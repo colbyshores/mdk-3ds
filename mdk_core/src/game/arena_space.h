@@ -59,6 +59,14 @@ public:
     // false when there is none.
     bool bottom(Vec feet, float* out);
 
+    // The first face a box of half extents half meets from from to to (centres),
+    // in Kurt's arena then the second (C# ArenaSpace.Sight, camera_clearance):
+    // the box's centre there and the face's plane. False when nothing is met.
+    bool sight(Vec from, Vec to, Vec half, Vec* outPoint, const formats::BspNode** outPlane);
+
+    // Whether the segment crosses a face of Kurt's arena (C# ArenaSpace.Crosses).
+    bool crosses(Vec from, Vec to);
+
     // The name of the arena around a point, or null.
     const std::string* arenaAt(Vec point) const;
 
@@ -77,6 +85,9 @@ private:
     const Entry* firstEntry(Vec point) const;
     void addAt(Vec point, std::vector<Bsp*>& out);
     Bsp* kurt(Vec point);
+    // Kurt's arenas for a probe: the solid ones, else those around the point
+    // (C# ArenaSpace.Kurts). Returns a pointer to the scratch or _solid.
+    const std::vector<Bsp*>* kurts(Vec point);
 
     // THE ENTRIES ARE HEAP-ALLOCATED (unique_ptr), not stored by value in the
     // vector. The C# holds Bsp by reference (List<Bsp>), so a Bsp's address
@@ -87,7 +98,7 @@ private:
     std::vector<std::unique_ptr<Entry>> _arenas;
     std::vector<Bsp*> _solid;   // empty: those around Kurt by bounds are used
     std::vector<Bsp*> _around;  // scratch for the move's arena list
-    std::vector<Bsp*> _kurts;   // scratch for bottom()
+    std::vector<Bsp*> _kurts;   // scratch for kurts()/sight()
 };
 
 } // namespace mdk

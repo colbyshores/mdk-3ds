@@ -55,6 +55,10 @@ public:
     // accumulated mouse so the in-step terms stay zero.
     void mouseLook(Input& input);
 
+    // Moves Kurt by offset (horizontal) with collision, sliding along what he
+    // meets (the camera's push, C# Kurt.Shove). Returns how far he went.
+    Vec3 shove(Vec3 offset);
+
 private:
     void updateVertical(const Input& input, const Vec3& move, float delta);
     void updateAir(bool jumpHeld, float delta);

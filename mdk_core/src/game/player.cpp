@@ -146,6 +146,18 @@ void Player::mouseLook(Input& input) {
     lookPitch = clampf(lookPitch, kMinPitch - arenaPitch, kMaxPitch - arenaPitch);
 }
 
+Vec3 Player::shove(Vec3 offset) {
+    // C# Kurt.Shove: a horizontal Walk move (Nearby is empty until the objects
+    // land, so the 4-arg move), returning how far the feet actually went. The
+    // C#'s Contact() only records the touched triangle, which is not ported.
+    const Vec3 start = feet;
+    const Vec3 move{offset.x, offset.y, 0.0f};
+    if (_space && (move.x != 0.0f || move.y != 0.0f)) {
+        feet = fromVec(_space->move(toVec(feet), toVec(move), ArenaSpace::kMotionWalk, kWalkSlide).feet);
+    }
+    return Vec3{feet.x - start.x, feet.y - start.y, feet.z - start.z};
+}
+
 void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
     const bool jumpHeld = input.isDown(kKeyJump);
     if (!jumpHeld) {

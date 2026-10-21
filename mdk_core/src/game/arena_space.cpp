@@ -160,6 +160,42 @@ bool ArenaSpace::bottom(Vec feet, float* out) {
     return true;
 }
 
+const std::vector<Bsp*>* ArenaSpace::kurts(Vec point) {
+    if (!_solid.empty()) {
+        return &_solid;
+    }
+    _kurts.clear();
+    addAt(point, _kurts);
+    return &_kurts;
+}
+
+bool ArenaSpace::sight(Vec from, Vec to, Vec half, Vec* outPoint, const formats::BspNode** outPlane) {
+    for (Bsp* bsp : *kurts(from)) {
+        Vec end;
+        int node = Bsp::kNone;
+        const int triangle = bsp->sweepBox(from, to, half, 0, 0.0f, &end, &node);
+        if (triangle != Bsp::kNone && node >= 0) {
+            if (outPoint != nullptr) {
+                *outPoint = end;
+            }
+            if (outPlane != nullptr) {
+                *outPlane = &bsp->arena()->nodes()[node];
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ArenaSpace::crosses(Vec from, Vec to) {
+    Bsp* own = kurt(from);
+    if (own == nullptr) {
+        return false;
+    }
+    Vec point;
+    return own->segment(from, to, Bsp::kSegmentAny, &point) != Bsp::kNone;
+}
+
 const std::string* ArenaSpace::arenaAt(Vec point) const {
     const Entry* e = firstEntry(point);
     return e ? &e->arena->name() : nullptr;

@@ -186,6 +186,15 @@ int main(int argc, char** argv) {
     auto last = std::chrono::steady_clock::now();
 
     uint32_t frame = 0;
+    // Build the camera once up front so the very first frame has a valid matrix
+    // even if no simulation step fits in it (a zero camera would collapse every
+    // vertex to the clip origin and draw nothing).
+    mdk::Camera camera;
+    if (playerReady) {
+        mdk::buildFollowCameraCleared(&camera, &space, player,
+                                      player.arenaPitch + player.lookPitch,
+                                      mdk::follow_camera::kDefaultPivot, 1280.0f / 960.0f);
+    }
     while (true) {
         const auto now = std::chrono::steady_clock::now();
         const float elapsed = std::chrono::duration<float>(now - last).count();
@@ -203,10 +212,13 @@ int main(int argc, char** argv) {
         params.screenshot_path = nullptr;
 
         if (playerReady) {
-            // The C# frame order: the mouse look is per frame, the simulation
-            // runs in fixed steps, and the camera is rebuilt from Kurt's feet
-            // and facing each frame. The BSP camera-clear (C# Clear/Sight)
-            // that keeps the camera out of walls lands with the collision port.
+            // The C# frame order (Viewer.Frame): the mouse look is per frame,
+            // then the simulation runs in fixed steps, and EACH step updates
+            // Kurt and then the camera (UpdateKurt then UpdateCamera). So the
+            // camera clearance (C# Clear/Sight) — which pushes Kurt off a wall
+            // and the camera with him — runs once per step, not once per frame.
+            // A frame faster than the step runs no step and reuses the camera the
+            // last step placed (the C# blends between steps; that is not ported).
             player.mouseLook(input);
             pending += elapsed;
             if (pending > kStep * 10.0f) {
@@ -214,12 +226,11 @@ int main(int argc, char** argv) {
             }
             while (pending >= kStep) {
                 player.update(input, kStep);
+                mdk::buildFollowCameraCleared(&camera, &space, player,
+                                              player.arenaPitch + player.lookPitch,
+                                              mdk::follow_camera::kDefaultPivot, 1280.0f / 960.0f);
                 pending -= kStep;
             }
-            mdk::Camera camera;
-            mdk::buildFollowCamera(&camera, player.feet, player.facing(),
-                                   player.arenaPitch + player.lookPitch,
-                                   mdk::follow_camera::kDefaultPivot, 1280.0f / 960.0f);
             mdk_render_set_camera(renderer, &camera);
         }
 
