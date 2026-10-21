@@ -109,6 +109,8 @@ set(SOURCES
     ${CORE}/src/formats/texture.cpp
     ${CORE}/src/formats/texture_archive.cpp
     ${CORE}/src/formats/wav.cpp
+    ${CORE}/src/game/arena_space.cpp
+    ${CORE}/src/game/bsp.cpp
     ${CORE}/src/game/follow_camera.cpp
     ${CORE}/src/game/hud_view.cpp
     ${CORE}/src/game/level_data.cpp
