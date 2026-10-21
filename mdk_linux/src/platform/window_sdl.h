@@ -9,6 +9,8 @@
 
 #include <stdint.h>
 
+#include "game/input.h"
+
 namespace mdk {
 
 struct Window {
@@ -31,8 +33,12 @@ bool windowCreate(Window* window, const WindowDesc* desc);
 // Destroy the window and the SDL subsystems.
 void windowDestroy(Window* window);
 
-// Pump the platform's events. Returns false when the application was asked
-// to close.
-bool windowPump(Window* window);
+// Pump the platform's events, translating them into the game's input. Returns
+// false when the application was asked to close. Held keys set `input->down`;
+// relative mouse motion accumulates into `input->mouseX/mouseY`.
+bool windowPump(Window* window, Input* input);
+
+// Grab or release the mouse (relative mode) for look controls.
+void windowCaptureMouse(Window* window, bool on);
 
 } // namespace mdk

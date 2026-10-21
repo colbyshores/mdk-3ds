@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 
 #include "render/render.h"
 #include "render/camera_builder.h"
@@ -20,6 +21,8 @@
 #include "game/level_view.h"
 #include "game/follow_camera.h"
 #include "game/hud_view.h"
+#include "game/player.h"
+#include "game/input.h"
 #include "formats/mdk_data.h"
 #include "formats/bni.h"
 #include "formats/file_system.h"
@@ -151,27 +154,59 @@ int main(int argc, char** argv) {
         std::printf("[main] data: NOT FOUND\n");
     }
 
+    // Kurt at the level's spawn, facing the start angle. The follow camera's
+    // arena pitch is the game's default (4 degrees), so with no input the view
+    // is the same framing the static camera produced.
+    mdk::Input input;
+    mdk::Player player;
+    bool playerReady = false;
+    if (arena) {
+        const float* start = level.dti().startPosition();
+        player.feet = mdk::Vec3{start[0], start[1], start[2]};
+        player.yaw = level.dti().startAngle();
+        player.arenaPitch = mdk::follow_camera::kDefaultPitch;
+        playerReady = true;
+        mdk::windowCaptureMouse(&window, true);
+    }
+
+    const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
+    float pending = 0.0f;
+    auto last = std::chrono::steady_clock::now();
+
     uint32_t frame = 0;
-    while (headless || mdk::windowPump(&window)) {
+    while (true) {
+        const auto now = std::chrono::steady_clock::now();
+        const float elapsed = std::chrono::duration<float>(now - last).count();
+        last = now;
+
+        if (!headless && !mdk::windowPump(&window, &input)) {
+            break;
+        }
+
         MdkFrameParams params;
-        params.elapsed = 0.0f;
+        params.elapsed = elapsed;
         params.frame_index = frame;
         params.clear_colour = 0xFF0F1218u;
         params.present = true;
         params.screenshot_path = nullptr;
 
-        if (arena) {
-            // The follow camera at the level's spawn, at the game's pitch and
-            // pivot (C# FollowCamera: default pitch 4, pivot 4.5). The BSP
-            // camera-clear (C# Clear/Sight) that keeps the camera out of walls
-            // lands with the collision port; until then the spawn view is the
-            // raw placement.
-            const float* start = level.dti().startPosition();
-            const float angle = level.dti().startAngle() * (3.14159265358979323846f / 180.0f);
-            const mdk::Vec3 feet{start[0], start[1], start[2]};
-            const mdk::Vec3 facing{mdk::fastCos(angle), mdk::fastSin(angle), 0.0f};
+        if (playerReady) {
+            // The C# frame order: the mouse look is per frame, the simulation
+            // runs in fixed steps, and the camera is rebuilt from Kurt's feet
+            // and facing each frame. The BSP camera-clear (C# Clear/Sight)
+            // that keeps the camera out of walls lands with the collision port.
+            player.mouseLook(input);
+            pending += elapsed;
+            if (pending > kStep * 10.0f) {
+                pending = kStep * 10.0f; // never spiral after a stall
+            }
+            while (pending >= kStep) {
+                player.update(input, kStep);
+                pending -= kStep;
+            }
             mdk::Camera camera;
-            mdk::buildFollowCamera(&camera, feet, facing, mdk::follow_camera::kDefaultPitch,
+            mdk::buildFollowCamera(&camera, player.feet, player.facing(),
+                                   player.arenaPitch + player.lookPitch,
                                    mdk::follow_camera::kDefaultPivot, 1280.0f / 960.0f);
             mdk_render_set_camera(renderer, &camera);
         }

@@ -113,6 +113,7 @@ set(SOURCES
     ${CORE}/src/game/hud_view.cpp
     ${CORE}/src/game/level_data.cpp
     ${CORE}/src/game/level_view.cpp
+    ${CORE}/src/game/player.cpp
     ${CORE}/src/render/arena_scene.cpp
     ${CORE}/src/render/camera_builder.cpp
     ${CORE}/src/render/material_resolver.cpp
