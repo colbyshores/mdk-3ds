@@ -1,0 +1,154 @@
+// ============================================================================
+// level_view.cpp — see level_view.h.
+// ============================================================================
+
+#include "game/level_view.h"
+
+#include <string.h>
+
+namespace mdk {
+
+namespace {
+
+// A colour as a key: the four bytes packed.
+uint32_t packColour(const Colour& colour) {
+    const uint32_t r = (uint32_t)(colour.r * 255.0f + 0.5f) & 0xFFu;
+    const uint32_t g = (uint32_t)(colour.g * 255.0f + 0.5f) & 0xFFu;
+    const uint32_t b = (uint32_t)(colour.b * 255.0f + 0.5f) & 0xFFu;
+    const uint32_t a = (uint32_t)(colour.a * 255.0f + 0.5f) & 0xFFu;
+    return r | (g << 8) | (b << 16) | (a << 24);
+}
+
+} // namespace
+
+bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Arena* arena) {
+    if (!renderer || !level || !arena) {
+        return false;
+    }
+    renderer_ = renderer;
+    arena_ = arena;
+
+    palette_ = level->paletteOf(arena);
+    const std::vector<const formats::TextureArchive*> archives = level->archivesOf(arena);
+
+    MaterialResolver resolver(&level->dti(), Shading::Original);
+    if (!buildArenaScene(arena, resolver, palette_, archives, &scene_)) {
+        return false;
+    }
+
+    // The mesh. The vertices are copied into the backend's buffer.
+    mesh_ = mdk_render_create_mesh(renderer, scene_.vertices.data(),
+                                   (int32_t)scene_.vertices.size());
+    if (mesh_ < 0) {
+        return false;
+    }
+
+    // The palette. The 3DS keeps it to expand the textures through it; the
+    // Vulkan backend binds it as a texture of its own.
+    paletteId_ = mdk_render_create_palette(renderer, palette_.rgba());
+
+    return true;
+}
+
+bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
+    if (!arena_ || outMin == nullptr || outMax == nullptr) {
+        return false;
+    }
+    const std::vector<formats::Vec3f>& positions = arena_->vertices();
+    if (positions.empty()) {
+        return false;
+    }
+    Vec3 min = Vec3{positions[0].x, positions[0].y, positions[0].z};
+    Vec3 max = min;
+    for (size_t i = 1; i < positions.size(); i++) {
+        if (positions[i].x < min.x) min.x = positions[i].x;
+        if (positions[i].y < min.y) min.y = positions[i].y;
+        if (positions[i].z < min.z) min.z = positions[i].z;
+        if (positions[i].x > max.x) max.x = positions[i].x;
+        if (positions[i].y > max.y) max.y = positions[i].y;
+        if (positions[i].z > max.z) max.z = positions[i].z;
+    }
+    *outMin = min;
+    *outMax = max;
+    return true;
+}
+
+MdkTextureId LevelView::textureId(const formats::Texture* texture) {
+    if (!texture) {
+        return -1;
+    }
+    std::map<const formats::Texture*, MdkTextureId>::const_iterator found = textures_.find(texture);
+    if (found != textures_.end()) {
+        return found->second;
+    }
+
+    // The texture's palette. The arena's is the one its indices are
+    // relative to.
+    const uint8_t* rgba = palette_.rgba();
+
+    // The texture's height already includes the animation frames: the
+    // original stacks them vertically.
+    const MdkTextureId id = mdk_render_create_index_texture(
+        renderer_, texture->width(), texture->height() * texture->frameCount(),
+        texture->indices(), rgba);
+    textures_[texture] = id;
+    return id;
+}
+
+MdkTextureId LevelView::flatColourId(const Colour& colour) {
+    const uint32_t key = packColour(colour);
+    std::map<uint32_t, MdkTextureId>::const_iterator found = flatColours_.find(key);
+    if (found != flatColours_.end()) {
+        return found->second;
+    }
+    // A one-pixel texture of the colour. The 3DS draws a flat surface with
+    // it, because the PICA200's combiner cannot take a constant colour from
+    // a vertex shader.
+    uint8_t pixel[4];
+    pixel[0] = (uint8_t)((key >> 0) & 0xFFu);
+    pixel[1] = (uint8_t)((key >> 8) & 0xFFu);
+    pixel[2] = (uint8_t)((key >> 16) & 0xFFu);
+    pixel[3] = (uint8_t)((key >> 24) & 0xFFu);
+    const MdkTextureId id = mdk_render_create_rgba_texture(renderer_, 1, 1, pixel);
+    flatColours_[key] = id;
+    return id;
+}
+
+void LevelView::draw() {
+    if (!renderer_ || mesh_ < 0) {
+        return;
+    }
+    for (size_t i = 0; i < scene_.batches.size(); i++) {
+        const ArenaBatch& batch = scene_.batches[i];
+        mdk::MeshDraw draw;
+        draw.mesh = mesh_;
+        draw.first_vertex = batch.first;
+        draw.vertex_count = batch.count;
+        draw.frame = 0;
+        draw.primitive = Primitive::Triangles;
+        memset(draw.world, 0, sizeof(draw.world));
+        draw.world[0] = 1.0f;
+        draw.world[5] = 1.0f;
+        draw.world[10] = 1.0f;
+        draw.world[15] = 1.0f;
+
+        draw.material.texture = batch.surface.texture ? textureId(batch.surface.texture)
+                                                       : flatColourId(batch.surface.colour);
+        draw.material.palette = paletteId_;
+        draw.material.frame_count = batch.surface.frameCount;
+        draw.material.pass = batch.surface.pass;
+        draw.material.shading = batch.surface.shading;
+        draw.material.row_shift = batch.surface.rowShift;
+        // The colour is applied EXACTLY ONCE. A flat surface's colour is
+        // already carried by the one-pixel texture above (that is why the
+        // flat texture exists -- the PICA200 cannot take a constant), so
+        // the material colour must be white for both targets. Setting it to
+        // the surface colour here squared the flat colours -- (19,11,11)
+        // rendered as (1,0,0).
+        draw.material.colour = Colour{1.0f, 1.0f, 1.0f, 1.0f};
+
+        mdk_render_draw_mesh(renderer_, &draw);
+    }
+}
+
+} // namespace mdk

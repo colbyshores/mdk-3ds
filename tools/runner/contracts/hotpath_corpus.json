@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "captured": null,
+  "capture_note": "NO CAPTURE YET. MDK's port has not taken an OG-profile capture, so the hot-path corpus is EMPTY and `captured` is null: 'top 15 of a captured profile' (AGENTS.md 2) names nothing, and inventing entries from memory is exactly what the rule forbids. The SCHEMA is t2k's, unchanged, so the first capture populates `seed` and sets `captured` without touching a script. While the project is frozen (PROJECT_FROZEN_AT in tools/runner/gates_vfp.py) the corpus-age and pin-age clocks are waived, so an empty corpus is a NOTE rather than a finding; unfrozen, a corpus with no capture date is a MUST finding. The first capture MUST set `captured` to the capture date, populate `seed` with the measured hot functions and why each is hot, and land a docs/validation/perf-*.log whose date the gate cross-checks (a `captured` date newer than the newest log on disk is reported).",
+  "seed": [],
+  "cold_always": [
+    "mdk_core/src/util/math_lut.cpp",
+    "mdk_core/src/formats/",
+    "mdk_3ds/src/main_3ds.cpp"
+  ]
+}

@@ -1,8 +1,43 @@
+# Build output
+build/
+build-*/
+*.o
+*.d
+*.elf
+*.map
+*.3dsx
+*.cia
+*.smdh
+*.shbin
+*.spv
+*.pyc
+__pycache__/
+
+# The user's own copy of the commercial game. It is staged into the RomFS at
+# build time and is NOT committed: it is a copyrighted game, and the build
+# script stages it from ../MDK (or the MDK_DATA_DIR the formats library
+# looks in). The staging MANIFEST is committed; the bytes are not.
+/MDK/
+
+# The 3DS build's staged RomFS. Rebuilt by mdk_3ds/tools/stage_romfs.sh.
+/mdk_3ds/romfs/*
+!/mdk_3ds/romfs/.gitkeep
+
+# The vendored Vulkan headers and volk are copied from ../t2k by
+# mdk_linux/tools/fetch_third_party.sh. They are large and they have their
+# own upstream; they are fetched, not committed.
+/mdk_linux/third_party/vulkan/
+/mdk_linux/third_party/volk/
+
+# The test artefacts
+/tests/**/*.out
+/tests/**/*.png
+/tests/**/*.json.out
+
+# The C# oracle's build output. The oracle under src/ is kept as the reference
+# implementation; it is not built in this tree.
 bin/
 obj/
-*.user
-.vs/
-shaders/compiled/
-publish/
-# Your own folders of the game data and the 1996 demo (src/Mdk.Formats/LocalPaths.cs)
-mdk_paths.cfg
+
+# Kilo editor/recovery state.
+.kilo/

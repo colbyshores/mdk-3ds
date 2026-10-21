@@ -1,0 +1,4 @@
+# The gate writes its JSON report here on every run. It is a build
+# artefact, not a source file: keep it out of the tree.
+*
+!.gitignore

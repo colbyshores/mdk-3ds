@@ -1,0 +1,88 @@
+; ============================================================================
+; mdk_c3d.v.pica — the MDK vertex shader for the 3DS.
+;
+; ONE uniform matrix, at registers 0-3, holding the combined model-view-
+; projection. The CPU composes it (see renderer_c3d.cpp's buildEyeMvp) and the
+; PICA200 does the transform on the GPU: neither backend ever transforms
+; vertices on the CPU. See the Obsidian note
+; "port-mvp-transform-locus-cpu-vs-gpu".
+;
+; THE 90-DEGREE ROTATION IS IN THE MATRIX, NOT HERE. The 3DS framebuffer is
+; 240x400 portrait and the game is landscape, so the projection carries the
+; rotation. It is a PROPER ROTATION (determinant +1): the upstream picaGL
+; version used a reflection (determinant -1) which flips the winding a
+; second time and undoes the cull inversion. See ../forsaken/3DS_PORT_NOTES.md.
+;
+; THE UV TRANSFORM, at register 4.
+;
+; THE PICA200'S TEXTURE DIMENSIONS ARE POWERS OF TWO. The texture size
+; register encodes log2(width) and log2(height), so 128x176 IS NOT A TEXTURE
+; THE HARDWARE CAN HOLD -- a 128x128 one is, and a 128x176 one is not, and
+; the allocation fails with no diagnostic at all. MDK's textures are
+; 256x400, 128x176, 256x320 and so on: every one of them has to be PADDED UP
+; to the next power of two.
+;
+; A padded texture is larger than the image it holds, so the texture
+; coordinate has to be scaled and offset to address the right part of it:
+;
+;     uv' = uv * scale + offset
+;
+; `scale` is the real size over the padded size, and `offset` is the frame's
+; origin for an animated texture (the frames are stacked vertically, and the
+; original's shader picks the frame with `uv.y = (frac(uv.y) + frame) /
+; frame_count`).
+;
+; Attributes (bound by C3D_AttrInfo):
+;   v0 = position (float3)
+;   v1 = texcoord (float2)
+;
+; TWO attributes, five floats a vertex. The packed RGBA8 colour is NOT
+; uploaded: the original look's world surfaces are unlit (the palette
+; decides the colour) and the flat-coloured surfaces are drawn with a
+; one-pixel texture of that colour, so the colour never reaches the
+; fragment stage. The output colour is therefore white.
+; ============================================================================
+
+.constf constants(0.0, 1.0, -1.0, 0.5)
+.alias  zeros constants.xxxx
+.alias  ones  constants.yyyy
+
+.out outpos position
+.out outclr color
+.out outtexcoord texcoord0
+
+; Inputs
+.alias inpos v0
+.alias intex v1
+
+; The combined model-view-projection, in uniform registers 0-3.
+.fvec mvp[4]
+
+; The UV transform, in uniform register 4: x and y are the scale, z and w
+; are the offset. A single vec4, not an array.
+.fvec uvtransform
+
+.entry vmain
+.proc vmain
+    ; The matrix-vector product. dp4 writes only the x component of its
+    ; destination, so each row of the matrix is dotted with the position
+    ; separately.
+    mov r0, inpos
+    dp4 outpos.x, mvp[0], r0
+    dp4 outpos.y, mvp[1], r0
+    dp4 outpos.z, mvp[2], r0
+    dp4 outpos.w, mvp[3], r0
+
+    mov outclr, ones
+
+    ; The texture coordinate, scaled and offset for the padded texture.
+    mov r1, uvtransform
+    mov r0, intex
+    mul r0.x, r0.x, r1.x
+    mul r0.y, r0.y, r1.y
+    add r0.x, r0.x, r1.z
+    add r0.y, r0.y, r1.w
+    mov outtexcoord, r0
+
+    end
+.end
