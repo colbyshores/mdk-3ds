@@ -125,6 +125,32 @@ const formats::Arena* LevelData::arenaNamed(const std::string& name) const {
     return nullptr;
 }
 
+bool LevelData::isReachable(const std::string& arenaName) const {
+    // The C# LevelData.IsReachable: the starting arena, or one with a
+    // connection record (type 6). A name not in the DTI (a corridor) is
+    // reachable. Arenas without a connection start hidden and must not be in
+    // the collision world, or one whose bounds overlap the playable column can
+    // steal the smallest-arena selection and give Kurt the wrong BSP.
+    const uint32_t kConnection = 6;
+    const std::vector<formats::Dti::ArenaEntry>& arenas = dti_.arenas();
+    int32_t index = -1;
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (arenas[i].name == arenaName) {
+            index = (int32_t)i;
+            break;
+        }
+    }
+    if (index < 0 || index == dti_.startArena()) {
+        return true;
+    }
+    for (size_t i = 0; i < arenas[index].records.size(); i++) {
+        if (arenas[index].records[i].type == kConnection) {
+            return true;
+        }
+    }
+    return false;
+}
+
 formats::Palette& LevelData::paletteOf(const formats::Arena* arena) {
     std::map<const formats::Arena*, formats::Palette>::iterator found = palettes_.find(arena);
     if (found != palettes_.end()) {

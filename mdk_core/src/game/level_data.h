@@ -66,6 +66,11 @@ public:
     // The arena with that name, or null.
     const formats::Arena* arenaNamed(const std::string& name) const;
 
+    // Whether an arena can be entered from the start: the starting one, or one
+    // with a connection (a DTI record of type 6). A corridor, which is not
+    // listed in the DTI, is always reachable. (The C# LevelData.IsReachable.)
+    bool isReachable(const std::string& arenaName) const;
+
     // THE PALETTE AN ARENA DRAWS WITH: the level's, with the arena's own
     // 112 colours. A corridor borrows its arena's: CHMO_1 from HMO_1.
     // NOT const: the palette is made once per arena and cached, and making

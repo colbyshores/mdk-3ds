@@ -23,6 +23,7 @@
 #include "game/hud_view.h"
 #include "game/player.h"
 #include "game/input.h"
+#include "game/arena_space.h"
 #include "formats/mdk_data.h"
 #include "formats/bni.h"
 #include "formats/file_system.h"
@@ -154,17 +155,28 @@ int main(int argc, char** argv) {
         std::printf("[main] data: NOT FOUND\n");
     }
 
-    // Kurt at the level's spawn, facing the start angle. The follow camera's
-    // arena pitch is the game's default (4 degrees), so with no input the view
-    // is the same framing the static camera produced.
+    // The BSP world Kurt moves through: the arenas reachable from the start
+    // (the C# Viewer adds only IsReachable ones -- a hidden arena whose bounds
+    // overlap the spawn column would otherwise steal the arena selection).
+    mdk::ArenaSpace space;
+    for (const mdk::formats::Arena* a : level.arenas()) {
+        if (level.isReachable(a->name())) {
+            space.add(a);
+        }
+    }
+
+    // Kurt at the level's spawn, dropped 3 units onto the floor (the C#
+    // Viewer StartDrop), facing the start angle. The follow camera's arena
+    // pitch is the game's default (4 degrees).
     mdk::Input input;
     mdk::Player player;
     bool playerReady = false;
     if (arena) {
         const float* start = level.dti().startPosition();
-        player.feet = mdk::Vec3{start[0], start[1], start[2]};
+        player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
         player.arenaPitch = mdk::follow_camera::kDefaultPitch;
+        player.setSpace(&space);
         playerReady = true;
         mdk::windowCaptureMouse(&window, true);
     }
