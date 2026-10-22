@@ -30,14 +30,9 @@ public:
     float forwardSpeed = 0.0f;
     float strafeSpeed = 0.0f;
     float turnRate = 0.0f;     // degrees/s
-    float lookPitch = 0.0f;    // the camera's look offset, degrees, + looks down
     float verticalSpeed = 0.0f;
     bool onFloor = false;
     bool chuteOpen = false;
-
-    // The follow camera's arena pitch (the DTI arena's pitch; the C# default
-    // is 4 degrees). The view pitch is arenaPitch + lookPitch.
-    float arenaPitch = 0.0f;
 
     // The BSP world Kurt moves through. Without it the move is a flat-plane
     // stand-in (used only before the level is loaded).

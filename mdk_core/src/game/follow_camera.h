@@ -14,6 +14,7 @@
 // Orient: forward = facing*cos(pitch) - Z*sin(pitch).
 // ============================================================================
 
+#include "game/input.h"
 #include "render/render_types.h"
 
 namespace mdk {
@@ -38,6 +39,27 @@ constexpr float kDefaultPivot = 4.5f;
 // over (C# FollowCamera.ViewPitchLimit). The orient's up-vector degenerates at
 // exactly 90 degrees.
 constexpr float kViewPitchLimit = 89.0f;  // degrees
+
+// The pitch smoothing (C# FollowCamera). The look offset is clamped to this
+// range once the arena pitch and the air tilt are taken off it.
+constexpr float kMouseDegrees = 0.15f;    // degrees per mouse count
+constexpr float kMinPitch = -60.0f;
+constexpr float kMaxPitch = 90.0f;
+constexpr float kTicks = 30.0f;           // the original's ticks per second
+// The arena pitch eases in by 0.85·old + 0.15·new per tick.
+constexpr float kPitchEase = 0.85f;
+// Air time starts below this fall speed; the tilt grows by 0.667·Ticks per
+// second up to 40, and decays by 40 per second back on the ground.
+constexpr float kFallStartSpeed = -16.0f;
+constexpr float kAirPitchRate = 0.667f * 30.0f;
+constexpr float kAirPitchMax = 40.0f;
+constexpr float kAirPitchDecay = 40.0f;
+// The climb: the smoothed rise of the feet per tick, clamped to ±0.5, eased by
+// 0.97·old + 0.03·new, returning by 0.02 per tick; 40 degrees per unit.
+constexpr float kClimbClamp = 0.5f;
+constexpr float kClimbKeep = 0.97f;
+constexpr float kClimbReturn = 0.02f;
+constexpr float kClimbPitch = 40.0f;
 
 } // namespace follow_camera
 
@@ -64,8 +86,41 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
 
 // As buildFollowCamera, but placed from the player and run through the camera
 // clearance (C# FollowCamera.Update: Point then Clear). The clearance may move
-// the player (Kurt is shoved off the wall) and the camera with him.
+// the player (Kurt is shoved off a wall) and the camera with him.
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect);
+
+// The follow camera's smoothing state (C# FollowCamera). It owns the eased arena
+// pitch, the mouse's look offset, the air tilt and the climb, and places the
+// view each step. The shake, the roll, the between-step blend, the sniper scope
+// and the top-down view are not ported (they need the scripts, the moves and the
+// high-refresh blend); where the C# branches on them this takes the false side.
+class FollowCamera {
+public:
+    // The per-frame mouse look up/down (C# FollowCamera.MouseLook): the look
+    // offset, clamped against the eased arena pitch and the air tilt.
+    void mouseLook(Input& input);
+
+    // One step (C# FollowCamera.Update): ease the arena pitch toward its target,
+    // update the air time and the climb, compute the pitch, then place the camera
+    // and run the clearance (buildFollowCameraCleared). `arenaPitchTarget` is the
+    // pitch of the arena Kurt is in (the C# PitchGoal).
+    void update(Camera* camera, ArenaSpace* space, Player& player, float arenaPitchTarget,
+                float delta, float aspect);
+
+private:
+    void updateAirTime(const Player& player, float delta);
+    void updateClimb(float feetZ, float delta);
+    static float climbStep(float climb, float rise, float ticks);
+
+    float _arenaPitch = follow_camera::kDefaultPitch;
+    float _lookOffset = 0.0f;
+    float _airPitch = 0.0f;
+    float _airTime = 0.0f;
+    float _climb = 0.0f;
+    bool _haveLastFeetZ = false;
+    float _lastFeetZ = 0.0f;
+    float _climbTime = 0.0f;
+};
 
 } // namespace mdk

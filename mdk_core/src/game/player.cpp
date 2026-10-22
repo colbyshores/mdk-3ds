@@ -54,9 +54,6 @@ const float kGlueNz = 0.25f;
 // needed for the position half now.
 const float kHardLandingSpeed = -100.0f;
 
-const float kMinPitch = -60.0f;
-const float kMaxPitch = 90.0f;
-
 float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -140,10 +137,9 @@ void Player::update(const Input& input, float delta) {
 }
 
 void Player::mouseLook(Input& input) {
+    // Kurt's mouse look is the yaw only (C# Kurt.MouseLook); the camera's look
+    // offset (its pitch) is the FollowCamera's, applied in FollowCamera::mouseLook.
     yaw += -input.takeMouseX() * kMouseDegrees;
-    lookPitch += input.takeMouseY() * kMouseDegrees;
-    // Keep the total view pitch (arena + look) inside the C#'s clamp.
-    lookPitch = clampf(lookPitch, kMinPitch - arenaPitch, kMaxPitch - arenaPitch);
 }
 
 Vec3 Player::shove(Vec3 offset) {

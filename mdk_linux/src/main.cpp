@@ -1,11 +1,12 @@
 // ============================================================================
 // main.cpp — the Linux frontend.
 //
-// It mirrors mdk_3ds/src/main_3ds.cpp: find the data, load level 3, build
-// the arena view, and draw it every frame from a camera that frames the
-// arena. The game logic (Kurt, the follow camera, the HUD) lands with the
-// game port; until then the camera framing is the same standstill the 3DS
-// frontend uses, so both targets show the same picture from the same code.
+// It finds the data, loads level 3, builds the arena view, and drives Kurt and
+// the follow camera (input, movement, collision, vertical physics, camera pitch
+// and clearance) every frame. The game logic is live on Linux only for now: the
+// 3DS frontend (mdk_3ds/src/main_3ds.cpp) still frames the arena with the
+// standstill camera until its input layer lands, so the two frontends are
+// deliberately at different phases rather than mirroring each other.
 // ============================================================================
 
 #include <SDL3/SDL.h>
@@ -166,22 +167,23 @@ int main(int argc, char** argv) {
     }
 
     // Kurt at the level's spawn, dropped 3 units onto the floor (the C#
-    // Viewer StartDrop), facing the start angle. The follow camera's arena
-    // pitch is the game's default (4 degrees).
+    // Viewer StartDrop), facing the start angle. The follow camera owns its own
+    // pitch smoothing, starting at the game's default (4 degrees).
     mdk::Input input;
     mdk::Player player;
+    mdk::FollowCamera follow;
     bool playerReady = false;
     if (arena) {
         const float* start = level.dti().startPosition();
         player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
-        player.arenaPitch = mdk::follow_camera::kDefaultPitch;
         player.setSpace(&space);
         playerReady = true;
         mdk::windowCaptureMouse(&window, true);
     }
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
+    const float kAspect = 1280.0f / 960.0f;
     float pending = 0.0f;
     auto last = std::chrono::steady_clock::now();
 
@@ -191,9 +193,13 @@ int main(int argc, char** argv) {
     // vertex to the clip origin and draw nothing).
     mdk::Camera camera;
     if (playerReady) {
-        mdk::buildFollowCameraCleared(&camera, &space, player,
-                                      player.arenaPitch + player.lookPitch,
-                                      mdk::follow_camera::kDefaultPivot, 1280.0f / 960.0f);
+        // Seed the matrix with the NON-clearing placement: the C# places no
+        // camera before its first step (FollowCamera.Update, which runs the
+        // clearance, is step 1), so seeding with the cleared build would shove
+        // Kurt mid-air at spawn before any physics has run.
+        mdk::buildFollowCamera(&camera, player.feet, player.facing(),
+                               mdk::follow_camera::kDefaultPitch, mdk::follow_camera::kDefaultPivot,
+                               kAspect);
     }
     while (true) {
         const auto now = std::chrono::steady_clock::now();
@@ -212,23 +218,28 @@ int main(int argc, char** argv) {
         params.screenshot_path = nullptr;
 
         if (playerReady) {
-            // The C# frame order (Viewer.Frame): the mouse look is per frame,
-            // then the simulation runs in fixed steps, and EACH step updates
-            // Kurt and then the camera (UpdateKurt then UpdateCamera). So the
-            // camera clearance (C# Clear/Sight) — which pushes Kurt off a wall
-            // and the camera with him — runs once per step, not once per frame.
+            // The C# frame order (Viewer.Frame): the mouse look is per frame
+            // (Kurt's yaw and the camera's look offset), then the simulation runs
+            // in fixed steps, and EACH step updates Kurt and then the camera
+            // (UpdateKurt then UpdateCamera) — so the pitch smoothing and the
+            // clearance (C# Clear/Sight) run once per step, not once per frame.
             // A frame faster than the step runs no step and reuses the camera the
             // last step placed (the C# blends between steps; that is not ported).
             player.mouseLook(input);
+            follow.mouseLook(input);
             pending += elapsed;
             if (pending > kStep * 10.0f) {
                 pending = kStep * 10.0f; // never spiral after a stall
             }
             while (pending >= kStep) {
                 player.update(input, kStep);
-                mdk::buildFollowCameraCleared(&camera, &space, player,
-                                              player.arenaPitch + player.lookPitch,
-                                              mdk::follow_camera::kDefaultPivot, 1280.0f / 960.0f);
+                // The pitch the camera eases to: the arena Kurt is in (the C#
+                // PitchGoal is the scripts' current arena; the geometric arena
+                // around his feet is the stand-in until the scripts land).
+                const std::string* here =
+                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                const float target = here ? level.arenaPitch(*here) : mdk::follow_camera::kDefaultPitch;
+                follow.update(&camera, &space, player, target, kStep, kAspect);
                 pending -= kStep;
             }
             mdk_render_set_camera(renderer, &camera);

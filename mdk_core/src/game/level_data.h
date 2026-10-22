@@ -71,6 +71,10 @@ public:
     // listed in the DTI, is always reachable. (The C# LevelData.IsReachable.)
     bool isReachable(const std::string& arenaName) const;
 
+    // The DTI camera pitch (degrees, positive looks down) for the arena with
+    // that name, or the default (4) when it is not listed. (C# Viewer.ArenaPitch.)
+    float arenaPitch(const std::string& arenaName) const;
+
     // THE PALETTE AN ARENA DRAWS WITH: the level's, with the arena's own
     // 112 colours. A corridor borrows its arena's: CHMO_1 from HMO_1.
     // NOT const: the palette is made once per arena and cached, and making

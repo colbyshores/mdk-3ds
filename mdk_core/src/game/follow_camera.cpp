@@ -4,6 +4,7 @@
 
 #include "game/follow_camera.h"
 
+#include <algorithm>
 #include <math.h>
 
 #include "formats/arena.h"
@@ -40,6 +41,10 @@ float clampViewPitch(float degrees) {
         return -follow_camera::kViewPitchLimit;
     }
     return degrees;
+}
+
+float clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
 }
 
 Vec3 cross(const Vec3& a, const Vec3& b) {
@@ -177,6 +182,82 @@ bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                                   position.z + forward.z},
                              up, follow_camera::kFieldOfView, aspect, follow_camera::kNear,
                              follow_camera::kFar);
+}
+
+void FollowCamera::mouseLook(Input& input) {
+    // C# FollowCamera.MouseLook (the top-down and sniper guards are not ported).
+    _lookOffset = clampf(_lookOffset + input.takeMouseY() * follow_camera::kMouseDegrees,
+                         follow_camera::kMinPitch - _arenaPitch - _airPitch,
+                         follow_camera::kMaxPitch - _arenaPitch - _airPitch);
+}
+
+void FollowCamera::updateAirTime(const Player& player, float delta) {
+    // C# UpdateAirTime: starts below FallStartSpeed, ends on rising or landing.
+    const float vz = player.verticalSpeed;
+    if (_airTime == 0.0f) {
+        _airTime = vz < follow_camera::kFallStartSpeed ? delta : 0.0f;
+        return;
+    }
+    const bool landed = vz == 0.0f && player.onFloor;
+    _airTime = (vz > 0.0f || landed) ? 0.0f : _airTime + delta;
+}
+
+float FollowCamera::climbStep(float climb, float rise, float ticks) {
+    // C# FollowCamera.Climb: eased toward the rise; coming back from the other
+    // sign it also returns by ClimbReturn per tick, without passing the rise.
+    const float keep = powf(follow_camera::kClimbKeep, ticks);
+    climb = rise * (1.0f - keep) + climb * keep;
+    if (climb < 0.0f && rise >= 0.0f) {
+        return std::min(climb + follow_camera::kClimbReturn * ticks, rise);
+    }
+    if (climb > 0.0f && rise <= 0.0f) {
+        return std::max(climb - follow_camera::kClimbReturn * ticks, rise);
+    }
+    return climb;
+}
+
+void FollowCamera::updateClimb(float feetZ, float delta) {
+    // C# UpdateClimb: the rise is measured once a tick (the original's 30 fps),
+    // so Kurt's 60 steps a second down a slope do not shake the view.
+    if (!_haveLastFeetZ) {
+        _lastFeetZ = feetZ;
+        _haveLastFeetZ = true;
+    }
+    _climbTime += delta * follow_camera::kTicks;
+    if (_climbTime < 1.0f) {
+        return;
+    }
+    const float ticks = floorf(_climbTime);
+    _climbTime -= ticks;
+    const float rise = clampf((feetZ - _lastFeetZ) / ticks, -follow_camera::kClimbClamp,
+                              follow_camera::kClimbClamp);
+    _lastFeetZ = feetZ;
+    _climb = climbStep(_climb, rise, ticks);
+}
+
+void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, float arenaPitchTarget,
+                          float delta, float aspect) {
+    // Ease the arena pitch toward its target (C# Lerp(target, old, Pow(ease, dt))).
+    _arenaPitch = arenaPitchTarget + (_arenaPitch - arenaPitchTarget) *
+                                    powf(follow_camera::kPitchEase, delta * follow_camera::kTicks);
+    // The per-step input.MouseY (C# line 108) is always zero: the mouse look is
+    // applied per frame in mouseLook, which consumes the accumulated mouse.
+    updateAirTime(player, delta);
+    updateClimb(player.feet.z, delta);
+    // Rising (the end-of-level lift) is not ported, so the air pitch only decays
+    // on the ground or grows in the air.
+    if (_airTime == 0.0f) {
+        _airPitch = std::max(_airPitch - follow_camera::kAirPitchDecay * delta, 0.0f);
+    } else {
+        _airPitch = std::max(_airPitch,
+                             std::min(_airTime * follow_camera::kAirPitchRate, follow_camera::kAirPitchMax));
+    }
+    _lookOffset = clampf(_lookOffset, follow_camera::kMinPitch - _arenaPitch - _airPitch,
+                         follow_camera::kMaxPitch - _arenaPitch - _airPitch);
+    // CameraTilt (a script) and CameraRoll are not ported (both 0).
+    const float degrees =
+        _arenaPitch + _lookOffset + _airPitch - follow_camera::kClimbPitch * _climb;
+    buildFollowCameraCleared(camera, space, player, degrees, follow_camera::kDefaultPivot, aspect);
 }
 
 } // namespace mdk

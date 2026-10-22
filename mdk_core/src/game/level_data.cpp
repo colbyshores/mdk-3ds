@@ -151,6 +151,17 @@ bool LevelData::isReachable(const std::string& arenaName) const {
     return false;
 }
 
+float LevelData::arenaPitch(const std::string& arenaName) const {
+    // C# Viewer.ArenaPitch: the DTI entry's pitch, else the default (4).
+    const std::vector<formats::Dti::ArenaEntry>& arenas = dti_.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (arenas[i].name == arenaName) {
+            return arenas[i].pitch;
+        }
+    }
+    return 4.0f;
+}
+
 formats::Palette& LevelData::paletteOf(const formats::Arena* arena) {
     std::map<const formats::Arena*, formats::Palette>::iterator found = palettes_.find(arena);
     if (found != palettes_.end()) {
