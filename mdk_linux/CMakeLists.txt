@@ -120,6 +120,8 @@ set(SOURCES
     ${CORE}/src/render/camera_builder.cpp
     ${CORE}/src/render/material_resolver.cpp
     ${CORE}/src/scripts/object.cpp
+    ${CORE}/src/scripts/script_runtime.cpp
+    ${CORE}/src/scripts/script_vm.cpp
     ${CORE}/src/util/math_lut.cpp
     ${CORE}/src/util/random.cpp
 )
