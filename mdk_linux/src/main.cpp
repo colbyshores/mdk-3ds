@@ -168,22 +168,44 @@ int main(int argc, char** argv) {
 
     // Kurt at the level's spawn, dropped 3 units onto the floor (the C#
     // Viewer StartDrop), facing the start angle. The follow camera owns its own
-    // pitch smoothing, starting at the game's default (4 degrees).
+    // pitch smoothing, starting at the game's default (4 degrees). Used for the
+    // first spawn and every respawn after a death: the C# reloads the level on
+    // death, and with no scripts the geometry is static, so resetting Kurt and the
+    // camera to the start is the same fresh start.
     mdk::Input input;
     mdk::Player player;
     mdk::FollowCamera follow;
     bool playerReady = false;
-    if (arena) {
+    auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
+        player = mdk::Player();
         player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
         player.setSpace(&space);
+        follow = mdk::FollowCamera();
+        // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
+        // scripts' current arena). Until the scripts land it is set once here, so
+        // bottom() -- and so the fall-out death -- still resolves his arena when he
+        // drops below its bounds instead of losing it and falling forever.
+        const std::string* here =
+            space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+        if (here) {
+            space.setSolid(*here);
+        }
+    };
+    if (arena) {
+        spawnPlayer();
         playerReady = true;
         mdk::windowCaptureMouse(&window, true);
     }
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
     const float kAspect = 1280.0f / 960.0f;
+    // The beat a dead Kurt is left frozen before respawning, standing in for the
+    // death animation and the ~4.25 s skull fade (K_BANG, SkullFade/SkullEnd) that
+    // are not ported; the HUD shows the skull meanwhile.
+    const float kRespawnDelay = 4.0f;
+    float deathTimer = 0.0f;
     float pending = 0.0f;
     auto last = std::chrono::steady_clock::now();
 
@@ -242,6 +264,21 @@ int main(int argc, char** argv) {
                 follow.update(&camera, &space, player, target, kStep, kAspect);
                 pending -= kStep;
             }
+            // Death: update() froze Kurt (it returns when dead). After the death
+            // beat, respawn him at the start (the C# reloads the level; the static
+            // geometry makes a reset the same fresh start) and re-seed the camera.
+            if (player.dead) {
+                deathTimer += elapsed;
+                if (deathTimer >= kRespawnDelay) {
+                    spawnPlayer();
+                    deathTimer = 0.0f;
+                    mdk::buildFollowCamera(&camera, player.feet, player.facing(),
+                                           mdk::follow_camera::kDefaultPitch,
+                                           mdk::follow_camera::kDefaultPivot, kAspect);
+                }
+            } else {
+                deathTimer = 0.0f;
+            }
             mdk_render_set_camera(renderer, &camera);
         }
 
@@ -250,11 +287,12 @@ int main(int argc, char** argv) {
             view.draw();
         }
         if (hudReady) {
-            // A stand-in HUD state until the player port lands: full health,
-            // a few inventory slots, and a target bar, so every HUD element
-            // is on screen for the visual check.
+            // The health and the skull are Kurt's now (the player port landed); the
+            // inventory slots and the target bar stay stand-ins until the items and
+            // the shooting land, so every HUD element is still on screen.
             mdk::HudState state;
-            state.health = 100;
+            state.health = player.health;
+            state.dead = player.dead;
             state.slots = {{1, 5}, {2, 12}, {3, 1}};
             state.selected = 0;
             state.barHealth = 300;

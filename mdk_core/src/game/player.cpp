@@ -53,6 +53,9 @@ const float kGlueNz = 0.25f;
 // with health). The C# gates the creep snap behind it, so the constant is
 // needed for the position half now.
 const float kHardLandingSpeed = -100.0f;
+const int kHardLandingDamage = 10;   // C# HardLandingDamage
+// Kurt dies this far below his arena's lowest point (C# FallOutDepth).
+const float kFallOutDepth = -50.0f;
 
 float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -99,6 +102,9 @@ Vec3 Player::right() const {
 }
 
 void Player::update(const Input& input, float delta) {
+    if (dead) {
+        return; // C# Kurt.Update returns on State.Dead: a dead Kurt is frozen.
+    }
     const bool turbo = input.isDown(kKeyTurbo);
 
     // The C# UpdateTurning (the mouse term is applied per frame in mouseLook).
@@ -139,6 +145,12 @@ void Player::update(const Input& input, float delta) {
 void Player::mouseLook(Input& input) {
     // Kurt's mouse look is the yaw only (C# Kurt.MouseLook); the camera's look
     // offset (its pitch) is the FollowCamera's, applied in FollowCamera::mouseLook.
+    // A dead Kurt does not turn (C# MouseLook returns no turn on State.Dead), but
+    // the accumulated mouse is still drained so it cannot build up.
+    if (dead) {
+        input.takeMouseX();
+        return;
+    }
     yaw += -input.takeMouseX() * kMouseDegrees;
 }
 
@@ -152,6 +164,17 @@ Vec3 Player::shove(Vec3 offset) {
         feet = fromVec(_space->move(toVec(feet), toVec(move), ArenaSpace::kMotionWalk, kWalkSlide).feet);
     }
     return Vec3{feet.x - start.x, feet.y - start.y, feet.z - start.z};
+}
+
+void Player::setHealth(int health) {
+    // C# SetHealth: max(health, 0).
+    this->health = health > 0 ? health : 0;
+}
+
+void Player::damage(int damage) {
+    // C# Damage with Normal difficulty (Easy/Hard scaling lands with difficulty).
+    // The death transition is the caller's (health 0 on the floor), not here.
+    health = health - damage > 0 ? health - damage : 0;
 }
 
 void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
@@ -182,8 +205,21 @@ void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
     // also caps upward speed at 40 u/s on leaving an updraft (Kurt.Updraft.cs);
     // today upward speed never exceeds the 40 u/s jump, so the omission is
     // inert -- add the cap with the fan subsystem.
-    // The fall-out death (50 below the arena's lowest point) lands with the
-    // health subsystem.
+    // The fall-out death (damp_gravity 0x469efc): 50 below his arena's lowest
+    // point Kurt dies, and counts as on a floor so the death plays. God mode is
+    // not ported.
+    float bottom = 0.0f;
+    if (_space && _space->bottom(toVec(feet), &bottom) && feet.z <= bottom + kFallOutDepth) {
+        health = 0;
+        verticalSpeed = 0.0f;
+        onFloor = true;
+    }
+    // health 0 on the floor is death (C# "health 0 --on the floor--> DEAD"). A
+    // hard landing lands the same tick and fall-out forces OnFloor, so both die
+    // now; a future mid-air damage source would wait for the landing, as in the C#.
+    if (health == 0 && onFloor) {
+        dead = true;
+    }
 }
 
 void Player::updateAir(bool jumpHeld, float delta) {
@@ -264,7 +300,13 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
     // load-bearing for position: a hard landing must NOT snap to `before`, or
     // Kurt is left floating just above the floor with onFloor set.
     if (verticalSpeed < kHardLandingSpeed) {
-        // HardLanding(): 10 damage + K_CRASHL, deferred to the health port.
+        // C# HardLanding(): 10 damage (no knock-down). The K_CRASHL animation and
+        // the HardLand state are not ported; only the damage matters here. The
+        // damage can bring health to 0, and this landing sets OnFloor, so the
+        // death check in updateVertical fires the same tick.
+        if (health > 0) {
+            damage(kHardLandingDamage);
+        }
     } else {
         const float creep = kCreepSpeed * delta;
         const float dx = feet.x - before.x;

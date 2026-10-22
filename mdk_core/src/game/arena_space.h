@@ -51,6 +51,15 @@ public:
     // Adds an arena once (a teleport may add one no connection leads to).
     void add(const formats::Arena* arena);
 
+    // Pins Kurt's arena to the one with that name (C# ArenaSpace.SetSolid). While
+    // set, the move, the sight/crosses probes and bottom() treat it as Kurt's
+    // arena even when his feet leave its bounds -- the sticky arena the original
+    // keeps (arena+0x44e) and the scripts refresh on a crossing. Until the scripts
+    // land, the frontend pins it once to the start arena, so a fall out of that
+    // arena reaches bottom() and the death fires. Clears the pin if no arena has
+    // that name (then the arenas around the feet are used, as before).
+    void setSolid(const std::string& name);
+
     // Moves Kurt's feet by delta, sliding along faces met obliquely enough
     // ((D·n)^2 <= slideK·|D|^2).
     Result move(Vec feet, Vec delta, Motion motion, float slideK);
@@ -96,7 +105,7 @@ private:
     // a vector insert relocate an Entry and silently alias a held Bsp* to the
     // wrong arena. unique_ptr keeps each Entry at a stable address.
     std::vector<std::unique_ptr<Entry>> _arenas;
-    std::vector<Bsp*> _solid;   // empty: those around Kurt by bounds are used
+    std::vector<Bsp*> _solid;   // Kurt's pinned arena (setSolid); empty = those around him by bounds
     std::vector<Bsp*> _around;  // scratch for the move's arena list
     std::vector<Bsp*> _kurts;   // scratch for kurts()/sight()
 };

@@ -34,6 +34,19 @@ public:
     bool onFloor = false;
     bool chuteOpen = false;
 
+    // Health and death (C# Kurt.Combat). The full combat (knock-down, the hurt
+    // flash, invulnerability, difficulty scaling and weapons) is not ported; this
+    // is the health and death the vertical physics' consequences need: a hard
+    // landing damages Kurt and a fall out of the arena kills him. health 0 on the
+    // floor is death (C# "health 0 --on the floor--> DEAD"); update() then freezes
+    // (C# Kurt.Update returns on State.Dead) until the frontend respawns him.
+    static constexpr int kMaxHealth = 100; // C# Inventory.MaxHealth
+    int health = kMaxHealth;
+    bool dead = false;
+
+    // Starts with another health than full (C# SetHealth: max(health, 0)).
+    void setHealth(int health);
+
     // The BSP world Kurt moves through. Without it the move is a flat-plane
     // stand-in (used only before the level is loaded).
     void setSpace(ArenaSpace* space) { _space = space; }
@@ -60,6 +73,7 @@ private:
     void glueDownhill(const Vec3& move, float delta);
     void fallMove(float delta);
     void land(const Vec3& before, const Vec3& normal, float delta);
+    void damage(int damage); // C# Damage (Normal difficulty): health -= damage, floored at 0
 
     ArenaSpace* _space = nullptr;
     Vec3 _floorNormal = {0.0f, 0.0f, 1.0f};

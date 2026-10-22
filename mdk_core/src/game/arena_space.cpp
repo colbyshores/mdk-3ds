@@ -58,6 +58,17 @@ void ArenaSpace::add(const formats::Arena* arena) {
     _arenas.insert(_arenas.begin() + at, std::make_unique<Entry>(arena, mn, mx, volume));
 }
 
+void ArenaSpace::setSolid(const std::string& name) {
+    // C# ArenaSpace.SetSolid: Kurt's arena is the named one while pinned.
+    _solid.clear();
+    for (const auto& up : _arenas) {
+        if (up->arena->name() == name) {
+            _solid.push_back(&up->bsp);
+            return;
+        }
+    }
+}
+
 const ArenaSpace::Entry* ArenaSpace::firstEntry(Vec point) const {
     for (const auto& up : _arenas) {
         if (contains(up->min, up->max, point)) {
