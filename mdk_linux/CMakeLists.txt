@@ -121,6 +121,7 @@ set(SOURCES
     ${CORE}/src/render/material_resolver.cpp
     ${CORE}/src/scripts/object.cpp
     ${CORE}/src/util/math_lut.cpp
+    ${CORE}/src/util/random.cpp
 )
 
 # ----------------------------------------------------------------------------

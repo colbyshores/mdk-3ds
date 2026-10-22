@@ -25,7 +25,9 @@ SOURCES := \
 	path_tests.cpp \
 	format_tests.cpp \
 	math_lut_tests.cpp \
+	random_tests.cpp \
 	$(CORE)/util/math_lut.cpp \
+	$(CORE)/util/random.cpp \
 	$(CORE)/formats/bin_reader.cpp \
 	$(CORE)/formats/palette.cpp \
 	$(CORE)/formats/texture.cpp \
