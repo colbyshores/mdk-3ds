@@ -119,6 +119,7 @@ set(SOURCES
     ${CORE}/src/render/arena_scene.cpp
     ${CORE}/src/render/camera_builder.cpp
     ${CORE}/src/render/material_resolver.cpp
+    ${CORE}/src/scripts/object.cpp
     ${CORE}/src/util/math_lut.cpp
 )
 
