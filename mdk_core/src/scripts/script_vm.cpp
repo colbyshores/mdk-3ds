@@ -555,6 +555,15 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             break;
 
+        // Animation: the loop flag is a golden-state bit; the frame playback
+        // (GetAnimation, AdvanceAnimation) lands with the animation slice.
+        case 3:  // anim_once
+            obj->flags &= ~MdkObject::FlagLoop;
+            break;
+        case 59:  // anim_loop
+            obj->flags |= MdkObject::FlagLoop;
+            break;
+
         // Conditions.
         case 96: {  // if_kurt_in_rect
             const Vec3& kurt = runtime_.kurtPosition();

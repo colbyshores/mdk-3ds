@@ -11,15 +11,15 @@
 // and seed=1; this matches it exactly.
 //
 // WHY TICK 1 ONLY. A spawned object runs its init script inside Spawn and gets
-// no motion update on the first tick, so it stays at its spawn position. Motion
-// (gravity, footing, movement commands) is a later slice; the multi-tick golden
-// states land with it.
+// no motion update on the first tick beyond path-following, so a non-path object
+// stays at its spawn position. Gravity/footing/movement commands are later
+// motion slices; the multi-tick golden states land with them.
 //
-// WHY LEVELS 3..7. Level 8's first object (XBSHIP) rides a path: follow_path
-// puts it at the path start, but its exact tick-1 position and yaw come from
-// Motion.Update's path-following step (ObjectMotion), which is the motion slice.
-// golden/L8_t1.txt records that target; it joins the asserted set when Motion
-// lands. Levels 3..7 have no object whose tick-1 state depends on Motion.
+// PATH-RIDING OBJECTS. Level 8's first object (XBSHIP) rides a path: follow_path
+// puts it at the path start and Motion's path-following step (motionPath) advances
+// it one frame and turns it along the path. That is the one motion that moves an
+// object at tick 1 (gravity objects are footing-held at their spawn), so it is in
+// scope here; the rest of ObjectMotion is not.
 // ============================================================================
 
 #include <stdio.h>
@@ -115,8 +115,8 @@ int main() {
     }
 
     int failures = 0;
-    // Levels 3..7 (see the header: level 8 needs Motion's path-following).
-    for (int level = 3; level <= 7; level++) {
+    // Levels 3..8 (the shipped single-player levels that start in an arena).
+    for (int level = 3; level <= 8; level++) {
         LevelData levelData;
         if (!LevelData::load(&levelData, &data, level)) {
             printf("FAIL L%d: did not load\n", level);

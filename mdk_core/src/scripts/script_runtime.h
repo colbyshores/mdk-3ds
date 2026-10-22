@@ -88,6 +88,11 @@ public:
     Vec3 pathVector(int32_t path, int32_t key, int32_t field);
     Vec3 pathPosition(int32_t path, float time);
     void startPath(MdkObject* obj, int32_t path, float time, const Vec3& origin);
+    // The path-following half of ObjectMotion.Update: advances a path-riding
+    // object one tick and turns it along the path. Gravity/footing/commands are
+    // later motion slices; at tick 1 path-following is the only motion that moves
+    // an object (gravity objects are footing-held at their spawn).
+    void motionPath(MdkObject* obj);
     void showArena(const std::string& arena);
     ArenaState& getArenaState(const std::string& arena);
     void setGroupState(const std::string&, int32_t, int32_t) {}  // triangle groups: later slice

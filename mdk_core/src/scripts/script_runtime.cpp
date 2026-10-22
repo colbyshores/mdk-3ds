@@ -128,8 +128,10 @@ void ScriptRuntime::runTick() {
             continue;
         }
         vm_.run(obj);
-        // Motion.Update lands with the movement slice; on the first tick no
-        // object has been spawned yet, so this never runs here.
+        // The path-following half of Motion.Update. Gravity/footing/commands land
+        // with their motion slices; at tick 1 path-following is the only motion
+        // that moves an object (gravity objects are footing-held at their spawn).
+        motionPath(obj);
     }
 
     runControllers();
@@ -340,6 +342,80 @@ void ScriptRuntime::startPath(MdkObject* obj, int32_t path, float time, const Ve
     obj->position.x = p.x + origin.x;
     obj->position.y = p.y + origin.y;
     obj->position.z = p.z + origin.z;
+}
+
+void ScriptRuntime::motionPath(MdkObject* obj) {
+    if (obj->path == 0) {
+        return;
+    }
+    int32_t path = obj->path;
+    if (obj->path_stop >= 0) {
+        // Round halves away from zero (ObjectMotion.Round).
+        int32_t r = obj->path_time >= 0.0f ? (int32_t)(obj->path_time + 0.5f)
+                                           : (int32_t)(obj->path_time - 0.5f);
+        if (r == obj->path_stop) {
+            return;
+        }
+    }
+    const float step = obj->path_speed;  // Ticks is 1 frame per tick
+    int32_t last = pathKeyFrame(path, pathKeyCount(path) - 1);
+    float stop = (float)obj->path_stop;
+    bool once = (obj->flags & MdkObject::FlagPathOnce) != 0;
+    if (step < 0.0f) {
+        if (obj->path_stop < 0 || obj->path_time < stop || stop < obj->path_time + step) {
+            obj->path_time += step;
+        } else {
+            obj->path_time = stop;
+        }
+        if (obj->path_time < 0.0f) {
+            if (once) {
+                obj->path = 0;
+                obj->path_time = 0.0f;
+            } else {
+                obj->path_time += (float)(last - 1);
+            }
+        }
+    } else {
+        if (obj->path_stop < 0 || stop < obj->path_time || obj->path_time + step < stop) {
+            obj->path_time += step;
+        } else {
+            obj->path_time = stop;
+        }
+        if (once) {
+            if (obj->path_time >= (float)(last - 2)) {
+                obj->path = 0;
+                obj->path_time = (float)(last - 2);
+            }
+        } else if (obj->path_time >= (float)(last - 1)) {
+            obj->path_time -= (float)(last - 1);
+        }
+    }
+
+    Vec3 old = obj->position;
+    Vec3 pp = pathPosition(path, obj->path_time);
+    Vec3 p;
+    p.x = pp.x + obj->path_origin.x;
+    p.y = pp.y + obj->path_origin.y;
+    p.z = pp.z + obj->path_origin.z;
+    bool pushes = (obj->flags & MdkObject::FlagPathPushes) != 0;
+    if (pushes) {
+        p.z = old.z;
+    }
+    if ((obj->flags & MdkObject::FlagNoTurning) == 0 &&
+        fabsf(p.x - old.x) + fabsf(p.y - old.y) > kTick * 0.5f) {
+        /* @vfp-exempt R6 — path-following turn; the heading must match the C#
+         * oracle's MathF.Atan2 byte-for-byte for golden-state parity, which the
+         * fastAtan2 LUT would not reproduce. measured n/a (cold at tick 1).
+         * Verified 2026-10-22. */
+        float deg = atan2f(p.y - old.y, p.x - old.x) * (180.0f / 3.14159265358979323846f);
+        obj->yaw = wrap360(deg + obj->path_yaw_offset);
+    }
+    if (!pushes) {
+        obj->position = p;
+        return;
+    }
+    // FlagPathPushes drives horizontal velocity (Push) instead of position; that
+    // belongs to the velocity/footing motion slice.
 }
 
 const Model* ScriptRuntime::findModel(const std::string& arena, const std::string& type) {
