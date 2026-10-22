@@ -405,10 +405,12 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             break;
         case 113: {  // spawn_relative: at an offset rotated by this object's yaw
             const float rad = obj->yaw * (3.14159265358979323846f / 180.0f);
-            /* @vfp-exempt R6 — cold spawn path; the rotation must match the C#
-             * oracle's MathF.SinCos byte-for-byte for golden-state parity, which
-             * the fastSin/fastCos LUT would not reproduce. measured n/a (cold).
-             * Verified 2026-10-22. */
+            /* @vfp-exempt R6 — cold spawn path; the rotation uses libm sinf/cosf
+             * because they track the C# oracle's MathF.SinCos to within 1 ULP,
+             * which is below the golden table's %.4f precision; the fastSin/fastCos
+             * LUT's error is far larger and would move those values. (Not byte-for-
+             * byte: glibc and .NET differ by 1 ULP on some inputs.) measured n/a
+             * (cold). Verified 2026-10-22. */
             const float s = sinf(rad);
             const float c = cosf(rad);
             const float ox = fval(op(ins, 0));

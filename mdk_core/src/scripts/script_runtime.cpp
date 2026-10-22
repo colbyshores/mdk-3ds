@@ -128,10 +128,12 @@ void ScriptRuntime::runTick() {
             continue;
         }
         vm_.run(obj);
-        // The path-following half of Motion.Update. Gravity/footing/commands land
-        // with their motion slices; at tick 1 path-following is the only motion
-        // that moves an object (gravity objects are footing-held at their spawn).
-        motionPath(obj);
+        // The path-following half of Motion.Update, gated on liveness exactly as
+        // the C# (Vm.Run then `if (!Dead) Motion.Update`): a script that kills the
+        // object this tick must not have it path-moved afterwards.
+        if (!obj->dead) {
+            motionPath(obj);
+        }
     }
 
     runControllers();
@@ -292,20 +294,36 @@ void ScriptRuntime::spawnConnector(MdkObject* obj, const std::string& type, cons
 }
 
 int32_t ScriptRuntime::pathKeyCount(int32_t path) {
+    if (path < 0 || (size_t)path + 4 > cmi_->bytes().size()) {
+        return 0;
+    }
     return (int32_t)readU32(cmi_->bytes().data(), path);
 }
 
 int32_t ScriptRuntime::pathKeyFrame(int32_t path, int32_t key) {
-    return readS32(cmi_->bytes().data(), path + kPathCountSize + key * kPathKeySize);
+    // A corrupt count could make key huge; compute the offset in 64-bit so the
+    // multiply cannot overflow, and read nothing past the CMI image.
+    if (key < 0) {
+        return 0;
+    }
+    long long off = (long long)path + kPathCountSize + (long long)key * kPathKeySize;
+    if (off < 0 || (size_t)off + 4 > cmi_->bytes().size()) {
+        return 0;
+    }
+    return readS32(cmi_->bytes().data(), (int)off);
 }
 
 Vec3 ScriptRuntime::pathVector(int32_t path, int32_t key, int32_t field) {
-    const uint8_t* b = cmi_->bytes().data();
-    int off = path + kPathCountSize + key * kPathKeySize + kPathFrameSize + field * kPathVectorSize;
     Vec3 v;
-    v.x = readF32(b, off);
-    v.y = readF32(b, off + 4);
-    v.z = readF32(b, off + 8);
+    long long off = (long long)path + kPathCountSize + (long long)key * kPathKeySize +
+                    kPathFrameSize + field * kPathVectorSize;
+    if (key < 0 || off < 0 || (size_t)off + 12 > cmi_->bytes().size()) {
+        return v;
+    }
+    const uint8_t* b = cmi_->bytes().data();
+    v.x = readF32(b, (int)off);
+    v.y = readF32(b, (int)off + 4);
+    v.z = readF32(b, (int)off + 8);
     return v;
 }
 
@@ -345,14 +363,19 @@ void ScriptRuntime::startPath(MdkObject* obj, int32_t path, float time, const Ve
 }
 
 void ScriptRuntime::motionPath(MdkObject* obj) {
+    // An effect plays only its texture animation and never path-moves (the C#
+    // Update returns on EffectFrames before any path work).
+    if (obj->effect_frames > 0) {
+        return;
+    }
     if (obj->path == 0) {
         return;
     }
     int32_t path = obj->path;
     if (obj->path_stop >= 0) {
-        // Round halves away from zero (ObjectMotion.Round).
-        int32_t r = obj->path_time >= 0.0f ? (int32_t)(obj->path_time + 0.5f)
-                                           : (int32_t)(obj->path_time - 0.5f);
+        // Round halves away from zero (ObjectMotion.Round == MathF.Round's
+        // AwayFromZero); roundf matches it exactly, the ±0.5f idiom does not.
+        int32_t r = (int32_t)roundf(obj->path_time);
         if (r == obj->path_stop) {
             return;
         }
@@ -403,10 +426,11 @@ void ScriptRuntime::motionPath(MdkObject* obj) {
     }
     if ((obj->flags & MdkObject::FlagNoTurning) == 0 &&
         fabsf(p.x - old.x) + fabsf(p.y - old.y) > kTick * 0.5f) {
-        /* @vfp-exempt R6 — path-following turn; the heading must match the C#
-         * oracle's MathF.Atan2 byte-for-byte for golden-state parity, which the
-         * fastAtan2 LUT would not reproduce. measured n/a (cold at tick 1).
-         * Verified 2026-10-22. */
+        /* @vfp-exempt R6 — path-following turn (per path-riding object per tick);
+         * libm atan2f tracks the C# oracle's MathF.Atan2 to within 1 ULP, below the
+         * golden table's %.4f precision; the fastAtan2 LUT's error is far larger and
+         * would move those values. (Not byte-for-byte: glibc and .NET differ by 1 ULP
+         * on some inputs.) measured n/a (corpus empty). Verified 2026-10-22. */
         float deg = atan2f(p.y - old.y, p.x - old.x) * (180.0f / 3.14159265358979323846f);
         obj->yaw = wrap360(deg + obj->path_yaw_offset);
     }

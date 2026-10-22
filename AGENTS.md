@@ -26,6 +26,30 @@ renderer there is explicitly *ungated*, not compliant.
 
 ---
 
+## 0. Working loop (autonomous) — do not stop after every turn
+
+The port is driven by the ralph-wiggum loop (`SPEC.md` §13): pick the next
+unfinished increment, work it to its checked exit criterion, and **keep going**.
+Stopping at the end of a turn to report and wait is a contract violation unless
+the increment is genuinely blocked (no path to the exit criterion, or a decision
+only the user can make). A verified checkpoint is not a reason to stop.
+
+**The per-increment loop, in order, every increment:**
+
+1. Implement the increment.
+2. Run the checks: the relevant tests/gates (`tests/`, `tools/check.sh`) AND the
+   adversarial validator (`@adversarial-validator`) over the changed code.
+3. Fix what the validator and gates raise.
+4. **Commit** — only after the validator and gates are clean.
+5. Move to the next increment immediately.
+
+Commit is gated on the agent check, not on the turn ending. Never commit un-checked
+work, and never end a turn with verified, committed work by merely summarising —
+start the next increment. If a turn must end mid-increment, say what is in flight
+and continue on the next one rather than treating the summary as a stop.
+
+---
+
 ## 1. What the ARM11 actually taxes
 
 Floating-point arithmetic is supported in hardware. Costs depend on the
