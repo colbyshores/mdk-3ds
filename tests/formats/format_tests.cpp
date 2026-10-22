@@ -137,6 +137,31 @@ MDK_TEST(Level7StartsInDant1) {
     }
 }
 
+// Level 3's HMO_1 arena carries its own models (the scripts' FindModel
+// looks a type up here when it is not a global CMI model). The names and
+// count are the C# oracle's, read from the same MTO.
+MDK_TEST(Level3Hmo1ArenaModels) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    std::vector<uint8_t> mtoBytes;
+    MDK_CHECK(readDataFile("TRAVERSE/LEVEL3/LEVEL3O.MTO", &mtoBytes));
+    Mto mto = Mto::parse(mtoBytes.data(), (int32_t)mtoBytes.size());
+    const Arena* arena = mto.getArena("HMO_1");
+    MDK_CHECK(arena != nullptr);
+    if (!arena) {
+        return;
+    }
+    MDK_CHECK_EQ(arena->modelCount(), 6);
+    const char* expected[] = {"XE", "XED", "XU", "XU_MISS", "XH1_DOOR", "XG_BOMB1"};
+    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+        MDK_CHECK(arena->model(expected[i]) != nullptr);
+    }
+    // XG is a global CMI model, not an arena one: it is not here.
+    MDK_CHECK(arena->model("XG") == nullptr);
+}
+
 // LEVEL8's walls paint black with index 0: drawn opaque, as the original
 // uploads every texture without kind bit 0 (0x474c9c). GUNT_2's beam showed
 // the sky through them.

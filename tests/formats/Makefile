@@ -35,6 +35,8 @@ SOURCES := \
 	$(CORE)/formats/dti.cpp \
 	$(CORE)/formats/mto.cpp \
 	$(CORE)/formats/arena.cpp \
+	$(CORE)/formats/model.cpp \
+	$(CORE)/formats/model_animation.cpp \
 	$(CORE)/formats/file_system.cpp \
 	$(CORE)/formats/case_insensitive_path.cpp \
 	$(CORE)/formats/local_paths.cpp \

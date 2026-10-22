@@ -36,6 +36,8 @@
 #include <string>
 #include <vector>
 
+#include "formats/model.h"
+#include "formats/model_animation.h"
 #include "formats/texture_archive.h"
 #include "formats/vector_types.h"
 
@@ -135,6 +137,18 @@ public:
     uint32_t clipFlag() const { return clipFlag_; }
     void setClipFlag(uint32_t flag) { clipFlag_ = flag; }
 
+    // The arena's own models and animations, parsed from the arena block.
+    // The scripts' FindModel looks a type up here when it is not a global
+    // CMI model (e.g. HMO_1's XH1_DOOR). Null when there is no such model.
+    const Model* model(const std::string& name) const;
+    const ModelAnimation* animation(const std::string& name) const;
+
+    // How many models and animations the arena has, and a model's name by
+    // index (for the load-time checks).
+    int32_t modelCount() const { return (int32_t)models_.size(); }
+    int32_t animationCount() const { return (int32_t)animations_.size(); }
+    const std::string& modelName(int32_t index) const { return models_[index].first; }
+
     int32_t triangleCount() const { return (int32_t)triangleMaterials_.size(); }
 
 private:
@@ -144,6 +158,10 @@ private:
     // vertices.
     void parseWorldSection(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset,
                            int32_t nameLength, int32_t nodeSize);
+
+    // The model, animation and sound directories (arena_parse_models). The
+    // sounds are read past, not kept: the audio path is elsewhere.
+    void parseModels(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset);
 
     std::string name_;
     std::vector<uint8_t> paletteRgb_;
@@ -156,6 +174,8 @@ private:
     std::vector<uint32_t> triangleFlags_;
     std::vector<BspNode> nodes_;
     uint32_t clipFlag_ = 0;
+    std::vector<std::pair<std::string, Model>> models_;
+    std::vector<std::pair<std::string, ModelAnimation>> animations_;
 };
 
 } // namespace formats

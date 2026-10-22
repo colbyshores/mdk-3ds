@@ -49,10 +49,11 @@ Arena* Arena::parse(const std::string& name, const uint8_t* bytes, int32_t byteC
     arena->textures_ = TextureArchive::parse(bytes, byteCount, buf + 0x10);
     arena->parseWorldSection(bytes, byteCount, world, kMaterialNameLength, kBspNodeSize);
 
-    // The models, the animations and the sounds. They need the model
-    // formats, which are a separate translation unit; until those land the
-    // arena still parses its world, which is what the renderer draws.
-    (void)models;
+    // The models, the animations and the sounds. The scripts' FindModel
+    // needs the arena's own models (e.g. HMO_1's XH1_DOOR), so they are
+    // parsed here; the sounds are read past, as the audio path keeps them
+    // elsewhere.
+    arena->parseModels(bytes, byteCount, models + 4);
 
     return arena;
 }
@@ -151,6 +152,58 @@ void Arena::parseWorldSection(const uint8_t* bytes, int32_t byteCount, int32_t b
     for (uint32_t i = 0; i < vertexCount; i++) {
         reader.vec3(&vertices_[i].x);
     }
+}
+
+void Arena::parseModels(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset) {
+    if (!bytes || baseOffset < 0 || baseOffset + 12 > byteCount) {
+        return;
+    }
+    BinReader reader(bytes, byteCount, baseOffset);
+
+    const uint32_t animationCount = reader.u32();
+    const uint32_t modelCount = reader.u32();
+    const uint32_t soundCount = reader.u32();
+
+    for (uint32_t i = 0; i < animationCount; i++) {
+        char name[16];
+        reader.name(name, 8);
+        const int32_t offset = baseOffset + (int32_t)reader.u32();
+        ModelAnimation animation;
+        if (ModelAnimation::parse(&animation, name, bytes, byteCount, offset)) {
+            animations_.push_back(std::make_pair(std::string(name), animation));
+        }
+    }
+
+    for (uint32_t i = 0; i < modelCount; i++) {
+        char name[16];
+        reader.name(name, 8);
+        const int32_t offset = baseOffset + (int32_t)reader.u32();
+        Model model;
+        if (Model::parse(&model, name, bytes, byteCount, offset)) {
+            models_.push_back(std::make_pair(std::string(name), model));
+        }
+    }
+
+    // The sounds are read past: the audio path keeps them, not the arena.
+    (void)soundCount;
+}
+
+const Model* Arena::model(const std::string& name) const {
+    for (size_t i = 0; i < models_.size(); i++) {
+        if (models_[i].first == name) {
+            return &models_[i].second;
+        }
+    }
+    return nullptr;
+}
+
+const ModelAnimation* Arena::animation(const std::string& name) const {
+    for (size_t i = 0; i < animations_.size(); i++) {
+        if (animations_[i].first == name) {
+            return &animations_[i].second;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace formats
