@@ -5,6 +5,7 @@
 #include "scripts/script_runtime.h"
 
 #include <math.h>
+#include <string.h>
 
 #include "formats/dti.h"
 
@@ -24,6 +25,39 @@ const int32_t kDtiStaticFlags = MdkObject::FlagPickup | MdkObject::FlagNotSolid2
 
 float wrap360(float degrees) {
     return degrees - 360.0f * floorf(degrees / 360.0f);
+}
+
+// Little-endian reads from the CMI image (memcpy: the ARM11 is unforgiving about
+// aliasing/unaligned access, and these land on unaligned path keys).
+float readF32(const uint8_t* b, int at) {
+    float v;
+    memcpy(&v, b + at, 4);
+    return v;
+}
+int32_t readS32(const uint8_t* b, int at) {
+    int32_t v;
+    memcpy(&v, b + at, 4);
+    return v;
+}
+uint32_t readU32(const uint8_t* b, int at) {
+    uint32_t v;
+    memcpy(&v, b + at, 4);
+    return v;
+}
+
+// The CMI path layout: a U32 count, then keys of 40 bytes (an S32 frame then
+// three 12-byte vectors: position, end tangent, start tangent).
+const int kPathCountSize = 4;
+const int kPathKeySize = 40;
+const int kPathFrameSize = 4;
+const int kPathVectorSize = 12;
+
+// One Hermite component (ObjectMotion.PathPosition's per-axis math).
+float hermite(float p0, float p1, float m0, float m1, float u) {
+    float d = p1 - p0;
+    float a = m0 + m1 - d * 2.0f;
+    float b = d * 3.0f - m0 * 2.0f - m1;
+    return ((a * u + b) * u + m0) * u + p0;
 }
 
 } // namespace
@@ -219,6 +253,93 @@ MdkObject* ScriptRuntime::spawn(MdkObject* parent, const std::string& type, cons
 
     created->restart = script;
     return created;
+}
+
+void ScriptRuntime::spawnConnector(MdkObject* obj, const std::string& type, const Vec3& position,
+                                   float yaw, int32_t instance, const std::string& otherArena,
+                                   int32_t script) {
+    static const int32_t kDoorFlags = 0x1108000;
+    if (otherArena == "NONE") {
+        return;
+    }
+
+    // A door already linking these two arenas is reused (moved here if out of sight),
+    // not spawned again.
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject& other = *it;
+        if (other.dead || other.type_name != type ||
+            !((other.arena == obj->arena && other.connects == otherArena) ||
+              (other.arena == otherArena && other.connects == obj->arena))) {
+            continue;
+        }
+        if (other.arena != currentArena_ && other.arena != secondArena_) {
+            other.arena = obj->arena;
+            other.connects = otherArena;
+        }
+        return;
+    }
+
+    MdkObject* door = spawn(obj, type, position, yaw, instance, script, false);
+    if (door == nullptr) {
+        return;
+    }
+    door->flags |= kDoorFlags;
+    door->connects = otherArena;
+    // Behaviors.SetupDoor sets DoorState/LockParts/HatchParts from the model's part
+    // list; none are golden-state fields, so the part scan lands with the door slice.
+}
+
+int32_t ScriptRuntime::pathKeyCount(int32_t path) {
+    return (int32_t)readU32(cmi_->bytes().data(), path);
+}
+
+int32_t ScriptRuntime::pathKeyFrame(int32_t path, int32_t key) {
+    return readS32(cmi_->bytes().data(), path + kPathCountSize + key * kPathKeySize);
+}
+
+Vec3 ScriptRuntime::pathVector(int32_t path, int32_t key, int32_t field) {
+    const uint8_t* b = cmi_->bytes().data();
+    int off = path + kPathCountSize + key * kPathKeySize + kPathFrameSize + field * kPathVectorSize;
+    Vec3 v;
+    v.x = readF32(b, off);
+    v.y = readF32(b, off + 4);
+    v.z = readF32(b, off + 8);
+    return v;
+}
+
+Vec3 ScriptRuntime::pathPosition(int32_t path, float time) {
+    int32_t key = pathKeyCount(path) - 2;
+    while (key > 0 && (float)pathKeyFrame(path, key) >= time) {
+        key--;
+    }
+    if (key < 0) {
+        key = 0;
+    }
+    float start = (float)pathKeyFrame(path, key);
+    float length = (float)pathKeyFrame(path, key + 1) - start;
+    float u = length != 0.0f ? (time - start) / length : 0.0f;
+    Vec3 p0 = pathVector(path, key, 0);
+    Vec3 p1 = pathVector(path, key + 1, 0);
+    Vec3 m0 = pathVector(path, key, 2);
+    Vec3 m1 = pathVector(path, key + 1, 1);
+    // Hermite: a = m0 + m1 - 2d, b = 3d - 2m0 - m1, result = ((a*u + b)*u + m0)*u + p0,
+    // where d = p1 - p0. Component-wise (Vec3 has no operators).
+    Vec3 out;
+    out.x = hermite(p0.x, p1.x, m0.x, m1.x, u);
+    out.y = hermite(p0.y, p1.y, m0.y, m1.y, u);
+    out.z = hermite(p0.z, p1.z, m0.z, m1.z, u);
+    return out;
+}
+
+void ScriptRuntime::startPath(MdkObject* obj, int32_t path, float time, const Vec3& origin) {
+    obj->path = path;
+    obj->path_time = time;
+    obj->path_origin = origin;
+    obj->path_stop = -1;
+    Vec3 p = pathPosition(path, time);
+    obj->position.x = p.x + origin.x;
+    obj->position.y = p.y + origin.y;
+    obj->position.z = p.z + origin.z;
 }
 
 const Model* ScriptRuntime::findModel(const std::string& arena, const std::string& type) {

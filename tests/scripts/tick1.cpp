@@ -1,13 +1,25 @@
 // ============================================================================
-// tick1.cpp — the level-3 tick-1 object-table check.
+// tick1.cpp — the level tick-1 golden-state check.
 //
-// The scripts' first end-to-end milestone: load level 3, place Kurt at the
-// level's start, run one tick, and dump the object table. The arena controller
-// spawns the level's objects during that tick, and each runs its type's init
-// script inside Spawn. The expected table is the C# oracle's, byte for byte.
+// The scripts' first end-to-end milestone: for each level, load it, place Kurt
+// at the level's start, run one tick, and dump the object table. The arena
+// controller (and, on some levels, the DTI's alien/static records) spawns the
+// level's objects during that tick, and each runs its type's init script inside
+// Spawn. The expected tables are the C# oracle's, byte for byte, in golden/.
 //
 // The oracle is /tmp/kilo/oracle (headless Mdk.Game). Its driver sets Option=0
 // and seed=1; this matches it exactly.
+//
+// WHY TICK 1 ONLY. A spawned object runs its init script inside Spawn and gets
+// no motion update on the first tick, so it stays at its spawn position. Motion
+// (gravity, footing, movement commands) is a later slice; the multi-tick golden
+// states land with it.
+//
+// WHY LEVELS 3..7. Level 8's first object (XBSHIP) rides a path: follow_path
+// puts it at the path start, but its exact tick-1 position and yaw come from
+// Motion.Update's path-following step (ObjectMotion), which is the motion slice.
+// golden/L8_t1.txt records that target; it joins the asserted set when Motion
+// lands. Levels 3..7 have no object whose tick-1 state depends on Motion.
 // ============================================================================
 
 #include <stdio.h>
@@ -52,58 +64,27 @@ MdkData locateData() {
     return MdkData();
 }
 
-// The oracle's table, verbatim (level 3, one tick, seed 1, Option 0).
-const char* kExpected =
-    "level=3 ticks=1 seed=1 currentArena=HMO_1 objects=11\n"
-    "000 type=SW_BONES arena=HMO_1 pos=(-64.0000,349.0000,350.0000) yaw=0.0000 hp=100 flags=0x002008A6 dead=0 move=0/0\n"
-    "001 type=SW_H01 arena=HMO_1 pos=(-59.0000,314.0000,104.0000) yaw=0.0000 hp=100 flags=0x002008A6 dead=0 move=0/0\n"
-    "002 type=SW_GATT arena=HMO_1 pos=(58.0000,355.0000,380.0000) yaw=0.0000 hp=100 flags=0x002008A6 dead=0 move=0/0\n"
-    "003 type=SW_HBOMB arena=HMO_1 pos=(-57.0000,186.0000,157.0000) yaw=0.0000 hp=100 flags=0x002008A6 dead=0 move=0/0\n"
-    "004 type=XF arena=HMO_1 pos=(-5.0000,703.0000,306.0000) yaw=0.0000 hp=10 flags=0x00000000 dead=0 move=0/0\n"
-    "005 type=XG arena=HMO_1 pos=(-49.0000,181.0000,127.0000) yaw=0.0000 hp=60 flags=0x00000006 dead=0 move=0/0\n"
-    "006 type=XG arena=HMO_1 pos=(19.0000,181.0000,127.0000) yaw=0.0000 hp=60 flags=0x00000006 dead=0 move=0/0\n"
-    "007 type=XS arena=HMO_1 pos=(0.0000,615.0000,115.0000) yaw=270.0000 hp=400 flags=0x00000004 dead=0 move=0/0\n"
-    "008 type=XH1_DOOR arena=HMO_1 pos=(0.0000,632.0000,104.0000) yaw=270.0000 hp=65000 flags=0x01002000 dead=0 move=0/0\n"
-    "009 type=XTUR arena=HMO_1 pos=(13.0000,460.0000,149.0000) yaw=0.0000 hp=100 flags=0x00000000 dead=0 move=0/0\n"
-    "010 type=XTUR arena=HMO_1 pos=(-14.0000,460.0000,149.0000) yaw=0.0000 hp=100 flags=0x00000000 dead=0 move=0/0\n";
-
-} // namespace
-
-int main() {
-    // The formats library reaches the filesystem through this seam.
-    mdk::formats::setFileSystem(mdk::test::host::fileSystem());
-
-    MdkData data = locateData();
-    if (!data.found()) {
-        printf("SKIP: no MDK data (set MDK_DATA_DIR)\n");
-        return 0;
+// A whole file's text, read with plain stdio (a test fixture, not game data).
+bool readText(const std::string& path, std::string* out) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) {
+        return false;
     }
-
-    LevelData level;
-    if (!LevelData::load(&level, &data, 3)) {
-        printf("FAIL: level 3 did not load\n");
-        return 1;
+    out->clear();
+    char buf[4096];
+    size_t n = 0;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        out->append(buf, n);
     }
+    fclose(f);
+    return true;
+}
 
-    std::vector<uint8_t> cmiBytes;
-    if (!data.read("TRAVERSE/LEVEL3/LEVEL3.CMI", &cmiBytes)) {
-        printf("FAIL: LEVEL3.CMI did not read\n");
-        return 1;
-    }
-    Cmi cmi;
-    if (!Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
-        printf("FAIL: LEVEL3.CMI did not parse\n");
-        return 1;
-    }
-
-    scripts::ScriptRuntime runtime(&level, &cmi, 1);
-    runtime.option = 0;  // the oracle's Option
-    runtime.update(1.0f / 30.0f);
-
-    // Build the table in the oracle's format.
+// The object table in the oracle's format.
+std::string dumpTable(int level, scripts::ScriptRuntime& runtime) {
     std::string out;
     char line[512];
-    snprintf(line, sizeof(line), "level=3 ticks=1 seed=1 currentArena=%s objects=%d\n",
+    snprintf(line, sizeof(line), "level=%d ticks=1 seed=1 currentArena=%s objects=%d\n", level,
              runtime.currentArena().c_str(), (int)runtime.objects().size());
     out += line;
     int index = 0;
@@ -118,14 +99,75 @@ int main() {
                  o.move_parameter);
         out += line;
     }
+    return out;
+}
 
-    if (out == std::string(kExpected)) {
-        printf("PASS: level-3 tick-1 table matches the oracle (%d objects)\n",
-               (int)runtime.objects().size());
+} // namespace
+
+int main() {
+    // The formats library reaches the filesystem through this seam.
+    mdk::formats::setFileSystem(mdk::test::host::fileSystem());
+
+    MdkData data = locateData();
+    if (!data.found()) {
+        printf("SKIP: no MDK data (set MDK_DATA_DIR)\n");
         return 0;
     }
 
-    printf("FAIL: level-3 tick-1 table differs from the oracle\n--- got ---\n%s", out.c_str());
-    printf("--- expected ---\n%s", kExpected);
+    int failures = 0;
+    // Levels 3..7 (see the header: level 8 needs Motion's path-following).
+    for (int level = 3; level <= 7; level++) {
+        LevelData levelData;
+        if (!LevelData::load(&levelData, &data, level)) {
+            printf("FAIL L%d: did not load\n", level);
+            failures++;
+            continue;
+        }
+
+        char cmiPath[128];
+        snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+        std::vector<uint8_t> cmiBytes;
+        if (!data.read(cmiPath, &cmiBytes)) {
+            printf("FAIL L%d: CMI did not read\n", level);
+            failures++;
+            continue;
+        }
+        Cmi cmi;
+        if (!Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+            printf("FAIL L%d: CMI did not parse\n", level);
+            failures++;
+            continue;
+        }
+
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+        runtime.option = 0;  // the oracle's Option
+        runtime.update(1.0f / 30.0f);
+
+        std::string got = dumpTable(level, runtime);
+
+        char goldenPath[128];
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t1.txt", level);
+        std::string expected;
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d: no golden file %s\n", level, goldenPath);
+            failures++;
+            continue;
+        }
+
+        if (got == expected) {
+            printf("PASS L%d: tick-1 table matches the oracle (%d objects)\n", level,
+                   (int)runtime.objects().size());
+        } else {
+            printf("FAIL L%d: tick-1 table differs\n--- got ---\n%s--- expected ---\n%s", level,
+                   got.c_str(), expected.c_str());
+            failures++;
+        }
+    }
+
+    if (failures == 0) {
+        printf("\nAll levels match the oracle at tick 1.\n");
+        return 0;
+    }
+    printf("\n%d level(s) differ.\n", failures);
     return 1;
 }

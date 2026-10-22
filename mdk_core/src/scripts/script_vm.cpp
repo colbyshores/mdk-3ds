@@ -399,6 +399,63 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.spawn(obj, strval(op(ins, 5)), vpos(ins), fval(op(ins, 3)), ival(op(ins, 4)),
                            ival(op(ins, 6)), false);
             break;
+        case 149:  // spawn_connector: a door to another arena
+            runtime_.spawnConnector(obj, strval(op(ins, 5)), vpos(ins), fval(op(ins, 3)),
+                                    ival(op(ins, 4)), strval(op(ins, 6)), ival(op(ins, 7)));
+            break;
+        case 113: {  // spawn_relative: at an offset rotated by this object's yaw
+            const float rad = obj->yaw * (3.14159265358979323846f / 180.0f);
+            /* @vfp-exempt R6 — cold spawn path; the rotation must match the C#
+             * oracle's MathF.SinCos byte-for-byte for golden-state parity, which
+             * the fastSin/fastCos LUT would not reproduce. measured n/a (cold).
+             * Verified 2026-10-22. */
+            const float s = sinf(rad);
+            const float c = cosf(rad);
+            const float ox = fval(op(ins, 0));
+            const float oy = fval(op(ins, 1));
+            Vec3 position;
+            position.x = obj->position.x + (ox * c - oy * s);
+            position.y = obj->position.y + (ox * s + oy * c);
+            position.z = obj->position.z + fval(op(ins, 2));
+            runtime_.spawn(obj, strval(op(ins, 3)), position, 0.0f, -1, ival(op(ins, 4)), false);
+            break;
+        }
+        case 2: {  // follow_path: ride a CMI path (positions the object at the path start)
+            const int32_t kFlag200 = 0x200;
+            int32_t path = ival(op(ins, 0));
+            if (path == 0) {
+                obj->path = 0;
+                break;
+            }
+            int32_t f1 = ival(op(ins, 1));
+            int32_t f2 = ival(op(ins, 2));
+            obj->flags = (f1 & 1) != 0 ? (obj->flags | kFlag200) : (obj->flags & ~kFlag200);
+            obj->flags = (f1 & 2) != 0 ? (obj->flags | MdkObject::FlagPathPushes)
+                                       : (obj->flags & ~MdkObject::FlagPathPushes);
+            obj->flags = (f2 & 1) != 0 ? (obj->flags | MdkObject::FlagPathOnce)
+                                       : (obj->flags & ~MdkObject::FlagPathOnce);
+            float time = (float)ival(op(ins, 3));
+            if ((f2 & 2) != 0) {
+                obj->path_speed = -1.0f;
+                if (ival(op(ins, 3)) == 0) {
+                    time = (float)(runtime_.pathKeyFrame(path, runtime_.pathKeyCount(path) - 1) - 1);
+                }
+            }
+            Vec3 origin;
+            if (ival(op(ins, 4)) != 0) {
+                Vec3 p = runtime_.pathPosition(path, time);
+                origin.x = obj->position.x - p.x;
+                origin.y = obj->position.y - p.y;
+                origin.z = obj->position.z - p.z;
+            } else {
+                const std::vector<ScriptValue>& v = listval(op(ins, 5));
+                origin.x = v.size() > 0 ? fval(v[0]) : 0.0f;
+                origin.y = v.size() > 1 ? fval(v[1]) : 0.0f;
+                origin.z = v.size() > 2 ? fval(v[2]) : 0.0f;
+            }
+            runtime_.startPath(obj, path, time, origin);
+            break;
+        }
         case 100:  // arena_show
             runtime_.showArena(strval(op(ins, 0)));
             break;
@@ -488,6 +545,14 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             break;
         case 117:  // flags_clear
             obj->flags &= ~ival(op(ins, 0));
+            break;
+        case 97:  // set_banking (automatic banking, ObjectMotion.Bank)
+            if (ival(op(ins, 0)) != 0) {
+                obj->flags &= ~MdkObject::FlagNoBanking;
+            } else {
+                obj->flags |= MdkObject::FlagNoBanking;
+                obj->roll = 0.0f;
+            }
             break;
 
         // Conditions.

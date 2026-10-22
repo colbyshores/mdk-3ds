@@ -1,0 +1,6 @@
+level=6 ticks=1 seed=1 currentArena=OLYM_1 objects=5
+000 type=SW_SGREN arena=OLYM_1 pos=(-1168.0000,-1227.0000,80.0000) yaw=0.0000 hp=100 flags=0x002008A6 dead=0 move=0/0
+001 type=XT arena=OLYM_1 pos=(-1141.0000,-947.0000,-50.0000) yaw=90.0000 hp=200 flags=0x00000004 dead=0 move=0/0
+002 type=XD arena=OLYM_1 pos=(-1140.0000,-987.0000,-65.0000) yaw=0.0000 hp=20 flags=0x00000080 dead=0 move=0/0
+003 type=6_DOOR arena=OLYM_1 pos=(-1142.0000,-931.0000,-73.0000) yaw=270.0000 hp=65000 flags=0x01108000 dead=0 move=0/0
+004 type=SW_KEY arena=OLYM_1 pos=(-1186.0000,-946.0000,-17.0000) yaw=0.0000 hp=100 flags=0x002008A6 dead=0 move=0/0

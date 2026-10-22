@@ -79,6 +79,15 @@ public:
     const std::deque<MdkObject>& objects() const { return objects_; }
     MdkObject* spawn(MdkObject* parent, const std::string& type, const Vec3& position, float yaw,
                      int32_t instance, int32_t script, bool flagged);
+    void spawnConnector(MdkObject* obj, const std::string& type, const Vec3& position, float yaw,
+                        int32_t instance, const std::string& otherArena, int32_t script);
+    // Path following (ObjectMotion's path reads): a path is a run of keys in the
+    // CMI; PathPosition interpolates the Hermite segment at time.
+    int32_t pathKeyCount(int32_t path);
+    int32_t pathKeyFrame(int32_t path, int32_t key);
+    Vec3 pathVector(int32_t path, int32_t key, int32_t field);
+    Vec3 pathPosition(int32_t path, float time);
+    void startPath(MdkObject* obj, int32_t path, float time, const Vec3& origin);
     void showArena(const std::string& arena);
     ArenaState& getArenaState(const std::string& arena);
     void setGroupState(const std::string&, int32_t, int32_t) {}  // triangle groups: later slice
