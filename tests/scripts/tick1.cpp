@@ -93,10 +93,11 @@ std::string dumpTable(int level, scripts::ScriptRuntime& runtime) {
         const scripts::MdkObject& o = *it;
         snprintf(line, sizeof(line),
                  "%03d type=%s arena=%s pos=(%.4f,%.4f,%.4f) yaw=%.4f hp=%d flags=0x%08X dead=%d "
-                 "move=%d/%d\n",
+                 "move=%d/%d connects=%s path=%d/%.4f/%.4f/%d\n",
                  index, o.type_name.c_str(), o.arena.c_str(), o.position.x, o.position.y,
                  o.position.z, o.yaw, o.health, (unsigned)o.flags, o.dead ? 1 : 0, o.move_command,
-                 o.move_parameter);
+                 o.move_parameter, o.connects.c_str(), o.path, o.path_time, o.path_speed,
+                 o.path_stop);
         out += line;
     }
     return out;
