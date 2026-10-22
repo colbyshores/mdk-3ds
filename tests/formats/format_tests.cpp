@@ -27,6 +27,7 @@
 #include "formats/mdk_data.h"
 #include "formats/mto.h"
 #include "formats/texture_archive.h"
+#include "game/level_data.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -194,4 +195,44 @@ MDK_TEST(OnlyKeyedTexturesSeeThrough) {
         }
         MDK_CHECK(sawZero);
     }
+}
+
+// LevelData::entryNamed finds the DTI arena entry by name the way the C#'s
+// EntryNamed does: a linear scan, matched with `entry.Name == name`, which is
+// ordinal (case-sensitive). The VM's spawn path looks up an arena's object
+// records through this, so it must return the same entry the DTI lists and
+// null for a name that is not there.
+MDK_TEST(EntryNamedFindsTheDtiArena) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    mdk::LevelData level;
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+    const Dti& dti = level.dti();
+    MDK_CHECK(!dti.arenas().empty());
+
+    // The starting arena is found and is the very entry the DTI lists.
+    const int32_t start = dti.startArena();
+    if (start >= 0 && start < (int32_t)dti.arenas().size()) {
+        const std::string name = dti.arenas()[start].name;
+        const Dti::ArenaEntry* entry = level.entryNamed(name);
+        MDK_CHECK(entry != nullptr);
+        if (entry) {
+            MDK_CHECK_STR_EQ(entry->name, name);
+            MDK_CHECK(entry == &dti.arenas()[start]);
+        }
+    }
+
+    // HMO_1 is a level-3 arena and carries the object records the tick-1
+    // spawn reads.
+    const Dti::ArenaEntry* hmo1 = level.entryNamed("HMO_1");
+    MDK_CHECK(hmo1 != nullptr);
+    if (hmo1) {
+        MDK_CHECK(!hmo1->records.empty());
+    }
+
+    // Case-sensitive, and an unknown name is null -- both like the C#.
+    MDK_CHECK(level.entryNamed("hmo_1") == nullptr);
+    MDK_CHECK(level.entryNamed("NO_SUCH_ARENA") == nullptr);
 }

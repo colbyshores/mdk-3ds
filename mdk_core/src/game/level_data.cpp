@@ -125,6 +125,16 @@ const formats::Arena* LevelData::arenaNamed(const std::string& name) const {
     return nullptr;
 }
 
+const formats::Dti::ArenaEntry* LevelData::entryNamed(const std::string& name) const {
+    const std::vector<formats::Dti::ArenaEntry>& entries = dti_.arenas();
+    for (size_t i = 0; i < entries.size(); i++) {
+        if (entries[i].name == name) {
+            return &entries[i];
+        }
+    }
+    return nullptr;
+}
+
 bool LevelData::isReachable(const std::string& arenaName) const {
     // The C# LevelData.IsReachable: the starting arena, or one with a
     // connection record (type 6). A name not in the DTI (a corridor) is

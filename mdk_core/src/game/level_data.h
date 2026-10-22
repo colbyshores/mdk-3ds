@@ -66,6 +66,10 @@ public:
     // The arena with that name, or null.
     const formats::Arena* arenaNamed(const std::string& name) const;
 
+    // The DTI entry of the arena of that name, or null. Case-sensitive, like
+    // the C#'s `entry.Name == name`. (C# LevelData.EntryNamed.)
+    const formats::Dti::ArenaEntry* entryNamed(const std::string& name) const;
+
     // Whether an arena can be entered from the start: the starting one, or one
     // with a connection (a DTI record of type 6). A corridor, which is not
     // listed in the DTI, is always reachable. (The C# LevelData.IsReachable.)

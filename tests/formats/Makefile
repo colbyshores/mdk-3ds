@@ -38,7 +38,11 @@ SOURCES := \
 	$(CORE)/formats/file_system.cpp \
 	$(CORE)/formats/case_insensitive_path.cpp \
 	$(CORE)/formats/local_paths.cpp \
-	$(CORE)/formats/mdk_data.cpp
+	$(CORE)/formats/mdk_data.cpp \
+	$(CORE)/formats/sni.cpp \
+	$(CORE)/formats/sprite_animation.cpp \
+	$(CORE)/formats/fti.cpp \
+	$(CORE)/game/level_data.cpp
 
 # The formats the port has landed so far. The list grows as the batches
 # land; a source that is missing from BOTH this list and the tree is a
