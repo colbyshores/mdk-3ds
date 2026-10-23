@@ -154,6 +154,10 @@ private:
     // walks or flies a commanded object toward its waypoint, adding to push before
     // gravity/ApplyVelocity. Stuck detection/replan are a later slice.
     void updateCommand(MdkObject* obj);
+    // FollowAttachment (command 74): an attached object (a pickup's chute) tracks its
+    // leader's reference point and copies its yaw/pitch; it clears its command when
+    // the leader is gone.
+    void followAttachment(MdkObject* obj);
     // PlanMove (0x45a434): the first waypoint is the destination when a ray clears,
     // else the nearest detour around the block.
     void planMove(MdkObject* obj);
@@ -161,10 +165,11 @@ private:
     // segment. Only the hit/no-hit answer is used by the move planner.
     bool raycastClear(const Vec3& from, const Vec3& to);
     // The pickup half of ObjectMotion.Update (UpdatePickup 0x43d8f0), run after
-    // ApplyVelocity for a FlagPickup object. Ports the reachable branches: a falling
-    // pickup lands on floor contact (Fall), and a landed/non-gravity pickup not in the
-    // Still list spins in place. The chute deploy (needs attach command 74), the
-    // Runner's RNG-synchronized animations, and the Collected shrink are later slices.
+    // ApplyVelocity for a FlagPickup object. A falling pickup lands on floor contact
+    // (Fall), or — once it reaches terminal speed — clamps its fall and opens its
+    // chute (spawns SW_CHUTE, attach command 74); a landed/non-gravity pickup not in
+    // the Still list spins in place. The Runner's RNG-synchronized animations and the
+    // Collected shrink are later slices.
     void motionPickup(MdkObject* obj);
 
 

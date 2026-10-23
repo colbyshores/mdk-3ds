@@ -218,12 +218,18 @@ struct MdkObject {
     // offset (0x43b65c: z + obj+0x5c), e.g. LEVEL6's centred boulder XBO.
     float lift() const { return (flags & FlagRolling) != 0 ? height_offset : 0.0f; }
 
+    // World position of a model reference point (the C#'s ReferencePoint): the
+    // point scaled and rotated about Z by yaw, added to the position; the position
+    // itself when the model has no such point (index out of range). Used by the
+    // attach motion (command 74) to hang a chute on its leader.
+    Vec3 reference_point(int index) const;
+
     // Deferred to later slices (each needs a dependency not in this one yet):
     //   Footing            -> the Solids footing enum (collision slice)
     //   _ticked + remember() -> the frame-blend state position_at()/yaw_at()/transform_at() read (FrameBlend slice)
     //   rotation()/transform()/position_at()/yaw_at()/transform_at() -> Mat4 arithmetic + FrameBlend
     //   play_animation()/advance_animation() -> ModelAnimation + Mat4
-    //   pose()/part_bounds()/pose_bounds()/reference_point()/part_center() -> Model baking + Mat4
+    //   pose()/part_bounds()/pose_bounds()/part_center() -> Model baking + Mat4
     //   sound_position() -> ScriptMath.rotated_z
     //   distance_to()/yaw_to() -> <cmath> (trivial; land with the VM that calls them)
 };

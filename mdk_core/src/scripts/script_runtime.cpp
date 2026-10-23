@@ -633,9 +633,29 @@ void ScriptRuntime::motionPickup(MdkObject* obj) {
             obj->height_offset = hover;
             obj->flags |= MdkObject::FlagLanded;
             obj->position.z += hover;
+            return;
         }
-        // A pickup still falling slower than PickupChuteSpeed (-15) returns; the chute
-        // deploy is not reached in the tested tick range (gravity 32 reaches -15 at ~14).
+        // Still falling: once it reaches terminal speed (PickupChuteSpeed, -15) it
+        // clamps there and opens its chute — a SW_CHUTE hung on it by attach command
+        // 74. Above that speed it is still accelerating, so nothing happens yet.
+        const float kPickupChuteSpeed = -15.0f;
+        if (obj->velocity.z >= kPickupChuteSpeed) {
+            return;
+        }
+        obj->velocity.z = kPickupChuteSpeed;
+        if (obj->attached != nullptr) {
+            return;  // chute already open
+        }
+        MdkObject* chute = spawn(obj, "SW_CHUTE", obj->position, obj->yaw, -1, 0, false);
+        if (chute == nullptr) {
+            return;
+        }
+        chute->flags = 0x820;      // ChuteFlags
+        chute->leader = obj;
+        chute->attach_point_a = 0;
+        chute->attach_point_b = 0;
+        chute->move_command = 74;  // AttachCommand
+        obj->attached = chute;
         return;
     }
     // Landed or non-gravity: a pickup not in the Still list spins in place at
@@ -756,11 +776,34 @@ void ScriptRuntime::startMove(MdkObject* obj, int32_t command, const Vec3& desti
     planMove(obj);
 }
 
+// FollowAttachment (0x45b6c8, movement command 74): an attached object (a pickup's
+// chute) hangs on its leader's reference point. With AttachPoints (0,0) the delta is
+// the leader's reference point minus its own, so a chute with no reference points
+// snaps to the leader's position and copies its yaw/pitch. The command clears when
+// the leader is dead or gone (the C# also clears on Health==0).
+void ScriptRuntime::followAttachment(MdkObject* obj) {
+    MdkObject* other = obj->leader;
+    if (other == nullptr || other->dead || other->health == 0) {
+        obj->move_command = 0;
+        return;
+    }
+    Vec3 a = obj->reference_point(obj->attach_point_a);
+    Vec3 b = other->reference_point(obj->attach_point_b);
+    obj->position.x += b.x - a.x;
+    obj->position.y += b.y - a.y;
+    obj->position.z += b.z - a.z;
+    obj->yaw = other->yaw;
+    obj->pitch = other->pitch;
+}
+
 // UpdateCommand (0x45a7d4): the walk/fly dispatch for a commanded object. Only
 // move_to (78) is dispatched by the VM so far; the stuck detect/replan is a later
 // slice and does not affect the first commanded ticks.
 void ScriptRuntime::updateCommand(MdkObject* obj) {
     switch (obj->move_command) {
+        case 74:
+            followAttachment(obj);
+            break;
         case 78: {
             bool walking = (obj->flags & MdkObject::FlagGravity) != 0;
             if (walking) {

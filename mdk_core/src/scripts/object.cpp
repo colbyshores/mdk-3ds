@@ -1,5 +1,9 @@
 #include "scripts/object.h"
 
+#include <cmath>
+
+#include "formats/model.h"
+
 // The object model is data-only in this slice, so this translation unit carries
 // the compile-time checks that pin the flag word — the values most likely to be
 // mistyped in a hand port. The runtime field defaults (health=100, the -1 triple,
@@ -48,3 +52,29 @@ static_assert(mdk::Mat4::identity().m[0] == 1.0f && mdk::Mat4::identity().m[5] =
                   mdk::Mat4::identity().m[10] == 1.0f && mdk::Mat4::identity().m[15] == 1.0f &&
                   mdk::Mat4::identity().m[1] == 0.0f,
               "Mat4::identity");
+
+// ReferencePoint (0x43b65c): the model's reference point `index`, scaled by the
+// object's scale and rotated about Z by yaw, added to the position. The C# is
+// Position + Vector3.Transform(ReferencePoints[i] * Scale, CreateRotationZ(yaw));
+// with the row-vector CreateRotationZ that rotation is (x*cos - y*sin, x*sin +
+// y*cos, z). Out of range (or no model) returns the position, as the C# does.
+mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
+    if (model == nullptr || index < 0 ||
+        static_cast<size_t>(index) >= model->referencePoints.size()) {
+        return position;
+    }
+    const mdk::formats::Vec3f& p = model->referencePoints[static_cast<size_t>(index)];
+    float x = p.x * scale;
+    float y = p.y * scale;
+    float z = p.z * scale;
+    float radians = yaw * (3.14159265358979323846f / 180.0f);
+    /* @vfp-exempt R6 — the attach motion's reference-point rotation (per attached
+     * object per tick); libm cosf/sinf track the C# oracle's MathF.Cos/Sin to within
+     * 1 ULP, below the golden table's %.4f precision; the fastSin/fastCos LUT's error
+     * is far larger and would move the attached object's position. (Not byte-for-
+     * byte: glibc and .NET differ by 1 ULP on some inputs.) measured n/a (cold).
+     * Verified 2026-10-23. */
+    float c = cosf(radians);
+    float s = sinf(radians);
+    return Vec3{position.x + (x * c - y * s), position.y + (x * s + y * c), position.z + z};
+}
