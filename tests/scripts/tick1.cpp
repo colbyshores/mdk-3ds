@@ -103,6 +103,46 @@ std::string dumpTable(int level, int ticks, scripts::ScriptRuntime& runtime) {
     return out;
 }
 
+// Comma-join a list of ints, as the oracle's string.Join(",", list) does (empty when
+// the list is empty).
+std::string joinInts(const std::vector<int32_t>& v) {
+    std::string s;
+    char n[16];
+    for (size_t i = 0; i < v.size(); i++) {
+        if (i) s += ",";
+        snprintf(n, sizeof(n), "%d", (int)v[i]);
+        s += n;
+    }
+    return s;
+}
+
+// The script register file + per-object VM state, in the oracle's "script" dump format.
+std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "SCRIPT level=%d ticks=%d seed=1 currentArena=%s objects=%d\n",
+             level, ticks, runtime.currentArena().c_str(), (int)runtime.objects().size());
+    out += line;
+    const std::array<float, 4>& g = runtime.globalVariables;
+    snprintf(line, sizeof(line), "GVAR %.4f %.4f %.4f %.4f\n", g[0], g[1], g[2], g[3]);
+    out += line;
+    int index = 0;
+    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+         it != runtime.objects().end(); ++it, ++index) {
+        const scripts::MdkObject& o = *it;
+        snprintf(line, sizeof(line),
+                 "OBJ %03d type=%s sflags=0x%08X vars=%.4f,%.4f,%.4f,%.4f restart=%d wait=%.4f "
+                 "wresume=%d death=%d cmdtgt=%d gret=%s gres=%s timers=%.4f,%.4f,%.4f,%.4f,%.4f\n",
+                 index, o.type_name.c_str(), (unsigned)o.script_flags, o.variables[0], o.variables[1],
+                 o.variables[2], o.variables[3], o.restart, o.wait_time, o.wait_resume, o.death_script,
+                 o.command_target, joinInts(o.gosub_returns).c_str(), joinInts(o.gosub_restarts).c_str(),
+                 o.level_timers[0], o.level_timers[1], o.level_timers[2], o.level_timers[3],
+                 o.level_timers[4]);
+        out += line;
+    }
+    return out;
+}
+
 } // namespace
 
 int main() {
@@ -185,6 +225,52 @@ int main() {
         } else {
             printf("FAIL L%d_t%d: table differs\n--- got ---\n%s--- expected ---\n%s", level, ticks,
                    got.c_str(), expected.c_str());
+            failures++;
+        }
+    }
+
+    // Script register file + per-object VM state. The object table can match while a
+    // script variable or the VM's per-object state (restart/wait/timers) diverges, so
+    // this is a second, independent byte-for-byte check over the same cases.
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        int level = cases[c].level;
+        int ticks = cases[c].ticks;
+        LevelData levelData;
+        if (!LevelData::load(&levelData, &data, level)) {
+            continue;
+        }
+        char cmiPath[128];
+        snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+        std::vector<uint8_t> cmiBytes;
+        if (!data.read(cmiPath, &cmiBytes)) {
+            continue;
+        }
+        Cmi cmi;
+        if (!Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+            continue;
+        }
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+        runtime.option = 0;
+        for (int t = 0; t < ticks; t++) {
+            runtime.update(1.0f / 30.0f);
+        }
+        std::string got = dumpScript(level, ticks, runtime);
+        char goldenPath[128];
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_script.txt", level, ticks);
+        std::string expected;
+        if (!readText(goldenPath, &expected)) {
+            // No script golden yet: the script state diverges on a later slice (the
+            // door's wait_anim_frame parks restart on an animation frame the advance
+            // slice has not landed). Skip, not fail — the object table above still
+            // covers this case. A golden is added here once the state matches.
+            printf("SKIP L%d_t%d_script: no script golden (later slice)\n", level, ticks);
+            continue;
+        }
+        if (got == expected) {
+            printf("PASS L%d_t%d_script: register file + VM state match the oracle\n", level, ticks);
+        } else {
+            printf("FAIL L%d_t%d_script: script state differs\n--- got ---\n%s--- expected ---\n%s",
+                   level, ticks, got.c_str(), expected.c_str());
             failures++;
         }
     }

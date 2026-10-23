@@ -236,7 +236,17 @@ float* ScriptVm::variables(MdkObject* obj, int32_t source) {
         case 2:
             return obj->variables.data();
         default:
-            return obj->linked ? obj->linked->variables.data() : noVariables_.data();
+            if (obj->linked != nullptr) {
+                return obj->linked->variables.data();
+            }
+            // The C# NoVariables() clears its one scratch array on EVERY access, so a
+            // write to a missing linked object's variable is discarded, not kept. Clear
+            // it here too: without this, add_var/add_var_dt (+=) would accumulate forever
+            // in the shared scratch array where the oracle zeroes it each time.
+            for (int i = 0; i < kVariableCount; i++) {
+                noVariables_[i] = 0.0f;
+            }
+            return noVariables_.data();
     }
 }
 
@@ -624,6 +634,30 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                 index = kVariableCount - 1;
             }
             vars[index] = fval(op(ins, 2));
+            break;
+        }
+        case 66: {  // add_var
+            float* vars = variables(obj, ival(op(ins, 0)));
+            int32_t index = ival(op(ins, 1));
+            if (index < 0) {
+                index = 0;
+            }
+            if (index > kVariableCount - 1) {
+                index = kVariableCount - 1;
+            }
+            vars[index] += fval(op(ins, 2));
+            break;
+        }
+        case 216: {  // add_var_dt: the per-tick variable step (a spawner countdown)
+            float* vars = variables(obj, ival(op(ins, 0)));
+            int32_t index = ival(op(ins, 1));
+            if (index < 0) {
+                index = 0;
+            }
+            if (index > kVariableCount - 1) {
+                index = kVariableCount - 1;
+            }
+            vars[index] += fval(op(ins, 2)) * kDt;
             break;
         }
         case 73:  // set_obey_level

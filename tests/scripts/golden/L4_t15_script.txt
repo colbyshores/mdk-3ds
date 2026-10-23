@@ -1,0 +1,2 @@
+SCRIPT level=4 ticks=15 seed=1 currentArena=MEAT_1 objects=0
+GVAR 0.0000 0.0000 0.0000 0.0000
