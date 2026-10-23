@@ -132,7 +132,7 @@ int main() {
     };
     const Case cases[] = {
         {3, 1}, {4, 1}, {5, 1}, {6, 1}, {7, 1}, {8, 1},
-        {3, 2}, {4, 2}, {4, 3}, {4, 4}, {5, 2}, {5, 3}, {6, 2}, {6, 3}, {7, 2},
+        {3, 2}, {4, 2}, {4, 3}, {4, 4}, {5, 2}, {5, 3}, {6, 2}, {6, 3}, {7, 2}, {7, 3},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         int level = cases[c].level;
@@ -311,6 +311,49 @@ int main() {
                     }
                     if (!xdFound) {
                         printf("FAIL walk: expected a commanded XD object, found none\n");
+                        failures++;
+                    }
+                }
+            }
+        }
+    }
+
+    // Pickup landing (UpdatePickup -> Fall). L7_t3 proves the Runner (SW_H150) lands
+    // with hover 0, but that does not exercise the Z += hover arithmetic. SW_H01 is a
+    // normal pickup that lands on the floor at tick 3 with hover 1.5 (z 103.95 ->
+    // 105.45) and FlagLanded set, so it verifies the non-Runner landing path. (The whole
+    // L3_t3 table is not a golden: its XF path-turn yaw differs from the oracle by the
+    // documented glibc-vs-.NET atan2f 1-ULP, unrelated to the pickup.)
+    {
+        LevelData levelData;
+        if (LevelData::load(&levelData, &data, 3)) {
+            std::vector<uint8_t> cmiBytes;
+            if (data.read("TRAVERSE/LEVEL3/LEVEL3.CMI", &cmiBytes)) {
+                Cmi cmi;
+                if (Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+                    runtime.option = 0;
+                    for (int t = 0; t < 3; t++) {
+                        runtime.update(1.0f / 30.0f);
+                    }
+                    bool found = false;
+                    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+                         it != runtime.objects().end(); ++it) {
+                        if (it->type_name != "SW_H01") {
+                            continue;
+                        }
+                        found = true;
+                        bool zOk = fabsf(it->position.z - 105.4500f) < 0.0001f;
+                        bool landed = (it->flags & 0x20000) != 0;  // FlagLanded
+                        printf("%s pickup SW_H01 z=%.4f landed=%d (oracle z 105.4500 landed)\n",
+                               (zOk && landed) ? "PASS" : "FAIL", it->position.z, landed ? 1 : 0);
+                        if (!zOk || !landed) {
+                            failures++;
+                        }
+                        break;
+                    }
+                    if (!found) {
+                        printf("FAIL pickup: expected an SW_H01 object, found none\n");
                         failures++;
                     }
                 }

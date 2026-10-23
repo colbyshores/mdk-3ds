@@ -160,6 +160,12 @@ private:
     // Raycast (0x421680): whether any triangle of the active arenas crosses the
     // segment. Only the hit/no-hit answer is used by the move planner.
     bool raycastClear(const Vec3& from, const Vec3& to);
+    // The pickup half of ObjectMotion.Update (UpdatePickup 0x43d8f0), run after
+    // ApplyVelocity for a FlagPickup object. Ports the reachable branches: a falling
+    // pickup lands on floor contact (Fall). The chute deploy (needs attach command 74),
+    // the Runner's RNG-synchronized animations, the Collected shrink, and the
+    // post-landing spin are later slices.
+    void motionPickup(MdkObject* obj);
 
 
     LevelData* level_;

@@ -202,6 +202,14 @@ void ScriptRuntime::runTick() {
         if (!obj->dead) {
             motionPath(obj);
             motionVelocity(obj);
+            // UpdatePickup runs after ApplyVelocity (ObjectMotion.cs:118), only if the
+            // object survived the velocity step (the C# returns on Dead before it). The
+            // C# dispatch gives ThrownKind>0 precedence over FlagPickup (UpdateThrown,
+            // not UpdatePickup), and returns for effect objects before this section.
+            if (!obj->dead && obj->effect_frames == 0 && obj->thrown_kind <= 0 &&
+                (obj->flags & MdkObject::FlagPickup) != 0) {
+                motionPickup(obj);
+            }
         }
     }
 
@@ -601,6 +609,35 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
         fallOut(obj);
     }
     obj->previous_position = obj->position;  // C# Update end (ObjectMotion.cs:146)
+}
+
+// UpdatePickup (0x43d8f0), run after ApplyVelocity for a FlagPickup object. Ports the
+// branches reachable before the chute/attach subsystem (command 74) and the Runner's
+// RNG-synchronized animations exist: a falling pickup lands on floor contact (Fall).
+// The chute deploy (velocity.Z below PickupChuteSpeed, unreachable until ~tick 14 at
+// gravity 32), the Runner, the Collected shrink, and the post-landing spin are later
+// slices, so a landed pickup does not yet spin or shrink here.
+void ScriptRuntime::motionPickup(MdkObject* obj) {
+    const float kPickupHover = 1.5f;
+    if ((obj->flags & MdkObject::FlagCollected) != 0) {
+        return;  // collected shrink/remove: later slice
+    }
+    bool gravity = (obj->flags & MdkObject::FlagGravity) != 0;
+    bool landed = (obj->flags & MdkObject::FlagLanded) != 0;
+    if (gravity && !landed) {
+        // Fall (0x43daf4): on floor contact the pickup lands. The Runner (SW_H150)
+        // rests on the floor (hover 0); the others hover on their chute.
+        if ((obj->contact_flags & MdkObject::ContactFloor) != 0) {
+            float hover = obj->type_name == "SW_H150" ? 0.0f : kPickupHover;
+            obj->height_offset = hover;
+            obj->flags |= MdkObject::FlagLanded;
+            obj->position.z += hover;
+        }
+        // A pickup still falling slower than PickupChuteSpeed (-15) returns; the chute
+        // deploy is not reached in the tested tick range (gravity 32 reaches -15 at ~14).
+        return;
+    }
+    // Landed or non-gravity: chute shrink / Runner / spin are later slices.
 }
 
 // Raycast (0x421680): whether any triangle of the active arenas crosses [from,to].
