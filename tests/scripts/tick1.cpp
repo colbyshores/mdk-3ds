@@ -116,18 +116,23 @@ int main() {
     }
 
     int failures = 0;
-    // (level, ticks) cases. Tick 1 covers every shipped level; the multi-tick
-    // cases exercise the motion slices (path-following, gravity free-fall, and the
-    // face_target / turn_to_yaw turning opcodes) that only move an object after its
-    // spawn tick. Deeper ticks (L3_t3+, L8_t2+) additionally need the movement-command
-    // and BSP footing slices and are deferred to that increment.
+    // (level, ticks) cases. Tick 1 covers every shipped level; the multi-tick cases
+    // exercise the motion slices that move an object after its spawn tick:
+    // path-following, gravity free-fall, the BSP footing sweep, and the
+    // face_target / turn_to_yaw turning opcodes. A level/tick is added here only
+    // once its whole table matches the oracle byte for byte. The deeper ticks still
+    // differ and are deferred to their own slices: the movement commands (move=78,
+    // the walking/chasing enemies on L6/L8), the pickup behaviour (FlagLanded /
+    // chute / hover on the SW_* pickups, and their removal once collected), the
+    // object-removal path (the oracle drops collected pickups from the table), and
+    // the libm atan2 1-ULP that moves a path object's yaw in the 4th decimal (L3 XF).
     struct Case {
         int level;
         int ticks;
     };
     const Case cases[] = {
         {3, 1}, {4, 1}, {5, 1}, {6, 1}, {7, 1}, {8, 1},
-        {3, 2},
+        {3, 2}, {4, 2}, {4, 3}, {4, 4}, {7, 2},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         int level = cases[c].level;

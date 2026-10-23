@@ -1,0 +1,1 @@
+level=4 ticks=2 seed=1 currentArena=MEAT_1 objects=0
