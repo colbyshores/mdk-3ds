@@ -640,6 +640,29 @@ bool ScriptRuntime::raycastClear(const Vec3& from, const Vec3& to) {
     return true;
 }
 
+// CanSeeKurt (ScriptRuntime.cs:3236): within range, inside the view cone (a cone
+// under HalfTurn is clamped to MinCone), and a clear ray from the object's eye to
+// Kurt's chest. The ray uses the same active-arena raycast as the move planner.
+bool ScriptRuntime::canSeeKurt(MdkObject* obj, float range, float cone) {
+    const float kMinCone = 10.0f;
+    const float kEyeHeight = 5.0f;
+    const float kKurtChest = 4.0f;
+    const float kHalfTurn = 180.0f;
+    float dx = obj->position.x - kurtPosition_.x;
+    float dy = obj->position.y - kurtPosition_.y;
+    float dz = obj->position.z - kurtPosition_.z;
+    if (sqrtf(dx * dx + dy * dy + dz * dz) > range) {
+        return false;
+    }
+    if (cone < kHalfTurn &&
+        fabsf(wrapAngle(yawTo(obj, kurtPosition_) - obj->yaw)) > fmaxf(cone, kMinCone)) {
+        return false;
+    }
+    Vec3 from{obj->position.x, obj->position.y, obj->position.z + kEyeHeight};
+    Vec3 to{kurtPosition_.x, kurtPosition_.y, kurtPosition_.z + kKurtChest};
+    return raycastClear(from, to);
+}
+
 // PlanMove (0x45a434): head straight for the destination when a ray clears it, else
 // the nearest detour point around the block (both sides, widening from the midpoint).
 void ScriptRuntime::planMove(MdkObject* obj) {

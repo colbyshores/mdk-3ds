@@ -105,6 +105,9 @@ public:
     // first waypoint (ObjectMotion.PlanMove). The VM seam; the walk/fly half runs in
     // motionVelocity's command step each following tick.
     void startMove(MdkObject* obj, int32_t command, const Vec3& destination);
+    // CanSeeKurt (if_sees_kurt / if_not_sees_kurt): within range, inside the view
+    // cone, and with a clear ray from the object's eye to Kurt's chest. The VM seam.
+    bool canSeeKurt(MdkObject* obj, float range, float cone);
     void showArena(const std::string& arena);
     ArenaState& getArenaState(const std::string& arena);
     void setGroupState(const std::string&, int32_t, int32_t) {}  // triangle groups: later slice
@@ -121,6 +124,10 @@ public:
 
     // ---- Readable state (the driver dumps these) ----
     const std::string& currentArena() const { return currentArena_; }
+    // Diagnostic: opcodes the scripts reached that this VM does not implement yet.
+    const std::vector<std::pair<int32_t, int32_t>>& unimplemented() const {
+        return vm_.unimplemented();
+    }
 
 private:
     void runTick();
@@ -153,6 +160,7 @@ private:
     // Raycast (0x421680): whether any triangle of the active arenas crosses the
     // segment. Only the hit/no-hit answer is used by the move planner.
     bool raycastClear(const Vec3& from, const Vec3& to);
+
 
     LevelData* level_;
     const formats::Cmi* cmi_;

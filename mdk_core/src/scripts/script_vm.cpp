@@ -398,6 +398,32 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.startMove(obj, 78, vpos(ins));
             break;
 
+        // Vision.
+        case 14:   // if_sees_kurt
+        case 57: { // if_not_sees_kurt
+            bool sees = runtime_.canSeeKurt(obj, fval(op(ins, 0)), fval(op(ins, 1)));
+            return branch(obj, ins, ins.opcode == 14 ? sees : !sees);
+        }
+
+        // Flags (set/clear/toggle and the if_flag conditions).
+        case 68:  // set_flag
+        case 69:  // clear_flag
+        case 70: { // toggle_flag
+            int32_t source = ival(op(ins, 0));
+            int32_t mask = (int32_t)(1u << (ival(op(ins, 1)) & 31));
+            int32_t cur = getFlags(obj, source);
+            int32_t next = ins.opcode == 68 ? (cur | mask)
+                                           : (ins.opcode == 69 ? (cur & ~mask) : (cur ^ mask));
+            setFlags(obj, source, next);
+            break;
+        }
+        case 71:  // if_flag_set
+        case 72: { // if_flag_clear
+            int32_t mask = (int32_t)(1u << (ival(op(ins, 1)) & 31));
+            bool set = (getFlags(obj, ival(op(ins, 0))) & mask) != 0;
+            return branch(obj, ins, ins.opcode == 71 ? set : !set);
+        }
+
         // Spawning.
         case 86:   // spawn
             runtime_.spawn(obj, strval(op(ins, 3)), vpos(ins), 0.0f, -1, ival(op(ins, 4)), false);

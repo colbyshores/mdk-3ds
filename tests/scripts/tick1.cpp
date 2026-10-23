@@ -238,15 +238,16 @@ int main() {
         }
     }
 
-    // Walk command (move_to opcode 78 -> StartMove -> PlanMove -> Walk's turn). A
-    // whole-table L8_t2 golden is blocked by a SEPARATE slice: the two XD objects'
-    // scripts set FlagCollides and issue move_to at tick 2, but the VM does not yet
-    // reach that branch (a script-dispatch gap, like the L6 SW_KEY spawn), so their
-    // step is not exercised here. The two commanded XGs prove the walk math the oracle
-    // agrees with byte for byte: opcode 78 records the command, PlanMove finds a clear
-    // line (waypoint = destination), and Walk turns the yaw toward it (90 -> 84.5768
-    // and 90 -> 84.0) via the atan2f/wrap/clamp turn. They have not translated yet
-    // (speed is still ramping from 0), so only the turn is asserted.
+    // Walk command (move_to opcode 78 -> StartMove -> PlanMove -> Walk). The commanded
+    // XGs prove the turn math the oracle agrees with byte for byte: opcode 78 records
+    // the command, PlanMove finds a clear line (waypoint = destination), and Walk turns
+    // the yaw toward it (90 -> 84.5768 and 90 -> 84.0) via the atan2f/wrap/clamp turn;
+    // they have not translated yet (speed still ramping from 0). The first XD proves the
+    // FULL chain including translation: its script gates the move behind if_sees_kurt
+    // and if_flag_set (both now ported), so it walks to the oracle's exact position and
+    // yaw. The second XD is a near-miss (yaw 356.3 vs the oracle's 354.0): its direct
+    // line is blocked and the detour waypoint differs, a BSP-raycast/detour fidelity
+    // slice separate from this one, so the whole L8_t2 table is not yet green.
     {
         LevelData levelData;
         if (LevelData::load(&levelData, &data, 8)) {
@@ -281,6 +282,35 @@ int main() {
                     }
                     if (xi != 2) {
                         printf("FAIL walk: expected 2 commanded XG objects, found %d\n", xi);
+                        failures++;
+                    }
+                    // The first XD (x > 0) is commanded via if_sees_kurt + if_flag_set
+                    // and walks to the oracle's exact position and yaw (full translation).
+                    const float xdPos[3] = {18.0663f, 115.0070f, 11.9600f};
+                    const float xdYaw = 6.0f;
+                    bool xdFound = false;
+                    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+                         it != runtime.objects().end(); ++it) {
+                        if (it->type_name != "XD" || it->position.x <= 0.0f) {
+                            continue;
+                        }
+                        xdFound = true;
+                        bool posOk = fabsf(it->position.x - xdPos[0]) < 0.0001f &&
+                                     fabsf(it->position.y - xdPos[1]) < 0.0001f &&
+                                     fabsf(it->position.z - xdPos[2]) < 0.0001f;
+                        bool yawOk = fabsf(it->yaw - xdYaw) < 0.0001f;
+                        bool cmdOk = it->move_command == 78;
+                        printf("%s walk XD pos=(%.4f,%.4f,%.4f) yaw=%.4f move=%d (oracle "
+                               "(18.0663,115.0070,11.9600) yaw 6.0000 move 78)\n",
+                               (posOk && yawOk && cmdOk) ? "PASS" : "FAIL", it->position.x,
+                               it->position.y, it->position.z, it->yaw, it->move_command);
+                        if (!posOk || !yawOk || !cmdOk) {
+                            failures++;
+                        }
+                        break;
+                    }
+                    if (!xdFound) {
+                        printf("FAIL walk: expected a commanded XD object, found none\n");
                         failures++;
                     }
                 }
