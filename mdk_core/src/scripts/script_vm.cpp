@@ -51,6 +51,18 @@ int32_t ival(const ScriptValue& v) {
     return 0;
 }
 
+// The C#'s MathF.Max: NaN-propagating. fmaxf is NOT — it returns the numeric side
+// when exactly one argument is NaN, so a NaN operand would silently become finite.
+float mathMax(float a, float b) {
+    if (a != a) {
+        return a;
+    }
+    if (b != b) {
+        return b;
+    }
+    return a > b ? a : b;
+}
+
 const std::vector<ScriptValue>& listval(const ScriptValue& v) {
     return v.kind == ScriptValueKind::List ? v.items : kEmpty;
 }
@@ -397,6 +409,37 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 78:  // move_to: walk/fly toward the operand position (V(o) = operands 0,1,2)
             runtime_.startMove(obj, 78, vpos(ins));
             break;
+
+        case 200: { // move_to_point: a Manhattan step toward a point (V(o,1)), added to push
+            // (0x459555). Unlike move_to this is not a command: it nudges the object each
+            // tick it runs and branches true once within Arrived. Gravity leaves Z alone.
+            const float kArrived = 0.5f;
+            const float kMinDistance = 0.1f;
+            Vec3 toPoint;
+            toPoint.x = fval(op(ins, 1)) - obj->position.x;
+            toPoint.y = fval(op(ins, 2)) - obj->position.y;
+            toPoint.z = fval(op(ins, 3)) - obj->position.z;
+            if ((obj->flags & MdkObject::FlagGravity) != 0) {
+                toPoint.z = 0.0f;
+            }
+            float distance = fabsf(toPoint.x) + fabsf(toPoint.y) + fabsf(toPoint.z);
+            if (distance < kArrived) {
+                return branch(obj, ins, true);
+            }
+            float scale = fval(op(ins, 0)) * kDt / mathMax(distance, kMinDistance);
+            float sx = toPoint.x * scale;
+            float sy = toPoint.y * scale;
+            float sz = toPoint.z * scale;
+            // Clamp each axis to |toPoint| so the step cannot overshoot the target.
+            float ax = fabsf(toPoint.x);
+            float ay = fabsf(toPoint.y);
+            float az = fabsf(toPoint.z);
+            /* @vfp-exempt R11 — float divide by the compile-time constant kDt, not integer divide; kept as a divide so the push matches the oracle's Clamp(step)/Dt bit-for-bit. measured n/a. Verified 2026-10-23. */
+            obj->push.x += (sx < -ax ? -ax : (sx > ax ? ax : sx)) / kDt;
+            obj->push.y += (sy < -ay ? -ay : (sy > ay ? ay : sy)) / kDt;
+            obj->push.z += (sz < -az ? -az : (sz > az ? az : sz)) / kDt;
+            break;
+        }
 
         // Vision.
         case 14:   // if_sees_kurt
