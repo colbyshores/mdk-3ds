@@ -45,7 +45,15 @@ public:
     // + 1 passes, sliding along faces met obliquely enough that
     // (D·n)^2 <= slideK·|D|^2. Returns the triangle of the last pass's contact
     // (kNone when it ended free) and writes where the box ends and the node.
-    int sweepBox(Vec a, Vec b, Vec h, int iterations, float slideK, Vec* end, int* node);
+    //
+    // firstNode/firstTriangle (optional) report the FIRST contact across all
+    // passes -- the C# Bsp.SweepBox's contacts callback's first invocation, which
+    // ObjectMotion.Sweep keeps as its first-contact normal. The returned node is
+    // the STOPPING pass's contact (what Kurt's move wants); a slide that ends free
+    // returns kNone there even though an earlier pass hit, so footing uses the
+    // first contact instead. Kurt passes neither and is unaffected.
+    int sweepBox(Vec a, Vec b, Vec h, int iterations, float slideK, Vec* end, int* node,
+                 int* firstNode = nullptr, int* firstTriangle = nullptr);
 
     // The nearest triangle a segment crosses (front-to-back walk 0x421470), or
     // kNone. Writes the hit point.

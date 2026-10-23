@@ -8,11 +8,16 @@
 #include <string.h>
 
 #include "formats/dti.h"
+#include "formats/model_animation.h"
+#include "game/bsp.h"
 
 namespace mdk {
 namespace scripts {
 
 using formats::Model;
+using formats::ModelAnimation;
+using formats::Vec3f;
+using formats::Box;
 
 const float ScriptRuntime::kTick = 1.0f / 30.0f;
 
@@ -25,6 +30,20 @@ const int32_t kDtiStaticFlags = MdkObject::FlagPickup | MdkObject::FlagNotSolid2
 
 float wrap360(float degrees) {
     return degrees - 360.0f * floorf(degrees / 360.0f);
+}
+
+const float kDegToRad = 3.14159265358979323846f / 180.0f;
+
+// ScriptMath.RotatedZ: turn about Z by yaw degrees, keep Z (the yaw).
+Vec3 rotatedZ(const Vec3& v, float degrees) {
+    /* @vfp-exempt R6 — the footing sweep's yaw rotation of the collision box; the
+     * C# oracle uses MathF.SinCos (exact), and libm sinf/cosf track it to within
+     * 1 ULP, below the golden table's %.4f precision; the fastSin/fastCos LUT's
+     * error is far larger and would move the box and its landing. measured n/a
+     * (corpus empty). Verified 2026-10-23. */
+    float s = sinf(degrees * kDegToRad);
+    float c = cosf(degrees * kDegToRad);
+    return Vec3{v.x * c - v.y * s, v.x * s + v.y * c, v.z};
 }
 
 // Little-endian reads from the CMI image (memcpy: the ARM11 is unforgiving about
@@ -497,15 +516,208 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
         return;
     }
 
-    // A FlagCollides object would Sweep its box against the arena BSP here and stop
-    // on a floor (velocity.Z zeroed, ContactFloor set). That sweep is the collision
-    // slice; in free air it finds nothing and yields position += motion, which is
-    // what every object in this slice does until landing lands.
-    obj->position.x += motion.x;
-    obj->position.y += motion.y;
-    obj->position.z += motion.z;
+    // A FlagCollides object sweeps its box against the arena BSP and stops on a
+    // floor (velocity.Z zeroed, ContactFloor set); one without it moves freely.
+    if ((obj->flags & MdkObject::FlagCollides) == 0) {
+        obj->position.x += motion.x;
+        obj->position.y += motion.y;
+        obj->position.z += motion.z;
+    } else {
+        Vec3 normal{0.0f, 0.0f, 1.0f};
+        if (sweepBox(obj, motion, &normal)) {
+            obj->contact_flags |= MdkObject::ContactCollided;
+            if (motion.z <= 0.0f) {
+                obj->contact_flags |= MdkObject::ContactFloor;
+            }
+            if ((obj->flags & MdkObject::FlagBounces) != 0) {
+                // C# velocity += normal * dot(velocity, normal) * Bounce (-1.8).
+                float d = obj->velocity.x * normal.x + obj->velocity.y * normal.y +
+                          obj->velocity.z * normal.z;
+                obj->velocity.x += normal.x * d * -1.8f;
+                obj->velocity.y += normal.y * d * -1.8f;
+                obj->velocity.z += normal.z * d * -1.8f;
+            } else {
+                obj->velocity.z = 0.0f;
+            }
+        }
+    }
+
+    // FallOut: below the arena floor by 200 (FallOutDepth).
+    if (obj->position.z < getArenaFloor(obj->arena) - 200.0f) {
+        fallOut(obj);
+    }
     obj->previous_position = obj->position;  // C# Update end (ObjectMotion.cs:146)
-    // FallOut (position.Z below the arena floor by 200) lands with the collision slice.
+}
+
+Bsp* ScriptRuntime::bspOf(const std::string& arena) {
+    std::map<std::string, std::unique_ptr<Bsp>>::iterator it = bsps_.find(arena);
+    if (it != bsps_.end()) {
+        return it->second.get();
+    }
+    // The full arena set (MTO arenas AND SNI corridors), as the C# builds _bsps
+    // from every level.Arenas entry -- not just the MTO.
+    const formats::Arena* a = level_->arenaNamed(arena);
+    if (a == nullptr) {
+        return nullptr;
+    }
+    std::unique_ptr<Bsp> built(new Bsp(a));
+    Bsp* raw = built.get();
+    bsps_.emplace(arena, std::move(built));  // unique_ptr keeps the address stable
+    return raw;
+}
+
+float ScriptRuntime::getArenaFloor(const std::string& arena) {
+    std::map<std::string, float>::iterator it = floors_.find(arena);
+    if (it != floors_.end()) {
+        return it->second;
+    }
+    const float kNoArenaFloor = -1000.0f;  // C# NoArenaFloor
+    float floor = kNoArenaFloor;
+    const formats::Arena* a = level_->arenaNamed(arena);  // full set, as _floors
+    if (a != nullptr && !a->vertices().empty()) {
+        float minz = a->vertices()[0].z;
+        for (size_t i = 1; i < a->vertices().size(); ++i) {
+            if (a->vertices()[i].z < minz) {
+                minz = a->vertices()[i].z;
+            }
+        }
+        floor = minz;
+    }
+    floors_.emplace(arena, floor);
+    return floor;
+}
+
+Box ScriptRuntime::poseBounds(const MdkObject* obj) {
+    const Model* model = obj->model;
+    if (model == nullptr) {
+        Box d;  // C# DefaultBounds
+        d.min = Vec3f{-1.0f, -1.0f, 0.0f};
+        d.max = Vec3f{1.0f, 1.0f, 4.0f};
+        return d;
+    }
+    // One pose: the rest vertices, or the baked animation frame. The C# caches the
+    // whole bake per (model, animation); baking per call is correct and the test
+    // set is small, so caching is a later optimisation, not a correctness need.
+    std::vector<std::vector<Vec3f> > pose;
+    if (obj->animation == nullptr) {
+        pose = model->restPose();
+    } else {
+        std::vector<std::vector<std::vector<Vec3f> > > frames = obj->animation->bake(*model);
+        int32_t f = obj->animation_frame;
+        if (f < 0) {
+            f = 0;
+        }
+        if (f >= static_cast<int32_t>(frames.size())) {
+            f = static_cast<int32_t>(frames.size()) - 1;
+        }
+        if (!frames.empty()) {
+            pose = frames[f];
+        }
+    }
+    // PoseBoxes per part (min/max over its vertices), combined over the visible
+    // parts (hidden_parts bit clear); fall back to the model's own bounds.
+    bool have = false;
+    Box result;
+    for (size_t i = 0; i < pose.size(); ++i) {
+        if ((obj->hidden_parts & (1 << i)) != 0 || pose[i].empty()) {
+            continue;
+        }
+        Vec3f mn = pose[i][0];
+        Vec3f mx = pose[i][0];
+        for (size_t v = 1; v < pose[i].size(); ++v) {
+            const Vec3f& p = pose[i][v];
+            if (p.x < mn.x) mn.x = p.x;
+            if (p.y < mn.y) mn.y = p.y;
+            if (p.z < mn.z) mn.z = p.z;
+            if (p.x > mx.x) mx.x = p.x;
+            if (p.y > mx.y) mx.y = p.y;
+            if (p.z > mx.z) mx.z = p.z;
+        }
+        if (!have) {
+            result.min = mn;
+            result.max = mx;
+            have = true;
+        } else {
+            if (mn.x < result.min.x) result.min.x = mn.x;
+            if (mn.y < result.min.y) result.min.y = mn.y;
+            if (mn.z < result.min.z) result.min.z = mn.z;
+            if (mx.x > result.max.x) result.max.x = mx.x;
+            if (mx.y > result.max.y) result.max.y = mx.y;
+            if (mx.z > result.max.z) result.max.z = mx.z;
+        }
+    }
+    return have ? result : model->bounds;
+}
+
+bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
+    const float kWidthFactor = 0.25f;
+    const float kMinHeight = 0.5f;
+    const float kVerticalLift = 0.05f;
+    const float kLift = 0.5f;
+    Bsp* bsp = bspOf(obj->arena);
+    if (bsp == nullptr) {
+        obj->position.x += motion.x;
+        obj->position.y += motion.y;
+        obj->position.z += motion.z;
+        return false;
+    }
+    Box bounds = poseBounds(obj);
+    /* @vfp-exempt R6 — the footing sweep's yaw rotation of the collision box; the
+     * C# oracle uses MathF.SinCos (exact), and libm sinf/cosf track it to within
+     * 1 ULP, below the golden table's %.4f precision; the fastSin/fastCos LUT's
+     * error is far larger and would move the box and its landing. measured n/a
+     * (corpus empty). Verified 2026-10-23. */
+    float s = fabsf(sinf(obj->yaw * kDegToRad));
+    float c = fabsf(cosf(obj->yaw * kDegToRad));
+    float sx = (bounds.max.x - bounds.min.x) * obj->scale;
+    float sy = (bounds.max.y - bounds.min.y) * obj->scale;
+    Vec half{(c * sx + s * sy) * kWidthFactor, (s * sx + c * sy) * kWidthFactor,
+             fmaxf(bounds.max.z * obj->scale + obj->lift(), kMinHeight) * 0.5f};
+    Vec3 centre = rotatedZ(Vec3{(bounds.min.x + bounds.max.x) * 0.5f, (bounds.min.y + bounds.max.y) * 0.5f,
+                                (bounds.min.z + bounds.max.z) * 0.5f},
+                           obj->yaw);
+    Vec centrep{centre.x * obj->scale, centre.y * obj->scale, centre.z * obj->scale};
+    centrep.z = half.z + (motion.z != 0.0f ? kVerticalLift : kLift);
+    if (motion.z != 0.0f) {
+        float drop = obj->height_offset - obj->lift();
+        half.z += drop * 0.5f;
+        centrep.z -= drop * 0.5f;
+    }
+    Vec a{obj->position.x + centrep.x, obj->position.y + centrep.y, obj->position.z + centrep.z};
+    Vec b{a.x + motion.x, a.y + motion.y, a.z + motion.z};
+    Vec end{b.x, b.y, b.z};
+    int node = -1;
+    int firstNode = -1;
+    int firstTri = Bsp::kNone;
+    bsp->sweepBox(a, b, half, 2, 0.75f, &end, &node, &firstNode, &firstTri);
+    obj->position.x += end.x - a.x;
+    obj->position.y += end.y - a.y;
+    obj->position.z += end.z - a.z;
+    // Contact is the FIRST contact across the sweep passes (the C# Sweep returns its
+    // first-contact normal), not the stopping pass: a slide that ends free still hit
+    // a face, and an empty arena reports no contact at all (firstTri stays kNone).
+    bool contacted = firstTri != Bsp::kNone;
+    if (contacted && firstNode >= 0) {
+        const formats::BspNode& n = bsp->arena()->nodes()[firstNode];
+        *normal = Vec3{n.normal[0], n.normal[1], n.normal[2]};
+    }
+    return contacted;
+}
+
+void ScriptRuntime::fallOut(MdkObject* obj) {
+    // NOTE: kill()/remove() are the death-slice placeholders (they only set dead);
+    // the C# FallOut switches a death-scripted object to its death script and
+    // actually removes an unscripted one from the object list. That behaviour lands
+    // with the death/removal slice; the threshold and restore height match now.
+    const float kRestore = 150.0f;
+    if (obj->death_script == 0) {
+        remove(obj);
+        return;
+    }
+    kill(obj);
+    obj->velocity.z = 0.0f;
+    obj->position.z = getArenaFloor(obj->arena) - kRestore;
+    obj->flags &= ~MdkObject::FlagGravity;
 }
 
 const Model* ScriptRuntime::findModel(const std::string& arena, const std::string& type) {

@@ -181,6 +181,58 @@ int main() {
         }
     }
 
+    // Footing (the BSP sweep that stops a gravity object on a floor). A whole-table
+    // L3_t3 golden is blocked by two SEPARATE slices, not by footing itself: the
+    // path object XF's yaw differs by 1 in the 4th decimal (atan2f vs MathF.Atan2,
+    // a libm ULP), and SW_H01 starts a tick already penetrating its floor and the
+    // shared Bsp::sweepBox resolves a straddling box downward where the original
+    // pushes it up (a Kurt-affecting sweep-fidelity slice). The clean landings below
+    // prove the footing physics: each XG rests on its arena floor exactly as the
+    // oracle, with velocity.Z zeroed so it stays put on later ticks.
+    {
+        LevelData levelData;
+        if (LevelData::load(&levelData, &data, 3)) {
+            std::vector<uint8_t> cmiBytes;
+            if (data.read("TRAVERSE/LEVEL3/LEVEL3.CMI", &cmiBytes)) {
+                Cmi cmi;
+                if (Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+                    runtime.option = 0;
+                    for (int t = 0; t < 3; t++) {
+                        runtime.update(1.0f / 30.0f);
+                    }
+                    // The two XG spawn at z=127.0 and fall; the oracle lands them at
+                    // 126.9500 and 126.9644 (their arena floors), which free-fall alone
+                    // would overshoot (126.8933).
+                    int checked = 0;
+                    const float expectedZ[2] = {126.9500f, 126.9644f};
+                    int xi = 0;
+                    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+                         it != runtime.objects().end(); ++it) {
+                        if (it->type_name != "XG") {
+                            continue;
+                        }
+                        if (xi < 2) {
+                            float z = it->position.z;
+                            bool ok = z > expectedZ[xi] - 0.0001f && z < expectedZ[xi] + 0.0001f;
+                            printf("%s footing XG[%d] landed z=%.4f (oracle %.4f)\n", ok ? "PASS" : "FAIL",
+                                   xi, z, expectedZ[xi]);
+                            if (!ok) {
+                                failures++;
+                            }
+                            checked++;
+                            xi++;
+                        }
+                    }
+                    if (checked != 2) {
+                        printf("FAIL footing: expected 2 XG objects, found %d\n", checked);
+                        failures++;
+                    }
+                }
+            }
+        }
+    }
+
     if (failures == 0) {
         printf("\nAll cases match the oracle.\n");
         return 0;

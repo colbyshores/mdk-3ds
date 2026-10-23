@@ -29,6 +29,7 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -122,6 +123,23 @@ private:
     void runControllers();
     void spawnDtiAliens(const std::string& arena);
 
+    // Collision / footing (ObjectMotion's Sweep 0x45fec4 + the arena BSP/floor maps).
+    // The arena's BSP, built once per arena name (C# BspOf); null when the arena
+    // is not in the MTO (the sweep then moves by the motion exactly).
+    Bsp* bspOf(const std::string& arena);
+    // The lowest vertex Z of the arena (C# GetArenaFloor), or -1000 when it has none.
+    float getArenaFloor(const std::string& arena);
+    // The bounds of the visible parts in the object's current pose (model space):
+    // the rest pose when it has no animation, else the baked animation frame.
+    formats::Box poseBounds(const MdkObject* obj);
+    // Sweeps obj's collision box by motion through its arena BSP, moves obj by the
+    // swept result, and writes the contact normal. Returns whether it contacted a
+    // face (C# Sweep's non-null first-contact normal).
+    bool sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal);
+    // An object that fell below its arena floor by 200 (C# FallOut): removed when it
+    // has no death script, else killed and parked on the floor without gravity.
+    void fallOut(MdkObject* obj);
+
     LevelData* level_;
     const formats::Cmi* cmi_;
     formats::ScriptDecoder decoder_;
@@ -134,6 +152,8 @@ private:
     int32_t nextInstance_ = 0;
 
     ArenaSpace space_;
+    std::map<std::string, std::unique_ptr<Bsp>> bsps_;  // per-arena BSP (C# _bsps), stable addresses
+    std::map<std::string, float> floors_;               // per-arena floor Z (C# _floors)
     std::string currentArena_;
     std::string secondArena_;
     bool secondActive_ = false;

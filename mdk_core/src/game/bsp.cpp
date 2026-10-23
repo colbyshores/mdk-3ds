@@ -113,9 +113,16 @@ bool boxOverlaps(Vec v0, Vec v1, Vec v2, Vec h, Vec normal) {
 
 } // namespace
 
-int Bsp::sweepBox(Vec a, Vec b, Vec h, int iterations, float slideK, Vec* end, int* node) {
+int Bsp::sweepBox(Vec a, Vec b, Vec h, int iterations, float slideK, Vec* end, int* node,
+                  int* firstNode, int* firstTriangle) {
     *node = kNone;
     *end = a;
+    if (firstNode != nullptr) {
+        *firstNode = kNone;
+    }
+    if (firstTriangle != nullptr) {
+        *firstTriangle = kNone;
+    }
     if (arena_->nodes().empty() || arena_->vertices().empty()) {
         return kNone;
     }
@@ -127,6 +134,7 @@ int Bsp::sweepBox(Vec a, Vec b, Vec h, int iterations, float slideK, Vec* end, i
     _slideLimit = slideK * vLenSq(_d0);
     _margin = kMarginFactor * (std::fabs(h.x) + std::fabs(h.y) + std::fabs(h.z));
     _slide = true;
+    bool firstRecorded = false;
     while (iterations >= 0 && _slide) {
         _canSlide = iterations != 0;
         _slide = false;
@@ -135,9 +143,31 @@ int Bsp::sweepBox(Vec a, Vec b, Vec h, int iterations, float slideK, Vec* end, i
         _d = vSub(_b, _a);
         sweepNode(0);
         if (_slide) {
+            // The C# fires its contacts callback here (Final=false); the first such
+            // contact is the first contact. Record it once.
+            if (!firstRecorded) {
+                if (firstNode != nullptr) {
+                    *firstNode = _hitNode;
+                }
+                if (firstTriangle != nullptr) {
+                    *firstTriangle = _hitTriangle;
+                }
+                firstRecorded = true;
+            }
             // Slid: the next pass goes from the contact to the slid end.
             _a = _p;
             _b = _s;
+        } else if (_hitTriangle != kNone) {
+            // The C# fires its callback here too (Final=true).
+            if (!firstRecorded) {
+                if (firstNode != nullptr) {
+                    *firstNode = _hitNode;
+                }
+                if (firstTriangle != nullptr) {
+                    *firstTriangle = _hitTriangle;
+                }
+                firstRecorded = true;
+            }
         }
         iterations--;
     }
