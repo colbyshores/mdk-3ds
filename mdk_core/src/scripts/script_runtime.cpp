@@ -33,6 +33,55 @@ float wrap360(float degrees) {
 }
 
 const float kDegToRad = 3.14159265358979323846f / 180.0f;
+// .NET RadiansToDegrees multiplies by (180f / MathF.PI); dividing by kDegToRad is
+// not bit-equivalent (separately rounded reciprocal), so keep the multiply factor.
+const float kRadToDeg = 180.0f / 3.14159265358979323846f;
+
+// ScriptMath.WrapAngle: an angle folded into [-180, 180).
+float wrapAngle(float degrees) {
+    return degrees - 360.0f * floorf((degrees + 180.0f) / 360.0f);
+}
+
+// MdkObject.YawTo: the compass yaw (degrees, [0, 360)) from the object to a point.
+// atan2f tracks the oracle's MathF.Atan2 within 1 ULP (below the golden table's
+// %.4f precision); the fastAtan2 LUT's error is far larger and would move it.
+/* @vfp-exempt R6 — yaw-to-point in the movement-command path; libm atan2f matches
+ * the C# oracle's MathF.Atan2 to within 1 ULP, which is below the golden table's
+ * %.4f precision, while the fastAtan2 LUT would move the turned yaw. measured n/a
+ * (corpus empty). Verified 2026-10-23. */
+float yawTo(const MdkObject* obj, const Vec3& point) {
+    float degrees = atan2f(point.y - obj->position.y, point.x - obj->position.x) * kRadToDeg;
+    return fmodf(fmodf(degrees, 360.0f) + 360.0f, 360.0f);
+}
+
+// ScriptMath.FromAngle: the unit heading (x, y) for a yaw in degrees. cosf/sinf
+// track the oracle's MathF.SinCos within 1 ULP (the LUT would move the step).
+/* @vfp-exempt R6 — heading from yaw in the walk/fly step; libm cosf/sinf match the
+ * C# oracle's MathF.SinCos to within 1 ULP, below the golden table's %.4f
+ * precision, while the fastSin/fastCos LUT would move the walked position. measured
+ * n/a (corpus empty). Verified 2026-10-23. */
+Vec3 fromAngle(float degrees) {
+    float radians = degrees * kDegToRad;
+    return Vec3{cosf(radians), sinf(radians), 0.0f};
+}
+
+float clampf(float value, float lo, float hi) {
+    return value < lo ? lo : (value > hi ? hi : value);
+}
+
+float signf(float value) {
+    return value > 0.0f ? 1.0f : (value < 0.0f ? -1.0f : 0.0f);
+}
+
+// Vector3 equality: the planner sets Waypoint to a copy of MoveDestination, so exact
+// component equality is the "already heading for the destination" test the C# uses.
+bool vecEq(const Vec3& a, const Vec3& b) {
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+const float kTurnSpeed = 180.0f;
+const float kSlowTurnAngle = 80.0f;
+const float kPlanHeight = 8.0f;
 
 // ScriptMath.RotatedZ: turn about Z by yaw degrees, keep Z (the yaw).
 Vec3 rotatedZ(const Vec3& v, float degrees) {
@@ -468,6 +517,11 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     if (obj->effect_frames > 0) {
         return;
     }
+    // UpdateCommand (ObjectMotion.cs:80): a commanded object walks or flies toward
+    // its waypoint, adding to push BEFORE gravity/ApplyVelocity below. The command
+    // was set this tick by the VM (vm_.run ran before motionVelocity in runTick),
+    // so the first step happens on the command tick exactly as the C#.
+    updateCommand(obj);
     // A just-spawned object is not moved on its spawn tick by the tick loop's
     // snapshot (the C# ListCopy at ScriptRuntime.cs:962): objects spawned during
     // the loop or by the controllers are appended after it and skipped. There is
@@ -548,6 +602,217 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     }
     obj->previous_position = obj->position;  // C# Update end (ObjectMotion.cs:146)
 }
+
+// Raycast (0x421680): whether any triangle of the active arenas crosses [from,to].
+// Only Kurt's arena and the second one stop rays; the rest are passed through. The
+// planner only needs hit/no-hit, so the hit point/normal/group are not carried.
+bool ScriptRuntime::raycastClear(const Vec3& from, const Vec3& to) {
+    Vec a{from.x, from.y, from.z};
+    Vec b{to.x, to.y, to.z};
+    // RayArenas: the current + second arena when a current is set, else every arena
+    // (the C# _bsps is filled from level.Arenas at construction, so "all" is the full
+    // set, not just the arenas touched so far). bspOf builds each on demand.
+    if (!currentArena_.empty()) {
+        const std::string* names[2] = {&currentArena_, &secondArena_};
+        for (int i = 0; i < 2; i++) {
+            Bsp* bsp = bspOf(*names[i]);
+            if (bsp == nullptr) {
+                continue;
+            }
+            Vec point{};
+            if (bsp->segment(a, b, Bsp::kSegmentAny, &point, Bsp::kClipPassesThrough) != Bsp::kNone) {
+                return false;
+            }
+        }
+        return true;
+    }
+    const std::vector<const formats::Arena*>& arenas = level_->arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        Bsp* bsp = bspOf(arenas[i]->name());
+        if (bsp == nullptr) {
+            continue;
+        }
+        Vec point{};
+        if (bsp->segment(a, b, Bsp::kSegmentAny, &point, Bsp::kClipPassesThrough) != Bsp::kNone) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// PlanMove (0x45a434): head straight for the destination when a ray clears it, else
+// the nearest detour point around the block (both sides, widening from the midpoint).
+void ScriptRuntime::planMove(MdkObject* obj) {
+    const int kDetours = 11;
+    obj->waypoint = obj->move_destination;
+    obj->stuck_count = 0;
+    obj->stuck_ticks = 0.0f;
+    obj->stuck_moved = Vec3{0.0f, 0.0f, 0.0f};
+    obj->contact_flags &= ~MdkObject::ContactStuck;
+    Vec3 up{0.0f, 0.0f, kPlanHeight};
+    Vec3 a{obj->position.x + up.x, obj->position.y + up.y, obj->position.z + up.z};
+    Vec3 b{obj->move_destination.x + up.x, obj->move_destination.y + up.y,
+           obj->move_destination.z + up.z};
+    if (raycastClear(a, b)) {
+        return;
+    }
+    Vec3 middle{(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f};
+    const float sides[2] = {-1.0f, 1.0f};
+    for (int i = 0; i < kDetours; i++) {
+        for (int s = 0; s < 2; s++) {
+            // Detour(a,b,middle, 0.1*(i+1)*side): a point offset perpendicular to
+            // the a->b line through the midpoint, by a fraction of the a->b distance.
+            /* @vfp-exempt R6 — the detour probe's perpendicular direction; atan2f +
+             * sinf/cosf track the oracle's MathF.SinCos/Atan2 within 1 ULP, below the
+             * golden table's %.4f precision; the LUT would move the chosen waypoint.
+             * measured n/a (corpus empty). Verified 2026-10-23. */
+            float rad = atan2f(b.y - a.y, b.x - a.x);
+            float amount = 0.1f * (i + 1) * sides[s];
+            float dist = sqrtf((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y) +
+                               (b.z - a.z) * (b.z - a.z));
+            Vec3 point{middle.x + sinf(rad) * amount * dist, middle.y + cosf(rad) * amount * dist,
+                       middle.z};
+            if (raycastClear(a, point) && raycastClear(point, b)) {
+                obj->waypoint = point;
+                return;
+            }
+        }
+    }
+}
+
+// StartMove (ScriptVm.cs:2036): record the command and destination, drop any path,
+// and plan the first waypoint.
+void ScriptRuntime::startMove(MdkObject* obj, int32_t command, const Vec3& destination) {
+    obj->move_command = command;
+    obj->move_destination = destination;
+    obj->path = 0;
+    planMove(obj);
+}
+
+// UpdateCommand (0x45a7d4): the walk/fly dispatch for a commanded object. Only
+// move_to (78) is dispatched by the VM so far; the stuck detect/replan is a later
+// slice and does not affect the first commanded ticks.
+void ScriptRuntime::updateCommand(MdkObject* obj) {
+    switch (obj->move_command) {
+        case 78: {
+            bool walking = (obj->flags & MdkObject::FlagGravity) != 0;
+            if (walking) {
+                // Walk (0x45a7d4): step to the waypoint on the ground, then the
+                // destination. Arrival within 5 (Manhattan in X/Y) advances or stops.
+                const float kArrived = 5.0f;
+                bool final = vecEq(obj->waypoint, obj->move_destination);
+                if (fabsf(obj->waypoint.x - obj->position.x) +
+                        fabsf(obj->waypoint.y - obj->position.y) <
+                    kArrived) {
+                    if (final) {
+                        obj->move_command = 0;
+                        obj->speed = 0.0f;
+                        obj->contact_flags &= ~MdkObject::ContactStuck;
+                        return;
+                    }
+                    obj->waypoint = obj->move_destination;
+                }
+                float targetYaw = obj->yaw;
+                if (obj->waypoint.x != obj->position.x || obj->waypoint.y != obj->position.y) {
+                    targetYaw = yawTo(obj, obj->waypoint);
+                }
+                float diff = wrapAngle(targetYaw - obj->yaw);
+                float maxStep = kTurnSpeed * kTick;
+                obj->yaw = wrap360(obj->yaw + clampf(diff, -maxStep, maxStep));
+                float targetSpeed = obj->max_speed * (fabsf(diff) > kSlowTurnAngle ? 0.5f : 1.0f);
+                if (obj->speed > targetSpeed) {
+                    obj->speed = fmaxf(obj->speed - obj->deceleration * kTick, targetSpeed);
+                } else if (obj->speed < targetSpeed) {
+                    obj->speed = fminf(obj->speed + obj->acceleration * kTick, targetSpeed);
+                }
+                Vec3 direction = fromAngle(obj->yaw);
+                obj->push.x += obj->speed * direction.x;
+                obj->push.y += obj->speed * direction.y;
+            } else {
+                // Fly (0x45ae74): turn toward the waypoint (unless NoTurning), then
+                // step along the heading, climbing by the vertical fraction of the
+                // remaining distance.
+                const float kTurnFrom = 3.0f;
+                const float kArrivedAcross = 4.0f;
+                const float kArrivedUp = 3.0f;
+                bool final = vecEq(obj->waypoint, obj->move_destination);
+                Vec3 toW{obj->waypoint.x - obj->position.x, obj->waypoint.y - obj->position.y,
+                         obj->waypoint.z - obj->position.z};
+                float diff = 0.0f;
+                bool noTurning = (obj->flags & MdkObject::FlagNoTurning) != 0;
+                if (!noTurning && fabsf(toW.x) + fabsf(toW.y) > kTurnFrom) {
+                    float targetYaw = obj->yaw;
+                    if (obj->waypoint.x != obj->position.x || obj->waypoint.y != obj->position.y) {
+                        targetYaw = yawTo(obj, obj->waypoint);
+                    }
+                    diff = wrapAngle(targetYaw - obj->yaw);
+                    float maxStep = kTurnSpeed * kTick;
+                    obj->yaw = wrap360(obj->yaw + clampf(diff, -maxStep, maxStep));
+                }
+                float targetSpeed = obj->max_speed * (fabsf(diff) > kSlowTurnAngle ? 0.5f : 1.0f);
+                if (obj->speed > targetSpeed) {
+                    obj->speed = fmaxf(obj->speed - obj->deceleration * kTick, targetSpeed);
+                } else if (obj->speed < targetSpeed) {
+                    obj->speed = fminf(obj->speed + obj->acceleration * kTick, targetSpeed);
+                }
+                if (!noTurning) {
+                    float horizontal = sqrtf(toW.x * toW.x + toW.y * toW.y);
+                    float vertical = fabsf(toW.z);
+                    float climb = horizontal + vertical > 0.0f ? vertical / (horizontal + vertical)
+                                                               : 0.0f;
+                    Vec3 direction = fromAngle(obj->yaw);
+                    obj->push.x += direction.x * obj->speed * (1.0f - climb);
+                    obj->push.y += direction.y * obj->speed * (1.0f - climb);
+                    obj->push.z += obj->speed * climb * signf(toW.z);
+                    if (horizontal < kArrivedAcross && vertical < kArrivedUp) {
+                        if (final) {
+                            obj->move_command = 0;
+                            obj->speed = 0.0f;
+                            obj->contact_flags &= ~MdkObject::ContactStuck;
+                        } else {
+                            obj->waypoint = obj->move_destination;
+                        }
+                    }
+                } else {
+                    float distance = fabsf(toW.x) + fabsf(toW.y) + fabsf(toW.z);
+                    if (distance < 1.0f) {
+                        if (final) {
+                            obj->position = obj->waypoint;
+                            obj->move_command = 0;
+                            obj->speed = 0.0f;
+                            obj->contact_flags &= ~MdkObject::ContactStuck;
+                            return;
+                        }
+                        obj->waypoint = obj->move_destination;
+                    }
+                    if (distance <= 0.0f) {
+                        return;
+                    }
+                    float scale = obj->speed * kTick / distance;
+                    float stepX = toW.x * scale;
+                    float stepY = toW.y * scale;
+                    float stepZ = toW.z * scale;
+                    if (fabsf(stepX) > fabsf(toW.x)) {
+                        stepX = toW.x;
+                    }
+                    if (fabsf(stepY) > fabsf(toW.y)) {
+                        stepY = toW.y;
+                    }
+                    if (fabsf(stepZ) > fabsf(toW.z)) {
+                        stepZ = toW.z;
+                    }
+                    obj->push.x += stepX / kTick;
+                    obj->push.y += stepY / kTick;
+                    obj->push.z += stepZ / kTick;
+                }
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
 
 Bsp* ScriptRuntime::bspOf(const std::string& arena) {
     std::map<std::string, std::unique_ptr<Bsp>>::iterator it = bsps_.find(arena);

@@ -238,6 +238,56 @@ int main() {
         }
     }
 
+    // Walk command (move_to opcode 78 -> StartMove -> PlanMove -> Walk's turn). A
+    // whole-table L8_t2 golden is blocked by a SEPARATE slice: the two XD objects'
+    // scripts set FlagCollides and issue move_to at tick 2, but the VM does not yet
+    // reach that branch (a script-dispatch gap, like the L6 SW_KEY spawn), so their
+    // step is not exercised here. The two commanded XGs prove the walk math the oracle
+    // agrees with byte for byte: opcode 78 records the command, PlanMove finds a clear
+    // line (waypoint = destination), and Walk turns the yaw toward it (90 -> 84.5768
+    // and 90 -> 84.0) via the atan2f/wrap/clamp turn. They have not translated yet
+    // (speed is still ramping from 0), so only the turn is asserted.
+    {
+        LevelData levelData;
+        if (LevelData::load(&levelData, &data, 8)) {
+            std::vector<uint8_t> cmiBytes;
+            if (data.read("TRAVERSE/LEVEL8/LEVEL8.CMI", &cmiBytes)) {
+                Cmi cmi;
+                if (Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+                    runtime.option = 0;
+                    for (int t = 0; t < 2; t++) {
+                        runtime.update(1.0f / 30.0f);
+                    }
+                    // The first two XGs (in table order) are commanded to move; the
+                    // oracle turns them to these yaws with move command 78 active.
+                    const float expectedYaw[2] = {84.5768f, 84.0f};
+                    int xi = 0;
+                    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+                         it != runtime.objects().end() && xi < 2; ++it) {
+                        if (it->type_name != "XG") {
+                            continue;
+                        }
+                        float yaw = it->yaw;
+                        bool yawOk = yaw > expectedYaw[xi] - 0.0001f && yaw < expectedYaw[xi] + 0.0001f;
+                        bool cmdOk = it->move_command == 78;
+                        printf("%s walk XG[%d] yaw=%.4f move=%d (oracle yaw %.4f move 78)\n",
+                               (yawOk && cmdOk) ? "PASS" : "FAIL", xi, yaw, it->move_command,
+                               expectedYaw[xi]);
+                        if (!yawOk || !cmdOk) {
+                            failures++;
+                        }
+                        xi++;
+                    }
+                    if (xi != 2) {
+                        printf("FAIL walk: expected 2 commanded XG objects, found %d\n", xi);
+                        failures++;
+                    }
+                }
+            }
+        }
+    }
+
     if (failures == 0) {
         printf("\nAll cases match the oracle.\n");
         return 0;

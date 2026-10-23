@@ -101,6 +101,10 @@ public:
     // they land, a free-air object moves by motion exactly as the sweep yields when
     // it finds nothing, so free-fall matches the oracle.
     void motionVelocity(MdkObject* obj);
+    // Movement command (move_to, opcode 78): records the destination and plans the
+    // first waypoint (ObjectMotion.PlanMove). The VM seam; the walk/fly half runs in
+    // motionVelocity's command step each following tick.
+    void startMove(MdkObject* obj, int32_t command, const Vec3& destination);
     void showArena(const std::string& arena);
     ArenaState& getArenaState(const std::string& arena);
     void setGroupState(const std::string&, int32_t, int32_t) {}  // triangle groups: later slice
@@ -139,6 +143,16 @@ private:
     // An object that fell below its arena floor by 200 (C# FallOut): removed when it
     // has no death script, else killed and parked on the floor without gravity.
     void fallOut(MdkObject* obj);
+    // The movement-command half of ObjectMotion.Update (UpdateCommand 0x45a7d4):
+    // walks or flies a commanded object toward its waypoint, adding to push before
+    // gravity/ApplyVelocity. Stuck detection/replan are a later slice.
+    void updateCommand(MdkObject* obj);
+    // PlanMove (0x45a434): the first waypoint is the destination when a ray clears,
+    // else the nearest detour around the block.
+    void planMove(MdkObject* obj);
+    // Raycast (0x421680): whether any triangle of the active arenas crosses the
+    // segment. Only the hit/no-hit answer is used by the move planner.
+    bool raycastClear(const Vec3& from, const Vec3& to);
 
     LevelData* level_;
     const formats::Cmi* cmi_;

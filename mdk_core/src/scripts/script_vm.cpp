@@ -393,6 +393,11 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, true);
         }
 
+        // Movement.
+        case 78:  // move_to: walk/fly toward the operand position (V(o) = operands 0,1,2)
+            runtime_.startMove(obj, 78, vpos(ins));
+            break;
+
         // Spawning.
         case 86:   // spawn
             runtime_.spawn(obj, strval(op(ins, 3)), vpos(ins), 0.0f, -1, ival(op(ins, 4)), false);
