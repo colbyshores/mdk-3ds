@@ -1018,12 +1018,12 @@ target-dependent assumptions.* The 3DS-specific suspects are enumerated in
 ## 12. Adversarial validation
 
 The primary coding agent writes the code; a **stronger model**
-(`kimi-k3-nvidia`, via the `litellm` provider) reviews it adversarially.
+(`luna`, via the `litellm` provider) reviews it adversarially.
 
 - `.kilo/agent/adversarial-validator.md` defines the agent: its job is to
   **disprove** the code, not to praise it. It is given the spec, the diff, and
   the evidence, and it must produce a falsification attempt for each claim.
-- The agent is invoked with `model: "kimi-k3-nvidia"`, `provider: "litellm"`.
+- The agent is invoked with `model: "luna"`, `provider: "litellm"`.
 - Review dimensions, in priority order:
   1. **Fidelity to the C# oracle** — does the C++ do what the C# does? Name
      the exact method and the exact divergence.

@@ -81,11 +81,11 @@ bool readText(const std::string& path, std::string* out) {
 }
 
 // The object table in the oracle's format.
-std::string dumpTable(int level, scripts::ScriptRuntime& runtime) {
+std::string dumpTable(int level, int ticks, scripts::ScriptRuntime& runtime) {
     std::string out;
     char line[512];
-    snprintf(line, sizeof(line), "level=%d ticks=1 seed=1 currentArena=%s objects=%d\n", level,
-             runtime.currentArena().c_str(), (int)runtime.objects().size());
+    snprintf(line, sizeof(line), "level=%d ticks=%d seed=1 currentArena=%s objects=%d\n", level,
+             ticks, runtime.currentArena().c_str(), (int)runtime.objects().size());
     out += line;
     int index = 0;
     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
@@ -116,8 +116,22 @@ int main() {
     }
 
     int failures = 0;
-    // Levels 3..8 (the shipped single-player levels that start in an arena).
-    for (int level = 3; level <= 8; level++) {
+    // (level, ticks) cases. Tick 1 covers every shipped level; the multi-tick
+    // cases exercise the motion slices (path-following, gravity free-fall, and the
+    // face_target / turn_to_yaw turning opcodes) that only move an object after its
+    // spawn tick. Deeper ticks (L3_t3+, L8_t2+) additionally need the movement-command
+    // and BSP footing slices and are deferred to that increment.
+    struct Case {
+        int level;
+        int ticks;
+    };
+    const Case cases[] = {
+        {3, 1}, {4, 1}, {5, 1}, {6, 1}, {7, 1}, {8, 1},
+        {3, 2},
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        int level = cases[c].level;
+        int ticks = cases[c].ticks;
         LevelData levelData;
         if (!LevelData::load(&levelData, &data, level)) {
             printf("FAIL L%d: did not load\n", level);
@@ -142,33 +156,35 @@ int main() {
 
         scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
         runtime.option = 0;  // the oracle's Option
-        runtime.update(1.0f / 30.0f);
+        for (int t = 0; t < ticks; t++) {
+            runtime.update(1.0f / 30.0f);
+        }
 
-        std::string got = dumpTable(level, runtime);
+        std::string got = dumpTable(level, ticks, runtime);
 
         char goldenPath[128];
-        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t1.txt", level);
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d.txt", level, ticks);
         std::string expected;
         if (!readText(goldenPath, &expected)) {
-            printf("FAIL L%d: no golden file %s\n", level, goldenPath);
+            printf("FAIL L%d_t%d: no golden file %s\n", level, ticks, goldenPath);
             failures++;
             continue;
         }
 
         if (got == expected) {
-            printf("PASS L%d: tick-1 table matches the oracle (%d objects)\n", level,
+            printf("PASS L%d_t%d: table matches the oracle (%d objects)\n", level, ticks,
                    (int)runtime.objects().size());
         } else {
-            printf("FAIL L%d: tick-1 table differs\n--- got ---\n%s--- expected ---\n%s", level,
+            printf("FAIL L%d_t%d: table differs\n--- got ---\n%s--- expected ---\n%s", level, ticks,
                    got.c_str(), expected.c_str());
             failures++;
         }
     }
 
     if (failures == 0) {
-        printf("\nAll levels match the oracle at tick 1.\n");
+        printf("\nAll cases match the oracle.\n");
         return 0;
     }
-    printf("\n%d level(s) differ.\n", failures);
+    printf("\n%d case(s) differ.\n", failures);
     return 1;
 }

@@ -93,6 +93,13 @@ public:
     // later motion slices; at tick 1 path-following is the only motion that moves
     // an object (gravity objects are footing-held at their spawn).
     void motionPath(MdkObject* obj);
+    // The gravity + ApplyVelocity half of ObjectMotion.Update (0x45e74c, 0x45e810):
+    // gravity integrates velocity.Z, friction damps the horizontal, and the object
+    // moves by (velocity + push) * Dt. The BSP sweep that stops an object on a
+    // floor (landing/footing) and the fall-out check are the collision slice; until
+    // they land, a free-air object moves by motion exactly as the sweep yields when
+    // it finds nothing, so free-fall matches the oracle.
+    void motionVelocity(MdkObject* obj);
     void showArena(const std::string& arena);
     ArenaState& getArenaState(const std::string& arena);
     void setGroupState(const std::string&, int32_t, int32_t) {}  // triangle groups: later slice

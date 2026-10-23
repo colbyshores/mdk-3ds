@@ -133,6 +133,7 @@ void ScriptRuntime::runTick() {
         // object this tick must not have it path-moved afterwards.
         if (!obj->dead) {
             motionPath(obj);
+            motionVelocity(obj);
         }
     }
 
@@ -440,6 +441,71 @@ void ScriptRuntime::motionPath(MdkObject* obj) {
     }
     // FlagPathPushes drives horizontal velocity (Push) instead of position; that
     // belongs to the velocity/footing motion slice.
+}
+
+void ScriptRuntime::motionVelocity(MdkObject* obj) {
+    // An effect plays only its texture animation (the C# Update returns before any
+    // gravity/velocity work), exactly as motionPath skips it.
+    if (obj->effect_frames > 0) {
+        return;
+    }
+    // A just-spawned object is not moved on its spawn tick by the tick loop's
+    // snapshot (the C# ListCopy at ScriptRuntime.cs:962): objects spawned during
+    // the loop or by the controllers are appended after it and skipped. There is
+    // deliberately NO spawn-tick gate here — the C# has none, and one would wrongly
+    // skip the first real fall tick for a DTI-spawned gravity object (spawned
+    // before the snapshot) once arena crossings land; footing holds those instead.
+    bool gravity = (obj->flags & MdkObject::FlagGravity) != 0;
+    if (gravity) {
+        obj->velocity.z -= obj->gravity * kTick;
+        // Updraft (Fans.Query) is not ported; no fan reaches these free-fall cases
+        // (the oracle's velocity.Z is exactly -gravity*Dt here). When Fans lands, the
+        // terminal clamp MUST move after the fan query (C# order: gravity, Updraft,
+        // clamp — ObjectMotion.cs:93-95), or a fan updraft will clamp differently.
+        if (obj->velocity.z < -220.0f) {
+            obj->velocity.z = -220.0f;  // TerminalVelocity
+        }
+    }
+
+    // ApplyVelocity (0x45e810). Friction acts on the horizontal only for a gravity
+    // object (its vertical is gravity's, not friction's).
+    obj->contact_flags &= ~(MdkObject::ContactCollided | MdkObject::ContactFloor | 0x10);
+    float mx = obj->velocity.x;
+    float my = obj->velocity.y;
+    float mz = gravity ? 0.0f : obj->velocity.z;
+    float length = sqrtf(mx * mx + my * my + mz * mz);
+    if (length > 0.0f) {
+        float factor = fmaxf(length - obj->friction * kTick, 0.0f) / length;
+        obj->velocity.x *= factor;
+        obj->velocity.y *= factor;
+        if (!gravity) {
+            obj->velocity.z *= factor;
+        }
+    }
+
+    Vec3 motion;
+    motion.x = (obj->velocity.x + obj->push.x) * kTick;
+    motion.y = (obj->velocity.y + obj->push.y) * kTick;
+    motion.z = (obj->velocity.z + obj->push.z) * kTick;
+    obj->push.x = 0.0f;
+    obj->push.y = 0.0f;
+    obj->push.z = 0.0f;
+    if (motion.x == 0.0f && motion.y == 0.0f && motion.z == 0.0f) {
+        // C# ApplyVelocity returns here, but Update still records PreviousPosition
+        // at its end (ObjectMotion.cs:146), so set it even with no motion.
+        obj->previous_position = obj->position;
+        return;
+    }
+
+    // A FlagCollides object would Sweep its box against the arena BSP here and stop
+    // on a floor (velocity.Z zeroed, ContactFloor set). That sweep is the collision
+    // slice; in free air it finds nothing and yields position += motion, which is
+    // what every object in this slice does until landing lands.
+    obj->position.x += motion.x;
+    obj->position.y += motion.y;
+    obj->position.z += motion.z;
+    obj->previous_position = obj->position;  // C# Update end (ObjectMotion.cs:146)
+    // FallOut (position.Z below the arena floor by 200) lands with the collision slice.
 }
 
 const Model* ScriptRuntime::findModel(const std::string& arena, const std::string& type) {

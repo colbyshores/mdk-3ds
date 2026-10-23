@@ -77,6 +77,11 @@ float wrap360(float degrees) {
     return degrees - 360.0f * floorf(degrees / 360.0f);
 }
 
+// Wrap to [-180, 180) (ScriptMath.WrapAngle).
+float wrapAngle(float degrees) {
+    return degrees - 360.0f * floorf((degrees + 180.0f) / 360.0f);
+}
+
 bool iequals(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) {
         return false;
@@ -500,6 +505,26 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 8:  // set_yaw
             obj->yaw = wrap360(fval(op(ins, 0)));
             break;
+        case 60: {  // face_target: snap the yaw to the heading toward the target
+            const Vec3& t = runtime_.targetPosition();
+            /* @vfp-exempt R6 — face_target turn (per facing object per tick);
+             * libm atan2f tracks the C# oracle's MathF.Atan2 to within 1 ULP, below
+             * the golden table's %.4f precision; the fastAtan2 LUT's error is far
+             * larger and would move those values. (Not byte-for-byte: glibc and .NET
+             * differ by 1 ULP on some inputs.) measured n/a (corpus empty).
+             * Verified 2026-10-22. */
+            obj->yaw = wrap360(atan2f(t.y - obj->position.y, t.x - obj->position.x) *
+                               (180.0f / 3.14159265358979323846f));
+            break;
+        }
+        case 207: {  // turn_to_yaw: turn toward a goal yaw by at most rate*Dt; branches when reached
+            float goal = fval(op(ins, 1));
+            float diff = wrapAngle(goal - obj->yaw);
+            float step = fval(op(ins, 0)) * kDt;
+            float sign = diff > 0.0f ? 1.0f : (diff < 0.0f ? -1.0f : 0.0f);
+            obj->yaw = wrap360(fabsf(diff) <= step ? goal : obj->yaw + sign * step);
+            return branch(obj, ins, fabsf(obj->yaw - wrap360(goal)) < 1e-4f);
+        }
 
         // Movement parameters.
         case 50:  // set_max_speed
