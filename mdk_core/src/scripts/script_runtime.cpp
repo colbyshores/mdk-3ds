@@ -613,12 +613,13 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
 
 // UpdatePickup (0x43d8f0), run after ApplyVelocity for a FlagPickup object. Ports the
 // branches reachable before the chute/attach subsystem (command 74) and the Runner's
-// RNG-synchronized animations exist: a falling pickup lands on floor contact (Fall).
-// The chute deploy (velocity.Z below PickupChuteSpeed, unreachable until ~tick 14 at
-// gravity 32), the Runner, the Collected shrink, and the post-landing spin are later
-// slices, so a landed pickup does not yet spin or shrink here.
+// RNG-synchronized animations exist: a falling pickup lands on floor contact (Fall),
+// and a landed/non-gravity pickup not in the Still list spins in place. The chute
+// deploy (velocity.Z below PickupChuteSpeed, unreachable until ~tick 14 at gravity 32),
+// the Runner, and the Collected shrink are later slices.
 void ScriptRuntime::motionPickup(MdkObject* obj) {
     const float kPickupHover = 1.5f;
+    const float kPickupTurnSpeed = 180.0f;
     if ((obj->flags & MdkObject::FlagCollected) != 0) {
         return;  // collected shrink/remove: later slice
     }
@@ -637,7 +638,13 @@ void ScriptRuntime::motionPickup(MdkObject* obj) {
         // deploy is not reached in the tested tick range (gravity 32 reaches -15 at ~14).
         return;
     }
-    // Landed or non-gravity: chute shrink / Runner / spin are later slices.
+    // Landed or non-gravity: a pickup not in the Still list spins in place at
+    // PickupTurnSpeed. (The chute shrink and the Runner's RNG-synchronized animations
+    // are later slices; the Runner SW_H150 is in Still, so it does not spin here.)
+    if (obj->type_name != "SW_H150" && obj->type_name != "SW_SEAL" &&
+        obj->type_name != "SW_SBONE") {
+        obj->yaw = wrap360(obj->yaw + kTick * kPickupTurnSpeed);
+    }
 }
 
 // Raycast (0x421680): whether any triangle of the active arenas crosses [from,to].

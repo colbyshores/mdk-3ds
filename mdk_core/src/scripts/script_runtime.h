@@ -162,9 +162,9 @@ private:
     bool raycastClear(const Vec3& from, const Vec3& to);
     // The pickup half of ObjectMotion.Update (UpdatePickup 0x43d8f0), run after
     // ApplyVelocity for a FlagPickup object. Ports the reachable branches: a falling
-    // pickup lands on floor contact (Fall). The chute deploy (needs attach command 74),
-    // the Runner's RNG-synchronized animations, the Collected shrink, and the
-    // post-landing spin are later slices.
+    // pickup lands on floor contact (Fall), and a landed/non-gravity pickup not in the
+    // Still list spins in place. The chute deploy (needs attach command 74), the
+    // Runner's RNG-synchronized animations, and the Collected shrink are later slices.
     void motionPickup(MdkObject* obj);
 
 
