@@ -210,6 +210,9 @@ int main() {
         {7, 120}, {7, 300},
         {8, 2}, {8, 3}, {8, 4}, {8, 5}, {8, 6}, {8, 10}, {8, 15}, {8, 20}, {8, 25}, {8, 30},
         {8, 40}, {8, 60},
+        // Deeper ticks that stay byte-exact with the oracle: the spawner/walker
+        // scripts run past t300 without a new slice (L3 and L8 diverge earlier).
+        {4, 360}, {4, 420}, {4, 480}, {4, 540}, {4, 600}, {5, 360}, {5, 420}, {5, 480}, {5, 540}, {6, 360}, {6, 420}, {6, 480}, {6, 540}, {6, 600}, {7, 360}, {7, 420}, {7, 480}, {7, 540}, {7, 600}, {8, 360},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         int level = cases[c].level;

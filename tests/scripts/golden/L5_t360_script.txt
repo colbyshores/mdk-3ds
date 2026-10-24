@@ -1,0 +1,9 @@
+SCRIPT level=5 ticks=360 seed=1 currentArena=MUSE_1 objects=7
+GVAR 0.0000 0.0000 0.0000 0.0000
+OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,-12.1000,0.5000 restart=5037 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 001 type=XS sflags=0x00000400 vars=0.0000,0.0000,0.0000,0.0000 restart=1360 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 002 type=XS sflags=0x00000400 vars=0.0000,0.0000,0.0000,0.0000 restart=1592 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 003 type=SW_DUMMY sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 004 type=SW_CHUTE sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 005 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1890 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 006 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=5534 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
