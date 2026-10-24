@@ -1341,6 +1341,35 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             break;
         }
+        case 197:  // find_advance_spot: walk toward Kurt via a DTI advance spot
+            runtime_.findAdvanceSpot(obj);
+            return branch(obj, ins, obj->move_command == 197);
+        case 110:  // delete_self: out of the list, and stop this frame
+            runtime_.remove(obj);
+            return kYield;
+        case 218:  // set_f13c: the pitch
+            obj->pitch = fval(op(ins, 0));
+            break;
+        case 164: {  // path_speed_by_kurt: scale path speed by the distance to Kurt
+            if (ival(op(ins, 0)) != 0) {
+                const std::vector<ScriptValue>& raw = listval(op(ins, 1));
+                float middle = 0.0f;
+                for (size_t k = 0; k < 4; k++) {
+                    float s = k < raw.size() ? fval(raw[k]) : 0.0f;
+                    if (k < raw.size()) {
+                        obj->path_speeds[k] = s;
+                    }
+                    if (k == 2) {
+                        middle = s;
+                    }
+                }
+                obj->path_speed = middle;
+                obj->flags |= MdkObject::FlagPathSpeedByKurt;
+            } else {
+                obj->flags &= ~MdkObject::FlagPathSpeedByKurt;
+            }
+            break;
+        }
         case 39: {  // push_forward: push along the object's yaw (x,y only)
             /* @vfp-exempt R6 — push_forward heading (per pushing object); glibc
              * cosf/sinf match the C#'s MathF.Cos/Sin bit-for-bit on this machine

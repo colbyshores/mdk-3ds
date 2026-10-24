@@ -162,6 +162,9 @@ public:
     // the object's arena that Kurt cannot see but the object can reach, and command
     // a walk to it (MoveCommand 43). Clears MoveCommand when no spot qualifies.
     void findCoverSpot(MdkObject* obj);
+    // FindAdvanceSpot (ScriptRuntime.cs:2413, opcode 197): advance toward Kurt
+    // (command 197) via a DTI type-5 spot, or stop (clears MoveCommand).
+    void findAdvanceSpot(MdkObject* obj);
     // C# MayCommand (command_objects / if_count_objects): the receiver has no
     // other leader of a higher priority and obeys the sender's priority.
     static bool mayCommand(const MdkObject* sender, const MdkObject* receiver);

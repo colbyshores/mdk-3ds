@@ -848,6 +848,48 @@ bool ScriptRuntime::canSeeKurt(MdkObject* obj, float range, float cone) {
     return raycastClear(from, to);
 }
 
+// FindAdvanceSpot (ScriptRuntime.cs:2413, opcode 197): advance toward Kurt
+// (command 197) via a type-5 spot of the object's arena, 5-400 units from the
+// object, no farther from the object than Kurt is, and nearer to Kurt than the
+// object is. The qualifying spots are collected in arena-record order and one is
+// picked uniformly with a single RNG draw. Sets MoveCommand 197 on success and
+// clears (zeroes) it otherwise, matching the C# one-for-one.
+void ScriptRuntime::findAdvanceSpot(MdkObject* obj) {
+    const int32_t kAdvanceCommand = 197;
+    const uint32_t kDtiCover = 5;
+    auto distance2d = [](const Vec3& a, const Vec3& b) {
+        float dx = a.x - b.x;
+        float dy = a.y - b.y;
+        return sqrtf(dx * dx + dy * dy);
+    };
+    obj->move_command = 0;
+    float toKurt = distance2d(obj->position, kurtPosition_);
+    std::vector<Vec3> spots;
+    const formats::Dti::ArenaEntry* entry = level_->entryNamed(obj->arena);
+    if (entry != nullptr) {
+        for (const formats::Dti::Record& record : entry->records) {
+            if (record.type != kDtiCover) {
+                continue;
+            }
+            Vec3 spot{record.position[0], record.position[1], record.position[2]};
+            float dist = distance2d(obj->position, spot);
+            if (dist < 5.0f || dist > 400.0f || dist > toKurt ||
+                distance2d(spot, kurtPosition_) >= toKurt) {
+                continue;
+            }
+            spots.push_back(spot);
+        }
+    }
+    if (spots.empty()) {
+        return;
+    }
+    const Vec3& destination = spots[rng_.next((int)spots.size())];
+    obj->move_command = kAdvanceCommand;
+    obj->move_destination = destination;
+    obj->waypoint = destination;
+    obj->contact_flags &= ~MdkObject::ContactStuck;
+}
+
 // FindCoverSpot (ScriptRuntime.cs:2447, opcode 46): a DTI cover spot (type 5) in
 // the object's arena that Kurt cannot see (a blocked ray Kurt->spot) but the
 // object can reach (a clear ray obj->spot), within [9,400] of the object, nearer
