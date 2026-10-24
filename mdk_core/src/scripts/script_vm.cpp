@@ -1341,6 +1341,94 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             break;
         }
+        case 39: {  // push_forward: push along the object's yaw (x,y only)
+            /* @vfp-exempt R6 — push_forward heading (per pushing object); glibc
+             * cosf/sinf match the C#'s MathF.Cos/Sin bit-for-bit on this machine
+             * (probed), and the conversion is .NET's left-associative spelling.
+             * measured n/a (cold). Verified 2026-10-24. */
+            const float rad = obj->yaw * 3.14159265358979323846f / 180.0f;
+            const float mag = value(obj, op(ins, 0));
+            obj->push.x += cosf(rad) * mag;
+            obj->push.y += sinf(rad) * mag;
+            break;
+        }
+        case 201: {  // push_dir: push along yaw plus an offset (x,y only)
+            /* @vfp-exempt R6 — see push_forward. */
+            const float rad = (obj->yaw + fval(op(ins, 1))) * 3.14159265358979323846f / 180.0f;
+            const float mag = fval(op(ins, 0));
+            obj->push.x += cosf(rad) * mag;
+            obj->push.y += sinf(rad) * mag;
+            break;
+        }
+        case 80: {  // add_vel_local: add a velocity rotated by the object's yaw
+            /* @vfp-exempt R6 — see push_forward. */
+            const float rad = obj->yaw * 3.14159265358979323846f / 180.0f;
+            const float s = sinf(rad);
+            const float c = cosf(rad);
+            obj->velocity.x += -fval(op(ins, 0)) * c - fval(op(ins, 1)) * s;
+            obj->velocity.y += -fval(op(ins, 1)) * c - fval(op(ins, 0)) * s;
+            obj->velocity.z += fval(op(ins, 2));
+            break;
+        }
+        case 126: {  // aim_pitch_target: pitch to the target plus the aim height
+            /* @vfp-exempt R6 — see aim_target. */
+            const float kAimHeight = 3.0f;
+            const Vec3 target = runtime_.targetPosition();
+            const float dx = target.x - obj->position.x;
+            const float dy = target.y - obj->position.y;
+            obj->pitch = atan2f(target.z + kAimHeight - obj->position.z, sqrtf(dx * dx + dy * dy)) *
+                         180.0f / 3.14159265358979323846f;
+            break;
+        }
+        case 157: {  // vel_away_from: run from the named object (negative speed moves toward it)
+            MdkObject* other = runtime_.firstOther(obj, strval(op(ins, 0)), ival(op(ins, 1)));
+            Vec3 away;
+            away.x = away.y = away.z = 0.0f;
+            if (other != nullptr) {
+                away.x = obj->position.x - other->position.x;
+                away.y = obj->position.y - other->position.y;
+                away.z = obj->position.z - other->position.z;
+            }
+            if (away.x != 0.0f || away.y != 0.0f || away.z != 0.0f) {
+                const float len = sqrtf(away.x * away.x + away.y * away.y + away.z * away.z);
+                const float mag = fval(op(ins, 2));
+                obj->velocity.x = away.x / len * mag;
+                obj->velocity.y = away.y / len * mag;
+                obj->velocity.z = away.z / len * mag;
+                obj->path = 0;
+            }
+            break;
+        }
+        case 41: {  // set_targetable: flag 0x100 (a platform), and 0x800000 with mode 2
+            const int32_t kPlatform = 0x100;
+            if (ival(op(ins, 0)) != 0) {
+                obj->flags |= kPlatform;
+            } else {
+                obj->flags &= ~kPlatform;
+            }
+            if (ival(op(ins, 0)) == 2) {
+                obj->flags |= MdkObject::FlagStandable;
+            } else {
+                obj->flags &= ~MdkObject::FlagStandable;
+            }
+            break;
+        }
+        case 63:  // set_flag148_10_inv: Kurt goes through the object (0x10)
+            if (ival(op(ins, 0)) != 0) {
+                obj->flags = (obj->flags & ~MdkObject::FlagNotSolid);
+            } else {
+                obj->flags = (obj->flags | MdkObject::FlagNotSolid);
+            }
+            break;
+        case 169:  // set_roll_radius
+            obj->roll_radius = value(obj, op(ins, 0));
+            break;
+        case 177:  // set_blast_range: blasts farther than this don't hurt the object
+            obj->blast_range = fval(op(ins, 0));
+            break;
+        case 205:  // set_21f: indestructible
+            obj->indestructible = ival(op(ins, 0)) != 0;
+            break;
 
         default:
             noteUnimplemented(ins.opcode);

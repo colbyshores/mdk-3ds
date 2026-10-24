@@ -136,7 +136,7 @@ public:
     void setAlienTarget(MdkObject* obj) { alienTarget_ = obj; }
     // The first live object of obj's arena whose type matches (C# FirstOther with
     // instance = AnyInstance): face_mode 3 copies its yaw. Null when none.
-    MdkObject* firstOther(MdkObject* obj, const std::string& type);
+    MdkObject* firstOther(MdkObject* obj, const std::string& type, int32_t instance = -1);
     // command_objects (opcode 4): sends a command to the matching objects of the
     // arena (0x440384). Commands: 1 join a formation around the sender, 7 goto
     // target, 0xFC gosub target, 43 go to a destination. The VM parses the operands

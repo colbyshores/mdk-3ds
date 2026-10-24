@@ -1931,10 +1931,14 @@ void ScriptRuntime::selectTarget(MdkObject* obj) {
 
 // C# FirstOther(obj, type, AnyInstance): the first live object of the same arena,
 // of the named type, other than obj. The type compare is case-insensitive (C# Is).
-MdkObject* ScriptRuntime::firstOther(MdkObject* obj, const std::string& type) {
+MdkObject* ScriptRuntime::firstOther(MdkObject* obj, const std::string& type, int32_t instance) {
+    const int32_t kAnyInstance = -1;
     for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
         MdkObject& other = *it;
         if (&other == obj || other.dead || other.arena != obj->arena) {
+            continue;
+        }
+        if (instance != kAnyInstance && other.instance_id != instance) {
             continue;
         }
         if (iequalsType(other.type_name, type)) {
