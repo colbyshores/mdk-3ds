@@ -1449,6 +1449,32 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 91:  // set_path_speed
             obj->path_speed = value(obj, op(ins, 0));
             break;
+        case 62: {  // if_target_angle: absolute wrapped yaw to the target
+            /* @vfp-exempt R6 — see aim_target. */
+            const float rad = atan2f(runtime_.targetPosition().y - obj->position.y,
+                                     runtime_.targetPosition().x - obj->position.x);
+            const float deg = rad * 180.0f / 3.14159265358979323846f;
+            const float angle = deg >= 0.0f ? deg : deg + 360.0f;
+            return branch(obj, ins, compare(wrapAngle(angle - obj->yaw), listval(op(ins, 0))));
+        }
+        case 234:  // if_target_angle_signed: signed wrapped yaw minus yaw to the target
+            return branch(obj, ins,
+                          compare(wrapAngle(obj->yaw - runtime_.yawTo(obj, runtime_.targetPosition())),
+                                  listval(op(ins, 0))));
+        case 191: {  // if_kurt_delta: Kurt's offset along an axis, absolute unless +0x80
+            int32_t axis = ival(op(ins, 0)) & 0x7F;
+            if (axis > 2) {
+                axis = 2;
+            }
+            const Vec3& k = runtime_.kurtPosition();
+            float delta = axis == 0   ? k.x - obj->position.x
+                            : axis == 1 ? k.y - obj->position.y
+                                        : k.z - obj->position.z;
+            if ((ival(op(ins, 0)) & 0x80) == 0) {
+                delta = delta >= 0.0f ? delta : -delta;
+            }
+            return branch(obj, ins, compare(delta, listval(op(ins, 1))));
+        }
 
         default:
             noteUnimplemented(ins.opcode);
