@@ -1429,6 +1429,26 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 205:  // set_21f: indestructible
             obj->indestructible = ival(op(ins, 0)) != 0;
             break;
+        case 20:  // stop_path
+            obj->path = 0;
+            break;
+        case 21: {  // path_stop_at (-2 = the current frame)
+            int32_t stop = ival(op(ins, 0)) & 0xFFFF;
+            if ((stop & 0x8000) != 0) {
+                stop -= 0x10000;
+            }
+            obj->path_stop = stop;
+            if (obj->path_stop == -2) {
+                obj->path_stop = lroundf(obj->path_time);
+            }
+            break;
+        }
+        case 33:  // if_path_frame: off a path, or at/past operand frame - 1
+            return branch(obj, ins,
+                          obj->path == 0 || lroundf(obj->path_time) >= ival(op(ins, 0)) - 1);
+        case 91:  // set_path_speed
+            obj->path_speed = value(obj, op(ins, 0));
+            break;
 
         default:
             noteUnimplemented(ins.opcode);
