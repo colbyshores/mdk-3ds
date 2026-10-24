@@ -1144,6 +1144,16 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, runtime_.rng().next(10000) < fval(op(ins, 0)) * 100.0f);
         case 222:  // if_opcode_count: this object's opcodes executed this frame
             return branch(obj, ins, compare((float)opcodeCount_, listval(op(ins, 0))));
+        case 251: {  // set_target_mode: 1 the aliens' target, 2 always targets Kurt
+            const int32_t mode = ival(op(ins, 0));
+            obj->target_mode = mode;
+            if (mode == 1) {
+                runtime_.setAlienTarget(obj);
+            } else if (mode == 0 && runtime_.alienTarget() == obj) {
+                runtime_.setAlienTarget(nullptr);
+            }
+            break;
+        }
         case 187: {  // random_kick: a shove in a random direction
             /* @vfp-exempt R6 — cold kick path; glibc cosf/sinf match the C#'s
              * MathF.Cos/Sin bit-for-bit on this machine (probed), and the

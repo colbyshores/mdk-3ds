@@ -132,6 +132,8 @@ public:
     const Vec3& targetPosition() const { return targetPosition_; }
     float targetYaw() const { return targetYaw_; }
     void selectTarget(MdkObject* obj);
+    MdkObject* alienTarget() const { return alienTarget_; }
+    void setAlienTarget(MdkObject* obj) { alienTarget_ = obj; }
     // The first live object of obj's arena whose type matches (C# FirstOther with
     // instance = AnyInstance): face_mode 3 copies its yaw. Null when none.
     MdkObject* firstOther(MdkObject* obj, const std::string& type);
@@ -289,6 +291,7 @@ private:
     Vec3 targetPosition_{};
     float kurtYaw_ = 0.0f;
     float targetYaw_ = 0.0f;
+    MdkObject* alienTarget_ = nullptr;  // C# ScriptRuntime.AlienTarget (opcode 251)
     int32_t tickCount_ = 0;
 };
 

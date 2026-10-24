@@ -1908,9 +1908,25 @@ const Model* ScriptRuntime::findModel(const std::string& arena, const std::strin
     return nullptr;
 }
 
-void ScriptRuntime::selectTarget(MdkObject*) {
+// C# ScriptRuntime.SelectTarget: an object's script aims at Kurt, or at the decoy
+// while it walks, or at the aliens' target (opcode 251), unless the object always
+// targets Kurt (target mode 2). Items.Decoy is not ported yet, so the decoy branch
+// stays null until the Items slice lands; the alien-target branch is live.
+void ScriptRuntime::selectTarget(MdkObject* obj) {
+    const int32_t alwaysKurt = 2;
     targetPosition_ = kurtPosition_;
-    targetYaw_ = wrap360(kurtYaw_);
+    targetYaw_ = kurtYaw_;
+    if (obj->target_mode == alwaysKurt) {
+        return;
+    }
+    MdkObject* other = nullptr;
+    if (alienTarget_ != nullptr && !alienTarget_->dead) {
+        other = alienTarget_;
+    }
+    if (other != nullptr) {
+        targetPosition_ = other->position;
+        targetYaw_ = other->yaw;
+    }
 }
 
 // C# FirstOther(obj, type, AnyInstance): the first live object of the same arena,
