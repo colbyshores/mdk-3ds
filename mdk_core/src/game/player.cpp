@@ -92,7 +92,7 @@ float accelerate(float speed, float input, bool turbo, float accelFactor, float 
 } // namespace
 
 Vec3 Player::facing() const {
-    const float radians = yaw * (3.14159265358979323846f / 180.0f);
+    const float radians = yaw * 3.14159265358979323846f / 180.0f;  // float.DegreesToRadians (left-assoc)
     return Vec3{fastCos(radians), fastSin(radians), 0.0f};
 }
 

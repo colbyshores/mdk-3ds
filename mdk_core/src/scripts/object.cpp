@@ -67,13 +67,14 @@ mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
     float x = p.x * scale;
     float y = p.y * scale;
     float z = p.z * scale;
-    float radians = yaw * (3.14159265358979323846f / 180.0f);
+    // float.DegreesToRadians is left-associated (yaw * pi / 180f).
+    float radians = yaw * 3.14159265358979323846f / 180.0f;
     /* @vfp-exempt R6 — the attach motion's reference-point rotation (per attached
-     * object per tick); libm cosf/sinf track the C# oracle's MathF.Cos/Sin to within
-     * 1 ULP, below the golden table's %.4f precision; the fastSin/fastCos LUT's error
-     * is far larger and would move the attached object's position. (Not byte-for-
-     * byte: glibc and .NET differ by 1 ULP on some inputs.) measured n/a (cold).
-     * Verified 2026-10-23. */
+     * object per tick); glibc cosf/sinf match the C# oracle's MathF.Cos/Sin
+     * bit-for-bit on this machine (probed), and the conversion is .NET's
+     * left-associative spelling; the fastSin/fastCos LUT's error is far larger
+     * and would move the attached object's position. measured n/a (corpus
+     * empty). Verified 2026-10-23. */
     float c = cosf(radians);
     float s = sinf(radians);
     return Vec3{position.x + (x * c - y * s), position.y + (x * s + y * c), position.z + z};

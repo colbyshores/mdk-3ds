@@ -79,7 +79,7 @@ bool buildLookAtCamera(Camera* camera, const Vec3& eye, const Vec3& target, cons
     // the 1 at [2][3].
     // R6: tan goes through the LUT's sin/cos (hardware vdiv, R7) rather than
     // libm tanf. The camera is rebuilt every frame, so this is a per-frame path.
-    const float radians = fovDegrees * (kPi / 180.0f);
+    const float radians = fovDegrees * kPi / 180.0f;
     const float halfFov = radians * 0.5f;
     float yScale = fastCos(halfFov) / fastSin(halfFov);
     float xScale = yScale / (aspect > 0.0f ? aspect : 1.0f);
@@ -110,8 +110,8 @@ bool buildHeadingCamera(Camera* camera, const Vec3& eye, float headingDegrees, f
                         float fovDegrees, float aspect, float nearPlane, float farPlane) {
     // The level's heading: 90 faces +Y, 0 faces +X. The heading is a
     // rotation about the Z axis, and the pitch tilts the view.
-    const float heading = headingDegrees * (kPi / 180.0f);
-    const float pitch = pitchDegrees * (kPi / 180.0f);
+    const float heading = headingDegrees * kPi / 180.0f;
+    const float pitch = pitchDegrees * kPi / 180.0f;
     const float cosHeading = fastCos(heading);
     const float sinHeading = fastSin(heading);
     const float cosPitch = fastCos(pitch);

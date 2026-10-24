@@ -66,6 +66,9 @@ private:
     // goto command's target) or the near-target offset, the selector and the args,
     // and hands them to the runtime (C# CommandObjects, ScriptVm.cs:2178).
     void commandObjects(MdkObject* obj, const formats::Instruction& ins);
+    // CountOthers (ScriptVm.cs:311): this object's arena's objects of a type —
+    // alive (health > 0) for if_count_alive, or commandable for if_count_objects.
+    int32_t countOthers(MdkObject* obj, const formats::ScriptValue& type, bool alive);
 
     int32_t branch(MdkObject* obj, const formats::Instruction& ins, bool condition);
     int32_t gotoTarget(MdkObject* obj, int32_t target);

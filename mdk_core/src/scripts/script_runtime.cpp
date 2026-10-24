@@ -33,10 +33,21 @@ float wrap360(float degrees) {
     return degrees - 360.0f * floorf(degrees / 360.0f);
 }
 
-const float kDegToRad = 3.14159265358979323846f / 180.0f;
-// .NET RadiansToDegrees multiplies by (180f / MathF.PI); dividing by kDegToRad is
-// not bit-equivalent (separately rounded reciprocal), so keep the multiply factor.
-const float kRadToDeg = 180.0f / 3.14159265358979323846f;
+// MathF.PI, as a float.
+const float kPi = 3.14159265358979323846f;
+
+// float.DegreesToRadians / float.RadiansToDegrees. .NET spells BOTH left-
+// associatively (x * MathF.PI / 180f, x * 180f / MathF.PI) — verified against
+// the real runtime — so the constant-folded (pi/180f)/(180f/pi) forms are
+// different by 1 ULP at many inputs, and the yaws the goldens pin would move
+// in the 4th decimal. Keep the multiply-then-divide order exactly.
+static float degreesToRadians(float degrees) {
+    return degrees * kPi / 180.0f;
+}
+
+static float radiansToDegrees(float radians) {
+    return radians * 180.0f / kPi;
+}
 
 // Case-insensitive string equality (the C#'s Equals(OrdinalIgnoreCase) / Is).
 static bool iequalsType(const std::string& a, const std::string& b) {
@@ -83,26 +94,16 @@ float wrapAngle(float degrees) {
     return degrees - 360.0f * floorf((degrees + 180.0f) / 360.0f);
 }
 
-// MdkObject.YawTo: the compass yaw (degrees, [0, 360)) from the object to a point.
-// atan2f tracks the oracle's MathF.Atan2 within 1 ULP (below the golden table's
-// %.4f precision); the fastAtan2 LUT's error is far larger and would move it.
-/* @vfp-exempt R6 — yaw-to-point in the movement-command path; libm atan2f matches
- * the C# oracle's MathF.Atan2 to within 1 ULP, which is below the golden table's
- * %.4f precision, while the fastAtan2 LUT would move the turned yaw. measured n/a
- * (corpus empty). Verified 2026-10-23. */
-float yawTo(const MdkObject* obj, const Vec3& point) {
-    float degrees = atan2f(point.y - obj->position.y, point.x - obj->position.x) * kRadToDeg;
-    return fmodf(fmodf(degrees, 360.0f) + 360.0f, 360.0f);
-}
-
 // ScriptMath.FromAngle: the unit heading (x, y) for a yaw in degrees. cosf/sinf
-// track the oracle's MathF.SinCos within 1 ULP (the LUT would move the step).
-/* @vfp-exempt R6 — heading from yaw in the walk/fly step; libm cosf/sinf match the
- * C# oracle's MathF.SinCos to within 1 ULP, below the golden table's %.4f
- * precision, while the fastSin/fastCos LUT would move the walked position. measured
- * n/a (corpus empty). Verified 2026-10-23. */
+// match the oracle's MathF.SinCos bit-for-bit on this machine (probed); the
+// conversion is .NET's left-associative DegreesToRadians (the LUT would move the step).
+/* @vfp-exempt R6 — heading from yaw in the walk/fly step; glibc cosf/sinf match
+ * the C# oracle's MathF.SinCos bit-for-bit on this machine (probed), and the
+ * conversion is .NET's left-associative DegreesToRadians, while the fastSin/
+ * fastCos LUT would move the walked position. measured n/a (corpus empty).
+ * Verified 2026-10-23. */
 Vec3 fromAngle(float degrees) {
-    float radians = degrees * kDegToRad;
+    float radians = degreesToRadians(degrees);
     return Vec3{cosf(radians), sinf(radians), 0.0f};
 }
 
@@ -128,11 +129,12 @@ const float kPlanHeight = 8.0f;
 Vec3 rotatedZ(const Vec3& v, float degrees) {
     /* @vfp-exempt R6 — the footing sweep's yaw rotation of the collision box; the
      * C# oracle uses MathF.SinCos (exact), and libm sinf/cosf track it to within
-     * 1 ULP, below the golden table's %.4f precision; the fastSin/fastCos LUT's
+     * this machine (probed), and the conversion is .NET's left-associative
+     * DegreesToRadians; the fastSin/fastCos LUT's error is far larger and
      * error is far larger and would move the box and its landing. measured n/a
      * (corpus empty). Verified 2026-10-23. */
-    float s = sinf(degrees * kDegToRad);
-    float c = cosf(degrees * kDegToRad);
+    float s = sinf(degreesToRadians(degrees));
+    float c = cosf(degreesToRadians(degrees));
     return Vec3{v.x * c - v.y * s, v.x * s + v.y * c, v.z};
 }
 
@@ -565,11 +567,11 @@ void ScriptRuntime::motionPath(MdkObject* obj) {
     if ((obj->flags & MdkObject::FlagNoTurning) == 0 &&
         fabsf(p.x - old.x) + fabsf(p.y - old.y) > kTick * 0.5f) {
         /* @vfp-exempt R6 — path-following turn (per path-riding object per tick);
-         * libm atan2f tracks the C# oracle's MathF.Atan2 to within 1 ULP, below the
-         * golden table's %.4f precision; the fastAtan2 LUT's error is far larger and
-         * would move those values. (Not byte-for-byte: glibc and .NET differ by 1 ULP
-         * on some inputs.) measured n/a (corpus empty). Verified 2026-10-22. */
-        float deg = atan2f(p.y - old.y, p.x - old.x) * (180.0f / 3.14159265358979323846f);
+         * glibc atan2f matches the C# oracle's MathF.Atan2 bit-for-bit on this
+         * machine (probed), and the conversion is .NET's left-associative
+         * radiansToDegrees; the fastAtan2 LUT's error is far larger and would move
+         * those values. measured n/a (corpus empty). Verified 2026-10-23. */
+        float deg = radiansToDegrees(atan2f(p.y - old.y, p.x - old.x));
         obj->yaw = wrap360(deg + obj->path_yaw_offset);
     }
     if (!pushes) {
@@ -719,9 +721,20 @@ void ScriptRuntime::motionPickup(MdkObject* obj) {
         obj->attached = chute;
         return;
     }
+    // The chute shrinks away once the pickup has landed (ObjectBehaviors.cs:226):
+    // a notch per tick, and gone (removed) at ChuteGone.
+    const float kChuteGone = 0.2f;
+    MdkObject* chute = obj->attached;
+    if (chute != nullptr && chute->scale > kChuteGone) {
+        chute->scale -= kTick;
+        if (chute->scale <= kChuteGone) {
+            remove(chute);
+            obj->attached = nullptr;
+        }
+    }
+    // The Runner's RNG-synchronized animations are a later slice.
     // Landed or non-gravity: a pickup not in the Still list spins in place at
-    // PickupTurnSpeed. (The chute shrink and the Runner's RNG-synchronized animations
-    // are later slices; the Runner SW_H150 is in Still, so it does not spin here.)
+    // PickupTurnSpeed.
     if (obj->type_name != "SW_H150" && obj->type_name != "SW_SEAL" &&
         obj->type_name != "SW_SBONE") {
         obj->yaw = wrap360(obj->yaw + kTick * kPickupTurnSpeed);
@@ -731,6 +744,19 @@ void ScriptRuntime::motionPickup(MdkObject* obj) {
 // Raycast (0x421680): whether any triangle of the active arenas crosses [from,to].
 // Only Kurt's arena and the second one stop rays; the rest are passed through. The
 // planner only needs hit/no-hit, so the hit point/normal/group are not carried.
+// CrossesFloor (ScriptRuntime.cs:2914): an up-facing face of the arena crosses
+// the segment. No BSP for the arena → false, as the C#'s TryGetValue miss.
+bool ScriptRuntime::crossesFloor(const std::string& arena, const Vec3& from, const Vec3& to) {
+    Bsp* bsp = bspOf(arena);
+    if (bsp == nullptr) {
+        return false;
+    }
+    Vec a{from.x, from.y, from.z};
+    Vec b{to.x, to.y, to.z};
+    Vec point;
+    return bsp->segment(a, b, Bsp::kSegmentFloor, &point, Bsp::kClipPassesThrough) != Bsp::kNone;
+}
+
 bool ScriptRuntime::raycastClear(const Vec3& from, const Vec3& to) {
     Vec a{from.x, from.y, from.z};
     Vec b{to.x, to.y, to.z};
@@ -768,6 +794,20 @@ bool ScriptRuntime::raycastClear(const Vec3& from, const Vec3& to) {
 // CanSeeKurt (ScriptRuntime.cs:3236): within range, inside the view cone (a cone
 // under HalfTurn is clamped to MinCone), and a clear ray from the object's eye to
 // Kurt's chest. The ray uses the same active-arena raycast as the move planner.
+// MdkObject.YawTo: the compass yaw (degrees, [0, 360)) from the object to a
+// point — the fmod wrap, NOT ScriptMath.Wrap360's floor form, and the two
+// round differently at the range edges.
+/* @vfp-exempt R6 — yaw-to-point in the movement-command path; glibc atan2f
+ * matches the C# oracle's MathF.Atan2 bit-for-bit on this machine (probed:
+ * .NET's MathF.Atan2 is the float libm call, and both picked the same value at
+ * every ULP-divergent input tested), and the conversion is .NET's left-assoc
+ * radiansToDegrees; the fastAtan2 LUT's error is far larger and would move the
+ * turned yaw. measured n/a (corpus empty). Verified 2026-10-23. */
+float ScriptRuntime::yawTo(const MdkObject* obj, const Vec3& point) const {
+    float degrees = radiansToDegrees(atan2f(point.y - obj->position.y, point.x - obj->position.x));
+    return fmodf(fmodf(degrees, 360.0f) + 360.0f, 360.0f);
+}
+
 bool ScriptRuntime::canSeeKurt(MdkObject* obj, float range, float cone) {
     const float kMinCone = 10.0f;
     const float kEyeHeight = 5.0f;
@@ -811,7 +851,7 @@ void ScriptRuntime::planMove(MdkObject* obj) {
             // Detour(a,b,middle, 0.1*(i+1)*side): a point offset perpendicular to
             // the a->b line through the midpoint, by a fraction of the a->b distance.
             /* @vfp-exempt R6 — the detour probe's perpendicular direction; atan2f +
-             * sinf/cosf track the oracle's MathF.SinCos/Atan2 within 1 ULP, below the
+             * sinf/cosf match the oracle's MathF.SinCos/Atan2 bit-for-bit on this machine
              * golden table's %.4f precision; the LUT would move the chosen waypoint.
              * measured n/a (corpus empty). Verified 2026-10-23. */
             float rad = atan2f(b.y - a.y, b.x - a.x);
@@ -873,12 +913,13 @@ void ScriptRuntime::moveForward(MdkObject* obj) {
         obj->push.y += obj->speed * direction.y;
     } else {
         /* @vfp-exempt R6 — MoveForward's pitch push (per moving object per tick);
-         * libm sinf/cosf track the C# oracle's MathF.SinCos to within 1 ULP,
-         * below the golden table's %.4f precision; the fastSin/fastCos LUT's error
-         * is far larger and would move those values. measured n/a (corpus empty).
+         * glibc sinf/cosf match the C# oracle's MathF.SinCos bit-for-bit on this
+         * machine (probed), and the conversion is .NET's left-associative
+         * DegreesToRadians; the fastSin/fastCos LUT's error is far larger and
+         * would move those values. measured n/a (corpus empty).
          * Verified 2026-10-23. */
-        const float s = sinf(obj->pitch * kDegToRad);
-        const float c = cosf(obj->pitch * kDegToRad);
+        const float s = sinf(degreesToRadians(obj->pitch));
+        const float c = cosf(degreesToRadians(obj->pitch));
         obj->push.x += direction.x * c * obj->speed;
         obj->push.y += direction.y * c * obj->speed;
         obj->push.z += s * obj->speed;
@@ -1428,13 +1469,13 @@ bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
         return false;
     }
     Box bounds = poseBounds(obj);
-    /* @vfp-exempt R6 — the footing sweep's yaw rotation of the collision box; the
-     * C# oracle uses MathF.SinCos (exact), and libm sinf/cosf track it to within
-     * 1 ULP, below the golden table's %.4f precision; the fastSin/fastCos LUT's
-     * error is far larger and would move the box and its landing. measured n/a
-     * (corpus empty). Verified 2026-10-23. */
-    float s = fabsf(sinf(obj->yaw * kDegToRad));
-    float c = fabsf(cosf(obj->yaw * kDegToRad));
+    /* @vfp-exempt R6 — the footing sweep's yaw rotation of the collision box; glibc
+     * sinf/cosf match the C# oracle's MathF.SinCos bit-for-bit on this machine
+     * (probed), and the conversion is .NET's left-associative DegreesToRadians;
+     * the fastSin/fastCos LUT's error is far larger and would move the box and its
+     * landing. measured n/a (corpus empty). Verified 2026-10-23. */
+    float s = fabsf(sinf(degreesToRadians(obj->yaw)));
+    float c = fabsf(cosf(degreesToRadians(obj->yaw)));
     float sx = (bounds.max.x - bounds.min.x) * obj->scale;
     float sy = (bounds.max.y - bounds.min.y) * obj->scale;
     Vec half{(c * sx + s * sy) * kWidthFactor, (s * sx + c * sy) * kWidthFactor,
@@ -1471,10 +1512,10 @@ bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
 }
 
 void ScriptRuntime::fallOut(MdkObject* obj) {
-    // NOTE: kill()/remove() are the death-slice placeholders (they only set dead);
-    // the C# FallOut switches a death-scripted object to its death script and
-    // actually removes an unscripted one from the object list. That behaviour lands
-    // with the death/removal slice; the threshold and restore height match now.
+    // NOTE: kill() is the death-slice placeholder (it only sets dead); the C#
+    // FallOut switches a death-scripted object to its death script, while
+    // remove() now takes an unscripted falling-out object out of the object
+    // list with full removal semantics. The threshold and restore height match.
     const float kRestore = 150.0f;
     if (obj->death_script == 0) {
         remove(obj);
@@ -1531,7 +1572,7 @@ MdkObject* ScriptRuntime::firstOther(MdkObject* obj, const std::string& type) {
 
 // C# MayCommand (0x440384): the receiver has no other leader of a higher priority,
 // and obeys the sender's priority.
-static bool mayCommand(const MdkObject* sender, const MdkObject* receiver) {
+bool ScriptRuntime::mayCommand(const MdkObject* sender, const MdkObject* receiver) {
     const MdkObject* leader = receiver->leader;
     if (leader != nullptr && leader != sender && !leader->dead &&
         sender->priority <= leader->priority) {
@@ -1544,10 +1585,10 @@ static bool mayCommand(const MdkObject* sender, const MdkObject* receiver) {
 // are NOT the standard rotation — X uses (ox*s - oy*c) and Y uses (-oy*s - ox*c).
 static Vec3 formationPosition(const MdkObject* leader, const Vec3& offset) {
     /* @vfp-exempt R6 — cold formation placement (command 1); libm sinf/cosf track
-     * the C# oracle's MathF.SinCos to within 1 ULP. measured n/a (cold).
-     * Verified 2026-10-23. */
-    const float s = sinf(leader->yaw * kDegToRad);
-    const float c = cosf(leader->yaw * kDegToRad);
+     * the C# oracle's MathF.SinCos bit-for-bit on this machine (probed).
+     * measured n/a (cold). Verified 2026-10-23. */
+    const float s = sinf(degreesToRadians(leader->yaw));
+    const float c = cosf(degreesToRadians(leader->yaw));
     Vec3 out;
     out.x = leader->position.x + offset.x * s - offset.y * c;
     out.y = leader->position.y - offset.y * s - offset.x * c;
@@ -1560,11 +1601,12 @@ static Vec3 formationPosition(const MdkObject* leader, const Vec3& offset) {
 // the object's height offset.
 Vec3 ScriptRuntime::nearTargetDestination(const MdkObject* obj, float forward, float side) {
     /* @vfp-exempt R6 — cold command path; libm atan2f/sinf/cosf track the C#
-     * oracle's Mathf calls to within 1 ULP. measured n/a (cold). Verified 2026-10-23. */
+     * oracle's MathF calls bit-for-bit on this machine (probed), with .NET's
+     * left-associative conversions. measured n/a (cold). Verified 2026-10-23. */
     const float direction =
-        atan2f(targetPosition_.y - obj->position.y, targetPosition_.x - obj->position.x) * kRadToDeg;
-    const float s = sinf(direction * kDegToRad);
-    const float c = cosf(direction * kDegToRad);
+        radiansToDegrees(atan2f(targetPosition_.y - obj->position.y, targetPosition_.x - obj->position.x));
+    const float s = sinf(degreesToRadians(direction));
+    const float c = cosf(degreesToRadians(direction));
     const float dx = obj->position.x - targetPosition_.x;
     const float dy = obj->position.y - targetPosition_.y;
     const float dz = obj->position.z - targetPosition_.z;
@@ -1696,7 +1738,36 @@ void ScriptRuntime::kill(MdkObject* obj) {
 }
 
 void ScriptRuntime::remove(MdkObject* obj) {
+    // C# Remove (ScriptRuntime.cs:1673): Dead, then out of the list. The deque's
+    // slots are never vacated (the pointer model depends on it), so the object is
+    // marked removed and every reference to it is dropped; the readable list and
+    // every Objects iteration skip it through dead + isRemoved.
     obj->dead = true;
+    removed_.push_back(obj);
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject& other = *it;
+        if (other.linked == obj) {
+            other.linked = nullptr;
+        }
+        if (other.leader == obj) {
+            other.leader = nullptr;
+        }
+        if (other.attached == obj) {
+            other.attached = nullptr;
+        }
+        if (other.cow_target == obj) {
+            other.cow_target = nullptr;
+        }
+    }
+}
+
+bool ScriptRuntime::isRemoved(const MdkObject* obj) const {
+    for (size_t i = 0; i < removed_.size(); i++) {
+        if (removed_[i] == obj) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace scripts

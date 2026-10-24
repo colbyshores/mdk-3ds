@@ -95,9 +95,9 @@ Vec3 followCameraPoint(const Vec3& feet, const Vec3& facing, float pitch, float 
     float back = -distance * cosPitch;
     if (pitch > 0.0f) {
         back += follow_camera::kDownBack * (1.0f - cosPitch);
-    } else if (pitch < follow_camera::kCloseUpPitch * (kPi / 180.0f)) {
+    } else if (pitch < follow_camera::kCloseUpPitch * kPi / 180.0f) {
         distance = follow_camera::kDistance *
-                   (pitch * (180.0f / kPi) + follow_camera::kCloseUpBias) / follow_camera::kCloseUpRange;
+                   (pitch * 180.0f / kPi + follow_camera::kCloseUpBias) / follow_camera::kCloseUpRange;
         back = -distance * cosPitch;
     }
     const float sinPitch = fastSin(pitch);
@@ -117,7 +117,7 @@ void followCameraOrient(const Vec3& facing, float pitch, Vec3* forward, Vec3* up
 
 bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
                        float pitchDegrees, float pivot, float aspect) {
-    const float pitch = clampViewPitch(pitchDegrees) * (kPi / 180.0f);
+    const float pitch = clampViewPitch(pitchDegrees) * kPi / 180.0f;
     const Vec3 position = followCameraPoint(feet, facing, pitch, pivot);
     Vec3 forward;
     Vec3 up;
@@ -170,7 +170,7 @@ Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera) {
 
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect) {
-    const float pitch = clampViewPitch(pitchDegrees) * (kPi / 180.0f);
+    const float pitch = clampViewPitch(pitchDegrees) * kPi / 180.0f;
     const Vec3 facing = player.facing();
     Vec3 position = followCameraPoint(player.feet, facing, pitch, pivot);
     position = followCameraClear(space, player, position);

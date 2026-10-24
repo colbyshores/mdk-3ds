@@ -1,0 +1,13 @@
+level=8 ticks=5 seed=1 currentArena=GUNT_1 objects=12
+000 type=XBSHIP arena=GUNT_1 pos=(94.9830,-70.6622,362.7039) yaw=88.6280 hp=65000 flags=0x00002E08 dead=0 move=0/0 connects= path=17083/5.0000/1.0000/-1
+001 type=XCARGO arena=GUNT_1 pos=(-186.0000,203.0000,-22.0000) yaw=0.0000 hp=750 flags=0x00000000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+002 type=XCORRDOR arena=GUNT_1 pos=(-68.0000,93.0000,12.0000) yaw=0.0000 hp=65000 flags=0x01108000 dead=0 move=0/0 connects=CGUNT_1 path=0/0.0000/1.0000/-1
+003 type=SW_DUMMY arena=GUNT_1 pos=(196.0000,154.0000,23.4500) yaw=12.0000 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+004 type=SW_H01 arena=GUNT_1 pos=(183.0000,100.0000,20.6444) yaw=0.0000 hp=100 flags=0x002008A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+005 type=SW_H01 arena=GUNT_1 pos=(122.0000,83.0000,7.4500) yaw=12.0000 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+006 type=SW_H01 arena=GUNT_1 pos=(67.0000,83.0000,7.4500) yaw=12.0000 hp=100 flags=0x002208A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+007 type=XG arena=GUNT_1 pos=(93.0236,76.0225,17.0059) yaw=84.5838 hp=60 flags=0x0000000E dead=0 move=78/0 connects= path=0/0.0000/1.0000/-1
+008 type=XG arena=GUNT_1 pos=(19.0090,117.0203,11.9600) yaw=66.0000 hp=60 flags=0x0000000E dead=0 move=78/0 connects= path=0/0.0000/1.0000/-1
+009 type=XG arena=GUNT_1 pos=(93.0379,244.1656,5.9600) yaw=90.0000 hp=60 flags=0x00000006 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+010 type=XD arena=GUNT_1 pos=(18.6540,115.2201,12.1194) yaw=24.0000 hp=20 flags=0x00000086 dead=0 move=78/0 connects= path=0/0.0000/1.0000/-1
+011 type=XD arena=GUNT_1 pos=(-49.3695,105.7950,12.0000) yaw=336.0000 hp=20 flags=0x00000080 dead=0 move=78/0 connects= path=0/0.0000/1.0000/-1

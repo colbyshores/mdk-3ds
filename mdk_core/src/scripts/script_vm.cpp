@@ -403,6 +403,26 @@ void ScriptVm::commandObjects(MdkObject* obj, const Instruction& ins) {
     runtime_.commandObjects(obj, command, target, destination, selector, type, param, id);
 }
 
+// CountOthers (ScriptVm.cs:311): the objects of the same arena whose type matches
+// (case-insensitively, as the C# Is), alive for if_count_alive or commandable for
+// if_count_objects.
+int32_t ScriptVm::countOthers(MdkObject* obj, const ScriptValue& type, bool alive) {
+    const std::deque<MdkObject>& objects = runtime_.objects();
+    const std::string typeName = strval(type);
+    int32_t count = 0;
+    for (std::deque<MdkObject>::const_iterator it = objects.begin(); it != objects.end(); ++it) {
+        const MdkObject& other = *it;
+        if (&other == obj || other.dead || other.arena != obj->arena ||
+            !iequals(other.type_name, typeName)) {
+            continue;
+        }
+        if (alive ? other.health > 0 : ScriptRuntime::mayCommand(obj, &other)) {
+            count++;
+        }
+    }
+    return count;
+}
+
 // The parts mask of a set_parts_mask / set_parts_show operand (the C#'s PartsMask).
 static int32_t partsMask(MdkObject* obj, const std::vector<ScriptValue>& entries, int32_t mask,
                          bool hide) {
@@ -616,13 +636,14 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             obj->door_distance = fval(op(ins, 0));
             break;
         case 113: {  // spawn_relative: at an offset rotated by this object's yaw
-            const float rad = obj->yaw * (3.14159265358979323846f / 180.0f);
+            // float.DegreesToRadians is left-associated (yaw * pi / 180f).
+            const float rad = obj->yaw * 3.14159265358979323846f / 180.0f;
             /* @vfp-exempt R6 — cold spawn path; the rotation uses libm sinf/cosf
-             * because they track the C# oracle's MathF.SinCos to within 1 ULP,
-             * which is below the golden table's %.4f precision; the fastSin/fastCos
-             * LUT's error is far larger and would move those values. (Not byte-for-
-             * byte: glibc and .NET differ by 1 ULP on some inputs.) measured n/a
-             * (cold). Verified 2026-10-22. */
+             * because they match the C# oracle's MathF.SinCos bit-for-bit on this
+             * machine (probed: .NET's MathF trig routes to the float libm calls),
+             * and the conversion is .NET's left-associative spelling; the
+             * fastSin/fastCos LUT's error is far larger and would move those
+             * values. measured n/a (cold). Verified 2026-10-23. */
             const float s = sinf(rad);
             const float c = cosf(rad);
             const float ox = fval(op(ins, 0));
@@ -712,18 +733,10 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 8:  // set_yaw
             obj->yaw = wrap360(fval(op(ins, 0)));
             break;
-        case 60: {  // face_target: snap the yaw to the heading toward the target
-            const Vec3& t = runtime_.targetPosition();
-            /* @vfp-exempt R6 — face_target turn (per facing object per tick);
-             * libm atan2f tracks the C# oracle's MathF.Atan2 to within 1 ULP, below
-             * the golden table's %.4f precision; the fastAtan2 LUT's error is far
-             * larger and would move those values. (Not byte-for-byte: glibc and .NET
-             * differ by 1 ULP on some inputs.) measured n/a (corpus empty).
-             * Verified 2026-10-22. */
-            obj->yaw = wrap360(atan2f(t.y - obj->position.y, t.x - obj->position.x) *
-                               (180.0f / 3.14159265358979323846f));
+        case 60:  // face_target: snap the yaw to the heading toward the target
+            // C# is obj.YawTo(runtime.TargetPosition): the fmod wrap, not Wrap360.
+            obj->yaw = runtime_.yawTo(obj, runtime_.targetPosition());
             break;
-        }
         case 207: {  // turn_to_yaw: turn toward a goal yaw by at most rate*Dt; branches when reached
             float goal = fval(op(ins, 1));
             float diff = wrapAngle(goal - obj->yaw);
@@ -736,17 +749,18 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             const std::vector<ScriptValue>& face = listval(op(ins, 0));
             const int32_t mode = face.empty() ? 0 : ival(face[0]);
             if ((mode == 1 || mode == 2) && obj->velocity.x != 0.0f && obj->velocity.y != 0.0f) {
-                /* @vfp-exempt R6 — face_mode turn (per facing alien per tick); libm
-                 * atan2f/sqrtf track the C# oracle's MathF.Atan2/Vector2.Length to
-                 * within 1 ULP, below the golden table's %.4f precision; the fastAtan2
-                 * LUT's error is far larger and would move those values. measured n/a
-                 * (corpus empty). Verified 2026-10-23. */
-                obj->yaw = wrap360(atan2f(obj->velocity.y, obj->velocity.x) *
-                                   (180.0f / 3.14159265358979323846f));
+                /* @vfp-exempt R6 — face_mode turn (per facing alien per tick); glibc
+                 * atan2f/sinf/cosf/sqrtf match the C# oracle's MathF calls
+                 * bit-for-bit on this machine (probed), and the conversions are
+                 * .NET's left-associative spellings; the fastAtan2 LUT's error is
+                 * far larger and would move those values. measured n/a (corpus
+                 * empty). Verified 2026-10-23. */
+                obj->yaw = wrap360(atan2f(obj->velocity.y, obj->velocity.x) * 180.0f /
+                                   3.14159265358979323846f);
                 if (mode == 2 && obj->velocity.z != 0.0f) {
                     const float horiz =
                         sqrtf(obj->velocity.x * obj->velocity.x + obj->velocity.y * obj->velocity.y);
-                    obj->pitch = atan2f(obj->velocity.z, horiz) * (180.0f / 3.14159265358979323846f);
+                    obj->pitch = atan2f(obj->velocity.z, horiz) * 180.0f / 3.14159265358979323846f;
                 }
             } else if (mode == 3 && face.size() > 1) {
                 MdkObject* other = runtime_.firstOther(obj, strval(face[1]));
@@ -982,6 +996,134 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 89:   // play_sound
         case 248:  // push_kurt
             break;
+
+        // Movement conditions.
+        case 44:  // if_move_done
+            return branch(obj, ins, obj->move_command == 0);
+        case 102:  // if_path_done
+            return branch(obj, ins, obj->path == 0);
+        case 54: {  // if_dest_dist: to the move destination (2D when on a floor)
+            Vec3 toDestination;
+            toDestination.x = obj->move_destination.x - obj->position.x;
+            toDestination.y = obj->move_destination.y - obj->position.y;
+            toDestination.z = (obj->contact_flags & MdkObject::ContactFloor) != 0
+                                  ? 0.0f
+                                  : obj->move_destination.z - obj->position.z;
+            return branch(obj, ins, compare(sqrtf(toDestination.x * toDestination.x +
+                                                  toDestination.y * toDestination.y +
+                                                  toDestination.z * toDestination.z),
+                                            listval(op(ins, 0))));
+        }
+        case 45: {  // if_target_dist: the 3D distance to the target
+            const Vec3& t = runtime_.targetPosition();
+            const float dx = t.x - obj->position.x;
+            const float dy = t.y - obj->position.y;
+            const float dz = t.z - obj->position.z;
+            return branch(obj, ins,
+                          compare(sqrtf(dx * dx + dy * dy + dz * dz), listval(op(ins, 0))));
+        }
+        case 231:  // if_move_idle_flag: the movement gave up (stuck, HandleStuck)
+            return branch(obj, ins, obj->move_command == 0 && obj->stuck_count != 0);
+        case 124:  // path_yaw_offset: the yaw added to the path's own heading
+            obj->path_yaw_offset = fval(op(ins, 0));
+            break;
+
+        // Objects and odds.
+        case 10:  // if_count_objects: the count EQUALS the operand (unlike 119's Compare)
+            return branch(obj, ins, countOthers(obj, op(ins, 0), false) == ival(op(ins, 1)));
+        case 119:  // if_count_alive: live objects of the arena of a type
+            return branch(obj, ins, compare((float)countOthers(obj, op(ins, 0), true),
+                                            listval(op(ins, 1))));
+        case 123:  // if_not_in_player_arena
+            return branch(obj, ins, obj->arena != runtime_.currentArena());
+        case 47:  // if_chance: percent per tick
+            return branch(obj, ins, runtime_.rng().next(10000) < fval(op(ins, 0)) * 100.0f);
+        case 222:  // if_opcode_count: this object's opcodes executed this frame
+            return branch(obj, ins, compare((float)opcodeCount_, listval(op(ins, 0))));
+        case 187: {  // random_kick: a shove in a random direction
+            /* @vfp-exempt R6 — cold kick path; glibc cosf/sinf match the C#'s
+             * MathF.Cos/Sin bit-for-bit on this machine (probed), and the
+             * conversion is .NET's left-associative spelling; the RNG draws are
+             * taken in the C#'s evaluation order (angle, length, then height).
+             * measured n/a (cold). Verified 2026-10-23. */
+            const float angle = runtime_.rng().nextSingle() * 360.0f;
+            const float mult = 0.5f + runtime_.rng().nextSingle();
+            const float rad = angle * 3.14159265358979323846f / 180.0f;
+            const float kickX = cosf(rad) * fval(op(ins, 0)) * mult;
+            const float kickY = sinf(rad) * fval(op(ins, 0)) * mult;
+            const float kickZ = fval(op(ins, 1)) * (0.5f + runtime_.rng().nextSingle());
+            obj->velocity.x += kickX;
+            obj->velocity.y += kickY;
+            obj->velocity.z += kickZ;
+            break;
+        }
+
+        // The World's Most Interesting Bomb (Items.Bomb; null until the Items slice).
+        case 165: {  // if_no_bomb
+            const MdkObject* bomb =
+                runtime_.itemsBomb != nullptr && !runtime_.itemsBomb->dead ? runtime_.itemsBomb
+                                                                          : nullptr;
+            return branch(obj, ins, bomb == nullptr);
+        }
+        case 166: {  // if_bomb_visible: a clear line from 5 above to 5 above the bomb
+            const MdkObject* bomb =
+                runtime_.itemsBomb != nullptr && !runtime_.itemsBomb->dead ? runtime_.itemsBomb
+                                                                          : nullptr;
+            bool sees = false;
+            if (bomb != nullptr) {
+                const float kSightHeight = 5.0f;
+                Vec3 from{obj->position.x, obj->position.y, obj->position.z + kSightHeight};
+                Vec3 to{bomb->position.x, bomb->position.y, bomb->position.z + kSightHeight};
+                sees = runtime_.raycastClear(from, to);
+            }
+            return branch(obj, ins, sees);
+        }
+        case 236: {  // if_no_floor_at: no up-facing face below a point ahead
+            const float kProbeTop = 3.0f;
+            const float kDefaultDrop = 6.0f;
+            const float dx = fval(op(ins, 0));
+            const float dy = fval(op(ins, 1));
+            const float depth = fval(op(ins, 2));
+            /* @vfp-exempt R6 — the probe offset's rotation (per probing object per
+             * tick); glibc sinf/cosf match the C#'s MathF.SinCos bit-for-bit on this
+             * machine (probed), and the conversion is .NET's left-associative
+             * spelling; a LUT would move the probe point. measured n/a (corpus
+             * empty). Verified 2026-10-23. */
+            const float s = sinf(obj->yaw * 3.14159265358979323846f / 180.0f);
+            const float c = cosf(obj->yaw * 3.14159265358979323846f / 180.0f);
+            Vec3 top;
+            top.x = obj->position.x + (-dx * c - dy * s);
+            top.y = obj->position.y + (-dy * c - dx * s);
+            top.z = obj->position.z + kProbeTop;
+            const float bottom = depth != 0.0f ? obj->position.z + depth : top.z - kDefaultDrop;
+            Vec3 down = top;
+            down.z = bottom;
+            return branch(obj, ins, !runtime_.crossesFloor(obj->arena, top, down));
+        }
+
+        // Movement commands.
+        case 43:  // move_near_target (only in Kurt's arena)
+            if (obj->arena == runtime_.currentArena()) {
+                runtime_.startMove(obj, 43,
+                                   runtime_.nearTargetDestination(obj, fval(op(ins, 0)),
+                                                                  fval(op(ins, 1))));
+            }
+            break;
+        case 75:  // stop_motion
+            obj->move_command = 0;
+            break;
+
+        // Flags.
+        case 23:  // set_flag148_1 (clearing it also stops the roll)
+            if (ival(op(ins, 0)) != 0) {
+                obj->flags |= 1;
+            } else {
+                obj->flags &= ~1;
+                obj->roll = 0.0f;
+            }
+            break;
+        case 176:  // if_flag_40000: the pickup was collected
+            return branch(obj, ins, (obj->flags & MdkObject::FlagCollected) != 0);
 
         // Conditions.
         case 96: {  // if_kurt_in_rect

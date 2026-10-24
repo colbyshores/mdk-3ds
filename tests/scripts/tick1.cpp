@@ -85,12 +85,16 @@ std::string dumpTable(int level, int ticks, scripts::ScriptRuntime& runtime) {
     std::string out;
     char line[512];
     snprintf(line, sizeof(line), "level=%d ticks=%d seed=1 currentArena=%s objects=%d\n", level,
-             ticks, runtime.currentArena().c_str(), (int)runtime.objects().size());
+             ticks, runtime.currentArena().c_str(), runtime.objectCount());
     out += line;
     int index = 0;
     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
          it != runtime.objects().end(); ++it, ++index) {
         const scripts::MdkObject& o = *it;
+        if (runtime.isRemoved(&o)) {
+            index--;  // the oracle's list does not contain removed objects
+            continue;
+        }
         snprintf(line, sizeof(line),
                  "%03d type=%s arena=%s pos=(%.4f,%.4f,%.4f) yaw=%.4f hp=%d flags=0x%08X dead=%d "
                  "move=%d/%d connects=%s path=%d/%.4f/%.4f/%d\n",
@@ -121,7 +125,7 @@ std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
     std::string out;
     char line[512];
     snprintf(line, sizeof(line), "SCRIPT level=%d ticks=%d seed=1 currentArena=%s objects=%d\n",
-             level, ticks, runtime.currentArena().c_str(), (int)runtime.objects().size());
+             level, ticks, runtime.currentArena().c_str(), runtime.objectCount());
     out += line;
     const std::array<float, 4>& g = runtime.globalVariables;
     snprintf(line, sizeof(line), "GVAR %.4f %.4f %.4f %.4f\n", g[0], g[1], g[2], g[3]);
@@ -130,6 +134,10 @@ std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
          it != runtime.objects().end(); ++it, ++index) {
         const scripts::MdkObject& o = *it;
+        if (runtime.isRemoved(&o)) {
+            index--;  // the oracle's list does not contain removed objects
+            continue;
+        }
         snprintf(line, sizeof(line),
                  "OBJ %03d type=%s sflags=0x%08X vars=%.4f,%.4f,%.4f,%.4f restart=%d wait=%.4f "
                  "wresume=%d death=%d cmdtgt=%d gret=%s gres=%s timers=%.4f,%.4f,%.4f,%.4f,%.4f\n",
@@ -161,11 +169,9 @@ int main() {
     // path-following, gravity free-fall, the BSP footing sweep, and the
     // face_target / turn_to_yaw turning opcodes. A level/tick is added here only
     // once its whole table matches the oracle byte for byte. The deeper ticks still
-    // differ and are deferred to their own slices: the movement commands (move=78,
-    // the walking/chasing enemies on L6/L8), the pickup behaviour (FlagLanded /
-    // chute / hover on the SW_* pickups, and their removal once collected), the
-    // object-removal path (the oracle drops collected pickups from the table), and
-    // the libm atan2 1-ULP that moves a path object's yaw in the 4th decimal (L3 XF).
+    // differ and are deferred to their own slices: the walking/chasing enemies'
+    // stuck detection and replanning (DetectStuck/HandleStuck), the combat and
+    // death paths, and the transient object effects (projectiles, explosions).
     struct Case {
         int level;
         int ticks;
@@ -179,9 +185,22 @@ int main() {
         // The XGEN spawner's aliens: the countdown (add_var_dt) opens the spawn at
         // ~t119, and the spawned XG runs its spawn script, lands (footing), and walks
         // off with set_move_x (command 88) — the tables at t240/t300 keep matching
-        // while it moves. L5_t180 is excluded: its XS hits the documented glibc vs
-        // .NET atan2f 1-ULP in the yaw's 4th decimal (same as L3_t3's XF).
+        // while it moves.
         {5, 120}, {5, 240}, {5, 300},
+        // With .NET's degree/radian conversions spelled left-associatively (the
+        // constant-folded forms are 1 ULP off at many inputs) the yaws are
+        // bit-exact, so the previously-excluded cases match: L5_t180 and L3_t3
+        // (their 4th-decimal yaw shifts), L8_t2+ (the walk planner's detour picked
+        // a different waypoint off the ULP), and every level runs green to t300
+        // except where the walk's stuck/replan slice begins to matter (L8_t120's
+        // table, L3_t300's XS, and past t300).
+        {3, 3}, {3, 4}, {3, 5}, {3, 6}, {3, 10}, {3, 15}, {3, 30}, {3, 60}, {3, 120},
+        {4, 25}, {4, 30}, {4, 40}, {4, 60}, {4, 120}, {4, 300},
+        {5, 180},
+        {6, 120}, {6, 300},
+        {7, 120}, {7, 300},
+        {8, 2}, {8, 3}, {8, 4}, {8, 5}, {8, 6}, {8, 10}, {8, 15}, {8, 20}, {8, 25}, {8, 30},
+        {8, 40}, {8, 60},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         int level = cases[c].level;
@@ -227,7 +246,7 @@ int main() {
 
         if (got == expected) {
             printf("PASS L%d_t%d: table matches the oracle (%d objects)\n", level, ticks,
-                   (int)runtime.objects().size());
+                   runtime.objectCount());
         } else {
             printf("FAIL L%d_t%d: table differs\n--- got ---\n%s--- expected ---\n%s", level, ticks,
                    got.c_str(), expected.c_str());
@@ -281,14 +300,10 @@ int main() {
         }
     }
 
-    // Footing (the BSP sweep that stops a gravity object on a floor). A whole-table
-    // L3_t3 golden is blocked by two SEPARATE slices, not by footing itself: the
-    // path object XF's yaw differs by 1 in the 4th decimal (atan2f vs MathF.Atan2,
-    // a libm ULP), and SW_H01 starts a tick already penetrating its floor and the
-    // shared Bsp::sweepBox resolves a straddling box downward where the original
-    // pushes it up (a Kurt-affecting sweep-fidelity slice). The clean landings below
-    // prove the footing physics: each XG rests on its arena floor exactly as the
-    // oracle, with velocity.Z zeroed so it stays put on later ticks.
+    // Footing (the BSP sweep that stops a gravity object on a floor). The L3_t3
+    // table is now a whole-table golden; the footing probes below pin the clean
+    // landings directly: each XG rests on its arena floor exactly as the oracle,
+    // with velocity.Z zeroed so it stays put on later ticks.
     {
         LevelData levelData;
         if (LevelData::load(&levelData, &data, 3)) {
@@ -416,9 +431,7 @@ int main() {
     // Pickup landing (UpdatePickup -> Fall). L7_t3 proves the Runner (SW_H150) lands
     // with hover 0, but that does not exercise the Z += hover arithmetic. SW_H01 is a
     // normal pickup that lands on the floor at tick 3 with hover 1.5 (z 103.95 ->
-    // 105.45) and FlagLanded set, so it verifies the non-Runner landing path. (The whole
-    // L3_t3 table is not a golden: its XF path-turn yaw differs from the oracle by the
-    // documented glibc-vs-.NET atan2f 1-ULP, unrelated to the pickup.)
+    // 105.45) and FlagLanded set, so it verifies the non-Runner landing path.
     {
         LevelData levelData;
         if (LevelData::load(&levelData, &data, 3)) {

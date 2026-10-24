@@ -114,7 +114,14 @@ public:
     ArenaState& getArenaState(const std::string& arena);
     void setGroupState(const std::string&, int32_t, int32_t) {}  // triangle groups: later slice
     void kill(MdkObject* obj);
+    // C# Remove: the object leaves the object list (Dead set, then removed). The
+    // C++ deque keeps its slot — every held pointer stays valid — so the object
+    // is marked removed here and every reference to it is dropped; the readable
+    // list (isRemoved) skips it, matching the C# list exactly. Kill, in
+    // contrast, leaves the object dead but PRESENT.
     void remove(MdkObject* obj);
+    // Whether the object was removed (no longer one of the C#'s Objects).
+    bool isRemoved(const MdkObject* obj) const;
     const Vec3& kurtPosition() const { return kurtPosition_; }
     const Vec3& targetPosition() const { return targetPosition_; }
     void selectTarget(MdkObject* obj);
@@ -130,6 +137,18 @@ public:
     // A move command's near-target destination (command 43): forward/side metres off
     // the target, scaled by 1% of the distance to it (C# NearTargetDestination).
     Vec3 nearTargetDestination(const MdkObject* obj, float forward, float side);
+    // MdkObject.YawTo: the compass yaw (degrees, [0, 360)) from the object to a
+    // point — the fmod wrap, not ScriptMath.Wrap360's floor form.
+    float yawTo(const MdkObject* obj, const Vec3& point) const;
+    // CrossesFloor (0x421708's floor probe): whether an up-facing face of the
+    // arena crosses the segment. False when the arena has no BSP, as the C#.
+    bool crossesFloor(const std::string& arena, const Vec3& from, const Vec3& to);
+    // Raycast (0x421680) as its hit/no-hit answer: whether the segment is clear
+    // of every triangle of the active arenas (the C# Raycast's null test).
+    bool raycastClear(const Vec3& from, const Vec3& to);
+    // C# MayCommand (command_objects / if_count_objects): the receiver has no
+    // other leader of a higher priority and obeys the sender's priority.
+    static bool mayCommand(const MdkObject* sender, const MdkObject* receiver);
     const formats::Model* findModel(const std::string& arena, const std::string& type);
     // Animation playback (MdkObject.PlayAnimation/AdvanceAnimation). The animation
     // operand of anim_once/anim_loop (GetAnimation 0x442e50): a CMI-stored animation
@@ -156,9 +175,15 @@ public:
     int32_t globalFlags = 0;
     std::array<float, 4> globalVariables{{0.0f, 0.0f, 0.0f, 0.0f}};
     int32_t option = 0;  // the driver sets 0 (the oracle's Option)
+    // Items.Bomb: the World's Most Interesting Bomb Kurt threw. The Items
+    // subsystem is a later slice, so this stays null until it lands, which is
+    // what the C# reads when no bomb is in play (if_no_bomb / if_bomb_visible).
+    MdkObject* itemsBomb = nullptr;
 
     // ---- Readable state (the driver dumps these) ----
     const std::string& currentArena() const { return currentArena_; }
+    // The C# Objects.Count: the objects minus the removed ones.
+    int32_t objectCount() const { return (int32_t)objects_.size() - (int32_t)removed_.size(); }
     // Diagnostic: opcodes the scripts reached that this VM does not implement yet.
     const std::vector<std::pair<int32_t, int32_t>>& unimplemented() const {
         return vm_.unimplemented();
@@ -202,7 +227,6 @@ private:
     void planMove(MdkObject* obj);
     // Raycast (0x421680): whether any triangle of the active arenas crosses the
     // segment. Only the hit/no-hit answer is used by the move planner.
-    bool raycastClear(const Vec3& from, const Vec3& to);
     // The pickup half of ObjectMotion.Update (UpdatePickup 0x43d8f0), run after
     // ApplyVelocity for a FlagPickup object. A falling pickup lands on floor contact
     // (Fall), or — once it reaches terminal speed — clamps its fall and opens its
@@ -222,6 +246,8 @@ private:
     std::map<int32_t, formats::ModelAnimation> animations_;
 
     std::deque<MdkObject> objects_;
+    // The removed (C# Objects.Remove) objects, still in their deque slots.
+    std::vector<MdkObject*> removed_;
     std::map<std::string, ArenaState> arenas_;
     std::map<std::string, formats::Model> modelCache_;  // global models, stable addresses
     int32_t nextInstance_ = 0;
