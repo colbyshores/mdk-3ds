@@ -176,6 +176,12 @@ int main() {
         {4, 15}, {5, 15}, {6, 15}, {7, 15}, {4, 20}, {5, 20}, {6, 20}, {7, 20},
         {5, 25}, {6, 25}, {7, 25}, {5, 30}, {6, 30}, {7, 30},
         {5, 40}, {6, 40}, {7, 40}, {5, 60}, {6, 60}, {7, 60},
+        // The XGEN spawner's aliens: the countdown (add_var_dt) opens the spawn at
+        // ~t119, and the spawned XG runs its spawn script, lands (footing), and walks
+        // off with set_move_x (command 88) — the tables at t240/t300 keep matching
+        // while it moves. L5_t180 is excluded: its XS hits the documented glibc vs
+        // .NET atan2f 1-ULP in the yaw's 4th decimal (same as L3_t3's XF).
+        {5, 120}, {5, 240}, {5, 300},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         int level = cases[c].level;

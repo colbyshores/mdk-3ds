@@ -1,0 +1,7 @@
+level=5 ticks=120 seed=1 currentArena=MUSE_1 objects=6
+000 type=XGEN arena=MUSE_1 pos=(1.5000,1.3000,-3.0000) yaw=0.0000 hp=300 flags=0x00000000 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+001 type=XS arena=MUSE_1 pos=(-211.7357,-952.0000,-276.9321) yaw=348.6414 hp=400 flags=0x0000000C dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+002 type=XS arena=MUSE_1 pos=(197.7357,-952.0000,-276.9321) yaw=188.8501 hp=400 flags=0x0000000C dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+003 type=SW_DUMMY arena=MUSE_1 pos=(-38.0000,-988.0000,-159.9642) yaw=0.0000 hp=100 flags=0x002008A6 dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1
+004 type=SW_CHUTE arena=MUSE_1 pos=(-38.0000,-988.0000,-159.9642) yaw=0.0000 hp=100 flags=0x00000820 dead=0 move=74/0 connects= path=0/0.0000/1.0000/-1
+005 type=XG arena=MUSE_1 pos=(-1.9398,-49.8619,32.4516) yaw=266.1536 hp=60 flags=0x0000000E dead=0 move=0/0 connects= path=0/0.0000/1.0000/-1

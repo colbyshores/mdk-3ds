@@ -1,0 +1,9 @@
+SCRIPT level=7 ticks=20 seed=1 currentArena=DANT_1 objects=7
+GVAR 0.0000 0.0000 0.0000 0.0000
+OBJ 000 type=X7DOOR sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=2540 wait=0.0000 wresume=2529 death=0 cmdtgt=2529 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 001 type=BEAMS sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 002 type=BEAMS sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 003 type=BEAMS sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=2498 wait=0.9000 wresume=2514 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 004 type=XTURBINE sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 005 type=XTURBINE sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 006 type=SW_H150 sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000

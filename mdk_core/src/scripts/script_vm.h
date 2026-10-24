@@ -62,6 +62,11 @@ private:
 
     int32_t execute(MdkObject* obj, const formats::Instruction& ins);
 
+    // command_objects (opcode 4): parses the command operand, the branch action (a
+    // goto command's target) or the near-target offset, the selector and the args,
+    // and hands them to the runtime (C# CommandObjects, ScriptVm.cs:2178).
+    void commandObjects(MdkObject* obj, const formats::Instruction& ins);
+
     int32_t branch(MdkObject* obj, const formats::Instruction& ins, bool condition);
     int32_t gotoTarget(MdkObject* obj, int32_t target);
     int32_t gosub(MdkObject* obj, int32_t returnPc, int32_t target);

@@ -7,6 +7,7 @@
 #include <math.h>
 #include <string.h>
 
+#include "formats/bin_reader.h"
 #include "formats/dti.h"
 #include "formats/model_animation.h"
 #include "game/bsp.h"
@@ -36,6 +37,46 @@ const float kDegToRad = 3.14159265358979323846f / 180.0f;
 // .NET RadiansToDegrees multiplies by (180f / MathF.PI); dividing by kDegToRad is
 // not bit-equivalent (separately rounded reciprocal), so keep the multiply factor.
 const float kRadToDeg = 180.0f / 3.14159265358979323846f;
+
+// Case-insensitive string equality (the C#'s Equals(OrdinalIgnoreCase) / Is).
+static bool iequalsType(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); i++) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'A' && ca <= 'Z') {
+            ca = (char)(ca - 'A' + 'a');
+        }
+        if (cb >= 'A' && cb <= 'Z') {
+            cb = (char)(cb - 'A' + 'a');
+        }
+        if (ca != cb) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// MathF.Round's single-argument form (MidpointRounding.ToEven): exact halves go
+// to the EVEN neighbour. C roundf is halves-away-from-zero and disagrees at
+// every N.5, which would move the animation's frame clock a frame off the
+// oracle (ScriptMath.Round is a DIFFERENT helper: it passes AwayFromZero, and
+// the plain MathF.Round here is a deliberate banker's round).
+static int32_t roundToEven(float v) {
+    if (v != v) {
+        return 0;
+    }
+    const float f = floorf(v);
+    const float d = v - f;
+    if (d > 0.5f) {
+        return (int32_t)f + 1;
+    }
+    if (d < 0.5f) {
+        return (int32_t)f;
+    }
+    return ((int32_t)f & 1) != 0 ? (int32_t)f + 1 : (int32_t)f;
+}
 
 // ScriptMath.WrapAngle: an angle folded into [-180, 180).
 float wrapAngle(float degrees) {
@@ -195,6 +236,11 @@ void ScriptRuntime::runTick() {
         if (!live) {
             continue;
         }
+        // A door's behaviour runs BEFORE its script (ScriptRuntime.cs:970-973), so
+        // the script's if_flag_clear sees the state the door engine just wrote.
+        if ((obj->flags & MdkObject::FlagDoor) != 0) {
+            updateDoor(obj);
+        }
         vm_.run(obj);
         // The path-following half of Motion.Update, gated on liveness exactly as
         // the C# (Vm.Run then `if (!Dead) Motion.Update`): a script that kills the
@@ -209,6 +255,22 @@ void ScriptRuntime::runTick() {
             if (!obj->dead && obj->effect_frames == 0 && obj->thrown_kind <= 0 &&
                 (obj->flags & MdkObject::FlagPickup) != 0) {
                 motionPickup(obj);
+            }
+            // AdvanceAnimation (ObjectMotion.cs:132), after ApplyVelocity and the
+            // pickup dispatch. An effect object returned from Update before this
+            // point, so it never advances an animation here.
+            if (!obj->dead && obj->effect_frames == 0) {
+                float time = obj->animation_time;
+                advanceAnimation(obj, kTick);
+                // The frame sound (ObjectMotion.cs:133): fired once when the frame
+                // clock crosses its frame. PlaySound itself is not ported (no mixer);
+                // the trigger clears the request exactly as the C# does.
+                if (!obj->frame_sound.empty() && obj->animation != nullptr &&
+                    time < (float)obj->frame_sound_frame &&
+                    (float)obj->frame_sound_frame <= time + kTick * obj->animation_rate *
+                                                           obj->animation->speed) {
+                    obj->frame_sound.clear();
+                }
             }
         }
     }
@@ -366,8 +428,7 @@ void ScriptRuntime::spawnConnector(MdkObject* obj, const std::string& type, cons
     }
     door->flags |= kDoorFlags;
     door->connects = otherArena;
-    // Behaviors.SetupDoor sets DoorState/LockParts/HatchParts from the model's part
-    // list; none are golden-state fields, so the part scan lands with the door slice.
+    setupDoor(door);
 }
 
 int32_t ScriptRuntime::pathKeyCount(int32_t path) {
@@ -796,6 +857,37 @@ void ScriptRuntime::followAttachment(MdkObject* obj) {
     obj->pitch = other->pitch;
 }
 
+// ObjectMotion.MoveForward (command 88, set_move_x): accelerate to the max speed
+// (or to a stop, parameter 0) and push along the yaw — and the pitch, when the
+// object is not held on the ground by gravity.
+void ScriptRuntime::moveForward(MdkObject* obj) {
+    const float targetSpeed = obj->move_parameter != 0 ? obj->max_speed : 0.0f;
+    if (obj->speed > targetSpeed) {
+        obj->speed = fmaxf(obj->speed - obj->deceleration * kTick, targetSpeed);
+    } else if (obj->speed < targetSpeed) {
+        obj->speed = fminf(obj->speed + obj->acceleration * kTick, targetSpeed);
+    }
+    const Vec3 direction = fromAngle(obj->yaw);
+    if ((obj->flags & MdkObject::FlagGravity) != 0) {
+        obj->push.x += obj->speed * direction.x;
+        obj->push.y += obj->speed * direction.y;
+    } else {
+        /* @vfp-exempt R6 — MoveForward's pitch push (per moving object per tick);
+         * libm sinf/cosf track the C# oracle's MathF.SinCos to within 1 ULP,
+         * below the golden table's %.4f precision; the fastSin/fastCos LUT's error
+         * is far larger and would move those values. measured n/a (corpus empty).
+         * Verified 2026-10-23. */
+        const float s = sinf(obj->pitch * kDegToRad);
+        const float c = cosf(obj->pitch * kDegToRad);
+        obj->push.x += direction.x * c * obj->speed;
+        obj->push.y += direction.y * c * obj->speed;
+        obj->push.z += s * obj->speed;
+    }
+    if (obj->move_parameter == 0 && obj->speed == targetSpeed) {
+        obj->move_command = 0;
+    }
+}
+
 // UpdateCommand (0x45a7d4): the walk/fly dispatch for a commanded object. Only
 // move_to (78) is dispatched by the VM so far; the stuck detect/replan is a later
 // slice and does not affect the first commanded ticks.
@@ -804,6 +896,11 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
         case 74:
             followAttachment(obj);
             break;
+        case 88:  // MoveForward (command of set_move_x): straight along the yaw
+            moveForward(obj);
+            break;
+        case 43:   // move to a destination (command_objects 43):
+        case 197:  // the same walk/fly handling as move_to (ObjectMotion.cs:338)
         case 78: {
             bool walking = (obj->flags & MdkObject::FlagGravity) != 0;
             if (walking) {
@@ -1024,6 +1121,300 @@ Box ScriptRuntime::poseBounds(const MdkObject* obj) {
     return have ? result : model->bounds;
 }
 
+// GetAnimation (0x442e50): a CMI-stored animation parsed once per offset and kept,
+// or — when the record's first u32 is 0 — the arena animation named by its 8 chars.
+// The 1996 demo's file animations (IsBeta) are not reachable: the runtime always
+// builds the retail decoder.
+const formats::ModelAnimation* ScriptRuntime::getAnimation(MdkObject* obj, int32_t offset) {
+    if (offset == 0) {
+        return nullptr;
+    }
+    const std::vector<uint8_t>& bytes = cmi_->bytes();
+    if (offset >= 0 && offset + 4 <= (int32_t)bytes.size()) {
+        uint32_t first = 0;
+        memcpy(&first, &bytes[offset], sizeof(first));
+        if (first == 0) {
+            char name[9] = {0};
+            formats::binAscii(bytes.data(), offset + 4, 8, name);
+            const formats::Arena* arena = level_->mto().has(obj->arena) ? level_->mto().getArena(obj->arena)
+                                                                        : nullptr;
+            return arena != nullptr ? arena->animation(name) : nullptr;
+        }
+    }
+    std::map<int32_t, formats::ModelAnimation>::iterator it = animations_.find(offset);
+    if (it != animations_.end()) {
+        return &it->second;
+    }
+    char name[24];
+    snprintf(name, sizeof(name), "CMI_%x", (unsigned)offset);
+    formats::ModelAnimation animation;
+    if (!formats::ModelAnimation::parse(&animation, name, bytes.data(), (int32_t)bytes.size(), offset)) {
+        return nullptr;
+    }
+    std::pair<std::map<int32_t, formats::ModelAnimation>::iterator, bool> inserted =
+        animations_.emplace(offset, std::move(animation));
+    return &inserted.first->second;
+}
+
+// MdkObject.PlayAnimation: a loop sets FlagLoop; replaying the same live animation
+// only clears a hold frame, otherwise the animation restarts from frame 0.
+void ScriptRuntime::playAnimation(MdkObject* obj, const formats::ModelAnimation* animation, bool loop) {
+    if (loop) {
+        obj->flags |= MdkObject::FlagLoop;
+    } else {
+        obj->flags &= ~MdkObject::FlagLoop;
+    }
+    if (animation == obj->animation && obj->animation_end_frame != MdkObject::AnimationEnded) {
+        if (obj->animation_end_frame >= 0) {
+            obj->animation_end_frame = MdkObject::NoHoldFrame;
+        }
+        return;
+    }
+    obj->animation = animation;
+    obj->animation_time = 0.0f;
+    obj->animation_frame = 0;
+    obj->animation_end_frame = animation != nullptr ? MdkObject::NoHoldFrame : MdkObject::AnimationEnded;
+}
+
+// MdkObject.AdvanceAnimation (object_anim_update): the frame clock, the hold frame,
+// the loop clamp, and the root motion of every passed frame joined into the push
+// (divided by delta so ApplyVelocity's *Dt puts it back to per-tick units).
+void ScriptRuntime::advanceAnimation(MdkObject* obj, float delta) {
+    const formats::ModelAnimation* animation = obj->animation;
+    if (animation == nullptr || obj->animation_end_frame == MdkObject::AnimationEnded) {
+        return;
+    }
+    if (obj->animation_end_frame >= 0 && obj->animation_frame == obj->animation_end_frame) {
+        return;
+    }
+    int32_t count = animation->frameCount;
+    if (count <= 0) {
+        return;
+    }
+    obj->animation_time += delta * obj->animation_rate * animation->speed;
+    if (obj->animation_end_frame >= 0 && obj->animation_frame < obj->animation_end_frame &&
+        roundToEven(obj->animation_time) >= obj->animation_end_frame) {
+        obj->animation_time = (float)obj->animation_end_frame;
+    }
+    if (obj->animation_time >= (float)(count - 1)) {
+        if ((obj->flags & MdkObject::FlagLoop) != 0) {
+            if (obj->animation_time >= (float)count) {
+                obj->animation_time -= (float)count;
+            }
+        } else {
+            obj->animation_time = (float)(count - 1);
+        }
+    }
+    /* @vfp-exempt R11 — the frame wrap's modulo by the animation's frame count, a
+     * 1:1 port of the C#'s Round(AnimationTime) % count; the divisor is a small
+     * positive per-animation constant, and a restructure would risk the pinned
+     * frame sequence. measured n/a (corpus empty). Verified 2026-10-23. */
+    int32_t frame = roundToEven(obj->animation_time) % count;
+    if (frame != obj->animation_frame) {
+        int32_t step = frame > obj->animation_frame ? frame - obj->animation_frame
+                                                   : frame + count - obj->animation_frame;
+        if ((obj->flags & MdkObject::FlagNoRootMotion) != 0) {
+            step = 0;
+        }
+        for (int32_t i = 0; i < step; i++) {
+            /* @vfp-exempt R11 — the passed-frames walk's modulo by the frame count,
+             * a 1:1 port of the C#'s (AnimationFrame + 1 + i) % count; the divisor
+             * is the same small positive constant as the wrap above.
+             * measured n/a (corpus empty). Verified 2026-10-23. */
+            size_t f = (size_t)((obj->animation_frame + 1 + i) % count);
+            if (f < animation->rootMotion.size()) {
+                const Vec3f& rm = animation->rootMotion[f];
+                Vec3 turned = rotatedZ(Vec3{rm.x, rm.y, rm.z}, obj->yaw);
+                /* @vfp-exempt R11 — root motion divided by the compile-time constant
+                 * delta (1/30), matching the oracle's Push += motion/Dt bit-for-bit;
+                 * not an integer divide. measured n/a. Verified 2026-10-23. */
+                obj->push.x += turned.x / delta;
+                obj->push.y += turned.y / delta;
+                obj->push.z += turned.z / delta;
+            }
+        }
+        obj->animation_frame = frame;
+    }
+    if (obj->animation_frame == count - 1 && (obj->flags & MdkObject::FlagLoop) == 0 &&
+        obj->animation_frame != obj->animation_end_frame) {
+        obj->animation_end_frame = MdkObject::AnimationEnded;
+    }
+}
+
+// MdkObject.RestartAnimation: starts from frame 0 even when already playing.
+void ScriptRuntime::restartAnimation(MdkObject* obj, const formats::ModelAnimation* animation,
+                                     bool loop) {
+    obj->animation = nullptr;
+    playAnimation(obj, animation, loop);
+}
+
+// The door state bits (ObjectBehaviors): the low 4 are the engine's, the rest the
+// scripts' (door_set_flags writes only them).
+static const int32_t kDoorOpen = 0x1;
+static const int32_t kDoorOpening = 0x2;
+static const int32_t kDoorClosing = 0x4;
+static const int32_t kDoorClosed = 0x8;
+static const int32_t kDoorOpenNotSolid = 0x10;
+static const int32_t kDoorStaysOpen = 0x20;
+static const int32_t kDoorLocked = 0x40;
+static const int32_t kDoorLockHidden = 0x100;
+static const int32_t kDoorScriptBits = 0xF0;
+static const int32_t kDoorOpenKept = 0x70;
+
+// MdkObject.IsAnimationDone, as the runtime reads it (the VM has its own copy).
+static bool animationDone(const MdkObject* obj) {
+    return obj->animation == nullptr || obj->animation_end_frame == MdkObject::AnimationEnded;
+}
+
+// ObjectBehaviors.MoveDoor (0x43ca00): a door seen from its other side turns around,
+// so it stays live, solid and drawn in Kurt's arena after the arena behind it goes.
+static void moveDoor(MdkObject* obj) {
+    std::string arena = obj->arena;
+    obj->arena = obj->connects;
+    obj->connects = arena;
+    obj->yaw += 180.0f;
+    if (obj->yaw >= 360.0f) {
+        obj->yaw -= 360.0f;
+    }
+}
+
+// ObjectBehaviors.ShowBehind: the arena the door connects to — or its own, when it
+// connects to nothing — shows when the door opens.
+void ScriptRuntime::showBehindDoor(MdkObject* obj) {
+    for (int side = 0; side < 2; side++) {
+        const std::string& arena = side == 0 ? obj->connects : obj->arena;
+        if (arena.empty() || arena == currentArena_ ||
+            (secondActive_ && arena == secondArena_)) {
+            continue;
+        }
+        showArena(arena);
+        return;
+    }
+}
+
+// ObjectBehaviors.SetupDoor (spawn_connector): new doors are closed (0x45cdec), and
+// the masks of their LOCK and HC... parts are found by name.
+void ScriptRuntime::setupDoor(MdkObject* obj) {
+    obj->door_state = kDoorClosed;
+    obj->lock_parts = 0;
+    obj->hatch_parts = 0;
+    if (obj->model == nullptr) {
+        return;
+    }
+    const std::vector<formats::Model::Part>& parts = obj->model->partList;
+    for (size_t i = 0; i < parts.size(); i++) {
+        const std::string name = parts[i].nameString();
+        if (name == "LOCK") {
+            obj->lock_parts |= (int32_t)(1 << i);
+        } else if (name.size() >= 2 && name[0] == 'H' && name[1] == 'C') {
+            obj->hatch_parts |= (int32_t)(1 << i);
+        }
+    }
+}
+
+// ObjectBehaviors.UpdateDoor: opens when Kurt comes closer than its distance, closes
+// when he goes away. The door sounds are the audio slice's (no mixer); everything
+// else is state the golden dumps read.
+void ScriptRuntime::updateDoor(MdkObject* obj) {
+    if (obj->arena != currentArena_ && obj->connects == currentArena_) {
+        moveDoor(obj);
+    }
+
+    int32_t state = obj->door_state;
+    if ((state & kDoorOpening) != 0) {
+        if (animationDone(obj)) {
+            state = (state & kDoorOpenKept) | kDoorOpen;
+        }
+    } else if ((state & kDoorClosing) != 0 && animationDone(obj)) {
+        state = (state & kDoorScriptBits) | kDoorClosed;
+        // The closed sound plays here (obj->door_sounds[3]).
+        showArena("");  // the arena behind it goes
+    }
+
+    const float dx = kurtPosition_.x - obj->position.x;
+    const float dy = kurtPosition_.y - obj->position.y;
+    const float dz = kurtPosition_.z - obj->position.z;
+    if (sqrtf(dx * dx + dy * dy + dz * dz) >= obj->door_distance) {
+        if ((state & (kDoorClosing | kDoorClosed | kDoorStaysOpen)) == 0) {
+            restartAnimation(obj, getAnimation(obj, obj->door_animations[1]), false);
+            state = (state & kDoorScriptBits) | kDoorClosing;
+            // The closing sound plays here (obj->door_sounds[1]).
+        }
+    } else if ((state & (kDoorOpen | kDoorOpening | kDoorLocked)) == 0) {
+        restartAnimation(obj, getAnimation(obj, obj->door_animations[0]), false);
+        state = (state & kDoorScriptBits) | kDoorOpening;
+        showBehindDoor(obj);
+    }
+    obj->door_state = state;
+
+    // LOCK parts show a locked door; HC... parts hide while it's closed.
+    int32_t hidden = obj->hidden_parts;
+    if ((state & kDoorClosed) == 0) {
+        hidden = (hidden | obj->lock_parts) & ~obj->hatch_parts;
+    } else {
+        hidden |= obj->hatch_parts;
+        if ((state & kDoorLocked) != 0 && (state & kDoorLockHidden) == 0) {
+            hidden &= ~obj->lock_parts;
+        } else {
+            hidden |= obj->lock_parts;
+        }
+    }
+    obj->hidden_parts = hidden;
+    if ((state & kDoorOpenNotSolid) == 0) {
+        return;
+    }
+    obj->flags = (state & kDoorOpen) != 0 ? (obj->flags | MdkObject::FlagNotSolid)
+                                         : (obj->flags & ~MdkObject::FlagNotSolid);
+}
+
+// GetWorldBounds: the pose box's eight corners, scaled, turned by yaw, lifted, and
+// placed at the position. An object with no model is a point box at its position.
+formats::Box ScriptRuntime::worldBounds(const MdkObject* obj) {
+    formats::Box box;
+    if (obj->model == nullptr) {
+        box.min = Vec3f{obj->position.x, obj->position.y, obj->position.z};
+        box.max = box.min;
+        return box;
+    }
+    box = poseBounds(obj);
+    formats::Box world;
+    bool have = false;
+    for (int i = 0; i < 8; i++) {
+        Vec3f corner{(i & 1) != 0 ? box.max.x : box.min.x, (i & 2) != 0 ? box.max.y : box.min.y,
+                     (i & 4) != 0 ? box.max.z : box.min.z};
+        Vec3 turned = rotatedZ(Vec3{corner.x * obj->scale, corner.y * obj->scale, corner.z * obj->scale},
+                               obj->yaw);
+        Vec3 point;
+        point.x = obj->position.x + turned.x;
+        point.y = obj->position.y + turned.y;
+        point.z = obj->position.z + obj->lift() + turned.z;
+        if (!have) {
+            world.min = Vec3f{point.x, point.y, point.z};
+            world.max = world.min;
+            have = true;
+        } else {
+            if (point.x < world.min.x) world.min.x = point.x;
+            if (point.y < world.min.y) world.min.y = point.y;
+            if (point.z < world.min.z) world.min.z = point.z;
+            if (point.x > world.max.x) world.max.x = point.x;
+            if (point.y > world.max.y) world.max.y = point.y;
+            if (point.z > world.max.z) world.max.z = point.z;
+        }
+    }
+    return world;
+}
+
+// GetKurtBox: half width 0.6 in XY, height 5 from his feet.
+formats::Box ScriptRuntime::kurtBox() const {
+    const float kKurtHalfWidth = 0.6f;
+    const float kKurtHeight = 5.0f;
+    formats::Box box;
+    box.min = Vec3f{kurtPosition_.x - kKurtHalfWidth, kurtPosition_.y - kKurtHalfWidth, kurtPosition_.z};
+    box.max = Vec3f{kurtPosition_.x + kKurtHalfWidth, kurtPosition_.y + kKurtHalfWidth,
+                    kurtPosition_.z + kKurtHeight};
+    return box;
+}
+
 bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
     const float kWidthFactor = 0.25f;
     const float kMinHeight = 0.5f;
@@ -1121,6 +1512,182 @@ const Model* ScriptRuntime::findModel(const std::string& arena, const std::strin
 void ScriptRuntime::selectTarget(MdkObject*) {
     targetPosition_ = kurtPosition_;
     targetYaw_ = wrap360(kurtYaw_);
+}
+
+// C# FirstOther(obj, type, AnyInstance): the first live object of the same arena,
+// of the named type, other than obj. The type compare is case-insensitive (C# Is).
+MdkObject* ScriptRuntime::firstOther(MdkObject* obj, const std::string& type) {
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject& other = *it;
+        if (&other == obj || other.dead || other.arena != obj->arena) {
+            continue;
+        }
+        if (iequalsType(other.type_name, type)) {
+            return &other;
+        }
+    }
+    return nullptr;
+}
+
+// C# MayCommand (0x440384): the receiver has no other leader of a higher priority,
+// and obeys the sender's priority.
+static bool mayCommand(const MdkObject* sender, const MdkObject* receiver) {
+    const MdkObject* leader = receiver->leader;
+    if (leader != nullptr && leader != sender && !leader->dead &&
+        sender->priority <= leader->priority) {
+        return false;
+    }
+    return receiver->obey_level >= sender->priority;
+}
+
+// ObjectMotion.FormationPosition: the leader's frame; note the off-diagonal signs
+// are NOT the standard rotation — X uses (ox*s - oy*c) and Y uses (-oy*s - ox*c).
+static Vec3 formationPosition(const MdkObject* leader, const Vec3& offset) {
+    /* @vfp-exempt R6 — cold formation placement (command 1); libm sinf/cosf track
+     * the C# oracle's MathF.SinCos to within 1 ULP. measured n/a (cold).
+     * Verified 2026-10-23. */
+    const float s = sinf(leader->yaw * kDegToRad);
+    const float c = cosf(leader->yaw * kDegToRad);
+    Vec3 out;
+    out.x = leader->position.x + offset.x * s - offset.y * c;
+    out.y = leader->position.y - offset.y * s - offset.x * c;
+    out.z = leader->position.z + offset.z;
+    return out;
+}
+
+// C# NearTargetDestination (command 43's operand): forward/side off the target's
+// heading, scaled by 1% of the 3D distance to it, landing on the target's Z with
+// the object's height offset.
+Vec3 ScriptRuntime::nearTargetDestination(const MdkObject* obj, float forward, float side) {
+    /* @vfp-exempt R6 — cold command path; libm atan2f/sinf/cosf track the C#
+     * oracle's Mathf calls to within 1 ULP. measured n/a (cold). Verified 2026-10-23. */
+    const float direction =
+        atan2f(targetPosition_.y - obj->position.y, targetPosition_.x - obj->position.x) * kRadToDeg;
+    const float s = sinf(direction * kDegToRad);
+    const float c = cosf(direction * kDegToRad);
+    const float dx = obj->position.x - targetPosition_.x;
+    const float dy = obj->position.y - targetPosition_.y;
+    const float dz = obj->position.z - targetPosition_.z;
+    // The C# multiplies left-to-right: (rotated * 0.01f) * distance. Keeping
+    // that order matters — the destination feeds PlanMove and the goldens.
+    const float distance = sqrtf(dx * dx + dy * dy + dz * dz);
+    Vec3 out;
+    out.x = targetPosition_.x + (forward * c - side * s) * 0.01f * distance;
+    out.y = targetPosition_.y + (forward * s + side * c) * 0.01f * distance;
+    out.z = targetPosition_.z + obj->height_offset;
+    return out;
+}
+
+// One receiver of command_objects (0x4405d0). True when it joined a formation.
+bool ScriptRuntime::commandObject(MdkObject* sender, MdkObject* receiver, int32_t command,
+                                 int32_t target, const Vec3& destination, int32_t formationIndex) {
+    switch (command) {
+        case 1: {  // join a formation around the sender: places alternate left/right
+            const bool wide = iequalsType(receiver->type_name, "XE");
+            const float spread = wide ? 4.0f : 1.0f;
+            const float back = wide ? 2.5f : 1.0f;
+            const float side = (formationIndex & 1) != 0 ? 1.0f : -1.0f;
+            receiver->waypoint.x = side * (float)(formationIndex / 2 + 1) * 5.0f * spread;
+            receiver->waypoint.y = back * -4.0f;
+            receiver->waypoint.z = 8.0f;
+            receiver->move_destination = formationPosition(sender, receiver->waypoint);
+            receiver->leader = sender;
+            receiver->move_command = 1;
+            receiver->path = 0;
+            return true;
+        }
+        case 7:  // goto: the receiver's script restarts at the target
+            receiver->wait_time = 0.0f;
+            receiver->restart = target;
+            receiver->wait_resume = target;
+            receiver->leader = sender;
+            receiver->gosub_returns.clear();
+            receiver->gosub_restarts.clear();
+            receiver->level_timers[0] = 0.0f;
+            receiver->command_target = target;
+            break;
+        case 0xFC: {  // gosub: the receiver's script gosubs the target from where it is
+            if ((int32_t)receiver->gosub_returns.size() < ScriptVm::kGosubDepth) {
+                receiver->gosub_returns.push_back(receiver->restart);
+                receiver->gosub_restarts.push_back(receiver->restart);
+                receiver->wait_time = 0.0f;
+                receiver->restart = target;
+                receiver->wait_resume = target;
+                receiver->leader = sender;
+                receiver->level_timers[receiver->gosub_returns.size()] = 0.0f;
+            }
+            break;
+        }
+        case 43:  // move to a destination
+            if (receiver->arena == currentArena_) {
+                receiver->move_destination = destination;
+                receiver->leader = sender;
+                receiver->move_command = 43;
+                receiver->path = 0;
+                planMove(receiver);
+            }
+            break;
+        default:
+            break;
+    }
+    return false;
+}
+
+// command_objects (0x440384): every matching live object of the sender's arena gets
+// the command. Selectors: 2 all of a type, 3 everything, 4 the first of a type,
+// 5 a type by instance id, 6 of a type in sight, 7 the sender's followers,
+// 8 everything following the sender, 9 the linked object, 10 of a type beyond a Y.
+void ScriptRuntime::commandObjects(MdkObject* sender, int32_t command, int32_t target,
+                                  const Vec3& destination, int32_t selector,
+                                  const std::string& type, float param, int32_t id) {
+    const float kSightHeight = 8.0f;
+    if (selector == 9) {
+        if (sender->linked != nullptr && !sender->linked->dead) {
+            commandObject(sender, sender->linked, command, target, destination, 0);
+        }
+        return;
+    }
+    int32_t formationIndex = 0;
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject* receiver = &(*it);
+        if (receiver == sender || receiver->dead || receiver->arena != sender->arena) {
+            continue;
+        }
+        if (selector != 3 && selector != 8 && !iequalsType(receiver->type_name, type)) {
+            continue;
+        }
+        if (!mayCommand(sender, receiver)) {
+            continue;
+        }
+        if ((selector == 7 || selector == 8) && receiver->leader != sender) {
+            continue;
+        }
+        if (selector == 5 && receiver->instance_id != id) {
+            continue;
+        }
+        if (selector == 6) {
+            const float dx = sender->position.x - receiver->position.x;
+            const float dy = sender->position.y - receiver->position.y;
+            const float dz = sender->position.z - receiver->position.z;
+            Vec3 from{sender->position.x, sender->position.y, sender->position.z + kSightHeight};
+            Vec3 to{receiver->position.x, receiver->position.y, receiver->position.z + kSightHeight};
+            if (sqrtf(dx * dx + dy * dy + dz * dz) > param || !raycastClear(from, to)) {
+                continue;
+            }
+        }
+        if (selector == 10 && receiver->position.y < param) {
+            continue;
+        }
+        if ((command == 7 && receiver->command_target == target) || receiver->health == 0) {
+            continue;
+        }
+        if (commandObject(sender, receiver, command, target, destination, formationIndex)) {
+            formationIndex++;
+        }
+        if (selector == 4) {
+            return;
+        }
+    }
 }
 
 void ScriptRuntime::kill(MdkObject* obj) {

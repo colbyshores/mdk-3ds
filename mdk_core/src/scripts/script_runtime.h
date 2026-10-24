@@ -35,6 +35,7 @@
 
 #include "formats/cmi.h"
 #include "formats/model.h"
+#include "formats/model_animation.h"
 #include "formats/script_decoder.h"
 #include "game/arena_space.h"
 #include "game/level_data.h"
@@ -66,6 +67,7 @@ public:
     static const int32_t kIndestructible = 65000;
     static const int32_t kGroupCount = 16;
     static const float kTick;
+    static constexpr float kTicksPerSecond = 30.0f;
 
     // The level and its CMI are BORROWED and must outlive the runtime (the
     // decoder borrows the CMI's bytes, and the models borrow the level's).
@@ -116,7 +118,40 @@ public:
     const Vec3& kurtPosition() const { return kurtPosition_; }
     const Vec3& targetPosition() const { return targetPosition_; }
     void selectTarget(MdkObject* obj);
+    // The first live object of obj's arena whose type matches (C# FirstOther with
+    // instance = AnyInstance): face_mode 3 copies its yaw. Null when none.
+    MdkObject* firstOther(MdkObject* obj, const std::string& type);
+    // command_objects (opcode 4): sends a command to the matching objects of the
+    // arena (0x440384). Commands: 1 join a formation around the sender, 7 goto
+    // target, 0xFC gosub target, 43 go to a destination. The VM parses the operands
+    // (the action, the near-target offset) and calls this with the command.
+    void commandObjects(MdkObject* sender, int32_t command, int32_t target, const Vec3& destination,
+                        int32_t selector, const std::string& type, float param, int32_t id);
+    // A move command's near-target destination (command 43): forward/side metres off
+    // the target, scaled by 1% of the distance to it (C# NearTargetDestination).
+    Vec3 nearTargetDestination(const MdkObject* obj, float forward, float side);
     const formats::Model* findModel(const std::string& arena, const std::string& type);
+    // Animation playback (MdkObject.PlayAnimation/AdvanceAnimation). The animation
+    // operand of anim_once/anim_loop (GetAnimation 0x442e50): a CMI-stored animation
+    // named after its offset, or (first u32 == 0) the arena animation named in the
+    // record. The 1996 demo's file animations are not reached by the retail decoder.
+    const formats::ModelAnimation* getAnimation(MdkObject* obj, int32_t offset);
+    void playAnimation(MdkObject* obj, const formats::ModelAnimation* animation, bool loop);
+    // MdkObject.RestartAnimation: starts from frame 0 even when already playing.
+    void restartAnimation(MdkObject* obj, const formats::ModelAnimation* animation, bool loop);
+    void advanceAnimation(MdkObject* obj, float delta);
+    // Doors (ObjectBehaviors.UpdateDoor/SetupDoor): a door opens when Kurt comes
+    // closer than its distance and closes when he goes away.
+    void updateDoor(MdkObject* obj);
+    void setupDoor(MdkObject* obj);
+    // The object's pose bounds turned into the world (GetWorldBounds): the eight
+    // corners scaled, turned by yaw, lifted, and placed at the position.
+    formats::Box worldBounds(const MdkObject* obj);
+    // The bounds of the visible parts in the object's current pose (model space):
+    // the rest pose when it has no animation, else the baked animation frame.
+    formats::Box poseBounds(const MdkObject* obj);
+    // Kurt's bounding box (GetKurtBox): half-width 0.6, height 5 from his feet.
+    formats::Box kurtBox() const;
 
     int32_t globalFlags = 0;
     std::array<float, 4> globalVariables{{0.0f, 0.0f, 0.0f, 0.0f}};
@@ -131,6 +166,11 @@ public:
 
 private:
     void runTick();
+    // ObjectBehaviors.ShowBehind: the arena a door opens onto.
+    void showBehindDoor(MdkObject* obj);
+    // One receiver of command_objects (0x4405d0); true when it joined a formation.
+    bool commandObject(MdkObject* sender, MdkObject* receiver, int32_t command, int32_t target,
+                       const Vec3& destination, int32_t formationIndex);
     void runControllers();
     void spawnDtiAliens(const std::string& arena);
 
@@ -140,9 +180,6 @@ private:
     Bsp* bspOf(const std::string& arena);
     // The lowest vertex Z of the arena (C# GetArenaFloor), or -1000 when it has none.
     float getArenaFloor(const std::string& arena);
-    // The bounds of the visible parts in the object's current pose (model space):
-    // the rest pose when it has no animation, else the baked animation frame.
-    formats::Box poseBounds(const MdkObject* obj);
     // Sweeps obj's collision box by motion through its arena BSP, moves obj by the
     // swept result, and writes the contact normal. Returns whether it contacted a
     // face (C# Sweep's non-null first-contact normal).
@@ -154,6 +191,8 @@ private:
     // walks or flies a commanded object toward its waypoint, adding to push before
     // gravity/ApplyVelocity. Stuck detection/replan are a later slice.
     void updateCommand(MdkObject* obj);
+    // ObjectMotion.MoveForward (command 88, set_move_x): along the yaw/pitch.
+    void moveForward(MdkObject* obj);
     // FollowAttachment (command 74): an attached object (a pickup's chute) tracks its
     // leader's reference point and copies its yaw/pitch; it clears its command when
     // the leader is gone.
@@ -178,6 +217,9 @@ private:
     formats::ScriptDecoder decoder_;
     Random rng_;
     ScriptVm vm_;
+    // CMI-offset animations parsed on demand (C# _animations); the map nodes are
+    // stable, so pointers into it stay valid as more animations parse.
+    std::map<int32_t, formats::ModelAnimation> animations_;
 
     std::deque<MdkObject> objects_;
     std::map<std::string, ArenaState> arenas_;

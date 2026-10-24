@@ -93,6 +93,10 @@ public:
 private:
     int32_t number_ = 0;
     formats::Dti dti_;
+    // The MTO file bytes, OWNED here: the MTO borrows them, and the arenas it
+    // parses on demand (and their animations' track data) borrow them too.
+    // Declared before mto_ so it outlives it (members destroy in reverse order).
+    std::vector<uint8_t> mtoBytes_;
     formats::Mto mto_;
     formats::TextureArchive levelTextures_;
     std::vector<const formats::Arena*> arenas_;

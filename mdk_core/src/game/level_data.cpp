@@ -54,13 +54,14 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
         }
     }
 
-    // The arenas.
-    bytes.clear();
+    // The arenas. The bytes are kept in the level (mtoBytes_): the MTO and the
+    // arenas/animations it parses borrow them for the level's whole life.
+    out->mtoBytes_.clear();
     path = std::string(base) + "O.MTO";
-    if (!data->read(path, &bytes)) {
+    if (!data->read(path, &out->mtoBytes_)) {
         return false;
     }
-    out->mto_ = formats::Mto::parse(bytes.data(), (int32_t)bytes.size());
+    out->mto_ = formats::Mto::parse(out->mtoBytes_.data(), (int32_t)out->mtoBytes_.size());
     for (size_t i = 0; i < out->mto_.arenaNames().size(); i++) {
         const formats::Arena* arena = out->mto_.getArena(out->mto_.arenaNames()[i]);
         if (arena) {

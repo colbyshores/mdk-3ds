@@ -192,6 +192,9 @@ struct MdkObject {
     MdkObject* attached = nullptr; // carried along (a pickup's chute)
 
     // ---- Doors (obj+0x306..0x32a) ----
+    // ---- Door state bits (obj+0x14d): the low 4 are the engine's, the
+    // scripts set only the rest (ObjectBehaviors.DoorEngineBits) ----
+    static constexpr int32_t DoorEngineBits = 0xF;
     std::array<int32_t, 2> door_animations{{0, 0}}; // CMI offsets: open, close
     int32_t door_state = 0;
     float door_distance = 20.0f;   // Kurt opens it when closer than this
