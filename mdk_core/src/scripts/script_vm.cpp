@@ -602,6 +602,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             bool set = (getFlags(obj, ival(op(ins, 0))) & mask) != 0;
             return branch(obj, ins, ins.opcode == 71 ? set : !set);
         }
+        case 46:  // find_cover_spot
+            runtime_.findCoverSpot(obj);
+            return branch(obj, ins, obj->move_command == 43);
 
         // Spawning.
         case 86:   // spawn

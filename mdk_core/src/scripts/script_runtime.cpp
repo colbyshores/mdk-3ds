@@ -8,6 +8,8 @@
 #include <math.h>
 #include <string.h>
 
+#include <algorithm>
+
 #include "formats/bin_reader.h"
 #include "formats/dti.h"
 #include "formats/model_animation.h"
@@ -844,6 +846,65 @@ bool ScriptRuntime::canSeeKurt(MdkObject* obj, float range, float cone) {
     Vec3 from{obj->position.x, obj->position.y, obj->position.z + kEyeHeight};
     Vec3 to{kurtPosition_.x, kurtPosition_.y, kurtPosition_.z + kKurtChest};
     return raycastClear(from, to);
+}
+
+// FindCoverSpot (ScriptRuntime.cs:2447, opcode 46): a DTI cover spot (type 5) in
+// the object's arena that Kurt cannot see (a blocked ray Kurt->spot) but the
+// object can reach (a clear ray obj->spot), within [9,400] of the object, nearer
+// to the object than Kurt is, and nearer to the object than Kurt. The nearest is
+// chosen, biased nearer-first when three or more qualify. Sets MoveCommand 43 on
+// success and clears it otherwise. The single RNG draw (when any spot qualifies)
+// matches the C# one-for-one.
+void ScriptRuntime::findCoverSpot(MdkObject* obj) {
+    const int kCoverCommand = 43;
+    const uint32_t kDtiCover = 5;
+    const float kEyeHeight = 5.0f;
+    static const int kNearerFirst[] = {0, 0, 0, 1, 1, 2};
+    const int kNearerFirstCount = (int)(sizeof(kNearerFirst) / sizeof(kNearerFirst[0]));
+    auto distance = [](const Vec3& a, const Vec3& b) {
+        float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+        return sqrtf(dx * dx + dy * dy + dz * dz);
+    };
+    float toKurt = distance(obj->position, kurtPosition_);
+    Vec3 kurtEye{kurtPosition_.x, kurtPosition_.y, kurtPosition_.z + kEyeHeight};
+    Vec3 objEye{obj->position.x, obj->position.y, obj->position.z + kEyeHeight};
+    std::vector<Vec3> spots;
+    const formats::Dti::ArenaEntry* entry = level_->entryNamed(obj->arena);
+    if (entry != nullptr) {
+        for (const formats::Dti::Record& record : entry->records) {
+            if (record.type != kDtiCover) {
+                continue;
+            }
+            Vec3 spot{record.position[0], record.position[1], record.position[2]};
+            float dist = distance(obj->position, spot);
+            if (dist < 9.0f || dist > 400.0f || dist > toKurt ||
+                distance(spot, kurtPosition_) >= toKurt) {
+                continue;
+            }
+            Vec3 spotEye{spot.x, spot.y, spot.z + kEyeHeight};
+            if (raycastClear(kurtEye, spotEye) || !raycastClear(objEye, spotEye)) {
+                continue;
+            }
+            spots.push_back(spot);
+        }
+    }
+    obj->move_command = 0;
+    if (spots.empty()) {
+        return;
+    }
+    std::sort(spots.begin(), spots.end(), [&](const Vec3& a, const Vec3& b) {
+        return distance(obj->position, a) < distance(obj->position, b);
+    });
+    int choice = (int)spots.size() >= 3 ? kNearerFirst[rng_.next(kNearerFirstCount)]
+                                        : rng_.next((int)spots.size());
+    if (choice > (int)spots.size() - 1) {
+        choice = (int)spots.size() - 1;
+    }
+    const Vec3& destination = spots[choice];
+    obj->move_command = kCoverCommand;
+    obj->move_destination = destination;
+    obj->waypoint = destination;
+    obj->path = 0;
 }
 
 // PlanMove (0x45a434): head straight for the destination when a ray clears it, else

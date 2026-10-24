@@ -156,6 +156,10 @@ public:
     // Raycast (ScriptRuntime.cs:2886) with its answer: the NEAREST arena hit
     // point across the ray arenas (nearest by distance-squared, as the C#).
     bool raycastPoint(const Vec3& from, const Vec3& to, Vec3* out);
+    // FindCoverSpot (ScriptRuntime.cs:2447, opcode 46): pick a DTI cover spot in
+    // the object's arena that Kurt cannot see but the object can reach, and command
+    // a walk to it (MoveCommand 43). Clears MoveCommand when no spot qualifies.
+    void findCoverSpot(MdkObject* obj);
     // C# MayCommand (command_objects / if_count_objects): the receiver has no
     // other leader of a higher priority and obeys the sender's priority.
     static bool mayCommand(const MdkObject* sender, const MdkObject* receiver);
