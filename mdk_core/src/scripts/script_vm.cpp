@@ -1268,6 +1268,80 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.setGroupState(obj->arena, ival(op(ins, 0)), ival(op(ins, 1)));
             break;
 
+        // --- Opcodes ported in the Phase 2 coverage audit (faithful to ScriptVm.cs). ---
+        case 79:  // set_pos: place the object at the operand position
+            obj->position = vpos(ins);
+            break;
+        case 211:  // stop_velocity: zero this frame's velocity
+            obj->velocity.x = obj->velocity.y = obj->velocity.z = 0.0f;
+            break;
+        case 120:  // set_pitch: snap the pitch to the operand
+            obj->pitch = fval(op(ins, 0));
+            break;
+        case 122:  // turn_pitch: turn toward a goal pitch by at most rate*Dt
+            {
+                const float maxStep = fval(op(ins, 0)) * kDt;
+                float step = wrapAngle(fval(op(ins, 1)) - obj->pitch);
+                // Math.Clamp spelled with the C#'s comparisons: a NaN step stays NaN.
+                step = step < -maxStep ? -maxStep : (step > maxStep ? maxStep : step);
+                obj->pitch += step;
+            }
+            break;
+        case 56:  // add_health: heal/damage unless indestructible; a kill yields
+            if (obj->health < 65000) {  // C# ScriptRuntime.Indestructible
+                obj->health += ival(op(ins, 0));
+                if (obj->health <= 0) {
+                    runtime_.kill(obj);
+                    return kYield;
+                }
+            }
+            break;
+        case 160:  // if_yaw: compare the wrapped yaw against the operand condition
+            return branch(obj, ins, compare(wrap360(obj->yaw), listval(op(ins, 0))));
+        case 185:  // if_speed: compare the scalar speed
+            return branch(obj, ins, compare(obj->speed, listval(op(ins, 0))));
+        case 38:  // if_vel_z: compare the vertical velocity
+            return branch(obj, ins, compare(obj->velocity.z, listval(op(ins, 0))));
+        case 127:  // if_health: compare the health
+            return branch(obj, ins, compare((float)obj->health, listval(op(ins, 0))));
+        case 103: {  // if_kurt_in_box: each axis between its min and max
+            const Vec3& k = runtime_.kurtPosition();
+            bool inside = k.x >= fval(op(ins, 0)) && k.x <= fval(op(ins, 3)) &&
+                          k.y >= fval(op(ins, 1)) && k.y <= fval(op(ins, 4)) &&
+                          k.z >= fval(op(ins, 2)) && k.z <= fval(op(ins, 5));
+            return branch(obj, ins, inside);
+        }
+        case 237: {  // if_self_in_box: this object's position between min and max
+            const Vec3& p = obj->position;
+            bool inside = p.x >= fval(op(ins, 0)) && p.y >= fval(op(ins, 1)) &&
+                          p.z >= fval(op(ins, 2)) && p.x <= fval(op(ins, 3)) &&
+                          p.y <= fval(op(ins, 4)) && p.z <= fval(op(ins, 5));
+            return branch(obj, ins, inside);
+        }
+        case 34: {  // if_no_leader: no leader (or a dead one); clears the move command when true
+            bool alone = obj->leader == nullptr || obj->leader->dead;
+            int32_t next = branch(obj, ins, alone);
+            if (alone) {
+                obj->move_command = 0;
+            }
+            return next;
+        }
+        case 183: {  // switch_gosub: a gosub picked by a variable, returning after the table
+            int32_t slot = ival(op(ins, 1));
+            if (slot < 0) {
+                slot = 0;
+            }
+            if (slot > kVariableCount - 1) {
+                slot = kVariableCount - 1;
+            }
+            int32_t index = (int32_t)variables(obj, ival(op(ins, 0)))[slot];
+            const std::vector<ScriptValue>& table = listval(op(ins, 2));
+            if (index >= 0 && index < (int32_t)table.size()) {
+                return gosub(obj, ins.next, ival(listval(table[index])[0]));
+            }
+            break;
+        }
+
         default:
             noteUnimplemented(ins.opcode);
             break;
