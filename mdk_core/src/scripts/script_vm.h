@@ -66,6 +66,15 @@ private:
     // goto command's target) or the near-target offset, the selector and the args,
     // and hands them to the runtime (C# CommandObjects, ScriptVm.cs:2178).
     void commandObjects(MdkObject* obj, const formats::Instruction& ins);
+
+    // Aim / turn / face handlers (script_vm_ai.cpp). Each returns the next pc, so a
+    // switch `break` in the original body became `return ins.next` here.
+    int32_t opAimTarget(MdkObject* obj, const formats::Instruction& ins);   // 101, 104
+    int32_t opTurnToTarget(MdkObject* obj, const formats::Instruction& ins); // 235, 105
+    int32_t opTurnToYaw(MdkObject* obj, const formats::Instruction& ins);    // 207
+    int32_t opFaceMode(MdkObject* obj, const formats::Instruction& ins);     // 193
+    int32_t opIfDestDist(MdkObject* obj, const formats::Instruction& ins);   // 54
+    int32_t opIfNoFloorAt(MdkObject* obj, const formats::Instruction& ins);  // 236
     // CountOthers (ScriptVm.cs:311): this object's arena's objects of a type —
     // alive (health > 0) for if_count_alive, or commandable for if_count_objects.
     int32_t countOthers(MdkObject* obj, const formats::ScriptValue& type, bool alive);
