@@ -214,8 +214,13 @@ private:
     void fallOut(MdkObject* obj);
     // The movement-command half of ObjectMotion.Update (UpdateCommand 0x45a7d4):
     // walks or flies a commanded object toward its waypoint, adding to push before
-    // gravity/ApplyVelocity. Stuck detection/replan are a later slice.
+    // gravity/ApplyVelocity, then watches for a stall (DetectStuck) and answers it
+    // (HandleStuck: replan once, slide through, or give up). Commands 1/6/61/74/
+    // 88/30/15/229 are their own slices.
     void updateCommand(MdkObject* obj);
+    // ObjectMotion.HandleStuck (0x45b6c8): the stuck object's once-replan, slide,
+    // or give-up, driven by how far it turned this update (degrees).
+    void handleStuck(MdkObject* obj, float turned);
     // ObjectMotion.MoveForward (command 88, set_move_x): along the yaw/pitch.
     void moveForward(MdkObject* obj);
     // FollowAttachment (command 74): an attached object (a pickup's chute) tracks its
@@ -225,6 +230,10 @@ private:
     // PlanMove (0x45a434): the first waypoint is the destination when a ray clears,
     // else the nearest detour around the block.
     void planMove(MdkObject* obj);
+    // The replan on a stuck object (0x45a434, Detour): head for the destination
+    // again when the waypoint was a detour, else probe detours from 3/4 there
+    // and then from itself.
+    void replan(MdkObject* obj);
     // Raycast (0x421680): whether any triangle of the active arenas crosses the
     // segment. Only the hit/no-hit answer is used by the move planner.
     // The pickup half of ObjectMotion.Update (UpdatePickup 0x43d8f0), run after

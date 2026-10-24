@@ -187,6 +187,11 @@ int main() {
         // off with set_move_x (command 88) — the tables at t240/t300 keep matching
         // while it moves.
         {5, 120}, {5, 240}, {5, 300},
+        // Stuck detection/replan (DetectStuck: 16 ticks walking, 9 with 197;
+        // HandleStuck: replan once per stuck flag, slide, give up): L8's walkers
+        // wander GUNT for hundreds of ticks — the stuck block is what keeps the
+        // long walks deterministic between the walkers.
+        {6, 300}, {8, 40}, {8, 60}, {8, 120},
         // With .NET's degree/radian conversions spelled left-associatively (the
         // constant-folded forms are 1 ULP off at many inputs) the yaws are
         // bit-exact, so the previously-excluded cases match: L5_t180 and L3_t3

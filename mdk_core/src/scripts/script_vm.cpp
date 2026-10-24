@@ -1024,6 +1024,8 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         }
         case 231:  // if_move_idle_flag: the movement gave up (stuck, HandleStuck)
             return branch(obj, ins, obj->move_command == 0 && obj->stuck_count != 0);
+        case 61:  // projectile flight (FlyProjectile, fire): a later slice
+            break;
         case 124:  // path_yaw_offset: the yaw added to the path's own heading
             obj->path_yaw_offset = fval(op(ins, 0));
             break;

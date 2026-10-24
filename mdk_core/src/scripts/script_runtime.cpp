@@ -849,11 +849,13 @@ void ScriptRuntime::planMove(MdkObject* obj) {
     for (int i = 0; i < kDetours; i++) {
         for (int s = 0; s < 2; s++) {
             // Detour(a,b,middle, 0.1*(i+1)*side): a point offset perpendicular to
-            // the a->b line through the midpoint, by a fraction of the a->b distance.
-            /* @vfp-exempt R6 — the detour probe's perpendicular direction; atan2f +
-             * sinf/cosf match the oracle's MathF.SinCos/Atan2 bit-for-bit on this machine
-             * golden table's %.4f precision; the LUT would move the chosen waypoint.
-             * measured n/a (corpus empty). Verified 2026-10-23. */
+            // the a->b line through the midpoint, by a fraction of the a->b distance:
+            // raw radians, no degree conversion anywhere, as the C#'s
+            // MathF.SinCos(MathF.Atan2(...)).
+            /* @vfp-exempt R6 — the plan-move detour probe's perpendicular
+             * direction; glibc atan2f/sinf/cosf match the C# oracle's MathF
+             * calls bit-for-bit on this machine (probed); the LUT would move the
+             * chosen waypoint. measured n/a (corpus empty). Verified 2026-10-26. */
             float rad = atan2f(b.y - a.y, b.x - a.x);
             float amount = 0.1f * (i + 1) * sides[s];
             float dist = sqrtf((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y) +
@@ -868,8 +870,66 @@ void ScriptRuntime::planMove(MdkObject* obj) {
     }
 }
 
-// StartMove (ScriptVm.cs:2036): record the command and destination, drop any path,
-// and plan the first waypoint.
+// The replan on a stuck object (0x45a434): head for the destination again when the
+// waypoint was a detour, otherwise probe detours from 3/4 of the way there, then
+// from itself (0.1 to 1.9 of the distance, both sides).
+static Vec3 detour(const Vec3& a, const Vec3& b, const Vec3& origin, float amount) {
+    /* @vfp-exempt R6 — the stuck-replan detour's perpendicular direction; glibc
+     * atan2f/sinf/cosf match the C# oracle's MathF.SinCos/Atan2 bit-for-bit on
+     * this machine (probed), and the conversion is absent exactly as the C#'s;
+     * the LUT would move the chosen waypoint. measured n/a (corpus empty).
+     * Verified 2026-10-26. */
+    const float rad = atan2f(b.y - a.y, b.x - a.x);
+    const float distance = sqrtf((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y) +
+                                 (b.z - a.z) * (b.z - a.z));
+    Vec3 point;
+    point.x = origin.x + sinf(rad) * amount * distance;
+    point.y = origin.y + cosf(rad) * amount * distance;
+    point.z = origin.z;
+    return point;
+}
+
+// The replan on a stuck object (0x45a434): head for the destination again when the
+// waypoint was a detour; otherwise probe detours from 3/4 of the way there, then
+// from itself (0.1 to 1.9 of the distance, both sides).
+void ScriptRuntime::replan(MdkObject* obj) {
+    const int kDetours = 7;
+    if (obj->waypoint.x != obj->move_destination.x || obj->waypoint.y != obj->move_destination.y ||
+        obj->waypoint.z != obj->move_destination.z) {
+        obj->waypoint = obj->move_destination;
+        obj->stuck_ticks = 0.0f;
+        obj->stuck_moved = Vec3{0.0f, 0.0f, 0.0f};
+        obj->contact_flags &= ~MdkObject::ContactStuck;
+        return;
+    }
+    static const float kPlanHeight = 8.0f;
+    Vec3 up{0.0f, 0.0f, kPlanHeight};
+    Vec3 a{obj->position.x + up.x, obj->position.y + up.y, obj->position.z + up.z};
+    Vec3 b{obj->move_destination.x + up.x, obj->move_destination.y + up.y,
+           obj->move_destination.z + up.z};
+    // The C#'s two origins in order: 3/4 there, then itself.
+    for (int originIndex = 0; originIndex < 2; originIndex++) {
+        Vec3 origin;
+        if (originIndex == 0) {
+            origin.x = b.x * 0.75f + a.x * 0.25f;
+            origin.y = b.y * 0.75f + a.y * 0.25f;
+            origin.z = b.z * 0.75f + a.z * 0.25f;
+        } else {
+            origin = a;
+        }
+        const float sides[2] = {-1.0f, 1.0f};
+        for (int i = 0; i < kDetours; i++) {
+            for (int s = 0; s < 2; s++) {
+                Vec3 point = detour(a, b, origin, (0.1f + 0.3f * i) * sides[s]);
+                if (raycastClear(a, point) && raycastClear(point, b)) {
+                    obj->waypoint = point;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 void ScriptRuntime::startMove(MdkObject* obj, int32_t command, const Vec3& destination) {
     obj->move_command = command;
     obj->move_destination = destination;
@@ -929,6 +989,85 @@ void ScriptRuntime::moveForward(MdkObject* obj) {
     }
 }
 
+// ObjectMotion.DetectStuck (0x45a7d4, 0x45ae74): after Walk/Fly, collisions with
+// enough speed and little motion over a 16-tick window (9 for a flying 197) mark
+// the object stuck. A walking 43 counts ANY collision as stuck (the cover case).
+static void detectStuck(MdkObject* obj, bool walking) {
+    const float kStuckSpeed = 2.0f;
+    const float kWindow = 16.0f;
+    const float kAdvanceWindow = 9.0f;
+    const float kCoverStuckTicks = 30.0f;
+    const bool collided = (obj->contact_flags & MdkObject::ContactCollided) != 0;
+    if (walking && obj->move_command == 43) {
+        if (collided) {
+            obj->contact_flags |= MdkObject::ContactStuck;
+            obj->stuck_ticks = kCoverStuckTicks;
+            return;
+        }
+        obj->stuck_count = 0;
+        obj->stuck_ticks = 0.0f;
+        obj->stuck_moved = Vec3{0.0f, 0.0f, 0.0f};
+        return;
+    }
+    if (!collided || obj->speed <= kStuckSpeed) {
+        obj->stuck_count = 0;
+        obj->stuck_ticks = 0.0f;
+        obj->stuck_moved = Vec3{0.0f, 0.0f, 0.0f};
+        return;
+    }
+    const float window = walking && obj->move_command == 197 ? kAdvanceWindow : kWindow;
+    if (obj->stuck_ticks < window) {
+        // Ticks, not Dt: the window counts updates (ObjectMotion.Ticks = 1f).
+        obj->stuck_moved.x += obj->position.x - obj->previous_position.x;
+        obj->stuck_moved.y += obj->position.y - obj->previous_position.y;
+        obj->stuck_moved.z += obj->position.z - obj->previous_position.z;
+        obj->stuck_ticks += 1.0f;
+        return;
+    }
+    if (fabsf(obj->stuck_moved.x) + fabsf(obj->stuck_moved.y) + fabsf(obj->stuck_moved.z) >=
+        obj->speed * 0.5f) {
+        obj->stuck_ticks = 0.0f;
+        obj->stuck_moved = Vec3{0.0f, 0.0f, 0.0f};
+        return;
+    }
+    obj->contact_flags |= MdkObject::ContactStuck;
+}
+
+// ObjectMotion.HandleStuck (0x45b6c8): a stuck object that isn't turning (under 3°
+// this update) replans once, then move_to slides straight to the waypoint through
+// everything and the others give up (if_move_idle_flag sees StuckCount). A 197
+// gives up at once.
+void ScriptRuntime::handleStuck(MdkObject* obj, float turned) {
+    const float kTurning = 3.0f;
+    const int32_t kReplans = 3;
+
+    if ((obj->contact_flags & MdkObject::ContactStuck) == 0 || turned >= kTurning) {
+        return;
+    }
+    obj->stuck_count++;
+    if (obj->move_command == 197) {
+        // ObjectMotion.Stop: an idled command keeps no stale state.
+        obj->move_command = 0;
+        obj->speed = 0.0f;
+        obj->contact_flags &= ~MdkObject::ContactStuck;
+    } else if (obj->stuck_count < kReplans) {
+        replan(obj);
+        obj->stuck_count++;
+    } else if (obj->move_command == 78) {
+        Vec3 toWaypoint;
+        toWaypoint.x = obj->waypoint.x - obj->position.x;
+        toWaypoint.y = obj->waypoint.y - obj->position.y;
+        toWaypoint.z = obj->waypoint.z - obj->position.z;
+        const float step = obj->speed * kTick;
+        obj->position.x += clampf(toWaypoint.x, -step, step);
+        obj->position.y += clampf(toWaypoint.y, -step, step);
+        obj->position.z += clampf(toWaypoint.z, -step, step);
+    } else {
+        obj->move_command = 0;
+        obj->speed = 0.0f;
+    }
+}
+
 // UpdateCommand (0x45a7d4): the walk/fly dispatch for a commanded object. Only
 // move_to (78) is dispatched by the VM so far; the stuck detect/replan is a later
 // slice and does not affect the first commanded ticks.
@@ -943,6 +1082,7 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
         case 43:   // move to a destination (command_objects 43):
         case 197:  // the same walk/fly handling as move_to (ObjectMotion.cs:338)
         case 78: {
+            const float yaw = obj->yaw;
             bool walking = (obj->flags & MdkObject::FlagGravity) != 0;
             if (walking) {
                 // Walk (0x45a7d4): step to the waypoint on the ground, then the
@@ -1033,26 +1173,31 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
                         }
                         obj->waypoint = obj->move_destination;
                     }
-                    if (distance <= 0.0f) {
-                        return;
+                    if (distance > 0.0f) {
+                        float scale = obj->speed * kTick / distance;
+                        float stepX = toW.x * scale;
+                        float stepY = toW.y * scale;
+                        float stepZ = toW.z * scale;
+                        if (fabsf(stepX) > fabsf(toW.x)) {
+                            stepX = toW.x;
+                        }
+                        if (fabsf(stepY) > fabsf(toW.y)) {
+                            stepY = toW.y;
+                        }
+                        if (fabsf(stepZ) > fabsf(toW.z)) {
+                            stepZ = toW.z;
+                        }
+                        obj->push.x += stepX / kTick;
+                        obj->push.y += stepY / kTick;
+                        obj->push.z += stepZ / kTick;
                     }
-                    float scale = obj->speed * kTick / distance;
-                    float stepX = toW.x * scale;
-                    float stepY = toW.y * scale;
-                    float stepZ = toW.z * scale;
-                    if (fabsf(stepX) > fabsf(toW.x)) {
-                        stepX = toW.x;
-                    }
-                    if (fabsf(stepY) > fabsf(toW.y)) {
-                        stepY = toW.y;
-                    }
-                    if (fabsf(stepZ) > fabsf(toW.z)) {
-                        stepZ = toW.z;
-                    }
-                    obj->push.x += stepX / kTick;
-                    obj->push.y += stepY / kTick;
-                    obj->push.z += stepZ / kTick;
                 }
+            }
+            // DetectStuck then HandleStuck(|yaw - yawAtEntry|) (ObjectMotion.cs:354):
+            // both only fire when the command survived Walk/Fly.
+            if (obj->move_command != 0) {
+                detectStuck(obj, walking);
+                handleStuck(obj, fabsf(wrapAngle(obj->yaw - yaw)));
             }
             break;
         }
