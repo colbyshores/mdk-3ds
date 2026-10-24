@@ -40,7 +40,6 @@ SOURCES := \
 	$(CORE)/game/bsp.cpp \
 	$(CORE)/scripts/object.cpp \
 	$(CORE)/scripts/script_vm.cpp \
-	$(CORE)/scripts/script_vm_ai.cpp \
 	$(CORE)/scripts/script_runtime.cpp
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))

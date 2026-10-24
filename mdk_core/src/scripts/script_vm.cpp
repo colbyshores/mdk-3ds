@@ -10,7 +10,6 @@
 
 #include "formats/model.h"
 #include "scripts/script_runtime.h"
-#include "scripts/script_vm_internal.h"
 
 namespace mdk {
 namespace scripts {
@@ -24,7 +23,113 @@ const float ScriptVm::kDt = 1.0f / 30.0f;
 const float ScriptVm::kEpsilon = 0.05f;
 const float ScriptVm::kMinWait = 1e-5f;
 
-using namespace detail;
+namespace {
+
+const ScriptValue kNull;
+const std::vector<ScriptValue> kEmpty;
+const std::string kEmptyString;
+
+// A numeric operand as a float (the C#'s ScriptMath.F).
+float fval(const ScriptValue& v) {
+    if (v.kind == ScriptValueKind::Float) {
+        return v.floatValue;
+    }
+    if (v.kind == ScriptValueKind::Int) {
+        return (float)v.intValue;
+    }
+    return 0.0f;
+}
+
+// A numeric operand as an int (the C#'s ScriptMath.I).
+int32_t ival(const ScriptValue& v) {
+    if (v.kind == ScriptValueKind::Int) {
+        return v.intValue;
+    }
+    if (v.kind == ScriptValueKind::Float) {
+        return (int32_t)v.floatValue;
+    }
+    return 0;
+}
+
+// The C#'s MathF.Max: NaN-propagating. fmaxf is NOT — it returns the numeric side
+// when exactly one argument is NaN, so a NaN operand would silently become finite.
+float mathMax(float a, float b) {
+    if (a != a) {
+        return a;
+    }
+    if (b != b) {
+        return b;
+    }
+    return a > b ? a : b;
+}
+
+// The C#'s MathF.Min: NaN-propagating, for the same reason as mathMax.
+float mathMin(float a, float b) {
+    if (a != a) {
+        return a;
+    }
+    if (b != b) {
+        return b;
+    }
+    return a < b ? a : b;
+}
+
+const std::vector<ScriptValue>& listval(const ScriptValue& v) {
+    return v.kind == ScriptValueKind::List ? v.items : kEmpty;
+}
+
+const std::string& strval(const ScriptValue& v) {
+    return v.kind == ScriptValueKind::String ? v.stringValue : kEmptyString;
+}
+
+// An instruction's operand, or the null operand when the index is past the end.
+const ScriptValue& op(const Instruction& ins, int32_t i) {
+    return (i >= 0 && (size_t)i < ins.operands.size()) ? ins.operands[i] : kNull;
+}
+
+// The position operand: the first three operands as a vector (the C#'s V(o)).
+Vec3 vpos(const Instruction& ins) {
+    Vec3 out;
+    out.x = fval(op(ins, 0));
+    out.y = fval(op(ins, 1));
+    out.z = fval(op(ins, 2));
+    return out;
+}
+
+float wrap360(float degrees) {
+    return degrees - 360.0f * floorf(degrees / 360.0f);
+}
+
+// Wrap to [-180, 180) (ScriptMath.WrapAngle).
+float wrapAngle(float degrees) {
+    return degrees - 360.0f * floorf((degrees + 180.0f) / 360.0f);
+}
+
+// MdkObject.IsAnimationDone: no animation, or the hold frame marked ended.
+bool isAnimDone(const MdkObject& obj) {
+    return obj.animation == nullptr || obj.animation_end_frame == MdkObject::AnimationEnded;
+}
+
+bool iequals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); i++) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'A' && ca <= 'Z') {
+            ca = (char)(ca - 'A' + 'a');
+        }
+        if (cb >= 'A' && cb <= 'Z') {
+            cb = (char)(cb - 'A' + 'a');
+        }
+        if (ca != cb) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
 
 ScriptVm::ScriptVm(ScriptRuntime& runtime, formats::ScriptDecoder& decoder)
     : runtime_(runtime), decoder_(decoder) {}
@@ -636,8 +741,39 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             obj->yaw = runtime_.yawTo(obj, runtime_.targetPosition());
             break;
         case 101:  // aim_target: Aim(obj, 100, CheckDistance) — snap yaw when more than
-        case 104:  // 2 across, set pitch to the chest; 104 (aim_target_inaccurate)
-            return opAimTarget(obj, ins);
+        case 104: {  // 2 across, set pitch to the chest; 104 (aim_target_inaccurate)
+            // always snaps the yaw and adds an RNG error to yaw and pitch.
+            const float kAimHeight = 3.0f;
+            const float kMinAcross = 2.0f;
+            const float kPerfect = 100.0f;
+            const float kPitchErrorScale = 4.0f;
+            const float accuracy = ins.opcode == 101 ? kPerfect : fval(op(ins, 0));
+            const bool always = ins.opcode == 104;
+            const Vec3 target = runtime_.targetPosition();
+            const float dx = target.x - obj->position.x;
+            const float dy = target.y - obj->position.y;
+            const float dz = target.z - obj->position.z;
+            /* @vfp-exempt R6 — aim_target's heading (per aiming object per tick);
+             * glibc atan2f/sqrtf match the C# oracle's MathF calls bit-for-bit on
+             * this machine (probed), and the conversion is .NET's left-associative
+             * spelling; the fastAtan2 LUT's error is far larger and would move the
+             * aim. measured n/a (corpus empty). Verified 2026-10-24. */
+            const float horizontal = sqrtf(dx * dx + dy * dy);
+            if (always || horizontal > kMinAcross) {
+                obj->yaw = runtime_.yawTo(obj, target);
+            }
+            obj->pitch = atan2f(target.z + kAimHeight - obj->position.z, horizontal) * 180.0f /
+                         3.14159265358979323846f;
+            if (accuracy == kPerfect) {
+                break;
+            }
+            const float distance = sqrtf(dx * dx + dy * dy + dz * dz) + 0.1f;
+            obj->yaw = wrap360(obj->yaw + (float)(runtime_.rng().next(20) - 10) *
+                                                 (kPerfect - accuracy) / distance);
+            obj->pitch += (float)(runtime_.rng().next(20) - 10) * (kPerfect - accuracy) /
+                          (distance * kPitchErrorScale);
+            break;
+        }
         case 40:  // turn_yaw: yaw by rate*Dt (the XD's scripted turn)
             obj->yaw = wrap360(obj->yaw + value(obj, op(ins, 0)) * kDt);
             break;
@@ -645,12 +781,93 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             obj->roll = wrap360(obj->roll + value(obj, op(ins, 0)) * kDt);
             break;
         case 235:  // turn_to_target_offset: turn toward a point offset from the
-        case 105:  // target in the target's frame (105 adds a z offset and pitches)
-            return opTurnToTarget(obj, ins);
-        case 207:  // turn_to_yaw: turn toward a goal yaw by at most rate*Dt; branches when reached
-            return opTurnToYaw(obj, ins);
-        case 193:  // face_mode: 1/2 face the velocity (2 also pitches), 3 copies another's yaw
-            return opFaceMode(obj, ins);
+        case 105: {  // target in the target's frame (105 adds a z offset and pitches)
+            const float kPerfect = 100.0f;
+            const float kPitchErrorScale = 4.0f;
+            const Vec3 target = runtime_.targetPosition();
+            const float rate = fval(op(ins, 0));
+            const float accuracy = fval(op(ins, 1));
+            const float a = fval(op(ins, 2));
+            const float b = fval(op(ins, 3));
+            /* @vfp-exempt R6 — turn_to_target_offset's heading (per turning
+             * object per tick); glibc sinf/cosf/atan2f/sqrtf match the C#
+             * oracle's MathF calls bit-for-bit on this machine (probed), and
+             * the conversions are .NET's left-associative spellings; the
+             * fastAtan2 LUT's error is far larger and would move the aim.
+             * measured n/a (corpus empty). Verified 2026-10-24. */
+            const float tRad = runtime_.targetYaw() * 3.14159265358979323846f / 180.0f;
+            const float s = sinf(tRad);
+            const float c = cosf(tRad);
+            Vec3 point;
+            point.x = target.x - (a * c + b * s);
+            point.y = target.y - (b * c + a * s);
+            point.z = target.z;
+            const float dx = point.x - obj->position.x;
+            const float dy = point.y - obj->position.y;
+            const float horizontal = sqrtf(dx * dx + dy * dy);
+            float yaw = runtime_.yawTo(obj, point);
+            if (accuracy != kPerfect) {
+                yaw += (float)(runtime_.rng().next(20) - 10) * (kPerfect - accuracy) /
+                       (1.0f + horizontal);
+            }
+            const float maxStep = rate * kDt;
+            // Math.Clamp spelled with the C#'s comparisons: a NaN step stays NaN.
+            float step = wrapAngle(yaw - obj->yaw);
+            step = step < -maxStep ? -maxStep : (step > maxStep ? maxStep : step);
+            obj->yaw = wrap360(obj->yaw + step);
+            if (ins.opcode == 235) {
+                break;
+            }
+            const float z = fval(op(ins, 4));
+            /* @vfp-exempt R6 — turn_to_target_offset3d's pitch (per turning
+             * object per tick); glibc atan2f matches the C# oracle's MathF call
+             * bit-for-bit on this machine (probed), and the conversion is .NET's
+             * left-associative spelling; the fastAtan2 LUT's error is far larger
+             * and would move the aim. measured n/a (corpus empty). Verified 2026-10-24. */
+            float pitch = atan2f(target.z + z - obj->position.z + obj->height_offset, horizontal) *
+                          180.0f / 3.14159265358979323846f;
+            if (accuracy != kPerfect) {
+                pitch += (float)(runtime_.rng().next(20) - 10) * (kPerfect - accuracy) /
+                         (1.0f + horizontal * kPitchErrorScale);
+            }
+            float pstep = wrapAngle(pitch - obj->pitch);
+            pstep = pstep < -maxStep ? -maxStep : (pstep > maxStep ? maxStep : pstep);
+            obj->pitch += pstep;
+            break;
+        }
+        case 207: {  // turn_to_yaw: turn toward a goal yaw by at most rate*Dt; branches when reached
+            float goal = fval(op(ins, 1));
+            float diff = wrapAngle(goal - obj->yaw);
+            float step = fval(op(ins, 0)) * kDt;
+            float sign = diff > 0.0f ? 1.0f : (diff < 0.0f ? -1.0f : 0.0f);
+            obj->yaw = wrap360(fabsf(diff) <= step ? goal : obj->yaw + sign * step);
+            return branch(obj, ins, fabsf(obj->yaw - wrap360(goal)) < 1e-4f);
+        }
+        case 193: {  // face_mode: 1/2 face the velocity (2 also pitches), 3 copies another's yaw
+            const std::vector<ScriptValue>& face = listval(op(ins, 0));
+            const int32_t mode = face.empty() ? 0 : ival(face[0]);
+            if ((mode == 1 || mode == 2) && obj->velocity.x != 0.0f && obj->velocity.y != 0.0f) {
+                /* @vfp-exempt R6 — face_mode turn (per facing alien per tick); glibc
+                 * atan2f/sinf/cosf/sqrtf match the C# oracle's MathF calls
+                 * bit-for-bit on this machine (probed), and the conversions are
+                 * .NET's left-associative spellings; the fastAtan2 LUT's error is
+                 * far larger and would move those values. measured n/a (corpus
+                 * empty). Verified 2026-10-23. */
+                obj->yaw = wrap360(atan2f(obj->velocity.y, obj->velocity.x) * 180.0f /
+                                   3.14159265358979323846f);
+                if (mode == 2 && obj->velocity.z != 0.0f) {
+                    const float horiz =
+                        sqrtf(obj->velocity.x * obj->velocity.x + obj->velocity.y * obj->velocity.y);
+                    obj->pitch = atan2f(obj->velocity.z, horiz) * 180.0f / 3.14159265358979323846f;
+                }
+            } else if (mode == 3 && face.size() > 1) {
+                MdkObject* other = runtime_.firstOther(obj, strval(face[1]));
+                if (other != nullptr) {
+                    obj->yaw = other->yaw;
+                }
+            }
+            break;
+        }
 
         // Movement parameters.
         case 50:  // set_max_speed
@@ -886,8 +1103,18 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, obj->move_command == 0);
         case 102:  // if_path_done
             return branch(obj, ins, obj->path == 0);
-        case 54:  // if_dest_dist: to the move destination (2D when on a floor)
-            return opIfDestDist(obj, ins);
+        case 54: {  // if_dest_dist: to the move destination (2D when on a floor)
+            Vec3 toDestination;
+            toDestination.x = obj->move_destination.x - obj->position.x;
+            toDestination.y = obj->move_destination.y - obj->position.y;
+            toDestination.z = (obj->contact_flags & MdkObject::ContactFloor) != 0
+                                  ? 0.0f
+                                  : obj->move_destination.z - obj->position.z;
+            return branch(obj, ins, compare(sqrtf(toDestination.x * toDestination.x +
+                                                  toDestination.y * toDestination.y +
+                                                  toDestination.z * toDestination.z),
+                                            listval(op(ins, 0))));
+        }
         case 45: {  // if_target_dist: the 3D distance to the target
             const Vec3& t = runtime_.targetPosition();
             const float dx = t.x - obj->position.x;
@@ -965,8 +1192,28 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             return branch(obj, ins, sees);
         }
-        case 236:  // if_no_floor_at: no up-facing face below a point ahead
-            return opIfNoFloorAt(obj, ins);
+        case 236: {  // if_no_floor_at: no up-facing face below a point ahead
+            const float kProbeTop = 3.0f;
+            const float kDefaultDrop = 6.0f;
+            const float dx = fval(op(ins, 0));
+            const float dy = fval(op(ins, 1));
+            const float depth = fval(op(ins, 2));
+            /* @vfp-exempt R6 — the probe offset's rotation (per probing object per
+             * tick); glibc sinf/cosf match the C#'s MathF.SinCos bit-for-bit on this
+             * machine (probed), and the conversion is .NET's left-associative
+             * spelling; a LUT would move the probe point. measured n/a (corpus
+             * empty). Verified 2026-10-23. */
+            const float s = sinf(obj->yaw * 3.14159265358979323846f / 180.0f);
+            const float c = cosf(obj->yaw * 3.14159265358979323846f / 180.0f);
+            Vec3 top;
+            top.x = obj->position.x + (-dx * c - dy * s);
+            top.y = obj->position.y + (-dy * c - dx * s);
+            top.z = obj->position.z + kProbeTop;
+            const float bottom = depth != 0.0f ? obj->position.z + depth : top.z - kDefaultDrop;
+            Vec3 down = top;
+            down.z = bottom;
+            return branch(obj, ins, !runtime_.crossesFloor(obj->arena, top, down));
+        }
 
         // Movement commands.
         case 43:  // move_near_target (only in Kurt's arena)
