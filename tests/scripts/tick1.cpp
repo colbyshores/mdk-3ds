@@ -203,6 +203,7 @@ int main() {
         // The XS controller fires the BOLT (fire, opcode 61): the projectile
         // spawns at the reference point, flies straight, and dies on its lifetime.
         {3, 300},
+        {8, 300},
         {4, 25}, {4, 30}, {4, 40}, {4, 60}, {4, 120}, {4, 300},
         {5, 180},
         {6, 120}, {6, 300},

@@ -130,6 +130,7 @@ public:
     bool isRemoved(const MdkObject* obj) const;
     const Vec3& kurtPosition() const { return kurtPosition_; }
     const Vec3& targetPosition() const { return targetPosition_; }
+    float targetYaw() const { return targetYaw_; }
     void selectTarget(MdkObject* obj);
     // The first live object of obj's arena whose type matches (C# FirstOther with
     // instance = AnyInstance): face_mode 3 copies its yaw. Null when none.

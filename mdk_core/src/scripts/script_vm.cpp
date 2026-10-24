@@ -737,31 +737,101 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             // C# is obj.YawTo(runtime.TargetPosition): the fmod wrap, not Wrap360.
             obj->yaw = runtime_.yawTo(obj, runtime_.targetPosition());
             break;
-        case 101: {  // aim_target: Aim(obj, 100, CheckDistance) — the perfect path:
-            // snap the yaw to the target when more than 2 across, and always set the
-            // pitch to the target's chest (TargetPosition.Z + 3). The error terms
-            // only apply to aim_target_inaccurate (104), which draws the RNG.
+        case 101:  // aim_target: Aim(obj, 100, CheckDistance) — snap yaw when more than
+        case 104: {  // 2 across, set pitch to the chest; 104 (aim_target_inaccurate)
+            // always snaps the yaw and adds an RNG error to yaw and pitch.
             const float kAimHeight = 3.0f;
             const float kMinAcross = 2.0f;
+            const float kPerfect = 100.0f;
+            const float kPitchErrorScale = 4.0f;
+            const float accuracy = ins.opcode == 101 ? kPerfect : fval(op(ins, 0));
+            const bool always = ins.opcode == 104;
             const Vec3 target = runtime_.targetPosition();
             const float dx = target.x - obj->position.x;
             const float dy = target.y - obj->position.y;
+            const float dz = target.z - obj->position.z;
             /* @vfp-exempt R6 — aim_target's heading (per aiming object per tick);
              * glibc atan2f/sqrtf match the C# oracle's MathF calls bit-for-bit on
              * this machine (probed), and the conversion is .NET's left-associative
              * spelling; the fastAtan2 LUT's error is far larger and would move the
              * aim. measured n/a (corpus empty). Verified 2026-10-24. */
             const float horizontal = sqrtf(dx * dx + dy * dy);
-            if (horizontal > kMinAcross) {
+            if (always || horizontal > kMinAcross) {
                 obj->yaw = runtime_.yawTo(obj, target);
             }
             obj->pitch = atan2f(target.z + kAimHeight - obj->position.z, horizontal) * 180.0f /
                          3.14159265358979323846f;
+            if (accuracy == kPerfect) {
+                break;
+            }
+            const float distance = sqrtf(dx * dx + dy * dy + dz * dz) + 0.1f;
+            obj->yaw = wrap360(obj->yaw + (float)(runtime_.rng().next(20) - 10) *
+                                                 (kPerfect - accuracy) / distance);
+            obj->pitch += (float)(runtime_.rng().next(20) - 10) * (kPerfect - accuracy) /
+                          (distance * kPitchErrorScale);
             break;
         }
+        case 40:  // turn_yaw: yaw by rate*Dt (the XD's scripted turn)
+            obj->yaw = wrap360(obj->yaw + value(obj, op(ins, 0)) * kDt);
+            break;
         case 134:  // turn_roll: roll by rate*Dt (the bolt's spin)
             obj->roll = wrap360(obj->roll + value(obj, op(ins, 0)) * kDt);
             break;
+        case 235:  // turn_to_target_offset: turn toward a point offset from the
+        case 105: {  // target in the target's frame (105 adds a z offset and pitches)
+            const float kPerfect = 100.0f;
+            const float kPitchErrorScale = 4.0f;
+            const Vec3 target = runtime_.targetPosition();
+            const float rate = fval(op(ins, 0));
+            const float accuracy = fval(op(ins, 1));
+            const float a = fval(op(ins, 2));
+            const float b = fval(op(ins, 3));
+            /* @vfp-exempt R6 — turn_to_target_offset's heading (per turning
+             * object per tick); glibc sinf/cosf/atan2f/sqrtf match the C#
+             * oracle's MathF calls bit-for-bit on this machine (probed), and
+             * the conversions are .NET's left-associative spellings; the
+             * fastAtan2 LUT's error is far larger and would move the aim.
+             * measured n/a (corpus empty). Verified 2026-10-24. */
+            const float tRad = runtime_.targetYaw() * 3.14159265358979323846f / 180.0f;
+            const float s = sinf(tRad);
+            const float c = cosf(tRad);
+            Vec3 point;
+            point.x = target.x - (a * c + b * s);
+            point.y = target.y - (b * c + a * s);
+            point.z = target.z;
+            const float dx = point.x - obj->position.x;
+            const float dy = point.y - obj->position.y;
+            const float horizontal = sqrtf(dx * dx + dy * dy);
+            float yaw = runtime_.yawTo(obj, point);
+            if (accuracy != kPerfect) {
+                yaw += (float)(runtime_.rng().next(20) - 10) * (kPerfect - accuracy) /
+                       (1.0f + horizontal);
+            }
+            const float maxStep = rate * kDt;
+            // Math.Clamp spelled with the C#'s comparisons: a NaN step stays NaN.
+            float step = wrapAngle(yaw - obj->yaw);
+            step = step < -maxStep ? -maxStep : (step > maxStep ? maxStep : step);
+            obj->yaw = wrap360(obj->yaw + step);
+            if (ins.opcode == 235) {
+                break;
+            }
+            const float z = fval(op(ins, 4));
+            /* @vfp-exempt R6 — turn_to_target_offset3d's pitch (per turning
+             * object per tick); glibc atan2f matches the C# oracle's MathF call
+             * bit-for-bit on this machine (probed), and the conversion is .NET's
+             * left-associative spelling; the fastAtan2 LUT's error is far larger
+             * and would move the aim. measured n/a (corpus empty). Verified 2026-10-24. */
+            float pitch = atan2f(target.z + z - obj->position.z + obj->height_offset, horizontal) *
+                          180.0f / 3.14159265358979323846f;
+            if (accuracy != kPerfect) {
+                pitch += (float)(runtime_.rng().next(20) - 10) * (kPerfect - accuracy) /
+                         (1.0f + horizontal * kPitchErrorScale);
+            }
+            float pstep = wrapAngle(pitch - obj->pitch);
+            pstep = pstep < -maxStep ? -maxStep : (pstep > maxStep ? maxStep : pstep);
+            obj->pitch += pstep;
+            break;
+        }
         case 207: {  // turn_to_yaw: turn toward a goal yaw by at most rate*Dt; branches when reached
             float goal = fval(op(ins, 1));
             float diff = wrapAngle(goal - obj->yaw);
