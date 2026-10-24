@@ -737,6 +737,31 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             // C# is obj.YawTo(runtime.TargetPosition): the fmod wrap, not Wrap360.
             obj->yaw = runtime_.yawTo(obj, runtime_.targetPosition());
             break;
+        case 101: {  // aim_target: Aim(obj, 100, CheckDistance) — the perfect path:
+            // snap the yaw to the target when more than 2 across, and always set the
+            // pitch to the target's chest (TargetPosition.Z + 3). The error terms
+            // only apply to aim_target_inaccurate (104), which draws the RNG.
+            const float kAimHeight = 3.0f;
+            const float kMinAcross = 2.0f;
+            const Vec3 target = runtime_.targetPosition();
+            const float dx = target.x - obj->position.x;
+            const float dy = target.y - obj->position.y;
+            /* @vfp-exempt R6 — aim_target's heading (per aiming object per tick);
+             * glibc atan2f/sqrtf match the C# oracle's MathF calls bit-for-bit on
+             * this machine (probed), and the conversion is .NET's left-associative
+             * spelling; the fastAtan2 LUT's error is far larger and would move the
+             * aim. measured n/a (corpus empty). Verified 2026-10-24. */
+            const float horizontal = sqrtf(dx * dx + dy * dy);
+            if (horizontal > kMinAcross) {
+                obj->yaw = runtime_.yawTo(obj, target);
+            }
+            obj->pitch = atan2f(target.z + kAimHeight - obj->position.z, horizontal) * 180.0f /
+                         3.14159265358979323846f;
+            break;
+        }
+        case 134:  // turn_roll: roll by rate*Dt (the bolt's spin)
+            obj->roll = wrap360(obj->roll + value(obj, op(ins, 0)) * kDt);
+            break;
         case 207: {  // turn_to_yaw: turn toward a goal yaw by at most rate*Dt; branches when reached
             float goal = fval(op(ins, 1));
             float diff = wrapAngle(goal - obj->yaw);
@@ -792,6 +817,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             break;
         case 84:  // set_height_offset
             obj->height_offset = value(obj, op(ins, 0));
+            break;
+        case 106:  // set_302: lifetime of projectiles, jump time... (the C#'s Parameter)
+            obj->parameter = fval(op(ins, 0));
             break;
 
         case 65: {  // set_var
@@ -1024,7 +1052,8 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         }
         case 231:  // if_move_idle_flag: the movement gave up (stuck, HandleStuck)
             return branch(obj, ins, obj->move_command == 0 && obj->stuck_count != 0);
-        case 61:  // projectile flight (FlyProjectile, fire): a later slice
+        case 61:  // fire: spawn a projectile (flyProjectile runs it each tick)
+            runtime_.fire(obj, listval(op(ins, 0)), strval(op(ins, 1)), ival(op(ins, 2)));
             break;
         case 124:  // path_yaw_offset: the yaw added to the path's own heading
             obj->path_yaw_offset = fval(op(ins, 0));

@@ -107,6 +107,12 @@ public:
     // first waypoint (ObjectMotion.PlanMove). The VM seam; the walk/fly half runs in
     // motionVelocity's command step each following tick.
     void startMove(MdkObject* obj, int32_t command, const Vec3& destination);
+    // Fire (ScriptRuntime.cs:2659): a projectile from a reference point of the
+    // object, flying along its yaw and pitch under the projectile's script.
+    // The VM seam for the scripts' fire opcode (case 61). Null when the spawn
+    // failed, as the C#'s null return.
+    MdkObject* fire(MdkObject* obj, const std::vector<formats::ScriptValue>& origin,
+                    const std::string& bullet, int32_t script);
     // CanSeeKurt (if_sees_kurt / if_not_sees_kurt): within range, inside the view
     // cone, and with a clear ray from the object's eye to Kurt's chest. The VM seam.
     bool canSeeKurt(MdkObject* obj, float range, float cone);
@@ -146,6 +152,9 @@ public:
     // Raycast (0x421680) as its hit/no-hit answer: whether the segment is clear
     // of every triangle of the active arenas (the C# Raycast's null test).
     bool raycastClear(const Vec3& from, const Vec3& to);
+    // Raycast (ScriptRuntime.cs:2886) with its answer: the NEAREST arena hit
+    // point across the ray arenas (nearest by distance-squared, as the C#).
+    bool raycastPoint(const Vec3& from, const Vec3& to, Vec3* out);
     // C# MayCommand (command_objects / if_count_objects): the receiver has no
     // other leader of a higher priority and obeys the sender's priority.
     static bool mayCommand(const MdkObject* sender, const MdkObject* receiver);
@@ -227,6 +236,10 @@ private:
     // leader's reference point and copies its yaw/pitch; it clears its command when
     // the leader is gone.
     void followAttachment(MdkObject* obj);
+    // ObjectMotion.FlyProjectile (command 61, fire): straight along the yaw and
+    // pitch until the lifetime (parameter) runs out, the raycast hits the arena,
+    // or the grown Kurt box is entered (touched; hurt and die when it damages).
+    void flyProjectile(MdkObject* obj);
     // PlanMove (0x45a434): the first waypoint is the destination when a ray clears,
     // else the nearest detour around the block.
     void planMove(MdkObject* obj);

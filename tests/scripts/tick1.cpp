@@ -200,6 +200,9 @@ int main() {
         // except where the walk's stuck/replan slice begins to matter (L8_t120's
         // table, L3_t300's XS, and past t300).
         {3, 3}, {3, 4}, {3, 5}, {3, 6}, {3, 10}, {3, 15}, {3, 30}, {3, 60}, {3, 120},
+        // The XS controller fires the BOLT (fire, opcode 61): the projectile
+        // spawns at the reference point, flies straight, and dies on its lifetime.
+        {3, 300},
         {4, 25}, {4, 30}, {4, 40}, {4, 60}, {4, 120}, {4, 300},
         {5, 180},
         {6, 120}, {6, 300},

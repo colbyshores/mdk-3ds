@@ -226,6 +226,11 @@ struct MdkObject {
     // itself when the model has no such point (index out of range). Used by the
     // attach motion (command 74) to hang a chute on its leader.
     Vec3 reference_point(int index) const;
+    // World position of the centre of a model part at rest (the C#'s PartCenter):
+    // the part box's mean, scaled and rotated about Z by yaw, at the position.
+    Vec3 partCenter(int index) const;
+    // The first part with this name, case-insensitively (the C#'s FindPart); -1.
+    int32_t findPart(const std::string& name) const;
 
     // Deferred to later slices (each needs a dependency not in this one yet):
     //   Footing            -> the Solids footing enum (collision slice)

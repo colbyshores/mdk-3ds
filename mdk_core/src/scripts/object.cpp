@@ -79,3 +79,51 @@ mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
     float s = sinf(radians);
     return Vec3{position.x + (x * c - y * s), position.y + (x * s + y * c), position.z + z};
 }
+
+mdk::Vec3 mdk::scripts::MdkObject::partCenter(int index) const {
+    if (index < 0 || model == nullptr ||
+        static_cast<size_t>(index) >= model->partList.size()) {
+        return position;
+    }
+    const mdk::formats::Box& box = model->partList[static_cast<size_t>(index)].bounds;
+    // The C#'s (bounds.Min + bounds.Max) / 2f * Scale: the mean scaled after.
+    float centreX = (box.min.x + box.max.x) * 0.5f * scale;
+    float centreY = (box.min.y + box.max.y) * 0.5f * scale;
+    float centreZ = (box.min.z + box.max.z) * 0.5f * scale;
+    // float.DegreesToRadians is left-associated (yaw * pi / 180f).
+    float radians = yaw * 3.14159265358979323846f / 180.0f;
+    float c = cosf(radians);
+    float s = sinf(radians);
+    return Vec3{position.x + (centreX * c - centreY * s),
+                position.y + (centreX * s + centreY * c), position.z + centreZ};
+}
+
+int32_t mdk::scripts::MdkObject::findPart(const std::string& name) const {
+    if (model == nullptr) {
+        return -1;
+    }
+    for (size_t i = 0; i < model->partList.size(); i++) {
+        const std::string partName = model->partList[i].nameString();
+        if (partName.size() != name.size()) {
+            continue;
+        }
+        bool same = true;
+        for (size_t k = 0; k < name.size(); k++) {
+            char a = partName[k], b = name[k];
+            if (a >= 'A' && a <= 'Z') {
+                a = (char)(a - 'A' + 'a');
+            }
+            if (b >= 'A' && b <= 'Z') {
+                b = (char)(b - 'A' + 'a');
+            }
+            if (a != b) {
+                same = false;
+                break;
+            }
+        }
+        if (same) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}

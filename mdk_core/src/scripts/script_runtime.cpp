@@ -4,6 +4,7 @@
 
 #include "scripts/script_runtime.h"
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -757,38 +758,55 @@ bool ScriptRuntime::crossesFloor(const std::string& arena, const Vec3& from, con
     return bsp->segment(a, b, Bsp::kSegmentFloor, &point, Bsp::kClipPassesThrough) != Bsp::kNone;
 }
 
-bool ScriptRuntime::raycastClear(const Vec3& from, const Vec3& to) {
+bool ScriptRuntime::raycastPoint(const Vec3& from, const Vec3& to, Vec3* out) {
     Vec a{from.x, from.y, from.z};
     Vec b{to.x, to.y, to.z};
     // RayArenas: the current + second arena when a current is set, else every arena
     // (the C# _bsps is filled from level.Arenas at construction, so "all" is the full
     // set, not just the arenas touched so far). bspOf builds each on demand.
-    if (!currentArena_.empty()) {
-        const std::string* names[2] = {&currentArena_, &secondArena_};
-        for (int i = 0; i < 2; i++) {
-            Bsp* bsp = bspOf(*names[i]);
-            if (bsp == nullptr) {
-                continue;
-            }
-            Vec point{};
-            if (bsp->segment(a, b, Bsp::kSegmentAny, &point, Bsp::kClipPassesThrough) != Bsp::kNone) {
-                return false;
-            }
-        }
-        return true;
-    }
-    const std::vector<const formats::Arena*>& arenas = level_->arenas();
-    for (size_t i = 0; i < arenas.size(); i++) {
-        Bsp* bsp = bspOf(arenas[i]->name());
+    // The C# Raycast keeps the NEAREST hit across the arenas by distance-squared.
+    bool hit = false;
+    float bestDistance = FLT_MAX;
+    const auto tryArena = [&](const std::string& name) {
+        Bsp* bsp = bspOf(name);
         if (bsp == nullptr) {
-            continue;
+            return;
         }
         Vec point{};
-        if (bsp->segment(a, b, Bsp::kSegmentAny, &point, Bsp::kClipPassesThrough) != Bsp::kNone) {
-            return false;
+        const int32_t triangle =
+            bsp->segment(a, b, Bsp::kSegmentAny, &point, Bsp::kClipPassesThrough);
+        if (triangle == Bsp::kNone) {
+            return;
+        }
+        const float dx = point.x - a.x;
+        const float dy = point.y - a.y;
+        const float dz = point.z - a.z;
+        const float distance = dx * dx + dy * dy + dz * dz;
+        // The C#'s exact skip: `distance >= bestDistance` (bestDistance starts at
+        // float.MaxValue), so a NaN distance is ADOPTED, as in the C#, and a first
+        // hit at exactly MaxValue is skipped. A `<`-with-hit-flag form would differ.
+        if (distance >= bestDistance) {
+            return;
+        }
+        bestDistance = distance;
+        *out = Vec3{point.x, point.y, point.z};
+        hit = true;
+    };
+    if (!currentArena_.empty()) {
+        tryArena(currentArena_);
+        tryArena(secondArena_);
+    } else {
+        const std::vector<const formats::Arena*>& arenas = level_->arenas();
+        for (size_t i = 0; i < arenas.size(); i++) {
+            tryArena(arenas[i]->name());
         }
     }
-    return true;
+    return hit;
+}
+
+bool ScriptRuntime::raycastClear(const Vec3& from, const Vec3& to) {
+    Vec3 point;
+    return !raycastPoint(from, to, &point);
 }
 
 // CanSeeKurt (ScriptRuntime.cs:3236): within range, inside the view cone (a cone
@@ -1068,6 +1086,137 @@ void ScriptRuntime::handleStuck(MdkObject* obj, float turned) {
     }
 }
 
+// FlyProjectile (ObjectMotion.cs:1016): straight along the yaw and pitch until the
+// lifetime (parameter, set by the projectile's own script — opcode 106) runs out,
+// the raycast hits the arena, or the grown Kurt box is entered. Touching Kurt (in
+// his box grown by 1) records the contact; with damage, the C# hurts Kurt and
+// kills the projectile — HurtKurt is Kurt's slice, so only the projectile's own
+// death is observable here (the zero-damage touch records without removing).
+void ScriptRuntime::flyProjectile(MdkObject* obj) {
+    // ObjectMotion.FlyProjectile, in .NET evaluation order: from the old position.
+    const Vec3 old = obj->position;
+    // float.DegreesToRadians is left-associated (x * pi / 180f).
+    /* @vfp-exempt R6 — the projectile's straight-line step (per projectile per
+     * tick); glibc sinf/cosf match the C# oracle's MathF.SinCos bit-for-bit on
+     * this machine (probed), and the conversions are .NET's left-associative
+     * spellings; the LUT would move the step. measured n/a (corpus empty).
+     * Verified 2026-10-24. */
+    const float yawSin = sinf(obj->yaw * 3.14159265358979323846f / 180.0f);
+    const float yawCos = cosf(obj->yaw * 3.14159265358979323846f / 180.0f);
+    const float pitchSin = sinf(obj->pitch * 3.14159265358979323846f / 180.0f);
+    const float pitchCos = cosf(obj->pitch * 3.14159265358979323846f / 180.0f);
+    obj->position.x += yawCos * pitchCos * obj->speed * kTick;
+    obj->position.y += yawSin * pitchCos * obj->speed * kTick;
+    obj->position.z += pitchSin * obj->speed * kTick;
+    obj->parameter -= kTick;
+    if (obj->parameter <= 0.0f) {
+        kill(obj);
+        return;
+    }
+    Vec3 point;
+    if (raycastPoint(old, obj->position, &point)) {
+        obj->position = point;
+        kill(obj);
+        return;
+    }
+    const float kKurtMargin = 1.0f;
+    formats::Box grown = kurtBox();
+    grown.min.x -= kKurtMargin;
+    grown.min.y -= kKurtMargin;
+    grown.min.z -= kKurtMargin;
+    grown.max.x += kKurtMargin;
+    grown.max.y += kKurtMargin;
+    grown.max.z += kKurtMargin;
+    // SegmentEntry (ScriptMath.cs:89): where the segment enters the box (its start
+    // when inside), or no entry. Like the C#, the hit writes the contact flag and
+    // the entry point.
+    float enter = 0.0f;
+    float leave = 1.0f;
+    bool miss = false;
+    const float from[3] = {old.x, old.y, old.z};
+    const float delta[3] = {obj->position.x - old.x, obj->position.y - old.y,
+                            obj->position.z - old.z};
+    const float boxMin[3] = {grown.min.x, grown.min.y, grown.min.z};
+    const float boxMax[3] = {grown.max.x, grown.max.y, grown.max.z};
+    for (int axis = 0; axis < 3 && !miss; axis++) {
+        if (delta[axis] == 0.0f) {
+            if (from[axis] < boxMin[axis] || from[axis] > boxMax[axis]) {
+                miss = true;
+            }
+            continue;
+        }
+        const float t0 = (boxMin[axis] - from[axis]) / delta[axis];
+        const float t1 = (boxMax[axis] - from[axis]) / delta[axis];
+        enter = fmaxf(enter, fminf(t0, t1));
+        leave = fminf(leave, fmaxf(t0, t1));
+        if (enter > leave) {
+            miss = true;
+        }
+    }
+    if (!miss) {
+        obj->contact_flags |= MdkObject::ContactTouchedKurt;
+        obj->position.x = old.x + delta[0] * enter;
+        obj->position.y = old.y + delta[1] * enter;
+        obj->position.z = old.z + delta[2] * enter;
+        if (obj->touch_damage > 0) {
+            // C#: runtime.HurtKurt(obj.TouchDamage) — Kurt's slice — then Kill.
+            kill(obj);
+        }
+    } else {
+        obj->contact_flags &= ~MdkObject::ContactTouchedKurt;
+    }
+}
+
+// A numeric operand as an int (the C#'s ScriptMath.I), file-local because the
+// runtime's only ScriptValue inputs are decoded lists (fire's origin).
+static int32_t operandInt(const formats::ScriptValue& v) {
+    if (v.kind == formats::ScriptValueKind::Int) {
+        return v.intValue;
+    }
+    if (v.kind == formats::ScriptValueKind::Float) {
+        return (int32_t)v.floatValue;
+    }
+    return 0;
+}
+
+// A string operand (the C#'s `origin[1] as string ?? ""`): "" for anything else.
+static std::string operandString(const formats::ScriptValue& v) {
+    if (v.kind == formats::ScriptValueKind::String) {
+        return v.stringValue;
+    }
+    return std::string();
+}
+
+// Fire (ScriptRuntime.cs:2659): a projectile from a reference point of the object
+// (origin [0, index]) or at the centre of one of its parts ([1, name]), flying
+// along the object's yaw and pitch, under the projectile's script.
+MdkObject* ScriptRuntime::fire(MdkObject* obj, const std::vector<formats::ScriptValue>& origin,
+                               const std::string& bullet, int32_t script) {
+    const int32_t kProjectileCommand = 61;
+    // ProjectileFlags (ScriptRuntime.cs:25): FlagNotTarget | FlagNotSolid2 |
+    // FlagChangesArena — the shot is not the chain gun's target, walks through,
+    // and may change arena.
+    static const int32_t kProjectileFlags = 0x80820;
+    Vec3 start;
+    if (!origin.empty() && operandInt(origin[0]) == 0) {
+        const int32_t index = origin.size() > 1 ? operandInt(origin[1]) : 0;
+        start = obj->reference_point(index);
+    } else {
+        const int32_t part =
+            origin.size() > 1 ? obj->findPart(operandString(origin[1])) : -1;
+        start = obj->partCenter(part);
+    }
+    MdkObject* shot = spawn(obj, bullet, start, obj->yaw, -1, 0, false);
+    if (shot == nullptr) {
+        return nullptr;
+    }
+    shot->move_command = kProjectileCommand;
+    shot->flags |= kProjectileFlags;
+    shot->pitch = obj->pitch;
+    shot->restart = script;
+    return shot;
+}
+
 // UpdateCommand (0x45a7d4): the walk/fly dispatch for a commanded object. Only
 // move_to (78) is dispatched by the VM so far; the stuck detect/replan is a later
 // slice and does not affect the first commanded ticks.
@@ -1078,6 +1227,9 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
             break;
         case 88:  // MoveForward (command of set_move_x): straight along the yaw
             moveForward(obj);
+            break;
+        case 61:  // FlyProjectile (fire): straight along the yaw and pitch
+            flyProjectile(obj);
             break;
         case 43:   // move to a destination (command_objects 43):
         case 197:  // the same walk/fly handling as move_to (ObjectMotion.cs:338)
