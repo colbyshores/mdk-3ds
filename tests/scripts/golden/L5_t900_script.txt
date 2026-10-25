@@ -1,0 +1,16 @@
+SCRIPT level=5 ticks=900 seed=1 currentArena=MUSE_1 objects=14 target_pos=-33.0000,-988.0000,-293.0000 target_yaw=284.0000 alien_target=-1
+GVAR 0.0000 0.0000 0.0000 0.0000
+OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,-30.2999,-5.6000 restart=5037 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 001 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3978 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 002 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3650 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=1.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 003 type=SW_DUMMY sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 004 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=7053 wait=0.0000 wresume=2031 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 005 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=7053 wait=0.0000 wresume=2031 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 006 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=7118 wait=0.0000 wresume=2031 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 007 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1890 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 008 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1890 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 009 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 010 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=17148 wait=0.0000 wresume=0 death=17192 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 011 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 012 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+OBJ 013 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000

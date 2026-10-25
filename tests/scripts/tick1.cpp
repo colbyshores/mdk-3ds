@@ -293,6 +293,22 @@ int main() {
         {5, 660},
         {6, 660}, {6, 720}, {6, 780}, {6, 840}, {6, 900},
         {7, 660}, {7, 900},
+        // The pickup/chute/death lifecycle slice (faithful Kill death-script branch +
+        // Remove taking a live Attached with it) moved the frontier from ~t400-900 to
+        // the end of the simulated corpus: every level now matches the oracle byte for
+        // byte (table AND script) far past the old boundary. L3/L6/L7/L8 match to at
+        // least t30000 with live objects (11/5/7/10 — a genuinely cycling steady
+        // state, not an empty arena); L4 empties its arena (0 objects, matching the
+        // oracle's empty at the same ticks) and matches to t10000. L5's new frontier
+        // is t2302: at t2303 the oracle spawns a 16th BOLT (flags 0x00080820, a
+        // different spawn path than the XS controller's opcode-61 bolts) that the
+        // C++ does not spawn yet — that spawn slice is the next blocker.
+        {3, 480}, {3, 600}, {3, 1200}, {3, 2400}, {3, 5000}, {3, 10000}, {3, 30000},
+        {4, 660}, {4, 900}, {4, 1200}, {4, 2400}, {4, 5000}, {4, 10000},
+        {5, 720}, {5, 900}, {5, 1200}, {5, 1800}, {5, 2300}, {5, 2302},
+        {6, 960}, {6, 1200}, {6, 2400}, {6, 5000}, {6, 10000},
+        {7, 960}, {7, 1200}, {7, 2400}, {7, 5000}, {7, 10000},
+        {8, 420}, {8, 600}, {8, 1200}, {8, 2400}, {8, 5000}, {8, 10000}, {8, 30000},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         int level = cases[c].level;

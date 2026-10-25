@@ -2147,10 +2147,11 @@ bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
 }
 
 void ScriptRuntime::fallOut(MdkObject* obj) {
-    // NOTE: kill() is the death-slice placeholder (it only sets dead); the C#
-    // FallOut switches a death-scripted object to its death script, while
-    // remove() now takes an unscripted falling-out object out of the object
-    // list with full removal semantics. The threshold and restore height match.
+    // The C# FallOut kills a death-scripted object (Kill switches it to its death
+    // script) and fully removes an unscripted one (Remove takes a live Attached with
+    // it). kill()'s death-script branch and remove() both match that now; only
+    // kill()'s Explode branch stays the documented gap. The threshold and restore
+    // height match.
     const float kRestore = 150.0f;
     if (obj->death_script == 0) {
         remove(obj);
@@ -2449,15 +2450,42 @@ void ScriptRuntime::commandObjects(MdkObject* sender, int32_t command, int32_t t
 }
 
 void ScriptRuntime::kill(MdkObject* obj) {
-    // The full death path (death script, debris, drops) lands with its slice.
-    obj->dead = true;
+    // C# Kill (ScriptRuntime.cs:1678): Health=0, then either Explode (no death
+    // script) or switch to the death script. NoteAlarmEnded is the unported alarm
+    // subsystem (no observable state here). The death-script branch is pure VM state
+    // and is exercised by the L3 BOLT (its death script ends in opcode 110
+    // delete_self, which removes it the next tick). The Explode branch's EFFECTS
+    // (PlaySoundAt/FlashAt/BreakUp/SpawnExplosion — mixer, flash, debris, explosion
+    // model) are unported, but its removal accounting is not: Explode calls
+    // Remove(obj) (cs:1717), so the object leaves the list here too. No golden in
+    // levels 3-8 to t30000 exercises this branch — every death in the corpus is a
+    // death-script death — so the missing effects stay the documented gap.
+    obj->health = 0;
+    if (obj->death_script == 0) {
+        remove(obj);  // Explode branch: removal accounting only (see CONTINUATION)
+        return;
+    }
+    obj->move_command = 0;
+    obj->flags |= MdkObject::FlagNotTarget;
+    obj->restart = obj->death_script;
+    obj->wait_time = 0.0f;
+    obj->wait_resume = obj->death_script;
+    obj->death_script = 0;
 }
 
 void ScriptRuntime::remove(MdkObject* obj) {
-    // C# Remove (ScriptRuntime.cs:1673): Dead, then out of the list. The deque's
-    // slots are never vacated (the pointer model depends on it), so the object is
-    // marked removed and every reference to it is dropped; the readable list and
-    // every Objects iteration skip it through dead + isRemoved.
+    // C# Remove (ScriptRuntime.cs:1648): a live Attached object (a pickup's chute) goes
+    // with it FIRST — Remove(obj.Attached) runs before obj is marked dead — then Dead,
+    // then out of the list. The deque's slots are never vacated (the pointer model
+    // depends on it), so the object is marked removed and every reference to it is
+    // dropped; the readable list and every Objects iteration skip it through dead +
+    // isRemoved. A pickup that falls out (FallOut -> remove) takes its chute with it.
+    if (isRemoved(obj)) {
+        return;  // C# Objects.Remove is idempotent; do not double-process
+    }
+    if (obj->attached != nullptr && !obj->attached->dead) {
+        remove(obj->attached);
+    }
     obj->dead = true;
     removed_.push_back(obj);
     for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
