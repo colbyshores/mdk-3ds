@@ -125,6 +125,53 @@ run_reviewer() { # $1 = review output file, $2 = scope: latest|full
     return 1
 }
 
+watchdog_case() {
+    # Installed via crontab: restarts the loop after a SILENT death
+    # (OOM, stray kill). Never resurrects an intentional stop/exit.
+    [ -f "$LOGDIR/disabled" ] && return 0
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        return 0
+    fi
+    echo "[$(date -Is)] WATCHDOG: loop dead, restarting" >>"$SUMMARY"
+    # Crash-loop guard: a loop that dies again within 3 minutes of its
+    # restart is failing at startup, not working. Stop after 3 tries and
+    # leave a diagnostic instead of spinning every 5 minutes forever.
+    local last_restart now age quick
+    last_restart="$(state_get LAST_RESTART_TS 0)"
+    now="$(date +%s)"
+    age=$(( now - last_restart ))
+    quick="$(state_get QUICK_DEATHS 0)"
+    if [ "${last_restart:-0}" -gt 0 ] && [ "$age" -lt 180 ]; then
+        quick=$(( quick + 1 ))
+        state_set QUICK_DEATHS "$quick"
+        echo "[$(date -Is)] WATCHDOG: loop died ${age}s after restart (quick deaths: $quick)" >>"$SUMMARY"
+        if [ "$quick" -ge 3 ]; then
+            echo "[$(date -Is)] WATCHDOG: crash loop detected — restarts disabled" >>"$SUMMARY"
+            echo "crash-loop at $(date -Is)" >"$LOGDIR/disabled"
+            return 0
+        fi
+    else
+        state_set QUICK_DEATHS 0
+    fi
+    state_set LAST_RESTART_TS "$now"
+    { echo "[$(date -Is)] memory at restart:"; free -h | head -2; } >>"$LOGDIR/watchdog.log" 2>&1
+    "$0" start >>"$LOGDIR/watchdog.log" 2>&1
+}
+
+# Kill a process that inherited the lock fd from a dead loop: it would hold
+# the flock forever and make every restart fail with "lock held".
+kill_stale_lock_holder() {
+    local holder f
+    for holder in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+        for f in /proc/"$holder"/fd/*; do
+            if [ "$(readlink -f "$f" 2>/dev/null)" = "$LOCK" ] && \
+               ! grep -q "ralph.sh __run" /proc/"$holder"/cmdline 2>/dev/null; then
+                kill -9 "$holder" 2>/dev/null
+            fi
+        done
+    done
+}
+
 # ---- one iteration ----------------------------------------------------------
 state_get() {
     local v
@@ -277,17 +324,7 @@ case "${1:-}" in
         # that inherited the lock fd would also block every restart.
         pkill -f -- "--title ralph-iter-" 2>/dev/null
         pkill -f -- "--title ralph-review" 2>/dev/null
-        # Drop any stale flock holder (an orphan may still hold fd 9).
-        local holder
-        for holder in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
-            local f
-            for f in /proc/"$holder"/fd/*; do
-                if [ "$(readlink -f "$f" 2>/dev/null)" = "$LOCK" ] && \
-                   ! grep -q "ralph.sh __run" /proc/"$holder"/cmdline 2>/dev/null; then
-                    kill -9 "$holder" 2>/dev/null
-                fi
-            done
-        done
+        kill_stale_lock_holder
         while [ $# -gt 1 ]; do
             case "$2" in
                 --max) MAX_ITERATIONS="$3"; shift 2 ;;
@@ -332,36 +369,7 @@ case "${1:-}" in
         echo "stopped by user at $(date -Is)" >"$LOGDIR/disabled"
         ;;
     watchdog)
-        # Installed via crontab: restarts the loop after a SILENT death
-        # (OOM, stray kill). Never resurrects an intentional stop/exit.
-        [ -f "$LOGDIR/disabled" ] && exit 0
-        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-            exit 0
-        fi
-        echo "[$(date -Is)] WATCHDOG: loop dead, restarting" >>"$SUMMARY"
-        # Crash-loop guard: a loop that dies again within 3 minutes of its
-        # restart is failing at startup, not working. Stop after 3 tries and
-        # leave a diagnostic instead of spinning every 5 minutes forever.
-        local last_restart now age quick
-        last_restart="$(state_get LAST_RESTART_TS 0)"
-        now="$(date +%s)"
-        age=$(( now - last_restart ))
-        quick="$(state_get QUICK_DEATHS 0)"
-        if [ "${last_restart:-0}" -gt 0 ] && [ "$age" -lt 180 ]; then
-            quick=$(( quick + 1 ))
-            state_set QUICK_DEATHS "$quick"
-            echo "[$(date -Is)] WATCHDOG: loop died ${age}s after restart (quick deaths: $quick)" >>"$SUMMARY"
-            if [ "$quick" -ge 3 ]; then
-                echo "[$(date -Is)] WATCHDOG: crash loop detected — restarts disabled" >>"$SUMMARY"
-                echo "crash-loop at $(date -Is)" >"$LOGDIR/disabled"
-                exit 0
-            fi
-        else
-            state_set QUICK_DEATHS 0
-        fi
-        state_set LAST_RESTART_TS "$now"
-        { echo "[$(date -Is)] memory at restart:"; free -h | head -2; } >>"$LOGDIR/watchdog.log" 2>&1
-        "$0" start >>"$LOGDIR/watchdog.log" 2>&1
+        watchdog_case
         ;;
     *)
         sed -n '2,20p' "$0"
