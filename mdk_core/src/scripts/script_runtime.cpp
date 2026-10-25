@@ -10,6 +10,7 @@
 
 #include <algorithm>
 
+#include "formats/ascii_case.h"
 #include "formats/bin_reader.h"
 #include "formats/dti.h"
 #include "formats/model_animation.h"
@@ -176,9 +177,10 @@ float hermite(float p0, float p1, float m0, float m1, float u) {
 
 } // namespace
 
-ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed)
+ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
+                             audio::SoundBank* bank)
     : level_(level), cmi_(cmi), decoder_(cmi->bytes().data(), (int32_t)cmi->bytes().size()),
-      rng_(seed), vm_(*this, decoder_) {
+      rng_(seed), vm_(*this, decoder_), bank_(bank), mixer_(bank) {
     // The arenas the world is built from, as the driver does: the reachable
     // ones, so the arena under Kurt is found.
     const std::vector<const formats::Arena*>& arenas = level_->arenas();
@@ -2113,6 +2115,114 @@ void ScriptRuntime::hurtKurt(int32_t damage) {
     }
 }
 
+// A numeric operand as a float (the C#'s ScriptMath.F).
+static float operandFloat(const formats::ScriptValue& v) {
+    if (v.kind == formats::ScriptValueKind::Float) {
+        return v.floatValue;
+    }
+    if (v.kind == formats::ScriptValueKind::Int) {
+        return (float)v.intValue;
+    }
+    return 0.0f;
+}
+
+// play_sound (opcode 89, 0x442402). flags & 3 is the start mode — play, restart,
+// play unless it is already playing, stop — and the place comes from the rest:
+// 0x80 without position, 0x10 following the object at an offset, 0x20 at a
+// reference point, 0x40 at a point, none of them where the object is. Flag 4
+// makes the sound the object's TRACKED sound, the one if_own_sound (249) asks
+// about, and plays it at the object, following it.
+void ScriptRuntime::playSound(MdkObject* obj, const std::string& name, int32_t flags,
+                              const formats::ScriptValue& position) {
+    const int32_t kStopMode = 3;
+    const int32_t kTracked = 4;
+    const int32_t kFollowing = 0x10;
+    const int32_t kAtReference = 0x20;
+    const int32_t kAtPoint = 0x40;
+    const int32_t kFlat = 0x80;
+    // SoundStarts (ScriptRuntime.cs:3257): the mode is the index. Mode 3 never
+    // indexes it — the C# stops (3D) or does nothing (2D) before reading it.
+    static const int32_t kSoundStarts[3] = {audio::SoundMixer::New, audio::SoundMixer::Restart,
+                                            audio::SoundMixer::Once};
+
+    const int32_t mode = flags & 3;
+    if ((flags & kFlat) != 0) {
+        if (mode != kStopMode) {
+            mixer_.play(name, kSoundStarts[mode]);
+        }
+        return;
+    }
+    if (mode == kStopMode) {
+        mixer_.stop(name);
+        return;
+    }
+    const int32_t start = kSoundStarts[mode];
+
+    // The point operand: three floats of a list (the C#'s V(list)), or the zero
+    // vector when the operand is not a list.
+    Vec3 point;
+    if (position.kind == formats::ScriptValueKind::List) {
+        const std::vector<formats::ScriptValue>& items = position.items;
+        point.x = items.size() > 0 ? operandFloat(items[0]) : 0.0f;
+        point.y = items.size() > 1 ? operandFloat(items[1]) : 0.0f;
+        point.z = items.size() > 2 ? operandFloat(items[2]) : 0.0f;
+    }
+
+    int32_t voice = 0;
+    if ((flags & kFollowing) != 0) {
+        voice = playOn(obj, name, start, point);
+    } else if ((flags & kAtReference) != 0) {
+        voice = mixer_.playAt(name, obj->reference_point(operandInt(position)), start);
+    } else if ((flags & kAtPoint) != 0) {
+        voice = mixer_.playAt(name, point, start);
+    } else if ((flags & kTracked) != 0) {
+        voice = playOn(obj, name, start, Vec3());
+    } else {
+        voice = mixer_.playAt(name, obj->position, start);
+    }
+
+    if ((flags & kTracked) != 0) {
+        obj->tracked_sound = name;
+        obj->tracked_voice = voice;
+    }
+}
+
+// set_loop_sound (opcode 107): start the object's looping sound, stopping the
+// previous one; an empty name just stops it. It only loops if the sound itself
+// does (its SNI flag) — the mixer plays the entry as stored.
+void ScriptRuntime::setLoopSound(MdkObject* obj, const std::string& name) {
+    mixer_.stopVoice(obj->loop_sound);
+    obj->loop_sound = 0;
+    obj->loop_sound_name = name;
+    if (name.empty()) {
+        return;
+    }
+    obj->loop_sound = playOn(obj, name, audio::SoundMixer::New, Vec3());
+}
+
+// if_sound_playing (opcode 233): the name is upper-cased before the search, as
+// the C# does — the archives' keys are upper case, the scripts' are not always.
+bool ScriptRuntime::isSoundPlaying(const std::string& name) const {
+    return mixer_.isPlaying(formats::toUpperAscii(name));
+}
+
+// C# PlayOn (ScriptRuntime.cs:3317): a sound following an object at an offset in
+// its frame, kept per object so Remove can stop it with the object. Ended voices
+// are forgotten as the list is walked, and a voice of 0 (every voice busy) is
+// kept too, exactly as the C# adds it.
+int32_t ScriptRuntime::playOn(MdkObject* obj, const std::string& name, int32_t start,
+                              const Vec3& offset) {
+    const int32_t voice = mixer_.playOn(name, &obj->position, &obj->yaw, offset, start);
+    std::vector<int32_t>& voices = following_[obj];
+    for (size_t i = voices.size(); i-- > 0;) {
+        if (!mixer_.isVoicePlaying(voices[i])) {
+            voices.erase(voices.begin() + (long)i);
+        }
+    }
+    voices.push_back(voice);
+    return voice;
+}
+
 bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
     const float kWidthFactor = 0.25f;
     const float kMinHeight = 0.5f;
@@ -2508,6 +2618,19 @@ void ScriptRuntime::remove(MdkObject* obj) {
     if (obj->attached != nullptr && !obj->attached->dead) {
         remove(obj->attached);
     }
+    // The object's sounds go with it (C# Remove: the loop sound, the tracked
+    // sound, and every voice that was following it).
+    mixer_.stopVoice(obj->loop_sound);
+    mixer_.stopVoice(obj->tracked_voice);
+    std::map<MdkObject*, std::vector<int32_t> >::iterator following = following_.find(obj);
+    if (following != following_.end()) {
+        for (size_t i = 0; i < following->second.size(); i++) {
+            mixer_.stopVoice(following->second[i]);
+        }
+        following_.erase(following);
+    }
+    obj->loop_sound = 0;
+    obj->tracked_voice = 0;
     obj->dead = true;
     removed_.push_back(obj);
     for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {

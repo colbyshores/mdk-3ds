@@ -12,6 +12,9 @@ LDFLAGS :=
 
 SOURCES := \
 	tick1.cpp \
+	$(CORE)/audio/sound_bank.cpp \
+	$(CORE)/audio/sound_device.cpp \
+	$(CORE)/audio/sound_mixer.cpp \
 	$(CORE)/util/math_lut.cpp \
 	$(CORE)/util/random.cpp \
 	$(CORE)/formats/bin_reader.cpp \
@@ -33,6 +36,7 @@ SOURCES := \
 	$(CORE)/formats/local_paths.cpp \
 	$(CORE)/formats/mdk_data.cpp \
 	$(CORE)/formats/sni.cpp \
+	$(CORE)/formats/wav.cpp \
 	$(CORE)/formats/sprite_animation.cpp \
 	$(CORE)/formats/fti.cpp \
 	$(CORE)/game/level_data.cpp \

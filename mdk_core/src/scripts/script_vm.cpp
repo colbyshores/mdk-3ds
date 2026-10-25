@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "formats/ascii_case.h"
 #include "formats/model.h"
 #include "scripts/script_runtime.h"
 
@@ -18,6 +19,7 @@ using formats::BranchAction;
 using formats::Instruction;
 using formats::ScriptValue;
 using formats::ScriptValueKind;
+using formats::toLowerAscii;
 
 const float ScriptVm::kDt = 1.0f / 30.0f;
 const float ScriptVm::kEpsilon = 0.05f;
@@ -1113,11 +1115,38 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                               kDt / mathMax(fval(op(ins, 0)), kMinPeriod) * 10000.0f);
         }
 
-        // Audio and Kurt effects: the mixer and Kurt's knock-down are later slices.
-        // Neither writes object or VM state the golden dumps read (play_sound's Tracked
-        // bookkeeping is read only by if_own_sound, itself unported), so these decode
-        // and advance exactly as the C# does without a state difference here.
-        case 89:   // play_sound
+        // Sounds. The mixer's voice table is the state these read and write; the
+        // dump's AUDIO line and each object's tracked/loop voice pin it.
+        case 89:  // play_sound
+            runtime_.playSound(obj, strval(op(ins, 2)), ival(op(ins, 0)), op(ins, 1));
+            break;
+        case 107:  // set_loop_sound
+            runtime_.setLoopSound(obj, strval(op(ins, 0)));
+            break;
+        case 233:  // if_sound_playing
+            return branch(obj, ins, runtime_.isSoundPlaying(strval(op(ins, 0))));
+        case 249: {  // if_own_sound: 0 playing, 1 playing this sound, other: not playing
+            const bool playing = runtime_.mixer().isVoicePlaying(obj->tracked_voice);
+            bool condition;
+            switch (ival(op(ins, 0))) {
+                case 0:
+                    condition = playing;
+                    break;
+                case 1:
+                    // C# Is(a, b): ordinal-ignore-case against the string operand,
+                    // or against "" when the operand is not a string.
+                    condition = playing && toLowerAscii(obj->tracked_sound) ==
+                                            toLowerAscii(strval(op(ins, 2)));
+                    break;
+                default:
+                    condition = !playing;
+                    break;
+            }
+            return branch(obj, ins, condition);
+        }
+
+        // Kurt's knock-down state machine is Kurt movement, a later slice: nothing
+        // in the corpus knocks him down, and no golden reads the knock-down state.
         case 248:  // push_kurt
             break;
 

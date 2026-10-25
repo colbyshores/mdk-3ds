@@ -1,9 +1,10 @@
 SCRIPT level=5 ticks=120 seed=1 currentArena=MUSE_1 objects=6 target_pos=-33.0000,-988.0000,-293.0000 target_yaw=284.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
 KURT health=100 hurt_flash=0.0000 invulnerable=0.0000 knock=0.0000 state=0 slots=0
-OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,-4.0333,0.6000 restart=5037 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 001 type=XS sflags=0x00000400 vars=0.0000,0.0000,0.0000,0.0000 restart=1360 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 002 type=XS sflags=0x00000400 vars=0.0000,0.0000,0.0000,0.0000 restart=1592 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 003 type=SW_DUMMY sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 004 type=SW_CHUTE sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 005 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=5534 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+AUDIO voices=1 list=1:SPIT
+OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,-4.0333,0.6000 restart=5037 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 001 type=XS sflags=0x00000400 vars=0.0000,0.0000,0.0000,0.0000 restart=1360 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 002 type=XS sflags=0x00000400 vars=0.0000,0.0000,0.0000,0.0000 restart=1592 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 003 type=SW_DUMMY sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 004 type=SW_CHUTE sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 005 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=5534 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0

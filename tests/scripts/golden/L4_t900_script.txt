@@ -1,3 +1,4 @@
 SCRIPT level=4 ticks=900 seed=1 currentArena=MEAT_1 objects=0 target_pos=0.0000,-73.0000,374.0000 target_yaw=90.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
 KURT health=100 hurt_flash=0.0000 invulnerable=0.0000 knock=0.0000 state=0 slots=0
+AUDIO voices=0 list=

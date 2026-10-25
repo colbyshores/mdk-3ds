@@ -76,5 +76,10 @@ bool Wav::parse(const uint8_t* wav, int32_t byteCount, Wav* outWav) {
     return true;
 }
 
+int32_t Wav::frames() const {
+    const int32_t samples = bitsPerSample_ == 8 ? dataSize() : (dataSize() & ~1) / 2;
+    return channels_ > 0 ? samples / channels_ : 0;
+}
+
 } // namespace formats
 } // namespace mdk

@@ -1,17 +1,18 @@
 SCRIPT level=5 ticks=720 seed=1 currentArena=MUSE_1 objects=14 target_pos=-33.0000,-988.0000,-293.0000 target_yaw=284.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
 KURT health=96 hurt_flash=125.0000 invulnerable=0.0000 knock=4.0000 state=0 slots=0
-OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,-24.3000,0.4000 restart=5037 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 001 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3650 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=4.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 002 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3650 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=4.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 003 type=SW_DUMMY sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 004 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=7118 wait=0.0000 wresume=2031 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 005 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1977 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 006 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1890 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 007 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1890 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 008 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=5534 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 009 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=17192 wait=0.0000 wresume=17192 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 010 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 011 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 012 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
-OBJ 013 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
+AUDIO voices=19 list=1:SPIT,2:SPIT,3:SPIT,4:SPIT,5:XG_SPOT3,6:LASER2,7:XU_JUMP,9:LASER1,10:XU_JUMP,11:XG_COCK,12:SPIT,13:LASER2,14:XU_JUMP,15:LASER1,16:XU_JUMP,17:RICO1,18:RICO1,19:RICO1,20:RICO1
+OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,-24.3000,0.4000 restart=5037 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 001 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3650 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=4.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 002 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3650 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=4.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 003 type=SW_DUMMY sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 004 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=7118 wait=0.0000 wresume=2031 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd=XG_SPOT3 tvoice=5 tplay=1 lsnd= lvoice=0 lplay=0
+OBJ 005 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1977 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 006 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1890 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 007 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1890 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 008 type=XG sflags=0x20000000 vars=0.0000,0.0000,0.0000,0.0000 restart=5534 wait=0.0000 wresume=5533 death=5597 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 009 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=17192 wait=0.0000 wresume=17192 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 010 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 011 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 012 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
+OBJ 013 type=BOLT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4831 wait=0.0000 wresume=0 death=4853 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0

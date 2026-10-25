@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "test_support.h"
+#include "audio/sound_bank.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/dti.h"
@@ -164,6 +165,21 @@ std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
              k.health(), k.hurtFlash(), k.invulnerable(), k.knockDamage(), (int)k.state(),
              (int)k.slotCount());
     out += line;
+    // The mixer's live voices: the ids the scripts were handed, in play order.
+    // This is what if_own_sound (249) and if_sound_playing (233) ask about.
+    const audio::SoundMixer& mixer = runtime.mixer();
+    snprintf(line, sizeof(line), "AUDIO voices=%d", (int)mixer.voices().size());
+    out += line;
+    out += " list=";
+    for (size_t v = 0; v < mixer.voices().size(); v++) {
+        if (v) {
+            out += ",";
+        }
+        snprintf(line, sizeof(line), "%d:", (int)mixer.voices()[v].id);
+        out += line;
+        out += mixer.voices()[v].name;
+    }
+    out += "\n";
     int index = 0;
     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
          it != runtime.objects().end(); ++it, ++index) {
@@ -174,12 +190,15 @@ std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
         }
         snprintf(line, sizeof(line),
                  "OBJ %03d type=%s sflags=0x%08X vars=%.4f,%.4f,%.4f,%.4f restart=%d wait=%.4f "
-                 "wresume=%d death=%d cmdtgt=%d gret=%s gres=%s timers=%.4f,%.4f,%.4f,%.4f,%.4f\n",
+                 "wresume=%d death=%d cmdtgt=%d gret=%s gres=%s timers=%.4f,%.4f,%.4f,%.4f,%.4f "
+                 "tsnd=%s tvoice=%d tplay=%d lsnd=%s lvoice=%d lplay=%d\n",
                  index, o.type_name.c_str(), (unsigned)o.script_flags, o.variables[0], o.variables[1],
                  o.variables[2], o.variables[3], o.restart, o.wait_time, o.wait_resume, o.death_script,
                  o.command_target, joinInts(o.gosub_returns).c_str(), joinInts(o.gosub_restarts).c_str(),
                  o.level_timers[0], o.level_timers[1], o.level_timers[2], o.level_timers[3],
-                 o.level_timers[4]);
+                 o.level_timers[4], o.tracked_sound.c_str(), (int)o.tracked_voice,
+                 mixer.isVoicePlaying(o.tracked_voice) ? 1 : 0, o.loop_sound_name.c_str(),
+                 (int)o.loop_sound, mixer.isVoicePlaying(o.loop_sound) ? 1 : 0);
         out += line;
     }
     return out;
@@ -345,8 +364,15 @@ int main() {
             failures++;
             continue;
         }
+        audio::SoundBank bank;
+        if (!audio::SoundBank::forLevel(&bank, data, level)) {
+            printf("FAIL L%d: sound bank did not load\n", level);
+            failures++;
+            continue;
+        }
+        bank.preload();
 
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
         runtime.option = 0;  // the oracle's Option
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -393,7 +419,14 @@ int main() {
         if (!Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
             continue;
         }
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+        audio::SoundBank bank;
+        if (!audio::SoundBank::forLevel(&bank, data, level)) {
+            printf("FAIL L%d_t%d_script: sound bank did not load\n", level, ticks);
+            failures++;
+            continue;
+        }
+        bank.preload();
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
         runtime.option = 0;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -430,7 +463,11 @@ int main() {
             if (data.read("TRAVERSE/LEVEL3/LEVEL3.CMI", &cmiBytes)) {
                 Cmi cmi;
                 if (Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+                    audio::SoundBank bank;
+                    if (audio::SoundBank::forLevel(&bank, data, 3)) {
+                        bank.preload();
+                    }
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
                     runtime.option = 0;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);
@@ -484,7 +521,11 @@ int main() {
             if (data.read("TRAVERSE/LEVEL8/LEVEL8.CMI", &cmiBytes)) {
                 Cmi cmi;
                 if (Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+                    audio::SoundBank bank;
+                    if (audio::SoundBank::forLevel(&bank, data, 8)) {
+                        bank.preload();
+                    }
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
                     runtime.option = 0;
                     for (int t = 0; t < 2; t++) {
                         runtime.update(1.0f / 30.0f);
@@ -558,7 +599,11 @@ int main() {
             if (data.read("TRAVERSE/LEVEL3/LEVEL3.CMI", &cmiBytes)) {
                 Cmi cmi;
                 if (Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1);
+                    audio::SoundBank bank;
+                    if (audio::SoundBank::forLevel(&bank, data, 3)) {
+                        bank.preload();
+                    }
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
                     runtime.option = 0;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);

@@ -33,6 +33,7 @@
 #include <string>
 #include <vector>
 
+#include "audio/sound_mixer.h"
 #include "formats/cmi.h"
 #include "formats/model.h"
 #include "formats/model_animation.h"
@@ -87,7 +88,10 @@ public:
     // The level and its CMI are BORROWED and must outlive the runtime (the
     // decoder borrows the CMI's bytes, and the models borrow the level's).
     // The level is non-const because the MTO parses its arenas on demand.
-    ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed);
+    // The sound bank is borrowed too; it is what decides whether a script's
+    // play_sound names a sound the level has.
+    ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
+                  audio::SoundBank* bank);
 
     // Advance the world by one frame (the driver calls this once per tick).
     void update(float delta);
@@ -163,6 +167,18 @@ public:
     // stays null and Kurt takes every hit, which is what the C# reads while
     // nothing is ridden.
     void hurtKurt(int32_t damage);
+    // ---- The mixer seam (the sounds the scripts make) ----
+    // play_sound (opcode 89, 0x442402): the start mode and the place come from
+    // `flags`, the point from `position` when that operand is a list.
+    void playSound(MdkObject* obj, const std::string& name, int32_t flags,
+                   const formats::ScriptValue& position);
+    // set_loop_sound (opcode 107): the object's looping sound, replacing the
+    // previous one; an empty name only stops it.
+    void setLoopSound(MdkObject* obj, const std::string& name);
+    // if_sound_playing (opcode 233): a sound by name, playing anywhere.
+    bool isSoundPlaying(const std::string& name) const;
+    // if_own_sound (opcode 249) reads the mixer's voice table.
+    const audio::SoundMixer& mixer() const { return mixer_; }
     const Vec3& targetPosition() const { return targetPosition_; }
     float targetYaw() const { return targetYaw_; }
     void selectTarget(MdkObject* obj);
@@ -304,11 +320,24 @@ private:
     void motionPickup(MdkObject* obj);
 
 
+    // C# PlayOn (ScriptRuntime.cs:3317): a sound following an object, at an
+    // offset in its frame, kept so Remove can stop it with the object.
+    int32_t playOn(MdkObject* obj, const std::string& name, int32_t start, const Vec3& offset);
+
     LevelData* level_;
     const formats::Cmi* cmi_;
     formats::ScriptDecoder decoder_;
     Random rng_;
     ScriptVm vm_;
+    // C# ScriptRuntime.Mixer, over the level's sound bank. The voices that
+    // follow an object hold pointers into objects_, whose deque slots are never
+    // vacated (see the ownership note in object.h).
+    audio::SoundBank* bank_;
+    audio::SoundMixer mixer_;
+    // C# _following: the voices started with playOn per object, so Remove can
+    // stop them with the object. The C# pools the lists; a vector is pooled by
+    // its own allocator, so the spare stack is not ported.
+    std::map<MdkObject*, std::vector<int32_t> > following_;
     // CMI-offset animations parsed on demand (C# _animations); the map nodes are
     // stable, so pointers into it stay valid as more animations parse.
     std::map<int32_t, formats::ModelAnimation> animations_;

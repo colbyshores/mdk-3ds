@@ -37,6 +37,12 @@ public:
     const uint8_t* data() const { return data_.data(); }
     int32_t dataSize() const { return (int32_t)data_.size(); }
 
+    // Samples per channel: what Sound.FromPcm makes of the chunk (8-bit is one
+    // byte per sample, anything else two, over the even part of the data), then
+    // divided by the channels as Sound.Frames does (AudioDevice.cs:14). Zero
+    // channels give zero.
+    int32_t frames() const;
+
     // Parses a WAV. FALSE when it has no `fmt ` chunk, no `data` chunk, or a
     // `fmt ` chunk too short to hold the header fields: the C# returns null
     // for the first two and throws for the third.
