@@ -105,11 +105,18 @@ the end of every batch.
    unit tests beyond the end-to-end goldens are still needed (the goldens are the
    only coverage today).
 3. **Reachable unimplemented opcodes**: 109, 138, 175, 249 fire in levels 3-8
-   to t600 and are real gaps (see coverage doc for subsystems).
-4. **Known divergences**: C++/oracle DTI record discrepancy; incomplete
-   decoy/`AlienTarget` targeting; opcode 207 — C# `MathF.Sign` throws on NaN
-   (C++ returns 0; exceptions are banned here, accepted divergence). (The former
-   "L5 `XG[004]` divergence ~t577" is CLOSED — see the batch note above.)
+   to t600 and are real gaps. Each is gated behind an unported subsystem
+   (109 → Rides + `Kurt.Hurt`; 138 → `Debris.Shatter`; 175 → `Kurt.Inventory`;
+   249 → the audio `Mixer`), so none is meaningfully testable until that
+   subsystem lands — do not blind-port them (see coverage doc).
+4. **Known divergences**: C++/oracle DTI record discrepancy (this iteration
+   verified the C++ `Dti::parseRecords` matches the C# `Dti.ParseRecords`
+   field-for-field — type/id/angle/position/boxEnd/`skip(-12)`/name(12) — so the
+   discrepancy is NOT in the record layout; it needs a concrete reproduction
+   before any change, per the "closed by a reproduction, not an argument" rule);
+   incomplete decoy/`AlienTarget` targeting; opcode 207 — C# `MathF.Sign` throws
+   on NaN (C++ returns 0; exceptions are banned here, accepted divergence). (The
+   former "L5 `XG[004]` divergence ~t577" is CLOSED — see the batch note above.)
 5. **Old 3DS hardware timing: UNMEASURED.** A devkitARM `.3dsx` is not
    hardware validation. Never claim an OG pass without a capture.
 
