@@ -156,6 +156,14 @@ std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
     const std::array<float, 4>& g = runtime.globalVariables;
     snprintf(line, sizeof(line), "GVAR %.4f %.4f %.4f %.4f\n", g[0], g[1], g[2], g[3]);
     out += line;
+    // Kurt's combat/inventory state (game/kurt.h): hurt_kurt (109) writes
+    // health/flash/knock, if_inventory (175) reads the slots.
+    const Kurt& k = runtime.kurt();
+    snprintf(line, sizeof(line),
+             "KURT health=%d hurt_flash=%.4f invulnerable=%.4f knock=%.4f state=%d slots=%d\n",
+             k.health(), k.hurtFlash(), k.invulnerable(), k.knockDamage(), (int)k.state(),
+             (int)k.slotCount());
+    out += line;
     int index = 0;
     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
          it != runtime.objects().end(); ++it, ++index) {

@@ -38,6 +38,7 @@
 #include "formats/model_animation.h"
 #include "formats/script_decoder.h"
 #include "game/arena_space.h"
+#include "game/kurt.h"
 #include "game/level_data.h"
 #include "render/render_types.h"
 #include "scripts/object.h"
@@ -153,6 +154,15 @@ public:
     // Whether the object was removed (no longer one of the C#'s Objects).
     bool isRemoved(const MdkObject* obj) const;
     const Vec3& kurtPosition() const { return kurtPosition_; }
+    // Kurt's combat/inventory state (the Hurt/Damage half of Kurt.Combat.cs):
+    // hurt_kurt (opcode 109) writes it, if_inventory (175) reads the slots.
+    const Kurt& kurt() const { return kurt_; }
+    // C# HurtKurt (ScriptRuntime.cs:2676, 0x46a498): riding the XD2 or the XE,
+    // the ridden object takes the hits instead of Kurt; on foot or on the board,
+    // Kurt does. Rides is a later slice — nothing mounts Kurt yet — so ridesRidden
+    // stays null and Kurt takes every hit, which is what the C# reads while
+    // nothing is ridden.
+    void hurtKurt(int32_t damage);
     const Vec3& targetPosition() const { return targetPosition_; }
     float targetYaw() const { return targetYaw_; }
     void selectTarget(MdkObject* obj);
@@ -317,6 +327,13 @@ private:
     std::string secondArena_;
     bool secondActive_ = false;
     Vec3 kurtPosition_{};
+    Kurt kurt_;  // C# ScriptRuntime.Kurt — the combat/inventory slice (game/kurt.h)
+    // Rides.Ridden (Rides.cs:40) and Rides.OnBoard (Rides.cs:89): the ridden
+    // object, and whether it is the snowboard. The ride slice (mount/dismount)
+    // is unported, so both stay at these values — what the C# reads while Kurt
+    // rides nothing, which is every tick of the corpus.
+    MdkObject* ridesRidden_ = nullptr;
+    bool ridesBoard_ = false;
     Vec3 targetPosition_{};
     float kurtYaw_ = 0.0f;
     float targetYaw_ = 0.0f;

@@ -1,5 +1,6 @@
 SCRIPT level=8 ticks=20 seed=1 currentArena=GUNT_1 objects=13 target_pos=94.0000,-41.0000,1.0000 target_yaw=90.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
+KURT health=100 hurt_flash=0.0000 invulnerable=0.0000 knock=0.0000 state=0 slots=0
 OBJ 000 type=XBSHIP sflags=0x00000000 vars=0.0000,7.0000,0.0000,0.0000 restart=3240 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
 OBJ 001 type=XCARGO sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=4391 wait=15.3667 wresume=4402 death=4371 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
 OBJ 002 type=XCORRDOR sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=3169 wait=0.0000 wresume=3163 death=0 cmdtgt=3163 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000

@@ -1,5 +1,6 @@
 SCRIPT level=6 ticks=60 seed=1 currentArena=OLYM_1 objects=6 target_pos=-1167.0000,-1173.0000,-27.0000 target_yaw=268.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
+KURT health=100 hurt_flash=0.0000 invulnerable=0.0000 knock=0.0000 state=0 slots=0
 OBJ 000 type=SW_SGREN sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
 OBJ 001 type=XT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=3451 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
 OBJ 002 type=XD sflags=0x00000804 vars=0.0000,0.0000,0.0000,0.0000 restart=6224 wait=0.0000 wresume=0 death=2890 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000

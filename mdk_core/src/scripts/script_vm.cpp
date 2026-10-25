@@ -1097,6 +1097,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                              a.max.y > b.min.y && a.min.z < b.max.z && a.max.z > b.min.z;
             return branch(obj, ins, hit);
         }
+        case 109:  // hurt_kurt: Kurt takes the damage, or the ridden object does
+            runtime_.hurtKurt(ival(op(ins, 0)));
+            break;
         case 188: {  // if_target_dist2d: the XY distance to the target
             const Vec3& t = runtime_.targetPosition();
             const float dx = t.x - obj->position.x;
@@ -1258,6 +1261,10 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             break;
         case 176:  // if_flag_40000: the pickup was collected
             return branch(obj, ins, (obj->flags & MdkObject::FlagCollected) != 0);
+        case 175: {  // if_inventory: how many items of a type Kurt has
+            const int32_t count = runtime_.kurt().countItem((Kurt::Item)ival(op(ins, 0)));
+            return branch(obj, ins, compareOps((float)count, op(ins, 1), op(ins, 2), op(ins, 3)));
+        }
 
         // Conditions.
         case 96: {  // if_kurt_in_rect

@@ -1,5 +1,6 @@
 SCRIPT level=5 ticks=2300 seed=1 currentArena=MUSE_1 objects=17 target_pos=-33.0000,-988.0000,-293.0000 target_yaw=284.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
+KURT health=0 hurt_flash=180.0000 invulnerable=0.0000 knock=101.0000 state=0 slots=0
 OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,-76.9658,-52.2662 restart=5037 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
 OBJ 001 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3650 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=5.0000,0.0000,0.0000,0.0000,0.0000
 OBJ 002 type=XS sflags=0x00000401 vars=0.0000,0.0000,0.0000,0.0000 restart=3650 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000

@@ -2091,6 +2091,28 @@ formats::Box ScriptRuntime::kurtBox() const {
     return box;
 }
 
+// C# HurtKurt (ScriptRuntime.cs:2676, 0x46a498): riding the XD2 or the XE the
+// ridden object takes the hits (and dies at 0 unless indestructible); on foot or
+// on the snowboard Kurt does. Rides.TakesHits is Ridden != null && no board; the
+// ride slice is unported, so ridesRidden stays null and every hit reaches Kurt —
+// what the C# reads while nothing is ridden.
+void ScriptRuntime::hurtKurt(int32_t damage) {
+    if (ridesRidden_ == nullptr || ridesBoard_) {
+        kurt_.hurt(damage);
+        return;
+    }
+
+    MdkObject* ridden = ridesRidden_;
+    if (ridden->health >= kIndestructible) {
+        return;
+    }
+
+    ridden->health -= damage;
+    if (ridden->health < 1) {
+        kill(ridden);
+    }
+}
+
 bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
     const float kWidthFactor = 0.25f;
     const float kMinHeight = 0.5f;
