@@ -20,6 +20,15 @@ order at the top of `docs/CONTINUATION.md`.
   then update `docs/CONTINUATION.md` and commit that. Never hold finished
   work uncommitted while doing anything else. If time runs out, the tree must
   already contain your banked work.
+- **Commit BEFORE the long steps.** Golden regeneration, the full golden
+  suite, and the 3DS build each take many minutes. Commit the code change
+  FIRST, then run them; if a long step is killed by the iteration timeout,
+  the code is already safe. A timeout with an uncommitted tree loses the
+  whole batch.
+- **One subsystem slice per batch.** A batch is one code change plus its
+  goldens — not a multi-subsystem sweep. If you inherit a dirty tree from a
+  timed-out iteration, finish and commit THAT work first before starting
+  anything new.
 - **One batch per iteration.** When your batch is committed and CONTINUATION
   is updated, END. Do not start a second batch.
 - **Do not launch the adversarial-validator subagent.** The loop runs the
