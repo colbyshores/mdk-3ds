@@ -283,3 +283,29 @@
   `kurtLooksAt` (constants match ScriptRuntime.cs:2701), 6/15, 62, 207.
 - VM group cases 98/99/140/162/163/168/194 match C# operand layout.
 
+
+## Iteration 14 — Kurt health/inventory state + opcodes 109/175 (commit 4bdcba6)
+
+- New `mdk_core/src/game/kurt.h/.cpp`: the Hurt/Damage half of `Kurt.Combat.cs`
+  (health 0x574324, red flash clamp 75..180 at 25/damage, invulnerability
+  0x573bd4, knock damage 0x573b20, the Dead/Knocked/GetUp/HardLand gate, the
+  difficulty scaling 2/3-easy-min-1 / 2x-hard) and the `Inventory.cs` slot list
+  (5 slots, the Item enum). The movement state machine and pickup collection are
+  later slices, so in the corpus the state moves only through the scripts.
+- `ScriptRuntime::hurtKurt` mirrors C# `HurtKurt` (ScriptRuntime.cs:2676)
+  including the `Rides.TakesHits` gate (ride slice unported → nothing ridden →
+  Kurt takes every hit, as the C# reads). VM: case 109 → hurtKurt(I(o[0]));
+  case 175 → countItem + compareOps(count, o[1], o[2], o[3] ?? 0).
+- The oracle driver's script dump gained a `KURT` line
+  (health/hurt_flash/invulnerable/knock/state/slots); all 170 script goldens
+  regenerated from the oracle and matched byte for byte. L3 t480 pins health 96
+  / flash 150 / knock 4 (two hurts, flash clamp); L5 pins Kurt dead (health 0,
+  knock 101) by t2303; L4/L6/L7/L8 pin him untouched (100/0/0). state=0 and
+  slots=0 everywhere confirm push_kurt never knocks him and nothing is collected
+  in the corpus — the gates are exercised at their false branch.
+- Gates: `audit_r11_idiv` flagged the easy-difficulty `/3`; the constants are
+  now `constexpr` (the audit trusts constexpr divisors; house style in object.h
+  already uses them). `std::max` needed `(int32_t)` literals on arm-none-eabi
+  (int32_t is `long` there).
+- Verified: tests 341 PASS/0 SKIP, check.sh ALL GATES PASSED (smdh SKIP, no
+  .cia), mdk_3ds links mdk.3dsx, linux `Built target mdk`.
