@@ -1,8 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (group-state batch committed). This file is the
-persistent handoff for every fresh context window. Update it at the end of
-every batch.
+Last updated: 2026-10-25 (L5 t577-600 goldens pinned; XG[004] divergence closed).
+This file is the persistent handoff for every fresh context window. Update it at
+the end of every batch.
 
 ## Current tree state (VERIFIED)
 
@@ -20,7 +20,25 @@ every batch.
   reachability probe was rerun to t600: of the remaining set only 109 (L3, L5),
   138 (L5), 175 (L6), 249 (L5) fire.
 
-## What this batch did (all verified against the C# oracle)
+## What this batch did (L5 deep-tick goldens — divergence closed)
+
+- The open "L5 `XG[004]` golden divergence ~tick 577 (root cause unknown)" is
+  **resolved**. Reproduced against the oracle: at t600 the oracle's object count
+  oscillates 8→9→8 (the XGEN spawner's 5th XG opens ~t585 and dies ~t595) and
+  object 004 takes a `move_near_target` (opcode 43) at ~t577. The current C++
+  matches the oracle **byte for byte** (table AND script state) at t577/585/590/
+  595/600. The old divergence was the same degree/radian constant-fold ULP class
+  the left-associative spelling already resolves (the stale `/tmp/kilo/cpp_L5_t600_*.txt`
+  dumps predated that fix and misled the earlier note).
+- Added golden cases `{5,577},{5,585},{5,590},{5,595},{5,600}` (table + script)
+  to `tests/scripts/tick1.cpp`, generated from the oracle. Verified:
+  - `make -C tests/scripts` → `All cases match the oracle.` (new cases PASS,
+    table + script).
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED`.
+  - `make -C mdk_3ds` → links `mdk.3dsx`.
+  - Test-only change; no `mdk_core` code touched, so both targets are unaffected.
+
+## What the previous batch did (all verified against the C# oracle)
 
 - `TriangleGroups.SetState` semantics: stored per-group state on `Arena`
   (`groupState`/`setGroupState`/`hasGroup`), full 1..255 group numbers, the
@@ -61,10 +79,10 @@ every batch.
    still needed.
 3. **Reachable unimplemented opcodes**: 109, 138, 175, 249 fire in levels 3-8
    to t600 and are real gaps (see coverage doc for subsystems).
-4. **Known divergences**: L5 `XG[004]` golden divergence ~tick 577 (root
-   cause unknown); C++/oracle DTI record discrepancy; incomplete
+4. **Known divergences**: C++/oracle DTI record discrepancy; incomplete
    decoy/`AlienTarget` targeting; opcode 207 — C# `MathF.Sign` throws on NaN
-   (C++ returns 0; exceptions are banned here, accepted divergence).
+   (C++ returns 0; exceptions are banned here, accepted divergence). (The former
+   "L5 `XG[004]` divergence ~t577" is CLOSED — see the batch note above.)
 5. **Old 3DS hardware timing: UNMEASURED.** A devkitARM `.3dsx` is not
    hardware validation. Never claim an OG pass without a capture.
 
