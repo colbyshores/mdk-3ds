@@ -1,7 +1,9 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (dynamic scene updates: mid-play group hide is a
-draw-time check, group retexture rebuilds the scene; scene regression test added).
+Last updated: 2026-10-25 (iteration 6: tree re-verified green, iteration-5's
+dangling doc committed, scene commit adversarially reviewed (no bug), opcode-27
+mis-classification corrected; remaining opcode work recorded as a true
+subsystem-integration blocker with a testability map).
 This file is the persistent handoff for every fresh context window. Update it at
 the end of every batch.
 
@@ -21,6 +23,71 @@ the end of every batch.
   "ported" list were wrong — 114, 171, 209 were never in the C++). The
   reachability probe was rerun to t600: of the remaining set only 109 (L3, L5),
   138 (L5), 175 (L6), 249 (L5) fire.
+
+## What this batch did (iteration 6 — verification, review, doc correction)
+
+- **Tree re-verified green** on a clean rebuild (iteration 5 timed out mid-final-
+  verification after committing the scene code `003f9a3` but before committing its
+  `CONTINUATION.md` update):
+  - `make -C tests/scripts` (after `clean`) → `All cases match the oracle.` (all
+    table + script + `L{n}_dti` + the three scene checks PASS).
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no built
+    `.cia`).
+  - `make -C mdk_3ds` → stages RomFS (69 files, 79M) and links `mdk.3dsx`.
+- Committed iteration 5's dangling `CONTINUATION.md` update (the dynamic-scene
+  batch note) as its own commit — the code was already committed, only the doc was
+  left in the working tree.
+- **Adversarially reviewed the scene commit `003f9a3`** against the C# `LevelView`
+  (the four external reviews all timed out at rc=124 mid-verification and produced
+  no findings). Checked: the run-break at group boundaries (a batch is single-group,
+  matching the C#'s per-group meshes batched by surface); the orphaned-vertex path
+  when a not-drawn triangle splits a same-material/same-group run (the split triangle's
+  3 vertices are pushed but referenced by no batch — wasted buffer, never drawn, and
+  the neighbouring batches' `first`/`count` stay correct); `arenaBatchVisible`
+  (group 0 has no stored state → always drawn); `LevelView::refresh()` (rebuilds the
+  whole arena mesh for a `group_set_texture`, the C# per-group `Rebuild` produces the
+  same picture; the texture/flat-colour caches grow monotonically, matching the C#
+  "old mesh lives until the level ends"). **No bug found.**
+- **Corrected a real mis-classification** in `docs/OPCODE_COVERAGE.md`: opcode **27**
+  was grouped under "Audio (no mixer port)". It is `if_alarm`, a branch on
+  `runtime.AlarmTicks > 0` (ScriptVm.cs:1693) — gated behind the **alarm-ticks state
+  machine** (a runtime `alarm_ticks` field + the per-tick decrement
+  ScriptRuntime.cs:896 + the setters in movement command 15 ObjectMotion.cs:385 and
+  Rides Rides.cs:219), none of which exists in the C++. 107/233/249 are the real
+  audio opcodes. 27 does not fire in levels 3-8 to t600, so there is no golden to
+  exercise it — it stays deferred, now with the correct gate named.
+
+## Testability map (why the remaining opcode work is blocked, not merely deferred)
+
+The goldens compare a FIXED field set (`tick1.cpp` `dumpTable`/`dumpScript`):
+pos, yaw, hp, flags, dead, move_command/parameter, connects, path/time/speed/stop,
+script_flags, variables, restart, wait, death_script, command_target, gosub stacks,
+level_timers, global vars. They do **not** observe: `target_position`/`target_yaw`,
+`alien_target`, `alarm_ticks`, `Items.Bomb`/`Items.Decoy`, velocity, or any audio
+state. Combined with the reachability probe (only 109/138/175/249 fire among the
+remaining 77), every remaining owned-partial or unimplemented opcode falls in one of
+three buckets, none of which is testable in the current tree:
+
+1. **Gated behind an unported subsystem** (the subsystem must land first): 109
+   (Rides + `Kurt.Hurt`), 138 (`Debris.Shatter`), 175 (`Kurt.Inventory`), 249/107/
+   233 (audio `Mixer`), 27 (alarm-ticks state machine), 165/166 (`Items.Bomb`),
+   decoy targeting (`Items.Decoy`), 16/56 death path (death script/debris/drops).
+2. **Fires but its effect is not in the dumped field set** — e.g. movement command 6
+   (`Chase`) and 15 (`AlarmTicks`): if 6 fired and moved an object the goldens would
+   already FAIL, so it does not fire in levels 3-8/t600; 15's only observable effect
+   (`alarm_ticks`) is not dumped. Implementing them cannot be checked.
+3. **In the dumped set and already matches** — the goldens pass byte-for-byte, so any
+   owned opcode that fires and writes a dumped field is already verified.
+
+The project rule (OPCODE_COVERAGE.md) forbids porting an opcode without a test that
+exercises it, so buckets 1 and 2 must NOT be blind-ported. **To unblock the next
+tier**, the highest-leverage move is to extend BOTH the oracle driver's `script`
+dump (`/tmp/kilo/oracle/Driver/Program.cs`) and `tick1.cpp` `dumpScript` to observe
+`alarm_ticks`, `target_position`/`target_yaw`, `alien_target`, and `Items.Bomb`/
+`Decoy`, then regenerate the script goldens — that turns bucket 2 into a real test
+and makes the Items/alarm subsystem slices verifiable when they land. That is a
+deliberate golden-set change (touches the oracle harness and regenerates every
+script golden), so it is its own increment, not a drive-by.
 
 ## What this batch did (dynamic scene updates — open item 1)
 

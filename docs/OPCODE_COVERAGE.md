@@ -52,7 +52,16 @@ By blocking subsystem (carried grouping, corrected for this batch):
   136, 158, 167, 172, 179, 180, 184, 192, 195, 208, 213, 214, 228
 - **Movement/AI leftovers (needs partner links, rolling-basis math,
   jump/swing mechanics):** 85, 204, 206, 217, 226, 229
-- **Audio (no mixer port):** 27, 107, 233, 249
+- **Audio (no mixer port):** 107 (`set_loop_sound`), 233 (`if_sound_playing`),
+  249 (`if_own_sound`)
+- **Alarm-ticks state machine (no `AlarmTicks` runtime field; command 15 / Rides
+  unported):** 27 (`if_alarm`). This is a branch on `runtime.AlarmTicks > 0`
+  (ScriptVm.cs:1693), NOT an audio opcode — the earlier grouping under Audio was
+  wrong. Its gate is the alarm-ticks state machine: a runtime `alarm_ticks` field,
+  the per-tick decrement (`AlarmTicks = max(AlarmTicks-1, 0)`, ScriptRuntime.cs:896),
+  and the setters in movement command 15 (ObjectMotion.cs:385) and Rides
+  (Rides.cs:219). None of that exists in the C++ yet, and 27 does not fire in
+  levels 3-8 to t600, so there is no golden to exercise it — do not blind-port it.
 - **Camera/cutscene/debug (no camera/cutscene port):** 13, 77, 131, 203, 243
 - **Not identified in the reference (no safe port exists):** 199, 210, 239
 - **Needs its subsystem or data the tree does not have (deferred with cause):**
