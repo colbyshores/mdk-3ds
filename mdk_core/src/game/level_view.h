@@ -49,7 +49,20 @@ public:
     bool load(MdkRenderer renderer, LevelData* level, const formats::Arena* arena);
 
     // Draw the arena. The camera and the lighting are the caller's.
+    //
+    // A group the scripts hid mid-play (group_set_state) is skipped here, per
+    // batch, with no rebuild -- the C# LevelView checks Hidden at draw time
+    // (LevelView.cs:126). A group the scripts RETEXTURED (group_set_texture)
+    // needs refresh() first: its surface is baked into the batches.
     void draw();
+
+    // Rebuild the scene from the arena's CURRENT group materials and re-upload
+    // the mesh. This is the C# LevelView.Rebuild (LevelView.cs:251), the path a
+    // group_set_texture takes: the group's triangles take the new material, so
+    // their surface (and UV scale) changes and the mesh is built again. Call it
+    // after a material change, between frames; a hide/show needs no refresh
+    // because draw() reads the hidden state live.
+    bool refresh();
 
     // The scene, for the tests and for the diagnostics.
     const ArenaScene& scene() const { return scene_; }
@@ -73,6 +86,7 @@ private:
     MdkTextureId flatColourId(const Colour& colour);
 
     MdkRenderer renderer_ = nullptr;
+    LevelData* level_ = nullptr;
     const formats::Arena* arena_ = nullptr;
     ArenaScene scene_;
 

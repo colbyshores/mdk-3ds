@@ -38,6 +38,8 @@ SOURCES := \
 	$(CORE)/game/level_data.cpp \
 	$(CORE)/game/arena_space.cpp \
 	$(CORE)/game/bsp.cpp \
+	$(CORE)/render/arena_scene.cpp \
+	$(CORE)/render/material_resolver.cpp \
 	$(CORE)/scripts/object.cpp \
 	$(CORE)/scripts/script_vm.cpp \
 	$(CORE)/scripts/script_runtime.cpp

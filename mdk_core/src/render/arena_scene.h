@@ -35,13 +35,20 @@
 
 namespace mdk {
 
-// A run of triangles sharing a surface.
+// A run of triangles sharing a surface AND a group.
 struct ArenaBatch {
     // The first VERTEX of the run. The count is in vertices, so a run of
     // triangles is a multiple of three.
     int32_t first = 0;
     int32_t count = 0;
     Surface surface;
+    // The triangle group (the top byte of the triangle flags) every triangle
+    // in this run belongs to. A run never spans two groups: the build breaks a
+    // run at a group boundary as well as a material change, so the drawing can
+    // skip a whole group the scripts hid mid-play (arenaBatchVisible) without
+    // rebuilding the mesh -- the C# LevelView checks Hidden per group at draw
+    // time (LevelView.cs:126), and this is the same decision per batch.
+    int32_t group = 0;
 };
 
 // An arena's geometry.
@@ -67,5 +74,12 @@ bool buildArenaScene(const formats::Arena* arena,
                      const formats::Palette& palette,
                      const std::vector<const formats::TextureArchive*>& archives,
                      ArenaScene* out);
+
+// Whether a batch is drawn right now: its group is not Hidden. This is the
+// draw-time check the C# LevelView makes per group (LevelView.cs:126) -- a
+// group the scripts hid with group_set_state disappears with no mesh rebuild,
+// because the geometry is still in the buffer and only the draw is skipped.
+// Group 0 (the rest of the arena) never changes and is always drawn.
+bool arenaBatchVisible(const formats::Arena* arena, const ArenaBatch& batch);
 
 } // namespace mdk

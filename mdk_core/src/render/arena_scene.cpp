@@ -34,9 +34,11 @@ bool buildArenaScene(const formats::Arena* arena,
 
     out->vertices.reserve((size_t)triangleCount * 3);
 
-    // The run of triangles currently being batched, and the material value
-    // it is for. A new material value starts a new run.
+    // The run of triangles currently being batched: its material value and its
+    // group. A new material value OR a new group starts a new run, so a batch
+    // never spans two groups and the drawing can skip a hidden group per batch.
     int32_t runMaterial = 0;
+    int32_t runGroup = 0;
     bool haveRun = false;
 
     // The surfaces, by material value. A material value's surface is
@@ -63,12 +65,11 @@ bool buildArenaScene(const formats::Arena* arena,
             continue;
         }
         const int32_t triangleGroup = (int32_t)(flags[(size_t)t] >> 24);
-        // A group whose stored state is Hidden is not drawn (LevelView.cs:126).
-        // The state is read at BUILD time here; a group hidden mid-play needs a
-        // scene rebuild to disappear (open rendering-integration item).
-        if ((arena->groupState(triangleGroup) & formats::Arena::kGroupHidden) != 0) {
-            continue;
-        }
+        // A group's Hidden state is NOT checked here: the C# LevelView builds
+        // every group's mesh and checks Hidden at DRAW time (LevelView.cs:126),
+        // so a group the scripts hide mid-play disappears with no rebuild. The
+        // build only drops the clip/disabled triangles (above); hidden groups'
+        // geometry stays in the buffer and arenaBatchVisible skips its draw.
         // A stored group material replaces the triangle's own (C# Group.Material);
         // absence is a presence test, not a sentinel, because a negative material
         // is a valid flat palette colour.
@@ -115,7 +116,7 @@ bool buildArenaScene(const formats::Arena* arena,
             out->vertices.push_back(vertex);
         }
 
-        if (!haveRun || material != runMaterial) {
+        if (!haveRun || material != runMaterial || triangleGroup != runGroup) {
             // A new run. The previous one ends where this one starts.
             if (haveRun && !out->batches.empty()) {
                 out->batches.back().count = first - out->batches.back().first;
@@ -131,8 +132,10 @@ bool buildArenaScene(const formats::Arena* arena,
             batch.first = first;
             batch.count = 0;
             batch.surface = surface;
+            batch.group = triangleGroup;
             out->batches.push_back(batch);
             runMaterial = material;
+            runGroup = triangleGroup;
             haveRun = true;
         }
     }
@@ -152,6 +155,15 @@ bool buildArenaScene(const formats::Arena* arena,
     out->batches.swap(kept);
 
     return !out->batches.empty();
+}
+
+bool arenaBatchVisible(const formats::Arena* arena, const ArenaBatch& batch) {
+    if (!arena) {
+        return false;
+    }
+    // The C# LevelView skips a group whose stored state is Hidden (LevelView.cs:126).
+    // Group 0 has no stored state (groupState returns 0) and is always drawn.
+    return (arena->groupState(batch.group) & formats::Arena::kGroupHidden) == 0;
 }
 
 } // namespace mdk

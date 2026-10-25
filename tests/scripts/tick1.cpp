@@ -36,6 +36,8 @@
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
 #include "game/level_data.h"
+#include "render/arena_scene.h"
+#include "render/material_resolver.h"
 #include "scripts/script_runtime.h"
 
 using namespace mdk;
@@ -555,6 +557,163 @@ int main() {
         } else {
             printf("FAIL L%d_dti: records differ\n--- got ---\n%s--- expected ---\n%s", level,
                    got.c_str(), expected.c_str());
+            failures++;
+        }
+    }
+
+    // Dynamic scene updates (open item 1). The scene is built once but the
+    // scripts change group state (group_set_state) and group material
+    // (group_set_texture) mid-play. This checks the three things that make that
+    // work, against real arena geometry:
+    //   (a) tagging  -- every batch belongs to exactly one group, and the
+    //                   batches partition the drawn triangles by group (so a
+    //                   per-batch hidden check skips exactly the hidden group);
+    //   (b) hide     -- a group hidden after the build is not visible, while the
+    //                   other groups still are (the C# draw-time Hidden check,
+    //                   LevelView.cs:126), with no rebuild;
+    //   (c) retexture-- a group given a new material shows it on a rebuild (the
+    //                   C# LevelView.Rebuild path, LevelView.cs:251).
+    {
+        int arenasChecked = 0;
+        int crossAdjTotal = 0;  // adjacent drawn triangles in different groups sharing a material
+        bool testedHide = false, testedRetexture = false;
+        for (int level = 3; level <= 8; level++) {
+            LevelData levelData;
+            if (!LevelData::load(&levelData, &data, level)) {
+                continue;
+            }
+            for (size_t ai = 0; ai < levelData.arenas().size(); ai++) {
+                const Arena* arenaC = levelData.arenas()[ai];
+                Arena* arena = levelData.arenaNamedMutable(arenaC->name());
+                if (!arena) {
+                    continue;
+                }
+                Palette& palette = levelData.paletteOf(arena);
+                const std::vector<const TextureArchive*> archives = levelData.archivesOf(arena);
+                MaterialResolver resolver(&levelData.dti(), Shading::Original);
+                ArenaScene scene;
+                if (!buildArenaScene(arena, resolver, palette, archives, &scene) ||
+                    scene.batches.empty()) {
+                    continue;
+                }
+                arenasChecked++;
+
+                // (a) Tagging, on EVERY arena: per group, the batch triangles must
+                // equal the drawn triangles -- a triangle is drawn when it is not
+                // clip/disabled and its material (the group's, else its own) is
+                // drawn. A batch that spanned two groups would misattribute its
+                // triangles and break this equality, so this proves the build
+                // breaks runs at group boundaries (the run-break) and that the
+                // batches partition the drawn triangles by group exactly once.
+                const std::vector<uint32_t>& flags = arena->triangleFlags();
+                const std::vector<int32_t>& mats = arena->triangleMaterials();
+                const std::vector<std::string>& names = arena->materials();
+                std::map<int32_t, int32_t> expected, got;
+                int32_t prevGroup = -1, prevMat = -999;
+                bool prevDrawn = false;
+                for (size_t t = 0; t < flags.size(); t++) {
+                    // A clip/disabled triangle is skipped without breaking the run
+                    // (buildArenaScene `continue`s before the run logic), so it does
+                    // not reset the previous-drawn tracking either.
+                    if ((flags[t] & (arena->clipFlag() | Arena::kGroupDisabled)) != 0) {
+                        continue;
+                    }
+                    const int32_t g = (int32_t)(flags[t] >> 24);
+                    int32_t gm = 0;
+                    const int32_t mat = arena->groupMaterial(g, &gm) ? gm : mats[t];
+                    if (MaterialResolver::isDrawn(mat, names, archives)) {
+                        expected[g]++;
+                        // Two consecutive drawn triangles in different groups that
+                        // share a material: only the run-break keeps them in
+                        // separate batches. Count them so the test proves it is
+                        // exercised, not just present.
+                        if (prevDrawn && g != prevGroup && mat == prevMat) {
+                            crossAdjTotal++;
+                        }
+                        prevDrawn = true;
+                        prevGroup = g;
+                        prevMat = mat;
+                    } else {
+                        prevDrawn = false;  // a not-drawn material breaks the run
+                    }
+                }
+                for (size_t i = 0; i < scene.batches.size(); i++) {
+                    got[scene.batches[i].group] += scene.batches[i].count / 3;
+                }
+                if (!(expected == got)) {
+                    printf("FAIL scene tagging L%d %s: batches do not partition drawn triangles by group\n",
+                           level, arena->name().c_str());
+                    failures++;
+                }
+
+                // (b) Hide: a non-zero group with batches, hidden after the build.
+                if (!testedHide) {
+                    int32_t g = 0;
+                    for (size_t i = 0; i < scene.batches.size(); i++) {
+                        if (scene.batches[i].group != 0) { g = scene.batches[i].group; break; }
+                    }
+                    if (g != 0) {
+                        arena->setGroupState(g, Arena::kGroupHidden);
+                        bool anyOfG = false, hiddenAllHidden = true, othersVisible = true;
+                        for (size_t i = 0; i < scene.batches.size(); i++) {
+                            const bool vis = arenaBatchVisible(arena, scene.batches[i]);
+                            if (scene.batches[i].group == g) {
+                                anyOfG = true;
+                                if (vis) hiddenAllHidden = false;
+                            } else if (!vis) {
+                                othersVisible = false;
+                            }
+                        }
+                        const bool ok = anyOfG && hiddenAllHidden && othersVisible;
+                        printf("%s scene hide L%d %s group %d: hidden group's batches not drawn, others still drawn\n",
+                               ok ? "PASS" : "FAIL", level, arena->name().c_str(), g);
+                        if (!ok) failures++;
+                        testedHide = true;
+                        arena->setGroupState(g, 0);  // restore for any later check
+                    }
+                }
+
+                // (c) Retexture: a non-zero group with a textured batch, given a
+                // flat colour; on a rebuild its batches must all be flat (the new
+                // material took effect), proving the scene reflects group_set_texture.
+                if (!testedRetexture) {
+                    int32_t g = 0;
+                    for (size_t i = 0; i < scene.batches.size(); i++) {
+                        if (scene.batches[i].group != 0 && scene.batches[i].surface.texture != nullptr) {
+                            g = scene.batches[i].group;
+                            break;
+                        }
+                    }
+                    if (g != 0) {
+                        arena->setGroupMaterial(g, -1);  // flat palette colour 1
+                        ArenaScene rebuilt;
+                        buildArenaScene(arena, resolver, palette, archives, &rebuilt);
+                        bool anyOfG = false, allFlat = true;
+                        for (size_t i = 0; i < rebuilt.batches.size(); i++) {
+                            if (rebuilt.batches[i].group == g) {
+                                anyOfG = true;
+                                if (rebuilt.batches[i].surface.texture != nullptr) allFlat = false;
+                            }
+                        }
+                        const bool ok = anyOfG && allFlat;
+                        printf("%s scene retexture L%d %s group %d: after group_set_texture(-1) its batches are flat on rebuild\n",
+                               ok ? "PASS" : "FAIL", level, arena->name().c_str(), g);
+                        if (!ok) failures++;
+                        testedRetexture = true;
+                    }
+                }
+            }
+        }
+        printf("PASS scene tagging: %d arenas partition the drawn triangles by group (%d cross-group same-material adjacencies exercised the run-break)\n",
+               arenasChecked, crossAdjTotal);
+        if (arenasChecked == 0 || crossAdjTotal == 0) {
+            printf("FAIL scene dynamic: tagging did not exercise the group run-break (arenas=%d crossAdj=%d)\n",
+                   arenasChecked, crossAdjTotal);
+            failures++;
+        }
+        if (!testedHide || !testedRetexture) {
+            printf("FAIL scene dynamic: did not exercise hide/retexture (hide=%d retexture=%d)\n",
+                   (int)testedHide, (int)testedRetexture);
             failures++;
         }
     }

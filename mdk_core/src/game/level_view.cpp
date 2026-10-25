@@ -26,6 +26,7 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
         return false;
     }
     renderer_ = renderer;
+    level_ = level;
     arena_ = arena;
 
     palette_ = level->paletteOf(arena);
@@ -120,6 +121,11 @@ void LevelView::draw() {
     }
     for (size_t i = 0; i < scene_.batches.size(); i++) {
         const ArenaBatch& batch = scene_.batches[i];
+        // A group the scripts hid mid-play is skipped here, not rebuilt away --
+        // the C# LevelView checks Hidden per group at draw time (LevelView.cs:126).
+        if (!arenaBatchVisible(arena_, batch)) {
+            continue;
+        }
         mdk::MeshDraw draw;
         draw.mesh = mesh_;
         draw.first_vertex = batch.first;
@@ -149,6 +155,36 @@ void LevelView::draw() {
 
         mdk_render_draw_mesh(renderer_, &draw);
     }
+}
+
+bool LevelView::refresh() {
+    if (!renderer_ || !level_ || !arena_) {
+        return false;
+    }
+    // The C# LevelView.Rebuild (LevelView.cs:251): a group_set_texture changes a
+    // group's material, so its surface and UV scale change and the mesh is built
+    // again. The whole arena is rebuilt (it is one mesh), which is the same
+    // picture the C#'s per-group rebuild produces. A hide/show does NOT come here
+    // -- draw() reads the hidden state live, so it needs no rebuild.
+    MaterialResolver resolver(&level_->dti(), Shading::Original);
+    const std::vector<const formats::TextureArchive*> archives = level_->archivesOf(arena_);
+    ArenaScene rebuilt;
+    buildArenaScene(arena_, resolver, palette_, archives, &rebuilt);
+
+    scene_.vertices.swap(rebuilt.vertices);
+    scene_.batches.swap(rebuilt.batches);
+
+    // The mesh is rebuilt. The C# creates a new mesh on Rebuild and lets the old
+    // one live until the level ends; here the old GPU buffer is released first.
+    if (mesh_ >= 0) {
+        mdk_render_release_mesh(renderer_, mesh_);
+        mesh_ = -1;
+    }
+    if (!scene_.vertices.empty()) {
+        mesh_ = mdk_render_create_mesh(renderer_, scene_.vertices.data(),
+                                       (int32_t)scene_.vertices.size());
+    }
+    return mesh_ >= 0 || scene_.vertices.empty();
 }
 
 } // namespace mdk
