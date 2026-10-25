@@ -455,8 +455,7 @@ static int32_t randomTarget(Random& rng, const std::vector<ScriptValue>& entries
     if (entries.empty()) {
         return 0;
     }
-    int32_t pick = rng.next((int)entries.size());
-    return ival(listval(entries[pick])[0]);
+    return ival(listval(entries[rng.next((int)entries.size())])[0]);
 }
 
 // A weighted random target ([[weight, target], ...]).
@@ -582,6 +581,24 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 57: { // if_not_sees_kurt
             bool sees = runtime_.canSeeKurt(obj, fval(op(ins, 0)), fval(op(ins, 1)));
             return branch(obj, ins, ins.opcode == 14 ? sees : !sees);
+        }
+        case 115: { // if_wall: a horizontal ray from the walker's chest (or feet)
+            const float kWalkerHeight = 2.0f;
+            Vec3 from = obj->position;
+            from.z += (obj->flags & MdkObject::FlagCollides) != 0 ? kWalkerHeight : 0.0f;
+            const float angle = obj->yaw + fval(op(ins, 0));
+            /* @vfp-exempt R6 — the wall probe's heading (per probing object per
+             * tick); glibc cosf/sinf match the C#'s MathF.SinCos bit-for-bit on this
+             * machine (probed), and the conversion is .NET's left-associative
+             * spelling; a LUT would move the probe endpoint. measured n/a (corpus
+             * empty). Verified 2026-10-25. */
+            const float radians = angle * 3.14159265358979323846f / 180.0f;
+            const float scale = fval(op(ins, 1));
+            Vec3 to = from;
+            to.x += cosf(radians) * scale;
+            to.y += sinf(radians) * scale;
+            Vec3 hit;
+            return branch(obj, ins, runtime_.raycastPoint(from, to, &hit));
         }
 
         // Flags (set/clear/toggle and the if_flag conditions).
