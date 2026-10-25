@@ -1,10 +1,13 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (iteration 7: the script goldens now observe the
-runtime target-tracking state — `target_pos`/`target_yaw`/`alien_target` — the
-C++ already matched the oracle on all three, so the 114 script goldens were
-regenerated and now lock the per-tick target reset; `alarm_ticks` remains the
-one field still unobservable, gated behind the unported alarm-ticks subsystem).
+Last updated: 2026-10-25 (iteration 8: the golden corpus now reaches each level's
+honest deep-tick frontier — L3 t420, L5 t660, L6 t900, L7 t900 — all generated
+from the oracle and matching byte for byte (table + script). The frontier is
+bounded by the unported pickup/chute/death lifecycle and transient effects,
+confirmed by the first divergent tick per level (L8 t420, L3 t480, L5 t720; L4
+empties to 0 objects past t600). The testability map's blocker was independently
+re-verified: `move_command` 15 (the only alarm setter) never fires in levels 3-8
+to t600, so the alarm subsystem is not testable in this corpus).
 This file is the persistent handoff for every fresh context window. Update it at
 the end of every batch.
 
@@ -13,8 +16,10 @@ the end of every batch.
 - The group-state slice (Task 1 below) is implemented and committed. Clean
   rebuild verified:
   - `make -C tests/scripts` → `All cases match the oracle.` (after `clean`), now
-    including the six `L{n}_dti` record-layout checks and the target-tracking
-    fields (`target_pos`/`target_yaw`/`alien_target`) added to the script dump.
+    including the six `L{n}_dti` record-layout checks, the target-tracking
+    fields (`target_pos`/`target_yaw`/`alien_target`) added to the script dump,
+    and the deep-tick frontier cases (L3 t360/t420, L5 t660, L6 t660-900,
+    L7 t660/t900).
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
   - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
@@ -25,6 +30,39 @@ the end of every batch.
   "ported" list were wrong — 114, 171, 209 were never in the C++). The
   reachability probe was rerun to t600: of the remaining set only 109 (L3, L5),
   138 (L5), 175 (L6), 249 (L5) fire.
+
+## What this batch did (iteration 8 — deep-tick golden frontier)
+
+- Extended the golden corpus to each level's honest deep-tick frontier, generated
+  from the oracle driver (table + script dumps), all matching byte for byte:
+  **L3 t360/t420** (pickups/chutes resolve, objects drop 14→12), **L5 t660** (the
+  XGEN region past t600), **L6 t660/720/780/840/900** (the XD keeps walking — the
+  table genuinely cycles, not a frozen steady state: object 002's pos/yaw/restart
+  change across the range), **L7 t660/t900** (a steady arena bracketed to prove no
+  slow drift). 10 new cases, 20 new golden files.
+- **The frontier is the unported-slice boundary, confirmed empirically, not
+  assumed.** Probed deeper ticks against the oracle and committed only the matching
+  ones; the first divergent tick per level is the unported lifecycle: **L8 diverges
+  at t420** (SW_H01 + SW_CHUTE removed between t360 and t420 — the pickup/chute
+  removal slice), **L3 at t480**, **L5 at t720**, and **L4 empties to 0 objects
+  past t600** (degenerate, not committed). None of the divergent goldens were
+  committed (they would fail).
+- **Independently re-verified the testability map's blocker** (so the next context
+  does not re-litigate it): `grep` over every golden shows `move=15/` appears **0
+  times** — movement command 15 (the only `AlarmTicks` setter, ObjectMotion.cs:385)
+  never fires in levels 3-8 to t600, so porting the alarm-ticks state machine +
+  dumping `alarm_ticks` would yield an all-zeros column that exercises nothing.
+  The four reachable unimplemented opcodes (109/138/175/249) fire but their effects
+  are not in the dumped field set (Kurt health, Kurt inventory, audio) or need an
+  unported subsystem, so they remain blind-port-forbidden.
+- **Corpus cannot widen by level**: only `MDK/TRAVERSE/LEVEL3..8` data is present
+  (no level 1/2/9+), so the only axis left to densify is ticks, and that axis is
+  now bounded by the unported lifecycle slices above.
+- Test-only change; no `mdk_core` code touched, so both targets are unaffected.
+  Verified: `make -C tests/scripts` (clean) → `All cases match the oracle.`;
+  `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no `.cia`);
+  `make -C mdk_3ds` → links `mdk.3dsx`; `cmake --build build-linux --target mdk` →
+  `Built target mdk`.
 
 ## What this batch did (iteration 7 — target-tracking goldens)
 
@@ -139,6 +177,16 @@ with the alarm-ticks state machine (the per-tick decrement + the movement-comman
 / Rides setters), and `Items.Bomb`/`Decoy` with the `Items` slice (which must also
 become reachable from the oracle driver). Adding either field to the dump before its
 subsystem lands would make the goldens diverge and force a blind port.
+
+**Progress (iteration 8):** the alarm-ticks unblock is now shown to be a dead end in
+*this* corpus, not merely deferred: `move=15/` (the only `AlarmTicks` setter) appears
+**0 times** across every golden, so dumping `alarm_ticks` would lock an all-zeros
+column. The deep-tick frontier was extended instead (see the iteration 8 batch note):
+the corpus now reaches each level's first unported-lifecycle divergence (L8 t420,
+L3 t480, L5 t720; L4 empties past t600). The next real unblock is a subsystem whose
+setter actually fires in levels 3-8 — the pickup/chute/death lifecycle is the first
+one on that frontier (it is what bounds L8 at t420), so porting it (with a dump field
+for the removal) is the highest-leverage next slice, not the alarm.
 
 ## What this batch did (dynamic scene updates — open item 1)
 
