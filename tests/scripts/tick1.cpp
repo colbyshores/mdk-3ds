@@ -32,6 +32,7 @@
 #include "test_support.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
+#include "formats/dti.h"
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
 #include "game/level_data.h"
@@ -147,6 +148,42 @@ std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
                  o.level_timers[0], o.level_timers[1], o.level_timers[2], o.level_timers[3],
                  o.level_timers[4]);
         out += line;
+    }
+    return out;
+}
+
+// The DTI records in the oracle's "dti" dump format. The floats are printed as
+// raw IEEE bits (not %.4f) so a one-ULP parser difference is caught, not rounded
+// away. This locks the record layout -- including the boxEnd/name rewind quirk --
+// against the C# Dti.ParseRecords.
+std::string floatBits(float f) {
+    uint32_t u;
+    memcpy(&u, &f, 4);
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%08X", u);
+    return std::string(buf);
+}
+
+std::string dumpDti(int level, const Dti& dti) {
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "DTI level=%d arenas=%d\n", level, (int)dti.arenas().size());
+    out += line;
+    for (size_t i = 0; i < dti.arenas().size(); i++) {
+        const Dti::ArenaEntry& a = dti.arenas()[i];
+        snprintf(line, sizeof(line), "ARENA name=%s pitch=%s records=%d\n", a.name.c_str(),
+                 floatBits(a.pitch).c_str(), (int)a.records.size());
+        out += line;
+        for (size_t j = 0; j < a.records.size(); j++) {
+            const Dti::Record& r = a.records[j];
+            snprintf(line, sizeof(line),
+                     "REC type=%u id=%d angle=%s pos=%s,%s,%s box=%s,%s,%s name=%s\n",
+                     r.type, r.id, floatBits(r.angle).c_str(),
+                     floatBits(r.position[0]).c_str(), floatBits(r.position[1]).c_str(),
+                     floatBits(r.position[2]).c_str(), floatBits(r.boxEnd[0]).c_str(),
+                     floatBits(r.boxEnd[1]).c_str(), floatBits(r.boxEnd[2]).c_str(), r.name);
+            out += line;
+        }
     }
     return out;
 }
@@ -484,6 +521,41 @@ int main() {
                     }
                 }
             }
+        }
+    }
+
+    // DTI record layout. The object-table goldens above prove the DTI-derived
+    // SPAWNED objects match, but they do not observe every record field (the
+    // boxEnd far-corner and the name bytes a fan/wind zone keeps in them). This
+    // dumps every arena's records with the floats as raw bits and compares to the
+    // oracle's, closing the "DTI record discrepancy" claim with a reproduction:
+    // the C++ Dti::parseRecords is byte-identical to the C# Dti.ParseRecords.
+    for (int level = 3; level <= 8; level++) {
+        char dtiPath[128];
+        snprintf(dtiPath, sizeof(dtiPath), "TRAVERSE/LEVEL%d/LEVEL%d.DTI", level, level);
+        std::vector<uint8_t> dtiBytes;
+        if (!data.read(dtiPath, &dtiBytes)) {
+            printf("FAIL L%d_dti: DTI did not read\n", level);
+            failures++;
+            continue;
+        }
+        Dti dti = Dti::parse(dtiBytes.data(), (int32_t)dtiBytes.size());
+        std::string got = dumpDti(level, dti);
+        char goldenPath[128];
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_dti.txt", level);
+        std::string expected;
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d_dti: no golden file %s\n", level, goldenPath);
+            failures++;
+            continue;
+        }
+        if (got == expected) {
+            printf("PASS L%d_dti: %d arenas, records match the oracle byte for byte\n", level,
+                   (int)dti.arenas().size());
+        } else {
+            printf("FAIL L%d_dti: records differ\n--- got ---\n%s--- expected ---\n%s", level,
+                   got.c_str(), expected.c_str());
+            failures++;
         }
     }
 

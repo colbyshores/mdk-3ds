@@ -1,6 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (owned-opcode classification done — Task 2 remainder).
+Last updated: 2026-10-25 (DTI record discrepancy reproduced-and-closed; permanent
+DTI-record regression test added).
 This file is the persistent handoff for every fresh context window. Update it at
 the end of every batch.
 
@@ -8,7 +9,8 @@ the end of every batch.
 
 - The group-state slice (Task 1 below) is implemented and committed. Clean
   rebuild verified:
-  - `make -C tests/scripts` → `All cases match the oracle.` (after `clean`)
+  - `make -C tests/scripts` → `All cases match the oracle.` (after `clean`), now
+    including the six `L{n}_dti` record-layout checks.
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
   - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
@@ -19,6 +21,32 @@ the end of every batch.
   "ported" list were wrong — 114, 171, 209 were never in the C++). The
   reachability probe was rerun to t600: of the remaining set only 109 (L3, L5),
   138 (L5), 175 (L6), 249 (L5) fire.
+
+## What this batch did (DTI record discrepancy — reproduced and closed)
+
+- Open item 4's "C++/oracle DTI record discrepancy" is **CLOSED with a concrete
+  reproduction**, not an argument (the prior batch had only argued the layouts
+  match field-for-field).
+- Reproduction: dumped every arena's object records for levels 3-8 from BOTH the
+  C# oracle (`Dti.ParseRecords`) and the C++ `Dti::parseRecords`, printing every
+  float (angle, position[3], boxEnd[3], arena pitch) as **raw IEEE bits** so a
+  one-ULP difference cannot hide behind `%.4f`. Result: **byte-identical across
+  all 6 levels, 19 arenas each, every record** — type/id/angle/position/boxEnd
+  (the three-floats-then-`skip(-12)`-then-name(12) rewind quirk) and name. The
+  claim was unsubstantiated; there is no DTI record discrepancy.
+- Locked it with a **permanent regression test**: `tests/scripts/tick1.cpp` now
+  dumps the same raw-bit record view and compares to committed goldens
+  `tests/scripts/golden/L{3..8}_dti.txt` (generated from the oracle). The test is
+  sensitive — a probe aliasing bug during authoring made the C++ dump differ, and
+  the check caught it, confirming it fails on a real divergence.
+- Reproduce/regenerate: the oracle driver gained a `dti` dump mode
+  (`/tmp/kilo/oracle/Driver/Program.cs`, 4th arg `dti`) that prints the records
+  in this format; the goldens are that output. (The driver is the oracle harness,
+  not in the repo — same as the existing goldens' provenance.)
+- Test-only change; no `mdk_core` code touched, so both targets are unaffected.
+  Verified: `make -C tests/scripts` (clean) → `All cases match the oracle.` (six
+  `L{n}_dti` PASS); `bash tools/check.sh` → `CHECK: ALL GATES PASSED`;
+  `make -C mdk_3ds` → links `mdk.3dsx`.
 
 ## What this batch did (owned-opcode classification — Task 2 remainder)
 
@@ -109,11 +137,10 @@ the end of every batch.
    (109 → Rides + `Kurt.Hurt`; 138 → `Debris.Shatter`; 175 → `Kurt.Inventory`;
    249 → the audio `Mixer`), so none is meaningfully testable until that
    subsystem lands — do not blind-port them (see coverage doc).
-4. **Known divergences**: C++/oracle DTI record discrepancy (this iteration
-   verified the C++ `Dti::parseRecords` matches the C# `Dti.ParseRecords`
-   field-for-field — type/id/angle/position/boxEnd/`skip(-12)`/name(12) — so the
-   discrepancy is NOT in the record layout; it needs a concrete reproduction
-   before any change, per the "closed by a reproduction, not an argument" rule);
+4. **Known divergences**: the former "C++/oracle DTI record discrepancy" is
+   **CLOSED** — reproduced with a raw-IEEE-bit dump of every arena's records for
+   levels 3-8 from both parsers, byte-identical (see the batch note above), and
+   locked by `tests/scripts/golden/L{3..8}_dti.txt`. Remaining known divergences:
    incomplete decoy/`AlienTarget` targeting; opcode 207 — C# `MathF.Sign` throws
    on NaN (C++ returns 0; exceptions are banned here, accepted divergence). (The
    former "L5 `XG[004]` divergence ~t577" is CLOSED — see the batch note above.)
