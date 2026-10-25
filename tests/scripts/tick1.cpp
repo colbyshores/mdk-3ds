@@ -213,6 +213,12 @@ int main() {
         // Deeper ticks that stay byte-exact with the oracle: the spawner/walker
         // scripts run past t300 without a new slice (L3 and L8 diverge earlier).
         {4, 360}, {4, 420}, {4, 480}, {4, 540}, {4, 600}, {5, 360}, {5, 420}, {5, 480}, {5, 540}, {6, 360}, {6, 420}, {6, 480}, {6, 540}, {6, 600}, {7, 360}, {7, 420}, {7, 480}, {7, 540}, {7, 600}, {8, 360},
+        // L5 past t540: the XGEN spawner's 5th XG opens (~t585) and dies (~t595), and
+        // object 004 takes a move_near_target (opcode 43) at ~t577. The old "XG[004]
+        // divergence ~t577" was the same degree/radian constant-fold ULP class the
+        // left-associative spelling resolves (see the note above), so the whole region
+        // now matches the oracle byte for byte (table and script state).
+        {5, 577}, {5, 585}, {5, 590}, {5, 595}, {5, 600},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         int level = cases[c].level;
