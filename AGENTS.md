@@ -620,12 +620,34 @@ Select checks relevant to the changed behavior and record results explicitly:
 | Rendering or synchronization | Busy-scene pacing, both-eye/slider behavior, buffer reuse under load, and successful resource teardown |
 | Lifecycle or workers | HOME return, lid sleep/wake, repeated pause/resume, clean exit, and no stuck waits or duplicate workers |
 | Filesystem or streaming | Packaged assets in each shipped format, missing/read-error handling, relevant save failures, and streaming behavior under load |
+| Emulator run | The dedicated display the emulator ran on (`:99`), the exact command, the capture, and the scene it showed |
 
 Record hardware, scene/workload, clock/cache settings, build revision, and
 stereoscopic mode. Separate actual original-3DS testing from New 3DS
 OG-profile testing. If actual original hardware is unavailable, state that
 gap; do not claim it passed. A documentation-only revision is not a new
 performance pass.
+
+### P7 — Emulator runs never touch the operator's display
+
+- **Every emulator run (mandarine, and any other GUI harness that opens a
+  window) MUST run on the dedicated headless X display `:99`, never on the
+  operator's desktop (screen 1).** The operator works on screen 1; a window
+  popping up there interrupts them and is a contract violation, not a
+  nuisance.
+- Set `DISPLAY=:99` **explicitly on every emulator invocation**. Never rely
+  on an ambient `DISPLAY` from the shell environment — the loop's agents
+  inherit whatever the session had, which is usually the operator's display.
+- The dedicated server is `Xvfb :99 -screen 0 1280x1024x24` (background it;
+  it is shared, so do not kill a server another run is using). Start it if it
+  is not already listening; do not assume it exists.
+- Capture output to files under `/tmp/kilo` and read the files. Do not open
+  a viewer window on the operator's display to look at a capture.
+- The same rule applies to any test that takes over the screen, including a
+  windowed Linux/Vulkan run: use the dedicated display, or the headless path
+  the Linux target provides.
+- Record the display used in the evidence for the run. An emulator capture
+  with no display recorded does not count as evidence.
 
 ---
 

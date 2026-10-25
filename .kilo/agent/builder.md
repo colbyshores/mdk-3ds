@@ -76,6 +76,13 @@ make -C mdk_3ds              # the devkitARM target
 
 A failing gate is a root-cause bug to fix, not a gate to relax.
 
+**Emulator runs (mandarine, any GUI harness): run them on the dedicated
+headless display `DISPLAY=:99` — NEVER on the operator's desktop (screen 1).
+Set `DISPLAY=:99` explicitly on every invocation; start `Xvfb :99 -screen 0
+1280x1024x24` if it is not already listening; capture to files under
+`/tmp/kilo` and read the files instead of opening a viewer. Record the
+display in the evidence. (AGENTS.md §11 P7.)
+
 ## Before you end
 
 1. The batch is committed (code + `docs/CONTINUATION.md` + `docs/PROGRESS_LOG.md`).
