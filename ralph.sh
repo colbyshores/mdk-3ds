@@ -41,7 +41,7 @@ WORKER_MODEL="${WORKER_MODEL:-litellm/qwen}"
 REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/kimi-k3-nvidia}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-30}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-3600}"
-REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-1800}"
+REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-3600}"
 STALL_LIMIT="${STALL_LIMIT:-4}"
 FAIL_LIMIT="${FAIL_LIMIT:-3}"
 PROMPT_FILE="${PROMPT_FILE:-ralph/PROMPT.md}"
@@ -210,6 +210,10 @@ loop() {
         [ "$rc" -ne 0 ] && break
     done
     echo "[$(date -Is)] LOOP EXIT rc=$rc iter=$(state_get ITER)" >>"$SUMMARY"
+    # Intentional exit (complete, budget, stall, repeated failures): mark
+    # disabled so the watchdog does not resurrect the loop. A silent death
+    # (OOM, stray kill) never reaches this line, so the watchdog restarts.
+    echo "rc=$rc at $(date -Is)" >"$LOGDIR/disabled"
     rm -f "$PIDFILE"
     exit "$rc"
 }
@@ -220,6 +224,9 @@ case "${1:-}" in
         if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
             echo "already running pid $(cat "$PIDFILE")"; exit 6
         fi
+        # The loop died (or was stopped): kill any orphaned worker it left
+        # behind so two workers never edit the tree at once.
+        pkill -f -- "--title ralph-iter-" 2>/dev/null
         while [ $# -gt 1 ]; do
             case "$2" in
                 --max) MAX_ITERATIONS="$3"; shift 2 ;;
@@ -227,6 +234,7 @@ case "${1:-}" in
             esac
         done
         export MAX_ITERATIONS
+        rm -f "$LOGDIR/disabled"
         nohup "$0" __run >>"$LOGDIR/loop.log" 2>&1 &
         echo $! >"$PIDFILE"
         echo "started pid $(cat "$PIDFILE") — logs: $LOGDIR"
@@ -258,6 +266,18 @@ case "${1:-}" in
         else
             echo "not running"
         fi
+        pkill -f -- "--title ralph-iter-" 2>/dev/null
+        echo "stopped by user at $(date -Is)" >"$LOGDIR/disabled"
+        ;;
+    watchdog)
+        # Installed via crontab: restarts the loop after a SILENT death
+        # (OOM, stray kill). Never resurrects an intentional stop/exit.
+        [ -f "$LOGDIR/disabled" ] && exit 0
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            exit 0
+        fi
+        echo "[$(date -Is)] WATCHDOG: loop dead, restarting" >>"$SUMMARY"
+        "$0" start >>"$LOGDIR/watchdog.log" 2>&1
         ;;
     *)
         sed -n '2,20p' "$0"

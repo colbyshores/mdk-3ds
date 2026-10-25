@@ -4,6 +4,16 @@ You are one iteration of an autonomous engineering loop on
 `/mnt/nas/Development/mdk-sdl`. You start with no memory; the repository is
 your memory. Mission: complete the existing Phase 2 specification.
 
+## OWNER DIRECTIVE (2026-10-25) — CODE PORTING IS THE MISSION
+
+The mission is converting the C# game to C++ per SPEC.md. Docs-only or
+test-only iterations are NOT progress. Every iteration MUST land production
+code (ported C# behavior in `mdk_core/`) unless (a) the build is broken or
+(b) a BLOCKER review finding blocks all code work. When goldens cannot be
+extended because a subsystem is unported, THAT SUBSYSTEM is your next port:
+port it and extend the goldens in the same iteration. Work the priority
+order at the top of `docs/CONTINUATION.md`.
+
 Read first, in order:
 
 1. `AGENTS.md` (performance + language contract, working loop).

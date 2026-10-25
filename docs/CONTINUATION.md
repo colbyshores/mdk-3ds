@@ -11,6 +11,29 @@ to t600, so the alarm subsystem is not testable in this corpus).
 This file is the persistent handoff for every fresh context window. Update it at
 the end of every batch.
 
+## PRIORITY ORDER (owner directive 2026-10-25 — port code, goldens follow)
+
+The owner's directive: churn through the C#→C++ conversion. Port subsystems
+in this order; extend goldens in the same iteration as the code that unlocks
+them. Do not spend an iteration on docs/tests alone.
+
+1. **Pickup/chute/death lifecycle slice** — the C# `Items` subsystem's object
+   removal path (pickups consumed, chutes removing SW_H01/SW_CHUTE). This is
+   the confirmed frontier blocker: L8 diverges at t420, L3 at t480, L5 at
+   t720 exactly where this slice is needed. Port it, then commit the deeper
+   goldens it unlocks.
+2. **Kurt health/inventory state** — the fields opcodes 109/175 read (they
+   fire in L3/L5/L6 goldens). Port the state + dump it in the golden table
+   so the opcodes become verifiable, then implement them.
+3. **Audio slice for opcode 249** — C# `Audio/SoundBank.cs`/`SoundMixer.cs`
+   → a C++ sound seam (3DS: no backend yet is fine; the SCRIPT-visible state
+   is what the goldens pin). Then implement 249.
+4. Continue the remaining 77 opcodes subsystem by subsystem, same rule.
+
+Deferred with evidence: alarm (move_command 15 never fires in the corpus —
+verified 0 occurrences in goldens), opcodes whose subsystems are not yet
+reachable. Old-3DS hardware timing stays open (hardware-only).
+
 ## Current tree state (VERIFIED)
 
 - The group-state slice (Task 1 below) is implemented and committed. Clean
