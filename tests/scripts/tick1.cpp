@@ -281,6 +281,18 @@ int main() {
         // left-associative spelling resolves (see the note above), so the whole region
         // now matches the oracle byte for byte (table and script state).
         {5, 577}, {5, 585}, {5, 590}, {5, 595}, {5, 600},
+        // Deeper ticks that stay byte-exact with the oracle, generated from it. Each
+        // level stops at the first tick where an unported slice diverges (the pickup/
+        // chute/death lifecycle and the transient effects), so these are the honest
+        // frontier per level: L3 to t420 (objects drop off as pickups/chutes resolve),
+        // L5 to t660 (the XGEN region past t600), L6 to t900 (the XD keeps walking —
+        // the table genuinely cycles, not a frozen steady state), L7 t660/t900 bracket
+        // a steady arena to prove no slow drift. L4 empties out past t600 (0 objects)
+        // and L8 diverges at t420 (SW_H01/SW_CHUTE removal), so neither extends.
+        {3, 360}, {3, 420},
+        {5, 660},
+        {6, 660}, {6, 720}, {6, 780}, {6, 840}, {6, 900},
+        {7, 660}, {7, 900},
     };
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
         int level = cases[c].level;
