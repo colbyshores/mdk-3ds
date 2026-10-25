@@ -1,13 +1,12 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (iteration 8: the golden corpus now reaches each level's
-honest deep-tick frontier — L3 t420, L5 t660, L6 t900, L7 t900 — all generated
-from the oracle and matching byte for byte (table + script). The frontier is
-bounded by the unported pickup/chute/death lifecycle and transient effects,
-confirmed by the first divergent tick per level (L8 t420, L3 t480, L5 t720; L4
-empties to 0 objects past t600). The testability map's blocker was independently
-re-verified: `move_command` 15 (the only alarm setter) never fires in levels 3-8
-to t600, so the alarm subsystem is not testable in this corpus).
+Last updated: 2026-10-25 (iteration 11: the pickup/chute/death lifecycle slice
+is ported — `Kill`'s death-script branch and `Remove`'s live-`Attached` cascade
+mirror the C# — and the golden frontier moved from ~t400-900 to the END of the
+corpus: L3/L6/L7/L8 match the oracle byte for byte (table AND script) to t30000
+with live objects, L4 to t10000 (empty arena), L5 to t2302. The new L5 blocker
+is a BOLT spawn at t2303 (leads recorded below). Review-8's depth finding is
+recorded as an open item gated on hardware verification.)
 This file is the persistent handoff for every fresh context window. Update it at
 the end of every batch.
 
@@ -17,11 +16,22 @@ The owner's directive: churn through the C#→C++ conversion. Port subsystems
 in this order; extend goldens in the same iteration as the code that unlocks
 them. Do not spend an iteration on docs/tests alone.
 
-1. **Pickup/chute/death lifecycle slice** — the C# `Items` subsystem's object
-   removal path (pickups consumed, chutes removing SW_H01/SW_CHUTE). This is
-   the confirmed frontier blocker: L8 diverges at t420, L3 at t480, L5 at
-   t720 exactly where this slice is needed. Port it, then commit the deeper
-   goldens it unlocks.
+1. **BOLT spawn slice (the new L5 frontier, t2303)** — at t2303 the oracle
+   spawns a 16th BOLT in MUSE_1 that the C++ does not spawn (15 vs 16 objects;
+   everything matches at t2302). Evidence for the next context: the new BOLT's
+   flags are exactly `ProjectileFlags` 0x00080820 (ScriptRuntime.cs:25), while
+   the six BOLTs that DO match carry 0x000808A0 = ProjectileFlags |
+   FlagNoBanking. C# `Spawn(..., Spawning.Plain)` applies NO static flags
+   (cs:1570 — only `Spawning.Flagged` does), and the `{arena}${type}` init
+   script runs at creation (cs:1579-1584) — so the NoBanking on the matching
+   BOLTs comes from the init script, and the t2303 BOLT's absence means the
+   XG's fire DECISION diverged, not the spawn flags: the C++ `fire()`
+   (script_runtime.cpp:1531) already matches C# `Fire` (cs:2659) operand for
+   operand. Leads, in order: (a) an RNG-gated branch (opcode 47 `if_chance`)
+   in the XG attack script — check the C++ `.NET Random` port's draw sequence
+   against the oracle's at ~t2303; (b) a visibility/raycast predicate; (c) a
+   Kurt-state input. Disassemble the MUSE_1 XG attack script around the
+   opcode-61 fire to find the predicate. Then extend L5 past t2302.
 2. **Kurt health/inventory state** — the fields opcodes 109/175 read (they
    fire in L3/L5/L6 goldens). Port the state + dump it in the golden table
    so the opcodes become verifiable, then implement them.
@@ -36,23 +46,61 @@ reachable. Old-3DS hardware timing stays open (hardware-only).
 
 ## Current tree state (VERIFIED)
 
-- The group-state slice (Task 1 below) is implemented and committed. Clean
-  rebuild verified:
-  - `make -C tests/scripts` → `All cases match the oracle.` (after `clean`), now
-    including the six `L{n}_dti` record-layout checks, the target-tracking
-    fields (`target_pos`/`target_yaw`/`alien_target`) added to the script dump,
-    and the deep-tick frontier cases (L3 t360/t420, L5 t660, L6 t660-900,
-    L7 t660/t900).
+- The kill/remove lifecycle slice is implemented and committed. Verified on the
+  final tree:
+  - `make -C tests/scripts` → `All cases match the oracle.` — 341 PASS, 0 SKIP,
+    including the 36 new deep cases (L3 t480-30000, L4 t660-10000, L5 t720-2302,
+    L6 t960-10000, L7 t960-10000, L8 t420-30000; table AND script dumps).
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
-  - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
-  - `cmake --build build-linux` (the `mdk` target) also compiles and links —
-    both targets build the changed core.
+  - `make -C mdk_3ds` (with `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM`)
+    → links `mdk.elf`, builds `mdk.3dsx`
+  - `cmake --build build-linux --target mdk` → `Built target mdk` — both targets
+    build the changed core.
 - `docs/OPCODE_COVERAGE.md` was recounted from the brace-matched `Execute`
   spans: C# 238 cases, C++ 161, remaining 77 (the old 155/83 and the old
   "ported" list were wrong — 114, 171, 209 were never in the C++). The
   reachability probe was rerun to t600: of the remaining set only 109 (L3, L5),
   138 (L5), 175 (L6), 249 (L5) fire.
+
+## What this batch did (iteration 11 — pickup/chute/death lifecycle slice)
+
+- **`ScriptRuntime::kill()` now mirrors C# `Kill` (ScriptRuntime.cs:1678)**:
+  `health=0`, then either the death-script switch (move_command=0,
+  FlagNotTarget, restart/wait_resume = death_script, wait_time=0,
+  death_script=0) or the Explode branch. The Explode branch's EFFECTS
+  (PlaySoundAt/FlashAt/BreakUp/SpawnExplosion — mixer, flash, debris, explosion
+  model) remain unported, but its REMOVAL ACCOUNTING now lands: C# `Explode`
+  calls `Remove(obj)` (cs:1717), so the C++ branch calls `remove(obj)` instead
+  of the old `dead=true` placeholder (which left the object counted in
+  `objectCount()` — found by the adversarial validator). No golden to t30000
+  exercises the Explode branch (every corpus death is a death-script death),
+  so the missing effects stay the documented gap.
+- **`ScriptRuntime::remove()` now mirrors C# `Remove` (cs:1648)**: a live
+  `Attached` (a pickup's chute) is removed FIRST (before the parent is marked
+  dead), with an `isRemoved()` early-return guard for idempotence (the C++
+  `removed_.push_back` is not idempotent, unlike C# `List.Remove`). A pickup
+  that falls out (`fallOut` → `remove`) takes its chute with it. The stale
+  `fallOut` NOTE (calling kill() a placeholder) was corrected.
+- **The frontier moved from ~t400-900 to the end of the corpus.** Probed tick
+  by tick against the oracle (table AND script dumps): L3 matches to t30000
+  (11 live objects), L8 to t30000 (10), L6 to t30000 (5), L7 to t30000 (7),
+  L4 to t10000 (0 objects — the arena empties at the same ticks as the oracle;
+  the old "L4 empties past t600" divergence was the kill() placeholder). L5
+  matches to t2302; t2303 is the new blocker (BOLT spawn, priority 1 above).
+- 36 new golden cases, 72 golden files, all generated from the oracle driver
+  (`dotnet mdkoracle.dll <level> <ticks> 1 [script]`). The temp `RALPH_DUMP`
+  probe used for the probing was removed from `tick1.cpp` before committing.
+- Adversarial validator run over the diff: one MAJOR (Explode-branch count
+  accounting) found and fixed as above; the death-script branch field-for-field
+  and the Attached cascade order were independently confirmed against the C#.
+- Call-site audit vs the C#: C# `Kill` has three call sites (ScriptVm.cs:494/505
+  = opcodes 16/56, ported; cs:1554 = opcode 184 `explode`, in the remaining-77
+  set, gated behind the unported `Items.Blast`). C# `Remove` call sites map to
+  the C++ ones (opcode 110, fallOut, chute-shrink, the Attached cascade); the
+  arena-unload removal (cs:677) and the collected-shrink removal (cs:2610)
+  belong to unported slices (arena streaming, collected shrink) and do not fire
+  in the corpus.
 
 ## What this batch did (iteration 8 — deep-tick golden frontier)
 
@@ -372,6 +420,34 @@ for the removal) is the highest-leverage next slice, not the alarm.
    former "L5 `XG[004]` divergence ~t577" is CLOSED — see the batch note above.)
 5. **Old 3DS hardware timing: UNMEASURED.** A devkitARM `.3dsx` is not
    hardware validation. Never claim an OG pass without a capture.
+6. **C3D depth state diverges from the oracle (review-8 finding, verified).**
+   The C# renderer depth-tests and depth-writes mesh geometry in the original
+   look: `enable_depth_test = geometry == Mesh && pass not Overlay/OnTop`,
+   `enable_depth_write = Mesh && !blended && pass != OnTop`, compare
+   LESS_OR_EQUAL (`src/Mdk.Engine/Render/Renderer.cs:603-608` — note the
+   renderer oracle lives in `src/Mdk.Engine`, not `src/Mdk.Game`). The C3D
+   backend disables the depth test outright (`mdk_3ds/src/render/renderer_c3d.cpp:624`,
+   `C3D_DepthTest(false, GPU_ALWAYS, 0)`), and its comment's claim that "the
+   C#'s original-look path" draws back-to-front without depth is REFUTED by
+   the oracle above. The fix is NOT a one-line flip: PICA's depth range is
+   [-1,0] (opposite of D3D's [0,1]), the comment documents an observed
+   invisible-geometry trap from a desktop-style clear, and AGENTS.md P6
+   requires a hardware/emulator capture for render-path changes (no emulator
+   is available in this environment). The next render pass must map the C#
+   LESS_OR_EQUAL semantics onto PICA (projection remap at renderer_c3d.cpp:496
+   + `C3D_DepthMap` + test function + clear value) and verify on hardware or
+   a working emulator before claiming it.
+7. **DepthLayer/DepthPull unported (review-8 finding).** The C# pairs
+   `Layers.Of` (`src/Mdk.Game/Level/Layers.cs`) with `DepthPull.cs` to push
+   per-triangle depth layers (a poster over its wall); `render_types.h`
+   documents `DepthPull`/`depth_layer` but no C++ code computes or applies
+   them. Gated on item 6 (they are depth-buffer semantics) and on the textured
+   renderer path.
+8. **Doc/spec drift (review-8 observations, not code).** `AGENTS.md`/`SPEC.md`
+   cite `docs/DOCTRINE.md`, which does not exist; SPEC §9.4 lists a
+   `gates_romfs` gate that was never written. Both are documentation/spec
+   corrections, not porting work — flag to the owner rather than inventing a
+   gate or doctrine text unilaterally.
 
 ## Verification commands (run after every batch)
 
