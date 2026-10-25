@@ -40,5 +40,5 @@ bin/
 obj/
 
 # Kilo editor/recovery state.
-.kilo/
+# .kilo/ is PROJECT CONFIG (agents + commands) and is tracked.
 logs/

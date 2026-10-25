@@ -37,7 +37,8 @@ find_kilo() {
 }
 KILO="$(find_kilo)" || { echo "FATAL: kilo CLI not found (set KILO_BIN)"; exit 6; }
 
-WORKER_MODEL="${WORKER_MODEL:-litellm/qwen}"
+WORKER_MODEL="${WORKER_MODEL:-litellm/minimax-m3.1-flash-nvidia}"
+WORKER_AGENT="${WORKER_AGENT:-builder}"
 # The reviewer must be a LIVE, stronger route. kimi-k3-nvidia went EOL upstream
 # (HTTP 410) on 2026-10-15; it is kept only as a documented fallback, never as
 # the default, because a dead reviewer silently turns the review step into a
@@ -66,7 +67,7 @@ run_gates() { # -> sets GATES_OK, appends gate lines to $1
     local -a names=("tests/scripts" "tools/check.sh" "mdk_3ds build")
     local -a cmds=("make -C tests/scripts" "bash tools/check.sh" "make -C mdk_3ds")
     for i in 0 1 2; do
-        if timeout 1800 bash -c "${cmds[$i]}" >>"$log" 2>&1; then
+        if timeout 1800 bash -c "${cmds[$i]}" 9>&- >>"$log" 2>&1; then
             echo "GATE ${names[$i]}: PASS" | tee -a "$log"
         else
             echo "GATE ${names[$i]}: FAIL" | tee -a "$log"
@@ -90,7 +91,7 @@ review_attempt() { # $1=out file  $2=model  $3=scope text
     timeout "$REVIEW_TIMEOUT" "$KILO" run -m "$model" --format json \
         --title "ralph-review" \
         "Read .kilo/agent/adversarial-validator.md and act exactly as that adversarial validator (you may not edit anything, and do not run builds — review by reading code and the C# oracle). SCOPE: $scope Be concise and concrete. Verify the claims in docs/CONTINUATION.md for that scope; do not trust them. End your reply with exactly one line: 'VERDICT: COMPLETE' only if every SPEC acceptance criterion is met with evidence and nothing actionable remains except hardware-only verification; otherwise 'VERDICT: INCOMPLETE' followed by the BLOCKER/MAJOR findings that must be fixed." \
-        >"$out.jsonl.attempt" 2>"$out.err"
+        9>&- >"$out.jsonl.attempt" 2>"$out.err"
     local rc=$?
     # A provider error (e.g. HTTP 410 EOL) is a FAILED review, never a verdict.
     local errs texts
@@ -148,9 +149,9 @@ iterate() {
     full_prompt="$(cat "$prompt_file")$(printf '%s' "$status_block")"
 
     echo "[$(date -Is)] iter=$iter start model=$WORKER_MODEL" >>"$SUMMARY"
-    timeout "$ITER_TIMEOUT" "$KILO" run -m "$WORKER_MODEL" --auto --format json \
+    timeout "$ITER_TIMEOUT" "$KILO" run --agent "$WORKER_AGENT" -m "$WORKER_MODEL" --auto --format json \
         --title "ralph-iter-$iter" "$full_prompt" \
-        >"$itlog.jsonl" 2>"$itlog.err"
+        9>&- >"$itlog.jsonl" 2>"$itlog.err"
     local rc=$?
     local final_text
     final_text="$(jq -rs '[.[] | select(.type=="text") | .part.text] | last // "(no text)"' "$itlog.jsonl" 2>/dev/null)"
@@ -225,6 +226,12 @@ iterate() {
 }
 
 loop() {
+    # The lock fd must NOT be inherited by the worker/reviewer children: an
+    # orphaned child that keeps fd 9 open holds the flock after the loop dies,
+    # and every later start then fails with "lock held" forever. Close it in
+    # each child by opening it with exec redirection that is marked close-on-
+    # exec (bash's `exec {fd}>` is not CLOEXEC, so we close it explicitly in
+    # the child commands instead).
     exec 9>"$LOCK"
     flock -n 9 || { echo "ralph loop already running (lock held)"; exit 6; }
     [ -f "$STATE" ] || { echo "ITER=0"; echo "FAILS=0"; echo "STALL=0"; } >"$STATE"
@@ -265,9 +272,22 @@ case "${1:-}" in
         if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
             echo "already running pid $(cat "$PIDFILE")"; exit 6
         fi
-        # The loop died (or was stopped): kill any orphaned worker it left
-        # behind so two workers never edit the tree at once.
+        # The loop died (or was stopped): kill any orphaned worker/reviewer it
+        # left behind so two workers never edit the tree at once. An orphan
+        # that inherited the lock fd would also block every restart.
         pkill -f -- "--title ralph-iter-" 2>/dev/null
+        pkill -f -- "--title ralph-review" 2>/dev/null
+        # Drop any stale flock holder (an orphan may still hold fd 9).
+        local holder
+        for holder in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+            local f
+            for f in /proc/"$holder"/fd/*; do
+                if [ "$(readlink -f "$f" 2>/dev/null)" = "$LOCK" ] && \
+                   ! grep -q "ralph.sh __run" /proc/"$holder"/cmdline 2>/dev/null; then
+                    kill -9 "$holder" 2>/dev/null
+                fi
+            done
+        done
         while [ $# -gt 1 ]; do
             case "$2" in
                 --max) MAX_ITERATIONS="$3"; shift 2 ;;
@@ -308,6 +328,7 @@ case "${1:-}" in
             echo "not running"
         fi
         pkill -f -- "--title ralph-iter-" 2>/dev/null
+        pkill -f -- "--title ralph-review" 2>/dev/null
         echo "stopped by user at $(date -Is)" >"$LOGDIR/disabled"
         ;;
     watchdog)
@@ -318,6 +339,27 @@ case "${1:-}" in
             exit 0
         fi
         echo "[$(date -Is)] WATCHDOG: loop dead, restarting" >>"$SUMMARY"
+        # Crash-loop guard: a loop that dies again within 3 minutes of its
+        # restart is failing at startup, not working. Stop after 3 tries and
+        # leave a diagnostic instead of spinning every 5 minutes forever.
+        local last_restart now age quick
+        last_restart="$(state_get LAST_RESTART_TS 0)"
+        now="$(date +%s)"
+        age=$(( now - last_restart ))
+        quick="$(state_get QUICK_DEATHS 0)"
+        if [ "${last_restart:-0}" -gt 0 ] && [ "$age" -lt 180 ]; then
+            quick=$(( quick + 1 ))
+            state_set QUICK_DEATHS "$quick"
+            echo "[$(date -Is)] WATCHDOG: loop died ${age}s after restart (quick deaths: $quick)" >>"$SUMMARY"
+            if [ "$quick" -ge 3 ]; then
+                echo "[$(date -Is)] WATCHDOG: crash loop detected — restarts disabled" >>"$SUMMARY"
+                echo "crash-loop at $(date -Is)" >"$LOGDIR/disabled"
+                exit 0
+            fi
+        else
+            state_set QUICK_DEATHS 0
+        fi
+        state_set LAST_RESTART_TS "$now"
         { echo "[$(date -Is)] memory at restart:"; free -h | head -2; } >>"$LOGDIR/watchdog.log" 2>&1
         "$0" start >>"$LOGDIR/watchdog.log" 2>&1
         ;;
