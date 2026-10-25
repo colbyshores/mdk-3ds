@@ -14,6 +14,22 @@ extended because a subsystem is unported, THAT SUBSYSTEM is your next port:
 port it and extend the goldens in the same iteration. Work the priority
 order at the top of `docs/CONTINUATION.md`.
 
+## THROUGHPUT RULES (owner directive 2026-10-25 — the loop must shred)
+
+- **Bank early, bank often.** Commit each small verified step immediately,
+  then update `docs/CONTINUATION.md` and commit that. Never hold finished
+  work uncommitted while doing anything else. If time runs out, the tree must
+  already contain your banked work.
+- **One batch per iteration.** When your batch is committed and CONTINUATION
+  is updated, END. Do not start a second batch.
+- **Do not launch the adversarial-validator subagent.** The loop runs the
+  external stronger-model reviewer over your commits. Self-review your diff
+  (operand order, off-by-one, clamps, ownership, prohibited C++) instead.
+- **Lean context.** Read AGENTS.md, CONTINUATION.md, and the newest
+  review-*.md. Open SPEC.md only for the specific section you need. Keep
+  CONTINUATION.md under ~150 lines: replace stale state with current state,
+  append batch narrative to docs/PROGRESS_LOG.md.
+
 Read first, in order:
 
 1. `AGENTS.md` (performance + language contract, working loop).

@@ -83,7 +83,7 @@ run_reviewer() { # $1 = review output file
     local out="$1"
     timeout "$REVIEW_TIMEOUT" "$KILO" run -m "$REVIEWER_MODEL" --format json \
         --title "ralph-review" \
-        "Read .kilo/agent/adversarial-validator.md and act exactly as that adversarial validator (you may not edit anything). Review the CURRENT working tree and recent commits of this repository against SPEC.md, AGENTS.md and docs/CONTINUATION.md. Verify the claims in docs/CONTINUATION.md yourself. End your reply with exactly one line: 'VERDICT: COMPLETE' only if every SPEC acceptance criterion is met with evidence and nothing actionable remains except hardware-only verification; otherwise 'VERDICT: INCOMPLETE' followed by the BLOCKER/MAJOR findings that must be fixed." \
+        "Read .kilo/agent/adversarial-validator.md and act exactly as that adversarial validator (you may not edit anything, and do not run builds — review by reading code and the C# oracle). SCOPE: the changes in the most recent commits since $(state_get HEAD_AT_START HEAD) plus any uncommitted work — use git log/diff to bound your review; do not re-review older code. Verify the claims in docs/CONTINUATION.md about these changes. Be concise and concrete. End your reply with exactly one line: 'VERDICT: COMPLETE' only if every SPEC acceptance criterion is met with evidence and nothing actionable remains except hardware-only verification; otherwise 'VERDICT: INCOMPLETE' followed by the BLOCKER/MAJOR findings that must be fixed." \
         >"$out.jsonl" 2>"$out.err"
     local rc=$?
     jq -rs '[.[] | select(.type=="text") | .part.text] | join("\n\n")' "$out.jsonl" >"$out" 2>/dev/null
@@ -112,6 +112,7 @@ iterate() {
     local iter prompt_file="$PROMPT_FILE"
     iter=$(( $(state_get ITER 0) + 1 ))
     state_set ITER "$iter"
+    state_set HEAD_AT_START "$(git -C "$REPO" rev-parse HEAD)"
     local itlog="$LOGDIR/iter-$iter"
     local status_block
     status_block="$(printf '\n\n--- LOOP STATUS (machine-generated) ---\niteration: %s of max %s\ngates from previous iteration: %s\nlast progress: iteration %s\nIf logs/ralph/review-*.md exists and is newer than your last change, address its findings first.\n' "$iter" "$MAX_ITERATIONS" "$(state_get LAST_GATES n/a)" "$(state_get LAST_PROGRESS none)")"
@@ -130,12 +131,19 @@ iterate() {
     echo "[$(date -Is)] iter=$iter worker rc=$rc session=$session" >>"$SUMMARY"
     printf '%s\n' "$final_text" >"$itlog.txt"
     if [ "$rc" -ne 0 ]; then
-        local fails=$(( $(state_get FAILS 0) + 1 ))
-        state_set FAILS "$fails"
-        echo "[$(date -Is)] iter=$iter WORKER FAILED rc=$rc (consecutive: $fails)" >>"$SUMMARY"
-        if [ "$fails" -ge "$FAIL_LIMIT" ]; then
-            echo "[$(date -Is)] STOP: $fails consecutive worker failures" >>"$SUMMARY"
-            return 4
+        # A timeout that still banked commits is progress, not failure.
+        if [ "$rc" -eq 124 ] && [ "$(git -C "$REPO" rev-parse HEAD)" != "$(state_get HEAD_AT_START "$(git -C "$REPO" rev-parse HEAD)")" ]; then
+            echo "[$(date -Is)] iter=$iter worker timed out AFTER banking commits — not counted as failure" >>"$SUMMARY"
+            state_set FAILS 0
+            state_set LAST_PROGRESS "$iter"
+        else
+            local fails=$(( $(state_get FAILS 0) + 1 ))
+            state_set FAILS "$fails"
+            echo "[$(date -Is)] iter=$iter WORKER FAILED rc=$rc (consecutive: $fails)" >>"$SUMMARY"
+            if [ "$fails" -ge "$FAIL_LIMIT" ]; then
+                echo "[$(date -Is)] STOP: $fails consecutive worker failures" >>"$SUMMARY"
+                return 4
+            fi
         fi
         return 0
     fi
@@ -277,6 +285,7 @@ case "${1:-}" in
             exit 0
         fi
         echo "[$(date -Is)] WATCHDOG: loop dead, restarting" >>"$SUMMARY"
+        { echo "[$(date -Is)] memory at restart:"; free -h | head -2; } >>"$LOGDIR/watchdog.log" 2>&1
         "$0" start >>"$LOGDIR/watchdog.log" 2>&1
         ;;
     *)
