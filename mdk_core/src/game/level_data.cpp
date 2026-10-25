@@ -126,6 +126,15 @@ const formats::Arena* LevelData::arenaNamed(const std::string& name) const {
     return nullptr;
 }
 
+formats::Arena* LevelData::arenaNamedMutable(const std::string& name) {
+    for (size_t i = 0; i < arenas_.size(); i++) {
+        if (arenas_[i]->name() == name) {
+            return const_cast<formats::Arena*>(arenas_[i]);
+        }
+    }
+    return nullptr;
+}
+
 const formats::Dti::ArenaEntry* LevelData::entryNamed(const std::string& name) const {
     const std::vector<formats::Dti::ArenaEntry>& entries = dti_.arenas();
     for (size_t i = 0; i < entries.size(); i++) {

@@ -66,6 +66,13 @@ public:
     // The arena with that name, or null.
     const formats::Arena* arenaNamed(const std::string& name) const;
 
+    // The arena with that name, writable. The C# LevelData.Arenas is a mutable
+    // list, and the group machinery (the C# TriangleGroups) converts flagged
+    // triangles and stores per-group state ON the arenas, so the play setup and
+    // the scripts need write access. The arenas are owned by the MTO and the
+    // level's corridor list, neither of which makes them const.
+    formats::Arena* arenaNamedMutable(const std::string& name);
+
     // The DTI entry of the arena of that name, or null. Case-sensitive, like
     // the C#'s `entry.Name == name`. (C# LevelData.EntryNamed.)
     const formats::Dti::ArenaEntry* entryNamed(const std::string& name) const;

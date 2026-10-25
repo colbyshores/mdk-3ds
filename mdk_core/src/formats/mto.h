@@ -52,7 +52,7 @@ public:
 
     // The arena with this name, parsed on demand and cached. Returns null
     // when there is no such arena.
-    const Arena* getArena(const std::string& name);
+    Arena* getArena(const std::string& name);
 
 private:
     // The buffer the arenas are parsed from. It is BORROWED: the caller

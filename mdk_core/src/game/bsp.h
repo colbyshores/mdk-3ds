@@ -58,6 +58,7 @@ public:
     // The nearest triangle a segment crosses (front-to-back walk 0x421470), or
     // kNone. Writes the hit point.
     int segment(Vec a, Vec b, SegmentMode mode, Vec* point, Clip clip = kClipStops);
+    int segmentWithGroup(Vec a, Vec b, SegmentMode mode, Vec* point, Clip clip, int32_t* group);
 
     // The plane of the node whose list holds the triangle.
     const formats::BspNode& planeOf(int triangle) const;

@@ -23,6 +23,7 @@ bool buildArenaScene(const formats::Arena* arena,
 
     const std::vector<int32_t>& indices = arena->triangleIndices();
     const std::vector<int32_t>& materials = arena->triangleMaterials();
+    const std::vector<uint32_t>& flags = arena->triangleFlags();
     const std::vector<formats::Vec2f>& uvs = arena->triangleUvs();
     const std::vector<formats::Vec3f>& positions = arena->vertices();
 
@@ -55,7 +56,26 @@ bool buildArenaScene(const formats::Arena* arena,
     std::map<int32_t, float> scaleY;
 
     for (int32_t t = 0; t < triangleCount; t++) {
-        const int32_t material = materials[(size_t)t];
+        // The C# LevelView.Build skips a triangle the arena's clip flag marks
+        // (the 1996 demo's not-drawn triangles) or the Disabled flag marks
+        // (the retail arena activation's, LevelView.cs:294).
+        if ((flags[(size_t)t] & (arena->clipFlag() | formats::Arena::kGroupDisabled)) != 0) {
+            continue;
+        }
+        const int32_t triangleGroup = (int32_t)(flags[(size_t)t] >> 24);
+        // A group whose stored state is Hidden is not drawn (LevelView.cs:126).
+        // The state is read at BUILD time here; a group hidden mid-play needs a
+        // scene rebuild to disappear (open rendering-integration item).
+        if ((arena->groupState(triangleGroup) & formats::Arena::kGroupHidden) != 0) {
+            continue;
+        }
+        // A stored group material replaces the triangle's own (C# Group.Material);
+        // absence is a presence test, not a sentinel, because a negative material
+        // is a valid flat palette colour.
+        int32_t groupMaterial = 0;
+        const int32_t material = arena->groupMaterial(triangleGroup, &groupMaterial)
+                                     ? groupMaterial
+                                     : materials[(size_t)t];
 
         if (surfaces.find(material) == surfaces.end()) {
             Surface surface;

@@ -51,13 +51,19 @@ namespace scripts {
 struct ArenaState {
     std::string name;
     MdkObject controller;
+    MdkObject hit_scripts;
     bool started = false;
     int32_t flags = 0;
     std::array<float, 4> variables{{0.0f, 0.0f, 0.0f, 0.0f}};
+    std::array<int32_t, 16> group_hit_flags{{}};
+    std::array<int32_t, 16> group_hit_masks{{}};
+    std::array<int32_t, 16> group_hit_scripts{{}};
+    std::array<int32_t, 16> group_counters{{}};
 
     ArenaState(const std::string& arenaName, int32_t scriptOffset) : name(arenaName) {
         controller.arena = arenaName;
         controller.restart = scriptOffset;
+        hit_scripts.arena = arenaName;
     }
 };
 
@@ -66,6 +72,14 @@ public:
     static const int32_t kSpawnFlaggedFlags = 0x2008A6;
     static const int32_t kIndestructible = 65000;
     static const int32_t kGroupCount = 16;
+    static const int32_t kGroupStopsHit = 0x20;
+    static const int32_t kGroupAlwaysHit = 0x40;
+    static const int32_t kGroupDestructible = 0x80;
+    static const int32_t kGroupHide = 2;
+    static const int32_t kGroupShow = 3;
+    static const int32_t kHitTypeKurt = -11;
+    static const int32_t kHitPart = -3;
+    static const int32_t kHitTypePart = -4;
     static const float kTick;
     static constexpr float kTicksPerSecond = 30.0f;
 
@@ -80,6 +94,7 @@ public:
     // ---- The seam the VM calls ----
     Random& rng() { return rng_; }
     const std::deque<MdkObject>& objects() const { return objects_; }
+    ArenaState& getArenaState(const std::string& arena);
     MdkObject* spawn(MdkObject* parent, const std::string& type, const Vec3& position, float yaw,
                      int32_t instance, int32_t script, bool flagged);
     void spawnConnector(MdkObject* obj, const std::string& type, const Vec3& position, float yaw,
@@ -116,9 +131,18 @@ public:
     // CanSeeKurt (if_sees_kurt / if_not_sees_kurt): within range, inside the view
     // cone, and with a clear ray from the object's eye to Kurt's chest. The VM seam.
     bool canSeeKurt(MdkObject* obj, float range, float cone);
+    bool kurtLooksAt(const MdkObject* obj, float minRange, float maxRange, float cone);
     void showArena(const std::string& arena);
-    ArenaState& getArenaState(const std::string& arena);
-    void setGroupState(const std::string&, int32_t, int32_t) {}  // triangle groups: later slice
+    void setGroupState(const std::string& arena, int32_t group, int32_t operation);
+    void setGroupHitFlags(const std::string& arena, int32_t group, int32_t flags);
+    void setGroupHitScript(const std::string& arena, int32_t group, int32_t mask, int32_t script);
+    void setGroupCounter(const std::string& arena, int32_t group, int32_t value);
+    int32_t groupCounter(const std::string& arena, int32_t group);
+    int32_t getKurtFloorGroup();
+    int32_t hitGroup(const std::string& arena, int32_t group, int32_t amount, int32_t kind,
+                     int32_t weapon);
+    void setGroupTexture(const std::string& arena, int32_t group, int32_t value);
+
     void kill(MdkObject* obj);
     // C# Remove: the object leaves the object list (Dead set, then removed). The
     // C++ deque keeps its slot — every held pointer stays valid — so the object
@@ -137,6 +161,7 @@ public:
     // The first live object of obj's arena whose type matches (C# FirstOther with
     // instance = AnyInstance): face_mode 3 copies its yaw. Null when none.
     MdkObject* firstOther(MdkObject* obj, const std::string& type, int32_t instance = -1);
+    MdkObject* findObject(MdkObject* obj, const std::string& type, int32_t mode);
     // command_objects (opcode 4): sends a command to the matching objects of the
     // arena (0x440384). Commands: 1 join a formation around the sender, 7 goto
     // target, 0xFC gosub target, 43 go to a destination. The VM parses the operands
@@ -158,6 +183,7 @@ public:
     // Raycast (ScriptRuntime.cs:2886) with its answer: the NEAREST arena hit
     // point across the ray arenas (nearest by distance-squared, as the C#).
     bool raycastPoint(const Vec3& from, const Vec3& to, Vec3* out);
+    bool raycastGroup(const Vec3& from, const Vec3& to, int32_t* group);
     // FindCoverSpot (ScriptRuntime.cs:2447, opcode 46): pick a DTI cover spot in
     // the object's arena that Kurt cannot see but the object can reach, and command
     // a walk to it (MoveCommand 43). Clears MoveCommand when no spot qualifies.

@@ -51,7 +51,7 @@ bool Mto::has(const std::string& name) const {
     return false;
 }
 
-const Arena* Mto::getArena(const std::string& name) {
+Arena* Mto::getArena(const std::string& name) {
     for (size_t i = 0; i < arenas_.size(); i++) {
         if (arenas_[i].first == name) {
             return arenas_[i].second;

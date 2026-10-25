@@ -316,6 +316,10 @@ int Bsp::testTriangles(Vec p, const formats::BspNode& n, int first, int count) {
 }
 
 int Bsp::segment(Vec a, Vec b, SegmentMode mode, Vec* point, Clip clip) {
+    return segmentWithGroup(a, b, mode, point, clip, nullptr);
+}
+
+int Bsp::segmentWithGroup(Vec a, Vec b, SegmentMode mode, Vec* point, Clip clip, int32_t* group) {
     *point = b;
     _passed = (clip == kClipPassesThrough) ? (kNotSolid | arena_->clipFlag()) : kNotSolid;
     if (arena_->nodes().empty()) {
@@ -325,6 +329,9 @@ int Bsp::segment(Vec a, Vec b, SegmentMode mode, Vec* point, Clip clip) {
     int triangle = walk(0, a, b, mode, &hit);
     if (triangle != kNone) {
         *point = hit;
+        if (group != nullptr) {
+            *group = (int32_t)(arena_->triangleFlags()[triangle] >> 24);
+        }
     }
     return triangle;
 }

@@ -835,12 +835,15 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             obj->pitch += pstep;
             break;
         }
-        case 207: {  // turn_to_yaw: turn toward a goal yaw by at most rate*Dt; branches when reached
+        case 207: {  // turn_to_yaw: branch only when the instruction has an action
             float goal = fval(op(ins, 1));
             float diff = wrapAngle(goal - obj->yaw);
             float step = fval(op(ins, 0)) * kDt;
             float sign = diff > 0.0f ? 1.0f : (diff < 0.0f ? -1.0f : 0.0f);
             obj->yaw = wrap360(fabsf(diff) <= step ? goal : obj->yaw + sign * step);
+            if (ins.action.type == BranchAction::Kind::None) {
+                return ins.next;
+            }
             return branch(obj, ins, fabsf(obj->yaw - wrap360(goal)) < 1e-4f);
         }
         case 193: {  // face_mode: 1/2 face the velocity (2 also pitches), 3 copies another's yaw
@@ -1267,7 +1270,42 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 98:  // group_set_state
             runtime_.setGroupState(obj->arena, ival(op(ins, 0)), ival(op(ins, 1)));
             break;
-
+        case 140:  // group_set_texture (renderer material remapping remains unsupported)
+            runtime_.setGroupTexture(obj->arena, ival(op(ins, 0)), ival(op(ins, 1)));
+            break;
+        case 99: {  // group_on_hit: per-arena hit kinds and script
+            runtime_.setGroupHitScript(obj->arena, ival(op(ins, 1)), ival(op(ins, 0)),
+                                        ival(op(ins, 2)));
+            break;
+        }
+        case 168: {  // group_set_hit_flags; destructible groups begin hidden
+            int32_t groupNum = ival(op(ins, 0));
+            runtime_.setGroupHitFlags(obj->arena, groupNum, ival(op(ins, 1)));
+            break;
+        }
+        case 162: {  // arena_counter_set
+            runtime_.setGroupCounter(obj->arena, ival(op(ins, 0)), ival(op(ins, 1)));
+            break;
+        }
+        case 163: {  // if_arena_counter
+            return branch(obj, ins, compare((float)runtime_.groupCounter(obj->arena, ival(op(ins, 0))),
+                                            listval(op(ins, 1))));
+        }
+        case 194: {  // group_state_near_player: opposite state for Kurt's floor group
+            int32_t floorGroup = runtime_.getKurtFloorGroup();
+            int32_t first = ival(op(ins, 1));
+            int32_t last = ival(op(ins, 2));
+            if (first <= 0 || floorGroup < first || floorGroup > last) {
+                break;
+            }
+            for (int32_t group = first; group <= last; group++) {
+                bool near = group >= floorGroup - ival(op(ins, 3)) &&
+                            group <= floorGroup + ival(op(ins, 4));
+                runtime_.setGroupState(runtime_.currentArena(), group,
+                                       near ? (ival(op(ins, 0)) ^ 1) : ival(op(ins, 0)));
+            }
+            break;
+        }
         // --- Opcodes ported in the Phase 2 coverage audit (faithful to ScriptVm.cs). ---
         case 79:  // set_pos: place the object at the operand position
             obj->position = vpos(ins);
@@ -1304,6 +1342,73 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, compare(obj->velocity.z, listval(op(ins, 0))));
         case 127:  // if_health: compare the health
             return branch(obj, ins, compare((float)obj->health, listval(op(ins, 0))));
+        case 246: {  // turn_to_linked (bit 7: the pitch too)
+            const int32_t kTurns = 1;
+            const int32_t kAlsoPitch = 0x80;
+            if ((ival(op(ins, 0)) & kTurns) == 0 || obj->linked == nullptr || obj->linked->dead) {
+                break;
+            }
+            const MdkObject* partner = obj->linked;
+            /* @vfp-exempt R6 — linked-object yaw/pitch uses C# MathF.Atan2 and
+             * radians-to-degrees; maintain bit-exact angle behavior. measured
+             * n/a (corpus empty). Verified 2026-10-24. */
+            const float dx = partner->position.x - obj->position.x;
+            const float dy = partner->position.y - obj->position.y;
+            float step = fval(op(ins, 1)) * kDt;
+            float diff = wrapAngle(runtime_.yawTo(obj, partner->position) - obj->yaw);
+            diff = diff < -step ? -step : (diff > step ? step : diff);
+            obj->yaw = wrap360(obj->yaw + diff);
+            if ((ival(op(ins, 0)) & kAlsoPitch) != 0) {
+                const float dz = partner->position.z - obj->position.z;
+                const float horizontal = sqrtf(dx * dx + dy * dy);
+                const float targetPitch = atan2f(dz + obj->height_offset, horizontal) *
+                                          180.0f / 3.14159265358979323846f;
+                float pitchStep = wrapAngle(targetPitch - obj->pitch);
+                pitchStep = pitchStep < -step ? -step : (pitchStep > step ? step : pitchStep);
+                obj->pitch += pitchStep;
+            }
+            break;
+        }
+        case 250: {  // if_in_box: typed object of this arena inside an operand box
+            const int32_t kByType = 0xFF;
+            const int32_t kFlat = 2;
+            const int32_t kSolid = 3;
+            const int32_t kBoxValues = 6;
+            if (ival(op(ins, 0)) != kByType) {
+                return branch(obj, ins, false);
+            }
+            // The C# copies up to six operand values into a ZERO-FILLED box: a
+            // short list leaves the missing axes at 0 rather than skipping the test.
+            float box[kBoxValues] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+            const std::vector<ScriptValue>& values = listval(op(ins, 3));
+            for (size_t i = 0; i < values.size() && i < (size_t)kBoxValues; i++) {
+                box[i] = fval(values[i]);
+            }
+            const int32_t mode = ival(op(ins, 2));
+            bool insideAny = false;
+            const std::deque<MdkObject>& objects = runtime_.objects();
+            for (std::deque<MdkObject>::const_iterator it = objects.begin(); it != objects.end(); ++it) {
+                const MdkObject& other = *it;
+                // The C# InBox tests every object of the arena and type — the
+                // sender included, when it matches.
+                if (other.dead || runtime_.isRemoved(&other) || other.arena != obj->arena ||
+                    !iequals(other.type_name, strval(op(ins, 1)))) {
+                    continue;
+                }
+                const Vec3& p = other.position;
+                if (mode == kFlat) {
+                    if (p.x >= box[0] && p.y >= box[1] && p.x <= box[2] && p.y <= box[3]) {
+                        insideAny = true;
+                        break;
+                    }
+                } else if (p.x >= box[0] && p.y >= box[1] && p.x <= box[3] && p.y <= box[4] &&
+                           (mode != kSolid || (p.z >= box[2] && p.z <= box[5]))) {
+                    insideAny = true;
+                    break;
+                }
+            }
+            return branch(obj, ins, insideAny);
+        }
         case 103: {  // if_kurt_in_box: each axis between its min and max
             const Vec3& k = runtime_.kurtPosition();
             bool inside = k.x >= fval(op(ins, 0)) && k.x <= fval(op(ins, 3)) &&
@@ -1318,6 +1423,12 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                           p.y <= fval(op(ins, 4)) && p.z <= fval(op(ins, 5));
             return branch(obj, ins, inside);
         }
+        case 15:  // alarm: enter the alarm movement command
+            obj->move_command = 15;
+            break;
+        case 6:  // move_to_target: the targetting movement command (planned by ObjectMotion)
+            obj->move_command = 6;
+            break;
         case 34: {  // if_no_leader: no leader (or a dead one); clears the move command when true
             bool alone = obj->leader == nullptr || obj->leader->dead;
             int32_t next = branch(obj, ins, alone);
@@ -1344,6 +1455,16 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 197:  // find_advance_spot: walk toward Kurt via a DTI advance spot
             runtime_.findAdvanceSpot(obj);
             return branch(obj, ins, obj->move_command == 197);
+        case 245: {  // find_object: select a named same-arena object
+            const std::vector<ScriptValue>& args = listval(op(ins, 0));
+            if (!args.empty()) {
+                int32_t mode = args.size() == 2 ? ival(args[0]) : 0;
+                obj->linked = runtime_.findObject(obj, strval(args[args.size() - 1]), mode);
+            } else {
+                obj->linked = nullptr;
+            }
+            break;
+        }
         case 110:  // delete_self: out of the list, and stop this frame
             runtime_.remove(obj);
             return kYield;
@@ -1478,13 +1599,14 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 91:  // set_path_speed
             obj->path_speed = value(obj, op(ins, 0));
             break;
+        case 87:  // if_kurt_looks_at_me: range, cone and line-of-sight test
+            return branch(obj, ins, runtime_.kurtLooksAt(obj, fval(op(ins, 0)), fval(op(ins, 1)),
+                                                        fval(op(ins, 2))));
         case 62: {  // if_target_angle: absolute wrapped yaw to the target
             /* @vfp-exempt R6 — see aim_target. */
-            const float rad = atan2f(runtime_.targetPosition().y - obj->position.y,
-                                     runtime_.targetPosition().x - obj->position.x);
-            const float deg = rad * 180.0f / 3.14159265358979323846f;
-            const float angle = deg >= 0.0f ? deg : deg + 360.0f;
-            return branch(obj, ins, compare(wrapAngle(angle - obj->yaw), listval(op(ins, 0))));
+            const float yaw = runtime_.yawTo(obj, runtime_.targetPosition());
+            const float angle = fabsf(wrapAngle(yaw - obj->yaw));
+            return branch(obj, ins, compare(angle, listval(op(ins, 0))));
         }
         case 234:  // if_target_angle_signed: signed wrapped yaw minus yaw to the target
             return branch(obj, ins,

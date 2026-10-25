@@ -206,5 +206,51 @@ const ModelAnimation* Arena::animation(const std::string& name) const {
     return nullptr;
 }
 
+bool Arena::hasGroup(int32_t group) const {
+    for (size_t i = 0; i < triangleFlags_.size(); i++) {
+        if ((int32_t)(triangleFlags_[i] >> 24) == group) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t Arena::groupState(int32_t group) const {
+    std::map<int32_t, uint32_t>::const_iterator it = groupStates_.find(group);
+    return it == groupStates_.end() ? 0u : it->second;
+}
+
+void Arena::setGroupState(int32_t group, uint32_t state) {
+    groupStates_[group] = state;
+}
+
+void Arena::setGroupMaterial(int32_t group, int32_t material) {
+    // C# TriangleGroups.SetMaterial: the group must exist and not be group 0.
+    if (group == 0 || !hasGroup(group)) {
+        return;
+    }
+    groupMaterials_[group] = material;
+}
+
+bool Arena::groupMaterial(int32_t group, int32_t* out) const {
+    std::map<int32_t, int32_t>::const_iterator it = groupMaterials_.find(group);
+    if (it == groupMaterials_.end()) {
+        return false;
+    }
+    *out = it->second;
+    return true;
+}
+
+void Arena::applyDisabledTriangles() {
+    if (clipFlag_ != 0) {
+        return;
+    }
+    for (size_t i = 0; i < triangleFlags_.size(); i++) {
+        if ((triangleFlags_[i] & kGroupDisabled) != 0) {
+            triangleFlags_[i] |= kGroupHidden | kGroupNotSolid;
+        }
+    }
+}
+
 } // namespace formats
 } // namespace mdk

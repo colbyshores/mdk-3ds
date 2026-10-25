@@ -33,6 +33,7 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -127,6 +128,31 @@ public:
 
     // Per triangle: the group in bits 24-31 and the outline bits in 20-23.
     const std::vector<uint32_t>& triangleFlags() const { return triangleFlags_; }
+    std::vector<uint32_t>& mutableTriangleFlags() { return triangleFlags_; }
+
+    // The group state bits, as the C# TriangleGroups.State: the two triangle
+    // bits group_set_state moves. A group EXISTS when a triangle's top byte is
+    // its number (group 0 is the rest of the arena and never changes).
+    static const uint32_t kGroupHidden = 0x10;
+    static const uint32_t kGroupNotSolid = 0x20;
+    // The flag the arena activation turns into hidden and not solid.
+    static const uint32_t kGroupDisabled = 0x2;
+
+    bool hasGroup(int32_t group) const;
+    // The group's stored state (the C# Group.State), 0 when it was never set.
+    uint32_t groupState(int32_t group) const;
+    void setGroupState(int32_t group, uint32_t state);
+    void setGroupMaterial(int32_t group, int32_t material);
+    // The group's stored material (the C# Group.Material, an int?): false when
+    // the group has none. A negative material is a VALID palette colour
+    // (-1 is entry 1), so absence cannot be a sentinel value.
+    bool groupMaterial(int32_t group, int32_t* out) const;
+
+    // The conversion the C# TriangleGroups registration makes when an arena is
+    // registered for play: a retail triangle flagged Disabled is hidden and not
+    // solid (LEVEL8 GUNT_2's invisible diagonal wall). An arena with a clip
+    // flag (the 1996 demo) keeps its flags, as the C#'s Disable returns then.
+    void applyDisabledTriangles();
 
     // The BSP nodes. Node 0 is the root, and a child's index is higher than
     // its parent's.
@@ -172,6 +198,8 @@ private:
     std::vector<int32_t> triangleMaterials_;
     std::vector<Vec2f> triangleUvs_;
     std::vector<uint32_t> triangleFlags_;
+    std::map<int32_t, int32_t> groupMaterials_;
+    std::map<int32_t, uint32_t> groupStates_;
     std::vector<BspNode> nodes_;
     uint32_t clipFlag_ = 0;
     std::vector<std::pair<std::string, Model>> models_;
