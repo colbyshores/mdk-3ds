@@ -127,8 +127,31 @@ std::string joinInts(const std::vector<int32_t>& v) {
 std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
     std::string out;
     char line[512];
-    snprintf(line, sizeof(line), "SCRIPT level=%d ticks=%d seed=1 currentArena=%s objects=%d\n",
-             level, ticks, runtime.currentArena().c_str(), runtime.objectCount());
+    // Runtime target-tracking state (the C# resets it to Kurt each tick and SelectTarget
+    // may override). alien_target is the alien-target object's index in this dump's own
+    // enumeration (removed objects skipped), or -1 when none — the same index the OBJ
+    // lines use, so the two views agree.
+    int alienIndex = -1;
+    {
+        int ai = 0;
+        for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+             it != runtime.objects().end(); ++it) {
+            if (runtime.isRemoved(&(*it))) {
+                continue;
+            }
+            if (&(*it) == runtime.alienTarget()) {
+                alienIndex = ai;
+                break;
+            }
+            ai++;
+        }
+    }
+    const Vec3& tp = runtime.targetPosition();
+    snprintf(line, sizeof(line),
+             "SCRIPT level=%d ticks=%d seed=1 currentArena=%s objects=%d target_pos=%.4f,%.4f,%.4f "
+             "target_yaw=%.4f alien_target=%d\n",
+             level, ticks, runtime.currentArena().c_str(), runtime.objectCount(), tp.x, tp.y, tp.z,
+             runtime.targetYaw(), alienIndex);
     out += line;
     const std::array<float, 4>& g = runtime.globalVariables;
     snprintf(line, sizeof(line), "GVAR %.4f %.4f %.4f %.4f\n", g[0], g[1], g[2], g[3]);

@@ -1,4 +1,4 @@
-SCRIPT level=5 ticks=1 seed=1 currentArena=MUSE_1 objects=4
+SCRIPT level=5 ticks=1 seed=1 currentArena=MUSE_1 objects=4 target_pos=-33.0000,-988.0000,-293.0000 target_yaw=284.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
 OBJ 000 type=XGEN sflags=0x00000000 vars=0.0000,0.0000,0.0000,1.0000 restart=5029 wait=0.0000 wresume=0 death=1824 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
 OBJ 001 type=XS sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=1346 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000

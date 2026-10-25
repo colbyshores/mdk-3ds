@@ -1,4 +1,4 @@
-SCRIPT level=3 ticks=15 seed=1 currentArena=HMO_1 objects=11
+SCRIPT level=3 ticks=15 seed=1 currentArena=HMO_1 objects=11 target_pos=-4.0000,0.0000,190.0000 target_yaw=96.0000 alien_target=-1
 GVAR 0.0000 0.0000 0.0000 0.0000
 OBJ 000 type=SW_BONES sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
 OBJ 001 type=SW_H01 sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000
