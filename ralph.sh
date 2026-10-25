@@ -38,7 +38,13 @@ find_kilo() {
 KILO="$(find_kilo)" || { echo "FATAL: kilo CLI not found (set KILO_BIN)"; exit 6; }
 
 WORKER_MODEL="${WORKER_MODEL:-litellm/qwen}"
-REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/kimi-k3-nvidia}"
+# The reviewer must be a LIVE, stronger route. kimi-k3-nvidia went EOL upstream
+# (HTTP 410) on 2026-10-15; it is kept only as a documented fallback, never as
+# the default, because a dead reviewer silently turns the review step into a
+# no-op. The model actually used is recorded in every review file and in the
+# summary log — a substitution is never silent.
+REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/glm-5.3-nvidia}"
+REVIEWER_FALLBACK_MODEL="${REVIEWER_FALLBACK_MODEL:-litellm/deepseek-v4.1-flash-nvidia}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-30}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-3600}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-3600}"
@@ -79,21 +85,43 @@ tree_hash() {
 # subagent-mode agent; it is run here as instructions for the reviewer model
 # so the reviewer is provably the stronger model. The loop captures its
 # output (the reviewer has no write permission by design).
-run_reviewer() { # $1 = review output file
-    local out="$1"
-    timeout "$REVIEW_TIMEOUT" "$KILO" run -m "$REVIEWER_MODEL" --format json \
+review_attempt() { # $1=out file  $2=model  $3=scope text
+    local out="$1" model="$2" scope="$3"
+    timeout "$REVIEW_TIMEOUT" "$KILO" run -m "$model" --format json \
         --title "ralph-review" \
-        "Read .kilo/agent/adversarial-validator.md and act exactly as that adversarial validator (you may not edit anything, and do not run builds — review by reading code and the C# oracle). SCOPE: the changes in the most recent commits since $(state_get HEAD_AT_START HEAD) plus any uncommitted work — use git log/diff to bound your review; do not re-review older code. Verify the claims in docs/CONTINUATION.md about these changes. Be concise and concrete. End your reply with exactly one line: 'VERDICT: COMPLETE' only if every SPEC acceptance criterion is met with evidence and nothing actionable remains except hardware-only verification; otherwise 'VERDICT: INCOMPLETE' followed by the BLOCKER/MAJOR findings that must be fixed." \
-        >"$out.jsonl" 2>"$out.err"
+        "Read .kilo/agent/adversarial-validator.md and act exactly as that adversarial validator (you may not edit anything, and do not run builds — review by reading code and the C# oracle). SCOPE: $scope Be concise and concrete. Verify the claims in docs/CONTINUATION.md for that scope; do not trust them. End your reply with exactly one line: 'VERDICT: COMPLETE' only if every SPEC acceptance criterion is met with evidence and nothing actionable remains except hardware-only verification; otherwise 'VERDICT: INCOMPLETE' followed by the BLOCKER/MAJOR findings that must be fixed." \
+        >"$out.jsonl.attempt" 2>"$out.err"
     local rc=$?
-    jq -rs '[.[] | select(.type=="text") | .part.text] | join("\n\n")' "$out.jsonl" >"$out" 2>/dev/null
-    if [ ! -s "$out" ]; then
-        echo "REVIEWER ERROR rc=$rc (see $out.err)" >"$out"
+    # A provider error (e.g. HTTP 410 EOL) is a FAILED review, never a verdict.
+    local errs texts
+    errs="$(jq -rs '[.[] | select(.type=="error")] | length' "$out.jsonl.attempt" 2>/dev/null || echo 0)"
+    texts="$(jq -rs '[.[] | select(.type=="text") | .part.text] | join("\n\n")' "$out.jsonl.attempt" 2>/dev/null)"
+    if [ "$rc" -ne 0 ] || [ "${errs:-1}" -gt 0 ] || [ -z "$texts" ]; then
+        { echo "REVIEWER FAILED model=$model rc=$rc errors=$errs"; head -c 800 "$out.err" 2>/dev/null; } >"$out"
         return 1
     fi
-    echo "" >>"$out"
-    echo "<!-- reviewer=$REVIEWER_MODEL rc=$rc -->" >>"$out"
+    { echo "<!-- reviewer=$model rc=$rc -->"; printf '%s\n' "$texts"; } >"$out"
+    cp "$out.jsonl.attempt" "$out.jsonl"
     return 0
+}
+
+run_reviewer() { # $1 = review output file, $2 = scope: latest|full
+    local out="$1" scope_arg="${2:-latest}" scope
+    if [ "$scope_arg" = "full" ]; then
+        scope="the ENTIRE current C++ tree against the SPEC.md acceptance criteria and the C# oracle (src/Mdk.Game/**). This is the completion-gate review: check every acceptance criterion you can and list every unmet one."
+    else
+        scope="the changes in the commits since $(state_get HEAD_AT_START HEAD) plus any uncommitted work — use git log/diff to bound it; do not re-review older code."
+    fi
+    if review_attempt "$out" "$REVIEWER_MODEL" "$scope"; then
+        return 0
+    fi
+    echo "[$(date -Is)] primary reviewer $REVIEWER_MODEL FAILED — trying fallback $REVIEWER_FALLBACK_MODEL" >>"$SUMMARY"
+    if review_attempt "$out" "$REVIEWER_FALLBACK_MODEL" "$scope"; then
+        echo "[$(date -Is)] WARNING: review produced by FALLBACK model $REVIEWER_FALLBACK_MODEL" >>"$SUMMARY"
+        return 0
+    fi
+    echo "[$(date -Is)] BOTH REVIEWERS FAILED (see $out)" >>"$SUMMARY"
+    return 1
 }
 
 # ---- one iteration ----------------------------------------------------------
@@ -169,7 +197,7 @@ iterate() {
     # External adversarial review after any productive iteration.
     if [ "$(state_get LAST_PROGRESS)" = "$iter" ]; then
         echo "[$(date -Is)] iter=$iter external review start model=$REVIEWER_MODEL" >>"$SUMMARY"
-        if run_reviewer "$LOGDIR/review-$iter.md"; then
+        if run_reviewer "$LOGDIR/review-$iter.md" latest; then
             grep -q '^VERDICT: COMPLETE' "$LOGDIR/review-$iter.md" \
                 && echo "[$(date -Is)] iter=$iter review verdict COMPLETE" >>"$SUMMARY" \
                 || echo "[$(date -Is)] iter=$iter review verdict INCOMPLETE" >>"$SUMMARY"
@@ -180,17 +208,13 @@ iterate() {
 
     # Completion: worker marker + all gates green + reviewer COMPLETE.
     if [ -f docs/PHASE2_COMPLETE ] && [ "$GATES_OK" = 1 ]; then
-        local rv; rv="$(ls -t "$LOGDIR"/review-*.md 2>/dev/null | head -1)"
-        if [ -n "$rv" ] && grep -q '^VERDICT: COMPLETE' "$rv"; then
-            echo "[$(date -Is)] COMPLETE: gates green + reviewer verdict at $rv" >>"$SUMMARY"
+        # The acceptance gate is a FULL-TREE review: a per-batch scoped review
+        # cannot establish that every SPEC criterion is met.
+        if run_reviewer "$LOGDIR/review-final.md" full && grep -q '^VERDICT: COMPLETE' "$LOGDIR/review-final.md"; then
+            echo "[$(date -Is)] COMPLETE: gates green + full-tree review verdict COMPLETE" >>"$SUMMARY"
             return 0
         fi
-        # Marker without a fresh COMPLETE verdict: re-review right now.
-        if run_reviewer "$LOGDIR/review-final.md" && grep -q '^VERDICT: COMPLETE' "$LOGDIR/review-final.md"; then
-            echo "[$(date -Is)] COMPLETE: verified by fresh final review" >>"$SUMMARY"
-            return 0
-        fi
-        echo "[$(date -Is)] completion claim REJECTED (reviewer verdict not COMPLETE)" >>"$SUMMARY"
+        echo "[$(date -Is)] completion claim REJECTED (full-tree review verdict not COMPLETE)" >>"$SUMMARY"
     fi
 
     if [ "$(state_get STALL)" -ge "$STALL_LIMIT" ]; then
@@ -206,6 +230,15 @@ loop() {
     [ -f "$STATE" ] || { echo "ITER=0"; echo "FAILS=0"; echo "STALL=0"; } >"$STATE"
     [ -n "$(state_get LAST_HASH)" ] || state_set LAST_HASH "$(tree_hash)"
     echo "[$(date -Is)] LOOP START worker=$WORKER_MODEL reviewer=$REVIEWER_MODEL max=$MAX_ITERATIONS" >>"$SUMMARY"
+    # Route preflight: a dead provider route (EOL model, expired key) must be
+    # reported now, not discovered as a silently useless review later.
+    for m in "$WORKER_MODEL" "$REVIEWER_MODEL" "$REVIEWER_FALLBACK_MODEL"; do
+        if timeout 180 "$KILO" run -m "$m" --format json "Reply with exactly: OK" 2>/dev/null | grep -q '"type":"text"'; then
+            echo "[$(date -Is)] preflight OK: $m" >>"$SUMMARY"
+        else
+            echo "[$(date -Is)] PREFLIGHT FAILED: $m" >>"$SUMMARY"
+        fi
+    done
     local rc=0
     while :; do
         local iter; iter="$(state_get ITER 0)"
