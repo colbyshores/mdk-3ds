@@ -1,9 +1,10 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (iteration 6: tree re-verified green, iteration-5's
-dangling doc committed, scene commit adversarially reviewed (no bug), opcode-27
-mis-classification corrected; remaining opcode work recorded as a true
-subsystem-integration blocker with a testability map).
+Last updated: 2026-10-25 (iteration 7: the script goldens now observe the
+runtime target-tracking state — `target_pos`/`target_yaw`/`alien_target` — the
+C++ already matched the oracle on all three, so the 114 script goldens were
+regenerated and now lock the per-tick target reset; `alarm_ticks` remains the
+one field still unobservable, gated behind the unported alarm-ticks subsystem).
 This file is the persistent handoff for every fresh context window. Update it at
 the end of every batch.
 
@@ -12,7 +13,8 @@ the end of every batch.
 - The group-state slice (Task 1 below) is implemented and committed. Clean
   rebuild verified:
   - `make -C tests/scripts` → `All cases match the oracle.` (after `clean`), now
-    including the six `L{n}_dti` record-layout checks.
+    including the six `L{n}_dti` record-layout checks and the target-tracking
+    fields (`target_pos`/`target_yaw`/`alien_target`) added to the script dump.
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
   - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
@@ -23,6 +25,46 @@ the end of every batch.
   "ported" list were wrong — 114, 171, 209 were never in the C++). The
   reachability probe was rerun to t600: of the remaining set only 109 (L3, L5),
   138 (L5), 175 (L6), 249 (L5) fire.
+
+## What this batch did (iteration 7 — target-tracking goldens)
+
+- Executed the testability map's recommended unblock (the "extend BOTH the oracle
+  driver's `script` dump and `tick1.cpp` `dumpScript`" move), scoped to the
+  runtime fields the C++ **already** maintains so the change is a pure
+  regression-lock with no behaviour change: `target_pos`, `target_yaw`,
+  `alien_target`. These are `ScriptRuntime`-level state (C# `TargetPosition`/
+  `TargetYaw`/`AlienTarget`, ScriptRuntime.cs:199-208), reset to Kurt each tick
+  (cs:887-889) and overridable per object by `SelectTarget` (cs:418-441); the C++
+  mirrors this in `selectTarget` (script_runtime.cpp:2192) and the constructor.
+- **Measured before committing**: extended both dumps, ran the C++ against the
+  OLD goldens (117 cases differ — the SCRIPT line changed), then confirmed the
+  C++ `got` SCRIPT lines equal the oracle's for L3_t300/L5_t600/L8_t300/L4_t600
+  byte for byte. Regenerated all 114 script goldens from the oracle → all match.
+- **Sensitivity proven**: a `+0.0001f` perturbation of the dumped `target_yaw`
+  makes the script checks FAIL (then reverted) — the new fields are genuinely
+  compared, not ignored.
+- `alien_target` is `-1` in every current case (opcode 251 does not fire in
+  levels 3-8 to t600), so the index mapping is correct-but-unexercised; it is
+  computed over the same removed-skipped enumeration as the OBJ lines, so the
+  two views agree when it does fire.
+- **`alarm_ticks` deliberately NOT added**: the C++ has no `alarm_ticks` field
+  (the alarm-ticks state machine — the per-tick decrement cs:896 + the setters in
+  movement command 15 / Rides — is unported), so dumping it would diverge and
+  force a blind port. It stays the next field to add, paired with the alarm
+  subsystem slice. `Items.Bomb`/`Decoy` also stay out: they live on a separate
+  `Items` subsystem not reachable from the driver, and the C++ `itemsBomb` is
+  always null (matches the C# when no bomb is in play).
+- **Oracle-driver provenance** (the driver is `/tmp/kilo/oracle/Driver/Program.cs`,
+  not in the repo — same as every existing golden): the `script` dump mode's
+  SCRIPT line gained `target_pos={X:F4},{Y:F4},{Z:F4} target_yaw={Yaw:F4}
+  alien_target={idx}`, where `idx` is `AlienTarget`'s index in `scripts.Objects`
+  or `-1`. Regenerate with
+  `dotnet mdkoracle.dll <level> <ticks> 1 script > golden/L<level>_t<ticks>_script.txt`.
+- Verified: `make -C tests/scripts` (clean) → `All cases match the oracle.`;
+  `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
+  `.cia`); `make -C mdk_3ds` → links `mdk.3dsx`; `cmake --build build-linux
+  --target mdk` → links `mdk`. Test-only + oracle-harness change; no `mdk_core`
+  code touched, so both targets are unaffected.
 
 ## What this batch did (iteration 6 — verification, review, doc correction)
 
@@ -88,6 +130,15 @@ dump (`/tmp/kilo/oracle/Driver/Program.cs`) and `tick1.cpp` `dumpScript` to obse
 and makes the Items/alarm subsystem slices verifiable when they land. That is a
 deliberate golden-set change (touches the oracle harness and regenerates every
 script golden), so it is its own increment, not a drive-by.
+
+**Progress (iteration 7):** `target_position`/`target_yaw`/`alien_target` are DONE —
+dumped and locked into all 114 script goldens (the C++ already matched, so no
+behaviour change). The remaining dump fields are each gated behind an unported
+subsystem and must be added *with* that subsystem, not before it: `alarm_ticks`
+with the alarm-ticks state machine (the per-tick decrement + the movement-command-15
+/ Rides setters), and `Items.Bomb`/`Decoy` with the `Items` slice (which must also
+become reachable from the oracle driver). Adding either field to the dump before its
+subsystem lands would make the goldens diverge and force a blind port.
 
 ## What this batch did (dynamic scene updates — open item 1)
 
