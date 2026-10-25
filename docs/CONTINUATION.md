@@ -1,7 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (DTI record discrepancy reproduced-and-closed; permanent
-DTI-record regression test added).
+Last updated: 2026-10-25 (dynamic scene updates: mid-play group hide is a
+draw-time check, group retexture rebuilds the scene; scene regression test added).
 This file is the persistent handoff for every fresh context window. Update it at
 the end of every batch.
 
@@ -21,6 +21,39 @@ the end of every batch.
   "ported" list were wrong — 114, 171, 209 were never in the C++). The
   reachability probe was rerun to t600: of the remaining set only 109 (L3, L5),
   138 (L5), 175 (L6), 249 (L5) fire.
+
+## What this batch did (dynamic scene updates — open item 1)
+
+- Open item 1 ("a mid-play `group_state`/`group_set_texture` change does not
+  change what is drawn until the scene is rebuilt") is **closed at the scene
+  level**, faithful to the C# `LevelView`, which checks Hidden at DRAW time
+  (LevelView.cs:126) and rebuilds a group's mesh on a material change (the
+  `Changed` event → `Rebuild`, LevelView.cs:251).
+- `ArenaBatch` gained a `group` field, and `buildArenaScene` now breaks a run at
+  a **group boundary** as well as a material change, so every batch is single-
+  group. The build-time Hidden skip is **gone**: hidden groups' geometry stays in
+  the mesh and `arenaBatchVisible(arena, batch)` (a new free function) decides
+  per batch at draw time — so `group_set_state` hide/show needs **no rebuild**.
+  `LevelView::draw()` skips a batch whose group is Hidden now.
+- `LevelView::refresh()` is the `group_set_texture` path (the C# `Rebuild`): it
+  re-runs `buildArenaScene` against the arena's current group materials and
+  rebuilds the GPU mesh (release + create, like the C# creating a new mesh). It
+  is the integration hook a `group_set_texture` calls between frames; there is no
+  `GameEngine` yet to call it, so the mechanism is in place and tested at the
+  scene level, and the per-opcode wiring lands with the engine. A hide/show does
+  NOT call it (draw reads hidden live).
+- **Regression test** (`tests/scripts/tick1.cpp`, scene section): over **all 104
+  arenas** of levels 3-8 it checks (a) the batches partition the drawn triangles
+  by group — a batch spanning two groups breaks this equality, so this proves the
+  run-break; **880 cross-group same-material adjacencies** exercise it (removing
+  the run-break makes it FAIL on HMO_2/HMO_3/MEAT_*/…, confirmed); (b) hiding a
+  group after the build makes its batches not-visible while others stay visible;
+  (c) `group_set_texture(-1)` on a textured group makes its batches flat on a
+  rebuild. `arena_scene.cpp` + `material_resolver.cpp` added to the test Makefile.
+- Verified: `make -C tests/scripts` (clean) → `All cases match the oracle.` (new
+  scene PASSes); `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; `make -C
+  mdk_3ds` → links `mdk.3dsx`; `cmake --build build-linux --target mdk` → links
+  `mdk` (both targets build the changed core).
 
 ## What this batch did (DTI record discrepancy — reproduced and closed)
 
@@ -122,11 +155,15 @@ the end of every batch.
 
 ## Open items (do not lose these)
 
-1. **Dynamic scene updates.** `buildArenaScene` reads group hidden/material
-   state only at scene-build time. A mid-play `group_state`/`group_set_texture`
-   change does not change what is drawn until the scene is rebuilt (or draw
-   checks the state per frame). This is a rendering-integration task, not a
-   script-VM gap — the VM state is correct. Do not fake it.
+1. **Dynamic scene updates — DONE at the scene level.** `buildArenaScene` tags
+   each batch with its group and breaks runs at group boundaries; Hidden is a
+   draw-time check (`arenaBatchVisible`), so `group_set_state` hide/show needs no
+   rebuild, and `LevelView::refresh()` rebuilds the scene+mesh for a
+   `group_set_texture` (the C# `Rebuild`). Locked by the scene test in
+   `tests/scripts/tick1.cpp`. **Remaining:** the `GameEngine` that runs the
+   scripts must call `LevelView::refresh()` when a `group_set_texture` fires (no
+   engine exists yet); the VM state and the scene mechanism are both correct and
+   tested, only the per-opcode call-site wiring is pending. Do not fake it.
 2. **Opcode classification (Task 2 remainder) — DONE.** The 161 owned cases are
    classified in `docs/OPCODE_COVERAGE.md` §"Owned-case classification": 0 stubs,
    11 partial (each verified against the gating subsystem), 150 complete. Per-opcode
