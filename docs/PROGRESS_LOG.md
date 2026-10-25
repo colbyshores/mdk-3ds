@@ -309,3 +309,41 @@
   (int32_t is `long` there).
 - Verified: tests 341 PASS/0 SKIP, check.sh ALL GATES PASSED (smdh SKIP, no
   .cia), mdk_3ds links mdk.3dsx, linux `Built target mdk`.
+
+## Iteration 17 — the audio slice: mixer, sound bank, device control plane; 89/107/233/249
+
+- In-flight from iterations 15-16 (which died before committing); this iteration
+  verified, fixed, and banked it. New `mdk_core/src/audio/`: `sound_bank.{h,cpp}`
+  (SNI archive lookup, newest-archive-wins, cached-missing, WAV-header metadata
+  only — samples belong to the platform backend), `sound_mixer.{h,cpp}` (the
+  voice table, Start modes New/Restart/Once, 2D/point/source placement, Doppler,
+  scope listening — a 1:1 port of SoundMixer.cs; the spare-Voice pool and the
+  Func-follow overload are documented non-ports), and `sound_device.{h,cpp}`
+  (the AudioDevice control plane: ids from 1, the 64-voice cap that drops a new
+  sound, per-voice gain/pitch/pan, the frame-consumption lifecycle the muted
+  device would run). The C# `ISoundSource` virtual is replaced by the two fields
+  that answer it (the object's position and yaw pointers into the never-vacated
+  object deque) per AGENTS.md §10.
+- VM: case 89 → playSound(str(o[2]), I(o[0]), o[1]) with the flags decode
+  (mode 0-3, Flat/Following/AtReference/AtPoint/Tracked); case 107 →
+  setLoopSound; case 233 → isSoundPlaying(upper(name)); case 249 → the
+  TrackedVoice/TrackedSound branch. ScriptRuntime::remove now stops the loop,
+  tracked, and following voices as the C# Remove does.
+- The oracle driver's script dump gained the `AUDIO voices=N list=id:NAME,...`
+  line (reflection on `_voices`) and per-object `tsnd/tvoice/tplay/lsnd/lvoice/
+  lplay`; all 170 script goldens regenerated from the oracle. L5 pins nonzero
+  tracked voices with tplay=1 (249's true branch fires); L3's table fills to the
+  64-voice cap with RICO1 on both sides (the headless harness never calls
+  mixer.update, on either side). Six goldens re-diffed against a freshly built
+  oracle binary: byte-identical.
+- Fixes this iteration: the R6 audit flagged `rotatedZ`'s sinf/cosf — pinned with
+  the established oracle-fidelity R6 pin (glibc matches MathF.SinCos bit-for-bit;
+  the LUT would move a voice's pan). The R11 screen flagged the WAV frame-count
+  division in sound_bank.cpp — the geometry moved to `Wav::frames()` (formats/,
+  the contract's cold-parsing scope) instead of pinning a cold site with a
+  hot-only rule (§5). A stray extra printf argument in tick1.cpp.
+- `docs/OPCODE_COVERAGE.md` recounted with its own brace-matched method: C# 238 /
+  C++ 168 / remaining 71 (it had also been stale on 115, ported at iter 11);
+  partials 11→10 (89 complete; 24/151 re-gated to their now-unblocked call-sites).
+- Verified: tests 341 PASS/0 SKIP, check.sh ALL GATES PASSED (smdh SKIP, no
+  .cia), mdk_3ds links mdk.3dsx, linux `Built target mdk`.
