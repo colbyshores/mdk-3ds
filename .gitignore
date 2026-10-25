@@ -41,3 +41,4 @@ obj/
 
 # Kilo editor/recovery state.
 .kilo/
+logs/
