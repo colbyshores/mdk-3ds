@@ -1,6 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (L5 t577-600 goldens pinned; XG[004] divergence closed).
+Last updated: 2026-10-25 (owned-opcode classification done — Task 2 remainder).
 This file is the persistent handoff for every fresh context window. Update it at
 the end of every batch.
 
@@ -20,7 +20,34 @@ the end of every batch.
   reachability probe was rerun to t600: of the remaining set only 109 (L3, L5),
   138 (L5), 175 (L6), 249 (L5) fire.
 
-## What this batch did (L5 deep-tick goldens — divergence closed)
+## What this batch did (owned-opcode classification — Task 2 remainder)
+
+- Open item 2 (classify the 161 owned cases) is **done**. The classification is
+  in `docs/OPCODE_COVERAGE.md` §"Owned-case classification", produced by a
+  reproducible brace-matched extraction of the numeric `case` labels from the C#
+  `ScriptVm.Execute` and the C++ `ScriptVm::execute` (re-confirmed C# 238 / C++
+  161 / remaining 77; the C++ owns no case the C# lacks).
+- Result: **0 stubs**, **11 partial** (faithful dispatch whose gameplay effect
+  is gated behind a partial/unported subsystem), **150 complete**. Each partial
+  is verified against the code, not asserted:
+  - 6, 15 — set `move_command` 6/15 but `ScriptRuntime::updateCommand`
+    (script_runtime.cpp:1561) has no case for them → no motion.
+  - 16, 56 — call `kill()`, a death-slice placeholder (script_runtime.cpp:2451
+    sets only `dead`; death script / debris / drops unported).
+  - 24, 151 — store sound names whose playback needs the unported mixer.
+  - 89, 248 — honest no-ops (mixer / Kurt knock-back unported; no state the
+    goldens read).
+  - 140 — sets group material VM state; renderer ignores it (open item 1).
+  - 165, 166 — read `itemsBomb`, never assigned (script_runtime.h:226) → always
+    "no bomb" until the Items slice.
+- Test-coverage axis recorded separately: all 161 owned cases are covered only by
+  the end-to-end (level, tick) goldens; there are no per-opcode unit tests.
+- Doc-only change; no `mdk_core` code touched, so both targets are unaffected.
+  Verified: `make -C tests/scripts` → `All cases match the oracle.`;
+  `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; `make -C mdk_3ds` → links
+  `mdk.3dsx`.
+
+## What the prior batch did (L5 deep-tick goldens — divergence closed)
 
 - The open "L5 `XG[004]` golden divergence ~tick 577 (root cause unknown)" is
   **resolved**. Reproduced against the oracle: at t600 the oracle's object count
@@ -72,11 +99,11 @@ the end of every batch.
    change does not change what is drawn until the scene is rebuilt (or draw
    checks the state per frame). This is a rendering-integration task, not a
    script-VM gap — the VM state is correct. Do not fake it.
-2. **Opcode classification (Task 2 remainder).** The 161 owned cases are not
-   yet classified complete / insufficiently-tested / partial / stubbed. A
-   dispatch case that calls a partial subsystem (e.g. move commands 6/15 on
-   partial motion) is NOT "done". Per-opcode tests beyond the goldens are
-   still needed.
+2. **Opcode classification (Task 2 remainder) — DONE.** The 161 owned cases are
+   classified in `docs/OPCODE_COVERAGE.md` §"Owned-case classification": 0 stubs,
+   11 partial (each verified against the gating subsystem), 150 complete. Per-opcode
+   unit tests beyond the end-to-end goldens are still needed (the goldens are the
+   only coverage today).
 3. **Reachable unimplemented opcodes**: 109, 138, 175, 249 fire in levels 3-8
    to t600 and are real gaps (see coverage doc for subsystems).
 4. **Known divergences**: C++/oracle DTI record discrepancy; incomplete

@@ -27,7 +27,8 @@ state, hit flags/scripts/counters, floor-group probe), plus 6, 15, 245, and
 re-checks of 87, 246, 250, 62, 207 against the oracle. `find_object` is
 factored into a runtime helper to keep enumeration and RNG semantics together.
 Per-opcode tests are still needed for edge cases beyond the end-to-end golden
-suite, and the complete-vs-partial classification below is not done per opcode.
+suite; the complete-vs-partial classification of the owned cases is now done
+(see "Owned-case classification" at the end of this file).
 
 ## Remaining 77 (verified set)
 
@@ -62,3 +63,75 @@ By blocking subsystem (carried grouping, corrected for this batch):
 Do not implement any line of the list above without its subsystem and a test
 that exercises it; an unverifiable blind port risks a latent gameplay bug that
 is worse than the current documented no-op.
+
+## Owned-case classification (Task 2 remainder)
+
+Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
+`ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
+and compare as sets. This yields C# **238**, C++ **161**, remaining **77** (the
+C++ owns no case the C# lacks). The same extraction is what produced the counts
+above, so the owned set here is the same 161, not a re-count from memory.
+
+Two axes, kept separate:
+
+- **Completeness** — does the dispatch case do everything the C# case does *and
+  is its gameplay effect realized by the subsystems present in this tree?* A
+  case that faithfully mirrors the C# operand layout but delegates its effect to
+  a partial or unported subsystem is **partial**, not done (the CONTINUATION's
+  "move commands 6/15 on partial motion is NOT done").
+- **Test coverage** — every owned case is exercised only by the end-to-end
+  (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
+  object table and script state against the oracle byte-for-byte through t600 on
+  levels 3-8. There are **no per-opcode unit tests**, so in that sense all 161
+  are insufficiently-tested; the goldens give end-to-end coverage for whatever
+  actually fires in those levels/ticks.
+
+**Stubs: 0.** No owned case is a fake implementation. The only no-op cases (89
+`play_sound`, 248 `push_kurt`) are documented honest no-ops because their
+subsystems (the audio mixer, Kurt's knock-back) do not exist yet; they decode
+and advance the PC exactly as the C# does and write no state the goldens read.
+
+**Partial — faithful dispatch, effect gated behind a partial/unported subsystem
+(11 cases), each verified against the code:**
+
+| Opcode | Name | Gating subsystem (verified) |
+|---|---|---|
+| 6 | move_to_target | sets `move_command = 6`; `ScriptRuntime::updateCommand` (script_runtime.cpp:1561) has no case for 6 → no motion |
+| 15 | alarm | sets `move_command = 15`; same — no `updateCommand` case for 15 |
+| 16 | set_health | on health 0 calls `kill()`, which is a death-slice placeholder (script_runtime.cpp:2451 sets only `dead`; death script / debris / drops unported) |
+| 24 | set_id_and_name | stores `frame_sound`; playback needs the unported mixer |
+| 56 | add_health | on death calls the same `kill()` placeholder |
+| 89 | play_sound | honest no-op; mixer unported (no observable state the goldens read) |
+| 140 | group_set_texture | sets the group material VM state; the renderer ignores it (open item 1, dynamic scene updates) |
+| 151 | door_set_names | stores door sound names; playback needs the unported mixer |
+| 165 | if_no_bomb | reads `itemsBomb`, which is never assigned (script_runtime.h:226, `= nullptr` only) → always "no bomb" until the Items slice |
+| 166 | if_bomb_visible | same `itemsBomb` gap → always false |
+| 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
+
+**Complete — effect realized with the subsystems present (150 cases):** every
+owned case not in the partial table above (161 − 11 = 150). These are the pure
+state, condition, orientation/aim, movement-parameter, handled-movement-command,
+path, animation-state, variable/flag, control-flow, group-state and spawn cases,
+each exercised by the byte-for-byte goldens through t600 on levels 3-8.
+Representative members, by group: orientation/aim (8, 40, 60, 62, 87, 101, 104,
+105, 120, 122, 126, 134, 160, 193, 207, 234, 235, 246); movement parameters
+(50-55, 82, 84, 106, 169, 177); handled movement commands (43, 46, 61, 78, 88,
+93, 157, 197, 231 — `stuck_count` is maintained at script_runtime.cpp:1403/1411);
+path (2, 20, 21, 33, 91, 102, 124, 164); animation (3, 17, 19, 58, 59, 92, 118,
+154, 186 — `advanceAnimation` is ported and called); conditions/flags/variables
+(10, 11, 14, 18, 22, 23, 25, 26, 31, 34-39, 41, 42, 44, 45, 47, 48, 54, 57, 63,
+65-73, 75, 76, 79, 80, 83, 86, 96, 97, 100, 103, 108, 110, 111, 113, 116, 117,
+119, 123, 127, 161, 176, 185, 187, 188, 191, 198, 200, 201, 205, 211, 212, 216,
+218, 222, 230, 232, 236, 237, 238, 245, 250, 251, 252, 253); control flow (1, 4,
+9, 12, 64, 94, 95, 125, 183); group state (98, 99, 162, 163, 168, 194); spawn
+(113, 149, 150, 152, 153). The authoritative complete set is the owned set minus
+the 11 partial cases, not this illustrative grouping.
+
+Note on 251 (`set_target_mode`): its own effect (set `target_mode`, set/clear
+the alien target) is realized, so it is classified complete; the known
+decoy/`AlienTarget` targeting gap lives in the targeting *selection*, not in this
+dispatch case.
+
+Closing the partial cases requires their subsystems (motion commands 6/15, the
+death path, the audio mixer, the renderer material remap, the Items.Bomb slice),
+each of which is its own increment with a test — not a blind port.
