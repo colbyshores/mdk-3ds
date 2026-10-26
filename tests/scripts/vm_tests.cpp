@@ -45,6 +45,8 @@ const int32_t kIfCheatKey = 13;
 const int32_t kSetPartsMask = 31;
 const int32_t kClearPartsMask = 32;
 const int32_t kBlowOffParts = 129;
+const int32_t kJumpTo = 226;
+const int32_t kSet2d0Block = 242;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -441,6 +443,64 @@ void testBlownOffPartsStayHiddenThroughClear(scripts::ScriptRuntime& runtime) {
     runtime.option = 0;
 }
 
+// The rope-swing pair has no C# ScriptVmTests counterpart either, so these
+// pin the oracle directly (ScriptVm.cs:1139-1166) with identical program
+// bytes. Opcode 85 (set_rolling) stays unported: SetRolling snapshots the
+// full Rotation matrix into RollingBasis, and rotation() is deferred to the
+// FrameBlend slice (object.h) — a faithful port needs that arithmetic.
+void testJumpToStartsSwingBelowThePivot(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject obj;
+    obj.position = mdk::Vec3{10.0f, 20.0f, 5.0f};
+    obj.yaw = 30.0f;
+    Code code;
+    code.u8(kJumpTo).f32(11.0f).f32(22.0f).f32(45.0f).f32(2.5f).f32(0.75f);
+    code.end();
+    runProgram(runtime, code, &obj);
+
+    CHECK(!sawUnimplemented(kJumpTo));
+    CHECK(obj.swing_pivot.x == 11.0f);
+    CHECK(obj.swing_pivot.y == 22.0f);
+    CHECK(obj.swing_pivot.z == 45.0f);
+    CHECK(obj.swing_speed == 2.5f);
+    CHECK(obj.swing_gain == 0.75f);
+    CHECK(obj.swing_yaw == 30.0f);
+    CHECK(obj.swing_length == 40.0f);
+    CHECK((obj.flags & scripts::MdkObject::FlagSwinging) != 0);
+}
+
+void testSet2d0BlockDrawsTheRopeLines(scripts::ScriptRuntime& runtime) {
+    // Count zero clears the mask, even over a stale nonzero one.
+    scripts::MdkObject cleared;
+    cleared.rope_mask = 0xFF;
+    cleared.rope_color = 1;
+    Code zero;
+    zero.u8(kSet2d0Block).u8(0);
+    zero.end();
+    runProgram(runtime, zero, &cleared);
+    CHECK(!sawUnimplemented(kSet2d0Block));
+    CHECK(cleared.rope_mask == 0);
+
+    // Count nonzero: colour 1, all lines, the four points in order.
+    scripts::MdkObject obj;
+    Code code;
+    code.u8(kSet2d0Block).u8(1)
+        .f32(1.0f).f32(2.0f).f32(3.0f)
+        .f32(4.0f).f32(5.0f).f32(6.0f)
+        .f32(7.0f).f32(8.0f).f32(9.0f)
+        .f32(10.0f).f32(11.0f).f32(12.0f);
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kSet2d0Block));
+    CHECK(obj.rope_color == 1);
+    CHECK(obj.rope_mask == 0xFF);
+    CHECK(obj.rope_points[0].x == 1.0f);
+    CHECK(obj.rope_points[0].y == 2.0f);
+    CHECK(obj.rope_points[0].z == 3.0f);
+    CHECK(obj.rope_points[3].x == 10.0f);
+    CHECK(obj.rope_points[3].y == 11.0f);
+    CHECK(obj.rope_points[3].z == 12.0f);
+}
+
 } // namespace
 
 int main() {
@@ -501,6 +561,10 @@ int main() {
     printf("PASS BlowOffPartsLocksAndHides\n");
     testBlownOffPartsStayHiddenThroughClear(runtime);
     printf("PASS BlownOffPartsStayHiddenThroughClear\n");
+    testJumpToStartsSwingBelowThePivot(runtime);
+    printf("PASS JumpToStartsSwingBelowThePivot\n");
+    testSet2d0BlockDrawsTheRopeLines(runtime);
+    printf("PASS Set2d0BlockDrawsTheRopeLines\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

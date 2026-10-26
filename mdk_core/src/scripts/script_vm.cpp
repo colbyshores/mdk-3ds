@@ -1693,6 +1693,31 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 177:  // set_blast_range: blasts farther than this don't hurt the object
             obj->blast_range = fval(op(ins, 0));
             break;
+        case 226:  // jump_to: [pivot x, y, z, angular speed, gain], starts swinging below the pivot
+            obj->swing_pivot = vpos(ins);
+            obj->swing_speed = fval(op(ins, 3));
+            obj->swing_gain = fval(op(ins, 4));
+            obj->swing_yaw = obj->yaw;
+            obj->swing_length = obj->swing_pivot.z - obj->position.z;
+            obj->flags |= MdkObject::FlagSwinging;
+            break;
+        case 242: {  // set_2d0_block: [[count, 4 points]]: lines from reference points 1-4 to the points
+            const int32_t kAllLines = 0xFF;
+            const std::vector<ScriptValue>& block = listval(op(ins, 0));
+            if (block.empty() || ival(block[0]) == 0) {
+                obj->rope_mask = 0;
+                break;
+            }
+
+            obj->rope_color = 1;
+            obj->rope_mask = kAllLines;
+            for (size_t i = 0; i < obj->rope_points.size(); i++) {
+                obj->rope_points[i].x = fval(block[1 + i * 3]);
+                obj->rope_points[i].y = fval(block[1 + i * 3 + 1]);
+                obj->rope_points[i].z = fval(block[1 + i * 3 + 2]);
+            }
+            break;
+        }
         case 205:  // set_21f: indestructible
             obj->indestructible = ival(op(ins, 0)) != 0;
             break;
