@@ -50,6 +50,7 @@ const int32_t kJumpTo = 226;
 const int32_t kSet2d0Block = 242;
 const int32_t kSpawnAtPoint = 156;
 const int32_t kPushHitDir = 81;
+const int32_t kSpawnAlongPath = 206;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -119,6 +120,17 @@ public:
     }
 
     Code& f32(float value) {
+        uint8_t raw[4];
+        memcpy(raw, &value, sizeof(raw));
+        for (int i = 0; i < 4; i++) {
+            bytes_.push_back(raw[i]);
+        }
+        return *this;
+    }
+
+    // A raw 32-bit operand (Data32): the decoder adds FileBase back, so callers
+    // pass the stored form (file offset minus 4), like target() does.
+    Code& u32(int32_t value) {
         uint8_t raw[4];
         memcpy(raw, &value, sizeof(raw));
         for (int i = 0; i < 4; i++) {
@@ -693,6 +705,58 @@ void testPushHitDirAddsVelocityAlongTheLastHit(scripts::ScriptRuntime& runtime) 
     }
 }
 
+// Opcode 206 (spawn_along_path) has no C# ScriptVmTests counterpart either, so
+// this pins the oracle directly (ScriptVm.cs:440-448): from time 0 to before
+// the path's last key, one object per step, flagged like spawn_flagged
+// (0x2008A6), at the path position for the accumulated float time. Path 53729
+// of LEVEL7.CMI has 3 keys at frames [0, 5, 10] (verified against the file,
+// and re-pinned below so a data change fails here, not silently elsewhere);
+// step 5 spawns exactly at times 0 and 5 (5+5 == 10 ends the accumulation).
+void testSpawnAlongPathSpawnsEveryStep(scripts::ScriptRuntime& runtime) {
+    const int32_t kPath = 53729;
+    CHECK(runtime.pathKeyCount(kPath) == 3);
+    CHECK(runtime.pathKeyFrame(kPath, runtime.pathKeyCount(kPath) - 1) == 10);
+
+    const size_t before = runtime.objects().size();
+    scripts::MdkObject obj;
+    obj.arena = "DANT_1";
+    Code code;
+    code.u8(kSpawnAlongPath).u32(kPath - 4).f32(5.0f).pstr("BEAMS").target("along");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(0.0f);
+    code.label("along");
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kSpawnAlongPath));
+    CHECK(runtime.objects().size() == before + 2);
+    const float times[2] = {0.0f, 5.0f};
+    int32_t firstInstance = -1;
+    for (int i = 0; i < 2; i++) {
+        const scripts::MdkObject& created = runtime.objects()[before + (size_t)i];
+        CHECK(created.type_name == "BEAMS");
+        CHECK(created.arena == "DANT_1");
+        CHECK(created.flags == scripts::ScriptRuntime::kSpawnFlaggedFlags);
+        const mdk::Vec3 want = runtime.pathPosition(kPath, times[i]);
+        CHECK(created.position.x == want.x);
+        CHECK(created.position.y == want.y);
+        CHECK(created.position.z == want.z);
+        CHECK(created.spawn_position.x == want.x);
+        CHECK(created.spawn_position.y == want.y);
+        CHECK(created.spawn_position.z == want.z);
+        CHECK(created.yaw == 0.0f);
+        CHECK(created.instance_id >= 0);
+        CHECK(created.restart == (int32_t)code.labelOffset("along"));
+        if (i == 0) {
+            firstInstance = created.instance_id;
+        } else {
+            CHECK(created.instance_id == firstInstance + 1);
+        }
+    }
+    // The two steps land at different times: t=0 is (0,0,0), t=5 is (0,0,6).
+    const scripts::MdkObject& first = runtime.objects()[before];
+    const scripts::MdkObject& second = runtime.objects()[before + 1];
+    CHECK(first.position.z != second.position.z);
+}
+
 } // namespace
 
 int main() {
@@ -761,6 +825,8 @@ int main() {
     printf("PASS SpawnAtPointSpawnsAtTheReferencePoint\n");
     testPushHitDirAddsVelocityAlongTheLastHit(runtime);
     printf("PASS PushHitDirAddsVelocityAlongTheLastHit\n");
+    testSpawnAlongPathSpawnsEveryStep(runtime);
+    printf("PASS SpawnAlongPathSpawnsEveryStep\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

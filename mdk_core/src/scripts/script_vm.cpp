@@ -686,6 +686,20 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.spawn(obj, strval(op(ins, 1)), obj->reference_point(ival(op(ins, 0))), 0.0f, -1,
                            ival(op(ins, 2)), false);
             break;
+        case 206: {  // spawn_along_path: one flagged object every step along the path
+            int32_t path = ival(op(ins, 0));
+            int32_t end = runtime_.pathKeyFrame(path, runtime_.pathKeyCount(path) - 1);
+            float step = fval(op(ins, 1));
+            // Oracle-exact float accumulation (ScriptVm.cs): the spawn count
+            // and each spawn time come from repeated float addition, so an
+            // integer-count rewrite would shift spawn positions by ulps. A
+            // zero step hangs the oracle identically; this matches it.
+            for (float time = 0.0f; time < (float)end; time += step) {
+                runtime_.spawn(obj, strval(op(ins, 2)), runtime_.pathPosition(path, time), 0.0f, -1,
+                               ival(op(ins, 3)), true);
+            }
+            break;
+        }
         case 2: {  // follow_path: ride a CMI path (positions the object at the path start)
             const int32_t kFlag200 = 0x200;
             int32_t path = ival(op(ins, 0));
