@@ -12,6 +12,7 @@
 // the exception: no C# counterpart exists, so they pin the oracle's
 // ScriptVm.cs directly, with the same byte encoding the C# decoder reads.
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -554,6 +555,22 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     CHECK(created.yaw == 0.0f);
     CHECK(created.instance_id >= 0);
     const int32_t firstInstance = created.instance_id;
+    // The script operand reaches the object: the C++ dispatch passes
+    // ival(op(ins, 2)) as the spawn script (script_vm.cpp) and spawn ends
+    // with created->restart = script (script_runtime.cpp), mirroring C#
+    // I(o[2]) into Spawning (ScriptVm.cs:1574). A wrong operand index or a
+    // dropped assignment would leave restart 0, so the "spawned" label's
+    // offset must be live on the object and point at the trailing kEnd.
+    CHECK(created.restart != 0);
+    CHECK(created.previous_position.x == created.position.x);
+    CHECK(created.previous_position.y == created.position.y);
+    CHECK(created.previous_position.z == created.position.z);
+    {
+        std::vector<uint8_t> bytes = code.build();
+        CHECK(created.restart >= code.entry());
+        CHECK(created.restart < (int32_t)bytes.size());
+        CHECK(bytes[(size_t)created.restart] == (uint8_t)ScriptDecoder::kEnd);
+    }
 
     // An out-of-range reference point falls back to the position, and a
     // second -1 instance takes the next id.
@@ -575,6 +592,43 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     CHECK(landed.position.y == 2.0f);
     CHECK(landed.position.z == 3.0f);
     CHECK(landed.instance_id == firstInstance + 1);
+
+    // The rotation/scale half of reference_point: a yawed, scaled parent
+    // pins the C# Position + Transform(p * Scale, RotZ(yaw)) row-vector form
+    // (MdkObject.cs:574-582), which the axis-aligned case above cannot see.
+    // Hand-computed: ref (3,1,0.5) at scale 2 is (6,2,1); RotZ(90) takes
+    // (x,y) to (-y,x), so (-2,6,1) at pos (10,20,5) lands on (8,26,6).
+    // Tolerance, not equality: cosf(pi/2) is ~-4.4e-8, not exactly 0. Each
+    // wrong shape lands elsewhere (no scale: (9,23,5.5); no rotation:
+    // (16,22,6); flipped sign: (12,14,6)), so this pins all three.
+    Model turned2Model;
+    Vec3f ref2;
+    ref2.x = 3.0f;
+    ref2.y = 1.0f;
+    ref2.z = 0.5f;
+    turned2Model.referencePoints.push_back(ref2);
+    scripts::MdkObject spinner;
+    spinner.arena = "DANT_1";
+    spinner.model = &turned2Model;
+    spinner.position = mdk::Vec3{10.0f, 20.0f, 5.0f};
+    spinner.yaw = 90.0f;
+    spinner.scale = 2.0f;
+    const size_t third = runtime.objects().size();
+    Code turned;
+    turned.u8(kSpawnAtPoint).u8(0).pstr("BEAMS").target("go");
+    turned.label("go");
+    turned.end();
+    runProgram(runtime, turned, &spinner);
+    CHECK(!sawUnimplemented(kSpawnAtPoint));
+    CHECK(runtime.objects().size() == third + 1);
+    const scripts::MdkObject& rotated = runtime.objects()[third];
+    CHECK(fabsf(rotated.position.x - 8.0f) < 1e-3f);
+    CHECK(fabsf(rotated.position.y - 26.0f) < 1e-3f);
+    CHECK(fabsf(rotated.position.z - 6.0f) < 1e-3f);
+    CHECK(rotated.previous_position.x == rotated.position.x);
+    CHECK(rotated.previous_position.y == rotated.position.y);
+    CHECK(rotated.previous_position.z == rotated.position.z);
+    CHECK(rotated.restart != 0);
 }
 
 } // namespace

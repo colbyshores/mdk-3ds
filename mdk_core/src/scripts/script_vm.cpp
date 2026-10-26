@@ -1710,10 +1710,13 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             const std::vector<ScriptValue>& block = listval(op(ins, 0));
             // The decoder only ever builds [mode] or [mode + 12 floats]
             // (modeCount242, matching the C#'s ModeThenFloats), so a short
-            // nonzero block is decoder-unreachable. The C# indexes
-            // unconditionally (ScriptVm.cs case 242) and would throw on one;
-            // this clears the mask instead of reading out of bounds.
-            // Deliberate hardening (review-28 MINOR), not oracle behavior.
+            // nonzero block is decoder-unreachable on the retail dialect; the
+            // Beta dialect has no 242 mapping at all (scriptBetaOpcodeInfo
+            // returns null for it, so decodeBeta rejects the instruction and
+            // the VM never sees it). The C# indexes unconditionally
+            // (ScriptVm.cs case 242) and would throw on one; this clears the
+            // mask instead of reading out of bounds. Deliberate hardening
+            // (review-28 MINOR), not oracle behavior.
             if (block.size() < 13 || ival(block[0]) == 0) {
                 obj->rope_mask = 0;
                 break;
