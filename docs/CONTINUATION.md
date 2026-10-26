@@ -90,17 +90,11 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
 
 ## Testability map (why the remaining opcode work is gated, not merely deferred)
 
-The goldens compare a FIXED field set (`tick1.cpp` `dumpTable`/`dumpScript`):
-pos, yaw, hp, flags, dead, move_command/parameter, connects, path/time/speed/stop,
-script_flags, variables, restart, wait, death_script, command_target, gosub stacks,
-level_timers, global vars, target_position/target_yaw/alien_target (iter 7), Kurt's
-combat/inventory state (iter 14), and the mixer voice table + tracked/loop voices
-(iter 17). They do **not** observe: velocity, `alarm_ticks`, `Items.Bomb`/`Decoy`,
-or debris. The project rule (OPCODE_COVERAGE.md) forbids porting an opcode without
-a test that exercises it. Two templates: the dump-field route (port the
-subsystem state, dump it, regenerate — the AUDIO/KURT lines) and the harness
-route (`tests/scripts/vm_tests` twins the C# unit test — opcode 13's
-template). The harness route needs no golden change.
+The goldens compare a FIXED field set (`tick1.cpp` dump fns): table + script
+state incl. AUDIO/KURT/mixer lines. They do **not** observe: velocity,
+`alarm_ticks`, `Items.Bomb`/`Decoy`, debris. Porting an opcode without a test
+is forbidden. Two templates: dump-field (port state, dump, regenerate) and
+harness (`vm_tests` twins/pins the oracle — no golden change).
 
 `alarm_ticks` is a dead end (move=15 fires 0 times). `Items.Bomb`/`Decoy` land
 with the Items slice; debris state landed with the shatter slice.
