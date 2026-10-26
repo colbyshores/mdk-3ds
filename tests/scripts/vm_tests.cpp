@@ -51,6 +51,7 @@ const int32_t kSet2d0Block = 242;
 const int32_t kSpawnAtPoint = 156;
 const int32_t kPushHitDir = 81;
 const int32_t kSpawnAlongPath = 206;
+const int32_t kHeadShots = 217;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -755,9 +756,11 @@ void testSpawnAlongPathSpawnsEveryStep(scripts::ScriptRuntime& runtime) {
     const scripts::MdkObject& first = runtime.objects()[before];
     const scripts::MdkObject& second = runtime.objects()[before + 1];
     CHECK(first.position.z != second.position.z);
-    // Absolute key-frame positions (not just relative to pathPosition): a
-    // Hermite regression that moved both sides together would pass the loop
-    // above but fail here.
+    // Absolute key-frame positions (not just relative to pathPosition): they
+    // pin the position/frame-field reads, not the Hermite tangents (any
+    // tangent field reproduces the key positions at u=0 and u=1, so a
+    // tangent-assignment regression would pass these silently; tangents are
+    // covered by the path-following corpus goldens instead).
     CHECK(first.position.x == 0.0f);
     CHECK(first.position.y == 0.0f);
     CHECK(first.position.z == 0.0f);
@@ -800,6 +803,47 @@ void testSpawnAlongPathSpawnsEveryStep(scripts::ScriptRuntime& runtime) {
         // i*step on this data, the case above would be redundant.
         CHECK(differ > 0);
     }
+}
+
+// Opcode 217 (global_573c4c_add) has no C# ScriptVmTests counterpart, so
+// this pins the oracle directly (ScriptVm.cs:1606-1611): the head-shot count
+// grows by the second operand only when the first is 1. The s32 second
+// operand rides the same four bytes the decoder reads (u32 writes the
+// identical little-endian encoding for these values).
+void testHeadShotsAddOnlyWhenEnabled(scripts::ScriptRuntime& runtime) {
+    runtime.stats.headShots = 0;
+    scripts::MdkObject obj;
+    Code add;
+    add.u8(kHeadShots).u8(1).u32(3);
+    add.end();
+    runProgram(runtime, add, &obj);
+    CHECK(!sawUnimplemented(kHeadShots));
+    CHECK(runtime.stats.headShots == 3);
+    Code more;
+    more.u8(kHeadShots).u8(1).u32(2);
+    more.end();
+    runProgram(runtime, more, &obj);
+    CHECK(!sawUnimplemented(kHeadShots));
+    CHECK(runtime.stats.headShots == 5);
+    // First operand 0: no count, and the script stays in sync.
+    Code off;
+    off.u8(kHeadShots).u8(0).u32(10);
+    off.end();
+    runProgram(runtime, off, &obj);
+    CHECK(!sawUnimplemented(kHeadShots));
+    CHECK(runtime.stats.headShots == 5);
+    // The struct underneath: enemies match case-insensitively, created and
+    // killed count separately, percent truncates and is 0 without shots.
+    CHECK(scripts::isEnemyType("xb1"));
+    CHECK(!scripts::isEnemyType("KURT"));
+    scripts::GameStats counts;
+    counts.countEnemy("xb", scripts::GameStats::Created);
+    counts.countEnemy("XB1", scripts::GameStats::Killed);
+    counts.countEnemy("kurt", scripts::GameStats::Killed);
+    CHECK(counts.enemies == 1);
+    CHECK(counts.kills == 1);
+    CHECK(scripts::GameStats::percent(1, 3) == 33);
+    CHECK(scripts::GameStats::percent(0, 0) == 0);
 }
 
 } // namespace
@@ -872,6 +916,8 @@ int main() {
     printf("PASS PushHitDirAddsVelocityAlongTheLastHit\n");
     testSpawnAlongPathSpawnsEveryStep(runtime);
     printf("PASS SpawnAlongPathSpawnsEveryStep\n");
+    testHeadShotsAddOnlyWhenEnabled(runtime);
+    printf("PASS HeadShotsAddOnlyWhenEnabled\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

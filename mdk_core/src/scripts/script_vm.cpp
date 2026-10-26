@@ -1611,6 +1611,11 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 218:  // set_f13c: the pitch
             obj->pitch = fval(op(ins, 0));
             break;
+        case 217:  // global_573c4c_add: head shots, when the first operand is 1
+            if (ival(op(ins, 0)) == 1) {
+                runtime_.stats.headShots += ival(op(ins, 1));
+            }
+            break;
         case 164: {  // path_speed_by_kurt: scale path speed by the distance to Kurt
             if (ival(op(ins, 0)) != 0) {
                 const std::vector<ScriptValue>& raw = listval(op(ins, 1));

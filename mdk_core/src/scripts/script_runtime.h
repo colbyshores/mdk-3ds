@@ -43,6 +43,7 @@
 #include "game/level_data.h"
 #include "render/render_types.h"
 #include "scripts/debris.h"
+#include "scripts/game_stats.h"
 #include "scripts/object.h"
 #include "scripts/script_vm.h"
 #include "util/random.h"
@@ -259,6 +260,12 @@ public:
     // The debris subsystem (Debris.cs): shattered groups, sparks, break-ups.
     const Debris& debris() const { return debris_; }
     Debris& debris() { return debris_; }
+    // The level's Score-o-matic counts (GameStats.cs: shots, sniper rounds,
+    // head shots, enemies created/killed, town flags). Opcode 217 writes
+    // headShots; the other writers (chain-gun fire, sniper rounds, the kill
+    // path, town flags) land with their own slices — the struct starts at
+    // zero, which is what a fresh level has.
+    GameStats stats;
 
     // ---- Readable state (the driver dumps these) ----
     const std::string& currentArena() const { return currentArena_; }
