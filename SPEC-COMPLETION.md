@@ -216,7 +216,8 @@ to get it wrong:
 
 ## 7. MCP servers available to you
 
-Configured in the Kilo config (`~/.config/kilo/kilo.jsonc`, section `mcp`):
+Available to Muse sessions in this workspace (the Obsidian and Cognee
+servers below are wired as MCP tools for the Muse harness):
 
 | Server | Endpoint / notes | Status |
 |---|---|---|
@@ -224,7 +225,7 @@ Configured in the Kilo config (`~/.config/kilo/kilo.jsonc`, section `mcp`):
 | **Cognee** | `https://cognee.lab.home/mcp` — knowledge-graph memory of past ports | **ERRORING** (recall fails as of 2026-10-25) — attempt a recall once; if it errors, proceed without it and say so. Setup history: runbook `20-runbooks/cognee-mcp-through-kilo-the-patches-that-made-it-work.md` |
 | **reverify** | `https://reverify.lab.home/mcp` — verification inbox pattern | See runbook `20-runbooks/using-the-reverify-mcp-from-any-session-the-inbox-pattern.md` |
 | **codebase-memory** | local nvm binary `codebase-memory-mcp` | See runbook `20-runbooks/codebase-memory-mcp-through-kilo-auto-index-and-the-one-reload-you-cant-script.md` |
-| **Vaultwarden** (`vault-mcp`) | `https://vault-mcp.lab.home/sse` | **FORBIDDEN.** Global policy: all models except `litellm/qwen` (the `vaultkeeper` agent) are denied `vault_*` tools. Do not call them; if credentials are needed, say so and use non-sensitive mock data. |
+| **Vaultwarden** (`vault-mcp`) | `https://vault-mcp.lab.home/sse` | **FORBIDDEN** for this swarm. Do not call `vault_*` tools; if credentials are needed, say so and use non-sensitive mock data. |
 
 ### Obsidian notes that are actually useful for this port
 
@@ -254,21 +255,27 @@ Configured in the Kilo config (`~/.config/kilo/kilo.jsonc`, section `mcp`):
 
 ## 8. Agent swarm and adversarial validation (REQUIRED)
 
-The owner requires a swarm with adversarial checks. The pieces that already
-exist in this repo:
+The owner requires a swarm with adversarial checks, running entirely on
+the **Muse subscription** (no Kilo, no litellm routes). The pieces in this
+repo:
 
-- **Builder**: `.kilo/agent/builder.md` (model `litellm/minimax-m3.1-flash-nvidia`,
+- **Builder**: `ralph/builder.md` (model `muse-spark-1.3`, high effort,
   edit+bash allowed, subagents denied) — the per-iteration implementer with
-  the banking discipline baked in.
-- **Adversarial validator**: `.kilo/agent/adversarial-validator.md` (model
-  `litellm/luna`, **edit denied by design**, mode: subagent) — falsifies
-  instead of praising: fidelity to the C# oracle first (name the C# method
-  and diff semantically), then the 3DS traps, the performance contract, the
-  language contract, memory/lifetime, and both-target compilation. A finding
-  without evidence is an opinion and must be labeled UNPROVEN.
-- **`/validate`**: `.kilo/command/validate.md` — the slash-command wrapper for
-  running the validator over the current diff.
-- **The ralph loop**: `./ralph.sh` (§9) already runs the swarm mechanically:
+  the banking discipline baked in. `ralph.sh` feeds it to a fresh
+  `muse exec` run each iteration.
+- **Adversarial validator**: `ralph/validator.md` (model
+  `muse-wonder-1.0`, max effort, **`--disable-write` by design**) —
+  falsifies instead of praising: fidelity to the C# oracle first (name the
+  C# method and diff semantically), then the 3DS traps, the performance
+  contract, the language contract, memory/lifetime, and both-target
+  compilation. A finding without evidence is an opinion and must be labeled
+  UNPROVEN.
+- **In-session validation**: when working interactively instead of through
+  the loop, run the same `ralph/validator.md` instructions as a read-only
+  review over the current diff (a separate `muse exec --disable-write`
+  run, or a read-only subagent given that file). Never let the builder
+  grade its own batch.
+- **The ralph loop**: `./ralph.sh` (§9) runs the swarm mechanically:
   builder per iteration + an external stronger-model review of each batch +
   independent gate runs the worker cannot influence.
 
@@ -284,24 +291,26 @@ Swarm rules (from the owner's standing directive):
 3. **Fix confirmed BLOCKER/MAJOR findings, rerun the affected gates, then
    commit.** An `UNPROVEN` finding may be rebutted with evidence in
    `docs/CONTINUATION.md`.
-4. **Never substitute a reviewer silently.** Record the model used. Verified
-   live routes as of 2026-10-25: `litellm/qwen`, `litellm/glm-5.3-nvidia` (1M
-   context; the current reviewer), `litellm/minimax-m3.1-flash-nvidia` (the
-   builder), `litellm/deepseek-v4.1-flash-nvidia`, `litellm/luna`,
-   `litellm/muse-spark`, `litellm/muse-spark-contributor`.
-   **DEAD: `litellm/kimi-k3-nvidia`** — EOL upstream 2026-10-15, HTTP 410.
-   The muse harness itself should run on the muse route (`muse-spark`) per
-   the owner, with the reviewer on a different model (glm-5.3-nvidia or luna).
+4. **Never substitute a reviewer silently.** Record the model used. The
+   swarm runs on the Muse subscription only: builder `muse-spark-1.3`
+   (high effort), reviewer `muse-wonder-1.0` (max effort, write-disabled).
+   The reviewer must stay a different, stronger model than the builder; if
+   either route fails its preflight, the loop records PREFLIGHT FAILED
+   instead of silently reviewing with the builder's model.
 5. **Completion is never a worker's claim.** Gates + goldens re-run on the
    final tree by the harness itself, plus a full-tree adversarial review.
 
 ## 9. The ralph loop (existing machinery — use it or replace it deliberately)
 
 `./ralph.sh` is a working autonomous loop (in-repo, committed, ~20 iterations
-proven). Per iteration: a FRESH builder context (`--agent builder`), the
-message from `ralph/PROMPT.md` + a machine status block, then the loop itself
-independently runs the three gates, detects progress/stall, and runs the
-external reviewer.
+proven under its previous Kilo driver; rewired to Muse on 2026-10-25).
+Per iteration: a FRESH builder context (`muse exec` on `muse-spark-1.3`,
+prompt = `ralph/builder.md` + `ralph/PROMPT.md` + a machine status block),
+then the loop itself independently runs the three gates, detects
+progress/stall, and runs the external reviewer (a separate fresh
+`muse exec --disable-write` on `muse-wonder-1.0` with `ralph/validator.md`).
+Run it from a normal operator shell: `muse exec` needs `~/.config/muse`
+(auth) outside any agent sandbox.
 
 ```sh
 ./ralph.sh start [--max N]   # detached, pid file logs/ralph/loop.pid

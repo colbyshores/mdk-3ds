@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# ralph.sh — autonomous mission loop for the MDK Phase 2 port.
+# ralph.sh — autonomous mission loop for the MDK Phase 2 port (Muse swarm).
 #
 # Each iteration starts a FRESH coding-agent context (no session memory),
-# feeds it ralph/PROMPT.md + docs/CONTINUATION.md, and lets it complete one
-# verified batch. The loop itself independently re-runs the gates and an
-# external adversarial reviewer — a worker's completion claim is never
-# sufficient evidence on its own.
+# feeds it ralph/builder.md + ralph/PROMPT.md + docs/CONTINUATION.md, and
+# lets it complete one verified batch. The loop itself independently re-runs
+# the gates and an external adversarial reviewer — a worker's completion
+# claim is never sufficient evidence on its own.
+#
+# Both swarm roles run on the Muse subscription via `muse exec`:
+# the builder is muse-spark-1.3 (high effort, writes allowed) and the
+# adversarial reviewer is muse-wonder-1.0 (max effort, --disable-write).
+# There is no Kilo/litellm path; do not re-add one.
 #
 # Usage:
 #   ./ralph.sh start [--max N]   start detached (pid file, logs/ralph/)
@@ -14,11 +19,16 @@
 #   ./ralph.sh status            loop state + last summary lines
 #   ./ralph.sh stop              terminate a detached loop
 #
-# Config (env overrides): KILO_BIN WORKER_MODEL REVIEWER_MODEL MAX_ITERATIONS
-# ITER_TIMEOUT REVIEW_TIMEOUT STALL_LIMIT FAIL_LIMIT PROMPT_FILE
+# Config (env overrides): MUSE_BIN WORKER_MODEL WORKER_EFFORT REVIEWER_MODEL
+# REVIEWER_EFFORT MAX_ITERATIONS ITER_TIMEOUT REVIEW_TIMEOUT STALL_LIMIT
+# FAIL_LIMIT PROMPT_FILE BUILDER_FILE VALIDATOR_FILE
 #
 # Exit codes: 0 complete (independently verified) | 3 stalled | 4 repeated
 # failures | 5 iteration budget exhausted | 6 already running / bad state.
+#
+# NOTE: ralph.sh must run from a normal operator shell, not inside another
+# agent's sandbox: `muse exec` needs read access to ~/.config/muse (auth)
+# and write access to the session store.
 
 set -u -o pipefail
 
@@ -26,32 +36,26 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO" || exit 6
 
 # ---- configuration ----------------------------------------------------------
-find_kilo() {
-    # The VS Code host may export a stale KILO_BIN (old extension version);
-    # only honour it if it is actually executable.
-    if [ -n "${KILO_BIN:-}" ] && [ -x "$KILO_BIN" ]; then echo "$KILO_BIN"; return; fi
-    local c
-    c="$(ls -d "$HOME"/.vscode/extensions/kilocode.kilo-code-*/bin/kilo 2>/dev/null | sort -V | tail -1)"
-    [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; return; }
-    command -v kilo
+find_muse() {
+    if [ -n "${MUSE_BIN:-}" ] && [ -x "$MUSE_BIN" ]; then echo "$MUSE_BIN"; return; fi
+    command -v muse
 }
-KILO="$(find_kilo)" || { echo "FATAL: kilo CLI not found (set KILO_BIN)"; exit 6; }
+MUSE="$(find_muse)" || { echo "FATAL: muse CLI not found (set MUSE_BIN)"; exit 6; }
 
-WORKER_MODEL="${WORKER_MODEL:-litellm/minimax-m3.1-flash-nvidia}"
-WORKER_AGENT="${WORKER_AGENT:-builder}"
-# The reviewer must be a LIVE, stronger route. kimi-k3-nvidia went EOL upstream
-# (HTTP 410) on 2026-10-15; it is kept only as a documented fallback, never as
-# the default, because a dead reviewer silently turns the review step into a
-# no-op. The model actually used is recorded in every review file and in the
-# summary log — a substitution is never silent.
-REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/glm-5.3-nvidia}"
-REVIEWER_FALLBACK_MODEL="${REVIEWER_FALLBACK_MODEL:-litellm/deepseek-v4.1-flash-nvidia}"
+WORKER_MODEL="${WORKER_MODEL:-muse-spark-1.3}"
+WORKER_EFFORT="${WORKER_EFFORT:-high}"
+WORKER_STEPS="${WORKER_STEPS:-80}"
+REVIEWER_MODEL="${REVIEWER_MODEL:-muse-wonder-1.0}"
+REVIEWER_EFFORT="${REVIEWER_EFFORT:-max}"
+REVIEWER_STEPS="${REVIEWER_STEPS:-60}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-30}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-3600}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-3600}"
 STALL_LIMIT="${STALL_LIMIT:-4}"
 FAIL_LIMIT="${FAIL_LIMIT:-3}"
 PROMPT_FILE="${PROMPT_FILE:-ralph/PROMPT.md}"
+BUILDER_FILE="${BUILDER_FILE:-ralph/builder.md}"
+VALIDATOR_FILE="${VALIDATOR_FILE:-ralph/validator.md}"
 
 LOGDIR="$REPO/logs/ralph"
 STATE="$LOGDIR/state"
@@ -60,6 +64,38 @@ LOCK="$LOGDIR/lock"
 PIDFILE="$LOGDIR/loop.pid"
 
 mkdir -p "$LOGDIR"
+
+# ---- muse exec helpers ------------------------------------------------------
+# muse exec --json emits one JSON object per line; the final answer is the
+# text of the run.terminal.completed event. Anything else (non-zero exit, a
+# failed terminal, no terminal event) is a FAILED run, never a result.
+muse_final_text() { # $1 = jsonl file
+    jq -rs '[.[] | select(.payload_type=="run.terminal.completed") | .payload.text] | last // ""' "$1" 2>/dev/null
+}
+muse_terminal_ok() { # $1 = jsonl file
+    jq -rs '[.[] | select(.payload_type=="run.terminal.completed") | .payload.terminal] | last // ""' "$1" 2>/dev/null | grep -qx completed
+}
+muse_session_id() { # $1 = jsonl file
+    jq -rs '[.[] | select(.stream.kind=="session") | .stream.id] | first // "none"' "$1" 2>/dev/null
+}
+
+run_builder() { # $1 = prompt file, $2 = jsonl out, $3 = err out
+    timeout "$ITER_TIMEOUT" "$MUSE" exec --json --no-session-log \
+        --trust-workspace --approval-mode never \
+        --model "$WORKER_MODEL" --reasoning-effort "$WORKER_EFFORT" \
+        --max-model-steps "$WORKER_STEPS" \
+        --prompt-file "$1" \
+        9>&- >"$2" 2>"$3"
+}
+
+run_reviewer_exec() { # $1 = prompt file, $2 = jsonl out, $3 = err out
+    timeout "$REVIEW_TIMEOUT" "$MUSE" exec --json --no-session-log \
+        --trust-workspace --approval-mode never --disable-write \
+        --model "$REVIEWER_MODEL" --reasoning-effort "$REVIEWER_EFFORT" \
+        --max-model-steps "$REVIEWER_STEPS" \
+        --prompt-file "$1" \
+        9>&- >"$2" 2>"$3"
+}
 
 # ---- gates (independent verification, never delegated to the worker) --------
 run_gates() { # -> sets GATES_OK, appends gate lines to $1
@@ -82,26 +118,23 @@ tree_hash() {
 }
 
 # ---- external adversarial reviewer ------------------------------------------
-# The project validator agent (.kilo/agent/adversarial-validator.md) is a
-# subagent-mode agent; it is run here as instructions for the reviewer model
-# so the reviewer is provably the stronger model. The loop captures its
-# output (the reviewer has no write permission by design).
-review_attempt() { # $1=out file  $2=model  $3=scope text
-    local out="$1" model="$2" scope="$3"
-    timeout "$REVIEW_TIMEOUT" "$KILO" run -m "$model" --format json \
-        --title "ralph-review" \
-        "Read .kilo/agent/adversarial-validator.md and act exactly as that adversarial validator (you may not edit anything, and do not run builds — review by reading code and the C# oracle). SCOPE: $scope Be concise and concrete. Verify the claims in docs/CONTINUATION.md for that scope; do not trust them. End your reply with exactly one line: 'VERDICT: COMPLETE' only if every SPEC acceptance criterion is met with evidence and nothing actionable remains except hardware-only verification; otherwise 'VERDICT: INCOMPLETE' followed by the BLOCKER/MAJOR findings that must be fixed." \
-        9>&- >"$out.jsonl.attempt" 2>"$out.err"
+# The reviewer is a separate fresh muse exec run on the stronger model with
+# writes disabled (ralph/validator.md is its instructions). A failed run
+# (provider error, timeout, empty reply) is a FAILED review, never a verdict;
+# it is retried once on the same route and then recorded as failed.
+review_attempt() { # $1=out file  $2=scope text
+    local out="$1" scope="$2"
+    local prompt="$LOGDIR/.review-prompt.md"
+    { cat "$VALIDATOR_FILE"; printf '\n\n--- REVIEW SCOPE ---\n%s\n' "$scope"; } >"$prompt"
+    run_reviewer_exec "$prompt" "$out.jsonl.attempt" "$out.err"
     local rc=$?
-    # A provider error (e.g. HTTP 410 EOL) is a FAILED review, never a verdict.
-    local errs texts
-    errs="$(jq -rs '[.[] | select(.type=="error")] | length' "$out.jsonl.attempt" 2>/dev/null || echo 0)"
-    texts="$(jq -rs '[.[] | select(.type=="text") | .part.text] | join("\n\n")' "$out.jsonl.attempt" 2>/dev/null)"
-    if [ "$rc" -ne 0 ] || [ "${errs:-1}" -gt 0 ] || [ -z "$texts" ]; then
-        { echo "REVIEWER FAILED model=$model rc=$rc errors=$errs"; head -c 800 "$out.err" 2>/dev/null; } >"$out"
+    local texts
+    texts="$(muse_final_text "$out.jsonl.attempt")"
+    if [ "$rc" -ne 0 ] || ! muse_terminal_ok "$out.jsonl.attempt" || [ -z "$texts" ]; then
+        { echo "REVIEWER FAILED model=$REVIEWER_MODEL rc=$rc"; head -c 800 "$out.err" 2>/dev/null; } >"$out"
         return 1
     fi
-    { echo "<!-- reviewer=$model rc=$rc -->"; printf '%s\n' "$texts"; } >"$out"
+    { echo "<!-- reviewer=$REVIEWER_MODEL effort=$REVIEWER_EFFORT rc=$rc -->"; printf '%s\n' "$texts"; } >"$out"
     cp "$out.jsonl.attempt" "$out.jsonl"
     return 0
 }
@@ -113,15 +146,15 @@ run_reviewer() { # $1 = review output file, $2 = scope: latest|full
     else
         scope="the changes in the commits since $(state_get HEAD_AT_START HEAD) plus any uncommitted work — use git log/diff to bound it; do not re-review older code."
     fi
-    if review_attempt "$out" "$REVIEWER_MODEL" "$scope"; then
+    if review_attempt "$out" "$scope"; then
         return 0
     fi
-    echo "[$(date -Is)] primary reviewer $REVIEWER_MODEL FAILED — trying fallback $REVIEWER_FALLBACK_MODEL" >>"$SUMMARY"
-    if review_attempt "$out" "$REVIEWER_FALLBACK_MODEL" "$scope"; then
-        echo "[$(date -Is)] WARNING: review produced by FALLBACK model $REVIEWER_FALLBACK_MODEL" >>"$SUMMARY"
+    echo "[$(date -Is)] reviewer $REVIEWER_MODEL FAILED — retrying once" >>"$SUMMARY"
+    if review_attempt "$out" "$scope"; then
+        echo "[$(date -Is)] WARNING: review produced on retry (route $REVIEWER_MODEL)" >>"$SUMMARY"
         return 0
     fi
-    echo "[$(date -Is)] BOTH REVIEWERS FAILED (see $out)" >>"$SUMMARY"
+    echo "[$(date -Is)] REVIEWER FAILED TWICE (see $out)" >>"$SUMMARY"
     return 1
 }
 
@@ -172,6 +205,15 @@ kill_stale_lock_holder() {
     done
 }
 
+# Kill orphaned muse exec children of a dead/stopped loop so two workers
+# never edit the tree at once. Children are identified by the prompt files
+# this script generates under $LOGDIR.
+kill_orphan_workers() {
+    pkill -f -- "--prompt-file $LOGDIR/.prompt-" 2>/dev/null
+    pkill -f -- "--prompt-file $LOGDIR/.review-prompt" 2>/dev/null
+    true
+}
+
 # ---- one iteration ----------------------------------------------------------
 state_get() {
     local v
@@ -192,21 +234,20 @@ iterate() {
     local itlog="$LOGDIR/iter-$iter"
     local status_block
     status_block="$(printf '\n\n--- LOOP STATUS (machine-generated) ---\niteration: %s of max %s\ngates from previous iteration: %s\nlast progress: iteration %s\nIf logs/ralph/review-*.md exists and is newer than your last change, address its findings first.\n' "$iter" "$MAX_ITERATIONS" "$(state_get LAST_GATES n/a)" "$(state_get LAST_PROGRESS none)")"
-    local full_prompt
-    full_prompt="$(cat "$prompt_file")$(printf '%s' "$status_block")"
+    local full_prompt="$LOGDIR/.prompt-iter-$iter.md"
+    { cat "$BUILDER_FILE"; printf '\n\n--- ITERATION MESSAGE ---\n'; cat "$prompt_file"; printf '%s' "$status_block"; } >"$full_prompt"
 
-    echo "[$(date -Is)] iter=$iter start model=$WORKER_MODEL" >>"$SUMMARY"
-    timeout "$ITER_TIMEOUT" "$KILO" run --agent "$WORKER_AGENT" -m "$WORKER_MODEL" --auto --format json \
-        --title "ralph-iter-$iter" "$full_prompt" \
-        9>&- >"$itlog.jsonl" 2>"$itlog.err"
+    echo "[$(date -Is)] iter=$iter start builder=$WORKER_MODEL effort=$WORKER_EFFORT" >>"$SUMMARY"
+    run_builder "$full_prompt" "$itlog.jsonl" "$itlog.err"
     local rc=$?
     local final_text
-    final_text="$(jq -rs '[.[] | select(.type=="text") | .part.text] | last // "(no text)"' "$itlog.jsonl" 2>/dev/null)"
+    final_text="$(muse_final_text "$itlog.jsonl")"
+    [ -n "$final_text" ] || final_text="(no text)"
     local session
-    session="$(jq -rs '[.[] | .sessionID? // empty][0] // "none"' "$itlog.jsonl" 2>/dev/null)"
+    session="$(muse_session_id "$itlog.jsonl")"
     echo "[$(date -Is)] iter=$iter worker rc=$rc session=$session" >>"$SUMMARY"
     printf '%s\n' "$final_text" >"$itlog.txt"
-    if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -ne 0 ] || ! muse_terminal_ok "$itlog.jsonl"; then
         # A timeout that still banked commits is progress, not failure.
         if [ "$rc" -eq 124 ] && [ "$(git -C "$REPO" rev-parse HEAD)" != "$(state_get HEAD_AT_START "$(git -C "$REPO" rev-parse HEAD)")" ]; then
             echo "[$(date -Is)] iter=$iter worker timed out AFTER banking commits — not counted as failure" >>"$SUMMARY"
@@ -244,7 +285,7 @@ iterate() {
 
     # External adversarial review after any productive iteration.
     if [ "$(state_get LAST_PROGRESS)" = "$iter" ]; then
-        echo "[$(date -Is)] iter=$iter external review start model=$REVIEWER_MODEL" >>"$SUMMARY"
+        echo "[$(date -Is)] iter=$iter external review start reviewer=$REVIEWER_MODEL effort=$REVIEWER_EFFORT" >>"$SUMMARY"
         if run_reviewer "$LOGDIR/review-$iter.md" latest; then
             grep -q '^VERDICT: COMPLETE' "$LOGDIR/review-$iter.md" \
                 && echo "[$(date -Is)] iter=$iter review verdict COMPLETE" >>"$SUMMARY" \
@@ -254,7 +295,7 @@ iterate() {
         fi
     fi
 
-    # Completion: worker marker + all gates green + reviewer COMPLETE.
+    # Completion: completion marker + all gates green + reviewer COMPLETE.
     if [ -f docs/PHASE2_COMPLETE ] && [ "$GATES_OK" = 1 ]; then
         # The acceptance gate is a FULL-TREE review: a per-batch scoped review
         # cannot establish that every SPEC criterion is met.
@@ -275,19 +316,18 @@ iterate() {
 loop() {
     # The lock fd must NOT be inherited by the worker/reviewer children: an
     # orphaned child that keeps fd 9 open holds the flock after the loop dies,
-    # and every later start then fails with "lock held" forever. Close it in
-    # each child by opening it with exec redirection that is marked close-on-
-    # exec (bash's `exec {fd}>` is not CLOEXEC, so we close it explicitly in
-    # the child commands instead).
+    # and every later start then fails with "lock held" forever. Each child
+    # command closes it explicitly (9>&-).
     exec 9>"$LOCK"
     flock -n 9 || { echo "ralph loop already running (lock held)"; exit 6; }
     [ -f "$STATE" ] || { echo "ITER=0"; echo "FAILS=0"; echo "STALL=0"; } >"$STATE"
     [ -n "$(state_get LAST_HASH)" ] || state_set LAST_HASH "$(tree_hash)"
-    echo "[$(date -Is)] LOOP START worker=$WORKER_MODEL reviewer=$REVIEWER_MODEL max=$MAX_ITERATIONS" >>"$SUMMARY"
-    # Route preflight: a dead provider route (EOL model, expired key) must be
-    # reported now, not discovered as a silently useless review later.
-    for m in "$WORKER_MODEL" "$REVIEWER_MODEL" "$REVIEWER_FALLBACK_MODEL"; do
-        if timeout 180 "$KILO" run -m "$m" --format json "Reply with exactly: OK" 2>/dev/null | grep -q '"type":"text"'; then
+    echo "[$(date -Is)] LOOP START builder=$WORKER_MODEL/$WORKER_EFFORT reviewer=$REVIEWER_MODEL/$REVIEWER_EFFORT max=$MAX_ITERATIONS" >>"$SUMMARY"
+    # Route preflight: a dead model route must be reported now, not
+    # discovered as a silently useless review later.
+    local m
+    for m in "$WORKER_MODEL" "$REVIEWER_MODEL"; do
+        if timeout 180 "$MUSE" exec --json --no-session-log --approval-mode never --model "$m" "Reply with exactly: OK" 9>&- 2>/dev/null | grep -q '"terminal":"completed"'; then
             echo "[$(date -Is)] preflight OK: $m" >>"$SUMMARY"
         else
             echo "[$(date -Is)] PREFLIGHT FAILED: $m" >>"$SUMMARY"
@@ -322,8 +362,7 @@ case "${1:-}" in
         # The loop died (or was stopped): kill any orphaned worker/reviewer it
         # left behind so two workers never edit the tree at once. An orphan
         # that inherited the lock fd would also block every restart.
-        pkill -f -- "--title ralph-iter-" 2>/dev/null
-        pkill -f -- "--title ralph-review" 2>/dev/null
+        kill_orphan_workers
         kill_stale_lock_holder
         while [ $# -gt 1 ]; do
             case "$2" in
@@ -346,7 +385,7 @@ case "${1:-}" in
         exit $?
         ;;
     smoke)
-        PROMPT_FILE="ralph/SMOKE.md" exec "$0" once
+        PROMPT_FILE="ralph/SMOKE.md" BUILDER_FILE="ralph/SMOKE-BUILDER.md" exec "$0" once
         ;;
     status)
         if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
@@ -364,15 +403,14 @@ case "${1:-}" in
         else
             echo "not running"
         fi
-        pkill -f -- "--title ralph-iter-" 2>/dev/null
-        pkill -f -- "--title ralph-review" 2>/dev/null
+        kill_orphan_workers
         echo "stopped by user at $(date -Is)" >"$LOGDIR/disabled"
         ;;
     watchdog)
         watchdog_case
         ;;
     *)
-        sed -n '2,20p' "$0"
+        sed -n '2,27p' "$0"
         exit 6
         ;;
 esac

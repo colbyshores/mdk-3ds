@@ -1017,13 +1017,16 @@ target-dependent assumptions.* The 3DS-specific suspects are enumerated in
 
 ## 12. Adversarial validation
 
-The primary coding agent writes the code; a **stronger model**
-(`luna`, via the `litellm` provider) reviews it adversarially.
+The primary coding agent writes the code; a **stronger model** reviews it
+adversarially. Both roles run on the Muse subscription via `muse exec`
+(see `SPEC-COMPLETION.md` §8): the builder is `muse-spark-1.3` and the
+reviewer is `muse-wonder-1.0`.
 
-- `.kilo/agent/adversarial-validator.md` defines the agent: its job is to
-  **disprove** the code, not to praise it. It is given the spec, the diff, and
-  the evidence, and it must produce a falsification attempt for each claim.
-- The agent is invoked with `model: "luna"`, `provider: "litellm"`.
+- `ralph/validator.md` defines the reviewer: its job is to **disprove** the
+  code, not to praise it. It is given the spec, the diff, and the evidence,
+  and it must produce a falsification attempt for each claim.
+- The reviewer is invoked by `ralph.sh` as a separate fresh
+  `muse exec --disable-write` run on `muse-wonder-1.0` at max effort.
 - Review dimensions, in priority order:
   1. **Fidelity to the C# oracle** — does the C++ do what the C# does? Name
      the exact method and the exact divergence.

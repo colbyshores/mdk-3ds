@@ -38,7 +38,8 @@ only the user can make). A verified checkpoint is not a reason to stop.
 
 1. Implement the increment.
 2. Run the checks: the relevant tests/gates (`tests/`, `tools/check.sh`) AND the
-   adversarial validator (`@adversarial-validator`) over the changed code.
+   adversarial validator (`ralph/validator.md`, run by `ralph.sh` as a
+   write-disabled `muse exec` review on `muse-wonder-1.0`) over the changed code.
 3. Fix what the validator and gates raise.
 4. **Commit** — only after the validator and gates are clean.
 5. Move to the next increment immediately.
