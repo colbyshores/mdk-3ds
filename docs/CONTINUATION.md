@@ -1,11 +1,12 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 33: review-32 closed — 206 test
-now pins 0.1f accumulation (100 spawns, .NET-corroborated) + absolute
-z=0/z=6; T2 pin refused by gate grammar (proven), prose rationale kept;
-OPCODE_COVERAGE 206 grouping fixed; degenerate-path divergence recorded.
-No new opcode (hardening batch): coverage stays C++ 180/238, remaining 59,
-all three gates green. Corpus still byte-for-byte to t30000.)
+Last updated: 2026-10-26 (iteration 35: stats slice committed — opcode
+217 `global_573c4c_add` via new `GameStats` (`game_stats.h`, exact
+33-entry table re-verified against GameStats.cs) + `stats` on
+ScriptRuntime + the R11 pin on `percent` (level-end only, oracle
+truncation shape). Coverage now C++ 181/238, remaining 58. All three
+gates green — see Verified below. Next: one opcode family per batch
+through the harness.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -45,8 +46,8 @@ them. Do not spend an iteration on docs/tests alone.
    **81 (`push_hit_dir`) DONE (slice 4, iter 31)** — field-only port,
    writers deferred to the combat slices. 85 (`set_rolling`) stays out:
    `SetRolling` snapshots the full `Rotation` matrix; `rotation()` is
-   deferred to the FrameBlend slice. Coverage: C++ 180/238, remaining 59
-   (true dispatches 179; the 180th label is the nested `case 0:` in 249).
+   deferred to the FrameBlend slice. Coverage: C++ 181/238, remaining 58
+   (true dispatches 180; the 181st label is the nested `case 0:` in 249).
    132/136 stay with the Effects slice (RNG + effect list + dump line).
    The rest never fire in levels 3-8 to t30000 — they land through the
    harness now, one family per batch. P5 golden-frame tests stay parallel.
@@ -57,15 +58,20 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 33 (code commit with 206 test hardening + this state commit).
+- Iteration 35 (stats slice: two code commits + this state commit).
   Verified on the final tree:
-  - `make -C tests/scripts` → `vm_tests` 15/15 PASS (206 test now pins
-    absolute z=0/z=6 and the 0.1f accumulation case) then `All cases match
-    the oracle.` (goldens unchanged — no oracle behavior changed)
-  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
-    built `.cia`)
+  - `make -C tests/scripts` → `vm_tests` 16/16 PASS (new
+    `HeadShotsAddOnlyWhenEnabled` pins 217: +3/+2 accumulate, first-operand
+    0 counts nothing, plus `isEnemyType`/`countEnemy`/`percent` unit pins)
+    then `All cases match the oracle.` (goldens unchanged — the counters
+    are not dumped)
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs:
+    no built `.cia`). Needed one fix mid-iteration: the R11 screen flagged
+    `percent`'s `hits * 100 / shots` (file-level loop inference from
+    `isEnemyType`'s scan); pinned R11 with a level-end-only rationale,
+    same surface as renderer_c3d.cpp:1130 — no gate relaxed.
   - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
-  - Coverage: C++ 180/238, remaining 59 (hardening batch, no new opcode)
+  - Coverage: C++ 181/238, remaining 58 (217 landed with the stats slice)
 - Earlier slices (details in `docs/PROGRESS_LOG.md`): iters 23/24 (harness +
   opcode 13, parts pair), iters 28/29/30 (rope-swing, spawn 156, review-29
   hardening), iter 31 (opcode 81, review-30) and iter 32 (opcode 206,
@@ -80,8 +86,8 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
   script goldens with: for each `{L, T}` in the `cases[]` table,
   `mdkoracle L T 1 script > golden/L{L}_t{T}_script.txt`.
 - `docs/OPCODE_COVERAGE.md` recounted from the brace-matched sets: C# 238 /
-  C++ 175 / remaining 64 (re-run 2026-10-26 for the parts batch; the 175
-  carries the nested `case 0:` inside opcode 249 — true dispatches 174).
+  C++ 181 / remaining 58 (re-run 2026-10-26 for the stats batch; the 181
+  carries the nested `case 0:` inside opcode 249 — true dispatches 180).
 
 
 ## Testability map
@@ -107,8 +113,9 @@ twins/pins the oracle — no golden change). `alarm_ticks` is a dead end
    goldens). Remaining: incomplete decoy/`AlienTarget` targeting; opcode 207 —
    C# `MathF.Sign` throws on NaN (C++ returns 0; exceptions banned, accepted);
    degenerate-path guards (`pathKeyCount`/`pathKeyFrame` return 0 where C#
-   throws; inherited by 206 — unreachable in shipped scripts, 206 never fires
-   in the corpus).
+   reads out-of-range bytes — garbage mid-buffer, throws only at the edges;
+   inherited by 206 — unreachable in shipped scripts, 206 never fires in the
+   corpus).
 4. **Old 3DS hardware timing: UNMEASURED.** A devkitARM `.3dsx` is not
    hardware validation. Never claim an OG pass without a capture.
 5. **C3D depth state diverges from the oracle (review-8 finding, verified).**

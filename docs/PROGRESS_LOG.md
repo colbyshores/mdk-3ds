@@ -613,3 +613,48 @@
   → `mdk.3dsx` (118 MB, rebuilt 2026-10-26).
 - Next: one opcode family per batch through the harness; 132/136 still need
   the Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+## Iteration 35 — stats slice: opcode 217 via new GameStats (181/238, remaining 58, gates green)
+
+- Ported 217 (`global_573c4c_add`) with a new header-only
+  `mdk_core/src/scripts/game_stats.h`: a 1:1 port of
+  `src/Mdk.Game/Scripts/GameStats.cs` — the exact 33-entry enemy table
+  (order-verified against GameStats.cs:14-17), `isEnemyType`
+  (`ToUpperInvariant` → `toUpperAscii`, ASCII-identical on these names),
+  `countEnemy` (Created/Killed split), `percent` (truncating shape,
+  0 without shots). Header-only on purpose: no object file, so no
+  `notdir` collision in the 3DS build (same reason as
+  `formats/ascii_case.h`). `GameStats.IndexOf` deliberately NOT ported —
+  it is `GameState` order (save-game/Viewer slice), nothing ported reads it.
+- `ScriptRuntime` gains a `stats` member (zero-initialised, which is what a
+  fresh level has); `case 217` writes `headShots` only when the first
+  operand is 1, exactly `ScriptVm.cs:1606-1611`. Other writers (chain-gun
+  fire, sniper rounds, kill path, town flags) land with their own slices.
+- Pinned by `HeadShotsAddOnlyWhenEnabled` in `vm_tests` (no C#
+  `ScriptVmTests` counterpart exists — the test pins the oracle directly:
+  +3/+2 accumulate, first-operand 0 counts nothing, plus `isEnemyType`
+  (`xb1` yes / `KURT` no), `countEnemy` created/killed separation, and
+  `percent` truncation incl. 0/0). Goldens unchanged — the counters are
+  not dumped (dump-field template does not apply).
+- Mid-iteration gate fix (no gate relaxed): the R11 screen flagged
+  `hits * 100 / shots` via file-level loop inference from `isEnemyType`'s
+  table scan; pinned `/* @vfp-exempt R11 ... */` with a level-end-only
+  rationale (Score-o-matic math runs at most once per level, never per
+  frame; float math would change the truncation) — same surface as
+  `renderer_c3d.cpp:1130`.
+- Recount-verified: C# 238 / C++ 181 / remaining 58 (true dispatches 180;
+  the 181st label is the nested `case 0:` in 249); remaining set matches
+  the doc list exactly (217 removed).
+- Iteration mechanics: the iter-35 worker was killed by subscription quota
+  exhaustion (API 429) AFTER the two code commits landed but BEFORE the
+  state commit — iter 36 inherited a dirty tree (`docs/CONTINUATION.md`
+  only), re-verified all three gates on the final tree itself, appended
+  this narrative, and committed the state. No code changed in iter 36.
+- Verified (iter 36, on the final tree): `vm_tests` 16/16 PASS ("All VM
+  unit tests match the oracle.", incl. the new 217 test); `make -C
+  tests/scripts` (after `clean`) exit 0, "All cases match the oracle."
+  (goldens unchanged); `bash tools/check.sh` → ALL GATES PASSED (smdh
+  SKIP, no .cia); `make -C mdk_3ds` (with
+  `DEVKITARM/DEVKITPRO=/opt/devkitpro/...`) → `mdk.3dsx`.
+- Next: one opcode family per batch through the harness; 132/136 still need
+  the Effects slice; 85 waits on the FrameBlend `rotation()` slice.
