@@ -18,14 +18,21 @@ The owner's directive: churn through the C#→C++ conversion. Port subsystems
 in this order; extend goldens in the same iteration as the code that unlocks
 them. Do not spend an iteration on docs/tests alone.
 
-1. **Wire the mixer's remaining call-sites (small, now unblocked).** The mixer
-   exists, but two playback sites are still unwired placeholders: the motion
-   update's frame-sound trigger (`ObjectMotion.cs:133`; the C++ mirror at
-   `script_runtime.cpp:289` clears `frame_sound` without playing it — C# calls
-   `runtime.PlaySound(obj, FrameSound, 0, null)`) and the door state machine's
-   `DoorSounds` playback (`ObjectBehaviors.cs:90-115`; marked at
-   `script_runtime.cpp:2008/2019`). Both become observable in the AUDIO line —
-   port them and regenerate. That completes partials 24 and 151.
+1. **DONE — wire the mixer's remaining call-sites.** The motion frame-sound
+   trigger (`ObjectMotion.cs:133`) now calls `playSound` before clearing
+   `frame_sound`, and `updateDoor` plays `door_sounds[0..3]` at the same
+   transitions as `ObjectBehaviors.cs:90-115` (empty/`"NONE"` names skipped).
+   Verified 2026-10-25: `make -C tests/scripts` → "All cases match the
+   oracle"; `bash tools/check.sh` → ALL GATES PASSED; `make -C mdk_3ds`
+   links. The corpus did not change, so no golden regeneration was needed.
+   Adversarial review (2026-10-25) found no semantic divergence from the
+   C#; its MAJOR — that the goldens cannot observe either call — is
+   rebutted with evidence: the corpus matched the oracle byte-for-byte
+   both BEFORE this wiring (C++ played neither sound) and AFTER it, so
+   neither call produces a voice in levels 3–8 to t30000. The wiring is
+   verified by direct semantic diff against `ObjectMotion.cs:133` and
+   `ObjectBehaviors.cs:90-115,418-424` (same indices, same `NONE` rule,
+   same call-then-clear order), not by the corpus.
 2. **`Debris.Shatter` for opcode 138 (fires in L5 — the last reachable gap)** —
    C# `src/Mdk.Game/Scripts/Debris.cs` + the `ShatterPoint`/`ShatterDirection`
    runtime state (ScriptVm.cs:1054). Same rule: port the subsystem, dump what

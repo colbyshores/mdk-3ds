@@ -347,3 +347,15 @@
   partials 11→10 (89 complete; 24/151 re-gated to their now-unblocked call-sites).
 - Verified: tests 341 PASS/0 SKIP, check.sh ALL GATES PASSED (smdh SKIP, no
   .cia), mdk_3ds links mdk.3dsx, linux `Built target mdk`.
+
+## Mixer call-sites + Muse swarm migration (2026-10-25)
+
+- Wired the last two mixer call-sites: the motion frame-sound trigger
+  (`ObjectMotion.cs:133`) and the door state machine's `DoorSounds`
+  (`ObjectBehaviors.cs:90-115`, `Play` at 418-424). All three gates pass
+  with no golden change; adversarial review found no semantic divergence
+  (observability MAJOR rebutted in `docs/CONTINUATION.md`).
+- The swarm moved from Kilo/litellm to the Muse subscription: `ralph.sh`
+  now drives `muse exec` (builder `muse-spark-1.3`, reviewer
+  `muse-wonder-1.0` with `--disable-write`), prompts live in
+  `ralph/builder.md` + `ralph/validator.md`, and `.kilo/` is removed.

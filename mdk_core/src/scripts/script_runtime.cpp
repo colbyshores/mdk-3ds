@@ -180,7 +180,12 @@ float hermite(float p0, float p1, float m0, float m1, float u) {
 ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
                              audio::SoundBank* bank)
     : level_(level), cmi_(cmi), decoder_(cmi->bytes().data(), (int32_t)cmi->bytes().size()),
-      rng_(seed), vm_(*this, decoder_), bank_(bank), mixer_(bank) {
+      rng_(seed), vm_(*this, decoder_), bank_(bank), mixer_(bank), debris_(rng_) {
+    // Debris delegates (ScriptRuntime.cs:340-346): Ray and GroupFacets are
+    // wired; Trail (Effects.SpawnTrail) and Updraft (Fans.Query) stay unset
+    // until those slices land — neither perturbs the RNG stream (see debris.h).
+    debris_.setCallbacks(this, &ScriptRuntime::debrisRayTrampoline, nullptr, nullptr,
+                         &ScriptRuntime::debrisFacetsTrampoline);
     // The arenas the world is built from, as the driver does: the reachable
     // ones, so the arena under Kurt is found.
     const std::vector<const formats::Arena*>& arenas = level_->arenas();
@@ -241,6 +246,11 @@ void ScriptRuntime::runTick() {
         showArena(arena);
     }
 
+    // Debris.Update(1f) (ScriptRuntime.cs:955): the pieces move before the
+    // object loop, as in the C#. The neighbouring subsystem updates (Items,
+    // Effects, Fans, SniperRounds, AirStrike) are later slices.
+    debris_.update(1.0f);
+
     // Only Kurt's arena and the active second one update. On the first tick
     // nothing has spawned yet, so this loop is empty; the controller below is
     // what creates the level's objects.
@@ -284,12 +294,12 @@ void ScriptRuntime::runTick() {
                 float time = obj->animation_time;
                 advanceAnimation(obj, kTick);
                 // The frame sound (ObjectMotion.cs:133): fired once when the frame
-                // clock crosses its frame. PlaySound itself is not ported (no mixer);
-                // the trigger clears the request exactly as the C# does.
+                // clock crosses its frame, at the object's position.
                 if (!obj->frame_sound.empty() && obj->animation != nullptr &&
                     time < (float)obj->frame_sound_frame &&
                     (float)obj->frame_sound_frame <= time + kTick * obj->animation_rate *
                                                            obj->animation->speed) {
+                    playSound(obj, obj->frame_sound, 0, formats::ScriptValue());
                     obj->frame_sound.clear();
                 }
             }
@@ -875,6 +885,95 @@ bool ScriptRuntime::raycastGroup(const Vec3& from, const Vec3& to, int32_t* grou
         *group = bestGroup;
     }
     return hit;
+}
+
+// RayIn (ScriptRuntime.cs:2249): the arena's nearest segment hit with its
+// triangle normal and group, for Debris (and later Effects).
+bool ScriptRuntime::rayIn(const std::string& arena, const Vec3& from, const Vec3& to,
+                          DebrisRayHit* out) {
+    Bsp* bsp = bspOf(arena);
+    if (bsp == nullptr) {
+        return false;
+    }
+    Vec a{from.x, from.y, from.z};
+    Vec b{to.x, to.y, to.z};
+    Vec point{};
+    int32_t triangleGroup = 0;
+    const int32_t triangle = bsp->segmentWithGroup(a, b, Bsp::kSegmentAny, &point,
+                                                   Bsp::kClipPassesThrough, &triangleGroup);
+    if (triangle == Bsp::kNone) {
+        return false;
+    }
+    out->point = Vec3{point.x, point.y, point.z};
+    // TriangleNormal (ScriptRuntime.cs:2950): cross(b-a, c-a), normalized,
+    // or +Z when degenerate.
+    const formats::Arena* mesh = level_->arenaNamed(arena);
+    Vec3 normal{0.0f, 0.0f, 1.0f};
+    if (mesh != nullptr) {
+        const std::vector<int32_t>& idx = mesh->triangleIndices();
+        const std::vector<formats::Vec3f>& verts = mesh->vertices();
+        formats::Vec3f va = verts[(size_t)idx[(size_t)triangle * 3]];
+        formats::Vec3f vb = verts[(size_t)idx[(size_t)triangle * 3 + 1]];
+        formats::Vec3f vc = verts[(size_t)idx[(size_t)triangle * 3 + 2]];
+        float ux = vb.x - va.x, uy = vb.y - va.y, uz = vb.z - va.z;
+        float vx = vc.x - va.x, vy = vc.y - va.y, vz = vc.z - va.z;
+        float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        if (nx != 0.0f || ny != 0.0f || nz != 0.0f) {
+            float len = sqrtf(nx * nx + ny * ny + nz * nz);
+            normal = Vec3{nx / len, ny / len, nz / len};
+        }
+    }
+    out->normal = normal;
+    out->arena = arena;
+    out->group = triangleGroup;
+    return true;
+}
+
+// GroupFacets (ScriptRuntime.cs:2261): the triangles of an arena's group
+// with their current material, for shattering. Null group 0, as the C#.
+bool ScriptRuntime::groupFacets(const std::string& arena, int32_t group, DebrisGroup* out) {
+    const formats::Arena* mesh = level_->arenaNamed(arena);
+    if (mesh == nullptr || group == 0 || !mesh->hasGroup(group)) {
+        return false;
+    }
+    int32_t groupMaterial = 0;
+    bool hasGroupMaterial = mesh->groupMaterial(group, &groupMaterial);
+    const std::vector<uint32_t>& flags = mesh->triangleFlags();
+    const std::vector<int32_t>& idx = mesh->triangleIndices();
+    const std::vector<formats::Vec3f>& verts = mesh->vertices();
+    const std::vector<formats::Vec2f>& uvs = mesh->triangleUvs();
+    const std::vector<int32_t>& mats = mesh->triangleMaterials();
+    out->names = &mesh->materials();
+    out->facets.clear();
+    for (size_t t = 0; t < flags.size(); t++) {
+        if ((int32_t)(flags[t] >> 24) != group) {
+            continue;
+        }
+        DebrisFacet facet;
+        formats::Vec3f va = verts[(size_t)idx[t * 3]];
+        formats::Vec3f vb = verts[(size_t)idx[t * 3 + 1]];
+        formats::Vec3f vc = verts[(size_t)idx[t * 3 + 2]];
+        facet.a = Vec3{va.x, va.y, va.z};
+        facet.b = Vec3{vb.x, vb.y, vb.z};
+        facet.c = Vec3{vc.x, vc.y, vc.z};
+        formats::Vec2f ua = uvs[t * 3], ub = uvs[t * 3 + 1], uc = uvs[t * 3 + 2];
+        facet.uvA = Vec2{ua.x, ua.y};
+        facet.uvB = Vec2{ub.x, ub.y};
+        facet.uvC = Vec2{uc.x, uc.y};
+        facet.material = hasGroupMaterial ? groupMaterial : mats[t];
+        out->facets.push_back(facet);
+    }
+    return !out->facets.empty();
+}
+
+bool ScriptRuntime::debrisRayTrampoline(void* ctx, const std::string& arena, const Vec3& from,
+                                        const Vec3& to, DebrisRayHit* out) {
+    return static_cast<ScriptRuntime*>(ctx)->rayIn(arena, from, to, out);
+}
+
+bool ScriptRuntime::debrisFacetsTrampoline(void* ctx, const std::string& arena, int32_t group,
+                                           DebrisGroup* out) {
+    return static_cast<ScriptRuntime*>(ctx)->groupFacets(arena, group, out);
 }
 
 // CanSeeKurt (ScriptRuntime.cs:3236): within range, inside the view cone (a cone
@@ -1991,21 +2090,28 @@ void ScriptRuntime::setupDoor(MdkObject* obj) {
 }
 
 // ObjectBehaviors.UpdateDoor: opens when Kurt comes closer than its distance, closes
-// when he goes away. The door sounds are the audio slice's (no mixer); everything
-// else is state the golden dumps read.
+// when he goes away, and plays the configured door sounds at the transitions.
 void ScriptRuntime::updateDoor(MdkObject* obj) {
     if (obj->arena != currentArena_ && obj->connects == currentArena_) {
         moveDoor(obj);
     }
 
     int32_t state = obj->door_state;
+    // ObjectBehaviors.Play: a door sound is played at the door unless it is
+    // empty or the explicit "NONE" name.
+    const auto play = [this, obj](const std::string& name) {
+        if (!name.empty() && name != "NONE") {
+            playSound(obj, name, 0, formats::ScriptValue());
+        }
+    };
     if ((state & kDoorOpening) != 0) {
         if (animationDone(obj)) {
             state = (state & kDoorOpenKept) | kDoorOpen;
+            play(obj->door_sounds[2]);
         }
     } else if ((state & kDoorClosing) != 0 && animationDone(obj)) {
         state = (state & kDoorScriptBits) | kDoorClosed;
-        // The closed sound plays here (obj->door_sounds[3]).
+        play(obj->door_sounds[3]);
         showArena("");  // the arena behind it goes
     }
 
@@ -2016,11 +2122,12 @@ void ScriptRuntime::updateDoor(MdkObject* obj) {
         if ((state & (kDoorClosing | kDoorClosed | kDoorStaysOpen)) == 0) {
             restartAnimation(obj, getAnimation(obj, obj->door_animations[1]), false);
             state = (state & kDoorScriptBits) | kDoorClosing;
-            // The closing sound plays here (obj->door_sounds[1]).
+            play(obj->door_sounds[1]);
         }
     } else if ((state & (kDoorOpen | kDoorOpening | kDoorLocked)) == 0) {
         restartAnimation(obj, getAnimation(obj, obj->door_animations[0]), false);
         state = (state & kDoorScriptBits) | kDoorOpening;
+        play(obj->door_sounds[0]);
         showBehindDoor(obj);
     }
     obj->door_state = state;
