@@ -255,6 +255,13 @@ iterate() {
     echo "[$(date -Is)] iter=$iter worker rc=$rc session=$session" >>"$SUMMARY"
     printf '%s\n' "$final_text" >"$itlog.txt"
     if [ "$rc" -ne 0 ] || ! muse_terminal_ok "$itlog.jsonl"; then
+        # Subscription quota exhaustion is not a worker failure: stop the
+        # loop cleanly (one iteration, no FAILS) until the window resets.
+        if grep -q 'Subscription quota exhausted\|rate_limit_error' "$itlog.err" 2>/dev/null; then
+            echo "[$(date -Is)] iter=$iter QUOTA EXHAUSTED (see $itlog.err) — stopping until reset" >>"$SUMMARY"
+            state_set FAILS 0
+            return 6
+        fi
         # A timeout that still banked commits is progress, not failure.
         if [ "$rc" -eq 124 ] && [ "$(git -C "$REPO" rev-parse HEAD)" != "$(state_get HEAD_AT_START "$(git -C "$REPO" rev-parse HEAD)")" ]; then
             echo "[$(date -Is)] iter=$iter worker timed out AFTER banking commits — not counted as failure" >>"$SUMMARY"
