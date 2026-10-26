@@ -1,12 +1,14 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 37: vision-condition slice committed —
-opcode 243 `if_point_sees_player` (`reference_point` within u16 range of
-Kurt's feet, `raycastClear` to his chest), pinned by a new `vm_tests`
-test; review-36 VERDICT COMPLETE, no action (MINOR house-wide UB note,
-NIT coverage note). Coverage now C++ 182/238, remaining 57. All three
-gates green — see Verified below. Next: one opcode family per batch
-through the harness.)
+Last updated: 2026-10-26 (iteration 38: value-slot slice committed —
+opcode 199 `set_104` and 210 `set_2c0`, the C#'s own unidentified object
+slots (`ScriptVm.cs:1663-1668`): each writes its single `Value` operand
+into its slot; `MdkObject` already had both fields, no C++ reader exists,
+pinned by a new `vm_tests` test (literal + variable operands). Review-37
+was an environment failure (reviewer quota exhausted), no findings.
+Coverage now C++ 184/238 (labels; true dispatches 183), remaining 55.
+All three gates green — see Verified below. Next: one opcode family per
+batch through the harness.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -46,8 +48,13 @@ them. Do not spend an iteration on docs/tests alone.
    **81 (`push_hit_dir`) DONE (slice 4, iter 31)** — field-only port,
    writers deferred to the combat slices. 85 (`set_rolling`) stays out:
    `SetRolling` snapshots the full `Rotation` matrix; `rotation()` is
-   deferred to the FrameBlend slice. Coverage: C++ 181/238, remaining 58
-   (true dispatches 180; the 181st label is the nested `case 0:` in 249).
+   deferred to the FrameBlend slice. **Value-slot pair DONE (iter 38)** —
+   199 (`set_104`) + 210 (`set_2c0`), the C#'s own unidentified object
+   slots (`ScriptVm.cs:1663-1668`): each is a pure object-state write of
+   one `Value` operand, both fields already on `MdkObject`, no C++
+   reader to diverge from; pinned through `vm_tests` (literal + variable
+   operands). Coverage: C++ 184/238, remaining 55 (true dispatches 183;
+   the 184th label is the nested `case 0:` in 249).
    132/136 stay with the Effects slice (RNG + effect list + dump line).
    The rest never fire in levels 3-8 to t30000 — they land through the
    harness now, one family per batch. P5 golden-frame tests stay parallel.
@@ -63,34 +70,27 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 37 (vision-condition slice: code commit + coverage-doc update + this state commit).
+- Iteration 38 (value-slot slice: inherited half-batched `vm_tests` test
+  finished with the two dispatch cases + main() registration; code
+  commit cc09097, then doc commits).
   Verified on the final tree:
-  - `make -C tests/scripts` → `vm_tests` 17/17 PASS (new
-    `PointSeesPlayerNeedsRangeAndAClearLine` pins 243: range gate,
-    ref-point selection, clear-line true at the L7 spawn,
-    blocked-from-below false) then `All cases match the oracle.`
-    (goldens unchanged — 243 never fires in levels 3-8)
+  - `make -C tests/scripts` → `vm_tests` 18/18 PASS (new
+    `UnidentifiedValueSlotsStoreTheirOperand` pins 199/210: bit-for-bit
+    literal stores, variable operand via the shared `Value()` helper,
+    clean `unimplemented()` bucket) then `All cases match the oracle.`
+    (goldens unchanged — neither fires in levels 3-8)
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs:
     no built `.cia`)
-  - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
-- Iteration 35 (stats slice: two code commits + this state commit).
-  Verified on the final tree:
-  - `make -C tests/scripts` → `vm_tests` 16/16 PASS (new
-    `HeadShotsAddOnlyWhenEnabled` pins 217: +3/+2 accumulate, first-operand
-    0 counts nothing, plus `isEnemyType`/`countEnemy`/`percent` unit pins)
-    then `All cases match the oracle.` (goldens unchanged — the counters
-    are not dumped)
-  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs:
-    no built `.cia`). Needed one fix mid-iteration: the R11 screen flagged
-    `percent`'s `hits * 100 / shots` (file-level loop inference from
-    `isEnemyType`'s scan); pinned R11 with a level-end-only rationale,
-    same surface as renderer_c3d.cpp:1130 — no gate relaxed.
-  - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
-  - Coverage: C++ 182/238, remaining 57 (243 landed with the vision-condition slice)
-- Earlier slices (details in `docs/PROGRESS_LOG.md`): iters 23/24 (harness +
-  opcode 13, parts pair), iters 28/29/30 (rope-swing, spawn 156, review-29
-  hardening), iter 31 (opcode 81, review-30) and iter 32 (opcode 206,
-  review-31) — all gates green at each commit.
+  - `make -C mdk_3ds` (DEVKITPRO=/opt/devkitpro, DEVKITARM=.../devkitARM)
+    → links `mdk.elf`, builds `mdk.3dsx`
+  - Coverage: C++ 184/238, remaining 55 (199/210 landed with the
+    value-slot slice)
+- Earlier slices (details in `docs/PROGRESS_LOG.md`): iter 37 (243 vision
+  condition, vm_tests 17/17), iter 35 (217 stats, vm_tests 16/16, R11 pin
+  on `percent`), iters 23/24 (harness + opcode 13, parts pair), iters
+  28/29/30 (rope-swing, spawn 156, review-29 hardening), iter 31 (opcode
+  81, review-30) and iter 32 (opcode 206, review-31) — all gates green at
+  each commit.
 - Corpus frontier: every level 3-8 matches the oracle byte for byte (table AND
   script) to t30000. The tick axis is spent; unfired opcodes now land through
   `vm_tests`, one family per batch.

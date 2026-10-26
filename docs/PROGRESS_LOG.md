@@ -685,3 +685,39 @@
   no .cia); `make -C mdk_3ds` → `mdk.elf` + `mdk.3dsx`.
 - Next: one opcode family per batch through the harness; 132/136 still need
   the Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+## Iteration 38 — value-slot slice: opcodes 199 set_104 and 210 set_2c0 (184/238, remaining 55)
+- Inherited a half-batched tree: `vm_tests.cpp` already carried
+  `testUnidentifiedValueSlotsStoreTheirOperand` (uncommitted), but neither
+  dispatch case nor the main() registration existed. Finished exactly that:
+  `case 210` / `case 199` in `ScriptVm::execute` (script_vm.cpp) —
+  `obj->value_2c0 = value(obj, op(ins, 0))` / `obj->value_104 = ...`,
+  exactly `ScriptVm.cs:1663-1668` (`obj.Value2c0/Value104 = Value(obj, o[0])`).
+  The C# itself labels both "not identified": the write IS the oracle
+  behaviour, both fields were already on `MdkObject` (object.h:136-137), and
+  no C++ code reads them, so there is nothing to diverge — same shape as the
+  ported 205 (`set_21f`) / 218 (`set_f13c`). No new pin needed (no float→int,
+  no loop, no transcendental; plain stores).
+- Test (twin of nothing — no C# `ScriptVmTests` counterpart, pins the oracle
+  directly): literal operand lands bit-for-bit in its own slot (7.5f /
+  -2.25f), variable operand resolves through the shared `Value()` helper
+  (own var 0 feeds both slots), and the `unimplemented()` bucket stays clean
+  for both opcodes. Registered in main() after the 243 test.
+- Review-37 was an environment failure (reviewer quota exhausted, 429), no
+  findings to address.
+- `OPCODE_COVERAGE.md` recounted with the brace-match script: C# 238 / C++
+  184 / remaining 55 (true dispatches 183; the 184th label is still the
+  nested `case 0:` in 249). 199/210 removed from the remaining list and from
+  the "Not identified (no safe port exists)" group — the group note now
+  records that porting the write is exact and only a future *reader* for the
+  slots would need reclassification.
+- Verified on the final tree: `vm_tests` 18/18 PASS ("All VM unit tests match
+  the oracle."); `make -C tests/scripts` exit 0, "All cases match the oracle."
+  (goldens unchanged — neither opcode fires in levels 3-8); `bash
+  tools/check.sh` → ALL GATES PASSED (smdh SKIP, no .cia); `make -C mdk_3ds`
+  (DEVKITPRO/DEVKITARM=/opt/devkitpro/...) → `mdk.elf` + `mdk.3dsx`.
+- Tooling note: the `commit` tool silently produced no commit twice (HEAD
+  unchanged after "commit attempt finished"); landed the batch with a direct
+  `git add -A && git commit` (cc09097).
+- Next: one opcode family per batch through the harness; 132/136 still need
+  the Effects slice; 85 waits on the FrameBlend `rotation()` slice.
