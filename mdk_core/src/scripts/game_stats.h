@@ -79,8 +79,9 @@ struct GameStats {
     }
 
     // Accuracy in percent (truncated), 0 without shots. Score-o-matic
-    // level-end math, cold: the runtime int division is the C#'s shape.
+    // level-end math: runs at most once per level, never per frame.
     static int32_t percent(int32_t hits, int32_t shots) {
+        /* @vfp-exempt R11 — level-end only, not per frame; the truncating integer divide is the oracle's exact shape (GameStats.Percent), and float math would change the truncation. measured n/a. Verified 2026-10-26. */
         return shots > 0 ? hits * 100 / shots : 0;
     }
 };
