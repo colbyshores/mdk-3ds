@@ -755,6 +755,51 @@ void testSpawnAlongPathSpawnsEveryStep(scripts::ScriptRuntime& runtime) {
     const scripts::MdkObject& first = runtime.objects()[before];
     const scripts::MdkObject& second = runtime.objects()[before + 1];
     CHECK(first.position.z != second.position.z);
+    // Absolute key-frame positions (not just relative to pathPosition): a
+    // Hermite regression that moved both sides together would pass the loop
+    // above but fail here.
+    CHECK(first.position.x == 0.0f);
+    CHECK(first.position.y == 0.0f);
+    CHECK(first.position.z == 0.0f);
+    CHECK(second.position.z == 6.0f);
+
+    // A non-exact step pins the accumulation itself. Step 0.1f is not exactly
+    // representable, so repeated float addition drifts from i*step (first
+    // differing at i=7: accumulated 0x3F333334 vs multiplied 0x3F333333). An
+    // integer-count rewrite (time = i*step) passes the exact-step case above
+    // unchanged but fails here. Count and every position come from the
+    // accumulated sequence, exactly as the oracle loop produces them
+    // (ScriptVm.cs:445): 100 spawns, last time 9.9000015f.
+    {
+        const size_t before2 = runtime.objects().size();
+        const float kStep = 0.1f;
+        scripts::MdkObject obj2;
+        obj2.arena = "DANT_1";
+        Code code2;
+        code2.u8(kSpawnAlongPath).u32(kPath - 4).f32(kStep).pstr("BEAMS").target("along2");
+        code2.u8(kSetVar).u8(kOwn).u8(0).f32(0.0f);
+        code2.label("along2");
+        code2.end();
+        runProgram(runtime, code2, &obj2);
+        CHECK(!sawUnimplemented(kSpawnAlongPath));
+        CHECK(runtime.objects().size() == before2 + 100);
+        float acc = 0.0f;
+        int differ = 0;
+        for (int i = 0; i < 100; i++) {
+            const scripts::MdkObject& created = runtime.objects()[before2 + (size_t)i];
+            const mdk::Vec3 want = runtime.pathPosition(kPath, acc);
+            CHECK(created.position.x == want.x);
+            CHECK(created.position.y == want.y);
+            CHECK(created.position.z == want.z);
+            if (acc != (float)i * kStep) {
+                differ++;
+            }
+            acc += kStep;
+        }
+        // The discrimination guard: if accumulation never differed from
+        // i*step on this data, the case above would be redundant.
+        CHECK(differ > 0);
+    }
 }
 
 } // namespace

@@ -690,10 +690,15 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             int32_t path = ival(op(ins, 0));
             int32_t end = runtime_.pathKeyFrame(path, runtime_.pathKeyCount(path) - 1);
             float step = fval(op(ins, 1));
-            // Oracle-exact float accumulation (ScriptVm.cs): the spawn count
-            // and each spawn time come from repeated float addition, so an
-            // integer-count rewrite would shift spawn positions by ulps. A
-            // zero step hangs the oracle identically; this matches it.
+            // Oracle-exact float accumulation (ScriptVm.cs:445): the spawn
+            // count and each spawn time come from repeated float addition, so
+            // an integer-count rewrite would shift spawn positions by ulps.
+            // This is a float loop condition (AGENTS.md T2), kept to match the
+            // oracle; it carries no @vfp-exempt pin because the gate grammar
+            // accepts R-rules only (verified against EXEMPT_RE: a T2 pin is
+            // rejected as invalid grammar, so the owner-grammar decision from
+            // review-31 covers this site too). A zero step hangs the oracle
+            // identically; this matches it.
             for (float time = 0.0f; time < (float)end; time += step) {
                 runtime_.spawn(obj, strval(op(ins, 2)), runtime_.pathPosition(path, time), 0.0f, -1,
                                ival(op(ins, 3)), true);

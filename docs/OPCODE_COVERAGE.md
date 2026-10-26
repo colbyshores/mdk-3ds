@@ -103,7 +103,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   chain/partner links, raycast normals):** 32, 121, 128, 129, 132,
   136, 158, 167, 172, 179, 180, 184, 192, 195, 213, 214, 228 (81 landed with the 81 batch: only the `hit_direction` FIELD is ported — its writers live in ChainGunHit, the mortar path, Twister, sniper rounds and TouchDamage, none of which has a C++ counterpart yet, so in integrated play 81 always pushes due east until those slices land; each of those slices' acceptance checks must re-verify 81 end-to-end)
 - **Movement/AI leftovers (needs partner links, rolling-basis math):**
-  85, 204, 206, 217, 229. 85 (`set_rolling`) snapshots the full `Rotation`
+  85, 204, 217, 229 (206 landed with the spawn_along_path batch). 85 (`set_rolling`)
   matrix into `RollingBasis`; `rotation()` is deferred to the FrameBlend
   slice. 226/242 landed with the rope-swing batch.
 - **Audio — ported with the mixer slice:** 89 (`play_sound`), 107
