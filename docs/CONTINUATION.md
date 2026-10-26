@@ -1,9 +1,10 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 23: the synthetic opcode harness lands —
-`tests/scripts/vm_tests` twins `ScriptVmTests.cs` 1:1 and runs in the scripts
-gate; opcode 13 `if_cheat_key` ports through it. Coverage C++ 173/238. Corpus
-still byte-for-byte to t30000, table AND script.)
+Last updated: 2026-10-26 (iteration 24: opcodes 32 `clear_parts_mask` + 129
+`blow_off_parts` port through `vm_tests` with a synthetic model — coverage
+C++ 175/238, remaining 64, all three gates green, goldens unchanged.
+132/136 stay with the Effects slice. Corpus still byte-for-byte to t30000,
+table AND script.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -31,9 +32,15 @@ them. Do not spend an iteration on docs/tests alone.
    11 opcodes: 1/12/13/64-68/71/252/253) and runs inside
    `make -C tests/scripts`; **opcode 13 (`if_cheat_key`) DONE** through it
    (explicit false branch; the twin pins the value AND the clean
-   `unimplemented()` bucket). Coverage: C++ 173/238, remaining 66. The other
-   66 never fire in levels 3-8 to t30000 — they land through the harness now,
-   one family per batch (parts bucket 32/129/132/136 is the natural next).
+   `unimplemented()` bucket). **Parts pair DONE (slice 2, iter 24)** —
+   32 reuses `partsMask` with hide=false, 129 validates the gore mode and
+   locks+hides via `findPart`; three `vm_tests` tests pin them against a
+   synthetic 3-part model (no C# counterpart exists to twin — header notes
+   this). Coverage: C++ 175/238, remaining 64 (recount-verified; the 175
+   carries the nested `case 0:` inside opcode 249, true dispatches 174).
+   132/136 stay with the Effects slice (RNG + effect list + dump line).
+   The other 64 never fire in levels 3-8 to t30000 — they land through the
+   harness now, one family per batch.
    P5 golden-frame tests stay the parallel track.
 
 Deferred with evidence: alarm (move_command 15 never fires in the corpus —
@@ -44,20 +51,18 @@ none fires in levels 3-8 — do not blind-port), 248 `push_kurt` (honest no-op:
 
 ## Current tree state (VERIFIED)
 
-- Iteration 23 (commits `01af4e9` code, docs commit to follow in the same
+- Iteration 24 (commits `9c884ed` code, state commit to follow in the same
   batch). Verified on the final tree:
-  - `make -C tests/scripts` → `All VM unit tests match the oracle.` (7/7) then
-    `All cases match the oracle.` (goldens unchanged — 13 never fires in the
-    corpus, as the probe says).
+  - `make -C tests/scripts` → `All VM unit tests match the oracle.` (10/10:
+    7 twins + 3 new parts tests) then `All cases match the oracle.` (goldens
+    unchanged — 32/129 never fire in the corpus).
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
   - `make -C mdk_3ds` (with `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM`)
-    → links `mdk.elf`, builds `mdk.3dsx`
-  - The C# `ScriptVmTests` suite could NOT run here: this sandbox denies
-    AF_UNIX sockets and .NET's build/test servers require them (probed). The
-    in-repo C# file is the spec; the twin was checked against it line by line,
-    and 6/7 twin tests passed on the first run before the 13 port (only the
-    new `!saw13` assertion failed), which corroborates the program bytes.
+    → links `mdk.elf` (newer than the port), builds `mdk.3dsx`
+- Iteration 23 (`01af4e9`): harness + opcode 13, all gates green (C# suite
+  unrunnable in this sandbox — AF_UNIX denied — twin checked line by line;
+  details in `docs/PROGRESS_LOG.md`).
 - Corpus frontier: every level 3-8 matches the oracle byte for byte (table AND
   script) to t30000. The tick axis is spent; unfired opcodes now land through
   `vm_tests`, one family per batch.
@@ -68,8 +73,8 @@ none fires in levels 3-8 — do not blind-port), 248 `push_kurt` (honest no-op:
   script goldens with: for each `{L, T}` in the `cases[]` table,
   `mdkoracle L T 1 script > golden/L{L}_t{T}_script.txt`.
 - `docs/OPCODE_COVERAGE.md` recounted from the brace-matched sets: C# 238 /
-  C++ 173 / remaining 66 (re-run 2026-10-26; also fixed the section's stale
-  171/68 and the 11-vs-8 partials slip).
+  C++ 175 / remaining 64 (re-run 2026-10-26 for the parts batch; the 175
+  carries the nested `case 0:` inside opcode 249 — true dispatches 174).
 
 
 ## Testability map (why the remaining opcode work is gated, not merely deferred)

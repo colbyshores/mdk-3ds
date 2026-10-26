@@ -4,7 +4,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ owns **173**, leaving **66** unimplemented. The
+  owns **238** cases, the C++ owns **175**, leaving **64** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -13,6 +13,13 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   t600) was rerun after this batch: of the remaining set, only **138** (L5)
   fires in levels 3-8 — 109 (L3, L5), 175 (L6) and 249 (L5) are now ported.
   (99 and 168, which fired before this batch, are now implemented.)
+- **Parts batch (2026-10-26):** 32/129 ported (`script_vm.cpp`, reusing
+  `partsMask`/`findPart`/`locked_parts`/`option`); the brace-matched recount
+  is C# **238** / C++ **175** / remaining **64**. The C++ count carries the
+  same nested-switch artifact as the 173 before it: the 175th label is the
+  `case 0:` mode arm *inside* opcode 249's switch, not a dispatch — true
+  dispatches are 174, and 174 + 64 = 238. Verified by recount script both
+  sides; the remaining list below is the exact set difference.
 - **Debris slice (2026-10-25):** 137/138/139 (`shatter_group` family) are
   ported with `mdk_core/src/scripts/debris.{h,cpp}` (a 1:1 port of
   `Debris.cs`: Shatter/Spark/Update, pooled pieces, seeded-RNG order) and
@@ -46,8 +53,12 @@ suite; the complete-vs-partial classification of the owned cases is now done
 
 13 left this list with the synthetic-harness batch (port 13 is an explicit
 false branch, `ScriptVmTests.UnimplementedConditionsAreFalse` pins it, and the
-C++ `unimplemented()` bucket stays clean): 27, 28, 29, 32, 49, 74, 77, 81,
-85, 112, 114, 121, 128, 129,
+C++ `unimplemented()` bucket stays clean). 32 (`clear_parts_mask`) and 129
+(`blow_off_parts`) left with the parts batch: pure object-state ops over the
+existing parts fields, pinned by three `vm_tests` tests with a synthetic
+model (no C# counterpart exists to twin). Remaining 64: 27, 28, 29, 49,
+74, 77, 81,
+85, 112, 114, 121, 128,
 130, 131, 132, 133, 135, 136, 142, 143, 156, 158, 159, 167, 170,
 171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 199, 202,
 203, 204, 206, 209, 210, 213, 214, 215, 217, 219, 220, 221, 223, 224,
@@ -61,9 +72,11 @@ they stay documented no-ops until a corpus or a synthetic test exercises
 them (the rule at the end of this file). The synthetic harness
 (`tests/scripts/vm_tests`, twin of `tests/Mdk.Game.Tests/ScriptVmTests.cs`)
 is the second route in: 13 came through it without ever firing in the corpus.
-208's neighbours in the parts
-bucket (32 `clear_parts_mask`, 129/132/136 and friends) are the natural
-next slice when a test can exercise them.
+208's neighbours 132/136 (`spawn_effect`/`spawn_debris`) stay with the
+Effects slice: both draw RNG and delegate to `Effects.SpawnBubble`/`SpawnDrop`
+(an effect list with textures, frame counts and per-tick update), which the
+C++ does not have — a bigger subsystem slice needing its own dump line, not a
+two-line dispatch.
 
 By blocking subsystem (carried grouping, corrected for this batch):
 
@@ -111,10 +124,11 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. This yields C# **238**, C++ **173**, remaining **66**
-(the C++ owns no case the C# lacks; re-run 2026-10-26 for the 13 batch, which
-also corrected this section's stale 171/68). The same extraction is what
-produced the counts above.
+and compare as sets. This yields C# **238**, C++ **175**, remaining **64**
+(re-run 2026-10-26 for the 32/129 batch; the C++ set holds one label the C#
+lacks — the nested `case 0:` mode arm inside opcode 249's switch, not a
+dispatch — so true dispatches are 174 and 174 + 64 = 238). The same extraction
+is what produced the counts above.
 
 Two axes, kept separate:
 
@@ -126,9 +140,10 @@ Two axes, kept separate:
 - **Test coverage** — every owned case is exercised only by the end-to-end
   (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
   object table and script state against the oracle byte-for-byte through t600 on
-   levels 3-8. Per-opcode unit tests now exist for the 11 opcodes the harness
-  twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253); the other 162
-  owned cases are golden-covered only where they fire.
+   levels 3-8. Per-opcode unit tests now exist for 13 opcodes: the 11 the
+  harness twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253) plus
+  32/129, which pin the oracle directly (no C# counterpart exists); the other
+  162 owned cases are golden-covered only where they fire.
 
 **Stubs: 0.** No owned case is a fake implementation. The only no-op case (248
 `push_kurt`) is a documented honest no-op because its subsystem (Kurt's
@@ -152,8 +167,8 @@ play, so both are complete.)**
 | 166 | if_bomb_visible | same `itemsBomb` gap → always false |
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
-**Complete — effect realized with the subsystems present (165 cases):** every
-owned case not in the partial table above (173 − 8 = 165). These are the pure
+**Complete — effect realized with the subsystems present (167 cases):** every
+owned case not in the partial table above (175 − 8 = 167). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases,
 each exercised by the byte-for-byte goldens through t600 on levels 3-8.

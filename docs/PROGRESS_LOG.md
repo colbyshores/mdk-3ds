@@ -414,3 +414,37 @@
   outside the sandbox when convenient.
 - Next: unfired opcodes land through the harness, one family per batch — the
   parts bucket (32 `clear_parts_mask`, 129/132/136) is the natural next slice.
+
+## 2026-10-26 — iteration 24: opcodes 32 + 129 (parts pair) via vm_tests (coverage 175/238)
+
+- Opcode 32 (`clear_parts_mask`) is a one-liner through the existing
+  `partsMask` helper with `hide=false`; opcode 129 (`blow_off_parts`)
+  validates the gore mode (`mode > 2`, null model, mode-2-without-gore break),
+  resolves names via `findPart`, and ORs the mask into `locked_parts` and
+  `hidden_parts` (`ScriptVm.cs:1523-1524,1746-1769`). No new subsystem: all
+  fields and helpers already existed for opcode 31.
+- 132/136 (`spawn_effect`/`spawn_debris`) stay with the Effects slice: both
+  draw RNG and delegate to `Effects.SpawnBubble`/`SpawnDrop` (effect list,
+  textures, frame counts, per-tick update) — a dump-line subsystem slice, not
+  a dispatch.
+- Tests: `pstr` builder + synthetic 3-part model fixture (`partsModel`) in
+  `vm_tests.cpp`; three tests pin hide/show-by-name, ALL-vs-locked,
+  gore on/off, mode 1 vs 3, unknown names, and the 129→32 interaction, each
+  with the `unimplemented()`-bucket check. No C# counterpart exists to twin
+  (that suite covers 11 opcodes), so they pin the oracle's ScriptVm.cs
+  directly with identical program bytes — noted in the file header.
+- Authentic failure observed: with the port stashed, 14 checks fail (state +
+  bucket assertions); restored, all 10 tests pass
+  ("All VM unit tests match the oracle.").
+- Verified: `make -C tests/scripts` → 10/10 + "All cases match the oracle."
+  (goldens unchanged — 32/129 never fire in the corpus);
+  `bash tools/check.sh` → ALL GATES PASSED (smdh SKIP, no .cia);
+  `make -C mdk_3ds` (DEVKITPRO/DEVKITARM) → `mdk.elf` (fresh link, newer than
+  the port) + `mdk.3dsx`.
+- Coverage: brace-matched recount → C# 238 / C++ 175 / remaining 64 (exact set
+  difference). Noted in the doc: the C++ label count carries a nested-switch
+  artifact (the `case 0:` mode arm inside opcode 249, present since the mixer
+  slice), so true dispatches are 174 and 174 + 64 = 238.
+- Next: unfired opcodes land through the harness, one family per batch —
+  132/136 need the Effects slice; the Kurt/items, arena, movement and
+  camera buckets in OPCODE_COVERAGE.md keep their subsystem gates.
