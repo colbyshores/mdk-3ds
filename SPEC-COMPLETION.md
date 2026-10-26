@@ -104,13 +104,28 @@ the same batch. One subsystem slice per batch.
    the subsystem, make its state observable in the golden dump, implement the
    opcodes, regenerate. **Never blind-port** an opcode whose behavior cannot
    be exercised and verified by a golden.
-4. **P5**: golden-frame tests for the Vulkan renderer (original look within
-   tolerance vs the C#).
-5. **P6**: enhanced look, stereo, mods (Linux-only).
-6. **P7**: the Citro3D renderer depth: platform integration (aptMainLoop,
+4. **P5.0 — the frame-golden harness (owner directive 2026-10-26: build it
+   BEFORE any P5–P7 renderer work).** The VM corridor is safe to run
+   unsupervised because the golden dump proves every batch; the renderer has
+   no equivalent proof, and a reviewer's opinion is not a frame oracle.
+   Deliverable: a deterministic headless render of a pinned level + scripted
+   input (the Linux `--headless` path), frozen reference frames checked into
+   the repo (or a hash manifest), a tolerance comparator (byte-exact where
+   deterministic, perceptual elsewhere), and a gate wired into
+   `tools/check.sh` that fails on regression — proven to fail on a seeded
+   visual regression before it is trusted. **Owner decision required first:
+   the reference source** — the C# renderer rendered headlessly here, vs.
+   captures of the original `MDKD3D.EXE`. That answer determines the harness
+   design; do not pick it silently. Same rule as the goldens: a reference
+   frame changes only from the reference source, never from the
+   implementation's output.
+5. **P5**: golden-frame tests for the Vulkan renderer (original look within
+   tolerance vs the C#). Requires P5.0.
+6. **P6**: enhanced look, stereo, mods (Linux-only). Requires P5.0.
+7. **P7**: the Citro3D renderer depth: platform integration (aptMainLoop,
    sleep/resume, worker sync — `AGENTS.md` §11 P1–P6), audio sink, RomFS
-   streaming; the A/B checklist run in mandarine.
-7. **P8**: `.cia` packaging — **`makerom` is NOT installed and `libmxml` is
+   streaming; the A/B checklist run in mandarine. Requires P5.0.
+8. **P8**: `.cia` packaging — **`makerom` is NOT installed and `libmxml` is
    absent**; `mdk_3ds/tools/build_cia.sh` exits non-zero with an explanation
    instead of shipping a broken title. Installing makerom is an owner
    decision; do not fake it. Then: gates green, final adversarial sweep.
@@ -299,6 +314,14 @@ Swarm rules (from the owner's standing directive):
    instead of silently reviewing with the builder's model.
 5. **Completion is never a worker's claim.** Gates + goldens re-run on the
    final tree by the harness itself, plus a full-tree adversarial review.
+
+**Current harness (owner directive 2026-10-26):** the Muse subscription is out
+of credits until 2026-11-01, so the loop runs as `./ralph-pi.sh` on the Pi
+harness (worker `litellm/glm-5.3-flash-nvidia`, fallback `litellm/luna`;
+adversarial reviewer `litellm/minimax-m3.1-flash-nvidia`; gates independent in
+the script). `ralph.sh` and all Muse config stay in place untouched;
+`logs/ralph/disabled` parks the Muse watchdog — delete it to resume Muse on
+Nov 1. Never run both loops at once (one writer).
 
 ## 9. The ralph loop (existing machinery — use it or replace it deliberately)
 

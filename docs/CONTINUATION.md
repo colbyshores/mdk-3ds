@@ -52,6 +52,11 @@ them. Do not spend an iteration on docs/tests alone.
    The rest never fire in levels 3-8 to t30000 — they land through the
    harness now, one family per batch. P5 golden-frame tests stay parallel.
 
+4. **P5.0 — frame-golden harness (SPEC-COMPLETION.md §3 item 4): build it
+   before any P5–P7 renderer batch. Owner must first pick the reference
+   source (headless C# vs original EXE captures). No renderer porting until
+   the harness gate is green.**
+
 Deferred: alarm (move 15 fires 0x), 240/241/244 (Kurt state exists, none
 fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
 
