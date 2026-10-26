@@ -33,7 +33,7 @@ WORKER_MODEL="${WORKER_MODEL:-litellm/glm-5.3-flash-nvidia}"
 FALLBACK_MODEL="${FALLBACK_MODEL:-litellm/luna}"
 REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/minimax-m3.1-flash-nvidia}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-3600}"
-REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-3600}"
+REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 MAX_ITER="${MAX_ITER:-30}"
 STALL_LIMIT="${STALL_LIMIT:-3}"
 FAIL_LIMIT="${FAIL_LIMIT:-3}"
@@ -55,13 +55,22 @@ pi_run() { # $1=model $2=prompt-file $3=out $4=err
         "$PI_CMD" --model "$1" -p "$(cat "$2")" --no-session ) >"$3" 2>"$4"
 }
 
-run_gates() { # independent verification; never delegated to the worker
+run_gates() { # independent verification; never delegated to the worker.
+    # Runs as piagent in a FRESH process (the worker cannot influence it).
+    # NOT as coleshores: this NFS mount does not honor setgid group
+    # inheritance (measured 2026-10-26), so worker-created build artifacts
+    # are piagent:piagent and a coleshores rebuild fails on them.
     local out="$1" rc=0
     {
         echo "== gates $(date -Is) =="
-        make -C "$ROOT/tests/scripts"        >/dev/null 2>&1 || { echo "GATE FAIL: tests/scripts"; rc=1; }
-        bash "$ROOT/tools/check.sh"          >/dev/null 2>&1 || { echo "GATE FAIL: tools/check.sh"; rc=1; }
-        make -C "$ROOT/mdk_3ds"              >/dev/null 2>&1 || { echo "GATE FAIL: mdk_3ds"; rc=1; }
+        sudo -n -H -u piagent env DEVKITPRO="$DEVKITPRO" DEVKITARM="$DEVKITARM" \
+            make -C "$ROOT/tests/scripts" 2>&1 | tail -20
+        [ "${PIPESTATUS[0]}" -ne 0 ] && { echo "GATE FAIL: tests/scripts"; rc=1; }
+        sudo -n -H -u piagent bash "$ROOT/tools/check.sh" 2>&1 | tail -10
+        [ "${PIPESTATUS[0]}" -ne 0 ] && { echo "GATE FAIL: tools/check.sh"; rc=1; }
+        sudo -n -H -u piagent env DEVKITPRO="$DEVKITPRO" DEVKITARM="$DEVKITARM" \
+            make -C "$ROOT/mdk_3ds" 2>&1 | tail -20
+        [ "${PIPESTATUS[0]}" -ne 0 ] && { echo "GATE FAIL: mdk_3ds"; rc=1; }
         [ "$rc" -eq 0 ] && echo "GATES: PASS"
     } >"$out" 2>&1
     return "$rc"
@@ -145,7 +154,7 @@ while :; do
         RP="$LOGDIR/.review-prompt-$ITER.md"
         {
             cat "$VALIDATOR_FILE"
-            printf '\n\n--- REVIEW SCOPE ---\nReview the changes in commits %s..%s plus any uncommitted work (use git log/diff to bound it). You must NOT edit any file; read-only inspection only.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
+            printf '\n\n--- REVIEW SCOPE ---\nReview ONLY the changes in commits %s..%s plus any uncommitted work (bound the scope with git log/diff first; do not read unrelated files). You must NOT edit any file; read-only inspection only. Work efficiently: a review that times out is a failed review.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
         } >"$RP"
         timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
             --model "$REVIEWER_MODEL" -p "$(cat "$RP")" --no-session \
