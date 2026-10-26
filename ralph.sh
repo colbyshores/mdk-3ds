@@ -99,6 +99,13 @@ run_reviewer_exec() { # $1 = prompt file, $2 = jsonl out, $3 = err out
 
 # ---- gates (independent verification, never delegated to the worker) --------
 run_gates() { # -> sets GATES_OK, appends gate lines to $1
+    # The 3DS gate needs the devkitPro toolchain paths; builders export them
+    # per-command, so default them here or the loop's own gate run fails
+    # environmentally on every iteration.
+    if [ -d /opt/devkitpro/devkitARM ]; then
+        export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
+        export DEVKITARM="${DEVKITARM:-/opt/devkitpro/devkitARM}"
+    fi
     local log="$1" ok=1
     local -a names=("tests/scripts" "tools/check.sh" "mdk_3ds build")
     local -a cmds=("make -C tests/scripts" "bash tools/check.sh" "make -C mdk_3ds")
