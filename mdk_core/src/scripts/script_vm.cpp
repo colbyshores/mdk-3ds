@@ -682,6 +682,10 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.spawn(obj, strval(op(ins, 3)), position, 0.0f, -1, ival(op(ins, 4)), false);
             break;
         }
+        case 156:  // spawn_at_point: spawns the named type at a model reference point
+            runtime_.spawn(obj, strval(op(ins, 1)), obj->reference_point(ival(op(ins, 0))), 0.0f, -1,
+                           ival(op(ins, 2)), false);
+            break;
         case 2: {  // follow_path: ride a CMI path (positions the object at the path start)
             const int32_t kFlag200 = 0x200;
             int32_t path = ival(op(ins, 0));
@@ -1704,7 +1708,13 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 242: {  // set_2d0_block: [[count, 4 points]]: lines from reference points 1-4 to the points
             const int32_t kAllLines = 0xFF;
             const std::vector<ScriptValue>& block = listval(op(ins, 0));
-            if (block.empty() || ival(block[0]) == 0) {
+            // The decoder only ever builds [mode] or [mode + 12 floats]
+            // (modeCount242, matching the C#'s ModeThenFloats), so a short
+            // nonzero block is decoder-unreachable. The C# indexes
+            // unconditionally (ScriptVm.cs case 242) and would throw on one;
+            // this clears the mask instead of reading out of bounds.
+            // Deliberate hardening (review-28 MINOR), not oracle behavior.
+            if (block.size() < 13 || ival(block[0]) == 0) {
                 obj->rope_mask = 0;
                 break;
             }

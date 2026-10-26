@@ -47,6 +47,7 @@ const int32_t kClearPartsMask = 32;
 const int32_t kBlowOffParts = 129;
 const int32_t kJumpTo = 226;
 const int32_t kSet2d0Block = 242;
+const int32_t kSpawnAtPoint = 156;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -469,18 +470,24 @@ void testJumpToStartsSwingBelowThePivot(scripts::ScriptRuntime& runtime) {
 }
 
 void testSet2d0BlockDrawsTheRopeLines(scripts::ScriptRuntime& runtime) {
-    // Count zero clears the mask, even over a stale nonzero one.
+    // Count zero clears the mask, even over a stale nonzero one; the colour
+    // and the points survive (the C# touches only RopeMask on this path).
     scripts::MdkObject cleared;
     cleared.rope_mask = 0xFF;
     cleared.rope_color = 1;
+    cleared.rope_points[0] = mdk::Vec3{9.0f, 9.0f, 9.0f};
     Code zero;
     zero.u8(kSet2d0Block).u8(0);
     zero.end();
     runProgram(runtime, zero, &cleared);
     CHECK(!sawUnimplemented(kSet2d0Block));
     CHECK(cleared.rope_mask == 0);
+    CHECK(cleared.rope_color == 1);
+    CHECK(cleared.rope_points[0].x == 9.0f);
+    CHECK(cleared.rope_points[0].y == 9.0f);
+    CHECK(cleared.rope_points[0].z == 9.0f);
 
-    // Count nonzero: colour 1, all lines, the four points in order.
+    // Count nonzero: colour 1, all lines, all four points in order.
     scripts::MdkObject obj;
     Code code;
     code.u8(kSet2d0Block).u8(1)
@@ -496,9 +503,78 @@ void testSet2d0BlockDrawsTheRopeLines(scripts::ScriptRuntime& runtime) {
     CHECK(obj.rope_points[0].x == 1.0f);
     CHECK(obj.rope_points[0].y == 2.0f);
     CHECK(obj.rope_points[0].z == 3.0f);
+    CHECK(obj.rope_points[1].x == 4.0f);
+    CHECK(obj.rope_points[1].y == 5.0f);
+    CHECK(obj.rope_points[1].z == 6.0f);
+    CHECK(obj.rope_points[2].x == 7.0f);
+    CHECK(obj.rope_points[2].y == 8.0f);
+    CHECK(obj.rope_points[2].z == 9.0f);
     CHECK(obj.rope_points[3].x == 10.0f);
     CHECK(obj.rope_points[3].y == 11.0f);
     CHECK(obj.rope_points[3].z == 12.0f);
+}
+
+// Opcode 156 (spawn_at_point) has no C# ScriptVmTests counterpart either, so
+// this pins the oracle directly (ScriptVm.cs:1573, MdkObject.cs:574-582): the
+// named type spawns at the parent's reference point with yaw 0 and instance
+// -1, and an out-of-range point falls back to the position. BEAMS is a model
+// of the DANT_1 arena (LEVEL7O.MTO) with no init script (no DANT_1$BEAMS key
+// in the CMI object scripts), so the spawn runs no nested script and these
+// assertions observe only opcode 156.
+void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) {
+    Model model;
+    Vec3f ref;
+    ref.x = 1.0f;
+    ref.y = 2.0f;
+    ref.z = 3.0f;
+    model.referencePoints.push_back(ref);
+
+    const size_t before = runtime.objects().size();
+    scripts::MdkObject obj;
+    obj.arena = "DANT_1";
+    obj.model = &model;
+    obj.position = mdk::Vec3{10.0f, 20.0f, 5.0f};
+    obj.yaw = 0.0f;
+    Code code;
+    code.u8(kSpawnAtPoint).u8(0).pstr("BEAMS").target("spawned");
+    code.label("spawned");
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kSpawnAtPoint));
+    CHECK(runtime.objects().size() == before + 1);
+    const scripts::MdkObject& created = runtime.objects()[before];
+    CHECK(created.type_name == "BEAMS");
+    CHECK(created.arena == "DANT_1");
+    CHECK(created.position.x == 11.0f);
+    CHECK(created.position.y == 22.0f);
+    CHECK(created.position.z == 8.0f);
+    CHECK(created.spawn_position.x == 11.0f);
+    CHECK(created.spawn_position.y == 22.0f);
+    CHECK(created.spawn_position.z == 8.0f);
+    CHECK(created.yaw == 0.0f);
+    CHECK(created.instance_id >= 0);
+    const int32_t firstInstance = created.instance_id;
+
+    // An out-of-range reference point falls back to the position, and a
+    // second -1 instance takes the next id.
+    scripts::MdkObject plain;
+    plain.arena = "DANT_1";
+    plain.model = &model;
+    plain.position = mdk::Vec3{1.0f, 2.0f, 3.0f};
+    plain.yaw = 0.0f;
+    const size_t again = runtime.objects().size();
+    Code fallback;
+    fallback.u8(kSpawnAtPoint).u8(5).pstr("BEAMS").target("landed");
+    fallback.label("landed");
+    fallback.end();
+    runProgram(runtime, fallback, &plain);
+    CHECK(!sawUnimplemented(kSpawnAtPoint));
+    CHECK(runtime.objects().size() == again + 1);
+    const scripts::MdkObject& landed = runtime.objects()[again];
+    CHECK(landed.position.x == 1.0f);
+    CHECK(landed.position.y == 2.0f);
+    CHECK(landed.position.z == 3.0f);
+    CHECK(landed.instance_id == firstInstance + 1);
 }
 
 } // namespace
@@ -565,6 +641,8 @@ int main() {
     printf("PASS JumpToStartsSwingBelowThePivot\n");
     testSet2d0BlockDrawsTheRopeLines(runtime);
     printf("PASS Set2d0BlockDrawsTheRopeLines\n");
+    testSpawnAtPointSpawnsAtTheReferencePoint(runtime);
+    printf("PASS SpawnAtPointSpawnsAtTheReferencePoint\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");
