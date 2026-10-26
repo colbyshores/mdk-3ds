@@ -4,7 +4,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ owns **177**, leaving **62** unimplemented. The
+  owns **238** cases, the C++ owns **180**, leaving **59** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -28,6 +28,11 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   header comment records this). Opcode 85 (`set_rolling`) stays out:
   `SetRolling` snapshots the full `Rotation` matrix into `RollingBasis`,
   and `rotation()` is deferred to the FrameBlend slice (`object.h`).
+- **Spawn/parts-to-push batches (2026-10-26):** 156 (`spawn_at_point`), 81
+  (`push_hit_dir`) and 206 (`spawn_along_path`) ported through `vm_tests`;
+  recount C# **238** / C++ **180** / remaining **59** (true dispatches 179,
+  as §"Counting note" records). Count reconciled 2026-10-26: the header at
+  the top of this file had gone stale at 177/62 while the batches landed.
 - **Debris slice (2026-10-25):** 137/138/139 (`shatter_group` family) are
   ported with `mdk_core/src/scripts/debris.{h,cpp}` (a 1:1 port of
   `Debris.cs`: Shatter/Spark/Update, pooled pieces, seeded-RNG order) and
