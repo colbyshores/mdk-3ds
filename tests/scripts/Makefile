@@ -10,8 +10,7 @@ CXXFLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter \
             -fno-strict-aliasing -I$(CORE) -I. -I../formats
 LDFLAGS :=
 
-SOURCES := \
-	tick1.cpp \
+COMMON_SOURCES := \
 	$(CORE)/audio/sound_bank.cpp \
 	$(CORE)/audio/sound_device.cpp \
 	$(CORE)/audio/sound_mixer.cpp \
@@ -50,16 +49,30 @@ SOURCES := \
 	$(CORE)/scripts/script_runtime.cpp \
 	$(CORE)/scripts/debris.cpp
 
+# tick1 is the golden-state binary; vm_tests is the synthetic per-opcode
+# harness (the C++ twin of tests/Mdk.Game.Tests/ScriptVmTests.cs). Both link
+# the same core objects: a source that lands on one target only is a silently
+# different game, so the shared list stays single-sourced here.
+SOURCES := \
+	tick1.cpp \
+	$(COMMON_SOURCES)
+
+SOURCES_VM := \
+	vm_tests.cpp \
+	$(COMMON_SOURCES)
+
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))
-VPATH := $(sort $(dir $(SOURCES)))
+OBJECTS_VM := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES_VM)))
+VPATH := $(sort $(dir $(SOURCES) $(SOURCES_VM)))
 
 .PHONY: all bin test clean
 
 all: test
 
-bin: $(BUILD)/tick1
+bin: $(BUILD)/tick1 $(BUILD)/vm_tests
 
-test: $(BUILD)/tick1
+test: $(BUILD)/tick1 $(BUILD)/vm_tests
+	@$(BUILD)/vm_tests
 	@$(BUILD)/tick1
 
 $(BUILD):
@@ -73,7 +86,11 @@ $(BUILD)/tick1: $(OBJECTS)
 	@echo "LINK $@"
 	@$(CXX) $(LDFLAGS) $(OBJECTS) -o $@
 
--include $(OBJECTS:.o=.d)
+$(BUILD)/vm_tests: $(OBJECTS_VM)
+	@echo "LINK $@"
+	@$(CXX) $(LDFLAGS) $(OBJECTS_VM) -o $@
+
+-include $(OBJECTS:.o=.d) $(BUILD)/vm_tests.d
 
 clean:
 	@rm -rf $(BUILD)

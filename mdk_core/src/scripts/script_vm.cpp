@@ -579,6 +579,11 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         }
 
         // Vision.
+        // if_cheat_key (ScriptVm.cs:1709): cheat keys aren't done, so the
+        // condition is explicitly false — it must not fall through to the
+        // unimplemented bucket below.
+        case 13:
+            return branch(obj, ins, false);
         case 14:   // if_sees_kurt
         case 57: { // if_not_sees_kurt
             bool sees = runtime_.canSeeKurt(obj, fval(op(ins, 0)), fval(op(ins, 1)));
