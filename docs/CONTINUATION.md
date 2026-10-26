@@ -1,11 +1,11 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 31: review-30 findings closed — 156
-restart pins now separator + exact label offset (fall-through-distinguishing),
-OOB-safe range guard on all three spawns; opcode 81 push_hit_dir ported via
-vm_tests (literal/Dt/variable speeds); coverage C++ 179/238, remaining 60,
-all three gates green. 85 stays out: SetRolling snapshots Rotation, deferred
-to FrameBlend. Corpus still byte-for-byte to t30000, table AND script.)
+Last updated: 2026-10-26 (iteration 32: review-31 81-wording fixed —
+field-only port noted, writers deferred to the combat slices with
+re-verification required; opcode 206 spawn_along_path ported via vm_tests
+on L7 path 53729; coverage C++ 180/238, remaining 59, all three gates
+green. 85 stays out: SetRolling snapshots Rotation, deferred to
+FrameBlend. Corpus still byte-for-byte to t30000, table AND script.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -50,6 +50,11 @@ them. Do not spend an iteration on docs/tests alone.
    **81 (`push_hit_dir`) DONE (slice 4, iter 31)** — Value(o[1]) x Dt-in-mode-1
    along hit_direction, x/y only; `vm_tests` pins literal, Dt-scaled, and
    variable speeds (no C# counterpart to twin).
+   **206 (`spawn_along_path`) DONE (slice 5, iter 32)** — flagged spawn per
+   step over the ported path API; `vm_tests` pins count/positions/flags on
+   L7 path 53729 (no C# counterpart to twin). Coverage: C++ 180/238,
+   remaining 59. Review-31's 81 wording gap closed in the same batch
+   (field-only port noted, writers deferred to the combat slices).
    132/136 stay with the Effects slice (RNG + effect list + dump line).
    The other 60 never fire in levels 3-8 to t30000 — they land through the
    harness now, one family per batch.
@@ -61,19 +66,20 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 31 (commit `c5b057d` code + this state commit). Verified on the
+- Iteration 32 (code commit `8bf29c5` + this state commit). Verified on the
   final tree:
-  - `make -C tests/scripts` → `vm_tests` 14/14 PASS (incl. hardened 156
-    pins + new 81 test) then `All cases match the oracle.` (goldens unchanged
-    — 156/81 never fire in the corpus)
+  - `make -C tests/scripts` → `vm_tests` 15/15 PASS (incl. new 206 test) then
+    `All cases match the oracle.` (goldens unchanged — 206 never fires in
+    the corpus)
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
   - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
-  - Coverage: C++ 179/238, remaining 60 (81 ported; review-30 gaps closed by
-    the same test edits)
+  - Coverage: C++ 180/238, remaining 59 (206 ported; review-31 81 wording
+    fixed by the same batch)
 - Earlier slices (details in `docs/PROGRESS_LOG.md`): iters 23/24 (harness +
-  opcode 13, parts pair) and iters 28/29/30 (rope-swing, spawn 156, review-29
-  hardening) — all gates green at each commit.
+  opcode 13, parts pair), iters 28/29/30 (rope-swing, spawn 156, review-29
+  hardening) and iter 31 (opcode 81, review-30 hardening) — all gates green
+  at each commit.
 - Corpus frontier: every level 3-8 matches the oracle byte for byte (table AND
   script) to t30000. The tick axis is spent; unfired opcodes now land through
   `vm_tests`, one family per batch.

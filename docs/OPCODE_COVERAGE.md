@@ -66,13 +66,13 @@ C++ `unimplemented()` bucket stays clean). 32 (`clear_parts_mask`) and 129
 existing parts fields, pinned by three `vm_tests` tests with a synthetic
 model (no C# counterpart exists to twin). 226 (`jump_to`) and 242
 (`set_2d0_block`) left with the rope-swing batch the same way: pure
-swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with this batch: pure velocity math over existing fields, pinned by a `vm_tests` test. Remaining 60:
+swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with the 81 batch: pure velocity math over existing fields, pinned by a `vm_tests` test. 206 (`spawn_along_path`) left with this batch: the path API (`pathKeyCount`/`pathKeyFrame`/`pathPosition`) and flagged `spawn` both already ported, pinned by a `vm_tests` test on LEVEL7.CMI path 53729. Remaining 59:
 27, 28, 29, 49,
 74, 77,
 85, 112, 114, 121, 128,
 130, 131, 132, 133, 135, 136, 142, 143, 158, 159, 167, 170,
 171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 199, 202,
-203, 204, 206, 209, 210, 213, 214, 215, 217, 219, 220, 221, 223, 224,
+203, 204, 209, 210, 213, 214, 215, 217, 219, 220, 221, 223, 224,
 228, 229, 239, 240, 241, 243, 244, 247
 
 **Reachability, re-probed to t30000 (2026-10-25, `tick1 probe 30000`):**
@@ -101,7 +101,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   28, 130, 133, 142, 143, 159, 190, 202, 223, 224 (156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported)
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 32, 121, 128, 129, 132,
-  136, 158, 167, 172, 179, 180, 184, 192, 195, 213, 214, 228 (81 landed with this batch: it needed only Value/Dt/hit_direction, all already ported)
+  136, 158, 167, 172, 179, 180, 184, 192, 195, 213, 214, 228 (81 landed with the 81 batch: only the `hit_direction` FIELD is ported — its writers live in ChainGunHit, the mortar path, Twister, sniper rounds and TouchDamage, none of which has a C++ counterpart yet, so in integrated play 81 always pushes due east until those slices land; each of those slices' acceptance checks must re-verify 81 end-to-end)
 - **Movement/AI leftovers (needs partner links, rolling-basis math):**
   85, 204, 206, 217, 229. 85 (`set_rolling`) snapshots the full `Rotation`
   matrix into `RollingBasis`; `rotation()` is deferred to the FrameBlend
@@ -136,10 +136,10 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. This yields C# **238**, C++ **179**, remaining **60**
-(re-run 2026-10-26 for the 81 batch; the C++ set holds one label the C#
+and compare as sets. This yields C# **238**, C++ **180**, remaining **59**
+(re-run 2026-10-26 for the 206 batch; the C++ set holds one label the C#
 lacks — the nested `case 0:` mode arm inside opcode 249's switch, not a
-dispatch — so true dispatches are 178 and 178 + 60 = 238). The same extraction
+dispatch — so true dispatches are 179 and 179 + 59 = 238). The same extraction
 is what produced the counts above.
 
 Two axes, kept separate:
@@ -152,10 +152,11 @@ Two axes, kept separate:
 - **Test coverage** — every owned case is exercised only by the end-to-end
   (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
   object table and script state against the oracle byte-for-byte through t600 on
-   levels 3-8. Per-opcode unit tests now exist for 17 opcodes: the 11 the
+   levels 3-8. Per-opcode unit tests now exist for 18 opcodes: the 11 the
   harness twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253) plus
-  32/129, 226/242, 156 and 81, which pin the oracle directly (no C# counterpart
-  exists); the other owned cases are golden-covered only where they fire.
+  32/129, 226/242, 156, 81 and 206, which pin the oracle directly (no C#
+  counterpart exists); the other owned cases are golden-covered only where
+  they fire.
 
 **Stubs: 0.** No owned case is a fake implementation. The only no-op case (248
 `push_kurt`) is a documented honest no-op because its subsystem (Kurt's
@@ -179,8 +180,8 @@ play, so both are complete.)**
 | 166 | if_bomb_visible | same `itemsBomb` gap → always false |
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
-**Complete — effect realized with the subsystems present (170 cases):** every
-owned case not in the partial table above (178 − 8 = 170). These are the pure
+**Complete — effect realized with the subsystems present (171 cases):** every
+owned case not in the partial table above (179 − 8 = 171). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases,
 each exercised by the byte-for-byte goldens through t600 on levels 3-8.
@@ -195,8 +196,8 @@ path (2, 20, 21, 33, 91, 102, 124, 164); animation (3, 17, 19, 58, 59, 92, 118,
 119, 123, 127, 161, 176, 185, 187, 188, 191, 198, 200, 201, 205, 211, 212, 216,
 218, 222, 230, 232, 236, 237, 238, 245, 250, 251, 252, 253); control flow (1, 4,
 9, 12, 64, 94, 95, 125, 183); group state (98, 99, 162, 163, 168, 194); spawn
-(113, 149, 150, 152, 153, 156). The authoritative complete set is the owned set minus
-the 8 partial cases, not this illustrative grouping. (156 joined the spawn group with this batch.)
+(113, 149, 150, 152, 153, 156, 206). The authoritative complete set is the owned set minus
+the 8 partial cases, not this illustrative grouping. (206 joined the spawn group with this batch.)
 
 Note on 251 (`set_target_mode`): its own effect (set `target_mode`, set/clear
 the alien target) is realized, so it is classified complete; the known

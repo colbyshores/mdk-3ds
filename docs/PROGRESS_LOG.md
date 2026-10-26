@@ -544,3 +544,33 @@
   `make -C mdk_3ds` (DEVKITPRO/DEVKITARM from /opt/devkitpro) → `mdk.3dsx`.
 - Next: one opcode family per batch through the harness; 132/136 still need the
   Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+## Iteration 32 — opcode 206 spawn_along_path (180/238, remaining 59) + review-31 doc fix
+
+- Review-31 (VERDICT: INCOMPLETE, one MINOR + one NIT, no code bug) addressed:
+  OPCODE_COVERAGE no longer claims 81's inputs are "all already ported" — only
+  the `hit_direction` FIELD is ported; its writers (ChainGunHit, the mortar
+  path, Twister, sniper rounds, TouchDamage) have no C++ counterpart yet, so in
+  integrated play 81 always pushes due east until those slices land, and each of
+  those slices' acceptance checks must re-verify 81 end-to-end. The R6 shorthand
+  pin stays (consistent with cases 80/201/126; the gate-grammar question is
+  flagged for the owner, not unilaterally changed).
+- Opcode 206 (`spawn_along_path`, ScriptVm.cs:440-448): from time 0 to before
+  the path's last key, one flagged spawn per step at `pathPosition(path, time)`,
+  yaw 0, instance -1. Operands `[Data32, F32, Pstr, Code32]` confirmed against
+  the opcode table (offset 425). The float accumulation is oracle-exact by
+  design (an integer-count rewrite would shift spawn positions by ulps); a zero
+  step hangs the oracle identically, so this matches it. New `vm_tests` test on
+  LEVEL7.CMI path 53729 (3 keys, frames [0,5,10], step 5 → times 0 and 5):
+  count, exact positions, flagged flags, instance chain, restart operand, clean
+  unimplemented bucket. Mutation check: 15 checks fail with the port reverted,
+  green with it applied.
+- Recount-verified: C# 238 / C++ 180 / remaining 59 (true dispatches 179; the
+  180th label is the nested `case 0:` inside 249); the remaining set matches the
+  doc list exactly.
+- Verified: `vm_tests` 15/15 PASS; `make -C tests/scripts` → "All cases match
+  the oracle." (goldens unchanged — 206 never fires in the corpus);
+  `bash tools/check.sh` → ALL GATES PASSED (smdh SKIP, no .cia);
+  `make -C mdk_3ds` → `mdk.3dsx`.
+- Next: one opcode family per batch through the harness; 132/136 still need the
+  Effects slice; 85 waits on the FrameBlend `rotation()` slice.
