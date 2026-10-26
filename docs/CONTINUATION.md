@@ -1,10 +1,10 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 29: opcode 156 `spawn_at_point` (+ review-28 242 hardening)
-`set_2d0_block` port through `vm_tests` — coverage C++ 178/238, remaining
-61, all three gates green, goldens unchanged. 85 stays out: SetRolling
-snapshots Rotation, deferred to FrameBlend. Corpus still byte-for-byte to
-t30000, table AND script.)
+Last updated: 2026-10-26 (iteration 30: review-29 findings closed — 156 test
+hardened (rotation/scale + restart plumbing), 242 comment scoped to both
+dialects; coverage unchanged C++ 178/238, remaining 61, all three gates
+green. 85 stays out: SetRolling snapshots Rotation, deferred to FrameBlend.
+Corpus still byte-for-byte to t30000, table AND script.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -59,18 +59,18 @@ none fires in levels 3-8 — do not blind-port), 248 `push_kurt` (honest no-op:
 
 ## Current tree state (VERIFIED)
 
-- Iteration 24 (commits `9c884ed` code, state commit to follow in the same
-  batch). Verified on the final tree:
-  - `make -C tests/scripts` → `All VM unit tests match the oracle.` (10/10:
-    7 twins + 3 new parts tests) then `All cases match the oracle.` (goldens
-    unchanged — 32/129 never fire in the corpus).
+- Iteration 30 (commit `4a86cb6`). Verified on the final tree:
+  - `make -C tests/scripts` → `vm_tests` 13/13 PASS (incl. hardened 156
+    test) then `All cases match the oracle.` (goldens unchanged — 156/242
+    never fire in the corpus)
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
-  - `make -C mdk_3ds` (with `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM`)
-    → links `mdk.elf` (newer than the port), builds `mdk.3dsx`
-- Iteration 23 (`01af4e9`): harness + opcode 13, all gates green (C# suite
-  unrunnable in this sandbox — AF_UNIX denied — twin checked line by line;
-  details in `docs/PROGRESS_LOG.md`).
+  - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
+  - Coverage unchanged: C++ 178/238, remaining 61 (no new opcode this batch;
+    review-29 gaps closed by tests + comment only)
+- Earlier slices (details in `docs/PROGRESS_LOG.md`): iters 23/24 (harness +
+  opcode 13, parts pair) and iters 28/29 (rope-swing, spawn 156) — all gates
+  green at each commit.
 - Corpus frontier: every level 3-8 matches the oracle byte for byte (table AND
   script) to t30000. The tick axis is spent; unfired opcodes now land through
   `vm_tests`, one family per batch.
@@ -99,9 +99,8 @@ subsystem state, dump it, regenerate — the AUDIO/KURT lines) and the harness
 route (`tests/scripts/vm_tests` twins the C# unit test — opcode 13's
 template). The harness route needs no golden change.
 
-`alarm_ticks` is a dead end in this corpus (move=15 setter fires 0 times).
-`Items.Bomb`/`Decoy` land with the Items slice. Debris state lands with the
-shatter slice (priority 2).
+`alarm_ticks` is a dead end (move=15 fires 0 times). `Items.Bomb`/`Decoy` land
+with the Items slice; debris state landed with the shatter slice.
 
 
 ## Open items (do not lose these)

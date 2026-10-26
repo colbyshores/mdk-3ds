@@ -492,3 +492,30 @@
   `Stats.CountEnemy` call — affects all spawn opcodes equally, goldens don't observe it.
 - Next: one opcode family per batch through the harness; 132/136 still need the
   Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+## Iteration 30 — review-29 findings closed: 156 test hardening + 242 comment scope (no new opcode)
+
+- Review-29 (VERDICT: INCOMPLETE, no BLOCKER/MAJOR) left two MINOR test-strength
+  gaps on the iteration-29 spawn slice, both closed here; coverage unchanged
+  (C++ 178/238, remaining 61).
+- Gap 1 (rotation/scale unpinned): the 156 test ran at yaw 0 / scale 1, so a
+  sign error in `reference_point`'s RotZ or a missing `* scale` passed. Added a
+  third spawn: parent yaw 90, scale 2, ref point (3,1,0.5) → hand-computed
+  (8,26,6), asserted with 1e-3 tolerance (cosf(pi/2) ≈ -4.4e-8, not 0 —
+  verified with libm before writing the test). Each wrong shape lands
+  elsewhere (no scale: (9,23,5.5); no rotation: (16,22,6); transposed sign:
+  (12,14,6)). Also pins `previous_position == position` and nonzero `restart`.
+- Gap 2 (`restart` plumbing unpinned): the test never asserted the `code32`
+  script operand reaches the object. Now asserts `created.restart != 0` AND
+  that it points at the trailing kEnd byte of the rebuilt program
+  (`readOffset` adds FileBase back, so the stored `label-4` decodes to the
+  exact label offset — a wrong operand index would leave restart 0 and fail).
+- Open question closed: the Beta dialect has no 242 mapping
+  (`scriptBetaOpcodeInfo` returns null → `decodeBeta` rejects the instruction),
+  so the "decoder-unreachable short block" hardening holds on both dialects;
+  the `script_vm.cpp` comment now says so. No behavior change.
+- Verified: `vm_tests` 13/13 PASS, zero FAIL; `make -C tests/scripts` →
+  "All cases match the oracle." (goldens unchanged); `bash tools/check.sh` →
+  ALL GATES PASSED (smdh SKIP, no .cia); `make -C mdk_3ds` → `mdk.3dsx` built.
+- Next: one opcode family per batch through the harness; 132/136 still need the
+  Effects slice; 85 waits on the FrameBlend `rotation()` slice.
