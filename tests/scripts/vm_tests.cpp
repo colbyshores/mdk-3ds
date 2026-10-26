@@ -49,6 +49,7 @@ const int32_t kBlowOffParts = 129;
 const int32_t kJumpTo = 226;
 const int32_t kSet2d0Block = 242;
 const int32_t kSpawnAtPoint = 156;
+const int32_t kPushHitDir = 81;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -140,6 +141,11 @@ public:
             bytes_.push_back(0);
         }
         return *this;
+    }
+
+    size_t labelOffset(const std::string& name) const {
+        std::map<std::string, size_t>::const_iterator it = labels_.find(name);
+        return it == labels_.end() ? 0 : it->second;
     }
 
     Code& end() { return u8(kEnd); }
@@ -538,6 +544,9 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     obj.yaw = 0.0f;
     Code code;
     code.u8(kSpawnAtPoint).u8(0).pstr("BEAMS").target("spawned");
+    // The separator keeps the label off the spawn's own fall-through, so the
+    // exact-offset pin below distinguishes ival(op(ins, 2)) from ins.next.
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(0.0f);
     code.label("spawned");
     code.end();
     runProgram(runtime, code, &obj);
@@ -558,18 +567,19 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     // The script operand reaches the object: the C++ dispatch passes
     // ival(op(ins, 2)) as the spawn script (script_vm.cpp) and spawn ends
     // with created->restart = script (script_runtime.cpp), mirroring C#
-    // I(o[2]) into Spawning (ScriptVm.cs:1574). A wrong operand index or a
-    // dropped assignment would leave restart 0, so the "spawned" label's
-    // offset must be live on the object and point at the trailing kEnd.
-    CHECK(created.restart != 0);
+    // I(o[2]) into Spawning (ScriptVm.cs:1574). The exact-offset pin below
+    // distinguishes that operand from the spawn's own fall-through (ins.next
+    // points at the separator set_var, not the label).
+    CHECK(created.restart == (int32_t)code.labelOffset("spawned"));
     CHECK(created.previous_position.x == created.position.x);
     CHECK(created.previous_position.y == created.position.y);
     CHECK(created.previous_position.z == created.position.z);
     {
         std::vector<uint8_t> bytes = code.build();
-        CHECK(created.restart >= code.entry());
-        CHECK(created.restart < (int32_t)bytes.size());
-        CHECK(bytes[(size_t)created.restart] == (uint8_t)ScriptDecoder::kEnd);
+        const bool restartInRange =
+            created.restart >= code.entry() && created.restart < (int32_t)bytes.size();
+        CHECK(restartInRange);
+        CHECK(restartInRange && bytes[(size_t)created.restart] == (uint8_t)ScriptDecoder::kEnd);
     }
 
     // An out-of-range reference point falls back to the position, and a
@@ -582,6 +592,7 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     const size_t again = runtime.objects().size();
     Code fallback;
     fallback.u8(kSpawnAtPoint).u8(5).pstr("BEAMS").target("landed");
+    fallback.u8(kSetVar).u8(kOwn).u8(0).f32(0.0f);
     fallback.label("landed");
     fallback.end();
     runProgram(runtime, fallback, &plain);
@@ -592,6 +603,7 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     CHECK(landed.position.y == 2.0f);
     CHECK(landed.position.z == 3.0f);
     CHECK(landed.instance_id == firstInstance + 1);
+    CHECK(landed.restart == (int32_t)fallback.labelOffset("landed"));
 
     // The rotation/scale half of reference_point: a yawed, scaled parent
     // pins the C# Position + Transform(p * Scale, RotZ(yaw)) row-vector form
@@ -616,6 +628,7 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     const size_t third = runtime.objects().size();
     Code turned;
     turned.u8(kSpawnAtPoint).u8(0).pstr("BEAMS").target("go");
+    turned.u8(kSetVar).u8(kOwn).u8(0).f32(0.0f);
     turned.label("go");
     turned.end();
     runProgram(runtime, turned, &spinner);
@@ -628,7 +641,56 @@ void testSpawnAtPointSpawnsAtTheReferencePoint(scripts::ScriptRuntime& runtime) 
     CHECK(rotated.previous_position.x == rotated.position.x);
     CHECK(rotated.previous_position.y == rotated.position.y);
     CHECK(rotated.previous_position.z == rotated.position.z);
-    CHECK(rotated.restart != 0);
+    CHECK(rotated.restart == (int32_t)turned.labelOffset("go"));
+}
+
+// Opcode 81 (push_hit_dir) has no C# ScriptVmTests counterpart either, so this
+// pins the oracle directly (ScriptVm.cs:601-607): the Value operand (literal
+// or variable), times Dt in mode 1, added along the last-hit heading; z is
+// untouched.
+void testPushHitDirAddsVelocityAlongTheLastHit(scripts::ScriptRuntime& runtime) {
+    // Mode 0, literal speed, heading east: exactly (10, 0).
+    {
+        Code code;
+        code.u8(kPushHitDir).u8(0).u8(kLiteral).f32(10.0f);
+        code.end();
+        scripts::MdkObject obj;
+        obj.hit_direction = 0.0f;
+        obj.velocity = mdk::Vec3{1.0f, 2.0f, 3.0f};
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kPushHitDir));
+        CHECK(obj.velocity.x == 11.0f);
+        CHECK(obj.velocity.y == 2.0f);
+        CHECK(obj.velocity.z == 3.0f);
+    }
+    // Mode 1 scales by the tick: 30 * Dt lands within an ulp of 1.
+    {
+        Code code;
+        code.u8(kPushHitDir).u8(1).u8(kLiteral).f32(30.0f);
+        code.end();
+        scripts::MdkObject obj;
+        obj.hit_direction = 0.0f;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kPushHitDir));
+        CHECK(fabsf(obj.velocity.x - 1.0f) < 1e-6f);
+        CHECK(obj.velocity.y == 0.0f);
+        CHECK(obj.velocity.z == 0.0f);
+    }
+    // A variable speed along heading north lands on +y (tolerance: the C#
+    // SinCos and the C++ sinf/cosf can differ by an ulp at 90 degrees).
+    {
+        Code code;
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(5.0f);
+        code.u8(kPushHitDir).u8(0).u8(kOwn).u8(0);
+        code.end();
+        scripts::MdkObject obj;
+        obj.hit_direction = 90.0f;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kPushHitDir));
+        CHECK(fabsf(obj.velocity.x) < 1e-4f);
+        CHECK(fabsf(obj.velocity.y - 5.0f) < 1e-4f);
+        CHECK(obj.velocity.z == 0.0f);
+    }
 }
 
 } // namespace
@@ -697,6 +759,8 @@ int main() {
     printf("PASS Set2d0BlockDrawsTheRopeLines\n");
     testSpawnAtPointSpawnsAtTheReferencePoint(runtime);
     printf("PASS SpawnAtPointSpawnsAtTheReferencePoint\n");
+    testPushHitDirAddsVelocityAlongTheLastHit(runtime);
+    printf("PASS PushHitDirAddsVelocityAlongTheLastHit\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

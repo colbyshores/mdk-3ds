@@ -1641,6 +1641,14 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             obj->velocity.z += fval(op(ins, 2));
             break;
         }
+        case 81: {  // push_hit_dir: velocity along the direction of the last hit
+            /* @vfp-exempt R6 — see push_forward. */
+            const float speed = value(obj, op(ins, 1)) * (ival(op(ins, 0)) == 1 ? kDt : 1.0f);
+            const float rad = obj->hit_direction * 3.14159265358979323846f / 180.0f;
+            obj->velocity.x += cosf(rad) * speed;
+            obj->velocity.y += sinf(rad) * speed;
+            break;
+        }
         case 126: {  // aim_pitch_target: pitch to the target plus the aim height
             /* @vfp-exempt R6 — see aim_target. */
             const float kAimHeight = 3.0f;
