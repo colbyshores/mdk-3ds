@@ -658,3 +658,30 @@
   `DEVKITARM/DEVKITPRO=/opt/devkitpro/...`) → `mdk.3dsx`.
 - Next: one opcode family per batch through the harness; 132/136 still need
   the Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+## Iteration 37 — vision-condition slice: opcode 243 if_point_sees_player (182/238, remaining 57)
+- `case 243` in `ScriptVm::execute` (script_vm.cpp): `reference_point(ival(o[0]))`
+  within `fval(o[1])` of `kurtPosition()` (feet) AND `raycastClear(point, chest)`
+  with chest = feet + 4z — exactly `ScriptVm.cs:1703-1708`. The *u16* range rides
+  an int operand on both sides (ScriptDecoder.cs:217), so fval's int arm is the
+  C# F int arm, exact. Single `&&` expression keeps the C# short-circuit (NaN
+  distance is false, never a raycast). sqrtf matches the established bit-for-bit
+  glibc pattern; 243 never fires in the corpus (cold), no pin needed.
+- Pinned by `testPointSeesPlayerNeedsRangeAndAClearLine` in `vm_tests` (no C#
+  `ScriptVmTests` counterpart — pins the oracle directly): at-feet/range-1000
+  sees (feet->chest clear at the L7 spawn), 5000-east/range-100 misses (distance
+  gate, geometry-free), ref-0-5000-east with body at feet misses (pins o[0] as
+  ref index, geometry-free), 100-below/range-1000 misses (segment crosses the
+  ground — pins the raycast-false path). New `Code::u16` helper (little-endian,
+  matching binU16). `OPCODE_COVERAGE.md` recounted: C# 238 / C++ 182 / 57
+  (true dispatches 181); 243 removed from the camera/cutscene group (it never
+  needed the camera — only reference_point/kurtPosition/raycastClear).
+- Review-36 (stats slice) was VERDICT COMPLETE: MINOR house-wide int-overflow
+  note (no action — unreachable magnitudes), NIT negative-add coverage gap
+  (deferred to next touch of that test). Nothing to address.
+- Verified on the final tree: `vm_tests` 17/17 PASS ("All VM unit tests match
+  the oracle."); `make -C tests/scripts` exit 0, "All cases match the oracle."
+  (goldens unchanged); `bash tools/check.sh` → ALL GATES PASSED (smdh SKIP,
+  no .cia); `make -C mdk_3ds` → `mdk.elf` + `mdk.3dsx`.
+- Next: one opcode family per batch through the harness; 132/136 still need
+  the Effects slice; 85 waits on the FrameBlend `rotation()` slice.

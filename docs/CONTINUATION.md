@@ -1,10 +1,10 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 35: stats slice committed — opcode
-217 `global_573c4c_add` via new `GameStats` (`game_stats.h`, exact
-33-entry table re-verified against GameStats.cs) + `stats` on
-ScriptRuntime + the R11 pin on `percent` (level-end only, oracle
-truncation shape). Coverage now C++ 181/238, remaining 58. All three
+Last updated: 2026-10-26 (iteration 37: vision-condition slice committed —
+opcode 243 `if_point_sees_player` (`reference_point` within u16 range of
+Kurt's feet, `raycastClear` to his chest), pinned by a new `vm_tests`
+test; review-36 VERDICT COMPLETE, no action (MINOR house-wide UB note,
+NIT coverage note). Coverage now C++ 182/238, remaining 57. All three
 gates green — see Verified below. Next: one opcode family per batch
 through the harness.)
 This file is the persistent handoff for every fresh context window. Keep it under
@@ -58,6 +58,16 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 37 (vision-condition slice: code commit + coverage-doc update + this state commit).
+  Verified on the final tree:
+  - `make -C tests/scripts` → `vm_tests` 17/17 PASS (new
+    `PointSeesPlayerNeedsRangeAndAClearLine` pins 243: range gate,
+    ref-point selection, clear-line true at the L7 spawn,
+    blocked-from-below false) then `All cases match the oracle.`
+    (goldens unchanged — 243 never fires in levels 3-8)
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs:
+    no built `.cia`)
+  - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
 - Iteration 35 (stats slice: two code commits + this state commit).
   Verified on the final tree:
   - `make -C tests/scripts` → `vm_tests` 16/16 PASS (new
@@ -71,7 +81,7 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
     `isEnemyType`'s scan); pinned R11 with a level-end-only rationale,
     same surface as renderer_c3d.cpp:1130 — no gate relaxed.
   - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
-  - Coverage: C++ 181/238, remaining 58 (217 landed with the stats slice)
+  - Coverage: C++ 182/238, remaining 57 (243 landed with the vision-condition slice)
 - Earlier slices (details in `docs/PROGRESS_LOG.md`): iters 23/24 (harness +
   opcode 13, parts pair), iters 28/29/30 (rope-swing, spawn 156, review-29
   hardening), iter 31 (opcode 81, review-30) and iter 32 (opcode 206,
