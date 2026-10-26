@@ -4,7 +4,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ owns **175**, leaving **64** unimplemented. The
+  owns **238** cases, the C++ owns **177**, leaving **62** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -20,6 +20,14 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   `case 0:` mode arm *inside* opcode 249's switch, not a dispatch — true
   dispatches are 174, and 174 + 64 = 238. Verified by recount script both
   sides; the remaining list below is the exact set difference.
+- **Rope-swing batch (2026-10-26):** 226/242 ported (`script_vm.cpp`, pure
+  object-state over the existing swing/rope fields); the recount is C#
+  **238** / C++ **177** / remaining **62** (true dispatches 176;
+  176 + 62 = 238). 226/242 never fire in levels 3-8, so they land through
+  `vm_tests` like the parts pair (no C# counterpart exists to twin — the
+  header comment records this). Opcode 85 (`set_rolling`) stays out:
+  `SetRolling` snapshots the full `Rotation` matrix into `RollingBasis`,
+  and `rotation()` is deferred to the FrameBlend slice (`object.h`).
 - **Debris slice (2026-10-25):** 137/138/139 (`shatter_group` family) are
   ported with `mdk_core/src/scripts/debris.{h,cpp}` (a 1:1 port of
   `Debris.cs`: Shatter/Spark/Update, pooled pieces, seeded-RNG order) and
@@ -49,20 +57,23 @@ Per-opcode tests are still needed for edge cases beyond the end-to-end golden
 suite; the complete-vs-partial classification of the owned cases is now done
 (see "Owned-case classification" at the end of this file).
 
-## Remaining 66 (verified set)
+## Remaining 62 (verified set)
 
 13 left this list with the synthetic-harness batch (port 13 is an explicit
 false branch, `ScriptVmTests.UnimplementedConditionsAreFalse` pins it, and the
 C++ `unimplemented()` bucket stays clean). 32 (`clear_parts_mask`) and 129
 (`blow_off_parts`) left with the parts batch: pure object-state ops over the
 existing parts fields, pinned by three `vm_tests` tests with a synthetic
-model (no C# counterpart exists to twin). Remaining 64: 27, 28, 29, 49,
+model (no C# counterpart exists to twin). 226 (`jump_to`) and 242
+(`set_2d0_block`) left with the rope-swing batch the same way: pure
+swing/rope object-state, pinned by two `vm_tests` tests. Remaining 62:
+27, 28, 29, 49,
 74, 77, 81,
 85, 112, 114, 121, 128,
 130, 131, 132, 133, 135, 136, 142, 143, 156, 158, 159, 167, 170,
 171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 199, 202,
 203, 204, 206, 209, 210, 213, 214, 215, 217, 219, 220, 221, 223, 224,
-226, 228, 229, 239, 240, 241, 242, 243, 244, 247
+228, 229, 239, 240, 241, 243, 244, 247
 
 **Reachability, re-probed to t30000 (2026-10-25, `tick1 probe 30000`):**
 after the Debris slice the only remaining opcode that fires anywhere in
@@ -92,8 +103,10 @@ By blocking subsystem (carried grouping, corrected for this batch):
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 32, 81, 121, 128, 129, 132,
   136, 158, 167, 172, 179, 180, 184, 192, 195, 213, 214, 228
-- **Movement/AI leftovers (needs partner links, rolling-basis math,
-  jump/swing mechanics):** 85, 204, 206, 217, 226, 229
+- **Movement/AI leftovers (needs partner links, rolling-basis math):**
+  85, 204, 206, 217, 229. 85 (`set_rolling`) snapshots the full `Rotation`
+  matrix into `RollingBasis`; `rotation()` is deferred to the FrameBlend
+  slice. 226/242 landed with the rope-swing batch.
 - **Audio — ported with the mixer slice:** 89 (`play_sound`), 107
   (`set_loop_sound`), 233 (`if_sound_playing`) and 249 (`if_own_sound`) landed
   with `mdk_core/src/audio/` (the sound bank, the mixer voice table, and the
@@ -113,7 +126,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
 - **Not identified in the reference (no safe port exists):** 199, 210, 239
 - **Needs its subsystem or data the tree does not have (deferred with cause):**
   object attach 74, sky state 202, waypoint tables 221, partner links 213/214,
-  projectiles 219, point-line debug telemetry 242, sniper-stance player gating
+  projectiles 219, sniper-stance player gating
   220, item-chain links 29/49
 
 Do not implement any line of the list above without its subsystem and a test
@@ -124,10 +137,10 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. This yields C# **238**, C++ **175**, remaining **64**
-(re-run 2026-10-26 for the 32/129 batch; the C++ set holds one label the C#
+and compare as sets. This yields C# **238**, C++ **177**, remaining **62**
+(re-run 2026-10-26 for the 226/242 batch; the C++ set holds one label the C#
 lacks — the nested `case 0:` mode arm inside opcode 249's switch, not a
-dispatch — so true dispatches are 174 and 174 + 64 = 238). The same extraction
+dispatch — so true dispatches are 176 and 176 + 62 = 238). The same extraction
 is what produced the counts above.
 
 Two axes, kept separate:
@@ -140,10 +153,10 @@ Two axes, kept separate:
 - **Test coverage** — every owned case is exercised only by the end-to-end
   (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
   object table and script state against the oracle byte-for-byte through t600 on
-   levels 3-8. Per-opcode unit tests now exist for 13 opcodes: the 11 the
+   levels 3-8. Per-opcode unit tests now exist for 15 opcodes: the 11 the
   harness twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253) plus
-  32/129, which pin the oracle directly (no C# counterpart exists); the other
-  162 owned cases are golden-covered only where they fire.
+  32/129 and 226/242, which pin the oracle directly (no C# counterpart
+  exists); the other owned cases are golden-covered only where they fire.
 
 **Stubs: 0.** No owned case is a fake implementation. The only no-op case (248
 `push_kurt`) is a documented honest no-op because its subsystem (Kurt's
@@ -167,8 +180,8 @@ play, so both are complete.)**
 | 166 | if_bomb_visible | same `itemsBomb` gap → always false |
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
-**Complete — effect realized with the subsystems present (167 cases):** every
-owned case not in the partial table above (175 − 8 = 167). These are the pure
+**Complete — effect realized with the subsystems present (169 cases):** every
+owned case not in the partial table above (177 − 8 = 169). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases,
 each exercised by the byte-for-byte goldens through t600 on levels 3-8.

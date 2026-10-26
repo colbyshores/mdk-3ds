@@ -1,10 +1,10 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 24: opcodes 32 `clear_parts_mask` + 129
-`blow_off_parts` port through `vm_tests` with a synthetic model — coverage
-C++ 175/238, remaining 64, all three gates green, goldens unchanged.
-132/136 stay with the Effects slice. Corpus still byte-for-byte to t30000,
-table AND script.)
+Last updated: 2026-10-26 (iteration 28: opcodes 226 `jump_to` + 242
+`set_2d0_block` port through `vm_tests` — coverage C++ 177/238, remaining
+62, all three gates green, goldens unchanged. 85 stays out: SetRolling
+snapshots Rotation, deferred to FrameBlend. Corpus still byte-for-byte to
+t30000, table AND script.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -36,10 +36,17 @@ them. Do not spend an iteration on docs/tests alone.
    32 reuses `partsMask` with hide=false, 129 validates the gore mode and
    locks+hides via `findPart`; three `vm_tests` tests pin them against a
    synthetic 3-part model (no C# counterpart exists to twin — header notes
-   this). Coverage: C++ 175/238, remaining 64 (recount-verified; the 175
-   carries the nested `case 0:` inside opcode 249, true dispatches 174).
+   this). **Rope-swing DONE (slice 3, iter 28)** — 226 sets the swing
+   pivot/speed/gain/yaw/length + FlagSwinging, 242 sets the rope lines
+   (colour 1, mask 0xFF, four points) or clears the mask on count zero;
+   two `vm_tests` tests pin `ScriptVm.cs:1139-1166` (no C# counterpart
+   exists to twin — noted in the test header). Coverage: C++ 177/238,
+   remaining 62 (recount-verified; the 177 carries the nested `case 0:`
+   inside opcode 249, true dispatches 176). 85 (`set_rolling`) stays out:
+   `SetRolling` snapshots the full `Rotation` matrix and `rotation()` is
+   deferred to the FrameBlend slice.
    132/136 stay with the Effects slice (RNG + effect list + dump line).
-   The other 64 never fire in levels 3-8 to t30000 — they land through the
+   The other 62 never fire in levels 3-8 to t30000 — they land through the
    harness now, one family per batch.
    P5 golden-frame tests stay the parallel track.
 

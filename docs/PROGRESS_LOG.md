@@ -448,3 +448,22 @@
 - Next: unfired opcodes land through the harness, one family per batch —
   132/136 need the Effects slice; the Kurt/items, arena, movement and
   camera buckets in OPCODE_COVERAGE.md keep their subsystem gates.
+
+## Iteration 28 — rope-swing pair: opcodes 226 `jump_to` + 242 `set_2d0_block`
+
+- 226 starts the swing below the pivot (`swing_pivot`/`speed`/`gain`/`yaw`/
+  `length` + `FlagSwinging`); 242 sets the rope lines (colour 1, mask 0xFF,
+  four points) or clears the mask on count zero. Pure object-state over
+  fields the C++ already owns (`object.h`); 242 guards an empty block like
+  the existing `partsMask` helper. 85 (`set_rolling`) stays out: it snapshots
+  the full `Rotation` matrix and `rotation()` is deferred to FrameBlend.
+- Tests first: two `vm_tests` tests failed authentically in the
+  `unimplemented()` bucket (20 checks), then passed after the dispatch.
+  Pin `ScriptVm.cs:1139-1166` with identical program bytes (F32×5 for 226;
+  u8 mode + 12 F32 for 242).
+- Gates: `vm_tests` 12/12; goldens "All cases match the oracle" (unchanged —
+  neither opcode fires in the corpus); `tools/check.sh` ALL PASSED;
+  `mdk.3dsx` links. Coverage: brace-matched recount → C# 238 / C++ 177 /
+  remaining 62 (true dispatches 176; `case 0:` artifact inside 249 noted).
+- Next: one opcode family per batch through the harness; 132/136 still need
+  the Effects slice; 85 waits on the FrameBlend `rotation()` slice.
