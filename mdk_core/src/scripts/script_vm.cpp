@@ -1631,6 +1631,12 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                 runtime_.stats.headShots += ival(op(ins, 1));
             }
             break;
+        case 210:  // set_2c0: an unidentified object slot (ScriptVm.cs:1663)
+            obj->value_2c0 = value(obj, op(ins, 0));
+            break;
+        case 199:  // set_104: an unidentified object slot (ScriptVm.cs:1666)
+            obj->value_104 = value(obj, op(ins, 0));
+            break;
         case 164: {  // path_speed_by_kurt: scale path speed by the distance to Kurt
             if (ival(op(ins, 0)) != 0) {
                 const std::vector<ScriptValue>& raw = listval(op(ins, 1));

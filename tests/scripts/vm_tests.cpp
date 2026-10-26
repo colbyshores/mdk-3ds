@@ -53,6 +53,8 @@ const int32_t kPushHitDir = 81;
 const int32_t kSpawnAlongPath = 206;
 const int32_t kHeadShots = 217;
 const int32_t kIfPointSeesPlayer = 243;
+const int32_t kSet104 = 199;
+const int32_t kSet2c0 = 210;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -936,6 +938,42 @@ void testPointSeesPlayerNeedsRangeAndAClearLine(scripts::ScriptRuntime& runtime)
     }
 }
 
+// Opcodes 199 (set_104) and 210 (set_2c0) have no C# ScriptVmTests
+// counterpart, so this pins the oracle directly (ScriptVm.cs:1663-1668):
+// each writes its single Value operand into its own otherwise-unidentified
+// object slot. Both slots exist on the C++ object already (object.h); neither
+// opcode fires in levels 3-8, so no golden changes.
+void testUnidentifiedValueSlotsStoreTheirOperand(scripts::ScriptRuntime& runtime) {
+    // Literal operands land bit-for-bit, each in its own slot.
+    {
+        Code code;
+        code.u8(kSet104).u8(kLiteral).f32(7.5f);
+        code.u8(kSet2c0).u8(kLiteral).f32(-2.25f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kSet104));
+        CHECK(!sawUnimplemented(kSet2c0));
+        CHECK(obj.value_104 == 7.5f);
+        CHECK(obj.value_2c0 == -2.25f);
+    }
+    // Variable operands resolve through the same Value() helper as the other
+    // value-taking opcodes (ScriptVm.cs:172-180): own var 0 feeds both slots.
+    {
+        Code code;
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(3.0f);
+        code.u8(kSet104).u8(kOwn).u8(0);
+        code.u8(kSet2c0).u8(kOwn).u8(0);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kSet104));
+        CHECK(!sawUnimplemented(kSet2c0));
+        CHECK(obj.value_104 == 3.0f);
+        CHECK(obj.value_2c0 == 3.0f);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1010,6 +1048,8 @@ int main() {
     printf("PASS HeadShotsAddOnlyWhenEnabled\n");
     testPointSeesPlayerNeedsRangeAndAClearLine(runtime);
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
+    testUnidentifiedValueSlotsStoreTheirOperand(runtime);
+    printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");
