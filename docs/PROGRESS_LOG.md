@@ -519,3 +519,28 @@
   ALL GATES PASSED (smdh SKIP, no .cia); `make -C mdk_3ds` → `mdk.3dsx` built.
 - Next: one opcode family per batch through the harness; 132/136 still need the
   Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+## Iteration 31 — review-30 findings closed + opcode 81 push_hit_dir (179/238, remaining 60)
+
+- Review-30 (VERDICT: INCOMPLETE, one MINOR + one NIT, no code bug) both closed
+  in `vm_tests.cpp`: each 156 spawn now places a separator `set_var` between
+  the spawn and its label and asserts `restart == labelOffset` exactly, so a
+  fall-through (`ins.next`) regression fails (next points at the separator, not
+  the label); the range guard is a single `restartInRange` boolean, no
+  out-of-bounds read on a failed check. Applied to all three spawns
+  (spawned/landed/go).
+- Opcode 81 (`push_hit_dir`, ScriptVm.cs:601-607): `value(o[1])` (literal or
+  variable) times `Dt` in mode 1 along `hit_direction`, x/y only, z untouched.
+  Operands `[U8, Value]` confirmed against the opcode table (offset 123).
+  Port sits after case 80 with a `see push_forward` R6 pin (cosf/sinf match the
+  C# SinCos bit-for-bit per the probed exemption). New `vm_tests` test pins
+  literal mode-0 (exact), literal mode-1 (30*Dt within 1e-6 of 1), and variable
+  speed at heading 90 (+y within 1e-4). No C# counterpart exists to twin.
+  81 never fires in levels 3-8, so goldens are unchanged by construction.
+- Recount-verified: C# 238 / C++ 179 / remaining 60 (true dispatches 178; the
+  179th label is the nested `case 0:` inside 249).
+- Verified: `vm_tests` 14/14 PASS; `make -C tests/scripts` → "All cases match
+  the oracle."; `bash tools/check.sh` → ALL GATES PASSED (smdh SKIP, no .cia);
+  `make -C mdk_3ds` (DEVKITPRO/DEVKITARM from /opt/devkitpro) → `mdk.3dsx`.
+- Next: one opcode family per batch through the harness; 132/136 still need the
+  Effects slice; 85 waits on the FrameBlend `rotation()` slice.

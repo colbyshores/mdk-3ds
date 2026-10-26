@@ -1,10 +1,11 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 30: review-29 findings closed — 156 test
-hardened (rotation/scale + restart plumbing), 242 comment scoped to both
-dialects; coverage unchanged C++ 178/238, remaining 61, all three gates
-green. 85 stays out: SetRolling snapshots Rotation, deferred to FrameBlend.
-Corpus still byte-for-byte to t30000, table AND script.)
+Last updated: 2026-10-26 (iteration 31: review-30 findings closed — 156
+restart pins now separator + exact label offset (fall-through-distinguishing),
+OOB-safe range guard on all three spawns; opcode 81 push_hit_dir ported via
+vm_tests (literal/Dt/variable speeds); coverage C++ 179/238, remaining 60,
+all three gates green. 85 stays out: SetRolling snapshots Rotation, deferred
+to FrameBlend. Corpus still byte-for-byte to t30000, table AND script.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -46,31 +47,33 @@ them. Do not spend an iteration on docs/tests alone.
    `SetRolling` snapshots the full `Rotation` matrix and `rotation()` is
    deferred to the FrameBlend slice.
    156 (`spawn_at_point`) landed with the spawn slice: arena-model spawn at a reference point, pinned against BEAMS/DANT_1 (no init script, no nested run).
+   **81 (`push_hit_dir`) DONE (slice 4, iter 31)** — Value(o[1]) x Dt-in-mode-1
+   along hit_direction, x/y only; `vm_tests` pins literal, Dt-scaled, and
+   variable speeds (no C# counterpart to twin).
    132/136 stay with the Effects slice (RNG + effect list + dump line).
-   The other 61 never fire in levels 3-8 to t30000 — they land through the
+   The other 60 never fire in levels 3-8 to t30000 — they land through the
    harness now, one family per batch.
    P5 golden-frame tests stay the parallel track.
 
-Deferred with evidence: alarm (move_command 15 never fires in the corpus —
-verified 0 occurrences), 240/241/244 (Kurt's state exists in `game/kurt.h` but
-none fires in levels 3-8 — do not blind-port), 248 `push_kurt` (honest no-op:
-`state=0` in every golden). Old-3DS hardware timing stays open (hardware-only).
+Deferred: alarm (move 15 fires 0x), 240/241/244 (Kurt state exists, none
+fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
 
 
 ## Current tree state (VERIFIED)
 
-- Iteration 30 (commit `4a86cb6`). Verified on the final tree:
-  - `make -C tests/scripts` → `vm_tests` 13/13 PASS (incl. hardened 156
-    test) then `All cases match the oracle.` (goldens unchanged — 156/242
-    never fire in the corpus)
+- Iteration 31 (commit `c5b057d` code + this state commit). Verified on the
+  final tree:
+  - `make -C tests/scripts` → `vm_tests` 14/14 PASS (incl. hardened 156
+    pins + new 81 test) then `All cases match the oracle.` (goldens unchanged
+    — 156/81 never fire in the corpus)
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
   - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
-  - Coverage unchanged: C++ 178/238, remaining 61 (no new opcode this batch;
-    review-29 gaps closed by tests + comment only)
+  - Coverage: C++ 179/238, remaining 60 (81 ported; review-30 gaps closed by
+    the same test edits)
 - Earlier slices (details in `docs/PROGRESS_LOG.md`): iters 23/24 (harness +
-  opcode 13, parts pair) and iters 28/29 (rope-swing, spawn 156) — all gates
-  green at each commit.
+  opcode 13, parts pair) and iters 28/29/30 (rope-swing, spawn 156, review-29
+  hardening) — all gates green at each commit.
 - Corpus frontier: every level 3-8 matches the oracle byte for byte (table AND
   script) to t30000. The tick axis is spent; unfired opcodes now land through
   `vm_tests`, one family per batch.
@@ -102,7 +105,6 @@ template). The harness route needs no golden change.
 `alarm_ticks` is a dead end (move=15 fires 0 times). `Items.Bomb`/`Decoy` land
 with the Items slice; debris state landed with the shatter slice.
 
-
 ## Open items (do not lose these)
 
 1. **Dynamic scene updates — DONE at the scene level.** `buildArenaScene` tags
@@ -111,9 +113,8 @@ with the Items slice; debris state landed with the shatter slice.
    scripts must call `refresh()` when a `group_set_texture` fires (no engine
    exists yet); the VM state and scene mechanism are both tested, only the
    per-opcode call-site wiring is pending. Do not fake it.
-2. **Opcode classification — DONE** in `docs/OPCODE_COVERAGE.md` §"Owned-case
-   classification": 0 stubs, 10 partial, 158 complete (of 168). Per-opcode unit
-   tests beyond the goldens are still needed.
+2. **Opcode classification — DONE** in `docs/OPCODE_COVERAGE.md`. Per-opcode
+   unit tests beyond the goldens are still needed.
 3. **Known divergences**: the DTI record-layout question is CLOSED (raw-bit
    goldens). Remaining: incomplete decoy/`AlienTarget` targeting; opcode 207 —
    C# `MathF.Sign` throws on NaN (C++ returns 0; exceptions banned, accepted).

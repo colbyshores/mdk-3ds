@@ -66,9 +66,9 @@ C++ `unimplemented()` bucket stays clean). 32 (`clear_parts_mask`) and 129
 existing parts fields, pinned by three `vm_tests` tests with a synthetic
 model (no C# counterpart exists to twin). 226 (`jump_to`) and 242
 (`set_2d0_block`) left with the rope-swing batch the same way: pure
-swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. Remaining 61:
+swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with this batch: pure velocity math over existing fields, pinned by a `vm_tests` test. Remaining 60:
 27, 28, 29, 49,
-74, 77, 81,
+74, 77,
 85, 112, 114, 121, 128,
 130, 131, 132, 133, 135, 136, 142, 143, 158, 159, 167, 170,
 171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 199, 202,
@@ -100,8 +100,8 @@ By blocking subsystem (carried grouping, corrected for this batch):
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
   28, 130, 133, 142, 143, 159, 190, 202, 223, 224 (156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported)
 - **Effects/combat/partners (needs parts, Items.Bomb,
-  chain/partner links, raycast normals):** 32, 81, 121, 128, 129, 132,
-  136, 158, 167, 172, 179, 180, 184, 192, 195, 213, 214, 228
+  chain/partner links, raycast normals):** 32, 121, 128, 129, 132,
+  136, 158, 167, 172, 179, 180, 184, 192, 195, 213, 214, 228 (81 landed with this batch: it needed only Value/Dt/hit_direction, all already ported)
 - **Movement/AI leftovers (needs partner links, rolling-basis math):**
   85, 204, 206, 217, 229. 85 (`set_rolling`) snapshots the full `Rotation`
   matrix into `RollingBasis`; `rotation()` is deferred to the FrameBlend
@@ -136,10 +136,10 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. This yields C# **238**, C++ **178**, remaining **61**
-(re-run 2026-10-26 for the 156 batch; the C++ set holds one label the C#
+and compare as sets. This yields C# **238**, C++ **179**, remaining **60**
+(re-run 2026-10-26 for the 81 batch; the C++ set holds one label the C#
 lacks — the nested `case 0:` mode arm inside opcode 249's switch, not a
-dispatch — so true dispatches are 177 and 177 + 61 = 238). The same extraction
+dispatch — so true dispatches are 178 and 178 + 60 = 238). The same extraction
 is what produced the counts above.
 
 Two axes, kept separate:
@@ -152,9 +152,9 @@ Two axes, kept separate:
 - **Test coverage** — every owned case is exercised only by the end-to-end
   (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
   object table and script state against the oracle byte-for-byte through t600 on
-   levels 3-8. Per-opcode unit tests now exist for 16 opcodes: the 11 the
+   levels 3-8. Per-opcode unit tests now exist for 17 opcodes: the 11 the
   harness twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253) plus
-  32/129, 226/242 and 156, which pin the oracle directly (no C# counterpart
+  32/129, 226/242, 156 and 81, which pin the oracle directly (no C# counterpart
   exists); the other owned cases are golden-covered only where they fire.
 
 **Stubs: 0.** No owned case is a fake implementation. The only no-op case (248
