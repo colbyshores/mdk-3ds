@@ -8,7 +8,9 @@
 // the test that exercises them, instead of as blind ports.
 //
 // The C# file is the specification: same programs, same assertions, same
-// level. A divergence fails here, not in a golden.
+// level. A divergence fails here, not in a golden. The parts tests below are
+// the exception: no C# counterpart exists, so they pin the oracle's
+// ScriptVm.cs directly, with the same byte encoding the C# decoder reads.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -26,6 +28,7 @@
 #include "formats/dti.h"
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
+#include "formats/model.h"
 #include "formats/script_decoder.h"
 #include "game/level_data.h"
 #include "scripts/script_runtime.h"
@@ -39,6 +42,9 @@ namespace {
 const int32_t kSetRestart = 1;
 const int32_t kGoto = 12;
 const int32_t kIfCheatKey = 13;
+const int32_t kSetPartsMask = 31;
+const int32_t kClearPartsMask = 32;
+const int32_t kBlowOffParts = 129;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -112,6 +118,14 @@ public:
         memcpy(raw, &value, sizeof(raw));
         for (int i = 0; i < 4; i++) {
             bytes_.push_back(raw[i]);
+        }
+        return *this;
+    }
+
+    Code& pstr(const std::string& value) {
+        bytes_.push_back((uint8_t)value.size());
+        for (size_t i = 0; i < value.size(); i++) {
+            bytes_.push_back((uint8_t)value[i]);
         }
         return *this;
     }
@@ -299,6 +313,134 @@ void testUnimplementedConditionsAreFalse(scripts::ScriptRuntime& runtime) {
     CHECK(!saw13);
 }
 
+// Whether the last runProgram left the opcode in the unimplemented bucket.
+bool sawUnimplemented(int32_t opcode) {
+    for (size_t i = 0; i < lastUnimplemented_.size(); i++) {
+        if (lastUnimplemented_[i] == opcode) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A model with three named parts. PartsMask/FindPart only read the part-name
+// list, so this stands in for level data without depending on it.
+Model partsModel() {
+    Model model;
+    const char* names[] = {"HEAD", "TORSO", "LEG"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        Model::Part part;
+        snprintf(part.name, sizeof(part.name), "%s", names[i]);
+        model.partList.push_back(part);
+    }
+    return model;
+}
+
+// The parts family has no C# ScriptVmTests counterpart (that suite only
+// covers 11 opcodes), so these tests pin the oracle directly
+// (ScriptVm.cs:1523-1524 for 32, 1746-1769 for 129) with identical program
+// bytes. Opcodes 132/136 stay unported: they need the Effects slice.
+void testClearPartsMaskShowsPartsAgain(scripts::ScriptRuntime& runtime) {
+    Model model = partsModel();
+    scripts::MdkObject obj;
+    obj.model = &model;
+
+    // Hide HEAD (bit 0) and TORSO (bit 1) by name; LEG stays visible.
+    Code hide;
+    hide.u8(kSetPartsMask).u8(2).pstr("HEAD").pstr("TORSO");
+    hide.end();
+    runProgram(runtime, hide, &obj);
+    CHECK(obj.hidden_parts == 0x3);
+    CHECK(!sawUnimplemented(kSetPartsMask));
+
+    // Show TORSO again by name.
+    Code show;
+    show.u8(kClearPartsMask).u8(1).pstr("TORSO");
+    show.end();
+    runProgram(runtime, show, &obj);
+    CHECK(obj.hidden_parts == 0x1);
+    CHECK(!sawUnimplemented(kClearPartsMask));
+
+    // ALL shows the rest, but a blown-off (locked) HEAD stays hidden.
+    obj.locked_parts = 0x1;
+    Code all;
+    all.u8(kClearPartsMask).u8(1).pstr("ALL");
+    all.end();
+    runProgram(runtime, all, &obj);
+    CHECK(obj.hidden_parts == 0x1);
+    CHECK(obj.locked_parts == 0x1);
+    CHECK(!sawUnimplemented(kClearPartsMask));
+}
+
+void testBlowOffPartsLocksAndHides(scripts::ScriptRuntime& runtime) {
+    Model model = partsModel();
+    runtime.option = 1;
+
+    // Gore on: mode 2 blows off HEAD (lowercase pins the case-insensitive
+    // match) and locks it hidden; NOSE names no part and is skipped.
+    scripts::MdkObject obj;
+    obj.model = &model;
+    Code gore;
+    gore.u8(kBlowOffParts).u8(2).u8(2).pstr("head").pstr("NOSE");
+    gore.end();
+    runProgram(runtime, gore, &obj);
+    CHECK(obj.locked_parts == 0x1);
+    CHECK(obj.hidden_parts == 0x1);
+    CHECK(!sawUnimplemented(kBlowOffParts));
+
+    // Gore off: mode 2 is a no-op (ScriptVm.cs:1752).
+    runtime.option = 0;
+    scripts::MdkObject shy;
+    shy.model = &model;
+    runProgram(runtime, gore, &shy);
+    CHECK(shy.locked_parts == 0);
+    CHECK(shy.hidden_parts == 0);
+
+    // Mode 1 is not gore-gated: it blows off even with the option off.
+    scripts::MdkObject plain;
+    plain.model = &model;
+    Code mode1;
+    mode1.u8(kBlowOffParts).u8(1).u8(1).pstr("LEG");
+    mode1.end();
+    runProgram(runtime, mode1, &plain);
+    CHECK(plain.locked_parts == 0x4);
+    CHECK(plain.hidden_parts == 0x4);
+
+    // Mode past gore (3): no-op, and the decoder leaves no parts operand.
+    scripts::MdkObject wild;
+    wild.model = &model;
+    Code mode3;
+    mode3.u8(kBlowOffParts).u8(3);
+    mode3.end();
+    runProgram(runtime, mode3, &wild);
+    CHECK(wild.locked_parts == 0);
+    CHECK(wild.hidden_parts == 0);
+    CHECK(!sawUnimplemented(kBlowOffParts));
+
+    runtime.option = 0;
+}
+
+void testBlownOffPartsStayHiddenThroughClear(scripts::ScriptRuntime& runtime) {
+    // The in-game sequence: 129 blows off HEAD, then 32 shows ALL.
+    Model model = partsModel();
+    runtime.option = 1;
+    scripts::MdkObject obj;
+    obj.model = &model;
+    Code blow;
+    blow.u8(kBlowOffParts).u8(2).u8(1).pstr("HEAD");
+    blow.end();
+    runProgram(runtime, blow, &obj);
+    CHECK(!sawUnimplemented(kBlowOffParts));
+    Code all;
+    all.u8(kClearPartsMask).u8(1).pstr("ALL");
+    all.end();
+    runProgram(runtime, all, &obj);
+    CHECK(obj.locked_parts == 0x1);
+    CHECK(obj.hidden_parts == 0x1);
+    CHECK(!sawUnimplemented(kClearPartsMask));
+    runtime.option = 0;
+}
+
 } // namespace
 
 int main() {
@@ -353,6 +495,12 @@ int main() {
     printf("PASS FlagWordFiveIsTheDoorState\n");
     testUnimplementedConditionsAreFalse(runtime);
     printf("PASS UnimplementedConditionsAreFalse\n");
+    testClearPartsMaskShowsPartsAgain(runtime);
+    printf("PASS ClearPartsMaskShowsPartsAgain\n");
+    testBlowOffPartsLocksAndHides(runtime);
+    printf("PASS BlowOffPartsLocksAndHides\n");
+    testBlownOffPartsStayHiddenThroughClear(runtime);
+    printf("PASS BlownOffPartsStayHiddenThroughClear\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

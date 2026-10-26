@@ -747,6 +747,31 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 31:  // set_parts_mask
             obj->hidden_parts = partsMask(obj, listval(op(ins, 0)), obj->hidden_parts, true);
             break;
+        case 32:  // clear_parts_mask: shows the parts again, except blown off ones
+            obj->hidden_parts = partsMask(obj, listval(op(ins, 0)), obj->hidden_parts, false);
+            break;
+        case 129:  // blow_off_parts: the parts go and stay hidden; mode 2 only
+        {
+            // With gore (ScriptVm.cs:1746). The mode is a u8 operand, so the
+            // < 0 arm never fires from decoded bytes; it mirrors the C# guard.
+            const int32_t kGoreMode = 2;
+            const int32_t mode = ival(op(ins, 0));
+            if (mode < 0 || mode > kGoreMode || obj->model == nullptr ||
+                (mode == kGoreMode && runtime_.option == 0)) {
+                break;
+            }
+            int32_t mask = 0;
+            const std::vector<ScriptValue>& names = listval(op(ins, 1));
+            for (size_t i = 0; i < names.size(); i++) {
+                const int32_t part = obj->findPart(strval(names[i]));
+                if (part >= 0) {
+                    mask |= (1 << part);
+                }
+            }
+            obj->locked_parts |= mask;
+            obj->hidden_parts |= mask;
+            break;
+        }
         case 198: {  // set_weak_parts
             obj->flags |= MdkObject::FlagWeakParts;
             obj->weak_prefix = strval(op(ins, 0));
