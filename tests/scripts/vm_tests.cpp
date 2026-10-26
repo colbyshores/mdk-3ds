@@ -52,6 +52,7 @@ const int32_t kSpawnAtPoint = 156;
 const int32_t kPushHitDir = 81;
 const int32_t kSpawnAlongPath = 206;
 const int32_t kHeadShots = 217;
+const int32_t kIfPointSeesPlayer = 243;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -117,6 +118,13 @@ public:
 
     Code& u8(int32_t value) {
         bytes_.push_back((uint8_t)value);
+        return *this;
+    }
+
+    // A 16-bit operand (the decoder's u16/s16: little-endian, like Bin.U16).
+    Code& u16(int32_t value) {
+        bytes_.push_back((uint8_t)(value & 0xFF));
+        bytes_.push_back((uint8_t)((value >> 8) & 0xFF));
         return *this;
     }
 
@@ -846,6 +854,88 @@ void testHeadShotsAddOnlyWhenEnabled(scripts::ScriptRuntime& runtime) {
     CHECK(scripts::GameStats::percent(0, 0) == 0);
 }
 
+// Opcode 243 (if_point_sees_player) has no C# ScriptVmTests counterpart, so
+// this pins the oracle directly (ScriptVm.cs:1703-1708): the REFERENCE point
+// (not the position) must be within the u16 range of Kurt's feet, and the
+// line from it to his chest (feet + 4) must clear every arena triangle.
+// Program: 243 ref, range, goto seen / var0 = 1 / seen: var0 = 2.
+void testPointSeesPlayerNeedsRangeAndAClearLine(scripts::ScriptRuntime& runtime) {
+    const mdk::Vec3 kurt = runtime.kurtPosition();
+    scripts::MdkObject obj;
+    obj.arena = "DANT_1";
+    obj.position = mdk::Vec3{kurt.x, kurt.y, kurt.z};
+    obj.yaw = 0.0f;
+    obj.scale = 1.0f;
+
+    // At Kurt's feet, well within range, line feet->chest clear: seen.
+    {
+        Code code;
+        code.u8(kIfPointSeesPlayer).u8(0).u16(1000).u8(kActionGoto).target("seen");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        code.end();
+        code.label("seen");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+        code.end();
+        scripts::MdkObject at = obj;
+        runProgram(runtime, code, &at);
+        CHECK(!sawUnimplemented(kIfPointSeesPlayer));
+        CHECK(at.variables[0] == 2.0f);
+    }
+    // 5000 east, range 100: the distance gate fails first, no raycast.
+    {
+        Code code;
+        code.u8(kIfPointSeesPlayer).u8(0).u16(100).u8(kActionGoto).target("seen");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        code.end();
+        code.label("seen");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+        code.end();
+        scripts::MdkObject far = obj;
+        far.position = mdk::Vec3{kurt.x + 5000.0f, kurt.y, kurt.z};
+        runProgram(runtime, code, &far);
+        CHECK(!sawUnimplemented(kIfPointSeesPlayer));
+        CHECK(far.variables[0] == 1.0f);
+    }
+    // The operand selects the reference point, not the position: the body is
+    // at Kurt's feet but ref 0 sits 5000 east, so range 100 still misses.
+    {
+        Model model;
+        Vec3f ref;
+        ref.x = 5000.0f;
+        ref.y = 0.0f;
+        ref.z = 0.0f;
+        model.referencePoints.push_back(ref);
+        Code code;
+        code.u8(kIfPointSeesPlayer).u8(0).u16(100).u8(kActionGoto).target("seen");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        code.end();
+        code.label("seen");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+        code.end();
+        scripts::MdkObject bodied = obj;
+        bodied.model = &model;
+        runProgram(runtime, code, &bodied);
+        CHECK(!sawUnimplemented(kIfPointSeesPlayer));
+        CHECK(bodied.variables[0] == 1.0f);
+    }
+    // 100 below Kurt's feet, range 1000: in range, but the segment up to his
+    // chest crosses the ground he stands on, so the line is blocked.
+    {
+        Code code;
+        code.u8(kIfPointSeesPlayer).u8(0).u16(1000).u8(kActionGoto).target("seen");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        code.end();
+        code.label("seen");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+        code.end();
+        scripts::MdkObject under = obj;
+        under.position = mdk::Vec3{kurt.x, kurt.y, kurt.z - 100.0f};
+        runProgram(runtime, code, &under);
+        CHECK(!sawUnimplemented(kIfPointSeesPlayer));
+        CHECK(under.variables[0] == 1.0f);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -918,6 +1008,8 @@ int main() {
     printf("PASS SpawnAlongPathSpawnsEveryStep\n");
     testHeadShotsAddOnlyWhenEnabled(runtime);
     printf("PASS HeadShotsAddOnlyWhenEnabled\n");
+    testPointSeesPlayerNeedsRangeAndAClearLine(runtime);
+    printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

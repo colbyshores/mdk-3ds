@@ -1297,6 +1297,21 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             return branch(obj, ins, sees);
         }
+        case 243: {  // if_point_sees_player: the reference point is within
+            // range of Kurt's feet and the line to his chest is clear
+            // (ScriptVm.cs:1703-1708). The *u16* range rides an int operand on
+            // both sides (ScriptDecoder.cs:217), so fval's int arm is the
+            // C#'s F int arm, exact. Single expression to keep the C#'s
+            // short-circuit (a NaN distance is false, never a raycast).
+            const Vec3 point = obj->reference_point(ival(op(ins, 0)));
+            const Vec3& kurt = runtime_.kurtPosition();
+            const float dx = point.x - kurt.x;
+            const float dy = point.y - kurt.y;
+            const float dz = point.z - kurt.z;
+            const Vec3 chest{kurt.x, kurt.y, kurt.z + 4.0f};
+            return branch(obj, ins, sqrtf(dx * dx + dy * dy + dz * dz) <= fval(op(ins, 1)) &&
+                                             runtime_.raycastClear(point, chest));
+        }
         case 236: {  // if_no_floor_at: no up-facing face below a point ahead
             const float kProbeTop = 3.0f;
             const float kDefaultDrop = 6.0f;
