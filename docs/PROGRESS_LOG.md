@@ -467,3 +467,28 @@
   remaining 62 (true dispatches 176; `case 0:` artifact inside 249 noted).
 - Next: one opcode family per batch through the harness; 132/136 still need
   the Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+## Iteration 29 — spawn slice: opcode 156 `spawn_at_point` + review-28 closed (coverage 178/238)
+
+- 156 is `runtime_.spawn` at `obj->reference_point`, operand layout `[U8, Pstr, Code32]`
+  (`ScriptVm.cs:1573`, `MdkObject.cs:574-582`). Both helpers already existed for the
+  earlier spawn cases, so the dispatch is three lines with no new subsystem. R11/R4/R6
+  clean (no division, no double, no libm in the dispatch).
+- Test pins the oracle directly (no C# counterpart exists): BEAMS is a model of the
+  DANT_1 arena (LEVEL7O.MTO) with no init script (no `DANT_1$BEAMS` key in the CMI
+  object scripts — verified in the binary), so the spawn runs no nested script.
+  Asserts type/arena/position (refpoint + position), spawn_position, yaw 0,
+  instance sequencing (-1 takes next id twice), the out-of-range fallback to the
+  position, and the clean `unimplemented()` bucket.
+- Review-28 MINOR closed: 242 now requires `block.size() >= 13` before the draw loop
+  (decoder-unreachable short blocks clear the mask instead of UB — commented as a
+  deliberate deviation). NIT closed: the 242 test asserts all four points and
+  colour/point preservation on the zero path.
+- Verified: `vm_tests` 13/13; `make -C tests/scripts` → "All cases match the oracle."
+  (goldens unchanged — 156 never fires in the corpus); `bash tools/check.sh` →
+  ALL GATES PASSED (smdh SKIP, no .cia); `make -C mdk_3ds` → `mdk.3dsx` links.
+  Brace-matched recount: C# 238 / C++ 178 / remaining 61 (true dispatches 177).
+- Known pre-existing gap (out of scope, noted): C++ `spawn()` omits the C#'s
+  `Stats.CountEnemy` call — affects all spawn opcodes equally, goldens don't observe it.
+- Next: one opcode family per batch through the harness; 132/136 still need the
+  Effects slice; 85 waits on the FrameBlend `rotation()` slice.

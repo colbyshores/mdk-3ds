@@ -1,8 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 28: opcodes 226 `jump_to` + 242
-`set_2d0_block` port through `vm_tests` — coverage C++ 177/238, remaining
-62, all three gates green, goldens unchanged. 85 stays out: SetRolling
+Last updated: 2026-10-26 (iteration 29: opcode 156 `spawn_at_point` (+ review-28 242 hardening)
+`set_2d0_block` port through `vm_tests` — coverage C++ 178/238, remaining
+61, all three gates green, goldens unchanged. 85 stays out: SetRolling
 snapshots Rotation, deferred to FrameBlend. Corpus still byte-for-byte to
 t30000, table AND script.)
 This file is the persistent handoff for every fresh context window. Keep it under
@@ -40,13 +40,14 @@ them. Do not spend an iteration on docs/tests alone.
    pivot/speed/gain/yaw/length + FlagSwinging, 242 sets the rope lines
    (colour 1, mask 0xFF, four points) or clears the mask on count zero;
    two `vm_tests` tests pin `ScriptVm.cs:1139-1166` (no C# counterpart
-   exists to twin — noted in the test header). Coverage: C++ 177/238,
-   remaining 62 (recount-verified; the 177 carries the nested `case 0:`
-   inside opcode 249, true dispatches 176). 85 (`set_rolling`) stays out:
+   exists to twin — noted in the test header). Coverage: C++ 178/238,
+   remaining 61 (recount-verified; the 178 carries the nested `case 0:`
+   inside opcode 249, true dispatches 177). 85 (`set_rolling`) stays out:
    `SetRolling` snapshots the full `Rotation` matrix and `rotation()` is
    deferred to the FrameBlend slice.
+   156 (`spawn_at_point`) landed with the spawn slice: arena-model spawn at a reference point, pinned against BEAMS/DANT_1 (no init script, no nested run).
    132/136 stay with the Effects slice (RNG + effect list + dump line).
-   The other 62 never fire in levels 3-8 to t30000 — they land through the
+   The other 61 never fire in levels 3-8 to t30000 — they land through the
    harness now, one family per batch.
    P5 golden-frame tests stay the parallel track.
 
