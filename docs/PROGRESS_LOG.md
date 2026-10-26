@@ -574,3 +574,42 @@
   `make -C mdk_3ds` → `mdk.3dsx`.
 - Next: one opcode family per batch through the harness; 132/136 still need the
   Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+## Iteration 33 — review-32 hardening batch (180/238, remaining 59, gates green)
+
+- Review-32 (VERDICT: INCOMPLETE, 1 MAJOR + 3 MINOR + 1 inherited, no code
+  bug in the 206 port) addressed as one hardening batch (no new opcode):
+- MAJOR (float-accumulation pin gap): `testSpawnAlongPathSpawnsEveryStep`
+  gains a second run with non-exact step 0.1f to end 10 — 100 spawns, each
+  position bit-compared against `pathPosition` at the accumulated time, plus
+  a `differ > 0` guard proving the case discriminates accumulation from
+  `i*step`. Independent oracle corroboration: a throwaway .NET 10 program
+  (outside the repo, `/tmp/kilo/acc`, SDK at `/tmp/kilo/dotnet10`) running
+  the exact C# loop (`for (var time = 0f; time < end; time += step)`,
+  ScriptVm.cs:445) prints `count=100 last=9.900002 firstDiff=7
+  acc7=3F333334 mul7=3F333333` — the count and the first-divergence hex
+  pinned in the test comment come from the oracle toolchain, not the port.
+- MINOR (absolute positions): the exact-step case now asserts literal
+  `x/y/z == 0` for t=0 and `z == 6.0f` for t=5, so a Hermite regression
+  moving both sides together fails here instead of passing silently.
+- MINOR (T2 pin grammar): NOT added as a pin — proven by direct test that
+  `EXEMPT_RE` in `tools/runner/gates_vfp.py` accepts R-rules only, so a
+  `/* @vfp-exempt T2 ... */` pin would trip a MUST "invalid @vfp-exempt
+  grammar" finding and break `tools/check.sh`. The 206 loop keeps a prose
+  rationale that names T2 and records the owner-grammar decision, consistent
+  with the review-31 precedent. The gate author (owner) owns the grammar
+  extension; the port does not change gates unilaterally.
+- MINOR (doc): `docs/OPCODE_COVERAGE.md` movement/AI grouping no longer lists
+  206 as remaining (it landed in iter 32; the remaining-59 set already
+  excluded it).
+- Inherited (degenerate path): recorded in CONTINUATION open item 3 —
+  `pathKeyCount`/`pathKeyFrame` return 0 on invalid paths where the C#
+  throws (span reads); 206 inherits the divergence, unreachable in shipped
+  scripts (206 never fires in the corpus).
+- Verified: `vm_tests` 15/15 PASS ("All VM unit tests match the oracle.",
+  incl. hardened 206 test); `make -C tests/scripts` exit 0, 376 PASS lines,
+  0 FAIL, "All cases match the oracle." (goldens unchanged); `bash
+  tools/check.sh` → ALL GATES PASSED (smdh SKIP, no .cia); `make -C mdk_3ds`
+  → `mdk.3dsx` (118 MB, rebuilt 2026-10-26).
+- Next: one opcode family per batch through the harness; 132/136 still need
+  the Effects slice; 85 waits on the FrameBlend `rotation()` slice.

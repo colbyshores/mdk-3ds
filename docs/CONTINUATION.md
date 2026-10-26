@@ -1,11 +1,11 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 32: review-31 81-wording fixed —
-field-only port noted, writers deferred to the combat slices with
-re-verification required; opcode 206 spawn_along_path ported via vm_tests
-on L7 path 53729; coverage C++ 180/238, remaining 59, all three gates
-green. 85 stays out: SetRolling snapshots Rotation, deferred to
-FrameBlend. Corpus still byte-for-byte to t30000, table AND script.)
+Last updated: 2026-10-26 (iteration 33: review-32 closed — 206 test
+now pins 0.1f accumulation (100 spawns, .NET-corroborated) + absolute
+z=0/z=6; T2 pin refused by gate grammar (proven), prose rationale kept;
+OPCODE_COVERAGE 206 grouping fixed; degenerate-path divergence recorded.
+No new opcode (hardening batch): coverage stays C++ 180/238, remaining 59,
+all three gates green. Corpus still byte-for-byte to t30000.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -37,28 +37,19 @@ them. Do not spend an iteration on docs/tests alone.
    32 reuses `partsMask` with hide=false, 129 validates the gore mode and
    locks+hides via `findPart`; three `vm_tests` tests pin them against a
    synthetic 3-part model (no C# counterpart exists to twin — header notes
-   this). **Rope-swing DONE (slice 3, iter 28)** — 226 sets the swing
-   pivot/speed/gain/yaw/length + FlagSwinging, 242 sets the rope lines
-   (colour 1, mask 0xFF, four points) or clears the mask on count zero;
-   two `vm_tests` tests pin `ScriptVm.cs:1139-1166` (no C# counterpart
-   exists to twin — noted in the test header). Coverage: C++ 178/238,
-   remaining 61 (recount-verified; the 178 carries the nested `case 0:`
-   inside opcode 249, true dispatches 177). 85 (`set_rolling`) stays out:
-   `SetRolling` snapshots the full `Rotation` matrix and `rotation()` is
-   deferred to the FrameBlend slice.
-   156 (`spawn_at_point`) landed with the spawn slice: arena-model spawn at a reference point, pinned against BEAMS/DANT_1 (no init script, no nested run).
-   **81 (`push_hit_dir`) DONE (slice 4, iter 31)** — Value(o[1]) x Dt-in-mode-1
-   along hit_direction, x/y only; `vm_tests` pins literal, Dt-scaled, and
-   variable speeds (no C# counterpart to twin).
-   **206 (`spawn_along_path`) DONE (slice 5, iter 32)** — flagged spawn per
-   step over the ported path API; `vm_tests` pins count/positions/flags on
-   L7 path 53729 (no C# counterpart to twin). Coverage: C++ 180/238,
-   remaining 59. Review-31's 81 wording gap closed in the same batch
-   (field-only port noted, writers deferred to the combat slices).
+   this). **Rope-swing DONE (slice 3, iter 28)** — 226 + 242, pinned
+   against `ScriptVm.cs:1139-1166`. **Spawn slice** — 156 (arena-model
+   spawn at a reference point) and **206 DONE (slice 5, iter 32)** —
+   flagged spawn per step over the path API, pinned on L7 path 53729
+   (iter 33 hardened it: 0.1f accumulation + absolute positions).
+   **81 (`push_hit_dir`) DONE (slice 4, iter 31)** — field-only port,
+   writers deferred to the combat slices. 85 (`set_rolling`) stays out:
+   `SetRolling` snapshots the full `Rotation` matrix; `rotation()` is
+   deferred to the FrameBlend slice. Coverage: C++ 180/238, remaining 59
+   (true dispatches 179; the 180th label is the nested `case 0:` in 249).
    132/136 stay with the Effects slice (RNG + effect list + dump line).
-   The other 60 never fire in levels 3-8 to t30000 — they land through the
-   harness now, one family per batch.
-   P5 golden-frame tests stay the parallel track.
+   The rest never fire in levels 3-8 to t30000 — they land through the
+   harness now, one family per batch. P5 golden-frame tests stay parallel.
 
 Deferred: alarm (move 15 fires 0x), 240/241/244 (Kurt state exists, none
 fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
@@ -66,20 +57,19 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 32 (code commit `8bf29c5` + this state commit). Verified on the
-  final tree:
-  - `make -C tests/scripts` → `vm_tests` 15/15 PASS (incl. new 206 test) then
-    `All cases match the oracle.` (goldens unchanged — 206 never fires in
-    the corpus)
+- Iteration 33 (code commit with 206 test hardening + this state commit).
+  Verified on the final tree:
+  - `make -C tests/scripts` → `vm_tests` 15/15 PASS (206 test now pins
+    absolute z=0/z=6 and the 0.1f accumulation case) then `All cases match
+    the oracle.` (goldens unchanged — no oracle behavior changed)
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
   - `make -C mdk_3ds` → links `mdk.elf`, builds `mdk.3dsx`
-  - Coverage: C++ 180/238, remaining 59 (206 ported; review-31 81 wording
-    fixed by the same batch)
+  - Coverage: C++ 180/238, remaining 59 (hardening batch, no new opcode)
 - Earlier slices (details in `docs/PROGRESS_LOG.md`): iters 23/24 (harness +
   opcode 13, parts pair), iters 28/29/30 (rope-swing, spawn 156, review-29
-  hardening) and iter 31 (opcode 81, review-30 hardening) — all gates green
-  at each commit.
+  hardening), iter 31 (opcode 81, review-30) and iter 32 (opcode 206,
+  review-31) — all gates green at each commit.
 - Corpus frontier: every level 3-8 matches the oracle byte for byte (table AND
   script) to t30000. The tick axis is spent; unfired opcodes now land through
   `vm_tests`, one family per batch.
@@ -94,16 +84,14 @@ fires — do not blind-port), 248 `push_kurt` (honest no-op). HW timing open.
   carries the nested `case 0:` inside opcode 249 — true dispatches 174).
 
 
-## Testability map (why the remaining opcode work is gated, not merely deferred)
+## Testability map
 
-The goldens compare a FIXED field set (`tick1.cpp` dump fns): table + script
-state incl. AUDIO/KURT/mixer lines. They do **not** observe: velocity,
-`alarm_ticks`, `Items.Bomb`/`Decoy`, debris. Porting an opcode without a test
-is forbidden. Two templates: dump-field (port state, dump, regenerate) and
-harness (`vm_tests` twins/pins the oracle — no golden change).
-
-`alarm_ticks` is a dead end (move=15 fires 0 times). `Items.Bomb`/`Decoy` land
-with the Items slice; debris state landed with the shatter slice.
+Goldens compare a FIXED field set (table + script incl. AUDIO/KURT/mixer);
+they do **not** observe velocity, `alarm_ticks`, `Items.Bomb`/`Decoy`,
+debris. Porting an opcode without a test is forbidden. Two templates:
+dump-field (port state, dump, regenerate) and harness (`vm_tests`
+twins/pins the oracle — no golden change). `alarm_ticks` is a dead end
+(move=15 fires 0x); `Items.Bomb`/`Decoy` land with the Items slice.
 
 ## Open items (do not lose these)
 
@@ -117,7 +105,10 @@ with the Items slice; debris state landed with the shatter slice.
    unit tests beyond the goldens are still needed.
 3. **Known divergences**: the DTI record-layout question is CLOSED (raw-bit
    goldens). Remaining: incomplete decoy/`AlienTarget` targeting; opcode 207 —
-   C# `MathF.Sign` throws on NaN (C++ returns 0; exceptions banned, accepted).
+   C# `MathF.Sign` throws on NaN (C++ returns 0; exceptions banned, accepted);
+   degenerate-path guards (`pathKeyCount`/`pathKeyFrame` return 0 where C#
+   throws; inherited by 206 — unreachable in shipped scripts, 206 never fires
+   in the corpus).
 4. **Old 3DS hardware timing: UNMEASURED.** A devkitARM `.3dsx` is not
    hardware validation. Never claim an OG pass without a capture.
 5. **C3D depth state diverges from the oracle (review-8 finding, verified).**
