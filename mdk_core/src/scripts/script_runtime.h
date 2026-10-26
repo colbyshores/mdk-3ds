@@ -163,6 +163,10 @@ public:
     // Kurt's combat/inventory state (the Hurt/Damage half of Kurt.Combat.cs):
     // hurt_kurt (opcode 109) writes it, if_inventory (175) reads the slots.
     const Kurt& kurt() const { return kurt_; }
+    // The C# VM writes the same fields directly (Kurt and the screen,
+    // ScriptVm.cs:1580-1600: 215/240/244); the mutable overload is that seam,
+    // while reads and the mutators keep the const path above.
+    Kurt& kurt() { return kurt_; }
     // C# HurtKurt (ScriptRuntime.cs:2676, 0x46a498): riding the XD2 or the XE,
     // the ridden object takes the hits instead of Kurt; on foot or on the board,
     // Kurt does. Rides is a later slice — nothing mounts Kurt yet — so ridesRidden

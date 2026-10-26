@@ -76,6 +76,26 @@ float mathMin(float a, float b) {
     return a < b ? a : b;
 }
 
+// MathF.Round's single-argument form (MidpointRounding.ToEven): exact halves go
+// to the EVEN neighbour, where C roundf is halves-away-from-zero. Same
+// convention as script_runtime.cpp's roundToEven (the animation clock); this
+// one stays in float, so NaN and infinities round to themselves like the C#.
+// From 2^23 up every float is a whole number, so the C# returns them as-is.
+float mathfRound(float v) {
+    if (v != v || fabsf(v) >= 8388608.0f) {
+        return v;
+    }
+    const float f = floorf(v);
+    const float d = v - f;
+    if (d > 0.5f) {
+        return f + 1.0f;
+    }
+    if (d < 0.5f) {
+        return f;
+    }
+    return ((int32_t)f & 1) != 0 ? f + 1.0f : f;
+}
+
 const std::vector<ScriptValue>& listval(const ScriptValue& v) {
     return v.kind == ScriptValueKind::List ? v.items : kEmpty;
 }
@@ -1197,6 +1217,27 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             return branch(obj, ins, condition);
         }
+
+        // Kurt and the screen (ScriptVm.cs:1580-1600). All three write Kurt's
+        // combat state directly; the flash fades and the knock-down itself are
+        // Kurt movement, later slices.
+        case 215:  // screen_flash: raise the white flash to the rounded operand
+            runtime_.kurt().setWhiteFlash(
+                mathMax(runtime_.kurt().whiteFlash(), mathfRound(value(obj, op(ins, 0)))));
+            break;
+        case 240: {  // set_hurt_flash: the knock-down counter (1 means 5), unless invulnerable
+            const float kDefaultKnock = 5.0f;
+            if (runtime_.kurt().invulnerable() <= 0.0f) {
+                runtime_.kurt().setKnockDamage(ival(op(ins, 0)) == 1 ? kDefaultKnock
+                                                                     : fval(op(ins, 0)));
+            }
+            break;
+        }
+        case 244:  // set_global_573bd4: the invulnerability time, set or accumulated
+            runtime_.kurt().setInvulnerable(
+                ival(op(ins, 0)) == 0 ? fval(op(ins, 1))
+                                      : runtime_.kurt().invulnerable() + fval(op(ins, 1)));
+            break;
 
         // Kurt's knock-down state machine is Kurt movement, a later slice: nothing
         // in the corpus knocks him down, and no golden reads the knock-down state.

@@ -55,6 +55,9 @@ const int32_t kHeadShots = 217;
 const int32_t kIfPointSeesPlayer = 243;
 const int32_t kSet104 = 199;
 const int32_t kSet2c0 = 210;
+const int32_t kScreenFlash = 215;
+const int32_t kSetHurtFlash = 240;
+const int32_t kSetGlobal573bd4 = 244;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -974,6 +977,103 @@ void testUnidentifiedValueSlotsStoreTheirOperand(scripts::ScriptRuntime& runtime
     }
 }
 
+// Opcodes 215 (screen_flash), 240 (set_hurt_flash) and 244
+// (set_global_573bd4) have no C# ScriptVmTests counterpart, so this pins the
+// oracle directly (ScriptVm.cs:1584-1598): 215 raises Kurt's white flash to the
+// banker's-rounded Value operand; 240 writes his knock-down counter (a literal
+// 1 means the default 5) unless he is invulnerable; 244 sets or accumulates his
+// invulnerability time. None fires in levels 3-8, so no golden changes.
+void testKurtAndScreenWrites(scripts::ScriptRuntime& runtime) {
+    // 215: max of the old flash and MathF.Round(Value). From 0, 2.5 rounds to
+    // the even 2; 3.5 rounds to 4; a lower 1.5 rounds to 2 and does not lower.
+    {
+        runtime.kurt().setWhiteFlash(0.0f);
+        Code code;
+        code.u8(kScreenFlash).u8(kLiteral).f32(2.5f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kScreenFlash));
+        CHECK(runtime.kurt().whiteFlash() == 2.0f);
+    }
+    {
+        Code code;
+        code.u8(kScreenFlash).u8(kLiteral).f32(3.5f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(runtime.kurt().whiteFlash() == 4.0f);
+    }
+    {
+        Code code;
+        code.u8(kScreenFlash).u8(kLiteral).f32(1.5f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(runtime.kurt().whiteFlash() == 4.0f);
+    }
+    // The variable form resolves through the shared Value() helper.
+    {
+        Code code;
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(6.5f);
+        code.u8(kScreenFlash).u8(kOwn).u8(0);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(runtime.kurt().whiteFlash() == 6.0f);
+    }
+
+    // 240: without invulnerability, a literal 1 means the default 5 and any
+    // other byte is used as its float value; while invulnerable it is ignored.
+    {
+        runtime.kurt().setInvulnerable(0.0f);
+        Code code;
+        code.u8(kSetHurtFlash).u8(1);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kSetHurtFlash));
+        CHECK(runtime.kurt().knockDamage() == 5.0f);
+    }
+    {
+        Code code;
+        code.u8(kSetHurtFlash).u8(7);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(runtime.kurt().knockDamage() == 7.0f);
+    }
+    {
+        runtime.kurt().setInvulnerable(2.0f);
+        Code code;
+        code.u8(kSetHurtFlash).u8(9);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(runtime.kurt().knockDamage() == 7.0f);
+        runtime.kurt().setInvulnerable(0.0f);
+    }
+
+    // 244: a zero mode sets the time, a non-zero mode accumulates it.
+    {
+        Code code;
+        code.u8(kSetGlobal573bd4).u8(0).f32(3.5f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kSetGlobal573bd4));
+        CHECK(runtime.kurt().invulnerable() == 3.5f);
+    }
+    {
+        Code code;
+        code.u8(kSetGlobal573bd4).u8(1).f32(1.5f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(runtime.kurt().invulnerable() == 5.0f);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1050,6 +1150,8 @@ int main() {
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
     testUnidentifiedValueSlotsStoreTheirOperand(runtime);
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
+    testKurtAndScreenWrites(runtime);
+    printf("PASS KurtAndScreenWrites\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

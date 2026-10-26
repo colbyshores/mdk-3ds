@@ -57,7 +57,22 @@ public:
     float hurtFlash() const { return hurtFlash_; }
     float invulnerable() const { return invulnerable_; }
     float knockDamage() const { return knockDamage_; }
+    float whiteFlash() const { return whiteFlash_; }
     State state() const { return state_; }
+
+    // ---- The VM's Kurt-and-screen writes (ScriptVm.cs:1580-1600) ----
+    // screen_flash (opcode 215) raises the white flash; the nuke and the
+    // explosion flash write it too, but their slices are later (Kurt.Combat
+    // .cs:80). The per-tick fade (FadeFlashes, Kurt.Combat.cs:203) is Kurt
+    // movement — also later.
+    void setWhiteFlash(float value) { whiteFlash_ = value; }
+    // set_global_573bd4 (opcode 244): invulnerability time in seconds
+    // (Kurt.Combat.cs:82); hurt() reads it.
+    void setInvulnerable(float seconds) { invulnerable_ = seconds; }
+    // set_hurt_flash (opcode 240): the knock-down counter (Kurt.Combat.cs:84).
+    // hurt() clears it while invulnerable; the knock-down state machine that
+    // reads it is Kurt movement, a later slice.
+    void setKnockDamage(float value) { knockDamage_ = value; }
 
     // Inventory.Slots: filled by pickup collection (a later slice), read by
     // if_inventory (opcode 175).
@@ -74,6 +89,7 @@ private:
 
     int32_t health_ = kMaxHealth;
     float hurtFlash_ = 0.0f;
+    float whiteFlash_ = 0.0f;    // the white screen flash (0x573b68)
     float invulnerable_ = 0.0f;  // seconds (0x573bd4)
     float knockDamage_ = 0.0f;   // damage taken recently (0x573b20)
     State state_ = Still;
