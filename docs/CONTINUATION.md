@@ -1,12 +1,9 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-25 (iteration 17: the audio slice is ported —
-`mdk_core/src/audio/` (SoundBank, SoundMixer voice table, SoundDevice control
-plane), opcodes 89 `play_sound`, 107 `set_loop_sound`, 233 `if_sound_playing`,
-249 `if_own_sound`, and the goldens now pin an `AUDIO` voice-table line plus each
-object's tracked/loop voice (`tsnd/tvoice/tplay/lsnd/lvoice/lplay`). The corpus
-still matches the oracle byte for byte to t30000 on every level, table AND
-script.)
+Last updated: 2026-10-26 (iteration 23: the synthetic opcode harness lands —
+`tests/scripts/vm_tests` twins `ScriptVmTests.cs` 1:1 and runs in the scripts
+gate; opcode 13 `if_cheat_key` ports through it. Coverage C++ 173/238. Corpus
+still byte-for-byte to t30000, table AND script.)
 This file is the persistent handoff for every fresh context window. Keep it under
 ~150 lines: current state + priorities only; append batch narratives to
 docs/PROGRESS_LOG.md (archived, not loaded by default).
@@ -18,44 +15,26 @@ The owner's directive: churn through the C#→C++ conversion. Port subsystems
 in this order; extend goldens in the same iteration as the code that unlocks
 them. Do not spend an iteration on docs/tests alone.
 
-1. **DONE — wire the mixer's remaining call-sites.** The motion frame-sound
-   trigger (`ObjectMotion.cs:133`) now calls `playSound` before clearing
-   `frame_sound`, and `updateDoor` plays `door_sounds[0..3]` at the same
-   transitions as `ObjectBehaviors.cs:90-115` (empty/`"NONE"` names skipped).
-   Verified 2026-10-25: `make -C tests/scripts` → "All cases match the
-   oracle"; `bash tools/check.sh` → ALL GATES PASSED; `make -C mdk_3ds`
-   links. The corpus did not change, so no golden regeneration was needed.
-   Adversarial review (2026-10-25) found no semantic divergence from the
-   C#; its MAJOR — that the goldens cannot observe either call — is
-   rebutted with evidence: the corpus matched the oracle byte-for-byte
-   both BEFORE this wiring (C++ played neither sound) and AFTER it, so
-   neither call produces a voice in levels 3–8 to t30000. The wiring is
-   verified by direct semantic diff against `ObjectMotion.cs:133` and
-   `ObjectBehaviors.cs:90-115,418-424` (same indices, same `NONE` rule,
-   same call-then-clear order), not by the corpus.
-2. **DONE — `Debris.Shatter` + opcodes 137/138/139.** `mdk_core/src/scripts/
-   debris.{h,cpp}` ports `Debris.cs` (Shatter/Spark/Update, pooled pieces);
-   the runtime carries `ShatterPoint`/`ShatterDirection` and wires the Ray
-   and GroupFacets delegates. The script dump has a `DEBRIS` line on both
-   sides; the oracle driver now registers its triangle groups as the
-   viewer's `LevelView` does (it never did, so Shatter was a no-op in every
-   golden), and all 340 goldens were regenerated from the oracle. Verified
-   2026-10-25: `make -C tests/scripts` → "All cases match the oracle" (L5's
-   138 at t482 produces 134 pieces, pinned by the DEBRIS line);
-   `bash tools/check.sh` → ALL GATES PASSED; `make -C mdk_3ds` links;
-   Linux `Built target mdk`. Coverage: C++ 171/238, remaining 68.
-   BreakUp/Trail/Updraft stay with their owning slices (see `debris.h`).
+1. **DONE — mixer call-sites** (`ObjectMotion.cs:133`, `ObjectBehaviors.cs:90-115`).
+   Verified 2026-10-25, all gates green; unobservable in the corpus (byte-match
+   before AND after), verified by semantic diff, not the corpus. Details in
+   `docs/PROGRESS_LOG.md`.
+2. **DONE — `Debris.Shatter` + opcodes 137/138/139** (`debris.{h,cpp}`, DEBRIS
+   golden line, oracle group registration, all goldens regenerated). Verified
+   2026-10-25, all gates green. BreakUp/Trail/Updraft stay with their owning
+   slices (see `debris.h`). Details in `docs/PROGRESS_LOG.md`.
 3. Continue the remaining opcodes subsystem by subsystem, same rule.
    **Opcode 208 (`if_part_hit`) DONE** — the reachability probe
-   (`tests/scripts/tick1 probe 30000`, a new permanent harness mode) showed
-   it was the only remaining opcode firing anywhere in levels 3–8
-   (L5 ×9134); it is ported and the probe is now clean on every level.
-   Coverage: C++ 172/238, remaining 67. The other 67 do not fire in this
-   corpus (133 `AnimatedTextures` and the Effects spawns were probed to
-   t30000 and never trigger), so per the no-blind-port rule they wait for
-   a synthetic per-opcode test harness (open item 2) or a corpus that
-   exercises them. Next verifiable work is therefore P5 (golden-frame
-   tests for the Vulkan renderer) or that synthetic harness.
+   (`tests/scripts/tick1 probe 30000`) showed it the only firing unported
+   opcode (L5 ×9134); ported, probe clean since. **Synthetic harness DONE
+   (slice 1)** — `tests/scripts/vm_tests` twins `ScriptVmTests.cs` (7 tests,
+   11 opcodes: 1/12/13/64-68/71/252/253) and runs inside
+   `make -C tests/scripts`; **opcode 13 (`if_cheat_key`) DONE** through it
+   (explicit false branch; the twin pins the value AND the clean
+   `unimplemented()` bucket). Coverage: C++ 173/238, remaining 66. The other
+   66 never fire in levels 3-8 to t30000 — they land through the harness now,
+   one family per batch (parts bucket 32/129/132/136 is the natural next).
+   P5 golden-frame tests stay the parallel track.
 
 Deferred with evidence: alarm (move_command 15 never fires in the corpus —
 verified 0 occurrences), 240/241/244 (Kurt's state exists in `game/kurt.h` but
@@ -65,35 +44,32 @@ none fires in levels 3-8 — do not blind-port), 248 `push_kurt` (honest no-op:
 
 ## Current tree state (VERIFIED)
 
-- The audio slice is implemented and committed (032f999). Verified on the final
-  tree:
-  - `make -C tests/scripts` → `All cases match the oracle.` — 341 PASS, 0 SKIP,
-    including the 170 regenerated script goldens with the `AUDIO` line and the
-    per-object audio fields. Six goldens (L3/L5/L6/L8/L4 spread) were re-diffed
-    against a freshly run oracle binary and match byte for byte.
+- Iteration 23 (commits `01af4e9` code, docs commit to follow in the same
+  batch). Verified on the final tree:
+  - `make -C tests/scripts` → `All VM unit tests match the oracle.` (7/7) then
+    `All cases match the oracle.` (goldens unchanged — 13 never fires in the
+    corpus, as the probe says).
   - `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh` SKIPs: no
     built `.cia`)
   - `make -C mdk_3ds` (with `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM`)
     → links `mdk.elf`, builds `mdk.3dsx`
-  - `cmake --build build-linux --target mdk` → `Built target mdk` — both targets
-    build the changed core.
+  - The C# `ScriptVmTests` suite could NOT run here: this sandbox denies
+    AF_UNIX sockets and .NET's build/test servers require them (probed). The
+    in-repo C# file is the spec; the twin was checked against it line by line,
+    and 6/7 twin tests passed on the first run before the 13 port (only the
+    new `!saw13` assertion failed), which corroborates the program bytes.
 - Corpus frontier: every level 3-8 matches the oracle byte for byte (table AND
-  script) to t30000. The tick axis is spent; what is left is subsystem depth.
+  script) to t30000. The tick axis is spent; unfired opcodes now land through
+  `vm_tests`, one family per batch.
 - The oracle driver (`/tmp/kilo/oracle/Driver/Program.cs`, outside the repo; run
   with `DOTNET_ROOT=/tmp/kilo/dotnet10`, `MDK_DATA_DIR=<repo>/MDK`,
-  `bin/Debug/net10.0/mdkoracle L T 1 script`) now emits the `AUDIO voices=N
-  list=id:NAME,...` line (via reflection on `_voices`) and the per-object audio
-  fields; `tick1.cpp` `dumpScript` mirrors both. Regenerate script goldens with:
-  for each `{L, T}` in the `cases[]` table,
+  `bin/Debug/net10.0/mdkoracle L T 1 script`) emits the `AUDIO` line and the
+  per-object audio fields; `tick1.cpp` `dumpScript` mirrors both. Regenerate
+  script goldens with: for each `{L, T}` in the `cases[]` table,
   `mdkoracle L T 1 script > golden/L{L}_t{T}_script.txt`.
-- The headless harness never calls `SoundMixer::update` (neither does the C#
-  driver), so in the corpus a voice ends only when stopped — L3's voice table
-  fills to the 64 cap with RICO1 on both sides. The per-frame 3D update and the
-  device's frame-consumption lifecycle are ported but only the headless half is
-  golden-verified; the lifecycle lands with the audio backend's own checks.
-- `docs/OPCODE_COVERAGE.md` recounted from the brace-matched sets: C# 238 / C++
-  168 / remaining 71 (the doc had also been stale on 115, ported at iter 11).
-  Reachability (to t600): of the remaining set only **138** fires in levels 3-8.
+- `docs/OPCODE_COVERAGE.md` recounted from the brace-matched sets: C# 238 /
+  C++ 173 / remaining 66 (re-run 2026-10-26; also fixed the section's stale
+  171/68 and the 11-vs-8 partials slip).
 
 
 ## Testability map (why the remaining opcode work is gated, not merely deferred)
@@ -105,9 +81,10 @@ level_timers, global vars, target_position/target_yaw/alien_target (iter 7), Kur
 combat/inventory state (iter 14), and the mixer voice table + tracked/loop voices
 (iter 17). They do **not** observe: velocity, `alarm_ticks`, `Items.Bomb`/`Decoy`,
 or debris. The project rule (OPCODE_COVERAGE.md) forbids porting an opcode without
-a test that exercises it, so each remaining opcode lands WITH the dump field that
-makes it observable — the AUDIO/KURT lines are the template: port the subsystem
-state, dump it, regenerate, implement the opcode, verify.
+a test that exercises it. Two templates: the dump-field route (port the
+subsystem state, dump it, regenerate — the AUDIO/KURT lines) and the harness
+route (`tests/scripts/vm_tests` twins the C# unit test — opcode 13's
+template). The harness route needs no golden change.
 
 `alarm_ticks` is a dead end in this corpus (move=15 setter fires 0 times).
 `Items.Bomb`/`Decoy` land with the Items slice. Debris state lands with the

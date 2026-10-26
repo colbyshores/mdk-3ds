@@ -4,7 +4,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ owns **172**, leaving **67** unimplemented. The
+  owns **238** cases, the C++ owns **173**, leaving **66** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -42,9 +42,12 @@ Per-opcode tests are still needed for edge cases beyond the end-to-end golden
 suite; the complete-vs-partial classification of the owned cases is now done
 (see "Owned-case classification" at the end of this file).
 
-## Remaining 67 (verified set)
+## Remaining 66 (verified set)
 
-13, 27, 28, 29, 32, 49, 74, 77, 81, 85, 112, 114, 121, 128, 129,
+13 left this list with the synthetic-harness batch (port 13 is an explicit
+false branch, `ScriptVmTests.UnimplementedConditionsAreFalse` pins it, and the
+C++ `unimplemented()` bucket stays clean): 27, 28, 29, 32, 49, 74, 77, 81,
+85, 112, 114, 121, 128, 129,
 130, 131, 132, 133, 135, 136, 142, 143, 156, 158, 159, 167, 170,
 171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 199, 202,
 203, 204, 206, 209, 210, 213, 214, 215, 217, 219, 220, 221, 223, 224,
@@ -53,9 +56,12 @@ suite; the complete-vs-partial classification of the owned cases is now done
 **Reachability, re-probed to t30000 (2026-10-25, `tick1 probe 30000`):**
 after the Debris slice the only remaining opcode that fires anywhere in
 levels 3–8 is **208** (`if_part_hit`, L5 ×9134), now ported; the probe is
-clean on every level. The other 67 do not fire in this corpus at all —
+clean on every level. The other 66 do not fire in this corpus at all —
 they stay documented no-ops until a corpus or a synthetic test exercises
-them (the rule at the end of this file). 208's neighbours in the parts
+them (the rule at the end of this file). The synthetic harness
+(`tests/scripts/vm_tests`, twin of `tests/Mdk.Game.Tests/ScriptVmTests.cs`)
+is the second route in: 13 came through it without ever firing in the corpus.
+208's neighbours in the parts
 bucket (32 `clear_parts_mask`, 129/132/136 and friends) are the natural
 next slice when a test can exercise them.
 
@@ -88,7 +94,9 @@ By blocking subsystem (carried grouping, corrected for this batch):
   and the setters in movement command 15 (ObjectMotion.cs:385) and Rides
   (Rides.cs:219). None of that exists in the C++ yet, and 27 does not fire in
   levels 3-8 to t600, so there is no golden to exercise it — do not blind-port it.
-- **Camera/cutscene/debug (no camera/cutscene port):** 13, 77, 131, 203, 243
+- **Camera/cutscene/debug (no camera/cutscene port):** 77, 131, 203, 243
+  (13 `if_cheat_key` left this group: the C# is an explicit false branch, so
+  no camera/cheat subsystem is needed — ported with the harness twin.)
 - **Not identified in the reference (no safe port exists):** 199, 210, 239
 - **Needs its subsystem or data the tree does not have (deferred with cause):**
   object attach 74, sky state 202, waypoint tables 221, partner links 213/214,
@@ -103,9 +111,10 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. This yields C# **238**, C++ **171**, remaining **68** (the
-C++ owns no case the C# lacks). The same extraction is what produced the counts
-above, so the owned set here is the same 172, not a re-count from memory.
+and compare as sets. This yields C# **238**, C++ **173**, remaining **66**
+(the C++ owns no case the C# lacks; re-run 2026-10-26 for the 13 batch, which
+also corrected this section's stale 171/68). The same extraction is what
+produced the counts above.
 
 Two axes, kept separate:
 
@@ -117,9 +126,9 @@ Two axes, kept separate:
 - **Test coverage** — every owned case is exercised only by the end-to-end
   (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
   object table and script state against the oracle byte-for-byte through t600 on
-   levels 3-8. There are **no per-opcode unit tests**, so in that sense all 172
-  are insufficiently-tested; the goldens give end-to-end coverage for whatever
-  actually fires in those levels/ticks.
+   levels 3-8. Per-opcode unit tests now exist for the 11 opcodes the harness
+  twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253); the other 162
+  owned cases are golden-covered only where they fire.
 
 **Stubs: 0.** No owned case is a fake implementation. The only no-op case (248
 `push_kurt`) is a documented honest no-op because its subsystem (Kurt's
@@ -143,8 +152,8 @@ play, so both are complete.)**
 | 166 | if_bomb_visible | same `itemsBomb` gap → always false |
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
-**Complete — effect realized with the subsystems present (164 cases):** every
-owned case not in the partial table above (172 − 8 = 164). These are the pure
+**Complete — effect realized with the subsystems present (165 cases):** every
+owned case not in the partial table above (173 − 8 = 165). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases,
 each exercised by the byte-for-byte goldens through t600 on levels 3-8.
@@ -160,7 +169,7 @@ path (2, 20, 21, 33, 91, 102, 124, 164); animation (3, 17, 19, 58, 59, 92, 118,
 218, 222, 230, 232, 236, 237, 238, 245, 250, 251, 252, 253); control flow (1, 4,
 9, 12, 64, 94, 95, 125, 183); group state (98, 99, 162, 163, 168, 194); spawn
 (113, 149, 150, 152, 153). The authoritative complete set is the owned set minus
-the 11 partial cases, not this illustrative grouping.
+the 8 partial cases, not this illustrative grouping.
 
 Note on 251 (`set_target_mode`): its own effect (set `target_mode`, set/clear
 the alien target) is realized, so it is classified complete; the known

@@ -381,3 +381,36 @@
   was banked inside the preceding audio commit by a staging overlap;
   the tree at HEAD is consistent, that one intermediate commit is not
   bisect-clean on its own.
+
+## Synthetic opcode harness + if_cheat_key (2026-10-26)
+
+- The corpus is spent for opcodes (nothing unported fires in levels 3-8 to
+  t30000), so the second route in is a synthetic harness:
+  `tests/scripts/vm_tests.cpp` is a 1:1 C++ twin of
+  `tests/Mdk.Game.Tests/ScriptVmTests.cs` — same `Code` builder bytes (gap,
+  FileBase-4 targets), same level-7 runtime shape, same 7 programs and
+  assertions — wired as a second binary in `tests/scripts/Makefile` that runs
+  before the goldens in `make -C tests/scripts`. Both binaries link the same
+  core objects (shared `COMMON_SOURCES` list).
+- Opcode 13 (`if_cheat_key`) ports through it: an explicit
+  `return branch(obj, ins, false)` mirroring `ScriptVm.cs:1709`, instead of
+  falling into `noteUnimplemented`. The twin pins both the value (goto not
+  taken, `variables[0] == 1`) and the clean `unimplemented()` bucket (the C#
+  owns 13 explicitly, so it never touches its `Unimplemented` dict either).
+- Authentic failure observed: pre-port, 6/7 twin tests passed and only the new
+  `!saw13` assertion failed; post-port all 7 pass
+  ("All VM unit tests match the oracle."). Goldens unchanged, as predicted
+  (13 never fires in the corpus).
+- Verified: `make -C tests/scripts` → twin 7/7 + "All cases match the oracle.";
+  `bash tools/check.sh` → ALL GATES PASSED (smdh SKIP, no .cia);
+  `make -C mdk_3ds` (devkitARM env) → links `mdk.elf`, builds `mdk.3dsx`.
+- Coverage: brace-match recount → C# 238 / C++ 173 / remaining 66; fixed the
+  doc's stale 171/68 classification numbers and the 11-vs-8 partials slip.
+- Gap (environmental, not code): the C# `ScriptVmTests` suite could not run in
+  this sandbox — AF_UNIX sockets are denied (`socket()` → EPERM, probed) and
+  .NET's MSBuild/test servers require them; no prebuilt test dll exists. The
+  twin was verified against the in-repo C# file line by line instead, and the
+  6/7 first-run pass corroborates the program bytes. Re-run the C# suite
+  outside the sandbox when convenient.
+- Next: unfired opcodes land through the harness, one family per batch — the
+  parts bucket (32 `clear_parts_mask`, 129/132/136) is the natural next slice.
