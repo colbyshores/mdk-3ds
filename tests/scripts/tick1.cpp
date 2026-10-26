@@ -180,6 +180,24 @@ std::string dumpScript(int level, int ticks, scripts::ScriptRuntime& runtime) {
         out += mixer.voices()[v].name;
     }
     out += "\n";
+    // The debris pieces in flight: shattered groups and sparks (Debris.Pieces).
+    {
+        const scripts::Debris& debris = runtime.debris();
+        const std::vector<scripts::Debris::Piece*>& pieces = debris.pieces();
+        snprintf(line, sizeof(line), "DEBRIS pieces=%d list=", (int)pieces.size());
+        out += line;
+        for (size_t pi = 0; pi < pieces.size(); pi++) {
+            const scripts::Debris::Piece* p = pieces[pi];
+            if (pi) {
+                out += ",";
+            }
+            snprintf(line, sizeof(line), "%s@%.4f,%.4f,%.4fv%.4f,%.4f,%.4ft%d", p->arena.c_str(),
+                     p->center.x, p->center.y, p->center.z, p->velocity.x, p->velocity.y,
+                     p->velocity.z, (int)p->ticks);
+            out += line;
+        }
+        out += "\n";
+    }
     int index = 0;
     for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
          it != runtime.objects().end(); ++it, ++index) {

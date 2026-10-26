@@ -359,3 +359,25 @@
   now drives `muse exec` (builder `muse-spark-1.3`, reviewer
   `muse-wonder-1.0` with `--disable-write`), prompts live in
   `ralph/builder.md` + `ralph/validator.md`, and `.kilo/` is removed.
+
+## Debris slice: opcodes 137/138/139 (2026-10-25)
+
+- `mdk_core/src/scripts/debris.{h,cpp}`: 1:1 port of `Debris.cs`
+  (Shatter/Spark/Update, 600-piece pool, seeded-RNG call order, banker's
+  rounding for `MathF.Round`, .NET's double-derived degrees→radians
+  factor — the float spelling was 1 ULP off in ~46% of draws, proven by
+  the adversarial review). Runtime: `ShatterPoint`/`ShatterDirection`,
+  Ray/GroupFacets delegates wired; Trail/Updraft wait for Effects/Fans.
+- Oracle harness fix: the driver never registered its `TriangleGroups`
+  (only the viewer's `LevelView` calls `Add`), so Shatter was a no-op in
+  every golden. It now registers all arenas; L5's 138 (t482) yields 134
+  pieces. All 340 goldens regenerated from the oracle; the script dump
+  gained a `DEBRIS` line on both sides.
+- Verified: tests/scripts "All cases match the oracle", check.sh ALL
+  GATES PASSED (one R6 pin for spawn-time spin trig), mdk_3ds links,
+  Linux builds. Coverage 171/238, remaining 68. Adversarial review: no
+  BLOCKER/MAJOR; the 1-ULP MINOR above was fixed.
+- Note: the runtime half of this slice (constructor/rayIn/groupFacets)
+  was banked inside the preceding audio commit by a staging overlap;
+  the tree at HEAD is consistent, that one intermediate commit is not
+  bisect-clean on its own.

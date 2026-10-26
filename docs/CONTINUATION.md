@@ -33,11 +33,21 @@ them. Do not spend an iteration on docs/tests alone.
    verified by direct semantic diff against `ObjectMotion.cs:133` and
    `ObjectBehaviors.cs:90-115,418-424` (same indices, same `NONE` rule,
    same call-then-clear order), not by the corpus.
-2. **`Debris.Shatter` for opcode 138 (fires in L5 — the last reachable gap)** —
-   C# `src/Mdk.Game/Scripts/Debris.cs` + the `ShatterPoint`/`ShatterDirection`
-   runtime state (ScriptVm.cs:1054). Same rule: port the subsystem, dump what
-   makes it observable, implement 138, regenerate.
-3. Continue the remaining 71 opcodes subsystem by subsystem, same rule.
+2. **DONE — `Debris.Shatter` + opcodes 137/138/139.** `mdk_core/src/scripts/
+   debris.{h,cpp}` ports `Debris.cs` (Shatter/Spark/Update, pooled pieces);
+   the runtime carries `ShatterPoint`/`ShatterDirection` and wires the Ray
+   and GroupFacets delegates. The script dump has a `DEBRIS` line on both
+   sides; the oracle driver now registers its triangle groups as the
+   viewer's `LevelView` does (it never did, so Shatter was a no-op in every
+   golden), and all 340 goldens were regenerated from the oracle. Verified
+   2026-10-25: `make -C tests/scripts` → "All cases match the oracle" (L5's
+   138 at t482 produces 134 pieces, pinned by the DEBRIS line);
+   `bash tools/check.sh` → ALL GATES PASSED; `make -C mdk_3ds` links;
+   Linux `Built target mdk`. Coverage: C++ 171/238, remaining 68.
+   BreakUp/Trail/Updraft stay with their owning slices (see `debris.h`).
+3. Continue the remaining 68 opcodes subsystem by subsystem, same rule.
+   Next scoped slice: opcode 133 (`AnimatedTextures`, 58 lines) with a
+   `Frames` dump line; then the Effects bucket (128/129/132/136).
 
 Deferred with evidence: alarm (move_command 15 never fires in the corpus —
 verified 0 occurrences), 240/241/244 (Kurt's state exists in `game/kurt.h` but

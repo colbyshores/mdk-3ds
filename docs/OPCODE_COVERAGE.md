@@ -4,7 +4,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ owns **168**, leaving **71** unimplemented. The
+  owns **238** cases, the C++ owns **171**, leaving **68** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -12,9 +12,21 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 - The reachability probe (C++ `unimplemented()` after running each level to
   t600) was rerun after this batch: of the remaining set, only **138** (L5)
   fires in levels 3-8 — 109 (L3, L5), 175 (L6) and 249 (L5) are now ported.
-  138's stateful meaning remains unported; the harness dumps do not observe
-  its effects. It is a real gap, not a confirmed harmless no-op. (99 and 168,
-  which fired before this batch, are now implemented.)
+  (99 and 168, which fired before this batch, are now implemented.)
+- **Debris slice (2026-10-25):** 137/138/139 (`shatter_group` family) are
+  ported with `mdk_core/src/scripts/debris.{h,cpp}` (a 1:1 port of
+  `Debris.cs`: Shatter/Spark/Update, pooled pieces, seeded-RNG order) and
+  the runtime's `ShatterPoint`/`ShatterDirection` state. The script dump
+  now carries a `DEBRIS pieces=... list=...` line on both sides (oracle
+  driver + `tick1.cpp`), and all 340 goldens were regenerated from the
+  oracle. **Oracle harness fix (same batch):** the driver built
+  `TriangleGroups` but never called `Add` (only the viewer's `LevelView`
+  does), so `GroupFacets` always returned null and Shatter was a no-op in
+  every golden. The driver now registers every arena, as `LevelView`
+  does; with that, L5's 138 (t482) produces 134 pieces and the DEBRIS
+  line pins them. BreakUp, Trail (Effects) and Updraft (Fans) remain
+  unported with their owning slices; neither perturbs the RNG stream
+  (see `debris.h`).
 
 ## Ported so far (verified present in `ScriptVm::execute`)
 
@@ -30,10 +42,10 @@ Per-opcode tests are still needed for edge cases beyond the end-to-end golden
 suite; the complete-vs-partial classification of the owned cases is now done
 (see "Owned-case classification" at the end of this file).
 
-## Remaining 71 (verified set)
+## Remaining 68 (verified set)
 
 13, 27, 28, 29, 32, 49, 74, 77, 81, 85, 112, 114, 121, 128, 129,
-130, 131, 132, 133, 135, 136, 137, 138, 139, 142, 143, 156, 158, 159, 167, 170,
+130, 131, 132, 133, 135, 136, 142, 143, 156, 158, 159, 167, 170,
 171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 199, 202,
 203, 204, 206, 208, 209, 210, 213, 214, 215, 217, 219, 220, 221, 223, 224,
 226, 228, 229, 239, 240, 241, 242, 243, 244, 247
@@ -47,9 +59,9 @@ By blocking subsystem (carried grouping, corrected for this batch):
   `if_inventory` landed with the Kurt health/inventory slice; 240/241/244 read
   the same Kurt state but do not fire in levels 3-8, so they stay deferred.)
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
-  28, 130, 133, 137, 138, 139, 142, 143, 156 (spawn_at_point), 159, 190, 202,
+  28, 130, 133, 142, 143, 156 (spawn_at_point), 159, 190, 202,
   223, 224
-- **Effects/combat/debris/partners (needs parts, debris, shatter, Items.Bomb,
+- **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 32, 81, 121, 128, 129, 132,
   136, 158, 167, 172, 179, 180, 184, 192, 195, 208, 213, 214, 228
 - **Movement/AI leftovers (needs partner links, rolling-basis math,
@@ -82,9 +94,9 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. This yields C# **238**, C++ **168**, remaining **71** (the
+and compare as sets. This yields C# **238**, C++ **171**, remaining **68** (the
 C++ owns no case the C# lacks). The same extraction is what produced the counts
-above, so the owned set here is the same 168, not a re-count from memory.
+above, so the owned set here is the same 171, not a re-count from memory.
 
 Two axes, kept separate:
 
@@ -96,7 +108,7 @@ Two axes, kept separate:
 - **Test coverage** — every owned case is exercised only by the end-to-end
   (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
   object table and script state against the oracle byte-for-byte through t600 on
-   levels 3-8. There are **no per-opcode unit tests**, so in that sense all 168
+   levels 3-8. There are **no per-opcode unit tests**, so in that sense all 171
   are insufficiently-tested; the goldens give end-to-end coverage for whatever
   actually fires in those levels/ticks.
 
@@ -107,23 +119,23 @@ C# does and writes no state the goldens read. (89 `play_sound` was the other
 honest no-op until the mixer slice landed; it is now a real implementation.)
 
 **Partial — faithful dispatch, effect gated behind a partial/unported subsystem
-(10 cases), each verified against the code:**
+(8 cases), each verified against the code. (24 and 151 left this table with
+the mixer call-sites batch: the frame-sound trigger and the door sounds now
+play, so both are complete.)**
 
 | Opcode | Name | Gating subsystem (verified) |
 |---|---|---|
 | 6 | move_to_target | sets `move_command = 6`; `ScriptRuntime::updateCommand` (script_runtime.cpp:1561) has no case for 6 → no motion |
 | 15 | alarm | sets `move_command = 15`; same — no `updateCommand` case for 15 |
 | 16 | set_health | on health 0 calls `kill()`, which is a death-slice placeholder (script_runtime.cpp:2451 sets only `dead`; death script / debris / drops unported) |
-| 24 | set_id_and_name | stores `frame_sound`; the mixer exists now, but the motion update's frame-sound trigger (ObjectMotion.cs:133, mirrored at script_runtime.cpp:289) clears the name without playing it |
 | 56 | add_health | on death calls the same `kill()` placeholder |
 | 140 | group_set_texture | sets the group material VM state; the renderer ignores it (open item 1, dynamic scene updates) |
-| 151 | door_set_names | stores `door_sounds`; the mixer exists now, but the door state machine's playback call-sites (ObjectBehaviors.cs:90-115, marked at script_runtime.cpp:2008/2019) are not wired |
 | 165 | if_no_bomb | reads `itemsBomb`, which is never assigned (script_runtime.h:226, `= nullptr` only) → always "no bomb" until the Items slice |
 | 166 | if_bomb_visible | same `itemsBomb` gap → always false |
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
-**Complete — effect realized with the subsystems present (158 cases):** every
-owned case not in the partial table above (168 − 10 = 158). These are the pure
+**Complete — effect realized with the subsystems present (163 cases):** every
+owned case not in the partial table above (171 − 8 = 163). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases,
 each exercised by the byte-for-byte goldens through t600 on levels 3-8.

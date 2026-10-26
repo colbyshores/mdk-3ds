@@ -2,6 +2,7 @@ SCRIPT level=7 ticks=300 seed=1 currentArena=DANT_1 objects=7 target_pos=0.0000,
 GVAR 0.0000 0.0000 0.0000 0.0000
 KURT health=100 hurt_flash=0.0000 invulnerable=0.0000 knock=0.0000 state=0 slots=0
 AUDIO voices=0 list=
+DEBRIS pieces=0 list=
 OBJ 000 type=X7DOOR sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=2540 wait=0.0000 wresume=2529 death=0 cmdtgt=2529 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
 OBJ 001 type=BEAMS sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
 OBJ 002 type=BEAMS sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0

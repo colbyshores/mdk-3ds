@@ -42,6 +42,7 @@
 #include "game/kurt.h"
 #include "game/level_data.h"
 #include "render/render_types.h"
+#include "scripts/debris.h"
 #include "scripts/object.h"
 #include "scripts/script_vm.h"
 #include "util/random.h"
@@ -250,6 +251,14 @@ public:
     // subsystem is a later slice, so this stays null until it lands, which is
     // what the C# reads when no bomb is in play (if_no_bomb / if_bomb_visible).
     MdkObject* itemsBomb = nullptr;
+    // C# ScriptRuntime.ShatterPoint / ShatterDirection (ScriptRuntime.cs:193):
+    // the shatter origin the last 138/139 set; 137 reuses them. The direction
+    // starts straight up (Vector3.UnitZ in MDK's Z-up world).
+    Vec3 shatterPoint{};
+    Vec3 shatterDirection{0.0f, 0.0f, 1.0f};
+    // The debris subsystem (Debris.cs): shattered groups, sparks, break-ups.
+    const Debris& debris() const { return debris_; }
+    Debris& debris() { return debris_; }
 
     // ---- Readable state (the driver dumps these) ----
     const std::string& currentArena() const { return currentArena_; }
@@ -324,6 +333,15 @@ private:
     // offset in its frame, kept so Remove can stop it with the object.
     int32_t playOn(MdkObject* obj, const std::string& name, int32_t start, const Vec3& offset);
 
+    // Debris delegates (Debris.cs Ray / GroupFacets, wired in the constructor):
+    // RayIn (ScriptRuntime.cs:2249) and GroupFacets (ScriptRuntime.cs:2261).
+    bool rayIn(const std::string& arena, const Vec3& from, const Vec3& to, DebrisRayHit* out);
+    bool groupFacets(const std::string& arena, int32_t group, DebrisGroup* out);
+    static bool debrisRayTrampoline(void* ctx, const std::string& arena, const Vec3& from,
+                                    const Vec3& to, DebrisRayHit* out);
+    static bool debrisFacetsTrampoline(void* ctx, const std::string& arena, int32_t group,
+                                       DebrisGroup* out);
+
     LevelData* level_;
     const formats::Cmi* cmi_;
     formats::ScriptDecoder decoder_;
@@ -334,6 +352,7 @@ private:
     // vacated (see the ownership note in object.h).
     audio::SoundBank* bank_;
     audio::SoundMixer mixer_;
+    Debris debris_;  // C# ScriptRuntime.Debris, sharing rng_ (declared above it)
     // C# _following: the voices started with playOn per object, so Remove can
     // stop them with the object. The C# pools the lists; a vector is pooled by
     // its own allocator, so the spare stack is not ported.

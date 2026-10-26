@@ -1326,6 +1326,32 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 140:  // group_set_texture (renderer material remapping remains unsupported)
             runtime_.setGroupTexture(obj->arena, ival(op(ins, 0)), ival(op(ins, 1)));
             break;
+        case 137:  // shatter_group: [group, life, size, speed(, point(, direction))]
+        case 138:
+        case 139: {
+            // 138 sets the point and direction, 139 the point (pieces fly away
+            // from it), 137 reuses them (ScriptVm.cs:1054-1080).
+            if (ins.opcode == 138) {
+                runtime_.shatterPoint = Vec3{fval(op(ins, 4)), fval(op(ins, 5)), fval(op(ins, 6))};
+                runtime_.shatterDirection =
+                    Vec3{fval(op(ins, 7)), fval(op(ins, 8)), fval(op(ins, 9))};
+            } else if (ins.opcode == 139) {
+                runtime_.shatterPoint = Vec3{fval(op(ins, 4)), fval(op(ins, 5)), fval(op(ins, 6))};
+                runtime_.shatterDirection = Vec3{};
+            }
+            int32_t group = ival(op(ins, 0));
+            if (group >= 1 && group <= 255) {
+                runtime_.debris().shatter(obj->arena, group, fval(op(ins, 1)), fval(op(ins, 2)),
+                                          fval(op(ins, 3)), runtime_.shatterPoint,
+                                          runtime_.shatterDirection);
+            }
+            if (runtime_.shatterDirection.x == 0.0f && runtime_.shatterDirection.y == 0.0f &&
+                runtime_.shatterDirection.z == 0.0f) {
+                // A radial burst leaves the direction straight up for the next 137.
+                runtime_.shatterDirection = Vec3{0.0f, 0.0f, 1.0f};
+            }
+            break;
+        }
         case 99: {  // group_on_hit: per-arena hit kinds and script
             runtime_.setGroupHitScript(obj->arena, ival(op(ins, 1)), ival(op(ins, 0)),
                                         ival(op(ins, 2)));

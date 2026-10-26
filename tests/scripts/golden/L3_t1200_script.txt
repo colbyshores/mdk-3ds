@@ -2,6 +2,7 @@ SCRIPT level=3 ticks=1200 seed=1 currentArena=HMO_1 objects=11 target_pos=-4.000
 GVAR 0.0000 0.0000 0.0000 0.0000
 KURT health=92 hurt_flash=180.0000 invulnerable=0.0000 knock=8.0000 state=0 slots=0
 AUDIO voices=10 list=1:RICO1,2:RICO1,3:RICO1,4:RICO1,5:RICO1,6:RICO1,7:RICO1,8:RICO1,9:RICO1,10:RICO1
+DEBRIS pieces=0 list=
 OBJ 000 type=SW_BONES sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
 OBJ 001 type=SW_H01 sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0
 OBJ 002 type=SW_GATT sflags=0x00000000 vars=0.0000,0.0000,0.0000,0.0000 restart=0 wait=0.0000 wresume=0 death=0 cmdtgt=0 gret= gres= timers=0.0000,0.0000,0.0000,0.0000,0.0000 tsnd= tvoice=0 tplay=0 lsnd= lvoice=0 lplay=0

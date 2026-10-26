@@ -126,6 +126,7 @@ set(SOURCES
     ${CORE}/src/scripts/object.cpp
     ${CORE}/src/scripts/script_runtime.cpp
     ${CORE}/src/scripts/script_vm.cpp
+    ${CORE}/src/scripts/debris.cpp
     ${CORE}/src/util/math_lut.cpp
     ${CORE}/src/util/random.cpp
 )

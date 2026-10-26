@@ -47,7 +47,8 @@ SOURCES := \
 	$(CORE)/render/material_resolver.cpp \
 	$(CORE)/scripts/object.cpp \
 	$(CORE)/scripts/script_vm.cpp \
-	$(CORE)/scripts/script_runtime.cpp
+	$(CORE)/scripts/script_runtime.cpp \
+	$(CORE)/scripts/debris.cpp
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))
 VPATH := $(sort $(dir $(SOURCES)))
