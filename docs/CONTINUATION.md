@@ -45,9 +45,17 @@ them. Do not spend an iteration on docs/tests alone.
    `bash tools/check.sh` → ALL GATES PASSED; `make -C mdk_3ds` links;
    Linux `Built target mdk`. Coverage: C++ 171/238, remaining 68.
    BreakUp/Trail/Updraft stay with their owning slices (see `debris.h`).
-3. Continue the remaining 68 opcodes subsystem by subsystem, same rule.
-   Next scoped slice: opcode 133 (`AnimatedTextures`, 58 lines) with a
-   `Frames` dump line; then the Effects bucket (128/129/132/136).
+3. Continue the remaining opcodes subsystem by subsystem, same rule.
+   **Opcode 208 (`if_part_hit`) DONE** — the reachability probe
+   (`tests/scripts/tick1 probe 30000`, a new permanent harness mode) showed
+   it was the only remaining opcode firing anywhere in levels 3–8
+   (L5 ×9134); it is ported and the probe is now clean on every level.
+   Coverage: C++ 172/238, remaining 67. The other 67 do not fire in this
+   corpus (133 `AnimatedTextures` and the Effects spawns were probed to
+   t30000 and never trigger), so per the no-blind-port rule they wait for
+   a synthetic per-opcode test harness (open item 2) or a corpus that
+   exercises them. Next verifiable work is therefore P5 (golden-frame
+   tests for the Vulkan renderer) or that synthetic harness.
 
 Deferred with evidence: alarm (move_command 15 never fires in the corpus —
 verified 0 occurrences), 240/241/244 (Kurt's state exists in `game/kurt.h` but

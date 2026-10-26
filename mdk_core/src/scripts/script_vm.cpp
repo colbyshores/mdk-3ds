@@ -1290,6 +1290,14 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             break;
         case 176:  // if_flag_40000: the pickup was collected
             return branch(obj, ins, (obj->flags & MdkObject::FlagCollected) != 0);
+        case 208: {  // if_part_hit: the part is hidden (blown off or destroyed)
+            const int32_t part = obj->findPart(strval(op(ins, 0)));
+            const bool hit = part >= 0 && (obj->hidden_parts & (1 << part)) != 0;
+            if (hit) {
+                obj->hit_event = 0;
+            }
+            return branch(obj, ins, hit);
+        }
         case 175: {  // if_inventory: how many items of a type Kurt has
             const int32_t count = runtime_.kurt().countItem((Kurt::Item)ival(op(ins, 0)));
             return branch(obj, ins, compareOps((float)count, op(ins, 1), op(ins, 2), op(ins, 3)));

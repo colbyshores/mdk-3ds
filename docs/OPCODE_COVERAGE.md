@@ -4,7 +4,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ owns **171**, leaving **68** unimplemented. The
+  owns **238** cases, the C++ owns **172**, leaving **67** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -42,13 +42,22 @@ Per-opcode tests are still needed for edge cases beyond the end-to-end golden
 suite; the complete-vs-partial classification of the owned cases is now done
 (see "Owned-case classification" at the end of this file).
 
-## Remaining 68 (verified set)
+## Remaining 67 (verified set)
 
 13, 27, 28, 29, 32, 49, 74, 77, 81, 85, 112, 114, 121, 128, 129,
 130, 131, 132, 133, 135, 136, 142, 143, 156, 158, 159, 167, 170,
 171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 199, 202,
-203, 204, 206, 208, 209, 210, 213, 214, 215, 217, 219, 220, 221, 223, 224,
+203, 204, 206, 209, 210, 213, 214, 215, 217, 219, 220, 221, 223, 224,
 226, 228, 229, 239, 240, 241, 242, 243, 244, 247
+
+**Reachability, re-probed to t30000 (2026-10-25, `tick1 probe 30000`):**
+after the Debris slice the only remaining opcode that fires anywhere in
+levels 3–8 is **208** (`if_part_hit`, L5 ×9134), now ported; the probe is
+clean on every level. The other 67 do not fire in this corpus at all —
+they stay documented no-ops until a corpus or a synthetic test exercises
+them (the rule at the end of this file). 208's neighbours in the parts
+bucket (32 `clear_parts_mask`, 129/132/136 and friends) are the natural
+next slice when a test can exercise them.
 
 By blocking subsystem (carried grouping, corrected for this batch):
 
@@ -63,7 +72,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   223, 224
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 32, 81, 121, 128, 129, 132,
-  136, 158, 167, 172, 179, 180, 184, 192, 195, 208, 213, 214, 228
+  136, 158, 167, 172, 179, 180, 184, 192, 195, 213, 214, 228
 - **Movement/AI leftovers (needs partner links, rolling-basis math,
   jump/swing mechanics):** 85, 204, 206, 217, 226, 229
 - **Audio — ported with the mixer slice:** 89 (`play_sound`), 107
@@ -96,7 +105,7 @@ Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
 and compare as sets. This yields C# **238**, C++ **171**, remaining **68** (the
 C++ owns no case the C# lacks). The same extraction is what produced the counts
-above, so the owned set here is the same 171, not a re-count from memory.
+above, so the owned set here is the same 172, not a re-count from memory.
 
 Two axes, kept separate:
 
@@ -108,7 +117,7 @@ Two axes, kept separate:
 - **Test coverage** — every owned case is exercised only by the end-to-end
   (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
   object table and script state against the oracle byte-for-byte through t600 on
-   levels 3-8. There are **no per-opcode unit tests**, so in that sense all 171
+   levels 3-8. There are **no per-opcode unit tests**, so in that sense all 172
   are insufficiently-tested; the goldens give end-to-end coverage for whatever
   actually fires in those levels/ticks.
 
@@ -134,8 +143,8 @@ play, so both are complete.)**
 | 166 | if_bomb_visible | same `itemsBomb` gap → always false |
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
-**Complete — effect realized with the subsystems present (163 cases):** every
-owned case not in the partial table above (171 − 8 = 163). These are the pure
+**Complete — effect realized with the subsystems present (164 cases):** every
+owned case not in the partial table above (172 − 8 = 164). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases,
 each exercised by the byte-for-byte goldens through t600 on levels 3-8.

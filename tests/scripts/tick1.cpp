@@ -260,13 +260,54 @@ std::string dumpDti(int level, const Dti& dti) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     // The formats library reaches the filesystem through this seam.
     mdk::formats::setFileSystem(mdk::test::host::fileSystem());
 
     MdkData data = locateData();
     if (!data.found()) {
         printf("SKIP: no MDK data (set MDK_DATA_DIR)\n");
+        return 0;
+    }
+
+    // Reachability probe (`tick1 probe [ticks]`): run each level and list the
+    // opcodes the scripts reached that the VM does not implement yet, with
+    // hit counts. This is how the next opcode slice is chosen (evidence, not
+    // memory — see docs/OPCODE_COVERAGE.md).
+    if (argc > 1 && std::string(argv[1]) == "probe") {
+        int probeTicks = argc > 2 ? atoi(argv[2]) : 10000;
+        for (int level = 3; level <= 8; level++) {
+            LevelData levelData;
+            if (!LevelData::load(&levelData, &data, level)) {
+                continue;
+            }
+            char cmiPath[128];
+            snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+            std::vector<uint8_t> cmiBytes;
+            if (!data.read(cmiPath, &cmiBytes)) {
+                continue;
+            }
+            Cmi cmi;
+            if (!Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+                continue;
+            }
+            audio::SoundBank bank;
+            if (!audio::SoundBank::forLevel(&bank, data, level)) {
+                continue;
+            }
+            bank.preload();
+            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
+            runtime.option = 0;
+            for (int t = 0; t < probeTicks; t++) {
+                runtime.update(1.0f / 30.0f);
+            }
+            printf("PROBE L%d ticks=%d unimplemented:", level, probeTicks);
+            const std::vector<std::pair<int32_t, int32_t> >& un = runtime.unimplemented();
+            for (size_t i = 0; i < un.size(); i++) {
+                printf(" %d(x%d)", (int)un[i].first, (int)un[i].second);
+            }
+            printf("\n");
+        }
         return 0;
     }
 
