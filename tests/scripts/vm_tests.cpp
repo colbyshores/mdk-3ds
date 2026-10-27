@@ -1172,6 +1172,8 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
                                                0.0f, -1, 0, false);
     scripts::MdkObject* second = runtime.spawn(&controller, "BEAMS", Vec3{4.0f, 5.0f, 6.0f},
                                                 0.0f, 1000, 0, false);
+    scripts::MdkObject* differentId = runtime.spawn(&controller, "BEAMS", Vec3{5.0f, 6.0f, 7.0f},
+                                                     0.0f, 1001, 0, false);
     scripts::MdkObject* self = runtime.spawn(&controller, "BEAMS", Vec3{7.0f, 8.0f, 9.0f},
                                               0.0f, 1000, 0, false);
     scripts::MdkObject* dead = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
@@ -1180,10 +1182,12 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
                                                     0.0f, 1000, 0, false);
     CHECK(first != nullptr);
     CHECK(second != nullptr);
+    CHECK(differentId != nullptr);
     CHECK(self != nullptr);
     CHECK(dead != nullptr);
     CHECK(otherArena != nullptr);
-    if (first == nullptr || second == nullptr || self == nullptr || dead == nullptr || otherArena == nullptr) {
+    if (first == nullptr || second == nullptr || differentId == nullptr || self == nullptr ||
+        dead == nullptr || otherArena == nullptr) {
         return;
     }
     dead->dead = true;
@@ -1193,6 +1197,7 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     // second shares it explicitly to make last-match selection observable.
     CHECK(first->instance_id == 1000);
     CHECK(second->instance_id == 1000);
+    CHECK(differentId->instance_id == 1001);
     const std::string requested = "BEAMS_1000";
     Code code;
     code.u8(kAttachTo).u8(2).u8(5).pstr(requested);
@@ -1211,6 +1216,14 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     CHECK(self->leader == second);
     CHECK(self->attach_point_a == 3);
     CHECK(self->attach_point_b == 6);
+
+    Code distinctId;
+    distinctId.u8(kAttachTo).u8(4).u8(7).pstr("BEAMS_1001");
+    distinctId.end();
+    runProgram(runtime, distinctId, self);
+    CHECK(self->leader == differentId);
+    CHECK(self->attach_point_a == 4);
+    CHECK(self->attach_point_b == 7);
 
     scripts::MdkObject unchanged;
     unchanged.arena = "DANT_1";

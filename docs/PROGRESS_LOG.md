@@ -1,4 +1,19 @@
 
+## What this batch did (iteration 48 — pin `attach_to` ID matching)
+
+- Addressed review-8's test gap: every matching candidate previously used
+  instance ID 1000, so ignoring the requested `TYPE_ID` suffix could still pass.
+  Added a live same-arena `BEAMS_1001` candidate. The `BEAMS_1000` request must
+  select the last eligible ID-1000 object, while a separate `BEAMS_1001` request
+  must select the ID-1001 object and update both attach points.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed all
+  23 VM tests and all oracle cases (`All cases match the oracle.`).
+  `bash tools/check.sh` reported all gates passed; `gates_smdh` was skipped
+  because no CIA exists. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` staged 69 RomFS files (79M) and built `mdk.3dsx` (the
+  existing `mdk.elf` was up to date). `git diff --check` passed. No golden
+  changed; no emulator or hardware run. Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 47 — strengthen `attach_to` exclusion test)
 
 - Addressed review-7's finding that the dead/cross-arena exclusion assertions

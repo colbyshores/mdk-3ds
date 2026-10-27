@@ -1,6 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 47: review-7 attach_to exclusion-test fix).
+Last updated: 2026-10-27 (iteration 48: review-8 attach_to ID-match test fix).
 Current coverage: 190 true C++ dispatches / 238, 48 remaining. Next: continue
 one opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -22,7 +22,9 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    and transition test), and 74 (`attach_to`; review-6 corrected auto IDs to
    start at 1000 and strengthened canonical-name/selection tests).
    132/136 still need Effects; frame-blend integration remains a separate future
-   slice. Remaining 48 are listed in
+   slice. Iteration 48 closes review-8's test gap: a live same-arena `BEAMS_1001`
+   candidate is distinct from `BEAMS_1000`, and both exact ID requests are pinned.
+   Remaining 48 are listed in
    `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
@@ -33,10 +35,16 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 48 addresses review-8's finding that all candidates used ID 1000.
+  The attach test includes same-arena `BEAMS_1001`; `BEAMS_1000` must select the
+  ID-1000 match and `BEAMS_1001` must select the ID-1001 match. The 23 VM tests
+  and complete oracle suite passed; `tools/check.sh` passed (SMDH skipped without
+  CIA); the 3DS build staged 69 RomFS files and produced `mdk.3dsx`.
+  `git diff --check` passed. No golden changed; no emulator/hardware run.
 - Iteration 47 fixes review-7's false-positive exclusion assertions: valid
   candidates precede self/dead/cross-arena candidates in scan order, so removal
-  of either exclusion independently changes the selected leader. All gates and
-  the 3DS build passed; details are in `PROGRESS_LOG.md`.
+  of either exclusion independently changes the selected leader. Gates and
+  3DS build passed; details are in `PROGRESS_LOG.md`.
 - Iteration 46 ports opcode 74 `attach_to`; review-6 fixes set generated
   instance IDs to the C# starting value 1000 and test explicit `BEAMS_1000`,
   duplicate-ID last-match selection, case folding, exclusions, and miss-state
