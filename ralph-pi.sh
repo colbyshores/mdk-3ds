@@ -29,13 +29,26 @@ SUMMARY="$LOGDIR/summary.log"
 PIDFILE="$LOGDIR/loop.pid"
 mkdir -p "$LOGDIR"
 
-WORKER_MODEL="${WORKER_MODEL:-litellm/glm-5.3-flash-nvidia}"
-FALLBACK_MODEL="${FALLBACK_MODEL:-litellm/luna}"
-REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/minimax-m3.1-flash-nvidia}"
+# Worker route chain, best first (owner directive 2026-10-27): the full-size
+# glm first, the flash variant second, then LOCAL qwen (free to run —
+# Qwen 3.8 Flash Next on the owner's ai-node; measured ping 8.8s), luna only
+# as the last resort. The glm routes flap upstream, so the chain is ordered,
+# not single-tier.
+WORKER_MODELS="${WORKER_MODELS:-litellm/glm-5.3-nvidia litellm/glm-5.3-flash-nvidia litellm/qwen litellm/luna}"
+# Reviewer primary is the owner's LOCAL qwen (litellm/qwen = halogen
+# qwen3.8-flash-next): free to run and A/B-measured at parity with minimax on
+# the same review scope (2026-10-27: same core MINOR finding, plus it verified
+# closure at HEAD, found an extra doc NIT, and finished in ~25 min vs minimax's
+# 47-97). minimax stays as the fallback.
+REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/qwen}"
 # Reviewer fallbacks MUST differ from the model the worker used on this
 # iteration: a review by the worker's own model is a self-review, not an
 # adversarial check. Probed alive 2026-10-27: grok, qwen, glm-5.3-nvidia.
-REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/grok litellm/qwen litellm/glm-5.3-nvidia}"
+# Reviewer fallbacks MUST differ from the model the worker used on this
+# iteration: a review by the worker's own model is a self-review, not an
+# adversarial check. qwen sits ahead of grok on cost (local, free); if its
+# review quality proves weaker on an A/B, demote it.
+REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/minimax-m3.1-flash-nvidia litellm/grok}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-5400}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 MAX_ITER="${MAX_ITER:-30}"
@@ -115,12 +128,12 @@ guard() {
     # Tries the primary route, then the fallback — a dead primary must not
     # park the whole project (measured 2026-10-26: glm route died mid-run).
     local probe_ok=0 m
-    for m in "$WORKER_MODEL" "$FALLBACK_MODEL"; do
+    for m in $WORKER_MODELS; do
         if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$m" \
             -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%A %G' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
             --no-session 2>&1 | grep -q WTEST_OK; then
             probe_ok=1
-            [ "$m" != "$WORKER_MODEL" ] && echo "ralph-pi: primary route unhealthy — using $m" >&2
+            echo "ralph-pi: write probe passed on $m" >&2
             break
         fi
         echo "ralph-pi: probe failed on $m" >&2
@@ -144,21 +157,24 @@ guard
 RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
 RUN_DIR="$LOGDIR/run-$RUN_ID"
 mkdir -p "$RUN_DIR"
-log "loop start worker=$WORKER_MODEL fallback=$FALLBACK_MODEL reviewer=$REVIEWER_MODEL pid=$$ run=$RUN_ID"
+log "loop start worker_chain=[$WORKER_MODELS] reviewer=$REVIEWER_MODEL reviewer_fallbacks=[$REVIEWER_FALLBACKS] pid=$$ run=$RUN_ID"
 ITER=0; STALL=0; FAILS=0
 while :; do
     # Route health FIRST: a dead route must not consume the iteration cap.
-    RUN_MODEL="$WORKER_MODEL"
-    if ! model_alive "$RUN_MODEL"; then
-        log "worker route $RUN_MODEL UNHEALTHY"
-        if model_alive "$FALLBACK_MODEL"; then
-            RUN_MODEL="$FALLBACK_MODEL"
-            log "falling back to $RUN_MODEL"
+    RUN_MODEL=""
+    for cand in $WORKER_MODELS; do
+        if model_alive "$cand"; then
+            RUN_MODEL="$cand"
+            [ "$cand" != "${WORKER_MODELS%% *}" ] && log "worker route degraded to $cand"
+            break
         else
-            log "no healthy worker route — sleeping 300s"
-            sleep 300
-            continue
+            log "worker route $cand UNHEALTHY"
         fi
+    done
+    if [ -z "$RUN_MODEL" ]; then
+        log "no healthy worker route — sleeping 300s"
+        sleep 300
+        continue
     fi
     ITER=$((ITER+1))
     ILOG="$RUN_DIR/iter-$ITER.log"
@@ -168,7 +184,7 @@ while :; do
         printf '\n---\n\n'
         cat "$PROMPT_FILE"
         printf '\n---\n\n# Loop status block (machine-generated)\n\n'
-        echo "- iteration: $ITER (worker $WORKER_MODEL, reviewer $REVIEWER_MODEL)"
+        echo "- iteration: $ITER (worker $RUN_MODEL, reviewer $REVIEWER_MODEL)"
         echo "- HEAD: $(git -C "$ROOT" log --oneline -1)"
         echo "- dirty tree: $(git -C "$ROOT" status --porcelain | wc -l) file(s) — if any, finish and commit THAT work first (builder rule)."
         NEWEST_REVIEW="$(ls -t "$LOGDIR"/run-*/review-*.md 2>/dev/null | head -1)"
@@ -180,12 +196,21 @@ while :; do
     pi_run "$RUN_MODEL" "$RUN_DIR/.prompt-$ITER.md" "$ILOG" "$ILOG.err"
     RC=$?
     [ "$RC" -eq 124 ] && recover_session "$ITER"
-    if [ "$RC" -ne 0 ] && [ "$RUN_MODEL" != "$FALLBACK_MODEL" ] && model_alive "$FALLBACK_MODEL"; then
-        log "iter=$ITER worker rc=$RC on $RUN_MODEL — retrying once on fallback $FALLBACK_MODEL"
-        pi_run "$FALLBACK_MODEL" "$RUN_DIR/.prompt-$ITER.md" "$ILOG.fb" "$ILOG.fb.err"
-        RC=$?
-        [ "$RC" -eq 124 ] && recover_session "$ITER.fb"
-        [ "$RC" -eq 0 ] && log "iter=$ITER fallback $FALLBACK_MODEL completed"
+    if [ "$RC" -ne 0 ]; then
+        # next alive route in the chain AFTER the one that failed
+        NEXT_MODEL=""
+        seen=0
+        for cand in $WORKER_MODELS; do
+            [ "$seen" -eq 1 ] && { if model_alive "$cand"; then NEXT_MODEL="$cand"; break; fi; }
+            [ "$cand" = "$RUN_MODEL" ] && seen=1
+        done
+        if [ -n "$NEXT_MODEL" ]; then
+            log "iter=$ITER worker rc=$RC on $RUN_MODEL — retrying once on $NEXT_MODEL"
+            pi_run "$NEXT_MODEL" "$RUN_DIR/.prompt-$ITER.md" "$ILOG.fb" "$ILOG.fb.err"
+            RC=$?
+            [ "$RC" -eq 124 ] && recover_session "$ITER.fb"
+            [ "$RC" -eq 0 ] && log "iter=$ITER fallback $NEXT_MODEL completed"
+        fi
     fi
     log "iter=$ITER worker rc=$RC session-log=$ILOG"
 
