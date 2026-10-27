@@ -1040,6 +1040,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 73:  // set_obey_level
             obj->obey_level = ival(op(ins, 0));
             break;
+        case 85:  // set_rolling
+            obj->set_rolling(ival(op(ins, 0)) != 0);
+            break;
         case 11:  // set_priority
             obj->priority = ival(op(ins, 0));
             break;

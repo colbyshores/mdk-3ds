@@ -217,6 +217,12 @@ struct MdkObject {
     float animation_rate = AnimationFps; // obj+0xe0
     int32_t animation_end_frame = AnimationEnded; // obj+0x118
 
+    // The orientation: yaw around Z, pitch raises the nose, roll turns around
+    // the forward axis. Matches the C# RotationOf(roll, pitch, yaw) order.
+    Mat4 rotation() const;
+    // Starts/stops rolling; enabling captures the current orientation once.
+    void set_rolling(bool enabled);
+
     // A rolling object rests on its origin but its model is lifted by the height
     // offset (0x43b65c: z + obj+0x5c), e.g. LEVEL6's centred boulder XBO.
     float lift() const { return (flags & FlagRolling) != 0 ? height_offset : 0.0f; }

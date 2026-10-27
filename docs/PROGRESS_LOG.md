@@ -771,3 +771,11 @@
     `mdk.3dsx`.
 - No Original 3DS or emulator run was performed; this opcode has no rendered
   output and hardware performance remains unmeasured.
+
+## What this batch did (iteration 41 — opcode 85 `set_rolling`)
+
+- Added `MdkObject::rotation()` using row-vector `Mat4` composition matching the C# `RotationOf(roll, -pitch, yaw)` order, plus `set_rolling(bool)` preserving the transition semantics: enabling captures only on off→on; disabling clears the flag without changing the saved basis.
+- Added opcode 85 dispatch and a synthetic VM test for a 90° yaw basis, no recapture while already rolling, basis preservation on stop, and recapture on the next start. The oracle case is `MdkObject.SetRolling` / `Rotation` (`src/Mdk.Game/Objects/MdkObject.cs:279-285,327-341`); no level golden changes because opcode 85 is unreachable in the level 3-8 corpus.
+- Raw trig in the new gameplay orientation path is R6-pinned because using the approximate LUT would perturb the saved gameplay basis. The first `tools/check.sh` run caught the missing pin; the pin was added and the complete gate rerun passed.
+- Updated opcode counts: 189 true C++ dispatches / 238, 49 remaining; opcode coverage now includes a direct VM test for 85.
+- Verification after the final code/doc edits: `make -C tests/scripts` → VM tests PASS including `SetRollingCapturesRotationOnTransition`; all table/script, DTI, scene checks PASS and `All cases match the oracle.`; `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (SMDH gate skipped: no built `.cia`); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → linked `mdk.elf`, staged 69 RomFS files and built `mdk.3dsx`; `git diff --check` clean. No OG hardware capture was performed. Latest external review remains unavailable: review-37 records quota exhaustion; this iteration self-reviewed the C# matrix order and transition behavior.

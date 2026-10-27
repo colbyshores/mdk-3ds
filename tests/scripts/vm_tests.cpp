@@ -60,6 +60,7 @@ const int32_t kSetHurtFlash = 240;
 const int32_t kSetGlobal573bd4 = 244;
 const int32_t kSet27c = 239;
 const int32_t kDebugMsg = 77;
+const int32_t kSetRolling = 85;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -1076,6 +1077,53 @@ void testKurtAndScreenWrites(scripts::ScriptRuntime& runtime) {
     }
 }
 
+// Opcode 85 (set_rolling) captures the object's current Rotation only when
+// transitioning from off to on; repeated on and off preserve the saved basis.
+void testSetRollingCapturesRotationOnTransition(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject obj;
+    obj.yaw = 90.0f;
+    Code on;
+    on.u8(kSetRolling).u8(1);
+    on.end();
+    runProgram(runtime, on, &obj);
+    CHECK(!sawUnimplemented(kSetRolling));
+    CHECK((obj.flags & scripts::MdkObject::FlagRolling) != 0);
+    CHECK(fabsf(obj.rolling_basis.m[0]) < 1e-6f);
+    CHECK(fabsf(obj.rolling_basis.m[1] - 1.0f) < 1e-6f);
+    CHECK(fabsf(obj.rolling_basis.m[4] + 1.0f) < 1e-6f);
+    CHECK(fabsf(obj.rolling_basis.m[5]) < 1e-6f);
+
+    obj.yaw = 0.0f;
+    runProgram(runtime, on, &obj);
+    CHECK(obj.rolling_basis.m[1] > 0.999f); // already rolling: do not recapture
+
+    Code off;
+    off.u8(kSetRolling).u8(0);
+    off.end();
+    runProgram(runtime, off, &obj);
+    CHECK((obj.flags & scripts::MdkObject::FlagRolling) == 0);
+    CHECK(obj.rolling_basis.m[1] > 0.999f); // stopping preserves the basis
+    runProgram(runtime, on, &obj);
+    CHECK((obj.flags & scripts::MdkObject::FlagRolling) != 0);
+    CHECK(fabsf(obj.rolling_basis.m[0] - 1.0f) < 1e-6f);
+    CHECK(fabsf(obj.rolling_basis.m[1]) < 1e-6f);
+
+    // Pin the full Rx(roll) * Ry(-pitch) * Rz(yaw) composition, not just yaw.
+    Code stop;
+    stop.u8(kSetRolling).u8(0);
+    stop.end();
+    runProgram(runtime, stop, &obj);
+    obj.roll = 30.0f;
+    obj.pitch = 20.0f;
+    obj.yaw = 40.0f;
+    runProgram(runtime, on, &obj);
+    CHECK(fabsf(obj.rolling_basis.m[0] - 0.7198463f) < 1e-5f);
+    CHECK(fabsf(obj.rolling_basis.m[1] - 0.6040228f) < 1e-5f);
+    CHECK(fabsf(obj.rolling_basis.m[2] - 0.3420201f) < 1e-5f);
+    CHECK(fabsf(obj.rolling_basis.m[6] - 0.4698463f) < 1e-5f);
+    CHECK(fabsf(obj.rolling_basis.m[10] - 0.8137977f) < 1e-5f);
+}
+
 // Opcode 239 is explicitly unidentified and a no-op in the C# oracle
 // (ScriptVm.cs:1783). Its six-float operand record must still decode and
 // advance cleanly without entering the unimplemented bucket.
@@ -1187,6 +1235,8 @@ int main() {
     printf("PASS UnidentifiedSet27cIsNoOp\n");
     testDebugMessageIsNoOp(runtime);
     printf("PASS DebugMessageIsNoOp\n");
+    testSetRollingCapturesRotationOnTransition(runtime);
+    printf("PASS SetRollingCapturesRotationOnTransition\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

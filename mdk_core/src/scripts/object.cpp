@@ -58,6 +58,70 @@ static_assert(mdk::Mat4::identity().m[0] == 1.0f && mdk::Mat4::identity().m[5] =
 // Position + Vector3.Transform(ReferencePoints[i] * Scale, CreateRotationZ(yaw));
 // with the row-vector CreateRotationZ that rotation is (x*cos - y*sin, x*sin +
 // y*cos, z). Out of range (or no model) returns the position, as the C# does.
+mdk::Mat4 mdk::scripts::MdkObject::rotation() const {
+    /* @vfp-exempt R6 — set_rolling captures the gameplay orientation; LUT approximation would alter the saved rolling basis, so retain libm reference trig. measured n/a. Verified 2026-10-26. */
+    const float radians_per_degree = 3.14159265358979323846f / 180.0f;
+    const float roll_radians = roll * radians_per_degree;
+    const float pitch_radians = -pitch * radians_per_degree;
+    const float yaw_radians = yaw * radians_per_degree;
+    const float cr = cosf(roll_radians);
+    const float sr = sinf(roll_radians);
+    const float cp = cosf(pitch_radians);
+    const float sp = sinf(pitch_radians);
+    const float cy = cosf(yaw_radians);
+    const float sy = sinf(yaw_radians);
+
+    // System.Numerics uses row vectors and composes X(roll) * Y(-pitch) * Z(yaw).
+    Mat4 rx = Mat4::identity();
+    rx.m[5] = cr;
+    rx.m[6] = sr;
+    rx.m[9] = -sr;
+    rx.m[10] = cr;
+    Mat4 ry = Mat4::identity();
+    ry.m[0] = cp;
+    ry.m[2] = -sp;
+    ry.m[8] = sp;
+    ry.m[10] = cp;
+    Mat4 rz = Mat4::identity();
+    rz.m[0] = cy;
+    rz.m[1] = sy;
+    rz.m[4] = -sy;
+    rz.m[5] = cy;
+
+    Mat4 result{};
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
+            float value = 0.0f;
+            for (int k = 0; k < 4; ++k) {
+                value += rx.m[row * 4 + k] * ry.m[k * 4 + column];
+            }
+            result.m[row * 4 + column] = value;
+        }
+    }
+    Mat4 composed{};
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
+            float value = 0.0f;
+            for (int k = 0; k < 4; ++k) {
+                value += result.m[row * 4 + k] * rz.m[k * 4 + column];
+            }
+            composed.m[row * 4 + column] = value;
+        }
+    }
+    return composed;
+}
+
+void mdk::scripts::MdkObject::set_rolling(bool enabled) {
+    if (!enabled) {
+        flags &= ~FlagRolling;
+        return;
+    }
+    if ((flags & FlagRolling) == 0) {
+        flags |= FlagRolling;
+        rolling_basis = rotation();
+    }
+}
+
 mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {
     if (model == nullptr || index < 0 ||
         static_cast<size_t>(index) >= model->referencePoints.size()) {
