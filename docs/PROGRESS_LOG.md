@@ -1,4 +1,17 @@
 
+## What this batch did (iteration 53 — strengthen opcode 241 health fixture)
+
+- Strengthened the opcode 241 synthetic fixture by setting the receiver
+  object's own health to 100 while Kurt is damaged to 99. The existing true and
+  false branch outcomes now independently reject an implementation that reads
+  the receiver's health instead of `runtime.Kurt.Health`. Runtime behavior and
+  oracle goldens are unchanged.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  24 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA); the
+  3DS build staged 69 RomFS files (79M) and produced `mdk.3dsx`. No golden
+  changed; no emulator/hardware run. Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 52 — opcode 241 `if_player_health`)
 
 - Ported the C# comparison against `runtime.Kurt.Health` in the C++ VM. Added

@@ -886,6 +886,7 @@ void testIfPlayerHealthComparesKurtHealth(scripts::ScriptRuntime& runtime) {
         code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
         code.end();
         scripts::MdkObject obj;
+        obj.health = 100;  // Different from Kurt so using the receiver is detectable.
         runProgram(runtime, code, &obj);
         CHECK(!sawUnimplemented(kIfPlayerHealth));
         CHECK(obj.variables[0] == 2.0f);
@@ -899,6 +900,7 @@ void testIfPlayerHealthComparesKurtHealth(scripts::ScriptRuntime& runtime) {
         code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
         code.end();
         scripts::MdkObject obj;
+        obj.health = 100;  // Different from Kurt so using the receiver is detectable.
         runProgram(runtime, code, &obj);
         CHECK(!sawUnimplemented(kIfPlayerHealth));
         CHECK(obj.variables[0] == 1.0f);

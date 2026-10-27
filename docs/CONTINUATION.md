@@ -1,6 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 52: opcode 241 `if_player_health`).
+Last updated: 2026-10-27 (iteration 53: strengthen opcode 241 health fixture).
 Current coverage: 191 true C++ dispatches / 238, 47 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -28,14 +28,18 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 53 strengthens opcode 241's synthetic fixture: the receiver object's
+  own health is 100 while Kurt is damaged to 99, so the taken and untaken
+  branches reject an implementation that reads the receiver instead of Kurt.
+  `make -C tests/scripts clean && make -C tests/scripts` passed 24 VM tests and
+  the complete oracle suite (`All cases match the oracle.`); `bash tools/check.sh`
+  passed all contract gates (SMDH skipped, no CIA); `DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` built `mdk.3dsx` after
+  staging 69 RomFS files (79M). No golden changed; no emulator/hardware run.
+  Old-3DS timing remains unmeasured.
 - Iteration 52 ports opcode 241 (`if_player_health`) as a comparison of Kurt's
   current health, with a synthetic test pinning both taken and untaken branches;
-  the C# level corpus does not reach it. `make -C tests/scripts clean && make
-  -C tests/scripts` passed 24 VM tests and the complete oracle suite (`All cases
-  match the oracle.`); `bash tools/check.sh` passed all contract gates (SMDH
-  skipped, no CIA); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
-  make -C mdk_3ds` built `mdk.3dsx` after staging 69 RomFS files (79M). No
-  golden changed; no emulator/hardware run. Old-3DS timing remains unmeasured.
+  the C# level corpus does not reach it.
 - Iteration 51 closes review-10's `attach_to` fixture gap with a live
   different-type same-arena candidate sharing instance ID 1000; full checks
   and the 3DS build passed. Iteration 50 strengthened opcode 217's signed
