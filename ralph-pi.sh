@@ -37,7 +37,7 @@ REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 MAX_ITER="${MAX_ITER:-30}"
 STALL_LIMIT="${STALL_LIMIT:-3}"
 FAIL_LIMIT="${FAIL_LIMIT:-3}"
-PROBE_TIMEOUT="${PROBE_TIMEOUT:-600}"
+PROBE_TIMEOUT="${PROBE_TIMEOUT:-300}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
 PI_CMD="${PI_CMD:-pi}"
 BUILDER_FILE="$ROOT/ralph/builder.md"
@@ -107,11 +107,22 @@ guard() {
         echo "FATAL: ralph-pi already running (pid $op)" >&2; exit 2
     fi
     echo "$$" >"$PIDFILE"
-    # full-chain probe: sudo rule, model chain, pi bash tool, repo writes
-    if ! timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$WORKER_MODEL" \
-        -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%A %G' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
-        --no-session 2>&1 | grep -q WTEST_OK; then
-        echo "FATAL: pi write probe failed (sudo rule, model chain, or repo writes)." >&2; exit 3
+    # full-chain probe: sudo rule, model chain, pi bash tool, repo writes.
+    # Tries the primary route, then the fallback — a dead primary must not
+    # park the whole project (measured 2026-10-26: glm route died mid-run).
+    local probe_ok=0 m
+    for m in "$WORKER_MODEL" "$FALLBACK_MODEL"; do
+        if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$m" \
+            -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%A %G' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
+            --no-session 2>&1 | grep -q WTEST_OK; then
+            probe_ok=1
+            [ "$m" != "$WORKER_MODEL" ] && echo "ralph-pi: primary route unhealthy — using $m" >&2
+            break
+        fi
+        echo "ralph-pi: probe failed on $m" >&2
+    done
+    if [ "$probe_ok" -ne 1 ]; then
+        echo "FATAL: pi write probe failed on every route (sudo rule, model chain, or repo writes)." >&2; exit 3
     fi
 }
 
