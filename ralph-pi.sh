@@ -34,7 +34,20 @@ mkdir -p "$LOGDIR"
 # Qwen 3.8 Flash Next on the owner's ai-node; measured ping 8.8s), luna only
 # as the last resort. The glm routes flap upstream, so the chain is ordered,
 # not single-tier.
-WORKER_MODELS="${WORKER_MODELS:-litellm/glm-5.3-nvidia litellm/glm-5.3-flash-nvidia litellm/qwen litellm/luna}"
+# Worker chain (owner directive 2026-10-27): hosted NVIDIA routes first, then
+# minimax as the hosted builder of record, then the owner's LOCAL qwen, then
+# luna. Reason for the order: the builder job is the long pole (45-90 min of
+# tool-driven work per batch) and must not queue behind the 2 shared local
+# slots that perfect_dark and tetrisphere-godot also use. qwen as REVIEWER is
+# the measured-parity, free, fast seat (A/B 2026-10-27); qwen as builder is
+# unmeasured and slot-bound, so it waits behind minimax.
+# Worker chain (owner directive 2026-10-27): minimax-m3.1-flash-nvidia first
+# (measured far more dependable than the glm routes), then the glm family, then
+# the owner's LOCAL qwen, then luna. The builder is the long pole (45-120 min
+# per batch) and must not queue behind the 2 shared local slots, so qwen waits
+# behind the hosted routes; qwen's seat is REVIEWER, where it was A/B-measured
+# at parity with minimax.
+WORKER_MODELS="${WORKER_MODELS:-litellm/minimax-m3.1-flash-nvidia litellm/glm-5.3-nvidia litellm/glm-5.3-flash-nvidia litellm/qwen litellm/luna}"
 # Reviewer primary is the owner's LOCAL qwen (litellm/qwen = halogen
 # qwen3.8-flash-next): free to run and A/B-measured at parity with minimax on
 # the same review scope (2026-10-27: same core MINOR finding, plus it verified
@@ -49,7 +62,10 @@ REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/qwen}"
 # adversarial check. qwen sits ahead of grok on cost (local, free); if its
 # review quality proves weaker on an A/B, demote it.
 REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/minimax-m3.1-flash-nvidia litellm/grok}"
-ITER_TIMEOUT="${ITER_TIMEOUT:-5400}"
+# 120 min: a batch legitimately spends 15-20 min in the golden suite and the
+# 3DS build, and a valid slice was cut off at the 90 min wall (measured
+# 2026-10-27, iteration 13).
+ITER_TIMEOUT="${ITER_TIMEOUT:-7200}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 MAX_ITER="${MAX_ITER:-30}"
 STALL_LIMIT="${STALL_LIMIT:-3}"
