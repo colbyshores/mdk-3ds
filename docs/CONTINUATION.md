@@ -1,12 +1,11 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 41: opcode 85 `set_rolling` captures the
-current orientation on the off-to-on transition, with the row-vector matrix
-composition and VM test pinned). Current coverage: 189 true C++ dispatches /
-238, 49 remaining. Script/golden suite, all contract gates, and 3DS build
-passed; `gates_smdh` skipped because no `.cia` exists. Review-37 failed for
-quota reasons; no newer review exists. Next: continue one opcode family per
-batch via `vm_tests`.
+Last updated: 2026-10-27 (iteration 42: addressed external review of opcode
+85 `set_rolling`: matched .NET degree-conversion and matrix FMA order, pinned
+all 16 matrix bits, removed stale comments). Current coverage: 189 true C++
+dispatches / 238, 49 remaining. Tests, contract gates, and 3DS build passed;
+`gates_smdh` skipped because no `.cia` exists. Next: continue one opcode family
+per batch via `vm_tests`.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 `docs/PROGRESS_LOG.md`.
@@ -35,10 +34,10 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 41, opcode 85 (`set_rolling`) has matrix capture semantics and a
-  synthetic transition test. Coverage: C# 238 unique cases; C++ 191 numeric
-  labels, 190 unique (nested `case 0` in 249 is not an opcode), 189 true
-  dispatches, 49 missing.
+- Iteration 42 corrected opcode 85's rotation rounding per external review and
+  pins the full 4x4 matrix against .NET 10 oracle bits. Coverage: C# 238 unique
+  cases; C++ 191 numeric labels, 190 unique (nested `case 0` in 249 is not an
+  opcode), 189 true dispatches, 49 missing.
 - `make -C tests/scripts clean && make -C tests/scripts` → all 22 VM tests
   PASS, then `All cases match the oracle.` (table/script corpus byte-identical).
 - `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; `gates_smdh` SKIPPED
@@ -48,10 +47,11 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 - No actual Old-3DS hardware capture was performed; hardware readiness remains
   unmeasured.
 - `git diff --check` → clean.
-- Latest external review `review-37.md` is an environment failure (429
-  subscription quota), no findings. `review-36.md` concerned older stats code;
-  no new finding for this batch. Reviewer could not provide an adversarial
-  review for iteration 40; the changed code was self-reviewed against C#.
+- External review `logs/ralph-pi/run-20261027-014607/review-1.md` identified
+  degree conversion and `Matrix4x4` rounding divergences in opcode 85; the
+  iteration-42 fix is pinned by exact bits. An ARM11 object disassembly shows
+  `fmaf` calls (not an inline fused opcode); no actual 3DS hardware run was
+  performed, so runtime/performance evidence remains open.
 
 ## Testability and standing open items
 
