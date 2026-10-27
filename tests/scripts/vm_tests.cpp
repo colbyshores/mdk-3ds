@@ -58,6 +58,7 @@ const int32_t kSet2c0 = 210;
 const int32_t kScreenFlash = 215;
 const int32_t kSetHurtFlash = 240;
 const int32_t kSetGlobal573bd4 = 244;
+const int32_t kSet27c = 239;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -1074,6 +1075,22 @@ void testKurtAndScreenWrites(scripts::ScriptRuntime& runtime) {
     }
 }
 
+// Opcode 239 is explicitly unidentified and a no-op in the C# oracle
+// (ScriptVm.cs:1783). Its six-float operand record must still decode and
+// advance cleanly without entering the unimplemented bucket.
+void testUnidentifiedSet27cIsNoOp(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject obj;
+    obj.variables[0] = 17.0f;
+    Code code;
+    code.u8(kSet27c).f32(1.0f).f32(2.0f).f32(3.0f).f32(4.0f).f32(5.0f).f32(6.0f);
+    code.u8(kSetVar).u8(kOwn).u8(1).f32(9.0f);
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kSet27c));
+    CHECK(obj.variables[0] == 17.0f);
+    CHECK(obj.variables[1] == 9.0f);
+}
+
 } // namespace
 
 int main() {
@@ -1152,6 +1169,8 @@ int main() {
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
     testKurtAndScreenWrites(runtime);
     printf("PASS KurtAndScreenWrites\n");
+    testUnidentifiedSet27cIsNoOp(runtime);
+    printf("PASS UnidentifiedSet27cIsNoOp\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

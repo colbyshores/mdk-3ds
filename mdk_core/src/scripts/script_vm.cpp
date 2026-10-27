@@ -1239,6 +1239,10 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                                       : runtime_.kurt().invulnerable() + fval(op(ins, 1)));
             break;
 
+        // The C# identifies no effect for these six-float records either.
+        case 239:  // set_27c (not identified): ScriptVm.cs:1783 is a no-op
+            break;
+
         // Kurt's knock-down state machine is Kurt movement, a later slice: nothing
         // in the corpus knocks him down, and no golden reads the knock-down state.
         case 248:  // push_kurt

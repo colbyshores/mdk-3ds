@@ -721,3 +721,32 @@
   `git add -A && git commit` (cc09097).
 - Next: one opcode family per batch through the harness; 132/136 still need
   the Effects slice; 85 waits on the FrameBlend `rotation()` slice.
+
+
+## Iteration 39 — opcode 239 `set_27c` explicit no-op
+
+- Ported opcode 239 in `mdk_core/src/scripts/script_vm.cpp` as an explicit
+  no-op, matching `src/Mdk.Game/Scripts/ScriptVm.cs:1783`. The decoder's
+  generated layout already consumes six F32 operands; no behavior was inferred
+  from the unidentified field name. The `vm_tests` synthetic program gives it
+  six floats, then writes a second object variable. It verifies the no-op,
+  clean `unimplemented()` bucket, and correct instruction alignment by checking
+  that the following write executes.
+- C++ dispatch coverage recalculated against brace-matched method spans:
+  C# has 238 unique cases; C++ has 189 numeric labels, 188 unique labels, of
+  which 187 are dispatches (the nested `case 0` in opcode 249 isn't an opcode).
+  Thus 51 remain. Added 239 to the completed list and adjusted the deferred
+  dispatch count; this is a one-opcode batch, no golden changes.
+- Review-37 was unavailable (reviewer quota 429); no newer adversarial review
+  was present. Self-review confirmed the C# no-op and decoder's six-F32 record.
+- Verification on this tree:
+  - `make -C tests/scripts` → VM tests 20/20 PASS; full suite ended with
+    `All cases match the oracle.`
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; SMDH check SKIPPED
+    (no CIA built).
+  - Bare `make -C mdk_3ds` failed because `DEVKITARM` was unset. Retried as
+    `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` → linked `mdk.elf`, staged 69 RomFS files (79M), built
+    `mdk.3dsx`.
+- No Original 3DS or emulator run was performed; this opcode has no rendered
+  output and hardware performance remains unmeasured.
