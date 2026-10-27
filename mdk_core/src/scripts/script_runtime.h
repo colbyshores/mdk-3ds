@@ -379,7 +379,7 @@ private:
     std::vector<MdkObject*> removed_;
     std::map<std::string, ArenaState> arenas_;
     std::map<std::string, formats::Model> modelCache_;  // global models, stable addresses
-    int32_t nextInstance_ = 0;
+    int32_t nextInstance_ = 1000;
 
     ArenaSpace space_;
     std::map<std::string, std::unique_ptr<Bsp>> bsps_;  // per-arena BSP (C# _bsps), stable addresses

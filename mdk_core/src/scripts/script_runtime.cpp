@@ -2465,8 +2465,7 @@ MdkObject* ScriptRuntime::firstOther(MdkObject* obj, const std::string& type, in
     return nullptr;
 }
 
-// C# ScriptVm.FindObject: mode 0 random, mode 1 nearest, mode 2 nearest thrown item
-// within sight/range. Collection order is the stable object-list order.
+// C# ScriptVm case 74: match the named TYPE_ID in this arena, retaining the last live match.
 void ScriptRuntime::attachTo(MdkObject* obj, int32_t pointA, int32_t pointB,
                              const std::string& name) {
     MdkObject* found = nullptr;
@@ -2488,6 +2487,8 @@ void ScriptRuntime::attachTo(MdkObject* obj, int32_t pointA, int32_t pointB,
     }
 }
 
+// C# ScriptVm.FindObject: mode 0 random, mode 1 nearest, mode 2 nearest thrown item
+// within sight/range. Collection order is the stable object-list order.
 MdkObject* ScriptRuntime::findObject(MdkObject* obj, const std::string& type, int32_t mode) {
     const float kItemRange = 200.0f;
     const float kItemAbove = 9.0f;

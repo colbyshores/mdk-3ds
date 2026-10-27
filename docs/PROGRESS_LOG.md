@@ -7,15 +7,22 @@
   assign leader, both attach-point indices, and movement command 74; on a miss,
   preserve all object state. Existing movement-command 74 behavior follows the
   attachment and copies the leader's reference-point position and orientation.
-- Added `AttachToSelectsNamedArenaObject` in `tests/scripts/vm_tests.cpp` to pin
-  case-insensitive ID match, selection of the last match, attachment points,
-  command, no unimplemented report, and miss-state preservation. No golden changed.
-- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed all
-  23 VM tests and all oracle cases (`All cases match the oracle.`);
-  `bash tools/check.sh` reported all gates passed (`gates_smdh` skipped because
-  no `.cia` exists); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+- External review-6 found that C# auto IDs begin at 1000 while C++ began at 0,
+  and that the original test inferred its operand from C++ state and did not
+  actually prove duplicate-ID selection or state preservation. Set
+  `nextInstance_` to 1000 and use an isolated-runtime test with oracle operand
+  `BEAMS_1000`, duplicate explicit IDs, dead/cross-arena/self exclusions, case
+  folding, and seeded leader/point/move state on a miss. Restored the displaced
+  `findObject` source comment to its function.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  all 23 VM tests and all oracle cases (`All cases match the oracle.`). The
+  first test run caught a harness mistake (the second receiver was not in the
+  runtime object collection); corrected it by executing the program on the
+  spawned self object, then reran the full command successfully. `bash
+  tools/check.sh` reported all gates passed; `gates_smdh` was SKIPPED because no
+  CIA exists. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
   make -C mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
-  `mdk.3dsx` without warnings. `git diff --check` passed. No emulator or
+  `mdk.3dsx`. `git diff --check` passed. No golden changed. No emulator or
   hardware run; Old-3DS timing remains unmeasured.
 
 ## What this batch did (iteration 45 — finish deferred object inventory review)

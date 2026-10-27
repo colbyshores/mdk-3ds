@@ -1160,43 +1160,72 @@ void testDebugMessageIsNoOp(scripts::ScriptRuntime& runtime) {
     CHECK(obj.variables[2] == 11.0f);
 }
 
-// attach_to (ScriptVm.cs:968) selects by case-insensitive TYPE_ID in the same
-// arena, keeps the last matching live object, and leaves state untouched on miss.
+// attach_to (ScriptVm.cs:968) uses the oracle's canonical TYPE_ID, excludes
+// dead/cross-arena/self objects, retains the last matching live object, and
+// leaves all receiver state untouched on a miss.
 void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    scripts::MdkObject* dead = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                              0.0f, 1000, 0, false);
+    scripts::MdkObject* otherArena = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                    0.0f, 1000, 0, false);
     scripts::MdkObject* first = runtime.spawn(&controller, "BEAMS", Vec3{1.0f, 2.0f, 3.0f},
                                                0.0f, -1, 0, false);
     scripts::MdkObject* second = runtime.spawn(&controller, "BEAMS", Vec3{4.0f, 5.0f, 6.0f},
-                                                0.0f, -1, 0, false);
+                                                0.0f, 1000, 0, false);
+    CHECK(dead != nullptr);
+    CHECK(otherArena != nullptr);
     CHECK(first != nullptr);
     CHECK(second != nullptr);
-    if (first == nullptr || second == nullptr) {
+    if (dead == nullptr || otherArena == nullptr || first == nullptr || second == nullptr) {
         return;
     }
-    const std::string requested = "beams_" + std::to_string(second->instance_id);
-    scripts::MdkObject obj;
-    obj.arena = "DANT_1";
+    dead->dead = true;
+    otherArena->arena = "OTHER_ARENA";
+
+    // Oracle-derived identity: the fresh runtime's first auto-ID is 1000;
+    // second shares it explicitly to make last-match selection observable.
+    CHECK(first->instance_id == 1000);
+    CHECK(second->instance_id == 1000);
+    const std::string requested = "BEAMS_1000";
+    scripts::MdkObject* self = runtime.spawn(&controller, "BEAMS", Vec3{7.0f, 8.0f, 9.0f},
+                                              0.0f, 1000, 0, false);
+    CHECK(self != nullptr);
+    if (self == nullptr) {
+        return;
+    }
     Code code;
     code.u8(kAttachTo).u8(2).u8(5).pstr(requested);
     code.end();
-    runProgram(runtime, code, &obj);
+    runProgram(runtime, code, self);
     CHECK(!sawUnimplemented(kAttachTo));
-    CHECK(obj.leader == second);
-    CHECK(obj.attach_point_a == 2);
-    CHECK(obj.attach_point_b == 5);
-    CHECK(obj.move_command == kAttachTo);
+    CHECK(self->leader == second);
+    CHECK(self->attach_point_a == 2);
+    CHECK(self->attach_point_b == 5);
+    CHECK(self->move_command == kAttachTo);
+
+    Code folded;
+    folded.u8(kAttachTo).u8(3).u8(6).pstr("beams_1000");
+    folded.end();
+    runProgram(runtime, folded, self);
+    CHECK(self->leader == second);
+    CHECK(self->attach_point_a == 3);
+    CHECK(self->attach_point_b == 6);
 
     scripts::MdkObject unchanged;
     unchanged.arena = "DANT_1";
+    unchanged.leader = first;
+    unchanged.attach_point_a = 13;
+    unchanged.attach_point_b = 17;
     unchanged.move_command = 43;
     Code miss;
     miss.u8(kAttachTo).u8(7).u8(8).pstr("BEAMS_999999");
     miss.end();
     runProgram(runtime, miss, &unchanged);
     CHECK(!sawUnimplemented(kAttachTo));
-    CHECK(unchanged.leader == nullptr);
-    CHECK(unchanged.attach_point_a == 0);
-    CHECK(unchanged.attach_point_b == 0);
+    CHECK(unchanged.leader == first);
+    CHECK(unchanged.attach_point_a == 13);
+    CHECK(unchanged.attach_point_b == 17);
     CHECK(unchanged.move_command == 43);
 }
 
@@ -1240,6 +1269,10 @@ int main() {
     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
     runtime.option = 0;
 
+    scripts::ScriptRuntime attachRuntime(&levelData, &cmi, 1, &bank);
+    testAttachToSelectsNamedArenaObject(attachRuntime);
+    printf("PASS AttachToSelectsNamedArenaObject\n");
+
     testLoopCountsWithVariablesAndGoto(runtime);
     printf("PASS LoopCountsWithVariablesAndGoto\n");
     testGosubReturnsAfterTheCall(runtime);
@@ -1282,8 +1315,6 @@ int main() {
     printf("PASS UnidentifiedSet27cIsNoOp\n");
     testDebugMessageIsNoOp(runtime);
     printf("PASS DebugMessageIsNoOp\n");
-    testAttachToSelectsNamedArenaObject(runtime);
-    printf("PASS AttachToSelectsNamedArenaObject\n");
     testSetRollingCapturesRotationOnTransition(runtime);
     printf("PASS SetRollingCapturesRotationOnTransition\n");
 

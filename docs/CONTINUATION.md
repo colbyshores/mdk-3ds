@@ -1,8 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 46: ported opcode 74 `attach_to` and added
-synthetic VM coverage). Current coverage: 190 true C++ dispatches / 238, 48
-remaining. Iteration-46 verification is recorded below after required gates. Next: continue one opcode family per
+Last updated: 2026-10-27 (iteration 46 review-6 fixes: auto instance IDs and
+`attach_to` coverage). Current coverage: 190 true C++ dispatches / 238, 48
+remaining. Next: finish this batch's gates, then continue one opcode family per
 batch via `vm_tests`.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -20,7 +20,8 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    implemented and pinned (relevant slices detailed in `PROGRESS_LOG.md`).
    The newest batches are 239 (reference no-op; decoder consumes six floats),
    77 (`debug_msg`, ignored by reference), 85 (`set_rolling`; rotation math
-   and transition test), and 74 (`attach_to`; tested name selection and points).
+   and transition test), and 74 (`attach_to`; review-6 corrected auto IDs to
+   start at 1000 and strengthened canonical-name/selection tests).
    132/136 still need Effects; frame-blend integration remains a separate future
    slice. Remaining 48 are listed in
    `docs/OPCODE_COVERAGE.md`.
@@ -33,17 +34,16 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 46 ports opcode 74 `attach_to`: selects the last live object in the
-  same arena whose case-insensitive `TYPE_ID` matches, then assigns leader,
-  attach points, and move command. The synthetic VM test pins successful match,
-  case folding, last-match behavior, and miss-state preservation. No golden
-  changed. Verification: `make -C tests/scripts clean && make -C tests/scripts`
-  passed all 23 VM tests and all oracle cases (`All cases match the oracle.`);
-  `bash tools/check.sh` reported all gates passed (`gates_smdh` skipped, no CIA);
-  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
-  linked `mdk.elf`, staged 69 RomFS files (79M), and built `mdk.3dsx` without
-  warnings. `git diff --check` passed. No emulator/hardware run; Old-3DS timing
-  remains unmeasured.
+- Iteration 46 ports opcode 74 `attach_to`; review-6 fixes set generated
+  instance IDs to the C# starting value 1000 and test explicit `BEAMS_1000`,
+  duplicate-ID last-match selection, case folding, exclusions, and miss-state
+  preservation. `make -C tests/scripts clean && make -C tests/scripts` passed
+  all 23 VM tests and all oracle cases (`All cases match the oracle.`).
+  `bash tools/check.sh` reported all gates passed; `gates_smdh` was SKIPPED
+  because no CIA exists. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+  `mdk.3dsx`. `git diff --check` passed. No golden changed; no emulator or
+  hardware run. Old-3DS timing remains unmeasured.
 - Iteration 45 corrected the `object.h` behavior inventory per review-4:
   sound positioning is owned by `SoundMixer`, distance is inlined at existing
   call sites, `PoseParts` remains unported, and the `PartCenter` distinction is
