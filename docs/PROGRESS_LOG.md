@@ -1,4 +1,19 @@
 
+## What this batch did (iteration 49 — prove exact `attach_to` ID matching)
+
+- Addressed review-9's finding that the prior fixture rejected suffix-ignoring
+  logic but did not force exact equality. Added live same-arena IDs 999 and
+  10001 after the valid candidates: a lower-bound/range resolver and a
+  canonical-name prefix resolver now select a near-match last and fail the
+  exact ID assertions. Runtime code and oracle goldens are unchanged.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  all 23 VM tests and all oracle cases (`All cases match the oracle.`);
+  `bash tools/check.sh` reported all gates passed with SMDH skipped (no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  staged 69 RomFS files (79M) and produced `mdk.3dsx`; `git diff --check`
+  passed. No golden changed; no emulator/hardware run. Old-3DS timing remains
+  unmeasured.
+
 ## What this batch did (iteration 48 — pin `attach_to` ID matching)
 
 - Addressed review-8's test gap: every matching candidate previously used

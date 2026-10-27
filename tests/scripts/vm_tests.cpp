@@ -1174,6 +1174,12 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
                                                 0.0f, 1000, 0, false);
     scripts::MdkObject* differentId = runtime.spawn(&controller, "BEAMS", Vec3{5.0f, 6.0f, 7.0f},
                                                      0.0f, 1001, 0, false);
+    // Keep near-matches before self/dead/cross-arena entries so those
+    // exclusion checks remain independently sensitive to scan order.
+    scripts::MdkObject* lowerNearMatch = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                        0.0f, 999, 0, false);
+    scripts::MdkObject* longerNearMatch = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                         0.0f, 10001, 0, false);
     scripts::MdkObject* self = runtime.spawn(&controller, "BEAMS", Vec3{7.0f, 8.0f, 9.0f},
                                               0.0f, 1000, 0, false);
     scripts::MdkObject* dead = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
@@ -1186,8 +1192,11 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     CHECK(self != nullptr);
     CHECK(dead != nullptr);
     CHECK(otherArena != nullptr);
+    CHECK(lowerNearMatch != nullptr);
+    CHECK(longerNearMatch != nullptr);
     if (first == nullptr || second == nullptr || differentId == nullptr || self == nullptr ||
-        dead == nullptr || otherArena == nullptr) {
+        dead == nullptr || otherArena == nullptr || lowerNearMatch == nullptr ||
+        longerNearMatch == nullptr) {
         return;
     }
     dead->dead = true;
@@ -1198,6 +1207,8 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     CHECK(first->instance_id == 1000);
     CHECK(second->instance_id == 1000);
     CHECK(differentId->instance_id == 1001);
+    CHECK(lowerNearMatch->instance_id == 999);
+    CHECK(longerNearMatch->instance_id == 10001);
     const std::string requested = "BEAMS_1000";
     Code code;
     code.u8(kAttachTo).u8(2).u8(5).pstr(requested);

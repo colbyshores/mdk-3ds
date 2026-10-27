@@ -1,8 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 48: review-8 attach_to ID-match test fix).
-Current coverage: 190 true C++ dispatches / 238, 48 remaining. Next: continue
-one opcode family per batch via `vm_tests`; renderer work waits for P5.0.
+Last updated: 2026-10-27 (iteration 49: review-9 exact `attach_to` ID test).
+Current coverage: 190 true C++ dispatches / 238, 48 remaining. Continue one
+opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 `docs/PROGRESS_LOG.md`.
@@ -16,16 +16,9 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    batch. Opcode 208 (reachability probe), harness + 13, parts 32/129,
    rope-swing 226/242, spawn 156/206, push-hit-dir 81, stats 217, vision 243,
    value slots 199/210, Kurt/screen 215/240/244, and no-ops 239/77 are
-   implemented and pinned (relevant slices detailed in `PROGRESS_LOG.md`).
-   The newest batches are 239 (reference no-op; decoder consumes six floats),
-   77 (`debug_msg`, ignored by reference), 85 (`set_rolling`; rotation math
-   and transition test), and 74 (`attach_to`; review-6 corrected auto IDs to
-   start at 1000 and strengthened canonical-name/selection tests).
-   132/136 still need Effects; frame-blend integration remains a separate future
-   slice. Iteration 48 closes review-8's test gap: a live same-arena `BEAMS_1001`
-   candidate is distinct from `BEAMS_1000`, and both exact ID requests are pinned.
-   Remaining 48 are listed in
-   `docs/OPCODE_COVERAGE.md`.
+   implemented and pinned. Newer slices include 85 (`set_rolling`) and 74
+   (`attach_to`). 132/136 still need Effects; frame-blend integration remains a
+   separate future slice. Remaining 48 are listed in `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
    no renderer batch until the harness gate is green.
@@ -35,88 +28,29 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 48 addresses review-8's finding that all candidates used ID 1000.
-  The attach test includes same-arena `BEAMS_1001`; `BEAMS_1000` must select the
-  ID-1000 match and `BEAMS_1001` must select the ID-1001 match. The 23 VM tests
-  and complete oracle suite passed; `tools/check.sh` passed (SMDH skipped without
-  CIA); the 3DS build staged 69 RomFS files and produced `mdk.3dsx`.
-  `git diff --check` passed. No golden changed; no emulator/hardware run.
-- Iteration 47 fixes review-7's false-positive exclusion assertions: valid
-  candidates precede self/dead/cross-arena candidates in scan order, so removal
-  of either exclusion independently changes the selected leader. Gates and
-  3DS build passed; details are in `PROGRESS_LOG.md`.
-- Iteration 46 ports opcode 74 `attach_to`; review-6 fixes set generated
-  instance IDs to the C# starting value 1000 and test explicit `BEAMS_1000`,
-  duplicate-ID last-match selection, case folding, exclusions, and miss-state
-  preservation. `make -C tests/scripts clean && make -C tests/scripts` passed
-  all 23 VM tests and all oracle cases (`All cases match the oracle.`).
-  `bash tools/check.sh` reported all gates passed; `gates_smdh` was SKIPPED
-  because no CIA exists. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
-  make -C mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
-  `mdk.3dsx`. `git diff --check` passed. No golden changed; no emulator or
-  hardware run. Old-3DS timing remains unmeasured.
-- Iteration 45 corrected the `object.h` behavior inventory per review-4:
-  sound positioning is owned by `SoundMixer`, distance is inlined at existing
-  call sites, `PoseParts` remains unported, and the `PartCenter` distinction is
-  explicit. No runtime behavior or golden changed; findings addressed below.
-- Iteration 44 corrected the file-level `object.h` overview and reconciled its
-  deferred behavior list against the tree: animation advance, pose bounds,
-  part center, and runtime yaw-to are implemented; Footing, frame-blend/transform
-  reads and pose/part baking remain deferred. Sound-position and distance-to
-  behavior already exists elsewhere in the tree. Documentation-only; no behavior
-  or test fixtures changed. This addresses external review-3's documentation drift.
-- Iteration 43 removed implemented `Rotation` from the deferred list per review-2.
-  External review-3 found that its new progress sentence and several other list
-  entries were still inaccurate; this iteration audits and corrects those.
-  `make -C tests/scripts clean && make -C tests/scripts` passed all 22 VM
-  tests and all table/script/other oracle cases (`All cases match the oracle.`).
-  `bash tools/check.sh` reported all gates passed; `gates_smdh` skipped because
-  no `.cia` exists. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
-  make -C mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
-  `mdk.3dsx`. No emulator or hardware run was relevant/performed. The change
-  was committed as `67c60a7` (one iteration-43 commit).
-- Iteration 45 verification: `make -C tests/scripts clean && make -C
-  tests/scripts` passed 22 VM tests and all oracle cases (`All cases match the
-  oracle.`); `bash tools/check.sh` reported all gates passed (`gates_smdh`
-  skipped because no `.cia` exists); `DEVKITPRO=/opt/devkitpro
-  DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` linked `mdk.elf`, staged
-  69 RomFS files (79M), and built `mdk.3dsx`. `git diff --check` passed.
-  Documentation-only correction; no emulator/hardware run. Old-3DS timing
-  remains unmeasured. Batch committed as the iteration-45 commit.
-- Iteration 44 verification: `make -C tests/scripts clean && make -C
-  tests/scripts` passed all 22 VM tests and all oracle cases (`All cases match
-  the oracle.`); `bash tools/check.sh` reported `CHECK: ALL GATES PASSED`
-  (`gates_smdh` skipped because no `.cia` exists); and
-  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
-  linked `mdk.elf`, staged 69 RomFS files (79M), and built `mdk.3dsx`.
-  `git diff --check` passed. This documentation-only change required no emulator
-  or hardware run; Old-3DS timing remains unmeasured. Code/docs committed as
-  `aca61d5`; its verification record was committed separately as `96d8c31`.
-- Iteration 42 corrected opcode 85's rotation rounding per external review and
-  pins the full 4x4 matrix against .NET 10 oracle bits. Coverage: C# 238 unique
-  cases; C++ 191 numeric labels, 190 unique (nested `case 0` in 249 is not an
-  opcode), 189 true dispatches, 49 missing.
-- `make -C tests/scripts clean && make -C tests/scripts` → all 22 VM tests
-  PASS, then `All cases match the oracle.` (table/script corpus byte-identical).
-- `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; `gates_smdh` SKIPPED
-  because no built `.cia` exists (not reported as passed).
-- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
-  → linked `mdk.elf`, staged 69 RomFS files (79M), built `mdk.3dsx`.
-- No actual Old-3DS hardware capture was performed; hardware readiness remains
+- Iteration 49 addresses review-9: the attach test adds same-arena `BEAMS_999`
+  and `BEAMS_10001` before self/dead/cross-arena exclusions. Thus lower-bound/
+  range and canonical-name-prefix resolvers cannot pass the exact-ID checks,
+  while exclusion assertions remain independently sensitive to scan order.
+  `make -C tests/scripts clean && make -C tests/scripts` passed all 23 VM tests
+  and the full oracle suite (`All cases match the oracle.`). `bash tools/check.sh`
+  reported all gates passed; SMDH was skipped because no CIA exists. The 3DS
+  build staged 69 RomFS files (79M) and produced `mdk.3dsx`. `git diff --check`
+  passed. No golden changed; no emulator/hardware run. Old-3DS timing remains
   unmeasured.
-- `git diff --check` → clean.
-- External review `logs/ralph-pi/run-20261027-014607/review-1.md` identified
-  degree conversion and `Matrix4x4` rounding divergences in opcode 85; the
-  iteration-42 fix is pinned by exact bits. An ARM11 object disassembly shows
-  `fmaf` calls (not an inline fused opcode); no actual 3DS hardware run was
-  performed, so runtime/performance evidence remains open.
+- Iteration 48 added a same-arena `BEAMS_1001` candidate, requiring requests
+  for `BEAMS_1000` and `BEAMS_1001` to select the matching IDs. Iteration 47
+  made self/dead/cross-arena exclusions independently testable. Iteration 46
+  ported opcode 74 with C# auto IDs starting at 1000, duplicate-ID last-match
+  selection, case folding, exclusions, and miss-state preservation. Full
+  details and earlier batch verification are in `docs/PROGRESS_LOG.md`.
 
 ## Testability and standing open items
 
 - Oracle/goldens compare fixed table + script fields, not velocity,
-  `alarm_ticks`, `Items.Bomb`/`Decoy`, or all combat/effect state. Use
-  `vm_tests` for otherwise unreachable opcode behavior; don't port without a
-  test. The tick corpus matches byte-for-byte through t30000 on levels 3–8.
+  `alarm_ticks`, `Items.Bomb`/`Decoy`, or all combat/effect state. Use `vm_tests`
+  for otherwise unreachable opcode behavior; don't port without a test. The
+  tick corpus matches byte-for-byte through t30000 on levels 3–8.
 - Oracle driver: `/tmp/kilo/oracle/Driver/Program.cs`; run with
   `DOTNET_ROOT=/tmp/kilo/dotnet10`, `MDK_DATA_DIR=<repo>/MDK`, driver args
   `L T 1 script`. Source oracle `src/Mdk.Game/**` is read-only.
@@ -145,5 +79,5 @@ DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds
 ```
 
 Tests do not track header dependencies: run `make -C tests/scripts clean` after
-header changes. Keep the monolithic `ScriptVm::execute()` switch. Never weaken
-a gate or test.
+header changes. Keep the monolithic `ScriptVm::execute()` switch. Never weaken a
+gate or test.
