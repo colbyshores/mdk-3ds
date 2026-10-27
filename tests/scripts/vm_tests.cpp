@@ -53,6 +53,7 @@ const int32_t kPushHitDir = 81;
 const int32_t kSpawnAlongPath = 206;
 const int32_t kHeadShots = 217;
 const int32_t kIfPointSeesPlayer = 243;
+const int32_t kIfPlayerHealth = 241;
 const int32_t kSet104 = 199;
 const int32_t kSet2c0 = 210;
 const int32_t kScreenFlash = 215;
@@ -76,6 +77,7 @@ const int32_t kOwn = 2;
 // Flag word 5: the object's own door state (ScriptVm.cs:200).
 const int32_t kDoor = 5;
 const int32_t kLessThan = 1;
+const int32_t kGreaterThan = 2;
 const int32_t kLiteral = 3;
 const uint8_t kActionGoto = 0x0C;
 const uint8_t kEnd = 0xFF;
@@ -869,6 +871,40 @@ void testHeadShotsAddOnlyWhenEnabled(scripts::ScriptRuntime& runtime) {
     CHECK(scripts::GameStats::percent(0, 0) == 0);
 }
 
+// Opcode 241 (if_player_health) has no C# ScriptVmTests counterpart. Pin its
+// comparison against Kurt after damage (99), including true and false branch
+// outcomes; opcode 241 does not fire in the level corpus.
+void testIfPlayerHealthComparesKurtHealth(scripts::ScriptRuntime& runtime) {
+    runtime.hurtKurt(1);
+    CHECK(runtime.kurt().health() == 99);
+    {
+        Code code;
+        code.u8(kIfPlayerHealth).u8(kLessThan).f32(100.0f).u8(kActionGoto).target("healthy");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        code.end();
+        code.label("healthy");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kIfPlayerHealth));
+        CHECK(obj.variables[0] == 2.0f);
+    }
+    {
+        Code code;
+        code.u8(kIfPlayerHealth).u8(kGreaterThan).f32(99.0f).u8(kActionGoto).target("low");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        code.end();
+        code.label("low");
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kIfPlayerHealth));
+        CHECK(obj.variables[0] == 1.0f);
+    }
+}
+
 // Opcode 243 (if_point_sees_player) has no C# ScriptVmTests counterpart, so
 // this pins the oracle directly (ScriptVm.cs:1703-1708): the REFERENCE point
 // (not the position) must be within the u16 range of Kurt's feet, and the
@@ -1345,6 +1381,8 @@ int main() {
     printf("PASS HeadShotsAddOnlyWhenEnabled\n");
     testPointSeesPlayerNeedsRangeAndAClearLine(runtime);
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
+    testIfPlayerHealthComparesKurtHealth(runtime);
+    printf("PASS IfPlayerHealthComparesKurtHealth\n");
     testUnidentifiedValueSlotsStoreTheirOperand(runtime);
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
     testKurtAndScreenWrites(runtime);

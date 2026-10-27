@@ -1553,6 +1553,8 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, compare(obj->velocity.z, listval(op(ins, 0))));
         case 127:  // if_health: compare the health
             return branch(obj, ins, compare((float)obj->health, listval(op(ins, 0))));
+        case 241:  // if_player_health: compare Kurt's health
+            return branch(obj, ins, compare((float)runtime_.kurt().health(), listval(op(ins, 0))));
         case 246: {  // turn_to_linked (bit 7: the pitch too)
             const int32_t kTurns = 1;
             const int32_t kAlsoPitch = 0x80;

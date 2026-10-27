@@ -1,4 +1,16 @@
 
+## What this batch did (iteration 52 — opcode 241 `if_player_health`)
+
+- Ported the C# comparison against `runtime.Kurt.Health` in the C++ VM. Added
+  synthetic coverage for a true (`100 > 99`) and false (`100 < 99`) branch and
+  confirmed opcode 241 leaves the unimplemented bucket. Updated the opcode
+  audit: 191/238 true dispatches, 47 remaining. No level golden changes.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  24 VM tests and all oracle cases (`All cases match the oracle.`); `bash
+  tools/check.sh` passed all contract gates (SMDH skipped, no CIA); the 3DS
+  build staged 69 RomFS files (79M) and produced `mdk.3dsx`. No emulator or
+  hardware run; Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 51 — exact `attach_to` type matching)
 
 - Addressed review-10's remaining fixture gap: a live same-arena `BOLT_1000`

@@ -1,7 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 50: opcode 217 signed-add and percent truncation tests).
-Current coverage: 190 true C++ dispatches / 238, 48 remaining. Continue one
+Last updated: 2026-10-27 (iteration 52: opcode 241 `if_player_health`).
+Current coverage: 191 true C++ dispatches / 238, 47 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -18,7 +18,7 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    value slots 199/210, Kurt/screen 215/240/244, and no-ops 239/77 are
    implemented and pinned. Newer slices include 85 (`set_rolling`) and 74
    (`attach_to`). 132/136 still need Effects; frame-blend integration remains a
-   separate future slice. Remaining 48 are listed in `docs/OPCODE_COVERAGE.md`.
+   separate future slice. Remaining 47 are listed in `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
    no renderer batch until the harness gate is green.
@@ -28,22 +28,19 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 50 strengthens opcode 217's `GameStats` test: a negative S32
-  operand subtracts from `headShots`, disabled counting remains unchanged, and
-  `Percent(2, 3)` pins integer truncation to 66. `make -C tests/scripts clean &&
-  make -C tests/scripts` passed 23 VM tests and the full oracle suite; `bash
-  tools/check.sh` passed all gates (SMDH skipped, no CIA); the 3DS build staged
-  69 RomFS files (79M) and produced `mdk.3dsx`. No golden changed; no
-  emulator/hardware run. Old-3DS timing remains unmeasured.
-- Iteration 51 closes review-10's `attach_to` fixture gap by adding a live
-  different-type same-arena candidate with colliding instance ID 1000. This
-  rejects ID-only matching. `docs/OPCODE_COVERAGE.md` records all pinned
-  TYPE_ID discrimination cases. `make -C tests/scripts clean && make -C
-  tests/scripts` passed 23 VM tests and the full oracle suite (`All cases match
-  the oracle.`); `bash tools/check.sh` passed all gates (SMDH skipped, no CIA);
-  the 3DS build staged 69 RomFS files (79M) and produced `mdk.3dsx`. No golden
-  changed, no emulator/hardware run. Old-3DS timing remains unmeasured.
-- Next: continue opcode conversion from the remaining 48 in
+- Iteration 52 ports opcode 241 (`if_player_health`) as a comparison of Kurt's
+  current health, with a synthetic test pinning both taken and untaken branches;
+  the C# level corpus does not reach it. `make -C tests/scripts clean && make
+  -C tests/scripts` passed 24 VM tests and the complete oracle suite (`All cases
+  match the oracle.`); `bash tools/check.sh` passed all contract gates (SMDH
+  skipped, no CIA); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` built `mdk.3dsx` after staging 69 RomFS files (79M). No
+  golden changed; no emulator/hardware run. Old-3DS timing remains unmeasured.
+- Iteration 51 closes review-10's `attach_to` fixture gap with a live
+  different-type same-arena candidate sharing instance ID 1000; full checks
+  and the 3DS build passed. Iteration 50 strengthened opcode 217's signed
+  operand and percent-truncation tests. Details are in `docs/PROGRESS_LOG.md`.
+- Next: continue opcode conversion from the remaining 47 in
   `docs/OPCODE_COVERAGE.md`; select the next testable subsystem slice.
 - Iteration 49 addresses review-9: the attach test adds same-arena `BEAMS_999`
   and `BEAMS_10001` before self/dead/cross-arena exclusions. Thus lower-bound/
