@@ -194,6 +194,8 @@ public:
     // instance = AnyInstance): face_mode 3 copies its yaw. Null when none.
     MdkObject* firstOther(MdkObject* obj, const std::string& type, int32_t instance = -1);
     MdkObject* findObject(MdkObject* obj, const std::string& type, int32_t mode);
+    // attach_to (opcode 74): bind to the last live same-arena object named TYPE_ID.
+    void attachTo(MdkObject* obj, int32_t pointA, int32_t pointB, const std::string& name);
     // command_objects (opcode 4): sends a command to the matching objects of the
     // arena (0x440384). Commands: 1 join a formation around the sender, 7 goto
     // target, 0xFC gosub target, 43 go to a destination. The VM parses the operands

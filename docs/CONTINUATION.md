@@ -1,10 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 44: reconciled the `object.h` deferred
-behavior list against implemented code per external review-3; no behavior changed).
-Current coverage: 189
-true C++ dispatches / 238, 49 remaining. Iteration-43 verification is recorded
-below after running the required gates. Next: continue one opcode family per
+Last updated: 2026-10-27 (iteration 46: ported opcode 74 `attach_to` and added
+synthetic VM coverage). Current coverage: 190 true C++ dispatches / 238, 48
+remaining. Iteration-46 verification is recorded below after required gates. Next: continue one opcode family per
 batch via `vm_tests`.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -21,9 +19,10 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    value slots 199/210, Kurt/screen 215/240/244, and no-ops 239/77 are
    implemented and pinned (relevant slices detailed in `PROGRESS_LOG.md`).
    The newest batches are 239 (reference no-op; decoder consumes six floats),
-   77 (`debug_msg`, ignored by reference), and 85 (`set_rolling`; rotation math
-   and transition test). 132/136 still need Effects; frame-blend integration
-   remains a separate future slice. Remaining 49 are listed in
+   77 (`debug_msg`, ignored by reference), 85 (`set_rolling`; rotation math
+   and transition test), and 74 (`attach_to`; tested name selection and points).
+   132/136 still need Effects; frame-blend integration remains a separate future
+   slice. Remaining 48 are listed in
    `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
@@ -34,6 +33,17 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 46 ports opcode 74 `attach_to`: selects the last live object in the
+  same arena whose case-insensitive `TYPE_ID` matches, then assigns leader,
+  attach points, and move command. The synthetic VM test pins successful match,
+  case folding, last-match behavior, and miss-state preservation. No golden
+  changed. Verification: `make -C tests/scripts clean && make -C tests/scripts`
+  passed all 23 VM tests and all oracle cases (`All cases match the oracle.`);
+  `bash tools/check.sh` reported all gates passed (`gates_smdh` skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  linked `mdk.elf`, staged 69 RomFS files (79M), and built `mdk.3dsx` without
+  warnings. `git diff --check` passed. No emulator/hardware run; Old-3DS timing
+  remains unmeasured.
 - Iteration 45 corrected the `object.h` behavior inventory per review-4:
   sound positioning is owned by `SoundMixer`, distance is inlined at existing
   call sites, `PoseParts` remains unported, and the `PartCenter` distinction is

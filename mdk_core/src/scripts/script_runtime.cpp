@@ -2467,6 +2467,27 @@ MdkObject* ScriptRuntime::firstOther(MdkObject* obj, const std::string& type, in
 
 // C# ScriptVm.FindObject: mode 0 random, mode 1 nearest, mode 2 nearest thrown item
 // within sight/range. Collection order is the stable object-list order.
+void ScriptRuntime::attachTo(MdkObject* obj, int32_t pointA, int32_t pointB,
+                             const std::string& name) {
+    MdkObject* found = nullptr;
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject& other = *it;
+        if (&other == obj || other.dead || isRemoved(&other) || other.arena != obj->arena) {
+            continue;
+        }
+        const std::string objectName = other.type_name + "_" + std::to_string(other.instance_id);
+        if (formats::toLowerAscii(objectName) == formats::toLowerAscii(name)) {
+            found = &other;
+        }
+    }
+    if (found != nullptr) {
+        obj->leader = found;
+        obj->attach_point_a = pointA;
+        obj->attach_point_b = pointB;
+        obj->move_command = 74;
+    }
+}
+
 MdkObject* ScriptRuntime::findObject(MdkObject* obj, const std::string& type, int32_t mode) {
     const float kItemRange = 200.0f;
     const float kItemAbove = 9.0f;

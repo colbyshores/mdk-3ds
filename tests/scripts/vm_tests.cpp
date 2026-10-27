@@ -61,6 +61,7 @@ const int32_t kSetGlobal573bd4 = 244;
 const int32_t kSet27c = 239;
 const int32_t kDebugMsg = 77;
 const int32_t kSetRolling = 85;
+const int32_t kAttachTo = 74;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -1159,6 +1160,46 @@ void testDebugMessageIsNoOp(scripts::ScriptRuntime& runtime) {
     CHECK(obj.variables[2] == 11.0f);
 }
 
+// attach_to (ScriptVm.cs:968) selects by case-insensitive TYPE_ID in the same
+// arena, keeps the last matching live object, and leaves state untouched on miss.
+void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    scripts::MdkObject* first = runtime.spawn(&controller, "BEAMS", Vec3{1.0f, 2.0f, 3.0f},
+                                               0.0f, -1, 0, false);
+    scripts::MdkObject* second = runtime.spawn(&controller, "BEAMS", Vec3{4.0f, 5.0f, 6.0f},
+                                                0.0f, -1, 0, false);
+    CHECK(first != nullptr);
+    CHECK(second != nullptr);
+    if (first == nullptr || second == nullptr) {
+        return;
+    }
+    const std::string requested = "beams_" + std::to_string(second->instance_id);
+    scripts::MdkObject obj;
+    obj.arena = "DANT_1";
+    Code code;
+    code.u8(kAttachTo).u8(2).u8(5).pstr(requested);
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kAttachTo));
+    CHECK(obj.leader == second);
+    CHECK(obj.attach_point_a == 2);
+    CHECK(obj.attach_point_b == 5);
+    CHECK(obj.move_command == kAttachTo);
+
+    scripts::MdkObject unchanged;
+    unchanged.arena = "DANT_1";
+    unchanged.move_command = 43;
+    Code miss;
+    miss.u8(kAttachTo).u8(7).u8(8).pstr("BEAMS_999999");
+    miss.end();
+    runProgram(runtime, miss, &unchanged);
+    CHECK(!sawUnimplemented(kAttachTo));
+    CHECK(unchanged.leader == nullptr);
+    CHECK(unchanged.attach_point_a == 0);
+    CHECK(unchanged.attach_point_b == 0);
+    CHECK(unchanged.move_command == 43);
+}
+
 } // namespace
 
 int main() {
@@ -1241,6 +1282,8 @@ int main() {
     printf("PASS UnidentifiedSet27cIsNoOp\n");
     testDebugMessageIsNoOp(runtime);
     printf("PASS DebugMessageIsNoOp\n");
+    testAttachToSelectsNamedArenaObject(runtime);
+    printf("PASS AttachToSelectsNamedArenaObject\n");
     testSetRollingCapturesRotationOnTransition(runtime);
     printf("PASS SetRollingCapturesRotationOnTransition\n");
 

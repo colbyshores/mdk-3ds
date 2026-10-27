@@ -1,4 +1,23 @@
 
+## What this batch did (iteration 46 — opcode 74 `attach_to`)
+
+- Ported opcode 74 from `ScriptVm.cs:968`: scan live objects in stable runtime
+  order, excluding self and removed/dead objects, require same arena, compare
+  formatted `TYPE_ID` case-insensitively, and keep the last match. On a match,
+  assign leader, both attach-point indices, and movement command 74; on a miss,
+  preserve all object state. Existing movement-command 74 behavior follows the
+  attachment and copies the leader's reference-point position and orientation.
+- Added `AttachToSelectsNamedArenaObject` in `tests/scripts/vm_tests.cpp` to pin
+  case-insensitive ID match, selection of the last match, attachment points,
+  command, no unimplemented report, and miss-state preservation. No golden changed.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed all
+  23 VM tests and all oracle cases (`All cases match the oracle.`);
+  `bash tools/check.sh` reported all gates passed (`gates_smdh` skipped because
+  no `.cia` exists); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+  `mdk.3dsx` without warnings. `git diff --check` passed. No emulator or
+  hardware run; Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 45 — finish deferred object inventory review)
 
 - Followed up on external review-4 of iteration 44's `object.h` behavior list.

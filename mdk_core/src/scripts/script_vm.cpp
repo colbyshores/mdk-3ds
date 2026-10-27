@@ -1296,6 +1296,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 119:  // if_count_alive: live objects of the arena of a type
             return branch(obj, ins, compare((float)countOthers(obj, op(ins, 0), true),
                                             listval(op(ins, 1))));
+        case 74:  // attach_to: the last live same-arena object named TYPE_ID
+            runtime_.attachTo(obj, ival(op(ins, 0)), ival(op(ins, 1)), strval(op(ins, 2)));
+            break;
         case 123:  // if_not_in_player_arena
             return branch(obj, ins, obj->arena != runtime_.currentArena());
         case 47:  // if_chance: percent per tick
