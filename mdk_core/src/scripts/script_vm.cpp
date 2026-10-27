@@ -1239,6 +1239,11 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                                       : runtime_.kurt().invulnerable() + fval(op(ins, 1)));
             break;
 
+        // Debug messages are intentionally ignored by the reference VM too
+        // (ScriptVm.cs:1713); decoder operands are consumed before dispatch.
+        case 77:  // debug_msg
+            break;
+
         // The C# identifies no effect for these six-float records either.
         case 239:  // set_27c (not identified): ScriptVm.cs:1783 is a no-op
             break;

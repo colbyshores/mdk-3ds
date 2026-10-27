@@ -1,4 +1,25 @@
 
+## What this batch did (iteration 40 — opcode 77 `debug_msg` no-op)
+
+- Ported opcode 77 as an explicit no-op in `ScriptVm::execute`, matching the
+  C# `case 77` at `ScriptVm.cs:1713`. The C# deliberately ignores debug output;
+  no logging subsystem or side effect is implied. Decoder continues to consume
+  the U8 and Pascal-string operands before dispatch.
+- Added a synthetic `vm_tests` program encoding mode 3 and `"debug text"`, then
+  a `set_var` instruction. It verifies opcode 77 is not in the unimplemented
+  bucket and that execution advances and performs the following write.
+- No level golden changes: opcode 77 does not fire in levels 3-8. Coverage is
+  now 188 true dispatches / 238, with 50 remaining.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  all 21 VM unit tests and `All cases match the oracle.`; `bash tools/check.sh`
+  reported all gates passed (SMDH gate skipped because no `.cia` exists);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  linked `mdk.elf` and built `mdk.3dsx`; `git diff --check` passed. The
+  adversarial reviewer was unavailable (review-37 is a prior quota failure and
+  no reviewer response was available for this iteration); self-review compared
+  behavior and decoder operand order against the read-only C# oracle.
+
+
 ## What this batch did (iteration 11 — pickup/chute/death lifecycle slice)
 
 - **`ScriptRuntime::kill()` now mirrors C# `Kill` (ScriptRuntime.cs:1678)**:

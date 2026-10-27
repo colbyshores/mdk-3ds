@@ -4,15 +4,16 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ has **189** numeric labels / 188 unique labels (187 true dispatches), leaving **51** unimplemented. The
+  owns **238** cases, the C++ has **190** numeric labels / 189 unique labels (188 true dispatches), leaving **50** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
   `noteUnimplemented` (decoded, no-op, scripts stay in sync).
 - The reachability probe (C++ `unimplemented()` after running each level to
   t600) was rerun after this batch: of the remaining set, only **138** (L5)
-  fires in levels 3-8 — 109 (L3, L5), 175 (L6) and 249 (L5) are now ported.
-  (99 and 168, which fired before this batch, are now implemented.)
+  fires in levels 3-8 — 109 (L3, L5), 175 (L6), 249 (L5), and 77 do not
+  exercise this route; 77 is covered by `vm_tests`. (99 and 168, which fired
+  before this batch, are now implemented.)
 - **Parts batch (2026-10-26):** 32/129 ported (`script_vm.cpp`, reusing
   `partsMask`/`findPart`/`locked_parts`/`option`); the brace-matched recount
   is C# **238** / C++ **175** / remaining **64**. The C++ count carries the
@@ -49,7 +50,11 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 - **Opcode 239 batch (2026-10-26):** explicit C# no-op `set_27c` is now a C++
   no-op case; a synthetic test supplies all six F32 operands, checks the
   following instruction executes, and verifies it is not counted unimplemented.
-  Current recount: C# 238, C++ 187 true dispatches, 51 remaining.
+- **Opcode 77 batch (2026-10-26):** `debug_msg` is an explicit no-op in the
+  C# VM. C++ now dispatches it as a no-op; `vm_tests` supplies its U8 and
+  Pascal-string operands and checks the following instruction executes and
+  opcode 77 is not reported unimplemented. Current recount: C# 238, C++ 188
+  true dispatches, 50 remaining.
 - **Debris slice (2026-10-25):** 137/138/139 (`shatter_group` family) are
   ported with `mdk_core/src/scripts/debris.{h,cpp}` (a 1:1 port of
   `Debris.cs`: Shatter/Spark/Update, pooled pieces, seeded-RNG order) and
@@ -79,7 +84,7 @@ Per-opcode tests are still needed for edge cases beyond the end-to-end golden
 suite; the complete-vs-partial classification of the owned cases is now done
 (see "Owned-case classification" at the end of this file).
 
-## Remaining 51 (verified set)
+## Remaining 50 (verified set)
 
 13 left this list with the synthetic-harness batch (port 13 is an explicit
 false branch, `ScriptVmTests.UnimplementedConditionsAreFalse` pins it, and the
@@ -88,9 +93,9 @@ C++ `unimplemented()` bucket stays clean). 32 (`clear_parts_mask`) and 129
 existing parts fields, pinned by three `vm_tests` tests with a synthetic
 model (no C# counterpart exists to twin). 226 (`jump_to`) and 242
 (`set_2d0_block`) left with the rope-swing batch the same way: pure
-swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with the 81 batch: pure velocity math over existing fields, pinned by a `vm_tests` test. 206 (`spawn_along_path`) left with this batch: the path API (`pathKeyCount`/`pathKeyFrame`/`pathPosition`) and flagged `spawn` both already ported, pinned by a `vm_tests` test on LEVEL7.CMI path 53729. 217 (`global_573c4c_add`) left with the stats slice: the new `GameStats` struct (`game_stats.h`: counters, `IsEnemy`/`CountEnemy`, `Percent`) with a `stats` member on the runtime, pinned by a `vm_tests` test. 243 (`if_point_sees_player`) left with the vision-condition batch: `reference_point`, `kurtPosition` and `raycastClear` all already ported, pinned by a `vm_tests` test (range gate, ref-point selection, clear-line true at the L7 spawn, blocked-from-below false). 199 (`set_104`) and 210 (`set_2c0`) left with the value-slot batch: the C# itself treats them as unidentified object slots and does nothing but `obj.Value104/Value2c0 = Value(obj, o[0])` (ScriptVm.cs:1663-1668) — a pure object-state write like 205/218, with the fields already on `MdkObject` and no C++ reader to diverge from, pinned by a `vm_tests` test (literal and variable operand paths). Remaining 51:
+swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with the 81 batch: pure velocity math over existing fields, pinned by a `vm_tests` test. 206 (`spawn_along_path`) left with this batch: the path API (`pathKeyCount`/`pathKeyFrame`/`pathPosition`) and flagged `spawn` both already ported, pinned by a `vm_tests` test on LEVEL7.CMI path 53729. 217 (`global_573c4c_add`) left with the stats slice: the new `GameStats` struct (`game_stats.h`: counters, `IsEnemy`/`CountEnemy`, `Percent`) with a `stats` member on the runtime, pinned by a `vm_tests` test. 243 (`if_point_sees_player`) left with the vision-condition batch: `reference_point`, `kurtPosition` and `raycastClear` all already ported, pinned by a `vm_tests` test (range gate, ref-point selection, clear-line true at the L7 spawn, blocked-from-below false). 199 (`set_104`) and 210 (`set_2c0`) left with the value-slot batch: the C# itself treats them as unidentified object slots and does nothing but `obj.Value104/Value2c0 = Value(obj, o[0])` (ScriptVm.cs:1663-1668) — a pure object-state write like 205/218, with the fields already on `MdkObject` and no C++ reader to diverge from, pinned by a `vm_tests` test (literal and variable operand paths). Remaining 50:
 27, 28, 29, 49,
-74, 77,
+74,
 85, 112, 114, 121, 128,
 130, 131, 132, 133, 135, 136, 142, 143, 158, 159, 167, 170,
 171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 202,
@@ -141,8 +146,8 @@ By blocking subsystem (carried grouping, corrected for this batch):
   and the setters in movement command 15 (ObjectMotion.cs:385) and Rides
   (Rides.cs:219). None of that exists in the C++ yet, and 27 does not fire in
   levels 3-8 to t600, so there is no golden to exercise it — do not blind-port it.
-- **Camera/cutscene/debug (no camera/cutscene port):** 77, 131, 203
-  (13 `if_cheat_key` left this group: the C# is an explicit false branch, so
+- **Camera/cutscene/debug (no camera/cutscene port):** 131, 203
+  (77 `debug_msg` is a reference no-op, now pinned by `vm_tests`; 13 `if_cheat_key` is an explicit false branch, so
   no camera/cheat subsystem is needed — ported with the harness twin. 243
   `if_point_sees_player` left the same way: it reads only `reference_point`,
   `kurtPosition` and `raycastClear`, none of which needs the camera —
@@ -165,10 +170,10 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. Current count: C# **238**, C++ **189 labels / 188 unique**,
-remaining **51**. The C++ set has the nested `case 0:` mode arm inside opcode
-249's switch, which is not a dispatch, so there are **187 true dispatches** and
-187 + 51 = 238. Recounted 2026-10-26 after opcode 239 was added; the raw C++
+and compare as sets. Current count: C# **238**, C++ **190 labels / 189 unique**,
+remaining **50**. The C++ set has the nested `case 0:` mode arm inside opcode
+249's switch, which is not a dispatch, so there are **188 true dispatches** and
+188 + 50 = 238. Recounted 2026-10-26 after opcode 77 was added; the raw C++
 label count includes one duplicate label in the nested switch.
 
 Two axes, kept separate:
@@ -181,9 +186,9 @@ Two axes, kept separate:
 - **Test coverage** — every owned case is exercised only by the end-to-end
   (level, tick) goldens in `tests/scripts/tick1.cpp`, which compare the full
   object table and script state against the oracle byte-for-byte through t600 on
-   levels 3-8. Per-opcode unit tests now exist for 20 opcodes: the 11 the
+   levels 3-8. Per-opcode unit tests now exist for 21 opcodes: the 11 the
   harness twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253) plus
-  32/129, 226/242, 156, 81, 206, 217 and 243, which pin the oracle directly (no C#
+  32/129, 226/242, 156, 81, 206, 217, 243 and 77, which pin the oracle directly (no C#
   counterpart exists); the other owned cases are golden-covered only where
   they fire.
 
@@ -212,11 +217,11 @@ play, so both are complete.)**
 | 244 | set_global_573bd4 | writes invulnerability, but per-tick timer decay is not ported |
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
-**Complete — effect realized with the subsystems present (176 cases):** every
-owned case not in the partial table above (187 true dispatches − 11 = 176). These are the pure
+**Complete — effect realized with the subsystems present (177 cases):** every
+owned case not in the partial table above (188 true dispatches − 11 = 177). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
-path, animation-state, variable/flag, control-flow, group-state and spawn cases,
-each exercised by the byte-for-byte goldens through t600 on levels 3-8.
+path, animation-state, variable/flag, control-flow, group-state and spawn cases, exercised by byte-for-byte goldens
+through t600 on levels 3-8 or by the synthetic tests where the corpus cannot reach them.
 Representative members, by group: orientation/aim (8, 40, 60, 62, 87, 101, 104,
 105, 120, 122, 126, 134, 160, 193, 207, 234, 235, 246); movement parameters
 (50-55, 82, 84, 106, 169, 177); handled movement commands (43, 46, 61, 78, 88,
@@ -227,8 +232,8 @@ conditions/flags/variables
 (10, 11, 14, 18, 22, 23, 25, 26, 31, 34-39, 41, 42, 44, 45, 47, 48, 54, 57, 63,
 65-73, 75, 76, 79, 80, 83, 86, 96, 97, 100, 103, 108, 110, 111, 113, 116, 117,
 119, 123, 127, 161, 176, 185, 187, 188, 191, 198, 200, 201, 205, 211, 212, 216,
-218, 222, 230, 232, 236, 237, 238, 239, 243, 245, 250, 251, 252, 253); control flow (1, 4,
-9, 12, 64, 94, 95, 125, 183); group state (98, 99, 162, 163, 168, 194); spawn
+218, 222, 230, 232, 236, 237, 238, 243, 245, 250, 251, 252, 253); control flow (1, 4,
+9, 12, 64, 94, 95, 125, 183); explicit no-ops (77, 239); group state (98, 99, 162, 163, 168, 194); spawn
 (113, 149, 150, 152, 153, 156, 206). The authoritative complete set is the owned set minus
 the 8 partial cases, not this illustrative grouping. (206 joined the spawn group with the 206 batch; 217 joined the new stats-counters group with the stats slice; 243 joins the conditions group with the vision-condition batch.)
 

@@ -59,6 +59,7 @@ const int32_t kScreenFlash = 215;
 const int32_t kSetHurtFlash = 240;
 const int32_t kSetGlobal573bd4 = 244;
 const int32_t kSet27c = 239;
+const int32_t kDebugMsg = 77;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -1091,6 +1092,19 @@ void testUnidentifiedSet27cIsNoOp(scripts::ScriptRuntime& runtime) {
     CHECK(obj.variables[1] == 9.0f);
 }
 
+// Opcode 77's C# case intentionally ignores its debug message (ScriptVm.cs:1713).
+// Its U8 and Pascal-string operands still need to be decoded before the next op.
+void testDebugMessageIsNoOp(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject obj;
+    Code code;
+    code.u8(kDebugMsg).u8(3).pstr("debug text");
+    code.u8(kSetVar).u8(kOwn).u8(2).f32(11.0f);
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kDebugMsg));
+    CHECK(obj.variables[2] == 11.0f);
+}
+
 } // namespace
 
 int main() {
@@ -1171,6 +1185,8 @@ int main() {
     printf("PASS KurtAndScreenWrites\n");
     testUnidentifiedSet27cIsNoOp(runtime);
     printf("PASS UnidentifiedSet27cIsNoOp\n");
+    testDebugMessageIsNoOp(runtime);
+    printf("PASS DebugMessageIsNoOp\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

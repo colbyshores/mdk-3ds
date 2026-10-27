@@ -1,11 +1,11 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-26 (iteration 39: opcode 239 `set_27c` explicit
-no-op ported and pinned; C# operand layout is six F32s. `vm_tests` proves
-that the following instruction executes and 239 is not reported unimplemented.
-Review-37 failed for quota reasons; no newer review exists. Current coverage:
-187 true C++ dispatches / 238, 51 remaining. All three required gates passed;
-see VERIFIED below. Next: continue one opcode family per batch via `vm_tests`.
+Last updated: 2026-10-26 (iteration 40: opcode 77 `debug_msg` explicit C#
+no-op ported and pinned; synthetic `vm_tests` supplies the U8 and Pascal-string
+operands and proves the following instruction executes. Current coverage:
+188 true C++ dispatches / 238, 50 remaining. All three required gates passed;
+see VERIFIED below. Review-37 failed for quota reasons; no newer review exists.
+Next: continue one opcode family per batch via `vm_tests`.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 `docs/PROGRESS_LOG.md`.
@@ -18,11 +18,11 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 3. Continue opcode conversion subsystem by subsystem; tests/goldens in the same
    batch. Opcode 208 (reachability probe), harness + 13, parts 32/129,
    rope-swing 226/242, spawn 156/206, push-hit-dir 81, stats 217, vision 243,
-   value slots 199/210, Kurt/screen 215/240/244 and unidentified no-op 239 are
+   value slots 199/210, Kurt/screen 215/240/244, and no-ops 239/77 are
    implemented and pinned (relevant slices detailed in `PROGRESS_LOG.md`).
-   The newest batch is 239: the reference explicitly does nothing, but the
-   decoder still consumes six floats. 132/136 still need Effects; 85 needs
-   FrameBlend's `rotation()`; do not blind-port. Remaining 51 are listed in
+   The newest batches are 239 (reference no-op; decoder consumes six floats)
+   and 77 (`debug_msg`, ignored by reference). 132/136 still need Effects; 85 needs
+   FrameBlend's `rotation()`; do not blind-port. Remaining 50 are listed in
    `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
@@ -33,22 +33,23 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 39, code commit pending until this iteration's doc update and gates
-  are committed together. No golden changes: opcode 239 does not fire in
-  levels 3-8. Coverage recount: C# 238 unique cases; C++ 189 numeric labels,
-  188 unique (nested `case 0` in 249 is not an opcode), 187 true dispatches,
-  51 missing.
-- `make -C tests/scripts` → `vm_tests` 20/20 PASS, then `All cases match the
-  oracle.` (table/script corpus byte-identical).
+- Iteration 40, opcode 77 (`debug_msg`) is explicitly ignored in C#, and now
+  has a C++ no-op dispatch plus a synthetic test for its U8/Pascal-string
+  operands, instruction advancement, and unimplemented bucket. No golden
+  changes: opcode 77 does not fire in levels 3-8. Coverage: C# 238 unique cases;
+  C++ 190 numeric labels, 189 unique (nested `case 0` in 249 is not an opcode),
+  188 true dispatches, 50 missing.
+- `make -C tests/scripts clean && make -C tests/scripts` → `vm_tests` 21/21
+  PASS, then `All cases match the oracle.` (table/script corpus byte-identical).
 - `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; `gates_smdh` SKIPPED
   because no built `.cia` exists (not reported as passed).
 - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
-  → linked `mdk.elf`, staged 69 RomFS files (79M), built `mdk.3dsx`. A bare
-  `make -C mdk_3ds` failed due to unset DEVKITARM; rerun with required env
-  succeeded.
+  → linked `mdk.elf`, staged 69 RomFS files (79M), built `mdk.3dsx`.
+- `git diff --check` → clean.
 - Latest external review `review-37.md` is an environment failure (429
   subscription quota), no findings. `review-36.md` concerned older stats code;
-  no new finding for this batch.
+  no new finding for this batch. Reviewer could not provide an adversarial
+  review for iteration 40; the changed code was self-reviewed against C#.
 
 ## Testability and standing open items
 
