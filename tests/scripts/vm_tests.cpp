@@ -54,6 +54,8 @@ const int32_t kSpawnAlongPath = 206;
 const int32_t kHeadShots = 217;
 const int32_t kIfPointSeesPlayer = 243;
 const int32_t kIfPlayerHealth = 241;
+const int32_t kIfPartnerDistance = 213;
+const int32_t kIfPartnerAngle = 214;
 const int32_t kSet104 = 199;
 const int32_t kSet2c0 = 210;
 const int32_t kScreenFlash = 215;
@@ -874,7 +876,11 @@ void testHeadShotsAddOnlyWhenEnabled(scripts::ScriptRuntime& runtime) {
 // Opcode 241 (if_player_health) has no C# ScriptVmTests counterpart. Pin its
 // comparison against Kurt after damage (99), including true and false branch
 // outcomes; opcode 241 does not fire in the level corpus.
-void testIfPlayerHealthComparesKurtHealth(scripts::ScriptRuntime& runtime) {
+void testIfPlayerHealthComparesKurtHealth(LevelData* levelData, const Cmi* cmi,
+                                           audio::SoundBank* bank) {
+    // A fresh runtime keeps this fixture independent of the shared test state:
+    // damaging Kurt here must not leak into any later test.
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
     runtime.hurtKurt(1);
     CHECK(runtime.kurt().health() == 99);
     {
@@ -886,7 +892,9 @@ void testIfPlayerHealthComparesKurtHealth(scripts::ScriptRuntime& runtime) {
         code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
         code.end();
         scripts::MdkObject obj;
-        obj.health = 100;  // Different from Kurt so using the receiver is detectable.
+        // Pinned defensively: the default is already 100, so this only guards
+        // a future default change. The default itself rejects a receiver read.
+        obj.health = 100;
         runProgram(runtime, code, &obj);
         CHECK(!sawUnimplemented(kIfPlayerHealth));
         CHECK(obj.variables[0] == 2.0f);
@@ -900,11 +908,68 @@ void testIfPlayerHealthComparesKurtHealth(scripts::ScriptRuntime& runtime) {
         code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
         code.end();
         scripts::MdkObject obj;
-        obj.health = 100;  // Different from Kurt so using the receiver is detectable.
+        // Pinned defensively: the default is already 100, so this only guards
+        // a future default change. The default itself rejects a receiver read.
+        obj.health = 100;
         runProgram(runtime, code, &obj);
         CHECK(!sawUnimplemented(kIfPlayerHealth));
         CHECK(obj.variables[0] == 1.0f);
     }
+}
+
+// Opcodes 213 (if_partner_distance) and 214 (if_partner_angle) have no C#
+// ScriptVmTests counterpart. These pin the oracle directly: both use zero
+// without a live linked object; a live partner's distance is at least one; its
+// angle is the signed wrapped yaw from the partner toward the receiver.
+int32_t runPartnerCondition(scripts::ScriptRuntime& runtime, int32_t opcode,
+                             scripts::MdkObject* linked, int32_t comparison, float threshold,
+                             float yaw) {
+    Code code;
+    code.u8(opcode).u8(comparison).f32(threshold).u8(kActionGoto).target("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    code.end();
+    scripts::MdkObject obj;
+    obj.linked = linked;
+    obj.yaw = yaw;
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(opcode));
+    return obj.variables[0] == 2.0f ? 2 : 1;
+}
+
+void testPartnerConditionsUseOnlyLiveLinkedObject(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject partner;
+
+    // No partner and a dead partner both read as distance zero.
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, nullptr, kLessThan, 1.0f, 0.0f) == 2);
+    partner.dead = true;
+    partner.position = mdk::Vec3{};
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, kLessThan, 1.0f, 0.0f) == 2);
+
+    // A live partner at the same point has distance one, not zero.
+    partner.dead = false;
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, kLessThan, 1.0f, 0.0f) == 1);
+
+    // The live distance is the full three-dimensional distance.
+    partner.position = mdk::Vec3{3.0f, 4.0f, 0.0f};
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, kGreaterThan, 4.0f, 0.0f) == 2);
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, kLessThan, 4.0f, 0.0f) == 1);
+
+    // Without a live partner the angle is zero.
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, nullptr, kGreaterThan, -1.0f, 0.0f) == 2);
+    partner.dead = true;
+    partner.position = mdk::Vec3{0.0f, 10.0f, 0.0f};
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, kGreaterThan, -1.0f, 0.0f) == 2);
+
+    // A partner due north is -90 degrees from the receiver's eastward yaw.
+    partner.dead = false;
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, kLessThan, -89.0f, 0.0f) == 2);
+
+    // A partner due east has angle zero.
+    partner.position = mdk::Vec3{10.0f, 0.0f, 0.0f};
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, kLessThan, 1.0f, 0.0f) == 2);
 }
 
 // Opcode 243 (if_point_sees_player) has no C# ScriptVmTests counterpart, so
@@ -1383,8 +1448,10 @@ int main() {
     printf("PASS HeadShotsAddOnlyWhenEnabled\n");
     testPointSeesPlayerNeedsRangeAndAClearLine(runtime);
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
-    testIfPlayerHealthComparesKurtHealth(runtime);
+    testIfPlayerHealthComparesKurtHealth(&levelData, &cmi, &bank);
     printf("PASS IfPlayerHealthComparesKurtHealth\n");
+    testPartnerConditionsUseOnlyLiveLinkedObject(runtime);
+    printf("PASS PartnerConditionsUseOnlyLiveLinkedObject\n");
     testUnidentifiedValueSlotsStoreTheirOperand(runtime);
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
     testKurtAndScreenWrites(runtime);

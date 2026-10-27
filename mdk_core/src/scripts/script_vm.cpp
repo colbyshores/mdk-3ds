@@ -1555,6 +1555,23 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, compare((float)obj->health, listval(op(ins, 0))));
         case 241:  // if_player_health: compare Kurt's health
             return branch(obj, ins, compare((float)runtime_.kurt().health(), listval(op(ins, 0))));
+        case 213: {  // if_partner_distance: zero without a live linked object
+            float distance = 0.0f;
+            if (obj->linked != nullptr && !obj->linked->dead) {
+                const float dx = obj->linked->position.x - obj->position.x;
+                const float dy = obj->linked->position.y - obj->position.y;
+                const float dz = obj->linked->position.z - obj->position.z;
+                distance = mathMax(sqrtf(dx * dx + dy * dy + dz * dz), 1.0f);
+            }
+            return branch(obj, ins, compare(distance, listval(op(ins, 0))));
+        }
+        case 214: {  // if_partner_angle: zero without a live linked object
+            float angle = 0.0f;
+            if (obj->linked != nullptr && !obj->linked->dead) {
+                angle = wrapAngle(obj->yaw - runtime_.yawTo(obj, obj->linked->position));
+            }
+            return branch(obj, ins, compare(angle, listval(op(ins, 0))));
+        }
         case 246: {  // turn_to_linked (bit 7: the pitch too)
             const int32_t kTurns = 1;
             const int32_t kAlsoPitch = 0x80;

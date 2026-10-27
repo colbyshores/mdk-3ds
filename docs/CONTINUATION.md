@@ -1,7 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 54: correct opcode 241 fixture claims).
-Current coverage: 191 true C++ dispatches / 238, 47 remaining. Continue one
+Last updated: 2026-10-27 (iteration 55: partner conditions 213/214 + review-2 fixture isolation).
+Current coverage: 193 true C++ dispatches / 238, 45 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -16,9 +16,10 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    batch. Opcode 208 (reachability probe), harness + 13, parts 32/129,
    rope-swing 226/242, spawn 156/206, push-hit-dir 81, stats 217, vision 243,
    value slots 199/210, Kurt/screen 215/240/244, and no-ops 239/77 are
-   implemented and pinned. Newer slices include 85 (`set_rolling`) and 74
-   (`attach_to`). 132/136 still need Effects; frame-blend integration remains a
-   separate future slice. Remaining 47 are listed in `docs/OPCODE_COVERAGE.md`.
+   implemented and pinned. Newer slices include 85 (`set_rolling`), 74
+   (`attach_to`) and the 213/214 partner condition pair. 132/136 still need
+   Effects; frame-blend integration remains a separate future slice. Remaining
+   45 are listed in `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
    no renderer batch until the harness gate is green.
@@ -28,6 +29,20 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 55 ports opcodes 213 (`if_partner_distance`) and 214
+  (`if_partner_angle`) over the existing `linked` field: zero without a live
+  partner, distance floored at one, angle the signed wrapped yaw toward the
+  partner. A synthetic `vm_tests` case covers no/dead partner, the distance
+  floor, the full 3D distance, and the signed angle. It also addresses review-2's
+  opcode-241 fixture finding: that test now builds its own `ScriptRuntime`
+  instead of damaging the shared one, and the stale in-code/doc causal claims
+  are corrected. `make -C tests/scripts clean && make -C tests/scripts` passed
+  25 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  built `mdk.3dsx` after staging 69 RomFS files (79M); `cmake --build
+  build-linux --target mdk` built the Linux target. No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
 - Iteration 54 corrects iteration 53's opcode 241 fixture claim. `MdkObject::health`
   already defaulted to 100, so the two explicit assignments add no
   branch-discriminating strength; iteration 52's true/false assertions already
@@ -52,7 +67,7 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   different-type same-arena candidate sharing instance ID 1000; full checks
   and the 3DS build passed. Iteration 50 strengthened opcode 217's signed
   operand and percent-truncation tests. Details are in `docs/PROGRESS_LOG.md`.
-- Next: continue opcode conversion from the remaining 47 in
+- Next: continue opcode conversion from the remaining 45 in
   `docs/OPCODE_COVERAGE.md`; select the next testable subsystem slice.
 - Iteration 49 addresses review-9: the attach test adds same-arena `BEAMS_999`
   and `BEAMS_10001` before self/dead/cross-arena exclusions. Thus lower-bound/

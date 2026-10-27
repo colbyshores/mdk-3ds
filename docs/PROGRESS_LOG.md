@@ -1,4 +1,33 @@
 
+## What this batch did (iteration 55 — partner conditions 213/214 and review-2 fixture isolation)
+
+- Ported opcode 213 (`if_partner_distance`) and 214 (`if_partner_angle`) from
+  `ScriptVm.cs:1441-1449`. Both read the existing `MdkObject::linked` field: a
+  null or dead partner gives distance/angle zero; a live partner gives the full
+  3D distance floored at one (`mathMax`, the C#'s `MathF.Max`) or the signed
+  wrapped yaw from the receiver toward the partner. No subsystem was invented;
+  `find_object` (245) already writes the link.
+- Added a synthetic `vm_tests` case, `PartnerConditionsUseOnlyLiveLinkedObject`,
+  covering no partner, a dead partner, the distance floor, the 3D distance, and
+  the signed angle (due north is -90, not 0 or +90). The opcode-pair addition
+  moves coverage to 193 true dispatches / 238, with 45 remaining; the audit
+  counts, remaining list, grouping notes, owned-case classification and the
+  per-opcode test count were updated consistently.
+- Addressed external review-2's MINOR/NIT findings on the opcode-241 fixture:
+  `testIfPlayerHealthComparesKurtHealth` now constructs a dedicated
+  `ScriptRuntime` (so `hurtKurt(1)` cannot leak into later tests), the receiver
+  health assignment comments now say the default/defensive rationale, and the
+  `OPCODE_COVERAGE.md` causal wording no longer credits the explicit pin with
+  branch-discriminating strength. Runtime behavior and oracle goldens are
+  unchanged.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  25 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  built `mdk.3dsx` after staging 69 RomFS files (79M); `cmake --build
+  build-linux --target mdk` built the Linux target. No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 54 — correct opcode 241 fixture claims)
 
 - Addressed the newest external review's mutation finding. `MdkObject::health`
