@@ -1,11 +1,28 @@
 
-## What this batch did (iteration 53 — strengthen opcode 241 health fixture)
+## What this batch did (iteration 54 — correct opcode 241 fixture claims)
 
-- Strengthened the opcode 241 synthetic fixture by setting the receiver
-  object's own health to 100 while Kurt is damaged to 99. The existing true and
-  false branch outcomes now independently reject an implementation that reads
-  the receiver's health instead of `runtime.Kurt.Health`. Runtime behavior and
-  oracle goldens are unchanged.
+- Addressed the newest external review's mutation finding. `MdkObject::health`
+  already defaults to 100, so iteration 53's two explicit assignments did not
+  add branch-discriminating strength: iteration 52's true/false assertions
+  already rejected an implementation that read the receiver instead of Kurt.
+  Retain the assignments as defensive pinning against a future default change,
+  and correct the iteration, coverage, and continuation claims accordingly.
+  Runtime behavior and oracle goldens are unchanged.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  24 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  built `mdk.3dsx` after staging 69 RomFS files (79M). No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
+
+## What this batch did (iteration 53 — explicitly pin opcode 241 health fixture)
+
+- Explicitly pinned the receiver object's own health to 100 while Kurt is
+  damaged to 99. The later mutation review established that this added no
+  branch-discriminating strength: `MdkObject::health` already defaulted to 100,
+  and iteration 52's true/false assertions already rejected a receiver-health
+  read. The explicit pin is retained as protection against a future default
+  change. Runtime behavior and oracle goldens are unchanged.
 - Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
   24 VM tests and the complete oracle suite (`All cases match the oracle.`);
   `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA); the
