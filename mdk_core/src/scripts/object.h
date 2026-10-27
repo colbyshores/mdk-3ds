@@ -7,11 +7,9 @@
 // State follows the original object structure (godot-mdk notes_part1.md): MDK
 // coordinates (Z up), degrees, yaw 0 = +X, 90 = +Y.
 //
-// THIS IS THE DATA + FLAGS ONLY. The behaviour that reads it — the transform
-// math (Transform/PositionAt), the animation advance, the pose/bounds
-// baking, the Footing predicate — lands with the VM and motion slices that call
-// it, because each needs a dependency not in this slice yet (Mat4 arithmetic,
-// FrameBlend, the Solids footing enum, ScriptMath). Those are marked below.
+// The object data model and its behavior are ported in slices. Some behavior
+// lives here, and runtime behavior lives in ScriptRuntime; the remaining
+// unported MdkObject behavior and its dependencies are listed below.
 //
 // Vectors are the render layer's Vec3 (mdk::Vec3, from render/render_types.h),
 // matching the game layer (player.h) so an object and Kurt share one vector type
@@ -238,14 +236,15 @@ struct MdkObject {
     // The first part with this name, case-insensitively (the C#'s FindPart); -1.
     int32_t findPart(const std::string& name) const;
 
-    // Deferred to later slices (each needs a dependency not in this one yet):
-    //   Footing            -> the Solids footing enum (collision slice)
-    //   _ticked + remember() -> the frame-blend state position_at()/yaw_at()/transform_at() read (FrameBlend slice)
+    // Still unported MdkObject behavior:
+    //   Footing -> the Solids footing enum (collision slice)
+    //   _ticked + remember() -> frame-blend state for position_at()/yaw_at()/transform_at()
     //   transform()/position_at()/yaw_at()/transform_at() -> Mat4 arithmetic + FrameBlend
-    //   play_animation()/advance_animation() -> ModelAnimation + Mat4
-    //   pose()/part_bounds()/pose_bounds()/part_center() -> Model baking + Mat4
+    //   pose()/part_bounds() -> Model baking + Mat4
     //   sound_position() -> ScriptMath.rotated_z
-    //   distance_to()/yaw_to() -> <cmath> (trivial; land with the VM that calls them)
+    //   distance_to() -> <cmath>
+    // Animation, pose_bounds(), part_center(), and yaw_to() are implemented in
+    // ScriptRuntime or this class; part_center() is not pose part_bounds().
 };
 
 } // namespace scripts

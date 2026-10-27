@@ -1,10 +1,14 @@
 
-## What this batch did (iteration 43 — stale `Rotation` deferral comment)
+## What this batch did (iteration 44 — reconcile deferred object behavior)
 
-- Addressed external review-2's sole NIT in `mdk_core/src/scripts/object.h`:
-  removed `Rotation/` from the list of behavior still deferred. `rotation()` is
-  already implemented; Transform/PositionAt and the other listed behaviors
-  remain deferred. Documentation-only; no runtime behavior or goldens changed.
+- Addressed external review-3's documentation finding in `mdk_core/src/scripts/object.h`:
+  reconciled the entire object behavior status against the current tree. The
+  deferred list now excludes implemented `rotation()`, `playAnimation()` /
+  `advanceAnimation()`, `poseBounds()`, `partCenter()`, and runtime `yawTo()`;
+  it retains only unported Footing, frame-blend/transform reads, pose/part
+  baking, sound position, and distance-to behavior. Corrected the file overview
+  that incorrectly called animation advance and pose/bounds baking unported.
+  Documentation-only; no runtime behavior or goldens changed.
 - Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
   all 22 VM tests and all oracle cases (`All cases match the oracle.`);
   `bash tools/check.sh` reported all gates passed (`gates_smdh` skipped because
