@@ -230,20 +230,16 @@ while :; do
     fi
     log "iter=$ITER worker rc=$RC session-log=$ILOG"
 
-    # gates: independent, after every iteration
-    GF="$RUN_DIR/gates-$ITER.log"
-    if run_gates "$GF"; then
-        state_set LAST_GATES PASS; FAILS=0
-    else
-        state_set LAST_GATES FAIL; FAILS=$((FAILS+1))
-        log "iter=$ITER GATES FAILED (see $GF) fail_count=$FAILS"
-    fi
-
     HEAD_AFTER="$(git -C "$ROOT" rev-parse HEAD)"
+
+    # Review FIRST, in the background, WHILE the mechanical gates run: the
+    # review is model work on a FIXED commit range and the gates only build,
+    # so they are independent — overlapping them removes ~10-15 min per
+    # iteration from the critical path. The review still COMPLETES before the
+    # next iteration starts: no batch is ever built on an unreviewed one.
+    REVIEW_PID=""
     if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
-        STALL=0
-        # adversarial review of the batch — read-only by instruction
-        RP="$LOGDIR/.review-prompt-$ITER.md"
+        RP="$RUN_DIR/.review-prompt-$ITER.md"
         {
             cat "$VALIDATOR_FILE"
             printf '\n\n--- REVIEW SCOPE ---\nReview ONLY the changes in commits %s..%s plus any uncommitted work (bound the scope with git log/diff first; do not read unrelated files). You must NOT edit any file; read-only inspection only. Work efficiently: a review that times out is a failed review.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
@@ -264,19 +260,35 @@ while :; do
             [ -z "$REVIEW_MODEL" ] && log "iter=$ITER no distinct reviewer route alive — review recorded as FAILED (no self-review)"
         fi
         if [ -n "$REVIEW_MODEL" ]; then
-            timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
+            ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
                 --model "$REVIEW_MODEL" -p "$(cat "$RP")" --no-session \
                 >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
-            RRC=$?
-        else
-            RRC=127
+              echo $? >"$RUN_DIR/review-$ITER.rc" ) &
+            REVIEW_PID=$!
+            log "iter=$ITER review started in background on $REVIEW_MODEL"
         fi
+    fi
+
+    # gates: independent, after every iteration
+    GF="$RUN_DIR/gates-$ITER.log"
+    if run_gates "$GF"; then
+        state_set LAST_GATES PASS; FAILS=0
+    else
+        state_set LAST_GATES FAIL; FAILS=$((FAILS+1))
+        log "iter=$ITER GATES FAILED (see $GF) fail_count=$FAILS"
+    fi
+
+    # collect the review (it ran alongside the gates)
+    if [ -n "$REVIEW_PID" ]; then
+        wait "$REVIEW_PID"
+        RRC="$(cat "$RUN_DIR/review-$ITER.rc" 2>/dev/null || echo 1)"
         if [ "$RRC" -ne 0 ] || [ ! -s "$RUN_DIR/review-$ITER.md" ]; then
             echo "REVIEWER FAILED model=$REVIEW_MODEL rc=$RRC" >>"$RUN_DIR/review-$ITER.md"
             log "iter=$ITER REVIEWER FAILED rc=$RRC (recorded, not silently skipped)"
         else
             log "iter=$ITER reviewed by $REVIEW_MODEL -> $RUN_DIR/review-$ITER.md"
         fi
+        STALL=0
     else
         STALL=$((STALL+1))
         log "iter=$ITER no commit — stall_count=$STALL"
