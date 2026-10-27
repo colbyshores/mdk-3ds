@@ -1,5 +1,20 @@
 
-## What this batch did (iteration 46 — opcode 74 `attach_to`)
+## What this batch did (iteration 47 — strengthen `attach_to` exclusion test)
+
+- Addressed review-7's finding that the dead/cross-arena exclusion assertions
+  were masked by later valid matches. The test now inserts the valid candidates,
+  self, then dead and cross-arena matches, in that order. Since `attach_to`
+  retains the last eligible match, removing either exclusion independently
+  makes that excluded object the selected leader and fails the assertion.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed all
+  23 VM tests and all oracle cases (`All cases match the oracle.`). `bash
+  tools/check.sh` reported all gates passed; `gates_smdh` was skipped because no
+  CIA exists. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` staged 69 RomFS files (79M) and built `mdk.3dsx` (the
+  existing `mdk.elf` was up to date). No golden changed. No emulator or
+  hardware run; Old-3DS timing remains unmeasured.
+
+# What this batch did (iteration 46 — opcode 74 `attach_to`)
 
 - Ported opcode 74 from `ScriptVm.cs:968`: scan live objects in stable runtime
   order, excluding self and removed/dead objects, require same arena, compare

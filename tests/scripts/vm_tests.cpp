@@ -1165,19 +1165,25 @@ void testDebugMessageIsNoOp(scripts::ScriptRuntime& runtime) {
 // leaves all receiver state untouched on a miss.
 void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
-    scripts::MdkObject* dead = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
-                                              0.0f, 1000, 0, false);
-    scripts::MdkObject* otherArena = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
-                                                    0.0f, 1000, 0, false);
+    // Insert valid candidates first, then self and exclusions. Because the
+    // runtime scans in insertion order and retains the last match, each
+    // missing exclusion independently changes the selected leader.
     scripts::MdkObject* first = runtime.spawn(&controller, "BEAMS", Vec3{1.0f, 2.0f, 3.0f},
                                                0.0f, -1, 0, false);
     scripts::MdkObject* second = runtime.spawn(&controller, "BEAMS", Vec3{4.0f, 5.0f, 6.0f},
                                                 0.0f, 1000, 0, false);
-    CHECK(dead != nullptr);
-    CHECK(otherArena != nullptr);
+    scripts::MdkObject* self = runtime.spawn(&controller, "BEAMS", Vec3{7.0f, 8.0f, 9.0f},
+                                              0.0f, 1000, 0, false);
+    scripts::MdkObject* dead = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                              0.0f, 1000, 0, false);
+    scripts::MdkObject* otherArena = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                    0.0f, 1000, 0, false);
     CHECK(first != nullptr);
     CHECK(second != nullptr);
-    if (dead == nullptr || otherArena == nullptr || first == nullptr || second == nullptr) {
+    CHECK(self != nullptr);
+    CHECK(dead != nullptr);
+    CHECK(otherArena != nullptr);
+    if (first == nullptr || second == nullptr || self == nullptr || dead == nullptr || otherArena == nullptr) {
         return;
     }
     dead->dead = true;
@@ -1188,12 +1194,6 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     CHECK(first->instance_id == 1000);
     CHECK(second->instance_id == 1000);
     const std::string requested = "BEAMS_1000";
-    scripts::MdkObject* self = runtime.spawn(&controller, "BEAMS", Vec3{7.0f, 8.0f, 9.0f},
-                                              0.0f, 1000, 0, false);
-    CHECK(self != nullptr);
-    if (self == nullptr) {
-        return;
-    }
     Code code;
     code.u8(kAttachTo).u8(2).u8(5).pstr(requested);
     code.end();

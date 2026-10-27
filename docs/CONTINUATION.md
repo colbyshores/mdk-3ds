@@ -1,9 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 46 review-6 fixes: auto instance IDs and
-`attach_to` coverage). Current coverage: 190 true C++ dispatches / 238, 48
-remaining. Next: finish this batch's gates, then continue one opcode family per
-batch via `vm_tests`.
+Last updated: 2026-10-27 (iteration 47: review-7 attach_to exclusion-test fix).
+Current coverage: 190 true C++ dispatches / 238, 48 remaining. Next: continue
+one opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 `docs/PROGRESS_LOG.md`.
@@ -34,6 +33,10 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 47 fixes review-7's false-positive exclusion assertions: valid
+  candidates precede self/dead/cross-arena candidates in scan order, so removal
+  of either exclusion independently changes the selected leader. All gates and
+  the 3DS build passed; details are in `PROGRESS_LOG.md`.
 - Iteration 46 ports opcode 74 `attach_to`; review-6 fixes set generated
   instance IDs to the C# starting value 1000 and test explicit `BEAMS_1000`,
   duplicate-ID last-match selection, case folding, exclusions, and miss-state
