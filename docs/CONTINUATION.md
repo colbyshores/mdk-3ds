@@ -57,7 +57,8 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
   linked `mdk.elf`, staged 69 RomFS files (79M), and built `mdk.3dsx`.
   `git diff --check` passed. This documentation-only change required no emulator
-  or hardware run; Old-3DS timing remains unmeasured.
+  or hardware run; Old-3DS timing remains unmeasured. Batch committed as
+  `aca61d5`.
 - Iteration 42 corrected opcode 85's rotation rounding per external review and
   pins the full 4x4 matrix against .NET 10 oracle bits. Coverage: C# 238 unique
   cases; C++ 191 numeric labels, 190 unique (nested `case 0` in 249 is not an
