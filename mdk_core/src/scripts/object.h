@@ -240,11 +240,12 @@ struct MdkObject {
     //   Footing -> the Solids footing enum (collision slice)
     //   _ticked + remember() -> frame-blend state for position_at()/yaw_at()/transform_at()
     //   transform()/position_at()/yaw_at()/transform_at() -> Mat4 arithmetic + FrameBlend
-    //   pose()/part_bounds() -> Model baking + Mat4
-    //   sound_position() -> ScriptMath.rotated_z
-    //   distance_to() -> <cmath>
-    // Animation, pose_bounds(), part_center(), and yaw_to() are implemented in
-    // ScriptRuntime or this class; part_center() is not pose part_bounds().
+    //   pose_parts()/pose()/part_bounds() -> Model baking + Mat4
+    // Animation, pose_bounds(), sound_position(), distance_to(), part_center(),
+    // and yaw_to() are implemented in ScriptRuntime, SoundMixer, or this class.
+    // sound_position() and distance_to() are inlined/owned elsewhere, not members
+    // here. part_center() (rest-pose box centre) is not part_bounds()/pose_bounds()
+    // (current-pose boxes).
 };
 
 } // namespace scripts

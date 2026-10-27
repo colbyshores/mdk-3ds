@@ -1,13 +1,30 @@
 
+## What this batch did (iteration 45 — finish deferred object inventory review)
+
+- Followed up on external review-4 of iteration 44's `object.h` behavior list.
+  The list now records `PoseParts` as unported; sound positioning is implemented
+  in `SoundMixer::voicePosition`, and distance behavior is already inlined at
+  landed call sites. Clarified that `PartCenter` is a rest-pose box centre,
+  unlike current-pose `part_bounds()` / `pose_bounds()`.
+- Documentation/comments only; no runtime behavior, oracle fixtures, or goldens
+  changed.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  all 22 VM tests and all oracle cases (`All cases match the oracle.`);
+  `bash tools/check.sh` reported `CHECK: ALL GATES PASSED` (`gates_smdh`
+  skipped because no `.cia` exists); `DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` linked `mdk.elf`, staged
+  69 RomFS files (79M), and built `mdk.3dsx`. No emulator/hardware run; Old-3DS
+  timing remains unmeasured.
+
 ## What this batch did (iteration 44 — reconcile deferred object behavior)
 
 - Addressed external review-3's documentation finding in `mdk_core/src/scripts/object.h`:
-  reconciled the entire object behavior status against the current tree. The
-  deferred list now excludes implemented `rotation()`, `playAnimation()` /
-  `advanceAnimation()`, `poseBounds()`, `partCenter()`, and runtime `yawTo()`;
-  it retains only unported Footing, frame-blend/transform reads, pose/part
-  baking, sound position, and distance-to behavior. Corrected the file overview
-  that incorrectly called animation advance and pose/bounds baking unported.
+  reconciled the object behavior status against the current tree. The deferred
+  list excludes implemented `rotation()`, `playAnimation()` / `advanceAnimation()`,
+  `poseBounds()`, `partCenter()`, and runtime `yawTo()`; it retains unported
+  Footing, frame-blend/transform reads, and pose/part baking. Review-4 found that
+  the then-current comment still incorrectly listed sound-position and distance
+  as deferred and omitted `PoseParts`; iteration 45 corrects that inventory.
   Documentation-only; no runtime behavior or goldens changed.
 - Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
   all 22 VM tests and all oracle cases (`All cases match the oracle.`);

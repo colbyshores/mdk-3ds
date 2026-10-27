@@ -34,12 +34,16 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 45 corrected the `object.h` behavior inventory per review-4:
+  sound positioning is owned by `SoundMixer`, distance is inlined at existing
+  call sites, `PoseParts` remains unported, and the `PartCenter` distinction is
+  explicit. No runtime behavior or golden changed; findings addressed below.
 - Iteration 44 corrected the file-level `object.h` overview and reconciled its
   deferred behavior list against the tree: animation advance, pose bounds,
   part center, and runtime yaw-to are implemented; Footing, frame-blend/transform
-  reads, pose/part baking, sound position, and distance-to remain deferred.
-  Documentation-only; no behavior or test fixtures changed. This addresses
-  external review-3's actionable documentation-drift finding.
+  reads and pose/part baking remain deferred. Sound-position and distance-to
+  behavior already exists elsewhere in the tree. Documentation-only; no behavior
+  or test fixtures changed. This addresses external review-3's documentation drift.
 - Iteration 43 removed implemented `Rotation` from the deferred list per review-2.
   External review-3 found that its new progress sentence and several other list
   entries were still inaccurate; this iteration audits and corrects those.
@@ -50,6 +54,14 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   make -C mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
   `mdk.3dsx`. No emulator or hardware run was relevant/performed. The change
   was committed as `67c60a7` (one iteration-43 commit).
+- Iteration 45 verification: `make -C tests/scripts clean && make -C
+  tests/scripts` passed 22 VM tests and all oracle cases (`All cases match the
+  oracle.`); `bash tools/check.sh` reported all gates passed (`gates_smdh`
+  skipped because no `.cia` exists); `DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` linked `mdk.elf`, staged
+  69 RomFS files (79M), and built `mdk.3dsx`. `git diff --check` passed.
+  Documentation-only correction; no emulator/hardware run. Old-3DS timing
+  remains unmeasured. Batch committed as the iteration-45 commit.
 - Iteration 44 verification: `make -C tests/scripts clean && make -C
   tests/scripts` passed all 22 VM tests and all oracle cases (`All cases match
   the oracle.`); `bash tools/check.sh` reported `CHECK: ALL GATES PASSED`
@@ -57,8 +69,8 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
   linked `mdk.elf`, staged 69 RomFS files (79M), and built `mdk.3dsx`.
   `git diff --check` passed. This documentation-only change required no emulator
-  or hardware run; Old-3DS timing remains unmeasured. Batch committed as
-  `aca61d5`.
+  or hardware run; Old-3DS timing remains unmeasured. Code/docs committed as
+  `aca61d5`; its verification record was committed separately as `96d8c31`.
 - Iteration 42 corrected opcode 85's rotation rounding per external review and
   pins the full 4x4 matrix against .NET 10 oracle bits. Coverage: C# 238 unique
   cases; C++ 191 numeric labels, 190 unique (nested `case 0` in 249 is not an
