@@ -35,10 +35,16 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   tools/check.sh` passed all gates (SMDH skipped, no CIA); the 3DS build staged
   69 RomFS files (79M) and produced `mdk.3dsx`. No golden changed; no
   emulator/hardware run. Old-3DS timing remains unmeasured.
-- Next: close review-10's remaining `attach_to` fixture gap by adding a live
-  different-type same-arena candidate with a colliding instance ID; update its
-  coverage description and clean up the review's documentation nits in that
-  test batch.
+- Iteration 51 closes review-10's `attach_to` fixture gap by adding a live
+  different-type same-arena candidate with colliding instance ID 1000. This
+  rejects ID-only matching. `docs/OPCODE_COVERAGE.md` records all pinned
+  TYPE_ID discrimination cases. `make -C tests/scripts clean && make -C
+  tests/scripts` passed 23 VM tests and the full oracle suite (`All cases match
+  the oracle.`); `bash tools/check.sh` passed all gates (SMDH skipped, no CIA);
+  the 3DS build staged 69 RomFS files (79M) and produced `mdk.3dsx`. No golden
+  changed, no emulator/hardware run. Old-3DS timing remains unmeasured.
+- Next: continue opcode conversion from the remaining 48 in
+  `docs/OPCODE_COVERAGE.md`; select the next testable subsystem slice.
 - Iteration 49 addresses review-9: the attach test adds same-arena `BEAMS_999`
   and `BEAMS_10001` before self/dead/cross-arena exclusions. Thus lower-bound/
   range and canonical-name-prefix resolvers cannot pass the exact-ID checks,
@@ -53,8 +59,8 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   for `BEAMS_1000` and `BEAMS_1001` to select the matching IDs. Iteration 47
   made self/dead/cross-arena exclusions independently testable. Iteration 46
   ported opcode 74 with C# auto IDs starting at 1000, duplicate-ID last-match
-  selection, case folding, exclusions, and miss-state preservation. Full
-  details and earlier batch verification are in `docs/PROGRESS_LOG.md`.
+  selection, case folding, exclusions, and miss-state preservation. Details
+  and verification for iterations 44–50 are in `docs/PROGRESS_LOG.md`.
 
 ## Testability and standing open items
 

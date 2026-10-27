@@ -1,4 +1,19 @@
 
+## What this batch did (iteration 51 — exact `attach_to` type matching)
+
+- Addressed review-10's remaining fixture gap: a live same-arena `BOLT_1000`
+  candidate collides numerically with `BEAMS_1000`. The existing `BEAMS_1000`
+  request must still bind to `second`, rejecting a resolver that ignores the
+  type component. The test also asserts the candidate's fixture identity.
+  Updated `OPCODE_COVERAGE.md` to list this discrimination alongside the
+  existing exact-ID near matches. Runtime and oracle goldens are unchanged.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  23 VM tests and the full oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all gates (SMDH skipped, no CIA); the 3DS build
+  staged 69 RomFS files (79M) and produced `mdk.3dsx`. `git diff --check`
+  passed. No golden changed, no emulator/hardware run. Old-3DS timing remains
+  unmeasured.
+
 ## What this batch did (iteration 50 — signed opcode 217 and percent truncation)
 
 - Strengthened the opcode 217 `GameStats` VM test with a negative S32 operand
@@ -57,7 +72,7 @@
   existing `mdk.elf` was up to date). No golden changed. No emulator or
   hardware run; Old-3DS timing remains unmeasured.
 
-# What this batch did (iteration 46 — opcode 74 `attach_to`)
+## What this batch did (iteration 46 — opcode 74 `attach_to`)
 
 - Ported opcode 74 from `ScriptVm.cs:968`: scan live objects in stable runtime
   order, excluding self and removed/dead objects, require same arena, compare

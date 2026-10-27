@@ -1188,6 +1188,9 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
                                                         0.0f, 999, 0, false);
     scripts::MdkObject* longerNearMatch = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
                                                          0.0f, 10001, 0, false);
+    // Colliding ID, different type: TYPE_ID must match both components.
+    scripts::MdkObject* otherType = runtime.spawn(&controller, "BOLT", Vec3{0.0f, 0.0f, 0.0f},
+                                                   0.0f, 1000, 0, false);
     scripts::MdkObject* self = runtime.spawn(&controller, "BEAMS", Vec3{7.0f, 8.0f, 9.0f},
                                               0.0f, 1000, 0, false);
     scripts::MdkObject* dead = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
@@ -1202,9 +1205,10 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     CHECK(otherArena != nullptr);
     CHECK(lowerNearMatch != nullptr);
     CHECK(longerNearMatch != nullptr);
+    CHECK(otherType != nullptr);
     if (first == nullptr || second == nullptr || differentId == nullptr || self == nullptr ||
         dead == nullptr || otherArena == nullptr || lowerNearMatch == nullptr ||
-        longerNearMatch == nullptr) {
+        longerNearMatch == nullptr || otherType == nullptr) {
         return;
     }
     dead->dead = true;
@@ -1217,6 +1221,8 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     CHECK(differentId->instance_id == 1001);
     CHECK(lowerNearMatch->instance_id == 999);
     CHECK(longerNearMatch->instance_id == 10001);
+    CHECK(otherType->instance_id == 1000);
+    CHECK(otherType->type_name == "BOLT");
     const std::string requested = "BEAMS_1000";
     Code code;
     code.u8(kAttachTo).u8(2).u8(5).pstr(requested);
