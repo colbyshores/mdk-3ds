@@ -56,6 +56,9 @@ const int32_t kIfPointSeesPlayer = 243;
 const int32_t kIfPlayerHealth = 241;
 const int32_t kIfPartnerDistance = 213;
 const int32_t kIfPartnerAngle = 214;
+const int32_t kSpawnPartner = 179;
+const int32_t kSnapToPartner = 180;
+const int32_t kLinkPartners = 228;
 const int32_t kSet104 = 199;
 const int32_t kSet2c0 = 210;
 const int32_t kScreenFlash = 215;
@@ -1000,6 +1003,219 @@ void testPartnerConditionsUseLiveLinkedObjectAndGeometry(scripts::ScriptRuntime&
                               kApproxEqual, -160.0f) == 2);
 }
 
+// Opcode 179 (spawn_partner) has no C# ScriptVmTests counterpart. It spawns
+// the named type at the receiver's position, gives the new object yaw zero,
+// and links the two objects in both directions.
+void testSpawnPartnerLinksBothObjects(LevelData* levelData, const Cmi* cmi,
+                                      audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    scripts::MdkObject* receiver = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 20.0f, 30.0f},
+                                                 45.0f, -1, 0, false);
+    CHECK(receiver != nullptr);
+    if (receiver == nullptr) {
+        return;
+    }
+    CHECK(receiver->linked == nullptr);
+
+    Code code;
+    code.u8(kSpawnPartner).pstr("BEAMS").u32(0);
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(9.0f);
+    code.end();
+    runProgram(runtime, code, receiver);
+
+    CHECK(!sawUnimplemented(kSpawnPartner));
+    CHECK(receiver->variables[0] == 9.0f);
+    CHECK(receiver->linked != nullptr);
+    if (receiver->linked == nullptr) {
+        return;
+    }
+    scripts::MdkObject* partner = receiver->linked;
+    CHECK(partner->linked == receiver);
+    CHECK(partner->type_name == "BEAMS");
+    CHECK(partner->arena == receiver->arena);
+    CHECK(partner->position.x == receiver->position.x);
+    CHECK(partner->position.y == receiver->position.y);
+    CHECK(partner->position.z == receiver->position.z);
+    CHECK(partner->yaw == 0.0f);
+    CHECK(!partner->dead);
+    CHECK(partner->instance_id >= 1000);
+}
+
+// Opcode 180 (snap_to_partner) copies a live partner's position. A non-zero
+// offset mode adds the following three floats to that copied position; no
+// partner, a dead partner, and mode zero leave the receiver where it was.
+void testSnapToPartnerUsesOnlyALivePartner(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject receiver;
+    scripts::MdkObject partner;
+    receiver.position = Vec3{100.0f, 200.0f, 300.0f};
+    partner.position = Vec3{7.0f, 8.0f, 9.0f};
+
+    Code noPartner;
+    noPartner.u8(kSnapToPartner).u8(0);
+    noPartner.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    noPartner.end();
+    runProgram(runtime, noPartner, &receiver);
+    CHECK(!sawUnimplemented(kSnapToPartner));
+    CHECK(receiver.variables[0] == 1.0f);
+    CHECK(receiver.position.x == 100.0f);
+    CHECK(receiver.position.y == 200.0f);
+    CHECK(receiver.position.z == 300.0f);
+
+    receiver.linked = &partner;
+    partner.dead = true;
+    Code deadPartner;
+    deadPartner.u8(kSnapToPartner).u8(0);
+    deadPartner.end();
+    runProgram(runtime, deadPartner, &receiver);
+    CHECK(!sawUnimplemented(kSnapToPartner));
+    CHECK(receiver.position.x == 100.0f);
+    CHECK(receiver.position.y == 200.0f);
+    CHECK(receiver.position.z == 300.0f);
+
+    partner.dead = false;
+    Code copy;
+    copy.u8(kSnapToPartner).u8(0);
+    copy.end();
+    runProgram(runtime, copy, &receiver);
+    CHECK(!sawUnimplemented(kSnapToPartner));
+    CHECK(receiver.position.x == 7.0f);
+    CHECK(receiver.position.y == 8.0f);
+    CHECK(receiver.position.z == 9.0f);
+
+    receiver.position = Vec3{100.0f, 200.0f, 300.0f};
+    Code offset;
+    offset.u8(kSnapToPartner).u8(1).f32(1.5f).f32(-2.0f).f32(4.0f);
+    offset.end();
+    runProgram(runtime, offset, &receiver);
+    CHECK(!sawUnimplemented(kSnapToPartner));
+    CHECK(receiver.position.x == 8.5f);
+    CHECK(receiver.position.y == 6.0f);
+    CHECK(receiver.position.z == 13.0f);
+}
+
+// Opcode 228 (link_partners) pairs live objects of one type in the same
+// arena when their squared distance is below 10000. It follows object-list
+// order rather than choosing the nearest candidate. The list form with a
+// zero second value clears only the receiver's link.
+void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const Cmi* cmi,
+                                                      audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    scripts::MdkObject* receiver = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                 0.0f, -1, 0, false);
+    scripts::MdkObject* differentType = runtime.spawn(&controller, "BOLT", Vec3{1.0f, 0.0f, 0.0f},
+                                                       0.0f, -1, 0, false);
+    scripts::MdkObject* deadNear = runtime.spawn(&controller, "BEAMS", Vec3{2.0f, 0.0f, 0.0f},
+                                                  0.0f, -1, 0, false);
+    scripts::MdkObject* crossArenaNear = runtime.spawn(&controller, "BEAMS", Vec3{3.0f, 0.0f, 0.0f},
+                                                        0.0f, -1, 0, false);
+    scripts::MdkObject* linkedDead = runtime.spawn(&controller, "BEAMS", Vec3{4.0f, 0.0f, 0.0f},
+                                                   0.0f, -1, 0, false);
+    scripts::MdkObject* alreadyLinked = runtime.spawn(&controller, "BEAMS", Vec3{5.0f, 0.0f, 0.0f},
+                                                       0.0f, -1, 0, false);
+    scripts::MdkObject* firstInRange = runtime.spawn(&controller, "BEAMS", Vec3{90.0f, 0.0f, 0.0f},
+                                                     0.0f, -1, 0, false);
+    scripts::MdkObject* nearerLater = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 0.0f, 0.0f},
+                                                    0.0f, -1, 0, false);
+    scripts::MdkObject* exactly100 = runtime.spawn(&controller, "BEAMS", Vec3{100.0f, 0.0f, 0.0f},
+                                                   0.0f, -1, 0, false);
+    scripts::MdkObject* farAway = runtime.spawn(&controller, "BEAMS", Vec3{500.0f, 0.0f, 0.0f},
+                                                0.0f, -1, 0, false);
+    CHECK(receiver != nullptr && differentType != nullptr && deadNear != nullptr &&
+          crossArenaNear != nullptr && linkedDead != nullptr && alreadyLinked != nullptr &&
+          firstInRange != nullptr && nearerLater != nullptr && exactly100 != nullptr &&
+          farAway != nullptr);
+    if (receiver == nullptr || differentType == nullptr || deadNear == nullptr ||
+        crossArenaNear == nullptr || linkedDead == nullptr || alreadyLinked == nullptr ||
+        firstInRange == nullptr || nearerLater == nullptr || exactly100 == nullptr ||
+        farAway == nullptr) {
+        return;
+    }
+
+    deadNear->dead = true;
+    crossArenaNear->arena = "OTHER_ARENA";
+    // The oracle's loose-object filter admits a dead link, but its pairing
+    // loop then skips every non-null link. Pin both halves of that rule.
+    linkedDead->linked = deadNear;
+    alreadyLinked->linked = differentType;
+    differentType->linked = alreadyLinked;
+
+    Code pair;
+    // Lower-case type: the oracle compares type names case-insensitively.
+    pair.u8(kLinkPartners).pstr("beams");
+    pair.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    pair.end();
+    runProgram(runtime, pair, receiver);
+    CHECK(!sawUnimplemented(kLinkPartners));
+    CHECK(receiver->variables[0] == 1.0f);
+    // firstInRange comes before nearerLater in the stable object list. The
+    // oracle takes the first eligible partner, not the geometrically nearest.
+    CHECK(receiver->linked == firstInRange);
+    CHECK(firstInRange->linked == receiver);
+    // The remaining two eligible objects are then paired with each other in
+    // list order; the far object stays alone.
+    CHECK(nearerLater->linked == exactly100);
+    CHECK(exactly100->linked == nearerLater);
+    CHECK(farAway->linked == nullptr);
+    CHECK(differentType->linked == alreadyLinked);
+    CHECK(alreadyLinked->linked == differentType);
+    CHECK(linkedDead->linked == deadNear);
+
+    // A second pair isolates the strict distance boundary: exactly 100 units
+    // is outside the oracle's range, while 99 units is inside it.
+    nearerLater->dead = true;
+    exactly100->dead = true;
+    farAway->dead = true;
+    scripts::MdkObject* boundaryReceiver = runtime.spawn(&controller, "BEAMS",
+                                                         Vec3{0.0f, 0.0f, 0.0f}, 0.0f, -1, 0, false);
+    scripts::MdkObject* at100 = runtime.spawn(&controller, "BEAMS", Vec3{100.0f, 0.0f, 0.0f},
+                                              0.0f, -1, 0, false);
+    scripts::MdkObject* at99 = runtime.spawn(&controller, "BEAMS", Vec3{99.0f, 0.0f, 0.0f},
+                                             0.0f, -1, 0, false);
+    CHECK(boundaryReceiver != nullptr && at100 != nullptr && at99 != nullptr);
+    if (boundaryReceiver == nullptr || at100 == nullptr || at99 == nullptr) {
+        return;
+    }
+    Code boundary;
+    boundary.u8(kLinkPartners).pstr("BEAMS");
+    boundary.end();
+    runProgram(runtime, boundary, boundaryReceiver);
+    CHECK(!sawUnimplemented(kLinkPartners));
+    CHECK(boundaryReceiver->linked == at99);
+    CHECK(at99->linked == boundaryReceiver);
+    CHECK(at100->linked == nullptr);
+
+    // The list form with a zero second value clears only the receiver's link.
+    receiver->linked = firstInRange;
+    firstInRange->linked = receiver;
+    Code clear;
+    clear.u8(kLinkPartners).u8(0).u8(0);
+    clear.end();
+    runProgram(runtime, clear, receiver);
+    CHECK(!sawUnimplemented(kLinkPartners));
+    CHECK(receiver->linked == nullptr);
+    CHECK(firstInRange->linked == receiver);
+
+    // A non-zero list value does not clear the link, and a type-mode call
+    // with no eligible pair preserves an existing link.
+    receiver->linked = firstInRange;
+    firstInRange->linked = receiver;
+    Code keep;
+    keep.u8(kLinkPartners).u8(0).u8(7);
+    keep.end();
+    runProgram(runtime, keep, receiver);
+    CHECK(!sawUnimplemented(kLinkPartners));
+    CHECK(receiver->linked == firstInRange);
+    Code preserve;
+    preserve.u8(kLinkPartners).pstr("BEAMS");
+    preserve.end();
+    runProgram(runtime, preserve, receiver);
+    CHECK(!sawUnimplemented(kLinkPartners));
+    CHECK(receiver->linked == firstInRange);
+    CHECK(firstInRange->linked == receiver);
+}
+
 // Opcode 243 (if_point_sees_player) has no C# ScriptVmTests counterpart, so
 // this pins the oracle directly (ScriptVm.cs:1703-1708): the REFERENCE point
 // (not the position) must be within the u16 range of Kurt's feet, and the
@@ -1480,6 +1696,12 @@ int main() {
     printf("PASS IfPlayerHealthComparesKurtHealth\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);
     printf("PASS PartnerConditionsUseLiveLinkedObjectAndGeometry\n");
+    testSpawnPartnerLinksBothObjects(&levelData, &cmi, &bank);
+    printf("PASS SpawnPartnerLinksBothObjects\n");
+    testSnapToPartnerUsesOnlyALivePartner(runtime);
+    printf("PASS SnapToPartnerUsesOnlyALivePartner\n");
+    testLinkPartnersPairsEligibleObjectsInListOrder(&levelData, &cmi, &bank);
+    printf("PASS LinkPartnersPairsEligibleObjectsInListOrder\n");
     testUnidentifiedValueSlotsStoreTheirOperand(runtime);
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
     testKurtAndScreenWrites(runtime);

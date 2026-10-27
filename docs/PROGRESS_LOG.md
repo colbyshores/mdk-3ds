@@ -1,4 +1,47 @@
 
+## What this batch did (iteration 57 — partner spawn/snap/link family)
+
+- Ported the partner-link family from `ScriptVm.cs:1451-1488`: opcode 179
+  (`spawn_partner`) spawns the named type at the receiver's position with
+  yaw zero and links the new object and receiver in both directions; opcode
+  180 (`snap_to_partner`) copies a live partner's position and then adds the
+  optional three-float offset; opcode 228 (`link_partners`) pairs live,
+  same-arena objects of a named type whose squared distance is below 10000,
+  while its list form with a zero second value clears only the receiver's
+  link.
+- `ScriptRuntime::linkPartners` preserves the oracle's exact two-stage
+  filter: the candidate snapshot admits a null link or a link to a dead
+  object, then the pairing loop skips every non-null link. It follows stable
+  object-list order (the first eligible later object, not the geometrically
+  nearest), uses case-insensitive exact type matching, excludes dead and
+  cross-arena objects, and leaves existing links untouched when no pair is
+  made.
+- Added three synthetic `vm_tests` cases. They pin both directions of the
+  179 link, spawn type/arena/position/yaw, 180's null/dead/live and offset
+  paths, and 228's case folding, type/arena/dead/already-linked exclusions,
+  dead-link rule, list order, strict 100-unit boundary, mutual links, and
+  asymmetric receiver-only clear. The opcode-pair family adds three to the
+  per-opcode test count (28 opcodes total).
+- Recounted the brace-matched method spans: C# 238 cases; C++ 198 numeric
+  labels / 197 unique labels, of which 196 are true dispatches; 42 remain.
+  `docs/OPCODE_COVERAGE.md` updates the remaining set, subsystem grouping,
+  owned-case classification and per-opcode test count. All three oracle
+  `Linked` writers (245/179/228) are now ported, so partner pairs created
+  by the new opcodes can feed conditions 213/214.
+- The existing `ScriptRuntime::spawn` omission of the C#'s
+  `Stats.CountEnemy` call remains unchanged and applies equally to every
+  spawn opcode; the level goldens do not observe those counters.
+- A local mutation probe over the new paths killed five variants: a one-way
+  179 link, an ignored 180 offset, a clear-on-any 228 list operand, an
+  inclusive 100-unit range boundary, and a case-sensitive type match.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  28 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  built `mdk.3dsx` after staging 69 RomFS files (79M), and `cmake --build
+  build-linux --target mdk` built the Linux target. No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 56 — review-3 partner-condition fixture hardening)
 
 - Addressed external review-3's MINOR/NIT findings on opcodes 213/214. The

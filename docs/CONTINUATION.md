@@ -1,7 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 56: review-3 partner-condition fixture hardening).
-Current coverage: 193 true C++ dispatches / 238, 45 remaining. Continue one
+Last updated: 2026-10-27 (iteration 57: partner spawn/snap/link family).
+Current coverage: 196 true C++ dispatches / 238, 42 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -17,11 +17,11 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    rope-swing 226/242, spawn 156/206, push-hit-dir 81, stats 217, vision 243,
    value slots 199/210, Kurt/screen 215/240/244, and no-ops 239/77 are
    implemented and pinned. Newer slices include 85 (`set_rolling`), 74
-   (`attach_to`) and the 213/214 partner condition pair. The latter read the
-   ported `find_object` (245) link writer; `spawn_partner` (179) and
-   `link_partners` (228) remain deferred and cannot yet feed them. 132/136
+   (`attach_to`), the 213/214 partner condition pair, and the 179/180/228
+   partner-link family. All three oracle `Linked` writers (245/179/228) are
+   now ported, so partner pairs can feed the 213/214 conditions. 132/136
    still need Effects; frame-blend integration remains a separate future
-   slice. Remaining 45 are listed in `docs/OPCODE_COVERAGE.md`.
+   slice. Remaining 42 are listed in `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
    no renderer batch until the harness gate is green.
@@ -31,6 +31,24 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 57 ports the partner-link family: 179 (`spawn_partner`) spawns
+  the named type at the receiver's position with yaw zero and links both
+  objects; 180 (`snap_to_partner`) copies a live partner's position and then
+  applies its optional offset; 228 (`link_partners`) pairs live same-arena
+  objects of the named type in stable list order when their squared distance
+  is below 10000, while its list form with a zero second value clears only
+  the receiver's link. Three `vm_tests` cases pin both link directions,
+  dead/no-link behavior, case-insensitive type matching, dead/cross-arena/
+  already-linked exclusions, the strict 100-unit boundary, list order and
+  the asymmetric clear. Coverage is now 196 true dispatches / 238 with 42
+  remaining; all three oracle `Linked` writers are ported, removing the
+  producer caveat from 213/214. `make -C tests/scripts clean && make -C
+  tests/scripts` passed 28 VM tests and the complete oracle suite (`All cases
+  match the oracle.`); `bash tools/check.sh` passed all contract gates (SMDH
+  skipped, no CIA); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` built `mdk.3dsx` after staging 69 RomFS files (79M), and
+  `cmake --build build-linux --target mdk` built the Linux target. No golden
+  changed; no emulator/hardware run. Old-3DS timing remains unmeasured.
 - Iteration 56 addresses review-3's partner-condition fixture finding. The
   213/214 `vm_tests` case now gives the receiver a non-origin position and a
   non-zero yaw, makes the partner differ in z, separates the receiver from
@@ -38,11 +56,11 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   distance, the receiver-relative origin, the floor of one, a live due-east
   angle of zero, and `wrap(receiverYaw - bearingToPartner)`: the negated turn
   required to face the partner. That single wording replaces the three contradictory descriptions in
-  the test and documentation. `docs/OPCODE_COVERAGE.md` now records that 213/214
-  are complete through the existing `linked` field but are fed in integrated
-  play only by the ported `find_object` writer (245); `spawn_partner` (179) and
-  `link_partners` (228) remain deferred. Runtime behavior and oracle goldens
-  are unchanged. `make -C tests/scripts clean && make -C tests/scripts` passed
+  the test and documentation. `docs/OPCODE_COVERAGE.md` recorded that 213/214
+  were complete through the existing `linked` field but were fed in integrated
+  play only by the then-ported `find_object` writer (245); iteration 57 ports
+  the other two writers (`spawn_partner` 179 and `link_partners` 228). Runtime
+  behavior and oracle goldens are unchanged. `make -C tests/scripts clean && make -C tests/scripts` passed
   25 VM tests and the complete oracle suite (`All cases match the oracle.`);
   `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
   `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
@@ -55,48 +73,8 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   partner. It also addresses review-2's opcode-241 fixture finding: that test
   now builds its own `ScriptRuntime` instead of damaging the shared one, and
   the stale in-code/doc causal claims are corrected.
-- Iteration 54 corrects iteration 53's opcode 241 fixture claim. `MdkObject::health`
-  already defaulted to 100, so the two explicit assignments add no
-  branch-discriminating strength; iteration 52's true/false assertions already
-  rejected a receiver-health read. The assignments are retained as defensive
-  pinning against a future default change. Runtime behavior and oracle goldens
-  are unchanged. `make -C tests/scripts clean && make -C tests/scripts` passed
-  24 VM tests and the complete oracle suite (`All cases match the oracle.`);
-  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA); the
-  3DS build produced `mdk.3dsx` after staging 69 RomFS files (79M). No golden
-  changed; no emulator/hardware run. Old-3DS timing remains unmeasured.
-- Iteration 53 explicitly pins opcode 241's receiver health to 100 while Kurt is
-  damaged to 99. `make -C tests/scripts clean && make -C tests/scripts` passed
-  24 VM tests and the complete oracle suite (`All cases match the oracle.`);
-  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
-  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
-  built `mdk.3dsx` after staging 69 RomFS files (79M). No golden changed; no
-  emulator/hardware run. Old-3DS timing remains unmeasured.
-- Iteration 52 ports opcode 241 (`if_player_health`) as a comparison of Kurt's
-  current health, with a synthetic test pinning both taken and untaken branches;
-  the C# level corpus does not reach it.
-- Iteration 51 closes review-10's `attach_to` fixture gap with a live
-  different-type same-arena candidate sharing instance ID 1000; full checks
-  and the 3DS build passed. Iteration 50 strengthened opcode 217's signed
-  operand and percent-truncation tests. Details are in `docs/PROGRESS_LOG.md`.
-- Next: continue opcode conversion from the remaining 45 in
+- Next: continue opcode conversion from the remaining 42 in
   `docs/OPCODE_COVERAGE.md`; select the next testable subsystem slice.
-- Iteration 49 addresses review-9: the attach test adds same-arena `BEAMS_999`
-  and `BEAMS_10001` before self/dead/cross-arena exclusions. Thus lower-bound/
-  range and canonical-name-prefix resolvers cannot pass the exact-ID checks,
-  while exclusion assertions remain independently sensitive to scan order.
-  `make -C tests/scripts clean && make -C tests/scripts` passed all 23 VM tests
-  and the full oracle suite (`All cases match the oracle.`). `bash tools/check.sh`
-  reported all gates passed; SMDH was skipped because no CIA exists. The 3DS
-  build staged 69 RomFS files (79M) and produced `mdk.3dsx`. `git diff --check`
-  passed. No golden changed; no emulator/hardware run. Old-3DS timing remains
-  unmeasured.
-- Iteration 48 added a same-arena `BEAMS_1001` candidate, requiring requests
-  for `BEAMS_1000` and `BEAMS_1001` to select the matching IDs. Iteration 47
-  made self/dead/cross-arena exclusions independently testable. Iteration 46
-  ported opcode 74 with C# auto IDs starting at 1000, duplicate-ID last-match
-  selection, case folding, exclusions, and miss-state preservation. Details
-  and verification for iterations 44–50 are in `docs/PROGRESS_LOG.md`.
 
 ## Testability and standing open items
 

@@ -4,7 +4,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ has **195** numeric labels / 194 unique labels (193 true dispatches), leaving **45** unimplemented. The
+  owns **238** cases, the C++ has **198** numeric labels / 197 unique labels (196 true dispatches), leaving **42** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -83,7 +83,7 @@ Per-opcode tests are still needed for edge cases beyond the end-to-end golden
 suite; the complete-vs-partial classification of the owned cases is now done
 (see "Owned-case classification" at the end of this file).
 
-## Remaining 45 (verified set)
+## Remaining 42 (verified set)
 
 13 left this list with the synthetic-harness batch (port 13 is an explicit
 false branch, `ScriptVmTests.UnimplementedConditionsAreFalse` pins it, and the
@@ -92,18 +92,18 @@ C++ `unimplemented()` bucket stays clean). 32 (`clear_parts_mask`) and 129
 existing parts fields, pinned by three `vm_tests` tests with a synthetic
 model (no C# counterpart exists to twin). 226 (`jump_to`) and 242
 (`set_2d0_block`) left with the rope-swing batch the same way: pure
-swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with the 81 batch: pure velocity math over existing fields, pinned by a `vm_tests` test. 206 (`spawn_along_path`) left with this batch: the path API (`pathKeyCount`/`pathKeyFrame`/`pathPosition`) and flagged `spawn` both already ported, pinned by a `vm_tests` test on LEVEL7.CMI path 53729. 217 (`global_573c4c_add`) left with the stats slice: the new `GameStats` struct (`game_stats.h`: counters, `IsEnemy`/`CountEnemy`, `Percent`) with a `stats` member on the runtime, pinned by a `vm_tests` test. 243 (`if_point_sees_player`) left with the vision-condition batch: `reference_point`, `kurtPosition` and `raycastClear` all already ported, pinned by a `vm_tests` test (range gate, ref-point selection, clear-line true at the L7 spawn, blocked-from-below false). 199 (`set_104`) and 210 (`set_2c0`) left with the value-slot batch: the C# itself treats them as unidentified object slots and does nothing but `obj.Value104/Value2c0 = Value(obj, o[0])` (ScriptVm.cs:1663-1668) — a pure object-state write like 205/218, with the fields already on `MdkObject` and no C++ reader to diverge from, pinned by a `vm_tests` test (literal and variable operand paths). Opcode 85 (`set_rolling`) was ported with a synthetic transition test for basis capture. Opcode 241 (`if_player_health`) was ported with a synthetic test pinning true and false comparison branches against Kurt's health after damage; the receiver's health is 100 (its default, now also pinned explicitly), so the assertions reject reading the receiver instead of Kurt; the pin itself adds no branch-discriminating strength today. Opcode 74 (`attach_to`) was ported with a synthetic VM test covering the oracle's explicit `BEAMS_1000` identity, case-insensitive matching, exact `TYPE_ID` equality (near-match IDs 999 and 10001 reject range/prefix resolvers, and a different-type ID-1000 candidate rejects ID-only matching), last-match selection among duplicate IDs, self/dead/cross-arena exclusion, attachment points, and preservation of seeded receiver state on a miss. Opcodes 213 (`if_partner_distance`) and 214 (`if_partner_angle`) were ported together over the existing linked-object field, with synthetic coverage for no partner, a dead partner, the live distance floor of one, the full three-dimensional distance measured from the receiver, and `wrap(receiverYaw - bearingToPartner)` (the negated turn required to face the partner). They are complete through the existing `linked` field, but only one of the oracle's three `Linked` writers is ported: `find_object` (245) can populate it, while `spawn_partner` (179) and `link_partners` (228) remain in the remaining set. A partner pair established by either unported writer therefore cannot yet reach these conditions. Remaining 45:
+swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with the 81 batch: pure velocity math over existing fields, pinned by a `vm_tests` test. 206 (`spawn_along_path`) left with this batch: the path API (`pathKeyCount`/`pathKeyFrame`/`pathPosition`) and flagged `spawn` both already ported, pinned by a `vm_tests` test on LEVEL7.CMI path 53729. 217 (`global_573c4c_add`) left with the stats slice: the new `GameStats` struct (`game_stats.h`: counters, `IsEnemy`/`CountEnemy`, `Percent`) with a `stats` member on the runtime, pinned by a `vm_tests` test. 243 (`if_point_sees_player`) left with the vision-condition batch: `reference_point`, `kurtPosition` and `raycastClear` all already ported, pinned by a `vm_tests` test (range gate, ref-point selection, clear-line true at the L7 spawn, blocked-from-below false). 199 (`set_104`) and 210 (`set_2c0`) left with the value-slot batch: the C# itself treats them as unidentified object slots and does nothing but `obj.Value104/Value2c0 = Value(obj, o[0])` (ScriptVm.cs:1663-1668) — a pure object-state write like 205/218, with the fields already on `MdkObject` and no C++ reader to diverge from, pinned by a `vm_tests` test (literal and variable operand paths). Opcode 85 (`set_rolling`) was ported with a synthetic transition test for basis capture. Opcode 241 (`if_player_health`) was ported with a synthetic test pinning true and false comparison branches against Kurt's health after damage; the receiver's health is 100 (its default, now also pinned explicitly), so the assertions reject reading the receiver instead of Kurt; the pin itself adds no branch-discriminating strength today. Opcode 74 (`attach_to`) was ported with a synthetic VM test covering the oracle's explicit `BEAMS_1000` identity, case-insensitive matching, exact `TYPE_ID` equality (near-match IDs 999 and 10001 reject range/prefix resolvers, and a different-type ID-1000 candidate rejects ID-only matching), last-match selection among duplicate IDs, self/dead/cross-arena exclusion, attachment points, and preservation of seeded receiver state on a miss. Opcodes 213 (`if_partner_distance`) and 214 (`if_partner_angle`) were ported together over the existing linked-object field, with synthetic coverage for no partner, a dead partner, the live distance floor of one, the full three-dimensional distance measured from the receiver, and `wrap(receiverYaw - bearingToPartner)` (the negated turn required to face the partner). All three oracle `Linked` writers are now ported: `find_object` (245), `spawn_partner` (179), and `link_partners` (228), so partner pairs can feed these conditions. Opcodes 179 (`spawn_partner`), 180 (`snap_to_partner`), and 228 (`link_partners`) were ported together over the existing linked field and spawn machinery. 179 spawns the named type at the receiver's position with yaw zero and links both objects; 180 copies a live partner's position and then applies its optional offset; 228 pairs live same-arena objects of the named type in stable list order when their squared distance is below 10000, while its list form with a zero second value clears only the receiver's link. Synthetic `vm_tests` pin both link directions, dead/no-link behavior, case-insensitive type matching, dead/cross-arena/already-linked exclusions, the strict 100-unit boundary, list order, and the asymmetric clear. Remaining 42:
 27, 28, 29, 49,
 112, 114, 121, 128,
 130, 131, 132, 133, 135, 136, 142, 143, 158, 159, 167, 170,
-171, 172, 173, 174, 178, 179, 180, 181, 184, 189, 190, 192, 195, 202,
+171, 172, 173, 174, 178, 181, 184, 189, 190, 192, 195, 202,
 203, 204, 209, 219, 220, 221, 223, 224,
-228, 229, 247
+229, 247
 
 **Reachability, re-probed to t30000 (2026-10-25, `tick1 probe 30000`):**
 after the Debris slice the only remaining opcode that fires anywhere in
 levels 3–8 is **208** (`if_part_hit`, L5 ×9134), now ported; the probe is
-clean on every level. The remaining 45 do not fire in this corpus at all —
+clean on every level. The remaining 42 do not fire in this corpus at all —
 they stay documented no-ops until a corpus or a synthetic test exercises
 them (the rule at the end of this file). The synthetic harness
 (`tests/scripts/vm_tests`, twin of `tests/Mdk.Game.Tests/ScriptVmTests.cs`)
@@ -126,7 +126,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   28, 130, 133, 142, 143, 159, 190, 202, 223, 224 (156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported)
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 32, 121, 128, 129, 132,
-  136, 158, 167, 172, 179, 180, 184, 192, 195, 228 (81 landed with the 81 batch: only the `hit_direction` FIELD is ported — its writers live in ChainGunHit, the mortar path, Twister, sniper rounds and TouchDamage, none of which has a C++ counterpart yet, so in integrated play 81 always pushes due east until those slices land; each of those slices' acceptance checks must re-verify 81 end-to-end)
+  136, 158, 167, 172, 184, 192, 195 (179/180/228 landed with the partner-link slice; 81 landed with the 81 batch: only the `hit_direction` FIELD is ported — its writers live in ChainGunHit, the mortar path, Twister, sniper rounds and TouchDamage, none of which has a C++ counterpart yet, so in integrated play 81 always pushes due east until those slices land; each of those slices' acceptance checks must re-verify 81 end-to-end)
 - **Movement/AI leftovers:**
   204, 229 (206 landed with the spawn_along_path batch; 217 with the stats slice).
   85 (`set_rolling`) landed with object rotation math. 226/242 landed with the rope-swing batch.
@@ -167,10 +167,10 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. Current count: C# **238**, C++ **195 labels / 194 unique**,
-remaining **45**. The C++ set has the nested `case 0:` mode arm inside opcode
-249's switch, which is not a dispatch, so there are **193 true dispatches** and
-193 + 45 = 238. Recounted 2026-10-27 after opcodes 213/214 were added; the raw C++
+and compare as sets. Current count: C# **238**, C++ **198 labels / 197 unique**,
+remaining **42**. The C++ set has the nested `case 0:` mode arm inside opcode
+249's switch, which is not a dispatch, so there are **196 true dispatches** and
+196 + 42 = 238. Recounted 2026-10-27 after opcodes 179/180/228 were added; the raw C++
 label count includes one nested switch arm and one duplicate label in the nested
 switch.
 
@@ -184,9 +184,10 @@ Two axes, kept separate:
 - **Test coverage** — the end-to-end (level, tick) goldens in
   `tests/scripts/tick1.cpp` compare the full object table and script state
   against the oracle byte-for-byte through t600 on levels 3-8. Per-opcode unit
-  tests now exist for 25 opcodes: the 11 the
+  tests now exist for 28 opcodes: the 11 the
   harness twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253) plus
-  32/129, 226/242, 156, 81, 206, 217, 243, 77, 85, 74 and 213/214, which pin the oracle
+  32/129, 226/242, 156, 81, 206, 217, 243, 77, 85, 74, 213/214 and
+  179/180/228, which pin the oracle
   directly (no C# counterpart exists); the other owned cases are golden-covered
   only where they fire.
 
@@ -215,8 +216,8 @@ play, so both are complete.)**
 | 244 | set_global_573bd4 | writes invulnerability, but per-tick timer decay is not ported |
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
-**Complete — effect realized with the subsystems present (182 cases):** every
-owned case not in the partial table above (193 true dispatches − 11 = 182). These are the pure
+**Complete — effect realized with the subsystems present (185 cases):** every
+owned case not in the partial table above (196 true dispatches − 11 = 185). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases, exercised by byte-for-byte goldens
 through t600 on levels 3-8 or by the synthetic tests where the corpus cannot reach them.
@@ -232,14 +233,13 @@ conditions/flags/variables
 119, 123, 127, 161, 176, 185, 187, 188, 191, 198, 200, 201, 205, 211, 212, 213,
 214, 216, 218, 222, 230, 232, 236, 237, 238, 243, 245, 250, 251, 252, 253); control flow (1, 4,
 9, 12, 64, 94, 95, 125, 183); explicit no-ops (77, 239); group state (98, 99, 162, 163, 168, 194); spawn
-(113, 149, 150, 152, 153, 156, 206). The authoritative complete set is the owned set minus
+(113, 149, 150, 152, 153, 156, 206); partner links (179, 180, 228). The authoritative complete set is the owned set minus
 the 11 partial cases, not this illustrative grouping. (206 joined the spawn group with the 206 batch; 217 joined the new stats-counters group with the stats slice; 243 joins the conditions group with the vision-condition batch.)
 
-The partner-condition cases 213/214 have the same producer caveat as the
-`hit_direction` case 81: their dispatches are complete over `MdkObject::linked`,
-but only `find_object` (245), one of the oracle's three `Linked` writers, is
-ported. `spawn_partner` (179) and `link_partners` (228) are still deferred, so
-partner pairs established by those paths cannot yet feed 213/214.
+All three oracle `Linked` writers are now ported: `find_object` (245),
+`spawn_partner` (179), and `link_partners` (228). The partner-condition cases
+213/214 therefore no longer have a producer caveat, and partner pairs created
+by either new writer can reach them.
 
 Note on 251 (`set_target_mode`): its own effect (set `target_mode`, set/clear
 the alien target) is realized, so it is classified complete; the known

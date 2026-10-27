@@ -2548,6 +2548,47 @@ MdkObject* ScriptRuntime::findObject(MdkObject* obj, const std::string& type, in
     return nullptr;
 }
 
+// C# ScriptVm.LinkPartners: pair the arena's live, matching-type objects when
+// they are closer than 100 units. Collection order is the stable object-list
+// order, and a pair takes the first later eligible object, not the nearest.
+void ScriptRuntime::linkPartners(MdkObject* obj, const std::string& type) {
+    const float kRangeSquared = 10000.0f;
+    std::vector<MdkObject*> loose;
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject& other = *it;
+        if (other.dead || isRemoved(&other) || other.arena != obj->arena ||
+            !iequalsType(other.type_name, type)) {
+            continue;
+        }
+        // The C# filter admits a null link or a link to a DEAD object, then
+        // skips every non-null link in the pairing loop; preserving both steps
+        // matters for an object whose partner died.
+        if (other.linked != nullptr && !other.linked->dead) {
+            continue;
+        }
+        loose.push_back(&other);
+    }
+    for (size_t i = 0; i < loose.size(); i++) {
+        if (loose[i]->linked != nullptr) {
+            continue;
+        }
+        for (size_t j = i + 1; j < loose.size(); j++) {
+            if (loose[j]->linked != nullptr) {
+                continue;
+            }
+            const float dx = loose[i]->position.x - loose[j]->position.x;
+            const float dy = loose[i]->position.y - loose[j]->position.y;
+            const float dz = loose[i]->position.z - loose[j]->position.z;
+            if (dx * dx + dy * dy + dz * dz >= kRangeSquared) {
+                continue;
+            }
+            loose[i]->linked = loose[j];
+            loose[j]->linked = loose[i];
+            break;
+        }
+    }
+}
+
 // C# MayCommand (0x440384): the receiver has no other leader of a higher priority,
 // and obeys the sender's priority.
 bool ScriptRuntime::mayCommand(const MdkObject* sender, const MdkObject* receiver) {

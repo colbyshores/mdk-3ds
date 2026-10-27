@@ -1572,6 +1572,40 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             return branch(obj, ins, compare(angle, listval(op(ins, 0))));
         }
+        case 179: {  // spawn_partner: spawn here, then link both ways
+            MdkObject* partner = runtime_.spawn(obj, strval(op(ins, 0)), obj->position, 0.0f, -1,
+                                                ival(op(ins, 1)), false);
+            if (partner != nullptr) {
+                partner->linked = obj;
+                obj->linked = partner;
+            }
+            break;
+        }
+        case 180: {  // snap_to_partner: copy the live partner, then an optional offset
+            if (obj->linked == nullptr || obj->linked->dead) {
+                break;
+            }
+            obj->position = obj->linked->position;
+            const std::vector<ScriptValue>& offset = listval(op(ins, 0));
+            if (offset.size() > 1 && ival(offset[0]) != 0) {
+                obj->position.x += fval(offset[1]);
+                obj->position.y += offset.size() > 2 ? fval(offset[2]) : 0.0f;
+                obj->position.z += offset.size() > 3 ? fval(offset[3]) : 0.0f;
+            }
+            break;
+        }
+        case 228: {  // link_partners: pair by type, or clear the receiver's link
+            const ScriptValue& typeOperand = op(ins, 0);
+            if (typeOperand.kind == ScriptValueKind::String) {
+                runtime_.linkPartners(obj, typeOperand.stringValue);
+            } else {
+                const std::vector<ScriptValue>& values = listval(typeOperand);
+                if (values.size() > 1 && ival(values[1]) == 0) {
+                    obj->linked = nullptr;
+                }
+            }
+            break;
+        }
         case 246: {  // turn_to_linked (bit 7: the pitch too)
             const int32_t kTurns = 1;
             const int32_t kAlsoPitch = 0x80;
