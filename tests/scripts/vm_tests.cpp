@@ -81,6 +81,7 @@ const int32_t kDoor = 5;
 const int32_t kLessThan = 1;
 const int32_t kGreaterThan = 2;
 const int32_t kLiteral = 3;
+const int32_t kApproxEqual = 5;  // |value - threshold| < epsilon
 const uint8_t kActionGoto = 0x0C;
 const uint8_t kEnd = 0xFF;
 // ObjectBehaviors.cs:21,25.
@@ -919,11 +920,14 @@ void testIfPlayerHealthComparesKurtHealth(LevelData* levelData, const Cmi* cmi,
 
 // Opcodes 213 (if_partner_distance) and 214 (if_partner_angle) have no C#
 // ScriptVmTests counterpart. These pin the oracle directly: both use zero
-// without a live linked object; a live partner's distance is at least one; its
-// angle is the signed wrapped yaw from the partner toward the receiver.
+// without a live linked object; a live partner's distance is the full 3D
+// distance from the receiver, floored at one; its angle is
+// wrap(receiverYaw - bearingToPartner), the negated turn required to face the
+// partner.
 int32_t runPartnerCondition(scripts::ScriptRuntime& runtime, int32_t opcode,
-                             scripts::MdkObject* linked, int32_t comparison, float threshold,
-                             float yaw) {
+                             scripts::MdkObject* linked,
+                             const mdk::Vec3& receiverPosition, float receiverYaw,
+                             int32_t comparison, float threshold) {
     Code code;
     code.u8(opcode).u8(comparison).f32(threshold).u8(kActionGoto).target("taken");
     code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
@@ -933,43 +937,67 @@ int32_t runPartnerCondition(scripts::ScriptRuntime& runtime, int32_t opcode,
     code.end();
     scripts::MdkObject obj;
     obj.linked = linked;
-    obj.yaw = yaw;
+    obj.position = receiverPosition;
+    obj.yaw = receiverYaw;
     runProgram(runtime, code, &obj);
     CHECK(!sawUnimplemented(opcode));
     return obj.variables[0] == 2.0f ? 2 : 1;
 }
 
-void testPartnerConditionsUseOnlyLiveLinkedObject(scripts::ScriptRuntime& runtime) {
+void testPartnerConditionsUseLiveLinkedObjectAndGeometry(scripts::ScriptRuntime& runtime) {
     scripts::MdkObject partner;
+    const mdk::Vec3 receiver{1.0f, 2.0f, 3.0f};
 
     // No partner and a dead partner both read as distance zero.
-    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, nullptr, kLessThan, 1.0f, 0.0f) == 2);
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, nullptr, receiver, 0.0f,
+                              kApproxEqual, 0.0f) == 2);
     partner.dead = true;
-    partner.position = mdk::Vec3{};
-    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, kLessThan, 1.0f, 0.0f) == 2);
+    partner.position = receiver;
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, receiver, 0.0f,
+                              kApproxEqual, 0.0f) == 2);
 
     // A live partner at the same point has distance one, not zero.
     partner.dead = false;
-    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, kLessThan, 1.0f, 0.0f) == 1);
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, receiver, 0.0f,
+                              kApproxEqual, 1.0f) == 2);
 
-    // The live distance is the full three-dimensional distance.
-    partner.position = mdk::Vec3{3.0f, 4.0f, 0.0f};
-    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, kGreaterThan, 4.0f, 0.0f) == 2);
-    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, kLessThan, 4.0f, 0.0f) == 1);
+    // The live distance is the full three-dimensional distance, measured from
+    // the receiver: 50 units along z, with the receiver away from the origin.
+    partner.position = mdk::Vec3{1.0f, 2.0f, 53.0f};
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, receiver, 0.0f,
+                              kApproxEqual, 50.0f) == 2);
+
+    // The receiver's position is the distance origin, not Kurt's: the receiver
+    // is 100 units from Kurt, while the partner is 10 units from the receiver.
+    const mdk::Vec3 kurt = runtime.kurtPosition();
+    const mdk::Vec3 farReceiver{kurt.x + 100.0f, kurt.y, kurt.z};
+    partner.position = mdk::Vec3{farReceiver.x, farReceiver.y, farReceiver.z + 10.0f};
+    CHECK(runPartnerCondition(runtime, kIfPartnerDistance, &partner, farReceiver, 0.0f,
+                              kApproxEqual, 10.0f) == 2);
 
     // Without a live partner the angle is zero.
-    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, nullptr, kGreaterThan, -1.0f, 0.0f) == 2);
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, nullptr, receiver, 200.0f,
+                              kApproxEqual, 0.0f) == 2);
     partner.dead = true;
-    partner.position = mdk::Vec3{0.0f, 10.0f, 0.0f};
-    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, kGreaterThan, -1.0f, 0.0f) == 2);
+    partner.position = mdk::Vec3{11.0f, 2.0f, 3.0f};
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, receiver, 200.0f,
+                              kApproxEqual, 0.0f) == 2);
 
     // A partner due north is -90 degrees from the receiver's eastward yaw.
     partner.dead = false;
-    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, kLessThan, -89.0f, 0.0f) == 2);
+    partner.position = mdk::Vec3{1.0f, 12.0f, 3.0f};
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, receiver, 0.0f,
+                              kApproxEqual, -90.0f) == 2);
 
-    // A partner due east has angle zero.
-    partner.position = mdk::Vec3{10.0f, 0.0f, 0.0f};
-    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, kLessThan, 1.0f, 0.0f) == 2);
+    // A partner due east has angle zero when the receiver's yaw is zero.
+    partner.position = mdk::Vec3{11.0f, 2.0f, 3.0f};
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, receiver, 0.0f,
+                              kApproxEqual, 0.0f) == 2);
+
+    // A receiver yaw of 200 degrees with a partner due east is -160: the raw
+    // 200 must wrap into [-180, 180), and the receiver's yaw must be read.
+    CHECK(runPartnerCondition(runtime, kIfPartnerAngle, &partner, receiver, 200.0f,
+                              kApproxEqual, -160.0f) == 2);
 }
 
 // Opcode 243 (if_point_sees_player) has no C# ScriptVmTests counterpart, so
@@ -1450,8 +1478,8 @@ int main() {
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
     testIfPlayerHealthComparesKurtHealth(&levelData, &cmi, &bank);
     printf("PASS IfPlayerHealthComparesKurtHealth\n");
-    testPartnerConditionsUseOnlyLiveLinkedObject(runtime);
-    printf("PASS PartnerConditionsUseOnlyLiveLinkedObject\n");
+    testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);
+    printf("PASS PartnerConditionsUseLiveLinkedObjectAndGeometry\n");
     testUnidentifiedValueSlotsStoreTheirOperand(runtime);
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
     testKurtAndScreenWrites(runtime);

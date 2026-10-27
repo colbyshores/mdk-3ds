@@ -1,11 +1,41 @@
 
+## What this batch did (iteration 56 — review-3 partner-condition fixture hardening)
+
+- Addressed external review-3's MINOR/NIT findings on opcodes 213/214. The
+  synthetic fixture now gives the receiver a non-origin position and a
+  non-zero yaw, makes the partner differ in z, separates the receiver from
+  Kurt, and uses the oracle's approximate-equality comparison. It now pins
+  the full 3D distance, the receiver-relative distance origin, the floor of
+  one, a live due-east angle of zero, and
+  `wrap(receiverYaw - bearingToPartner)` (the negated turn required to face
+  the partner), in addition to null/dead-partner behavior.
+- A local mutation probe rebuilt the four implementations review-3 found
+  previously unconstrained: 2D distance, no angle wrap, ignored receiver yaw,
+  and a Kurt-relative distance origin. All four now fail the fixture.
+- Standardized the angle description in the test and documentation to
+  `wrap(receiverYaw - bearingToPartner)`, the negated turn required to face
+  the partner. `docs/OPCODE_COVERAGE.md` now also records that 213/214 are
+  complete over the existing `linked` field but that only the `find_object`
+  writer (245) is ported: the oracle's `spawn_partner` (179) and
+  `link_partners` (228) writers remain in the remaining 45, so those paths
+  cannot yet feed the conditions. The stale reachability count was corrected
+  from 66 to the current 45.
+- Runtime behavior and oracle goldens are unchanged.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  25 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  built `mdk.3dsx` after staging 69 RomFS files (79M). No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 55 — partner conditions 213/214 and review-2 fixture isolation)
 
 - Ported opcode 213 (`if_partner_distance`) and 214 (`if_partner_angle`) from
   `ScriptVm.cs:1441-1449`. Both read the existing `MdkObject::linked` field: a
   null or dead partner gives distance/angle zero; a live partner gives the full
-  3D distance floored at one (`mathMax`, the C#'s `MathF.Max`) or the signed
-  wrapped yaw from the receiver toward the partner. No subsystem was invented;
+  3D distance floored at one (`mathMax`, the C#'s `MathF.Max`) or
+  `wrap(receiverYaw - bearingToPartner)`, the negated turn required to face
+  the partner. No subsystem was invented;
   `find_object` (245) already writes the link.
 - Added a synthetic `vm_tests` case, `PartnerConditionsUseOnlyLiveLinkedObject`,
   covering no partner, a dead partner, the distance floor, the 3D distance, and
