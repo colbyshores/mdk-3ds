@@ -482,9 +482,7 @@ void testBlownOffPartsStayHiddenThroughClear(scripts::ScriptRuntime& runtime) {
 
 // The rope-swing pair has no C# ScriptVmTests counterpart either, so these
 // pin the oracle directly (ScriptVm.cs:1139-1166) with identical program
-// bytes. Opcode 85 (set_rolling) stays unported: SetRolling snapshots the
-// full Rotation matrix into RollingBasis, and rotation() is deferred to the
-// FrameBlend slice (object.h) — a faithful port needs that arithmetic.
+// bytes.
 void testJumpToStartsSwingBelowThePivot(scripts::ScriptRuntime& runtime) {
     scripts::MdkObject obj;
     obj.position = mdk::Vec3{10.0f, 20.0f, 5.0f};
@@ -1117,11 +1115,19 @@ void testSetRollingCapturesRotationOnTransition(scripts::ScriptRuntime& runtime)
     obj.pitch = 20.0f;
     obj.yaw = 40.0f;
     runProgram(runtime, on, &obj);
-    CHECK(fabsf(obj.rolling_basis.m[0] - 0.7198463f) < 1e-5f);
-    CHECK(fabsf(obj.rolling_basis.m[1] - 0.6040228f) < 1e-5f);
-    CHECK(fabsf(obj.rolling_basis.m[2] - 0.3420201f) < 1e-5f);
-    CHECK(fabsf(obj.rolling_basis.m[6] - 0.4698463f) < 1e-5f);
-    CHECK(fabsf(obj.rolling_basis.m[10] - 0.8137977f) < 1e-5f);
+    // Exact Matrix4x4 bits captured from the .NET 10 C# oracle for
+    // roll=30, pitch=20, yaw=40; tolerance checks miss one-ULP divergences.
+    const uint32_t expected_bits[16] = {
+        0x3F3847D9, 0x3F1AA13D, 0x3EAF1D44, 0x00000000,
+        0xBF300B41, 0x3F0DB192, 0x3EF08FB2, 0x00000000,
+        0x3DC1857C, 0xBF12CB4E, 0x3F50550B, 0x00000000,
+        0x00000000, 0x00000000, 0x00000000, 0x3F800000,
+    };
+    for (size_t i = 0; i < 16; ++i) {
+        uint32_t actual_bits;
+        memcpy(&actual_bits, &obj.rolling_basis.m[i], sizeof(actual_bits));
+        CHECK(actual_bits == expected_bits[i]);
+    }
 }
 
 // Opcode 239 is explicitly unidentified and a no-op in the C# oracle

@@ -60,10 +60,11 @@ static_assert(mdk::Mat4::identity().m[0] == 1.0f && mdk::Mat4::identity().m[5] =
 // y*cos, z). Out of range (or no model) returns the position, as the C# does.
 mdk::Mat4 mdk::scripts::MdkObject::rotation() const {
     /* @vfp-exempt R6 — set_rolling captures the gameplay orientation; LUT approximation would alter the saved rolling basis, so retain libm reference trig. measured n/a. Verified 2026-10-26. */
-    const float radians_per_degree = 3.14159265358979323846f / 180.0f;
-    const float roll_radians = roll * radians_per_degree;
-    const float pitch_radians = -pitch * radians_per_degree;
-    const float yaw_radians = yaw * radians_per_degree;
+    const float pi = 3.14159265358979323846f;
+    // Match float.DegreesToRadians: multiply by pi before dividing by 180.
+    const float roll_radians = roll * pi / 180.0f;
+    const float pitch_radians = -pitch * pi / 180.0f;
+    const float yaw_radians = yaw * pi / 180.0f;
     const float cr = cosf(roll_radians);
     const float sr = sinf(roll_radians);
     const float cp = cosf(pitch_radians);
@@ -88,27 +89,22 @@ mdk::Mat4 mdk::scripts::MdkObject::rotation() const {
     rz.m[4] = -sy;
     rz.m[5] = cy;
 
-    Mat4 result{};
-    for (int row = 0; row < 4; ++row) {
-        for (int column = 0; column < 4; ++column) {
-            float value = 0.0f;
-            for (int k = 0; k < 4; ++k) {
-                value += rx.m[row * 4 + k] * ry.m[k * 4 + column];
+    // System.Numerics multiplies each row by the right-hand matrix with one
+    // rounded product followed by three fused multiply-adds (Vector4.Transform).
+    const auto multiply = [](const Mat4& left, const Mat4& right) {
+        Mat4 product{};
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) {
+                float value = left.m[row * 4] * right.m[column];
+                value = std::fma(left.m[row * 4 + 1], right.m[4 + column], value);
+                value = std::fma(left.m[row * 4 + 2], right.m[8 + column], value);
+                value = std::fma(left.m[row * 4 + 3], right.m[12 + column], value);
+                product.m[row * 4 + column] = value;
             }
-            result.m[row * 4 + column] = value;
         }
-    }
-    Mat4 composed{};
-    for (int row = 0; row < 4; ++row) {
-        for (int column = 0; column < 4; ++column) {
-            float value = 0.0f;
-            for (int k = 0; k < 4; ++k) {
-                value += result.m[row * 4 + k] * rz.m[k * 4 + column];
-            }
-            composed.m[row * 4 + column] = value;
-        }
-    }
-    return composed;
+        return product;
+    };
+    return multiply(multiply(rx, ry), rz);
 }
 
 void mdk::scripts::MdkObject::set_rolling(bool enabled) {

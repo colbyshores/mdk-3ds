@@ -241,7 +241,7 @@ struct MdkObject {
     // Deferred to later slices (each needs a dependency not in this one yet):
     //   Footing            -> the Solids footing enum (collision slice)
     //   _ticked + remember() -> the frame-blend state position_at()/yaw_at()/transform_at() read (FrameBlend slice)
-    //   rotation()/transform()/position_at()/yaw_at()/transform_at() -> Mat4 arithmetic + FrameBlend
+    //   transform()/position_at()/yaw_at()/transform_at() -> Mat4 arithmetic + FrameBlend
     //   play_animation()/advance_animation() -> ModelAnimation + Mat4
     //   pose()/part_bounds()/pose_bounds()/part_center() -> Model baking + Mat4
     //   sound_position() -> ScriptMath.rotated_z
