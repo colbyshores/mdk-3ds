@@ -1,4 +1,17 @@
 
+## What this batch did (iteration 50 — signed opcode 217 and percent truncation)
+
+- Strengthened the opcode 217 `GameStats` VM test with a negative S32 operand
+  that subtracts from `headShots`, plus a `Percent(2, 3) == 66` check to pin
+  integer truncation. The disabled-counting assertion now verifies it leaves the
+  resulting zero unchanged. Runtime implementation and goldens are unchanged.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  all 23 VM tests and all oracle cases (`All cases match the oracle.`);
+  `bash tools/check.sh` reported all gates passed with SMDH skipped (no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  staged 69 RomFS files (79M) and produced `mdk.3dsx`. No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 49 — prove exact `attach_to` ID matching)
 
 - Addressed review-9's finding that the prior fixture rejected suffix-ignoring

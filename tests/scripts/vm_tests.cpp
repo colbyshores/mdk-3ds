@@ -840,13 +840,20 @@ void testHeadShotsAddOnlyWhenEnabled(scripts::ScriptRuntime& runtime) {
     runProgram(runtime, more, &obj);
     CHECK(!sawUnimplemented(kHeadShots));
     CHECK(runtime.stats.headShots == 5);
+    // The S32 operand accepts negative values too; adding -5 subtracts.
+    Code subtract;
+    subtract.u8(kHeadShots).u8(1).u32(-5);
+    subtract.end();
+    runProgram(runtime, subtract, &obj);
+    CHECK(!sawUnimplemented(kHeadShots));
+    CHECK(runtime.stats.headShots == 0);
     // First operand 0: no count, and the script stays in sync.
     Code off;
     off.u8(kHeadShots).u8(0).u32(10);
     off.end();
     runProgram(runtime, off, &obj);
     CHECK(!sawUnimplemented(kHeadShots));
-    CHECK(runtime.stats.headShots == 5);
+    CHECK(runtime.stats.headShots == 0);
     // The struct underneath: enemies match case-insensitively, created and
     // killed count separately, percent truncates and is 0 without shots.
     CHECK(scripts::isEnemyType("xb1"));
@@ -858,6 +865,7 @@ void testHeadShotsAddOnlyWhenEnabled(scripts::ScriptRuntime& runtime) {
     CHECK(counts.enemies == 1);
     CHECK(counts.kills == 1);
     CHECK(scripts::GameStats::percent(1, 3) == 33);
+    CHECK(scripts::GameStats::percent(2, 3) == 66);
     CHECK(scripts::GameStats::percent(0, 0) == 0);
 }
 

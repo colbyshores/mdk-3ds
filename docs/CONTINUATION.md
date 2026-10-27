@@ -1,6 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 49: review-9 exact `attach_to` ID test).
+Last updated: 2026-10-27 (iteration 50: opcode 217 signed-add and percent truncation tests).
 Current coverage: 190 true C++ dispatches / 238, 48 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -28,6 +28,17 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 50 strengthens opcode 217's `GameStats` test: a negative S32
+  operand subtracts from `headShots`, disabled counting remains unchanged, and
+  `Percent(2, 3)` pins integer truncation to 66. `make -C tests/scripts clean &&
+  make -C tests/scripts` passed 23 VM tests and the full oracle suite; `bash
+  tools/check.sh` passed all gates (SMDH skipped, no CIA); the 3DS build staged
+  69 RomFS files (79M) and produced `mdk.3dsx`. No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
+- Next: close review-10's remaining `attach_to` fixture gap by adding a live
+  different-type same-arena candidate with a colliding instance ID; update its
+  coverage description and clean up the review's documentation nits in that
+  test batch.
 - Iteration 49 addresses review-9: the attach test adds same-arena `BEAMS_999`
   and `BEAMS_10001` before self/dead/cross-arena exclusions. Thus lower-bound/
   range and canonical-name-prefix resolvers cannot pass the exact-ID checks,
