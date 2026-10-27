@@ -32,6 +32,10 @@ mkdir -p "$LOGDIR"
 WORKER_MODEL="${WORKER_MODEL:-litellm/glm-5.3-flash-nvidia}"
 FALLBACK_MODEL="${FALLBACK_MODEL:-litellm/luna}"
 REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/minimax-m3.1-flash-nvidia}"
+# Reviewer fallbacks MUST differ from the model the worker used on this
+# iteration: a review by the worker's own model is a self-review, not an
+# adversarial check. Probed alive 2026-10-27: grok, qwen, glm-5.3-nvidia.
+REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/grok litellm/qwen litellm/glm-5.3-nvidia}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-5400}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 MAX_ITER="${MAX_ITER:-30}"
@@ -203,15 +207,20 @@ while :; do
             cat "$VALIDATOR_FILE"
             printf '\n\n--- REVIEW SCOPE ---\nReview ONLY the changes in commits %s..%s plus any uncommitted work (bound the scope with git log/diff first; do not read unrelated files). You must NOT edit any file; read-only inspection only. Work efficiently: a review that times out is a failed review.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
         } >"$RP"
-        REVIEW_MODEL="$REVIEWER_MODEL"
-        if ! model_alive "$REVIEW_MODEL"; then
-            log "iter=$ITER reviewer route $REVIEW_MODEL UNHEALTHY"
-            if model_alive "$FALLBACK_MODEL"; then
-                REVIEW_MODEL="$FALLBACK_MODEL"
-                log "iter=$ITER reviewer falling back to $REVIEW_MODEL"
-            else
-                REVIEW_MODEL=""
-            fi
+        REVIEW_MODEL=""
+        if model_alive "$REVIEWER_MODEL"; then
+            REVIEW_MODEL="$REVIEWER_MODEL"
+        else
+            log "iter=$ITER reviewer route $REVIEWER_MODEL UNHEALTHY"
+            for cand in $REVIEWER_FALLBACKS; do
+                [ "$cand" = "$RUN_MODEL" ] && continue   # never review with the worker's own model
+                if model_alive "$cand"; then
+                    REVIEW_MODEL="$cand"
+                    log "iter=$ITER reviewer falling back to $cand"
+                    break
+                fi
+            done
+            [ -z "$REVIEW_MODEL" ] && log "iter=$ITER no distinct reviewer route alive — review recorded as FAILED (no self-review)"
         fi
         if [ -n "$REVIEW_MODEL" ]; then
             timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
