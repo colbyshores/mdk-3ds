@@ -8,7 +8,7 @@
 // coordinates (Z up), degrees, yaw 0 = +X, 90 = +Y.
 //
 // THIS IS THE DATA + FLAGS ONLY. The behaviour that reads it — the transform
-// math (Rotation/Transform/PositionAt), the animation advance, the pose/bounds
+// math (Transform/PositionAt), the animation advance, the pose/bounds
 // baking, the Footing predicate — lands with the VM and motion slices that call
 // it, because each needs a dependency not in this slice yet (Mat4 arithmetic,
 // FrameBlend, the Solids footing enum, ScriptMath). Those are marked below.

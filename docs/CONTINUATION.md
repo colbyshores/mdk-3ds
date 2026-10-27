@@ -1,11 +1,10 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 42: addressed external review of opcode
-85 `set_rolling`: matched .NET degree-conversion and matrix FMA order, pinned
-all 16 matrix bits, removed stale comments). Current coverage: 189 true C++
-dispatches / 238, 49 remaining. Tests, contract gates, and 3DS build passed;
-`gates_smdh` skipped because no `.cia` exists. Next: continue one opcode family
-per batch via `vm_tests`.
+Last updated: 2026-10-27 (iteration 43: corrected a stale `object.h` comment
+identified by external review-2; no behavior changed). Current coverage: 189
+true C++ dispatches / 238, 49 remaining. Iteration-43 verification is recorded
+below after running the required gates. Next: continue one opcode family per
+batch via `vm_tests`.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 `docs/PROGRESS_LOG.md`.
@@ -34,6 +33,17 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 43 corrected the file-level `object.h` comment: `Rotation` is no
+  longer listed among deferred behavior now that `rotation()` is implemented.
+  This is documentation-only; no behavior or test fixtures changed. External
+  review-2 reported no BLOCKER/MAJOR findings; this was its sole NIT.
+  `make -C tests/scripts clean && make -C tests/scripts` passed all 22 VM
+  tests and all table/script/other oracle cases (`All cases match the oracle.`).
+  `bash tools/check.sh` reported all gates passed; `gates_smdh` skipped because
+  no `.cia` exists. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+  `mdk.3dsx`. No emulator or hardware run was relevant/performed. Changes
+  committed as the iteration-43 code and documentation commits.
 - Iteration 42 corrected opcode 85's rotation rounding per external review and
   pins the full 4x4 matrix against .NET 10 oracle bits. Coverage: C# 238 unique
   cases; C++ 191 numeric labels, 190 unique (nested `case 0` in 249 is not an

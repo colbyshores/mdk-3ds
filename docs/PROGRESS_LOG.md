@@ -1,4 +1,18 @@
 
+## What this batch did (iteration 43 — stale `Rotation` deferral comment)
+
+- Addressed external review-2's sole NIT in `mdk_core/src/scripts/object.h`:
+  removed `Rotation/` from the list of behavior still deferred. `rotation()` is
+  already implemented; Transform/PositionAt and the other listed behaviors
+  remain deferred. Documentation-only; no runtime behavior or goldens changed.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  all 22 VM tests and all oracle cases (`All cases match the oracle.`);
+  `bash tools/check.sh` reported all gates passed (`gates_smdh` skipped because
+  no `.cia` exists); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+  `mdk.3dsx`. No hardware or emulator run was needed/performed. This is a
+  documentation-only correction and does not claim Old-3DS readiness.
+
 ## What this batch did (iteration 40 — opcode 77 `debug_msg` no-op)
 
 - Ported opcode 77 as an explicit no-op in `ScriptVm::execute`, matching the
