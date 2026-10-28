@@ -1,3 +1,39 @@
+## What this batch did (iteration 67 — opcode 195, hit-weapon condition)
+
+- Ported opcode 195 (`if_hit_weapon`) from
+  `src/Mdk.Game/Scripts/ScriptVm.cs:1526-1527`. The receiver compares its
+  existing `MdkObject::hit_type` with the signed-byte operand and branches on
+  exact equality. This is a real dispatch over existing object state, not a
+  decoded no-op or a stub. The combat writers of `hit_type` (chain gun,
+  Items, sniper rounds and the cow) remain deferred with those subsystems.
+- Added `IfHitWeaponBranchesOnExactHitType` to `tests/scripts/vm_tests.cpp`.
+  It pins a negative grenade match and bomb mismatch, a positive projectile
+  match and mismatch, and the oracle's initial zero state. Replacing the
+  equality with false makes exactly three assertions fail; restoring it makes
+  the VM suite pass.
+- Addressed review-10's only NIT: the prior raycast test comment asserted an
+  exact DANT_8 face coordinate that depends on the BSP versus brute-force
+  geometry path. It now says "about 4.05". Review-10 found no BLOCKER, MAJOR,
+  or MINOR finding.
+- Coverage: 204 true C++ dispatches / 238, 34 remaining. The brace-matched
+  recount gives C# 238 cases and C++ 206 numeric labels / 205 unique labels;
+  the nested opcode-249 switch accounts for the extra label and the duplicate.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts build/vm_tests` then
+    `make -C tests/scripts` passed 39 VM tests and the complete oracle suite
+    (`All cases match the oracle.`).
+  - `bash tools/check.sh` passed all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` reported
+    no unimplemented opcodes on levels 3–8.
+- No golden changed; opcode 195 does not fire in the level 3–8 corpus. No
+  emulator or hardware run was performed. Old-3DS timing remains unmeasured.
+
+
 ## What this batch did (iteration 66 — current-plus-second raycast seam)
 
 - Closed the synthetic raycast coverage gap recorded by review-8 and repeated
