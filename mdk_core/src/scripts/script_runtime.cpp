@@ -1394,6 +1394,68 @@ void ScriptRuntime::startMove(MdkObject* obj, int32_t command, const Vec3& desti
     planMove(obj);
 }
 
+// Links (ObjectMotion.cs:503): the live followers of the leader, ordered by
+// instance id. The C#'s insertion sort is stable, so equal ids keep the
+// object-list order; this one does the same.
+void ScriptRuntime::chainLinks(const MdkObject* leader) {
+    chainLinks_.clear();
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject& other = *it;
+        if (other.dead || other.leader != leader) {
+            continue;
+        }
+        size_t at = chainLinks_.size();
+        while (at > 0 && chainLinks_[at - 1]->instance_id > other.instance_id) {
+            at--;
+        }
+        chainLinks_.insert(chainLinks_.begin() + at, &other);
+    }
+}
+
+// UpdateChain (ObjectMotion.cs:464, movement command 30): the chain links hang
+// off their leader — each link's reference point 0 sits at the previous link's
+// reference point 1, and the links turn 90 degrees apart. The link with instance
+// id 0 drives the chain; a link whose chain is broken (a link before it is gone)
+// lets go of the leader, exactly as the C#.
+void ScriptRuntime::updateChain(MdkObject* link) {
+    const float kLinkTurn = 90.0f;
+    MdkObject* leader = link->leader;
+    if (leader == nullptr || leader->dead) {
+        link->leader = nullptr;
+        link->move_command = 0;
+        return;
+    }
+    chainLinks(leader);
+    // Every link before this one must be there, with the instance id its place
+    // in the chain says; a gap breaks the chain.
+    for (int32_t i = 0; i < link->instance_id; i++) {
+        if (i >= (int32_t)chainLinks_.size() ||
+            chainLinks_[(size_t)i]->instance_id != i) {
+            link->leader = nullptr;
+            link->move_command = 0;
+            return;
+        }
+    }
+    // Only the first link moves the chain; the others keep their place.
+    if (link->instance_id != 0) {
+        return;
+    }
+    MdkObject* previous = leader;
+    for (size_t i = 0; i < chainLinks_.size() &&
+                        chainLinks_[i]->instance_id == (int32_t)i; i++) {
+        MdkObject* current = chainLinks_[i];
+        current->yaw = wrap360(leader->yaw + kLinkTurn * (float)i);
+        // The C# sets the yaw first, so the link's own reference point 0 is the
+        // one with the NEW yaw and the old position.
+        Vec3 from = current->reference_point(0);
+        Vec3 to = previous->reference_point(1);
+        current->position.x += to.x - from.x;
+        current->position.y += to.y - from.y;
+        current->position.z += to.z - from.z;
+        previous = current;
+    }
+}
+
 // FollowAttachment (0x45b6c8, movement command 74): an attached object (a pickup's
 // chute) hangs on its leader's reference point. With AttachPoints (0,0) the delta is
 // the leader's reference point minus its own, so a chute with no reference points
@@ -1666,6 +1728,9 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
             break;
         case 88:  // MoveForward (command of set_move_x): straight along the yaw
             moveForward(obj);
+            break;
+        case 30:  // UpdateChain: the chain links hang off their leader
+            updateChain(obj);
             break;
         case 61:  // FlyProjectile (fire): straight along the yaw and pitch
             flyProjectile(obj);
@@ -2564,8 +2629,11 @@ void ScriptRuntime::linkPartners(MdkObject* obj, const std::string& type) {
         // skips every non-null link in the pairing loop. Admitting the dead
         // link is unobservable for the pairing itself — a widow is skipped as
         // i and as j — but the clause is the oracle's filter and is kept
-        // verbatim; the retained link it admits is what the other `linked`
-        // consumers (variable source 3, 180, 213/214, 246) read.
+        // verbatim; the retained link it admits is what variable source 3 and
+        // getFlags/setFlags read, and what keeps the widow from being paired
+        // again here. The other `linked` consumers (180, 213/214, 246) read the
+        // field too, but they reject a dead partner exactly as they reject a
+        // null one.
         if (other.linked != nullptr && !other.linked->dead) {
             continue;
         }
@@ -2590,6 +2658,47 @@ void ScriptRuntime::linkPartners(MdkObject* obj, const std::string& type) {
             break;
         }
     }
+}
+
+// LastFollowerId (ScriptVm.cs:273): the highest instance id of the live objects
+// following the leader, or -1 when it has none. The C# takes the max over the
+// followers' ids (so a follower with a negative id is the answer) and returns
+// -1 only for the "no follower" case.
+int32_t ScriptRuntime::lastFollowerId(const MdkObject* leader) const {
+    bool found = false;
+    int32_t maxId = 0;
+    for (std::deque<MdkObject>::const_iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        const MdkObject& other = *it;
+        if (other.dead || other.leader != leader) {
+            continue;
+        }
+        if (!found || other.instance_id > maxId) {
+            maxId = other.instance_id;
+            found = true;
+        }
+    }
+    return found ? maxId : -1;
+}
+
+// LastChainLink (ScriptVm.cs:288): the live same-arena follower with movement
+// command 30 and the highest instance id, or null. The leader itself and the
+// objects of another arena are skipped, as the C#'s IsArenaOther does.
+MdkObject* ScriptRuntime::lastChainLink(const MdkObject* leader) {
+    const int32_t kChainCommand = 30;
+    MdkObject* best = nullptr;
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject& other = *it;
+        if (&other == leader || other.dead || other.arena != leader->arena) {
+            continue;
+        }
+        if (other.leader != leader || other.move_command != kChainCommand) {
+            continue;
+        }
+        if (best == nullptr || other.instance_id > best->instance_id) {
+            best = &other;
+        }
+    }
+    return best;
 }
 
 // C# MayCommand (0x440384): the receiver has no other leader of a higher priority,

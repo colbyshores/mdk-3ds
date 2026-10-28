@@ -101,6 +101,9 @@ public:
     // ---- The seam the VM calls ----
     Random& rng() { return rng_; }
     const std::deque<MdkObject>& objects() const { return objects_; }
+    // The mutable list: the objects the scripts make (the chain links of
+    // spawn_chain) are read and changed through it.
+    std::deque<MdkObject>& objects() { return objects_; }
     ArenaState& getArenaState(const std::string& arena);
     MdkObject* spawn(MdkObject* parent, const std::string& type, const Vec3& position, float yaw,
                      int32_t instance, int32_t script, bool flagged);
@@ -200,6 +203,15 @@ public:
     // link_partners (opcode 228): pair live, unlinked objects of the named
     // type in this arena when they are less than 100 units apart.
     void linkPartners(MdkObject* obj, const std::string& type);
+    // The chain that hangs off an object: opcode 29 (spawn_chain) makes it,
+    // opcode 49 (release_children) lets go of its links, and movement command
+    // 30 moves them.
+    // LastFollowerId (ScriptVm.cs:273): the highest instance id of the live
+    // followers of the leader, or -1 when it has none.
+    int32_t lastFollowerId(const MdkObject* leader) const;
+    // LastChainLink (ScriptVm.cs:288): the live same-arena follower with
+    // movement command 30 and the highest instance id, or null.
+    MdkObject* lastChainLink(const MdkObject* leader);
     // attach_to (opcode 74): bind to the last live same-arena object named TYPE_ID.
     void attachTo(MdkObject* obj, int32_t pointA, int32_t pointB, const std::string& name);
     // command_objects (opcode 4): sends a command to the matching objects of the
@@ -326,6 +338,14 @@ private:
     // leader's reference point and copies its yaw/pitch; it clears its command when
     // the leader is gone.
     void followAttachment(MdkObject* obj);
+    // UpdateChain (ObjectMotion.cs:464, movement command 30): the chain links hang
+    // off their leader — each link's reference point 0 sits at the previous link's
+    // reference point 1, and the links turn 90 degrees apart. The link with instance
+    // id 0 drives the chain; a link whose chain is broken lets go of the leader.
+    void updateChain(MdkObject* link);
+    // Links (ObjectMotion.cs:503): the live followers of the leader, ordered by
+    // instance id. The C# keeps the list in a field and reuses it; so does this.
+    void chainLinks(const MdkObject* leader);
     // ObjectMotion.FlyProjectile (command 61, fire): straight along the yaw and
     // pitch until the lifetime (parameter) runs out, the raycast hits the arena,
     // or the grown Kurt box is entered (touched; hurt and die when it damages).
@@ -379,6 +399,9 @@ private:
     // CMI-offset animations parsed on demand (C# _animations); the map nodes are
     // stable, so pointers into it stay valid as more animations parse.
     std::map<int32_t, formats::ModelAnimation> animations_;
+    // The chain followers of the last updateChain call (the C#'s _links list),
+    // reused so the per-tick chain does not grow a container.
+    std::vector<MdkObject*> chainLinks_;
 
     std::deque<MdkObject> objects_;
     // The removed (C# Objects.Remove) objects, still in their deque slots.

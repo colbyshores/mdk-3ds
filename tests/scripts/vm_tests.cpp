@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <deque>
 #include <map>
 #include <string>
 #include <vector>
@@ -68,6 +69,10 @@ const int32_t kSet27c = 239;
 const int32_t kDebugMsg = 77;
 const int32_t kSetRolling = 85;
 const int32_t kAttachTo = 74;
+const int32_t kSpawnChain = 29;
+const int32_t kReleaseChildren = 49;
+// The chain links' movement command (ObjectMotion.cs:370).
+const int32_t kChainCommand = 30;
 const int32_t kIfNoLeader = 34;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
@@ -1730,6 +1735,254 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     CHECK(unchanged.move_command == 43);
 }
 
+// The chain links the scripts hang off an object: opcode 29 (spawn_chain),
+// opcode 49 (release_children) and movement command 30 (the chain's motion).
+// The oracle's ScriptVm.cs:1006/1732 and ObjectMotion.cs:464 are the spec;
+// the C# test file has no counterpart for them.
+
+// The live links that follow the leader, in the object-list order the opcode
+// spawned them in.
+std::vector<scripts::MdkObject*> linksOf(scripts::ScriptRuntime& runtime,
+                                          const scripts::MdkObject* leader) {
+    std::vector<scripts::MdkObject*> links;
+    std::deque<scripts::MdkObject>& objects = runtime.objects();
+    for (std::deque<scripts::MdkObject>::iterator it = objects.begin(); it != objects.end(); ++it) {
+        if (!it->dead && it->leader == leader) {
+            links.push_back(&(*it));
+        }
+    }
+    return links;
+}
+
+// Two points the same to a fraction of a unit.
+bool near(const Vec3& a, const Vec3& b) {
+    const float kEpsilon = 0.001f;
+    return fabsf(a.x - b.x) < kEpsilon && fabsf(a.y - b.y) < kEpsilon &&
+           fabsf(a.z - b.z) < kEpsilon;
+}
+
+// Opcode 29 (spawn_chain): the links that hang off an object. The links are
+// numbered after the highest id of the followers the object already has, and
+// the oracle's loop counts down, so the FIRST link spawned has the highest
+// id and the last one has id 0 — the link that drives the chain.
+void testSpawnChainNumbersItsLinks(LevelData* levelData, const Cmi* cmi,
+                                   audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
+                                               45.0f, -1, 0, false);
+    CHECK(leader != nullptr);
+    if (leader == nullptr) {
+        return;
+    }
+
+    Code first;
+    first.u8(kSpawnChain).u8(3).pstr("X_STRIKB").u32(0);
+    first.end();
+    runProgram(runtime, first, leader);
+    CHECK(!sawUnimplemented(kSpawnChain));
+
+    std::vector<scripts::MdkObject*> links = linksOf(runtime, leader);
+    CHECK(links.size() == 3);
+    if (links.size() != 3) {
+        return;
+    }
+    CHECK(links[0]->instance_id == 2);
+    CHECK(links[1]->instance_id == 1);
+    CHECK(links[2]->instance_id == 0);
+    for (size_t i = 0; i < links.size(); i++) {
+        CHECK(links[i]->type_name == "X_STRIKB");
+        CHECK(links[i]->arena == leader->arena);
+        CHECK(links[i]->leader == leader);
+        CHECK(links[i]->move_command == kChainCommand);
+        CHECK(links[i]->position.x == leader->position.x);
+        CHECK(links[i]->position.y == leader->position.y);
+        CHECK(links[i]->position.z == leader->position.z);
+        CHECK(links[i]->yaw == 0.0f);
+        CHECK(!links[i]->dead);
+    }
+
+    // A second chain continues after the highest live id (2): the new links
+    // are 4 and 3, the first spawned the higher one.
+    Code second;
+    second.u8(kSpawnChain).u8(2).pstr("X_STRIKB").u32(0);
+    second.end();
+    runProgram(runtime, second, leader);
+    CHECK(!sawUnimplemented(kSpawnChain));
+    links = linksOf(runtime, leader);
+    CHECK(links.size() == 5);
+    if (links.size() != 5) {
+        return;
+    }
+    CHECK(links[3]->instance_id == 4);
+    CHECK(links[4]->instance_id == 3);
+
+    // A dead follower does not count: the highest LIVE id is 3, so the next
+    // link takes id 4 again — the dead link's id.
+    runtime.remove(links[3]);
+    CHECK(links[3]->dead);
+    Code third;
+    third.u8(kSpawnChain).u8(1).pstr("X_STRIKB").u32(0);
+    third.end();
+    runProgram(runtime, third, leader);
+    CHECK(!sawUnimplemented(kSpawnChain));
+    links = linksOf(runtime, leader);
+    CHECK(links.size() == 5);
+    if (links.size() != 5) {
+        return;
+    }
+    CHECK(links[4]->instance_id == 4);
+
+    // The links of another object are not this object's followers: the other
+    // object numbers its own chain from zero.
+    scripts::MdkObject* other = runtime.spawn(&controller, "X_STRIKB", Vec3{0.0f, 0.0f, 0.0f},
+                                              0.0f, -1, 0, false);
+    CHECK(other != nullptr);
+    if (other == nullptr) {
+        return;
+    }
+    Code otherChain;
+    otherChain.u8(kSpawnChain).u8(2).pstr("X_STRIKB").u32(0);
+    otherChain.end();
+    runProgram(runtime, otherChain, other);
+    std::vector<scripts::MdkObject*> otherLinks = linksOf(runtime, other);
+    CHECK(otherLinks.size() == 2);
+    if (otherLinks.size() != 2) {
+        return;
+    }
+    CHECK(otherLinks[0]->instance_id == 1);
+    CHECK(otherLinks[1]->instance_id == 0);
+}
+
+// Movement command 30 (the chain's motion): the links hang off their leader,
+// each link's reference point 0 at the previous link's reference point 1, and
+// they turn 90 degrees apart. Only the link with id 0 moves the chain.
+void testChainLinksHangOffTheirLeader(LevelData* levelData, const Cmi* cmi,
+                                       audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
+                                               45.0f, -1, 0, false);
+    CHECK(leader != nullptr);
+    if (leader == nullptr) {
+        return;
+    }
+    // The model carries two reference points, so the assembly moves the links
+    // off the leader instead of leaving them on it.
+    CHECK(leader->model != nullptr && leader->model->referencePoints.size() >= 2);
+
+    Code spawn;
+    spawn.u8(kSpawnChain).u8(3).pstr("X_STRIKB").u32(0);
+    spawn.end();
+    runProgram(runtime, spawn, leader);
+    std::vector<scripts::MdkObject*> links = linksOf(runtime, leader);
+    CHECK(links.size() == 3);
+    if (links.size() != 3) {
+        return;
+    }
+    scripts::MdkObject* last = links[0];    // id 2
+    scripts::MdkObject* middle = links[1];  // id 1
+    scripts::MdkObject* first = links[2];   // id 0
+
+    // Only the link with id 0 drives the chain: the others leave it alone,
+    // even before it has been assembled.
+    runtime.motionVelocity(middle);
+    CHECK(first->position.x == leader->position.x);
+    CHECK(first->position.y == leader->position.y);
+    CHECK(first->position.z == leader->position.z);
+    CHECK(first->yaw == 0.0f);
+    CHECK(middle->yaw == 0.0f);
+    CHECK(last->yaw == 0.0f);
+    CHECK(middle->leader == leader);
+
+    // The tick's motion step runs the chain: the link with id 0 drives it.
+    runtime.motionVelocity(first);
+    CHECK(first->yaw == 45.0f);
+    CHECK(middle->yaw == 135.0f);
+    CHECK(last->yaw == 225.0f);
+    CHECK(near(first->reference_point(0), leader->reference_point(1)));
+    CHECK(near(middle->reference_point(0), first->reference_point(1)));
+    CHECK(near(last->reference_point(0), middle->reference_point(1)));
+    // The links left the leader's place.
+    CHECK(!(first->position.x == leader->position.x &&
+            first->position.y == leader->position.y &&
+            first->position.z == leader->position.z));
+
+    // A gap in the chain breaks it: the link after the gap lets go.
+    runtime.remove(middle);
+    CHECK(middle->dead);
+    runtime.motionVelocity(last);
+    CHECK(last->leader == nullptr);
+    CHECK(last->move_command == 0);
+
+    // A dead leader lets the links go too.
+    runtime.remove(leader);
+    CHECK(leader->dead);
+    runtime.motionVelocity(first);
+    CHECK(first->leader == nullptr);
+    CHECK(first->move_command == 0);
+}
+
+// Opcode 49 (release_children): the object lets go of the last links of its
+// chain, one per count, and branches TRUE when the chain is empty.
+void testReleaseChildrenLetsGoOfTheChain(LevelData* levelData, const Cmi* cmi,
+                                          audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
+                                               45.0f, -1, 0, false);
+    CHECK(leader != nullptr);
+    if (leader == nullptr) {
+        return;
+    }
+    Code spawn;
+    spawn.u8(kSpawnChain).u8(3).pstr("X_STRIKB").u32(0);
+    spawn.end();
+    runProgram(runtime, spawn, leader);
+    std::vector<scripts::MdkObject*> links = linksOf(runtime, leader);
+    CHECK(links.size() == 3);
+    if (links.size() != 3) {
+        return;
+    }
+
+    // One link released: the LAST one (the highest id). The chain still has
+    // links, so the branch does not jump.
+    Code one;
+    one.u8(kReleaseChildren).u8(1).u8(kActionGoto).target("released");
+    one.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    one.end();
+    one.label("released");
+    one.u8(kSetVar).u8(kOwn).u8(1).f32(2.0f);
+    one.end();
+    runProgram(runtime, one, leader);
+    CHECK(!sawUnimplemented(kReleaseChildren));
+    CHECK(leader->variables[0] == 1.0f);
+    CHECK(leader->variables[1] == 0.0f);
+    CHECK(links[0]->leader == nullptr);
+    CHECK(links[0]->move_command == 0);
+    CHECK(links[1]->leader == leader);
+    CHECK(links[1]->move_command == kChainCommand);
+    CHECK(links[2]->leader == leader);
+    CHECK(links[2]->move_command == kChainCommand);
+
+    // More releases than links: the rest let go and the branch jumps.
+    Code all;
+    all.u8(kReleaseChildren).u8(5).u8(kActionGoto).target("released");
+    all.u8(kSetVar).u8(kOwn).u8(2).f32(3.0f);
+    all.end();
+    all.label("released");
+    all.u8(kSetVar).u8(kOwn).u8(3).f32(4.0f);
+    all.end();
+    runProgram(runtime, all, leader);
+    CHECK(!sawUnimplemented(kReleaseChildren));
+    CHECK(leader->variables[2] == 0.0f);
+    CHECK(leader->variables[3] == 4.0f);
+    CHECK(links[1]->leader == nullptr);
+    CHECK(links[1]->move_command == 0);
+    CHECK(links[2]->leader == nullptr);
+    CHECK(links[2]->move_command == 0);
+}
+
 } // namespace
 
 int main() {
@@ -1830,6 +2083,12 @@ int main() {
     printf("PASS DebugMessageIsNoOp\n");
     testSetRollingCapturesRotationOnTransition(runtime);
     printf("PASS SetRollingCapturesRotationOnTransition\n");
+    testSpawnChainNumbersItsLinks(&levelData, &cmi, &bank);
+    printf("PASS SpawnChainNumbersItsLinks\n");
+    testChainLinksHangOffTheirLeader(&levelData, &cmi, &bank);
+    printf("PASS ChainLinksHangOffTheirLeader\n");
+    testReleaseChildrenLetsGoOfTheChain(&levelData, &cmi, &bank);
+    printf("PASS ReleaseChildrenLetsGoOfTheChain\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

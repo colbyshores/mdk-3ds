@@ -763,6 +763,38 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.startPath(obj, path, time, origin);
             break;
         }
+        // The chain that hangs off an object (ScriptVm.cs:1006, 1732).
+        case 29: {  // spawn_chain: links that hang off this object, nearest one first
+            const int32_t kChainCommand = 30;
+            // The links are numbered after the highest id of the followers the
+            // object already has, so the chain's ids stay 0, 1, 2, ... and the
+            // first link (id 0) is the one that moves the chain.
+            const int32_t maxId = runtime_.lastFollowerId(obj);
+            const int32_t count = ival(op(ins, 0));
+            for (int32_t n = count - 1; n >= 0; n--) {
+                MdkObject* link = runtime_.spawn(obj, strval(op(ins, 1)), obj->position, 0.0f,
+                                                 n + maxId + 1, ival(op(ins, 2)), false);
+                if (link == nullptr) {
+                    break;
+                }
+                link->move_command = kChainCommand;
+                link->leader = obj;
+            }
+            break;
+        }
+        case 49: {  // release_children: lets go of the last followers of a chain
+            const int32_t count = ival(op(ins, 0));
+            for (int32_t i = 0; i < count; i++) {
+                MdkObject* last = runtime_.lastChainLink(obj);
+                if (last == nullptr) {
+                    // No chain left: the oracle branches TRUE here.
+                    return branch(obj, ins, true);
+                }
+                last->leader = nullptr;
+                last->move_command = 0;
+            }
+            break;
+        }
         case 100:  // arena_show
             runtime_.showArena(strval(op(ins, 0)));
             break;
