@@ -109,16 +109,23 @@ the same batch. One subsystem slice per batch.
    unsupervised because the golden dump proves every batch; the renderer has
    no equivalent proof, and a reviewer's opinion is not a frame oracle.
    Deliverable: a deterministic headless render of a pinned level + scripted
-   input (the Linux `--headless` path), frozen reference frames checked into
-   the repo (or a hash manifest), a tolerance comparator (byte-exact where
-   deterministic, perceptual elsewhere), and a gate wired into
-   `tools/check.sh` that fails on regression — proven to fail on a seeded
-   visual regression before it is trusted. **Owner decision required first:
-   the reference source** — the C# renderer rendered headlessly here, vs.
-   captures of the original `MDKD3D.EXE`. That answer determines the harness
-   design; do not pick it silently. Same rule as the goldens: a reference
-   frame changes only from the reference source, never from the
-   implementation's output.
+   input, frozen reference frames (or a hash manifest), a tolerance
+   comparator (byte-exact where deterministic, perceptual elsewhere), and a
+   gate wired into `tools/check.sh` that fails on regression — proven to fail
+   on a seeded visual regression before it is trusted. Same rule as the
+   goldens: a reference frame changes only from the reference source, never
+   from the implementation's output.
+   **Reference source — DECIDED (owner directive 2026-10-28): the C# itself.**
+   Findings that decided it: the C# is a complete SDL3/SDL_GPU implementation
+   whose Linux backend is Vulkan, `lvp_icd.json` (lavapipe) is installed here,
+   the game's data files are present in the gitignored `./MDK/` GOG install,
+   and the C# already ships a deterministic capture mode — `--screenshot=file
+   --wait=seconds --level=N --gpu=vulkan --snapshot=NAME` (the last prints a
+   state hash). So the oracle is the C# rendered headlessly here; captures of
+   the original `MDKD3D.EXE` (via the bundled nGlide wrapper) are an
+   OPTIONAL secondary fidelity cross-check, dev-time only. Reference frames
+   derived from the original art are ROM-derived pixels: they live under a
+   gitignored path with a regeneration script, never in the repo.
 5. **P5**: golden-frame tests for the Vulkan renderer (original look within
    tolerance vs the C#). Requires P5.0.
 6. **P6**: enhanced look, stereo, mods (Linux-only). Requires P5.0.
@@ -129,6 +136,20 @@ the same batch. One subsystem slice per batch.
    absent**; `mdk_3ds/tools/build_cia.sh` exits non-zero with an explanation
    instead of shipping a broken title. Installing makerom is an owner
    decision; do not fake it. Then: gates green, final adversarial sweep.
+9. **Phase 2 — the post-process gap sweep (owner directive 2026-10-28).**
+   **Sequence: only AFTER the C#-driven work above is exhausted.** The C#
+   is the preferred intermediate representation and stays the oracle
+   wherever it implements the behavior. What the C# itself does not implement
+   (the deferred-with-cause set: the Rides writer behind the alarm countdown,
+   Kurt's touch writer, the projectile and item-chain writers, and anything
+   else the C# leaves unidentified) is lifted in a SEPARATE sweep from the
+   original `./MDK/MDKD3D.EXE` using the REA MCP server (Ghidra 12.1.4 at
+   `~/re-tools/ghidra_12.1.4_PUBLIC`, `rea mcp`; disabled in
+   `~/.config/kilo/kilo.jsonc` — enable it when the sweep starts). RE-derived
+   behavior is documented as the oracle of record for that item, exactly as
+   the C#-identified slots (199/210) are documented today. No RE work enters
+   a normal porting batch.
+
 
 **Hardware-only (never claim done):** original Old-3DS timing/OG profile. A
 devkitARM build or a mandarine run is NOT hardware validation. This stays
