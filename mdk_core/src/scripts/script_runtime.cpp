@@ -2561,8 +2561,11 @@ void ScriptRuntime::linkPartners(MdkObject* obj, const std::string& type) {
             continue;
         }
         // The C# filter admits a null link or a link to a DEAD object, then
-        // skips every non-null link in the pairing loop; preserving both steps
-        // matters for an object whose partner died.
+        // skips every non-null link in the pairing loop. Admitting the dead
+        // link is unobservable for the pairing itself — a widow is skipped as
+        // i and as j — but the clause is the oracle's filter and is kept
+        // verbatim; the retained link it admits is what the other `linked`
+        // consumers (variable source 3, 180, 213/214, 246) read.
         if (other.linked != nullptr && !other.linked->dead) {
             continue;
         }
@@ -2780,10 +2783,15 @@ void ScriptRuntime::remove(MdkObject* obj) {
     // with it FIRST — Remove(obj.Attached) runs before obj is marked dead — then Dead,
     // then out of the list. The deque's slots are never vacated (the pointer model
     // depends on it), so the object is marked removed here and remains readable through
-    // surviving references. The oracle deliberately leaves an inbound Linked reference
-    // intact: a widow keeps pointing at its dead partner, and link_partners must not
-    // re-pair it. Other inbound relation references are cleared below as before. A
-    // pickup that falls out (FallOut -> remove) takes its chute with it.
+    // surviving references. The oracle clears NO inbound reference — not Linked, not
+    // Leader, not CowTarget, not Attached — so none is cleared here either: a widow
+    // keeps pointing at its dead partner (link_partners must not re-pair it), a
+    // removed chute keeps its leader, and a pickup keeps a chute removed under it.
+    // Every read site twins the oracle's test — null-or-dead for linked/leader,
+    // null-only for attached, elsewhere a comparison against a live object — so a
+    // retained pointer to the permanent slot behaves exactly like the oracle's
+    // retained managed reference. A pickup that falls out (FallOut -> remove) takes
+    // its chute with it.
     if (isRemoved(obj)) {
         return;  // C# Objects.Remove is idempotent; do not double-process
     }
@@ -2805,18 +2813,6 @@ void ScriptRuntime::remove(MdkObject* obj) {
     obj->tracked_voice = 0;
     obj->dead = true;
     removed_.push_back(obj);
-    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
-        MdkObject& other = *it;
-        if (other.leader == obj) {
-            other.leader = nullptr;
-        }
-        if (other.attached == obj) {
-            other.attached = nullptr;
-        }
-        if (other.cow_target == obj) {
-            other.cow_target = nullptr;
-        }
-    }
 }
 
 bool ScriptRuntime::isRemoved(const MdkObject* obj) const {

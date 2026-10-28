@@ -68,6 +68,7 @@ const int32_t kSet27c = 239;
 const int32_t kDebugMsg = 77;
 const int32_t kSetRolling = 85;
 const int32_t kAttachTo = 74;
+const int32_t kIfNoLeader = 34;
 const int32_t kWait = 64;
 const int32_t kSetVar = 65;
 const int32_t kAddVar = 66;
@@ -1103,46 +1104,27 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
                                                       audio::SoundBank* bank) {
     scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
-    scripts::MdkObject* receiver = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
-                                                 0.0f, -1, 0, false);
-    scripts::MdkObject* differentType = runtime.spawn(&controller, "BOLT", Vec3{1.0f, 0.0f, 0.0f},
-                                                       0.0f, -1, 0, false);
-    scripts::MdkObject* deadNear = runtime.spawn(&controller, "BEAMS", Vec3{2.0f, 0.0f, 0.0f},
-                                                  0.0f, -1, 0, false);
-    scripts::MdkObject* crossArenaNear = runtime.spawn(&controller, "BEAMS", Vec3{3.0f, 0.0f, 0.0f},
-                                                        0.0f, -1, 0, false);
+    // The widow's pair is built by the opcode itself: with only these two
+    // BEAMS in the arena, link_partners pairs them (2 units apart).
     scripts::MdkObject* linkedDead = runtime.spawn(&controller, "BEAMS", Vec3{4.0f, 0.0f, 0.0f},
                                                    0.0f, -1, 0, false);
-    scripts::MdkObject* alreadyLinked = runtime.spawn(&controller, "BEAMS", Vec3{5.0f, 0.0f, 0.0f},
-                                                       0.0f, -1, 0, false);
-    scripts::MdkObject* firstInRange = runtime.spawn(&controller, "BEAMS", Vec3{90.0f, 0.0f, 0.0f},
-                                                     0.0f, -1, 0, false);
-    scripts::MdkObject* nearerLater = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 0.0f, 0.0f},
-                                                    0.0f, -1, 0, false);
-    scripts::MdkObject* exactly100 = runtime.spawn(&controller, "BEAMS", Vec3{100.0f, 0.0f, 0.0f},
-                                                   0.0f, -1, 0, false);
-    scripts::MdkObject* farAway = runtime.spawn(&controller, "BEAMS", Vec3{500.0f, 0.0f, 0.0f},
-                                                0.0f, -1, 0, false);
-    CHECK(receiver != nullptr && differentType != nullptr && deadNear != nullptr &&
-          crossArenaNear != nullptr && linkedDead != nullptr && alreadyLinked != nullptr &&
-          firstInRange != nullptr && nearerLater != nullptr && exactly100 != nullptr &&
-          farAway != nullptr);
-    if (receiver == nullptr || differentType == nullptr || deadNear == nullptr ||
-        crossArenaNear == nullptr || linkedDead == nullptr || alreadyLinked == nullptr ||
-        firstInRange == nullptr || nearerLater == nullptr || exactly100 == nullptr ||
-        farAway == nullptr) {
+    scripts::MdkObject* deadNear = runtime.spawn(&controller, "BEAMS", Vec3{2.0f, 0.0f, 0.0f},
+                                                  0.0f, -1, 0, false);
+    CHECK(linkedDead != nullptr && deadNear != nullptr);
+    if (linkedDead == nullptr || deadNear == nullptr) {
         return;
     }
+    Code widowPair;
+    widowPair.u8(kLinkPartners).pstr("beams");
+    widowPair.end();
+    runProgram(runtime, widowPair, linkedDead);
+    CHECK(!sawUnimplemented(kLinkPartners));
+    CHECK(linkedDead->linked == deadNear);
+    CHECK(deadNear->linked == linkedDead);
 
-    crossArenaNear->arena = "OTHER_ARENA";
-    alreadyLinked->linked = differentType;
-    differentType->linked = alreadyLinked;
-
-    // Remove one member of a real pair. The oracle leaves the survivor's link
-    // pointing at the dead partner: the loose-object filter admits that dead
-    // link, while the pairing loop skips every non-null link.
-    linkedDead->linked = deadNear;
-    deadNear->linked = linkedDead;
+    // Remove one member of that real pair. The oracle leaves the survivor's
+    // link pointing at the dead partner; link_partners skips every non-null
+    // link (as i and as j), so the widow is never re-paired.
     runtime.remove(deadNear);
     CHECK(deadNear->dead);
     CHECK(runtime.isRemoved(deadNear));
@@ -1155,6 +1137,46 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
     writePartnerVariable.end();
     runProgram(runtime, writePartnerVariable, linkedDead);
     CHECK(deadNear->variables[0] == 4.5f);
+
+    scripts::MdkObject* receiver = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                 0.0f, -1, 0, false);
+    scripts::MdkObject* crossArenaNear = runtime.spawn(&controller, "BEAMS", Vec3{3.0f, 0.0f, 0.0f},
+                                                        0.0f, -1, 0, false);
+    scripts::MdkObject* alreadyLinked = runtime.spawn(&controller, "BEAMS", Vec3{5.0f, 0.0f, 0.0f},
+                                                       0.0f, -1, 0, false);
+    scripts::MdkObject* firstInRange = runtime.spawn(&controller, "BEAMS", Vec3{90.0f, 0.0f, 0.0f},
+                                                     0.0f, -1, 0, false);
+    scripts::MdkObject* nearerLater = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 0.0f, 0.0f},
+                                                    0.0f, -1, 0, false);
+    scripts::MdkObject* exactly100 = runtime.spawn(&controller, "BEAMS", Vec3{100.0f, 0.0f, 0.0f},
+                                                   0.0f, -1, 0, false);
+    scripts::MdkObject* farAway = runtime.spawn(&controller, "BEAMS", Vec3{500.0f, 0.0f, 0.0f},
+                                                0.0f, -1, 0, false);
+    CHECK(receiver != nullptr && crossArenaNear != nullptr && alreadyLinked != nullptr &&
+          firstInRange != nullptr && nearerLater != nullptr && exactly100 != nullptr &&
+          farAway != nullptr);
+    if (receiver == nullptr || crossArenaNear == nullptr || alreadyLinked == nullptr ||
+        firstInRange == nullptr || nearerLater == nullptr || exactly100 == nullptr ||
+        farAway == nullptr) {
+        return;
+    }
+
+    crossArenaNear->arena = "OTHER_ARENA";
+    // The already-linked pair is built by an oracle writer too: spawn_partner
+    // (179) links its receiver to the spawned partner whatever the type, so a
+    // BEAMS can hang on a live BOLT — and link_partners must leave it alone.
+    Code boltPartner;
+    boltPartner.u8(kSpawnPartner).pstr("BOLT").u32(0);
+    boltPartner.end();
+    runProgram(runtime, boltPartner, alreadyLinked);
+    CHECK(!sawUnimplemented(kSpawnPartner));
+    CHECK(alreadyLinked->linked != nullptr);
+    if (alreadyLinked->linked == nullptr) {
+        return;
+    }
+    scripts::MdkObject* differentType = alreadyLinked->linked;
+    CHECK(differentType->type_name == "BOLT");
+    CHECK(differentType->linked == alreadyLinked);
 
     Code pair;
     // Lower-case type: the oracle compares type names case-insensitively.
@@ -1175,8 +1197,10 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
     CHECK(farAway->linked == nullptr);
     CHECK(differentType->linked == alreadyLinked);
     CHECK(alreadyLinked->linked == differentType);
-    // The widow was admitted to the candidate snapshot but skipped by the
-    // pairing loop, so it keeps its dead partner instead of being re-paired.
+    // The widow is not re-paired: it keeps its dead partner. (Its admission
+    // to the loose list is unobservable here — the pairing loop skips every
+    // non-null link as i and as j. The retained link is what the source-3
+    // write above and the 180/213/214/246 tests read.)
     CHECK(linkedDead->linked == deadNear);
 
     // A second pair isolates the strict distance boundary: exactly 100 units
@@ -1204,8 +1228,8 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
     CHECK(at100->linked == nullptr);
 
     // The list form with a zero second value clears only the receiver's link.
-    receiver->linked = firstInRange;
-    firstInRange->linked = receiver;
+    // The pair program above left the receiver linked to firstInRange, so the
+    // state under test is the oracle's own, not a hand-made one.
     Code clear;
     clear.u8(kLinkPartners).u8(0).u8(0);
     clear.end();
@@ -1215,22 +1239,97 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
     CHECK(firstInRange->linked == receiver);
 
     // A non-zero list value does not clear the link, and a type-mode call
-    // with no eligible pair preserves an existing link.
-    receiver->linked = firstInRange;
-    firstInRange->linked = receiver;
+    // with no eligible pair preserves an existing link. The link is built by
+    // an oracle writer (spawn_partner) — the receiver's own new partner.
+    Code keepPartner;
+    keepPartner.u8(kSpawnPartner).pstr("BOLT").u32(0);
+    keepPartner.end();
+    runProgram(runtime, keepPartner, receiver);
+    CHECK(!sawUnimplemented(kSpawnPartner));
+    CHECK(receiver->linked != nullptr);
+    if (receiver->linked == nullptr) {
+        return;
+    }
+    scripts::MdkObject* keptPartner = receiver->linked;
+    CHECK(keptPartner->linked == receiver);
     Code keep;
     keep.u8(kLinkPartners).u8(0).u8(7);
     keep.end();
     runProgram(runtime, keep, receiver);
     CHECK(!sawUnimplemented(kLinkPartners));
-    CHECK(receiver->linked == firstInRange);
+    CHECK(receiver->linked == keptPartner);
     Code preserve;
     preserve.u8(kLinkPartners).pstr("BEAMS");
     preserve.end();
     runProgram(runtime, preserve, receiver);
     CHECK(!sawUnimplemented(kLinkPartners));
-    CHECK(receiver->linked == firstInRange);
-    CHECK(firstInRange->linked == receiver);
+    CHECK(receiver->linked == keptPartner);
+    CHECK(keptPartner->linked == receiver);
+}
+
+// The oracle's Remove clears NO inbound reference (ScriptRuntime.cs:1648-1673:
+// it sets Dead and drops the object from the list, and touches nothing else).
+// The C++ keeps the deque slot, so a retained pointer stays valid and holds
+// the same dead object the oracle's field would hold. Every read site twins
+// the oracle's guard — null-or-dead for linked/leader, null-only for attached
+// — so the retained reference reads the same way there.
+void testRemoveKeepsInboundReferences(LevelData* levelData, const Cmi* cmi,
+                                       audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
+    // The fresh runtime's first auto-ID is 1000, so the leader is "BEAMS_1000".
+    scripts::MdkObject* leader = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 0.0f, 0.0f},
+                                               0.0f, -1, 0, false);
+    scripts::MdkObject* follower = runtime.spawn(&controller, "BEAMS", Vec3{0.0f, 0.0f, 0.0f},
+                                                 0.0f, -1, 0, false);
+    CHECK(leader != nullptr && follower != nullptr);
+    if (leader == nullptr || follower == nullptr) {
+        return;
+    }
+    CHECK(leader->instance_id == 1000);
+
+    // attach_to (74) names the object "<type>_<id>" and makes it the leader.
+    Code attach;
+    attach.u8(kAttachTo).u8(2).u8(5).pstr("BEAMS_1000");
+    attach.end();
+    runProgram(runtime, attach, follower);
+    CHECK(!sawUnimplemented(kAttachTo));
+    CHECK(follower->leader == leader);
+    CHECK(follower->move_command == kAttachTo);
+
+    // A live leader is not "no leader": the move command survives.
+    Code hasLeader;
+    hasLeader.u8(kIfNoLeader).u8(kActionGoto).target("alone");
+    hasLeader.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    hasLeader.end();
+    hasLeader.label("alone");
+    hasLeader.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    hasLeader.end();
+    runProgram(runtime, hasLeader, follower);
+    CHECK(!sawUnimplemented(kIfNoLeader));
+    CHECK(follower->variables[0] == 1.0f);
+    CHECK(follower->move_command == kAttachTo);
+
+    runtime.remove(leader);
+    CHECK(leader->dead);
+    CHECK(runtime.isRemoved(leader));
+    // The oracle keeps the reference: Remove clears no inbound field, so the
+    // follower still points at the removed leader.
+    CHECK(follower->leader == leader);
+
+    // The retained reference still reads as "no leader" everywhere the oracle
+    // tests it (a dead leader is a missing leader), so the move command goes.
+    Code noLeader;
+    noLeader.u8(kIfNoLeader).u8(kActionGoto).target("alone");
+    noLeader.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    noLeader.end();
+    noLeader.label("alone");
+    noLeader.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    noLeader.end();
+    runProgram(runtime, noLeader, follower);
+    CHECK(!sawUnimplemented(kIfNoLeader));
+    CHECK(follower->variables[0] == 2.0f);
+    CHECK(follower->move_command == 0);
 }
 
 // Opcode 243 (if_point_sees_player) has no C# ScriptVmTests counterpart, so
@@ -1719,6 +1818,8 @@ int main() {
     printf("PASS SnapToPartnerUsesOnlyALivePartner\n");
     testLinkPartnersPairsEligibleObjectsInListOrder(&levelData, &cmi, &bank);
     printf("PASS LinkPartnersPairsEligibleObjectsInListOrder\n");
+    testRemoveKeepsInboundReferences(&levelData, &cmi, &bank);
+    printf("PASS RemoveKeepsInboundReferences\n");
     testUnidentifiedValueSlotsStoreTheirOperand(runtime);
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
     testKurtAndScreenWrites(runtime);

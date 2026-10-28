@@ -153,10 +153,12 @@ public:
     void kill(MdkObject* obj);
     // C# Remove: the object leaves the object list (Dead set, then removed). The
     // C++ deque keeps its slot — every held pointer stays valid — so the object
-    // is marked removed here. An inbound Linked reference is deliberately kept:
-    // the oracle's widow still points at its dead partner. The readable list
-    // (isRemoved) skips the removed object, matching the C# list exactly. Kill, in
-    // contrast, leaves the object dead but PRESENT.
+    // is marked removed here. The oracle clears no inbound reference, so none is
+    // cleared here either: the widow still points at its dead partner, and a
+    // removed chute still points at its leader. The readable list (isRemoved)
+    // skips the removed object, matching the C# list exactly. Kill, in contrast,
+    // leaves the object PRESENT with health == 0 and dead == false: `dead` is
+    // set only by remove(), in both languages.
     void remove(MdkObject* obj);
     // Whether the object was removed (no longer one of the C#'s Objects).
     bool isRemoved(const MdkObject* obj) const;
