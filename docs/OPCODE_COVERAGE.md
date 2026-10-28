@@ -92,7 +92,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   One `vm_tests` case pins the exclusions, both turn directions, first-object
   order, the angle clamp, and the dispatch. Recount: C# 238, C++ 200 true
   dispatches, 38 remaining.
-- **Turn-and-jump batch (2026-10-27):** opcode 229
+- **Turn-and-jump batch (2026-10-28):** opcode 229
   (`turn_and_jump_to_dest`) and movement command 229 are ported together over
   the existing destination, yaw, velocity, gravity, friction, parameter and
   contact fields. The receiver turns by at most the requested rate until it
@@ -207,7 +207,7 @@ Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 and compare as sets. Current count: C# **238**, C++ **203 labels / 202 unique**,
 remaining **37**. The C++ set has the nested `case 0:` mode arm inside opcode
 249's switch, which is not a dispatch, so there are **201 true dispatches** and
-201 + 37 = 238. Recounted 2026-10-27 after opcode 229 was added; the raw C++
+201 + 37 = 238. Recounted 2026-10-28 after opcode 229 was added; the raw C++
 label count includes one nested switch arm and one duplicate label in the nested
 switch.
 

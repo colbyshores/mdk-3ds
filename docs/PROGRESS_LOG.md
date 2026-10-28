@@ -1,3 +1,54 @@
+## What this batch did (iteration 63 — opcode 229, turn and jump)
+
+- Ported opcode 229 (`turn_and_jump_to_dest`) from
+  `ScriptVm.cs:1136-1138` and its movement command from
+  `ObjectMotion.cs:387-391/426-461`. The receiver first turns toward its move
+  destination by at most the requested degrees per second. Once it faces the
+  destination, the implementation sets the oracle's yaw, enters movement
+  command 229, chooses the arc top (at least ten above the higher end and
+  thirty above the lower end), derives the initial vertical speed and total
+  flight time from gravity, and sets the horizontal speed so that linear
+  friction still carries the object to the destination. The flight command
+  advances `parameter_timer` and ends with zeroed velocity on floor contact
+  after the apex; gravity still acts later in the same motion tick, matching
+  the oracle's update order.
+- The implementation reuses the existing `move_destination`, `yaw`,
+  `velocity`, `gravity`, `friction`, `parameter`, `parameter_timer` and
+  `contact_flags` fields. `ScriptRuntime::turnAndJump` preserves the C#'s
+  operation order and NaN-propagating `MathF.Max`; the existing `yawTo` seam
+  supplies the oracle's compass bearing. This is a real dispatch and movement
+  command, not a decoded no-op or a stub.
+- One synthetic `vm_tests` case,
+  `TurnAndJumpTurnsLaunchesAndStopsOnFloor`, pins the two-degree-per-tick
+  turn limit, the false branch while turning, the exact launch yaw and true
+  branch, the vertical speed, friction-adjusted horizontal speed and flight
+  time, the first gravity/friction motion tick, the exclusion of floor
+  contact before the apex, and the landing stop. The test was
+  mutation-checked: doubling the turn rate, shortening the arc, dropping the
+  friction compensation, allowing a landing before the apex, and removing the
+  landing stop each make the test fail.
+- The newest external review file,
+  `logs/ralph-pi/run-20261027-223315/review-6.md`, contains only
+  `REVIEWER FAILED model=litellm/qwen rc=1`; it supplied no BLOCKER, MAJOR,
+  MINOR or NIT finding to address. Review-4's remaining documentation point
+  was already fixed in iteration 61.
+- Coverage: 201 true C++ dispatches / 238, 37 remaining. The brace-matched
+  recount gives C# 238 cases and C++ 203 numeric labels / 202 unique labels;
+  the extra numeric label is the nested mode arm inside opcode 249, and one
+  nested label is duplicated, leaving 201 true dispatches.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` → 35 VM tests PASS
+    and the full oracle suite ended with `All cases match the oracle.`
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; SMDH SKIPPED (no CIA
+    built).
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` → linked `mdk.elf`, staged 69 RomFS files (79M), built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` → built the Linux target.
+- No golden changed; opcode 229 does not fire in the level 3–8 corpus. No
+  emulator or hardware run was performed. Old-3DS timing remains unmeasured.
+
+
 ## What this batch did (iteration 62 — opcode 204, object avoidance)
 
 - Ported opcode 204 (`avoid_objects`) from `ScriptVm.cs:1715-1729`. The
