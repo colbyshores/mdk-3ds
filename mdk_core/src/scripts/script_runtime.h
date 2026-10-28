@@ -132,6 +132,10 @@ public:
     // first waypoint (ObjectMotion.PlanMove). The VM seam; the walk/fly half runs in
     // motionVelocity's command step each following tick.
     void startMove(MdkObject* obj, int32_t command, const Vec3& destination);
+    // TurnAndJump (ObjectMotion.cs:426): turn towards the move destination at
+    // the given degrees-per-second rate; once facing it, enter movement command
+    // 229 and set the ballistic velocity for the jump.
+    void turnAndJump(MdkObject* obj, float rate);
     // Fire (ScriptRuntime.cs:2659): a projectile from a reference point of the
     // object, flying along its yaw and pitch under the projectile's script.
     // The VM seam for the scripts' fire opcode (case 61). Null when the spawn
@@ -334,7 +338,8 @@ private:
     // walks or flies a commanded object toward its waypoint, adding to push before
     // gravity/ApplyVelocity, then watches for a stall (DetectStuck) and answers it
     // (HandleStuck: replan once, slide through, or give up). Commands 1/6/61/74/
-    // 88/30/15/229 are their own slices.
+    // 88/30/15 are their own slices; 229 is handled above by turnAndJump and
+    // by the command's landing check.
     void updateCommand(MdkObject* obj);
     // ObjectMotion.HandleStuck (0x45b6c8): the stuck object's once-replan, slide,
     // or give-up, driven by how far it turned this update (degrees).

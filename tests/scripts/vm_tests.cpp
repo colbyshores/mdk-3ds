@@ -74,6 +74,7 @@ const int32_t kAttachTo = 74;
 const int32_t kSpawnChain = 29;
 const int32_t kReleaseChildren = 49;
 const int32_t kAvoidObjects = 204;
+const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
 const int32_t kIfNoLeader = 34;
@@ -2153,6 +2154,80 @@ void testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(LevelData* levelData, con
     CHECK(fabsf(receiver->yaw - 180.0f) < 1e-4f);
 }
 
+// Opcode 229 (turn_and_jump_to_dest) and movement command 229 have no C#
+// ScriptVmTests counterpart, so this pins the oracle directly
+// (ScriptVm.cs:1136-1138 and ObjectMotion.cs:387-391/426-461). The receiver
+// turns by at most rate degrees per second until it faces the destination;
+// then the ballistic velocity, apex and duration are set. The flight command
+// stops on floor contact after the apex.
+void testTurnAndJumpTurnsLaunchesAndStopsOnFloor(LevelData* levelData, const Cmi* cmi,
+                                                  audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::MdkObject obj;
+    obj.position = Vec3{0.0f, 0.0f, 10.0f};
+    obj.move_destination = Vec3{0.0f, 100.0f, 10.0f};
+    obj.flags = scripts::MdkObject::FlagGravity;
+
+    Code code;
+    code.u8(kTurnAndJump).f32(60.0f).u8(kActionGoto).target("launched");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("launched");
+    code.u8(kSetVar).u8(kOwn).u8(1).f32(2.0f);
+    code.end();
+
+    // The first call turns two degrees (60 degrees per second at 30 Hz), does
+    // not launch, and takes the false branch.
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kTurnAndJump));
+    CHECK(fabsf(obj.yaw - 2.0f) < 1e-4f);
+    CHECK(obj.move_command == 0);
+    CHECK(obj.velocity.x == 0.0f && obj.velocity.y == 0.0f && obj.velocity.z == 0.0f);
+    CHECK(obj.variables[0] == 1.0f);
+    CHECK(obj.variables[1] == 0.0f);
+
+    // Forty-four more calls bring the total to forty-five two-degree turns;
+    // the last reaches north exactly, launches, and takes the true branch.
+    for (int i = 0; i < 44; i++) {
+        runProgram(runtime, code, &obj);
+    }
+    CHECK(fabsf(obj.yaw - 90.0f) < 1e-4f);
+    CHECK(obj.move_command == kTurnAndJump);
+    CHECK(obj.variables[1] == 2.0f);
+    CHECK(obj.parameter_timer == 0.0f);
+
+    // Equal-height ends put the arc top thirty above them: up is
+    // sqrt(30 * 2 * 32), and the total flight time is 2 * up / gravity. The
+    // horizontal speed includes the distance lost to linear friction.
+    CHECK(fabsf(obj.velocity.z - 43.817806f) < 1e-4f);
+    CHECK(fabsf(obj.velocity.x) < 1e-4f);
+    CHECK(fabsf(obj.velocity.y - 124.150444f) < 1e-4f);
+    CHECK(fabsf(obj.parameter - 2.738613f) < 1e-4f);
+
+    // The first motion tick advances the arc: gravity has already reduced the
+    // vertical speed, and friction has reduced the horizontal speed.
+    runtime.motionVelocity(&obj);
+    CHECK(obj.move_command == kTurnAndJump);
+    CHECK(fabsf(obj.parameter_timer - scripts::ScriptRuntime::kTick) < 1e-6f);
+    CHECK(fabsf(obj.position.y - 4.067237f) < 1e-4f);
+    CHECK(fabsf(obj.position.z - 11.425038f) < 1e-4f);
+
+    // Floor contact before the apex does not end the flight.
+    obj.contact_flags |= scripts::MdkObject::ContactFloor;
+    runtime.motionVelocity(&obj);
+    CHECK(obj.move_command == kTurnAndJump);
+
+    // At the apex, floor contact ends movement command 229 and clears the
+    // velocity. Gravity then acts in the same motion tick, as it does in the
+    // oracle's update order.
+    obj.parameter_timer = obj.parameter * 0.5f;
+    obj.contact_flags |= scripts::MdkObject::ContactFloor;
+    runtime.motionVelocity(&obj);
+    CHECK(obj.move_command == 0);
+    CHECK(obj.velocity.x == 0.0f && obj.velocity.y == 0.0f);
+    CHECK(fabsf(obj.velocity.z + 32.0f * scripts::ScriptRuntime::kTick) < 1e-4f);
+}
+
 } // namespace
 
 int main() {
@@ -2263,6 +2338,8 @@ int main() {
     printf("PASS ReleaseChildrenLetsGoOfTheChain\n");
     testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(&levelData, &cmi, &bank);
     printf("PASS AvoidObjectsTurnsAwayFromTheFirstSolidOverlap\n");
+    testTurnAndJumpTurnsLaunchesAndStopsOnFloor(&levelData, &cmi, &bank);
+    printf("PASS TurnAndJumpTurnsLaunchesAndStopsOnFloor\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

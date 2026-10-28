@@ -119,6 +119,18 @@ float signf(float value) {
     return value > 0.0f ? 1.0f : (value < 0.0f ? -1.0f : 0.0f);
 }
 
+// MathF.Max: NaN-propagating. fmaxf is not, because it returns the numeric
+// side when exactly one argument is NaN.
+float mathMax(float a, float b) {
+    if (a != a) {
+        return a;
+    }
+    if (b != b) {
+        return b;
+    }
+    return a > b ? a : b;
+}
+
 // Vector3 equality: the planner sets Waypoint to a copy of MoveDestination, so exact
 // component equality is the "already heading for the destination" test the C# uses.
 bool vecEq(const Vec3& a, const Vec3& b) {
@@ -1399,6 +1411,46 @@ void ScriptRuntime::startMove(MdkObject* obj, int32_t command, const Vec3& desti
     planMove(obj);
 }
 
+// TurnAndJump (ObjectMotion.cs:426): turn towards the destination by at most
+// rate degrees per second. Once facing it, enter movement command 229 and set
+// the ballistic velocity. The arc clears the higher end by at least ten units
+// and the lower end by at least thirty; its duration accounts for friction.
+void ScriptRuntime::turnAndJump(MdkObject* obj, float rate) {
+    const int32_t kJumpCommand = 229;
+    const float kAboveHigher = 10.0f;
+    const float kAboveLower = 30.0f;
+    const float heading = yawTo(obj, obj->move_destination);
+    const float diff = wrapAngle(heading - obj->yaw);
+    if (fabsf(diff) > rate * kTick) {
+        obj->yaw = wrap360(obj->yaw + signf(diff) * rate * kTick);
+        return;
+    }
+
+    obj->yaw = heading;
+    obj->move_command = kJumpCommand;
+    const float z = obj->position.z;
+    const float goal = obj->move_destination.z;
+    const float top = goal < z ? mathMax(z + kAboveHigher, goal + kAboveLower)
+                               : mathMax(goal + kAboveHigher, z + kAboveLower);
+    const float gravity = obj->gravity;
+    const float up = sqrtf((top - z) * 2.0f * gravity);
+    const float flight = mathMax(up * up + (z - goal) * gravity * 2.0f, 0.0f);
+    const float time = (up + sqrtf(flight)) / gravity;
+    obj->parameter = time;
+    obj->parameter_timer = 0.0f;
+
+    const float dx = obj->move_destination.x - obj->position.x;
+    const float dy = obj->move_destination.y - obj->position.y;
+    const float distance = sqrtf(dx * dx + dy * dy);
+    const float speed =
+        (obj->friction * 0.5f * time * time + distance) / time;
+    const float directionX = distance > 0.0f ? dx / distance : 0.0f;
+    const float directionY = distance > 0.0f ? dy / distance : 0.0f;
+    obj->velocity.x = directionX * speed;
+    obj->velocity.y = directionY * speed;
+    obj->velocity.z = up;
+}
+
 // Links (ObjectMotion.cs:503): the live followers of the leader, ordered by
 // instance id. The C#'s insertion sort is stable, so equal ids keep the
 // object-list order; this one does the same.
@@ -1752,6 +1804,15 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
         case 61:  // FlyProjectile (fire): straight along the yaw and pitch
             flyProjectile(obj);
             break;
+        case 229: {  // TurnAndJump's flight: stop after the apex on floor contact
+            obj->parameter_timer += kTick;
+            if (obj->parameter_timer >= obj->parameter * 0.5f &&
+                (obj->contact_flags & MdkObject::ContactFloor) != 0) {
+                obj->move_command = 0;
+                obj->velocity = Vec3{};
+            }
+            break;
+        }
         case 43:   // move to a destination (command_objects 43):
         case 197:  // the same walk/fly handling as move_to (ObjectMotion.cs:338)
         case 78: {

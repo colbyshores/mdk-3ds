@@ -1935,6 +1935,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             obj->swing_length = obj->swing_pivot.z - obj->position.z;
             obj->flags |= MdkObject::FlagSwinging;
             break;
+        case 229:  // turn_and_jump_to_dest: turn, then enter movement command 229
+            runtime_.turnAndJump(obj, fval(op(ins, 0)));
+            return branch(obj, ins, obj->move_command == 229);
         case 242: {  // set_2d0_block: [[count, 4 points]]: lines from reference points 1-4 to the points
             const int32_t kAllLines = 0xFF;
             const std::vector<ScriptValue>& block = listval(op(ins, 0));
