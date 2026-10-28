@@ -1,3 +1,48 @@
+## What this batch did (iteration 61 — the alarm state: movement command 15 and opcode 27)
+
+- Ported the oracle's alarm state machine. `ScriptRuntime` now has the shared
+  `alarmTicks` countdown: it is decremented once at the start of every
+  non-cutscene tick (`ScriptRuntime.cs:896`), movement command 15 sets it to
+  ten for an alarm object in Kurt's current arena
+  (`ObjectMotion.cs:374-385`), and opcode 27 (`if_alarm`) branches while it
+  is positive (`ScriptVm.cs:1692-1693`). Command 15 also plays `ALERT` at
+  the object's position when `TickCount & 31` is zero, preserving the
+  oracle's every-32-ticks cadence and its `Mixer.PlayAt` placement at the
+  object's position.
+- The current-arena guard, the countdown value, its exact ten-tick lifetime,
+  the true and false `if_alarm` branches, and the sound cadence are all
+  pinned by one new synthetic `vm_tests` case,
+  `AlarmSoundsForTenTicksAndPlaysEveryThirtyTwo`. It drives the public motion
+  seam with a level-7 runtime, uses a fresh probe for the false branch so a
+  stale variable cannot make the assertion pass, and reaches `TickCount` 32
+  to distinguish the 32-tick sound from a sound on every tick.
+- The C#'s Rides subsystem is the other oracle writer of this countdown
+  (`Rides.cs:219,224`). Rides is still unported with its player/vehicle
+  slice, so the riding vehicle's alarm source remains deferred; the shared
+  countdown, command-15 producer, and condition are present and tested.
+- Addressed review-4's MINOR documentation finding. The old handoff text
+  called `release_children` (49) the one place the oracle clears an inbound
+  `leader`, but command 30 clears one in two places as well. Both the
+  coverage document and the iteration-60 narrative now say that 49 is the
+  only OPCODE that clears one and that the chain motion's own let-go
+  (`ObjectMotion.cs:470/480`) is the only other place.
+- Coverage: 199 true C++ dispatches / 238, 39 remaining (recounted with the
+  brace-matched method spans; the raw C++ label count is 201 with one nested
+  switch arm and one duplicate label in it). Opcode 15 leaves the partial
+  table; opcodes 15 and 27 are now in the complete set.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` → 33 VM tests PASS
+    and the full oracle suite ended with `All cases match the oracle.`
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; SMDH SKIPPED (no CIA
+    built).
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` → linked `mdk.elf`, staged 69 RomFS files (79M), built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` → built the Linux target.
+- No golden changed; no emulator or hardware run was performed. Old-3DS timing
+  remains unmeasured.
+
+
 ## What this batch did (iteration 60 — the chain-link family: opcodes 29/49 and movement command 30)
 
 - Ported the chain that hangs off an object: opcode 29 (`spawn_chain`), opcode
@@ -17,8 +62,10 @@
   the link with id 0 drives the chain, a gap in the chain makes the later
   links let go, and a dead leader makes them let go too. `release_children`
   lets go of the HIGHEST-id chain link (same arena, movement command 30) per
-  count and branches TRUE when the chain is empty — the one place the oracle
-  clears an inbound `leader`, and it clears exactly the links it releases.
+  count and branches TRUE when the chain is empty. It is the only OPCODE that
+  clears an inbound `leader`, and it clears exactly the links it releases; the
+  chain motion's own let-go (`ObjectMotion.cs:470/480`) is the only other
+  place the oracle clears one.
 - Three `vm_tests` tests pin it: `SpawnChainNumbersItsLinks` (the numbering,
   the live/dead follower rule, the per-leader numbering),
   `ChainLinksHangOffTheirLeader` (the assembly, the 90-degree turns, that
