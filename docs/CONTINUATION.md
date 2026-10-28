@@ -1,6 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (review-13 correction to opcode 170's Kurt-velocity source).
+Last updated: 2026-10-28 (review-14 hardening of opcode 170's Player binding
+and push/walk ordering).
 Current coverage: 206 true C++ dispatches / 238, 32 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -18,17 +19,19 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    value slots 199/210, Kurt/screen 215/240/244, no-ops 239/77, object avoidance
    204, turn-and-jump 229, floor-below 121, no-flat-floor 192, hit-weapon
    195, screen-shake 135 and inherit-Kurt-velocity 170 are implemented and
-   pinned. Opcode 170 now reads the already-ported `Player` live at dispatch
-  time; frontend integration must still construct `ScriptRuntime` and bind
-  that Player before 170 is complete. The current-plus-second raycast
-  selection seam is pinned against
-   overlapping DANT_1/DANT_8 geometry. All three oracle `Linked` writers
-   (245/179/228) are ported, so partner pairs can feed the 213/214 conditions.
-   132/136 still need Effects; frame-blend integration is a separate future
-   slice. The exact remaining 32 are in `docs/OPCODE_COVERAGE.md`.
+   pinned. Opcode 170 reads the already-ported `Player` live at dispatch
+   time; `ScriptRuntime` now has no defaulted Player argument, so every
+   construction states the choice. A frontend must still bind the live
+   Player for 170 to be complete. The current-plus-second raycast selection
+   seam is pinned against overlapping DANT_1/DANT_8 geometry. All three
+   oracle `Linked` writers (245/179/228) are ported, so partner pairs can
+   feed the 213/214 conditions. 132/136 still need Effects; frame-blend
+   integration is a separate future slice. The exact remaining 32 are in
+   `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
-   renderer batches. Owner must select headless C# vs original-EXE reference;
-   no renderer batch until the harness gate is green.
+   renderer batches. The reference source is DECIDED: the C# renderer,
+   headlessly under Linux/lavapipe (see `SPEC-COMPLETION.md`). The harness
+   itself is not built; no renderer batch until its gate is green.
 
 Deferred: 248 `push_kurt` is an honest no-op pending Kurt knock-back. The
 C#'s Rides subsystem also writes the alarm countdown and remains deferred with
@@ -39,18 +42,20 @@ timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- The latest batch corrects opcode 170 (`inherit_kurt_vel`) after review-13.
-  The receiver's velocity gains Kurt's current velocity multiplied by the F32
-  operand. `ScriptRuntime` now borrows the already-ported `mdk::Player` and
-  reads `Player::velocity()` live at dispatch time; the old copied
-  `setKurtVelocity` snapshot is gone. `Player::velocity()` includes the C#
-  `Kurt.cs:133` horizontal knock-down-push term and its drain, so a future
-  combat writer cannot silently omit it. The real remaining integration gap is
-  that no shipped frontend constructs `ScriptRuntime` and binds its Player
-  yet; the dispatch therefore remains partial. One synthetic `vm_tests` case pins the
-  dispatch, literal scaling, all three velocity components, preservation of
-  the receiver's existing velocity, a negative scale, fall-through, a live
-  Player change after runtime construction, the push term and its drain.
+- The latest batch addresses review-14's MINOR finding and NIT. The
+  `ScriptRuntime` constructor no longer defaults its Player argument: all
+  harness call sites now explicitly pass `nullptr`, while the opcode-170 test
+  passes the live `Player`. A future frontend must therefore make the Player
+  choice at every construction instead of silently inheriting a zero velocity
+  source. The runtime still borrows `mdk::Player` and reads
+  `Player::velocity()` live at dispatch time; no shipped frontend constructs
+  the runtime and binds that Player yet, so opcode 170 remains partial.
+- The opcode-170 VM case now also pins the C# `Kurt.cs:221-224` ordering:
+  the walk displacement uses the pre-drain knock-down push, then the push
+  drains before the move is applied and the vertical update runs. The
+  existing post-drain velocity assertion remains. Moving `drainKnockdownPush`
+  above the move computation makes `vm_tests` exit 1 on the two new
+  displacement assertions.
 - Review-13's MAJOR finding and MINOR unit/documentation issue are fixed. The
   old record incorrectly said Kurt movement was unported; `mdk::Player` has
   carried that movement since the earlier player batches. The seam is now
@@ -76,8 +81,9 @@ timing remains UNMEASURED.
     mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
     `mdk.3dsx`.
   - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
-  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
-    and reported no unimplemented opcodes on levels 3–8.
+  - A temporary mutation that drained the push before computing the walk move
+    made `vm_tests` exit 1 with exactly the two new displacement checks
+    failing; the source was restored before the final clean build.
 - No golden changed; opcode 170 does not fire in the level 3–8 corpus. No
   emulator or hardware run was performed. Old-3DS timing remains unmeasured.
 - Next isolated opcode family: port 202 (`set_574304`) with a runtime

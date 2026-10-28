@@ -135,18 +135,22 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   reset. The C# also raises `ShakeRaised` for the follow camera; that camera
   consumer is not ported, so the dispatch is classified partial. Recount: C#
   238, C++ 205 true dispatches, 33 remaining.
-- **Kurt-velocity batch (2026-10-28; corrected by review-13):** opcode 170
-  (`inherit_kurt_vel`) is ported over a borrowed live `Player` pointer. The
-  receiver's velocity gains each component of the C# `Kurt.Velocity` source
-  multiplied by the F32 operand. `Player::velocity()` now supplies that source
-  in u/s and includes the horizontal knock-down push term from
-  `Kurt.cs:133`; the runtime reads it at dispatch time rather than caching a
-  snapshot. One `vm_tests` case pins the dispatch, literal scaling, all three
-  components, preservation of existing velocity, a negative scale, fall-through,
-  a live Player change, and the push term and its drain. Kurt movement itself
-  was already ported as `mdk::Player`; the missing integration is that no shipped
-  frontend constructs `ScriptRuntime` and binds that Player yet, so the dispatch
-  remains partial. Recount: C# 238, C++ 206 true dispatches, 32 remaining.
+- **Kurt-velocity batch (2026-10-28; corrected by review-13, hardened by
+  review-14):** opcode 170 (`inherit_kurt_vel`) is ported over a borrowed live
+  `Player` pointer. The receiver's velocity gains each component of the C#
+  `Kurt.Velocity` source multiplied by the F32 operand. `Player::velocity()`
+  supplies that source in u/s and includes the horizontal knock-down push term
+  from `Kurt.cs:133`; the runtime reads it at dispatch time rather than caching
+  a snapshot. `ScriptRuntime` now requires the Player argument explicitly
+  rather than defaulting it to null, so every construction states whether it
+  has a live source. One `vm_tests` case pins the dispatch, literal scaling,
+  all three components, preservation of existing velocity, a negative scale,
+  fall-through, a live Player change, the push term and its drain, and the
+  C# `Kurt.cs:221-224` order in which the walk move captures the pre-drain push
+  before `DrainPush` runs. Kurt movement itself was already ported as
+  `mdk::Player`; the missing integration is that no shipped frontend constructs
+  `ScriptRuntime` and binds that Player yet, so the dispatch remains partial.
+  Recount: C# 238, C++ 206 true dispatches, 32 remaining.
 
 ## Ported so far (verified present in `ScriptVm::execute`)
 

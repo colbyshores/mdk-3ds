@@ -95,11 +95,12 @@ public:
     // The level is non-const because the MTO parses its arenas on demand.
     // The sound bank is borrowed too; it is what decides whether a script's
     // play_sound names a sound the level has. The Player is borrowed as the
-    // live source of Kurt's velocity (C# ScriptRuntime receives the same Kurt
-    // object in its constructor); harnesses may pass null until a frontend
-    // constructs the runtime with its Player.
+    // live source of Kurt's velocity. The C# constructor requires its Kurt;
+    // keep that decision explicit here too: pass the live Player from a
+    // frontend, or pass null deliberately from a harness that does not use
+    // Kurt's live state.
     ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
-                  audio::SoundBank* bank, const Player* player = nullptr);
+                  audio::SoundBank* bank, const Player* player);
 
     // Advance the world by one frame (the driver calls this once per tick).
     void update(float delta);

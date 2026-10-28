@@ -146,8 +146,9 @@ void Player::update(const Input& input, float delta) {
 
     const Vec3 f = facing();
     const Vec3 r = right();
-    // C# Kurt.cs:221-222: the move includes the current knock-down push, then
-    // that push drains before the vertical update consumes the move.
+    // C# Kurt.cs:221-224: the move captures the current (pre-drain)
+    // knock-down push, then that push drains before the walk move is applied
+    // and before the vertical update consumes the move.
     const Vec3 move{(f.x * forwardSpeed + r.x * strafeSpeed + _knockdownPush.x) * delta,
                     (f.y * forwardSpeed + r.y * strafeSpeed + _knockdownPush.y) * delta, 0.0f};
     drainKnockdownPush(delta);

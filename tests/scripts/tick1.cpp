@@ -296,7 +296,7 @@ int main(int argc, char** argv) {
                 continue;
             }
             bank.preload();
-            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
+            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
             runtime.option = 0;
             for (int t = 0; t < probeTicks; t++) {
                 runtime.update(1.0f / 30.0f);
@@ -431,7 +431,7 @@ int main(int argc, char** argv) {
         }
         bank.preload();
 
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
         runtime.option = 0;  // the oracle's Option
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -485,7 +485,7 @@ int main(int argc, char** argv) {
             continue;
         }
         bank.preload();
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
         runtime.option = 0;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -526,7 +526,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 3)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
                     runtime.option = 0;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);
@@ -584,7 +584,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 8)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
                     runtime.option = 0;
                     for (int t = 0; t < 2; t++) {
                         runtime.update(1.0f / 30.0f);
@@ -662,7 +662,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 3)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
                     runtime.option = 0;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);

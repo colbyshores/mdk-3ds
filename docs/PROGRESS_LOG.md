@@ -1636,3 +1636,33 @@
 - Raw trig in the new gameplay orientation path is R6-pinned because using the approximate LUT would perturb the saved gameplay basis. The first `tools/check.sh` run caught the missing pin; the pin was added and the complete gate rerun passed.
 - Updated opcode counts: 189 true C++ dispatches / 238, 49 remaining; opcode coverage now includes a direct VM test for 85.
 - Verification after the final code/doc edits: `make -C tests/scripts` → VM tests PASS including `SetRollingCapturesRotationOnTransition`; all table/script, DTI, scene checks PASS and `All cases match the oracle.`; `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (SMDH gate skipped: no built `.cia`); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → linked `mdk.elf`, staged 69 RomFS files and built `mdk.3dsx`; `git diff --check` clean. No OG hardware capture was performed. Latest external review remains unavailable: review-37 records quota exhaustion; this iteration self-reviewed the C# matrix order and transition behavior.
+
+## What this batch did (Phase 2 iteration 15 — review-14 opcode-170 hardening)
+
+- Addressed review-14's MINOR constructor finding. `ScriptRuntime`'s borrowed
+  `Player` argument no longer has a `nullptr` default. The six `tick1.cpp`
+  constructions and all synthetic-test constructions now state their choice
+  explicitly: harness-only runtimes pass `nullptr`, while the opcode-170 case
+  passes the live `Player`. This matches the C# constructor's mandatory Kurt
+  at the API boundary and prevents a future frontend from accidentally
+  omitting the binding.
+- Addressed review-14's move/drain-order NIT. The opcode-170 VM case now pins
+  the C# `Kurt.cs:221-224` walk displacement from the PRE-drain knock-down
+  push as well as the existing post-drain velocity. Tightened the matching
+  `Player::update` comment to state that the move captures the pre-drain push,
+  then the push drains before the walk move is applied and before the vertical
+  update consumes the move.
+- Mutation-checked the new ordering pin in a temporary source copy: moving
+  `drainKnockdownPush` above the move computation made `vm_tests` exit 1 on
+  exactly the two new displacement assertions. The source was restored before
+  the final clean build.
+- No oracle behavior changed and no golden changed. Verification on the final
+  tree: `make -C tests/scripts clean && make -C tests/scripts` exited 0 after
+  41 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`, SMDH SKIPPED with
+  no built `.cia`); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M),
+  and built `mdk.3dsx`; `cmake --build build-linux --target mdk` exited 0.
+- No emulator or Original 3DS run was performed. Old-3DS timing remains
+  unmeasured. Coverage remains 206 true C++ dispatches / 238 with 32
+  remaining; the next isolated opcode family is 202 (`set_574304`).

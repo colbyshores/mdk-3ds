@@ -809,14 +809,20 @@ void testInheritKurtVelocityAddsScaledKurtVelocity(LevelData* levelData, const C
         CHECK(obj.velocity.z == 6.0f);
     }
 
-    // The C# drains the push by 90 u/s^2 (PushDrain). One 1/60-second step
-    // takes (3, -1) to (1.5, 0): the x term retains half its value and the
-    // smaller y term reaches zero.
+    // The C# drains the push by 90 u/s^2 (PushDrain). The walk move captures
+    // the PRE-DRAIN push (Kurt.cs:221), and only then does DrainPush run before
+    // the move is applied and the vertical update runs (Kurt.cs:222-224). Pin
+    // both halves: the displacement must be (3, -1) * delta, while the velocity
+    // after this one 1/60-second step is (1.5, 0). A drain placed before the
+    // move computation would displace only (1.5, 0) * delta.
     player.forwardSpeed = 0.0f;
     player.strafeSpeed = 0.0f;
     player.verticalSpeed = 0.0f;
+    const Vec3 beforePushWalk = player.feet;
     Input idle;
     player.update(idle, 1.0f / 60.0f);
+    CHECK(fabsf(player.feet.x - beforePushWalk.x - 3.0f * (1.0f / 60.0f)) < 1e-6f);
+    CHECK(fabsf(player.feet.y - beforePushWalk.y + 1.0f * (1.0f / 60.0f)) < 1e-6f);
     CHECK(fabsf(player.velocity().x - 1.5f) < 1e-6f);
     CHECK(player.velocity().y == 0.0f);
 }
@@ -976,7 +982,7 @@ void testIfPlayerHealthComparesKurtHealth(LevelData* levelData, const Cmi* cmi,
                                            audio::SoundBank* bank) {
     // A fresh runtime keeps this fixture independent of the shared test state:
     // damaging Kurt here must not leak into any later test.
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     runtime.hurtKurt(1);
     CHECK(runtime.kurt().health() == 99);
     {
@@ -1100,7 +1106,7 @@ void testPartnerConditionsUseLiveLinkedObjectAndGeometry(scripts::ScriptRuntime&
 // and links the two objects in both directions.
 void testSpawnPartnerLinksBothObjects(LevelData* levelData, const Cmi* cmi,
                                       audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     scripts::MdkObject* receiver = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 20.0f, 30.0f},
                                                  45.0f, -1, 0, false);
@@ -1192,7 +1198,7 @@ void testSnapToPartnerUsesOnlyALivePartner(scripts::ScriptRuntime& runtime) {
 // zero second value clears only the receiver's link.
 void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const Cmi* cmi,
                                                       audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     // The widow's pair is built by the opcode itself: with only these two
     // BEAMS in the arena, link_partners pairs them (2 units apart).
@@ -1365,7 +1371,7 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
 // — so the retained reference reads the same way there.
 void testRemoveKeepsInboundReferences(LevelData* levelData, const Cmi* cmi,
                                        audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     // The fresh runtime's first auto-ID is 1000, so the leader is "BEAMS_1000".
     scripts::MdkObject* leader = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 0.0f, 0.0f},
@@ -1828,7 +1834,7 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
 void testAlarmSoundsForTenTicksAndPlaysEveryThirtyTwo(LevelData* levelData,
                                                        const Cmi* cmi,
                                                        audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     runtime.update(scripts::ScriptRuntime::kTick);
     CHECK(runtime.currentArena().size() != 0);
 
@@ -1935,7 +1941,7 @@ bool near(const Vec3& a, const Vec3& b) {
 // id and the last one has id 0 — the link that drives the chain.
 void testSpawnChainNumbersItsLinks(LevelData* levelData, const Cmi* cmi,
                                    audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
                                                45.0f, -1, 0, false);
@@ -2027,7 +2033,7 @@ void testSpawnChainNumbersItsLinks(LevelData* levelData, const Cmi* cmi,
 // they turn 90 degrees apart. Only the link with id 0 moves the chain.
 void testChainLinksHangOffTheirLeader(LevelData* levelData, const Cmi* cmi,
                                        audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
                                                45.0f, -1, 0, false);
@@ -2095,7 +2101,7 @@ void testChainLinksHangOffTheirLeader(LevelData* levelData, const Cmi* cmi,
 // chain, one per count, and branches TRUE when the chain is empty.
 void testReleaseChildrenLetsGoOfTheChain(LevelData* levelData, const Cmi* cmi,
                                           audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
                                                45.0f, -1, 0, false);
@@ -2158,7 +2164,7 @@ void testReleaseChildrenLetsGoOfTheChain(LevelData* levelData, const Cmi* cmi,
 // list's stable order decides which overlap is used.
 void testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(LevelData* levelData, const Cmi* cmi,
                                                         audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     Model model;
     model.bounds.min = Vec3f{-1.0f, -1.0f, 0.0f};
     model.bounds.max = Vec3f{1.0f, 1.0f, 2.0f};
@@ -2291,7 +2297,7 @@ void testIfHitWeaponBranchesOnExactHitType(scripts::ScriptRuntime& runtime) {
 // the current value. The runtime clears that value at the next tick.
 void testRaiseShakeKeepsTheTickMaximum(LevelData* levelData, const Cmi* cmi,
                                        audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     runtime.update(scripts::ScriptRuntime::kTick);
     CHECK(runtime.shake == 0.0f);
 
@@ -2476,7 +2482,7 @@ void testNoFlatFloorAtUsesRotatedPointAndHitNormal(scripts::ScriptRuntime& runti
 // a hit alone at another, and lets each arena win the nearest-hit contest.
 void testRaycastUsesCurrentAndSecondArena(LevelData* levelData, const Cmi* cmi,
                                           audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     runtime.update(1.0f / 30.0f);
     CHECK(runtime.currentArena() == "DANT_1");
 
@@ -2550,7 +2556,7 @@ void testRaycastUsesCurrentAndSecondArena(LevelData* levelData, const Cmi* cmi,
 // command stops on floor contact after half of the recorded flight time.
 void testTurnAndJumpTurnsLaunchesAndStopsOnFloor(LevelData* levelData, const Cmi* cmi,
                                                   audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
     scripts::MdkObject obj;
     obj.position = Vec3{0.0f, 0.0f, 10.0f};
     obj.move_destination = Vec3{0.0f, 100.0f, 10.0f};
@@ -2659,10 +2665,10 @@ int main() {
     // No preload: the programs play nothing, and the C# fixture only builds a
     // mixer around an unloaded bank too.
 
-    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank);
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
     runtime.option = 0;
 
-    scripts::ScriptRuntime attachRuntime(&levelData, &cmi, 1, &bank);
+    scripts::ScriptRuntime attachRuntime(&levelData, &cmi, 1, &bank, nullptr);
     testAttachToSelectsNamedArenaObject(attachRuntime);
     printf("PASS AttachToSelectsNamedArenaObject\n");
 
