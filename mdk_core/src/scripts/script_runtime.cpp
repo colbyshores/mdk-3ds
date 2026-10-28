@@ -225,6 +225,11 @@ void ScriptRuntime::update(float) {
 }
 
 void ScriptRuntime::runTick() {
+    // The alarm countdown decays once per tick, before any object runs
+    // (ScriptRuntime.cs:896). There is no cutscene state in this slice, so the
+    // C#'s cutscene early-return cannot suppress this decrement here.
+    alarmTicks = alarmTicks > 0 ? alarmTicks - 1 : 0;
+
     // Kurt changes arena only through a connection; on the first tick he is
     // placed and the arena under him is found.
     std::string arena;
@@ -1732,6 +1737,18 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
         case 30:  // UpdateChain: the chain links hang off their leader
             updateChain(obj);
             break;
+        case 15: {  // alarm: ALERT every 32 ticks; if_alarm holds for ten ticks
+            const int32_t kAlarmEvery = 31;
+            const int32_t kAlarmTicks = 10;
+            if (obj->arena != currentArena_) {
+                break;
+            }
+            if ((tickCount_ & kAlarmEvery) == 0) {
+                mixer_.playAt("ALERT", obj->position);
+            }
+            alarmTicks = kAlarmTicks;
+            break;
+        }
         case 61:  // FlyProjectile (fire): straight along the yaw and pitch
             flyProjectile(obj);
             break;

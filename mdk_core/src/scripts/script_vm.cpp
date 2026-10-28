@@ -1724,6 +1724,8 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 15:  // alarm: enter the alarm movement command
             obj->move_command = 15;
             break;
+        case 27:  // if_alarm: the alarm sounded within the last ten ticks
+            return branch(obj, ins, runtime_.alarmTicks > 0);
         case 6:  // move_to_target: the targetting movement command (planned by ObjectMotion)
             obj->move_command = 6;
             break;

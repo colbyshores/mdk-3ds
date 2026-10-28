@@ -272,6 +272,10 @@ public:
     int32_t globalFlags = 0;
     std::array<float, 4> globalVariables{{0.0f, 0.0f, 0.0f, 0.0f}};
     int32_t option = 0;  // the driver sets 0 (the oracle's Option)
+    // The alarm countdown shared by movement command 15 and opcode 27. The C#
+    // decrements it once at the start of every non-cutscene tick, then command
+    // 15 sets it to ten while the alarm object is in Kurt's current arena.
+    int32_t alarmTicks = 0;
     // Items.Bomb: the World's Most Interesting Bomb Kurt threw. The Items
     // subsystem is a later slice, so this stays null until it lands, which is
     // what the C# reads when no bomb is in play (if_no_bomb / if_bomb_visible).
@@ -293,6 +297,9 @@ public:
 
     // ---- Readable state (the driver dumps these) ----
     const std::string& currentArena() const { return currentArena_; }
+    // The C# TickCount: the completed simulation ticks. It is zero during the
+    // first tick and increments after that tick, as the oracle does.
+    int32_t tickCount() const { return tickCount_; }
     // The C# Objects.Count: the objects minus the removed ones.
     int32_t objectCount() const { return (int32_t)objects_.size() - (int32_t)removed_.size(); }
     // Diagnostic: opcodes the scripts reached that this VM does not implement yet.

@@ -67,6 +67,8 @@ const int32_t kSetHurtFlash = 240;
 const int32_t kSetGlobal573bd4 = 244;
 const int32_t kSet27c = 239;
 const int32_t kDebugMsg = 77;
+const int32_t kAlarm = 15;
+const int32_t kIfAlarm = 27;
 const int32_t kSetRolling = 85;
 const int32_t kAttachTo = 74;
 const int32_t kSpawnChain = 29;
@@ -1735,6 +1737,89 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
     CHECK(unchanged.move_command == 43);
 }
 
+// The alarm state machine: movement command 15 (ObjectMotion.cs:374-385)
+// and opcode 27 (ScriptVm.cs:1692-1693). A level-7 runtime is ticked once to
+// establish Kurt's current arena; a local object then drives the public motion
+// seam exactly as a list object would. The countdown is the runtime's own per-
+// tick decrement, so ten ticks pass from "sounded" to "not sounding".
+void testAlarmSoundsForTenTicksAndPlaysEveryThirtyTwo(LevelData* levelData,
+                                                       const Cmi* cmi,
+                                                       audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.currentArena().size() != 0);
+
+    scripts::MdkObject obj;
+    obj.arena = runtime.currentArena();
+
+    // The dispatch case itself enters movement command 15.
+    Code start;
+    start.u8(kAlarm);
+    start.end();
+    runProgram(runtime, start, &obj);
+    CHECK(!sawUnimplemented(kAlarm));
+    CHECK(obj.move_command == 15);
+
+    // Command 15 on a non-current arena does not sound the alarm.
+    scripts::MdkObject foreign;
+    foreign.arena = "NOT_CURRENT";
+    foreign.move_command = 15;
+    runtime.alarmTicks = 0;
+    runtime.motionVelocity(&foreign);
+    CHECK(runtime.alarmTicks == 0);
+
+    // A current-arena alarm sounds at once and holds if_alarm true.
+    CHECK(!runtime.mixer().isPlaying("ALERT"));
+    runtime.motionVelocity(&obj);
+    CHECK(runtime.alarmTicks == 10);
+    CHECK(!runtime.mixer().isPlaying("ALERT"));  // TickCount 1: not an ALERT tick.
+
+    Code alarmBranch;
+    alarmBranch.u8(kIfAlarm).u8(kActionGoto).target("alarm");
+    alarmBranch.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    alarmBranch.end();
+    alarmBranch.label("alarm");
+    alarmBranch.u8(kSetVar).u8(kOwn).u8(1).f32(2.0f);
+    alarmBranch.end();
+
+    scripts::MdkObject probe;
+    runProgram(runtime, alarmBranch, &probe);
+    CHECK(!sawUnimplemented(kIfAlarm));
+    CHECK(probe.variables[0] == 0.0f);
+    CHECK(probe.variables[1] == 2.0f);
+
+    // Nine ticks: the alarm still holds. Ten: it is over.
+    for (int i = 0; i < 9; i++) {
+        runtime.update(scripts::ScriptRuntime::kTick);
+    }
+    CHECK(runtime.alarmTicks == 1);
+    runProgram(runtime, alarmBranch, &probe);
+    CHECK(probe.variables[0] == 0.0f);
+    CHECK(probe.variables[1] == 2.0f);
+
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.alarmTicks == 0);
+    scripts::MdkObject quietProbe;
+    runProgram(runtime, alarmBranch, &quietProbe);
+    CHECK(quietProbe.variables[0] == 1.0f);
+    CHECK(quietProbe.variables[1] == 0.0f);
+
+    // ALERT plays on the tick after a multiple of 32 completed ticks
+    // (TickCount 32 & 31 == 0). The runtime has completed 11 ticks above;
+    // run to 31, sound nothing, complete 32, then sound.
+    while (runtime.tickCount() < 31) {
+        runtime.update(scripts::ScriptRuntime::kTick);
+    }
+    runtime.motionVelocity(&obj);
+    CHECK(!runtime.mixer().isPlaying("ALERT"));
+
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.tickCount() == 32);
+    runtime.motionVelocity(&obj);
+    CHECK(runtime.mixer().isPlaying("ALERT"));
+    CHECK(runtime.alarmTicks == 10);
+}
+
 // The chain links the scripts hang off an object: opcode 29 (spawn_chain),
 // opcode 49 (release_children) and movement command 30 (the chain's motion).
 // The oracle's ScriptVm.cs:1006/1732 and ObjectMotion.cs:464 are the spec;
@@ -2083,6 +2168,8 @@ int main() {
     printf("PASS DebugMessageIsNoOp\n");
     testSetRollingCapturesRotationOnTransition(runtime);
     printf("PASS SetRollingCapturesRotationOnTransition\n");
+    testAlarmSoundsForTenTicksAndPlaysEveryThirtyTwo(&levelData, &cmi, &bank);
+    printf("PASS AlarmSoundsForTenTicksAndPlaysEveryThirtyTwo\n");
     testSpawnChainNumbersItsLinks(&levelData, &cmi, &bank);
     printf("PASS SpawnChainNumbersItsLinks\n");
     testChainLinksHangOffTheirLeader(&levelData, &cmi, &bank);
