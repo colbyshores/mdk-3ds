@@ -238,7 +238,9 @@ public:
     bool raycastClear(const Vec3& from, const Vec3& to);
     // Raycast (ScriptRuntime.cs:2886) with its answer: the NEAREST arena hit
     // point across the ray arenas (nearest by distance-squared, as the C#).
-    bool raycastPoint(const Vec3& from, const Vec3& to, Vec3* out);
+    // When normal is non-null, it also receives that hit triangle's normalized
+    // geometric normal (the C# RayHit's Normal), or +Z for a degenerate face.
+    bool raycastPoint(const Vec3& from, const Vec3& to, Vec3* out, Vec3* normal = nullptr);
     bool raycastGroup(const Vec3& from, const Vec3& to, int32_t* group);
     // FindCoverSpot (ScriptRuntime.cs:2447, opcode 46): pick a DTI cover spot in
     // the object's arena that Kurt cannot see but the object can reach, and command

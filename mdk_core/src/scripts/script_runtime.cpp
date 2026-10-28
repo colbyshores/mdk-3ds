@@ -119,6 +119,41 @@ float signf(float value) {
     return value > 0.0f ? 1.0f : (value < 0.0f ? -1.0f : 0.0f);
 }
 
+// TriangleNormal (ScriptRuntime.cs:2950): the normalized cross product of the
+// hit triangle's second and third edges, or +Z when the face is degenerate.
+Vec3 triangleNormal(const formats::Arena* arena, int32_t triangle) {
+    Vec3 normal{0.0f, 0.0f, 1.0f};
+    if (arena == nullptr || triangle < 0) {
+        return normal;
+    }
+    const std::vector<int32_t>& indices = arena->triangleIndices();
+    const std::vector<formats::Vec3f>& vertices = arena->vertices();
+    if ((size_t)triangle >= indices.size() / 3) {
+        return normal;
+    }
+    const size_t base = (size_t)triangle * 3;
+    const int32_t ia = indices[base];
+    const int32_t ib = indices[base + 1];
+    const int32_t ic = indices[base + 2];
+    if ((size_t)ia >= vertices.size() || (size_t)ib >= vertices.size() ||
+        (size_t)ic >= vertices.size()) {
+        return normal;
+    }
+    const formats::Vec3f a = vertices[(size_t)ia];
+    const formats::Vec3f b = vertices[(size_t)ib];
+    const formats::Vec3f c = vertices[(size_t)ic];
+    const float ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+    const float vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+    const float nx = uy * vz - uz * vy;
+    const float ny = uz * vx - ux * vz;
+    const float nz = ux * vy - uy * vx;
+    if (nx != 0.0f || ny != 0.0f || nz != 0.0f) {
+        const float length = sqrtf(nx * nx + ny * ny + nz * nz);
+        normal = Vec3{nx / length, ny / length, nz / length};
+    }
+    return normal;
+}
+
 // MathF.Max: NaN-propagating. fmaxf is not, because it returns the numeric
 // side when exactly one argument is NaN.
 float mathMax(float a, float b) {
@@ -788,8 +823,8 @@ void ScriptRuntime::motionPickup(MdkObject* obj) {
 }
 
 // Raycast (0x421680): whether any triangle of the active arenas crosses [from,to].
-// Only Kurt's arena and the second one stop rays; the rest are passed through. The
-// planner only needs hit/no-hit, so the hit point/normal/group are not carried.
+// Only Kurt's arena and the second one stop rays; the rest are passed through.
+// Script predicates may request the nearest hit point and its geometric normal.
 // CrossesFloor (ScriptRuntime.cs:2914): an up-facing face of the arena crosses
 // the segment. No BSP for the arena → false, as the C#'s TryGetValue miss.
 bool ScriptRuntime::crossesFloor(const std::string& arena, const Vec3& from, const Vec3& to) {
@@ -803,7 +838,7 @@ bool ScriptRuntime::crossesFloor(const std::string& arena, const Vec3& from, con
     return bsp->segment(a, b, Bsp::kSegmentFloor, &point, Bsp::kClipPassesThrough) != Bsp::kNone;
 }
 
-bool ScriptRuntime::raycastPoint(const Vec3& from, const Vec3& to, Vec3* out) {
+bool ScriptRuntime::raycastPoint(const Vec3& from, const Vec3& to, Vec3* out, Vec3* normal) {
     Vec a{from.x, from.y, from.z};
     Vec b{to.x, to.y, to.z};
     // RayArenas: the current + second arena when a current is set, else every arena
@@ -818,8 +853,8 @@ bool ScriptRuntime::raycastPoint(const Vec3& from, const Vec3& to, Vec3* out) {
             return;
         }
         Vec point{};
-        const int32_t triangle =
-            bsp->segment(a, b, Bsp::kSegmentAny, &point, Bsp::kClipPassesThrough);
+        const int32_t triangle = bsp->segmentWithGroup(
+            a, b, Bsp::kSegmentAny, &point, Bsp::kClipPassesThrough, nullptr);
         if (triangle == Bsp::kNone) {
             return;
         }
@@ -835,6 +870,9 @@ bool ScriptRuntime::raycastPoint(const Vec3& from, const Vec3& to, Vec3* out) {
         }
         bestDistance = distance;
         *out = Vec3{point.x, point.y, point.z};
+        if (normal != nullptr) {
+            *normal = triangleNormal(bsp->arena(), triangle);
+        }
         hit = true;
     };
     if (!currentArena_.empty()) {
@@ -922,25 +960,7 @@ bool ScriptRuntime::rayIn(const std::string& arena, const Vec3& from, const Vec3
         return false;
     }
     out->point = Vec3{point.x, point.y, point.z};
-    // TriangleNormal (ScriptRuntime.cs:2950): cross(b-a, c-a), normalized,
-    // or +Z when degenerate.
-    const formats::Arena* mesh = level_->arenaNamed(arena);
-    Vec3 normal{0.0f, 0.0f, 1.0f};
-    if (mesh != nullptr) {
-        const std::vector<int32_t>& idx = mesh->triangleIndices();
-        const std::vector<formats::Vec3f>& verts = mesh->vertices();
-        formats::Vec3f va = verts[(size_t)idx[(size_t)triangle * 3]];
-        formats::Vec3f vb = verts[(size_t)idx[(size_t)triangle * 3 + 1]];
-        formats::Vec3f vc = verts[(size_t)idx[(size_t)triangle * 3 + 2]];
-        float ux = vb.x - va.x, uy = vb.y - va.y, uz = vb.z - va.z;
-        float vx = vc.x - va.x, vy = vc.y - va.y, vz = vc.z - va.z;
-        float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-        if (nx != 0.0f || ny != 0.0f || nz != 0.0f) {
-            float len = sqrtf(nx * nx + ny * ny + nz * nz);
-            normal = Vec3{nx / len, ny / len, nz / len};
-        }
-    }
-    out->normal = normal;
+    out->normal = triangleNormal(level_->arenaNamed(arena), triangle);
     out->arena = arena;
     out->group = triangleGroup;
     return true;

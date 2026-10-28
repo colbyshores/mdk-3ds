@@ -625,6 +625,29 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             Vec3 hit;
             return branch(obj, ins, runtime_.raycastPoint(from, to, &hit));
         }
+        case 192: { // if_no_flat_floor_at: no floor below a point ahead, or a steep one
+            // float.DegreesToRadians is left-associated (yaw * pi / 180f).
+            const float rad = obj->yaw * 3.14159265358979323846f / 180.0f;
+            /* @vfp-exempt R6 — cold script floor predicate; libm sinf/cosf match
+             * the C# oracle's MathF.SinCos bit-for-bit on this machine (probed),
+             * and the conversion is .NET's left-associative spelling; the
+             * fastSin/fastCos LUT's error is far larger and would move the probe
+             * point. measured n/a (cold). Verified 2026-10-28. */
+            const float s = sinf(rad);
+            const float c = cosf(rad);
+            const float ox = fval(op(ins, 0));
+            const float oy = fval(op(ins, 1));
+            Vec3 point = obj->position;
+            point.x += ox * c - oy * s;
+            point.y += ox * s + oy * c;
+            point.z += 1.0f;
+            Vec3 to = point;
+            to.z -= fval(op(ins, 2)) + 1.0f;
+            Vec3 hit;
+            Vec3 normal;
+            const bool found = runtime_.raycastPoint(point, to, &hit, &normal);
+            return branch(obj, ins, !found || fabsf(normal.z) < fval(op(ins, 3)));
+        }
         case 115: { // if_wall: a horizontal ray from the walker's chest (or feet)
             const float kWalkerHeight = 2.0f;
             Vec3 from = obj->position;

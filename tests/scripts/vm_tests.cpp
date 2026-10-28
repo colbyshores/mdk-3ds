@@ -75,6 +75,7 @@ const int32_t kSpawnChain = 29;
 const int32_t kReleaseChildren = 49;
 const int32_t kAvoidObjects = 204;
 const int32_t kIfFloorBelow = 121;
+const int32_t kIfNoFlatFloorAt = 192;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -2199,6 +2200,87 @@ void testFloorBelowBranchesOnARayHit(scripts::ScriptRuntime& runtime) {
     }
 }
 
+// Runs opcode 192 (if_no_flat_floor_at) and returns 2 when its branch is
+// taken, 1 when it is not. The C# has no ScriptVmTests counterpart for this
+// opcode, so the cases below pin ScriptVm.cs:1696-1701 directly.
+float runNoFlatFloorAt(scripts::ScriptRuntime& runtime, scripts::MdkObject* obj, float forward,
+                       float side, float drop, float flatLimit) {
+    Code code;
+    code.u8(kIfNoFlatFloorAt).f32(forward).f32(side).f32(drop).f32(flatLimit);
+    code.u8(kActionGoto).target("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    code.end();
+    runProgram(runtime, code, obj);
+    CHECK(!sawUnimplemented(kIfNoFlatFloorAt));
+    return obj->variables[0];
+}
+
+// Opcode 192 (if_no_flat_floor_at) rotates a forward/side offset by the
+// receiver's yaw, probes one unit above the receiver's level for a floor, and
+// branches when there is no floor or its normal is steeper than the operand
+// limit. The test pins all of those inputs against level 7's real geometry.
+void testNoFlatFloorAtUsesRotatedPointAndHitNormal(scripts::ScriptRuntime& runtime) {
+    const Vec3 kurt = runtime.kurtPosition();
+
+    // The level-7 floor is at zero. A ten-unit drop from the point one above
+    // the receiver crosses it; its normal is flat, so the condition is false.
+    {
+        scripts::MdkObject obj;
+        obj.position = kurt;
+        CHECK(runNoFlatFloorAt(runtime, &obj, 0.0f, 0.0f, 10.0f, 0.5f) == 1.0f);
+    }
+
+    // The same point with a zero drop stops above the floor. This pins both
+    // the drop distance and the oracle's extra one-unit clearance.
+    {
+        scripts::MdkObject obj;
+        obj.position = kurt;
+        CHECK(runNoFlatFloorAt(runtime, &obj, 0.0f, 0.0f, 0.0f, 0.5f) == 2.0f);
+    }
+
+    // The probe starts one unit above the receiver: from just below the
+    // floor, that extra unit makes the segment cross the floor.
+    {
+        scripts::MdkObject obj;
+        obj.position = Vec3{kurt.x, kurt.y, -0.5f};
+        CHECK(runNoFlatFloorAt(runtime, &obj, 0.0f, 0.0f, 0.0f, 0.5f) == 1.0f);
+    }
+
+    // DANT_1 has a sloping face at this point. Its normal's absolute Z is
+    // about 0.447214: steep enough for a 0.5 limit, but flat enough for a
+    // 0.25 limit. The segment is kept short so this face is the nearest hit.
+    {
+        scripts::MdkObject obj;
+        obj.position = Vec3{-14.666667f, 465.333344f, 22.716666f};
+        CHECK(runNoFlatFloorAt(runtime, &obj, 0.0f, 0.0f, 0.0f, 0.5f) == 2.0f);
+    }
+    {
+        scripts::MdkObject obj;
+        obj.position = Vec3{-14.666667f, 465.333344f, 22.716666f};
+        CHECK(runNoFlatFloorAt(runtime, &obj, 0.0f, 0.0f, 0.0f, 0.25f) == 1.0f);
+    }
+
+    // The forward offset is rotated by yaw. At 90 degrees it must move north
+    // onto the sloping face above; without the rotation (or with forward and
+    // side swapped) the probe misses and takes the other branch.
+    {
+        scripts::MdkObject obj;
+        obj.position = Vec3{-14.666667f, 460.333344f, 22.716666f};
+        obj.yaw = 90.0f;
+        CHECK(runNoFlatFloorAt(runtime, &obj, 5.0f, 0.0f, 0.0f, 0.25f) == 1.0f);
+    }
+
+    // Far from every arena there is no floor at all, so the condition is true.
+    {
+        scripts::MdkObject obj;
+        obj.position = Vec3{10000.0f, 10000.0f, 9.0f};
+        CHECK(runNoFlatFloorAt(runtime, &obj, 0.0f, 0.0f, 10.0f, 0.5f) == 2.0f);
+    }
+}
+
 // Opcode 229 (turn_and_jump_to_dest) and movement command 229 have no C#
 // ScriptVmTests counterpart, so this pins the oracle directly
 // (ScriptVm.cs:1136-1138 and ObjectMotion.cs:387-391/426-461). The receiver
@@ -2387,6 +2469,8 @@ int main() {
     printf("PASS AvoidObjectsTurnsAwayFromTheFirstSolidOverlap\n");
     testFloorBelowBranchesOnARayHit(runtime);
     printf("PASS FloorBelowBranchesOnARayHit\n");
+    testNoFlatFloorAtUsesRotatedPointAndHitNormal(runtime);
+    printf("PASS NoFlatFloorAtUsesRotatedPointAndHitNormal\n");
     testTurnAndJumpTurnsLaunchesAndStopsOnFloor(&levelData, &cmi, &bank);
     printf("PASS TurnAndJumpTurnsLaunchesAndStopsOnFloor\n");
 
