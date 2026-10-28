@@ -76,6 +76,7 @@ const int32_t kReleaseChildren = 49;
 const int32_t kAvoidObjects = 204;
 const int32_t kIfFloorBelow = 121;
 const int32_t kIfNoFlatFloorAt = 192;
+const int32_t kIfHitWeapon = 195;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -2156,6 +2157,49 @@ void testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(LevelData* levelData, con
     CHECK(fabsf(receiver->yaw - 180.0f) < 1e-4f);
 }
 
+// Runs opcode 195 (if_hit_weapon) and returns 2 when its branch is taken,
+// 1 when it is not. The opcode's first operand is signed-byte encoded.
+float runIfHitWeapon(scripts::ScriptRuntime& runtime, scripts::MdkObject* obj,
+                     int32_t weapon) {
+    Code code;
+    code.u8(kIfHitWeapon).u8(weapon).u8(kActionGoto).target("hit");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("hit");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    code.end();
+    runProgram(runtime, code, obj);
+    CHECK(!sawUnimplemented(kIfHitWeapon));
+    return obj->variables[0];
+}
+
+// Opcode 195 (if_hit_weapon) has no C# ScriptVmTests counterpart, so this
+// pins the oracle directly (ScriptVm.cs:1526-1527): the receiver branches
+// when the weapon type of its last hit equals the signed-byte operand. The
+// combat writers of that field remain deferred; this case exercises the
+// condition over the existing object state.
+void testIfHitWeaponBranchesOnExactHitType(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject obj;
+
+    // A grenade hit (-7) matches the same signed operand and takes the true
+    // branch; a bomb hit (-9) does not.
+    obj.hit_type = -7;
+    CHECK(runIfHitWeapon(runtime, &obj, -7) == 2.0f);
+    obj.hit_type = -9;
+    CHECK(runIfHitWeapon(runtime, &obj, -7) == 1.0f);
+
+    // Positive projectile types are exact too, rather than merely sharing a
+    // sign or category.
+    obj.hit_type = 3;
+    CHECK(runIfHitWeapon(runtime, &obj, 3) == 2.0f);
+    obj.hit_type = 4;
+    CHECK(runIfHitWeapon(runtime, &obj, 3) == 1.0f);
+
+    // The oracle's initial hit type is zero, and zero matches zero.
+    obj.hit_type = 0;
+    CHECK(runIfHitWeapon(runtime, &obj, 0) == 2.0f);
+}
+
 // Opcode 121 (if_floor_below) has no C# ScriptVmTests counterpart, so this
 // pins the oracle directly (ScriptVm.cs:1319-1320): a downward segment from
 // the receiver's position crosses any arena triangle, and the condition is
@@ -2340,7 +2384,7 @@ void testRaycastUsesCurrentAndSecondArena(LevelData* levelData, const Cmi* cmi,
     }
 
     // The contest can also go to the current arena. Here DANT_1's face at
-    // 23.300003 is nearer than DANT_8's face at 4.053000.
+    // 23.300003 is nearer than DANT_8's face at about 4.05.
     {
         Vec3 hit{};
         Vec3 normal{};
@@ -2512,6 +2556,8 @@ int main() {
     printf("PASS IfPlayerHealthComparesKurtHealth\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);
     printf("PASS PartnerConditionsUseLiveLinkedObjectAndGeometry\n");
+    testIfHitWeaponBranchesOnExactHitType(runtime);
+    printf("PASS IfHitWeaponBranchesOnExactHitType\n");
     testSpawnPartnerLinksBothObjects(&levelData, &cmi, &bank);
     printf("PASS SpawnPartnerLinksBothObjects\n");
     testSnapToPartnerUsesOnlyALivePartner(runtime);

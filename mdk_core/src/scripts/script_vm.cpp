@@ -1485,6 +1485,8 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             break;
         case 176:  // if_flag_40000: the pickup was collected
             return branch(obj, ins, (obj->flags & MdkObject::FlagCollected) != 0);
+        case 195:  // if_hit_weapon: the last hit's weapon type matches exactly
+            return branch(obj, ins, obj->hit_type == ival(op(ins, 0)));
         case 208: {  // if_part_hit: the part is hidden (blown off or destroyed)
             const int32_t part = obj->findPart(strval(op(ins, 0)));
             const bool hit = part >= 0 && (obj->hidden_parts & (1 << part)) != 0;
