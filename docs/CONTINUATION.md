@@ -1,7 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (opcode 202 sky-mode batch; review-15 citation NIT).
-Current coverage: 207 true C++ dispatches / 238, 31 remaining. Continue one
+Last updated: 2026-10-28 (opcode 203 camera-track batch; review-16 NIT).
+Current coverage: 208 true C++ dispatches / 238, 30 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -17,17 +17,19 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    rope-swing 226/242, spawn 156/206, push-hit-dir 81, stats 217, vision 243,
    value slots 199/210, Kurt/screen 215/240/244, no-ops 239/77, object
    avoidance 204, turn-and-jump 229, floor-below 121, no-flat-floor 192,
-   hit-weapon 195, screen-shake 135, inherit-Kurt-velocity 170 and sky-mode
-   202 are implemented and pinned. Opcode 170 reads the already-ported
-   `Player` live at dispatch time; `ScriptRuntime` has no defaulted Player
-   argument, so every construction states the choice. A frontend must still
-   bind the live Player for 170 to be complete. Opcode 202 writes shared
-   `ScriptRuntime::skyMode`, but its renderer backdrop consumer remains
+   hit-weapon 195, screen-shake 135, inherit-Kurt-velocity 170, sky-mode
+   202 and camera-track 203 are implemented and pinned. Opcode 170 reads the
+   already-ported `Player` live at dispatch time; `ScriptRuntime` has no
+   defaulted Player argument, so every construction states the choice. A
+   frontend must still bind the live Player for 170/203 to be complete.
+   Opcode 202 writes shared `ScriptRuntime::skyMode`, but its renderer backdrop
+   and snapshot consumers remain deferred. Opcode 203 writes the runtime camera
+   pitch and two-tick lifetime; its follow-camera and snapshot consumers remain
    deferred. The current-plus-second raycast selection seam is pinned against
    overlapping DANT_1/DANT_8 geometry. All three oracle `Linked` writers
    (245/179/228) are ported, so partner pairs can feed the 213/214 conditions.
    132/136 still need Effects; frame-blend integration is a separate future
-   slice. The exact remaining 31 are in `docs/OPCODE_COVERAGE.md`.
+   slice. The exact remaining 30 are in `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. The reference source is DECIDED: the C# renderer,
    headlessly under Linux/lavapipe (see `SPEC-COMPLETION.md`). The harness
@@ -36,30 +38,35 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 Deferred: 248 `push_kurt` is an honest no-op pending Kurt knock-back. The
 C#'s Rides subsystem also writes the alarm countdown and remains deferred with
 Rides. Opcode 135's follow-camera consumer, opcode 202's renderer backdrop
-consumer, opcode 195's group-hit/direct combat writers, opcode 81's
-hit-direction writers, and opcode 170's missing frontend `Player` binding
-remain partial with those integrations. Old-3DS timing remains UNMEASURED.
+and snapshot consumers, opcode 203's follow-camera/snapshot consumers and
+missing frontend `Player` binding, opcode 195's group-hit/direct combat
+writers, opcode 81's hit-direction writers, and opcode 170's missing frontend
+`Player` binding remain partial with those integrations. Old-3DS timing
+remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Opcode 202 (`set_574304`) now writes the signed-byte operand verbatim to
-  `ScriptRuntime::skyMode`, matching `ScriptVm.cs:1613-1615`. The state starts
-  at 0 and persists across ticks. The C# renderer maps 0 to sky, 1 to black,
-  and every other value to keep-last-frame; that consumer is not ported, so
-  the dispatch is partial rather than complete.
-- `SetSkyModeWritesSharedLevelState` pins the default, 0, 1, signed -1 and an
-  arbitrary value, the following instruction's execution, and persistence
-  across a tick. An unsigned-byte mutation makes `vm_tests` exit 1 with
-  exactly the `skyMode == -1` assertion failing.
-- Review-15's NIT is fixed: the opcode-170 move/drain/vertical-order citation
-  now covers `Kurt.cs:221-234`, not only `221-224`. Its UNPROVEN owner-directive
-  note needs no repository action.
-- Coverage is now 207 true dispatches / 238 with 31 remaining. The
-  brace-matched recount gives C# 238 cases and C++ 209 numeric labels / 208
+- Opcode 203 (`camera_track`) now dispatches to
+  `ScriptRuntime::cameraTrack`, matching `ScriptVm.cs:1124-1128` and
+  `ScriptRuntime.cs:1188-1216`. Mode 0 uses 70% of the way to the model's
+  bounds top; mode 1 uses height × scale. The request fades over the first 90
+  degrees of facing error, clamps to 30 degrees up and the arena rest pitch,
+  and lasts two ticks. A bound `Player`'s feet/yaw are copied at tick start,
+  matching `ScriptRuntime.cs:886-889`. The follow-camera and save/load
+  snapshot consumers are deferred, and no frontend binds the Player yet, so
+  the dispatch is partial.
+- `CameraTrackCalculatesPitchAndExpires` pins both modes, the 30-degree clamp,
+  turn-away falloff, the behind fallback, live Player yaw, the following
+  instruction and the two-tick expiry.
+- Review-16's NIT is fixed: opcode 202's partial row now records the C#
+  save/load snapshot's `sky_mode` consumer, not only the renderer backdrop.
+  Review-15's opcode-170 citation fix remains `Kurt.cs:221-234`.
+- Coverage is now 208 true dispatches / 238 with 30 remaining. The
+  brace-matched recount gives C# 238 cases and C++ 210 numeric labels / 209
   unique labels; opcode 249's nested `case 0`/`case 1` arms account for the
-  extra raw label and the duplicate. Classification: 15 partial, 192 complete.
+  extra raw label and the duplicate. Classification: 16 partial, 192 complete.
 - Verification on this tree:
-  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 42
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 43
     VM tests and the complete oracle suite (`All cases match the oracle.`).
   - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
     PASSED`); SMDH was skipped because no CIA was built.
@@ -69,17 +76,14 @@ remain partial with those integrations. Old-3DS timing remains UNMEASURED.
   - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
   - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
     with no unimplemented opcodes on levels 3-8.
-  - The unsigned-byte sky-mode mutation made `vm_tests` exit 1 with exactly
-    one failure (`runtime.skyMode == -1`); the source was restored and the
-    final clean build passed.
-- No golden changed; opcode 202 does not fire in the level 3-8 corpus. No
+- No golden changed; opcode 203 does not fire in the level 3-8 corpus. No
   emulator or hardware run was performed. Old-3DS timing remains unmeasured.
-- Next isolated opcode family: port 203 (`camera_track`) with a runtime
-  camera-track state seam and a synthetic test. Its renderer-side camera
-  consumer remains deferred, so classify the dispatch partial until that
-  consumer exists. Before opcode 170 can be complete, frontend integration
-  must construct `ScriptRuntime` and bind the live `Player`; do not re-port
-  Kurt movement.
+- Next isolated opcode family: port 220 (`place_x_near_player`) over the
+  existing RNG/object-list seams, after adding the C#'s observed
+  `KurtVelocity` tick field. Use a seeded synthetic test for its three x
+  choices, wrap and spacing pass. Before opcodes 170/203 can be complete,
+  frontend integration must construct `ScriptRuntime` and bind the live
+  `Player`; do not re-port Kurt movement.
 
 ## Testability and standing open items
 

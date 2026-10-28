@@ -1,3 +1,47 @@
+## What this batch did (Phase 2 iteration 17 — opcode 203 camera track; review-16 NIT)
+
+- Ported opcode 203 (`camera_track`) from
+  `src/Mdk.Game/Scripts/ScriptVm.cs:1124-1128` into
+  `ScriptRuntime::cameraTrack`, following
+  `src/Mdk.Game/Scripts/ScriptRuntime.cs:1188-1216`. Mode 0 uses 70% of the
+  way to the model's bounds top; mode 1 uses height × scale above the object.
+  The target falls as Kurt turns away, is clamped to 30 degrees up and the
+  arena's rest pitch, and is stored for two ticks. The runtime's pitch and
+  tick lifetime are new `cameraTrackPitch`/`cameraTrackTicks` fields.
+- The runtime now copies a bound `Player`'s feet and yaw at tick start,
+  matching `ScriptRuntime.cs:886-889`, so camera tracking reads the same live
+  source as the C#. The renderer's follow-camera pitch consumer and the C#
+  save/load snapshot's `camera_track_pitch`/`camera_track_ticks` fields remain
+  deferred with those subsystems; no shipped frontend binds the Player yet,
+  so the dispatch is partial.
+- Added `CameraTrackCalculatesPitchAndExpires` to `tests/scripts/vm_tests.cpp`.
+  It pins mode 0/model bounds, mode 1/height and scale, the 30-degree clamp,
+  turn-away falloff, the behind fallback, live Player yaw, the following
+  instruction, and the two-tick expiry. Opcode 203 does not fire in the level
+  3-8 corpus, so no golden changed. The tick harness now initializes the
+  shared trig LUT before the runtime can use `fastAtan2` on either target.
+- Addressed review-16's NIT. The opcode-202 partial row and state files now
+  record the C# save/load snapshot's `sky_mode` consumer as well as the
+  renderer backdrop; the opcode-203 row names both deferred consumers.
+- Recount-verified: C# 238 / C++ 210 numeric labels / 209 unique labels / 208
+  true dispatches, with 30 remaining. Classification is 16 partial and 192
+  complete. Code commit: `15dad88` (`Port opcode 203 camera_track`).
+- Verification on the final tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 43
+    VM tests and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    with no unimplemented opcodes on levels 3-8.
+- No emulator or Original 3DS run was performed. Old-3DS timing remains
+  unmeasured. Next isolated opcode family: 220 (`place_x_near_player`) over
+  the existing RNG/object-list seams, with the C#'s observed `KurtVelocity`
+  tick field and a seeded synthetic test.
+
 ## What this batch did (Phase 2 iteration 16 — opcode 202 sky mode; review-15 NIT)
 
 - Ported opcode 202 (`set_574304`) from
