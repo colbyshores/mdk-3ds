@@ -83,6 +83,7 @@ const int32_t kRaiseShake = 135;
 const int32_t kInheritKurtVel = 170;
 const int32_t kSetSkyMode = 202;
 const int32_t kCameraTrack = 203;
+const int32_t kPlaceXNearPlayer = 220;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -1023,6 +1024,207 @@ void testSetSkyModeWritesSharedLevelState(LevelData* levelData, const Cmi* cmi,
     other.end();
     runProgram(runtime, other, &obj);
     CHECK(runtime.skyMode == 42);
+}
+
+// Opcode 220 (place_x_near_player) has no C# ScriptVmTests counterpart, so
+// this pins the oracle directly (ScriptVm.cs:1121-1123 and
+// ScriptRuntime.cs:1136-1186): the first RNG draw picks the branch, only the
+// random branch consumes a second draw, the predicted X uses the runtime's
+// observed feet velocity, an X below xMin wraps once by the range, and the
+// spacing pass pushes X left 12 units from every live same-Y object.
+void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi,
+                                              audio::SoundBank* bank) {
+    // The C# public KurtVelocity field is written per tick from the copied
+    // feet (ScriptRuntime.cs:945-946). The first tick observes no movement;
+    // a moved Player is observed on the next tick.
+    {
+        Player player;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player);
+        const Vec3 base = runtime.kurtPosition();
+        player.feet = base;
+        runtime.update(scripts::ScriptRuntime::kTick);
+        CHECK(runtime.kurtVelocity.x == 0.0f);
+        CHECK(runtime.kurtVelocity.y == 0.0f);
+        CHECK(runtime.kurtVelocity.z == 0.0f);
+
+        Vec3 moved = base;
+        moved.x += 2.0f;
+        moved.y -= 1.0f;
+        moved.z += 0.5f;
+        player.feet = moved;
+        runtime.update(scripts::ScriptRuntime::kTick);
+        CHECK(runtime.kurtVelocity.x == 60.0f);
+        CHECK(runtime.kurtVelocity.y == -30.0f);
+        CHECK(runtime.kurtVelocity.z == 15.0f);
+    }
+
+    // .NET's seeded Random gives these branch draws directly: seed 14 starts
+    // 4, 9251 (random), seed 3 starts 29, 6975 (Kurt's X / fallback), and seed
+    // 0 starts 72 (the predicted X). The range below is 100 units wide.
+    const float* start = levelData->dti().startPosition();
+    Vec3 kurt;
+    kurt.x = start[0];
+    kurt.y = start[1];
+    kurt.z = start[2];
+    const float xMin = kurt.x - 50.0f;
+    const float xMax = kurt.x + 50.0f;
+    const float yLimit = kurt.y + 1.0f;
+
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 14, bank, nullptr);
+        runtime.objects().push_back(scripts::MdkObject());
+        scripts::MdkObject* obj = &runtime.objects().back();
+        obj->arena = "DANT_1";
+        obj->position = kurt;
+        Code code;
+        code.u8(kPlaceXNearPlayer).f32(xMin).f32(xMax).f32(yLimit);
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        code.end();
+        runProgram(runtime, code, obj);
+        CHECK(!sawUnimplemented(kPlaceXNearPlayer));
+        CHECK(obj->variables[0] == 1.0f);  // The instruction after 220 still runs.
+        CHECK(fabsf(obj->position.x - (kurt.x + 42.509995f)) < 0.001f);
+        CHECK(obj->position.y == kurt.y);
+        CHECK(obj->position.z == kurt.z);
+    }
+
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        runtime.objects().push_back(scripts::MdkObject());
+        scripts::MdkObject* obj = &runtime.objects().back();
+        obj->arena = "DANT_1";
+        obj->position = kurt;
+        Code code;
+        code.u8(kPlaceXNearPlayer).f32(xMin).f32(xMax).f32(yLimit);
+        code.end();
+        runProgram(runtime, code, obj);
+        CHECK(!sawUnimplemented(kPlaceXNearPlayer));
+        CHECK(obj->position.x == kurt.x);
+    }
+
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        runtime.kurtVelocity = mdk::Vec3{40.0f, 0.0f, 0.0f};
+        runtime.objects().push_back(scripts::MdkObject());
+        scripts::MdkObject* obj = &runtime.objects().back();
+        obj->arena = "DANT_1";
+        obj->position = kurt;
+        Code code;
+        code.u8(kPlaceXNearPlayer).f32(xMin).f32(xMax).f32(yLimit);
+        code.end();
+        runProgram(runtime, code, obj);
+        CHECK(!sawUnimplemented(kPlaceXNearPlayer));
+        CHECK(fabsf(obj->position.x - (kurt.x + 106.933205f)) < 0.001f);
+    }
+
+    // A predicted X below xMin wraps once by the full range.
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        runtime.kurtVelocity = mdk::Vec3{-40.0f, 0.0f, 0.0f};
+        runtime.objects().push_back(scripts::MdkObject());
+        scripts::MdkObject* obj = &runtime.objects().back();
+        obj->arena = "DANT_1";
+        obj->position = kurt;
+        Code code;
+        code.u8(kPlaceXNearPlayer).f32(xMin).f32(xMax).f32(yLimit);
+        code.end();
+        runProgram(runtime, code, obj);
+        CHECK(!sawUnimplemented(kPlaceXNearPlayer));
+        CHECK(fabsf(obj->position.x - (kurt.x - 6.9332047f)) < 0.001f);
+    }
+
+    // Kurt's X outside the range consumes the random branch even when the
+    // first draw would otherwise have taken the X branch (seed 3: 29).
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        runtime.objects().push_back(scripts::MdkObject());
+        scripts::MdkObject* obj = &runtime.objects().back();
+        obj->arena = "DANT_1";
+        obj->position = kurt;
+        Code code;
+        code.u8(kPlaceXNearPlayer).f32(kurt.x + 10.0f).f32(kurt.x + 110.0f).f32(yLimit);
+        code.end();
+        runProgram(runtime, code, obj);
+        CHECK(!sawUnimplemented(kPlaceXNearPlayer));
+        CHECK(fabsf(obj->position.x - (kurt.x + 79.75f)) < 0.001f);
+    }
+
+    // A Kurt Y above the limit consumes the random branch the same way.
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        runtime.objects().push_back(scripts::MdkObject());
+        scripts::MdkObject* obj = &runtime.objects().back();
+        obj->arena = "DANT_1";
+        obj->position = kurt;
+        Code code;
+        code.u8(kPlaceXNearPlayer).f32(xMin).f32(xMax).f32(kurt.y - 1.0f);
+        code.end();
+        runProgram(runtime, code, obj);
+        CHECK(!sawUnimplemented(kPlaceXNearPlayer));
+        CHECK(fabsf(obj->position.x - (kurt.x + 19.75f)) < 0.001f);
+    }
+
+    // A dead, cross-arena or different-Y object does not influence the pass,
+    // and the receiver itself is skipped.
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        runtime.objects().push_back(scripts::MdkObject());
+        scripts::MdkObject* obj = &runtime.objects().back();
+        obj->arena = "DANT_1";
+        obj->position = kurt;
+
+        scripts::MdkObject dead;
+        dead.arena = "DANT_1";
+        dead.position = kurt;
+        dead.position.x += 1.0f;
+        dead.dead = true;
+        runtime.objects().push_back(dead);
+        scripts::MdkObject crossArena;
+        crossArena.arena = "NOT_DANT_1";
+        crossArena.position = kurt;
+        crossArena.position.x += 1.0f;
+        runtime.objects().push_back(crossArena);
+        scripts::MdkObject differentY;
+        differentY.arena = "DANT_1";
+        differentY.position = kurt;
+        differentY.position.y += 1.0f;
+        runtime.objects().push_back(differentY);
+
+        Code code;
+        code.u8(kPlaceXNearPlayer).f32(xMin).f32(xMax).f32(yLimit);
+        code.end();
+        runProgram(runtime, code, obj);
+        CHECK(!sawUnimplemented(kPlaceXNearPlayer));
+        CHECK(obj->position.x == kurt.x);
+    }
+
+    // Live objects on the same Y push X to their LEFT by twelve. Two pushes
+    // in one pass are applied in list order and the next pass is stable.
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        runtime.objects().push_back(scripts::MdkObject());
+        scripts::MdkObject* obj = &runtime.objects().back();
+        obj->arena = "DANT_1";
+        obj->position = kurt;
+
+        scripts::MdkObject first;
+        first.arena = "DANT_1";
+        first.position = kurt;
+        first.position.x += 1.0f;
+        runtime.objects().push_back(first);
+        scripts::MdkObject second;
+        second.arena = "DANT_1";
+        second.position = kurt;
+        second.position.x -= 2.0f;
+        runtime.objects().push_back(second);
+
+        Code code;
+        code.u8(kPlaceXNearPlayer).f32(xMin).f32(xMax).f32(yLimit);
+        code.end();
+        runProgram(runtime, code, obj);
+        CHECK(!sawUnimplemented(kPlaceXNearPlayer));
+        CHECK(obj->position.x == kurt.x - 14.0f);
+    }
 }
 
 // Opcode 203 (camera_track) has no C# ScriptVmTests counterpart, so this pins
@@ -2862,6 +3064,8 @@ int main() {
     printf("PASS SetSkyModeWritesSharedLevelState\n");
     testCameraTrackCalculatesPitchAndExpires(&levelData, &cmi, &bank);
     printf("PASS CameraTrackCalculatesPitchAndExpires\n");
+    testPlaceNearKurtChoosesWrapsAndSpaces(&levelData, &cmi, &bank);
+    printf("PASS PlaceNearKurtChoosesWrapsAndSpaces\n");
     testPointSeesPlayerNeedsRangeAndAClearLine(runtime);
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
     testIfPlayerHealthComparesKurtHealth(&levelData, &cmi, &bank);

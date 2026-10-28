@@ -268,9 +268,10 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     kurtYaw_ = wrap360(level_->dti().startAngle());
     targetPosition_ = kurtPosition_;
     targetYaw_ = kurtYaw_;
+    previousKurtPosition_ = kurtPosition_;
 }
 
-Vec3 ScriptRuntime::kurtVelocity() const {
+Vec3 ScriptRuntime::kurtLiveVelocity() const {
     // Read the live Player at dispatch time. A snapshot would silently keep
     // the previous tick's velocity when the frontend forgot to push an update.
     return player_ != nullptr ? player_->velocity() : Vec3{};
@@ -289,6 +290,13 @@ void ScriptRuntime::runTick() {
         kurtYaw_ = wrap360(player_->yaw);
         targetPosition_ = kurtPosition_;
         targetYaw_ = kurtYaw_;
+    }
+
+    // The first tick has no movement to observe (ScriptRuntime.cs:914-917).
+    // A later teleport can set the previous position in the C#; no teleport
+    // source exists in this slice, so the ordinary delta is kept.
+    if (tickCount_ == 0) {
+        previousKurtPosition_ = kurtPosition_;
     }
 
     // The alarm countdown decays once per tick, before any object runs
@@ -324,6 +332,15 @@ void ScriptRuntime::runTick() {
         currentArena_ = arena;
         showArena(arena);
     }
+
+    // ScriptRuntime.cs:945-946 records Kurt's observed feet delta before the
+    // object scripts run. The C# computes it after CollectPickups; pickups and
+    // the other movement writers that can precede it are later slices, so the
+    // copied Player position is the complete source in this runtime.
+    kurtVelocity.x = (kurtPosition_.x - previousKurtPosition_.x) * kTicksPerSecond;
+    kurtVelocity.y = (kurtPosition_.y - previousKurtPosition_.y) * kTicksPerSecond;
+    kurtVelocity.z = (kurtPosition_.z - previousKurtPosition_.z) * kTicksPerSecond;
+    previousKurtPosition_ = kurtPosition_;
 
     // Debris.Update(1f) (ScriptRuntime.cs:955): the pieces move before the
     // object loop, as in the C#. The neighbouring subsystem updates (Items,
@@ -2458,6 +2475,53 @@ void ScriptRuntime::cameraTrack(MdkObject* obj, int32_t mode, float height) {
 
     cameraTrackPitch = target;
     cameraTrackTicks = 2;
+}
+
+void ScriptRuntime::placeNearKurt(MdkObject* obj, float xMin, float xMax, float yLimit) {
+    const float kLead = 2.67333f;
+    const int32_t kTries = 100;
+    const float kSpacing = 12.0f;
+
+    // PlaceNearKurt (ScriptRuntime.cs:1139-1186). The first draw chooses the
+    // branch; the random branch alone consumes a second draw. The operation
+    // order and float literals are kept as in the oracle.
+    const int32_t choice = rng_.next(100);
+    float x;
+    if (choice < 25 || kurtPosition_.x < xMin || kurtPosition_.x > xMax ||
+        kurtPosition_.y > yLimit) {
+        x = xMin + (xMax - xMin) * rng_.next(10000) * 0.0001f;
+    } else if (choice < 50) {
+        x = kurtPosition_.x;
+    } else {
+        x = kurtPosition_.x + kurtVelocity.x * kLead;
+    }
+
+    if (x < xMin) {
+        x += xMax - xMin;
+    }
+
+    for (int32_t attempt = 0; attempt < kTries; attempt++) {
+        bool moved = false;
+        for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+            MdkObject& other = *it;
+            // The C# iterates its live Objects list. The C++ deque keeps
+            // removed objects in stable slots, so skip those explicitly.
+            if (&other == obj || other.dead || isRemoved(&other) || other.arena != obj->arena ||
+                other.position.y != obj->position.y ||
+                fabsf(x - other.position.x) >= kSpacing - 0.5f) {
+                continue;
+            }
+
+            x = other.position.x - kSpacing;
+            moved = true;
+        }
+
+        if (!moved) {
+            break;
+        }
+    }
+
+    obj->position.x = x;
 }
 
 // A numeric operand as a float (the C#'s ScriptMath.F).

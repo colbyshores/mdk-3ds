@@ -181,10 +181,11 @@ public:
     // horizontal knock-down push and the vertical speed. inherit_kurt_vel
     // (opcode 170) reads this at dispatch time. It is distinct from the C#
     // ScriptRuntime.KurtVelocity field: that is the observed position delta
-    // multiplied by 30, while this is derived from Kurt's own velocity terms.
-    // The bound Player is borrowed and must outlive the runtime. With no Player
-    // bound, the source is zero, as it was before the frontend integration.
-    Vec3 kurtVelocity() const;
+    // multiplied by 30 (below), while this is derived from Kurt's own velocity
+    // terms. The bound Player is borrowed and must outlive the runtime. With no
+    // Player bound, the source is zero, as it was before the frontend
+    // integration.
+    Vec3 kurtLiveVelocity() const;
     // Kurt's combat/inventory state (the Hurt/Damage half of Kurt.Combat.cs):
     // hurt_kurt (opcode 109) writes it, if_inventory (175) reads the slots.
     const Kurt& kurt() const { return kurt_; }
@@ -207,6 +208,10 @@ public:
     // its two-tick lifetime; the follow-camera consumer and the save/load
     // snapshot consumer are deferred with their subsystems.
     void cameraTrack(MdkObject* obj, int32_t mode, float height);
+    // PlaceNearKurt (ScriptRuntime.cs:1136-1186, opcode 220): one of three X
+    // choices near Kurt, then pushed left out of the chosen X range and apart
+    // from same-Y objects by twelve units. Only X changes.
+    void placeNearKurt(MdkObject* obj, float xMin, float xMax, float yLimit);
     // ---- The mixer seam (the sounds the scripts make) ----
     // play_sound (opcode 89, 0x442402): the start mode and the place come from
     // `flags`, the point from `position` when that operand is a list.
@@ -302,6 +307,13 @@ public:
     int32_t globalFlags = 0;
     std::array<float, 4> globalVariables{{0.0f, 0.0f, 0.0f, 0.0f}};
     int32_t option = 0;  // the driver sets 0 (the oracle's Option)
+    // C# ScriptRuntime.KurtVelocity (ScriptRuntime.cs:204): the observed feet
+    // delta from the previous tick, multiplied by 30. place_x_near_player (220)
+    // uses its X to aim two-thirds of a second ahead. It is not Kurt's own
+    // velocity (C# Kurt.Velocity; see kurtLiveVelocity above). The per-tick
+    // tick writer is in runTick; like the C# public field, a test may set it
+    // directly to isolate the consumer.
+    Vec3 kurtVelocity{};
     // The alarm countdown shared by movement command 15 and opcode 27. The C#
     // decrements it once at the start of every non-cutscene tick, then command
     // 15 sets it to ten while the alarm object is in Kurt's current arena.
@@ -479,6 +491,7 @@ private:
     MdkObject* ridesRidden_ = nullptr;
     bool ridesBoard_ = false;
     Vec3 targetPosition_{};
+    Vec3 previousKurtPosition_{};  // C# _previousKurtPosition
     float kurtYaw_ = 0.0f;
     float targetYaw_ = 0.0f;
     MdkObject* alienTarget_ = nullptr;  // C# ScriptRuntime.AlienTarget (opcode 251)
