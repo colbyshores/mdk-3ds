@@ -277,6 +277,10 @@ void ScriptRuntime::runTick() {
     // C#'s cutscene early-return cannot suppress this decrement here.
     alarmTicks = alarmTicks > 0 ? alarmTicks - 1 : 0;
 
+    // The screen-shake request belongs to one tick (ScriptRuntime.cs:899).
+    // Calls made later in this tick replace it only when they are stronger.
+    shake = 0.0f;
+
     // Kurt changes arena only through a connection; on the first tick he is
     // placed and the arena under him is found.
     std::string arena;
@@ -2383,6 +2387,14 @@ void ScriptRuntime::hurtKurt(int32_t damage) {
     if (ridden->health < 1) {
         kill(ridden);
     }
+}
+
+// RaiseShake (ScriptRuntime.cs:1986, 0x467f7c): keep the strongest request
+// made during this tick. MathF.Max propagates NaN; mathMax preserves that.
+// The C# also raises its ShakeRaised event for the follow camera. The C++
+// camera's shake consumer is not ported yet, so this records the runtime half.
+void ScriptRuntime::raiseShake(float amount) {
+    shake = mathMax(shake, amount);
 }
 
 // A numeric operand as a float (the C#'s ScriptMath.F).

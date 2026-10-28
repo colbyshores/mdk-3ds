@@ -1292,9 +1292,12 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             return branch(obj, ins, condition);
         }
 
-        // Kurt and the screen (ScriptVm.cs:1580-1600). All three write Kurt's
-        // combat state directly; the flash fades and the knock-down itself are
-        // Kurt movement, later slices.
+        // Kurt and the screen (ScriptVm.cs:1580-1600). The flash and
+        // knock-down write Kurt's combat state directly; their visual and
+        // movement consumers are later slices.
+        case 135:  // raise_573aa8: keep the strongest screen shake asked this tick
+            runtime_.raiseShake(fval(op(ins, 0)));
+            break;
         case 215:  // screen_flash: raise the white flash to the rounded operand
             runtime_.kurt().setWhiteFlash(
                 mathMax(runtime_.kurt().whiteFlash(), mathfRound(value(obj, op(ins, 0)))));

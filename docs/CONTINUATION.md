@@ -1,7 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (iteration 67: opcode 195 hit-weapon condition).
-Current coverage: 204 true C++ dispatches / 238, 34 remaining. Continue one
+Last updated: 2026-10-28 (iteration 68: opcode 135 screen-shake state).
+Current coverage: 205 true C++ dispatches / 238, 33 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -16,12 +16,12 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    batch. Opcode 208 (reachability probe), harness + 13, parts 32/129,
    rope-swing 226/242, spawn 156/206, push-hit-dir 81, stats 217, vision 243,
    value slots 199/210, Kurt/screen 215/240/244, no-ops 239/77, object avoidance
-   204, turn-and-jump 229, floor-below 121, no-flat-floor 192 and hit-weapon
-   195 are implemented and pinned. The current-plus-second raycast selection
-   seam is pinned against overlapping DANT_1/DANT_8 geometry. All three oracle
-   `Linked` writers (245/179/228) are ported, so
+   204, turn-and-jump 229, floor-below 121, no-flat-floor 192, hit-weapon
+   195 and screen-shake 135 are implemented and pinned. The current-plus-second
+   raycast selection seam is pinned against overlapping DANT_1/DANT_8 geometry.
+   All three oracle `Linked` writers (245/179/228) are ported, so
    partner pairs can feed the 213/214 conditions. 132/136 still need Effects;
-   frame-blend integration is a separate future slice. The exact remaining 34
+   frame-blend integration is a separate future slice. The exact remaining 33
    are in
    `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
@@ -30,40 +30,48 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 
 Deferred: 248 `push_kurt` is an honest no-op pending Kurt knock-back. The
 C#'s Rides subsystem also writes the alarm countdown and remains deferred with
-Rides. Old-3DS timing remains UNMEASURED.
+Rides. Opcode 135's follow-camera consumer, opcode 195's group-hit/direct
+combat writers, and opcode 81's hit-direction writers remain partial with
+those subsystems. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 67 ports opcode 195 (`if_hit_weapon`) from
-  `ScriptVm.cs:1526-1527`. The receiver compares its existing
-  `MdkObject::hit_type` with the signed-byte operand and branches on exact
-  equality. One synthetic `vm_tests` case pins negative and positive matches,
-  mismatches, and the oracle's initial zero state. Replacing the comparison
-  with false makes three checks fail; restoring it makes the test pass.
-- Review-10 found no BLOCKER, MAJOR, or MINOR finding. Its only NIT was the
-  raycast test's imprecise DANT_8 face coordinate; the comment now says
-  "about 4.05" instead of asserting a geometry-dependent exact value.
-- Coverage is now 204 true dispatches / 238 with 34 remaining. The
-  brace-matched recount gives C# 238 cases and C++ 206 numeric labels / 205
+- Iteration 68 ports opcode 135 (`raise_573aa8`) from
+  `ScriptVm.cs:1581-1582` and `ScriptRuntime.cs:899,1986-1989`. The runtime
+  clears `shake` at tick start and keeps the strongest request, including the
+  oracle's NaN-propagating `MathF.Max` behavior. One synthetic `vm_tests` case
+  pins the dispatch, maximum sequence, negative request, NaN and next-tick
+  reset. The C# follow-camera consumer remains a separate renderer slice.
+- Review-11's three MINOR findings are addressed: opcode 195's test now pins
+  signed equality with two sign-crossing cases (an absolute-value mutant now
+  exits 1 with two failures); the deferral note now says the ported
+  `ScriptRuntime::hitGroup` is uncalled and names the C# group-hit call sites,
+  including Kurt's `HitTypeKurt = -11` touch; and the ledger applies one
+  Complete/Partial rule (unwritten input or missing consumer means partial).
+  That rule puts 81/135/195 in the 13-case partial table, leaving 192 complete.
+- Review-11 found no BLOCKER or MAJOR. Its PASS-print NIT is pre-existing; the
+  verification below cites exit codes. Its DANT_8 exact-coordinate observation
+  remains unproven and was not changed in this opcode slice.
+- Coverage is now 205 true dispatches / 238 with 33 remaining. The
+  brace-matched recount gives C# 238 cases and C++ 207 numeric labels / 206
   unique labels; the nested opcode-249 switch accounts for the extra label and
   the duplicate.
 - Verification on this tree:
-  - `make -C tests/scripts clean && make -C tests/scripts build/vm_tests` then
-    `make -C tests/scripts` passed 39 VM tests and the complete oracle suite
-    (`All cases match the oracle.`).
-  - `bash tools/check.sh` passed all contract gates (`CHECK: ALL GATES
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 40 VM
+    tests and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
     PASSED`); SMDH was skipped because no CIA was built.
   - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
-    mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
     `mdk.3dsx`.
-  - `cmake --build build-linux --target mdk` built the Linux target.
-  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` reported
-    no unimplemented opcodes on levels 3–8.
+  - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    and reported no unimplemented opcodes on levels 3–8.
 - No golden changed. No emulator or hardware run was performed. Old-3DS timing
   remains unmeasured.
-- Next: port opcode 135 (`raise_573aa8`) with the oracle's per-tick
-  screen-shake state and maximum semantics, plus a synthetic test. The
-  renderer-side shake consumer remains a separate renderer slice.
+- Next: port opcode 170 (`inherit_kurt_vel`) with a runtime Kurt-velocity seam
+  and a synthetic test. Opcode 28 remains with the SniperRounds subsystem; do
+  not blind-port either without the state they consume.
 
 ## Testability and standing open items
 

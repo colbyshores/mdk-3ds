@@ -183,6 +183,10 @@ public:
     // stays null and Kurt takes every hit, which is what the C# reads while
     // nothing is ridden.
     void hurtKurt(int32_t damage);
+    // RaiseShake (ScriptRuntime.cs:1986): the strongest screen shake requested
+    // during the current tick. The renderer-side camera consumer is a later
+    // slice; this records the oracle's per-tick state.
+    void raiseShake(float amount);
     // ---- The mixer seam (the sounds the scripts make) ----
     // play_sound (opcode 89, 0x442402): the start mode and the place come from
     // `flags`, the point from `position` when that operand is a list.
@@ -282,6 +286,9 @@ public:
     // decrements it once at the start of every non-cutscene tick, then command
     // 15 sets it to ten while the alarm object is in Kurt's current arena.
     int32_t alarmTicks = 0;
+    // The strongest screen shake requested during this tick (opcode 135). It
+    // is cleared at the start of every simulation tick, as in the oracle.
+    float shake = 0.0f;
     // Items.Bomb: the World's Most Interesting Bomb Kurt threw. The Items
     // subsystem is a later slice, so this stays null until it lands, which is
     // what the C# reads when no bomb is in play (if_no_bomb / if_bomb_visible).

@@ -77,6 +77,7 @@ const int32_t kAvoidObjects = 204;
 const int32_t kIfFloorBelow = 121;
 const int32_t kIfNoFlatFloorAt = 192;
 const int32_t kIfHitWeapon = 195;
+const int32_t kRaiseShake = 135;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -2195,9 +2196,67 @@ void testIfHitWeaponBranchesOnExactHitType(scripts::ScriptRuntime& runtime) {
     obj.hit_type = 4;
     CHECK(runIfHitWeapon(runtime, &obj, 3) == 1.0f);
 
+    // The equality is signed: matching magnitudes with opposite signs do not
+    // match. These reject an absolute-value comparison.
+    obj.hit_type = 7;
+    CHECK(runIfHitWeapon(runtime, &obj, -7) == 1.0f);
+    obj.hit_type = -3;
+    CHECK(runIfHitWeapon(runtime, &obj, 3) == 1.0f);
+
     // The oracle's initial hit type is zero, and zero matches zero.
     obj.hit_type = 0;
     CHECK(runIfHitWeapon(runtime, &obj, 0) == 2.0f);
+}
+
+// Opcode 135 (raise_573aa8) has no C# ScriptVmTests counterpart, so this pins
+// the oracle directly (ScriptVm.cs:1581-1582 and ScriptRuntime.cs:1986-1989):
+// each request raises the per-tick screen shake only when it is stronger than
+// the current value. The runtime clears that value at the next tick.
+void testRaiseShakeKeepsTheTickMaximum(LevelData* levelData, const Cmi* cmi,
+                                       audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.shake == 0.0f);
+
+    scripts::MdkObject obj;
+    Code first;
+    first.u8(kRaiseShake).f32(2.5f);
+    first.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    first.end();
+    runProgram(runtime, first, &obj);
+    CHECK(!sawUnimplemented(kRaiseShake));
+    CHECK(obj.variables[0] == 1.0f);  // The instruction after 135 still runs.
+    CHECK(runtime.shake == 2.5f);
+
+    // A weaker request leaves the tick's maximum alone.
+    Code weaker;
+    weaker.u8(kRaiseShake).f32(1.0f);
+    weaker.end();
+    runProgram(runtime, weaker, &obj);
+    CHECK(runtime.shake == 2.5f);
+
+    // A stronger request replaces it; a negative request does not lower it.
+    Code stronger;
+    stronger.u8(kRaiseShake).f32(4.0f);
+    stronger.end();
+    runProgram(runtime, stronger, &obj);
+    CHECK(runtime.shake == 4.0f);
+    Code negative;
+    negative.u8(kRaiseShake).f32(-1.0f);
+    negative.end();
+    runProgram(runtime, negative, &obj);
+    CHECK(runtime.shake == 4.0f);
+
+    // MathF.Max propagates NaN; fmaxf would instead keep the numeric value.
+    Code notNumber;
+    notNumber.u8(kRaiseShake).f32(nanf(""));
+    notNumber.end();
+    runProgram(runtime, notNumber, &obj);
+    CHECK(runtime.shake != runtime.shake);
+
+    // The request belongs to one simulation tick.
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.shake == 0.0f);
 }
 
 // Opcode 121 (if_floor_below) has no C# ScriptVmTests counterpart, so this
@@ -2558,6 +2617,8 @@ int main() {
     printf("PASS PartnerConditionsUseLiveLinkedObjectAndGeometry\n");
     testIfHitWeaponBranchesOnExactHitType(runtime);
     printf("PASS IfHitWeaponBranchesOnExactHitType\n");
+    testRaiseShakeKeepsTheTickMaximum(&levelData, &cmi, &bank);
+    printf("PASS RaiseShakeKeepsTheTickMaximum\n");
     testSpawnPartnerLinksBothObjects(&levelData, &cmi, &bank);
     printf("PASS SpawnPartnerLinksBothObjects\n");
     testSnapToPartnerUsesOnlyALivePartner(runtime);

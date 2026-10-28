@@ -1,11 +1,59 @@
+## What this batch did (iteration 68 — opcode 135, screen shake; review-11 fixes)
+
+- Ported opcode 135 (`raise_573aa8`) from `ScriptVm.cs:1581-1582`. The VM
+  forwards the F32 operand to `ScriptRuntime::raiseShake`, which keeps the
+  strongest request for the current tick with the oracle's NaN-propagating
+  `MathF.Max` semantics. `ScriptRuntime::runTick` clears the value at the start
+  of each tick, matching `ScriptRuntime.cs:899`. The C# `ShakeRaised` event's
+  follow-camera consumer is not ported, so the dispatch is classified partial.
+- Added `RaiseShakeKeepsTheTickMaximum` to `tests/scripts/vm_tests.cpp`. It
+  pins the dispatch and operand alignment, the 2.5/1.0/4.0 maximum sequence,
+  the negative request, NaN propagation, and the next-tick reset. The opcode
+  does not fire in the level 3-8 corpus, so no golden changed.
+- Addressed review-11's three MINOR findings. The opcode-195 test now includes
+  `hit_type = 7` against operand `-7` and `hit_type = -3` against operand `3`;
+  an absolute-value mutant now fails two assertions and exits 1 (previously it
+  exited 0). The ledger records that `ScriptRuntime::hitGroup` is ported but
+  uncalled, lists its C# group-hit call sites, and adds Kurt's
+  `HitTypeKurt = -11` touch. The Complete/Partial rule was made consistent:
+  an unwritten input or missing consumer makes a faithful dispatch partial, so
+  81, 135 and 195 join 165/166 and the other consumer-gated cases. Current
+  classification is 13 partial and 192 complete of 205 true dispatches.
+- Review-11 found no BLOCKER or MAJOR. Its PASS-print NIT is pre-existing
+  harness behavior; this batch's verification therefore cites exit codes rather
+  than treating a `PASS` line as evidence. Its DANT_8 coordinate NIT remains
+  unproven and was not changed in this opcode slice.
+- Coverage: 205 true C++ dispatches / 238, 33 remaining. The brace-matched
+  recount gives C# 238 cases and C++ 207 numeric labels / 206 unique labels;
+  the nested opcode-249 switch accounts for the extra label and the duplicate.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 40
+    VM tests and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` exited 0 with `CHECK: ALL GATES PASSED`; SMDH was
+    skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` exited 0 and built `mdk`.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    and reported no unimplemented opcodes on levels 3-8.
+  - In a detached worktree, replacing opcode 195's signed comparison with an
+    absolute-value comparison made `vm_tests` exit 1 with exactly the two
+    sign-crossing failures; the worktree was removed afterward.
+- No golden changed. No emulator or hardware run was performed. Old-3DS timing
+  remains unmeasured.
+
 ## What this batch did (iteration 67 — opcode 195, hit-weapon condition)
 
 - Ported opcode 195 (`if_hit_weapon`) from
   `src/Mdk.Game/Scripts/ScriptVm.cs:1526-1527`. The receiver compares its
   existing `MdkObject::hit_type` with the signed-byte operand and branches on
   exact equality. This is a real dispatch over existing object state, not a
-  decoded no-op or a stub. The combat writers of `hit_type` (chain gun,
-  Items, sniper rounds and the cow) remain deferred with those subsystems.
+  decoded no-op or a stub. The C++ group-hit scratch writer is ported in
+  `ScriptRuntime::hitGroup`, but `hitGroup` has no C++ caller. The C# group-hit
+  call sites (Kurt's `HitTypeKurt = -11` touch, the chain gun and `HitGroupAt`,
+  the sniper rounds and Items) and the direct object-hit writers for mortars,
+  Items, sniper rounds and the cow remain deferred with those subsystems.
 - Added `IfHitWeaponBranchesOnExactHitType` to `tests/scripts/vm_tests.cpp`.
   It pins a negative grenade match and bomb mismatch, a positive projectile
   match and mismatch, and the oracle's initial zero state. Replacing the
@@ -20,8 +68,8 @@
   the nested opcode-249 switch accounts for the extra label and the duplicate.
 - Verification on this tree:
   - `make -C tests/scripts clean && make -C tests/scripts build/vm_tests` then
-    `make -C tests/scripts` passed 39 VM tests and the complete oracle suite
-    (`All cases match the oracle.`).
+    `make -C tests/scripts` exited 0 after 39 VM tests and the complete oracle
+    suite (`All cases match the oracle.`).
   - `bash tools/check.sh` passed all contract gates (`CHECK: ALL GATES
     PASSED`); SMDH was skipped because no CIA was built.
   - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
