@@ -1,3 +1,47 @@
+## What this batch did (Phase 2 iteration 18 — opcode 220 place near Kurt)
+
+- Ported opcode 220 (`place_x_near_player`) from
+  `src/Mdk.Game/Scripts/ScriptVm.cs:1121-1123` into
+  `ScriptRuntime::placeNearKurt`, following
+  `src/Mdk.Game/Scripts/ScriptRuntime.cs:1136-1186`. The first seeded RNG draw
+  selects the random, current-X or predicted-X branch; only the random branch
+  consumes a second draw. An X below the minimum wraps once by the range,
+  then up to 100 passes move it twelve units left of every live same-arena,
+  same-Y object. The C++ deque retains removed objects in stable slots, so
+  the pass explicitly skips them to mirror the C# live `Objects` list.
+- Added the C# `ScriptRuntime.KurtVelocity` field as the runtime's observed
+  feet delta multiplied by 30. It is written before object scripts, matching
+  `ScriptRuntime.cs:945-946`, and is distinct from the live `Kurt.Velocity`
+  used by opcode 170; that accessor is now `kurtLiveVelocity()`.
+- Added `PlaceNearKurtChoosesWrapsAndSpaces` to `tests/scripts/vm_tests.cpp`.
+  It pins the observed-velocity first/moved ticks, all three X choices, the
+  range and Y fallbacks, the one wrap, dead/cross-arena/different-Y/self
+  exclusions, ordered spacing pushes and the following instruction. The
+  seeded branch draws were checked against .NET's seeded `System.Random`.
+  Opcode 220 does not fire in the level 3-8 corpus, so no golden changed.
+- Review-17 (`logs/ralph-pi/run-20261027-223315/review-17.md`) had verdict
+  COMPLETE and no BLOCKER, MAJOR or MINOR finding; its three NITs concerned
+  unreachable camera-track divergences or missing branch-strength cases and
+  required no change to this opcode batch.
+- Recount-verified: C# 238 / C++ 211 numeric labels / 210 unique labels / 209
+  true dispatches, with 29 remaining. Classification is 17 partial and 192
+  complete. Code commit: `bf62628` (`Port opcode 220 place_x_near_player`).
+- Verification on the final tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 44
+    VM tests and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    with no unimplemented opcodes on levels 3-8.
+- No emulator or Original 3DS run was performed. Old-3DS timing remains
+  unmeasured. Next isolated opcode family: 219 (`if_gun_aim`) over the
+  existing yaw/object-list seams and the new observed `KurtVelocity` field,
+  with a seeded synthetic test for its aim/fire branches.
+
 ## What this batch did (Phase 2 iteration 17 — opcode 203 camera track; review-16 NIT)
 
 - Ported opcode 203 (`camera_track`) from

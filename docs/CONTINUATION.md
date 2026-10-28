@@ -1,7 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (opcode 203 camera-track batch; review-16 NIT).
-Current coverage: 208 true C++ dispatches / 238, 30 remaining. Continue one
+Last updated: 2026-10-28 (opcode 220 place-near-Kurt batch).
+Current coverage: 209 true C++ dispatches / 238, 29 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -18,18 +18,21 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    value slots 199/210, Kurt/screen 215/240/244, no-ops 239/77, object
    avoidance 204, turn-and-jump 229, floor-below 121, no-flat-floor 192,
    hit-weapon 195, screen-shake 135, inherit-Kurt-velocity 170, sky-mode
-   202 and camera-track 203 are implemented and pinned. Opcode 170 reads the
-   already-ported `Player` live at dispatch time; `ScriptRuntime` has no
-   defaulted Player argument, so every construction states the choice. A
-   frontend must still bind the live Player for 170/203 to be complete.
-   Opcode 202 writes shared `ScriptRuntime::skyMode`, but its renderer backdrop
-   and snapshot consumers remain deferred. Opcode 203 writes the runtime camera
-   pitch and two-tick lifetime; its follow-camera and snapshot consumers remain
-   deferred. The current-plus-second raycast selection seam is pinned against
+   202, camera-track 203 and place-near-Kurt 220 are implemented and pinned.
+   Opcode 170 reads the already-ported `Player` live at dispatch time;
+   `ScriptRuntime` has no defaulted Player argument, so every construction
+   states the choice. A frontend must still bind the live Player for
+   170/203/220 to be complete. Opcode 202 writes shared
+   `ScriptRuntime::skyMode`, but its renderer backdrop and snapshot consumers
+   remain deferred. Opcode 203 writes the runtime camera pitch and two-tick
+   lifetime; its follow-camera and snapshot consumers remain deferred. Opcode
+   220 writes the receiver's X over the seeded RNG/object-list seams and uses
+   the runtime's observed `KurtVelocity` field for its predicted-X branch. The
+   current-plus-second raycast selection seam is pinned against
    overlapping DANT_1/DANT_8 geometry. All three oracle `Linked` writers
    (245/179/228) are ported, so partner pairs can feed the 213/214 conditions.
    132/136 still need Effects; frame-blend integration is a separate future
-   slice. The exact remaining 30 are in `docs/OPCODE_COVERAGE.md`.
+   slice. The exact remaining 29 are in `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. The reference source is DECIDED: the C# renderer,
    headlessly under Linux/lavapipe (see `SPEC-COMPLETION.md`). The harness
@@ -40,33 +43,32 @@ C#'s Rides subsystem also writes the alarm countdown and remains deferred with
 Rides. Opcode 135's follow-camera consumer, opcode 202's renderer backdrop
 and snapshot consumers, opcode 203's follow-camera/snapshot consumers and
 missing frontend `Player` binding, opcode 195's group-hit/direct combat
-writers, opcode 81's hit-direction writers, and opcode 170's missing frontend
-`Player` binding remain partial with those integrations. Old-3DS timing
-remains UNMEASURED.
+writers, opcode 81's hit-direction writers, and opcodes 170/220's missing
+frontend `Player` binding remain partial with those integrations. Old-3DS
+timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Opcode 203 (`camera_track`) now dispatches to
-  `ScriptRuntime::cameraTrack`, matching `ScriptVm.cs:1124-1128` and
-  `ScriptRuntime.cs:1188-1216`. Mode 0 uses 70% of the way to the model's
-  bounds top; mode 1 uses height × scale. The request fades over the first 90
-  degrees of facing error, clamps to 30 degrees up and the arena rest pitch,
-  and lasts two ticks. A bound `Player`'s feet/yaw are copied at tick start,
-  matching `ScriptRuntime.cs:886-889`. The follow-camera and save/load
-  snapshot consumers are deferred, and no frontend binds the Player yet, so
-  the dispatch is partial.
-- `CameraTrackCalculatesPitchAndExpires` pins both modes, the 30-degree clamp,
-  turn-away falloff, the behind fallback, live Player yaw, the following
-  instruction and the two-tick expiry.
-- Review-16's NIT is fixed: opcode 202's partial row now records the C#
-  save/load snapshot's `sky_mode` consumer, not only the renderer backdrop.
-  Review-15's opcode-170 citation fix remains `Kurt.cs:221-234`.
-- Coverage is now 208 true dispatches / 238 with 30 remaining. The
-  brace-matched recount gives C# 238 cases and C++ 210 numeric labels / 209
+- Opcode 220 (`place_x_near_player`) now dispatches to
+  `ScriptRuntime::placeNearKurt`, matching `ScriptVm.cs:1121-1123` and
+  `ScriptRuntime.cs:1136-1186`. The first seeded draw selects the random,
+  current-X or predicted-X branch; only random consumes a second draw. An X
+  below the minimum wraps once, then up to 100 passes move it twelve units
+  left of live same-arena, same-Y objects. Removed C++ deque slots are skipped
+  to mirror the C# live `Objects` list.
+- The runtime now has the C#'s observed `ScriptRuntime::KurtVelocity` field:
+  copied feet delta × 30, written before object scripts as in
+  `ScriptRuntime.cs:945-946`. It is distinct from the live `Kurt.Velocity`
+  used by opcode 170, so the latter accessor is now `kurtLiveVelocity()`.
+- `PlaceNearKurtChoosesWrapsAndSpaces` pins the observed-velocity tick
+  update, all three X choices, range/Y fallbacks, wrap, dead/cross-arena/Y
+  exclusions, ordered spacing pushes and the following instruction.
+- Coverage is now 209 true dispatches / 238 with 29 remaining. The
+  brace-matched recount gives C# 238 cases and C++ 211 numeric labels / 210
   unique labels; opcode 249's nested `case 0`/`case 1` arms account for the
-  extra raw label and the duplicate. Classification: 16 partial, 192 complete.
+  extra raw label and the duplicate. Classification: 17 partial, 192 complete.
 - Verification on this tree:
-  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 43
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 44
     VM tests and the complete oracle suite (`All cases match the oracle.`).
   - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
     PASSED`); SMDH was skipped because no CIA was built.
@@ -76,14 +78,13 @@ remains UNMEASURED.
   - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
   - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
     with no unimplemented opcodes on levels 3-8.
-- No golden changed; opcode 203 does not fire in the level 3-8 corpus. No
+- No golden changed; opcode 220 does not fire in the level 3-8 corpus. No
   emulator or hardware run was performed. Old-3DS timing remains unmeasured.
-- Next isolated opcode family: port 220 (`place_x_near_player`) over the
-  existing RNG/object-list seams, after adding the C#'s observed
-  `KurtVelocity` tick field. Use a seeded synthetic test for its three x
-  choices, wrap and spacing pass. Before opcodes 170/203 can be complete,
-  frontend integration must construct `ScriptRuntime` and bind the live
-  `Player`; do not re-port Kurt movement.
+- Next isolated opcode family: port 219 (`if_gun_aim`) over the existing
+  yaw/object-list seams and the new observed `KurtVelocity` field. Use a
+  seeded synthetic test for the aim/fire branches. Before opcodes 170/203/220
+  can be complete, frontend integration must construct `ScriptRuntime` and
+  bind the live `Player`; do not re-port Kurt movement.
 
 ## Testability and standing open items
 
