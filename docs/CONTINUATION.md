@@ -1,8 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 61: the alarm state — movement command 15
-and opcode 27).
-Current coverage: 199 true C++ dispatches / 238, 39 remaining. Continue one
+Last updated: 2026-10-27 (iteration 62: opcode 204, object avoidance).
+Current coverage: 200 true C++ dispatches / 238, 38 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -20,10 +19,11 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    implemented and pinned. Newer slices include 85 (`set_rolling`), 74
    (`attach_to`), the 213/214 partner condition pair, the 179/180/228
    partner-link family, the 29/49 chain-link family (with movement command 30,
-   the chain's own motion), and the 15/27 alarm-state family. All three oracle
-   `Linked` writers (245/179/228) are now ported, so partner pairs can feed the
-   213/214 conditions. 132/136 still need Effects; frame-blend integration
-   remains a separate future slice. Remaining 39 are listed in
+   the chain's own motion), the 15/27 alarm-state family, and 204
+   (`avoid_objects`). All three oracle `Linked` writers (245/179/228) are now
+   ported, so partner pairs can feed the 213/214 conditions. 132/136 still
+   need Effects; frame-blend integration remains a separate future slice.
+   Remaining 38 are listed in
    `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
@@ -35,6 +35,21 @@ Rides. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 62 ports opcode 204 (`avoid_objects`). It uses the existing
+  world-bounds and object-list seams to turn the receiver away from the first
+  live, solid, same-arena object whose strict bounds overlap its own, by at
+  most half a turn times one tick. One synthetic `vm_tests` case pins the
+  self/dead/cross-arena/non-solid/touching exclusions, both turn directions,
+  stable object order, the angle clamp, and the dispatch. Five mutations
+  (dead/non-solid acceptance, inclusive bounds, no first-hit break, and a
+  fixed step) each fail the test. Coverage is 200 true dispatches / 238 with
+  38 remaining. `make -C tests/scripts clean && make -C tests/scripts` passed
+  34 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  built `mdk.3dsx` after staging 69 RomFS files (79M), and `cmake --build
+  build-linux --target mdk` built the Linux target. No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
 - Iteration 61 ports the alarm state machine. `ScriptRuntime::alarmTicks`
   now mirrors the C#'s shared countdown: it decays once at the start of every
   non-cutscene tick, movement command 15 sets it to ten for an alarm object in
@@ -86,19 +101,11 @@ Rides. Old-3DS timing remains UNMEASURED.
   `cmake --build build-linux --target mdk` built the Linux target. No golden
   changed; no emulator/hardware run. Old-3DS timing remains unmeasured.
 
-- Iteration 57 ports the partner-link family: 179 (`spawn_partner`) spawns
-  the named type at the receiver's position with yaw zero and links both
-  objects; 180 (`snap_to_partner`) copies a live partner's position and then
-  applies its optional offset; 228 (`link_partners`) pairs live same-arena
-  objects of the named type in stable list order when their squared distance
-  is below 10000, while its list form with a zero second value clears only
-  the receiver's link. Three `vm_tests` cases pin both link directions,
-  dead/no-link behavior, case-insensitive type matching, dead/cross-arena/
-  already-linked exclusions, the strict 100-unit boundary, list order and
-  the asymmetric clear. All three oracle `Linked` writers are ported,
-  removing the producer caveat from 213/214.
-- Next: continue opcode conversion from the remaining 39 in
-  `docs/OPCODE_COVERAGE.md`; select the next testable subsystem slice. The
+- Next: continue opcode conversion from the remaining 38 in
+  `docs/OPCODE_COVERAGE.md`. The next testable movement slice is 229
+  (`turn_and_jump_to_dest`) plus movement command 229, over the existing
+  destination, velocity, gravity, friction, parameter and contact fields;
+  pin the turn, jump arc, and floor landing in `vm_tests`. The
   chain readers (`LastFollowerId`, `LastChainLink`, `Links`) compare against
   the RETAINED leader pointer — do not clear a link's `leader` outside
   `release_children` (49) and the chain motion's own let-go.

@@ -1,3 +1,45 @@
+## What this batch did (iteration 62 — opcode 204, object avoidance)
+
+- Ported opcode 204 (`avoid_objects`) from `ScriptVm.cs:1715-1729`. The
+  receiver computes its world bounds once, walks the live same-arena objects
+  in stable list order, and turns away from the first one whose strict world
+  bounds overlap its own. Dead objects, objects flagged `FlagNotSolid` or
+  `FlagNotSolid2`, and cross-arena objects are skipped. The turn is the
+  oracle's wrapped `YawTo(other) + 180 - yaw`, clamped to half a turn times
+  one tick, and the scan stops after the first eligible overlap.
+- The implementation reuses the existing `ScriptRuntime::worldBounds`,
+  `objects`, and `yawTo` seams. The local box intersection is strict on every
+  axis, matching `ScriptMath.Intersects`: boxes that merely touch do not
+  overlap. This is a real dispatch, not a decoded no-op or a stub.
+- One synthetic `vm_tests` case, `AvoidObjectsTurnsAwayFromTheFirstSolidOverlap`,
+  pins the dispatch and the self/dead/cross-arena/non-solid/touching
+  exclusions, both turn directions, stable first-object order, and the clamp
+  to the available angle. It also pins the six-degree-per-tick limit. The
+  test was mutation-checked: accepting dead objects, accepting non-solid
+  objects, making the bounds inclusive, continuing after the first overlap,
+  and replacing the available-angle clamp with a fixed step each make the
+  test fail.
+- The newest external review file, `logs/ralph-pi/run-20261027-223315/review-5.md`,
+  contains only `REVIEWER FAILED model=litellm/qwen rc=1`; it supplied no
+  BLOCKER, MAJOR, MINOR, or NIT finding to address. Review-4's remaining
+  documentation point was already fixed in iteration 61.
+- Coverage: 200 true C++ dispatches / 238, 38 remaining. The brace-matched
+  recount gives C# 238 cases and C++ 202 numeric labels / 201 unique labels;
+  the extra numeric label is the nested mode arm inside opcode 249, and one
+  nested label is duplicated, leaving 200 true dispatches.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` → 34 VM tests PASS
+    and the full oracle suite ended with `All cases match the oracle.`
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; SMDH SKIPPED (no CIA
+    built).
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` → linked `mdk.elf`, staged 69 RomFS files (79M), built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` → built the Linux target.
+- No golden changed; opcode 204 does not fire in the level 3–8 corpus. No
+  emulator or hardware run was performed. Old-3DS timing remains unmeasured.
+
+
 ## What this batch did (iteration 61 — the alarm state: movement command 15 and opcode 27)
 
 - Ported the oracle's alarm state machine. `ScriptRuntime` now has the shared
