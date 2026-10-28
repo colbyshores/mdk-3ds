@@ -40,6 +40,7 @@
 #include "render/arena_scene.h"
 #include "render/material_resolver.h"
 #include "scripts/script_runtime.h"
+#include "util/math_lut.h"
 
 using namespace mdk;
 using namespace mdk::formats;
@@ -261,6 +262,10 @@ std::string dumpDti(int level, const Dti& dti) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // The shared camera/geometry trig path must be initialized before any
+    // runtime can call fastAtan2 (opcode 203's camera-track calculation).
+    mdk::mathLutInit();
+
     // The formats library reaches the filesystem through this seam.
     mdk::formats::setFileSystem(mdk::test::host::fileSystem());
 

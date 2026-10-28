@@ -16,6 +16,7 @@
 #include "formats/model_animation.h"
 #include "game/bsp.h"
 #include "game/player.h"
+#include "util/math_lut.h"
 
 namespace mdk {
 namespace scripts {
@@ -280,10 +281,24 @@ void ScriptRuntime::update(float) {
 }
 
 void ScriptRuntime::runTick() {
+    // The C# copies Kurt's live feet and yaw into the script runtime at the
+    // start of every tick (ScriptRuntime.cs:886-889). A bound Player is the
+    // live source; with no Player, the level-start state remains in place.
+    if (player_ != nullptr) {
+        kurtPosition_ = player_->feet;
+        kurtYaw_ = wrap360(player_->yaw);
+        targetPosition_ = kurtPosition_;
+        targetYaw_ = kurtYaw_;
+    }
+
     // The alarm countdown decays once per tick, before any object runs
     // (ScriptRuntime.cs:896). There is no cutscene state in this slice, so the
     // C#'s cutscene early-return cannot suppress this decrement here.
     alarmTicks = alarmTicks > 0 ? alarmTicks - 1 : 0;
+
+    // The camera-track request lasts for the current tick and the next one
+    // (ScriptRuntime.cs:898).
+    cameraTrackTicks = cameraTrackTicks > 0 ? cameraTrackTicks - 1 : 0;
 
     // The screen-shake request belongs to one tick (ScriptRuntime.cs:899).
     // Calls made later in this tick replace it only when they are stronger.
@@ -2403,6 +2418,46 @@ void ScriptRuntime::hurtKurt(int32_t damage) {
 // camera's shake consumer is not ported yet, so this records the runtime half.
 void ScriptRuntime::raiseShake(float amount) {
     shake = mathMax(shake, amount);
+}
+
+// CameraTrack (ScriptRuntime.cs:1188-1216, opcode 203): calculate the pitch
+// the follow camera should ease towards while Kurt faces a tall object. The
+// camera is presentation, so its two atan2 calls use the shared fastAtan2 LUT
+// on both targets (R6); the table's angular error is far below one pixel of
+// camera pitch.
+void ScriptRuntime::cameraTrack(MdkObject* obj, int32_t mode, float height) {
+    const float maxUp = -30.0f;
+    const float halfTurn = 180.0f;
+    const float fullTurn = 360.0f;
+
+    const float heading = radiansToDegrees(
+        fastAtan2(obj->position.y - kurtPosition_.y, obj->position.x - kurtPosition_.x));
+    float off = wrap360(kurtYaw_ - heading);
+    if (off > halfTurn) {
+        off = fullTurn - off;
+    }
+
+    float top = obj->position.z + height * obj->scale;
+    if (mode == 0) {
+        float boundsTop = obj->position.z;
+        if (obj->model != nullptr) {
+            boundsTop += obj->model->bounds.max.z * obj->scale;
+        }
+        top = 0.3f * obj->position.z + 0.7f * boundsTop;
+    }
+
+    const float rest = level_->arenaPitch(currentArena_);
+    float target = rest;
+    if (off <= 90.0f && top >= kurtPosition_.z) {
+        const float dx = obj->position.x - kurtPosition_.x;
+        const float dy = obj->position.y - kurtPosition_.y;
+        const float distance = sqrtf(dx * dx + dy * dy);
+        const float angle = radiansToDegrees(fastAtan2(top - kurtPosition_.z, distance));
+        target = clampf(-angle * (120.0f - off) / 120.0f, maxUp, rest);
+    }
+
+    cameraTrackPitch = target;
+    cameraTrackTicks = 2;
 }
 
 // A numeric operand as a float (the C#'s ScriptMath.F).

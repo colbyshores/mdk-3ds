@@ -82,6 +82,7 @@ const int32_t kIfHitWeapon = 195;
 const int32_t kRaiseShake = 135;
 const int32_t kInheritKurtVel = 170;
 const int32_t kSetSkyMode = 202;
+const int32_t kCameraTrack = 203;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -1022,6 +1023,108 @@ void testSetSkyModeWritesSharedLevelState(LevelData* levelData, const Cmi* cmi,
     other.end();
     runProgram(runtime, other, &obj);
     CHECK(runtime.skyMode == 42);
+}
+
+// Opcode 203 (camera_track) has no C# ScriptVmTests counterpart, so this pins
+// the oracle directly (ScriptVm.cs:1124-1128 and ScriptRuntime.cs:1188-1216):
+// mode 1 looks at height * scale above the object, mode 0 at 70% of the way
+// to the model's top, the request falls as Kurt turns away and is clamped to
+// 30 degrees up, and it remains active for two ticks. The renderer-side
+// follow-camera consumer remains deferred.
+void testCameraTrackCalculatesPitchAndExpires(LevelData* levelData, const Cmi* cmi,
+                                               audio::SoundBank* bank) {
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player);
+    player.feet = runtime.kurtPosition();
+    player.yaw = 0.0f;
+    runtime.update(scripts::ScriptRuntime::kTick);
+
+    const mdk::Vec3 base = runtime.kurtPosition();
+    const float rest = levelData->arenaPitch(runtime.currentArena());
+    CHECK(!runtime.currentArena().empty());
+    CHECK(rest == 0.0f);  // Level 7's DANT_1 arena pitch.
+
+    // Mode 1: the object is 40 units ahead and its requested top is 20 above
+    // Kurt (origin +16, height 2, scale 2). With Kurt facing it, the target
+    // is -atan(20/40), or -26.565 degrees.
+    scripts::MdkObject obj;
+    obj.position = mdk::Vec3{base.x + 40.0f, base.y, base.z + 16.0f};
+    obj.scale = 2.0f;
+    Code mode1;
+    mode1.u8(kCameraTrack).u8(1).f32(2.0f);
+    mode1.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    mode1.end();
+    runProgram(runtime, mode1, &obj);
+    CHECK(!sawUnimplemented(kCameraTrack));
+    CHECK(obj.variables[0] == 1.0f);  // The instruction after 203 still runs.
+    CHECK(runtime.cameraTrackTicks == 2);
+    CHECK(fabsf(runtime.cameraTrackPitch + 26.565051f) < 0.001f);
+
+    // Mode 0: 70% of the way to the model's top. A 20-unit model top 80
+    // units away puts the requested top 14 above Kurt, for -9.926 degrees.
+    Model model;
+    model.bounds.min = Vec3f{0.0f, 0.0f, 0.0f};
+    model.bounds.max = Vec3f{0.0f, 0.0f, 20.0f};
+    obj.model = &model;
+    obj.position = mdk::Vec3{base.x + 80.0f, base.y, base.z};
+    obj.scale = 1.0f;
+    Code mode0;
+    mode0.u8(kCameraTrack).u8(0);
+    mode0.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    mode0.end();
+    runProgram(runtime, mode0, &obj);
+    CHECK(!sawUnimplemented(kCameraTrack));
+    CHECK(obj.variables[0] == 2.0f);
+    CHECK(runtime.cameraTrackTicks == 2);
+    CHECK(fabsf(runtime.cameraTrackPitch + 9.926246f) < 0.001f);
+
+    // The upward limit is 30 degrees, even when the requested top is much
+    // higher: mode 1 asks for a top 80 above Kurt, 40 units away.
+    obj.model = nullptr;
+    obj.position = mdk::Vec3{base.x + 40.0f, base.y, base.z + 76.0f};
+    obj.scale = 2.0f;
+    Code clamp;
+    clamp.u8(kCameraTrack).u8(1).f32(2.0f);
+    clamp.end();
+    runProgram(runtime, clamp, &obj);
+    CHECK(!sawUnimplemented(kCameraTrack));
+    CHECK(runtime.cameraTrackPitch == -30.0f);
+
+    // The lifetime is decremented once at the start of each following tick.
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.cameraTrackTicks == 1);
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.cameraTrackTicks == 0);
+    CHECK(runtime.cameraTrackPitch == -30.0f);  // The last pitch persists.
+
+    // The live Player yaw is copied at tick start. At 45 degrees the request
+    // is scaled by (120 - 45) / 120, so the same 26.565-degree angle becomes
+    // 16.603 degrees up.
+    player.yaw = 45.0f;
+    runtime.update(scripts::ScriptRuntime::kTick);
+    obj.position = mdk::Vec3{base.x + 40.0f, base.y, base.z + 16.0f};
+    obj.scale = 2.0f;
+    Code turned;
+    turned.u8(kCameraTrack).u8(1).f32(2.0f);
+    turned.end();
+    runProgram(runtime, turned, &obj);
+    CHECK(!sawUnimplemented(kCameraTrack));
+    CHECK(fabsf(runtime.cameraTrackPitch + 16.603157f) < 0.001f);
+
+    // At 180 degrees the object is behind Kurt, so the request falls back to
+    // the arena's rest pitch.
+    player.yaw = 180.0f;
+    runtime.update(scripts::ScriptRuntime::kTick);
+    obj.model = nullptr;
+    obj.position = mdk::Vec3{base.x + 40.0f, base.y, base.z};
+    obj.scale = 1.0f;
+    Code behind;
+    behind.u8(kCameraTrack).u8(1).f32(2.0f);
+    behind.end();
+    runProgram(runtime, behind, &obj);
+    CHECK(!sawUnimplemented(kCameraTrack));
+    CHECK(runtime.cameraTrackTicks == 2);
+    CHECK(runtime.cameraTrackPitch == rest);
 }
 
 // Opcode 241 (if_player_health) has no C# ScriptVmTests counterpart. Pin its
@@ -2757,6 +2860,8 @@ int main() {
     printf("PASS HeadShotsAddOnlyWhenEnabled\n");
     testSetSkyModeWritesSharedLevelState(&levelData, &cmi, &bank);
     printf("PASS SetSkyModeWritesSharedLevelState\n");
+    testCameraTrackCalculatesPitchAndExpires(&levelData, &cmi, &bank);
+    printf("PASS CameraTrackCalculatesPitchAndExpires\n");
     testPointSeesPlayerNeedsRangeAndAClearLine(runtime);
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
     testIfPlayerHealthComparesKurtHealth(&levelData, &cmi, &bank);

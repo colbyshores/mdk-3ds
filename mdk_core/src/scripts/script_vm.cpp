@@ -1830,6 +1830,13 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 202:  // set_574304: the sky mode shared by the level and renderer
             runtime_.skyMode = ival(op(ins, 0));
             break;
+        case 203: {  // camera_track: [mode, (height)] asks for a follow-camera pitch
+            const std::vector<ScriptValue>& track = listval(op(ins, 0));
+            const int32_t mode = track.empty() ? 0 : ival(track[0]);
+            const float height = track.size() > 1 ? fval(track[1]) : 0.0f;
+            runtime_.cameraTrack(obj, mode, height);
+            break;
+        }
         case 210:  // set_2c0: an unidentified object slot (ScriptVm.cs:1663)
             obj->value_2c0 = value(obj, op(ins, 0));
             break;

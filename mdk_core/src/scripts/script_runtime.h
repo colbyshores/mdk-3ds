@@ -95,7 +95,7 @@ public:
     // The level is non-const because the MTO parses its arenas on demand.
     // The sound bank is borrowed too; it is what decides whether a script's
     // play_sound names a sound the level has. The Player is borrowed as the
-    // live source of Kurt's velocity. The C# constructor requires its Kurt;
+    // live source of Kurt's velocity, feet and yaw. The C# constructor requires its Kurt;
     // keep that decision explicit here too: pass the live Player from a
     // frontend, or pass null deliberately from a harness that does not use
     // Kurt's live state.
@@ -202,6 +202,11 @@ public:
     // during the current tick. The renderer-side camera consumer is a later
     // slice; this records the oracle's per-tick state.
     void raiseShake(float amount);
+    // CameraTrack (ScriptRuntime.cs:1188-1216, opcode 203): calculate the
+    // camera pitch requested for an object. The runtime keeps the pitch and
+    // its two-tick lifetime; the follow-camera consumer and the save/load
+    // snapshot consumer are deferred with their subsystems.
+    void cameraTrack(MdkObject* obj, int32_t mode, float height);
     // ---- The mixer seam (the sounds the scripts make) ----
     // play_sound (opcode 89, 0x442402): the start mode and the place come from
     // `flags`, the point from `position` when that operand is a list.
@@ -303,9 +308,16 @@ public:
     int32_t alarmTicks = 0;
     // How the sky is drawn (C# ScriptRuntime.SkyMode, opcode 202): 0 shows
     // the sky, 1 clears to black, and any other value keeps the last frame.
-    // The renderer-side backdrop consumer is a later slice; the VM writes this
-    // shared level state exactly as the oracle does.
+    // The renderer-side backdrop consumer and the save/load snapshot consumer
+    // are later slices; the VM writes this shared level state exactly as the
+    // oracle does.
     int32_t skyMode = 0;
+    // camera_track (C# ScriptRuntime.CameraTrackPitch/CameraTrackTicks,
+    // opcode 203): the requested follow-camera pitch and how many more ticks
+    // it remains active. The renderer-side follow-camera consumer and the
+    // save/load snapshot consumer are deferred with their subsystems.
+    float cameraTrackPitch = 0.0f;
+    int32_t cameraTrackTicks = 0;
     // The strongest screen shake requested during this tick (opcode 135). It
     // is cleared at the start of every simulation tick, as in the oracle.
     float shake = 0.0f;
