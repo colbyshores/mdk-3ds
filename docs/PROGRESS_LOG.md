@@ -1,3 +1,63 @@
+## What this batch did (iteration 60 — the chain-link family: opcodes 29/49 and movement command 30)
+
+- Ported the chain that hangs off an object: opcode 29 (`spawn_chain`), opcode
+  49 (`release_children`) and movement command 30 (the chain's own motion,
+  `ObjectMotion.cs:464`), which had no C++ counterpart. The oracle's
+  `LastFollowerId` (`ScriptVm.cs:273`) and `LastChainLink` (`ScriptVm.cs:288`)
+  are now `ScriptRuntime::lastFollowerId` and `ScriptRuntime::lastChainLink`,
+  and `ScriptRuntime::updateChain` ports `UpdateChain` with the C#'s `Links`
+  list (the live followers, ordered by instance id, in the reused member list
+  the C# keeps in a field).
+- The details that matter: the links are numbered after the highest instance
+  id of the object's LIVE followers (a removed follower does not count, so its
+  id is reused), and the oracle's loop counts down, so the FIRST link spawned
+  has the HIGHEST id and the last one has id 0 — the link that drives the
+  chain. The chain's motion hangs each link's reference point 0 at the
+  previous link's reference point 1 and turns the links 90 degrees apart; only
+  the link with id 0 drives the chain, a gap in the chain makes the later
+  links let go, and a dead leader makes them let go too. `release_children`
+  lets go of the HIGHEST-id chain link (same arena, movement command 30) per
+  count and branches TRUE when the chain is empty — the one place the oracle
+  clears an inbound `leader`, and it clears exactly the links it releases.
+- Three `vm_tests` tests pin it: `SpawnChainNumbersItsLinks` (the numbering,
+  the live/dead follower rule, the per-leader numbering),
+  `ChainLinksHangOffTheirLeader` (the assembly, the 90-degree turns, that
+  only the id-0 link drives the chain, the broken chain, the dead leader) and
+  `ReleaseChildrenLetsGoOfTheChain` (the release order and the branch when
+  the chain runs out). Mutation-checked: breaking the follower-id scan, the
+  yaw, the release order, the gap check, the dead-leader check or the
+  "only id 0 drives" rule each fails a check (the first pass of the last one
+  was vacuous — re-assembling an assembled chain is a no-op — so the test now
+  drives a link BEFORE the chain is assembled).
+- Addressed review-3's NIT: the `link_partners` comment no longer claims that
+  180/213/214/246 depend on the retained dead link — they read the field but
+  reject a dead partner exactly as they reject a null one; variable source 3
+  and getFlags/setFlags are what read the retained pointer.
+- Recorded review-3's open question in the coverage doc: the chain-command
+  readers (`Links`, `LastFollowerId`, `LastChainLink`) compare against the
+  RETAINED leader pointer, so nothing may clear a link's `leader` except
+  `release_children` (49) and the chain motion's own let-go.
+- Coverage: 198 true C++ dispatches / 238, 40 remaining (recounted with the
+  brace-matched method spans; the raw C++ label count is 200 with one nested
+  switch arm and one duplicate label in it).
+- The known pre-existing gap in the shared `spawn()` helper — the C#'s
+  `Stats.CountEnemy(type, Created)` call is missing — applies equally to
+  opcode 29 and to every other spawn opcode (86/149/156/179/206); it was
+  already recorded (progress log, iterations 30 and 57) and the level
+  goldens do not observe those counters. Left untouched here so the batch
+  stays one subsystem.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` → 32 VM tests PASS
+    and the full oracle suite ended with `All cases match the oracle.`
+  - `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; SMDH SKIPPED (no CIA
+    built).
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` → linked `mdk.elf`, staged 69 RomFS files (79M), built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` → built the Linux target.
+- No golden changed; no emulator or hardware run was performed. Old-3DS timing
+  remains unmeasured.
+
 
 ## What this batch did (iteration 59 — the oracle's Remove clears no inbound reference)
 
