@@ -1,3 +1,39 @@
+## What this batch did (iteration 64 — opcode 121, floor below)
+
+- Ported opcode 121 (`if_floor_below`) from
+  `src/Mdk.Game/Scripts/ScriptVm.cs:1319-1320`. The receiver drops a segment
+  of the operand's length from its position and branches when the segment
+  crosses any triangle of the oracle's active ray arenas. The implementation
+  uses the existing `ScriptRuntime::raycastPoint` seam, whose nearest-hit and
+  active-arena semantics match the C# `Raycast`; no normal or arena-specific
+  floor-only approximation is introduced.
+- One synthetic `vm_tests` case, `FloorBelowBranchesOnARayHit`, pins the
+  dispatch, the blocked and clear branches, and the operand's role as the
+  drop distance. It uses the level-7 floor five below the level start: a
+  ten-unit drop crosses it, while a four-unit drop stops above it. The test
+  was mutation-checked: inverting the hit result, reversing the ray, and
+  replacing the operand with a fixed ten-unit drop each make the test fail.
+- Addressed review-7's comment NIT. Movement command 229 still uses the
+  oracle's `Parameter * 0.5f` condition, but its source and test comments now
+  call that half of the recorded flight time rather than an apex. No behavior
+  changed.
+- Coverage: 202 true C++ dispatches / 238, 36 remaining. The brace-matched
+  recount gives C# 238 cases and C++ 204 numeric labels / 203 unique labels;
+  the extra numeric label is the nested mode arm inside opcode 249, leaving
+  202 true dispatches.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` passed 36 VM tests
+    and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` passed all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` built the Linux target.
+- No golden changed; opcode 121 does not fire in the level 3–8 corpus. No
+  emulator or hardware run was performed. Old-3DS timing remains unmeasured.
+
+
 ## What this batch did (iteration 63 — opcode 229, turn and jump)
 
 - Ported opcode 229 (`turn_and_jump_to_dest`) from

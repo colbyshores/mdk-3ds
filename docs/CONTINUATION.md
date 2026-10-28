@@ -1,7 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (iteration 63: opcode 229, turn and jump).
-Current coverage: 201 true C++ dispatches / 238, 37 remaining. Continue one
+Last updated: 2026-10-28 (iteration 64: opcode 121, floor below).
+Current coverage: 202 true C++ dispatches / 238, 36 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
@@ -16,10 +16,11 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    batch. Opcode 208 (reachability probe), harness + 13, parts 32/129,
    rope-swing 226/242, spawn 156/206, push-hit-dir 81, stats 217, vision 243,
    value slots 199/210, Kurt/screen 215/240/244, no-ops 239/77, object avoidance
-   204, and turn-and-jump 229 are implemented and pinned. All three oracle
+   204, turn-and-jump 229 and floor-below 121 are implemented and pinned. All
+   three oracle
    `Linked` writers (245/179/228) are ported, so partner pairs can feed the
    213/214 conditions. 132/136 still need Effects; frame-blend integration is a
-   separate future slice. The exact remaining 37 are in
+   separate future slice. The exact remaining 36 are in
    `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. Owner must select headless C# vs original-EXE reference;
@@ -31,19 +32,17 @@ Rides. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 63 ports opcode 229 (`turn_and_jump_to_dest`) and movement command
-  229. The receiver turns toward its move destination by at most the requested
-  degrees per second; once facing it, the oracle's ballistic velocity, apex,
-  total flight time and friction-adjusted horizontal speed are set. Movement
-  command 229 advances the flight timer and stops with zeroed velocity on floor
-  contact after the apex. One synthetic `vm_tests` case pins the turn limit,
-  false/true branches, launch constants, first motion tick, early-contact
-  exclusion and floor landing. Mutation-checked: doubling the turn rate,
-  shortening the arc, dropping the friction compensation, allowing a landing
-  before the apex and removing the landing stop each fail the test. Coverage is 201 true dispatches / 238 with 37
-  remaining.
+- Iteration 64 ports opcode 121 (`if_floor_below`) over the existing arena
+  raycast seam. It drops a segment of the operand's length from the receiver's
+  position and branches when any triangle of the oracle's active ray arenas
+  crosses it. One synthetic `vm_tests` case pins the blocked and clear branches
+  and the operand's drop distance. Coverage is 202 true dispatches / 238 with
+  36 remaining.
+- Review-7's NIT is addressed: movement command 229's condition is now
+  described as half of the recorded flight time (`Parameter * 0.5f`), not a
+  geometric apex. The code was not changed.
 - Verification on this tree:
-  - `make -C tests/scripts clean && make -C tests/scripts` passed 35 VM tests
+  - `make -C tests/scripts clean && make -C tests/scripts` passed 36 VM tests
     and the complete oracle suite (`All cases match the oracle.`).
   - `bash tools/check.sh` passed all contract gates (`CHECK: ALL GATES
     PASSED`); SMDH was skipped because no CIA was built.
@@ -51,17 +50,16 @@ Rides. Old-3DS timing remains UNMEASURED.
     mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
     `mdk.3dsx`.
   - `cmake --build build-linux --target mdk` built the Linux target.
-- No golden changed; opcode 229 does not fire in the level 3–8 corpus. No
+- No golden changed; opcode 121 does not fire in the level 3–8 corpus. No
   emulator or hardware run was performed. Old-3DS timing remains unmeasured.
-- The newest external review,
-  `logs/ralph-pi/run-20261027-223315/review-6.md`, contains only
-  `REVIEWER FAILED model=litellm/qwen rc=1`; it supplied no BLOCKER, MAJOR,
-  MINOR or NIT finding to address. Review-4's remaining documentation point
-  was fixed in iteration 61.
-- Next: port opcode 121 (`if_floor_below`) over the existing arena raycast
-  seam, with a `vm_tests` case pinning clear/blocked rays and both branches.
-  Keep opcode 192 (`if_no_flat_floor_at`) as a separate slice unless its hit
-  normal can be carried by the same tested raycast seam.
+- The newest usable Pi review,
+  `logs/ralph-pi/run-20261027-223315/review-7.md`, found no BLOCKER or MAJOR
+  and supplied one comment NIT, addressed above. The newer
+  `logs/ralph/review-37.md` is only a Muse reviewer failure (quota 429), with
+  no findings.
+- Next: port opcode 192 (`if_no_flat_floor_at`) as its own slice. It needs the
+  oracle's ray-hit normal and rotated point ahead of the receiver; extend the
+  tested raycast seam to carry the normal rather than approximating it.
 
 ## Testability and standing open items
 
