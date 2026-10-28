@@ -1,6 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (opcode 170 `inherit_kurt_vel`).
+Last updated: 2026-10-28 (review-13 correction to opcode 170's Kurt-velocity source).
 Current coverage: 206 true C++ dispatches / 238, 32 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -18,7 +18,10 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    value slots 199/210, Kurt/screen 215/240/244, no-ops 239/77, object avoidance
    204, turn-and-jump 229, floor-below 121, no-flat-floor 192, hit-weapon
    195, screen-shake 135 and inherit-Kurt-velocity 170 are implemented and
-   pinned. The current-plus-second raycast selection seam is pinned against
+   pinned. Opcode 170 now reads the already-ported `Player` live at dispatch
+  time; frontend integration must still construct `ScriptRuntime` and bind
+  that Player before 170 is complete. The current-plus-second raycast
+  selection seam is pinned against
    overlapping DANT_1/DANT_8 geometry. All three oracle `Linked` writers
    (245/179/228) are ported, so partner pairs can feed the 213/214 conditions.
    132/136 still need Effects; frame-blend integration is a separate future
@@ -30,20 +33,29 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 Deferred: 248 `push_kurt` is an honest no-op pending Kurt knock-back. The
 C#'s Rides subsystem also writes the alarm countdown and remains deferred with
 Rides. Opcode 135's follow-camera consumer, opcode 195's group-hit/direct
-combat writers, opcode 81's hit-direction writers, and opcode 170's Kurt-motion
-velocity writer remain partial with those subsystems. Old-3DS timing remains
-UNMEASURED.
+combat writers, opcode 81's hit-direction writers, and opcode 170's missing
+frontend `Player` binding remain partial with those integrations. Old-3DS
+timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- The latest batch ports opcode 170 (`inherit_kurt_vel`) from
-  `ScriptVm.cs:1603-1604`. The receiver's velocity gains Kurt's current
-  velocity multiplied by the F32 operand. `ScriptRuntime` has an explicit
-  `kurtVelocity`/`setKurtVelocity` seam for the C# `Kurt.Velocity` source;
-  Kurt movement remains deferred, so the field stays zero in integrated play.
-  One synthetic `vm_tests` case pins the dispatch, literal scaling, all three
-  velocity components, preservation of the receiver's existing velocity, a
-  negative scale, and fall-through to the next instruction.
+- The latest batch corrects opcode 170 (`inherit_kurt_vel`) after review-13.
+  The receiver's velocity gains Kurt's current velocity multiplied by the F32
+  operand. `ScriptRuntime` now borrows the already-ported `mdk::Player` and
+  reads `Player::velocity()` live at dispatch time; the old copied
+  `setKurtVelocity` snapshot is gone. `Player::velocity()` includes the C#
+  `Kurt.cs:133` horizontal knock-down-push term and its drain, so a future
+  combat writer cannot silently omit it. The real remaining integration gap is
+  that no shipped frontend constructs `ScriptRuntime` and binds its Player
+  yet; the dispatch therefore remains partial. One synthetic `vm_tests` case pins the
+  dispatch, literal scaling, all three velocity components, preservation of
+  the receiver's existing velocity, a negative scale, fall-through, a live
+  Player change after runtime construction, the push term and its drain.
+- Review-13's MAJOR finding and MINOR unit/documentation issue are fixed. The
+  old record incorrectly said Kurt movement was unported; `mdk::Player` has
+  carried that movement since the earlier player batches. The seam is now
+  explicitly in u/s and distinct from the C# `ScriptRuntime.KurtVelocity`
+  observed-position-delta field.
 - Review-12's sole MINOR finding is fixed. The opcode-135 test now makes a
   finite request after a NaN request and pins that `MathF.Max(NaN, finite)`
   stays NaN. Mutation-checking the runtime `mathMax` first arm to return the
@@ -56,8 +68,8 @@ UNMEASURED.
   unique labels; opcode 249's nested `case 0`/`case 1` arms account for the
   extra raw label and the duplicate.
 - Verification on this tree:
-  - `make -C tests/scripts` exited 0 after 41 VM tests and the complete oracle
-    suite (`All cases match the oracle.`).
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 41
+    VM tests and the complete oracle suite (`All cases match the oracle.`).
   - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
     PASSED`); SMDH was skipped because no CIA was built.
   - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
@@ -68,9 +80,11 @@ UNMEASURED.
     and reported no unimplemented opcodes on levels 3–8.
 - No golden changed; opcode 170 does not fire in the level 3–8 corpus. No
   emulator or hardware run was performed. Old-3DS timing remains unmeasured.
-- Next: port opcode 202 (`set_574304`) with a runtime sky-mode seam and a
-  synthetic test. Its renderer consumer remains deferred, so classify the
-  dispatch partial until the sky renderer consumes it.
+- Next isolated opcode family: port 202 (`set_574304`) with a runtime
+  sky-mode seam and a synthetic test. Its renderer consumer remains deferred,
+  so classify the dispatch partial until the sky renderer consumes it. Before
+  opcode 170 can be complete, frontend integration must construct
+  `ScriptRuntime` and bind the live `Player`; do not re-port Kurt movement.
 
 ## Testability and standing open items
 

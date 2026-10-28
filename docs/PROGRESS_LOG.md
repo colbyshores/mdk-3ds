@@ -1,13 +1,56 @@
+## What this batch did (review-13 correction — live Player source for opcode 170)
+
+- Addressed review-13's MAJOR finding. The previous record said Kurt's
+  movement was not ported, but it already exists as `mdk::Player` and is live
+  in the Linux frontend. The real gap is that no shipped frontend constructs
+  `ScriptRuntime`, so the runtime has no integrated Player binding. The copied
+  `kurtVelocity` / `setKurtVelocity` snapshot has been removed.
+- `ScriptRuntime` now borrows the same `Player` at construction and reads
+  `Player::velocity()` live when opcode 170 dispatches. The source is in u/s
+  and is distinct from the C# `ScriptRuntime.KurtVelocity` field, which is the
+  observed position delta multiplied by 30. The runtime's position snapshot
+  remains part of the larger frontend integration and is not claimed complete.
+- Added `Player::velocity()` from `Kurt.cs:132-133`, including the horizontal
+  knock-down-push term. The push state, additive writer and per-step drain
+  follow `Kurt.Combat.cs`; the knock-down state machine and its producer still
+  land with combat. This removes the fidelity hazard where a future Player
+  binding would silently omit the C# `_push` term.
+- Extended `InheritKurtVelocityAddsScaledKurtVelocity` in
+  `tests/scripts/vm_tests.cpp`. It still pins the dispatch, literal scaling on
+  all three components, preservation of the receiver velocity, a negative
+  scale and fall-through. It now also changes the Player after runtime
+  construction (rejecting a cached snapshot) and pins the knock-down-push
+  term and its drain. Opcode 170 does not fire in the level 3-8 corpus, so no
+  golden changed.
+- Corrected the unit and ownership descriptions in `docs/OPCODE_COVERAGE.md`
+  and `docs/CONTINUATION.md`: frontend integration must wire
+  `Player -> ScriptRuntime`; it must not re-port Kurt movement.
+- Coverage is unchanged: 206 true C++ dispatches / 238, 32 remaining.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 41
+    VM tests and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    and reported no unimplemented opcodes on levels 3-8.
+- No emulator or hardware run was performed. Old-3DS timing remains
+  unmeasured. Next isolated opcode family: 202 (`set_574304`) with a runtime
+  sky-mode seam and a synthetic test; its renderer consumer remains deferred.
+
 ## What this batch did (opcode 170 — inherit Kurt velocity; review-12 fix)
 
 - Ported opcode 170 (`inherit_kurt_vel`) from
   `src/Mdk.Game/Scripts/ScriptVm.cs:1603-1604`. The receiver's velocity gains
   each component of the C# `Kurt.Velocity` source multiplied by the opcode's
-  F32 operand. `ScriptRuntime` now has an explicit `kurtVelocity` /
-  `setKurtVelocity` seam for that source. It is deliberately distinct from the
-  C# `ScriptRuntime.KurtVelocity` field, which measures position change over
-  a tick. Kurt movement is a later slice, so the seam has no integrated writer
-  yet and the dispatch is classified partial.
+  F32 operand. This first implementation used an explicit copied
+  `kurtVelocity` / `setKurtVelocity` seam for that source. Review-13 correctly
+  found that its record was wrong: Kurt movement was already ported as
+  `mdk::Player`. The review-13 correction above replaces the copy with a live
+  `Player` source and records the real remaining frontend integration gap.
 - Added `InheritKurtVelocityAddsScaledKurtVelocity` to
   `tests/scripts/vm_tests.cpp`. It pins the dispatch, literal scaling on all
   three components, preservation of the receiver's existing velocity, a

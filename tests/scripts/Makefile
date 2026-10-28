@@ -42,6 +42,7 @@ COMMON_SOURCES := \
 	$(CORE)/game/arena_space.cpp \
 	$(CORE)/game/bsp.cpp \
 	$(CORE)/game/kurt.cpp \
+	$(CORE)/game/player.cpp \
 	$(CORE)/render/arena_scene.cpp \
 	$(CORE)/render/material_resolver.cpp \
 	$(CORE)/scripts/object.cpp \

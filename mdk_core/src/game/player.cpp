@@ -40,6 +40,9 @@ const float kFallStartSpeed = -16.0f;
 const float kChuteGravity = 21.33f;
 const float kChuteFallSpeed = -8.0f;
 const float kChuteBrake = 256.0f;
+// C# Kurt.Combat.cs: PushDrain. The horizontal knock-down push fades toward
+// zero at this rate (u/s^2).
+const float kPushDrain = 0.1f * kTicks * kTicks;
 
 // damp_collide_move's slide factors: walking stops within 30 degrees of
 // head-on; falling slides off 45 degrees.
@@ -101,6 +104,21 @@ Vec3 Player::right() const {
     return Vec3{f.y, -f.x, 0.0f};
 }
 
+Vec3 Player::velocity() const {
+    // C# Kurt.Velocity (Kurt.cs:133):
+    // Facing * ForwardSpeed + Right * StrafeSpeed + new Vector3(_push, VerticalSpeed).
+    const Vec3 f = facing();
+    const Vec3 r = right();
+    return Vec3{f.x * forwardSpeed + r.x * strafeSpeed + _knockdownPush.x,
+                f.y * forwardSpeed + r.y * strafeSpeed + _knockdownPush.y, verticalSpeed};
+}
+
+void Player::addKnockdownPush(const Vec2& push) {
+    // C# Kurt.KnockDown (Kurt.Combat.cs:173-177): _push += push.
+    _knockdownPush.x += push.x;
+    _knockdownPush.y += push.y;
+}
+
 void Player::update(const Input& input, float delta) {
     if (dead) {
         return; // C# Kurt.Update returns on State.Dead: a dead Kurt is frozen.
@@ -128,8 +146,11 @@ void Player::update(const Input& input, float delta) {
 
     const Vec3 f = facing();
     const Vec3 r = right();
-    const Vec3 move{(f.x * forwardSpeed + r.x * strafeSpeed) * delta,
-                    (f.y * forwardSpeed + r.y * strafeSpeed) * delta, 0.0f};
+    // C# Kurt.cs:221-222: the move includes the current knock-down push, then
+    // that push drains before the vertical update consumes the move.
+    const Vec3 move{(f.x * forwardSpeed + r.x * strafeSpeed + _knockdownPush.x) * delta,
+                    (f.y * forwardSpeed + r.y * strafeSpeed + _knockdownPush.y) * delta, 0.0f};
+    drainKnockdownPush(delta);
 
     if (_space && (move.x != 0.0f || move.y != 0.0f)) {
         feet = fromVec(_space->move(toVec(feet), toVec(move), ArenaSpace::kMotionWalk, kWalkSlide)
@@ -175,6 +196,13 @@ void Player::damage(int damage) {
     // C# Damage with Normal difficulty (Easy/Hard scaling lands with difficulty).
     // The death transition is the caller's (health 0 on the floor), not here.
     health = health - damage > 0 ? health - damage : 0;
+}
+
+void Player::drainKnockdownPush(float delta) {
+    // C# DrainPush (Kurt.Combat.cs:208-209).
+    const float step = kPushDrain * delta;
+    _knockdownPush.x = moveToward(_knockdownPush.x, 0.0f, step);
+    _knockdownPush.y = moveToward(_knockdownPush.y, 0.0f, step);
 }
 
 void Player::updateVertical(const Input& input, const Vec3& move, float delta) {

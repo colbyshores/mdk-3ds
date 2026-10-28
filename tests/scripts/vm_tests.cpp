@@ -33,7 +33,9 @@
 #include "formats/model.h"
 #include "formats/script_decoder.h"
 #include "game/level_data.h"
+#include "game/player.h"
 #include "scripts/script_runtime.h"
+#include "util/math_lut.h"
 
 using namespace mdk;
 using namespace mdk::formats;
@@ -747,16 +749,19 @@ void testPushHitDirAddsVelocityAlongTheLastHit(scripts::ScriptRuntime& runtime) 
 
 // Opcode 170 (inherit_kurt_vel) has no C# ScriptVmTests counterpart, so this
 // pins the oracle directly (ScriptVm.cs:1603-1604): the receiver's velocity
-// gains Kurt's current velocity multiplied by the numeric operand. The C++
-// movement slice has not landed, so the test supplies the runtime's Kurt
-// velocity seam explicitly.
+// gains Kurt's current velocity multiplied by the numeric operand. The source
+// is the live Player (C# Kurt.Velocity, Kurt.cs:132-133), not a copied value.
 void testInheritKurtVelocityAddsScaledKurtVelocity(LevelData* levelData, const Cmi* cmi,
                                                     audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
-    runtime.setKurtVelocity(mdk::Vec3{2.0f, -4.0f, 6.0f});
+    Player player;
+    player.yaw = 0.0f;
+    player.forwardSpeed = 2.0f;
+    player.strafeSpeed = 4.0f;
+    player.verticalSpeed = 6.0f;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player);
 
-    // A literal scale is applied to every component and added to the
-    // receiver's existing velocity.
+    // At yaw zero, Player::velocity is (2, -4, 6). A literal scale is applied
+    // to every component and added to the receiver's existing velocity.
     {
         Code code;
         code.u8(kInheritKurtVel).f32(0.5f);
@@ -772,8 +777,9 @@ void testInheritKurtVelocityAddsScaledKurtVelocity(LevelData* levelData, const C
         CHECK(obj.velocity.z == 6.0f);
     }
 
-    // A negative literal scale reverses the inherited velocity, rather than
-    // replacing it with its magnitude.
+    // Change the Player after the runtime was constructed. The dispatch must
+    // read the live velocity, not a construction-time or previous-tick copy.
+    player.forwardSpeed = 10.0f;
     {
         Code code;
         code.u8(kInheritKurtVel).f32(-2.0f);
@@ -782,10 +788,37 @@ void testInheritKurtVelocityAddsScaledKurtVelocity(LevelData* levelData, const C
         obj.velocity = mdk::Vec3{1.0f, 2.0f, 3.0f};
         runProgram(runtime, code, &obj);
         CHECK(!sawUnimplemented(kInheritKurtVel));
-        CHECK(obj.velocity.x == -3.0f);
+        CHECK(obj.velocity.x == -19.0f);
         CHECK(obj.velocity.y == 10.0f);
         CHECK(obj.velocity.z == -9.0f);
     }
+
+    // The C# velocity includes the horizontal knock-down push. Its combat
+    // state machine is deferred, but omitting this term from Player::velocity
+    // would make every inherited knockdown velocity wrong.
+    player.addKnockdownPush(mdk::Vec2{3.0f, -1.0f});
+    {
+        Code code;
+        code.u8(kInheritKurtVel).f32(1.0f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kInheritKurtVel));
+        CHECK(obj.velocity.x == 13.0f);
+        CHECK(obj.velocity.y == -5.0f);
+        CHECK(obj.velocity.z == 6.0f);
+    }
+
+    // The C# drains the push by 90 u/s^2 (PushDrain). One 1/60-second step
+    // takes (3, -1) to (1.5, 0): the x term retains half its value and the
+    // smaller y term reaches zero.
+    player.forwardSpeed = 0.0f;
+    player.strafeSpeed = 0.0f;
+    player.verticalSpeed = 0.0f;
+    Input idle;
+    player.update(idle, 1.0f / 60.0f);
+    CHECK(fabsf(player.velocity().x - 1.5f) < 1e-6f);
+    CHECK(player.velocity().y == 0.0f);
 }
 
 // Opcode 206 (spawn_along_path) has no C# ScriptVmTests counterpart either, so
@@ -2588,6 +2621,10 @@ void testTurnAndJumpTurnsLaunchesAndStopsOnFloor(LevelData* levelData, const Cmi
 } // namespace
 
 int main() {
+    // Player::facing uses the shared trig table; initialize it before the
+    // opcode-170 test constructs a Player.
+    mdk::mathLutInit();
+
     // The formats library reaches the filesystem through this seam.
     mdk::formats::setFileSystem(mdk::test::host::fileSystem());
 

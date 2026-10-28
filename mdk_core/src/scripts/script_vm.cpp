@@ -577,7 +577,7 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         }
 
         case 170: {  // inherit_kurt_vel: add Kurt's current velocity, scaled by the operand
-            const Vec3& kurtVelocity = runtime_.kurtVelocity();
+            const Vec3 kurtVelocity = runtime_.kurtVelocity();
             const float scale = fval(op(ins, 0));
             obj->velocity.x += kurtVelocity.x * scale;
             obj->velocity.y += kurtVelocity.y * scale;

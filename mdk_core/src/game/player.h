@@ -5,11 +5,11 @@
 // the chute, the fall and the landing).
 //
 // This is the movement half of src/Mdk.Game/Kurt/Kurt.cs, using the C#'s exact
-// constants and the BSP collision in game/arena_space.h. The knock-down, the
-// crouch-slide, the ledges, the platforms, the updrafts, the weapons and the
-// death land with their own subsystems; where the C# branches on them this
-// takes the branch they are false on (no slide, no updraft, no platform, no
-// damage), which is the state a fresh Kurt is in.
+// constants and the BSP collision in game/arena_space.h. The knock-down state
+// machine, the crouch-slide, the ledges, the platforms, the updrafts, the
+// weapons and the death land with their own subsystems; where the C# branches
+// on them this takes the branch they are false on (no slide, no updraft, no
+// platform, no damage), which is the state a fresh Kurt is in.
 //
 // Units and convention match the C#: world units, Z up; Yaw in degrees,
 // counter-clockwise, Facing = (cos yaw, sin yaw, 0); the follow camera's pitch
@@ -54,6 +54,16 @@ public:
     Vec3 facing() const;
     Vec3 right() const;
 
+    // C# Kurt.Velocity (Kurt.cs:132-133), in u/s: the walking terms, the
+    // horizontal knock-down push and the vertical speed. The combat state
+    // machine that writes the push is not ported, but the push state and its
+    // drain are, so a future writer cannot silently omit this term.
+    Vec3 velocity() const;
+    // The velocity half of C# Kurt.KnockDown (Kurt.Combat.cs:173-177): add the
+    // horizontal knock-down push in u/s. The knock-down state itself lands with
+    // the combat slice.
+    void addKnockdownPush(const Vec2& push);
+
     // One fixed step of delta seconds (the C# Kurt.Update: turning, the walk
     // move against the BSP, then the vertical).
     void update(const Input& input, float delta);
@@ -74,8 +84,10 @@ private:
     void fallMove(float delta);
     void land(const Vec3& before, const Vec3& normal, float delta);
     void damage(int damage); // C# Damage (Normal difficulty): health -= damage, floored at 0
+    void drainKnockdownPush(float delta);
 
     ArenaSpace* _space = nullptr;
+    Vec2 _knockdownPush = {0.0f, 0.0f};  // C# Kurt.Combat.cs:_push, in u/s
     Vec3 _floorNormal = {0.0f, 0.0f, 1.0f};
     int _jumpTicksLeft = 0;
     bool _jumpReleased = true;

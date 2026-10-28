@@ -49,6 +49,9 @@
 #include "util/random.h"
 
 namespace mdk {
+
+class Player;
+
 namespace scripts {
 
 // Per-arena script state (the arena's embedded object).
@@ -91,9 +94,12 @@ public:
     // decoder borrows the CMI's bytes, and the models borrow the level's).
     // The level is non-const because the MTO parses its arenas on demand.
     // The sound bank is borrowed too; it is what decides whether a script's
-    // play_sound names a sound the level has.
+    // play_sound names a sound the level has. The Player is borrowed as the
+    // live source of Kurt's velocity (C# ScriptRuntime receives the same Kurt
+    // object in its constructor); harnesses may pass null until a frontend
+    // constructs the runtime with its Player.
     ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
-                  audio::SoundBank* bank);
+                  audio::SoundBank* bank, const Player* player = nullptr);
 
     // Advance the world by one frame (the driver calls this once per tick).
     void update(float delta);
@@ -170,13 +176,14 @@ public:
     // Whether the object was removed (no longer one of the C#'s Objects).
     bool isRemoved(const MdkObject* obj) const;
     const Vec3& kurtPosition() const { return kurtPosition_; }
-    // C# Kurt.Velocity (Kurt.cs:132-133): the current walking/falling velocity
-    // that inherit_kurt_vel (opcode 170) adds to an object. This is not the
-    // ScriptRuntime.KurtVelocity field, which measures the position change
-    // over a tick. Kurt movement is a later slice, so this seam stays zero
-    // until that slice writes it.
-    const Vec3& kurtVelocity() const { return kurtVelocity_; }
-    void setKurtVelocity(const Vec3& velocity) { kurtVelocity_ = velocity; }
+    // C# Kurt.Velocity (Kurt.cs:132-133), in u/s: the walking terms, the
+    // horizontal knock-down push and the vertical speed. inherit_kurt_vel
+    // (opcode 170) reads this at dispatch time. It is distinct from the C#
+    // ScriptRuntime.KurtVelocity field: that is the observed position delta
+    // multiplied by 30, while this is derived from Kurt's own velocity terms.
+    // The bound Player is borrowed and must outlive the runtime. With no Player
+    // bound, the source is zero, as it was before the frontend integration.
+    Vec3 kurtVelocity() const;
     // Kurt's combat/inventory state (the Hurt/Damage half of Kurt.Combat.cs):
     // hurt_kurt (opcode 109) writes it, if_inventory (175) reads the slots.
     const Kurt& kurt() const { return kurt_; }
@@ -409,6 +416,7 @@ private:
     static bool debrisFacetsTrampoline(void* ctx, const std::string& arena, int32_t group,
                                        DebrisGroup* out);
 
+    const Player* player_ = nullptr;  // borrowed; the live Kurt movement source
     LevelData* level_;
     const formats::Cmi* cmi_;
     formats::ScriptDecoder decoder_;
@@ -445,7 +453,6 @@ private:
     std::string secondArena_;
     bool secondActive_ = false;
     Vec3 kurtPosition_{};
-    Vec3 kurtVelocity_{};  // C# Kurt.Velocity; the movement slice writes it later
     Kurt kurt_;  // C# ScriptRuntime.Kurt — the combat/inventory slice (game/kurt.h)
     // Rides.Ridden (Rides.cs:40) and Rides.OnBoard (Rides.cs:89): the ridden
     // object, and whether it is the snowboard. The ride slice (mount/dismount)

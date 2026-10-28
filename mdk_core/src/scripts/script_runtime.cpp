@@ -15,6 +15,7 @@
 #include "formats/dti.h"
 #include "formats/model_animation.h"
 #include "game/bsp.h"
+#include "game/player.h"
 
 namespace mdk {
 namespace scripts {
@@ -225,9 +226,10 @@ float hermite(float p0, float p1, float m0, float m1, float u) {
 } // namespace
 
 ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
-                             audio::SoundBank* bank)
-    : level_(level), cmi_(cmi), decoder_(cmi->bytes().data(), (int32_t)cmi->bytes().size()),
-      rng_(seed), vm_(*this, decoder_), bank_(bank), mixer_(bank), debris_(rng_) {
+                             audio::SoundBank* bank, const Player* player)
+    : player_(player), level_(level), cmi_(cmi),
+      decoder_(cmi->bytes().data(), (int32_t)cmi->bytes().size()), rng_(seed),
+      vm_(*this, decoder_), bank_(bank), mixer_(bank), debris_(rng_) {
     // Debris delegates (ScriptRuntime.cs:340-346): Ray and GroupFacets are
     // wired; Trail (Effects.SpawnTrail) and Updraft (Fans.Query) stay unset
     // until those slices land — neither perturbs the RNG stream (see debris.h).
@@ -265,6 +267,12 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     kurtYaw_ = wrap360(level_->dti().startAngle());
     targetPosition_ = kurtPosition_;
     targetYaw_ = kurtYaw_;
+}
+
+Vec3 ScriptRuntime::kurtVelocity() const {
+    // Read the live Player at dispatch time. A snapshot would silently keep
+    // the previous tick's velocity when the frontend forgot to push an update.
+    return player_ != nullptr ? player_->velocity() : Vec3{};
 }
 
 void ScriptRuntime::update(float) {
