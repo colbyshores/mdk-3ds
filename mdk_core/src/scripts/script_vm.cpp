@@ -618,6 +618,13 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             bool sees = runtime_.canSeeKurt(obj, fval(op(ins, 0)), fval(op(ins, 1)));
             return branch(obj, ins, ins.opcode == 14 ? sees : !sees);
         }
+        case 121: { // if_floor_below: any arena triangle crosses the drop below
+            Vec3 from = obj->position;
+            Vec3 to = from;
+            to.z -= fval(op(ins, 0));
+            Vec3 hit;
+            return branch(obj, ins, runtime_.raycastPoint(from, to, &hit));
+        }
         case 115: { // if_wall: a horizontal ray from the walker's chest (or feet)
             const float kWalkerHeight = 2.0f;
             Vec3 from = obj->position;

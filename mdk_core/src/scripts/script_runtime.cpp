@@ -1804,7 +1804,7 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
         case 61:  // FlyProjectile (fire): straight along the yaw and pitch
             flyProjectile(obj);
             break;
-        case 229: {  // TurnAndJump's flight: stop after the apex on floor contact
+        case 229: {  // TurnAndJump's flight: stop after half the recorded flight time
             obj->parameter_timer += kTick;
             if (obj->parameter_timer >= obj->parameter * 0.5f &&
                 (obj->contact_flags & MdkObject::ContactFloor) != 0) {

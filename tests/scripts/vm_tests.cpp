@@ -74,6 +74,7 @@ const int32_t kAttachTo = 74;
 const int32_t kSpawnChain = 29;
 const int32_t kReleaseChildren = 49;
 const int32_t kAvoidObjects = 204;
+const int32_t kIfFloorBelow = 121;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -2154,12 +2155,56 @@ void testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(LevelData* levelData, con
     CHECK(fabsf(receiver->yaw - 180.0f) < 1e-4f);
 }
 
+// Opcode 121 (if_floor_below) has no C# ScriptVmTests counterpart, so this
+// pins the oracle directly (ScriptVm.cs:1319-1320): a downward segment from
+// the receiver's position crosses any arena triangle, and the condition is
+// true when it does. The receiver's arena does not select the ray: the oracle
+// uses its active ray arenas, like the existing raycast seam.
+void testFloorBelowBranchesOnARayHit(scripts::ScriptRuntime& runtime) {
+    const Vec3 kurt = runtime.kurtPosition();
+
+    Code blocked;
+    blocked.u8(kIfFloorBelow).f32(10.0f).u8(kActionGoto).target("below");
+    blocked.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    blocked.end();
+    blocked.label("below");
+    blocked.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    blocked.end();
+
+    // The level-7 floor is five below this point. A ten-unit drop crosses it,
+    // so the true branch runs.
+    {
+        scripts::MdkObject obj;
+        obj.position = Vec3{kurt.x, kurt.y, kurt.z - 4.0f};
+        runProgram(runtime, blocked, &obj);
+        CHECK(!sawUnimplemented(kIfFloorBelow));
+        CHECK(obj.variables[0] == 2.0f);
+    }
+
+    // From the same point, a four-unit drop stops above the floor and takes
+    // the false branch. This also pins the operand as the drop distance.
+    {
+        Code clear;
+        clear.u8(kIfFloorBelow).f32(4.0f).u8(kActionGoto).target("below");
+        clear.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        clear.end();
+        clear.label("below");
+        clear.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+        clear.end();
+        scripts::MdkObject obj;
+        obj.position = Vec3{kurt.x, kurt.y, kurt.z - 4.0f};
+        runProgram(runtime, clear, &obj);
+        CHECK(!sawUnimplemented(kIfFloorBelow));
+        CHECK(obj.variables[0] == 1.0f);
+    }
+}
+
 // Opcode 229 (turn_and_jump_to_dest) and movement command 229 have no C#
 // ScriptVmTests counterpart, so this pins the oracle directly
 // (ScriptVm.cs:1136-1138 and ObjectMotion.cs:387-391/426-461). The receiver
 // turns by at most rate degrees per second until it faces the destination;
-// then the ballistic velocity, apex and duration are set. The flight command
-// stops on floor contact after the apex.
+// then the ballistic velocity, arc top and duration are set. The flight
+// command stops on floor contact after half of the recorded flight time.
 void testTurnAndJumpTurnsLaunchesAndStopsOnFloor(LevelData* levelData, const Cmi* cmi,
                                                   audio::SoundBank* bank) {
     scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
@@ -2212,14 +2257,16 @@ void testTurnAndJumpTurnsLaunchesAndStopsOnFloor(LevelData* levelData, const Cmi
     CHECK(fabsf(obj.position.y - 4.067237f) < 1e-4f);
     CHECK(fabsf(obj.position.z - 11.425038f) < 1e-4f);
 
-    // Floor contact before the apex does not end the flight.
+    // Floor contact before half of the recorded flight time does not end the
+    // flight. The oracle's condition is Parameter * 0.5f in every case; it
+    // is not a geometric turning point.
     obj.contact_flags |= scripts::MdkObject::ContactFloor;
     runtime.motionVelocity(&obj);
     CHECK(obj.move_command == kTurnAndJump);
 
-    // At the apex, floor contact ends movement command 229 and clears the
-    // velocity. Gravity then acts in the same motion tick, as it does in the
-    // oracle's update order.
+    // At half the recorded flight time, floor contact ends movement command
+    // 229 and clears the velocity. Gravity then acts in the same motion tick,
+    // as it does in the oracle's update order.
     obj.parameter_timer = obj.parameter * 0.5f;
     obj.contact_flags |= scripts::MdkObject::ContactFloor;
     runtime.motionVelocity(&obj);
@@ -2338,6 +2385,8 @@ int main() {
     printf("PASS ReleaseChildrenLetsGoOfTheChain\n");
     testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(&levelData, &cmi, &bank);
     printf("PASS AvoidObjectsTurnsAwayFromTheFirstSolidOverlap\n");
+    testFloorBelowBranchesOnARayHit(runtime);
+    printf("PASS FloorBelowBranchesOnARayHit\n");
     testTurnAndJumpTurnsLaunchesAndStopsOnFloor(&levelData, &cmi, &bank);
     printf("PASS TurnAndJumpTurnsLaunchesAndStopsOnFloor\n");
 
