@@ -78,6 +78,7 @@ const int32_t kIfFloorBelow = 121;
 const int32_t kIfNoFlatFloorAt = 192;
 const int32_t kIfHitWeapon = 195;
 const int32_t kRaiseShake = 135;
+const int32_t kInheritKurtVel = 170;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -741,6 +742,49 @@ void testPushHitDirAddsVelocityAlongTheLastHit(scripts::ScriptRuntime& runtime) 
         CHECK(fabsf(obj.velocity.x) < 1e-4f);
         CHECK(fabsf(obj.velocity.y - 5.0f) < 1e-4f);
         CHECK(obj.velocity.z == 0.0f);
+    }
+}
+
+// Opcode 170 (inherit_kurt_vel) has no C# ScriptVmTests counterpart, so this
+// pins the oracle directly (ScriptVm.cs:1603-1604): the receiver's velocity
+// gains Kurt's current velocity multiplied by the numeric operand. The C++
+// movement slice has not landed, so the test supplies the runtime's Kurt
+// velocity seam explicitly.
+void testInheritKurtVelocityAddsScaledKurtVelocity(LevelData* levelData, const Cmi* cmi,
+                                                    audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    runtime.setKurtVelocity(mdk::Vec3{2.0f, -4.0f, 6.0f});
+
+    // A literal scale is applied to every component and added to the
+    // receiver's existing velocity.
+    {
+        Code code;
+        code.u8(kInheritKurtVel).f32(0.5f);
+        code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+        code.end();
+        scripts::MdkObject obj;
+        obj.velocity = mdk::Vec3{1.0f, 2.0f, 3.0f};
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kInheritKurtVel));
+        CHECK(obj.variables[0] == 1.0f);
+        CHECK(obj.velocity.x == 2.0f);
+        CHECK(obj.velocity.y == 0.0f);
+        CHECK(obj.velocity.z == 6.0f);
+    }
+
+    // A negative literal scale reverses the inherited velocity, rather than
+    // replacing it with its magnitude.
+    {
+        Code code;
+        code.u8(kInheritKurtVel).f32(-2.0f);
+        code.end();
+        scripts::MdkObject obj;
+        obj.velocity = mdk::Vec3{1.0f, 2.0f, 3.0f};
+        runProgram(runtime, code, &obj);
+        CHECK(!sawUnimplemented(kInheritKurtVel));
+        CHECK(obj.velocity.x == -3.0f);
+        CHECK(obj.velocity.y == 10.0f);
+        CHECK(obj.velocity.z == -9.0f);
     }
 }
 
@@ -2254,6 +2298,14 @@ void testRaiseShakeKeepsTheTickMaximum(LevelData* levelData, const Cmi* cmi,
     runProgram(runtime, notNumber, &obj);
     CHECK(runtime.shake != runtime.shake);
 
+    // MathF.Max(NaN, finite) is still NaN. This pins the current-value arm:
+    // returning the finite new value would lose the NaN here.
+    Code finiteAfterNaN;
+    finiteAfterNaN.u8(kRaiseShake).f32(1.0f);
+    finiteAfterNaN.end();
+    runProgram(runtime, finiteAfterNaN, &obj);
+    CHECK(runtime.shake != runtime.shake);
+
     // The request belongs to one simulation tick.
     runtime.update(scripts::ScriptRuntime::kTick);
     CHECK(runtime.shake == 0.0f);
@@ -2605,6 +2657,8 @@ int main() {
     printf("PASS SpawnAtPointSpawnsAtTheReferencePoint\n");
     testPushHitDirAddsVelocityAlongTheLastHit(runtime);
     printf("PASS PushHitDirAddsVelocityAlongTheLastHit\n");
+    testInheritKurtVelocityAddsScaledKurtVelocity(&levelData, &cmi, &bank);
+    printf("PASS InheritKurtVelocityAddsScaledKurtVelocity\n");
     testSpawnAlongPathSpawnsEveryStep(runtime);
     printf("PASS SpawnAlongPathSpawnsEveryStep\n");
     testHeadShotsAddOnlyWhenEnabled(runtime);

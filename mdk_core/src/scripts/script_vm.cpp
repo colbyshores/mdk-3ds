@@ -576,6 +576,15 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             break;
         }
 
+        case 170: {  // inherit_kurt_vel: add Kurt's current velocity, scaled by the operand
+            const Vec3& kurtVelocity = runtime_.kurtVelocity();
+            const float scale = fval(op(ins, 0));
+            obj->velocity.x += kurtVelocity.x * scale;
+            obj->velocity.y += kurtVelocity.y * scale;
+            obj->velocity.z += kurtVelocity.z * scale;
+            break;
+        }
+
         case 200: { // move_to_point: a Manhattan step toward a point (V(o,1)), added to push
             // (0x459555). Unlike move_to this is not a command: it nudges the object each
             // tick it runs and branches true once within Arrived. Gravity leaves Z alone.

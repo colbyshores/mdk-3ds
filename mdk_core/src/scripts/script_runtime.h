@@ -170,6 +170,13 @@ public:
     // Whether the object was removed (no longer one of the C#'s Objects).
     bool isRemoved(const MdkObject* obj) const;
     const Vec3& kurtPosition() const { return kurtPosition_; }
+    // C# Kurt.Velocity (Kurt.cs:132-133): the current walking/falling velocity
+    // that inherit_kurt_vel (opcode 170) adds to an object. This is not the
+    // ScriptRuntime.KurtVelocity field, which measures the position change
+    // over a tick. Kurt movement is a later slice, so this seam stays zero
+    // until that slice writes it.
+    const Vec3& kurtVelocity() const { return kurtVelocity_; }
+    void setKurtVelocity(const Vec3& velocity) { kurtVelocity_ = velocity; }
     // Kurt's combat/inventory state (the Hurt/Damage half of Kurt.Combat.cs):
     // hurt_kurt (opcode 109) writes it, if_inventory (175) reads the slots.
     const Kurt& kurt() const { return kurt_; }
@@ -438,6 +445,7 @@ private:
     std::string secondArena_;
     bool secondActive_ = false;
     Vec3 kurtPosition_{};
+    Vec3 kurtVelocity_{};  // C# Kurt.Velocity; the movement slice writes it later
     Kurt kurt_;  // C# ScriptRuntime.Kurt — the combat/inventory slice (game/kurt.h)
     // Rides.Ridden (Rides.cs:40) and Rides.OnBoard (Rides.cs:89): the ridden
     // object, and whether it is the snowboard. The ride slice (mount/dismount)
