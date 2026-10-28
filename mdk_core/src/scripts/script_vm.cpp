@@ -1827,6 +1827,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                 runtime_.stats.headShots += ival(op(ins, 1));
             }
             break;
+        case 202:  // set_574304: the sky mode shared by the level and renderer
+            runtime_.skyMode = ival(op(ins, 0));
+            break;
         case 210:  // set_2c0: an unidentified object slot (ScriptVm.cs:1663)
             obj->value_2c0 = value(obj, op(ins, 0));
             break;

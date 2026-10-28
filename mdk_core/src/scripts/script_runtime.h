@@ -301,6 +301,11 @@ public:
     // decrements it once at the start of every non-cutscene tick, then command
     // 15 sets it to ten while the alarm object is in Kurt's current arena.
     int32_t alarmTicks = 0;
+    // How the sky is drawn (C# ScriptRuntime.SkyMode, opcode 202): 0 shows
+    // the sky, 1 clears to black, and any other value keeps the last frame.
+    // The renderer-side backdrop consumer is a later slice; the VM writes this
+    // shared level state exactly as the oracle does.
+    int32_t skyMode = 0;
     // The strongest screen shake requested during this tick (opcode 135). It
     // is cleared at the start of every simulation tick, as in the oracle.
     float shake = 0.0f;

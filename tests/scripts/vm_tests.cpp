@@ -81,6 +81,7 @@ const int32_t kIfNoFlatFloorAt = 192;
 const int32_t kIfHitWeapon = 195;
 const int32_t kRaiseShake = 135;
 const int32_t kInheritKurtVel = 170;
+const int32_t kSetSkyMode = 202;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -973,6 +974,54 @@ void testHeadShotsAddOnlyWhenEnabled(scripts::ScriptRuntime& runtime) {
     CHECK(scripts::GameStats::percent(1, 3) == 33);
     CHECK(scripts::GameStats::percent(2, 3) == 66);
     CHECK(scripts::GameStats::percent(0, 0) == 0);
+}
+
+// Opcode 202 (set_574304) has no C# ScriptVmTests counterpart, so this pins
+// the oracle directly (ScriptVm.cs:1613-1615): the signed-byte operand is
+// written verbatim to the runtime's shared sky mode. The C# renderer consumes
+// 0 as shown, 1 as black, and every other value as keep-last-frame; that
+// renderer consumer remains a later slice.
+void testSetSkyModeWritesSharedLevelState(LevelData* levelData, const Cmi* cmi,
+                                          audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    CHECK(runtime.skyMode == 0);
+
+    scripts::MdkObject obj;
+    Code shown;
+    shown.u8(kSetSkyMode).u8(0);
+    shown.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    shown.end();
+    runtime.skyMode = 17;
+    runProgram(runtime, shown, &obj);
+    CHECK(!sawUnimplemented(kSetSkyMode));
+    CHECK(runtime.skyMode == 0);
+    CHECK(obj.variables[0] == 1.0f);  // The instruction after 202 still runs.
+
+    Code black;
+    black.u8(kSetSkyMode).u8(1);
+    black.end();
+    runProgram(runtime, black, &obj);
+    CHECK(runtime.skyMode == 1);
+
+    // Sky mode is level state, not per-tick state: the oracle does not clear
+    // it when the world advances.
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.skyMode == 1);
+
+    // The operand is signed: 0xff is -1, the mode that keeps the last frame.
+    Code hidden;
+    hidden.u8(kSetSkyMode).u8(0xFF);
+    hidden.end();
+    runProgram(runtime, hidden, &obj);
+    CHECK(runtime.skyMode == -1);
+
+    // Other values are stored unchanged for the renderer's keep-last-frame
+    // decision; the VM does not clamp or normalize them.
+    Code other;
+    other.u8(kSetSkyMode).u8(42);
+    other.end();
+    runProgram(runtime, other, &obj);
+    CHECK(runtime.skyMode == 42);
 }
 
 // Opcode 241 (if_player_health) has no C# ScriptVmTests counterpart. Pin its
@@ -2706,6 +2755,8 @@ int main() {
     printf("PASS SpawnAlongPathSpawnsEveryStep\n");
     testHeadShotsAddOnlyWhenEnabled(runtime);
     printf("PASS HeadShotsAddOnlyWhenEnabled\n");
+    testSetSkyModeWritesSharedLevelState(&levelData, &cmi, &bank);
+    printf("PASS SetSkyModeWritesSharedLevelState\n");
     testPointSeesPlayerNeedsRangeAndAClearLine(runtime);
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
     testIfPlayerHealthComparesKurtHealth(&levelData, &cmi, &bank);
