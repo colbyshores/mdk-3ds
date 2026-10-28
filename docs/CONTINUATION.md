@@ -1,6 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 57: partner spawn/snap/link family).
+Last updated: 2026-10-27 (iteration 58: preserve dead partner links).
 Current coverage: 196 true C++ dispatches / 238, 42 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -31,6 +31,22 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Iteration 58 addresses review-1's partner-widow findings.
+  `ScriptRuntime::remove` now retains the oracle's inbound `Linked` pointer
+  instead of nulling it, so removing one member of a pair leaves the survivor
+  linked to its dead partner. `link_partners` consequently skips that widow exactly as
+  the C# does, while variable source 3 still reads and writes the removed
+  partner's persistent variable array. The `vm_tests` fixture now creates a
+  real pair and calls `runtime.remove(partner)` instead of fabricating an
+  unreachable `dead` flag; it pins the retained link, no re-pairing, and the
+  removed partner's variable write. Coverage remains 196 true dispatches /
+  238 with 42 remaining. `make -C tests/scripts clean && make -C
+  tests/scripts` passed 28 VM tests and the complete oracle suite (`All cases
+  match the oracle.`); `bash tools/check.sh` passed all contract gates (SMDH
+  skipped, no CIA); `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds` built `mdk.3dsx` after staging 69 RomFS files (79M), and
+  `cmake --build build-linux --target mdk` built the Linux target. No golden
+  changed; no emulator/hardware run. Old-3DS timing remains unmeasured.
 - Iteration 57 ports the partner-link family: 179 (`spawn_partner`) spawns
   the named type at the receiver's position with yaw zero and links both
   objects; 180 (`snap_to_partner`) copies a live partner's position and then

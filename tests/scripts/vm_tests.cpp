@@ -79,6 +79,7 @@ const int32_t kReturn = 253;
 // Operand values.
 const int32_t kGlobal = 0;
 const int32_t kOwn = 2;
+const int32_t kLinked = 3;
 // Flag word 5: the object's own door state (ScriptVm.cs:200).
 const int32_t kDoor = 5;
 const int32_t kLessThan = 1;
@@ -1133,13 +1134,27 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
         return;
     }
 
-    deadNear->dead = true;
     crossArenaNear->arena = "OTHER_ARENA";
-    // The oracle's loose-object filter admits a dead link, but its pairing
-    // loop then skips every non-null link. Pin both halves of that rule.
-    linkedDead->linked = deadNear;
     alreadyLinked->linked = differentType;
     differentType->linked = alreadyLinked;
+
+    // Remove one member of a real pair. The oracle leaves the survivor's link
+    // pointing at the dead partner: the loose-object filter admits that dead
+    // link, while the pairing loop skips every non-null link.
+    linkedDead->linked = deadNear;
+    deadNear->linked = linkedDead;
+    runtime.remove(deadNear);
+    CHECK(deadNear->dead);
+    CHECK(runtime.isRemoved(deadNear));
+    CHECK(linkedDead->linked == deadNear);
+    CHECK(deadNear->linked == linkedDead);
+
+    // Variable source 3 still targets the removed partner's persistent array.
+    Code writePartnerVariable;
+    writePartnerVariable.u8(kSetVar).u8(kLinked).u8(0).f32(4.5f);
+    writePartnerVariable.end();
+    runProgram(runtime, writePartnerVariable, linkedDead);
+    CHECK(deadNear->variables[0] == 4.5f);
 
     Code pair;
     // Lower-case type: the oracle compares type names case-insensitively.
@@ -1160,13 +1175,15 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
     CHECK(farAway->linked == nullptr);
     CHECK(differentType->linked == alreadyLinked);
     CHECK(alreadyLinked->linked == differentType);
+    // The widow was admitted to the candidate snapshot but skipped by the
+    // pairing loop, so it keeps its dead partner instead of being re-paired.
     CHECK(linkedDead->linked == deadNear);
 
     // A second pair isolates the strict distance boundary: exactly 100 units
     // is outside the oracle's range, while 99 units is inside it.
-    nearerLater->dead = true;
-    exactly100->dead = true;
-    farAway->dead = true;
+    runtime.remove(nearerLater);
+    runtime.remove(exactly100);
+    runtime.remove(farAway);
     scripts::MdkObject* boundaryReceiver = runtime.spawn(&controller, "BEAMS",
                                                          Vec3{0.0f, 0.0f, 0.0f}, 0.0f, -1, 0, false);
     scripts::MdkObject* at100 = runtime.spawn(&controller, "BEAMS", Vec3{100.0f, 0.0f, 0.0f},

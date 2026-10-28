@@ -2556,7 +2556,7 @@ void ScriptRuntime::linkPartners(MdkObject* obj, const std::string& type) {
     std::vector<MdkObject*> loose;
     for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
         MdkObject& other = *it;
-        if (other.dead || isRemoved(&other) || other.arena != obj->arena ||
+        if (other.dead || other.arena != obj->arena ||
             !iequalsType(other.type_name, type)) {
             continue;
         }
@@ -2779,9 +2779,11 @@ void ScriptRuntime::remove(MdkObject* obj) {
     // C# Remove (ScriptRuntime.cs:1648): a live Attached object (a pickup's chute) goes
     // with it FIRST — Remove(obj.Attached) runs before obj is marked dead — then Dead,
     // then out of the list. The deque's slots are never vacated (the pointer model
-    // depends on it), so the object is marked removed and every reference to it is
-    // dropped; the readable list and every Objects iteration skip it through dead +
-    // isRemoved. A pickup that falls out (FallOut -> remove) takes its chute with it.
+    // depends on it), so the object is marked removed here and remains readable through
+    // surviving references. The oracle deliberately leaves an inbound Linked reference
+    // intact: a widow keeps pointing at its dead partner, and link_partners must not
+    // re-pair it. Other inbound relation references are cleared below as before. A
+    // pickup that falls out (FallOut -> remove) takes its chute with it.
     if (isRemoved(obj)) {
         return;  // C# Objects.Remove is idempotent; do not double-process
     }
@@ -2805,9 +2807,6 @@ void ScriptRuntime::remove(MdkObject* obj) {
     removed_.push_back(obj);
     for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
         MdkObject& other = *it;
-        if (other.linked == obj) {
-            other.linked = nullptr;
-        }
         if (other.leader == obj) {
             other.leader = nullptr;
         }

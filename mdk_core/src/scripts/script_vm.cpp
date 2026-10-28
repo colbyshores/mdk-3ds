@@ -274,6 +274,8 @@ float* ScriptVm::variables(MdkObject* obj, int32_t source) {
         case 2:
             return obj->variables.data();
         default:
+            // A removed partner is still the oracle's linked object: source 3
+            // reads and writes that object's persistent variable array.
             if (obj->linked != nullptr) {
                 return obj->linked->variables.data();
             }

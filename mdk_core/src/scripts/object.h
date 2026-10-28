@@ -22,7 +22,9 @@
 // give objects stable addresses that survive later insertions (a reserved-at-load
 // vector, a std::deque, an arena, or index-based links) — a plain growing
 // std::vector would dangle every link set before a reallocation. Decide this in
-// the level/runtime slice before the first `linked =` is written.
+// the level/runtime slice before the first `linked =` is written. Removed
+// objects keep their deque slots as well: the oracle retains a dead partner's
+// reference, so that link remains safe to inspect.
 // ============================================================================
 
 #include <array>

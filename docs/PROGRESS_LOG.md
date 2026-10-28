@@ -1,4 +1,34 @@
 
+## What this batch did (iteration 58 — preserve dead partner links)
+
+- Addressed the newest external review's MAJOR and MINOR findings on the
+  partner-link family. The C# `ScriptRuntime.Remove` marks the object dead and
+  removes it from `Objects`, but deliberately leaves inbound `Linked`
+  references intact. The C++ runtime had normalized those references to null,
+  making a surviving partner look unlinked; `link_partners` then re-paired it,
+  unlike the oracle.
+- `ScriptRuntime::remove` now preserves the dead partner pointer. This is
+  safe because `std::deque` object slots are stable and removed slots remain
+  allocated, matching the managed object's continued readability in C#. The
+  existing live-partner guards on opcodes 180/213/214/246 and command
+  selector 9 remain in force; variable source 3 deliberately reaches the
+  removed partner's persistent variables, as in the oracle.
+- Rebuilt the opcode-228 synthetic fixture around a real pair and a real
+  `ScriptRuntime::remove(partner)` call. It now pins the retained dead link,
+  the widow's exclusion from re-pairing, and a source-3 variable write into
+  the removed partner's array. The previous hand-set `dead` flags represented
+  states the runtime could not produce and were removed.
+- The redundant `isRemoved` term in the live-candidate filter was dropped;
+  removal always sets `dead`, exactly as the C# filter's `!other.Dead`
+  requires. No opcode count changed: 196 true dispatches / 238, 42 remaining.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  28 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  built `mdk.3dsx` after staging 69 RomFS files (79M), and `cmake --build
+  build-linux --target mdk` built the Linux target. No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 57 — partner spawn/snap/link family)
 
 - Ported the partner-link family from `ScriptVm.cs:1451-1488`: opcode 179
