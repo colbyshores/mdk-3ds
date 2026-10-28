@@ -127,6 +127,13 @@ float wrapAngle(float degrees) {
     return degrees - 360.0f * floorf((degrees + 180.0f) / 360.0f);
 }
 
+// ScriptMath.Intersects: strict on every axis, so boxes that only touch do
+// not intersect.
+bool boxesIntersect(const formats::Box& a, const formats::Box& b) {
+    return a.min.x < b.max.x && a.max.x > b.min.x && a.min.y < b.max.y &&
+           a.max.y > b.min.y && a.min.z < b.max.z && a.max.z > b.min.z;
+}
+
 // MdkObject.IsAnimationDone: no animation, or the hold frame marked ended.
 bool isAnimDone(const MdkObject& obj) {
     return obj.animation == nullptr || obj.animation_end_frame == MdkObject::AnimationEnded;
@@ -1865,6 +1872,31 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
                 obj->velocity.y = away.y / len * mag;
                 obj->velocity.z = away.z / len * mag;
                 obj->path = 0;
+            }
+            break;
+        }
+        case 204: {  // avoid_objects: turn away from the first solid object it overlaps
+            const formats::Box box = runtime_.worldBounds(obj);
+            const std::deque<MdkObject>& objects = runtime_.objects();
+            for (std::deque<MdkObject>::const_iterator it = objects.begin(); it != objects.end();
+                 ++it) {
+                const MdkObject& other = *it;
+                if (&other == obj || other.dead || other.arena != obj->arena) {
+                    continue;
+                }
+                const int32_t kNotSolid = MdkObject::FlagNotSolid | MdkObject::FlagNotSolid2;
+                if ((other.flags & kNotSolid) != 0 ||
+                    !boxesIntersect(box, runtime_.worldBounds(&other))) {
+                    continue;
+                }
+
+                const float kHalfTurn = 180.0f;
+                const float away =
+                    wrapAngle(runtime_.yawTo(obj, other.position) + kHalfTurn - obj->yaw);
+                const float step = mathMin(fabsf(away), kHalfTurn * kDt);
+                const float direction = away > 0.0f ? 1.0f : (away < 0.0f ? -1.0f : 0.0f);
+                obj->yaw = wrap360(obj->yaw + direction * step);
+                break;
             }
             break;
         }

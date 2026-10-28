@@ -73,6 +73,7 @@ const int32_t kSetRolling = 85;
 const int32_t kAttachTo = 74;
 const int32_t kSpawnChain = 29;
 const int32_t kReleaseChildren = 49;
+const int32_t kAvoidObjects = 204;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
 const int32_t kIfNoLeader = 34;
@@ -2068,6 +2069,90 @@ void testReleaseChildrenLetsGoOfTheChain(LevelData* levelData, const Cmi* cmi,
     CHECK(links[2]->move_command == 0);
 }
 
+// Opcode 204 (avoid_objects) has no C# ScriptVmTests counterpart, so this
+// pins the oracle directly (ScriptVm.cs:1715-1729): the receiver turns away
+// from the first live, solid object of its arena whose world bounds overlap
+// its own. The turn is at most half a turn times one tick, and the object
+// list's stable order decides which overlap is used.
+void testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(LevelData* levelData, const Cmi* cmi,
+                                                        audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    Model model;
+    model.bounds.min = Vec3f{-1.0f, -1.0f, 0.0f};
+    model.bounds.max = Vec3f{1.0f, 1.0f, 2.0f};
+
+    auto resetReceiver = [&]() -> scripts::MdkObject* {
+        runtime.objects().clear();
+        scripts::MdkObject receiver;
+        receiver.arena = "TEST";
+        receiver.model = &model;
+        runtime.objects().push_back(receiver);
+        return &runtime.objects().back();
+    };
+    auto addObstacle = [&](float x, float y, int32_t flags, const std::string& arena, bool dead) {
+        scripts::MdkObject obstacle;
+        obstacle.arena = arena;
+        obstacle.model = &model;
+        obstacle.position = mdk::Vec3{x, y, 0.0f};
+        obstacle.flags = flags;
+        obstacle.dead = dead;
+        runtime.objects().push_back(obstacle);
+    };
+
+    Code code;
+    code.u8(kAvoidObjects);
+    code.end();
+
+    // The receiver is in the object list, but GetArenaObjects excludes it.
+    scripts::MdkObject* receiver = resetReceiver();
+    runProgram(runtime, code, receiver);
+    CHECK(!sawUnimplemented(kAvoidObjects));
+    CHECK(receiver->yaw == 0.0f);
+
+    // Dead, cross-arena, non-solid and merely touching objects are all
+    // skipped. Their directions differ so an accidental acceptance changes
+    // the result rather than coinciding with the valid case below.
+    receiver = resetReceiver();
+    addObstacle(1.0f, 0.0f, 0, "TEST", true);
+    addObstacle(0.0f, -1.0f, 0, "OTHER", false);
+    addObstacle(1.0f, 0.0f, scripts::MdkObject::FlagNotSolid, "TEST", false);
+    addObstacle(0.0f, -1.0f, scripts::MdkObject::FlagNotSolid2, "TEST", false);
+    addObstacle(0.0f, -2.0f, 0, "TEST", false);
+    runProgram(runtime, code, receiver);
+    CHECK(!sawUnimplemented(kAvoidObjects));
+    CHECK(receiver->yaw == 0.0f);
+
+    // A solid overlap east of the receiver turns it six degrees away.
+    receiver = resetReceiver();
+    addObstacle(1.0f, 0.0f, 0, "TEST", false);
+    runProgram(runtime, code, receiver);
+    CHECK(!sawUnimplemented(kAvoidObjects));
+    CHECK(fabsf(receiver->yaw - 354.0f) < 1e-4f);
+
+    // A solid overlap south of it turns in the other direction.
+    receiver = resetReceiver();
+    addObstacle(0.0f, -1.0f, 0, "TEST", false);
+    runProgram(runtime, code, receiver);
+    CHECK(!sawUnimplemented(kAvoidObjects));
+    CHECK(fabsf(receiver->yaw - 6.0f) < 1e-4f);
+
+    // The first eligible overlap wins; the oracle stops at that object.
+    receiver = resetReceiver();
+    addObstacle(1.0f, 0.0f, 0, "TEST", false);
+    addObstacle(0.0f, -1.0f, 0, "TEST", false);
+    runProgram(runtime, code, receiver);
+    CHECK(!sawUnimplemented(kAvoidObjects));
+    CHECK(fabsf(receiver->yaw - 354.0f) < 1e-4f);
+
+    // The step is clamped to the available angle, not always six degrees.
+    receiver = resetReceiver();
+    receiver->yaw = 177.0f;
+    addObstacle(1.0f, 0.0f, 0, "TEST", false);
+    runProgram(runtime, code, receiver);
+    CHECK(!sawUnimplemented(kAvoidObjects));
+    CHECK(fabsf(receiver->yaw - 180.0f) < 1e-4f);
+}
+
 } // namespace
 
 int main() {
@@ -2176,6 +2261,8 @@ int main() {
     printf("PASS ChainLinksHangOffTheirLeader\n");
     testReleaseChildrenLetsGoOfTheChain(&levelData, &cmi, &bank);
     printf("PASS ReleaseChildrenLetsGoOfTheChain\n");
+    testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(&levelData, &cmi, &bank);
+    printf("PASS AvoidObjectsTurnsAwayFromTheFirstSolidOverlap\n");
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");
