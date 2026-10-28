@@ -4,7 +4,7 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ has **208** numeric labels / 207 unique labels (206 true dispatches), leaving **32** unimplemented. The
+  owns **238** cases, the C++ has **209** numeric labels / 208 unique labels (207 true dispatches), leaving **31** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -135,6 +135,13 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   reset. The C# also raises `ShakeRaised` for the follow camera; that camera
   consumer is not ported, so the dispatch is classified partial. Recount: C#
   238, C++ 205 true dispatches, 33 remaining.
+- **Sky-mode batch (2026-10-28; review-15's citation NIT fixed):** opcode 202
+  (`set_574304`) is ported over the runtime's shared `skyMode` state. One
+  `vm_tests` case pins the signed-byte operand, 0/1/other values, the
+  following-instruction alignment, and that the mode survives the next tick;
+  an unsigned-byte mutation fails exactly the -1 case. The renderer's
+  `SkyModes.BackdropOf` consumer is not ported, so the dispatch is classified
+  partial. Recount: C# 238, C++ 207 true dispatches, 31 remaining.
 - **Kurt-velocity batch (2026-10-28; corrected by review-13, hardened by
   review-14):** opcode 170 (`inherit_kurt_vel`) is ported over a borrowed live
   `Player` pointer. The receiver's velocity gains each component of the C#
@@ -146,8 +153,9 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   has a live source. One `vm_tests` case pins the dispatch, literal scaling,
   all three components, preservation of existing velocity, a negative scale,
   fall-through, a live Player change, the push term and its drain, and the
-  C# `Kurt.cs:221-224` order in which the walk move captures the pre-drain push
-  before `DrainPush` runs. Kurt movement itself was already ported as
+  C# `Kurt.cs:221-234` order in which the walk move captures the pre-drain push
+  before `DrainPush` runs and before the vertical update consumes the move.
+  Kurt movement itself was already ported as
   `mdk::Player`; the missing integration is that no shipped frontend constructs
   `ScriptRuntime` and binds that Player yet, so the dispatch remains partial.
   Recount: C# 238, C++ 206 true dispatches, 32 remaining.
@@ -187,7 +195,10 @@ per-tick screen-shake maximum.
 The Kurt-velocity batch adds: 170 (`inherit_kurt_vel`), over the runtime's
 borrowed live `Player` velocity source.
 
-## Remaining 32 (verified set)
+The sky-mode batch adds: 202 (`set_574304`), over the runtime's shared
+`skyMode` state; its renderer backdrop consumer is deferred.
+
+## Remaining 31 (verified set)
 
 13 left this list with the synthetic-harness batch (port 13 is an explicit
 false branch, `ScriptVmTests.UnimplementedConditionsAreFalse` pins it, and the
@@ -196,18 +207,18 @@ C++ `unimplemented()` bucket stays clean). 32 (`clear_parts_mask`) and 129
 existing parts fields, pinned by three `vm_tests` tests with a synthetic
 model (no C# counterpart exists to twin). 226 (`jump_to`) and 242
 (`set_2d0_block`) left with the rope-swing batch the same way: pure
-swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with the 81 batch: pure velocity math over existing fields, pinned by a `vm_tests` test. 206 (`spawn_along_path`) left with this batch: the path API (`pathKeyCount`/`pathKeyFrame`/`pathPosition`) and flagged `spawn` both already ported, pinned by a `vm_tests` test on LEVEL7.CMI path 53729. 217 (`global_573c4c_add`) left with the stats slice: the new `GameStats` struct (`game_stats.h`: counters, `IsEnemy`/`CountEnemy`, `Percent`) with a `stats` member on the runtime, pinned by a `vm_tests` test. 243 (`if_point_sees_player`) left with the vision-condition batch: `reference_point`, `kurtPosition` and `raycastClear` all already ported, pinned by a `vm_tests` test (range gate, ref-point selection, clear-line true at the L7 spawn, blocked-from-below false). 199 (`set_104`) and 210 (`set_2c0`) left with the value-slot batch: the C# itself treats them as unidentified object slots and does nothing but `obj.Value104/Value2c0 = Value(obj, o[0])` (ScriptVm.cs:1663-1668) — a pure object-state write like 205/218, with the fields already on `MdkObject` and no C++ reader to diverge from, pinned by a `vm_tests` test (literal and variable operand paths). Opcode 85 (`set_rolling`) was ported with a synthetic transition test for basis capture. Opcode 241 (`if_player_health`) was ported with a synthetic test pinning true and false comparison branches against Kurt's health after damage; the receiver's health is 100 (its default, now also pinned explicitly), so the assertions reject reading the receiver instead of Kurt; the pin itself adds no branch-discriminating strength today. Opcode 74 (`attach_to`) was ported with a synthetic VM test covering the oracle's explicit `BEAMS_1000` identity, case-insensitive matching, exact `TYPE_ID` equality (near-match IDs 999 and 10001 reject range/prefix resolvers, and a different-type ID-1000 candidate rejects ID-only matching), last-match selection among duplicate IDs, self/dead/cross-arena exclusion, attachment points, and preservation of seeded receiver state on a miss. Opcodes 213 (`if_partner_distance`) and 214 (`if_partner_angle`) were ported together over the existing linked-object field, with synthetic coverage for no partner, a dead partner, the live distance floor of one, the full three-dimensional distance measured from the receiver, and `wrap(receiverYaw - bearingToPartner)` (the negated turn required to face the partner). All three oracle `Linked` writers are now ported: `find_object` (245), `spawn_partner` (179), and `link_partners` (228), so partner pairs can feed these conditions. Opcodes 179 (`spawn_partner`), 180 (`snap_to_partner`), and 228 (`link_partners`) were ported together over the existing linked field and spawn machinery. 179 spawns the named type at the receiver's position with yaw zero and links both objects; 180 copies a live partner's position and then applies its optional offset; 228 pairs live same-arena objects of the named type in stable list order when their squared distance is below 10000, while its list form with a zero second value clears only the receiver's link. Synthetic `vm_tests` pin both link directions, dead/no-link behavior, case-insensitive type matching, dead/cross-arena/already-linked exclusions, the strict 100-unit boundary, list order, and the asymmetric clear. Opcodes 29 (`spawn_chain`) and 49 (`release_children`) left with the chain-link batch: the chain that hangs off an object, plus movement command 30 (the chain's own motion), pinned by three `vm_tests` tests (the link numbering after the highest live follower id, the dead follower that does not count, the chain assembly and its 90-degree turns, the broken chain, the dead leader, and the release order with the branch when the chain runs out). Opcode 27 (`if_alarm`) left with the alarm-state batch: the shared countdown is decremented once per tick, movement command 15 sounds it for ten ticks from an object in Kurt's current arena and plays `ALERT` every 32 ticks, and opcode 27 branches on the countdown. One `vm_tests` case pins the dispatch, current-arena guard, true/false branch, ten-tick expiry, and sound cadence. The C#'s Rides subsystem is the other writer of the same countdown and remains deferred with Rides. Opcode 204 (`avoid_objects`) left with the object-avoidance batch: the receiver turns away from the first live, solid, same-arena object whose strict world bounds overlap its own, by at most half a turn times one tick. One `vm_tests` case pins the self/dead/cross-arena/non-solid/touching exclusions, both turn directions, first-object order, and the angle clamp. Opcode 229 (`turn_and_jump_to_dest`) left with the turn-and-jump batch: the receiver turns towards its move destination by at most the requested rate, then launches with the oracle's ballistic velocity, arc top and friction-adjusted flight time; movement command 229 stops on floor contact after half of the recorded flight time. One `vm_tests` case pins the turn and false branch, the launch and true branch, the arc constants, the first motion tick, and the floor landing. Opcode 121 (`if_floor_below`) left with the floor-below batch: it drops a segment of the operand's length from the receiver's position and branches when any triangle of the oracle's active ray arenas crosses it, pinned by a `vm_tests` case with blocked and clear rays. Opcode 192 (`if_no_flat_floor_at`) left with the no-flat-floor batch: it rotates a forward/side offset by the receiver's yaw, probes one unit above that point down by the operand drop plus one, and branches when the ray misses or the hit triangle's normal is steeper than the limit, pinned by a `vm_tests` case against level 7's flat floor and sloping DANT_1 face. Opcode 195 (`if_hit_weapon`) left with the hit-weapon batch: it compares the receiver's existing `hit_type` field with the signed-byte operand and branches on exact equality, pinned by a `vm_tests` case for negative, positive, sign-crossing, mismatched, and default-zero hit types. Opcode 135 (`raise_573aa8`) left with the screen-shake batch: the runtime's per-tick maximum is implemented and tested, while the follow-camera consumer remains deferred. Opcode 170 (`inherit_kurt_vel`) left with the Kurt-velocity batch: the dispatch is implemented and tested over the live `Player` source, while frontend construction of `ScriptRuntime` and the Player binding remain missing. Remaining 32:
+swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) left with the spawn slice: `runtime_.spawn` at `reference_point`, pinned by a `vm_tests` test against BEAMS in DANT_1. 81 (`push_hit_dir`) left with the 81 batch: pure velocity math over existing fields, pinned by a `vm_tests` test. 206 (`spawn_along_path`) left with this batch: the path API (`pathKeyCount`/`pathKeyFrame`/`pathPosition`) and flagged `spawn` both already ported, pinned by a `vm_tests` test on LEVEL7.CMI path 53729. 217 (`global_573c4c_add`) left with the stats slice: the new `GameStats` struct (`game_stats.h`: counters, `IsEnemy`/`CountEnemy`, `Percent`) with a `stats` member on the runtime, pinned by a `vm_tests` test. 243 (`if_point_sees_player`) left with the vision-condition batch: `reference_point`, `kurtPosition` and `raycastClear` all already ported, pinned by a `vm_tests` test (range gate, ref-point selection, clear-line true at the L7 spawn, blocked-from-below false). 199 (`set_104`) and 210 (`set_2c0`) left with the value-slot batch: the C# itself treats them as unidentified object slots and does nothing but `obj.Value104/Value2c0 = Value(obj, o[0])` (ScriptVm.cs:1663-1668) — a pure object-state write like 205/218, with the fields already on `MdkObject` and no C++ reader to diverge from, pinned by a `vm_tests` test (literal and variable operand paths). Opcode 85 (`set_rolling`) was ported with a synthetic transition test for basis capture. Opcode 241 (`if_player_health`) was ported with a synthetic test pinning true and false comparison branches against Kurt's health after damage; the receiver's health is 100 (its default, now also pinned explicitly), so the assertions reject reading the receiver instead of Kurt; the pin itself adds no branch-discriminating strength today. Opcode 74 (`attach_to`) was ported with a synthetic VM test covering the oracle's explicit `BEAMS_1000` identity, case-insensitive matching, exact `TYPE_ID` equality (near-match IDs 999 and 10001 reject range/prefix resolvers, and a different-type ID-1000 candidate rejects ID-only matching), last-match selection among duplicate IDs, self/dead/cross-arena exclusion, attachment points, and preservation of seeded receiver state on a miss. Opcodes 213 (`if_partner_distance`) and 214 (`if_partner_angle`) were ported together over the existing linked-object field, with synthetic coverage for no partner, a dead partner, the live distance floor of one, the full three-dimensional distance measured from the receiver, and `wrap(receiverYaw - bearingToPartner)` (the negated turn required to face the partner). All three oracle `Linked` writers are now ported: `find_object` (245), `spawn_partner` (179), and `link_partners` (228), so partner pairs can feed these conditions. Opcodes 179 (`spawn_partner`), 180 (`snap_to_partner`), and 228 (`link_partners`) were ported together over the existing linked field and spawn machinery. 179 spawns the named type at the receiver's position with yaw zero and links both objects; 180 copies a live partner's position and then applies its optional offset; 228 pairs live same-arena objects of the named type in stable list order when their squared distance is below 10000, while its list form with a zero second value clears only the receiver's link. Synthetic `vm_tests` pin both link directions, dead/no-link behavior, case-insensitive type matching, dead/cross-arena/already-linked exclusions, the strict 100-unit boundary, list order, and the asymmetric clear. Opcodes 29 (`spawn_chain`) and 49 (`release_children`) left with the chain-link batch: the chain that hangs off an object, plus movement command 30 (the chain's own motion), pinned by three `vm_tests` tests (the link numbering after the highest live follower id, the dead follower that does not count, the chain assembly and its 90-degree turns, the broken chain, the dead leader, and the release order with the branch when the chain runs out). Opcode 27 (`if_alarm`) left with the alarm-state batch: the shared countdown is decremented once per tick, movement command 15 sounds it for ten ticks from an object in Kurt's current arena and plays `ALERT` every 32 ticks, and opcode 27 branches on the countdown. One `vm_tests` case pins the dispatch, current-arena guard, true/false branch, ten-tick expiry, and sound cadence. The C#'s Rides subsystem is the other writer of the same countdown and remains deferred with Rides. Opcode 204 (`avoid_objects`) left with the object-avoidance batch: the receiver turns away from the first live, solid, same-arena object whose strict world bounds overlap its own, by at most half a turn times one tick. One `vm_tests` case pins the self/dead/cross-arena/non-solid/touching exclusions, both turn directions, first-object order, and the angle clamp. Opcode 229 (`turn_and_jump_to_dest`) left with the turn-and-jump batch: the receiver turns towards its move destination by at most the requested rate, then launches with the oracle's ballistic velocity, arc top and friction-adjusted flight time; movement command 229 stops on floor contact after half of the recorded flight time. One `vm_tests` case pins the turn and false branch, the launch and true branch, the arc constants, the first motion tick, and the floor landing. Opcode 121 (`if_floor_below`) left with the floor-below batch: it drops a segment of the operand's length from the receiver's position and branches when any triangle of the oracle's active ray arenas crosses it, pinned by a `vm_tests` case with blocked and clear rays. Opcode 192 (`if_no_flat_floor_at`) left with the no-flat-floor batch: it rotates a forward/side offset by the receiver's yaw, probes one unit above that point down by the operand drop plus one, and branches when the ray misses or the hit triangle's normal is steeper than the limit, pinned by a `vm_tests` case against level 7's flat floor and sloping DANT_1 face. Opcode 195 (`if_hit_weapon`) left with the hit-weapon batch: it compares the receiver's existing `hit_type` field with the signed-byte operand and branches on exact equality, pinned by a `vm_tests` case for negative, positive, sign-crossing, mismatched, and default-zero hit types. Opcode 135 (`raise_573aa8`) left with the screen-shake batch: the runtime's per-tick maximum is implemented and tested, while the follow-camera consumer remains deferred. Opcode 170 (`inherit_kurt_vel`) left with the Kurt-velocity batch: the dispatch is implemented and tested over the live `Player` source, while frontend construction of `ScriptRuntime` and the Player binding remain missing. Opcode 202 (`set_574304`) left with the sky-mode batch: the runtime's shared sky mode is implemented and tested, while the renderer's backdrop consumer remains deferred. Remaining 31:
 28,
 112, 114, 128,
 130, 131, 132, 133, 136, 142, 143, 158, 159, 167,
-171, 172, 173, 174, 178, 181, 184, 189, 190, 202,
+171, 172, 173, 174, 178, 181, 184, 189, 190,
 203, 209, 219, 220, 221, 223, 224,
 247
 
 **Reachability, re-probed to t30000 (2026-10-28, `tick1 probe 30000`):**
 after the Debris slice the only remaining opcode that fires anywhere in
 levels 3–8 is **208** (`if_part_hit`, L5 ×9134), now ported; the probe is
-clean on every level. The remaining 32 do not fire in this corpus at all —
+clean on every level. The remaining 31 do not fire in this corpus at all —
 they stay documented no-ops until a corpus or a synthetic test exercises
 them (the rule at the end of this file). The synthetic harness
 (`tests/scripts/vm_tests`, twin of `tests/Mdk.Game.Tests/ScriptVmTests.cs`)
@@ -231,7 +242,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   bind that Player before the inherited velocity is realized in integrated
   play.)
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
-  28, 130, 133, 142, 143, 159, 190, 202, 223, 224 (156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported)
+  28, 130, 133, 142, 143, 159, 190, 223, 224 (156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred)
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 128, 132,
   136, 158, 167, 172, 184 (121 landed with the floor-below batch over
@@ -266,7 +277,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   and 210 are also unidentified downstream slots, but their C# behavior is a
   pure value write (see the value-slot batch above).
 - **Needs its subsystem or data the tree does not have (deferred with cause):**
-  sky state 202, waypoint tables 221,
+  waypoint tables 221,
   projectiles 219, sniper-stance player gating
   220, item-chain links (29/49 landed with the chain-link batch)
 
@@ -278,10 +289,10 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. Current count: C# **238**, C++ **208 labels / 207 unique**,
-remaining **32**. The C++ set has the nested `case 0:` mode arm inside opcode
-249's switch, which is not a dispatch, so there are **206 true dispatches** and
-206 + 32 = 238. Recounted 2026-10-28 after opcode 170 was added; the raw C++
+and compare as sets. Current count: C# **238**, C++ **209 labels / 208 unique**,
+remaining **31**. The C++ set has the nested `case 0:` mode arm inside opcode
+249's switch, which is not a dispatch, so there are **207 true dispatches** and
+207 + 31 = 238. Recounted 2026-10-28 after opcode 202 was added; the raw C++
 label count includes opcode 249's nested `case 0` and `case 1` arms, with the
 latter duplicating top-level opcode 1.
 
@@ -295,10 +306,10 @@ Two axes, kept separate:
 - **Test coverage** — the end-to-end (level, tick) goldens in
   `tests/scripts/tick1.cpp` compare the full object table and script state
   against the oracle byte-for-byte through t600 on levels 3-8. Per-opcode unit
-  tests now exist for 39 opcodes: the 11 the
+  tests now exist for 40 opcodes: the 11 the
   harness twin covers (1, 12, 13, 64, 65, 66, 67, 68, 71, 252, 253) plus
   32/129, 226/242, 156, 81, 206, 217, 243, 77, 85, 74, 213/214,
-  179/180/228, 29/49, 15/27, 204, 229, 121, 192, 195, 135 and 170, which pin the
+  179/180/228, 29/49, 15/27, 204, 229, 121, 192, 195, 135, 170 and 202, which pin the
   oracle directly (no C# counterpart exists); the other owned cases are
   golden-covered only where they fire.
 
@@ -311,11 +322,11 @@ Opcode 170 is a faithful dispatch over the borrowed live `Player` source; its
 missing frontend integration is recorded partial below.)
 
 **Partial — faithful dispatch, effect gated behind a partial/unported subsystem
-(14 cases), each verified against the code. The rule is consistent for input
+(15 cases), each verified against the code. The rule is consistent for input
 fields and output consumers: a required input with no reachable writer, or an
 output with no consumer, is partial even when the dispatch itself is exact.
 Thus 81/165/166/170/195 are partial for unwritten inputs, and
-135/215/240/244 for missing visual or movement consumers. (24 and 151 left this table with the
+135/202/215/240/244 for missing visual or movement consumers. (24 and 151 left this table with the
 mixer call-sites batch: the frame-sound trigger and the door sounds now play,
 so both are complete.)**
 
@@ -330,6 +341,7 @@ so both are complete.)**
 | 165 | if_no_bomb | reads `itemsBomb`, which is never assigned (script_runtime.h:295, `= nullptr` only) → always "no bomb" until the Items slice |
 | 166 | if_bomb_visible | same `itemsBomb` gap → always false |
 | 170 | inherit_kurt_vel | reads the borrowed `Player`'s live velocity, including the C# knock-down-push term; no shipped frontend constructs `ScriptRuntime` or binds the Player yet, so integrated play has no script runtime |
+| 202 | set_574304 | writes the runtime's shared `skyMode`, but the renderer's `SkyModes.BackdropOf` consumer is not ported |
 | 195 | if_hit_weapon | reads `hit_type`; its only C++ writer is `ScriptRuntime::hitGroup`, which has no caller. The C# group-hit call sites (including Kurt's `HitTypeKurt = -11` touch) and direct combat writers remain deferred |
 | 215 | screen_flash | writes whiteFlash, but fade and render consumers are not ported |
 | 240 | set_hurt_flash | writes knockDamage, but Kurt's knock-down state machine is not ported |
@@ -337,7 +349,7 @@ so both are complete.)**
 | 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
 
 **Complete — effect realized with the subsystems present (192 cases):** every
-owned case not in the partial table above (206 true dispatches − 14 = 192). These are the pure
+owned case not in the partial table above (207 true dispatches − 15 = 192). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases, exercised by byte-for-byte goldens
 through t600 on levels 3-8 or by the synthetic tests where the corpus cannot reach them.
@@ -378,6 +390,7 @@ dispatch case.
 
 Closing the partial cases requires their subsystems (movement command 6, the
 death path, the renderer material remap, the Items.Bomb slice, the camera
-shake/flash consumers, the combat writers for `hit_direction` and `hit_type`,
-and shipped-frontend construction of `ScriptRuntime` with its live `Player`
-binding), each of which is its own increment with a test — not a blind port.
+shake/flash and sky-backdrop consumers, the combat writers for `hit_direction`
+and `hit_type`, and shipped-frontend construction of `ScriptRuntime` with its
+live `Player` binding), each of which is its own increment with a test — not a
+blind port.

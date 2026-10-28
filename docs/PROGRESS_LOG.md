@@ -1,3 +1,41 @@
+## What this batch did (Phase 2 iteration 16 — opcode 202 sky mode; review-15 NIT)
+
+- Ported opcode 202 (`set_574304`) from
+  `src/Mdk.Game/Scripts/ScriptVm.cs:1613-1615`. Its signed-byte operand is now
+  written verbatim to a new shared `ScriptRuntime::skyMode` field. The field
+  starts at 0 and is level state, not per-tick state. The C# renderer's
+  `SkyModes.BackdropOf` consumer (0 sky, 1 black, anything else keep-last-frame)
+  is not ported, so the faithful dispatch is classified partial.
+- Added `SetSkyModeWritesSharedLevelState` to `tests/scripts/vm_tests.cpp`.
+  It pins the default, 0, 1, signed -1 and an arbitrary value, the following
+  instruction's execution, and persistence across the next tick. Opcode 202
+  does not fire in the level 3-8 corpus, so no golden changed. An
+  unsigned-byte mutation made `vm_tests` exit 1 with exactly the
+  `runtime.skyMode == -1` assertion failing; the source was restored before
+  the final clean build.
+- Addressed review-15's citation NIT. The opcode-170 move/drain/vertical-order
+  comment in `player.cpp` and the coverage ledger now cite `Kurt.cs:221-234`,
+  which includes the vertical update at line 234, rather than the short
+  `221-224` range. Review-15 reported no BLOCKER, MAJOR or MINOR finding.
+- Recount-verified: C# 238 / C++ 209 numeric labels / 208 unique labels / 207
+  true dispatches, with 31 remaining. Classification is 15 partial and 192
+  complete.
+- Verification on the final tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 42
+    VM tests and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    with no unimplemented opcodes on levels 3-8.
+- No emulator or Original 3DS run was performed. Old-3DS timing remains
+  unmeasured. Next isolated opcode family: 203 (`camera_track`) with a runtime
+  camera-track state seam and a synthetic test; its renderer-side camera
+  consumer remains deferred.
+
 ## What this batch did (review-13 correction — live Player source for opcode 170)
 
 - Addressed review-13's MAJOR finding. The previous record said Kurt's
@@ -1647,7 +1685,7 @@
   at the API boundary and prevents a future frontend from accidentally
   omitting the binding.
 - Addressed review-14's move/drain-order NIT. The opcode-170 VM case now pins
-  the C# `Kurt.cs:221-224` walk displacement from the PRE-drain knock-down
+  the C# `Kurt.cs:221-234` walk displacement from the PRE-drain knock-down
   push as well as the existing post-drain velocity. Tightened the matching
   `Player::update` comment to state that the move captures the pre-drain push,
   then the push drains before the walk move is applied and before the vertical
