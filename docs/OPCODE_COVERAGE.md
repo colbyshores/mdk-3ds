@@ -239,7 +239,11 @@ the 11 partial cases, not this illustrative grouping. (206 joined the spawn grou
 All three oracle `Linked` writers are now ported: `find_object` (245),
 `spawn_partner` (179), and `link_partners` (228). The partner-condition cases
 213/214 therefore no longer have a producer caveat, and partner pairs created
-by either new writer can reach them.
+by either new writer can reach them. Removal keeps those links exactly as the
+oracle does: the C# `Remove` clears no inbound reference, so `remove()` does
+not either (see the iteration-59 narrative in `docs/PROGRESS_LOG.md`); a widow
+keeps its dead partner, and `RemoveKeepsInboundReferences` pins the same for
+`leader`.
 
 Note on 251 (`set_target_mode`): its own effect (set `target_mode`, set/clear
 the alien target) is realized, so it is classified complete; the known

@@ -1,4 +1,56 @@
 
+## What this batch did (iteration 59 — the oracle's Remove clears no inbound reference)
+
+- Addressed the newest external review's two MINOR findings and two NITs on the
+  partner/removal semantics. The review found that `ScriptRuntime::remove`
+  nulled inbound `leader`, `attached` and `cow_target` pointers, while the
+  oracle's `Remove` (`src/Mdk.Game/Scripts/ScriptRuntime.cs:1648-1673`) clears
+  no inbound reference at all. The review could not prove the `attached` clear
+  safe — the oracle's `Attached` read sites test only for null
+  (`ObjectBehaviors.cs:238,267`), so nulling is NOT equivalent there — and
+  asked for the divergence to be removed rather than justified.
+- `ScriptRuntime::remove` now clears nothing, matching the oracle: a widow
+  keeps its dead partner, a removed chute keeps its leader, a pickup keeps a
+  chute removed under it. Every C++ read site was checked against its oracle
+  twin — `leader` (`followAttachment`, `mayCommand`, opcode 34, command
+  selector 7/8), `attached` (the pickup fall/shrink paths) and `cow_target`
+  (no C++ read yet; the oracle's is `is { Dead: false }`) — and each reads a
+  retained dead pointer the same way the oracle's retained managed reference
+  reads. The removed object's deque slot is permanent, so the retained pointer
+  stays valid; the object-list loops skip removed objects by `dead`, which
+  `remove` alone sets.
+- Corrected the header comment that claimed `kill` leaves an object "dead but
+  PRESENT": `kill` leaves the object present with `health == 0` and
+  `dead == false`; `dead` is written in exactly one place in each language —
+  `remove`, immediately before the object leaves the list.
+- Corrected the `link_partners` comment: admitting a dead link to the loose
+  list is unobservable for the pairing itself (a widow is skipped as `i` and
+  as `j`, since both loops skip every non-null link), so the comment no longer
+  claims the two steps matter. The clause is kept verbatim because it IS the
+  oracle's filter, and the retained link it admits is what the other `linked`
+  consumers (variable source 3, 180, 213/214, 246) read.
+- The `vm_tests` link_partners fixture no longer fabricates any state: the
+  widow's pair is built by a real `link_partners` run (the only two BEAMS in
+  the arena), the cross-type already-linked pair by `spawn_partner` (which
+  links its receiver to the spawned partner whatever the type), and the
+  keep/preserve links by `spawn_partner` as well; the redundant hand-set
+  re-links in the clear section were deleted because the pair program above
+  already produced that state.
+- Added `RemoveKeepsInboundReferences`: `attach_to` (74) makes one object the
+  leader of another, the leader is removed, and the follower still points at
+  the dead leader (the oracle's field state), while `if_no_leader` (34) still
+  reads it as no leader and clears the move command. Mutation-checked: putting
+  the inbound clears back fails this case (`follower->leader == leader`), and
+  putting the `linked` clear back fails 11 checks in the link_partners case.
+- No opcode count changed: 196 true dispatches / 238, 42 remaining.
+- Verification: `make -C tests/scripts clean && make -C tests/scripts` passed
+  29 VM tests and the complete oracle suite (`All cases match the oracle.`);
+  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  built `mdk.3dsx` after staging 69 RomFS files (79M), and `cmake --build
+  build-linux --target mdk` built the Linux target. No golden changed; no
+  emulator/hardware run. Old-3DS timing remains unmeasured.
+
 ## What this batch did (iteration 58 — preserve dead partner links)
 
 - Addressed the newest external review's MAJOR and MINOR findings on the

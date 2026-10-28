@@ -1,6 +1,7 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-27 (iteration 58: preserve dead partner links).
+Last updated: 2026-10-27 (iteration 59: the oracle's Remove clears no inbound
+reference).
 Current coverage: 196 true C++ dispatches / 238, 42 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -30,6 +31,33 @@ Deferred: alarm/move 15 fires zero times in current corpus; 248 `push_kurt` is
 an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
+
+- Iteration 59 addresses review-2's removal-semantics findings. The C# `Remove`
+  clears NO inbound reference (not `Linked`, `Leader`, `CowTarget`, `Attached`);
+  the C++ nulled inbound `leader`/`attached`/`cow_target` pointers, which the
+  oracle never does — and which is not equivalent for `Attached`, whose oracle
+  read sites test only for null. `ScriptRuntime::remove` now clears nothing,
+  matching the oracle: every C++ read site twins its oracle guard
+  (null-or-dead for `linked`/`leader`, null-only for `attached`, otherwise a
+  comparison against a live object), so a retained pointer to the permanent
+  deque slot reads the same way it does in C#. The header comment's claim that
+  `kill` leaves an object "dead but PRESENT" is corrected (`kill` leaves
+  `health == 0` and `dead == false`; `dead` is set only by `remove`, in both
+  languages), and the `link_partners` comment no longer claims the dead-link
+  admission is observable. The `vm_tests` fixture hand-builds no link at all
+  now: the widow pair comes from a real `link_partners` run, the cross-type
+  pair and the keep/preserve links from `spawn_partner`. A new
+  `RemoveKeepsInboundReferences` case pins the retained leader (via
+  `attach_to`) and the dead-leader reading of `if_no_leader`. Mutation-checked:
+  restoring the clears fails the new case, restoring the `linked` clear fails
+  11 checks. Coverage unchanged at 196 true dispatches / 238, 42 remaining.
+  `make -C tests/scripts clean && make -C tests/scripts` passed 29 VM tests and
+  the complete oracle suite (`All cases match the oracle.`); `bash
+  tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
+  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+  mdk_3ds` built `mdk.3dsx` after staging 69 RomFS files (79M), and `cmake
+  --build build-linux --target mdk` built the Linux target. No golden changed;
+  no emulator/hardware run. Old-3DS timing remains unmeasured.
 
 - Iteration 58 addresses review-1's partner-widow findings.
   `ScriptRuntime::remove` now retains the oracle's inbound `Linked` pointer
@@ -65,30 +93,6 @@ an honest no-op pending Kurt knock-back. Old-3DS timing remains UNMEASURED.
   make -C mdk_3ds` built `mdk.3dsx` after staging 69 RomFS files (79M), and
   `cmake --build build-linux --target mdk` built the Linux target. No golden
   changed; no emulator/hardware run. Old-3DS timing remains unmeasured.
-- Iteration 56 addresses review-3's partner-condition fixture finding. The
-  213/214 `vm_tests` case now gives the receiver a non-origin position and a
-  non-zero yaw, makes the partner differ in z, separates the receiver from
-  Kurt, and uses approximate-equality comparisons. It pins the full 3D
-  distance, the receiver-relative origin, the floor of one, a live due-east
-  angle of zero, and `wrap(receiverYaw - bearingToPartner)`: the negated turn
-  required to face the partner. That single wording replaces the three contradictory descriptions in
-  the test and documentation. `docs/OPCODE_COVERAGE.md` recorded that 213/214
-  were complete through the existing `linked` field but were fed in integrated
-  play only by the then-ported `find_object` writer (245); iteration 57 ports
-  the other two writers (`spawn_partner` 179 and `link_partners` 228). Runtime
-  behavior and oracle goldens are unchanged. `make -C tests/scripts clean && make -C tests/scripts` passed
-  25 VM tests and the complete oracle suite (`All cases match the oracle.`);
-  `bash tools/check.sh` passed all contract gates (SMDH skipped, no CIA);
-  `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
-  built `mdk.3dsx` after staging 69 RomFS files (79M). No golden changed; no
-  emulator/hardware run. Old-3DS timing remains unmeasured.
-- Iteration 55 ports opcodes 213 (`if_partner_distance`) and 214
-  (`if_partner_angle`) over the existing `linked` field: zero without a live
-  partner, distance floored at one, and angle
-  `wrap(receiverYaw - bearingToPartner)`, the negated turn required to face the
-  partner. It also addresses review-2's opcode-241 fixture finding: that test
-  now builds its own `ScriptRuntime` instead of damaging the shared one, and
-  the stale in-code/doc causal claims are corrected.
 - Next: continue opcode conversion from the remaining 42 in
   `docs/OPCODE_COVERAGE.md`; select the next testable subsystem slice.
 
