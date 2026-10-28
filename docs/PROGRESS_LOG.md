@@ -1,3 +1,50 @@
+## What this batch did (iteration 65 — opcode 192, no flat floor)
+
+- Ported opcode 192 (`if_no_flat_floor_at`) from
+  `src/Mdk.Game/Scripts/ScriptVm.cs:1696-1701`. The receiver rotates its
+  forward/side operand by its yaw, raises the resulting point one unit, drops
+  the third operand plus one unit, and branches when the ray misses or the
+  absolute Z of the hit triangle's normal is below the fourth operand. The
+  implementation preserves the oracle's left-associated degree conversion,
+  rotation expression, short-circuit on a miss, and comparison.
+- Extended `ScriptRuntime::raycastPoint` to carry the selected triangle's
+  geometric normal instead of approximating it. The normal is computed from the
+  same triangle returned by the nearest-hit walk, using the oracle's
+  `cross(b-a,c-a)` normalization and +Z fallback for a degenerate face. The
+  existing `rayIn` seam now shares that helper, so the debris and script ray
+  paths cannot drift in their normal calculation.
+- One synthetic `vm_tests` case, `NoFlatFloorAtUsesRotatedPointAndHitNormal`,
+  pins the dispatch against level 7's real geometry: a flat floor hit is false,
+  a zero drop and a far point are true, the probe's one-unit clearance is
+  exercised from just below the floor, DANT_1's sloping face is true at a 0.5
+  limit and false at 0.25, and a yaw-90 forward offset must land on that face
+  rather than east of it. The pair of threshold cases pins the normal operand
+  and comparison direction; the rotation case also rejects swapped forward/side
+  operands.
+- Review-8 found no BLOCKER or MAJOR. Its MINOR records a pre-existing
+  synthetic-coverage gap: the raycast tests exercise the all-arenas fallback,
+  not the current-plus-second arena pair. That seam test is now the next slice.
+  Its NIT concerns attribution of the prior floor-below test's drop-distance pin
+  and requires no code change.
+- Coverage: 203 true C++ dispatches / 238, 35 remaining. The brace-matched
+  recount gives C# 238 cases and C++ 205 numeric labels / 204 unique labels;
+  the extra numeric label is the nested mode arm inside opcode 249, leaving
+  203 true dispatches.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` passed 37 VM tests
+    and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` passed all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` reported
+    no unimplemented opcodes on levels 3–8.
+- No golden changed; opcode 192 does not fire in the level 3–8 corpus. No
+  emulator or hardware run was performed. Old-3DS timing remains unmeasured.
+
+
 ## What this batch did (iteration 64 — opcode 121, floor below)
 
 - Ported opcode 121 (`if_floor_below`) from
