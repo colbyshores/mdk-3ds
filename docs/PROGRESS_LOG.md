@@ -1,3 +1,40 @@
+## What this batch did (iteration 66 — current-plus-second raycast seam)
+
+- Closed the synthetic raycast coverage gap recorded by review-8 and repeated
+  as review-9's UNPROVEN observation. The C# `Raycast` selects the current
+  arena plus the second arena whenever a current arena exists, and otherwise
+  falls back to every arena. Earlier opcode 121/192 tests exercised only that
+  fallback.
+- Added `RaycastUsesCurrentAndSecondArena` to `tests/scripts/vm_tests.cpp`.
+  It uses level 7's overlapping `DANT_1` and `DANT_8` geometry: after one
+  runtime tick establishes `DANT_1` as current, `showArena("DANT_8")` adds
+  the second arena. The case pins a hit unique to the current arena, a hit
+  unique to the second arena, and both directions of the nearest-hit contest.
+  Each assertion covers the selected hit point and the selected triangle's
+  geometric normal, so a point from one arena cannot be paired with a normal
+  from another.
+- The test was mutation-checked: removing `tryArena(secondArena_)` from
+  `ScriptRuntime::raycastPoint` makes eight assertions fail (the second-only
+  hit and the second arena's winning point/normal), and restoring the arm
+  makes the suite pass. No production code changed in this batch.
+- Review-9 found no BLOCKER, MAJOR, or MINOR finding. Its only observation was
+  the coverage gap closed here. Coverage remains 203 true C++ dispatches / 238,
+  with 35 remaining.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` passed 38 VM tests
+    and the complete oracle suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` passed all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` reported
+    no unimplemented opcodes on levels 3–8.
+- No golden changed. No emulator or hardware run was performed. Old-3DS timing
+  remains unmeasured.
+
+
 ## What this batch did (iteration 65 — opcode 192, no flat floor)
 
 - Ported opcode 192 (`if_no_flat_floor_at`) from

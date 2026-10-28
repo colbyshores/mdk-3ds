@@ -2281,6 +2281,79 @@ void testNoFlatFloorAtUsesRotatedPointAndHitNormal(scripts::ScriptRuntime& runti
     }
 }
 
+// Raycast's arena selection (ScriptRuntime.cs:2886-2909) uses Kurt's current
+// arena and the second arena when a current arena is set, and every arena only
+// when there is no current one. Level 7's DANT_1 and DANT_8 overlap: their
+// geometry gives the current arena a hit alone at one point, the second arena
+// a hit alone at another, and lets each arena win the nearest-hit contest.
+void testRaycastUsesCurrentAndSecondArena(LevelData* levelData, const Cmi* cmi,
+                                          audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank);
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.currentArena() == "DANT_1");
+
+    // DANT_1 alone crosses this ray. This also proves that the current arena
+    // has been established before the second one is added.
+    {
+        Vec3 hit{};
+        Vec3 normal{};
+        const Vec3 from{-60.0f, 45.0f, 200.0f};
+        const Vec3 to{-60.0f, 45.0f, -200.0f};
+        CHECK(runtime.raycastPoint(from, to, &hit, &normal));
+        CHECK(fabsf(hit.z - 10.962601f) < 1e-4f);
+        CHECK(fabsf(normal.x + 0.214408f) < 1e-4f);
+        CHECK(fabsf(normal.y + 0.105432f) < 1e-4f);
+        CHECK(fabsf(normal.z - 0.971037f) < 1e-4f);
+    }
+
+    // DANT_8's geometry crosses this ray, but it is not active yet. Adding it
+    // as the second arena makes the previously clear ray hit.
+    Vec3 hit{};
+    Vec3 normal{};
+    CHECK(!runtime.raycastPoint(Vec3{100.0f, 0.0f, 200.0f}, Vec3{100.0f, 0.0f, -200.0f},
+                                 &hit, &normal));
+    runtime.showArena("DANT_8");
+    {
+        hit = Vec3{};
+        normal = Vec3{};
+        const Vec3 from{100.0f, 0.0f, 200.0f};
+        const Vec3 to{100.0f, 0.0f, -200.0f};
+        CHECK(runtime.raycastPoint(from, to, &hit, &normal));
+        CHECK(fabsf(hit.z - 46.946426f) < 1e-4f);
+        CHECK(fabsf(normal.x) < 1e-4f);
+        CHECK(fabsf(normal.y - 0.379919f) < 1e-4f);
+        CHECK(fabsf(normal.z - 0.925020f) < 1e-4f);
+    }
+
+    // At Kurt's start both arenas cross the ray. DANT_8's face is nearer, so
+    // the second arena's hit point and normal must replace DANT_1's lower one.
+    {
+        Vec3 hit{};
+        Vec3 normal{};
+        const Vec3 from{0.0f, 4.0f, 200.0f};
+        const Vec3 to{0.0f, 4.0f, -200.0f};
+        CHECK(runtime.raycastPoint(from, to, &hit, &normal));
+        CHECK(fabsf(hit.z - 24.078888f) < 1e-4f);
+        CHECK(fabsf(normal.x + 0.761176f) < 1e-4f);
+        CHECK(fabsf(normal.y - 0.124796f) < 1e-4f);
+        CHECK(fabsf(normal.z - 0.636426f) < 1e-4f);
+    }
+
+    // The contest can also go to the current arena. Here DANT_1's face at
+    // 23.300003 is nearer than DANT_8's face at 4.053000.
+    {
+        Vec3 hit{};
+        Vec3 normal{};
+        const Vec3 from{0.0f, 40.0f, 200.0f};
+        const Vec3 to{0.0f, 40.0f, -200.0f};
+        CHECK(runtime.raycastPoint(from, to, &hit, &normal));
+        CHECK(fabsf(hit.z - 23.300003f) < 1e-4f);
+        CHECK(fabsf(normal.x) < 1e-4f);
+        CHECK(fabsf(normal.y + 0.099504f) < 1e-4f);
+        CHECK(fabsf(normal.z - 0.995037f) < 1e-4f);
+    }
+}
+
 // Opcode 229 (turn_and_jump_to_dest) and movement command 229 have no C#
 // ScriptVmTests counterpart, so this pins the oracle directly
 // (ScriptVm.cs:1136-1138 and ObjectMotion.cs:387-391/426-461). The receiver
@@ -2471,6 +2544,8 @@ int main() {
     printf("PASS FloorBelowBranchesOnARayHit\n");
     testNoFlatFloorAtUsesRotatedPointAndHitNormal(runtime);
     printf("PASS NoFlatFloorAtUsesRotatedPointAndHitNormal\n");
+    testRaycastUsesCurrentAndSecondArena(&levelData, &cmi, &bank);
+    printf("PASS RaycastUsesCurrentAndSecondArena\n");
     testTurnAndJumpTurnsLaunchesAndStopsOnFloor(&levelData, &cmi, &bank);
     printf("PASS TurnAndJumpTurnsLaunchesAndStopsOnFloor\n");
 

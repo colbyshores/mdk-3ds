@@ -1,6 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (iteration 65: opcode 192, no flat floor).
+Last updated: 2026-10-28 (iteration 66: current+second raycast seam).
 Current coverage: 203 true C++ dispatches / 238, 35 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -17,7 +17,9 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    rope-swing 226/242, spawn 156/206, push-hit-dir 81, stats 217, vision 243,
    value slots 199/210, Kurt/screen 215/240/244, no-ops 239/77, object avoidance
    204, turn-and-jump 229, floor-below 121 and no-flat-floor 192 are implemented
-   and pinned. All three oracle `Linked` writers (245/179/228) are ported, so
+   and pinned. The current-plus-second raycast selection seam is now pinned
+   against overlapping DANT_1/DANT_8 geometry. All three oracle `Linked`
+   writers (245/179/228) are ported, so
    partner pairs can feed the 213/214 conditions. 132/136 still need Effects;
    frame-blend integration is a separate future slice. The exact remaining 35
    are in
@@ -32,20 +34,18 @@ Rides. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Iteration 65 ports opcode 192 (`if_no_flat_floor_at`) over the arena raycast
-  seam, now extended to carry the selected hit triangle's geometric normal.
-  The receiver rotates a forward/side offset by yaw, probes from one unit above
-  that point down by the operand drop plus one, and branches when the ray misses
-  or the hit normal's absolute Z is below the flatness limit. One synthetic
-  `vm_tests` case pins flat, absent and steep floors, both threshold branches,
-  the drop/clearance, and the yaw rotation. Coverage is 203 true dispatches /
-  238 with 35 remaining.
-- Review-8 found no BLOCKER or MAJOR. Its MINOR is the pre-existing gap in
-  synthetic raycast coverage: the tests exercise the all-arenas fallback, not
-  the current-plus-second arena pair. Its NIT only asks that the drop-distance
-  pin be credited to the pair of floor-below blocks; no code change is needed.
+- Iteration 66 closes review-8/review-9's current-plus-second raycast coverage
+  gap. One synthetic `vm_tests` case establishes level 7's current arena
+  (`DANT_1`), adds `DANT_8` as the second arena, and pins the selected hit
+  point and triangle normal for a current-only hit, a second-only hit, and
+  both possible winners of the nearest-hit contest. Removing the second-arena
+  raycast arm makes eight checks fail; restoring it makes the test pass.
+- Review-9 found no BLOCKER, MAJOR, or MINOR finding. Its UNPROVEN observation
+  was exactly the synthetic current-plus-second gap now closed by this case.
+  The implementation was unchanged; coverage remains 203 true dispatches / 238
+  with 35 remaining.
 - Verification on this tree:
-  - `make -C tests/scripts clean && make -C tests/scripts` passed 37 VM tests
+  - `make -C tests/scripts clean && make -C tests/scripts` passed 38 VM tests
     and the complete oracle suite (`All cases match the oracle.`).
   - `bash tools/check.sh` passed all contract gates (`CHECK: ALL GATES
     PASSED`); SMDH was skipped because no CIA was built.
@@ -55,11 +55,11 @@ Rides. Old-3DS timing remains UNMEASURED.
   - `cmake --build build-linux --target mdk` built the Linux target.
   - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` reported
     no unimplemented opcodes on levels 3–8.
-- No golden changed; opcode 192 does not fire in the level 3–8 corpus. No
-  emulator or hardware run was performed. Old-3DS timing remains unmeasured.
-- Next: close review-8's current-plus-second raycast coverage gap in its own
-  seam-test slice, then port opcode 195 (`if_hit_weapon`) over the existing
-  `MdkObject::hit_type` field. Combat writers for that field remain deferred.
+- No golden changed. No emulator or hardware run was performed. Old-3DS timing
+  remains unmeasured.
+- Next: port opcode 195 (`if_hit_weapon`) over the existing
+  `MdkObject::hit_type` field, with a synthetic branch test. Combat writers for
+  that field remain deferred.
 
 ## Testability and standing open items
 
