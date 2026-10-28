@@ -1,3 +1,46 @@
+## What this batch did (opcode 170 — inherit Kurt velocity; review-12 fix)
+
+- Ported opcode 170 (`inherit_kurt_vel`) from
+  `src/Mdk.Game/Scripts/ScriptVm.cs:1603-1604`. The receiver's velocity gains
+  each component of the C# `Kurt.Velocity` source multiplied by the opcode's
+  F32 operand. `ScriptRuntime` now has an explicit `kurtVelocity` /
+  `setKurtVelocity` seam for that source. It is deliberately distinct from the
+  C# `ScriptRuntime.KurtVelocity` field, which measures position change over
+  a tick. Kurt movement is a later slice, so the seam has no integrated writer
+  yet and the dispatch is classified partial.
+- Added `InheritKurtVelocityAddsScaledKurtVelocity` to
+  `tests/scripts/vm_tests.cpp`. It pins the dispatch, literal scaling on all
+  three components, preservation of the receiver's existing velocity, a
+  negative scale (rejecting an absolute-value mutant), and fall-through to
+  the next instruction. Opcode 170 does not fire in the level 3-8 corpus, so
+  no golden changed.
+- Addressed review-12's sole MINOR finding. The opcode-135 test now follows
+  its NaN request with a finite request and pins that
+  `MathF.Max(NaN, finite)` stays NaN. Mutation-checking the runtime
+  `mathMax` first arm to return the finite new value makes `vm_tests` exit 1
+  with exactly that assertion failing. Review-12 found no BLOCKER or MAJOR
+  finding. Its cutscene note remains a constraint on the future cutscene
+  slice: the alarm decrement and screen-shake clear must move after the
+  oracle's cutscene early return.
+- Coverage: 206 true C++ dispatches / 238, 32 remaining. The brace-matched
+  recount gives C# 238 cases and C++ 208 numeric labels / 207 unique labels;
+  opcode 249's nested `case 0` and `case 1` arms account for the extra raw
+  label and the duplicate.
+- Verification on this tree:
+  - `make -C tests/scripts` exited 0 after 41 VM tests and the complete oracle
+    suite (`All cases match the oracle.`).
+  - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
+    PASSED`); SMDH was skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    and reported no unimplemented opcodes on levels 3-8.
+- No golden changed. No emulator or hardware run was performed. Old-3DS timing
+  remains unmeasured. Next: opcode 202 (`set_574304`) with a runtime sky-mode
+  seam and a synthetic test; its renderer consumer remains deferred.
+
 ## What this batch did (iteration 68 — opcode 135, screen shake; review-11 fixes)
 
 - Ported opcode 135 (`raise_573aa8`) from `ScriptVm.cs:1581-1582`. The VM
