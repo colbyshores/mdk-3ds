@@ -459,9 +459,13 @@ int main(int argc, char** argv) {
             // HurtFlash is already partway up -- and when it completes, Died fires,
             // Game.cs:448-456 writes SaveGames.LastGame and leaves the level for
             // the menu. This stand-in has no menu, no save and no level end: it
-            // respawns Kurt in place after a fixed 4.0 s. So the divergences are
-            // the level-end flow and 4.0 s versus a beat that depends on
-            // HurtFlash, not the script clock.
+            // respawns Kurt in place after the whole 4.25 s fade (kRespawnDelay
+            // = SkullEnd/SkullFade). The C# beat can be SHORTER when HurtFlash is
+            // already partway up when Kurt dies; that path is unreachable here
+            // only because the alive-state damage flash is not ported, so
+            // state.hurtFlash is 0 while alive. So the divergences are the
+            // level-end flow and the missing HurtFlash head start, not the
+            // script clock.
             if (player.dead) {
                 deathTimer += elapsed;
                 if (deathTimer >= kRespawnDelay) {
