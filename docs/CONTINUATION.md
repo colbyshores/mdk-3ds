@@ -1,8 +1,9 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (Linux frontend ScriptRuntime integration).
-Current coverage: 210 true C++ dispatches / 238, 28 remaining. Continue one
-opcode family per batch via `vm_tests`; renderer work waits for P5.0.
+Last updated: 2026-10-28 (opcode 174 ammo condition).
+Current coverage: 211 true C++ dispatches / 238, 27 remaining. Every remaining
+opcode needs a deferred subsystem; the next increment is P5.0, not another
+blind opcode port.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 `docs/PROGRESS_LOG.md`.
@@ -18,17 +19,18 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    value slots 199/210, Kurt/screen 215/240/244, no-ops 239/77, object
    avoidance 204, turn-and-jump 229, floor-below 121, no-flat-floor 192,
    hit-weapon 195, screen-shake 135, inherit-Kurt-velocity 170, sky-mode
-   202, camera-track 203, place-near-Kurt 220 and gun-aim 219 are implemented
-   and pinned. The Linux frontend now constructs `ScriptRuntime`, binds the
-   live `Player`, runs its 30 Hz script clock after each 60 Hz player step,
-   and consumes `camera_track`/the scripts' current arena in the follow
-   camera. That completes 170/219/220 and the follow-camera half of 203.
+   202, camera-track 203, place-near-Kurt 220, gun-aim 219 and ammo 174 are
+   implemented and pinned. The Linux frontend now constructs `ScriptRuntime`,
+   binds the live `Player`, runs its 30 Hz script clock after each 60 Hz
+   player step, and consumes `camera_track`/the scripts' current arena in the
+   follow camera. That completes 170/219/220 and the follow-camera half of 203.
    Opcode 202's backdrop/snapshot consumers and opcode 203's snapshot
    consumer remain deferred. All three oracle `Linked` writers
    (245/179/228) are ported, so partner pairs can feed the 213/214
    conditions. 132/136 still need Effects; frame-blend integration is a
-   separate future slice. The exact remaining 28 are in
-   `docs/OPCODE_COVERAGE.md`.
+   separate future slice. The exact remaining 27 are in
+   `docs/OPCODE_COVERAGE.md`; each needs a deferred subsystem, so opcode
+   conversion is exhausted for the C# oracle's currently supported behavior.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. The reference source is DECIDED: the C# renderer,
    headlessly under Linux/lavapipe (see `SPEC-COMPLETION.md`). The harness
@@ -43,6 +45,11 @@ with those integrations. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
+- Opcode 174 (`if_ammo`) now reads `Kurt`'s super-chain-gun tick count and
+  five sniper-ammo entries. Kind 0 selects the timer, kinds 1-5 select the
+  entries, and any other kind reads zero. The fields and their test seam are
+  present, but pickup collection and chain-gun/sniper combat writers are not,
+  so integrated play sees zero and the opcode is partial.
 - The Linux frontend now loads `LEVEL3.CMI` and the level sound bank,
   constructs `ScriptRuntime` with the live `Player`, and runs it after Kurt
   moves and before the camera, matching `Viewer.cs:505-535`. The runtime
@@ -59,16 +66,16 @@ with those integrations. Old-3DS timing remains UNMEASURED.
 - Opcode 170 now has its live `Player` source in integrated play; 219/220 now
   receive the observed velocity written from that Player. The three are
   classified complete. 203 remains partial only because its save/load
-  snapshot consumer is deferred.
-- Review-20's FP-contraction correction is applied: VFPv2 `VMLA.F32` is the
-  fused MAC form and GCC contracts to it even with `-ffp-contract=off`. The
-  current TU is byte-identical under default/off/fast (161 `vmla`/`vmls`, 0
-  `vfma` each). ARM11 VMLA-versus-C# rounding remains UNMEASURED on hardware.
-- Coverage recount (unchanged dispatch methods): C# 238 cases, C++ 212 numeric
-  labels / 211 unique / 210 true dispatches, 28 remaining. Classification is
-  now 15 partial, 195 complete.
+  snapshot consumer is deferred. Review-21's single-arena caveat is recorded
+  below: the frontend refresh matches the oracle's timing, not its full
+  `SolidArenas` list.
+- Review-20's FP correction: VFPv2 `VMLA.F32` is fused and GCC emits it even
+  with `-ffp-contract=off`; the TU is byte-identical (161 `vmla`/`vmls`, 0
+  `vfma`). ARM11 VMLA-versus-C# rounding remains UNMEASURED.
+- Coverage: C# 238, C++ 213 labels / 212 unique / 211 true dispatches, 27
+  remaining; classification is 16 partial, 195 complete.
 - Verification on this tree:
-  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 46
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 47
     VM tests and the complete oracle suite (`All cases match the oracle.`,
     354 golden cases).
   - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`); SMDH was
@@ -85,15 +92,16 @@ with those integrations. Old-3DS timing remains UNMEASURED.
   from the movement `Player`, so health/items/object rendering and the 3DS
   frontend remain deferred. Ordinary C++ runs use a fresh seeded legacy RNG
   because .NET's unseeded modern generator is not ported; `--seed` makes runs
-  reproducible. No emulator or hardware run was performed; Old-3DS timing is
-  unmeasured.
-- Next isolated opcode family: 174 (`if_ammo`, `ScriptVm.cs:999-1005`) over
-  `Kurt`'s inventory seam — it needs the C# `Inventory.SuperChainGun` tick
-  counter and five `Inventory.Ammo` entries as fields, and their pickup
-  writers stay deferred, so it lands partial like 165/166/195. The other 27
-  remaining opcodes each need a deferred subsystem (Effects, Fans, Rides,
-  SniperRounds, teleport, HUD messages, wind, waypoints, arena preload); do not
-  blind-port them.
+  reproducible, but one seed is reused for every respawn in a process, unlike
+  the C#'s fresh unseeded generator per level load. Review-21 also records two
+  frontend divergences: the post-camera solid-arena refresh pins only the
+  scripts' current arena rather than the C#'s current-plus-active-second
+  `SolidArenas` list, and scripts continue during the 4-second death beat
+  rather than ending with the level as the C# does. No emulator or hardware
+  run was performed; Old-3DS timing is unmeasured.
+- Next increment: P5.0 frame-golden harness. All 27 remaining opcodes need a
+  deferred subsystem (Effects, Fans, Rides, SniperRounds, teleport, HUD,
+  wind, waypoints, arena preload, pickups/combat writers); do not blind-port.
 
 ## Testability and standing open items
 
@@ -108,6 +116,8 @@ with those integrations. Old-3DS timing remains UNMEASURED.
   `Directory.Build.props` to a scratch tree plus `src/Mdk.Engine/obj/shaders`,
   and build with `NUGET_PACKAGES=/home/coleshores/.nuget/packages dotnet build
   -p:PrecompiledShaders=spirv`; the repo's own C# `obj/` is not writable here.
+- The Linux frontend hardcodes level 3 in three places; a future level
+  argument must replace all three.
 - Dynamic scene refresh exists at scene level; no GameEngine exists to wire
   refresh on opcode 140. Do not fake call-site wiring.
 - Known divergences: incomplete decoy/`AlienTarget` target selection; opcode

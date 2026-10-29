@@ -1,3 +1,54 @@
+## What this batch did (Phase 2 iteration 22 — opcode 174 ammo condition)
+
+- Ported opcode 174 (`if_ammo`) from
+  `src/Mdk.Game/Scripts/ScriptVm.cs:999-1005` into the C++ VM. Kind 0 reads
+  `Inventory.SuperChainGun`, kinds 1-5 read the corresponding
+  `Inventory.Ammo` entry, and any other kind reads zero. The five ordinary
+  comparison operators and their between/outside second bound use the same
+  comparison path as opcode 175, including the oracle's unknown-operator
+  false result.
+- Extended `mdk::Kurt` with the super-chain-gun tick counter and five
+  sniper-ammo entries from `Inventory.cs`. Their pickup writers and the
+  chain-gun/sniper combat writers remain deferred with those subsystems, so
+  the dispatch is classified partial rather than presented as complete.
+- Added `IfAmmoReadsSuperChainGunAndSniperAmmo` to `tests/scripts/vm_tests.cpp`.
+  It pins the fresh zero state, the distinct super-chain-gun source, all five
+  ammo slots, the out-of-range kinds 6 and 255, strict/between/outside
+  comparisons, the unknown-comparison false branch, fall-through, and the
+  absence of opcode 174 from the unimplemented bucket. Opcode 174 does not
+  fire in the level 3-8 corpus, so no golden changed.
+- Recount-verified by brace-matching both dispatch methods: C# 238 cases, C++
+  213 numeric labels / 212 unique / 211 true dispatches, 27 remaining. The
+  nested `case 0`/`case 1` arms inside opcode 249's switch account for the
+  extra raw label and duplicate. Classification is 16 partial, 195 complete.
+- Review-21 had verdict COMPLETE and no BLOCKER or MAJOR finding. Its
+  frontend MINOR findings and NITs are now explicit in
+  `docs/CONTINUATION.md`: the post-camera solid-arena refresh matches the
+  oracle's timing but pins one arena rather than its current-plus-active-
+  second `SolidArenas` list; scripts continue during the 4-second death beat
+  rather than ending with the level; and one `--seed` is reused for every
+  respawn rather than drawing the C#'s fresh unseeded generator per life.
+  Level 3 remains hardcoded in three frontend places and is also recorded.
+- Code commits: `eb8c9f3` (`Port opcode 174 if_ammo`) and `6f68c52`
+  (`Clarify opcode 174 and frontend caveats`).
+- Verification on the final tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 47
+    VM tests and the complete oracle suite (`All cases match the oracle.`,
+    354 golden cases).
+  - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`); SMDH was
+    skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds -j8` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and
+    built `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk -j8` exited 0. A 120-frame
+    `DISPLAY=:99` headless run with `--seed 1` exited 0 and reported the
+    script assets/runtime ready.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    with no unimplemented opcodes on levels 3-8.
+- No emulator or Original 3DS run was performed; Old-3DS timing remains
+  unmeasured. Every remaining opcode needs a deferred subsystem, so the next
+  increment is the P5.0 frame-golden harness rather than a blind opcode port.
+
 ## What this batch did (Phase 2 iteration 21 — Linux frontend runtime integration)
 
 - The Linux frontend now loads `LEVEL3.CMI` and the level sound bank, then
