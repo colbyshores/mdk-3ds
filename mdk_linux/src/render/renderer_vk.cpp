@@ -30,6 +30,7 @@
 #include <vulkan/vulkan.h>
 #include <volk.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +40,7 @@
 
 #include "render/render.h"
 #include "render/render_types.h"
+#include "render/system_numerics_inverse.h"
 #include "render/vk/vk_context.h"
 
 #include "shader_palette_vert.h"
@@ -856,53 +858,6 @@ VkPipeline createSkyPipeline(RendererVk* r) {
     return pipeline;
 }
 
-// A general 4x4 inverse, row-major in and out (the engine's convention).
-// Returns false for a singular matrix.
-bool invertMatrix4(const float m[16], float out[16]) {
-    float inv[16];
-    inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] +
-             m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
-    inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] -
-             m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
-    inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] +
-             m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
-    inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] -
-              m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
-    inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] -
-             m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
-    inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] +
-             m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
-    inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] -
-             m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
-    inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] +
-              m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
-    inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] +
-             m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
-    inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] -
-             m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
-    inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] +
-              m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
-    inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] -
-              m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
-    inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] -
-             m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
-    inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] +
-             m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
-    inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] -
-              m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
-    inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] +
-              m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
-    float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
-    if (det == 0.0f) {
-        return false;
-    }
-    const float k = 1.0f / det;
-    for (int i = 0; i < 16; i++) {
-        out[i] = inv[i] * k;
-    }
-    return true;
-}
-
 // The descriptor set for one (texture, palette) pair, created on demand.
 //
 // THE SAMPLER IS PART OF THE PAIR, because the C# binds two different
@@ -985,14 +940,47 @@ void drawSky(RendererVk* r) {
         }
     }
 
+    // The C#'s sky rotation is CreateLookAt(Zero, camera.Forward, camera.Up):
+    // the exact camera axes, NOT the view matrix's. The view matrix recomputes
+    // `position + forward - position`, and the position's float cancellation
+    // changes the forward ULP. Use the camera's stored exact axes.
+    const mdk::Vec3 forward = r->camera.forward;
+    const mdk::Vec3 up = r->camera.up;
+    // System.Numerics normalizes EVERY axis it derives, including zaxis =
+    // normalize(eye - target). `eye` is Zero here so the subtraction is exact,
+    // but `forward` is itself the result of a normalize and its length is not
+    // exactly one, so the division is a real last-bit step and not a no-op.
+    // Normalize divides by the length; it does not multiply by a reciprocal.
+    mdk::Vec3 zaxis{-forward.x, -forward.y, -forward.z};
+    const float zLen = sqrtf(zaxis.x * zaxis.x + zaxis.y * zaxis.y + zaxis.z * zaxis.z);
+    if (zLen <= 0.0f) {
+        return;
+    }
+    zaxis.x /= zLen;
+    zaxis.y /= zLen;
+    zaxis.z /= zLen;
+    mdk::Vec3 right{up.y * zaxis.z - up.z * zaxis.y,
+                    up.z * zaxis.x - up.x * zaxis.z,
+                    up.x * zaxis.y - up.y * zaxis.x};
+    const float rightLen = sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
+    if (rightLen <= 0.0f) {
+        return;
+    }
+    right.x /= rightLen;
+    right.y /= rightLen;
+    right.z /= rightLen;
+    const mdk::Vec3 trueUp{zaxis.y * right.z - zaxis.z * right.y,
+                           zaxis.z * right.x - zaxis.x * right.z,
+                           zaxis.x * right.y - zaxis.y * right.x};
     float rotation[16];
-    memcpy(rotation, r->camera.view, 12 * sizeof(float));
-    rotation[12] = rotation[13] = rotation[14] = 0.0f;
-    rotation[15] = 1.0f;
+    rotation[0] = right.x;   rotation[1] = trueUp.x;  rotation[2] = zaxis.x;  rotation[3] = 0.0f;
+    rotation[4] = right.y;   rotation[5] = trueUp.y;  rotation[6] = zaxis.y;  rotation[7] = 0.0f;
+    rotation[8] = right.z;   rotation[9] = trueUp.z;  rotation[10] = zaxis.z; rotation[11] = 0.0f;
+    rotation[12] = 0.0f;     rotation[13] = 0.0f;     rotation[14] = 0.0f;    rotation[15] = 1.0f;
     float rp[16];
     mulMatrix(rotation, r->camera.projection, rp);
     float c2d[16];
-    if (!invertMatrix4(rp, c2d)) {
+    if (!mdk::invertSystemNumericsMatrix4(rp, c2d)) {
         return;
     }
     // The clip points this matrix turns into rays went through the flipped

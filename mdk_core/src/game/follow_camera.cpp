@@ -122,11 +122,16 @@ bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
     Vec3 forward;
     Vec3 up;
     followCameraOrient(facing, pitch, &forward, &up);
-    return buildLookAtCamera(camera, position,
-                             Vec3{position.x + forward.x, position.y + forward.y,
-                                  position.z + forward.z},
-                             up, follow_camera::kFieldOfView, aspect, follow_camera::kNear,
-                             follow_camera::kFar);
+    if (!buildLookAtCamera(camera, position,
+                           Vec3{position.x + forward.x, position.y + forward.y,
+                                position.z + forward.z},
+                           up, follow_camera::kFieldOfView, aspect, follow_camera::kNear,
+                           follow_camera::kFar)) {
+        return false;
+    }
+    camera->forward = forward;
+    camera->up = up;
+    return true;
 }
 
 Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera) {
@@ -177,11 +182,16 @@ bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
     Vec3 forward;
     Vec3 up;
     followCameraOrient(facing, pitch, &forward, &up);
-    return buildLookAtCamera(camera, position,
-                             Vec3{position.x + forward.x, position.y + forward.y,
-                                  position.z + forward.z},
-                             up, follow_camera::kFieldOfView, aspect, follow_camera::kNear,
-                             follow_camera::kFar);
+    if (!buildLookAtCamera(camera, position,
+                           Vec3{position.x + forward.x, position.y + forward.y,
+                                position.z + forward.z},
+                           up, follow_camera::kFieldOfView, aspect, follow_camera::kNear,
+                           follow_camera::kFar)) {
+        return false;
+    }
+    camera->forward = forward;
+    camera->up = up;
+    return true;
 }
 
 void FollowCamera::mouseLook(Input& input) {

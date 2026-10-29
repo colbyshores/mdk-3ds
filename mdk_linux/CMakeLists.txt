@@ -73,6 +73,7 @@ set(SOURCES
 
     # ---- the Vulkan renderer behind the render.h seam (RENDERER_VK) ----
     src/render/renderer_vk.cpp
+    src/render/system_numerics_inverse.cpp
     src/render/vk/vk_context.cpp
     third_party/volk/volk.c
 
