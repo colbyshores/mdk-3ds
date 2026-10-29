@@ -109,10 +109,11 @@ struct PipelineVk {
     VkPipeline pipeline;
 };
 
-// A descriptor set for one (texture, palette) pair.
+// A descriptor set for one (texture, palette, wrap) triple.
 struct DescPair {
     int32_t texture;
     int32_t palette;
+    bool repeat;
     VkDescriptorSet set;
 };
 
@@ -148,7 +149,11 @@ struct RendererVk {
     VkDescriptorPool descPool = VK_NULL_HANDLE;
     VkPipelineLayout pipeLayout = VK_NULL_HANDLE;
     VkPipelineCache pipeCache = VK_NULL_HANDLE;
+    // The C#'s two samplers (Renderer.cs:249-250): the REPEAT one for a
+    // surface's index texture and the CLAMP one for the palette and the
+    // sky's panorama.
     VkSampler sampler = VK_NULL_HANDLE;
+    VkSampler samplerRepeat = VK_NULL_HANDLE;
     VkShaderModule vertModule = VK_NULL_HANDLE;
     VkShaderModule fragModule = VK_NULL_HANDLE;
     VkShaderModule skyVertModule = VK_NULL_HANDLE;
@@ -899,9 +904,23 @@ bool invertMatrix4(const float m[16], float out[16]) {
 }
 
 // The descriptor set for one (texture, palette) pair, created on demand.
-VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette) {
+//
+// THE SAMPLER IS PART OF THE PAIR, because the C# binds two different
+// samplers (Renderer.cs:1098-1099): a surface's index texture is sampled
+// with the REPEAT sampler and the palette with the CLAMP one. A surface's
+// texture coordinates run past the texture's edge -- the arena's UVs are
+// in texels, so a wall that shows the texture twice has a coordinate
+// above 1 -- and the original TILES the texture there. Clamping instead
+// stretches the edge texel over the rest of the surface, which is what
+// the C++ used to do: it turned whole walls into flat brown.
+//
+// The sky is the exception: the C# binds the CLAMP sampler for the
+// panorama as well (Renderer.cs:1029-1030), so the sky's set is made with
+// repeat = false.
+VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette, bool repeat) {
     for (size_t i = 0; i < r->descs.size(); i++) {
-        if (r->descs[i].texture == texture && r->descs[i].palette == palette) {
+        if (r->descs[i].texture == texture && r->descs[i].palette == palette &&
+            r->descs[i].repeat == repeat) {
             return r->descs[i].set;
         }
     }
@@ -916,12 +935,14 @@ VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette
     }
 
     VkDescriptorImageInfo texInfo = {};
-    texInfo.sampler = r->sampler;
+    texInfo.sampler = repeat ? r->samplerRepeat : r->sampler;
     texInfo.imageView = (texture >= 0 && texture < (int32_t)r->textures.size())
                             ? r->textures[texture].view : VK_NULL_HANDLE;
     texInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkDescriptorImageInfo palInfo = {};
+    // The palette is always clamped: the C# binds the CLAMP sampler with
+    // it, and it is fetched by texel, so its address mode is moot.
     palInfo.sampler = r->sampler;
     palInfo.imageView = (palette >= 0 && palette < (int32_t)r->palettes.size())
                             ? r->palettes[palette].view : VK_NULL_HANDLE;
@@ -942,6 +963,7 @@ VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette
     DescPair pair;
     pair.texture = texture;
     pair.palette = palette;
+    pair.repeat = repeat;
     pair.set = set;
     r->descs.push_back(pair);
     return set;
@@ -996,7 +1018,8 @@ void drawSky(RendererVk* r) {
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipeline);
     vkCmdPushConstants(cb, r->pipeLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(SkyPush), &sp);
-    VkDescriptorSet set = getDescriptorSet(r, r->panorama.sky, r->panorama.palette);
+    // The sky's panorama is clamped, like the C#'s (Renderer.cs:1029).
+    VkDescriptorSet set = getDescriptorSet(r, r->panorama.sky, r->panorama.palette, false);
     if (set) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1, &set, 0,
                                 nullptr);
@@ -1158,8 +1181,12 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
         vkCreatePipelineCache(r->ctx.device, &cacheInfo, nullptr, &r->pipeCache);
     }
 
-    // The original look samples with NEAREST and clamps -- the C#'s
-    // palette.hlsl uses nearest texels, and the palette is Load-ed.
+    // The original look samples with NEAREST, and the C# has TWO samplers
+    // (Renderer.cs:249-250): the REPEAT one for a surface's index texture
+    // and the CLAMP one for the palette and the sky's panorama. The
+    // sampler's address mode is the difference: a surface's texture
+    // coordinates run past the texture's edge (the arena's UVs are in
+    // texels), and the original TILES the texture there.
     {
         VkSamplerCreateInfo samplerInfo = {};
         samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -1171,6 +1198,22 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.maxLod = 0.0f;
         vkCreateSampler(r->ctx.device, &samplerInfo, nullptr, &r->sampler);
+    }
+    {
+        VkSamplerCreateInfo samplerInfo = {};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_NEAREST;
+        samplerInfo.minFilter = VK_FILTER_NEAREST;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        // W repeats too: the C#'s CreateSampler sets all three axes to the
+        // same mode (Renderer.cs:506-508). It is moot for a 2D view, and it
+        // is written the same way so the two samplers differ ONLY in the
+        // address mode the C# differs in.
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.maxLod = 0.0f;
+        vkCreateSampler(r->ctx.device, &samplerInfo, nullptr, &r->samplerRepeat);
     }
 
     r->vertModule = createModule(&r->ctx, spv_palette_vert, spv_palette_vert_size);
@@ -1227,6 +1270,7 @@ void mdk_render_destroy(MdkRenderer rr) {
     if (r->skyVertModule) vkDestroyShaderModule(r->ctx.device, r->skyVertModule, nullptr);
     if (r->skyFragModule) vkDestroyShaderModule(r->ctx.device, r->skyFragModule, nullptr);
     if (r->sampler) vkDestroySampler(r->ctx.device, r->sampler, nullptr);
+    if (r->samplerRepeat) vkDestroySampler(r->ctx.device, r->samplerRepeat, nullptr);
     if (r->pipeCache) vkDestroyPipelineCache(r->ctx.device, r->pipeCache, nullptr);
     if (r->pipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->pipeLayout, nullptr);
     if (r->descPool) vkDestroyDescriptorPool(r->ctx.device, r->descPool, nullptr);
@@ -1642,7 +1686,8 @@ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
                        0, sizeof(PushConstants), &pc);
 
     if (pc.textured != 0) {
-        VkDescriptorSet set = getDescriptorSet(r, draw->material.texture, draw->material.palette);
+        // A surface's texture REPEATS, like the C#'s (Renderer.cs:1098).
+        VkDescriptorSet set = getDescriptorSet(r, draw->material.texture, draw->material.palette, true);
         if (set) {
             vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1,
                                     &set, 0, nullptr);
@@ -1684,7 +1729,7 @@ float canvasWidth(RendererVk* r) {
 // The orthographic matrix mapping canvas pixels (x right, y DOWN) to clip
 // space over the full viewport. The canvas is screen space, so it is written
 // straight for the framebuffer: canvas y 0 is the top row, which is clip y -1
-// with Vulkan's y-down framebuffer. That is the C#'
+// with Vulkan's y-down framebuffer. That is the C#'s
 // CreateOrthographicOffCenter(..., CanvasHeight + margin, -margin, ...) with
 // its y arguments swapped, expressed in the engine's row-major row-vector
 // layout (the translation lives in row 3, indices 12..14).
@@ -1784,7 +1829,9 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
     vkCmdPushConstants(cb, r->pipeLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(PushConstants), &pc);
     if (pc.textured != 0) {
-        VkDescriptorSet set = getDescriptorSet(r, q->texture, q->palette);
+        // The canvas's image repeats too: the C# draws it as an Overlay
+        // material, and the Overlay path binds the REPEAT sampler.
+        VkDescriptorSet set = getDescriptorSet(r, q->texture, q->palette, true);
         if (set) {
             vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1, &set,
                                     0, nullptr);
