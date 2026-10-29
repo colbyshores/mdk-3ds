@@ -2,14 +2,16 @@
 
 // ============================================================================
 // kurt.h — Kurt's combat and inventory state: the fields the scripts' hurt_kurt
-// (opcode 109) writes and if_inventory (opcode 175) reads.
+// (opcode 109) writes and if_inventory (opcode 175) / if_ammo (opcode 174)
+// read.
 //
 // A port of the Hurt/Damage half of src/Mdk.Game/Kurt/Kurt.Combat.cs and the
-// slot list of src/Mdk.Game/Kurt/Inventory.cs. The movement state machine, the
-// pickup collection, and the sniper/chain-gun combat are later slices: until
-// they land, State stays Still and the slots stay empty — which is exactly what
-// the C# reads in a world where Kurt never moves and never collects (the
-// headless oracle ticks no Kurt.Update, so nothing else writes this state).
+// slot, ammo and super-chain-gun state of src/Mdk.Game/Kurt/Inventory.cs. The
+// movement state machine, the pickup collection, and the sniper/chain-gun
+// combat are later slices: until they land, State stays Still and the slots,
+// ammo and super-chain-gun timer stay empty — which is exactly what the C#
+// reads in a world where Kurt never moves and never collects (the headless
+// oracle ticks no Kurt.Update, so nothing else writes this state).
 //
 // The addresses are the original's: health 0x574324, the invulnerability
 // 0x573bd4, the knock damage 0x573b20, the slots 0x57432c.
@@ -35,6 +37,7 @@ public:
         int32_t count;
     };
     static constexpr int32_t kMaxSlots = 5;
+    static constexpr int32_t kAmmoTypes = 5;
 
     // Kurt.Combat.cs: MaxHealth (Inventory.MaxHealth), the red flash's per-damage
     // step and clamp, and the difficulty scaling (0x46a77c).
@@ -81,6 +84,19 @@ public:
     // The C# if_inventory's count: the total Count of every slot of this Item.
     int32_t countItem(Item item) const;
 
+    // Inventory.Ammo: sniper rounds for types 1-5. if_ammo (opcode 174) reads
+    // type 0 as the super chain gun's remaining ticks and types 1-5 as these
+    // entries. An out-of-range type reads as zero, matching the oracle's
+    // `kind <= Inventory.Ammo.Count ? Ammo[kind - 1] : 0` guard.
+    int32_t ammo(int32_t type) const;
+    int32_t superChainGun() const;
+
+    // The pickup and combat writers for these values are deferred with their
+    // subsystems. These setters are the state seam for the save/load and
+    // pickup slices, and let the VM test supply otherwise unreachable values.
+    void setAmmo(int32_t type, int32_t count);
+    void setSuperChainGun(int32_t ticks);
+
 private:
     // Damage (0x46a77c): the difficulty scaling, the red flash, health, knock damage.
     void damage(int32_t damage);
@@ -98,6 +114,8 @@ private:
 
     Slot slots_[kMaxSlots];
     int32_t slotCount_ = 0;
+    int32_t ammo_[kAmmoTypes]{};
+    int32_t superChainGun_ = 0;
 };
 
 } // namespace mdk

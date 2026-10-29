@@ -57,6 +57,7 @@ const int32_t kSpawnAlongPath = 206;
 const int32_t kHeadShots = 217;
 const int32_t kIfPointSeesPlayer = 243;
 const int32_t kIfPlayerHealth = 241;
+const int32_t kIfAmmo = 174;
 const int32_t kIfPartnerDistance = 213;
 const int32_t kIfPartnerAngle = 214;
 const int32_t kSpawnPartner = 179;
@@ -107,6 +108,8 @@ const int32_t kLessThan = 1;
 const int32_t kGreaterThan = 2;
 const int32_t kLiteral = 3;
 const int32_t kApproxEqual = 5;  // |value - threshold| < epsilon
+const int32_t kBetween = 7;
+const int32_t kOutside = 8;
 const uint8_t kActionGoto = 0x0C;
 const uint8_t kEnd = 0xFF;
 // ObjectBehaviors.cs:21,25.
@@ -1796,6 +1799,71 @@ void testIfPlayerHealthComparesKurtHealth(LevelData* levelData, const Cmi* cmi,
         CHECK(!sawUnimplemented(kIfPlayerHealth));
         CHECK(obj.variables[0] == 1.0f);
     }
+}
+
+// Opcode 174 (if_ammo) has no C# ScriptVmTests counterpart, so this pins the
+// oracle directly (ScriptVm.cs:999-1005): kind 0 is the super chain gun's
+// remaining tick count, kinds 1-5 are the sniper-ammo entries, and every
+// other kind reads as zero. The comparison is the same one used by 175.
+float runIfAmmo(scripts::ScriptRuntime& runtime, int32_t kind, int32_t comparison,
+                float first, float second, bool hasSecond) {
+    Code code;
+    code.u8(kIfAmmo).u8(kind).u8(comparison).f32(first);
+    if (hasSecond) {
+        code.f32(second);
+    }
+    code.u8(kActionGoto).target("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("taken");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    code.end();
+    scripts::MdkObject obj;
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kIfAmmo));
+    return obj.variables[0];
+}
+
+void testIfAmmoReadsSuperChainGunAndSniperAmmo(LevelData* levelData, const Cmi* cmi,
+                                                audio::SoundBank* bank) {
+    // A fresh runtime keeps the injected inventory values out of other tests.
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+
+    // A fresh inventory has no super-chain-gun ticks and no sniper ammo.
+    CHECK(runIfAmmo(runtime, 0, kLessThan, 1.0f, 0.0f, false) == 2.0f);
+    CHECK(runIfAmmo(runtime, 1, kGreaterThan, 0.0f, 0.0f, false) == 1.0f);
+
+    runtime.kurt().setSuperChainGun(100);
+    runtime.kurt().setAmmo(1, 10);
+    runtime.kurt().setAmmo(2, 20);
+    runtime.kurt().setAmmo(3, 30);
+    runtime.kurt().setAmmo(4, 40);
+    runtime.kurt().setAmmo(5, 50);
+
+    // Kind 0 reads the super chain gun, not the first sniper-ammo entry.
+    CHECK(runIfAmmo(runtime, 0, kApproxEqual, 100.0f, 0.0f, false) == 2.0f);
+    CHECK(runIfAmmo(runtime, 0, kApproxEqual, 10.0f, 0.0f, false) == 1.0f);
+
+    // Kinds 1-5 map one-to-one onto the five sniper-ammo entries.
+    for (int32_t type = 1; type <= 5; type++) {
+        CHECK(runIfAmmo(runtime, type, kApproxEqual, (float)(type * 10), 0.0f, false) == 2.0f);
+    }
+    CHECK(runIfAmmo(runtime, 1, kApproxEqual, 20.0f, 0.0f, false) == 1.0f);
+    CHECK(runIfAmmo(runtime, 5, kApproxEqual, 40.0f, 0.0f, false) == 1.0f);
+
+    // The oracle's bounds guard leaves kinds above the five ammo entries at zero.
+    CHECK(runIfAmmo(runtime, 6, kApproxEqual, 0.0f, 0.0f, false) == 2.0f);
+    CHECK(runIfAmmo(runtime, 255, kApproxEqual, 0.0f, 0.0f, false) == 2.0f);
+
+    // The between and outside comparisons consume their second bound.
+    CHECK(runIfAmmo(runtime, 0, kBetween, 50.0f, 100.0f, true) == 2.0f);
+    CHECK(runIfAmmo(runtime, 0, kBetween, 101.0f, 200.0f, true) == 1.0f);
+    CHECK(runIfAmmo(runtime, 0, kOutside, 99.0f, 101.0f, true) == 1.0f);
+    CHECK(runIfAmmo(runtime, 0, kOutside, 50.0f, 99.0f, true) == 2.0f);
+
+    // An unknown comparison is false in the oracle, and the following
+    // instruction still runs.
+    CHECK(runIfAmmo(runtime, 0, 0, 0.0f, 0.0f, false) == 1.0f);
 }
 
 // Opcodes 213 (if_partner_distance) and 214 (if_partner_angle) have no C#
@@ -3499,6 +3567,8 @@ int main() {
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
     testIfPlayerHealthComparesKurtHealth(&levelData, &cmi, &bank);
     printf("PASS IfPlayerHealthComparesKurtHealth\n");
+    testIfAmmoReadsSuperChainGunAndSniperAmmo(&levelData, &cmi, &bank);
+    printf("PASS IfAmmoReadsSuperChainGunAndSniperAmmo\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);
     printf("PASS PartnerConditionsUseLiveLinkedObjectAndGeometry\n");
     testIfHitWeaponBranchesOnExactHitType(runtime);

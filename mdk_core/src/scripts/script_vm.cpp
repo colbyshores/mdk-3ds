@@ -1507,6 +1507,12 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             }
             return branch(obj, ins, hit);
         }
+        case 174: {  // if_ammo: 0 is the super chain gun's ticks; 1-5 are sniper ammo
+            const int32_t kind = ival(op(ins, 0));
+            const int32_t amount = kind == 0 ? runtime_.kurt().superChainGun()
+                                             : runtime_.kurt().ammo(kind);
+            return branch(obj, ins, compareOps((float)amount, op(ins, 1), op(ins, 2), op(ins, 3)));
+        }
         case 175: {  // if_inventory: how many items of a type Kurt has
             const int32_t count = runtime_.kurt().countItem((Kurt::Item)ival(op(ins, 0)));
             return branch(obj, ins, compareOps((float)count, op(ins, 1), op(ins, 2), op(ins, 3)));

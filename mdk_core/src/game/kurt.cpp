@@ -61,4 +61,26 @@ int32_t Kurt::countItem(Item item) const {
     return count;
 }
 
+int32_t Kurt::ammo(int32_t type) const {
+    if (type < 1 || type > kAmmoTypes) {
+        return 0;
+    }
+    return ammo_[type - 1];
+}
+
+int32_t Kurt::superChainGun() const {
+    return superChainGun_;
+}
+
+void Kurt::setAmmo(int32_t type, int32_t count) {
+    if (type < 1 || type > kAmmoTypes) {
+        return;
+    }
+    ammo_[type - 1] = count;
+}
+
+void Kurt::setSuperChainGun(int32_t ticks) {
+    superChainGun_ = ticks;
+}
+
 } // namespace mdk
