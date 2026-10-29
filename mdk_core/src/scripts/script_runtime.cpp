@@ -277,8 +277,17 @@ Vec3 ScriptRuntime::kurtLiveVelocity() const {
     return player_ != nullptr ? player_->velocity() : Vec3{};
 }
 
-void ScriptRuntime::update(float) {
-    runTick();
+void ScriptRuntime::update(float delta) {
+    // ScriptRuntime.cs:378-390 accumulates the elapsed time and completes a
+    // 1/30-second tick for each whole interval. The C# Viewer calls this
+    // once per 1/60-second gameplay step, so its scripts run at 30 Hz while
+    // Kurt's physics run at 60 Hz.
+    tickAccumulator_ += delta;
+    while (tickAccumulator_ >= kTick) {
+        tickAccumulator_ -= kTick;
+        runTick();
+        tickCount_++;
+    }
 }
 
 void ScriptRuntime::runTick() {
@@ -412,7 +421,6 @@ void ScriptRuntime::runTick() {
     }
 
     runControllers();
-    tickCount_++;
 }
 
 void ScriptRuntime::runControllers() {

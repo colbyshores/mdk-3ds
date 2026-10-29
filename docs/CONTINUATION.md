@@ -1,7 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-28 (opcode 219 gun-aim state + the FP-contraction
-measurement).
+Last updated: 2026-10-28 (Linux frontend ScriptRuntime integration).
 Current coverage: 210 true C++ dispatches / 238, 28 remaining. Continue one
 opcode family per batch via `vm_tests`; renderer work waits for P5.0.
 
@@ -20,20 +19,15 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    avoidance 204, turn-and-jump 229, floor-below 121, no-flat-floor 192,
    hit-weapon 195, screen-shake 135, inherit-Kurt-velocity 170, sky-mode
    202, camera-track 203, place-near-Kurt 220 and gun-aim 219 are implemented
-   and pinned. Opcode 170 reads the already-ported `Player` live at dispatch
-   time; `ScriptRuntime` has no defaulted Player argument, so every
-   construction states the choice. A frontend must still bind the live Player
-   for 170/203/219/220 to be complete. Opcode 202 writes shared
-   `ScriptRuntime::skyMode`, but its renderer backdrop and snapshot consumers
-   remain deferred. Opcode 203 writes the runtime camera pitch and two-tick
-   lifetime; its follow-camera and snapshot consumers remain deferred. Opcode
-   220 writes the receiver's X over the seeded RNG/object-list seams and uses
-   the runtime's observed `KurtVelocity` field for its predicted-X branch.
-   Opcode 219 aims the gun at Kurt's 1.67 s lead with the oracle's jitter,
-   raised-target pick and fire rolls, and reads the same observed field. All
-   three oracle `Linked` writers (245/179/228) are ported, so partner pairs can
-   feed the 213/214 conditions. 132/136 still need Effects; frame-blend
-   integration is a separate future slice. The exact remaining 28 are in
+   and pinned. The Linux frontend now constructs `ScriptRuntime`, binds the
+   live `Player`, runs its 30 Hz script clock after each 60 Hz player step,
+   and consumes `camera_track`/the scripts' current arena in the follow
+   camera. That completes 170/219/220 and the follow-camera half of 203.
+   Opcode 202's backdrop/snapshot consumers and opcode 203's snapshot
+   consumer remain deferred. All three oracle `Linked` writers
+   (245/179/228) are ported, so partner pairs can feed the 213/214
+   conditions. 132/136 still need Effects; frame-blend integration is a
+   separate future slice. The exact remaining 28 are in
    `docs/OPCODE_COVERAGE.md`.
 4. **P5.0 — frame-golden harness** (`SPEC-COMPLETION.md` §3 item 4) before
    renderer batches. The reference source is DECIDED: the C# renderer,
@@ -43,61 +37,63 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 Deferred: 248 `push_kurt` is an honest no-op pending Kurt knock-back. The
 C#'s Rides subsystem also writes the alarm countdown and remains deferred with
 Rides. Opcode 135's follow-camera consumer, opcode 202's renderer backdrop and
-snapshot consumers, opcode 203's follow-camera/snapshot consumers, and the
-missing frontend `Player` binding that gates 170/203/219/220, opcode 195's
-group-hit/direct combat writers and opcode 81's hit-direction writers remain
-partial with those integrations. Old-3DS timing remains UNMEASURED.
+snapshot consumers, opcode 203's snapshot consumer, opcode 195's group-hit/
+direct combat writers and opcode 81's hit-direction writers remain partial
+with those integrations. Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
-- Opcode 219 (`if_gun_aim`) dispatches to `ScriptRuntime::gunAim`, matching
-  `ScriptVm.cs:1119-1120` and `ScriptRuntime.cs:1084-1134`: the bearing to Kurt
-  led by 1.67 s of observed sideways velocity plus a quarter-degree jitter; a
-  roll of 70 against `round(|vx|) + 10` (halves away from zero) fires at Kurt;
-  otherwise up to four live same-arena objects within 2 in Y and 3 in Z of the
-  target row and inside the 270°±3 cone are collected and one bearing is picked
-  at random; failing that the gun faces 270° and fires on 29% of rolls.
-- `GunAimAimsAndFires` pins 21 outcomes, and **every one of its expectations was
-  reproduced against the C# oracle itself** in this batch (a scratch driver
-  calling `ScriptRuntime.GunAim` over the same geometry and seeds; recipe in
-  `docs/PROGRESS_LOG.md`). All 21 matched on fired flag, yaw to 4 dp and the
-  following RNG draw, so the pin is oracle output, not C++ output.
-- `mdk_3ds/Makefile` no longer passes `-ffp-contract=off` to
-  `script_runtime.o`. Measured with the shipped flags: the TU compiles to a
-  byte-identical object under the default, `-ffp-contract=off` and
-  `-ffp-contract=fast` (164 `vmla`/`vmls`, 0 `vfma` each). VFPv2 has no fused
-  multiply-add — GCC's `VFMA` needs `-mfpu=vfpv4` — so the flag could not change
-  this target's code, only imply a `VMLA` rounding that has never been measured.
-  Whether ARM11 `VMLA` rounds the product before the add is still UNMEASURED on
-  hardware; that open question, not the flag, is what a future device capture
-  has to settle (review-18 MINOR-1 closed on its premise).
-- Coverage recount (brace-matched both dispatch methods): C# 238 cases, C++ 212
-  numeric labels / 211 unique / 210 true dispatches, 28 remaining. The nested
-  `case 0`/`case 1` arms inside opcode 249's switch are the extra raw label and
-  the duplicate. Classification: 18 partial, 192 complete.
+- The Linux frontend now loads `LEVEL3.CMI` and the level sound bank,
+  constructs `ScriptRuntime` with the live `Player`, and runs it after Kurt
+  moves and before the camera, matching `Viewer.cs:505-535`. The runtime
+  keeps the C#'s separate 1/30-second tick clock, so the frontend's 1/60-
+  second calls complete a script tick every second call. A fresh runtime is
+  built on respawn, as the C# level reload does.
+- The follow camera now consumes the runtime's `cameraTrackPitch` while its
+  two-tick request lives and otherwise uses the scripts' current arena's
+  pitch (`Viewer.cs:746-747`). The collision world's solid arena is refreshed
+  after the camera step, as in the oracle.
+- `FrontendTickCadenceCopiesLivePlayer` pins the 60 Hz call cadence, the
+  30 Hz tick boundary and the live Player copy. The existing gun-aim,
+  place-near-Kurt, camera-track and inherited-velocity tests remain green.
+- Opcode 170 now has its live `Player` source in integrated play; 219/220 now
+  receive the observed velocity written from that Player. The three are
+  classified complete. 203 remains partial only because its save/load
+  snapshot consumer is deferred.
+- Review-20's FP-contraction correction is applied: VFPv2 `VMLA.F32` is the
+  fused MAC form and GCC contracts to it even with `-ffp-contract=off`. The
+  current TU is byte-identical under default/off/fast (161 `vmla`/`vmls`, 0
+  `vfma` each). ARM11 VMLA-versus-C# rounding remains UNMEASURED on hardware.
+- Coverage recount (unchanged dispatch methods): C# 238 cases, C++ 212 numeric
+  labels / 211 unique / 210 true dispatches, 28 remaining. Classification is
+  now 15 partial, 195 complete.
 - Verification on this tree:
-  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 45
-    VM tests (including `GunAimAimsAndFires`) and the complete oracle suite
-    (`All cases match the oracle.`, 354 golden cases).
-  - `bash tools/check.sh` exited 0 with all contract gates (`CHECK: ALL GATES
-    PASSED`); SMDH was skipped because no CIA was built.
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 46
+    VM tests and the complete oracle suite (`All cases match the oracle.`,
+    354 golden cases).
+  - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`); SMDH was
+    skipped because no CIA was built.
   - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
-    mdk_3ds` exited 0, recompiled `script_runtime.cpp`, linked `mdk.elf`,
-    staged 69 RomFS files (79M), and built `mdk.3dsx`.
-  - `cmake --build build-linux --target mdk` exited 0 and built the Linux target.
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and
+    built `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk -j8` exited 0. A 120-frame
+    headless run with `DISPLAY=:99` and `--seed 1` exited 0 and reported the
+    script assets/runtime ready.
   - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
     with no unimplemented opcodes on levels 3-8.
-- No golden changed; opcode 219 does not fire in the level 3-8 corpus. No
-  emulator or hardware run was performed. Old-3DS timing remains unmeasured.
+- No golden changed. The runtime's combat/inventory `Kurt` is still separate
+  from the movement `Player`, so health/items/object rendering and the 3DS
+  frontend remain deferred. Ordinary C++ runs use a fresh seeded legacy RNG
+  because .NET's unseeded modern generator is not ported; `--seed` makes runs
+  reproducible. No emulator or hardware run was performed; Old-3DS timing is
+  unmeasured.
 - Next isolated opcode family: 174 (`if_ammo`, `ScriptVm.cs:999-1005`) over
   `Kurt`'s inventory seam — it needs the C# `Inventory.SuperChainGun` tick
-  counter and the five `Inventory.Ammo` entries as fields, and their pickup
+  counter and five `Inventory.Ammo` entries as fields, and their pickup
   writers stay deferred, so it lands partial like 165/166/195. The other 27
   remaining opcodes each need a deferred subsystem (Effects, Fans, Rides,
   SniperRounds, teleport, HUD messages, wind, waypoints, arena preload); do not
-  blind-port them. The alternative increment with more value: construct
-  `ScriptRuntime` in a shipped frontend and bind the live `Player`, which
-  completes 170/203/219/220 at once. Do not re-port Kurt movement.
+  blind-port them.
 
 ## Testability and standing open items
 
@@ -117,6 +113,9 @@ partial with those integrations. Old-3DS timing remains UNMEASURED.
 - Known divergences: incomplete decoy/`AlienTarget` target selection; opcode
   207's `MathF.Sign(NaN)` exception is accepted because C++ exceptions are
   banned; degenerate-path guards return 0 rather than C# out-of-range behavior.
+  The Linux frontend now runs scripts, but its runtime `Kurt` combat/inventory
+  state is not yet the live `Player` state, and the 3DS frontend has no
+  `Player`/runtime binding yet.
 - C3D depth state still differs from C#: depth test disabled in C3D versus
   LESS_OR_EQUAL depth test/write in C#. Resolution needs projection remap,
   `C3D_DepthMap`, test function and clear value plus capture. DepthLayer/

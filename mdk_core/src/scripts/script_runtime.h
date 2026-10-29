@@ -102,7 +102,9 @@ public:
     ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
                   audio::SoundBank* bank, const Player* player);
 
-    // Advance the world by one frame (the driver calls this once per tick).
+    // Advance the world by the elapsed time. ScriptRuntime.cs:378-390 keeps
+    // its own 1/30-second tick clock: a 1/60-second frontend step completes a
+    // tick every second call. The driver may pass a whole tick directly.
     void update(float delta);
 
     // ---- The seam the VM calls ----
@@ -502,6 +504,7 @@ private:
     float targetYaw_ = 0.0f;
     MdkObject* alienTarget_ = nullptr;  // C# ScriptRuntime.AlienTarget (opcode 251)
     int32_t tickCount_ = 0;
+    float tickAccumulator_ = 0.0f;  // C# ScriptRuntime._time
 };
 
 } // namespace scripts

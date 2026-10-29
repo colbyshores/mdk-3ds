@@ -831,6 +831,49 @@ void testInheritKurtVelocityAddsScaledKurtVelocity(LevelData* levelData, const C
     CHECK(player.velocity().y == 0.0f);
 }
 
+// The shipped Linux frontend calls ScriptRuntime::update once per 1/60-second
+// gameplay step, after Kurt moves. ScriptRuntime.cs:378-390 keeps a separate
+// 1/30-second script clock, so the first 60 Hz step completes no tick and the
+// second copies the live Player into the runtime. This pins both the cadence
+// and the live binding that opcodes 170/203/219/220 now have in integrated
+// play.
+void testFrontendTickCadenceCopiesLivePlayer(LevelData* levelData, const Cmi* cmi,
+                                              audio::SoundBank* bank) {
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player);
+    player.feet = runtime.kurtPosition();
+    const Vec3 start = player.feet;
+
+    runtime.update(1.0f / 60.0f);
+    CHECK(runtime.tickCount() == 0);
+    CHECK(runtime.kurtPosition().x == start.x);
+    CHECK(runtime.kurtPosition().y == start.y);
+    CHECK(runtime.kurtPosition().z == start.z);
+
+    Vec3 moved = start;
+    moved.x += 2.0f;
+    moved.y -= 3.0f;
+    moved.z += 0.5f;
+    player.feet = moved;
+    runtime.update(1.0f / 60.0f);
+    CHECK(runtime.tickCount() == 1);
+    CHECK(runtime.kurtPosition().x == moved.x);
+    CHECK(runtime.kurtPosition().y == moved.y);
+    CHECK(runtime.kurtPosition().z == moved.z);
+
+    // A movement between script ticks is not visible until the next complete
+    // 1/30-second interval.
+    Vec3 later = moved;
+    later.x += 4.0f;
+    player.feet = later;
+    runtime.update(1.0f / 60.0f);
+    CHECK(runtime.tickCount() == 1);
+    CHECK(runtime.kurtPosition().x == moved.x);
+    runtime.update(1.0f / 60.0f);
+    CHECK(runtime.tickCount() == 2);
+    CHECK(runtime.kurtPosition().x == later.x);
+}
+
 // Opcode 206 (spawn_along_path) has no C# ScriptVmTests counterpart either, so
 // this pins the oracle directly (ScriptVm.cs:440-448): from time 0 to before
 // the path's last key, one object per step, flagged like spawn_flagged
@@ -3438,6 +3481,8 @@ int main() {
     printf("PASS PushHitDirAddsVelocityAlongTheLastHit\n");
     testInheritKurtVelocityAddsScaledKurtVelocity(&levelData, &cmi, &bank);
     printf("PASS InheritKurtVelocityAddsScaledKurtVelocity\n");
+    testFrontendTickCadenceCopiesLivePlayer(&levelData, &cmi, &bank);
+    printf("PASS FrontendTickCadenceCopiesLivePlayer\n");
     testSpawnAlongPathSpawnsEveryStep(runtime);
     printf("PASS SpawnAlongPathSpawnsEveryStep\n");
     testHeadShotsAddOnlyWhenEnabled(runtime);

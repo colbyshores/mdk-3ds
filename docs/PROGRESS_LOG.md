@@ -1,3 +1,56 @@
+## What this batch did (Phase 2 iteration 21 — Linux frontend runtime integration)
+
+- The Linux frontend now loads `LEVEL3.CMI` and the level sound bank, then
+  constructs `ScriptRuntime` with the live `Player` and runs it after Kurt's
+  1/60-second step and before the follow camera, matching `Viewer.cs:505-535`.
+  The runtime is rebuilt on respawn, as the C# level reload does. This closes the missing frontend binding that kept 170, 219 and 220
+  partial.
+- `ScriptRuntime::update` now implements the C#'s own 1/30-second accumulator
+  (`ScriptRuntime.cs:378-390`) rather than treating every call as one tick.
+  The frontend can therefore call it at its 60 Hz simulation rate while the
+  scripts run at 30 Hz. `FrontendTickCadenceCopiesLivePlayer` pins the first
+  half-tick, the completed tick, the live Player copy and the next boundary.
+- The follow camera now consumes opcode 203: `cameraTrackPitch` wins while
+  `cameraTrackTicks` remains, otherwise the scripts' current arena supplies
+  the pitch (`Viewer.cs:746-747`). The collision world's solid arena is
+  refreshed after the camera step, matching the oracle's order. Opcode 203
+  remains partial only for its save/load snapshot consumer.
+- Ordinary runs use a fresh entropy seed for the ported legacy RNG and
+  `--seed` requests a reproducible one. This is explicitly not the C#'s
+  unseeded modern .NET generator; that generator remains unported. The
+  runtime's combat/inventory `Kurt` also remains separate from movement
+  `Player`, so health/items/object rendering and the 3DS frontend binding are
+  not claimed complete.
+- Addressed review-20's MINOR. The Makefile and prior progress narrative now
+  state the correct mechanism: VFPv2 `VMLA.F32` is the fused, single-rounded
+  MAC and GCC contracts to it even under `-ffp-contract=off`; only VFPv4
+  `VFMA` is gated by that flag. Re-measured after this batch, the current
+  `script_runtime.o` is byte-identical under default/off/fast with 161
+  `vmla`/`vmls` and 0 `vfma`. ARM11 VMLA-versus-C# rounding remains UNMEASURED
+  on hardware.
+- Verification on the final tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 46
+    VM tests and the complete oracle suite (`All cases match the oracle.`,
+    354 golden cases).
+  - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`); SMDH was
+    skipped because no CIA was built.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds -j8` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and
+    built `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk -j8` exited 0.
+  - `MDK_DATA_DIR=<repo>/MDK DISPLAY=:99 build-linux/mdk --headless --frames
+    120 --seed 1` exited 0 and logged `scripts: runtime ready (seed 1)`.
+    The capture could not be written under `/tmp/kilo` because that directory
+    is owned by another user and is not writable by this harness; stdout was
+    captured to `/tmp/mdk-frontend-runtime.log`.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    with no unimplemented opcodes on levels 3-8.
+- No golden changed: the frontend is not part of the oracle corpus and the
+  script-tick change preserves the existing 1/30-second harness calls. No
+  emulator or Original 3DS run was performed; Old-3DS timing remains
+  unmeasured. Next isolated opcode family: 174 (`if_ammo`) over the runtime
+  inventory seam, landing partial until the ammo pickup writers land.
+
 ## What this batch did (Phase 2 iteration 19 — opcode 219 state, oracle reproduction, FP-contraction measurement)
 
 - Finished the opcode-219 batch that `91385f2` committed without its state
@@ -26,15 +79,16 @@
   `-ffp-contract=off` line `91385f2` had added to `mdk_3ds/Makefile`. With the
   shipped flags `script_runtime.cpp` compiles to a **byte-identical** object
   under the default, under `-ffp-contract=off` and under `-ffp-contract=fast`
-  (164 `vmla`/`vmls`, 0 `vfma` in each), because VFPv2 has no fused
-  multiply-add: GCC's fused `VFMA` needs `-mfpu=vfpv4`, and it emits `VMLA` as
-  the unfused mac even with contraction off — checked, `-mfpu=vfpv4
-  -ffp-contract=fast` is the only combination here that produces `vfma.f32`.
-  So the flag changed nothing and asserted a VMLA rounding nobody has measured.
-  Whether ARM11's `VMLA` rounds the product before the add remains UNMEASURED
-  on Old-3DS hardware; the Makefile comment now says that, and points at the
-  expression rather than the flag as the place to fix if a capture ever
-  disagrees. Review-18's other five findings were applied in `91385f2` (the
+  (164 `vmla`/`vmls`, 0 `vfma` in each). The later review-20 correction makes
+  the mechanism explicit: VFPv2's `VMLA.F32` is the fused, single-rounded MAC
+  form, and GCC's ARM backend contracts `a + b*c` to it even with contraction
+  disabled; only the VFPv4 `VFMA` form is gated by `-ffp-contract`. The flag
+  therefore changed nothing because the shipped object already contains
+  contracted MACs, not because VFPv2 lacked fusion. Whether ARM11 `VMLA`'s
+  rounding differs from the C# twice-rounded expression remains UNMEASURED on
+  Old-3DS hardware; the Makefile comment points at the expression rather than
+  the flag as the place to fix if a capture ever disagrees. Review-18's other
+  five findings were applied in `91385f2` (the
   `ScriptRuntime.Snapshot.cs:37-39` reset note, the cutscene early-return
   caveat, the 2.67 s lead comment, the tick-prologue order, the redundant
   `isRemoved` scan inside the 100-pass loop).

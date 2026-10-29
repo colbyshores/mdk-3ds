@@ -15,7 +15,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
+#include <climits>
+#include <memory>
+#include <random>
 
+#include "audio/sound_bank.h"
+#include "formats/cmi.h"
 #include "render/render.h"
 #include "render/camera_builder.h"
 #include "game/level_data.h"
@@ -30,7 +35,23 @@
 #include "formats/file_system.h"
 #include "platform/filesystem_posix.h"
 #include "platform/window_sdl.h"
+#include "scripts/script_runtime.h"
 #include "util/math_lut.h"
+
+namespace {
+
+// A fresh 32-bit seed for an ordinary run. The C# uses its modern unseeded
+// Random; the C++ runtime currently exposes the oracle-compatible seeded
+// legacy generator, so each construction gets fresh entropy instead.
+int32_t freshScriptSeed() {
+    std::random_device source;
+    const uint32_t bits = static_cast<uint32_t>(source());
+    int32_t seed = 0;
+    std::memcpy(&seed, &bits, sizeof(seed));
+    return seed;
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     // --headless: render with no window. The golden-frame harness needs it,
@@ -38,13 +59,33 @@ int main(int argc, char** argv) {
     // a Vulkan swapchain.
     bool headless = false;
     int maxFrames = -1;
+    bool scriptSeedSet = false;
+    int32_t scriptSeed = 0;
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "--headless") == 0) {
             headless = true;
         } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             maxFrames = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--seed") == 0) {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "[main] --seed needs a value\n");
+                return 1;
+            }
+            char* end = nullptr;
+            const long value = std::strtol(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || value < INT_MIN || value > INT_MAX) {
+                std::fprintf(stderr, "[main] invalid --seed: %s\n", argv[i]);
+                return 1;
+            }
+            scriptSeed = static_cast<int32_t>(value);
+            scriptSeedSet = true;
         }
     }
+
+    // The C# Viewer's ordinary runtime uses an unseeded modern Random. The
+    // C++ port currently has only the oracle-compatible seeded legacy
+    // generator, so an ordinary run gets a fresh entropy seed and a test can
+    // request a reproducible one with --seed.
 
     // The trig tables MUST be initialised before any fast* call. An
     // uninitialised table is all zeroes, so every trig call returns 0 --
@@ -93,11 +134,30 @@ int main(int argc, char** argv) {
     mdk::LevelData level;
     mdk::LevelView view;
     mdk::HudView hud;
+    mdk::formats::Cmi cmi;
+    mdk::audio::SoundBank bank;
+    bool scriptAssetsReady = false;
     bool hudReady = false;
     const mdk::formats::Arena* arena = nullptr;
     if (data.found()) {
         std::printf("[main] data: %s\n", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, 3)) {
+            // The scripts and their sounds are level assets, just as in the
+            // C# Viewer. They are kept alive for the runtime below.
+            std::vector<uint8_t> cmiBytes;
+            if (!data.read("TRAVERSE/LEVEL3/LEVEL3.CMI", &cmiBytes)) {
+                std::printf("[main] scripts: CMI did not read\n");
+            } else if (!mdk::formats::Cmi::parse(&cmi, cmiBytes.data(),
+                                                static_cast<int32_t>(cmiBytes.size()))) {
+                std::printf("[main] scripts: CMI did not parse\n");
+            } else if (!mdk::audio::SoundBank::forLevel(&bank, data, 3)) {
+                std::printf("[main] scripts: sound bank did not load\n");
+            } else {
+                bank.preload();
+                scriptAssetsReady = true;
+                std::printf("[main] scripts: assets loaded\n");
+            }
+
             const int32_t start = level.dti().startArena();
             if (start >= 0 && start < (int32_t)level.dti().arenas().size()) {
                 arena = level.arenaNamed(level.dti().arenas()[start].name);
@@ -175,6 +235,7 @@ int main(int argc, char** argv) {
     mdk::Input input;
     mdk::Player player;
     mdk::FollowCamera follow;
+    std::unique_ptr<mdk::scripts::ScriptRuntime> runtime;
     bool playerReady = false;
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
@@ -191,6 +252,16 @@ int main(int argc, char** argv) {
             space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
         if (here) {
             space.setSolid(*here);
+        }
+
+        // The C# reloads the level and constructs a fresh ScriptRuntime when
+        // Kurt respawns. Recreate the runtime here too, so its object list,
+        // tick count and random stream start over with the player.
+        if (scriptAssetsReady) {
+            const int32_t runtimeSeed = scriptSeedSet ? scriptSeed : freshScriptSeed();
+            runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player));
+            runtime->option = 0;
+            std::printf("[main] scripts: runtime ready (seed %d)\n", runtimeSeed);
         }
     };
     if (arena) {
@@ -255,13 +326,36 @@ int main(int argc, char** argv) {
             }
             while (pending >= kStep) {
                 player.update(input, kStep);
-                // The pitch the camera eases to: the arena Kurt is in (the C#
-                // PitchGoal is the scripts' current arena; the geometric arena
-                // around his feet is the stand-in until the scripts land).
-                const std::string* here =
-                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
-                const float target = here ? level.arenaPitch(*here) : mdk::follow_camera::kDefaultPitch;
+                // The C# Viewer order is Kurt, then the scripts, then the
+                // camera (Viewer.cs:505-535). ScriptRuntime keeps its own
+                // 1/30-second clock, so this 1/60-second call completes a
+                // script tick every second step.
+                if (runtime) {
+                    runtime->update(kStep);
+                }
+                // The pitch the camera eases to (Viewer.cs:746-747): a live
+                // camera_track request wins; otherwise it is the scripts'
+                // current arena's rest pitch. Without the runtime, retain the
+                // older geometric-arena stand-in.
+                float target = mdk::follow_camera::kDefaultPitch;
+                if (runtime) {
+                    target = runtime->cameraTrackTicks > 0
+                                 ? runtime->cameraTrackPitch
+                                 : level.arenaPitch(runtime->currentArena());
+                } else {
+                    const std::string* here =
+                        space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                    if (here) {
+                        target = level.arenaPitch(*here);
+                    }
+                }
                 follow.update(&camera, &space, player, target, kStep, kAspect);
+                // The C# refreshes the collision world's solid arenas after
+                // the camera step (Viewer.cs:533), so the camera sees the
+                // previous step's arena just as the oracle does.
+                if (runtime) {
+                    space.setSolid(runtime->currentArena());
+                }
                 pending -= kStep;
             }
             // Death: update() froze Kurt (it returns when dead). After the death

@@ -271,15 +271,17 @@ $(BUILD)/audio_device.o: CXXFLAGS += -fsingle-precision-constant
 
 # FP contraction -- deliberately NOT disabled here.
 #
-# C# never contracts a multiply-add, so `a + b*c` rounds twice there. VFPv2
-# has no fused multiply-add: GCC's fused form (VFMA) needs -mfpu=vfpv4, and
-# its ARM backend emits VMLA as the unfused mac even under
-# -ffp-contract=off. Measured on this tree with the shipped flags:
-# script_runtime.cpp compiles to a byte-identical object under the default,
-# -ffp-contract=off and -ffp-contract=fast (164 vmla/vmls, 0 vfma each), so
-# the flag added in 91385f2 changed nothing and only implied a VMLA rounding
-# that has never been measured on hardware. If an Old-3DS capture ever shows
-# a contraction divergence, fix the expression, not this flag.
+# C# never contracts a multiply-add, so `a + b*c` rounds twice there. VFPv2's
+# VMLA.F32 is nevertheless a fused multiply-accumulate (single-rounded), and
+# GCC's ARM backend contracts to it even under -ffp-contract=off; only the
+# VFPv4 VFMA form is gated by that flag. Measured on this tree with the
+# shipped flags: script_runtime.cpp compiles to a byte-identical object under
+# the default, -ffp-contract=off and -ffp-contract=fast (161 vmla/vmls, 0
+# vfma each). The flag therefore changes nothing on this target: the shipped
+# object already contains contracted VMLA MACs. Whether ARM11 VMLA's rounding
+# differs from the C# twice-rounded expression remains UNMEASURED on Old-3DS
+# hardware. If a capture ever shows a divergence, fix the expression, not
+# this flag.
 
 clean:
 	@echo "CLEAN"
