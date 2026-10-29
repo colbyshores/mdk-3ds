@@ -1,3 +1,59 @@
+## What this batch did (Phase 2 iteration 19 — opcode 219 state, oracle reproduction, FP-contraction measurement)
+
+- Finished the opcode-219 batch that `91385f2` committed without its state
+  files. `docs/OPCODE_COVERAGE.md` now records the gun-aim batch, removes 219
+  from the remaining set, and classifies it partial: its lead and its fire roll
+  read the observed `kurtVelocity` field, which no shipped frontend writes.
+  Recount-verified by brace-matching both dispatch methods: C# 238 cases, C++
+  212 numeric labels / 211 unique / 210 true dispatches, 28 remaining; the
+  nested `case 0`/`case 1` arms inside opcode 249's switch account for the
+  extra raw label and the duplicate. Classification: 18 partial, 192 complete.
+- Reproduced every opcode-219 expectation against the C# oracle instead of
+  trusting the commit message. A scratch driver (not committed) built the
+  level-7 `ScriptRuntime` the way `/tmp/kilo/oracle/Driver` does, seeded
+  `KurtPosition` from the DTI start (the C# sets it in `RunTick`; the C++
+  constructor seeds it), placed the same gun/target geometry and called
+  `ScriptRuntime.GunAim` for the same 21 seeds and scenarios. All 21 printed
+  the same fired flag, yaw (4 dp) and following `Rng.Next(1000)` draw that
+  `GunAimAimsAndFires` pins — including the 48.5-units-per-second case that
+  separates `roundf` from a banker's round, and the four-object target cap.
+  Recipe: copy `src/`, `assets/` and `Directory.Build.props` to a scratch tree
+  (the repo's C# `obj/` is not writable by this user), copy
+  `src/Mdk.Engine/obj/shaders` with it, then
+  `DOTNET_ROOT=/tmp/kilo/dotnet10 NUGET_PACKAGES=/home/coleshores/.nuget/packages
+  dotnet build -p:PrecompiledShaders=spirv`.
+- Closed review-18's MINOR-1 (FP contraction) by measurement and reverted the
+  `-ffp-contract=off` line `91385f2` had added to `mdk_3ds/Makefile`. With the
+  shipped flags `script_runtime.cpp` compiles to a **byte-identical** object
+  under the default, under `-ffp-contract=off` and under `-ffp-contract=fast`
+  (164 `vmla`/`vmls`, 0 `vfma` in each), because VFPv2 has no fused
+  multiply-add: GCC's fused `VFMA` needs `-mfpu=vfpv4`, and it emits `VMLA` as
+  the unfused mac even with contraction off — checked, `-mfpu=vfpv4
+  -ffp-contract=fast` is the only combination here that produces `vfma.f32`.
+  So the flag changed nothing and asserted a VMLA rounding nobody has measured.
+  Whether ARM11's `VMLA` rounds the product before the add remains UNMEASURED
+  on Old-3DS hardware; the Makefile comment now says that, and points at the
+  expression rather than the flag as the place to fix if a capture ever
+  disagrees. Review-18's other five findings were applied in `91385f2` (the
+  `ScriptRuntime.Snapshot.cs:37-39` reset note, the cutscene early-return
+  caveat, the 2.67 s lead comment, the tick-prologue order, the redundant
+  `isRemoved` scan inside the 100-pass loop).
+- Verification on the final tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 after 45
+    VM tests (including `GunAimAimsAndFires`) and the complete oracle suite
+    (`All cases match the oracle.`, 354 golden cases).
+  - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`; SMDH SKIPPED,
+    no `.cia` built).
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, recompiled `script_runtime.cpp` without the contraction
+    flag, linked `mdk.elf`, staged 69 RomFS files (79M) and built `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk` exited 0.
+  - `MDK_DATA_DIR=<repo>/MDK tests/scripts/build/tick1 probe 30000` exited 0
+    with no unimplemented opcodes on levels 3-8.
+- No golden changed: opcode 219 does not fire in the level 3-8 corpus, and no
+  oracle behaviour was edited in this batch. No emulator or Original 3DS run
+  was performed; Old-3DS timing remains unmeasured.
+
 ## What this batch did (Phase 2 iteration 18 — opcode 220 place near Kurt)
 
 - Ported opcode 220 (`place_x_near_player`) from
