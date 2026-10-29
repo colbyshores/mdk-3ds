@@ -1221,8 +1221,13 @@ void mdk_render_release(MdkRenderer r, MdkScope s) { (void)r; (void)s; }
  void mdk_render_canvas_end(MdkRenderer r) { (void)r; }
  float mdk_render_canvas_width(MdkRenderer r) {
     (void)r;
-    // The top screen is 400x240 in the game's landscape orientation. The
-    // canvas is 360 units high and its width follows that aspect.
+    // The canvas is 360 units high and its width follows the view's aspect,
+    // like C# Renderer.CanvasWidth. The ratio looks INVERTED and is not:
+    // kScreenWidth/kScreenHeight name the ROTATED FRAMEBUFFER axes (240x400
+    // portrait, renderer_c3d.cpp:62-63), not the landscape 400x240 the game
+    // draws into, so the landscape aspect is height/width = 400/240 and the
+    // canvas is 600 units wide. Renaming those constants to the landscape
+    // orientation would silently turn this into 216.
     return mdk::kCanvasHeight * (float)kScreenHeight / (float)kScreenWidth;
 }
  int32_t mdk_render_canvas_capacity(MdkRenderer r) {

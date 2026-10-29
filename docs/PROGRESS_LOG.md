@@ -2125,3 +2125,78 @@
 - No VM golden changed and opcode coverage is unchanged at 211 true dispatches /
   238 with 27 deferred. No emulator or Original 3DS run was performed; Old-3DS
   timing remains unmeasured.
+
+## What this batch did (Phase 2 iteration 25 — P5 sampler address mode: index textures REPEAT)
+
+- Closed the second measured renderer slice. The frame golden's C++ baseline
+  moved from `4da3474d1c5533f0` to `f4f91150cd35fd56`, and the measured gap to
+  the C# oracle fell from **7.930% / max 255 / mean 2.1995** to **4.398% / max
+  255 / mean 1.4939** at tolerance 0. The oracle hash is unchanged
+  (`b60e72552c40…`), so the improvement is measured against the same reference
+  bytes, and the manifest was rewritten by `regenerate_reference.sh`, not by
+  hand.
+- **The defect: one sampler where the oracle has two.** `Renderer.cs:249-250`
+  creates a REPEAT and a CLAMP sampler, and `DrawOne` binds them per resource
+  (`Renderer.cs:1098-1099`): the surface's index texture with REPEAT, its
+  palette with CLAMP. `BindPanorama` binds CLAMP for the sky's panorama and its
+  palette (`Renderer.cs:1029-1030`). The C++ had a single CLAMP sampler for
+  everything.
+- Why that is visible and not a technicality: the arena's texture coordinates
+  are in TEXELS and are normalised by the texture's size
+  (`LevelView.cs:327`, ported at `arena_scene.cpp:113`), so a surface that shows
+  a texture more than once has a coordinate above 1. The original tiles the
+  texture there; a clamped sampler stretches the edge texel over the rest of the
+  surface instead, which is what the C++ did — the cobblestone ground and several
+  walls were flat brown. The palette is fetched by texel (`Load` / `texelFetch`)
+  in both implementations, so its address mode is moot and it stays clamped
+  exactly as the oracle binds it.
+- The Vulkan backend now creates `samplerRepeat` alongside `sampler` (same
+  NEAREST filters and `maxLod = 0`; the C#'s `CreateSampler` sets all three
+  address axes to the one mode, `Renderer.cs:506-508`, and the C++ matches it
+  even though W is unused for a 2D view). `getDescriptorSet` is keyed by
+  `(texture, palette, repeat)` because the sampler is baked into the set: the
+  mesh path and the canvas path ask for repeat — the canvas quads go through the
+  same `DrawOne` — and the sky asks for clamp. The descriptor pool (4096 sets)
+  is not at risk from the extra variant, and the existing null-set path covers an
+  allocation failure.
+- Verified against the oracle's pixels, not just the hash: the pinned frame was
+  measured band by band. Top third (sky) 5.625% bad / mean 1.4922 / max 99;
+  middle 3.816% / 2.1723 / 247; bottom (ground and HUD) 3.754% / 4.3832 / 255.
+  The ground tiling is now structurally the oracle's; the sky is the largest
+  remaining band and is washed out rather than missing (max delta 99).
+- Deferred with cause, the 3DS half. `renderer_c3d.cpp` never calls
+  `C3D_TexSetWrap`, so its wrap field is 0, which is not `GPU_REPEAT`
+  (`3ds/gpu/enums.h:39`), and it clamps like the Vulkan backend used to. It
+  cannot take the same one-line change: the 3DS pads index textures to
+  power-of-two with TRANSPARENT padding and rescales the UVs by real/padded in
+  the vertex shader (`renderer_c3d.cpp:1133-1147`), so a plain REPEAT would tile
+  at the PADDED period and sample the transparent padding — index 0, which
+  discards — punching holes in the walls instead of tiling them. That needs the
+  padding filled with the tile pattern (exact only when the real size divides
+  the padded one) or a different UV scheme, and it is unverifiable without
+  hardware, so it is recorded rather than guessed at.
+- Review-24 had no BLOCKER or MAJOR finding. Its MINOR was the stale divergence
+  record: the death comment still said "a fixed 4.0 s" after the constant became
+  `kSkullEnd / kSkullFadePerSecond` = 4.25 s. The comment now records 4.25 s and
+  says why the C#'s shorter beat (dying with `HurtFlash` already partway up) is
+  unreachable here — only because the alive-state damage flash is not ported, so
+  `state.hurtFlash` is 0 while alive. Both NITs are fixed too: the rewrapped
+  canvas-ortho comment that lost its possessive, and the 3DS canvas-width
+  constants' orientation hazard is now stated where the ratio is written.
+- Verification on the final tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 (6m50s) and
+    ended `All cases match the oracle.` It was re-run incrementally after the
+    last 3DS-only comment edit and exited 0 again with the same last line.
+  - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`); SMDH SKIPPED for
+    no built CIA, and `gates_frames` PASS with `L3_f1.bmp sha=f4f91150cd35fd56`.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, staged 69 RomFS files (79M) and built `mdk.3dsx`, both
+    before and after that comment edit.
+  - `cmake --build build-linux --target mdk -j8` exited 0.
+  - `tests/frames/regenerate_reference.sh` exited 0 in 24 s. The oracle ran on
+    display `:99` inside a private mount namespace on lavapipe/llvmpipe; the C++
+    capture ran on `DISPLAY=:99` with the headless backend. The oracle hash came
+    out identical to the committed one.
+- No VM golden changed and opcode coverage is unchanged at 211 true dispatches /
+  238 with 27 deferred. No emulator or Original 3DS run was performed; Old-3DS
+  timing remains unmeasured.
