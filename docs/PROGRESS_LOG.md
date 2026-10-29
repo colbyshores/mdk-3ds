@@ -2079,3 +2079,49 @@
 - No emulator or Original 3DS run was performed. Old-3DS timing remains
   unmeasured. Coverage remains 206 true C++ dispatches / 238 with 32
   remaining; the next isolated opcode family is 202 (`set_574304`).
+
+## What this batch did (Phase 2 iteration 24 — P5 HUD canvas/state fidelity)
+
+- Closed the first measured renderer slice after P5.0. The frame golden's C++
+  baseline moved from `2b586df212dc8ed8` to `4da3474d1c5533f0`, and the measured
+  gap to the C# oracle fell from **12.680% / max 255 / mean 5.1350** to
+  **7.930% / max 255 / mean 2.1995** at tolerance 0. The oracle hash itself is
+  unchanged (`b60e72552c40…`), so the improvement is measured against the same
+  reference bytes.
+- Fixed the canvas coordinate space. The seam and Vulkan backend had a fixed
+  640x360 canvas, while the C# oracle defines `CanvasWidth = 360 * aspect`.
+  Added `mdk_render_canvas_width(MdkRenderer)` to the flat seam, implemented it
+  from the Vulkan target extent and the 3DS's 400x240 landscape aspect, and made
+  `canvasOrtho` and `HudView::draw` use it. The fixed `kCanvasWidth` constant is
+  gone so the old assumption cannot silently return.
+- Removed the Linux frontend's fake HUD state. The previous frame deliberately
+  drew inventory slots `{1,5}`, `{2,12}`, `{3,1}` and a 300/900 target bar. The
+  C# starts with an empty `Inventory` and `ScriptRuntime.GetBar()` returns
+  `(0,0)` when no target bar is active, so those were stand-ins masquerading as
+  state. The frontend now sends only the live player health/death state and the
+  default empty inventory/bar fields.
+- Ported the HUD blink cadence and skull fade timing. The C# advances
+  `HudView._blink` once per 30 Hz boundary (`Viewer.cs:535-538`), not once per
+  60 Hz frame; the frontend now accumulates the same boundary. A dead player's
+  skull alpha now follows `HurtFlash / 255` with `SkullFade = 2*Ticks = 60/s`
+  (`Kurt.Combat.cs:26-27,238-253`). The frontend still respawns in place after
+  the fade because menu/save/level-end flow remains unported.
+- Review-23 had no BLOCKER or MAJOR finding. Its minors (stale C3D depth comment,
+  oracle-pixel hash verification, frame-number guard, lavapipe extension wording,
+  and normalize epsilon) remain open and were not mixed into this renderer slice.
+- Verification on the final tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 and ended
+    `All cases match the oracle.`
+  - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`); SMDH SKIPPED for
+    no built CIA, and `gates_frames` PASS with
+    `L3_f1.bmp sha=4da3474d1c5533f0`.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), and built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk -j8` exited 0.
+  - `tests/frames/regenerate_reference.sh` exited 0. The oracle ran on display
+    `:99` inside a private mount namespace on lavapipe/llvmpipe and reported
+    `Level 3: 17 arenas, 9708 triangles`, `Kurt at -4.00 0.00 192.98 yaw 96`.
+- No VM golden changed and opcode coverage is unchanged at 211 true dispatches /
+  238 with 27 deferred. No emulator or Original 3DS run was performed; Old-3DS
+  timing remains unmeasured.
