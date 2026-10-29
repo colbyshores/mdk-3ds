@@ -14,7 +14,8 @@
 // oracle ticks no Kurt.Update, so nothing else writes this state).
 //
 // The addresses are the original's: health 0x574324, the invulnerability
-// 0x573bd4, the knock damage 0x573b20, the slots 0x57432c.
+// 0x573bd4, the knock damage 0x573b20, the slots 0x57432c, the super-chain-
+// gun ticks 0x5743ef and the sniper ammo 0x5743f3.
 // ============================================================================
 
 #include <stdint.h>

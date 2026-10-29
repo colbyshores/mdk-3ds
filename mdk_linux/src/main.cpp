@@ -351,8 +351,10 @@ int main(int argc, char** argv) {
                 }
                 follow.update(&camera, &space, player, target, kStep, kAspect);
                 // The C# refreshes the collision world's solid arenas after
-                // the camera step (Viewer.cs:533), so the camera sees the
-                // previous step's arena just as the oracle does.
+                // the camera step (Viewer.cs:533). This frontend currently
+                // pins only the scripts' current arena; the oracle's
+                // SolidArenas list also includes the active second arena,
+                // whose crossing state is deferred.
                 if (runtime) {
                     space.setSolid(runtime->currentArena());
                 }
@@ -361,6 +363,8 @@ int main(int argc, char** argv) {
             // Death: update() froze Kurt (it returns when dead). After the death
             // beat, respawn him at the start (the C# reloads the level; the static
             // geometry makes a reset the same fresh start) and re-seed the camera.
+            // This stand-in still advances scripts during the beat; the C# ends
+            // the level and its ScriptRuntime immediately when Kurt dies.
             if (player.dead) {
                 deathTimer += elapsed;
                 if (deathTimer >= kRespawnDelay) {

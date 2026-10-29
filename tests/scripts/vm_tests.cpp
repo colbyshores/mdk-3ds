@@ -1843,6 +1843,8 @@ void testIfAmmoReadsSuperChainGunAndSniperAmmo(LevelData* levelData, const Cmi* 
     // Kind 0 reads the super chain gun, not the first sniper-ammo entry.
     CHECK(runIfAmmo(runtime, 0, kApproxEqual, 100.0f, 0.0f, false) == 2.0f);
     CHECK(runIfAmmo(runtime, 0, kApproxEqual, 10.0f, 0.0f, false) == 1.0f);
+    CHECK(runIfAmmo(runtime, 0, kLessThan, 101.0f, 0.0f, false) == 2.0f);
+    CHECK(runIfAmmo(runtime, 0, kLessThan, 100.0f, 0.0f, false) == 1.0f);
 
     // Kinds 1-5 map one-to-one onto the five sniper-ammo entries.
     for (int32_t type = 1; type <= 5; type++) {
@@ -1850,6 +1852,8 @@ void testIfAmmoReadsSuperChainGunAndSniperAmmo(LevelData* levelData, const Cmi* 
     }
     CHECK(runIfAmmo(runtime, 1, kApproxEqual, 20.0f, 0.0f, false) == 1.0f);
     CHECK(runIfAmmo(runtime, 5, kApproxEqual, 40.0f, 0.0f, false) == 1.0f);
+    CHECK(runIfAmmo(runtime, 1, kGreaterThan, 9.0f, 0.0f, false) == 2.0f);
+    CHECK(runIfAmmo(runtime, 1, kGreaterThan, 10.0f, 0.0f, false) == 1.0f);
 
     // The oracle's bounds guard leaves kinds above the five ammo entries at zero.
     CHECK(runIfAmmo(runtime, 6, kApproxEqual, 0.0f, 0.0f, false) == 2.0f);
