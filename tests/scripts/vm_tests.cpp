@@ -84,6 +84,7 @@ const int32_t kInheritKurtVel = 170;
 const int32_t kSetSkyMode = 202;
 const int32_t kCameraTrack = 203;
 const int32_t kPlaceXNearPlayer = 220;
+const int32_t kIfGunAim = 219;
 const int32_t kTurnAndJump = 229;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
@@ -1224,6 +1225,387 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
         runProgram(runtime, code, obj);
         CHECK(!sawUnimplemented(kPlaceXNearPlayer));
         CHECK(obj->position.x == kurt.x - 14.0f);
+    }
+}
+
+// Opcode 219 (if_gun_aim) has no C# ScriptVmTests counterpart, so this pins
+// the oracle directly (ScriptVm.cs:1119-1120 and ScriptRuntime.cs:1084-1134).
+// The expectations come from the C# runtime itself, run over the same
+// geometry on level 7 (whose start position is (0, 4, 9)).
+//
+// One scenario: the gun's side of Kurt, the targets on the arc south of it,
+// and how the targets sit against the target row the script passes.
+struct GunAimCase {
+    bool north = false;       // the gun is north of Kurt (inside the cone)
+    bool followLead = false;  // place the gun on Kurt's predicted lead point
+    bool deadTarget = false;  // the targets are dead
+    bool crossArena = false;  // the targets are in another arena
+    float deltas[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};  // degrees from due south
+    int32_t targetCount = 0;
+    float dy = 0.0f;          // the targets' offset from the target row
+    float dz = 0.0f;          // the targets' offset in Z
+};
+
+// One if_gun_aim run: whether the gun fired, the yaw it ended up with, and
+// the first RNG draw after the opcode — the oracle's own sequence, so the
+// number of draws the opcode took is pinned too.
+struct GunAimResult {
+    bool fired;
+    float yaw;
+    int32_t nextDraw;
+};
+
+// Places the gun and its targets in a fresh runtime and returns the gun. The
+// gun is ten units north of Kurt (inside the 270-degree cone) or ten units
+// east (out of it); each target sits ten units out on the arc south of the
+// gun, `deltas` degrees from due south. The row the script passes is the
+// arc's Y.
+scripts::MdkObject* placeGun(scripts::ScriptRuntime& runtime, const GunAimCase& scenario,
+                              float* rowY) {
+    const mdk::Vec3& kurt = runtime.kurtPosition();
+    scripts::MdkObject gun;
+    gun.arena = "DANT_1";
+    const float leadX = scenario.followLead ? runtime.kurtVelocity.x * 1.67333f : 0.0f;
+    gun.position = scenario.north ? mdk::Vec3{kurt.x + leadX, kurt.y + 10.0f, kurt.z}
+                                  : mdk::Vec3{kurt.x + 10.0f, kurt.y, kurt.z};
+    runtime.objects().push_back(gun);
+    scripts::MdkObject* gunPtr = &runtime.objects().back();
+    *rowY = gun.position.y - 10.0f;
+    for (int32_t i = 0; i < scenario.targetCount; i++) {
+        const double angle = (270.0 + (double)scenario.deltas[i]) * 3.14159265358979323846 / 180.0;
+        scripts::MdkObject target;
+        target.arena = scenario.crossArena ? "NOT_DANT_1" : "DANT_1";
+        target.position = mdk::Vec3{gun.position.x + 10.0f * (float)cos(angle),
+                                    gun.position.y + 10.0f * (float)sin(angle) + scenario.dy,
+                                    gun.position.z + scenario.dz};
+        target.dead = scenario.deadTarget;
+        runtime.objects().push_back(target);
+    }
+    return gunPtr;
+}
+
+// Runs the if_gun_aim program: it branches to "fired" when the gun fires,
+// and the fall-through marks the other outcome.
+GunAimResult runGunAim(scripts::ScriptRuntime& runtime, scripts::MdkObject* gun, float rowY,
+                        float z) {
+    Code code;
+    code.u8(kIfGunAim).f32(rowY).f32(z).u8(kActionGoto).target("fired");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("fired");
+    code.u8(kSetVar).u8(kOwn).u8(1).f32(2.0f);
+    code.end();
+    runProgram(runtime, code, gun);
+    GunAimResult result;
+    result.fired = gun->variables[1] == 2.0f;
+    result.yaw = gun->yaw;
+    result.nextDraw = runtime.rng().next(1000);
+    return result;
+}
+
+void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBank* bank) {
+    GunAimCase aimed;
+    aimed.north = true;
+
+    // Aimed at Kurt (the gun is due north of him, so its bearing to him is
+    // the 270 the cone wants) with nothing else in the cone: the gun fires
+    // at Kurt with the jittered aim. Seed 0's fire roll (57 of 70) fails,
+    // and the gun fires at Kurt anyway; the two draws are the jitter and
+    // the roll.
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, aimed, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(!sawUnimplemented(kIfGunAim));
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.113f) < 0.001f);
+        CHECK(result.nextDraw == 768);
+    }
+
+    // Seed 1's fire roll (7 of 70) succeeds, so the gun fires at Kurt with
+    // the jittered aim as well.
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, aimed, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 269.874f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // With a raised target in the cone and the fire roll failing (seed 0),
+    // the gun aims at the target instead: the target's bearing, and a third
+    // draw to pick it.
+    {
+        GunAimCase scenario = aimed;
+        scenario.deltas[0] = 0.0f;
+        scenario.targetCount = 1;
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 558);
+    }
+
+    // The same target with the fire roll succeeding (seed 1): the gun fires
+    // at Kurt and ignores the target.
+    {
+        GunAimCase scenario = aimed;
+        scenario.targetCount = 1;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 269.874f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // And with seed 2's failing roll (28 of 70), the target again.
+    {
+        GunAimCase scenario = aimed;
+        scenario.targetCount = 1;
+        scripts::ScriptRuntime runtime(levelData, cmi, 2, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 985);
+    }
+
+    // Out of the cone (the gun is east of Kurt) with nothing in it: the gun
+    // faces 270 degrees and fires 29% of the time. Seed 0's roll (81 of 100)
+    // fires; seed 1's (11 of 100) does not.
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, GunAimCase(), &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 768);
+    }
+
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, GunAimCase(), &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(!result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // A raised target in the cone is fired at whatever the 29% roll says.
+    {
+        GunAimCase scenario;
+        scenario.targetCount = 1;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // Two targets in the cone: the gun picks one of their bearings at
+    // random. Seed 0 picks the second (271 degrees), seed 1 the first.
+    {
+        GunAimCase scenario;
+        scenario.deltas[0] = 0.0f;
+        scenario.deltas[1] = 1.0f;
+        scenario.targetCount = 2;
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 271.0f) < 0.001f);
+        CHECK(result.nextDraw == 768);
+    }
+
+    {
+        GunAimCase scenario;
+        scenario.deltas[0] = 0.0f;
+        scenario.deltas[1] = 1.0f;
+        scenario.targetCount = 2;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // Five targets in the cone: the oracle collects at most four, so seed 0
+    // picks the fourth (272 degrees) and never the fifth (268).
+    {
+        GunAimCase scenario;
+        scenario.deltas[0] = 0.0f;
+        scenario.deltas[1] = 1.0f;
+        scenario.deltas[2] = -1.0f;
+        scenario.deltas[3] = 2.0f;
+        scenario.deltas[4] = -2.0f;
+        scenario.targetCount = 5;
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 272.0f) < 0.001f);
+        CHECK(result.nextDraw == 768);
+    }
+
+    {
+        GunAimCase scenario;
+        scenario.deltas[0] = 0.0f;
+        scenario.deltas[1] = 1.0f;
+        scenario.deltas[2] = -1.0f;
+        scenario.deltas[3] = 2.0f;
+        scenario.deltas[4] = -2.0f;
+        scenario.targetCount = 5;
+        scripts::ScriptRuntime runtime(levelData, cmi, 2, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 271.0f) < 0.001f);
+        CHECK(result.nextDraw == 165);
+    }
+
+    // A dead target and a target in another arena are not targets: the gun
+    // faces 270 degrees and falls back on the 29% roll (seed 1: no).
+    {
+        GunAimCase scenario;
+        scenario.targetCount = 1;
+        scenario.deadTarget = true;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(!result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    {
+        GunAimCase scenario;
+        scenario.targetCount = 1;
+        scenario.crossArena = true;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(!result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // The target row: two units off it is still a target, two and a half is
+    // not (the window is two in Y).
+    {
+        GunAimCase scenario;
+        scenario.targetCount = 1;
+        scenario.dy = 2.0f;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    {
+        GunAimCase scenario;
+        scenario.targetCount = 1;
+        scenario.dy = 2.5f;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(!result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // And three units off in Z is a target, three and a half is not.
+    {
+        GunAimCase scenario;
+        scenario.targetCount = 1;
+        scenario.dz = 3.0f;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    {
+        GunAimCase scenario;
+        scenario.targetCount = 1;
+        scenario.dz = 3.5f;
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(!result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // Kurt moving sideways at 30 units per second leads the shot 50 units
+    // ahead of him, out of the cone: the gun faces 270 degrees and falls
+    // back on the 29% roll (seed 0 fires, seed 1 does not).
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        runtime.kurtVelocity = mdk::Vec3{30.0f, 0.0f, 0.0f};
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, aimed, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 768);
+    }
+
+    {
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        runtime.kurtVelocity = mdk::Vec3{30.0f, 0.0f, 0.0f};
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, aimed, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(!result.fired);
+        CHECK(fabsf(result.yaw - 270.0f) < 0.001f);
+        CHECK(result.nextDraw == 467);
+    }
+
+    // At 48.5 units per second, ScriptMath.Round rounds the magnitude away
+    // from zero to 49, so the 58-of-70 roll passes the threshold of 59 and
+    // Kurt wins over the raised target. The gun sits on the lead point to
+    // keep Kurt inside the cone. Seed 58's first roll is exactly 58: a
+    // banker's round would make the threshold 58 and select the target.
+    {
+        GunAimCase scenario = aimed;
+        scenario.followLead = true;
+        scenario.deltas[0] = 1.0f;
+        scenario.targetCount = 1;
+        scripts::ScriptRuntime runtime(levelData, cmi, 58, bank, nullptr);
+        runtime.kurtVelocity = mdk::Vec3{48.5f, 0.0f, 0.0f};
+        float rowY = 0.0f;
+        scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
+        GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
+        CHECK(result.fired);
+        CHECK(fabsf(result.yaw - 269.763f) < 0.001f);
+        CHECK(result.nextDraw == 309);
     }
 }
 
@@ -3066,6 +3448,8 @@ int main() {
     printf("PASS CameraTrackCalculatesPitchAndExpires\n");
     testPlaceNearKurtChoosesWrapsAndSpaces(&levelData, &cmi, &bank);
     printf("PASS PlaceNearKurtChoosesWrapsAndSpaces\n");
+    testGunAimAimsAndFires(&levelData, &cmi, &bank);
+    printf("PASS GunAimAimsAndFires\n");
     testPointSeesPlayerNeedsRangeAndAClearLine(runtime);
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
     testIfPlayerHealthComparesKurtHealth(&levelData, &cmi, &bank);

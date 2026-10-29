@@ -1841,6 +1841,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.placeNearKurt(obj, fval(op(ins, 0)), fval(op(ins, 1)), fval(op(ins, 2)));
             break;
         }
+        case 219: {  // if_gun_aim: [target row y, z] aims the gun and branches on firing
+            return branch(obj, ins, runtime_.gunAim(obj, fval(op(ins, 0)), fval(op(ins, 1))));
+        }
         case 210:  // set_2c0: an unidentified object slot (ScriptVm.cs:1663)
             obj->value_2c0 = value(obj, op(ins, 0));
             break;

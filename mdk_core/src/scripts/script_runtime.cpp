@@ -292,13 +292,6 @@ void ScriptRuntime::runTick() {
         targetYaw_ = kurtYaw_;
     }
 
-    // The first tick has no movement to observe (ScriptRuntime.cs:914-917).
-    // A later teleport can set the previous position in the C#; no teleport
-    // source exists in this slice, so the ordinary delta is kept.
-    if (tickCount_ == 0) {
-        previousKurtPosition_ = kurtPosition_;
-    }
-
     // The alarm countdown decays once per tick, before any object runs
     // (ScriptRuntime.cs:896). There is no cutscene state in this slice, so the
     // C#'s cutscene early-return cannot suppress this decrement here.
@@ -311,6 +304,14 @@ void ScriptRuntime::runTick() {
     // The screen-shake request belongs to one tick (ScriptRuntime.cs:899).
     // Calls made later in this tick replace it only when they are stronger.
     shake = 0.0f;
+
+    // The first tick has no movement to observe (ScriptRuntime.cs:911-917,
+    // after the decrements above, as in the oracle). A later teleport can set
+    // the previous position in the C#; no teleport source exists in this
+    // slice, so the ordinary delta is kept.
+    if (tickCount_ == 0) {
+        previousKurtPosition_ = kurtPosition_;
+    }
 
     // Kurt changes arena only through a connection; on the first tick he is
     // placed and the arena under him is found.
@@ -337,6 +338,14 @@ void ScriptRuntime::runTick() {
     // object scripts run. The C# computes it after CollectPickups; pickups and
     // the other movement writers that can precede it are later slices, so the
     // copied Player position is the complete source in this runtime.
+    //
+    // Two oracle details this slice does not have yet: the C#'s cutscene
+    // early-return (ScriptRuntime.cs:889-892) skips this write AND the
+    // previous-position update during a cutscene — there is no cutscene state
+    // here, so both happen on every tick; and the C#'s save/load snapshot
+    // resets the previous position (ScriptRuntime.Snapshot.cs:37-39), so the
+    // first tick after a load observes no movement. The snapshot slice must
+    // reset previousKurtPosition_ the same way.
     kurtVelocity.x = (kurtPosition_.x - previousKurtPosition_.x) * kTicksPerSecond;
     kurtVelocity.y = (kurtPosition_.y - previousKurtPosition_.y) * kTicksPerSecond;
     kurtVelocity.z = (kurtPosition_.z - previousKurtPosition_.z) * kTicksPerSecond;
@@ -2505,8 +2514,9 @@ void ScriptRuntime::placeNearKurt(MdkObject* obj, float xMin, float xMax, float 
         for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
             MdkObject& other = *it;
             // The C# iterates its live Objects list. The C++ deque keeps
-            // removed objects in stable slots, so skip those explicitly.
-            if (&other == obj || other.dead || isRemoved(&other) || other.arena != obj->arena ||
+            // removed objects in stable slots, but remove() sets dead on
+            // them, so the dead test IS the list membership.
+            if (&other == obj || other.dead || other.arena != obj->arena ||
                 other.position.y != obj->position.y ||
                 fabsf(x - other.position.x) >= kSpacing - 0.5f) {
                 continue;
@@ -2522,6 +2532,76 @@ void ScriptRuntime::placeNearKurt(MdkObject* obj, float xMin, float xMax, float 
     }
 
     obj->position.x = x;
+}
+
+// GunAim (ScriptRuntime.cs:1084-1134, opcode 219): the shooting galleries'
+// guns (level 6) only fire along -y (270 degrees +/- 3) and lead Kurt by the
+// 1.67 s their shot takes (sideways only). Faster sideways movement makes
+// them likelier to fire at him; otherwise they aim at a raised target (the
+// objects within 2 of y and 3 of z in their cone), then at Kurt anyway, and
+// else face 270 degrees and fire 29% of the time. Sets the yaw; returns
+// whether to fire.
+bool ScriptRuntime::gunAim(MdkObject* obj, float y, float z) {
+    const float kLead = 1.67333f;
+    const float kDown = 270.0f;
+    const float kCone = 3.0f;
+    const int32_t kMaxTargets = 4;
+
+    // The C#'s lead point: Kurt's X advanced by the observed sideways
+    // velocity over the shot's flight time, at Kurt's Y.
+    Vec3 lead{kurtPosition_.x + kurtVelocity.x * kLead, kurtPosition_.y, 0.0f};
+    // The C#'s `obj.YawTo(lead) + Rng.Next(500) * 0.001f - 0.25f`: the aim
+    // jitter of up to a quarter of a degree. The draw order matters, so the
+    // multiplication stays where the oracle has it.
+    float angle = yawTo(obj, lead) + rng_.next(500) * 0.001f - 0.25f;
+    const bool aimed = fabsf(angle - kDown) <= kCone;
+
+    // ScriptMath.Round is MathF.Round(AwayFromZero), which C's roundf is
+    // (unlike the banker's round the animation clock uses).
+    if (aimed && rng_.next(70) < (int32_t)roundf(fabsf(kurtVelocity.x)) + 10) {
+        obj->yaw = angle;
+        return true;
+    }
+
+    // The raised targets: the live objects of the gun's arena within 2 in Y
+    // and 3 in Z of the target row whose bearing from the gun is inside the
+    // cone. The C# collects at most four and picks one of them at random.
+    float angles[kMaxTargets];
+    int32_t count = 0;
+    for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+        MdkObject& other = *it;
+        // The C# iterates its live Objects list. The C++ deque keeps removed
+        // objects in stable slots, but remove() sets dead on them, so the
+        // dead test IS the list membership.
+        if (other.dead || other.arena != obj->arena ||
+            fabsf(other.position.y - y) > 2.0f || fabsf(other.position.z - z) > 3.0f) {
+            continue;
+        }
+
+        const float otherAngle = yawTo(obj, other.position);
+        if (fabsf(otherAngle - kDown) > kCone) {
+            continue;
+        }
+
+        angles[count] = otherAngle;
+        count++;
+        if (count == kMaxTargets) {
+            break;
+        }
+    }
+
+    if (count != 0) {
+        obj->yaw = angles[rng_.next(count)];
+        return true;
+    }
+
+    if (aimed) {
+        obj->yaw = angle;
+        return true;
+    }
+
+    obj->yaw = kDown;
+    return rng_.next(100) > 70;
 }
 
 // A numeric operand as a float (the C#'s ScriptMath.F).

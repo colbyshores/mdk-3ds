@@ -212,6 +212,10 @@ public:
     // choices near Kurt, then pushed left out of the chosen X range and apart
     // from same-Y objects by twelve units. Only X changes.
     void placeNearKurt(MdkObject* obj, float xMin, float xMax, float yLimit);
+    // GunAim (ScriptRuntime.cs:1084-1134, opcode 219): a shooting-gallery gun
+    // aims along -y (270 degrees) and leads Kurt by the 1.67 s its shot takes.
+    // It sets the receiver's yaw and answers whether the gun fires.
+    bool gunAim(MdkObject* obj, float y, float z);
     // ---- The mixer seam (the sounds the scripts make) ----
     // play_sound (opcode 89, 0x442402): the start mode and the place come from
     // `flags`, the point from `position` when that operand is a list.
@@ -309,10 +313,12 @@ public:
     int32_t option = 0;  // the driver sets 0 (the oracle's Option)
     // C# ScriptRuntime.KurtVelocity (ScriptRuntime.cs:204): the observed feet
     // delta from the previous tick, multiplied by 30. place_x_near_player (220)
-    // uses its X to aim two-thirds of a second ahead. It is not Kurt's own
-    // velocity (C# Kurt.Velocity; see kurtLiveVelocity above). The per-tick
-    // tick writer is in runTick; like the C# public field, a test may set it
-    // directly to isolate the consumer.
+    // uses its X to aim 2.67 s ahead (Lead = 2.67333f); if_gun_aim (219) uses
+    // its X to lead the shot the 1.67 s it takes, and its magnitude to decide
+    // how likely the gun is to fire at Kurt. It is not Kurt's own velocity
+    // (C# Kurt.Velocity; see kurtLiveVelocity above). The per-tick tick writer
+    // is in runTick; like the C# public field, a test may set it directly to
+    // isolate the consumer.
     Vec3 kurtVelocity{};
     // The alarm countdown shared by movement command 15 and opcode 27. The C#
     // decrements it once at the start of every non-cutscene tick, then command

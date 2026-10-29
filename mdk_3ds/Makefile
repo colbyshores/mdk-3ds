@@ -269,6 +269,13 @@ $(BUILD)/bsp.o:        CXXFLAGS += -fsingle-precision-constant
 $(BUILD)/script_vm.o:  CXXFLAGS += -fsingle-precision-constant
 $(BUILD)/audio_device.o: CXXFLAGS += -fsingle-precision-constant
 
+# C# does not contract multiply-add expressions. VFPv2's VMLA rounds once,
+# so the ARM build would otherwise compute different gameplay positions and
+# aim angles from the oracle for expressions such as `x + velocity * lead`.
+# Keep contraction off for the script runtime, whose float results are
+# deliberately transcribed from the C# operation order.
+$(BUILD)/script_runtime.o: CXXFLAGS += -ffp-contract=off
+
 clean:
 	@echo "CLEAN"
 	@rm -rf $(BUILD) $(TARGET).elf $(TARGET).3dsx $(TARGET).cia $(TARGET).map
