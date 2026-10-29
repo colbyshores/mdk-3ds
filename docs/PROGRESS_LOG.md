@@ -1,3 +1,129 @@
+## What this batch did (Phase 2 iteration 23 — P5.0 frame-golden harness; the camera handedness fix it exposed)
+
+- Built the P5.0 frame-golden harness (`SPEC-COMPLETION.md` §3 item 4), which
+  `docs/CONTINUATION.md` listed as the owner's next priority and as the gate that
+  must be green before any renderer batch. `tests/frames/capture_oracle.sh`
+  builds the C# oracle in a scratch tree and runs it headlessly on display `:99`
+  inside `unshare --user --map-root-user -m` with a bind-mounted private
+  `/tmp/.X11-unix` (the host's socket and lock files belong to another user and
+  `:99` is stale, and AGENTS.md P7 forbids the operator's display).
+  `tests/frames/capture_cpp.sh` renders the same pinned scene from the C++ build.
+  `tests/frames/compare_frames.py` compares two uncompressed 32-bit BMPs — the
+  oracle's own `Bmp.Write` container — and names the first offending pixels so a
+  regression is diagnosable from the gate log alone.
+- Added the C++ capture path that made that possible: `--capture=`,
+  `--capture-frame=N`, `--size=WxH`, `--level=N`, `--at=x,y,z[,yaw]` and
+  `--fixed-step` in `mdk_linux/src/main.cpp`. `--fixed-step` advances exactly the
+  C#'s 1/60-second test step per loop instead of the host's wall-clock delta, so a
+  capture frame is a simulation state and two runs of the same arguments are
+  byte-identical (verified: three runs, one SHA-256). `mdk_render_end_frame`
+  copies the presented swapchain image into a host buffer through a
+  present→transfer→present layout chain and writes it as a top-down BGRA BMP with
+  the oracle's 54-byte header. `vk_context` now requests
+  `VK_IMAGE_USAGE_TRANSFER_SRC_BIT` on the swapchain.
+- `--level=N` (3–8) replaces the three hardcoded level-3 sites:
+  `LevelData::load`, the `LEVEL%d.CMI` path and `SoundBank::forLevel`.
+- `tests/frames/regenerate_reference.sh` captures both sides of each pinned frame
+  and writes `tests/frames/reference.sha256`. No ROM-derived pixels are
+  committed: the manifest holds hashes and measured deltas only. For the pinned
+  frame (level 3, 320x240, seed 1, frame 1) it records
+  `oracle=b60e7255…`, `cpp=2b586df2…` and the gap
+  `bad_percent=12.680 max_delta=255 mean_delta=5.1350` at tolerance 0.
+- `tools/runner/gates_frames.py` is gate 7 of `tools/check.sh`. Per pinned frame
+  it checks (1) two live captures are byte-identical, (2) the capture matches the
+  recorded `cpp=` baseline hash, and (3) the gap to the oracle does not exceed the
+  recorded ceiling when the oracle pixels are on disk. It SKIPS (not passes) with
+  a stated reason when there is no manifest, no `build-linux/mdk`, or no game
+  data, the way `gates_smdh` skips before a CIA exists.
+- The two hashes are deliberately not interchangeable and the gate says so in its
+  own header: `oracle=` is the reference and the only number that means "the
+  original look"; `cpp=` is a regression baseline. The C++ frame is 12.680% away
+  from the oracle and closing that is P5, so a byte-exact-vs-oracle gate would be
+  red from the day it was written — the same argument AGENTS.md §2 makes about the
+  waived corpus-age clocks, because a permanently red gate trains the reader to
+  skip the gate. The baseline check is byte-exact in exchange, so any change to the
+  picture in any direction is a FAIL, and the only way through is to regenerate
+  the manifest, which re-measures the oracle gap and puts that number in the diff.
+  The ceiling may only shrink.
+- PROVEN TO FAIL ON A SEEDED REGRESSION. Dropping the `flipClipY` call from
+  `mdk_render_draw_mesh` (an upside-down level) and rebuilding made the gate print
+  `the frame changed: 6134e5f7… != recorded 2b586df2…` and `the gap to the oracle
+  grew: 76.997%/255/77.6020 vs the recorded ceiling 12.680%/255/5.1350`, and
+  `bash tools/check.sh` exited 1 with `FAIL gates_frames`. The seed was reverted,
+  the binary rebuilt, and the gate returned to `VERDICT: CONTRACT CLEAN` with the
+  original hash.
+- THE HARNESS IMMEDIATELY FOUND A REAL BUG. `buildLookAtCamera` built a
+  LEFT-HANDED basis (`right = cross(up, forward)`, `forward` as the third axis).
+  The C# oracle uses `System.Numerics.Matrix4x4.CreateLookAt`, which is
+  RIGHT-HANDED: `zaxis = normalize(eye - target)`, `xaxis = normalize(cross(up,
+  zaxis))`, `yaxis = cross(zaxis, xaxis)`. The old build negated x and z relative
+  to the oracle — the world was mirrored and the solid geometry's front faces were
+  culled away. `camera_builder.h` now states the oracle's convention and the
+  projection is `CreatePerspectiveFieldOfView`'s (`zScale = -far/range`,
+  `zOffset = -near*far/range`, `w = -z_view`), whose NDC depth still runs 0 (near)
+  to 1 (far), so the Citro3D `row[2] -= row[3]` depth conversion is unchanged.
+- The Vulkan backend now folds the clip.y flip into the combined matrix
+  (`flipClipY`, right-multiply by `diag(1,-1,1,1)`, i.e. negate column 1) instead
+  of relying on a negative viewport height, and the sky's clip-to-direction — the
+  INVERSE — carries the same flip on its LEFT side (`flipClipYLeft`, negate row 1)
+  and is uploaded verbatim rather than pre-transposed. `palette.vert` and
+  `sky.vert` multiply `M * v`, which is GLSL's column-major reading of the
+  engine's row-major row-vector matrix; the previous `v * M` was the transpose.
+  The canvas ortho is written straight for the y-down framebuffer, so its
+  translation moved to row 3 (indices 12/13).
+- `vk_context::beginFrame`'s viewport is now POSITIVE. It was dead state —
+  `mdk_render_begin_frame` sets its own viewport immediately afterwards and the
+  last set wins — and this was established rather than argued: the pinned frame
+  hash is byte-identical before and after the change. Two comments in the tree
+  claimed the negative viewport was what restored the oracle's orientation, which
+  contradicted the live code and would have been "fixed" the wrong way by the next
+  reader.
+- `renderer_c3d.cpp`'s cull enum moves from `GPU_CULL_FRONT_CCW` to
+  `GPU_CULL_BACK_CCW` because the mirror is gone and the winding moved with it;
+  the file header records that the mirror and the cull enum move together and that
+  getting one right on its own shows up as INVISIBLE GEOMETRY. **This is UNVERIFIED
+  on hardware** (AGENTS.md P6): no 3DS or emulator run was performed.
+- Addressed review-22's MAJOR. The recorded death-beat divergence was false: the
+  C# play tick calls `_scripts.Update(Step)` with no `Dead` guard
+  (`Viewer.cs:509-512`), so the oracle advances scripts through the whole death
+  beat, exactly as the C++ does. Verified against the oracle and rewritten in both
+  `mdk_linux/src/main.cpp` and `docs/CONTINUATION.md`: the real divergences are
+  that the C# skull fade is `HurtFlash/SkullFade` with `SkullFade = 2*Ticks = 60/s`
+  and `SkullEnd = 255` (`Kurt.Combat.cs:26-27,238-253`) — at most ~4.25 s, less if
+  `HurtFlash` starts partway up — and that on completion `Died` fires and
+  `Game.cs:448-456` writes `SaveGames.LastGame` and leaves for the menu, whereas
+  the C++ has no menu, no save and no level end and respawns in place after a fixed
+  4.0 s.
+- Fixed three latent bugs in the inherited harness scripts while getting them to
+  run: glslangValidator needs `-D` (without it the HLSL `#include` is parsed as
+  GLSL and fails) and an ATTACHED `-I<dir>`; the output names must be
+  `<name>.ps.spv`, not `<name>.frag.spv`, or the csproj silently links the stale
+  zero-byte placeholder shaders; and an apostrophe inside the inline single-quoted
+  `bash -c` script for the Xvfb namespace closed the quote and re-split every
+  following argument (`mount --bind "one" /tmp/.X11-unix`). The inner script is now
+  a file written with a quoted heredoc. `cp -a` became `cp -R` because the working
+  tree lives on a mount that cannot carry the source's mode.
+- Verification on this tree:
+  - `make -C tests/scripts clean && make -C tests/scripts` exited 0 and ended
+    `All cases match the oracle.`
+  - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`); SMDH SKIPPED (no
+    CIA built) and `gates_frames` PASS with `L3_f1.bmp sha=2b586df212dc8ed8`.
+  - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C
+    mdk_3ds` exited 0, linked `mdk.elf`, staged 69 RomFS files (79M), built
+    `mdk.3dsx`.
+  - `cmake --build build-linux --target mdk -j8` exited 0.
+  - `tests/frames/regenerate_reference.sh` exited 0. Evidence: the oracle ran on
+    display `:99` inside a private mount namespace on lavapipe/llvmpipe
+    (`GPU: llvmpipe (LLVM 20.1.2, 256 bits) (Vulkan via SDL_GPU)`), reported
+    `Level 3: 17 arenas, 9708 triangles, 705 outlines`, `Look: Original`,
+    `render target 320x240, swapchain B8G8R8A8_UNORM`, and `Kurt at -4.00 0.00
+    192.98 yaw 96`; the C++ capture reported `arena: HMO_1 (17 arenas)`,
+    `view: 154 batches, 1188 vertices, 399 triangles` and the same Kurt position.
+- No VM golden changed; opcode coverage is unchanged at 211 true dispatches / 238
+  with 27 remaining. No emulator or Original 3DS run was performed and Old-3DS
+  timing remains UNMEASURED. `/tmp/kilo` is not writable by this user, so captures
+  went to `/tmp/mdk-frame-reference` and `/tmp/mdk-pi`, with the display recorded.
+
 ## What this batch did (Phase 2 iteration 22 — opcode 174 ammo condition)
 
 - Ported opcode 174 (`if_ammo`) from

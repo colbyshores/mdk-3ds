@@ -435,10 +435,20 @@ int main(int argc, char** argv) {
                 pending -= kStep;
             }
             // Death: update() froze Kurt (it returns when dead). After the death
-            // beat, respawn him at the start (the C# reloads the level; the static
-            // geometry makes a reset the same fresh start) and re-seed the camera.
-            // This stand-in still advances scripts during the beat; the C# ends
-            // the level and its ScriptRuntime immediately when Kurt dies.
+            // beat, respawn him at the start and re-seed the camera.
+            //
+            // Scripts keep running during the beat HERE AND IN THE ORACLE: the C#
+            // play tick calls _scripts.Update(Step) with no Dead guard
+            // (Viewer.cs:509-512), so this is not a divergence. What actually
+            // differs is what happens when the beat ENDS. The C# runs a skull fade
+            // of HurtFlash/SkullFade -- SkullFade = 2*Ticks = 60/s, SkullEnd = 255
+            // (Kurt.Combat.cs:26-27,238-253), so at most ~4.25 s and less if
+            // HurtFlash is already partway up -- and when it completes, Died fires,
+            // Game.cs:448-456 writes SaveGames.LastGame and leaves the level for
+            // the menu. This stand-in has no menu, no save and no level end: it
+            // respawns Kurt in place after a fixed 4.0 s. So the divergences are
+            // the level-end flow and 4.0 s versus a beat that depends on
+            // HurtFlash, not the script clock.
             if (player.dead) {
                 deathTimer += elapsed;
                 if (deathTimer >= kRespawnDelay) {
