@@ -2152,13 +2152,15 @@
   exactly as the oracle binds it.
 - The Vulkan backend now creates `samplerRepeat` alongside `sampler` (same
   NEAREST filters and `maxLod = 0`; the C#'s `CreateSampler` sets all three
-  address axes to the one mode, `Renderer.cs:506-508`, and the C++ matches it
+  address axes to the one mode, `Renderer.cs:504-506`, and the C++ matches it
   even though W is unused for a 2D view). `getDescriptorSet` is keyed by
   `(texture, palette, repeat)` because the sampler is baked into the set: the
   mesh path and the canvas path ask for repeat — the canvas quads go through the
   same `DrawOne` — and the sky asks for clamp. The descriptor pool (4096 sets)
-  is not at risk from the extra variant, and the existing null-set path covers an
-  allocation failure.
+  is not at risk from the extra variant, and an allocation failure returns
+  VK_NULL_HANDLE so the draw survives — though the caller then draws with no set
+  bound, which is undefined shader reads, so "survives" is the honest word and
+  not "handles".
 - Verified against the oracle's pixels, not just the hash: the pinned frame was
   measured band by band. Top third (sky) 5.625% bad / mean 1.4922 / max 99;
   middle 3.816% / 2.1723 / 247; bottom (ground and HUD) 3.754% / 4.3832 / 255.
@@ -2200,3 +2202,94 @@
 - No VM golden changed and opcode coverage is unchanged at 211 true dispatches /
   238 with 27 deferred. No emulator or Original 3DS run was performed; Old-3DS
   timing remains unmeasured.
+
+## What this batch did (Phase 2 iteration 26 — P5 sky: the camera's own axes, and .NET's own inverse)
+
+The sky was the largest remaining band (5.625% of its pixels differing, max
+channel delta only 99), and CONTINUATION recorded it as a washed-out panorama
+rather than missing geometry. It was two separate last-bit divergences in how the
+sky's clip-to-direction matrix is built, both against `CameraMath.View`
+(`src/Mdk.Game/Kurt/FollowCamera.cs:395-401`):
+
+- **The axes.** The C# builds the sky rotation as
+  `Matrix4x4.CreateLookAt(Vector3.Zero, camera.Forward, camera.Up)` — the follow
+  camera's OWN `Forward`/`Up` fields. The C++ took the rotation out of the view
+  matrix instead (copy its first three columns, zero the translation). Those are
+  not the same floats: `buildLookAtCamera` recovers forward as
+  `normalize((position + forward) - position)`, and that cancellation lands on a
+  different ULP than the `forward` that went in. `buildFollowCamera` and
+  `buildFollowCameraCleared` now store the exact `followCameraOrient` axes on
+  `Camera::forward`/`Camera::up` after building the view, and `drawSky` reads
+  them. `Camera` already had those fields; nothing else in either backend read
+  them, so the change is confined to the sky. `drawSky` also now normalizes
+  `zaxis`, which `CreateLookAt` does and the previous code skipped — it happens
+  to be a no-op for this frame's value (byte-identical capture), but it is what
+  the oracle does and it is not a no-op in general.
+- **The inverse.** `Matrix4x4.Invert` is not "the cofactor formula". It is a
+  fixed SSE shuffle/multiply-add sequence whose `MultiplyAddEstimate` lowers to a
+  fused operation, and the cancellation in the 3x3 minors makes that fused
+  rounding observable. `mdk_linux/src/render/system_numerics_inverse.cpp` is a
+  mechanical translation of that sequence, `tN` names kept in IL evaluation
+  order so nobody "simplifies" it. It is a genuine inverse — checked standalone
+  against a random matrix, `M * M^-1 = I` to 2.4e-7 — and it rejects a singular
+  matrix the way .NET rejects one below `float.Epsilon`, which the old generic
+  cofactor version did not.
+
+Measured against the oracle's pixels on the pinned frame (level 3, 320x240,
+seed 1, frame 1, tolerance 0), and re-measured band by band:
+
+| | bad % | mean channel delta | sky band | middle | ground+HUD |
+|---|---:|---:|---|---|---|
+| before (`f4f91150cd35`) | 4.398 | 1.4939 | 5.625% / 0.8416 | 3.816% / 1.6067 | 3.754% / 3.5272 |
+| this batch (`3d67efbeab85`) | **3.323** | **1.3783** | **3.023% / 0.4664** | 3.191% / 1.5197 | 3.754% / 3.5272 |
+
+The ground band is byte-identical before and after, which is the check that this
+touched only the sky. Max delta stays 255 and comes from the ground band, not the
+sky (whose max is 99).
+
+Two ablations, because a claim that a 200-line translation "helps" has to be
+measured and not asserted:
+
+- exact axes + the OLD cofactor inverse: 3.862% / mean 1.4376, sky band 4.461%.
+  So the inverse translation is worth ~0.54 points on its own and the axes are
+  worth ~0.53; neither half is decoration.
+- An experiment that FAILED and is deliberately not in the tree: making
+  `follow_camera.cpp`'s `normalize` divide by the length the way
+  `Vector3.Normalize` reads, instead of multiplying by a reciprocal, REGRESSES
+  the sky from 3.023% to 5.730%. The reciprocal form is what the oracle actually
+  matches. Recorded so the next reader does not "correct" it into a regression.
+
+The remaining sky difference is sparse and scattered (3–17 pixels per row out of
+320, no band or edge), which is a last-bit direction landing on the far side of a
+sharp panorama texel boundary, not a structural mismatch. The largest band is now
+the ground (3.754% bad, mean 3.5272, max 255) and that is the next slice.
+
+Review-25's two NITs are fixed in the previous entry: the `CreateSampler`
+citation is `Renderer.cs:504-506`, and the descriptor-allocation-failure sentence
+no longer claims the null-set path "covers" it (the caller still draws with no
+set bound, which is undefined shader reads). Its MINOR about the descriptor-set
+cache never being invalidated on `mdk_render_update_texture`/
+`mdk_render_release_texture` is a real latent trap but has no caller anywhere in
+the tree today, so it is a tracked follow-up for whoever wires up animated
+textures, not this batch's subsystem. Its second MINOR — the 3DS still clamping
+where Linux now tiles — is unchanged and still hardware-gated for the recorded
+reason.
+
+Verification on this tree:
+
+- `make -C tests/scripts clean && make -C tests/scripts` exited 0 and ended
+  `All cases match the oracle.` (clean rebuild, because a header was added). No
+  VM golden changed.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no
+  built CIA, `gates_frames PASS` with `L3_f1.bmp sha=3d67efbeab85c8a4`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
+- `tests/frames/regenerate_reference.sh` exited 0. The oracle ran on display
+  `:99` inside a private mount namespace on lavapipe/llvmpipe (`Level 3: 17
+  arenas, 9708 triangles`, `Kurt at -4.00 0.00 192.98 yaw 96`); the C++ capture
+  ran with `DISPLAY=:99` on the headless backend. The oracle hash came out
+  byte-identical to the committed one (`b60e72552c40…`), so the reference moved
+  not at all and only the C++ baseline and the ceiling did.
+
+Opcode coverage is unchanged at 211 true dispatches / 238 with 27 deferred. No
+emulator or Original 3DS run was performed; Old-3DS timing remains unmeasured.
