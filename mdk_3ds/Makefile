@@ -269,12 +269,17 @@ $(BUILD)/bsp.o:        CXXFLAGS += -fsingle-precision-constant
 $(BUILD)/script_vm.o:  CXXFLAGS += -fsingle-precision-constant
 $(BUILD)/audio_device.o: CXXFLAGS += -fsingle-precision-constant
 
-# C# does not contract multiply-add expressions. VFPv2's VMLA rounds once,
-# so the ARM build would otherwise compute different gameplay positions and
-# aim angles from the oracle for expressions such as `x + velocity * lead`.
-# Keep contraction off for the script runtime, whose float results are
-# deliberately transcribed from the C# operation order.
-$(BUILD)/script_runtime.o: CXXFLAGS += -ffp-contract=off
+# FP contraction -- deliberately NOT disabled here.
+#
+# C# never contracts a multiply-add, so `a + b*c` rounds twice there. VFPv2
+# has no fused multiply-add: GCC's fused form (VFMA) needs -mfpu=vfpv4, and
+# its ARM backend emits VMLA as the unfused mac even under
+# -ffp-contract=off. Measured on this tree with the shipped flags:
+# script_runtime.cpp compiles to a byte-identical object under the default,
+# -ffp-contract=off and -ffp-contract=fast (164 vmla/vmls, 0 vfma each), so
+# the flag added in 91385f2 changed nothing and only implied a VMLA rounding
+# that has never been measured on hardware. If an Old-3DS capture ever shows
+# a contraction divergence, fix the expression, not this flag.
 
 clean:
 	@echo "CLEAN"
