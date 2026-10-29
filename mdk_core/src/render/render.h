@@ -205,11 +205,17 @@ void mdk_render_draw_mesh(MdkRenderer r, const mdk::MeshDraw* draw);
 // ---------------------------------------------------------------------------
 
 // Open the canvas batch. Quads are accumulated until mdk_render_canvas_end,
-// then uploaded and drawn in one go, in the canvas's 640x360 orthographic
-// space.
+// then uploaded and drawn in one go, in the canvas's orthographic space:
+// 360 units high and as wide as the frame's aspect makes it.
 void mdk_render_canvas_begin(MdkRenderer r);
 void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* quad);
 void mdk_render_canvas_end(MdkRenderer r);
+
+// The canvas's width for the current frame's aspect (the C# port's
+// Renderer.CanvasWidth). The canvas is always 360 units high; its width is
+// 360 * target_width / target_height, so HUD layout follows the frame rather
+// than a fixed 640x360 assumption.
+float mdk_render_canvas_width(MdkRenderer r);
 
 // How many quads the canvas batch can hold before the backend must flush.
 // The shared code batches into as many draws as it needs, so a small value

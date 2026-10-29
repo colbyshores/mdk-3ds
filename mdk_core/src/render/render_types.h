@@ -48,9 +48,9 @@ struct Colour {
     float a = 0.0f;
 };
 
-// The 3DS's 400x240 top screen and the game's 640x360 canvas are different
-// spaces; the canvas scale is what maps one to the other.
-static constexpr float kCanvasWidth = 640.0f;
+// The 3DS's 400x240 top screen and the game's canvas are different spaces;
+// the canvas scale is what maps one to the other. The canvas is 360 units
+// high and its width follows the frame's aspect (mdk_render_canvas_width).
 static constexpr float kCanvasHeight = 360.0f;
 
 // ---------------------------------------------------------------------------

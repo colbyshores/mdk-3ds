@@ -3,7 +3,8 @@
 // ============================================================================
 // hud_view.h — the in-game HUD, a 1:1 port of src/Mdk.Game/Hud/HudView.cs.
 //
-// It draws on the 640x360 canvas (render.h's canvas): the health in the
+// It draws on the 360-high canvas whose width follows the frame's aspect
+// (render.h's canvas): the health in the
 // SC_STAT panel (bottom right, SNIP_TXT digits, blinking at 20 or less), the
 // inventory outside sniper mode (5 PICKUPS slots at the bottom left), the
 // health bar of the object Kurt shoots at (top left), the red and white

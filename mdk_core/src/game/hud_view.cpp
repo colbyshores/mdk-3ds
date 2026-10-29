@@ -15,8 +15,8 @@ namespace mdk {
 
 namespace {
 
-// The C# HudView's layout constants. The canvas size is render_types.h's
-// kCanvasWidth / kCanvasHeight.
+// The C# HudView's layout constants. The canvas height is render_types.h's
+// kCanvasHeight; its width comes from the renderer for the current frame.
 const float kPanelRight = 16.0f;
 const float kPanelBottom = 10.0f;
 const int32_t kLowHealth = 20;
@@ -111,25 +111,26 @@ void HudView::tick() { blink_ = (blink_ + 1) & kBlinkMask; }
 
 void HudView::draw(MdkRenderer renderer, const HudState& state) {
     renderer_ = renderer;
+    const float canvasWidth = mdk_render_canvas_width(renderer_);
 
     // The flashes (C# DrawFlashes).
     if (state.dead) {
         if (skull_.texture >= 0) {
             const float alpha = clampf(state.hurtFlash / kFlashMax, 0.0f, 1.0f);
-            drawImage(skull_, kCanvasWidth / 2.0f - skull_.w / 2.0f,
+            drawImage(skull_, canvasWidth / 2.0f - skull_.w / 2.0f,
                       kCanvasHeight / 2.0f - skull_.h / 2.0f, Colour{1.0f, 1.0f, 1.0f, alpha});
         }
     } else if (state.hurtFlash > 0.0f) {
-        fillRect(0.0f, 0.0f, kCanvasWidth, kCanvasHeight,
+        fillRect(0.0f, 0.0f, canvasWidth, kCanvasHeight,
                  Colour{1.0f, 0.0f, 0.0f, state.hurtFlash / kFlashMax * kHurtAlpha});
     }
     if (state.whiteFlash > 0.0f) {
-        fillRect(0.0f, 0.0f, kCanvasWidth, kCanvasHeight,
+        fillRect(0.0f, 0.0f, canvasWidth, kCanvasHeight,
                  Colour{1.0f, 1.0f, 1.0f, clampf(state.whiteFlash / kFlashMax, 0.0f, 1.0f)});
     }
 
     // The health panel at the bottom right; the number blinks when health is low.
-    const float panelX = kCanvasWidth - (panel_.w + kPanelRight);
+    const float panelX = canvasWidth - (panel_.w + kPanelRight);
     const float panelY = kCanvasHeight - (panel_.h + kPanelBottom);
     drawImage(panel_, panelX, panelY, Colour{1.0f, 1.0f, 1.0f, 1.0f});
     if (state.health > kLowHealth || blink_ < kBlinkOn) {

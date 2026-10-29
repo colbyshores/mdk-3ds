@@ -1664,26 +1664,36 @@ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
 // ---------------------------------------------------------------------------
 //
 // Quads are drawn immediately in the Overlay pass (blended, no depth) through
-// an orthographic projection of the canvas's 640x360 logical space onto the
-// full viewport. The C# batches quads by texture; this draws one draw call per
-// quad, which is fine for a HUD and keeps the path simple. The vertex format
-// is the mesh format, so the palette pipeline draws it unchanged.
+// an orthographic projection of the canvas's 360-high logical space onto the
+// full viewport. The canvas width follows the frame's aspect, exactly like the
+// C# port's Renderer.CanvasWidth. The C# batches quads by texture; this draws
+// one draw call per quad, which is fine for a HUD and keeps the path simple.
+// The vertex format is the mesh format, so the palette pipeline draws it
+// unchanged.
 
 namespace {
+
+// The C# Renderer.CanvasWidth: 360 units high, as wide as the current target.
+float canvasWidth(RendererVk* r) {
+    const uint32_t w = r ? r->ctx.extent.width : 0;
+    const uint32_t h = r ? r->ctx.extent.height : 0;
+    const float aspect = h != 0 ? (float)w / (float)h : 4.0f / 3.0f;
+    return mdk::kCanvasHeight * aspect;
+}
 
 // The orthographic matrix mapping canvas pixels (x right, y DOWN) to clip
 // space over the full viewport. The canvas is screen space, so it is written
 // straight for the framebuffer: canvas y 0 is the top row, which is clip y -1
-// with Vulkan's y-down framebuffer. That is the C#'s
+// with Vulkan's y-down framebuffer. That is the C#'
 // CreateOrthographicOffCenter(..., CanvasHeight + margin, -margin, ...) with
 // its y arguments swapped, expressed in the engine's row-major row-vector
 // layout (the translation lives in row 3, indices 12..14).
-void canvasOrtho(float out[16]) {
+void canvasOrtho(float out[16], float width) {
     for (int i = 0; i < 16; i++) {
         out[i] = 0.0f;
     }
-    out[0] = 2.0f / 640.0f;   // x -> [-1,1]
-    out[5] = 2.0f / 360.0f;   // y (down) -> clip y down, the framebuffer's own sense
+    out[0] = 2.0f / width;      // x -> [-1,1]
+    out[5] = 2.0f / mdk::kCanvasHeight; // y (down) -> clip y down, the framebuffer's own sense
     out[10] = 1.0f;
     out[12] = -1.0f;
     out[13] = -1.0f;
@@ -1755,7 +1765,7 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
     memcpy((char*)r->canvasMapped + r->canvasOffset, verts, bytes);
 
     PushConstants pc = {};
-    canvasOrtho(pc.mvp);
+    canvasOrtho(pc.mvp, canvasWidth(r));
     pc.colour[0] = q->colour.r;
     pc.colour[1] = q->colour.g;
     pc.colour[2] = q->colour.b;
@@ -1788,6 +1798,9 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
 }
 
 void mdk_render_canvas_end(MdkRenderer r) { (void)r; }
+float mdk_render_canvas_width(MdkRenderer r) {
+    return canvasWidth(asVk(r));
+}
 int32_t mdk_render_canvas_capacity(MdkRenderer r) {
     (void)r;
     return 4096;

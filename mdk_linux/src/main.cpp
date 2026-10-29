@@ -338,12 +338,18 @@ int main(int argc, char** argv) {
     }
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
+    const float kHudStep = 1.0f / 30.0f; // the C# HUD blink's 30 Hz boundary
     const float kAspect = 1280.0f / 960.0f;
-    // The beat a dead Kurt is left frozen before respawning, standing in for the
-    // death animation and the ~4.25 s skull fade (K_BANG, SkullFade/SkullEnd) that
-    // are not ported; the HUD shows the skull meanwhile.
-    const float kRespawnDelay = 4.0f;
+    // The beat a dead Kurt is left frozen before respawning. The C# skull fade
+    // runs at SkullFade = 2*Ticks = 60/s from HurtFlash 0 to SkullEnd 255
+    // (Kurt.Combat.cs:26-27,238-253). This frontend still has no menu, save or
+    // level end, so it respawns in place when that fade completes rather than
+    // leaving the level as the oracle does.
+    const float kSkullFadePerSecond = 60.0f;
+    const float kSkullEnd = 255.0f;
+    const float kRespawnDelay = kSkullEnd / kSkullFadePerSecond;
     float deathTimer = 0.0f;
+    float hudPending = 0.0f;
     float pending = 0.0f;
     auto last = std::chrono::steady_clock::now();
 
@@ -432,6 +438,13 @@ int main(int argc, char** argv) {
                 if (runtime) {
                     space.setSolid(runtime->currentArena());
                 }
+                // The C# advances the HUD blink once per 30 Hz boundary
+                // (Viewer.cs:535-538), not once per 60 Hz frame.
+                hudPending += kStep;
+                if (hudPending >= kHudStep) {
+                    hud.tick();
+                    hudPending -= kHudStep;
+                }
                 pending -= kStep;
             }
             // Death: update() froze Kurt (it returns when dead). After the death
@@ -469,17 +482,13 @@ int main(int argc, char** argv) {
             view.draw();
         }
         if (hudReady) {
-            // The health and the skull are Kurt's now (the player port landed); the
-            // inventory slots and the target bar stay stand-ins until the items and
-            // the shooting land, so every HUD element is still on screen.
+            // The health, skull and its fade are Kurt's now. The C# starts with
+            // an empty inventory and no target bar; those writers land with the
+            // pickup and shooting subsystems, so the HUD must not invent them.
             mdk::HudState state;
             state.health = player.health;
             state.dead = player.dead;
-            state.slots = {{1, 5}, {2, 12}, {3, 1}};
-            state.selected = 0;
-            state.barHealth = 300;
-            state.barMax = 900;
-            hud.tick();
+            state.hurtFlash = player.dead ? deathTimer * kSkullFadePerSecond : 0.0f;
             mdk_render_canvas_begin(renderer);
             hud.draw(renderer, state);
             mdk_render_canvas_end(renderer);
