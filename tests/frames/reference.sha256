@@ -1,0 +1,6 @@
+# MDK frame golden manifest -- written by tests/frames/regenerate_reference.sh
+# DO NOT EDIT BY HAND to make a gate pass. See that script for what each field is.
+# oracle= is the C# reference; cpp= is a regression baseline, not a fidelity reference.
+# bad_percent/max_delta/mean_delta are the measured C++-to-oracle gap at tolerance 0 and
+# are a ceiling that may only shrink. Generated: 2026-10-29T10:43:52Z
+name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 oracle=b60e72552c409e909316dd28b38180ead856b12b2e788026127b8a68c54395a0 cpp=2b586df212dc8ed8fffbabbeba2bb9b9068650e039cea6484f59faf96b839741 bad_percent=12.680 max_delta=255 mean_delta=5.1350

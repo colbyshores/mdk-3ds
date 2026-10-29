@@ -150,7 +150,8 @@ bool createSwapchain(Context* ctx, uint32_t width, uint32_t height, bool vsync) 
     // The 3DS and the PC are the same picture, so the colour space is NOT
     // sRGB-encoded by the surface: the game's own gamma pass does that, and
     // doing it twice changes the picture.
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -774,15 +775,23 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
     vkCmdBeginRenderPass(frame.commandBuffer, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     // The viewport and scissor are dynamic state and MUST be set every frame;
-    // without them nothing rasterizes. The height is NEGATIVE: the engine's
-    // projection is the D3D one (y_ndc +1 = top of the window), and Vulkan
-    // maps y_ndc +1 to the bottom with a positive viewport. A negative
-    // height (core since 1.1) restores the oracle's orientation.
+    // without them nothing rasterizes. POSITIVE height: the y flip that puts
+    // the picture upright is folded into the projection matrix
+    // (renderer_vk.cpp flipClipY), not into the viewport. A negative height
+    // would flip it a second time and show the world upside down.
+    //
+    // The renderer sets its own viewport again right after this one, so this
+    // value is not the one that rasterizes anything; it is here so that a frame
+    // with a begin and no further state still has defined viewport state. It
+    // is kept consistent with the renderer on purpose -- two comments in this
+    // tree used to claim the opposite ("the negative viewport height restores
+    // the oracle's orientation") and a reader could not tell which one was
+    // live.
     VkViewport viewport = {};
     viewport.x = 0.0f;
-    viewport.y = (float)ctx->extent.height;
+    viewport.y = 0.0f;
     viewport.width = (float)ctx->extent.width;
-    viewport.height = -(float)ctx->extent.height;
+    viewport.height = (float)ctx->extent.height;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     vkCmdSetViewport(frame.commandBuffer, 0, 1, &viewport);

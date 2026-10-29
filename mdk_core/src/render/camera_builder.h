@@ -3,12 +3,13 @@
 // ============================================================================
 // camera_builder.h — building the game's camera.
 //
-// THE MATRIX CONVENTION IS THE ENGINE'S, and it is the Direct3D one:
+// THE MATRIX CONVENTION IS THE ENGINE'S, and it is the C# ORACLE'S
+// (System.Numerics.Matrix4x4.CreateLookAt / CreatePerspectiveFieldOfView):
 //
 //   * ROW-MAJOR, with a ROW-VECTOR convention: the point is a row and the
 //     transform is `p_clip = p_world * M`.
-//   * LEFT-HANDED: the camera looks down +Z, and the depth runs 0 (near) to
-//     1 (far).
+//   * RIGHT-HANDED: the camera looks down -Z in view space, and the depth
+//     runs 0 (near) to 1 (far) with clip.w = -z_view.
 //
 // The 3DS's vertex shader is column-vector, and its depth range is [-1, 0],
 // so the 3DS backend TRANSPOSES and REMAPS. That is the backend's job

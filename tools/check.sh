@@ -4,12 +4,13 @@
 #   bash tools/check.sh          run the whole suite
 #   bash tools/check.sh --help   this header
 #
-# THE SIX GATES, IN ORDER. The order is the order the contract builds up in:
+# THE SEVEN GATES, IN ORDER. The order is the order the contract builds up in:
 # the language contract first (it decides what the code may say at all), then
 # the hot-path rules and the exemption grammar, then the two maths screens,
-# then the two parity gates. The suite FAILS ON THE FIRST FAILURE: a gate that
-# fails stops the run, because a suite that keeps going past a red gate trains
-# its reader to look at the last line instead of the first.
+# then the two parity gates, then the frame golden. The suite FAILS ON THE FIRST
+# FAILURE: a gate that fails stops the run, because a suite that keeps going
+# past a red gate trains its reader to look at the last line instead of the
+# first.
 #
 #   1. audit_c_with_classes.py  AGENTS.md 10 -- the language contract
 #   2. gates_vfp.py             R1-R11 + T1/T2, the exemption grammar, R10
@@ -17,12 +18,15 @@
 #   4. audit_r11_idiv.py        runtime integer division/modulo in hot loops
 #   5. gates_core_parity.py     the two targets must link the SAME game
 #   6. gates_smdh.py            the CIA's home-menu identity
+#   7. gates_frames.py          the pinned frame matches its recorded capture
 #
 # WHAT A "SKIP" IS. gates_smdh has nothing to read until a .cia has been
-# built, so it says SKIPPED and exits 0. A skip is recorded in the summary as
-# a skip -- never as a pass. The rest of the suite is a hard pass/fail: the
-# R11 audit is a SCREEN, not a proof, so a clean run means "nothing obvious",
-# never "nothing present".
+# built, so it says SKIPPED and exits 0. gates_frames has nothing to capture
+# until build-linux/mdk and the game data exist, and it needs
+# tests/frames/reference.sha256 before it has a reference at all. A skip is
+# recorded in the summary as a skip -- never as a pass. The rest of the suite is
+# a hard pass/fail: the R11 audit is a SCREEN, not a proof, so a clean run means
+# "nothing obvious", never "nothing present".
 #
 # ENVIRONMENT
 #   VFP_FROZEN_AT=""   put the corpus-age and pin-age clocks back (AGENTS.md 2).
@@ -144,6 +148,23 @@ if grep -q "VERDICT: SKIPPED" "$tmp/smdh.log"; then
     record SKIP "gates_smdh" "no built .cia to read"
 else
     record PASS "gates_smdh" "the built CIA agrees with the Makefile"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. the frame golden
+# ---------------------------------------------------------------------------
+gate "gates_frames (expect VERDICT: CONTRACT CLEAN, or SKIPPED before a frame exists)"
+$PY tools/runner/gates_frames.py > "$tmp/frames.log" 2>&1
+rc=$?
+grep -E "^(PASS|FAIL) |^note: |^VERDICT" "$tmp/frames.log" | sed 's/^note: /  note: /'
+if [ $rc -ne 0 ]; then
+    grep -E "^FAIL|note: |VERDICT" "$tmp/frames.log" | head -20 >&2
+    fail "gates_frames" "exit $rc"
+fi
+if grep -q "VERDICT: SKIPPED" "$tmp/frames.log"; then
+    record SKIP "gates_frames" "no manifest, no built Linux binary, or no game data"
+else
+    record PASS "gates_frames" "every pinned frame is deterministic and unchanged"
 fi
 
 printf '\n%s' "$SUMMARY"

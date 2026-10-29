@@ -3,9 +3,12 @@
 // One screen-filling triangle from gl_VertexIndex. Each vertex carries the
 // world direction its clip position looks along: the clip-to-direction matrix
 // (the camera's rotation and projection, inverted) turns a clip point into a
-// ray. The matrix is uploaded in the COLUMN-vector form the C# uses for the sky
-// (HLSL mul(clip_to_direction, v)), which is the transpose of the row-vector
-// matrices the mesh pipeline uses -- so here it is `M * v`, NOT `v * M`.
+// ray. The matrix is uploaded EXACTLY as the engine builds it (row-major,
+// row-vector), which is what the C# pushes; GLSL's column-major mat4 is then
+// that matrix transposed, and `M * v` is the row-vector product
+// clip * C2D -- the C#'s `mul(clip_to_direction, float4(clip, 1, 1, 1))`.
+// Do not pre-transpose it here as well: the two transposes do not cancel, they
+// point every ray at the wrong pixel.
 
 #version 450
 

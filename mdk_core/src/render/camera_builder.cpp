@@ -50,13 +50,23 @@ bool buildLookAtCamera(Camera* camera, const Vec3& eye, const Vec3& target, cons
     if (forward.x == 0.0f && forward.y == 0.0f && forward.z == 0.0f) {
         return false;
     }
-    // LEFT-HANDED: the right vector is cross(up, forward), not
-    // cross(forward, up). The other way round mirrors the picture.
-    Vec3 right = normalize(cross(up, forward));
+    // RIGHT-HANDED, exactly as the C# oracle's
+    // System.Numerics.Matrix4x4.CreateLookAt builds it:
+    //
+    //   zaxis = normalize(eye - target)   = -forward
+    //   xaxis = normalize(cross(up, zaxis))
+    //   yaxis = cross(zaxis, xaxis)
+    //
+    // The old left-handed build (right = cross(up, forward), forward as the
+    // third axis) put the camera 180 degrees round in yaw AND mirrored the
+    // world: the picture came out inside-out and the solid geometry's front
+    // faces were culled away. The oracle's convention is the reference.
+    const Vec3 zaxis{-forward.x, -forward.y, -forward.z};
+    Vec3 right = normalize(cross(up, zaxis));
     if (right.x == 0.0f && right.y == 0.0f && right.z == 0.0f) {
         return false;
     }
-    const Vec3 trueUp = cross(forward, right);
+    const Vec3 trueUp = cross(zaxis, right);
 
     // The view matrix, in the row-vector convention (p' = p * M): the
     // camera's axes are the COLUMNS of M -- x' = dot(right, p) needs
@@ -65,18 +75,18 @@ bool buildLookAtCamera(Camera* camera, const Vec3& eye, const Vec3& target, cons
     // System.Numerics.Matrix4x4.CreateLookAt produces, which is what the
     // C# oracle uses.
     float* view = camera->view;
-    view[0] = right.x;   view[1] = trueUp.x;  view[2] = forward.x;  view[3] = 0.0f;
-    view[4] = right.y;   view[5] = trueUp.y;  view[6] = forward.y;  view[7] = 0.0f;
-    view[8] = right.z;   view[9] = trueUp.z;  view[10] = forward.z; view[11] = 0.0f;
+    view[0] = right.x;   view[1] = trueUp.x;  view[2] = zaxis.x;  view[3] = 0.0f;
+    view[4] = right.y;   view[5] = trueUp.y;  view[6] = zaxis.y;  view[7] = 0.0f;
+    view[8] = right.z;   view[9] = trueUp.z;  view[10] = zaxis.z; view[11] = 0.0f;
     view[12] = -dot(right, eye);
     view[13] = -dot(trueUp, eye);
-    view[14] = -dot(forward, eye);
+    view[14] = -dot(zaxis, eye);
     view[15] = 1.0f;
 
-    // The projection: Direct3D's LEFT-HANDED perspective, with the depth in
-    // [0, 1], in the row-vector convention: z' = z*zScale + zOffset comes
-    // from column 2 (zScale at [2][2], zOffset at [3][2]), and w' = z from
-    // the 1 at [2][3].
+    // The projection: System.Numerics.Matrix4x4.CreatePerspectiveFieldOfView,
+    // the right-handed one that goes with the view above. Its depth is still
+    // [0, 1] (0 at the near plane, 1 at the far plane), but the clip's w is
+    // -z_view, so a point in front of the camera has w > 0.
     // R6: tan goes through the LUT's sin/cos (hardware vdiv, R7) rather than
     // libm tanf. The camera is rebuilt every frame, so this is a per-frame path.
     const float radians = fovDegrees * kPi / 180.0f;
@@ -87,7 +97,7 @@ bool buildLookAtCamera(Camera* camera, const Vec3& eye, const Vec3& target, cons
     if (range <= 0.0f) {
         return false;
     }
-    const float zScale = farPlane / range;
+    const float zScale = -farPlane / range;
     const float zOffset = -nearPlane * farPlane / range;
 
     float* projection = camera->projection;
@@ -95,7 +105,7 @@ bool buildLookAtCamera(Camera* camera, const Vec3& eye, const Vec3& target, cons
     projection[0] = xScale;
     projection[5] = yScale;
     projection[10] = zScale;
-    projection[11] = 1.0f;
+    projection[11] = -1.0f;
     projection[14] = zOffset;
 
     camera->position = eye;

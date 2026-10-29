@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "render/render.h"
@@ -174,6 +175,10 @@ struct RendererVk {
     // the whole frame at record time -- reusing one slot would make every
     // draw read the last quad's vertices.
     VkDeviceSize canvasOffset = 0;
+
+    // The frame-capture path requested for the frame now being drawn. The
+    // path is copied because MdkFrameParams owns only a borrowed C string.
+    std::string screenshotPath;
 };
 
 RendererVk* asVk(MdkRenderer r) {
@@ -417,6 +422,161 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
     return true;
 }
 
+// Write an uncompressed, top-down 32-bit BMP. The pixels are BGRA, the
+// same layout the C# oracle's Bmp.Write emits. Keeping the two files'
+// containers identical makes the frame comparator work on the pixels, not
+// on two subtly different image encoders.
+bool writeBmp(const char* path, uint32_t width, uint32_t height, const uint8_t* bgra) {
+    if (!path || !bgra || width == 0 || height == 0) {
+        return false;
+    }
+    const uint64_t pixelBytes = (uint64_t)width * (uint64_t)height * 4u;
+    const uint64_t fileBytes = 54u + pixelBytes;
+    if (fileBytes > UINT32_MAX) {
+        return false;
+    }
+
+    FILE* file = std::fopen(path, "wb");
+    if (!file) {
+        std::printf("[vk] screenshot: could not open %s\n", path);
+        return false;
+    }
+
+    uint8_t header[54] = {};
+    header[0] = 'B';
+    header[1] = 'M';
+    const uint32_t fileSize = (uint32_t)fileBytes;
+    header[2] = (uint8_t)(fileSize & 0xFFu);
+    header[3] = (uint8_t)((fileSize >> 8) & 0xFFu);
+    header[4] = (uint8_t)((fileSize >> 16) & 0xFFu);
+    header[5] = (uint8_t)((fileSize >> 24) & 0xFFu);
+    const uint32_t pixelOffset = 54u;
+    header[10] = (uint8_t)(pixelOffset & 0xFFu);
+    header[11] = (uint8_t)((pixelOffset >> 8) & 0xFFu);
+    header[14] = 40u;
+    header[18] = (uint8_t)(width & 0xFFu);
+    header[19] = (uint8_t)((width >> 8) & 0xFFu);
+    header[20] = (uint8_t)((width >> 16) & 0xFFu);
+    header[21] = (uint8_t)((width >> 24) & 0xFFu);
+    // A negative height stores the rows top-down.
+    const uint32_t signedHeight = (uint32_t)-(int32_t)height;
+    header[22] = (uint8_t)(signedHeight & 0xFFu);
+    header[23] = (uint8_t)((signedHeight >> 8) & 0xFFu);
+    header[24] = (uint8_t)((signedHeight >> 16) & 0xFFu);
+    header[25] = (uint8_t)((signedHeight >> 24) & 0xFFu);
+    header[26] = 1u;
+    header[28] = 32u;
+
+    bool ok = std::fwrite(header, 1, sizeof(header), file) == sizeof(header);
+    if (ok) {
+        ok = std::fwrite(bgra, 1, (size_t)pixelBytes, file) == (size_t)pixelBytes;
+    }
+    if (std::fclose(file) != 0) {
+        ok = false;
+    }
+    if (!ok) {
+        std::printf("[vk] screenshot: could not write %s\n", path);
+    }
+    return ok;
+}
+
+// Copy the swapchain image just presented into a host buffer and write it as
+// a BMP. The copy is queued after the frame's present, so it is ordered after
+// all of that frame's draws; its fence waits for the readback before the
+// pixels are inspected.
+bool captureSwapchain(RendererVk* r, const char* path) {
+    if (!r || !path || r->ctx.extent.width == 0 || r->ctx.extent.height == 0) {
+        return false;
+    }
+    const uint32_t width = r->ctx.extent.width;
+    const uint32_t height = r->ctx.extent.height;
+    const VkDeviceSize size = (VkDeviceSize)width * (VkDeviceSize)height * 4u;
+
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    void* mapped = nullptr;
+    if (!createHostBuffer(&r->ctx, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                          &buffer, &memory, &mapped)) {
+        std::printf("[vk] screenshot: host buffer failed\n");
+        return false;
+    }
+
+    const VkImage image = r->ctx.images[r->ctx.currentImage];
+    VkCommandBuffer cb = beginOneShotTracked(&r->ctx);
+    if (!cb) {
+        vkUnmapMemory(r->ctx.device, memory);
+        vkDestroyBuffer(r->ctx.device, buffer, nullptr);
+        vkFreeMemory(r->ctx.device, memory, nullptr);
+        std::printf("[vk] screenshot: command buffer failed\n");
+        return false;
+    }
+
+    VkImageMemoryBarrier toTransfer = {};
+    toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    toTransfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransfer.image = image;
+    toTransfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    toTransfer.subresourceRange.levelCount = 1;
+    toTransfer.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                         1, &toTransfer);
+
+    VkBufferImageCopy region = {};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {width, height, 1};
+    vkCmdCopyImageToBuffer(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           buffer, 1, &region);
+
+    VkImageMemoryBarrier toPresent = toTransfer;
+    toPresent.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    toPresent.dstAccessMask = 0;
+    toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr,
+                         1, &toPresent);
+    endOneShot(&r->ctx, cb);
+
+    const uint8_t* raw = static_cast<const uint8_t*>(mapped);
+    std::vector<uint8_t> bgra((size_t)size);
+    const bool rawIsBgra = r->ctx.swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM ||
+                           r->ctx.swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB;
+    for (size_t i = 0; i < (size_t)size; i += 4) {
+        if (rawIsBgra) {
+            bgra[i] = raw[i];
+            bgra[i + 1] = raw[i + 1];
+            bgra[i + 2] = raw[i + 2];
+        } else {
+            bgra[i] = raw[i + 2];
+            bgra[i + 1] = raw[i + 1];
+            bgra[i + 2] = raw[i];
+        }
+        bgra[i + 3] = raw[i + 3];
+    }
+
+    const bool ok = writeBmp(path, width, height, bgra.data());
+    vkUnmapMemory(r->ctx.device, memory);
+    vkDestroyBuffer(r->ctx.device, buffer, nullptr);
+    vkFreeMemory(r->ctx.device, memory, nullptr);
+    if (ok) {
+        std::printf("[vk] screenshot: wrote %s (%ux%u)\n", path, width, height);
+    }
+    return ok;
+}
+
 void destroyImage(mdk::vk::Context* ctx, VkImage* image, VkDeviceMemory* memory,
                   VkImageView* view, void** mapped) {
     if (*view) { vkDestroyImageView(ctx->device, *view, nullptr); *view = VK_NULL_HANDLE; }
@@ -438,6 +598,35 @@ void mulMatrix(const float a[16], const float b[16], float out[16]) {
             }
             out[row * 4 + col] = sum;
         }
+    }
+}
+
+// Flip clip.y, in the engine's row-major row-vector layout.
+//
+// The engine's projection is the C# oracle's, which is written for a clip
+// space whose y runs UP. Vulkan's framebuffer runs y DOWN, so the C# gets an
+// upright picture from SDL_GPU because SDL_GPU's Vulkan backend draws through a
+// NEGATIVE viewport height. This backend cannot copy that: a negative viewport
+// needs VK_EXT_negative_viewport_height, and the software driver this project
+// validates against (lavapipe) does not advertise it. The two are the same
+// framebuffer map, so the flip is folded into the matrix instead: right-multiply
+// the row-vector matrix by diag(1,-1,1,1), which negates its column 1.
+//
+// The same map reverses the triangle winding, which is why the solid pipeline
+// names CLOCKWISE as its front face (createPipeline).
+void flipClipY(float m[16]) {
+    for (int row = 0; row < 4; row++) {
+        m[row * 4 + 1] = -m[row * 4 + 1];
+    }
+}
+
+// The same flip applied from the LEFT (diag(1,-1,1,1) * m), which is what the
+// sky's clip-to-direction needs: it is the INVERSE of the projection the clip
+// points came from, so the flip that was on the right of the forward transform
+// lands on the left of the inverse. In the row-major layout that negates row 1.
+void flipClipYLeft(float m[16]) {
+    for (int col = 0; col < 4; col++) {
+        m[1 * 4 + col] = -m[1 * 4 + col];
     }
 }
 
@@ -491,10 +680,9 @@ VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive) {
     // The C#: cull BACK on Solid only; front faces wind clockwise ON SCREEN,
     // which in Vulkan's Y-up framebuffer is counter-clockwise.
     rs.cullMode = (pass == (int)mdk::Pass::Solid) ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
-    // CLOCKWISE, exactly as the C# oracle: the negative viewport height in
-    // vk_context::beginFrame restores the D3D framebuffer orientation, and
-    // with it the D3D winding. (With a POSITIVE viewport the winding would
-    // flip and CCW would be right -- the two must move together.)
+    // CLOCKWISE: the clip.y flip folded into the projection matrix (flipClipY)
+    // reverses the winding the same way a negative viewport height would, and
+    // the C# oracle's front faces wind clockwise on screen.
     rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo ms = {};
@@ -761,8 +949,9 @@ VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette
 
 // The sky: one screen-filling triangle, drawn first, before the level. The
 // clip-to-direction matrix is the inverse of (rotation * projection) in the
-// row-vector convention, transposed into the column-vector form the sky shader
-// multiplies on the left (the C# mul(clip_to_direction, v)).
+// row-vector convention, uploaded verbatim; the sky shader multiplies it on
+// the left of the clip point, which GLSL's column-major mat4 turns back into
+// the row-vector product (the C#'s mul(clip_to_direction, v)).
 void drawSky(RendererVk* r) {
     if (r->panorama.sky < 0 || r->panorama.palette < 0) {
         return;
@@ -784,13 +973,16 @@ void drawSky(RendererVk* r) {
     if (!invertMatrix4(rp, c2d)) {
         return;
     }
+    // The clip points this matrix turns into rays went through the flipped
+    // projection (flipClipY), so the inverse carries the flip on its other
+    // side.
+    flipClipYLeft(c2d);
 
     SkyPush sp = {};
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            sp.clip_to_direction[i * 4 + j] = c2d[j * 4 + i];  // transpose
-        }
-    }
+    // Uploaded verbatim, exactly as the C# pushes its clip_to_direction: the
+    // shader's column-major mat4 is this row-major matrix transposed, and the
+    // shader's `M * v` is the row-vector product the C#'s mul(M, v) computes.
+    memcpy(sp.clip_to_direction, c2d, sizeof(c2d));
     sp.wrap_width = r->panorama.wrap_width;
     sp.horizon_row = r->panorama.horizon_row;
     sp.offset = r->panorama.offset;
@@ -1089,6 +1281,7 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->inFrame = true;
     r->drawCalls = 0;
     r->triangles = 0;
+    r->screenshotPath = params && params->screenshot_path ? params->screenshot_path : "";
 
     // The viewport and scissor are dynamic state; set them once per frame so
     // every pipeline shares them.
@@ -1115,6 +1308,11 @@ void mdk_render_end_frame(MdkRenderer rr) {
     }
     mdk::vk::endFrame(&r->ctx);
     r->inFrame = false;
+    if (!r->screenshotPath.empty()) {
+        const std::string path = r->screenshotPath;
+        r->screenshotPath.clear();
+        captureSwapchain(r, path.c_str());
+    }
 }
 
 void mdk_render_present(MdkRenderer rr) {
@@ -1413,6 +1611,8 @@ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
 
     PushConstants pc;
     mulMatrix(wv, r->camera.projection, pc.mvp);
+    // Vulkan's framebuffer runs y down; see flipClipY.
+    flipClipY(pc.mvp);
     pc.colour[0] = draw->material.colour.r;
     pc.colour[1] = draw->material.colour.g;
     pc.colour[2] = draw->material.colour.b;
@@ -1472,19 +1672,21 @@ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
 namespace {
 
 // The orthographic matrix mapping canvas pixels (x right, y DOWN) to clip
-// space over the full viewport. The shader reads the uploaded floats as
-// column-major (the same convention the level's mulMatrix output relies on),
-// so the translation lives in the last ROW of the column-major layout: indices
-// 3, 7, 11.
+// space over the full viewport. The canvas is screen space, so it is written
+// straight for the framebuffer: canvas y 0 is the top row, which is clip y -1
+// with Vulkan's y-down framebuffer. That is the C#'s
+// CreateOrthographicOffCenter(..., CanvasHeight + margin, -margin, ...) with
+// its y arguments swapped, expressed in the engine's row-major row-vector
+// layout (the translation lives in row 3, indices 12..14).
 void canvasOrtho(float out[16]) {
     for (int i = 0; i < 16; i++) {
         out[i] = 0.0f;
     }
     out[0] = 2.0f / 640.0f;   // x -> [-1,1]
-    out[5] = 2.0f / 360.0f;   // y (down) -> upright, matches the level
+    out[5] = 2.0f / 360.0f;   // y (down) -> clip y down, the framebuffer's own sense
     out[10] = 1.0f;
-    out[3] = -1.0f;
-    out[7] = -1.0f;
+    out[12] = -1.0f;
+    out[13] = -1.0f;
     out[15] = 1.0f;
 }
 

@@ -18,6 +18,7 @@
 #include <climits>
 #include <memory>
 #include <random>
+#include <string>
 
 #include "audio/sound_bank.h"
 #include "formats/cmi.h"
@@ -61,9 +62,67 @@ int main(int argc, char** argv) {
     int maxFrames = -1;
     bool scriptSeedSet = false;
     int32_t scriptSeed = 0;
+    std::string capturePath;
+    int captureFrame = 0;
+    int hiddenWidth = 1280;
+    int hiddenHeight = 960;
+    int levelNumber = 3;
+    bool fixedStep = false;
+    bool hasStartOverride = false;
+    mdk::Vec3 startOverride{};
+    bool hasYawOverride = false;
+    float yawOverride = 0.0f;
+
+    auto optionValue = [](const char* arg, const char* name) -> const char* {
+        const size_t length = std::strlen(name);
+        if (std::strncmp(arg, name, length) != 0 || arg[length] != '=') {
+            return nullptr;
+        }
+        return arg + length + 1;
+    };
+
     for (int i = 1; i < argc; i++) {
+        const char* value = nullptr;
         if (std::strcmp(argv[i], "--headless") == 0) {
             headless = true;
+        } else if (std::strcmp(argv[i], "--fixed-step") == 0) {
+            fixedStep = true;
+        } else if ((value = optionValue(argv[i], "--capture")) != nullptr) {
+            capturePath = value;
+            if (captureFrame == 0) {
+                captureFrame = 1;
+            }
+        } else if ((value = optionValue(argv[i], "--capture-frame")) != nullptr) {
+            captureFrame = std::atoi(value);
+        } else if ((value = optionValue(argv[i], "--size")) != nullptr) {
+            int w = 0;
+            int h = 0;
+            if (std::sscanf(value, "%dx%d", &w, &h) != 2 || w <= 0 || h <= 0) {
+                std::fprintf(stderr, "[main] invalid --size: %s (want WxH)\n", value);
+                return 1;
+            }
+            hiddenWidth = w;
+            hiddenHeight = h;
+        } else if ((value = optionValue(argv[i], "--level")) != nullptr) {
+            levelNumber = std::atoi(value);
+            if (levelNumber < 3 || levelNumber > 8) {
+                std::fprintf(stderr, "[main] --level must be 3-8\n");
+                return 1;
+            }
+        } else if ((value = optionValue(argv[i], "--at")) != nullptr) {
+            float x = 0.0f;
+            float y = 0.0f;
+            float z = 0.0f;
+            float yaw = 0.0f;
+            const int fields = std::sscanf(value, "%f,%f,%f,%f", &x, &y, &z, &yaw);
+            if (fields < 3) {
+                std::fprintf(stderr, "[main] invalid --at: %s (want x,y,z[,yaw])\n", value);
+                return 1;
+            }
+            startOverride = mdk::Vec3{x, y, z};
+            hasStartOverride = true;
+            hasYawOverride = fields == 4;
+            yawOverride = yaw;
         } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             maxFrames = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--seed") == 0) {
@@ -116,8 +175,8 @@ int main(int argc, char** argv) {
     desc.vsync = true;
     desc.validation = true;
     desc.enhanced_look = true;      // the Linux build does the enhanced look
-    desc.hidden_width = 1280;
-    desc.hidden_height = 960;
+    desc.hidden_width = hiddenWidth;
+    desc.hidden_height = hiddenHeight;
 
     MdkRenderer renderer = mdk_render_create(&desc);
     if (!renderer) {
@@ -141,16 +200,19 @@ int main(int argc, char** argv) {
     const mdk::formats::Arena* arena = nullptr;
     if (data.found()) {
         std::printf("[main] data: %s\n", data.dir().c_str());
-        if (mdk::LevelData::load(&level, &data, 3)) {
+        if (mdk::LevelData::load(&level, &data, levelNumber)) {
             // The scripts and their sounds are level assets, just as in the
             // C# Viewer. They are kept alive for the runtime below.
+            char cmiPath[128];
+            std::snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI",
+                          levelNumber, levelNumber);
             std::vector<uint8_t> cmiBytes;
-            if (!data.read("TRAVERSE/LEVEL3/LEVEL3.CMI", &cmiBytes)) {
+            if (!data.read(cmiPath, &cmiBytes)) {
                 std::printf("[main] scripts: CMI did not read\n");
             } else if (!mdk::formats::Cmi::parse(&cmi, cmiBytes.data(),
                                                 static_cast<int32_t>(cmiBytes.size()))) {
                 std::printf("[main] scripts: CMI did not parse\n");
-            } else if (!mdk::audio::SoundBank::forLevel(&bank, data, 3)) {
+            } else if (!mdk::audio::SoundBank::forLevel(&bank, data, levelNumber)) {
                 std::printf("[main] scripts: sound bank did not load\n");
             } else {
                 bank.preload();
@@ -240,8 +302,13 @@ int main(int argc, char** argv) {
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
         player = mdk::Player();
-        player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
-        player.yaw = level.dti().startAngle();
+        if (hasStartOverride) {
+            player.feet = startOverride;
+            player.yaw = hasYawOverride ? yawOverride : level.dti().startAngle();
+        } else {
+            player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
+            player.yaw = level.dti().startAngle();
+        }
         player.setSpace(&space);
         follow = mdk::FollowCamera();
         // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
@@ -296,7 +363,11 @@ int main(int argc, char** argv) {
     }
     while (true) {
         const auto now = std::chrono::steady_clock::now();
-        const float elapsed = std::chrono::duration<float>(now - last).count();
+        // A golden capture MUST NOT depend on how long the host took between
+        // frames. --fixed-step advances exactly the C#'s 1/60-second test step
+        // every loop, so the same capture frame is the same simulation state.
+        const float elapsed = fixedStep ? kStep
+                                        : std::chrono::duration<float>(now - last).count();
         last = now;
 
         if (!headless && !mdk::windowPump(&window, &input)) {
@@ -308,7 +379,10 @@ int main(int argc, char** argv) {
         params.frame_index = frame;
         params.clear_colour = 0xFF0F1218u;
         params.present = true;
-        params.screenshot_path = nullptr;
+        const bool captureThisFrame = captureFrame > 0 && static_cast<int>(frame) + 1 == captureFrame;
+        params.screenshot_path = captureThisFrame && !capturePath.empty()
+                                     ? capturePath.c_str()
+                                     : nullptr;
 
         if (playerReady) {
             // The C# frame order (Viewer.Frame): the mouse look is per frame
@@ -403,6 +477,9 @@ int main(int argc, char** argv) {
         mdk_render_end_frame(renderer);
 
         frame++;
+        if (captureThisFrame) {
+            break;
+        }
         if (maxFrames > 0 && (int)frame >= maxFrames) {
             break;
         }

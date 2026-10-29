@@ -28,10 +28,17 @@
 // conflicting with citro3d's auto-transfer from C3D_FrameEnd.
 //
 // THE TWO D3D CONVERSIONS (../forsaken/3DS_PORT_NOTES.md, SPEC.md 7.2):
-//   (A) depth: D3D's [0,1] becomes PICA's [-1,0] with `row[2] -= row[3]`
-//       on the combined matrix. Once. Not twice.
-//   (B) culling: the PICA200 has NO CW-front mode. MDK's meshes are CW-front,
-//       so "cull the back faces" is C3D_CullFace(GPU_CULL_FRONT_CCW).
+//   (A) depth: the engine's projection puts NDC z in [0,1] (the C# oracle's
+//       System.Numerics perspective, right-handed); PICA's is [-1,0], and
+//       `row[2] -= row[3]` on the combined matrix converts one to the other.
+//       Once. Not twice.
+//   (B) culling: the PICA200 has NO CW-front mode. Through the oracle's
+//       right-handed camera the meshes wind CCW on screen, so "cull the back
+//       faces" is C3D_CullFace(GPU_CULL_BACK_CCW). (Under the older
+//       left-handed camera build the picture was mirrored and they wound CW,
+//       which is where the previous GPU_CULL_FRONT_CCW came from; the mirror
+//       and the cull enum move together, and getting one of them right on its
+//       own shows up as INVISIBLE GEOMETRY, not as a wrong picture.)
 // ============================================================================
 
 #include <3ds.h>
@@ -436,11 +443,12 @@ inline GpuVertex expand(const mdk::Vertex& v) {
 //   out INVERTED. The two are one transpose apart, and only one of them is
 //   right.)
 //
-// (A) THE DEPTH CONVERSION. The engine's projection is Direct3D's
-//     left-handed one, so NDC.z is in [0,1]. PICA200 wants [-1,0]. The
-//     conversion is `row[2] -= row[3]`, in element terms _33' = _33 - 1 and
-//     _43' = _43. _34 is LEFT ALONE: the D3D view matrix gives v.z > 0 for
-//     points in front, so clip.w = +v.z is correct.
+// (A) THE DEPTH CONVERSION. The engine's projection is the C# oracle's
+//     right-handed one, whose NDC z still runs [0,1] (0 at the near plane,
+//     1 at the far), with clip.w = -v.z so a point in front has w > 0. PICA200
+//     wants [-1,0]. The conversion is `row[2] -= row[3]`, in element terms
+//     _33' = _33 - 1 and _43' = _43. _34 is LEFT ALONE: dividing the converted
+//     z by the untouched w is exactly the -1 shift in NDC.
 //
 //     The conversion is applied ONCE, to the COMBINED matrix.
 //
@@ -622,10 +630,13 @@ void buildEyeMvp(const RendererC3D* r, float eyeOffset, float out[16]) {
         // The depth BUFFER is still cleared, to 0, because that is what the
         // devkitPro examples do and the hardware expects.
         C3D_DepthTest(false, GPU_ALWAYS, (GPU_WRITEMASK)0);
-        // (B) THE CULL ENUM. The game wants back-face culling of CW-front
-        // meshes, and the PICA200 has no CW-front mode, so "front" here means
-        // "the face the hardware thinks is front", which is CCW.
-        C3D_CullFace(GPU_CULL_FRONT_CCW);
+        // (B) THE CULL ENUM. The game wants back-face culling, and through the
+        // oracle's right-handed camera the meshes wind CCW on screen. The
+        // PICA200 has no CW-front mode, so "cull the back faces of CCW-front
+        // meshes" is GPU_CULL_BACK_CCW. See the file header: this moved with
+        // the camera's handedness, and it needs a hardware look (AGENTS.md P6)
+        // before it can be called verified.
+        C3D_CullFace(GPU_CULL_BACK_CCW);
         C3D_DepthMap(true, 1.0f, 1.0f);
 
         // The viewport is a HARDWARE CLIP RECTANGLE. A zero-area viewport

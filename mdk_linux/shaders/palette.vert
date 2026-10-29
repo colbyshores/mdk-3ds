@@ -1,11 +1,13 @@
 // palette.vert — the GLSL port of shaders/palette.hlsl's vs_main.
 //
 // The matrix convention is the ENGINE's: row-major, row-vector
-// (clip = p * M, camera_builder.h). GLSL reads the uploaded floats as
-// column-major, so `p * M` in GLSL is exactly the row-vector product --
-// the same result the C# gets from mul(view_projection, p) with HLSL's
-// column-major cbuffer default. Do not "simplify" this to M * p: that is
-// the transpose, and it mirrors the picture.
+// (clip = p * M, camera_builder.h). GLSL reads an uploaded mat4 as
+// COLUMN-major, so the matrix the shader holds is that matrix transposed,
+// and the column-vector product `M * p` IS the row-vector product p * M.
+// That is exactly what the C# gets from `mul(view_projection,
+// float4(position, 1.0))` with DXC's column-major matrix packing for
+// SPIR-V. Writing it the other way round (`p * M`) is the transpose: it
+// puts every point behind its own near plane and the level vanishes.
 
 #version 450
 
@@ -26,7 +28,7 @@ layout(location = 0) out vec2 uv;
 layout(location = 1) out vec4 colour;
 
 void main() {
-    gl_Position = vec4(in_position, 1.0) * pc.view_projection;
+    gl_Position = pc.view_projection * vec4(in_position, 1.0);
     uv = in_uv;
     colour = in_colour;
 }
