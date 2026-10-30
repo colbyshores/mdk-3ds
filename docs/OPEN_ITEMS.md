@@ -42,6 +42,30 @@ measured or cited reason, and the batch that closes one should delete its entry.
   `renderer_c3d.cpp` ignores the now-ported `depth_layer` (with no depth test the
   painter's order decides, exactly as in the original). The ARM11 cost of the depth
   layer computation is unmeasured.
+- Kurt's sprite is drawn at `Player::feet`, not at the C#'s `FrameBlend.Feet`.
+  With blending off — which is what a fixed-step capture and the tests are — the
+  two are the same pixel, and sub-step blending is not ported.
+- `KurtSprite` cannot reach the states another subsystem owns: the ride's pose
+  (`Kurt.Pose`, which loops past its last frame), the beta back-up (`K_BCKUP`) and
+  muzzle flash (`K_MUZZF`) are loaded but never selected, and `Kurt.Visible` and
+  sniper mode are absent so the C#'s early returns there are the false branch. The
+  knock-down, throw, slide, ledge and helmet states have no writer for the same
+  reason. Whoever ports each one sets `Player`'s state and the frame counts follow.
+- `KurtSprite` (like `HudView`) has no release path: `load()` re-creates its
+  palette, mesh and every frame texture. The Linux frontend loads one level per
+  process, so nothing leaks today; a level change needs `mdk_render_release`
+  around a mark, and the 3DS frontend has no Kurt binding at all yet.
+- Footsteps (`FOOT1`-`FOOT4` on the run frames) and the `LAND` sound are not
+  ported: `Player::animate` advances the frame but plays nothing, and
+  `UpdateSpecial`/`UpdateDeath` skip `UpdateTouched` because there are no touch
+  volumes yet.
+- **The 3DS sampler fix stays deferred with cause.** `renderer_c3d.cpp` never calls
+  `C3D_TexSetWrap`, so its wrap field is 0 — not `GPU_REPEAT` (`enums.h:39`) — and it
+  clamps like Vulkan used to. It cannot take the same one-liner: the 3DS pads index
+  textures to POT with TRANSPARENT padding and rescales UVs by real/padded
+  (`renderer_c3d.cpp:1133-1147`), so a plain REPEAT tiles at the PADDED period and
+  samples index-0 padding, which discards — holes, not tiling. Needs the padding
+  filled with the tile pattern; unverifiable without hardware.
 - Old 3DS hardware timing is UNMEASURED. Emulator GUI runs must explicitly use
   `DISPLAY=:99`; `tests/frames/capture_cpp.sh` now sets it unconditionally rather
   than inheriting the session's, which is the operator's `:1`.
@@ -56,6 +80,14 @@ measured or cited reason, and the batch that closes one should delete its entry.
   leaves a cached set naming a destroyed `VkImageView`. Neither has a caller
   outside `renderer_vk.cpp` today — whoever wires animated textures must erase the
   affected entries (or stamp a generation counter) first.
+- Review-29's MINOR, still open: `tools/publish_frame.sh` reads the gap from
+  `compare_frames.py --measure` without checking its exit status, so a corrupt or
+  unreadable oracle writes `bad_percent= max_delta= mean_delta=` into the committed
+  frame manifest. The `[ -s ]` guard covers a missing file, not an unreadable one.
+- Review-29's MINOR, still open: `publish_frame.sh` defaults `VK_ICD_FILENAMES` to
+  lavapipe while `tools/check.sh`'s frame gate does not, so on a GPU host the
+  published picture and the gated picture could be rasterized by different drivers.
+  Both land on lavapipe here, so there is no symptom on this machine.
 - Review-28's latent Overlay trap: the C#'s `Renderer.DrawOne` uses
   `command.World` unchanged for `Pass.Overlay` — no depth pull and no
   view/projection. Linux's `mdk_render_draw_mesh` currently applies the pull to

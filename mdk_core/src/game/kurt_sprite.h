@@ -14,9 +14,13 @@
 // rewrites twelve vertices and draws the selected frame.
 //
 // The ride pose, the beta-only roll/helmet frames and the muzzle flash belong
-// to subsystems that are not ported yet. The ordinary movement, jump, fall,
-// chute, landing and death states ARE implemented here; see Player's state
-// machine. The missing consumers are recorded in docs/OPEN_ITEMS.md.
+// to subsystems that are not ported yet, and neither are Kurt.Visible nor his
+// sniper mode, so the C#'s branches on all of them are taken the way they are
+// false. The ordinary movement, jump, fall, chute, landing and death states ARE
+// implemented here; see Player's state machine. The missing consumers are
+// recorded in docs/OPEN_ITEMS.md. The frontend draws him at Kurt's own feet:
+// the C# draws at FrameBlend.Feet, which is Kurt's feet exactly when blending
+// is off (a step is drawn as it is), and sub-step blending is not ported.
 // ============================================================================
 
 #include <stdint.h>
@@ -88,7 +92,9 @@ public:
     Player::FrameCounts frameCounts() const;
 
     // The frame the player's state selects, or false when that animation is
-    // not present.
+    // not present. The animation points into the loaded set: it is valid until
+    // the next add(), which may grow that set, so draw with it before loading
+    // another animation.
     bool pick(const Player& player, Pick* out) const;
 
     // Draws Kurt at `feet` for a camera at `eye`. `forward`, `up` and the

@@ -74,8 +74,21 @@ float clampf(float value, float low, float high) {
     return value < low ? low : (value > high ? high : value);
 }
 
+// The C#'s Wrap: ((frame % count) + count) % count. For a positive count the
+// first remainder is already in (-count, count), so adding the count once when
+// it is negative is the same value with ONE remainder instead of two -- the
+// reduction AGENTS.md R11 asks for on this shape, since this ARM11 has no
+// integer divide and a runtime divisor lowers to __aeabi_idivmod.
 int32_t wrap(int32_t frame, int32_t count) {
-    return count > 0 ? ((frame % count) + count) % count : 0;
+    if (count <= 0) {
+        return 0;
+    }
+    /* @vfp-exempt R11 — the sprite frame wrap's modulo by the animation's frame
+     * count (the C#'s Wrap), a small positive per-animation constant; the
+     * oracle's two remainders are reduced to this one. measured n/a (corpus
+     * empty). Verified 2026-10-30. */
+    const int32_t remainder = frame % count;
+    return remainder < 0 ? remainder + count : remainder;
 }
 
 // The seam between the renderer's Vec3 and the collision's formats::Vec3f.

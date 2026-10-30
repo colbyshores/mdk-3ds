@@ -2,5 +2,5 @@
 # DO NOT EDIT BY HAND to make a gate pass. See that script for what each field is.
 # oracle= is the C# reference; cpp= is a regression baseline, not a fidelity reference.
 # bad_percent/max_delta/mean_delta are the measured C++-to-oracle gap at tolerance 0 and
-# are a ceiling that may only shrink. Generated: 2026-10-29T21:00:41Z
-name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 oracle=b60e72552c409e909316dd28b38180ead856b12b2e788026127b8a68c54395a0 cpp=3d67efbeab85c8a420608ea05027ab1d199590b4a741555d3f6bb63d2cdffd2a bad_percent=3.323 max_delta=255 mean_delta=1.3783
+# are a ceiling that may only shrink. Generated: 2026-10-30T05:02:17Z
+name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 oracle=b60e72552c409e909316dd28b38180ead856b12b2e788026127b8a68c54395a0 cpp=58615fc85d02e009c10f315478aa8d2b5b3eccb3a3945517dca9587c04397368 bad_percent=1.240 max_delta=247 mean_delta=0.1819
