@@ -61,14 +61,24 @@ measured or cited reason, and the batch that closes one should delete its entry.
 
 ## Foreign tree artifacts
 
-- **`tools/publish_frame.sh` is untracked and was not written by this loop.** It
-  appeared on 2026-10-29 16:46, owned by `museagent` (the Muse ralph loop sharing
-  this checkout), citing "owner directive 2026-10-29: the commit history is a
-  VISUAL record of progress" and writing `docs/frames/<date>-<label>.png`. That
-  contradicts `tests/frames/regenerate_reference.sh`, which records that pixel
-  bytes are never committed because they are ROM-derived art. Neither committed
-  nor deleted here: it is unverified work from another actor and the reconciliation
-  is the owner's call.
+Two files appeared on 2026-10-29 between 16:46 and 17:18, written by the other
+loop sharing this checkout (owners `museagent`/`coleshores`), and neither is this
+loop's work:
+
+- `tools/publish_frame.sh` — captures the pinned frame and publishes it under
+  `docs/frames/` with the measured gap beside it.
+- `docs/frames/README.md` — the owner directive they implement: every batch that
+  MOVES THE PICTURE leaves a picture in the commit history. It is explicit that
+  the oracle's frame is never committed (ROM-derived pixels, scratch directory
+  only) and that only the C++ port's own derived 320x240 frames are tracked, so
+  it does not contradict `regenerate_reference.sh`; the earlier reading that they
+  conflicted was wrong. The README also says `ralph-pi.sh` publishes a frame
+  itself when a committing batch touched render-relevant paths and left none.
+
+Both are still UNTRACKED as this is written. Whoever commits them should do it
+deliberately, and a batch that moves the picture should publish its frame once
+they are in the tree. Iteration 28 published nothing: its frame is byte-identical
+to the baseline, so there is no picture movement to record.
 
 ## Documentation drift
 
