@@ -140,13 +140,12 @@ filled with the tile pattern; unverifiable without hardware.
 
 The full list with its evidence is `docs/OPEN_ITEMS.md`. The ones that bite:
 
-- **An owner directive landed mid-batch, still untracked**: `tools/publish_frame.sh`
-  and `docs/frames/README.md` (written 2026-10-29 by the other loop sharing this
-  checkout) say every batch that MOVES THE PICTURE leaves a PNG of the pinned
-  frame in `docs/frames/` beside its measured gap; the oracle's pixels stay out.
-  Neither file is committed yet, so nothing was published here — and iteration 28
-  moved no pixels anyway (its frame is byte-identical to the baseline). See
-  `docs/OPEN_ITEMS.md`.
+- **Frame record (owner directive 2026-10-29, now in the tree)**: a batch that
+  changes what the renderer draws MUST run `tools/publish_frame.sh <label>` after
+  the gates and commit `docs/frames/<date>-<label>.png` + `.txt` WITH the batch
+  (`ralph/builder.md`, `docs/frames/README.md`). The oracle's pixels stay out.
+  Iteration 28 published `2026-10-30-depth-pull` and its frame is byte-identical
+  to the baseline, so the gap beside it is unchanged at 3.323%.
 - **C3D depth state still differs from the C#** (test disabled vs LESS_OR_EQUAL
   test/write), which is also why `renderer_c3d.cpp` ignores `depth_layer`.
 - **The oracle capture environment is not simplifiable**: glslang needs `-D` and

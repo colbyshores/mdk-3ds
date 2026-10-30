@@ -59,26 +59,23 @@ measured or cited reason, and the batch that closes one should delete its entry.
 - Review-27's MINOR is scheduled as the next increment in `CONTINUATION.md`
   (pairwise `dot()` in `system_numerics_inverse.cpp`).
 
-## Foreign tree artifacts
+## The frame-record directive (closed as an open item, kept as a rule)
 
-Two files appeared on 2026-10-29 between 16:46 and 17:18, written by the other
-loop sharing this checkout (owners `museagent`/`coleshores`), and neither is this
-loop's work:
+Owner directive 2026-10-29 landed mid-iteration 28, written by the other loop
+sharing this checkout (`ralph/builder.md`'s new section, `docs/frames/README.md`,
+`tools/publish_frame.sh`, all committed in ab97297 so the next iteration does not
+inherit a dirty tree):
 
-- `tools/publish_frame.sh` — captures the pinned frame and publishes it under
-  `docs/frames/` with the measured gap beside it.
-- `docs/frames/README.md` — the owner directive they implement: every batch that
-  MOVES THE PICTURE leaves a picture in the commit history. It is explicit that
-  the oracle's frame is never committed (ROM-derived pixels, scratch directory
-  only) and that only the C++ port's own derived 320x240 frames are tracked, so
-  it does not contradict `regenerate_reference.sh`; the earlier reading that they
-  conflicted was wrong. The README also says `ralph-pi.sh` publishes a frame
-  itself when a committing batch touched render-relevant paths and left none.
-
-Both are still UNTRACKED as this is written. Whoever commits them should do it
-deliberately, and a batch that moves the picture should publish its frame once
-they are in the tree. Iteration 28 published nothing: its frame is byte-identical
-to the baseline, so there is no picture movement to record.
+- A batch that changes what the renderer draws publishes the pinned frame with
+  `tools/publish_frame.sh <label>` AFTER the gates and commits
+  `docs/frames/<date>-<label>.png` and its `.txt` beside it, with the measured gap
+  movement in the commit message.
+- Only the C++ port's own derived 320x240 frames are tracked. The oracle's frame
+  is never committed — it is ROM-derived pixel data and lives in the scratch
+  directory. That is consistent with `regenerate_reference.sh`; the first reading
+  here, that the directive contradicted it, was wrong.
+- Never hand-edit a published frame. `tools/runner/gates_frames.py` decides
+  whether a frame is acceptable; the record only says what the build produced.
 
 ## Documentation drift
 
