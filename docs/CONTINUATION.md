@@ -1,6 +1,6 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-30 (review-30's Citro3D pass-culling MAJOR is closed).
+Last updated: 2026-10-30 (the newest external review's two MINORs are closed).
 The pinned frame is unchanged. Opcode coverage is unchanged: 211 true C++
 dispatches / 238, 27 deferred.
 
@@ -40,9 +40,11 @@ Kurt's muzzle flash, ride pose and footsteps. Old-3DS timing remains UNMEASURED.
 **Camera and renderer.** `buildLookAtCamera` uses the C#'s RIGHT-HANDED
 `CreateLookAt` basis and perspective projection. Vulkan folds clip.y into the
 combined matrix; the sky inverse carries the flip on its LEFT side; shaders use
-`M * v`. Citro3D uses `GPU_CULL_BACK_CCW` with the mirror removed, and now sets
-culling explicitly per draw: Solid culls back faces; DoubleSided and the other
-non-solid passes do not. **The 3DS result remains UNVERIFIED on hardware** (P6).
+`M * v`. Citro3D uses `GPU_CULL_BACK_CCW` with the mirror removed, and selects
+culling per draw: Solid culls back faces; DoubleSided and the other non-solid
+passes do not. The installed mode is cached and reset per eye, so repeated
+Solid draws no longer dirty and reflash the effect block on every mesh.
+**The 3DS result remains UNVERIFIED on hardware** (P6).
 
 **Sky and depth.** The sky inverse uses the follow camera's own axes and .NET's
 exact matrix-inverse reduction, pinned by `PASS SystemNumericsMatrixInverse`.
@@ -67,9 +69,9 @@ another subsystem owns have no writer and their oracle branches are taken as fal
 first, then the 50-unit fall-out test; `UpdateVertical`, `UpdateSpecial` and
 `UpdateDeath` all call it. Below the arena the C#'s **post-move** fall-out
 assignment sets `OnFloor` true again in the same step, so the corpse stays at the
-death point. The old build already held the same position; the real divergence
-was `OnFloor` parity. Review-30's mid-air-hang MAJOR was therefore void, not
-fixed. The complete operation and its parity are pinned by
+death point. The old build already held the same position; the real divergences
+were `OnFloor` **and** `VerticalSpeed` parity. Review-30's mid-air-hang MAJOR
+was therefore void, not fixed. The complete operation and its parity are pinned by
 `DeathUsesTheOraclesCompleteFallOperation`.
 
 **Animation wrap.** `Player::wrapAnimationFrame` is the exact C# reduction of
@@ -96,7 +98,7 @@ unique / 211 true dispatches, 27 remaining; 16 partial, 195 complete.
   CIA; `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009`).
 - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j4`
   exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
-- `tools/publish_frame.sh c3d-pass-culling` wrote the new frame pair with
+- `tools/publish_frame.sh c3d-cull-cache` wrote the new frame pair with
   `bad_percent=1.240 max_delta=247 mean_delta=0.1819` — byte-identical to the
   previous C++ frame, as expected because the change is 3DS-only.
 - No emulator or Old-3DS hardware run was performed. The 3DS frontend binding,
@@ -122,8 +124,10 @@ Full list with evidence in `docs/OPEN_ITEMS.md`. The ones that bite:
 - **Frame record:** every batch publishes `tools/publish_frame.sh <label>` after
   the gates and commits `docs/frames/<date>-<label>.png` + `.txt` WITH the batch.
   The oracle's pixels stay out.
-- **C3D depth state still differs from the C#** (test disabled vs LESS_OR_EQUAL
-  test/write), which is also why `renderer_c3d.cpp` ignores `depth_layer`.
+- **C3D depth and blend state still differ from the C#** (test disabled vs
+  LESS_OR_EQUAL test/write, and `Pass::Blended` glass is opaque), which is also
+  why `renderer_c3d.cpp` ignores `depth_layer`; `OnTop`/`Overlay` depth
+  exemptions are not modelled.
 - Review-30's texture-residency MAJOR and the narrower `KurtSprite`
   replacement/failure texture leaks remain recorded with measurements.
 - The oracle capture environment is not simplifiable (glslang flags,

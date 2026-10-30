@@ -210,6 +210,12 @@ struct RendererC3D {
     // no palette texture, so the palette's only job is the expansion.
     std::vector<std::vector<uint8_t>> palettes;
 
+    // The cull mode last written to the active render target. C3D_CullFace
+    // always marks the effect block dirty, even when the value is unchanged;
+    // without this cache every mesh draw would flush an effect-block rebind
+    // at the next draw. begin_frame resets it for each eye.
+    GPU_CULLMODE cullMode = GPU_CULL_NONE;
+
     int frame = 0;
     int32_t drawCount = 0;
     int32_t triangleCount = 0;
@@ -637,6 +643,9 @@ void buildEyeMvp(const RendererC3D* r, float eyeOffset, float out[16]) {
         // the camera's handedness, and it needs a hardware look (AGENTS.md P6)
         // before it can be called verified.
         C3D_CullFace(GPU_CULL_BACK_CCW);
+        // The cache describes the state actually installed above. It is reset
+        // for each eye because each eye selects a different render target.
+        r->cullMode = GPU_CULL_BACK_CCW;
         C3D_DepthMap(true, 1.0f, 1.0f);
 
         // The viewport is a HARDWARE CLIP RECTANGLE. A zero-area viewport
@@ -1214,21 +1223,37 @@ void mdk_render_release(MdkRenderer r, MdkScope s) { (void)r; (void)s; }
     //
     // The Vulkan backend culls only Pass::Solid (renderer_vk.cpp's pipeline
     // builder) and leaves every other pass -- DoubleSided, Mirror, Blended,
-    // OnTop -- uncullable. This backend has one pipeline, so the state is
-    // set here, explicitly, for the draw that asks for it.
+    // OnTop and Overlay -- uncullable. The oracle additionally requires a
+    // mesh and a non-shadow output for back-face culling; this seam only
+    // receives mesh surfaces, so those conjuncts cannot select another path
+    // here. This backend has one pipeline, so the state is selected for the
+    // draw that asks for it.
     //
     // Pass::DoubleSided is LOAD-BEARING for Kurt's sprite: the quad mirrors
     // `at.right` for a left-facing view, and that mirror reverses the
-    // winding. With the frame's BACK_CCW default the mirrored sprite is a
-    // back face and vanishes. The oracle's material says DoubleSided for
+    // winding. With the frame's BACK_CCW default the mirrored sprite would
+    // be a back face and vanish. The oracle's material says DoubleSided for
     // exactly this reason; do not "fix" it by emitting both windings, which
     // would double the sprite's vertex count.
+    //
+    // C3D_CullFace does not compare the requested mode with the current one:
+    // it always dirties the effect block, which is flushed at the next draw.
+    // Cache the installed mode and change it only on a pass transition. An
+    // all-Solid frame then performs no per-draw cull calls at all.
     const bool solid = draw->material.pass == mdk::Pass::Solid;
-    C3D_CullFace(solid ? GPU_CULL_BACK_CCW : GPU_CULL_NONE);
+    const GPU_CULLMODE wantedCull = solid ? GPU_CULL_BACK_CCW : GPU_CULL_NONE;
+    if (r->cullMode != wantedCull) {
+        C3D_CullFace(wantedCull);
+        r->cullMode = wantedCull;
+    }
     C3D_DrawArrays(GPU_TRIANGLES, first, count);
     // Restore the frame's default for the next draw, so every draw starts
-    // from the state begin_frame installed.
-    C3D_CullFace(GPU_CULL_BACK_CCW);
+    // from the state begin_frame installed. The transition back is cached in
+    // the same way; repeated Solid draws do not dirty the effect block.
+    if (r->cullMode != GPU_CULL_BACK_CCW) {
+        C3D_CullFace(GPU_CULL_BACK_CCW);
+        r->cullMode = GPU_CULL_BACK_CCW;
+    }
 }
 
 // ---------------------------------------------------------------------------

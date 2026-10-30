@@ -42,6 +42,15 @@ measured or cited reason, and the batch that closes one should delete its entry.
   `renderer_c3d.cpp` ignores the now-ported `depth_layer` (with no depth test the
   painter's order decides, exactly as in the original). The ARM11 cost of the depth
   layer computation is unmeasured.
+- The newest external review's MINOR: the 3DS `Pass` implementation covers culling
+  only. The C# derives cull, blend and depth-test/write from `Pass`
+  (`Renderer.cs:567,596,607-609`), but `renderer_c3d.cpp` never calls
+  `C3D_AlphaBlend`, so `Pass::Blended` glass draws opaque, and the
+  `OnTop`/`Overlay` depth exemptions are not modelled. The review measured
+  non-`Solid` batches in 12 of level 3's 17
+  arenas (`HMO_3`: 75 Blended; `HMO_9`: 25 Mirror + 49 Blended; `HMO_2`: 4
+  Blended). They are unreachable today only because the 3DS frontend draws the
+  start arena, whose 154 batches are all `Solid`.
 - Kurt's sprite is drawn at `Player::feet`, not at the C#'s `FrameBlend.Feet`.
   With blending off — which is what a fixed-step capture and the tests are — the
   two are the same pixel, and sub-step blending is not ported.

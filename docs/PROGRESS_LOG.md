@@ -2689,3 +2689,54 @@ Verification on this tree:
 - No emulator run and no Original 3DS hardware run was performed; Old-3DS timing
   remains unmeasured, and the new culling state is compile-verified but not
   hardware-verified.
+
+## What this batch did (iteration 33 — Citro3D cull-state caching and the `Pass` gap)
+
+The newest external review found no BLOCKER or MAJOR in the previous Citro3D
+pass-culling batch, but its two MINORs were actionable. The first was a real
+per-draw cost introduced by the fix; the second was an incomplete coverage claim.
+
+**Culling now changes only on a pass transition.** `C3D_CullFace` stores the mode
+and unconditionally marks the effect block dirty; Citro3D flushes that dirty bit
+at the next draw, and the flush rebinds the whole effect block rather than one
+register. The previous code called it before and after every mesh, so an
+all-Solid frame dirtied and flushed the block once per draw. `RendererC3D` now
+caches the mode installed for the active render target. `begin_frame` installs
+`GPU_CULL_BACK_CCW` for each eye and resets the cache; `mdk_render_draw_mesh`
+calls `C3D_CullFace` only when the requested pass differs from the installed
+mode and restores the frame default only on the transition back. An all-Solid
+frame now makes no per-draw cull call. The behavior is unchanged; the cost is
+what changed. The reviewer's cycle estimate remains an estimate — no Old-3DS
+timing was measured.
+
+**The `Pass` coverage claim is narrowed where it was incomplete.** The previous
+batch closed the culling half of the oracle's `Pass` behavior, but the C# also
+derives blend and depth-test/write from it. `renderer_c3d.cpp` still never calls
+`C3D_AlphaBlend`, so `Pass::Blended` glass would draw opaque, and the
+`OnTop`/`Overlay` depth exemptions are not modelled. `docs/OPEN_ITEMS.md` now
+records that gap with the reviewer's arena measurements: level 3 has non-Solid
+batches in 12 of 17 arenas, while the currently drawn start arena has 154 Solid
+batches and no non-Solid batch. The deleted culling entry is not allowed to be
+read as full `Pass` support.
+
+Two narrative corrections from the same review are applied: the Citro3D comment
+lists `Overlay` and notes the oracle's mesh/non-shadow conjuncts, and the
+fall-out death record now says both `OnFloor` **and** `VerticalSpeed` parity
+differed, not `OnFloor` alone. The mirrored-sprite sentence is phrased as the
+static inference it is, because no 3DS or emulator run was made.
+
+Verification on this tree:
+
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j4`
+  exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
+- `make -C tests/scripts clean && make -C tests/scripts -j4` exited 0 and ended
+  `All cases match the oracle.` No golden moved.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no
+  built CIA, and `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009`.
+- `cmake --build build-linux --target mdk -j16` exited 0.
+- `DISPLAY=:99 tools/publish_frame.sh c3d-cull-cache` published
+  `docs/frames/2026-10-30-c3d-cull-cache.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`. The PNG is byte-identical
+  to the previous C++ frame because the changed backend is 3DS-only.
+- No emulator or Original 3DS hardware run was performed. The cull-state change
+  is compile-verified only, and Old-3DS timing remains unmeasured.
