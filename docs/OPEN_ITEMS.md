@@ -1,0 +1,76 @@
+# Standing open items and traps
+
+Extracted from `docs/CONTINUATION.md` on 2026-10-29 so that file stays at
+"current state + priority order". Nothing here is new policy; each item records a
+measured or cited reason, and the batch that closes one should delete its entry.
+
+## Testability and the oracle harness
+
+- Oracle/goldens compare fixed table + script fields, not velocity, `alarm_ticks`,
+  `Items.Bomb`/`Decoy`, or all combat/effect state. Use `vm_tests` for otherwise
+  unreachable opcode behavior. Tick corpus matches through t30000 on levels 3-8.
+- Oracle driver: `/tmp/kilo/oracle/Driver/Program.cs`, args `L T 1 script`, with
+  `DOTNET_ROOT=/tmp/kilo/dotnet10` and `MDK_DATA_DIR=<repo>/MDK`. The source oracle
+  `src/Mdk.Game/**` is read-only; `tests/frames/capture_oracle.sh` builds the
+  scratch tree.
+- `/tmp/kilo` is readable but NOT writable by the Pi harness (it belongs to the
+  other loop's user); captures go under `/tmp/mdk-frame-reference` or
+  `/tmp/mdk-pi`, with the display recorded.
+- Oracle capture environment, all three learned the hard way: glslangValidator
+  needs `-D` and an ATTACHED `-I<dir>`; `NUGET_PACKAGES` must reach `ppy.SDL3-CS`
+  (there is no network); the host `/tmp/.X11-unix`/`:99` lock is unusable, so the
+  oracle runs `Xvfb :99` inside `unshare --user --map-root-user -m` with a private
+  `/tmp/.X11-unix`. Do not simplify any of them.
+- `--level=N` (3-8) selects the level in `LevelData::load`, `LEVEL%d.CMI` and
+  `SoundBank::forLevel`; the default remains 3. No `GameEngine` exists to wire
+  opcode 140 — do not fake call-site wiring.
+
+## Known divergences from the C#
+
+- Incomplete decoy/`AlienTarget` selection.
+- Opcode 207's `MathF.Sign(NaN)` exception is accepted because C++ exceptions are
+  banned; degenerate-path guards return 0 instead (this now also covers
+  `Vector3.Normalize` of a zero vector and `MathF.Sign(NaN)` in
+  `render/arena_scene.cpp`, neither reachable from a real arena).
+- Linux runtime combat/inventory is not yet the live `Player`; the 3DS frontend has
+  no runtime binding.
+- Review-21 caveat: the post-camera solid refresh pins only the current arena, not
+  the C#'s `SolidArenas`.
+- C3D depth state differs from the C#: depth test disabled versus the C#'s
+  LESS_OR_EQUAL test/write. Fixing it needs a projection remap, `C3D_DepthMap`, the
+  test function, the clear value and a capture — and it is also why
+  `renderer_c3d.cpp` ignores the now-ported `depth_layer` (with no depth test the
+  painter's order decides, exactly as in the original). The ARM11 cost of the depth
+  layer computation is unmeasured.
+- Old 3DS hardware timing is UNMEASURED. Emulator GUI runs must explicitly use
+  `DISPLAY=:99`; `tests/frames/capture_cpp.sh` now sets it unconditionally rather
+  than inheriting the session's, which is the operator's `:1`.
+
+## Review findings still open
+
+- Review-24's open question: VK `canvasWidth` reads the swapchain extent while the
+  C# reads the render target — indistinguishable while both are 4:3.
+- Review-25's MINOR, a latent trap: `getDescriptorSet` caches sets by
+  `(texture, palette, repeat)` and neither `mdk_render_update_texture` nor
+  `mdk_render_release_texture` invalidates `r->descs`, so a recreated texture id
+  leaves a cached set naming a destroyed `VkImageView`. Neither has a caller
+  outside `renderer_vk.cpp` today — whoever wires animated textures must erase the
+  affected entries (or stamp a generation counter) first.
+- Review-27's MINOR is scheduled as the next increment in `CONTINUATION.md`
+  (pairwise `dot()` in `system_numerics_inverse.cpp`).
+
+## Foreign tree artifacts
+
+- **`tools/publish_frame.sh` is untracked and was not written by this loop.** It
+  appeared on 2026-10-29 16:46, owned by `museagent` (the Muse ralph loop sharing
+  this checkout), citing "owner directive 2026-10-29: the commit history is a
+  VISUAL record of progress" and writing `docs/frames/<date>-<label>.png`. That
+  contradicts `tests/frames/regenerate_reference.sh`, which records that pixel
+  bytes are never committed because they are ROM-derived art. Neither committed
+  nor deleted here: it is unverified work from another actor and the reconciliation
+  is the owner's call.
+
+## Documentation drift
+
+- `AGENTS.md`/`SPEC.md` cite an absent `docs/DOCTRINE.md`; SPEC §9.4 names an
+  unwritten `gates_romfs`. Flagged to the owner; do not invent the policy.

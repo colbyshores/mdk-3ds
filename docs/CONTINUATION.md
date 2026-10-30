@@ -1,8 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-29 (P5 sky axes and inverse). Opcode coverage is
-unchanged: 211 true C++ dispatches / 238, 27 deferred. The frame gap fell from
-4.398% to **3.323%**; P5 continues one renderer slice at a time.
+Last updated: 2026-10-29 (arena depth layers + depth pull). Opcode coverage is
+unchanged: 211 true C++ dispatches / 238, 27 deferred. The frame gap is unchanged
+at **3.323%** — the depth pull moves no pixel in the pinned frame (proved below).
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 `docs/PROGRESS_LOG.md`.
@@ -19,18 +19,16 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    a deferred subsystem. Do not blind-port them or reverse-engineer them from
    `MDKD3D.EXE` (owner directive 2026-10-28).
 4. **DONE — P5.0 frame-golden harness.** Oracle capture runs on `:99` in a private
-   namespace; C++ capture is fixed-step; `gates_frames.py` is gate 7. Proven to
-   fail on a seeded regression.
-5. **P5 — close the measured 3.323% frame gap**, one renderer slice at a time.
-   The largest remaining band is now the **ground and HUD** (bottom third: 3.754%
-   of its pixels differ, mean 3.5272, max 255 — the largest mean delta in the
-   frame). The sky fell from 5.625% to 3.023% this batch and its residual is
-   sparse scattered pixels, not structure. The 3DS's half of the sampler fix is
-   deferred with cause below.
+   namespace; C++ capture is fixed-step; `gates_frames.py` is gate 7. Proven to fail
+   on a seeded regression.
+5. **P5 — close the measured 3.323% frame gap**, one renderer slice at a time. The
+   largest remaining band is the **ground and HUD** (bottom third: 3.754% of its
+   pixels differ, mean 3.5272, max 255 — the largest mean delta in the frame). The
+   sky band is 3.023% and its residual is sparse scattered pixels, not structure.
 
 Deferred with cause: 248 `push_kurt` awaits knock-back; Rides writes the alarm
-countdown; consumers of 135/195/202/203/81 remain partial. Old-3DS timing remains
-UNMEASURED.
+countdown; consumers of 135/195/202/203/81 remain partial; the 3DS half of the
+sampler fix (below). Old-3DS timing remains UNMEASURED.
 
 ## Current tree state (VERIFIED)
 
@@ -45,34 +43,48 @@ framebuffer. Citro3D uses `GPU_CULL_BACK_CCW` with the mirror removed:
 **Sky.** `CameraMath.View` builds the sky's clip-to-direction as
 `Invert(CreateLookAt(Zero, camera.Forward, camera.Up) * projection)` — the follow
 camera's OWN axes, not the view matrix's, because the view recovers forward as
-`normalize((position+forward)-position)` and that cancellation changes the ULP.
-`buildFollowCamera`/`buildFollowCameraCleared` now store the exact
-`followCameraOrient` axes on `Camera::forward`/`up` and `drawSky` uses them
-(including the `zaxis` normalize `CreateLookAt` does). `Matrix4x4.Invert` is a
-fixed SSE shuffle/`MultiplyAddEstimate` sequence, not a cofactor formula, and its
-fused rounding is observable in the 3x3 minors: `mdk_linux/src/render/
-system_numerics_inverse.cpp` translates it mechanically (standalone check:
-`M*M^-1 = I` to 2.4e-7, singular rejected). Both halves contribute (ablation in
-`PROGRESS_LOG`.
+`normalize((position+forward)-position)` and that cancellation changes the ULP;
+`buildFollowCamera*` therefore store the exact `followCameraOrient` axes on
+`Camera::forward`/`up`. `Matrix4x4.Invert` is translated mechanically from .NET's
+SSE shuffle/`MultiplyAddEstimate` sequence, not a cofactor formula
+(`mdk_linux/src/render/system_numerics_inverse.cpp`; `M*M^-1 = I` to 2.4e-7,
+singular rejected). Both halves contribute; ablation in `PROGRESS_LOG`.
+
+**Depth layers and the depth pull.** `computeArenaDepthLayers`
+(`render/arena_scene.cpp`) is the shared geometry half of the C# `Layers.Of`: planes
+keyed by a rounded normal and plane distance, stacked biggest-first, a smaller
+triangle one layer above the highest bigger one it overlaps (Sutherland-Hodgman in
+the plane's own 2D basis). The batch run-break takes the layer as well as material
+and group, and `MeshDraw::material.depth_layer` carries it.
+`render/depth_pull.cpp` is the C# `DepthPull.Of` (1/256 of the eye distance per
+layer, 1/128 more for lines, as `CreateScale(1-share, eye)` with translation
+`eye*(1-scale)`), and `renderer_vk.cpp` applies `world * depth_pull * view *
+projection` — the C# `Renderer.cs:1072` chain. Checked by
+`tests/scripts/layer_tests.cpp` (the C# `LayerTests.cs` + `DepthPullTests.cs`
+cases). Cold: 5.8–24 ms per LEVEL (all arenas) on x86 `-O2`, worst single arena
+10.3 ms (L4 `MEAT_5`), once per arena build. The pinned frame is byte-identical
+because draw order under `LESS_OR_EQUAL` already resolves its coplanar details;
+forcing every draw one layer nearer changes 0.009% of the frame (max 58), which is
+what proves the path is live. `renderer_c3d.cpp` does not apply the pull — see
+`docs/OPEN_ITEMS.md`.
 
 **Frame golden.** `tests/frames/reference.sha256` pins level 3, 320x240, seed 1,
 frame 1: `oracle=b60e72552c40…` (unchanged since first captured),
 `cpp=3d67efbeab85…` (regression baseline, NOT a fidelity reference), gap
-`bad_percent=3.323 max_delta=255 mean_delta=1.3783` at tolerance 0. The gate
-checks determinism, byte-exact match to `cpp=`, and that the oracle gap does not
-exceed the ceiling. The ceiling may only shrink.
+`bad_percent=3.323 max_delta=255 mean_delta=1.3783` at tolerance 0. The gate checks
+determinism, byte-exact match to `cpp=`, and that the oracle gap does not exceed
+the ceiling. The ceiling may only shrink.
 
 **Samplers.** The C# has TWO (`Renderer.cs:249-250`), bound per resource in
-`DrawOne` (`:1098-1099`): index texture REPEAT, palette CLAMP, sky panorama both
-CLAMP (`:1029-1030`). Arena UVs are texels normalised by texture size, so a
-surface showing a texture twice has a coordinate above 1 and the original TILES
-it; clamping stretched the edge texel and turned walls flat brown. Vulkan has
-`sampler` (clamp) and `samplerRepeat`, and `getDescriptorSet` is keyed by
-(texture, palette, repeat): mesh and canvas ask for repeat, the sky for clamp.
+`DrawOne`: index texture REPEAT, palette CLAMP, sky panorama both CLAMP. Arena UVs
+are texels normalised by texture size, so a surface showing a texture twice has a
+coordinate above 1 and the original TILES it. Vulkan has `sampler` (clamp) and
+`samplerRepeat`, and `getDescriptorSet` is keyed by (texture, palette, repeat):
+mesh and canvas ask for repeat, the sky for clamp.
 
 **HUD.** The seam exposes `mdk_render_canvas_width`: the canvas is 360 units high
-and `360 * target_width / target_height` wide, matching C# `Renderer.CanvasWidth`.
-The frontend invents no inventory slots and no target bar (a fresh C# level has an
+and `360 * target_width / target_height` wide (C# `Renderer.CanvasWidth`). The
+frontend invents no inventory slots and no target bar (a fresh C# level has an
 empty inventory and `GetBar() == (0, 0)`), the blink advances on the C#'s 30 Hz
 boundary, and a dead player's skull uses the C#'s 60/s fade to 255. It still
 respawns in place because menu/save/level-end flow is not ported.
@@ -84,28 +96,32 @@ CLI: `--headless --fixed-step --capture= --capture-frame=N --size=WxH --level=N
 --at=x,y,z[,yaw]`. Coverage: C# 238, C++ 213 labels / 212 unique / 211 true
 dispatches, 27 remaining; 16 partial, 195 complete.
 
-**Verification on this tree:** `make -C tests/scripts clean && make -C
-tests/scripts` exited 0 ending `All cases match the oracle.`; `bash tools/check.sh`
-exited 0 (`CHECK: ALL GATES PASSED`, SMDH SKIPPED for no CIA, `gates_frames PASS`
-with `L3_f1.bmp sha=3d67efbeab85c8a4`); `DEVKITPRO=/opt/devkitpro
-DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` exited 0 and built `mdk.3dsx`
-(69 RomFS files, 79M); `cmake --build build-linux --target mdk -j8` exited 0;
-`tests/frames/regenerate_reference.sh` exited 0 from a real oracle run on display
-`:99` in a private namespace (lavapipe/llvmpipe, `Level 3: 17 arenas, 9708
-triangles`, `Kurt at -4.00 0.00 192.98 yaw 96`).
+**Verified on this tree:** `make -C tests/scripts` exited 0 ending `All cases match
+the oracle.` with `PASS DepthLayersAndDepthPull`; `bash tools/check.sh` exited 0
+(`CHECK: ALL GATES PASSED`, SMDH SKIPPED for no CIA, `gates_frames PASS` with
+`L3_f1.bmp sha=3d67efbeab85c8a4`); the devkitARM `make -C mdk_3ds` exited 0 and
+built `mdk.3dsx` (69 RomFS files, 79M); `cmake --build build-linux --target mdk`
+exited 0 and gate 7 re-run against that binary reproduced the pinned hash. No
+oracle re-capture was needed (the reference did not move); the last one, iteration
+26, ran on display `:99` in a private namespace (lavapipe/llvmpipe, `Level 3: 17
+arenas, 9708 triangles`, `Kurt at -4.00 0.00 192.98 yaw 96`). **No VM golden
+changed and no emulator or Old-3DS hardware run was performed.** Runtime
+combat/inventory `Kurt` remains separate from movement `Player`; object rendering
+and 3DS frontend binding stay deferred. C++ uses one seeded legacy RNG per process,
+unlike C#'s fresh unseeded generator. Review-21 caveat stands: post-camera solid
+refresh pins only the current arena, not C#'s `SolidArenas`.
 
-**No VM golden changed. No emulator or Old-3DS hardware run was performed.**
-Old-3DS timing is unmeasured and the Citro3D cull enum is unverified on hardware.
-Runtime combat/inventory `Kurt` remains separate from movement `Player`; object
-rendering and 3DS frontend binding stay deferred. C++ uses one seeded legacy RNG
-per process, unlike C#'s fresh unseeded generator. Review-21 caveat stands:
-post-camera solid refresh pins only the current arena, not C#'s `SolidArenas`.
-
-**Next increment: P5 ground and HUD.** The bottom third is now the largest band
-(3.754% bad, mean 3.5272, max 255) and it is unchanged by the sky work. Its max
-255 says something is fully wrong at some pixels, not shaded differently: separate
-the HUD overlay from the ground shading before changing either, then take the
-middle band (3.191% / mean 1.5197 / max 247).
+**Next increment: review-27's MINOR, then P5 ground and HUD.** First the
+reviewer's verified fix in `mdk_linux/src/render/system_numerics_inverse.cpp`:
+`dot()` reduces sequentially where .NET's `Vector4.Dot` reduces pairwise, so
+`Matrix4x4.Invert` is 1–2 ULP off on high-cancellation inputs (bit-exact on all
+1305 realistic camera matrices, so no current player symptom). Make it
+`s0=p0+p1; s1=p2+p3; return s0+s1;` and soften the header's "mechanical
+translation" claim; the frame hash must not move. Then the bottom third is still
+the largest band (3.754% bad, mean 3.5272, max 255); its max 255 says something is
+fully wrong at some pixels, not shaded differently. Separate the HUD overlay from
+the ground shading before changing either, then take the middle band (3.191% /
+mean 1.5197 / max 247).
 
 **Do not "fix" `follow_camera.cpp`'s `normalize`.** It multiplies by a reciprocal
 where `Vector3.Normalize` reads as a division. Making it a division REGRESSES the
@@ -120,44 +136,23 @@ textures to POT with TRANSPARENT padding and rescales UVs by real/padded
 samples index-0 padding, which discards — holes, not tiling. Needs the padding
 filled with the tile pattern; unverifiable without hardware.
 
-## Testability and standing open items
+## Standing open items
 
-- Oracle/goldens compare fixed table + script fields, not velocity, `alarm_ticks`,
-  `Items.Bomb`/`Decoy`, or all combat/effect state. Use `vm_tests` for otherwise
-  unreachable opcode behavior. Tick corpus matches through t30000 on levels 3-8.
-- Oracle driver: `/tmp/kilo/oracle/Driver/Program.cs`, args `L T 1 script`, with
-  `DOTNET_ROOT=/tmp/kilo/dotnet10` and `MDK_DATA_DIR=<repo>/MDK`. Source oracle
-  `src/Mdk.Game/**` is read-only; scratch tree is built by `capture_oracle.sh`.
-- `--level=N` (3-8) selects level in `LevelData::load`, `LEVEL%d.CMI`, and
-  `SoundBank::forLevel`; default remains 3. Dynamic scene refresh exists at scene
-  level; no GameEngine exists to wire opcode 140 — do not fake call-site wiring.
-- Known divergences: incomplete decoy/`AlienTarget` selection; opcode 207's
-  `MathF.Sign(NaN)` exception is accepted because C++ exceptions are banned;
-  degenerate-path guards return 0. Linux runtime combat/inventory is not yet the
-  live `Player`; 3DS frontend has no runtime binding.
-- Oracle capture environment: glslangValidator needs `-D` and attached `-I<dir>`;
-  `NUGET_PACKAGES` must reach `ppy.SDL3-CS`; the host `/tmp/.X11-unix`/`:99` lock
-  is unusable, so the oracle runs `Xvfb :99` inside `unshare --user
-  --map-root-user -m` with a private `/tmp/.X11-unix`. Do not simplify either.
-- Review-24 and review-25 had no BLOCKER or MAJOR; all four of their NITs are
-  fixed (death-beat comment 4.25 s; `Renderer.cs:504-506`; the canvas-ortho
-  comment; the descriptor-alloc wording). Review-24's open question stands: VK
-  `canvasWidth` reads the swapchain extent while the C# reads the render target —
-  indistinguishable while both are 4:3.
-- Review-25's MINOR is a tracked latent trap: `getDescriptorSet` caches sets by
-  `(texture, palette, repeat)` and neither `mdk_render_update_texture` nor
-  `mdk_render_release_texture` invalidates `r->descs`, so a recreated texture id
-  leaves a cached set naming a destroyed `VkImageView`. Neither has any caller
-  outside `renderer_vk.cpp` today — whoever wires animated textures must erase the
-  affected entries (or stamp a generation counter) first.
-- C3D depth state differs from C#: depth test disabled versus C# LESS_OR_EQUAL
-  test/write. Fixing it needs projection remap, `C3D_DepthMap`, test function,
-  clear value and capture. DepthLayer/DepthPull remain unported.
-- Old 3DS hardware timing UNMEASURED. Emulator GUI runs must explicitly use
-  `DISPLAY=:99`; `/tmp/kilo` is not writable, so captures go under
-  `/tmp/mdk-frame-reference` or `/tmp/mdk-pi`, with display recorded.
-- Documentation drift: `AGENTS.md`/`SPEC.md` cite absent `docs/DOCTRINE.md`;
-  SPEC §9.4 names unwritten `gates_romfs`. Flag to owner; do not invent policy.
+The full list with its evidence is `docs/OPEN_ITEMS.md`. The ones that bite:
+
+- **`tools/publish_frame.sh` is an untracked foreign file** (written 2026-10-29
+  16:46 by the other loop's user, `museagent`), citing an owner directive to
+  commit captured frames. That contradicts `regenerate_reference.sh`'s policy
+  that pixel bytes are never committed. Left untracked and untouched; the owner
+  must reconcile the two. Do not commit it and do not delete it.
+- **C3D depth state still differs from the C#** (test disabled vs LESS_OR_EQUAL
+  test/write), which is also why `renderer_c3d.cpp` ignores `depth_layer`.
+- **The oracle capture environment is not simplifiable**: glslang needs `-D` and
+  an attached `-I<dir>`, `NUGET_PACKAGES` must reach `ppy.SDL3-CS`, and `Xvfb :99`
+  must run inside `unshare --user --map-root-user -m` with a private
+  `/tmp/.X11-unix`. `/tmp/kilo` is readable but not writable by this harness.
+- Reviews 24/25/27 had no BLOCKER or MAJOR; review-27's MINOR is the next
+  increment (above) and review-25's descriptor-cache MINOR is listed there.
 
 ## Verification commands
 
@@ -170,5 +165,5 @@ tests/frames/regenerate_reference.sh        # only for an intentional frame chan
 ```
 
 Tests do not track header dependencies: run `make -C tests/scripts clean` after
-header changes. Keep the monolithic `ScriptVm::execute()` switch. Never weaken
-a gate or test.
+header changes. Keep the monolithic `ScriptVm::execute()` switch. Never weaken a
+gate or test.

@@ -2293,3 +2293,115 @@ Verification on this tree:
 
 Opcode coverage is unchanged at 211 true dispatches / 238 with 27 deferred. No
 emulator or Original 3DS run was performed; Old-3DS timing remains unmeasured.
+
+## What this batch did (Phase 2 iteration 28 — arena depth layers and the depth pull)
+
+Inherited a dirty tree from a timed-out iteration: the depth layers and the
+depth pull, half-written. Finished it, hardened the two places where corrupt
+arena data would have been undefined behaviour in C++, verified and committed.
+
+**Why the feature exists.** The original draws with no depth buffer, back to
+front, so a poster lying in its wall's plane simply covers the wall. With a
+depth buffer the two fight for the same depth and flicker. The oracle therefore
+gives every arena triangle a **depth layer** (`src/Mdk.Game/Level/Layers.cs`)
+and draws it pulled towards the eye by a share of its distance
+(`src/Mdk.Engine/Render/DepthPull.cs`): the corners stay exactly where they
+were — moving a detail off its wall would open cracks to its neighbours — and
+only its depth changes.
+
+**What landed.**
+
+- `mdk_core/src/render/arena_scene.cpp` — `computeArenaDepthLayers`, the shared
+  geometry half of the C# `Layers.Of`: triangles grouped into planes keyed by a
+  rounded normal and plane distance (`MathF.Round(value * 64)`, midpoint-to-even,
+  reproduced exactly including the negative half-way cases), sorted biggest
+  first with the earlier triangle winning a tie, and each smaller triangle put
+  one layer above the highest bigger one it overlaps. The overlap is the C#'s
+  Sutherland-Hodgman `ClipBy` in the plane's own 2D basis around the first
+  corner (small numbers, so the cancellation stays small). `ArenaBatch` carries
+  the layer, the run-break now breaks on it as well as on material and group,
+  and `level_view.cpp` copies it into `MeshDraw::material.depth_layer`.
+- `mdk_core/src/render/depth_pull.{h,cpp}` — `buildDepthPullMatrix`, the C#
+  `DepthPull.Of`: 1/256 of the eye-to-surface distance per layer, 1/128 more
+  for lines, expressed as `Matrix4x4.CreateScale(1-share, eye)` in the oracle's
+  row-vector layout, i.e. translation `eye * (1 - scale)` — the product the
+  oracle's SIMD path uses, not `centre - centre*scale`.
+- `mdk_linux/src/render/renderer_vk.cpp` — `clip = world * depth_pull * view *
+  projection`, the C# `Renderer.cs:1072` chain (`command.World *
+  DepthPull.Of(view.Position, ...) * ViewProjection`). The pull is skipped
+  entirely for the ordinary case (layer 0, triangles) so nothing changes for
+  the overwhelming majority of draws.
+- `tests/scripts/layer_tests.cpp` — the C# `LayerTests.cs` and
+  `DepthPullTests.cs` cases run from `vm_tests`: the six synthetic arenas
+  (poster on a wall, poster half on a wall, neighbours sharing an edge, poster
+  on a poster, two equal triangles, a different plane), the two level-6 arenas
+  (OLYM_5's hub rim 159 over the glass floor 115, OLYM_7's dark floor 2 under
+  the mirror tile 56), and the depth-pull camera (eye -2222/3200/-2885, target
+  one unit below, world up +Z, 1.2 rad, 0.5–20000) checking that a pulled point
+  keeps its screen position to 1e-4 while its depth moves by more than four
+  24-bit depth steps.
+
+**Two corrupt-data guards, both UB in C++ and neither a fidelity choice.** A
+triangle whose area is NaN (only a corrupt arena can do that) is dropped rather
+than fed to `std::sort`: a NaN makes the comparator inconsistent, and an
+inconsistent comparator is undefined behaviour in C++ where the C#'s merge sort
+merely orders it arbitrarily. And `roundToEven` saturates instead of casting an
+out-of-range float, which is UB here and `INT_MIN` there. `normalize` of a zero
+vector and `MathF.Sign(NaN)` keep the documented degenerate-guards-return-0
+divergence, noted at the site; neither is reachable from a real arena, because
+the plane normal is a unit vector and the projection axis is chosen never to be
+parallel to it.
+
+**Measured, not assumed.** The whole computation on x86 at `-O2`, every arena of
+a level: level 3 5.8 ms / level 4 24.0 ms / level 5 11.2 ms / level 6 18.6 ms /
+level 7 10.5 ms / level 8 8.4 ms, worst single arena 10.3 ms (level 4 `MEAT_5`)
+and 0.9 ms for the pinned level's worst. That is once per arena build — level
+and arena load, never per frame — so it is cold by §2 and stays cold. The layers
+are not decoration: non-zero in real geometry, from 5 of 1014 triangles in
+`HMO_3` to 257 of 1042 in `OLYM_7`.
+
+**The pinned frame did not move, and that is the honest result, not a missing
+wire.** The C++ capture is byte-identical to the committed baseline
+(`3d67efbeab85c8a4`), so `reference.sha256` was NOT regenerated and the ceiling
+is unchanged at `bad_percent=3.323 max_delta=255 mean_delta=1.3783`. The reason
+is that the coplanar details in the pinned view are already resolved by draw
+order under `LESS_OR_EQUAL`, so pulling them nearer changes no pixel. That was
+falsification-tested rather than trusted: forcing every mesh draw one layer
+nearer changes 0.009% of the frame (max delta 58), which proves the matrix
+reaches the GPU and the path is live.
+
+Also in this batch: `tests/frames/capture_cpp.sh` sets `DISPLAY=:99`
+unconditionally instead of `${DISPLAY:-:99}`. Inheriting the session's display
+is exactly how a graphics run lands on the operator's screen (AGENTS.md P7);
+this machine's session display is `:1`.
+
+**The 3DS half.** `depth_pull.cpp` compiles into the 3DS build (the core glob)
+and the layers are computed there, but `renderer_c3d.cpp` does not apply the
+pull, because its depth state is still the open item below (depth test
+disabled, not the C#'s `LESS_OR_EQUAL` test/write): with no depth test the
+original's painter order already decides, which is the same reason the original
+needed no pull. The ARM11 cost of the layer computation is UNMEASURED; the 3DS
+builds one arena (the start arena) at startup, so the x86 worst case of ~10 ms
+is the shape of it, not a measurement.
+
+Verification on this tree:
+
+- `make -C tests/scripts` exited 0 and ended `All cases match the oracle.`,
+  including the new `PASS DepthLayersAndDepthPull`. No VM golden changed.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no
+  built CIA, `gates_frames PASS` with `L3_f1.bmp sha=3d67efbeab85c8a4`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
+- `cmake --build build-linux --target mdk -j8` exited 0, and `gates_frames.py`
+  re-run against that fresh binary reproduced `3d67efbeab85c8a4`.
+- The C++ frame capture ran with `DISPLAY=:99` on the headless backend. No
+  oracle re-capture was needed (the reference did not change) and no emulator or
+  Original 3DS run was performed; Old-3DS timing remains unmeasured.
+
+Review-27 had no BLOCKER or MAJOR. Its MINOR is real and is recorded as the next
+batch's first item, with the reviewer's verified fix: `dot()` in
+`mdk_linux/src/render/system_numerics_inverse.cpp` reduces sequentially where
+.NET's `Vector4.Dot` reduces pairwise, so the inverse is off by 1–2 ULP on
+high-cancellation inputs (bit-exact on all 1305 realistic camera matrices, so
+no current player symptom). It is a different subsystem from this one and is
+deliberately not mixed into this batch.
