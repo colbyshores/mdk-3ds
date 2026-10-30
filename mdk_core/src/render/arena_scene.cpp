@@ -63,11 +63,17 @@ formats::Vec3f divide(const formats::Vec3f& v, float scalar) {
 // put nearly coplanar triangles together.
 //
 // The saturating guard is for a corrupt arena: a vertex far enough out of
-// float range makes the plane distance overflow, and (int) of an
-// out-of-range float is undefined behaviour rather than the INT_MIN the C#
-// gets from cvttss2si. The guard changes nothing for real data.
+// float range makes the plane distance overflow. On .NET 10 the (int) cast
+// saturates (NaN -> 0, a positive overflow -> INT32_MAX, a negative overflow
+// -> INT32_MIN), whereas C++ float-to-int outside the representable range is
+// undefined behaviour. Return those values explicitly instead.
+//
+// The negative bound is inclusive: -2147483648 is exactly INT32_MIN, and
+// the C# casts it unchanged. The positive bound is 2147483520, the largest
+// float below 2^31; that value is representable, while the next float up
+// overflows and saturates. The guard changes nothing for real data.
 int32_t roundToEven(float value) {
-    if (!(value > -2147483520.0f)) {
+    if (!(value >= -2147483648.0f)) {
         return value < 0.0f ? INT32_MIN : 0;
     }
     if (value > 2147483520.0f) {

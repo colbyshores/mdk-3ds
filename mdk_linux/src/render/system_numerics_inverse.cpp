@@ -104,23 +104,29 @@ Vec4f div(const Vec4f& a, float d) {
     return r;
 }
 
+// .NET's Vector4.Dot reduces the four products pairwise: (x + y) + (z + w).
+// The volatiles prevent the compiler from reassociating that order. The old
+// sequential reduction differed by 1-2 ULP under cancellation.
 float dot(const Vec4f& a, const Vec4f& b) {
     volatile float p0 = a.v[0] * b.v[0];
     volatile float p1 = a.v[1] * b.v[1];
     volatile float p2 = a.v[2] * b.v[2];
     volatile float p3 = a.v[3] * b.v[3];
     volatile float s0 = p0 + p1;
-    volatile float s1 = s0 + p2;
-    volatile float s2 = s1 + p3;
-    return s2;
+    volatile float s1 = p2 + p3;
+    volatile float result = s0 + s1;
+    return result;
 }
 
-// A mechanical translation of .NET 10's Matrix4x4.Invert SSE/FMA path. The
-// `tN` names are the IL's locals in evaluation order; do not algebraically
+// A close translation of .NET 10's Matrix4x4.Invert SSE/FMA path. The `tN`
+// names preserve the IL's locals and operation grouping; do not algebraically
 // simplify or reorder them, because the sky matrix is sensitive to the fused
 // versus separate rounding of MultiplyAddEstimate and to the exact shuffle
-// grouping. The one dead branch (a singular determinant producing NaN) is
-// reported through the return value instead.
+// grouping. Vector4.Dot's pairwise reduction is reproduced explicitly above.
+// This is not a claim that every generated instruction is identical: it is
+// bit-exact on the realistic camera matrices checked here, while the original
+// sequential dot was not on high-cancellation inputs. The one dead branch (a
+// singular determinant producing NaN) is reported through the return value.
 bool invertBody(const Matrix4f& input, Matrix4f& result) {
     const Vec4f t0 = input.v0;
     const Vec4f t1 = input.v1;

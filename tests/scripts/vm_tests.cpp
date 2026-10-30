@@ -36,6 +36,7 @@
 #include "game/player.h"
 #include "layer_tests.h"
 #include "scripts/script_runtime.h"
+#include "system_numerics_tests.h"
 #include "util/math_lut.h"
 
 using namespace mdk;
@@ -3485,6 +3486,13 @@ int main() {
 
     // The formats library reaches the filesystem through this seam.
     mdk::formats::setFileSystem(mdk::test::host::fileSystem());
+
+    // The sky inverse's exact .NET reduction order, independent of game data.
+    const int numericsFailures = mdk::test::runSystemNumericsTests();
+    failures += numericsFailures;
+    if (numericsFailures == 0) {
+        printf("PASS SystemNumericsMatrixInverse\n");
+    }
 
     MdkData data = locateData();
     if (!data.found()) {

@@ -4,10 +4,11 @@
 # real game data. The source list is explicit for the same reason.
 
 CORE := ../../mdk_core/src
+LINUX := ../../mdk_linux/src
 BUILD := build
 CXX ?= g++
 CXXFLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter \
-            -fno-strict-aliasing -I$(CORE) -I. -I../formats
+            -fno-strict-aliasing -I$(CORE) -I$(LINUX) -I. -I../formats
 LDFLAGS :=
 
 COMMON_SOURCES := \
@@ -63,6 +64,8 @@ SOURCES := \
 SOURCES_VM := \
 	vm_tests.cpp \
 	layer_tests.cpp \
+	system_numerics_tests.cpp \
+	$(LINUX)/render/system_numerics_inverse.cpp \
 	$(COMMON_SOURCES)
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))
