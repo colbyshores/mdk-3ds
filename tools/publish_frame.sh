@@ -13,7 +13,8 @@ OUTDIR="$ROOT/docs/frames"
 TMP=$(mktemp -d /tmp/mdk-publish.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 BMP="$TMP/frame.bmp"
-if ! "$ROOT/tests/frames/capture_cpp.sh" "$BMP" >"$TMP/capture.log" 2>&1; then
+if ! VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}" \
+        "$ROOT/tests/frames/capture_cpp.sh" "$BMP" >"$TMP/capture.log" 2>&1; then
     echo "publish_frame: capture failed" >&2; tail -10 "$TMP/capture.log" >&2; exit 1
 fi
 [ -s "$BMP" ] || { echo "publish_frame: capture produced no frame" >&2; exit 1; }
@@ -34,7 +35,15 @@ fi
 {
     echo "frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)"
     echo "captured: $(date -u +%FT%TZ) at $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    grep "^name=" "$ROOT/tests/frames/reference.sha256" 2>/dev/null \
-        | sed 's/oracle=[a-f0-9]* cpp=[a-f0-9]* //' | sed 's/^/golden gap: /'
+    ORACLE_DIR="${MDK_FRAME_REFERENCE_DIR:-${TMPDIR:-/tmp}/mdk-frame-reference}"
+    ORACLE="$ORACLE_DIR/L3_f1.bmp"
+    if [ -s "$ORACLE" ]; then
+        read -r BAD MAX MEAN < <(python3 "$ROOT/tests/frames/compare_frames.py" "$ORACLE" "$BMP" --measure)
+        printf 'live C++ vs C# oracle: bad_percent=%s max_delta=%s mean_delta=%s\n' "$BAD" "$MAX" "$MEAN"
+    else
+        grep "^name=" "$ROOT/tests/frames/reference.sha256" 2>/dev/null \
+            | sed 's/oracle=[a-f0-9]* cpp=[a-f0-9]* //' | sed 's/^/recorded gap ceiling: /'
+        echo "live measurement: unavailable (oracle pixels absent at $ORACLE)"
+    fi
 } > "${PNG%.png}.txt"
 echo "publish_frame: wrote docs/frames/$(basename "$PNG")"
