@@ -64,20 +64,20 @@ of it, and do not re-read history you already have.
 
 ## The frame record (owner directive 2026-10-29)
 
-Any batch that changes what the renderer draws MUST publish the pinned frame
-and commit it WITH the batch, so the commit history is a visual record of
-progress toward the original look:
+Every batch that changes the picture MUST have a screenshot committed with
+its code, so the commit history shows visual progression, not just a number.
+The pinned frame is level 3, 320x240, seed 1, frame 1. After all gates pass:
 
 ```
 tools/publish_frame.sh <short-label>     # writes docs/frames/<date>-<label>.png (+ .txt)
 git add docs/frames                      # commit it with the batch
 ```
 
-Publish AFTER the gates (the frame must come from a consistent build) and
-state the measured gap movement in the commit message when it changes. Never
-edit a published frame by hand; `docs/frames/README.md` has the rules. The
-loop publishes one itself if a renderer batch forgets, so a miss costs
-nothing but the warning it logs.
+The screenshot is the C++ build's picture; the `.txt` records its measured
+gap against the C# oracle. The oracle image itself stays in `/tmp` and is never
+committed (ROM-derived pixels). Never edit a screenshot by hand; see
+`docs/frames/README.md`. The loop enforces this for renderer commits and
+publishes a missing screenshot at the commit boundary.
 
 ## Gates (run before you commit; all three must pass)
 
