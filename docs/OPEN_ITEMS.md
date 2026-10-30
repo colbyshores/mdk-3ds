@@ -56,8 +56,11 @@ measured or cited reason, and the batch that closes one should delete its entry.
   leaves a cached set naming a destroyed `VkImageView`. Neither has a caller
   outside `renderer_vk.cpp` today — whoever wires animated textures must erase the
   affected entries (or stamp a generation counter) first.
-- Review-27's MINOR is scheduled as the next increment in `CONTINUATION.md`
-  (pairwise `dot()` in `system_numerics_inverse.cpp`).
+- Review-28's latent Overlay trap: the C#'s `Renderer.DrawOne` uses
+  `command.World` unchanged for `Pass.Overlay` — no depth pull and no
+  view/projection. Linux's `mdk_render_draw_mesh` currently applies the pull to
+  every layered/lines draw and always applies view/projection. No reachable
+  Overlay mesh path exists today; whoever adds one must mirror the C# exemption.
 
 ## The frame-record directive (closed as an open item, kept as a rule)
 

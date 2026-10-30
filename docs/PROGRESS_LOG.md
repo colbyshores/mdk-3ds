@@ -2405,3 +2405,64 @@ batch's first item, with the reviewer's verified fix: `dot()` in
 high-cancellation inputs (bit-exact on all 1305 realistic camera matrices, so
 no current player symptom). It is a different subsystem from this one and is
 deliberately not mixed into this batch.
+
+## What this batch did (Phase 2 iteration 29 — .NET's exact reduction order)
+
+Review-27's MINOR and review-28's MINOR were two last-bit fidelity errors in
+renderer numerics. They are one small slice: both are the C++ side making an
+assumption about the .NET oracle's arithmetic instead of reproducing it.
+
+**The sky inverse's dot product.** `System.Numerics.Vector4.Dot` reduces its four
+products as `(x + y) + (z + w)`. The C++ translation used
+`((x + y) + z) + w`, which differs under cancellation. The determinant of
+`Matrix4x4.Invert` is that dot, so one final-ULP difference scales every inverse
+element. `system_numerics_inverse.cpp` now uses the oracle's pairwise order and
+keeps the volatile roundings that prevent the compiler reassociating it. The
+header and source no longer claim a literal mechanical translation: they state
+what is actually preserved (the shuffle/FMA grouping and the dot order) and
+what is not (identical generated instructions).
+
+`tests/scripts/system_numerics_tests.cpp` is a new exact-bit golden for this
+path. Its input is the third invertible matrix from .NET 10.0.402's
+`Random(12345)` with values uniform over [-1, 1]; its expected inverse is the
+exact `Matrix4x4.Invert` output from that runtime. The old sequential reduction
+misses those bits; the pairwise reduction matches all sixteen. A temporary
+differential harness over the same 500-matrix seed set found 500/500 exact
+matches with the new reduction and its first mismatch at the third matrix with
+the old one. The permanent test is linked into `vm_tests` and reports
+`PASS SystemNumericsMatrixInverse`.
+
+**The arena layer's corrupt-input boundary.** Review-28 correctly found that
+`arena_scene.cpp`'s comment attributed .NET's cast result to x86 conversion
+instructions. On .NET 10 `(int)MathF.Round(value)` saturates: NaN becomes zero,
+positive overflow becomes `INT32_MAX`, and negative overflow becomes
+`INT32_MIN`. The C++ guard now includes the exact negative bound
+`-2147483648.0f`; in particular, `-2147483520.0f` falls through and casts to
+itself instead of incorrectly becoming `INT32_MIN`. The comment now records
+the .NET semantics rather than a mistaken `cvttss2si` story. This input is
+unreachable from valid arena coordinates, but the port's corrupt-data path now
+matches the oracle rather than merely avoiding undefined behaviour.
+
+Review-28's other MINOR is latent and deliberately not changed: the C# does not
+apply the depth pull (or view/projection) to an Overlay mesh, but no reachable
+Overlay mesh path exists in C++ yet. The exact requirement is now recorded in
+`docs/OPEN_ITEMS.md` for whoever adds that path.
+
+Verification on this tree:
+
+- `make -C tests/scripts clean && make -C tests/scripts build/vm_tests`, then
+  the full `make -C tests/scripts`, exited 0. The latter ended `All cases match
+  the oracle.` and included `PASS SystemNumericsMatrixInverse` and
+  `PASS DepthLayersAndDepthPull`. No VM golden changed.
+- `cmake --build build-linux --target mdk -j8` exited 0.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no
+  built CIA, `gates_frames PASS` with `L3_f1.bmp sha=3d67efbeab85c8a4`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
+- The pinned frame is byte-identical (`3d67efbeab85c8a4`), so the oracle and
+  reference were not re-captured and the gap remains 3.323%. This batch changes
+  no rendered pixel, so no new frame-record image was published.
+- The Pi harness cannot run the Muse write-disabled validator (`muse exec` is
+  unavailable until 2026-11-01); the external loop reviewer remains required.
+  No emulator or Original 3DS run was performed, and Old-3DS timing remains
+  unmeasured.
