@@ -123,6 +123,7 @@ set(SOURCES
     ${CORE}/src/game/player.cpp
     ${CORE}/src/render/arena_scene.cpp
     ${CORE}/src/render/camera_builder.cpp
+    ${CORE}/src/render/depth_pull.cpp
     ${CORE}/src/render/material_resolver.cpp
     ${CORE}/src/scripts/object.cpp
     ${CORE}/src/scripts/script_runtime.cpp

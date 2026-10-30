@@ -8,9 +8,12 @@
 // and a list of batches -- runs of triangles sharing a surface.
 //
 // This is the same thing, minus the parts that are the ENHANCED look's
-// business: the triangle groups, the depth layers, the outlines and the
-// torn pieces. Those need the game logic (the scripts move the groups), so
-// they land with it.
+// business: the triangle groups, the outlines and the torn pieces. Those need
+// the game logic (the scripts move the groups), so they land with it.
+//
+// The arena's DEPTH LAYERS are here: they decide which of two coplanar
+// surfaces is a detail over the other, and the renderer pulls the detail
+// towards the eye so the two do not fight for the same depth.
 //
 // WHY IT IS SHARED. The vertices and the batches are the same on both
 // backends; only the GPU objects differ. A backend that built its own
@@ -49,6 +52,10 @@ struct ArenaBatch {
     // rebuilding the mesh -- the C# LevelView checks Hidden per group at draw
     // time (LevelView.cs:126), and this is the same decision per batch.
     int32_t group = 0;
+
+    // The triangle's depth layer (the C# Levels.Of). A detail over a larger
+    // surface in the same plane is one layer above it.
+    int32_t depthLayer = 0;
 };
 
 // An arena's geometry.
@@ -81,5 +88,19 @@ bool buildArenaScene(const formats::Arena* arena,
 // because the geometry is still in the buffer and only the draw is skipped.
 // Group 0 (the rest of the arena) never changes and is always drawn.
 bool arenaBatchVisible(const formats::Arena* arena, const ArenaBatch& batch);
+
+// Computes the depth layer of every triangle in `triangleIndices`.
+//
+// This is the shared geometry half of the C# Layers.Of
+// (src/Mdk.Game/Level/Layers.cs): triangles on the same plane are stacked
+// from the biggest outwards, and a smaller triangle that overlaps a bigger
+// one is one layer above it. `vertices` and `triangleIndices` use the
+// formats' own vector type; the returned vector has one layer per triangle.
+//
+// Returns false when the output pointer is null or the index list does not
+// contain three indices per triangle.
+bool computeArenaDepthLayers(const std::vector<formats::Vec3f>& vertices,
+                             const std::vector<int32_t>& triangleIndices,
+                             std::vector<int32_t>* layers);
 
 } // namespace mdk

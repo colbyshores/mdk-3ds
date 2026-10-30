@@ -38,6 +38,7 @@
 #include <string>
 #include <vector>
 
+#include "render/depth_pull.h"
 #include "render/render.h"
 #include "render/render_types.h"
 #include "render/system_numerics_inverse.h"
@@ -1636,10 +1637,21 @@ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
         return;
     }
 
-    // clip = p * world * view * projection -- the row-vector chain, the
-    // same order the C# uses (world first, then view, then projection).
+    // clip = p * world * depth_pull * view * projection -- the row-vector
+    // chain, the same order the C# uses (Renderer.cs:1072). The depth pull
+    // keeps a detail coplanar with the surface under it in the same place on
+    // screen, but nearer in the depth buffer.
+    float world[16];
+    if (draw->material.depth_layer != 0 || draw->primitive == mdk::Primitive::Lines) {
+        float pulled[16];
+        mdk::buildDepthPullMatrix(r->camera.position, draw->primitive,
+                                  draw->material.depth_layer, pulled);
+        mulMatrix(draw->world, pulled, world);
+    } else {
+        memcpy(world, draw->world, sizeof(world));
+    }
     float wv[16];
-    mulMatrix(draw->world, r->camera.view, wv);
+    mulMatrix(world, r->camera.view, wv);
 
     PushConstants pc;
     mulMatrix(wv, r->camera.projection, pc.mvp);

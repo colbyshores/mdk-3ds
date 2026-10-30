@@ -4,9 +4,257 @@
 
 #include "render/arena_scene.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <map>
+#include <tuple>
 
 namespace mdk {
+
+namespace {
+
+// The C# Layers.cs constants.
+const int32_t kHighestLayer = 3;
+const float kPlaneSteps = 64.0f;
+const float kMinOverlap = 1.0e-3f;
+const int32_t kTriangleCorners = 3;
+
+struct PlaneEntry {
+    int32_t triangle = 0;
+    float area = 0.0f;
+    formats::Vec3f normal = {0.0f, 0.0f, 0.0f};
+};
+
+formats::Vec3f subtract(const formats::Vec3f& a, const formats::Vec3f& b) {
+    return formats::Vec3f{a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+formats::Vec3f cross(const formats::Vec3f& a, const formats::Vec3f& b) {
+    return formats::Vec3f{a.y * b.z - a.z * b.y,
+                          a.z * b.x - a.x * b.z,
+                          a.x * b.y - a.y * b.x};
+}
+
+float dot(const formats::Vec3f& a, const formats::Vec3f& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+float length(const formats::Vec3f& v) {
+    return sqrtf(dot(v, v));
+}
+
+// Vector3.Normalize, except that a zero vector returns zero here where the C#
+// divides by zero. Only a corrupt arena reaches that: the plane normal is a
+// unit vector, and the axis below is chosen so it is never parallel to it.
+formats::Vec3f normalize(const formats::Vec3f& v) {
+    const float len = length(v);
+    if (len <= 0.0f) {
+        return formats::Vec3f{0.0f, 0.0f, 0.0f};
+    }
+    return formats::Vec3f{v.x / len, v.y / len, v.z / len};
+}
+
+formats::Vec3f divide(const formats::Vec3f& v, float scalar) {
+    return formats::Vec3f{v.x / scalar, v.y / scalar, v.z / scalar};
+}
+
+// MathF.Round's default midpoint rule is to even. The plane keys use it to
+// put nearly coplanar triangles together.
+//
+// The saturating guard is for a corrupt arena: a vertex far enough out of
+// float range makes the plane distance overflow, and (int) of an
+// out-of-range float is undefined behaviour rather than the INT_MIN the C#
+// gets from cvttss2si. The guard changes nothing for real data.
+int32_t roundToEven(float value) {
+    if (!(value > -2147483520.0f)) {
+        return value < 0.0f ? INT32_MIN : 0;
+    }
+    if (value > 2147483520.0f) {
+        return INT32_MAX;
+    }
+    const float lower = std::floor(value);
+    const float fraction = value - lower;
+    if (fraction > 0.5f) {
+        return (int32_t)(lower + 1.0f);
+    }
+    if (fraction < 0.5f) {
+        return (int32_t)lower;
+    }
+    const int64_t whole = (int64_t)lower;
+    return (int32_t)(whole + (whole & 1 ? 1 : 0));
+}
+
+int32_t planeStep(float value) {
+    return roundToEven(value * kPlaneSteps);
+}
+
+formats::Vec3f corner(const std::vector<formats::Vec3f>& vertices,
+                      const std::vector<int32_t>& triangleIndices,
+                      int32_t triangle, int32_t at) {
+    const int32_t index = triangleIndices[(size_t)triangle * kTriangleCorners + (size_t)at];
+    return vertices[(size_t)index];
+}
+
+struct Vec2f {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+Vec2f subtract(const Vec2f& a, const Vec2f& b) {
+    return Vec2f{a.x - b.x, a.y - b.y};
+}
+
+float cross(const Vec2f& a, const Vec2f& b) {
+    return a.x * b.y - a.y * b.x;
+}
+
+// MathF.Sign. A NaN returns 0 here where the C# returns NaN; the winding of a
+// degenerate clip triangle decides nothing either way in a real arena.
+float sign(float value) {
+    if (value > 0.0f) {
+        return 1.0f;
+    }
+    if (value < 0.0f) {
+        return -1.0f;
+    }
+    return 0.0f;
+}
+
+// The part of a polygon on the inner side of the edge from a to b (the C#
+// ClipBy).
+std::vector<Vec2f> clipBy(const std::vector<Vec2f>& polygon, const Vec2f& a, const Vec2f& b,
+                          float winding) {
+    std::vector<Vec2f> kept;
+    kept.reserve(polygon.size() + 1);
+    for (size_t k = 0; k < polygon.size(); k++) {
+        const Vec2f& p = polygon[k];
+        const Vec2f& q = polygon[(k + 1) % polygon.size()];
+        const float sideP = winding * cross(subtract(b, a), subtract(p, a));
+        const float sideQ = winding * cross(subtract(b, a), subtract(q, a));
+        if (sideP >= 0.0f) {
+            kept.push_back(p);
+        }
+        if ((sideP >= 0.0f) != (sideQ >= 0.0f)) {
+            const float at = sideP / (sideP - sideQ);
+            kept.push_back(Vec2f{p.x + (q.x - p.x) * at, p.y + (q.y - p.y) * at});
+        }
+    }
+    return kept;
+}
+
+// The area two triangles in one plane share. One is clipped by the other's
+// edges in the plane's own 2D coordinates.
+float overlap(const std::vector<formats::Vec3f>& vertices,
+              const std::vector<int32_t>& triangleIndices,
+              int32_t triangle, int32_t other, const formats::Vec3f& normal) {
+    const formats::Vec3f origin = corner(vertices, triangleIndices, triangle, 0);
+    const formats::Vec3f axis = std::fabs(normal.x) < 0.9f
+                                     ? formats::Vec3f{1.0f, 0.0f, 0.0f}
+                                     : formats::Vec3f{0.0f, 1.0f, 0.0f};
+    const formats::Vec3f u = normalize(cross(normal, axis));
+    const formats::Vec3f v = cross(normal, u);
+
+    auto flat = [&](const formats::Vec3f& point) {
+        const formats::Vec3f relative = subtract(point, origin);
+        return Vec2f{dot(relative, u), dot(relative, v)};
+    };
+
+    std::vector<Vec2f> polygon;
+    polygon.push_back(flat(origin));
+    polygon.push_back(flat(corner(vertices, triangleIndices, triangle, 1)));
+    polygon.push_back(flat(corner(vertices, triangleIndices, triangle, 2)));
+
+    const Vec2f clip0 = flat(corner(vertices, triangleIndices, other, 0));
+    const Vec2f clip1 = flat(corner(vertices, triangleIndices, other, 1));
+    const Vec2f clip2 = flat(corner(vertices, triangleIndices, other, 2));
+    const float winding = sign(cross(subtract(clip1, clip0), subtract(clip2, clip0)));
+
+    for (int32_t edge = 0; edge < kTriangleCorners && !polygon.empty(); edge++) {
+        const Vec2f& a = edge == 0 ? clip0 : (edge == 1 ? clip1 : clip2);
+        const Vec2f& b = edge == 0 ? clip1 : (edge == 1 ? clip2 : clip0);
+        polygon = clipBy(polygon, a, b, winding);
+    }
+
+    float twice = 0.0f;
+    for (size_t k = 0; k < polygon.size(); k++) {
+        twice += cross(polygon[k], polygon[(k + 1) % polygon.size()]);
+    }
+    return std::fabs(twice) / 2.0f;
+}
+
+} // namespace
+
+bool computeArenaDepthLayers(const std::vector<formats::Vec3f>& vertices,
+                             const std::vector<int32_t>& triangleIndices,
+                             std::vector<int32_t>* layers) {
+    if (!layers || triangleIndices.size() % (size_t)kTriangleCorners != 0) {
+        return false;
+    }
+
+    const int32_t triangleCount = (int32_t)(triangleIndices.size() / (size_t)kTriangleCorners);
+    layers->assign((size_t)triangleCount, 0);
+    for (int32_t index : triangleIndices) {
+        if (index < 0 || index >= (int32_t)vertices.size()) {
+            layers->clear();
+            return false;
+        }
+    }
+
+    // The triangles of each plane, keyed by a rounded normal and plane
+    // distance. The key puts nearly coplanar triangles together.
+    typedef std::tuple<int32_t, int32_t, int32_t, int32_t> PlaneKey;
+    std::map<PlaneKey, std::vector<PlaneEntry>> planes;
+    for (int32_t triangle = 0; triangle < triangleCount; triangle++) {
+        const formats::Vec3f a = corner(vertices, triangleIndices, triangle, 0);
+        const formats::Vec3f b = corner(vertices, triangleIndices, triangle, 1);
+        const formats::Vec3f c = corner(vertices, triangleIndices, triangle, 2);
+        const formats::Vec3f crossed = cross(subtract(c, a), subtract(b, a));
+        const float area = length(crossed);
+        // The C# drops a zero area. This also drops a NaN one, which only a
+        // corrupt arena produces, and dropping it is not a fidelity choice:
+        // a NaN would make the sort below compare inconsistently, and an
+        // inconsistent comparator is undefined behaviour in C++ where the
+        // C#'s merge sort merely orders it arbitrarily.
+        if (!(area > 0.0f)) {
+            continue;
+        }
+
+        PlaneEntry entry;
+        entry.triangle = triangle;
+        entry.area = area;
+        entry.normal = divide(crossed, area);
+        const PlaneKey key(planeStep(entry.normal.x), planeStep(entry.normal.y),
+                           planeStep(entry.normal.z), planeStep(dot(entry.normal, a)));
+        planes[key].push_back(entry);
+    }
+
+    for (std::map<PlaneKey, std::vector<PlaneEntry>>::iterator it = planes.begin();
+         it != planes.end(); ++it) {
+        std::vector<PlaneEntry>& plane = it->second;
+        std::sort(plane.begin(), plane.end(), [](const PlaneEntry& a, const PlaneEntry& b) {
+            if (a.area != b.area) {
+                return a.area > b.area;
+            }
+            return a.triangle < b.triangle;
+        });
+
+        // Each smaller triangle goes one layer above the highest bigger one
+        // it overlaps (the C# Layers.Stack).
+        for (size_t i = 1; i < plane.size(); i++) {
+            const int32_t triangle = plane[i].triangle;
+            for (size_t j = 0; j < i; j++) {
+                const int32_t under = plane[j].triangle;
+                if ((*layers)[(size_t)under] >= (*layers)[(size_t)triangle] &&
+                    overlap(vertices, triangleIndices, triangle, under, plane[i].normal) > kMinOverlap) {
+                    (*layers)[(size_t)triangle] =
+                        std::min((*layers)[(size_t)under] + 1, kHighestLayer);
+                }
+            }
+        }
+    }
+    return true;
+}
 
 bool buildArenaScene(const formats::Arena* arena,
                      const MaterialResolver& resolver,
@@ -34,11 +282,21 @@ bool buildArenaScene(const formats::Arena* arena,
 
     out->vertices.reserve((size_t)triangleCount * 3);
 
+    // The triangles' depth layers: the C# Levels.Of, computed once per arena
+    // (the C# keeps them in the ArenaView). A detail lying in the plane of a
+    // bigger surface is a layer above it, and the renderer pulls it towards
+    // the eye so the two do not fight for the same depth.
+    std::vector<int32_t> depthLayers;
+    if (!computeArenaDepthLayers(positions, indices, &depthLayers)) {
+        return false;
+    }
+
     // The run of triangles currently being batched: its material value and its
     // group. A new material value OR a new group starts a new run, so a batch
     // never spans two groups and the drawing can skip a hidden group per batch.
     int32_t runMaterial = 0;
     int32_t runGroup = 0;
+    int32_t runDepthLayer = 0;
     bool haveRun = false;
 
     // The surfaces, by material value. A material value's surface is
@@ -95,6 +353,7 @@ bool buildArenaScene(const formats::Arena* arena,
         const Surface& surface = surfaces[material];
         const float sx = scaleX[material];
         const float sy = scaleY[material];
+        const int32_t depthLayer = (size_t)t < depthLayers.size() ? depthLayers[(size_t)t] : 0;
 
         // The vertices. The colour is white: the original's Gouraud-blended
         // stream is this vertex's colour, and the world's surfaces are
@@ -116,7 +375,8 @@ bool buildArenaScene(const formats::Arena* arena,
             out->vertices.push_back(vertex);
         }
 
-        if (!haveRun || material != runMaterial || triangleGroup != runGroup) {
+        if (!haveRun || material != runMaterial || triangleGroup != runGroup ||
+            depthLayer != runDepthLayer) {
             // A new run. The previous one ends where this one starts.
             if (haveRun && !out->batches.empty()) {
                 out->batches.back().count = first - out->batches.back().first;
@@ -133,9 +393,11 @@ bool buildArenaScene(const formats::Arena* arena,
             batch.count = 0;
             batch.surface = surface;
             batch.group = triangleGroup;
+            batch.depthLayer = depthLayer;
             out->batches.push_back(batch);
             runMaterial = material;
             runGroup = triangleGroup;
+            runDepthLayer = depthLayer;
             haveRun = true;
         }
     }

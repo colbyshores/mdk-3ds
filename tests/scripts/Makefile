@@ -44,6 +44,8 @@ COMMON_SOURCES := \
 	$(CORE)/game/kurt.cpp \
 	$(CORE)/game/player.cpp \
 	$(CORE)/render/arena_scene.cpp \
+	$(CORE)/render/camera_builder.cpp \
+	$(CORE)/render/depth_pull.cpp \
 	$(CORE)/render/material_resolver.cpp \
 	$(CORE)/scripts/object.cpp \
 	$(CORE)/scripts/script_vm.cpp \
@@ -60,6 +62,7 @@ SOURCES := \
 
 SOURCES_VM := \
 	vm_tests.cpp \
+	layer_tests.cpp \
 	$(COMMON_SOURCES)
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))

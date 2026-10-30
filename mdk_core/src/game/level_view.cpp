@@ -145,6 +145,7 @@ void LevelView::draw() {
         draw.material.pass = batch.surface.pass;
         draw.material.shading = batch.surface.shading;
         draw.material.row_shift = batch.surface.rowShift;
+        draw.material.depth_layer = batch.depthLayer;
         // The colour is applied EXACTLY ONCE. A flat surface's colour is
         // already carried by the one-pixel texture above (that is why the
         // flat texture exists -- the PICA200 cannot take a constant), so

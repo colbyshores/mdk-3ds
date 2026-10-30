@@ -34,6 +34,7 @@
 #include "formats/script_decoder.h"
 #include "game/level_data.h"
 #include "game/player.h"
+#include "layer_tests.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 
@@ -3615,6 +3616,14 @@ int main() {
     printf("PASS RaycastUsesCurrentAndSecondArena\n");
     testTurnAndJumpTurnsLaunchesAndStopsOnFloor(&levelData, &cmi, &bank);
     printf("PASS TurnAndJumpTurnsLaunchesAndStopsOnFloor\n");
+
+    // The depth layers and the depth pull: the C#'s LayerTests.cs and
+    // DepthPullTests.cs, run here.
+    const int layerFailures = mdk::test::runDepthLayerTests(data);
+    failures += layerFailures;
+    if (layerFailures == 0) {
+        printf("PASS DepthLayersAndDepthPull\n");
+    }
 
     if (failures == 0) {
         printf("All VM unit tests match the oracle.\n");

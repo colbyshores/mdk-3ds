@@ -23,10 +23,12 @@ if [ ! -x "$ROOT/build-linux/mdk" ]; then
     exit 1
 fi
 
-# AGENTS.md P7: a graphics run never lands on the operator's display. The
-# headless backend opens no window, but the display is named anyway so the
-# evidence records which one was used and nothing can inherit the session's.
-export DISPLAY=${DISPLAY:-:99}
+# AGENTS.md P7: a graphics run never lands on the operator's display, and the
+# display is named EXPLICITLY -- never inherited from the session, which is
+# the operator's (DISPLAY=:1 here). The headless backend opens no window, but
+# an inherited DISPLAY is how a run ends up on the wrong screen, and the
+# evidence has to record the display it used.
+export DISPLAY=:99
 
 exec env \
     MDK_DATA_DIR="${MDK_DATA_DIR:-$ROOT/MDK}" \
