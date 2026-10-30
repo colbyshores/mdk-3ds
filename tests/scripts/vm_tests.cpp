@@ -32,6 +32,7 @@
 #include "formats/mdk_data.h"
 #include "formats/model.h"
 #include "formats/script_decoder.h"
+#include "game/arena_space.h"
 #include "game/level_data.h"
 #include "game/player.h"
 #include "layer_tests.h"
@@ -3477,6 +3478,94 @@ void testTurnAndJumpTurnsLaunchesAndStopsOnFloor(LevelData* levelData, const Cmi
     CHECK(fabsf(obj.velocity.z + 32.0f * scripts::ScriptRuntime::kTick) < 1e-4f);
 }
 
+// The animation wrap is the C# Wrap's exact reduction: a positive divisor
+// leaves the first remainder in (-count, count), so one conditional add is
+// enough. Zero or a negative count is the C# divide-by-zero path; the port
+// returns frame 0 rather than crashing.
+void testWrapAnimationFrameIsTheOracleReduction() {
+    CHECK(Player::wrapAnimationFrame(0, 5) == 0);
+    CHECK(Player::wrapAnimationFrame(4, 5) == 4);
+    CHECK(Player::wrapAnimationFrame(5, 5) == 0);
+    CHECK(Player::wrapAnimationFrame(7, 5) == 2);
+    CHECK(Player::wrapAnimationFrame(-1, 5) == 4);
+    CHECK(Player::wrapAnimationFrame(-6, 5) == 4);
+    CHECK(Player::wrapAnimationFrame(0, 0) == 0);
+    CHECK(Player::wrapAnimationFrame(-1, 0) == 0);
+}
+
+// Death uses the C#'s complete Fall operation, not only its move. FallMove's
+// degenerate sweep hits nothing and clears OnFloor, and the post-move
+// fall-out test then decides what happens next. On a real floor the corpse
+// re-lands on the next step; below the arena the fall-out test sets OnFloor
+// back to true and the oracle holds the corpse at the death point.
+void testDeathUsesTheOraclesCompleteFallOperation(LevelData* levelData) {
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+
+    const float* start = levelData->dti().startPosition();
+    const Vec startPoint{start[0], start[1], start[2]};
+    const std::string* arenaName = space.arenaAt(startPoint);
+    CHECK(arenaName != nullptr);
+    if (arenaName == nullptr) {
+        return;
+    }
+    space.setSolid(*arenaName);
+
+    Input input;
+    const float delta = 1.0f / 30.0f;
+
+    // A corpse on a real floor clears OnFloor in the first death step. Its
+    // next gravity move lands again and the creep snap restores the feet.
+    ArenaSpace::Floor floor;
+    const bool haveFloor = space.floorCrossing(
+        Vec{start[0], start[1], start[2] + 100.0f},
+        Vec{start[0], start[1], start[2] - 100.0f}, &floor);
+    CHECK(haveFloor);
+    if (haveFloor) {
+        Player player;
+        player.feet = Vec3{floor.point.x, floor.point.y, floor.point.z};
+        player.setSpace(&space);
+        player.dead = true;
+        player.onFloor = true;
+
+        player.update(input, delta);
+        CHECK(!player.onFloor);
+        CHECK(fabsf(player.feet.z - floor.point.z) < 1e-4f);
+
+        player.update(input, delta);
+        CHECK(player.onFloor);
+        CHECK(fabsf(player.feet.z - floor.point.z) < 1e-4f);
+    }
+
+    // Falling out of the arena sets OnFloor so the death plays. The oracle's
+    // Fall then repeats that post-move assignment every death step, so the
+    // corpse stays at the death point instead of falling farther.
+    float bottom = 0.0f;
+    CHECK(space.bottom(startPoint, &bottom));
+    if (!space.bottom(startPoint, &bottom)) {
+        return;
+    }
+    Player fallen;
+    fallen.feet = Vec3{start[0], start[1], bottom - 51.0f};
+    fallen.setSpace(&space);
+
+    fallen.update(input, delta);
+    CHECK(fallen.dead);
+    CHECK(fallen.health == 0);
+    CHECK(fallen.onFloor);
+    const float deathZ = fallen.feet.z;
+
+    for (int i = 0; i < 10; i++) {
+        fallen.update(input, delta);
+        CHECK(fallen.onFloor);
+        CHECK(fabsf(fallen.feet.z - deathZ) < 1e-6f);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -3564,6 +3653,10 @@ int main() {
     printf("PASS InheritKurtVelocityAddsScaledKurtVelocity\n");
     testFrontendTickCadenceCopiesLivePlayer(&levelData, &cmi, &bank);
     printf("PASS FrontendTickCadenceCopiesLivePlayer\n");
+    testWrapAnimationFrameIsTheOracleReduction();
+    printf("PASS WrapAnimationFrameIsTheOracleReduction\n");
+    testDeathUsesTheOraclesCompleteFallOperation(&levelData);
+    printf("PASS DeathUsesTheOraclesCompleteFallOperation\n");
     testSpawnAlongPathSpawnsEveryStep(runtime);
     printf("PASS SpawnAlongPathSpawnsEveryStep\n");
     testHeadShotsAddOnlyWhenEnabled(runtime);

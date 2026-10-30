@@ -2553,3 +2553,84 @@ Verification on this tree:
   remains unmeasured. The Pi harness still cannot run the Muse write-disabled
   validator (`muse exec` unavailable until 2026-11-01), so the external loop
   reviewer remains required.
+
+## What this batch did (iteration 31 — review-30: the oracle's complete `Fall` operation)
+
+Review-30's first MAJOR said a Kurt who dies by falling out of the arena freezes
+in mid-air while the oracle's corpse keeps falling, because `updateDeath` skipped
+`fallMove` on the `onFloor` branch. The reasoning that led there was right and the
+conclusion was not, and the difference is one statement.
+
+**The oracle's `Fall` is two things, not one.** `Kurt.cs:491-502` is `FallMove`
+followed by the fall-out test, and that test assigns `Health = 0`,
+`VerticalSpeed = 0f` **and `OnFloor = true`**. The review stopped after the move:
+a zero-length sweep really does report no hit (`Bsp.TestPlane` bails on `den == 0f`),
+and `FallMove` really does execute `OnFloor = false`. But below the arena the
+post-move test then sets `OnFloor` back to true in the same step, so the oracle's
+corpse does not fall away — it is held at the death point by the same assignment
+that the port had moved out of `updateVertical`.
+
+That was checked against the oracle rather than argued. A scratch .NET program
+built against the read-only C# source and the real level data put Kurt 51 units
+below his arena's bottom and stepped him: `state=Dead onFloor=True vertical=0`
+with Z fixed at 52.982224 for 120 further steps.
+
+**The fix is still the faithful one.** `Player::fall` is now the C#'s `Fall` —
+`fallMove` then the 50-unit fall-out test — and `updateVertical`, `updateSpecial`
+and `updateDeath` all call it, as the C# does. The port is now one function that
+matches one oracle function instead of two copies of half of it, so the next
+caller cannot get the wrong half. On a real floor the death step clears `OnFloor`,
+the next gravity step re-lands Kurt and the creep snap restores his feet, which is
+the case the removed comment had reasoned about correctly and over-generalised.
+
+`tests/scripts/vm_tests.cpp` pins both halves: `DeathUsesTheOraclesCompleteFallOperation`
+asserts the alternating `OnFloor` and the unchanged feet height for a corpse on a
+floor, and that a corpse below the arena stays at its death Z across ten steps with
+`OnFloor` true.
+
+**Review-30's MINOR on the R11 pin was correct and is fixed.** The
+`@vfp-exempt R11` pin sat on `wrap()`, which runs at most once per frame and is not
+in a loop, so it suppressed nothing — and AGENTS.md §5 forbids hot-only R-rule pins
+on cold code. The pin is gone and the reduction moved to
+`Player::wrapAnimationFrame`, where it reads as what it is: the C#'s `Wrap`, one
+remainder plus a conditional add, which the review proved equivalent for a positive
+count. `WrapAnimationFrameIsTheOracleReduction` pins positive, negative and
+zero-count behaviour.
+
+**Review-30's NIT on the two stale lines is fixed.** `main.cpp`'s death comment
+still described the early return this batch removed; it now describes the death
+beat. And the iteration-30 narrative reported `mean_delta=0.3895` where the frame
+manifest, the published sidecar and this batch's re-capture all say `0.1819`; the
+`0.3895` was a transcription error in prose, never a gate input, and the
+CONTINUATION now says so instead of repeating it.
+
+**The two 3DS MAJORs are recorded, not fixed, and they are latent.** Both concern
+a Kurt the 3DS frontend does not bind yet (`grep -rn KurtSprite mdk_3ds/src` is
+empty). `Pass::DoubleSided` is a no-op on the Citro3D backend, which sets
+`C3D_CullFace(GPU_CULL_BACK_CCW)` once per frame and never reads
+`draw.material.pass` — and because the sprite mirrors `at.right` for a left
+strafe, the mirrored quad winds the other way and would be culled. Separately,
+eager residency uploads all 360 frames (~49.9 MiB of POT-padded RGBA8 against
+SPEC's 6 MB budget) and the 3DS eviction cannot restore what it evicted. Both are
+in `docs/OPEN_ITEMS.md` with the reviewer's measurements and the fix that does not
+diverge from the oracle's vertex count, and each is its own next batch. The
+narrower `KurtSprite` replacement/failure texture leaks are recorded too.
+
+Verification on this tree:
+
+- `make -C tests/scripts clean && make -C tests/scripts` exited 0 and ended `All
+  cases match the oracle.`; the two new focused cases passed and no movement golden
+  moved, so nothing about where a living Kurt stands changed.
+- `cmake --build build-linux --target mdk -j16` exited 0.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no
+  built CIA, `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009` — the
+  pinned frame is byte-identical, as expected when no renderer path changed.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  exited 0 and built `mdk.3dsx`.
+- `tools/publish_frame.sh review30-fall` published
+  `docs/frames/2026-10-30-review30-fall.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, committed with this batch.
+- No emulator run and no Original 3DS hardware run was performed; Old-3DS timing
+  remains unmeasured. The Pi harness still cannot run the Muse write-disabled
+  validator (`muse exec` unavailable until 2026-11-01), so the external loop
+  reviewer remains required.

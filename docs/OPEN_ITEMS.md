@@ -94,6 +94,33 @@ measured or cited reason, and the batch that closes one should delete its entry.
   every layered/lines draw and always applies view/projection. No reachable
   Overlay mesh path exists today; whoever adds one must mirror the C# exemption.
 
+- Review-30 MAJOR, latent until the 3DS frontend binds Kurt: `Pass::DoubleSided`
+  is a no-op on the 3DS backend. `renderer_c3d.cpp` sets `C3D_CullFace(GPU_CULL_BACK_CCW)`
+  once per frame and never reads `draw.material.pass`, while `KurtSprite::draw`
+  asks for `Pass::DoubleSided` because `at.right = scale(right, pixel * flip)`
+  mirrors the quad for a left strafe — and a mirrored quad winds the other way, so
+  the mirrored Kurt is a back face and is culled. Vulkan honours the pass
+  (`renderer_vk.cpp:690`). Fix in the 3DS backend per draw (GPU_CULL_NONE for
+  DoubleSided, restore BACK_CCW after), NOT by emitting both windings, which would
+  diverge from the oracle's vertex count. `grep -rn KurtSprite mdk_3ds/src` is
+  empty, so this is pre-work for the binding phase, not today's hardware behaviour.
+- Review-30 MAJOR, same reachability caveat: eager Kurt-sprite residency does not
+  fit the 3DS. `load()` uploads every frame of every state animation at level
+  load; the reviewer measured `TRAVSPRT.BNI` as 19 animations / 360 frames, and
+  the 3DS expands each to `GPU_RGBA8` padded to POT, which is ~49.9 MiB against
+  SPEC's 6 MB VRAM budget (K_CHUTEC alone is 12 MiB). Worse, `evictTextures`
+  deletes the `C3D_Tex` and only sets `valid = false`, and nothing re-creates an
+  evicted id because the caller holds an `MdkTextureId` and not the source
+  indices — so the first failed Kurt allocation silently draws an arena surface
+  untextured for the rest of the session. Needs bounded/on-demand residency
+  (the frames of the current state, chute frames lazily) before the binding lands.
+- Review-30 MINOR, narrower than the release-path row above: `loadAnimation`
+  clears `out->frames` on a mid-animation texture failure, and `add()` replaces an
+  already-loaded `Animation`, in both cases without `mdk_render_release_texture`,
+  so those GPU ids are unreachable. The C# does not diverge here — its cache is
+  keyed by `(name, frame)`. No symptom today: the six slide/surf animations are
+  absent from `TRAVSPRT.BNI`, so `add()` never replaces a name.
+
 ## The frame-record directive (closed as an open item, kept as a rule)
 
 Owner directive 2026-10-29 landed mid-iteration 28, written by the other loop

@@ -473,8 +473,8 @@ int main(int argc, char** argv) {
                 }
                 pending -= kStep;
             }
-            // Death: update() froze Kurt (it returns when dead). After the death
-            // beat, respawn him at the start and re-seed the camera.
+            // Death: Player::update stays in updateDeath until the beat ends. The
+            // frontend then respawns him at the start and re-seeds the camera.
             //
             // Scripts keep running during the beat HERE AND IN THE ORACLE: the C#
             // play tick calls _scripts.Update(Step) with no Dead guard

@@ -66,6 +66,10 @@ public:
     bool chuteClosing() const { return _chuteClosing; }
     void setFrameCounts(const FrameCounts& counts) { _frameCounts = counts; }
 
+    // The C# KurtSprite.Wrap, used when a looping animation selects its frame.
+    // It is an exact integer wrap, not a search or an approximate clamp.
+    static int32_t wrapAnimationFrame(int32_t frame, int32_t count);
+
     // The BSP world Kurt moves through. Without it the move is a flat-plane
     // stand-in (used only before the level is loaded).
     void setSpace(ArenaSpace* space) { _space = space; }
@@ -100,6 +104,7 @@ private:
     void updateVertical(const Input& input, const Vec3& move, float delta);
     void updateAir(bool jumpHeld, float delta);
     void glueDownhill(const Vec3& move, float delta);
+    void fall(float delta);
     void fallMove(float delta);
     void land(const Vec3& before, const Vec3& normal, float delta);
     void damage(int damage); // C# Damage (Normal difficulty): health -= damage, floored at 0

@@ -248,7 +248,7 @@ void Player::updateSpecial(float delta) {
     // tick eight while Kurt is still falling.
     _stateTime += delta;
     verticalSpeed = std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
-    fallMove(delta);
+    fall(delta);
     // The C#'s UpdateTouched has no port yet; the fall still runs.
     const float ticks = _animationFrame * (float)kCrashTicksPerFrame;
     float next = ticks + kTicks * delta;
@@ -268,14 +268,14 @@ void Player::updateDeath(float delta) {
     forwardSpeed = 0.0f;
     strafeSpeed = 0.0f;
     verticalSpeed = onFloor ? 0.0f : std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
-    // The C# calls Fall() on either branch. With speed zero the move is a
-    // zero-length fall, which only flips OnFloor back to false for the next
-    // step (the corpse then falls one gravity step and the landing's creep
-    // snap puts it back), so the move is skipped here and the position is the
-    // same. The fall-out death inside Fall() cannot apply: he is on a floor.
-    if (!onFloor) {
-        fallMove(delta);
-    }
+    // The C# calls Fall() on either branch. It is the complete fall operation,
+    // not only FallMove: a zero-length move hits nothing (Bsp.TestPlane bails
+    // when the sweep is degenerate), but the fall-out test still runs after it.
+    // On a real floor this clears OnFloor for the next step; the next gravity
+    // move re-lands Kurt and the creep snap restores his position. Below the
+    // arena the fall-out test sets OnFloor back to true, so the oracle holds
+    // the corpse at the death point. Do not omit the post-move test.
+    fall(delta);
     _stateTime += delta;
     _animationFrame = std::min(_animationFrame + kTicks * delta,
                                (float)(frameCount(Kurt::Dead) - 1));
@@ -312,6 +312,18 @@ int32_t Player::frameCount(Kurt::State state) const {
         return 0;
     }
     return _frameCounts.values[index];
+}
+
+int32_t Player::wrapAnimationFrame(int32_t frame, int32_t count) {
+    // The C#'s Wrap: ((frame % count) + count) % count. For a positive count
+    // the first remainder is already in (-count, count), so adding the count
+    // once when it is negative is the same value with ONE remainder instead of
+    // two. This is straight-line frame selection, not a loop body.
+    if (count <= 0) {
+        return 0;
+    }
+    const int32_t remainder = frame % count;
+    return remainder < 0 ? remainder + count : remainder;
 }
 
 float Player::runRate() const {
@@ -385,20 +397,11 @@ void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
         updateAir(jumpHeld, delta);
     }
 
-    fallMove(delta);
     // UpdateUpdraft is not ported (no fans/wind zones yet). When it lands it
     // also caps upward speed at 40 u/s on leaving an updraft (Kurt.Updraft.cs);
     // today upward speed never exceeds the 40 u/s jump, so the omission is
     // inert -- add the cap with the fan subsystem.
-    // The fall-out death (damp_gravity 0x469efc): 50 below his arena's lowest
-    // point Kurt dies, and counts as on a floor so the death plays. God mode is
-    // not ported.
-    float bottom = 0.0f;
-    if (_space && _space->bottom(toVec(feet), &bottom) && feet.z <= bottom + kFallOutDepth) {
-        health = 0;
-        verticalSpeed = 0.0f;
-        onFloor = true;
-    }
+    fall(delta);
     // health 0 on the floor is death (C# "health 0 --on the floor--> DEAD"). A
     // hard landing lands the same tick and fall-out forces OnFloor, so both die
     // now; a future mid-air damage source would wait for the landing, as in the C#.
@@ -439,6 +442,21 @@ void Player::glueDownhill(const Vec3& move, float delta) {
         verticalSpeed = std::min(verticalSpeed, -downhill / delta);
     }
     verticalSpeed = std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
+}
+
+void Player::fall(float delta) {
+    // C# Kurt.Fall: the fall move first, then the fall-out death (damp_gravity
+    // 0x469efc). Fifty below his arena's lowest point Kurt dies and counts as
+    // on a floor so the death plays. This post-move test is load-bearing in
+    // UpdateDeath too: below the arena it sets OnFloor back to true after the
+    // zero-length move, exactly as the oracle does. God mode is not ported.
+    fallMove(delta);
+    float bottom = 0.0f;
+    if (_space && _space->bottom(toVec(feet), &bottom) && feet.z <= bottom + kFallOutDepth) {
+        health = 0;
+        verticalSpeed = 0.0f;
+        onFloor = true;
+    }
 }
 
 void Player::fallMove(float delta) {
