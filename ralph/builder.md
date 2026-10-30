@@ -56,7 +56,10 @@ of it, and do not re-read history you already have.
   the changed code.
 - **Never weaken a gate, a test or a golden to obtain a pass.** Goldens are
   oracle output; if a golden changes, the new value must come from the
-  oracle, not from your implementation.
+  oracle, not from your implementation. `AGENTS.md`, `SPEC.md`,
+  `SPEC-COMPLETION.md`, `tools/check.sh`, frame-oracle tooling and
+  `tests/frames/reference.sha256` are owner-protected; do not edit them in a
+  normal batch. A needed spec/gate change is a separate owner-authorized task.
 - **Keep `docs/CONTINUATION.md` under ~150 lines**: current state + priority
   order only. Append the batch narrative to `docs/PROGRESS_LOG.md`.
 - **End after one committed batch.** Do not start a second batch in the same
@@ -64,30 +67,34 @@ of it, and do not re-read history you already have.
 
 ## The frame record (owner directive 2026-10-29)
 
-Every batch that changes the picture MUST have a screenshot committed with
-its code, so the commit history shows visual progression, not just a number.
-The pinned frame is level 3, 320x240, seed 1, frame 1. After all gates pass:
+EVERY COMMIT in the loop's output history MUST contain the pinned screenshot
+and measurement sidecar, so history is a visible record revision by revision.
+The pinned frame is level 3, 320x240, seed 1, frame 1. A batch gets exactly
+one commit: finish code and progress docs, run all gates, publish the frame,
+then commit those paths together. Do not split code/docs/frame into commits.
 
 ```
-tools/publish_frame.sh <short-label>     # writes docs/frames/<date>-<label>.png (+ .txt)
-git add docs/frames                      # commit it with the batch
+tools/publish_frame.sh <short-label>     # docs/frames/<date>-<label>.png (+ .txt)
+git add docs/frames                      # include with batch
 ```
 
-The screenshot is the C++ build's picture; the `.txt` records its measured
-gap against the C# oracle. The oracle image itself stays in `/tmp` and is never
-committed (ROM-derived pixels). Never edit a screenshot by hand; see
-`docs/frames/README.md`. The loop enforces this for renderer commits and
-publishes a missing screenshot at the commit boundary.
+The screenshot is the C++ build's picture; `.txt` records its measured gap to
+the C# oracle. The oracle image stays in `/tmp`, never committed. Never edit a
+screenshot by hand; see `docs/frames/README.md`. The external integrity gate
+requires one new image/sidecar pair and forbids modifying older pairs.
 
 ## Gates (run before you commit; all three must pass)
 
 ```
 make -C tests/scripts        # builds + goldens ("All cases match the oracle")
-bash tools/check.sh          # the six contract gates
+bash tools/check.sh          # all contract, parity, frame and integrity gates
 make -C mdk_3ds              # the devkitARM target
 ```
 
-A failing gate is a root-cause bug to fix, not a gate to relax.
+A failing gate is a root-cause bug to fix, not a gate to relax. The loop runs
+`gates_batch_integrity.py --base <previous-HEAD> --head <batch-HEAD>` outside
+your process before dispatching review or starting another batch; failure
+stops the loop. The check also runs inside `tools/check.sh`.
 
 **Emulator runs (mandarine, any GUI harness): run them on the dedicated
 headless display `DISPLAY=:99` — NEVER on the operator's desktop (screen 1).

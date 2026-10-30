@@ -19,6 +19,7 @@
 #   5. gates_core_parity.py     the two targets must link the SAME game
 #   6. gates_smdh.py            the CIA's home-menu identity
 #   7. gates_frames.py          the pinned frame matches its recorded capture
+#   8. gates_batch_integrity.py project contract markers and offline invariants
 #
 # WHAT A "SKIP" IS. gates_smdh has nothing to read until a .cia has been
 # built, so it says SKIPPED and exits 0. gates_frames has nothing to capture
@@ -166,6 +167,18 @@ if grep -q "VERDICT: SKIPPED" "$tmp/frames.log"; then
 else
     record PASS "gates_frames" "every pinned frame is deterministic and unchanged"
 fi
+
+# ---------------------------------------------------------------------------
+# 8. project integrity / drift guard
+# ---------------------------------------------------------------------------
+gate "gates_batch_integrity (project contract markers and offline invariants)"
+$PY tools/runner/gates_batch_integrity.py > "$tmp/integrity.log" 2>&1
+rc=$?
+cat "$tmp/integrity.log"
+if [ $rc -ne 0 ]; then
+    fail "gates_batch_integrity" "project guardrail invariant failed"
+fi
+record PASS "gates_batch_integrity" "project invariants intact"
 
 printf '\n%s' "$SUMMARY"
 printf '\nCHECK: ALL GATES PASSED\n'

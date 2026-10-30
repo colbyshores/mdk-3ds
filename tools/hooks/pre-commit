@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+args=(--staged)
+if [ "${MDK_OWNER_APPROVED:-0}" = "1" ]; then
+    args+=(--owner-approved)
+fi
+python3 tools/runner/gates_batch_integrity.py "${args[@]}"

@@ -114,6 +114,12 @@ fixed.
   is not your call to restyle.
 - **Do not fix anything.** You have no write permission, by design. You
   report; the writer fixes.
+- **Scope / drift guard:** call out any changed acceptance criteria, oracle
+  selection, priority order, gate/test weakening, protected file edit, or
+  unexplained widening of the batch. A batch that changes project contracts
+  without owner approval is BLOCKER; an incomplete handoff/coverage claim is
+  MAJOR. Check the frame pair is new, in-scope, and measured; do not accept a
+  rewritten historical screenshot as progress.
 - **Do not rubber-stamp.** If you find nothing, say what you attacked to
   reach that conclusion. "Looks good" with no attack list is a failed
   review.

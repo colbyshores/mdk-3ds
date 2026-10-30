@@ -10,10 +10,14 @@
 #              read-only by instruction, over each iteration's diff
 #   orchestrator  this script: gates, progress/stall detection, review
 #              dispatch — the worker can never influence them
-# The Muse loop (ralph.sh) stays parked: this script creates
-# logs/ralph/disabled so the crontab watchdog cannot resurrect it into a
-# second writer. Delete that file to resume Muse on Nov 1.
+# The Muse loop (ralph.sh) stays parked: logs/ralph/disabled blocks its
+# watchdog and this script's invariant gate fails closed if it is removed.
+# Delete that file only when intentionally switching back to Muse; never run
+# both writers at once.
 #
+# Each committed batch must include docs/frames/*.png and its .txt measurement;
+# tools/runner/gates_batch_integrity.py enforces --base/--head and --staged
+# boundaries; the published image is produced by tools/publish_frame.sh.
 # Usage:
 #   systemd-run --user --unit=ralph-pi-mdk --property=Restart=on-failure \
 #       --property=RestartSec=120 ./ralph-pi.sh
@@ -67,6 +71,7 @@ REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/minimax-m3.1-flash-nvidia lite
 # 2026-10-27, iteration 13).
 ITER_TIMEOUT="${ITER_TIMEOUT:-7200}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
+REVIEW_FAIL_LIMIT="${REVIEW_FAIL_LIMIT:-2}"
 MAX_ITER="${MAX_ITER:-30}"
 STALL_LIMIT="${STALL_LIMIT:-3}"
 FAIL_LIMIT="${FAIL_LIMIT:-3}"
@@ -146,7 +151,7 @@ guard() {
     local probe_ok=0 m
     for m in $WORKER_MODELS; do
         if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$m" \
-            -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%A %G' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
+            -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%U:%G %a %n' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
             --no-session 2>&1 | grep -q WTEST_OK; then
             probe_ok=1
             echo "ralph-pi: write probe passed on $m" >&2
@@ -174,7 +179,7 @@ RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
 RUN_DIR="$LOGDIR/run-$RUN_ID"
 mkdir -p "$RUN_DIR"
 log "loop start worker_chain=[$WORKER_MODELS] reviewer=$REVIEWER_MODEL reviewer_fallbacks=[$REVIEWER_FALLBACKS] pid=$$ run=$RUN_ID"
-ITER=0; STALL=0; FAILS=0
+ITER=0; STALL=0; FAILS=0; REVIEW_FAILS=0
 while :; do
     # Route health FIRST: a dead route must not consume the iteration cap.
     RUN_MODEL=""
@@ -208,6 +213,12 @@ while :; do
         PREVG="$(state_get LAST_GATES)"
         [ -n "$PREVG" ] && [ "$PREVG" != "PASS" ] && echo "- WARNING: previous iteration left gates $PREVG — root-cause them before new work."
     } >"$RUN_DIR/.prompt-$ITER.md"
+    if ! sudo -n -H -u piagent python3 "$ROOT/tools/runner/gates_batch_integrity.py" \
+            >"$RUN_DIR/invariants-$ITER.log" 2>&1; then
+        log "iter=$ITER PROJECT INVARIANTS FAILED before worker; stopping (see $RUN_DIR/invariants-$ITER.log)"
+        cat "$RUN_DIR/invariants-$ITER.log" >>"$SUMMARY"
+        exit 6
+    fi
     log "iter=$ITER start worker=$RUN_MODEL"
     pi_run "$RUN_MODEL" "$RUN_DIR/.prompt-$ITER.md" "$ILOG" "$ILOG.err"
     RC=$?
@@ -231,6 +242,16 @@ while :; do
     log "iter=$ITER worker rc=$RC session-log=$ILOG"
 
     HEAD_AFTER="$(git -C "$ROOT" rev-parse HEAD)"
+    if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
+        if ! sudo -n -H -u piagent python3 "$ROOT/tools/runner/gates_batch_integrity.py" \
+                --base "$HEAD_BEFORE" --head "$HEAD_AFTER" \
+                >"$RUN_DIR/integrity-$ITER.log" 2>&1; then
+            log "iter=$ITER INTEGRITY GUARD FAILED; stopping before next batch (see $RUN_DIR/integrity-$ITER.log)"
+            cat "$RUN_DIR/integrity-$ITER.log" >>"$SUMMARY"
+            exit 6
+        fi
+        log "iter=$ITER integrity guard PASS"
+    fi
 
     # Review FIRST, in the background, WHILE the mechanical gates run: the
     # review is model work on a FIXED commit range and the gates only build,
@@ -285,10 +306,13 @@ while :; do
         if [ "$RRC" -ne 0 ] || [ ! -s "$RUN_DIR/review-$ITER.md" ]; then
             echo "REVIEWER FAILED model=$REVIEW_MODEL rc=$RRC" >>"$RUN_DIR/review-$ITER.md"
             log "iter=$ITER REVIEWER FAILED rc=$RRC (recorded, not silently skipped)"
+            REVIEW_FAILS=$((REVIEW_FAILS+1))
         else
             log "iter=$ITER reviewed by $REVIEW_MODEL -> $RUN_DIR/review-$ITER.md"
+            REVIEW_FAILS=0
         fi
         STALL=0
+        [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
     else
         STALL=$((STALL+1))
         log "iter=$ITER no commit — stall_count=$STALL"

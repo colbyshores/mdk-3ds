@@ -12,8 +12,7 @@
 #   MDK_DATA_DIR   the game data (default: <repo>/MDK)
 #   MDK_FRAME_LEVEL / MDK_FRAME_SIZE / MDK_FRAME_SEED / MDK_FRAME_CAPTURE
 #                  the pinned scene: level 3, 320x240, seed 1, frame 1
-#   VK_ICD_FILENAMES   set this to the lavapipe ICD to render headless on a
-#                  machine with no GPU (e.g. /usr/share/vulkan/icd.d/lvp_icd.json)
+#   VK_ICD_FILENAMES   set this to the Vulkan ICD to render headless
 set -uo pipefail
 OUT=${1:?usage: capture_cpp.sh <out.bmp>}
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -23,12 +22,10 @@ if [ ! -x "$ROOT/build-linux/mdk" ]; then
     exit 1
 fi
 
-# AGENTS.md P7: a graphics run never lands on the operator's display, and the
-# display is named EXPLICITLY -- never inherited from the session, which is
-# the operator's (DISPLAY=:1 here). The headless backend opens no window, but
-# an inherited DISPLAY is how a run ends up on the wrong screen, and the
-# evidence has to record the display it used.
 export DISPLAY=:99
+if [ -z "${VK_ICD_FILENAMES:-}" ] && [ -f /usr/share/vulkan/icd.d/lvp_icd.json ]; then
+    export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+fi
 
 exec env \
     MDK_DATA_DIR="${MDK_DATA_DIR:-$ROOT/MDK}" \
