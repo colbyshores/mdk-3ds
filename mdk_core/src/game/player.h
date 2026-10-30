@@ -66,8 +66,9 @@ public:
     bool chuteClosing() const { return _chuteClosing; }
     void setFrameCounts(const FrameCounts& counts) { _frameCounts = counts; }
 
-    // The C# KurtSprite.Wrap, used when a looping animation selects its frame.
-    // It is an exact integer wrap, not a search or an approximate clamp.
+    // The C# Kurt.Wrap (Kurt.cs:712), also copied inline by KurtSprite.Pick
+    // (KurtSprite.cs:325). It is an exact integer wrap, not a search or an
+    // approximate clamp.
     static int32_t wrapAnimationFrame(int32_t frame, int32_t count);
 
     // The BSP world Kurt moves through. Without it the move is a flat-plane

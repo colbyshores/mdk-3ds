@@ -1209,7 +1209,26 @@ void mdk_render_release(MdkRenderer r, MdkScope s) { (void)r; (void)s; }
     // respect, and it is recorded rather than hidden.
     const int32_t first = draw->first_vertex;
     const int32_t count = draw->vertex_count;
+
+    // THE PASS'S CULLING, PER DRAW.
+    //
+    // The Vulkan backend culls only Pass::Solid (renderer_vk.cpp's pipeline
+    // builder) and leaves every other pass -- DoubleSided, Mirror, Blended,
+    // OnTop -- uncullable. This backend has one pipeline, so the state is
+    // set here, explicitly, for the draw that asks for it.
+    //
+    // Pass::DoubleSided is LOAD-BEARING for Kurt's sprite: the quad mirrors
+    // `at.right` for a left-facing view, and that mirror reverses the
+    // winding. With the frame's BACK_CCW default the mirrored sprite is a
+    // back face and vanishes. The oracle's material says DoubleSided for
+    // exactly this reason; do not "fix" it by emitting both windings, which
+    // would double the sprite's vertex count.
+    const bool solid = draw->material.pass == mdk::Pass::Solid;
+    C3D_CullFace(solid ? GPU_CULL_BACK_CCW : GPU_CULL_NONE);
     C3D_DrawArrays(GPU_TRIANGLES, first, count);
+    // Restore the frame's default for the next draw, so every draw starts
+    // from the state begin_frame installed.
+    C3D_CullFace(GPU_CULL_BACK_CCW);
 }
 
 // ---------------------------------------------------------------------------

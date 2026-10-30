@@ -94,16 +94,6 @@ measured or cited reason, and the batch that closes one should delete its entry.
   every layered/lines draw and always applies view/projection. No reachable
   Overlay mesh path exists today; whoever adds one must mirror the C# exemption.
 
-- Review-30 MAJOR, latent until the 3DS frontend binds Kurt: `Pass::DoubleSided`
-  is a no-op on the 3DS backend. `renderer_c3d.cpp` sets `C3D_CullFace(GPU_CULL_BACK_CCW)`
-  once per frame and never reads `draw.material.pass`, while `KurtSprite::draw`
-  asks for `Pass::DoubleSided` because `at.right = scale(right, pixel * flip)`
-  mirrors the quad for a left strafe — and a mirrored quad winds the other way, so
-  the mirrored Kurt is a back face and is culled. Vulkan honours the pass
-  (`renderer_vk.cpp:690`). Fix in the 3DS backend per draw (GPU_CULL_NONE for
-  DoubleSided, restore BACK_CCW after), NOT by emitting both windings, which would
-  diverge from the oracle's vertex count. `grep -rn KurtSprite mdk_3ds/src` is
-  empty, so this is pre-work for the binding phase, not today's hardware behaviour.
 - Review-30 MAJOR, same reachability caveat: eager Kurt-sprite residency does not
   fit the 3DS. `load()` uploads every frame of every state animation at level
   load; the reviewer measured `TRAVSPRT.BNI` as 19 animations / 360 frames, and

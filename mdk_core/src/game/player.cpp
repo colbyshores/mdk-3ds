@@ -131,8 +131,10 @@ void Player::update(const Input& input, float delta) {
     // death branch.
     _chuteClosing = false;
     if (dead) {
-        // The C# UpdateDeath keeps the corpse falling until it lands, then
-        // advances only the death animation.
+        // The C# UpdateDeath advances the death beat. Fall keeps a corpse that
+        // fell out of the arena at its death point (the post-move fall-out
+        // assignment), and a corpse on a floor alternates OnFloor as the
+        // oracle's Fall does.
         updateDeath(delta);
         return;
     }

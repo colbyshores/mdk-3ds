@@ -2634,3 +2634,58 @@ Verification on this tree:
   remains unmeasured. The Pi harness still cannot run the Muse write-disabled
   validator (`muse exec` unavailable until 2026-11-01), so the external loop
   reviewer remains required.
+
+## What this batch did (iteration 32 — review-30's Citro3D pass culling)
+
+Review-30's second MAJOR was real even though the 3DS frontend does not bind
+Kurt yet: `renderer_c3d.cpp` installed `GPU_CULL_BACK_CCW` once per frame and
+never read `draw.material.pass`. The Vulkan backend culls only `Pass::Solid`, but
+the Citro3D backend made every mesh subject to the same rule. That is wrong for
+Kurt's sprite: the C# marks it `Pass::DoubleSided` because `at.right` mirrors
+the quad for a left-facing view, and the mirror reverses the winding. The
+mirrored sprite was therefore a back face under the frame default and vanished.
+
+The Citro3D draw path now sets culling explicitly for each draw, matching the
+Vulkan pipeline rule: `Pass::Solid` uses `GPU_CULL_BACK_CCW`; DoubleSided,
+Mirror, Blended and OnTop use `GPU_CULL_NONE`. The backend restores
+`GPU_CULL_BACK_CCW` after the draw. No duplicate winding or vertex was added, so
+the oracle's geometry and vertex count are unchanged. The frame's initial
+`GPU_CULL_BACK_CCW` remains as the explicit default and covers the diagnostic
+triangle.
+
+This closes review-30's `Pass::DoubleSided` MAJOR. It is still **not a hardware
+result**: the code compiles for devkitARM, but no emulator or Original 3DS run
+was performed, and the 3DS frontend still has no Kurt binding. The next
+renderer slice is the separate texture-residency MAJOR: eager sprite residency
+is ~49.9 MiB of POT-padded RGBA8 against the 6 MB budget, and the current 3DS
+eviction destroys a texture without retaining enough source to restore it.
+
+The latest external review also corrected the previous batch's narrative. Its
+linked old/new probes showed the corpse's position was bit-identical before and
+after the `Fall` refactor in both the floor and fall-out cases; only `OnFloor`
+parity differed. Review-30's mid-air-hang MAJOR was therefore void, not fixed.
+The current continuation and code comments now say that precisely. The review's
+two small polish findings are also applied: `wrapAnimationFrame` cites
+`Kurt.Wrap` (`Kurt.cs:712`) and the inline copy in `KurtSprite.Pick`
+(`KurtSprite.cs:325`), rather than a nonexistent `KurtSprite.Wrap`, and the
+floor-death test's Kurt now starts with health zero. These are comment/test
+polish; they do not change runtime behaviour.
+
+Verification on this tree:
+
+- `make -C tests/scripts clean && make -C tests/scripts -j4` exited 0 and ended `All
+  cases match the oracle.`; `DeathUsesTheOraclesCompleteFallOperation` and the
+  other focused VM cases passed, and no movement golden moved.
+- `cmake --build build-linux --target mdk -j16` exited 0.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no
+  built CIA, and `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j4`
+  exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
+- `tools/publish_frame.sh c3d-pass-culling` published
+  `docs/frames/2026-10-30-c3d-pass-culling.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`. The PNG is byte-identical
+  to the previous C++ frame, as expected because the changed renderer is the
+  3DS backend and the pinned capture is Linux/Vulkan.
+- No emulator run and no Original 3DS hardware run was performed; Old-3DS timing
+  remains unmeasured, and the new culling state is compile-verified but not
+  hardware-verified.

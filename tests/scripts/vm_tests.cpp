@@ -3529,6 +3529,7 @@ void testDeathUsesTheOraclesCompleteFallOperation(LevelData* levelData) {
         Player player;
         player.feet = Vec3{floor.point.x, floor.point.y, floor.point.z};
         player.setSpace(&space);
+        player.setHealth(0);
         player.dead = true;
         player.onFloor = true;
 
