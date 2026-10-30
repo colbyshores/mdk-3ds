@@ -62,6 +62,23 @@ of it, and do not re-read history you already have.
 - **End after one committed batch.** Do not start a second batch in the same
   iteration.
 
+## The frame record (owner directive 2026-10-29)
+
+Any batch that changes what the renderer draws MUST publish the pinned frame
+and commit it WITH the batch, so the commit history is a visual record of
+progress toward the original look:
+
+```
+tools/publish_frame.sh <short-label>     # writes docs/frames/<date>-<label>.png (+ .txt)
+git add docs/frames                      # commit it with the batch
+```
+
+Publish AFTER the gates (the frame must come from a consistent build) and
+state the measured gap movement in the commit message when it changes. Never
+edit a published frame by hand; `docs/frames/README.md` has the rules. The
+loop publishes one itself if a renderer batch forgets, so a miss costs
+nothing but the warning it logs.
+
 ## Gates (run before you commit; all three must pass)
 
 ```
