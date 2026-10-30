@@ -118,6 +118,7 @@ set(SOURCES
     ${CORE}/src/game/follow_camera.cpp
     ${CORE}/src/game/hud_view.cpp
     ${CORE}/src/game/kurt.cpp
+    ${CORE}/src/game/kurt_sprite.cpp
     ${CORE}/src/game/level_data.cpp
     ${CORE}/src/game/level_view.cpp
     ${CORE}/src/game/player.cpp

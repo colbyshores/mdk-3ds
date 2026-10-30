@@ -28,6 +28,7 @@
 #include "game/level_view.h"
 #include "game/follow_camera.h"
 #include "game/hud_view.h"
+#include "game/kurt_sprite.h"
 #include "game/player.h"
 #include "game/input.h"
 #include "game/arena_space.h"
@@ -193,10 +194,12 @@ int main(int argc, char** argv) {
     mdk::LevelData level;
     mdk::LevelView view;
     mdk::HudView hud;
+    mdk::KurtSprite kurtSprite;
     mdk::formats::Cmi cmi;
     mdk::audio::SoundBank bank;
     bool scriptAssetsReady = false;
     bool hudReady = false;
+    bool kurtSpriteReady = false;
     const mdk::formats::Arena* arena = nullptr;
     if (data.found()) {
         std::printf("[main] data: %s\n", data.dir().c_str());
@@ -254,17 +257,37 @@ int main(int argc, char** argv) {
                                 level.dti().skyHorizonRow(), level.dti().skyOffset(),
                                 level.dti().skyTopColor(), level.dti().skyBottomColor());
 
-                    // The HUD sprites (C# Viewer: TRAVERSE/TRAVSPRT.BNI),
-                    // indexed through the level's palette like the C# HudView.
+                    // The HUD and Kurt's sprites (C# Viewer:
+                    // TRAVERSE/TRAVSPRT.BNI), indexed through the level's
+                    // palette like the C# HudView and KurtSprite.
                     std::vector<uint8_t> spriteBytes;
                     mdk::formats::Bni sprites;
                     if (data.read("TRAVERSE/TRAVSPRT.BNI", &spriteBytes) &&
-                        mdk::formats::Bni::parse(&sprites, std::move(spriteBytes)) &&
-                        hud.load(renderer, sprites, level.dti().palette())) {
-                        hudReady = true;
-                        std::printf("[main] hud: loaded\n");
+                        mdk::formats::Bni::parse(&sprites, std::move(spriteBytes))) {
+                        if (hud.load(renderer, sprites, level.dti().palette())) {
+                            hudReady = true;
+                            std::printf("[main] hud: loaded\n");
+                        } else {
+                            std::printf("[main] hud: FAILED\n");
+                        }
+                        if (kurtSprite.load(renderer, sprites, level.dti().palette())) {
+                            kurtSpriteReady = true;
+                            // The level's SNI archives carry the slide and
+                            // snowboard frames (C# Viewer: KurtSprite.Add over
+                            // SoundBank.Animation).
+                            for (int i = 0; i < mdk::KurtSprite::levelAnimationCount(); i++) {
+                                const char* name = mdk::KurtSprite::levelAnimationName(i);
+                                mdk::formats::SpriteAnimation animation;
+                                if (bank.animation(name, &animation)) {
+                                    kurtSprite.add(renderer, name, animation);
+                                }
+                            }
+                            std::printf("[main] kurt sprite: loaded\n");
+                        } else {
+                            std::printf("[main] kurt sprite: FAILED\n");
+                        }
                     } else {
-                        std::printf("[main] hud: FAILED\n");
+                        std::printf("[main] sprites: FAILED\n");
                     }
                 } else {
                     std::printf("[main] view: FAILED\n");
@@ -310,6 +333,9 @@ int main(int argc, char** argv) {
             player.yaw = level.dti().startAngle();
         }
         player.setSpace(&space);
+        if (kurtSpriteReady) {
+            player.setFrameCounts(kurtSprite.frameCounts());
+        }
         follow = mdk::FollowCamera();
         // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
         // scripts' current arena). Until the scripts land it is set once here, so
@@ -484,6 +510,12 @@ int main(int argc, char** argv) {
         mdk_render_begin_frame(renderer, &params);
         if (arena) {
             view.draw();
+        }
+        if (kurtSpriteReady && playerReady) {
+            // C# Viewer.DrawScene draws Kurt after the level, objects and
+            // effects, and before the HUD.
+            kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
+                            camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
         if (hudReady) {
             // The health, skull and its fade are Kurt's now. The C# starts with

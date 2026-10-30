@@ -7,11 +7,12 @@
 //
 // A port of the Hurt/Damage half of src/Mdk.Game/Kurt/Kurt.Combat.cs and the
 // slot, ammo and super-chain-gun state of src/Mdk.Game/Kurt/Inventory.cs. The
-// movement state machine, the pickup collection, and the sniper/chain-gun
-// combat are later slices: until they land, State stays Still and the slots,
-// ammo and super-chain-gun timer stay empty — which is exactly what the C#
-// reads in a world where Kurt never moves and never collects (the headless
-// oracle ticks no Kurt.Update, so nothing else writes this state).
+// movement state machine now lives in game/player.h (the C#'s Kurt is one
+// class; this port splits the movement half from the combat half), and the
+// pickup collection and the sniper/chain-gun combat are later slices: until
+// they land, the slots, ammo and super-chain-gun timer stay empty — which is
+// exactly what the C# reads in a world where Kurt never collects (the
+// headless oracle ticks no Kurt.Update, so nothing else writes this state).
 //
 // The addresses are the original's: health 0x574324, the invulnerability
 // 0x573bd4, the knock damage 0x573b20, the slots 0x57432c, the super-chain-

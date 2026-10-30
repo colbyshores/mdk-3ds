@@ -207,6 +207,24 @@ bool ArenaSpace::crosses(Vec from, Vec to) {
     return own->segment(from, to, Bsp::kSegmentAny, &point) != Bsp::kNone;
 }
 
+bool ArenaSpace::floorCrossing(Vec from, Vec to, Floor* out) {
+    if (!out) {
+        return false;
+    }
+    for (Bsp* bsp : *kurts(from)) {
+        Vec point;
+        const int triangle = bsp->segment(from, to, Bsp::kSegmentFloor, &point);
+        if (triangle == Bsp::kNone) {
+            continue;
+        }
+        const formats::BspNode& plane = bsp->planeOf(triangle);
+        out->point = point;
+        out->normal = Vec{plane.normal[0], plane.normal[1], plane.normal[2]};
+        return true;
+    }
+    return false;
+}
+
 const std::string* ArenaSpace::arenaAt(Vec point) const {
     const Entry* e = firstEntry(point);
     return e ? &e->arena->name() : nullptr;

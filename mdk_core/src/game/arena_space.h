@@ -48,6 +48,13 @@ public:
         }
     };
 
+    // An up-facing surface crossed by a segment: where it was crossed and
+    // the plane's normal (C# ArenaSpace.Surface).
+    struct Floor {
+        Vec point;
+        Vec normal;
+    };
+
     // Adds an arena once (a teleport may add one no connection leads to).
     void add(const formats::Arena* arena);
 
@@ -75,6 +82,11 @@ public:
 
     // Whether the segment crosses a face of Kurt's arena (C# ArenaSpace.Crosses).
     bool crosses(Vec from, Vec to);
+
+    // The first up-facing face a segment crosses in Kurt's arena, then the
+    // second (C# ArenaSpace.FloorCrossing). Writes the crossing point and
+    // the face's normal when one is found.
+    bool floorCrossing(Vec from, Vec to, Floor* out);
 
     // The name of the arena around a point, or null.
     const std::string* arenaAt(Vec point) const;

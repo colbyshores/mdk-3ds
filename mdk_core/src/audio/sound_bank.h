@@ -61,6 +61,10 @@ public:
     // name the archives do not carry gets nothing.
     bool get(const std::string& name, Entry* out);
 
+    // A sprite animation stored with the sounds (the snowboard's K_SURF), or
+    // false. Later archives win, exactly as the C# SoundBank.Animation does.
+    bool animation(const std::string& name, formats::SpriteAnimation* out);
+
     // Convert every sound of the archives now (a level's load: none while
     // playing). Here that means reading every WAV header.
     void preload();

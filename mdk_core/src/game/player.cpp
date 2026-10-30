@@ -31,6 +31,13 @@ const float kTurnFrictionFast = 1.6f * kTicks * kTicks;   // 1440 deg/s^2
 const float kTurnFrictionSlow = 0.55f * kTicks * kTicks;  // 495 deg/s^2
 const float kMouseDegrees = 0.15f;                        // degrees per mouse count
 
+// The C# Kurt state machine's constants (Kurt.cs:81-88).
+const float kIdleDelay = 6.0f;
+const float kMovingSpeed = 1.0f;
+const float kTurnFrameDegrees = 45.0f;
+const int kCrashTicksPerFrame = 2;
+const int kCrashHoldTick = 8;
+
 const float kGravity = 64.0f;
 const float kMaxFallSpeed = 250.0f;
 const float kJumpSpeed = 40.0f;
@@ -120,9 +127,22 @@ void Player::addKnockdownPush(const Vec2& push) {
 }
 
 void Player::update(const Input& input, float delta) {
+    // C# Kurt.Update clears ChuteClosing before every branch, including the
+    // death branch.
+    _chuteClosing = false;
     if (dead) {
-        return; // C# Kurt.Update returns on State.Dead: a dead Kurt is frozen.
+        // The C# UpdateDeath keeps the corpse falling until it lands, then
+        // advances only the death animation.
+        updateDeath(delta);
+        return;
     }
+    if (_state == Kurt::HardLand) {
+        // A hard landing owns the step until K_CRASHL is done (C#
+        // UpdateSpecial). It also stops the ordinary walk state machine.
+        updateSpecial(delta);
+        return;
+    }
+
     const bool turbo = input.isDown(kKeyTurbo);
 
     // The C# UpdateTurning (the mouse term is applied per frame in mouseLook).
@@ -162,6 +182,142 @@ void Player::update(const Input& input, float delta) {
     }
 
     updateVertical(input, move, delta);
+    // C# Kurt.Update returns after a hard landing, before UpdateState. The
+    // landing set the state, and the next step runs UpdateSpecial instead.
+    if (_state == Kurt::HardLand) {
+        return;
+    }
+    updateState(forward, strafe, delta);
+}
+
+void Player::updateState(float forward, float strafe, float delta) {
+    _stateTime += delta;
+
+    // C# UpdateCombatState: health zero on a floor is the death state. The
+    // combat knock-down, get-up and throw states are separate deferred
+    // subsystems and cannot be entered by this movement-only Player.
+    if (health == 0 && onFloor) {
+        setState(Kurt::Dead);
+        return;
+    }
+
+    // The C# has no missing-animation guard: a missing animation has count 0,
+    // so `done` is `AnimationFrame >= -1`. A missing animation is a broken
+    // archive, not a state; the comparison is kept exactly as the oracle's.
+    const bool done = _animationFrame >= (float)(frameCount(_state) - 1);
+    if (!onFloor) {
+        if (chuteOpen) {
+            setState(Kurt::Chute);
+        } else if (_state == Kurt::Chute) {
+            // The closing frame is shown once, then the fall starts.
+            _chuteClosing = true;
+            setState(Kurt::Fall);
+            return;
+        } else if (verticalSpeed > 0.0f &&
+                   _state != Kurt::Jump && _state != Kurt::RunJump && _state != Kurt::Fall) {
+            setState(std::fabs(forwardSpeed) > kMovingSpeed ? Kurt::RunJump : Kurt::Jump);
+        } else if (verticalSpeed < kFallStartSpeed &&
+                   ((_state != Kurt::Jump && _state != Kurt::RunJump) || done)) {
+            setState(Kurt::Fall);
+        }
+    } else if (_state == Kurt::Jump || _state == Kurt::RunJump || _state == Kurt::Fall ||
+               _state == Kurt::Chute) {
+        setState(Kurt::Land);
+    } else if (_state == Kurt::Land && !done && forward == 0.0f && strafe == 0.0f) {
+        // The landing animation keeps running while he stands still.
+    } else if (forward != 0.0f || std::fabs(forwardSpeed) > kMovingSpeed) {
+        setState(Kurt::Run);
+    } else if (strafe != 0.0f || std::fabs(strafeSpeed) > kMovingSpeed) {
+        setState(Kurt::Side);
+    } else if (std::fabs(turnRate) > kMovingSpeed) {
+        setState(Kurt::Turn);
+    } else if (_state == Kurt::Idle && !done) {
+        // The idle animation keeps running.
+    } else if (_state == Kurt::Still && _stateTime > kIdleDelay) {
+        setState(Kurt::Idle);
+    } else if (_state != Kurt::Still) {
+        setState(Kurt::Still);
+    }
+
+    animate(delta);
+}
+
+void Player::updateSpecial(float delta) {
+    // C# Kurt.UpdateSpecial for K_CRASHL: gravity and the fall continue, and
+    // the animation advances at two original ticks per frame. It is held at
+    // tick eight while Kurt is still falling.
+    _stateTime += delta;
+    verticalSpeed = std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
+    fallMove(delta);
+    // The C#'s UpdateTouched has no port yet; the fall still runs.
+    const float ticks = _animationFrame * (float)kCrashTicksPerFrame;
+    float next = ticks + kTicks * delta;
+    if (ticks <= (float)kCrashHoldTick && next >= (float)kCrashHoldTick && !onFloor &&
+        verticalSpeed <= 0.0f && !chuteOpen) {
+        next = (float)kCrashHoldTick;
+    }
+    _animationFrame = next / (float)kCrashTicksPerFrame;
+    // The C# compares against the frame count with no guard: a missing
+    // K_CRASHL (count 0) leaves the hard landing at once.
+    if (_animationFrame >= (float)frameCount(Kurt::HardLand)) {
+        setState(Kurt::Still);
+    }
+}
+
+void Player::updateDeath(float delta) {
+    forwardSpeed = 0.0f;
+    strafeSpeed = 0.0f;
+    verticalSpeed = onFloor ? 0.0f : std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
+    // The C# calls Fall() on either branch. With speed zero the move is a
+    // zero-length fall, which only flips OnFloor back to false for the next
+    // step (the corpse then falls one gravity step and the landing's creep
+    // snap puts it back), so the move is skipped here and the position is the
+    // same. The fall-out death inside Fall() cannot apply: he is on a floor.
+    if (!onFloor) {
+        fallMove(delta);
+    }
+    _stateTime += delta;
+    _animationFrame = std::min(_animationFrame + kTicks * delta,
+                               (float)(frameCount(Kurt::Dead) - 1));
+}
+
+void Player::animate(float delta) {
+    if (_state == Kurt::Run || _state == Kurt::RunFire) {
+        const int32_t count = frameCount(_state);
+        if (count <= 0) {
+            return;
+        }
+        _animationFrame += runRate() * kTicks * delta;
+    } else if (_state == Kurt::Turn) {
+        // No guard: a missing K_TRN45 leaves the frame at zero, as the C#'s
+        // multiply by frameCount(Turn) == 0 does.
+        _animationFrame = yaw / kTurnFrameDegrees * (float)frameCount(Kurt::Turn);
+    } else {
+        _animationFrame += kTicks * delta;
+    }
+}
+
+void Player::setState(Kurt::State state) {
+    if (state == _state && _stateTime > 0.0f) {
+        return;
+    }
+    _state = state;
+    _stateTime = 0.0f;
+    _animationFrame = 0.0f;
+}
+
+int32_t Player::frameCount(Kurt::State state) const {
+    const int index = (int)state;
+    if (index < 0 || index >= kStateCount) {
+        return 0;
+    }
+    return _frameCounts.values[index];
+}
+
+float Player::runRate() const {
+    const float u = std::fabs(forwardSpeed) / kTicks * 1.5f;
+    const float rate = u <= 1.0f ? 0.75f * u + 0.25f : 0.25f * u + 0.75f;
+    return forwardSpeed < 0.0f ? -rate : rate;
 }
 
 void Player::mouseLook(Input& input) {
@@ -329,12 +485,16 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
     // load-bearing for position: a hard landing must NOT snap to `before`, or
     // Kurt is left floating just above the floor with onFloor set.
     if (verticalSpeed < kHardLandingSpeed) {
-        // C# HardLanding(): 10 damage (no knock-down). The K_CRASHL animation and
-        // the HardLand state are not ported; only the damage matters here. The
-        // damage can bring health to 0, and this landing sets OnFloor, so the
-        // death check in updateVertical fires the same tick.
+        // C# HardLanding(): 10 damage, then K_CRASHL unless the damage killed
+        // Kurt. The hard-landing state owns the next steps, so the ordinary
+        // walk state machine cannot replace it on this tick.
         if (health > 0) {
             damage(kHardLandingDamage);
+        }
+        if (health > 0 && _state != Kurt::Dead && _state != Kurt::Knocked &&
+            _state != Kurt::GetUp) {
+            chuteOpen = false;
+            setState(Kurt::HardLand);
         }
     } else {
         const float creep = kCreepSpeed * delta;

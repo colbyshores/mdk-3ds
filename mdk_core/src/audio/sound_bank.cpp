@@ -79,6 +79,19 @@ void SoundBank::preload() {
     }
 }
 
+bool SoundBank::animation(const std::string& name, formats::SpriteAnimation* out) {
+    if (!out) {
+        return false;
+    }
+    // Newest archive first, exactly as the C# SoundBank.Animation does.
+    for (int i = (int)archives_.size() - 1; i >= 0; i--) {
+        if (archives_[(size_t)i].animation(name, out)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Newest archive first, as the C#'s `for (var i = archives.Count - 1; ...)`.
 // An entry of that name that is not a sound is skipped and the search continues
 // in the older archives — it does not end the lookup. The winning entry is found
