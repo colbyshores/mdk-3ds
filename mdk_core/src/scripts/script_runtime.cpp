@@ -440,9 +440,8 @@ void ScriptRuntime::runTick() {
                 if ((obj->flags & MdkObject::FlagRolling) != 0) {
                     obj->update_rolling();
                 }
-                // Bank (ObjectMotion.cs:145) is NOT ported: the port never writes
-                // roll from motion, which is also why the transform golden is
-                // pinned at tick 1 only (OPEN_ITEMS.md).
+                // Bank (ObjectMotion.cs:145), between Roll and PreviousPosition.
+                motionBank(obj);
                 obj->previous_position = obj->position;
             }
         }
@@ -849,6 +848,35 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
 // and a landed/non-gravity pickup not in the Still list spins in place. The chute
 // deploy (velocity.Z below PickupChuteSpeed, unreachable until ~tick 14 at gravity 32),
 // the Runner, and the Collected shrink are later slices.
+// ObjectMotion.Bank (0x43b65c): an object leans into its turn. The turn counted is
+// the yaw change since the LAST call, at most 2 degrees of it per tick; the roll is
+// the old roll minus that turn, damped by 0.95 and kept inside +/-10 degrees.
+//
+// Two details a rewrite loses:
+//   * BankingYaw is written BEFORE the flag test, so an object that never banks
+//     still tracks its own yaw. Writing it only for a banking object would make the
+//     first tick after set_banking 1 count every degree turned while it was
+//     flagged, and lean over by the whole of it.
+//   * The roll is wrapped before the subtraction, so a roll that some other writer
+//     left outside +/-180 comes back through the short way round.
+void ScriptRuntime::motionBank(MdkObject* obj) {
+    const float kMaxTurn = 2.0f;   // degrees per tick
+    const float kMaxRoll = 10.0f;  // degrees
+    const float kDamping = 0.95f;
+    const int32_t kNoRoll = 1;     // the C#'s unnamed flag 1
+    const float kTicks = 1.0f;     // ObjectMotion.Ticks: one tick, in ticks
+    // The clamps are float predicates on a gameplay angle, not a loop bound and not
+    // a lattice index: R2/R3/T2 have nothing to bite on here, and the same idiom
+    // (clampf) is what the walk step and the turn step already use.
+    const float turn = clampf(wrapAngle(obj->yaw - obj->banking_yaw) / kTicks, -kMaxTurn, kMaxTurn);
+    obj->banking_yaw = obj->yaw;
+    if ((obj->flags & (MdkObject::FlagNoBanking | kNoRoll | MdkObject::FlagRolling)) != 0 ||
+        obj->thrown_kind > 0) {
+        return;
+    }
+    obj->roll = clampf((wrapAngle(obj->roll) - turn) * kDamping, -kMaxRoll, kMaxRoll);
+}
+
 void ScriptRuntime::motionPickup(MdkObject* obj) {
     const float kPickupHover = 1.5f;
     const float kPickupTurnSpeed = 180.0f;

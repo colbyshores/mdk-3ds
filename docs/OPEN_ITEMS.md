@@ -32,21 +32,31 @@ measured or cited reason, and the batch that closes one should delete its entry.
 
 ## Known divergences from the C#
 
-- **`ObjectMotion.Bank` is not ported, so the port never writes `MdkObject::roll`
-  from motion.** The C#'s automatic banking (`ObjectMotion.cs:749-763`:
-  `roll = clamp((wrap(roll) - turn) * 0.95, -10, 10)` with the turn clamped to
-  2°/tick, skipped under flag 0x80 / 0x1 / 0x40 or while thrown) is the only
-  writer of roll for a walking alien, and the port has no `Bank` at all — the
-  only writers are the script VM's turn opcodes. Measured at level 3: the
-  oracle's XF has `roll=-6.3411` at t120 and `9.0251` at t1200 where the port
-  has `0.0000`; seven objects differ by t15. The object-table golden does not
-  contain roll, which is why this was invisible until the object-pose golden
-  landed. That is also why `golden/L3_tN_transform.txt` is pinned at t1 only:
-  every multi-tick transform turns by a roll the port does not have. The pose
-  goldens are unaffected (roll is not a pose input) and pass at t1/t120/t1200. It is
-  also why `golden/L3_t1_blend.txt` is pinned at t1: measured at t2, every
-  interpolated place and yaw line matches the oracle bit for bit and the 28
-  differing transforms differ only in rows 2 and 3 — the roll-driven ones.
+- **`FrameBlend.Lerp` is `Vector3.Lerp`, and this port does not reproduce its
+  rounding for every input.** `game/frame_blend.cpp::lerp` writes
+  `from + (to - from) * t`; the oracle's `Vector3.Lerp` is not that expression.
+  Measured with a probe over 400 pseudo-random `(from, to, t)` triples printing
+  `Vector3.Lerp`'s raw bits: `from + (to-from)*t` differs from the oracle on 187
+  of the 400, `from*(1-t) + to*t` on 96, and `fmaf(from, 1-t, to*t)` on **none** —
+  that is the oracle's arithmetic. It bites in the game: at level 3 tick 120 the
+  `XF`'s interpolated x at alpha 0.75 is `C2C34BB6` in the oracle and `C2C34BB5`
+  here (1 ULP), which is why `golden/L3_t120_blend.txt` does not exist while t1,
+  t2 and t1200 do. **Why it is not a one-line fix:** `fmaf` is what matches, and
+  devkitARM lowers `__builtin_fmaf` to `bl fmaf` at `-march=armv6k -mtune=mpcore
+  -mfloat-abi=hard -mfpu=vfp` (verified: a call with stack spills, three of them
+  in a function that runs per object per frame), while the current spelling
+  lowers to a single `vmla.f32`. So the replacement is a target codegen decision
+  to measure, not a substitution — and note the two targets already disagree: the
+  3DS build contracts this expression into `vmla.f32` (GCC's default
+  `-ffp-contract`), so the host goldens pin the host build. Start by deciding
+  what `Vector3.Lerp` the 3DS can produce for free.
+- **`ObjectMotion.Bank` is ported (2026-10-31) and the object goldens went
+  multi-tick.** `ScriptRuntime::motionBank` is `ObjectMotion.Bank` (`0x43b65c`),
+  called between `Roll` and `PreviousPosition` exactly where the C# calls it, and
+  it is the only writer of `roll` for a walking alien. What is left of that item
+  is the level-7 `SW_H150` animation below: at L7 t1000 the transform dump still
+  differs by that one object, and by nothing else. L3/L4/L5/L6/L8 at t120 and L3
+  at t1200 are byte-identical to the oracle including the transforms.
 - **The object pass draws now** (`game/object_draw.{h,cpp}` uploads the frame's
   `ObjectStream` once into one dynamic mesh and issues the queued draws;
   `render/surface_cache.{h,cpp}` maps a surface + palette to a backend texture and

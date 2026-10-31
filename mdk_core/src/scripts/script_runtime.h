@@ -146,6 +146,11 @@ public:
     // they land, a free-air object moves by motion exactly as the sweep yields when
     // it finds nothing, so free-fall matches the oracle.
     void motionVelocity(MdkObject* obj);
+    // Automatic banking (ObjectMotion.Bank, 0x43b65c): the only writer of roll from
+    // MOTION -- the script VM's turn/reset opcodes are the other writers, and they
+    // run before this. Called once per object per tick, after Roll and before
+    // PreviousPosition is written, exactly where the C# calls it.
+    void motionBank(MdkObject* obj);
     // Movement command (move_to, opcode 78): records the destination and plans the
     // first waypoint (ObjectMotion.PlanMove). The VM seam; the walk/fly half runs in
     // motionVelocity's command step each following tick.

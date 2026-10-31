@@ -5,16 +5,28 @@
 namespace mdk {
 namespace frame_blend {
 
-// Vector3.Lerp is `from + (to - from) * t` per component; the t >= 1 early return
-// is FrameBlend.Lerp's own, and it is what makes the last frame of a tick land on
-// the tick's pose exactly instead of a rounding of it.
+// `from + (to - from) * t` per component; the t >= 1 early return is FrameBlend
+// .Lerp's own, and it is what makes the last frame of a tick land on the tick's
+// pose exactly instead of a rounding of it.
 //
-// MEASURED, not assumed: .NET 10's Vector3.Lerp agrees with this spelling bit for
-// bit on the object places this game produces (positions of order 1e3 moving by
-// 1e-2..1e1 a tick). It does NOT agree for a component of order 1e6, where the
-// library lands 1 ULP off the hand-written expression; no MDK coordinate is near
-// that, and the blend golden is printed at %.6f, which is where the agreement was
-// checked.
+// THIS IS NOT .NET'S Vector3.Lerp FOR EVERY INPUT, and an earlier note here claimed
+// it was. MEASURED against the oracle (a probe over 400 pseudo-random
+// (from, to, t) triples, printing Vector3.Lerp's raw bits): `from + (to-from)*t`
+// differs from the oracle on 187 of the 400, `from*(1-t) + to*t` on 96, and
+// `fmaf(from, 1-t, to*t)` on none -- that is the oracle's arithmetic. It bites in
+// the game: at level 3 tick 120 one object's interpolated x is 1 ULP off
+// (C2C34BB6 wanted, C2C34BB5 produced), which is why golden/L3_t120_blend.txt does
+// not exist while t1, t2 and t1200 do. It is NOT fixed here because the fix is not
+// one line: `fmaf` is what matches, and devkitARM lowers `fmaf` to a `bl fmaf`
+// libm call at -march=armv6k -mfpu=vfp (three calls with stack spills, in a path
+// that runs per object per frame), while this spelling lowers to a single
+// `vmla.f32` -- so the replacement is a codegen decision to measure on the target,
+// not a substitution. Recorded with this evidence in docs/OPEN_ITEMS.md.
+//
+// The two targets do not compute identical bits today either way: the 3DS build
+// compiles the expression below to `vmla.f32` (GCC's -ffp-contract contraction),
+// so the host goldens pin the host build. Same caveat as every other float golden
+// in this repository.
 Vec3 lerp(Vec3 from, Vec3 to, float t)
 {
     if (t >= 1.0f) {

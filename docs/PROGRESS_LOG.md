@@ -1,3 +1,92 @@
+## What this batch did (Phase 2 iteration 28 — an object leans into its turn, and the object goldens go multi-tick)
+
+Inherited work, finished and banked: the tree arrived dirty with `motionBank` written
+but unverified, undocumented and unpinned. It is `ObjectMotion.Bank` (`0x43b65c`), the
+automatic lean into a turn and the only writer of `MdkObject::roll` for a walking
+alien, and it is the item that held the transform, layout, draw and blend goldens at
+tick 1 — so this batch is the port plus the golden expansion it unlocks.
+
+- **`ScriptRuntime::motionBank` is `ObjectMotion.Bank`, line for line.** `turn =
+  clamp(wrap(yaw - banking_yaw) / Ticks, -2, 10)` with `Ticks = 1`, then
+  `banking_yaw = yaw`, then the guard (`FlagNoBanking | 1 | FlagRolling`, or
+  `thrown_kind > 0`) returns, then `roll = clamp((wrap(roll) - turn) * 0.95, -10, 10)`.
+  Two orderings are load-bearing and are commented as such: `banking_yaw` is written
+  **before** the flag test, so an object that never banks still tracks its own yaw
+  (writing it only for a banking object would make the first tick after
+  `set_banking 1` lean over by every degree turned while it was flagged), and the roll
+  is wrapped **before** the subtraction, so a roll another writer left outside ±180
+  comes back the short way round. It is called from `runTick` between `update_rolling`
+  and `previous_position = position`, which is exactly where the C# calls `Bank`
+  (`ObjectMotion.cs:145`) — inside the same `!dead && effect_frames == 0` block that
+  stands in for the C#'s early returns.
+- **The goldens it unlocked, all copied from the oracle probe.** `tick1 dump
+  <transform|layout|draw|bound>` at L3 t120 and t1200 came out byte-identical to
+  `mdkprobe`, so `golden/L3_t{120,1200}_{transform,layout,draw,stream_bound}.txt` are
+  new, and `golden/L3_t2_blend.txt` is new (the blend at t2 is byte-identical too, so
+  the interpolation is now pinned over a real tick and not only over the plumbing
+  case at t1). Cross-checked beyond the pinned cases: L4/L5/L6/L8 at t120 and L3 at
+  t15/t60/t600 are byte-identical; **L7 t1000 differs by one line only**, the
+  already-recorded `SW_H150` animation, and by nothing else — which retires the
+  "…and its only other differences at t1000 are the Bank transforms" half of that
+  open item.
+- **The golden gate is per golden now.** The block was one loop over `poseCases` with
+  `if (!wanted) continue;` after the transform, so every later golden inherited the
+  transform's tick list and no golden could be pinned at a tick the transform was not.
+  Five lists (`poseCases`, `transformCases`, `blendCases`, `layoutCases`, `drawCases`)
+  over the union of their ticks, each checked with `pinnedIn`, so t2 can be a blend
+  case without being a pose case. That is what makes `L3_t2_blend` possible at all.
+- **What the new goldens found: `Vector3.Lerp` is not this port's `lerp`.** At L3 t120
+  one object's interpolated x is 1 ULP off (`C2C34BB6` wanted, `C2C34BB5` produced),
+  so `L3_t120_blend.txt` does not exist and the blend is pinned at t1/t2/t1200
+  instead. Measured with a probe over 400 pseudo-random `(from, to, t)` triples
+  printing `Vector3.Lerp`'s raw bits: `from + (to-from)*t` mismatches 187, `from*(1-t)
+  + to*t` mismatches 96, `fmaf(from, 1-t, to*t)` mismatches **0** — that is the
+  oracle's arithmetic. It is not a one-line fix: devkitARM lowers `__builtin_fmaf` to
+  `bl fmaf` at `-march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp` (verified by
+  disassembly: a call with stack spills, three per `lerp`, in a path that runs per
+  object per frame), while the current spelling lowers to one `vmla.f32`. The false
+  "agrees bit for bit" claim in `frame_blend.cpp`'s comment is replaced with this
+  measurement, and the item is in `docs/OPEN_ITEMS.md` as the next numeric slice.
+  Note the corollary: the two targets do not compute identical bits today either way,
+  because the 3DS build contracts this expression into `vmla.f32` and the host cannot.
+- **Prior-solution lookup.** The Obsidian MCP server is not exposed to this harness,
+  so the vault was read directly, read-only, from `/mnt/nas/Vaults/port-docs`. There
+  is no `mdk` project folder and no note matching `ObjectMotion.Bank`, `roll` or
+  `Vector3.Lerp` rounding (the `banking` hits are other projects' — `blocksphere-3ds`,
+  `perfect-dark` — and are about a different banking). Cognee is not reachable from
+  this harness either. Nothing prior to reuse; the `Vector3.Lerp` measurement below is
+  new.
+- **Review-7 is empty** (`logs/ralph-pi/run-20261031-053650/review-7.md` is 0 bytes:
+  the reviewer produced no output for the previous batch), so there was no
+  Critical/High finding to remediate or rebut this iteration.
+
+Verification on this tree:
+
+- `make -C tests/scripts -j8` exited 0 and ended `All cases match the oracle.` —
+  **432 PASS** (380 from `tick1`, 52 from `vm_tests`), **0 FAIL, 0 SKIP**, and no
+  existing golden moved: 423 + the 9 new cases (transform/layout/draw/stream_bound at
+  t120 and t1200, blend at t2) = 432.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`,
+  `gates_smdh SKIP` (no built .cia), `gates_frames every pinned frame is deterministic
+  and unchanged` (`L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned
+  `cpp=`, so `reference.sha256` was not regenerated), `gates_batch_integrity project
+  invariants intact`. No gate was relaxed and no pin was added: `motionBank` is
+  `clampf`/`wrapAngle` over two float predicates on a gameplay angle, which is R2/R3/T2
+  territory only if it were a loop bound or a lattice index, and it is neither.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+  exited 0 and built `mdk.3dsx`; `cmake --build build-linux --target mdk -j8` exited 0.
+- `DISPLAY=:99 tools/publish_frame.sh banking-roll` wrote
+  `docs/frames/2026-10-31-banking-roll.png` + `.txt` (`bad_percent=1.240 max_delta=247
+  mean_delta=0.1819`), byte-identical (md5 `6769a137…`) to the previous batch's frame:
+  at frame 1 neither tree has an object, so nothing has banked. No emulator and no
+  Old-3DS hardware run was performed.
+- The oracle probe used for the goldens is the scratch tree at `/tmp/mdk-pi/obj3`
+  (a copy of `src/Mdk.Game` plus `Probe`, which is read-only in the repository and was
+  not touched). Its `lerp` mode is new instrumentation added this batch for the
+  `Vector3.Lerp` measurement; the repository does not depend on it.
+
 ## What this batch did (Phase 2 iteration 27 — a frame draws an object between its ticks)
 
 Review-5's remaining MAJOR, carried through review-6: the live Linux frontend handed
