@@ -1,3 +1,61 @@
+## What this batch did (Phase 2 iteration 25 — the object pass's draw stage, up to the GPU)
+
+The layout stage said where an object's corners come from; this is the half that
+puts them somewhere. It is the C#'s `ObjectView.Draw` ported up to the renderer seam,
+and it is pinned by an oracle golden of its own. Nothing uploads or draws yet, so the
+pinned frame is byte-identical to the last batch's; the GPU half and the frontend
+wiring are the next increment, and the picture moves when they land.
+
+- **`ObjectView::addObject` is `ObjectView.Draw`** (`game/object_view.{h,cpp}`): the
+  model/dead/layout guards, `PoseParts`, the hidden mask, `TextureFrame >= 0 ?
+  TextureFrame : 0`, `EffectFrames > 0 -> Glow.Shines`, `Arrange`, `Visible`, the
+  per-part corner copy loop and `Shine`, in the oracle's order. The C#'s two seam
+  calls become the frame's stream: `renderer.Stream(corners, out mesh, out first)`
+  is the cursor at the end of `ObjectStream::vertices` and `renderer.Draw(mesh,
+  first, corners, material, frame, world)` is a queued `ObjectStreamDraw` (offset,
+  corner count, surface with Shine applied, animated frame, transform). Visibility
+  stays the caller's, as in the C# (`Viewer.DrawObjects` skips the invisible,
+  `ObjectView.Draw` never looks at `Visible`), so the stream's offsets are the
+  oracle's stream offsets.
+- **The stream is the C#'s one-buffer-per-frame design, without the seam change.**
+  `OPEN_ITEMS.md` had two candidates — a real per-frame stream added to `render.h`,
+  or one dynamic mesh per object. Neither is needed: the C#'s `Renderer.Stream` is
+  already "one buffer, uploaded once before the frame, drawn at an offset", and
+  `mdk_render_create_dynamic_mesh`/`mdk_render_update_mesh` already are that, so the
+  GPU half will fill an `ObjectStream` here, upload it once and replay its draws.
+  Per-object meshes were rejected: their lifetime would be tied to a script-created
+  object's identity, and they would fragment linear memory mid-play for no gain.
+  The stream grows to the frame instead of the C#'s fixed `1 << 18` vertices,
+  measured against the oracle at 2559 corners (L3 t1) and 5616 (L8 t1) — the C#-
+  bound is never reached, and a fixed one on the 3DS would be 5 MiB of linear memory
+  spent to bound something that does not occur.
+- **The golden is the oracle's own draw loop.** The probe tree under
+  `/tmp/mdk-pi/obj3` got a `DumpDraw` in its COPY of `ObjectView.cs`: the oracle's
+  code with only the two seam calls replaced (the same cursor, the same `1 << 18`
+  capacity and empty-span rule, a recorder where the draw call was). Each batch
+  prints its offset, corner count, surface, animated frame, the sums and end
+  vertices of its corners, and an FNV-1a hash over the raw bits of all five floats
+  of every corner — order-sensitive, bit-exact, where a sum alone would not be.
+  `tests/scripts/golden/L3_t1_draw.txt` is that output; `tick1 dump draw 3 1`
+  reproduces it byte for byte on the first run.
+- **Checked past the pinned case, and the only differences are the known ones.**
+  Levels 4-7 at t1 match exactly (L4 draws nothing at t1, as the oracle does). At
+  L3 t120 and t1200 and at L8 t1 the dumps differ ONLY in `T` (transform) lines,
+  and only in the roll/pitch components — i.e. only by `ObjectMotion.Bank`, the
+  already-documented reason the transform golden is pinned at t1. Every corner,
+  offset, surface, animated frame and hash matches, which is the draw stage being
+  right rather than being right at tick 1.
+- **Two guards, because C++ has no exception to throw.** A pose whose part count
+  disagrees with the model, or an index outside a part, is the stale-pose-cache
+  hazard the last batch closed; the C# would take `IndexOutOfRange` there, so the
+  port draws nothing / leaves that corner zeroed instead of reading past the pose.
+- Gates: 420 PASS lines (was 419) with `All cases match the oracle.` after a clean
+  tests build (the tests Makefile does not track headers and `object_view.h`
+  changed); `tools/check.sh` ALL GATES PASSED with no new pin; the devkitARM build
+  built `mdk.3dsx`. No emulator run and no Old-3DS hardware run was performed.
+
+
+
 ## What this batch did (Phase 2 iteration 24 — the 1.240% frame gap, decomposed and two causes closed)
 
 This batch is measurement, not code: it closes two of the three things the frame

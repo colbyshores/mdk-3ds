@@ -11,6 +11,7 @@
 #include "formats/model.h"
 #include "formats/texture.h"
 #include "formats/texture_archive.h"
+#include "formats/vector_types.h"
 
 namespace mdk {
 
@@ -184,6 +185,98 @@ ObjectLayout* ObjectView::layoutOf(const formats::Model* model, const ObjectLook
         made.reset();
     }
     return layouts_.emplace(key, std::move(made)).first->second.get();
+}
+
+// The C#'s ObjectView.Draw, with the two renderer seam calls replaced by the
+// frame's stream: `renderer.Stream(corners, out mesh, out first)` is the cursor
+// bump at the end of `stream->vertices`, and `renderer.Draw(mesh, first,
+// corners, material, frame, transform)` is the queued ObjectStreamDraw. The
+// guards, PoseParts, Arrange, Visible, the per-part copy loop, Shine and the
+// frame selection are the oracle's, in the oracle's order.
+bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look,
+                           const Mat4& transform, ObjectStream* stream) {
+    if (obj.model == nullptr || obj.dead || stream == nullptr) {
+        return false;
+    }
+    ObjectLayout* layout = layoutOf(obj.model, look);
+    if (layout == nullptr) {
+        return false;
+    }
+
+    const std::vector<std::vector<formats::Vec3f> >& pose = obj.pose_parts();
+    const int32_t hidden = obj.hidden_parts;
+
+    // A pose that is not this model's is a stale pose cache (see
+    // scripts/pose_cache.h and LevelData::load), and the C# would take an
+    // IndexOutOfRange there. C++ has no exception to throw, so the object draws
+    // nothing instead of reading past the pose; the layout is keyed by the same
+    // model, so a part count that disagrees means the pose is not this model's.
+    if (pose.size() != obj.model->partList.size()) {
+        return false;
+    }
+
+    // The C#'s `TextureFrame >= 0 ? TextureFrame : 0` and its Glow.Shines test.
+    const int32_t frame = obj.texture_frame >= 0 ? obj.texture_frame : 0;
+    const bool shines = obj.effect_frames > 0;
+    const int32_t count = arrangeObjectLayout(layout, hidden);
+
+    // The frame's stream grows by this object's corners in ONE step. The C#
+    // asks for room per batch; the answer is the same cursor, and one resize
+    // keeps the value-initialisation that resize does (Vec3 has default member
+    // initializers, so the new corners are zeroed before the writes below
+    // overwrite them) to a single contiguous range instead of one per batch.
+    // The vectors keep their capacity between frames, so a frame after the first
+    // does not allocate at all (AGENTS.md 10).
+    int32_t total = 0;
+    for (int32_t i = 0; i < count; i++) {
+        total += objectBatchCorners(layout->batches[(size_t)layout->order[i]], hidden);
+    }
+    if (total == 0) {
+        return true;
+    }
+    size_t at = stream->vertices.size();
+    stream->vertices.resize(at + (size_t)total);
+
+    for (int32_t i = 0; i < count; i++) {
+        const ObjectBatch& batch = layout->batches[(size_t)layout->order[i]];
+        const int32_t corners = objectBatchCorners(batch, hidden);
+        if (corners == 0) {
+            // The C#'s `if (vertices.IsEmpty) continue;` -- a batch whose every
+            // part is hidden draws nothing, and the stream does not move.
+            continue;
+        }
+
+        const int32_t first = (int32_t)at;
+        size_t slot = 0;
+        for (size_t c = 0; c < batch.parts.size(); c++) {
+            const int32_t part = batch.parts[c];
+            if (objectPartHidden(hidden, part)) {
+                continue;
+            }
+            const std::vector<formats::Vec3f>& vertices = pose[(size_t)part];
+            const int32_t index = batch.indices[c];
+            // The slot advances for every corner the batch keeps, exactly as the
+            // C#'s `at++` does; only the write is conditional, and only for the
+            // stale-pose case the guards above exist for.
+            if (index >= 0 && (size_t)index < vertices.size()) {
+                const formats::Vec3f& position = vertices[(size_t)index];
+                stream->vertices[(size_t)(first + slot)] =
+                    Vertex{Vec3{position.x, position.y, position.z}, batch.uvs[c], kVertexWhite};
+            }
+            slot++;
+        }
+        at += (size_t)corners;
+
+        ObjectStreamDraw draw;
+        draw.first = first;
+        draw.corners = corners;
+        draw.surface = shineSurface(batch.surface, shines);
+        draw.frame = frame;
+        draw.world = transform;
+        stream->draws.push_back(draw);
+    }
+
+    return true;
 }
 
 } // namespace mdk

@@ -12,18 +12,23 @@
 //
 // The layout is made once per (model, palette) at a level's load and reused by
 // every object that draws that model with that palette, which is why it is a
-// cache and not a per-frame build. The posed vertices are NOT here: they depend
-// on the object's animation frame and hidden parts, and they are written into
-// the renderer's vertex stream per draw.
+// cache and not a per-frame build. The posed vertices are the second stage:
+// they depend on the object's animation frame and hidden parts, and they are
+// written into the frame's vertex stream per draw (`ObjectStream` below).
+//
+// THE STREAM IS NOT THE GPU BUFFER. The C# writes its posed corners into one
+// per-frame stream that the renderer owns (`Renderer.Stream`, uploaded once in
+// Present) and draws each batch at its offset in it. Neither C++ backend has a
+// per-frame stream in its seam, and neither needs one: what decides the picture
+// is the ORDER and CONTENT of the corners and the offset each batch is drawn
+// at, and all of that is here. The GPU half -- mapping a batch's surface to a
+// backend texture, uploading this stream once and issuing the draws -- is the
+// next increment, and it changes none of what is here.
 //
 // WHAT IS NOT PORTED, and why:
 //
-//   * The DRAW stage (ObjectView.Draw: arrange the batches, copy the posed
-//     corners into the renderer's stream, draw each batch with the object's
-//     transform). It needs the seam's per-frame vertex stream, which neither
-//     backend has yet; the batch that adds it is the next one. Everything the
-//     draw stage reads is here already: the layout, arrange's order, the corner
-//     count per batch, MdkObject::pose_parts() and MdkObject::transform().
+//   * The GPU half (the stream's upload and the draws themselves). It is the
+//     next increment; see docs/CONTINUATION.md.
 //   * The mods' model replacements (`Swaps`/`ModelSwap`, Source::Mod). Those
 //     are the enhanced look's HD models; the mods are not ported, so every
 //     batch here is a model batch, exactly as it is when Swaps is null.
@@ -42,6 +47,8 @@
 
 #include "render/material_resolver.h"
 #include "render/render_types.h"
+#include "scripts/object.h"
+#include "util/matrix.h"
 
 namespace mdk {
 
@@ -118,6 +125,50 @@ Surface shineSurface(const Surface& surface, bool shines);
 bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
                        const MaterialResolver& resolver, ObjectLayout* out);
 
+// One batch's draw, as the object pass queues it (the C#'s DrawCommand, for the
+// object pass). The surface is the FORMAT's surface, not a GPU one: the backend
+// maps it to its own texture and palette, exactly as LevelView maps an arena
+// batch's. `first` is the batch's offset in the frame's stream, which is what
+// the C#'s Renderer.Stream hands back as `first`.
+struct ObjectStreamDraw {
+    int32_t first = 0;
+    int32_t corners = 0;
+
+    // The surface with Shine already applied (an explosion's surfaces are
+    // unlit), so the GPU half maps surfaces to textures without knowing why.
+    Surface surface;
+
+    // The animated texture's frame (the C#'s Draw `frame` argument).
+    int32_t frame = 0;
+
+    // The object's transform (the C#'s Draw `world` argument). Row-major,
+    // row-vector, like MeshDraw::world.
+    Mat4 world = Mat4::identity();
+};
+
+// The frame's streamed corners and the draws they make: the C#'s
+// `Renderer._stream` plus the draw queue, minus the GPU. One per frame, reset at
+// its start (the C#'s QueueStream clears the stream the same way). The vectors
+// keep their capacity between frames, so a frame after the first does not
+// allocate (AGENTS.md 10: no per-frame container growth where the size is known).
+//
+// The C# sizes its stream once, for 1<<18 vertices, and a batch that does not fit
+// is skipped. This grows to the frame instead: the whole object pass measured
+// 2559 corners at level 3 tick 1 and 5616 at level 8's, so the C#'s bound is
+// never reached in a shipped level, and carrying a fixed one here would only be
+// a second number to keep true -- and a frame that overflowed it would be a
+// picture difference between two targets that have no reason to differ.
+struct ObjectStream {
+    std::vector<Vertex> vertices;
+    std::vector<ObjectStreamDraw> draws;
+
+    void reset()
+    {
+        vertices.clear();
+        draws.clear();
+    }
+};
+
 // The (model, palette) layout cache. The C# keeps it per ObjectView for the
 // life of the level; clear() is what a level change calls.
 class ObjectView {
@@ -130,6 +181,29 @@ public:
     // Returns null for a model with nothing to draw (and remembers that too, so
     // it is not rebuilt every draw).
     ObjectLayout* layoutOf(const formats::Model* model, const ObjectLook& look);
+
+    // The C#'s ObjectView.Draw, up to the point where the C# hands the corners to
+    // the renderer: arrange the batches, copy the posed corners onto the end of
+    // the frame's stream, and queue one draw per batch at its offset. `transform`
+    // is the C#'s Draw argument (the C# passes FrameBlend.TransformOf, which is
+    // obj.Transform with blending off).
+    //
+    // Visibility is the CALLER's, as it is in the C#: Viewer.DrawObjects skips
+    // the invisible objects and ObjectView.Draw never looks at Visible. The
+    // caller walks the objects in the C#'s order, so the stream's offsets are
+    // the oracle's.
+    //
+    // Returns false when the object draws nothing at all -- no model, dead, or a
+    // model with no batch, which is the C#'s three early returns. A visible
+    // object with a layout but no visible corner returns true and adds nothing.
+    //
+    // HOT PATH (AGENTS.md 2): this runs once per drawn object per frame and its
+    // inner loop runs once per corner -- thousands of times a frame. It is
+    // copies and integer indices only: no float->int conversion (R2), no float
+    // comparison (R3), no division (the UV scale was taken once at layout time),
+    // no transcendental (R6), no double (R4).
+    bool addObject(const scripts::MdkObject& obj, const ObjectLook& look,
+                   const Mat4& transform, ObjectStream* stream);
 
     // The C#'s Preload: lay a model out before it is drawn (a level's load).
     void preload(const formats::Model* model, const ObjectLook& look) { (void)layoutOf(model, look); }

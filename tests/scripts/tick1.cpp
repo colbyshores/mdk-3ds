@@ -413,6 +413,120 @@ std::string dumpObjectLayout(int level, int ticks, LevelData& levelData,
 // The basis is printed as raw bits (the transform golden's %.6f would not see a
 // last-bit difference) and the transform at %.6f, because the transform's
 // translation is the object's position and its rotation is the basis scaled.
+// The draw stage's digest of one batch's corners: FNV-1a over the raw bits of
+// the five floats of each vertex, in stream order. The sums and the end vertices
+// below say what a batch is; this says it is EXACTLY the oracle's, to the bit,
+// including the order the corners were written in (a rolling hash is not
+// order-independent the way a plain XOR would be).
+uint32_t hashCorners(const std::vector<Vertex>& vertices, int32_t first, int32_t corners) {
+    uint32_t hash = 2166136261u;
+    for (int32_t i = 0; i < corners; i++) {
+        const Vertex& v = vertices[(size_t)(first + i)];
+        const float values[5] = {v.pos.x, v.pos.y, v.pos.z, v.uv.x, v.uv.y};
+        for (int k = 0; k < 5; k++) {
+            uint32_t bits = 0;
+            memcpy(&bits, &values[k], sizeof(bits));
+            hash ^= bits;
+            hash *= 16777619u;
+        }
+    }
+    return hash;
+}
+
+// The object pass's DRAW stage (ObjectView.Draw): the batches arrange orders,
+// the posed corners each writes, and where in the frame's stream it is drawn
+// from. This is the golden that pins any of it: the layout golden stops at the
+// corner table, and the pose golden stops at the posed vertices -- what neither
+// can see is which corner goes where, in what order, with what surface and what
+// animated-texture frame, and which transform the draw carries.
+//
+// The objects are walked exactly as Viewer.DrawObjects walks them (skip the
+// invisible ones; the dead, the model-less and the layout-less are refused inside
+// the draw stage itself), and the stream is the one the whole frame shares, so
+// the `first` offsets are the oracle's stream offsets.
+std::string dumpObjectDraw(int level, int ticks, LevelData& levelData,
+                           scripts::ScriptRuntime& runtime) {
+    MaterialResolver resolver(&levelData.dti());
+    ObjectView view(resolver);
+    ObjectStream stream;
+    stream.reset();   // the frame's start, as the GPU half will do
+
+    std::string out;
+    char line[640];
+    snprintf(line, sizeof(line), "level=%d ticks=%d seed=1 objects=%d\n", level, ticks,
+             runtime.objectCount());
+    out += line;
+
+    int index = 0;
+    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+         it != runtime.objects().end(); ++it, ++index) {
+        const scripts::MdkObject& o = *it;
+        if (runtime.isRemoved(&o)) {
+            index--;
+            continue;
+        }
+        if (!o.visible) {
+            continue;
+        }
+
+        ObjectLook look = lookOf(levelData, o.arena);
+        const Mat4 transform = o.transform();
+        const size_t before = stream.draws.size();
+        if (!view.addObject(o, look, transform, &stream)) {
+            continue;
+        }
+
+        ObjectLayout* layout = view.layoutOf(o.model, look);
+        const int32_t count = arrangeObjectLayout(layout, o.hidden_parts);
+        snprintf(line, sizeof(line), "DRAW obj=%d model=%s arena=%s hidden=%d frame=%d shines=%d count=%d\n",
+                 index, o.model->name.c_str(), o.arena.c_str(), (int)o.hidden_parts,
+                 (int)(o.texture_frame >= 0 ? o.texture_frame : 0), o.effect_frames > 0 ? 1 : 0,
+                 (int)count);
+        out += line;
+
+        snprintf(line, sizeof(line),
+                 "  T %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f\n",
+                 transform.m[0], transform.m[1], transform.m[2], transform.m[3], transform.m[4],
+                 transform.m[5], transform.m[6], transform.m[7], transform.m[8], transform.m[9],
+                 transform.m[10], transform.m[11], transform.m[12], transform.m[13], transform.m[14],
+                 transform.m[15]);
+        out += line;
+
+        for (size_t d = before; d < stream.draws.size(); d++) {
+            const ObjectStreamDraw& draw = stream.draws[d];
+            const Surface& s = draw.surface;
+            const int32_t first = draw.first;
+            const int32_t corners = draw.corners;
+            const Vertex& head = stream.vertices[(size_t)first];
+            const Vertex& tail = stream.vertices[(size_t)(first + corners - 1)];
+            float sx = 0.0f, sy = 0.0f, sz = 0.0f, su = 0.0f, sv = 0.0f;
+            for (int32_t i = 0; i < corners; i++) {
+                const Vertex& v = stream.vertices[(size_t)(first + i)];
+                sx += v.pos.x;
+                sy += v.pos.y;
+                sz += v.pos.z;
+                su += v.uv.x;
+                sv += v.uv.y;
+            }
+            snprintf(line, sizeof(line),
+                     "  B%d first=%d corners=%d tex=%s colour=%.4f,%.4f,%.4f,%.4f frames=%d "
+                     "pass=%s shading=%s rowshift=%.4f sum=%.4f,%.4f,%.4f uvsum=%.4f,%.4f "
+                     "first=%.4f,%.4f,%.4f,%.4f,%.4f last=%.4f,%.4f,%.4f,%.4f,%.4f hash=%08X\n",
+                     (int)(d - before), (int)first, (int)corners,
+                     s.texture ? s.texture->name().c_str() : "flat", s.colour.r, s.colour.g,
+                     s.colour.b, s.colour.a, (int)s.frameCount, passName(s.pass), shadingName(s.shading),
+                     s.rowShift, sx, sy, sz, su, sv, head.pos.x, head.pos.y, head.pos.z, head.uv.x,
+                     head.uv.y, tail.pos.x, tail.pos.y, tail.pos.z, tail.uv.x, tail.uv.y,
+                     hashCorners(stream.vertices, first, corners));
+            out += line;
+        }
+    }
+
+    snprintf(line, sizeof(line), "STREAM vertices=%d\n", (int)stream.vertices.size());
+    out += line;
+    return out;
+}
+
 std::string dumpRolling() {
     struct Step {
         float x, y, z;
@@ -632,7 +746,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // Golden dumps (`tick1 dump <pose|transform|layout|rolling> [level] [ticks]`):
+    // Golden dumps (`tick1 dump <pose|transform|layout|draw|rolling> [level] [ticks]`):
     // print one dump to stdout, which is how a golden is written and how a failing
     // golden is diffed against the C# probe (the oracle twin of each of these
     // dumps; see docs/PROGRESS_LOG.md for the probe's recipe).
@@ -675,6 +789,8 @@ int main(int argc, char** argv) {
             printf("%s", dumpObjectTransforms(level, ticks, runtime).c_str());
         } else if (what == "layout") {
             printf("%s", dumpObjectLayout(level, ticks, levelData, runtime).c_str());
+        } else if (what == "draw") {
+            printf("%s", dumpObjectDraw(level, ticks, levelData, runtime).c_str());
         } else {
             printf("unknown dump\n");
             return 1;
@@ -1027,6 +1143,23 @@ int main(int argc, char** argv) {
                    "oracle\n", level, ticks);
         } else {
             printf("FAIL L%d_t%d_layout: %s\n", level, ticks,
+                   firstDifference(got, expected).c_str());
+            failures++;
+        }
+
+        // The draw stage (ObjectView.Draw), over the same tick: the frame's
+        // stream, the offset and corner count of every batch, and the surface,
+        // animated frame and transform each is drawn with.
+        got = dumpObjectDraw(level, ticks, levelData, runtime);
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_draw.txt", level, ticks);
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d_t%d_draw: no golden file %s\n", level, ticks, goldenPath);
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L%d_t%d_draw: every object's streamed corners, batch order, surfaces and "
+                   "transform match the oracle\n", level, ticks);
+        } else {
+            printf("FAIL L%d_t%d_draw: %s\n", level, ticks,
                    firstDifference(got, expected).c_str());
             failures++;
         }

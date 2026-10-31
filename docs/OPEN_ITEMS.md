@@ -39,23 +39,29 @@ measured or cited reason, and the batch that closes one should delete its entry.
   landed. That is also why `golden/L3_tN_transform.txt` is pinned at t1 only:
   every multi-tick transform turns by a roll the port does not have. The pose
   goldens are unaffected (roll is not a pose input) and pass at t1/t120/t1200.
-- **The object pass's draw stage is the next slice.** `ObjectView`'s layout
-  (`game/object_view.{h,cpp}`), `MdkObject::transform()` and
-  `MdkObject::pose_parts()` are ported and pinned; nothing draws them yet. The
-  draw stage needs a decision the C# does not settle for these backends: the C#
-  accumulates every object's posed corners into ONE per-frame stream
-  (`Renderer.Stream`, uploaded once in `Present` before the command buffer) and
-  draws each batch at its `first` offset. The Vulkan backend records draws into
-  the command buffer at call time and submits at `end_frame`, so a buffer
-  rewritten per object would show every object the LAST object's vertices; the
-  Citro3D backend issues its GPU commands at draw time, so the vertices must
-  already be in the mesh when the draw is made. Two designs survive that: a
-  real per-frame stream in the seam (reserve + write, uploaded at `end_frame`
-  before submit on Vulkan, written straight into the mesh on the 3DS), or one
-  dynamic mesh per object, sized at layout time and updated before that
-  object's draws (no seam change, per-object memory instead of one big staging
-  buffer). The mods' model replacements (`Source::Mod`) stay deferred with
-  cause: the mods are the enhanced look's and are not ported.
+- In the object pass, **the GPU half of the draw stage is the next slice**.
+  `ObjectView::addObject` (game/object_view.{h,cpp}) is `ObjectView.Draw` up to the
+  seam: it fills a per-frame `ObjectStream` (posed corners + one queued
+  `ObjectStreamDraw` per batch, with the stream offset, the surface, the animated
+  frame and the transform) and is pinned by `golden/L3_t1_draw.txt`. What is left is
+  the part the C# does inside `Renderer`: map each batch's `Surface` to a backend
+  texture and palette (that is `LevelView::textureId`/`flatColourId`'s logic — the
+  frame-stacked height and the one-pixel flat-colour texture — and it should be
+  factored out of `LevelView`, not copied), upload the stream once per frame with
+  `mdk_render_create_dynamic_mesh`/`mdk_render_update_mesh`, issue the queued draws,
+  and call the whole thing from `mdk_linux/src/main.cpp` after `view.draw()` (the
+  3DS frontend has no `ScriptRuntime`, so it has no objects to draw yet). That batch
+  changes the picture, so `tests/frames/reference.sha256` has to be rewritten by
+  `regenerate_reference.sh` — which means an oracle capture — and not by hand.
+  **The design decision `OPEN_ITEMS` used to leave open is made**: the C#'s
+  one-buffer-per-frame stream is what the port does, and it needs no seam change,
+  because a dynamic mesh already is "one buffer, uploaded once before the frame,
+  drawn at an offset". One dynamic mesh per object was rejected: its lifetime would
+  hang off a script-created object's identity and it would fragment linear memory
+  mid-play. The stream grows to the frame rather than carrying the C#'s `1 << 18`
+  bound; measured on the oracle the whole pass is 2559 corners at L3 t1 and 5616 at
+  L8 t1. The mods' model replacements (`Source::Mod`) stay deferred with cause: the
+  mods are the enhanced look's and are not ported.
 - Incomplete decoy/`AlienTarget` selection.
 - Opcode 207's `MathF.Sign(NaN)` exception is accepted because C++ exceptions are
   banned; degenerate-path guards return 0 instead (this now also covers
