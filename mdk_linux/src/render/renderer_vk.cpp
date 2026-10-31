@@ -925,6 +925,26 @@ VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette
     return set;
 }
 
+// Forget the descriptor sets that name a texture or palette whose image
+// view is about to be replaced or destroyed.
+//
+// A descriptor set holds the image view, not the texture id. If the view is
+// destroyed and the id is then reused, a cached set keyed by the id would
+// still name the destroyed view. The cache must therefore lose every set
+// that names the changed resource before the change happens.
+void forgetDescriptorSets(RendererVk* r, int32_t texture, int32_t palette) {
+    size_t i = 0;
+    while (i < r->descs.size()) {
+        if ((texture >= 0 && r->descs[i].texture == texture) ||
+            (palette >= 0 && r->descs[i].palette == palette)) {
+            r->descs[i] = r->descs.back();
+            r->descs.pop_back();
+            continue;
+        }
+        i++;
+    }
+}
+
 // The sky: one screen-filling triangle, drawn first, before the level. The
 // clip-to-direction matrix is the inverse of (rotation * projection) in the
 // row-vector convention, uploaded verbatim; the sky shader multiplies it on
@@ -1288,6 +1308,12 @@ mdk::MdkCapabilities mdk_render_capabilities(MdkRenderer r) {
     caps.panorama_linear = true;
     caps.max_texture_size = 16384;
     caps.max_canvas_quads = 4096;
+    // NO SPRITE RESIDENCY BOUND. The desktop has the memory for every frame
+    // the C# keeps -- its texture cache is keyed by (name, frame) and
+    // nothing ever evicts from it -- so the answer is 0, "no bound", and the
+    // sprite cache keeps the C#'s behaviour. (The 3DS names a budget; see
+    // renderer_c3d.cpp.)
+    caps.sprite_residency_bytes = 0;
     return caps;
 }
 
@@ -1436,6 +1462,18 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r_, int32_t w, int32_t 
     return id;
 }
 
+int32_t mdk_render_index_texture_bytes(MdkRenderer r_, int32_t w, int32_t h) {
+    (void)r_;
+    if (w <= 0 || h <= 0) {
+        return 0;
+    }
+    // WHAT THE DESKTOP SPENDS ON AN INDEX TEXTURE. The indices are kept as
+    // they are -- an R8_UNORM image, one byte a pixel -- and the palette
+    // lookup happens in the shader. So the texture is exactly its own
+    // pixels, and the 3DS's expanded, padded RGBA8 is eight times that.
+    return w * h;
+}
+
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r_, int32_t w, int32_t h,
                                             const uint8_t* px) {
     RendererVk* r = asVk(r_);
@@ -1492,6 +1530,9 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
     // The image is OPTIMAL-tiled with no persistent mapping (see
     // createHostImage); an update re-creates the image through the staging
     // path. Updates are rare (animated textures), not per-frame-per-texture.
+    // The cached descriptor sets name the old image view, so they must go
+    // before that view is destroyed.
+    forgetDescriptorSets(r, t_, -1);
     VkImage oldImage = t.image;
     VkDeviceMemory oldMemory = t.memory;
     VkImageView oldView = t.view;
@@ -1513,6 +1554,10 @@ void mdk_render_release_texture(MdkRenderer r_, MdkTextureId t_) {
     if (!r || t_ < 0 || t_ >= (int32_t)r->textures.size() || !r->textures[t_].used) {
         return;
     }
+    // The cached descriptor sets name the image view that is about to be
+    // destroyed. A released id may be reused, so those sets must not
+    // survive the release.
+    forgetDescriptorSets(r, t_, -1);
     destroyImage(&r->ctx, &r->textures[t_].image, &r->textures[t_].memory,
                  &r->textures[t_].view, &r->textures[t_].mapped);
     r->textures[t_].used = false;
@@ -1523,6 +1568,7 @@ void mdk_render_release_palette(MdkRenderer r_, MdkPaletteId p_) {
     if (!r || p_ < 0 || p_ >= (int32_t)r->palettes.size() || !r->palettes[p_].used) {
         return;
     }
+    forgetDescriptorSets(r, -1, p_);
     destroyImage(&r->ctx, &r->palettes[p_].image, &r->palettes[p_].memory,
                  &r->palettes[p_].view, &r->palettes[p_].mapped);
     r->palettes[p_].used = false;

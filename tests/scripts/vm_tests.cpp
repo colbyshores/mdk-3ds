@@ -37,6 +37,7 @@
 #include "game/player.h"
 #include "layer_tests.h"
 #include "scripts/script_runtime.h"
+#include "sprite_tests.h"
 #include "system_numerics_tests.h"
 #include "util/math_lut.h"
 
@@ -3725,6 +3726,15 @@ int main() {
     failures += layerFailures;
     if (layerFailures == 0) {
         printf("PASS DepthLayersAndDepthPull\n");
+    }
+
+    // The sprite cache's residency policy. The C# has no bound at all, so
+    // there is no C# twin for this: it pins the port's own policy, which is
+    // what keeps the 3DS's sprite frames inside its memory (sprite_tests.h).
+    const int spriteFailures = mdk::test::runSpriteResidencyTests();
+    failures += spriteFailures;
+    if (spriteFailures == 0) {
+        printf("PASS SpriteResidencyPolicy\n");
     }
 
     if (failures == 0) {

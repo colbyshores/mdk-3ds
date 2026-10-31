@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <utility>
 #include <vector>
 
 #include "render/render.h"
@@ -135,8 +136,6 @@ struct GpuVertex {
 struct C3dTexture {
     C3D_Tex tex;
     bool valid = false;
-    int32_t width = 0;
-    int32_t height = 0;
 
     // The real size, and the size the texture was PADDED to. The
     // difference is what the UV transform has to undo.
@@ -152,6 +151,34 @@ struct C3dTexture {
 
     // When this texture was last drawn, for the eviction order.
     uint32_t lastUsed = 0;
+
+    // THE SOURCE, kept so that an EVICTED texture can be made again.
+    //
+    // THE EVICTION HAS TO BE REVERSIBLE. The 3DS has six megabytes of VRAM
+    // and the linear heap starts there, so a texture that does not fit is
+    // evicted -- and an evicted texture whose source is gone can never come
+    // back, because the caller holds an id and not the pixels. The symptom
+    // is an arena surface that stops being textured for the rest of the
+    // session: the id is still good, the GPU copy is not, and the draw is
+    // skipped.
+    //
+    // The source is in SYSTEM memory, not the GPU's: the palette indices
+    // are a quarter of the expanded RGBA8 and an eighth of the padded one.
+    std::vector<uint8_t> source;
+    // The 256x1 palette the indices expand through (index textures only).
+    std::vector<uint8_t> palette;
+    // True when `source` holds palette indices, false when it holds the
+    // RGBA bytes of an RGBA texture.
+    bool indexed = false;
+
+    // The source changed while the old GPU copy may still be in flight. The
+    // replacement waits for the next frame boundary (AGENTS.md P3).
+    bool stale = false;
+
+    // The caller released this texture while its GPU copy may still be in
+    // flight. The copy waits for the next frame boundary; the id is already
+    // invalid to the caller.
+    bool releasePending = false;
 };
 
 // A mesh: the vertices, in LINEAR memory, where the GPU reads them.
@@ -204,16 +231,24 @@ struct RendererC3D {
 
     // The draw counter, for the eviction order.
     uint32_t drawCounter = 0;
+    // The draw counter's value when the current frame began. A texture
+    // stamped at or after it has been used by THIS frame's commands, and
+    // the GPU may still be reading it: it cannot be freed (AGENTS.md P3).
+    uint32_t frameStartUse = 0;
     std::vector<C3dMesh> meshes;
 
     // The palettes, kept so a texture can be expanded later. The 3DS has
     // no palette texture, so the palette's only job is the expansion.
     std::vector<std::vector<uint8_t>> palettes;
 
-    // The cull mode last written to the active render target. C3D_CullFace
-    // always marks the effect block dirty, even when the value is unchanged;
-    // without this cache every mesh draw would flush an effect-block rebind
-    // at the next draw. begin_frame resets it for each eye.
+    // The cull mode last written to the CITRO3D CONTEXT. citro3d keeps the
+    // render state in ONE global context, not per render target --
+    // C3D_FrameDrawOn does not restore it -- so anything that binds another
+    // target mid-frame inherits this mode.
+    //
+    // C3D_CullFace always marks the effect block dirty, even when the value
+    // is unchanged; without this cache every mesh draw would flush an
+    // effect-block rebind at the next draw.
     GPU_CULLMODE cullMode = GPU_CULL_NONE;
 
     int frame = 0;
@@ -222,6 +257,11 @@ struct RendererC3D {
     bool diagnosticTriangle = true;
     bool ready = false;
     bool inFrame = false;
+
+    // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
+    // may still be reading the last frame's textures then. C3D_FrameBegin
+    // waits for the previous queue, so it is the completion boundary.
+    bool gpuPending = false;
 };
 
 RendererC3D* asC3d(MdkRenderer r) {
@@ -385,6 +425,16 @@ inline GpuVertex expand(const mdk::Vertex& v) {
         linearFree(r->scratch);
         r->scratch = nullptr;
     }
+    // The textures and the meshes are NOT freed here, and that is
+    // deliberate.
+    //
+    // Their memory comes from the linear heap (C3D_TexInit's linear path is
+    // a linearAlloc, and so is a mesh's vertex array), and `C3D_Fini` below
+    // is what waits for the render queue to drain -- it calls
+    // gxCmdQueueWait with an infinite timeout before it stops the queue.
+    // Freeing the textures before that wait would hand back memory the GPU
+    // may still be reading (AGENTS.md P3); the heap itself goes when the
+    // process exits, which is the only caller of this destructor.
     if (r->targetLeft) {
         C3D_RenderTargetDelete(r->targetLeft);
         r->targetLeft = nullptr;
@@ -424,6 +474,29 @@ inline GpuVertex expand(const mdk::Vertex& v) {
     caps.panorama_linear = false;
     caps.max_texture_size = 1024;
     caps.max_canvas_quads = 512;
+
+    // THE SPRITE RESIDENCY BUDGET.
+    //
+    // THE ARITHMETIC. The 3DS has six megabytes of VRAM and the linear heap
+    // starts there, so everything the GPU reads comes out of it first:
+    //
+    //   the two eye targets      2 x (400x240 colour + 400x240 depth)  1.5 MiB
+    //   the command buffer        C3D_DEFAULT_CMDBUF_SIZE x 2         0.5 MiB
+    //   an arena's textures       the expanded, padded RGBA8          ~3.0 MiB
+    //                                                            ----------
+    //                                                            ~5.0 MiB
+    //
+    // which leaves about a megabyte for everything else -- and Kurt's
+    // sprite frames are 96 KiB each as GPU textures (measured: 49.94 MiB for
+    // all 360 frames of TRAVSPRT.BNI, 12.00 MiB for K_CHUTEC alone). So the
+    // sprite cache keeps ONE megabyte resident and makes the rest again as
+    // they are wanted.
+    //
+    // THE NUMBER IS AN ESTIMATE from the arithmetic above, not a
+    // measurement: the Old-3DS timing and the real residency are still
+    // UNMEASURED (AGENTS.md P6). What the bound buys is that the set can
+    // never be the 49.94 MiB the eager upload asked for.
+    caps.sprite_residency_bytes = 1024 * 1024;
     return caps;
 }
 
@@ -541,6 +614,51 @@ void buildEyeMvp(const RendererC3D* r, float eyeOffset, float out[16]) {
 // The frame
 // ---------------------------------------------------------------------------
 
+static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics);
+
+// Settle the texture changes that could not be made while the GPU might
+// still be reading the old copy.
+//
+// C3D_FrameBegin has waited for the previous queue by the time this runs,
+// so deleting and replacing these copies is safe (AGENTS.md P3). A release
+// wins over an update: the id is already invalid and its source is gone.
+static void settleDeferredTextures(RendererC3D* renderer) {
+    if (!renderer) {
+        return;
+    }
+    // Releases come first: they return memory without needing an
+    // allocation, and a stale replacement below may need that memory.
+    for (size_t i = 0; i < renderer->textures.size(); i++) {
+        C3dTexture& texture = renderer->textures[i];
+        if (!texture.releasePending) {
+            continue;
+        }
+        if (texture.valid) {
+            C3D_TexDelete(&texture.tex);
+            texture.valid = false;
+        }
+        texture.releasePending = false;
+        texture.stale = false;
+        texture.source.clear();
+        texture.palette.clear();
+    }
+    for (size_t i = 0; i < renderer->textures.size(); i++) {
+        C3dTexture& texture = renderer->textures[i];
+        if (!texture.stale) {
+            continue;
+        }
+        texture.stale = false;
+        if (texture.valid) {
+            C3D_TexDelete(&texture.tex);
+            texture.valid = false;
+        }
+        if (!texture.source.empty() && makeTexture(renderer, texture, false)) {
+            // The replacement is protected until it is first drawn.
+            texture.lastUsed = ++renderer->drawCounter;
+        }
+    }
+}
+
  void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->ready) return;
@@ -554,6 +672,15 @@ void buildEyeMvp(const RendererC3D* r, float eyeOffset, float out[16]) {
     r->inFrame = true;
     r->frame++;
     r->drawCount = 0;
+    // C3D_FrameBegin waited for the previous queue above. The old frame's
+    // GPU reads are complete, so deferred releases and replacements can be
+    // made now (AGENTS.md P3).
+    r->gpuPending = false;
+    // THE FRAME'S BOUNDARY FOR THE EVICTION. A texture stamped at or after
+    // this has been used by THIS frame's commands, and the GPU may still be
+    // reading it, so it cannot be freed (AGENTS.md P3).
+    r->frameStartUse = r->drawCounter + 1;
+    settleDeferredTextures(r);
 
     const uint32_t clear = params ? params->clear_colour : 0xFF000000u;
 
@@ -643,8 +770,10 @@ void buildEyeMvp(const RendererC3D* r, float eyeOffset, float out[16]) {
         // the camera's handedness, and it needs a hardware look (AGENTS.md P6)
         // before it can be called verified.
         C3D_CullFace(GPU_CULL_BACK_CCW);
-        // The cache describes the state actually installed above. It is reset
-        // for each eye because each eye selects a different render target.
+        // The cache describes the state actually installed above. The mode
+        // is GLOBAL to the context, so the first eye's install already
+        // covers the second; re-installing it per eye is belt and braces,
+        // not the mechanism.
         r->cullMode = GPU_CULL_BACK_CCW;
         C3D_DepthMap(true, 1.0f, 1.0f);
 
@@ -663,6 +792,10 @@ void buildEyeMvp(const RendererC3D* r, float eyeOffset, float out[16]) {
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);
     r->inFrame = false;
+    // C3D_FrameEnd submits the queue; it does not wait for it. Until the
+    // next C3D_FrameBegin, the GPU may still be reading this frame's
+    // textures, so they cannot be freed or replaced (AGENTS.md P3).
+    r->gpuPending = true;
 }
 
  void mdk_render_present(MdkRenderer rr) {
@@ -714,47 +847,276 @@ void buildEyeMvp(const RendererC3D* r, float eyeOffset, float out[16]) {
 // with the palette expansion (SPEC.md 7.3).
 // ---------------------------------------------------------------------------
 
- // Free the LEAST RECENTLY USED textures until at least `needed` bytes are
-// free, or there is nothing left to free.
+ // Free the LEAST RECENTLY USED texture, so that a new one can be made.
 //
 // THE EVICTION IS WHAT MAKES AN ARENA FIT. The 3DS has six megabytes of
 // VRAM, the render targets take one and a half, and an arena's expanded
 // textures come to around three more -- so the whole set does not fit at
 // once with everything else. The textures that are actually being drawn
 // stay; the rest go, and are made again when they are next needed.
-static void evictTextures(RendererC3D* renderer, size_t needed) {
-    if (!renderer) {
-        return;
+//
+// ONLY A TEXTURE THAT CANNOT BE IN FLIGHT MAY GO. A texture drawn by this
+// frame is read by this frame's commands, and a texture submitted by the
+// previous frame is still in flight until the next C3D_FrameBegin waits for
+// that queue (AGENTS.md P3). Outside a frame after a frame has been
+// submitted, nothing may be evicted.
+//
+// The evicted texture KEEPS ITS SOURCE, so it can be made again: the
+// eviction gives the VRAM back without making the id a dead end.
+//
+// Returns false when there is no texture that may be freed.
+static bool evictTextures(RendererC3D* renderer, size_t needed) {
+    (void)needed;
+    if (!renderer || renderer->gpuPending) {
+        return false;
     }
-    for (;;) {
-        // The least recently used texture.
-        int oldest = -1;
-        uint32_t oldestUse = 0xFFFFFFFFu;
-        for (size_t i = 0; i < renderer->textures.size(); i++) {
-            if (!renderer->textures[i].valid) {
+    // The least recently used texture this frame has not used.
+    int oldest = -1;
+    uint32_t oldestUse = 0xFFFFFFFFu;
+    for (size_t i = 0; i < renderer->textures.size(); i++) {
+        const C3dTexture& texture = renderer->textures[i];
+        if (!texture.valid || texture.releasePending) {
+            continue;
+        }
+        if (renderer->inFrame && texture.lastUsed >= renderer->frameStartUse) {
+            continue;
+        }
+        if (texture.lastUsed < oldestUse) {
+            oldestUse = texture.lastUsed;
+            oldest = (int)i;
+        }
+    }
+    if (oldest < 0) {
+        return false;
+    }
+    C3dTexture& victim = renderer->textures[(size_t)oldest];
+    C3D_TexDelete(&victim.tex);
+    victim.valid = false;
+    return true;
+}
+
+// A free slot in the texture table, or a new one.
+//
+// The ids the seam hands out are indices into the table, and a caller that
+// releases a texture and makes it again -- the sprite cache does exactly
+// that when its residency budget says a frame has to go -- must not grow
+// the table for ever. A slot with a source is NOT free: it is an evicted
+// texture that can be made again, and its source is the only copy there is.
+static int32_t acquireTextureSlot(RendererC3D* renderer) {
+    for (size_t i = 0; i < renderer->textures.size(); i++) {
+        const C3dTexture& texture = renderer->textures[i];
+        if (!texture.valid && !texture.releasePending && texture.source.empty()) {
+            return (int32_t)i;
+        }
+    }
+    renderer->textures.push_back(C3dTexture());
+    return (int32_t)renderer->textures.size() - 1;
+}
+
+// The expanded RGBA8 image of an index texture: the indices through the
+// palette, and the padding transparent. The caller frees it.
+//
+// THE RULE IS THE C#'s PALETTE SHADER'S RULE EXACTLY:
+//
+//     index == 0   -> TRANSPARENT (the shader discards it)
+//     otherwise    -> the palette's RGB, and the alpha is FORCED to 255
+//
+// The palette's own alpha is NOT used: the C#'s shader takes the palette's
+// RGB and writes an alpha of 1.0, and the transparency comes from the
+// index-0 discard.
+static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t height,
+                              const uint8_t* paletteRgba, int32_t paddedWidth,
+                              int32_t paddedHeight) {
+    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;
+    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));
+    if (!pixels) {
+        return nullptr;
+    }
+    // The padding is transparent. Each source row is copied into its own
+    // padded row: the source is width pixels wide, but the GPU texture is
+    // paddedWidth pixels wide, so copying the source as one contiguous run
+    // would shift every row after the first.
+    memset(pixels, 0, texels * 4);
+    for (int32_t y = 0; y < height; y++) {
+        const uint8_t* source = indices + (size_t)y * (size_t)width;
+        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;
+        for (int32_t x = 0; x < width; x++) {
+            const uint8_t index = source[x];
+            uint8_t* pixel = out + (size_t)x * 4;
+            if (index == 0) {
+                // Transparent: the colour is irrelevant, but it must not be
+                // black-with-alpha-255, which is what the palette says.
                 continue;
             }
-            if (renderer->textures[i].lastUsed < oldestUse) {
-                oldestUse = renderer->textures[i].lastUsed;
-                oldest = (int)i;
-            }
+            pixel[0] = paletteRgba[index * 4 + 0];
+            pixel[1] = paletteRgba[index * 4 + 1];
+            pixel[2] = paletteRgba[index * 4 + 2];
+            pixel[3] = 255;
         }
-        if (oldest < 0) {
-            return;
-        }
-        C3D_TexDelete(&renderer->textures[(size_t)oldest].tex);
-        renderer->textures[(size_t)oldest].valid = false;
-        (void)needed;
-        // One eviction per round: the allocation is retried by the caller,
-        // and the caller knows whether it succeeded.
-        return;
     }
+    return pixels;
+}
+
+// The expanded RGBA8 image of an RGBA texture: the real pixels, with the
+// POT padding transparent. The PICA200's texture-size register requires
+// power-of-two dimensions of at least 8, just as it does for an index
+// texture. The draw path's UV transform maps the real rectangle into the
+// padded one.
+static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
+                           int32_t paddedWidth, int32_t paddedHeight) {
+    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;
+    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));
+    if (!pixels) {
+        return nullptr;
+    }
+    memset(pixels, 0, texels * 4);
+    const size_t rowBytes = (size_t)width * 4;
+    for (int32_t y = 0; y < height; y++) {
+        memcpy(pixels + (size_t)y * (size_t)paddedWidth * 4,
+               source + (size_t)y * rowBytes, rowBytes);
+    }
+    return pixels;
+}
+
+// WHAT IS LEFT, when a texture does not fit. The probe is the only
+// diagnostic the 3DS gives: an allocation that fails says nothing at all,
+// and that silence is how a whole arena's textures once refused to allocate
+// one after another while the screen showed only the clear colour.
+static void probeTextureMemory(int32_t width, int32_t height, size_t bytes) {
+    void* probe = linearAlloc(1024u * 1024u);
+    mdk::log3dsPrintf("texture %dx%d (%d bytes) failed; linear 1MB: %s",
+                      (int)width, (int)height, (int)bytes, probe ? "ok" : "FULL");
+    if (probe) {
+        linearFree(probe);
+    }
+    C3dTexture small;
+    if (C3D_TexInit(&small.tex, 64, 64, GPU_RGBA8)) {
+        mdk::log3dsPrintf("  64x64 linear: yes");
+        C3D_TexDelete(&small.tex);
+    } else {
+        mdk::log3dsPrintf("  64x64 linear: no");
+    }
+    C3dTexture smallVram;
+    if (C3D_TexInitVRAM(&smallVram.tex, 64, 64, GPU_RGBA8)) {
+        mdk::log3dsPrintf("  64x64 vram: yes");
+        C3D_TexDelete(&smallVram.tex);
+    } else {
+        mdk::log3dsPrintf("  64x64 vram: no");
+    }
+    // THE BOUNDARY. Is the limit a dimension, or a total size?
+    static const int probes[][2] = {
+        {64, 64}, {64, 128}, {128, 64}, {128, 128},
+        {64, 256}, {256, 64}, {128, 176}, {32, 512}, {512, 32},
+    };
+    for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+        C3dTexture probeTex;
+        const bool ok = C3D_TexInit(&probeTex.tex, (u16)probes[i][0], (u16)probes[i][1],
+                                    GPU_RGBA8);
+        mdk::log3dsPrintf("  %dx%d: %s", probes[i][0], probes[i][1], ok ? "yes" : "NO");
+        if (ok) {
+            C3D_TexDelete(&probeTex.tex);
+        }
+    }
+    // And the same boundary in RGBA4, which is what the working port uses.
+    for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+        C3dTexture probeTex;
+        const bool ok = C3D_TexInit(&probeTex.tex, (u16)probes[i][0], (u16)probes[i][1],
+                                    GPU_RGBA4);
+        mdk::log3dsPrintf("  rgba4 %dx%d: %s", probes[i][0], probes[i][1], ok ? "yes" : "NO");
+        if (ok) {
+            C3D_TexDelete(&probeTex.tex);
+        }
+    }
+}
+
+// Makes the GPU copy of a texture from the source the backend kept, and
+// fills it.
+//
+// The allocation can fail because the VRAM is full, and the VRAM IS
+// routinely full: the render targets take one and a half megabytes, the
+// command buffer half a megabyte, and an arena's expanded textures come to
+// around three more, against six megabytes.
+//
+// So the allocation RETRIES, each time evicting the least recently used
+// texture. The textures that are being drawn stay; the ones that are not
+// are made again when they are next needed.
+static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics) {
+    if (texture.valid) {
+        return true;
+    }
+    const size_t gpuBytes = (size_t)texture.paddedWidth * (size_t)texture.paddedHeight * 4;
+    const size_t realBytes = (size_t)texture.realWidth * (size_t)texture.realHeight *
+                             (texture.indexed ? 1u : 4u);
+    if (texture.source.size() != realBytes ||
+        (texture.indexed && texture.palette.size() < 256 * 4)) {
+        mdk::log3dsPrintf("texture %dx%d source is invalid",
+                          (int)texture.realWidth, (int)texture.realHeight);
+        return false;
+    }
+    bool allocated = false;
+    bool diagnosticsRun = false;
+    for (;;) {
+        // C3D_TexInit, NOT C3D_TexInitVRAM.
+        //
+        // The VRAM-resident variant allocates from the 3DS's separate
+        // texture VRAM, and it FAILS on this build for a texture of any
+        // size -- even ninety kilobytes, with megabytes free. The
+        // linear-heap variant is what the working port (../forsaken) uses,
+        // and it works: the PICA200 samples textures out of the linear heap
+        // as well as out of the texture VRAM.
+        //
+        // RGBA8 is read LINEARLY by the PICA200; only the 16-bit and 8-bit
+        // formats go through the Morton tiling.
+        if (C3D_TexInit(&texture.tex, (u16)texture.paddedWidth, (u16)texture.paddedHeight,
+                        GPU_RGBA8)) {
+            allocated = true;
+            break;
+        }
+        if (!diagnosticsRun && diagnostics) {
+            diagnosticsRun = true;
+            probeTextureMemory(texture.realWidth, texture.realHeight, gpuBytes);
+        }
+        if (!evictTextures(renderer, gpuBytes)) {
+            break;
+        }
+    }
+    if (!allocated) {
+        mdk::log3dsPrintf("texture %dx%d FAILED: no texture memory",
+                          (int)texture.realWidth, (int)texture.realHeight);
+        return false;
+    }
+
+    // THE PIXELS. A PLAIN CPU BUFFER, NOT linearAlloc.
+    //
+    // The linear heap STARTS IN THE VRAM: its first megabytes are texture
+    // memory, and only then does it extend into system RAM. So a
+    // temporary buffer taken from the linear heap PERMANENTLY EATS VRAM --
+    // and this one is a temporary: it is copied into the texture and thrown
+    // away. Every expansion was therefore costing the 3DS its texture
+    // memory, and the arena's textures stopped allocating one after
+    // another.
+    uint8_t* pixels = nullptr;
+    if (texture.indexed) {
+        pixels = expandIndices(texture.source.data(), texture.realWidth, texture.realHeight,
+                               texture.palette.data(), texture.paddedWidth, texture.paddedHeight);
+    } else {
+        pixels = expandRgba(texture.source.data(), texture.realWidth, texture.realHeight,
+                            texture.paddedWidth, texture.paddedHeight);
+    }
+    if (!pixels) {
+        C3D_TexDelete(&texture.tex);
+        return false;
+    }
+    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);
+    free(pixels);
+    texture.valid = true;
+    return true;
 }
 
 MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px,
                                               const uint8_t* paletteRgba) {
     RendererC3D* renderer = asC3d(r);
-    if (!renderer || !renderer->ready || w <= 0 || h <= 0 || !px) {
+    if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !px) {
         return -1;
     }
     if (!paletteRgba) {
@@ -783,176 +1145,69 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     // MDK's textures are 256x400, 128x176, 256x320 and so on, so EVERY one
     // of them has to be padded. The cost is VRAM: 256x400 becomes 256x512,
     // a third more. The price of the hardware's rule.
-    const int32_t width = nextPowerOfTwo(w);
-    const int32_t height = nextPowerOfTwo(h);
-    const size_t texels = (size_t)width * (size_t)height;
-    const size_t bytes = texels * 4;
-    // A PLAIN CPU BUFFER, NOT linearAlloc.
-    //
-    // The linear heap STARTS IN THE VRAM: its first megabytes are texture
-    // memory, and only then does it extend into system RAM. So a
-    // temporary buffer taken from the linear heap PERMANENTLY EATS VRAM --
-    // and this one is a temporary: it is copied into the texture and thrown
-    // away. Every expansion was therefore costing the 3DS its texture
-    // memory, and the arena's textures stopped allocating one after
-    // another.
-    void* expanded = malloc(bytes);
-    if (!expanded) {
-        return -1;
-    }
-    uint8_t* pixels = static_cast<uint8_t*>(expanded);
-    // The image occupies the TOP of the padded texture; the rest is
-    // transparent. (The PICA's texture origin is the top-left, and the
-    // frames are stacked downwards, which is how the original stacks them.)
-    const size_t realTexels = (size_t)w * (size_t)h;
-    for (size_t i = 0; i < realTexels; i++) {
-        const uint8_t index = px[i];
-        uint8_t* out = pixels + i * 4;
-        if (index == 0) {
-            // Transparent: the colour is irrelevant, but it must not be
-            // black-with-alpha-255, which is what the palette says.
-            out[0] = 0;
-            out[1] = 0;
-            out[2] = 0;
-            out[3] = 0;
-            continue;
-        }
-        out[0] = paletteRgba[index * 4 + 0];
-        out[1] = paletteRgba[index * 4 + 1];
-        out[2] = paletteRgba[index * 4 + 2];
-        out[3] = 255;
-    }
-
-    // The allocation can fail because the VRAM is full, and the VRAM IS
-    // routinely full: the render targets take one and a half megabytes, the
-    // command buffer a megabyte, and an arena's expanded textures come to
-    // around three more, against six megabytes.
-    //
-    // So the allocation RETRIES, each time evicting the least recently used
-    // texture. The textures that are being drawn stay; the ones that are
-    // not are made again when they are next needed.
     C3dTexture texture;
-    texture.width = width;
-    texture.height = height;
-    texture.lastUsed = ++renderer->drawCounter;
-    bool allocated = false;
-    for (int attempt = 0; attempt < 32; attempt++) {
-        // C3D_TexInit, NOT C3D_TexInitVRAM.
-        //
-        // The VRAM-resident variant allocates from the 3DS's separate
-        // texture VRAM, and it FAILS on this build for a texture of any
-        // size -- even ninety kilobytes, with megabytes free. The
-        // linear-heap variant is what the working port (../forsaken) uses,
-        // and it works: the PICA200 samples textures out of the linear heap
-        // as well as out of the texture VRAM.
-        //
-        // RGBA8 is read LINEARLY by the PICA200; only the 16-bit and 8-bit
-        // formats go through the Morton tiling.
-        if (C3D_TexInit(&texture.tex, (u16)width, (u16)height, GPU_RGBA8)) {
-            allocated = true;
-            break;
-        }
-        if (attempt == 0) {
-            // THE PROBE. How much linear memory is left, and what is the
-            // biggest texture that WILL allocate? Guessing at the budget
-            // is how the port spent an hour.
-            void* probe = linearAlloc(1024u * 1024u);
-            mdk::log3dsPrintf("texture %dx%d (%d bytes) failed; linear 1MB: %s",
-                              (int)width, (int)height, (int)bytes, probe ? "ok" : "FULL");
-            if (probe) {
-                linearFree(probe);
-            }
-            C3dTexture small;
-            if (C3D_TexInit(&small.tex, 64, 64, GPU_RGBA8)) {
-                mdk::log3dsPrintf("  64x64 linear: yes");
-                C3D_TexDelete(&small.tex);
-            } else {
-                mdk::log3dsPrintf("  64x64 linear: no");
-            }
-            C3dTexture smallVram;
-            if (C3D_TexInitVRAM(&smallVram.tex, 64, 64, GPU_RGBA8)) {
-                mdk::log3dsPrintf("  64x64 vram: yes");
-                C3D_TexDelete(&smallVram.tex);
-            } else {
-                mdk::log3dsPrintf("  64x64 vram: no");
-            }
-            // THE BOUNDARY. Is the limit a dimension, or a total size?
-            static const int probes[][2] = {
-                {64, 64}, {64, 128}, {128, 64}, {128, 128},
-                {64, 256}, {256, 64}, {128, 176}, {32, 512}, {512, 32},
-            };
-            for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
-                C3dTexture probeTex;
-                const bool ok = C3D_TexInit(&probeTex.tex, (u16)probes[i][0], (u16)probes[i][1],
-                                            GPU_RGBA8);
-                mdk::log3dsPrintf("  %dx%d: %s", probes[i][0], probes[i][1], ok ? "yes" : "NO");
-                if (ok) {
-                    C3D_TexDelete(&probeTex.tex);
-                }
-            }
-            // And the same boundary in RGBA4, which is what the working port
-            // uses.
-            for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
-                C3dTexture probeTex;
-                const bool ok = C3D_TexInit(&probeTex.tex, (u16)probes[i][0], (u16)probes[i][1],
-                                            GPU_RGBA4);
-                mdk::log3dsPrintf("  rgba4 %dx%d: %s", probes[i][0], probes[i][1], ok ? "yes" : "NO");
-                if (ok) {
-                    C3D_TexDelete(&probeTex.tex);
-                }
-            }
-        }
-        evictTextures(renderer, (size_t)w * (size_t)h * 4);
-    }
-    if (!allocated) {
-        mdk::log3dsPrintf("texture %dx%d FAILED: no texture memory", (int)width, (int)height);
-        free(expanded);
-        return -1;
-    }
-    // The padding is transparent.
-    for (size_t i = realTexels; i < (size_t)width * (size_t)height; i++) {
-        uint8_t* out = pixels + i * 4;
-        out[0] = 0;
-        out[1] = 0;
-        out[2] = 0;
-        out[3] = 0;
-    }
-    C3D_TexLoadImage(&texture.tex, expanded, GPU_TEXFACE_2D, 0);
-    free(expanded);
     texture.realWidth = w;
     texture.realHeight = h;
-    texture.paddedWidth = width;
-    texture.paddedHeight = height;
-    texture.valid = true;
+    texture.paddedWidth = nextPowerOfTwo(w);
+    texture.paddedHeight = nextPowerOfTwo(h);
+    texture.indexed = true;
+    // THE SOURCE IS KEPT. An evicted texture is made again from this, and
+    // this is the only copy: the caller holds an id, not the pixels.
+    texture.source.assign(px, px + (size_t)w * (size_t)h);
+    texture.palette.assign(paletteRgba, paletteRgba + 256 * 4);
+    texture.lastUsed = ++renderer->drawCounter;
 
-    renderer->textures.push_back(texture);
-    return (MdkTextureId)(renderer->textures.size() - 1);
+    const int32_t id = acquireTextureSlot(renderer);
+    C3dTexture& slot = renderer->textures[(size_t)id];
+    slot = std::move(texture);
+    if (!makeTexture(renderer, slot, true)) {
+        // The failed slot goes back to being free: no GPU copy, no source.
+        slot = C3dTexture();
+        return -1;
+    }
+    return id;
 }
 
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t w, int32_t h, const uint8_t* px) {
     RendererC3D* renderer = asC3d(r);
-    if (!renderer || !renderer->ready || w <= 0 || h <= 0 || !px) {
+    if (!renderer || !renderer->ready || w <= 0 || h <= 0 || w > 1024 || h > 1024 || !px) {
         return -1;
     }
-    void* data = malloc((size_t)w * (size_t)h * 4);
-    if (!data) {
-        return -1;
-    }
-    memcpy(data, px, (size_t)w * (size_t)h * 4);
     C3dTexture texture;
-    texture.width = w;
-    texture.height = h;
+    texture.realWidth = w;
+    texture.realHeight = h;
+    // The PICA's texture-size register wants powers of two, and at least 8,
+    // for RGBA textures as well as index textures. The real rectangle is
+    // mapped into the padded one by the draw path's UV transform.
+    texture.paddedWidth = nextPowerOfTwo(w);
+    texture.paddedHeight = nextPowerOfTwo(h);
+    texture.indexed = false;
+    // The source is kept, so an evicted texture can be made again.
+    texture.source.assign(px, px + (size_t)w * (size_t)h * 4);
+    texture.lastUsed = ++renderer->drawCounter;
+
+    const int32_t id = acquireTextureSlot(renderer);
+    C3dTexture& slot = renderer->textures[(size_t)id];
+    slot = std::move(texture);
     // The linear heap, not the texture VRAM -- see the index-texture
     // creation for why.
-    if (!C3D_TexInit(&texture.tex, (u16)w, (u16)h, GPU_RGBA8)) {
-        linearFree(data);
+    if (!makeTexture(renderer, slot, true)) {
+        slot = C3dTexture();
         return -1;
     }
-    C3D_TexLoadImage(&texture.tex, data, GPU_TEXFACE_2D, 0);
-    free(data);
-    texture.valid = true;
-    renderer->textures.push_back(texture);
-    return (MdkTextureId)(renderer->textures.size() - 1);
+    return id;
+}
+
+int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t height) {
+    (void)r;
+    if (width <= 0 || height <= 0 || width > 1024 || height > 1024) {
+        return 0;
+    }
+    // WHAT THE 3DS SPENDS ON AN INDEX TEXTURE. The indices are expanded
+    // through the palette into RGBA8, and the dimensions are padded up to
+    // powers of two, so a 95x168 frame costs 128x256x4 = 131072 bytes --
+    // eight times the 15960 bytes of the indices themselves.
+    return nextPowerOfTwo(width) * nextPowerOfTwo(height) * 4;
 }
 
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba) {
@@ -970,16 +1225,37 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     if (!renderer || t < 0 || (size_t)t >= renderer->textures.size() || !px) {
         return;
     }
-    // A bullet hole's texture changes. The 3DS's texture was EXPANDED, so
+    C3dTexture& texture = renderer->textures[(size_t)t];
+    if (texture.source.empty() || texture.releasePending) {
+        return;
+    }
+    if (w != texture.realWidth || h != texture.realHeight) {
+        return;  // the contract is same-size updates only
+    }
+    // A bullet hole's texture changes. The 3DS's texture is EXPANDED, so
     // the update has to go through the palette again -- and the palette the
-    // texture was expanded through is not known here.
-    //
-    // Until the expansion is re-done, the texture keeps its old pixels. The
-    // bullet hole is then a small wrongness rather than a crash, and the
-    // palette-aware path lands with the resource work.
-    (void)w;
-    (void)h;
-    (void)px;
+    // texture was expanded through is kept with the texture, so it can.
+    const size_t bytes = (size_t)w * (size_t)h * (texture.indexed ? 1u : 4u);
+    texture.source.assign(px, px + bytes);
+
+    // If the old GPU copy may still be in flight, keep it and replace it at
+    // the next frame boundary. Otherwise the replacement can be made now.
+    const bool inFlight = renderer->gpuPending ||
+                          (renderer->inFrame && texture.lastUsed >= renderer->frameStartUse);
+    if (!texture.valid) {
+        return;  // the next draw makes the new source
+    }
+    if (inFlight) {
+        texture.stale = true;
+        return;
+    }
+    texture.stale = false;
+    C3D_TexDelete(&texture.tex);
+    texture.valid = false;
+    if (!makeTexture(renderer, texture, false)) {
+        return;
+    }
+    texture.lastUsed = ++renderer->drawCounter;
 }
 
 void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
@@ -988,10 +1264,23 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
         return;
     }
     C3dTexture& texture = renderer->textures[(size_t)t];
-    if (texture.valid) {
+    const bool inFlight = renderer->gpuPending ||
+                          (renderer->inFrame && texture.lastUsed >= renderer->frameStartUse);
+    if (texture.valid && !inFlight) {
         C3D_TexDelete(&texture.tex);
         texture.valid = false;
+    } else if (texture.valid) {
+        // The id is invalid to the caller now, but the GPU may still be
+        // reading the old copy. The next frame boundary frees it.
+        texture.releasePending = true;
     }
+    // A RELEASE is final: the source goes with the GPU copy, so the slot is
+    // free again once the deferred deletion settles. (An EVICTION is not a
+    // release: it keeps the source, and the texture is made again when it is
+    // next drawn.)
+    texture.source.clear();
+    texture.palette.clear();
+    texture.stale = false;
 }
 
 void mdk_render_release_palette(MdkRenderer r, MdkPaletteId p) {
@@ -1114,8 +1403,22 @@ void mdk_render_release(MdkRenderer r, MdkScope s) { (void)r; (void)s; }
     C3D_Tex* texture = nullptr;
     if (draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
         C3dTexture& resource = r->textures[(size_t)draw->material.texture];
-        if (resource.valid) {
-            texture = &resource.tex;
+        // A released texture whose GPU copy is waiting for the next frame
+        // boundary must not be drawn again: the caller has given the id up.
+        if (!resource.releasePending) {
+            if (!resource.valid && !resource.source.empty()) {
+                // THE EVICTION IS REVERSIBLE. The texture was made again from
+                // the source the backend kept: the caller's id is still good,
+                // and the picture comes back with it.
+                makeTexture(r, resource, false);
+            }
+            if (resource.valid) {
+                texture = &resource.tex;
+                // THE EVICTION ORDER. The texture is stamped every time it is
+                // drawn, so the least recently used one is the one that goes
+                // when the VRAM is full.
+                resource.lastUsed = ++r->drawCounter;
+            }
         }
     }
     if (!texture) {

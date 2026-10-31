@@ -129,6 +129,20 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t width, int32
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t width, int32_t height,
                                             const uint8_t* rgba);
 
+// The GPU memory, in bytes, that an INDEX texture of this size costs in the
+// active backend.
+//
+// The two backends spend very differently on the same picture. Vulkan keeps
+// the 8-bit palette indices as they are (one byte a pixel). The 3DS has no
+// palette texture format and no programmable fragment shader, so it expands
+// the indices through the palette into RGBA8 and pads the dimensions up to
+// powers of two -- eight times the bytes for a frame that is 87x159.
+//
+// A caller that keeps a SET of textures resident asks this, so the bound it
+// applies is the backend's own arithmetic and not a guess made in shared
+// code. Returns 0 when the backend has no answer.
+int32_t mdk_render_index_texture_bytes(MdkRenderer r, int32_t width, int32_t height);
+
 // Create a 256x1 RGBA palette.
 MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba256);
 

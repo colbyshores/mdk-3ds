@@ -10,8 +10,9 @@
 // the floor it stands on.
 //
 // The frames come from TRAVERSE/TRAVSPRT.BNI and the level's SNI archives.
-// They are decoded and uploaded once at level load; the per-frame path only
-// rewrites twelve vertices and draws the selected frame.
+// They are decoded at level load and uploaded when first drawn, subject to the
+// backend's residency bound; the per-frame path only rewrites twelve vertices
+// and draws the selected frame.
 //
 // The ride pose, the beta-only roll/helmet frames and the muzzle flash belong
 // to subsystems that are not ported yet, and neither are Kurt.Visible nor his
@@ -42,19 +43,148 @@ class SpriteAnimation;
 
 class ArenaSpace;
 
+// The bound on the sprite frames kept on the GPU, and the choice of which
+// one goes when the bound is exceeded.
+//
+// WHY THIS EXISTS. The C# uploads every frame of every sprite animation at
+// level load (KurtSprite.Preload) and keeps them for ever: its texture
+// cache is keyed by (name, frame) and nothing ever evicts from it. The
+// desktop can afford that. The 3DS cannot: the same set is 49.9 MiB of
+// palette-expanded RGBA8 padded to powers of two (measured over
+// TRAVSPRT.BNI: 19 animations, 360 frames) against a machine whose whole
+// texture heap is megabytes. So the port uploads a frame when it is first
+// drawn and keeps only as many as the backend says it can hold.
+//
+// IT KNOWS NOTHING ABOUT THE RENDERER. The numbers come in from the caller,
+// so the policy can be pinned by a test with no GPU at all
+// (tests/scripts/sprite_tests.cpp).
+class SpriteResidency {
+public:
+    // One resident frame, named by where it lives.
+    struct Entry {
+        int32_t animation = -1;
+        int32_t frame = -1;
+        int32_t bytes = 0;      // the GPU memory it costs while resident
+        uint32_t lastUsed = 0;  // the draw counter when it was last drawn
+    };
+
+    // The bound, in GPU bytes. 0 means "no bound": nothing is ever dropped.
+    void setBudget(int32_t bytes) { budget_ = bytes > 0 ? bytes : 0; }
+    int32_t budget() const { return budget_; }
+    bool bounded() const { return budget_ > 0; }
+    int32_t residentBytes() const { return residentBytes_; }
+    int32_t residentCount() const { return (int32_t)resident_.size(); }
+    bool overBudget() const { return budget_ > 0 && residentBytes_ > budget_; }
+
+    // A frame became resident.
+    void add(const Entry& entry) {
+        residentBytes_ += entry.bytes;
+        resident_.push_back(entry);
+    }
+
+    // A frame stopped being resident. False when it was not resident.
+    bool remove(int32_t animation, int32_t frame) {
+        for (size_t i = 0; i < resident_.size(); i++) {
+            if (resident_[i].animation != animation || resident_[i].frame != frame) {
+                continue;
+            }
+            residentBytes_ -= resident_[i].bytes;
+            resident_[i] = resident_.back();
+            resident_.pop_back();
+            return true;
+        }
+        return false;
+    }
+
+    // The whole set stopped being resident: a new level's `load()` starts
+    // from an empty cache, even if a previous load had already drawn frames.
+    void clear() {
+        residentBytes_ = 0;
+        resident_.clear();
+    }
+
+    // Every frame of an animation stopped being resident. The swap-and-pop
+    // re-examines the entry moved into the hole, so the result does not
+    // depend on the order the entries were added.
+    void removeAnimation(int32_t animation) {
+        size_t i = 0;
+        while (i < resident_.size()) {
+            if (resident_[i].animation == animation) {
+                residentBytes_ -= resident_[i].bytes;
+                resident_[i] = resident_.back();
+                resident_.pop_back();
+                continue;
+            }
+            i++;
+        }
+    }
+
+    // A frame was drawn now.
+    void touch(int32_t animation, int32_t frame, uint32_t now) {
+        for (size_t i = 0; i < resident_.size(); i++) {
+            if (resident_[i].animation == animation && resident_[i].frame == frame) {
+                resident_[i].lastUsed = now;
+                return;
+            }
+        }
+    }
+
+    // The resident frame that has gone unused the longest. The frame being
+    // drawn (`keep`) is never the victim: dropping it would drop the very
+    // picture that is about to be drawn. False when there is no candidate.
+    bool victim(int32_t keepAnimation, int32_t keepFrame, Entry* out) const {
+        const Entry* oldest = nullptr;
+        for (size_t i = 0; i < resident_.size(); i++) {
+            const Entry& entry = resident_[i];
+            if (entry.animation == keepAnimation && entry.frame == keepFrame) {
+                continue;
+            }
+            if (!oldest || entry.lastUsed < oldest->lastUsed) {
+                oldest = &entry;
+            }
+        }
+        if (!oldest) {
+            return false;
+        }
+        if (out) {
+            *out = *oldest;
+        }
+        return true;
+    }
+
+    // The draw counter. It only ever goes up, and it wraps after four
+    // billion draws, which no session reaches.
+    uint32_t tick() { return ++clock_; }
+
+private:
+    int32_t budget_ = 0;
+    int32_t residentBytes_ = 0;
+    uint32_t clock_ = 0;
+    std::vector<Entry> resident_;
+};
+
 class KurtSprite {
 public:
     KurtSprite();
 
     enum Repeat { Once, Loop };
 
-    // One uploaded frame and the anchor the C#'s SpriteAnimation.Frame has.
+    // One frame and the anchor the C#'s SpriteAnimation.Frame has.
+    //
+    // THE TEXTURE IS MADE WHEN THE FRAME IS FIRST DRAWN, not when the
+    // animation is loaded: see SpriteResidency above. `texture` is -1 while
+    // the frame is not resident.
     struct Frame {
         int32_t texture = -1;
         int32_t width = 0;
         int32_t height = 0;
         int32_t hotspotX = 0;
         int32_t hotspotY = 0;
+        // The decoded palette indices. The C# keeps them in its
+        // SpriteAnimation's frame cache; the port copies them here, because
+        // a frame whose texture has been dropped has to be uploaded again
+        // and the archive it came from is gone by then.
+        std::vector<uint8_t> indices;
     };
 
     // An animation's decoded frames. `repeat` is the C#'s Repeat enum.
@@ -64,16 +194,18 @@ public:
         std::vector<Frame> frames;
     };
 
-    // The animation and frame a player's state selects.
+    // The animation and frame a player's state selects. The animation is an
+    // index into the loaded set.
     struct Pick {
-        const Animation* animation = nullptr;
+        int32_t animation = -1;
         int32_t frame = 0;
     };
 
-    // Loads the ordinary animations from TRAVSPRT.BNI and uploads their
+    // Loads the ordinary animations from TRAVSPRT.BNI and decodes their
     // frames. The archive is borrowed only while this call runs: the decoded
-    // frames are copied and the GPU keeps its own copy. Returns false when
-    // the renderer or the still frame could not be loaded.
+    // frames are copied, and the GPU copies are made when a frame is first
+    // drawn. Returns false when the renderer or the still frame could not be
+    // loaded.
     bool load(MdkRenderer renderer, const formats::Bni& sprites,
               const formats::Palette& palette);
 
@@ -92,9 +224,8 @@ public:
     Player::FrameCounts frameCounts() const;
 
     // The frame the player's state selects, or false when that animation is
-    // not present. The animation points into the loaded set: it is valid until
-    // the next add(), which may grow that set, so draw with it before loading
-    // another animation.
+    // not present. The animation is an index into the loaded set, which the
+    // next add() may grow.
     bool pick(const Player& player, Pick* out) const;
 
     // Draws Kurt at `feet` for a camera at `eye`. `forward`, `up` and the
@@ -156,8 +287,25 @@ private:
                        const formats::SpriteAnimation& animation, Animation* out);
     int32_t findAnimation(const std::string& name) const;
     void resolveAnimations();
-    bool drawFrame(MdkRenderer renderer, const Animation& animation, int32_t frame,
-                   const Vec3& eye, const Quad& at, int32_t dx, int32_t dy, const Pull& pull);
+
+    // The C#'s Texture(name, frame, image): the frame's GPU texture, made
+    // the first time the frame is drawn and kept until the residency budget
+    // says it has to go. False when the texture could not be made.
+    bool ensureTexture(int32_t animation, int32_t frame);
+
+    // Drops the frames that have gone unused the longest until the resident
+    // set is inside the budget. The frame being drawn is never dropped.
+    void trimResidency(int32_t keepAnimation, int32_t keepFrame);
+
+    // Drops one frame's texture, and forgets that it was resident.
+    void releaseFrame(int32_t animation, int32_t frame);
+
+    // Drops every frame of an animation's textures. Used when an animation
+    // is replaced, so its GPU copies do not leak.
+    void releaseAnimation(int32_t animation);
+
+    bool drawFrame(MdkRenderer renderer, int32_t animation, int32_t frame, const Vec3& eye,
+                   const Quad& at, int32_t dx, int32_t dy, const Pull& pull);
     bool floorDepth(ArenaSpace* space, const Vec3& eye, const Vec3& forward, const Quad& at,
                     const Frame& frame, float rise, float* outDepth);
     static Vec3 corner(const Quad& at, float ax, float ay, float px, float py);
@@ -174,6 +322,8 @@ private:
     int32_t chuteSway_ = -1;
     int32_t backUp_ = -1;
     int32_t muzzleFlash_ = -1;
+    // What is on the GPU, and how much of it there is. See SpriteResidency.
+    SpriteResidency residency_;
 };
 
 } // namespace mdk

@@ -2740,3 +2740,64 @@ Verification on this tree:
   to the previous C++ frame because the changed backend is 3DS-only.
 - No emulator or Original 3DS hardware run was performed. The cull-state change
   is compile-verified only, and Old-3DS timing remains unmeasured.
+
+## What this batch did (iteration 34 — bounded, restorable sprite residency)
+
+Review-30's texture-residency MAJOR and its narrower replacement/leak MINOR are
+now closed in code. The 3DS frontend still binds no Kurt and no Original 3DS
+was available, so the new residency bound is compile-verified rather than
+hardware-verified.
+
+**Kurt's sprite frames are decoded at load and uploaded on first draw.** The
+C# eagerly uploads and retains every frame. The port now retains the decoded
+palette indices instead: `TRAVSPRT.BNI`'s 19 present Kurt animations contain
+360 frames, measured at 5.30 MiB of indices, 49.94 MiB when expanded to the
+3DS's padded RGBA8. `MdkCapabilities::sprite_residency_bytes` lets the backend
+name its bound without an `#ifdef`: Vulkan answers 0 (no bound, the C#'s own
+behaviour), while Citro3D answers 1 MiB. `SpriteResidency` applies that bound
+by dropping the least-recently-drawn frame and never dropping the frame about
+to be drawn. `PASS SpriteResidencyPolicy` pins the accounting, bound, victim
+choice, replacement and reset; this is a port policy and therefore has no C#
+twin.
+
+**Citro3D eviction is reversible.** Every texture now keeps its source bytes
+and palette in system memory. The draw path rebuilds an evicted texture from
+that source instead of leaving an arena surface untextured for the session.
+Texture replacement and release wait until `C3D_FrameBegin`, where the previous
+queue has completed, when the old GPU copy may still be in flight. Released
+texture slots can be reused without growing the id table for ever. The POT
+expansion also copies each source row into its own padded row; copying a
+non-square source as one contiguous run shifted every row after the first.
+
+**The replacement and reload paths release what they drop.** Replacing an
+animation releases its old frames. Re-loading `KurtSprite` releases the
+previous level's drawn frames and clears the residency accounting. The palette
+and dynamic mesh still need a level-scope release and remain recorded in
+`docs/OPEN_ITEMS.md`. Vulkan now forgets cached descriptor sets before a
+texture or palette image view is replaced or destroyed, so a reused id cannot
+inherit a set naming the old view.
+
+The newest review's three small documentation/comment findings are also
+applied: the non-`Solid` arena count is 10 of 17 (not 12), the cull cache is
+documented as global to the Citro3D context rather than per render target, and
+the oracle's `Pass` line citations are corrected to `Renderer.cs:565,596,
+606-607`.
+
+Verification on this tree:
+
+- `make -C tests/scripts clean && make -C tests/scripts -j4` exited 0. The focused
+  run printed `PASS SpriteResidencyPolicy` and `All VM unit tests match the
+  oracle.`; the complete suite ended `All cases match the oracle.` No golden
+  moved.
+- `cmake --build build-linux --target mdk -j16` exited 0.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j4`
+  exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no
+  built CIA, and `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009`.
+- `DISPLAY=:99 tools/publish_frame.sh sprite-residency` published
+  `docs/frames/2026-10-31-sprite-residency.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`. The PNG is byte-identical
+  to the previous C++ frame, as expected because the pinned capture is
+  Linux/Vulkan and the picture does not change.
+- No emulator or Original 3DS hardware run was performed. The 1 MiB bound, the
+  kept-source system-RAM cost and Old-3DS timing remain unmeasured.

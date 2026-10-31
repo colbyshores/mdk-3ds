@@ -44,13 +44,15 @@ measured or cited reason, and the batch that closes one should delete its entry.
   layer computation is unmeasured.
 - The newest external review's MINOR: the 3DS `Pass` implementation covers culling
   only. The C# derives cull, blend and depth-test/write from `Pass`
-  (`Renderer.cs:567,596,607-609`), but `renderer_c3d.cpp` never calls
+  (`Renderer.cs:565,596,606-607`), but `renderer_c3d.cpp` never calls
   `C3D_AlphaBlend`, so `Pass::Blended` glass draws opaque, and the
   `OnTop`/`Overlay` depth exemptions are not modelled. The review measured
-  non-`Solid` batches in 12 of level 3's 17
-  arenas (`HMO_3`: 75 Blended; `HMO_9`: 25 Mirror + 49 Blended; `HMO_2`: 4
-  Blended). They are unreachable today only because the 3DS frontend draws the
-  start arena, whose 154 batches are all `Solid`.
+  non-`Solid` batches in **10 of level 3's 17** arenas (HMO_2, HMO_3, HMO_5,
+  HMO_7, HMO_8, HMO_9, HMO_10, CHMO_4, CHMO_8, CHMO_9; `HMO_3`: 75 Blended;
+  `HMO_9`: 25 Mirror + 49 Blended; `HMO_2`: 4 Blended). The seven pure-`Solid`
+  arenas are HMO_1, HMO_4, HMO_6, CHMO_1, CHMO_2, CHMO_5 and CHMO_6. They are
+  unreachable today only because the 3DS frontend draws the start arena, whose
+  154 batches are all `Solid`.
 - Kurt's sprite is drawn at `Player::feet`, not at the C#'s `FrameBlend.Feet`.
   With blending off — which is what a fixed-step capture and the tests are — the
   two are the same pixel, and sub-step blending is not ported.
@@ -60,10 +62,15 @@ measured or cited reason, and the batch that closes one should delete its entry.
   sniper mode are absent so the C#'s early returns there are the false branch. The
   knock-down, throw, slide, ledge and helmet states have no writer for the same
   reason. Whoever ports each one sets `Player`'s state and the frame counts follow.
-- `KurtSprite` (like `HudView`) has no release path: `load()` re-creates its
-  palette, mesh and every frame texture. The Linux frontend loads one level per
-  process, so nothing leaks today; a level change needs `mdk_render_release`
-  around a mark, and the 3DS frontend has no Kurt binding at all yet.
+- `KurtSprite` (like `HudView`) has no release path for its palette and mesh:
+  `load()` re-creates them, and a second `load()` (a level change) leaks both.
+  The frames themselves are released now — `load()` releases the previous
+  level's drawn frames, `add()` releases the replaced animation's frames, and
+  the residency policy releases a frame when it leaves the budget — but `load()`
+  still does not release the previous palette and
+  mesh. The Linux frontend loads one level per process, so nothing leaks today;
+  a level change needs `mdk_render_release` around a mark, and the 3DS frontend
+  has no Kurt binding at all yet.
 - Footsteps (`FOOT1`-`FOOT4` on the run frames) and the `LAND` sound are not
   ported: `Player::animate` advances the frame but plays nothing, and
   `UpdateSpecial`/`UpdateDeath` skip `UpdateTouched` because there are no touch
@@ -83,12 +90,13 @@ measured or cited reason, and the batch that closes one should delete its entry.
 
 - Review-24's open question: VK `canvasWidth` reads the swapchain extent while the
   C# reads the render target — indistinguishable while both are 4:3.
-- Review-25's MINOR, a latent trap: `getDescriptorSet` caches sets by
-  `(texture, palette, repeat)` and neither `mdk_render_update_texture` nor
-  `mdk_render_release_texture` invalidates `r->descs`, so a recreated texture id
-  leaves a cached set naming a destroyed `VkImageView`. Neither has a caller
-  outside `renderer_vk.cpp` today — whoever wires animated textures must erase the
-  affected entries (or stamp a generation counter) first.
+- Review-25's MINOR is CLOSED: `getDescriptorSet` caches sets by
+  `(texture, palette, repeat)`, and `forgetDescriptorSets()` now drops every
+  cached set that names a texture or palette whose image view is about to be
+  replaced or destroyed. `mdk_render_update_texture`,
+  `mdk_render_release_texture` and `mdk_render_release_palette` call it before
+  the change, so a recreated texture id cannot inherit a set that names a
+  destroyed `VkImageView`.
 - Review-29's MINOR, still open: `tools/publish_frame.sh` reads the gap from
   `compare_frames.py --measure` without checking its exit status, so a corrupt or
   unreadable oracle writes `bad_percent= max_delta= mean_delta=` into the committed
@@ -103,22 +111,24 @@ measured or cited reason, and the batch that closes one should delete its entry.
   every layered/lines draw and always applies view/projection. No reachable
   Overlay mesh path exists today; whoever adds one must mirror the C# exemption.
 
-- Review-30 MAJOR, same reachability caveat: eager Kurt-sprite residency does not
-  fit the 3DS. `load()` uploads every frame of every state animation at level
-  load; the reviewer measured `TRAVSPRT.BNI` as 19 animations / 360 frames, and
-  the 3DS expands each to `GPU_RGBA8` padded to POT, which is ~49.9 MiB against
-  SPEC's 6 MB VRAM budget (K_CHUTEC alone is 12 MiB). Worse, `evictTextures`
-  deletes the `C3D_Tex` and only sets `valid = false`, and nothing re-creates an
-  evicted id because the caller holds an `MdkTextureId` and not the source
-  indices — so the first failed Kurt allocation silently draws an arena surface
-  untextured for the rest of the session. Needs bounded/on-demand residency
-  (the frames of the current state, chute frames lazily) before the binding lands.
-- Review-30 MINOR, narrower than the release-path row above: `loadAnimation`
-  clears `out->frames` on a mid-animation texture failure, and `add()` replaces an
-  already-loaded `Animation`, in both cases without `mdk_render_release_texture`,
-  so those GPU ids are unreachable. The C# does not diverge here — its cache is
-  keyed by `(name, frame)`. No symptom today: the six slide/surf animations are
-  absent from `TRAVSPRT.BNI`, so `add()` never replaces a name.
+- Review-30's texture-residency MAJOR is **CLOSED** (iteration 34). The sprite
+  frames are decoded, not uploaded, at level load: `KurtSprite` keeps the
+  palette indices and uploads a frame the first time it is drawn. The 3DS names
+  a 1 MiB residency budget (`MdkCapabilities::sprite_residency_bytes`), the
+  shared cache keeps the least-recently-drawn frames inside it, and a frame that
+  leaves the budget gives its GPU copy back. The Citro3D eviction is now
+  **restorable**: every texture keeps its source (the indices for an index
+  texture), and the draw path re-makes an evicted texture from it, so an arena
+  surface can no longer stay untextured for the rest of the session. What is
+  still open: the 3DS frontend binds no Kurt yet, so the bound is
+  compile-verified only and **UNMEASURED on hardware**; and the kept sources
+  cost system RAM — ~5.3 MiB of sprite indices for `TRAVSPRT.BNI` alone, plus
+  the arena textures' own sources — which has not been measured against the
+  3DS's heap.
+- Review-30's narrower leak MINOR is **CLOSED** with it: `add()` releases the
+  replaced animation's frames, and `loadAnimation` uploads nothing, so its
+  failure path has no GPU id to lose. The C# does not diverge here — its cache
+  is keyed by `(name, frame)`.
 
 ## The frame-record directive (closed as an open item, kept as a rule)
 

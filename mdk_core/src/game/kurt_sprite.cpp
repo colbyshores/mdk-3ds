@@ -166,6 +166,19 @@ bool KurtSprite::load(MdkRenderer renderer, const formats::Bni& sprites,
         return false;
     }
 
+    // THE RESIDENCY BOUND. The backend names what it can hold: the desktop
+    // has the memory for every frame the C# keeps (its answer is 0, "no
+    // bound"), and the 3DS names a megabyte or so. See SpriteResidency.
+    residency_.setBudget(mdk_render_capabilities(renderer).sprite_residency_bytes);
+
+    // A RE-LOAD IS NOT A RESET OF THE GPU: the previous level's drawn frames
+    // have textures now, and they have to be released before the animation
+    // list that names them goes away. The palette and mesh's release is
+    // recorded separately.
+    for (size_t i = 0; i < animations_.size(); i++) {
+        releaseAnimation((int32_t)i);
+    }
+    residency_.clear();
     animations_.clear();
     for (size_t i = 0; i < stateSpecs_.size(); i++) {
         if (findAnimation(stateSpecs_[i].name) >= 0) {
@@ -212,6 +225,12 @@ bool KurtSprite::add(MdkRenderer renderer, const std::string& name,
 
     const int32_t existing = findAnimation(name);
     if (existing >= 0) {
+        // THE REPLACED ANIMATION'S GPU COPIES GO FIRST. The C#'s cache is
+        // keyed by (name, frame), so a replaced animation's textures are the
+        // same objects and nothing leaks there; here every frame has its own
+        // texture, and the old ones have to be released or they are lost for
+        // ever (a GPU copy nobody can name).
+        releaseAnimation(existing);
         animations_[(size_t)existing] = std::move(loaded);
     } else {
         animations_.push_back(std::move(loaded));
@@ -247,18 +266,28 @@ bool KurtSprite::loadAnimation(MdkRenderer renderer, const std::string& name,
             return false;
         }
         const formats::Texture& image = decoded.image;
+        if (image.width() <= 0 || image.height() <= 0) {
+            out->frames.clear();
+            return false;
+        }
         Frame frame;
-        frame.texture = mdk_render_create_index_texture(
-            renderer, image.width(), image.height(), image.indices(), paletteRgba_.data());
         frame.width = image.width();
         frame.height = image.height();
         frame.hotspotX = decoded.hotspotX;
         frame.hotspotY = decoded.hotspotY;
-        if (frame.texture < 0) {
-            out->frames.clear();
-            return false;
-        }
-        out->frames.push_back(frame);
+        // THE INDICES ARE COPIED. The archive is borrowed only while the load
+        // runs, and the frame has to be uploadable again after its texture
+        // has been dropped -- which is what makes the 3DS's residency bound
+        // possible at all.
+        //
+        // The copy is one byte a pixel, which is a quarter of what the 3DS
+        // spends on the GPU copy and an eighth of what it spends on the
+        // padded one. The whole of TRAVSPRT.BNI's Kurt animations come to
+        // 5.30 MiB this way (measured: 19 animations, 360 frames), against
+        // the 49.94 MiB the same frames cost as GPU textures.
+        const size_t pixels = (size_t)image.width() * (size_t)image.height();
+        frame.indices.assign(image.indices(), image.indices() + pixels);
+        out->frames.push_back(std::move(frame));
     }
     return !out->frames.empty();
 }
@@ -300,7 +329,7 @@ bool KurtSprite::pick(const Player& player, Pick* out) const {
     if (!out) {
         return false;
     }
-    out->animation = nullptr;
+    out->animation = -1;
     out->frame = 0;
 
     // The chute's closing frame is shown once when it closes in the air.
@@ -309,7 +338,7 @@ bool KurtSprite::pick(const Player& player, Pick* out) const {
         if (index < 0 || (int32_t)animations_[(size_t)index].frames.size() <= kChuteClosedFrame) {
             return false;
         }
-        out->animation = &animations_[(size_t)index];
+        out->animation = index;
         out->frame = kChuteClosedFrame;
         return true;
     }
@@ -338,7 +367,7 @@ bool KurtSprite::pick(const Player& player, Pick* out) const {
         if (swayCount > 1) {
             const int32_t last = swayCount - 1;
             const int32_t k = (frame - kChuteOpenedFrame) % (last * 2);
-            out->animation = &animations_[(size_t)chuteSway_];
+            out->animation = chuteSway_;
             out->frame = k <= last ? k : last * 2 - k;
             return true;
         }
@@ -352,7 +381,7 @@ bool KurtSprite::pick(const Player& player, Pick* out) const {
     if (player.state() == Kurt::HelmetOff) {
         frame = count - 1 - frame;
     }
-    out->animation = &animation;
+    out->animation = index;
     out->frame = frame;
     return true;
 }
@@ -360,10 +389,14 @@ bool KurtSprite::pick(const Player& player, Pick* out) const {
 bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& feet, const Vec3& eye,
                       const Vec3& forward, const Vec3& up, float fieldOfView, ArenaSpace* space) {
     Pick selected;
-    if (!pick(player, &selected) || !selected.animation) {
+    if (!pick(player, &selected)) {
         return false;
     }
-    if (selected.frame < 0 || selected.frame >= (int32_t)selected.animation->frames.size()) {
+    if (selected.animation < 0 || selected.animation >= (int32_t)animations_.size()) {
+        return false;
+    }
+    const Animation& animation = animations_[(size_t)selected.animation];
+    if (selected.frame < 0 || selected.frame >= (int32_t)animation.frames.size()) {
         return false;
     }
 
@@ -396,7 +429,7 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
     at.right = scale(right, pixel * flip);
     at.up = scale(up, pixel);
 
-    const Frame& frame = selected.animation->frames[(size_t)selected.frame];
+    const Frame& frame = animation.frames[(size_t)selected.frame];
     const float rise = kFeetRise / pixel;
     float floor = 0.0f;
     const bool hasFloor = floorDepth(space, eye, forward, at, frame, rise, &floor);
@@ -404,11 +437,102 @@ bool KurtSprite::draw(MdkRenderer renderer, const Player& player, const Vec3& fe
     pull.body = inFront(depth, hasFloor, floor);
     pull.feet = nearer(depth, hasFloor, floor);
     pull.rise = rise;
-    return drawFrame(renderer, *selected.animation, selected.frame, eye, at, 0, 0, pull);
+    // THE FRAME'S TEXTURE IS MADE HERE, the first time the frame is drawn.
+    // The C# uploads every frame of every animation at level load
+    // (KurtSprite.Preload) and keeps them; the 3DS cannot afford that, so
+    // the upload waits for the frame that is actually wanted.
+    if (!ensureTexture(selected.animation, selected.frame)) {
+        return false;
+    }
+    return drawFrame(renderer, selected.animation, selected.frame, eye, at, 0, 0, pull);
 }
 
-bool KurtSprite::drawFrame(MdkRenderer renderer, const Animation& animation, int32_t frameIndex,
+bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
+    if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
+        return false;
+    }
+    Animation& animation = animations_[(size_t)animationIndex];
+    if (frameIndex < 0 || frameIndex >= (int32_t)animation.frames.size()) {
+        return false;
+    }
+    Frame& frame = animation.frames[(size_t)frameIndex];
+    const uint32_t now = residency_.tick();
+    if (frame.texture < 0) {
+        // THE C#'s Texture(name, frame, image): the frame's texture, made
+        // the first time the frame is drawn.
+        const int32_t texture = mdk_render_create_index_texture(
+            renderer_, frame.width, frame.height, frame.indices.data(), paletteRgba_.data());
+        if (texture < 0) {
+            return false;
+        }
+        frame.texture = texture;
+        SpriteResidency::Entry entry;
+        entry.animation = animationIndex;
+        entry.frame = frameIndex;
+        // WHAT IT COSTS. The backend's own arithmetic: the 3DS expands the
+        // indices through the palette into RGBA8 padded to powers of two,
+        // and the desktop keeps the indices as they are.
+        entry.bytes = mdk_render_index_texture_bytes(renderer_, frame.width, frame.height);
+        if (entry.bytes <= 0) {
+            entry.bytes = frame.width * frame.height;
+        }
+        entry.lastUsed = now;
+        residency_.add(entry);
+    } else {
+        residency_.touch(animationIndex, frameIndex, now);
+    }
+    trimResidency(animationIndex, frameIndex);
+    return true;
+}
+
+void KurtSprite::trimResidency(int32_t keepAnimation, int32_t keepFrame) {
+    while (residency_.overBudget()) {
+        SpriteResidency::Entry victim;
+        if (!residency_.victim(keepAnimation, keepFrame, &victim)) {
+            // Nothing else may go: the frame being drawn is the only one
+            // left, and dropping it would drop the picture.
+            return;
+        }
+        releaseFrame(victim.animation, victim.frame);
+    }
+}
+
+void KurtSprite::releaseFrame(int32_t animationIndex, int32_t frameIndex) {
+    // The accounting and the GPU copy are separate facts. A frame can hold a
+    // texture even when its residency entry has already gone (for example
+    // after an animation is replaced), and the copy must be released either
+    // way or it becomes unreachable.
+    residency_.remove(animationIndex, frameIndex);
+    if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
+        return;
+    }
+    Animation& animation = animations_[(size_t)animationIndex];
+    if (frameIndex < 0 || frameIndex >= (int32_t)animation.frames.size()) {
+        return;
+    }
+    Frame& frame = animation.frames[(size_t)frameIndex];
+    if (frame.texture >= 0) {
+        mdk_render_release_texture(renderer_, frame.texture);
+        frame.texture = -1;
+    }
+}
+
+void KurtSprite::releaseAnimation(int32_t animationIndex) {
+    if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
+        return;
+    }
+    const Animation& animation = animations_[(size_t)animationIndex];
+    for (size_t i = 0; i < animation.frames.size(); i++) {
+        releaseFrame(animationIndex, (int32_t)i);
+    }
+}
+
+bool KurtSprite::drawFrame(MdkRenderer renderer, int32_t animationIndex, int32_t frameIndex,
                            const Vec3& eye, const Quad& at, int32_t dx, int32_t dy, const Pull& pull) {
+    if (animationIndex < 0 || animationIndex >= (int32_t)animations_.size()) {
+        return false;
+    }
+    const Animation& animation = animations_[(size_t)animationIndex];
     if (frameIndex < 0 || frameIndex >= (int32_t)animation.frames.size()) {
         return false;
     }

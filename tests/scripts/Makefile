@@ -64,6 +64,7 @@ SOURCES := \
 SOURCES_VM := \
 	vm_tests.cpp \
 	layer_tests.cpp \
+	sprite_tests.cpp \
 	system_numerics_tests.cpp \
 	$(LINUX)/render/system_numerics_inverse.cpp \
 	$(COMMON_SOURCES)

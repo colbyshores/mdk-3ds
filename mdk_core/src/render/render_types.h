@@ -311,6 +311,23 @@ struct MdkCapabilities {
     bool panorama_linear = false; // the filtered panorama
     int32_t max_texture_size = 1024;
     int32_t max_canvas_quads = 256;
+
+    // The GPU memory, in bytes, that a caller-side sprite cache should keep
+    // resident.
+    //
+    // The C# uploads every frame of every sprite animation at level load
+    // (KurtSprite.Preload) and keeps them for ever: its `_textures` cache is
+    // keyed by (name, frame) and is never evicted. The desktop can afford
+    // that. The 3DS cannot: the same set is 49.9 MiB of palette-expanded
+    // RGBA8 padded to powers of two (measured over TRAVSPRT.BNI: 19
+    // animations, 360 frames) against a machine whose whole texture heap is
+    // megabytes.
+    //
+    // So the weaker target names its budget and the shared code applies it:
+    // the frames are uploaded when they are first drawn, and only as many as
+    // this budget are kept. 0 means "no bound", which is what the desktop
+    // answers -- the C#'s own behaviour.
+    int32_t sprite_residency_bytes = 0;
 };
 
 } // namespace mdk
