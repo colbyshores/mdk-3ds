@@ -16,6 +16,8 @@
 #include <cstring>
 #include <chrono>
 #include <climits>
+#include <deque>
+#include <map>
 #include <memory>
 #include <random>
 #include <string>
@@ -29,6 +31,8 @@
 #include "game/follow_camera.h"
 #include "game/hud_view.h"
 #include "game/kurt_sprite.h"
+#include "game/object_draw.h"
+#include "game/object_view.h"
 #include "game/player.h"
 #include "game/input.h"
 #include "game/arena_space.h"
@@ -37,6 +41,8 @@
 #include "formats/file_system.h"
 #include "platform/filesystem_posix.h"
 #include "platform/window_sdl.h"
+#include "render/material_resolver.h"
+#include "render/surface_cache.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 
@@ -192,6 +198,11 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     mdk::formats::MdkData data = mdk::formats::MdkData::find(mdk::formats::fileSystem());
     mdk::LevelData level;
+    // The GPU textures and palettes a resolved surface needs, shared by the arena
+    // view and the object pass exactly as the C# shares ONE MaterialResolver
+    // between them, so a texture an arena and an object both use is one texture
+    // (render/surface_cache.h).
+    mdk::SurfaceCache surfaces(renderer);
     mdk::LevelView view;
     mdk::HudView hud;
     mdk::KurtSprite kurtSprite;
@@ -233,7 +244,7 @@ int main(int argc, char** argv) {
             if (arena) {
                 std::printf("[main] arena: %s (%d arenas)\n", arena->name().c_str(),
                             (int)level.arenas().size());
-                if (view.load(renderer, &level, arena)) {
+                if (view.load(renderer, &level, arena, &surfaces)) {
                     std::printf("[main] view: %d batches, %d vertices, %d triangles\n",
                                 view.batchCount(), view.vertexCount(), arena->triangleCount());
                     // The sky panorama (C# Viewer.CreatePanorama): the DTI's
@@ -362,6 +373,45 @@ int main(int argc, char** argv) {
         playerReady = true;
         mdk::windowCaptureMouse(&window, true);
     }
+
+    // ---------------------------------------------------------------------
+    // The object pass: the C#'s Viewer._objects, Viewer._looks and DrawObjects.
+    //
+    // The layout cache is keyed by (model, palette) and the models belong to the
+    // level, so it lives as long as the level does -- which here is the process:
+    // this frontend loads one level and never changes it. A level change would
+    // call ObjectView::clear() next to LevelData::load's pose-cache
+    // invalidation, and would rebuild the resolver with the new level's DTI.
+    //
+    // The shading is the original look's, as LevelView's is: the shared game code
+    // draws the original look on both targets, and the enhanced look lives behind
+    // the Linux-only header the game never includes.
+    // ---------------------------------------------------------------------
+    mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Original);
+    mdk::ObjectView objectView(objectResolver);
+    mdk::ObjectDraw objectDraw;
+    mdk::ObjectStream objectStream;
+    std::map<std::string, mdk::ObjectLook> objectLooks;
+
+    // An arena's palette and textures for its objects (C# Viewer.ObjectLook):
+    // the arena's own when it has one, the level's for an object outside every
+    // arena. Cached by arena name, exactly as the C# caches its looks.
+    auto objectLook = [&](const std::string& name) -> const mdk::ObjectLook& {
+        std::map<std::string, mdk::ObjectLook>::iterator found = objectLooks.find(name);
+        if (found != objectLooks.end()) {
+            return found->second;
+        }
+        mdk::ObjectLook look;
+        const mdk::formats::Arena* owner = level.arenaNamed(name);
+        if (owner) {
+            look.palette = &level.paletteOf(owner);
+            look.archives = level.archivesOf(owner);
+        } else {
+            look.palette = &level.dti().palette();
+            look.archives.push_back(&level.levelTextures());
+        }
+        return objectLooks.emplace(name, look).first->second;
+    };
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
     const float kHudStep = 1.0f / 30.0f; // the C# HUD blink's 30 Hz boundary
@@ -510,6 +560,26 @@ int main(int argc, char** argv) {
         mdk_render_begin_frame(renderer, &params);
         if (arena) {
             view.draw();
+        }
+        if (runtime) {
+            // C# Viewer.DrawScene draws the objects after the arena and before
+            // Kurt's sprite: every object the scripts hold, in the order of its
+            // list, skipping the invisible ones -- and the ones the scripts have
+            // REMOVED, which the C# has taken out of its Objects list and the C++
+            // runtime keeps in its deque because other objects hold pointers
+            // into it.
+            objectStream.reset();
+            for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
+                if (!obj.visible || runtime->isRemoved(&obj)) {
+                    continue;
+                }
+                // The C# hands ObjectView.Draw `blend.TransformOf(obj)`, which is
+                // obj.Transform with frame blending off -- and a fixed-step
+                // capture, which is what the goldens are, has it off.
+                objectView.addObject(obj, objectLook(obj.arena), obj.transform(),
+                                     &objectStream);
+            }
+            objectDraw.draw(renderer, &surfaces, objectStream);
         }
         if (kurtSpriteReady && playerReady) {
             // C# Viewer.DrawScene draws Kurt after the level, objects and

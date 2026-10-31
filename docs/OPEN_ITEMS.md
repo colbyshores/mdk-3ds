@@ -12,7 +12,12 @@ measured or cited reason, and the batch that closes one should delete its entry.
 - Oracle driver: `/tmp/kilo/oracle/Driver/Program.cs`, args `L T 1 script`, with
   `DOTNET_ROOT=/tmp/kilo/dotnet10` and `MDK_DATA_DIR=<repo>/MDK`. The source oracle
   `src/Mdk.Game/**` is read-only; `tests/frames/capture_oracle.sh` builds the
-  scratch tree.
+  scratch tree. **For a frame later than the first**, `capture_oracle.sh` hardcodes
+  `--wait=0`, so run the binary it built (`/tmp/mdk-frame-oracle/src/Mdk.App/bin/Debug/net10.0/mdk_sdl`)
+  the same way — inside `unshare --user --map-root-user -m` with a bind-mounted private
+  `/tmp/.X11-unix` and its own `Xvfb :99 -nolock` — with `--wait=N`: in test mode the
+  oracle advances 1/60 s per frame, so `--wait=1` is frame 60 (1/60 rounds UP in binary,
+  so the accumulator reaches N/60 exactly on step N).
 - `/tmp/kilo` is readable but NOT writable by the Pi harness (it belongs to the
   other loop's user); captures go under `/tmp/mdk-frame-reference` or
   `/tmp/mdk-pi`, with the display recorded.
@@ -39,34 +44,33 @@ measured or cited reason, and the batch that closes one should delete its entry.
   landed. That is also why `golden/L3_tN_transform.txt` is pinned at t1 only:
   every multi-tick transform turns by a roll the port does not have. The pose
   goldens are unaffected (roll is not a pose input) and pass at t1/t120/t1200.
-- In the object pass, **the GPU half of the draw stage is the next slice**.
-  `ObjectView::addObject` (game/object_view.{h,cpp}) is `ObjectView.Draw` up to the
-  seam: it fills a per-frame `ObjectStream` (posed corners + one queued
-  `ObjectStreamDraw` per batch, with the stream offset, the surface, the **palette**,
-  the animated frame and the transform) and is pinned by `golden/L3_t1_draw.txt`
-  (queued fields only, with the transform's raw bits) and
-  `golden/L3_t1_stream_bound.txt` (the `1 << 18` refusal). What is left is
-  the part the C# does inside `Renderer`: map each queued draw's `Surface` **and
-  palette** to a backend texture and palette (that is `LevelView::textureId`/`flatColourId`'s logic — the
-  frame-stacked height and the one-pixel flat-colour texture — and it should be
-  factored out of `LevelView`, not copied), upload the stream once per frame with
-  `mdk_render_create_dynamic_mesh`/`mdk_render_update_mesh`, issue the queued draws,
-  and call the whole thing from `mdk_linux/src/main.cpp` after `view.draw()` (the
-  3DS frontend has no `ScriptRuntime`, so it has no objects to draw yet). That batch
-  changes the picture, so `tests/frames/reference.sha256` has to be rewritten by
-  `regenerate_reference.sh` — which means an oracle capture — and not by hand.
-  **The design decision `OPEN_ITEMS` used to leave open is made**: the C#'s
-  one-buffer-per-frame stream is what the port does, and it needs no seam change,
-  because a dynamic mesh already is "one buffer, uploaded once before the frame,
-  drawn at an offset". One dynamic mesh per object was rejected: its lifetime would
-  hang off a script-created object's identity and it would fragment linear memory
-  mid-play. The stream grows to the frame but **keeps the C#'s `1 << 18` refusal**
-  (review-3's MINOR): a batch that does not fit is refused with the cursor unmoved,
-  so a later smaller batch still fits. Measured on the oracle the whole pass is
-  2559 corners at L3 t1 and 5616 at L8 t1, so the bound is not reachable in a
-  shipped frame — which is exactly why `dump bound` exists to pin it. The mods'
-  model replacements (`Source::Mod`) stay deferred with cause: the mods are the
-  enhanced look's and are not ported.
+- **The object pass draws now** (`game/object_draw.{h,cpp}` uploads the frame's
+  `ObjectStream` once into one dynamic mesh and issues the queued draws;
+  `render/surface_cache.{h,cpp}` maps a surface + palette to a backend texture and
+  palette and is shared with `LevelView`, as the C# shares one `MaterialResolver`;
+  `mdk_linux/src/main.cpp` runs the C#'s `DrawObjects`, skipping the invisible and the
+  removed). The 3DS frontend still has no `ScriptRuntime`, so it has no objects to draw
+  and never allocates the stream mesh. What is left in this area, in order:
+  * **Pass bucketing.** The C# buckets its queued commands by `Pass` and draws the
+    buckets in order (`Renderer.cs:1004, 1049-1057`); both C++ backends record draws as
+    they come, so a `Blended` object (glass) draws in queue order — after the arena,
+    among the objects — instead of after every opaque draw. This is now visible, because
+    objects are drawn.
+  * **The pinned frame does not exercise the object pass, and cannot.** At capture frame
+    1 exactly 1/60 s has passed and `ScriptRuntime` completes a tick per 1/30 s, so
+    neither the oracle nor the port has a single object at frame 1: the earlier
+    expectation that this batch would have to rewrite `reference.sha256` was wrong, and
+    the middle 173 px of the gap is NOT the missing objects. To compare a frame where
+    objects exist, capture the oracle with `--wait=1` (60 fixed steps) and the C++ with
+    `--capture-frame=60`; measured that way the pass shrinks the gap from
+    `1.251 / 231 / 0.1910` to `1.188 / 175 / 0.1405`.
+  * The stream keeps the C#'s `1 << 18` **refusal** (a batch that does not fit is
+    refused with the cursor unmoved, so a later smaller batch still fits) but the GPU
+    buffer is made lazily and grows geometrically instead of the C#'s fixed allocation,
+    which on the 3DS would be 5.2 MiB of linear memory spent to bound a case no shipped
+    frame reaches (2559 corners at L3 t1, 5616 at L8 t1).
+  The mods' model replacements (`Source::Mod`) stay deferred with cause: the mods are
+  the enhanced look's and are not ported.
 - **A level-7 animation the port never starts: `SW_H150` / `H150_I`.** At level 7
   tick 1000 the oracle has that object on animation `H150_I` frame 36 and the port
   has no animation and frame 0, so its posed corners differ — visible in the draw

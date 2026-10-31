@@ -121,12 +121,14 @@ set(SOURCES
     ${CORE}/src/game/kurt_sprite.cpp
     ${CORE}/src/game/level_data.cpp
     ${CORE}/src/game/level_view.cpp
+    ${CORE}/src/game/object_draw.cpp
     ${CORE}/src/game/object_view.cpp
     ${CORE}/src/game/player.cpp
     ${CORE}/src/render/arena_scene.cpp
     ${CORE}/src/render/camera_builder.cpp
     ${CORE}/src/render/depth_pull.cpp
     ${CORE}/src/render/material_resolver.cpp
+    ${CORE}/src/render/surface_cache.cpp
     ${CORE}/src/scripts/object.cpp
     ${CORE}/src/scripts/script_runtime.cpp
     ${CORE}/src/scripts/script_vm.cpp

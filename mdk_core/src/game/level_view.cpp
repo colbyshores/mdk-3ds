@@ -8,32 +8,21 @@
 
 namespace mdk {
 
-namespace {
-
-// A colour as a key: the four bytes packed.
-uint32_t packColour(const Colour& colour) {
-    const uint32_t r = (uint32_t)(colour.r * 255.0f + 0.5f) & 0xFFu;
-    const uint32_t g = (uint32_t)(colour.g * 255.0f + 0.5f) & 0xFFu;
-    const uint32_t b = (uint32_t)(colour.b * 255.0f + 0.5f) & 0xFFu;
-    const uint32_t a = (uint32_t)(colour.a * 255.0f + 0.5f) & 0xFFu;
-    return r | (g << 8) | (b << 16) | (a << 24);
-}
-
-} // namespace
-
-bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Arena* arena) {
-    if (!renderer || !level || !arena) {
+bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Arena* arena,
+                     SurfaceCache* surfaces) {
+    if (!renderer || !level || !arena || !surfaces) {
         return false;
     }
     renderer_ = renderer;
     level_ = level;
     arena_ = arena;
+    surfaces_ = surfaces;
 
-    palette_ = level->paletteOf(arena);
+    palette_ = &level->paletteOf(arena);
     const std::vector<const formats::TextureArchive*> archives = level->archivesOf(arena);
 
     MaterialResolver resolver(&level->dti(), Shading::Original);
-    if (!buildArenaScene(arena, resolver, palette_, archives, &scene_)) {
+    if (!buildArenaScene(arena, resolver, *palette_, archives, &scene_)) {
         return false;
     }
 
@@ -44,10 +33,9 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
         return false;
     }
 
-    // The palette. The 3DS keeps it to expand the textures through it; the
-    // Vulkan backend binds it as a texture of its own.
-    paletteId_ = mdk_render_create_palette(renderer, palette_.rgba());
-
+    // The palette and the textures are made by the shared cache when they are
+    // first drawn, not here: an arena that is loaded and never drawn costs
+    // nothing, and the C#'s resolver makes them as surfaces resolve too.
     return true;
 }
 
@@ -74,49 +62,8 @@ bool LevelView::bounds(Vec3* outMin, Vec3* outMax) const {
     return true;
 }
 
-MdkTextureId LevelView::textureId(const formats::Texture* texture) {
-    if (!texture) {
-        return -1;
-    }
-    std::map<const formats::Texture*, MdkTextureId>::const_iterator found = textures_.find(texture);
-    if (found != textures_.end()) {
-        return found->second;
-    }
-
-    // The texture's palette. The arena's is the one its indices are
-    // relative to.
-    const uint8_t* rgba = palette_.rgba();
-
-    // The texture's height already includes the animation frames: the
-    // original stacks them vertically.
-    const MdkTextureId id = mdk_render_create_index_texture(
-        renderer_, texture->width(), texture->height() * texture->frameCount(),
-        texture->indices(), rgba);
-    textures_[texture] = id;
-    return id;
-}
-
-MdkTextureId LevelView::flatColourId(const Colour& colour) {
-    const uint32_t key = packColour(colour);
-    std::map<uint32_t, MdkTextureId>::const_iterator found = flatColours_.find(key);
-    if (found != flatColours_.end()) {
-        return found->second;
-    }
-    // A one-pixel texture of the colour. The 3DS draws a flat surface with
-    // it, because the PICA200's combiner cannot take a constant colour from
-    // a vertex shader.
-    uint8_t pixel[4];
-    pixel[0] = (uint8_t)((key >> 0) & 0xFFu);
-    pixel[1] = (uint8_t)((key >> 8) & 0xFFu);
-    pixel[2] = (uint8_t)((key >> 16) & 0xFFu);
-    pixel[3] = (uint8_t)((key >> 24) & 0xFFu);
-    const MdkTextureId id = mdk_render_create_rgba_texture(renderer_, 1, 1, pixel);
-    flatColours_[key] = id;
-    return id;
-}
-
 void LevelView::draw() {
-    if (!renderer_ || mesh_ < 0) {
+    if (!renderer_ || mesh_ < 0 || surfaces_ == nullptr) {
         return;
     }
     for (size_t i = 0; i < scene_.batches.size(); i++) {
@@ -138,9 +85,11 @@ void LevelView::draw() {
         draw.world[10] = 1.0f;
         draw.world[15] = 1.0f;
 
-        draw.material.texture = batch.surface.texture ? textureId(batch.surface.texture)
-                                                       : flatColourId(batch.surface.colour);
-        draw.material.palette = paletteId_;
+        // The texture and the palette come from the shared cache, keyed by the
+        // format's objects: an object drawn with this arena's palette reuses
+        // these textures instead of making its own (render/surface_cache.h).
+        draw.material.texture = surfaces_->surfaceId(batch.surface, palette_);
+        draw.material.palette = surfaces_->paletteId(palette_);
         draw.material.frame_count = batch.surface.frameCount;
         draw.material.pass = batch.surface.pass;
         draw.material.shading = batch.surface.shading;
@@ -159,7 +108,7 @@ void LevelView::draw() {
 }
 
 bool LevelView::refresh() {
-    if (!renderer_ || !level_ || !arena_) {
+    if (!renderer_ || !level_ || !arena_ || surfaces_ == nullptr) {
         return false;
     }
     // The C# LevelView.Rebuild (LevelView.cs:251): a group_set_texture changes a
@@ -170,7 +119,7 @@ bool LevelView::refresh() {
     MaterialResolver resolver(&level_->dti(), Shading::Original);
     const std::vector<const formats::TextureArchive*> archives = level_->archivesOf(arena_);
     ArenaScene rebuilt;
-    buildArenaScene(arena_, resolver, palette_, archives, &rebuilt);
+    buildArenaScene(arena_, resolver, *palette_, archives, &rebuilt);
 
     scene_.vertices.swap(rebuilt.vertices);
     scene_.batches.swap(rebuilt.batches);

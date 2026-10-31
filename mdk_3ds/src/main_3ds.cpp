@@ -132,6 +132,11 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     mdk::formats::MdkData data = mdk::formats::MdkData::find(mdk::formats::fileSystem());
     mdk::LevelData level;
+    // The GPU textures and palettes a resolved surface needs, shared by the arena
+    // view (and by the object pass, when this frontend has a script runtime to
+    // draw objects with). The C# gives both views one MaterialResolver for
+    // exactly this reason.
+    mdk::SurfaceCache surfaces(renderer);
     mdk::LevelView view;
     const mdk::formats::Arena* arena = nullptr;
     if (data.found()) {
@@ -147,7 +152,7 @@ int main(int argc, char** argv) {
             if (arena) {
                 mdk::log3dsPrintf("arena: %s (%d arenas)", arena->name().c_str(),
                                   (int)level.arenas().size());
-                if (view.load(renderer, &level, arena)) {
+                if (view.load(renderer, &level, arena, &surfaces)) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
                                       view.batchCount(), view.vertexCount(),
                                       arena->triangleCount());

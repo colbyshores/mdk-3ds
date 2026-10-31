@@ -1,3 +1,62 @@
+## What this batch did (Phase 2 iteration 26 — the object pass reaches the GPU, and the Linux frontend draws objects)
+
+The last batch queued the frame's object draws; this one spends them. The GPU half of
+`ObjectView.Draw` is `Renderer.QueueStream` plus `Renderer.Draw`, and the frontend
+call that makes it a picture is `Viewer.DrawObjects`. Objects now draw on Linux.
+
+- **`render/surface_cache.{h,cpp}` is the C#'s `MaterialResolver` GPU half.** The C#
+  resolver owns `_textures` (keyed by the format's `Texture`) and `_palettes` (keyed
+  by the format's `Palette`) and every `Material` it hands the renderer names an id
+  out of them. The C++ `MaterialResolver` deliberately carries no GPU handles, so the
+  two caches are a class of their own, and `LevelView::textureId`/`flatColourId` moved
+  into it rather than being copied — the object pass and the arena view now ask the
+  same one, as the C# gives both views the same resolver. Textures are keyed by
+  **(texture, palette)**, which is what the 3DS needs (it expands indices through the
+  palette when the texture is made) and is a no-op change for `LevelView`, which has
+  one palette. `LevelView` now borrows the arena's palette from `LevelData` (whose
+  `std::map` keeps it stable) instead of copying it, so the arena and its objects land
+  on one GPU palette and one set of expanded textures.
+- **`game/object_draw.{h,cpp}` is `QueueStream` + `Draw`.** One dynamic mesh holds the
+  frame's streamed corners, uploaded once per frame, and each queued batch is one
+  `mdk_render_draw_mesh` at its offset with the surface, palette, animated frame and
+  transform the queue carries. The mesh is **made lazily and grows geometrically**
+  instead of the C#'s fixed `1 << 18`: that is 5.2 MiB of *linear* memory on the 3DS,
+  where a failed `linearAlloc` is a silently missing mesh, and the measured frames use
+  2559 and 5616 corners. The `1 << 18` *refusal* stays in `ObjectView` (it is the
+  oracle's semantic bound); only the committed bytes changed. The flat surface's colour
+  is applied exactly once — through its one-pixel texture, material colour white —
+  for the same reason and with the same trap as `LevelView::draw`.
+- **`mdk_linux/src/main.cpp` is `Viewer._objects`, `_looks` and `DrawObjects`.** Every
+  object the runtime holds, in its list's order, skipping the invisible ones **and the
+  removed ones** (the C# has removed those from its `Objects` list; the C++ runtime
+  keeps their deque slots because other objects hold pointers into it), each with its
+  arena's look cached by arena name — the arena's palette and archives, or the DTI's
+  palette and the level's textures for an object outside every arena — placed by
+  `obj.transform()`, drawn after the arena and before Kurt's sprite, where the C#
+  draws them.
+- **The pinned frame did not move, and that is a fact about the frame, not about the
+  pass.** At capture frame 1 exactly 1/60 s has passed and `ScriptRuntime` ticks at
+  1/30, so *neither* tree has any object yet: the oracle's frame 1 has none either.
+  `cpp=` is byte-identical (`58615fc85d02…`), so `tests/frames/reference.sha256` was
+  **not** rewritten — there was nothing to rewrite, and the expectation in
+  `CONTINUATION.md` that this batch would have to regenerate it was wrong.
+- **Evidence that the pass draws the right things, at a frame where objects exist.**
+  The oracle at `--wait=1` (60 fixed steps, level 3, 320x240, display `:99` in the
+  private namespace) against the C++ at frame 60 (`DISPLAY=:99`, headless lavapipe):
+  with the pass `bad_percent=1.188 max_delta=175 mean_delta=0.1405`; with the pass
+  skipped `1.251 / 231 / 0.1910`. Drawing the objects moves the picture **towards**
+  the oracle on all three measures, and the pass changes 0.081% of the frame's pixels
+  (0.069% at frame 59), so it is drawing, and drawing where the oracle draws. Captures
+  under `/tmp/mdk-frame-reference`; the oracle binary is the one
+  `capture_oracle.sh` built from the untouched `src/Mdk.Game/**`.
+- Gates: **421 PASS** lines and `All cases match the oracle.` after a clean tests
+  build, no FAIL, no SKIP, no golden moved (the tests do not compile the two new GPU
+  files, exactly as they do not compile `level_view.cpp`); `tools/check.sh` ALL GATES
+  PASSED with no new pin and no relaxation — the new per-frame work is integer
+  indexing, pointer copies and one `memcpy`, so R2/R3/R4/R6/R11 have nothing to bite
+  on, and `audit_c_with_classes.py` is at 0. The devkitARM build built `mdk.3dsx`.
+  No emulator run and no Old-3DS hardware run was performed.
+
 ## What this batch did (Phase 2 iteration 25 — the object pass's draw stage, up to the GPU)
 
 The layout stage said where an object's corners come from; this is the half that
