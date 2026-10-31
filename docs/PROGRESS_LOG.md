@@ -1,3 +1,131 @@
+## What this batch did (Phase 2 iteration 2 — the hamster runs: `ObjectBehaviors.UpdateRunner`, and the last known object-dump divergence closes)
+
+The tree arrived clean at `094ead9` with an external review (DeepSeek V4.1 Flash,
+`logs/ralph-pi/run-20261031-195148/review-1.md`) whose verdict was INCOMPLETE on a
+Medium record finding. There were no Critical or High findings. The slice is the item
+that review's own cross-check re-confirmed as the one remaining divergence in any
+object dump: **level 7 tick 1000, `SW_H150`**.
+
+**Prior-solution lookup (mandatory, done first).** Obsidian MCP is not exposed in this
+harness, so the vault was read read-only from `/mnt/nas/Vaults/port-docs`: no note
+mentions `SW_H150`, `H150_I` or `UpdateRunner`, but
+`30-architecture/patterns/a-treatment-that-perturbs-a-shared-stream-forbids-temporal-cross-arm-alignment.md`
+(Perfect Dark 3DS §44.646) is exactly the hazard this item is — a treatment that
+perturbs a shared RNG stream means there is no tick-level correspondence between the
+arms after the first perturbation. Cognee MCP is likewise not exposed here; the
+repository's own `OPEN_ITEMS.md` carried the prior note ("the Runner's
+RNG-synchronized animations are a later slice"), and that is what this batch closed.
+
+- **`ScriptRuntime::motionRunner` is `ObjectBehaviors.UpdateRunner` (0x43daf4's
+  `SW_H150` branch), line for line.** Idle: if the object has no animation or its
+  animation is done, draw `rng().next(32768)` and on `< 72` restart `H150_I` once and
+  return; otherwise, if `Vector3.DistanceSquared(pos, kurt) < 20*20`, restart `H150_R`
+  looping and play `RUNNER` (`Start.Once`). Running: `FromAngle(yaw) * 40` joins the
+  push, the object faces away from Kurt (`Heading(pos, kurt) + 180`, `WrapAngle`'d,
+  clamped to ±270·Dt degrees), `Wrap360`s the yaw, sets `FlagGravity`, and if the
+  plan-view distance squared is `> 1000` it goes back to `H150_I`. It is called from
+  `motionPickup` exactly where the C# calls it — after the chute has shrunk and only
+  while `attached == nullptr`, before the Still-list spin — so the ordering the C# has
+  (runner before spin) is the ordering the port has.
+- **THE RNG IS THE POINT, and it is why this was not "approximated".** The chance is
+  drawn from the same `Random` every scripted random decision in the level takes, and
+  only under the idle-or-done guard. The port was not drawing it, so from level 7 tick
+  329 onward the port and the oracle were consuming different streams. A timer-based
+  idle would have looked identical in the pose dump and silently broken every later
+  random decision. `Random` here is the verified .NET legacy subtractive port
+  (`util/random.h`), so drawing it in the oracle's place reproduces the oracle's
+  stream.
+- **`ScriptRuntime` now borrows `TRAVSPRT.BNI`, because the C# constructor takes it.**
+  `ScriptRuntime::itemsAnimation` is `Items.GetAnimation`: look the name up in the
+  sprites archive, parse a `ModelAnimation` at its entry offset, cache it by name. The
+  cache is a `std::map` for the reason the C# dictionary works — `UpdateRunner`
+  compares the animation by **identity** (`obj.Animation != run`), so the same name
+  must keep answering the same address. The constructor argument defaults to null only
+  so a harness without an archive still compiles; `tick1` and `mdk_linux` both load the
+  archive and pass it, because a runtime without it is a world where those animations
+  do not exist, which is not the oracle's world. `tests/scripts/Makefile` gained
+  `formats/bni.cpp` for the same reason.
+- **`heading(from, to)` is `ScriptMath.Heading`, not `yawTo`.** `yawTo` wraps its
+  answer into [0,360) with two `fmodf`s; the C#'s `Heading` returns
+  `RadiansToDegrees(Atan2(...))` unfolded, and the runner feeds it through a
+  floor-based `WrapAngle` after adding 180 — feeding it a value that already had 360
+  added is not bit-identical through that wrap. It keeps the libm `atan2f` (glibc
+  matches `MathF.Atan2` bit-for-bit here, the same probed evidence `yawTo`'s pin
+  records) and no `@vfp-exempt` pin, because it is cold per-object behaviour and AGENTS.md 5
+  forbids putting a hot-only R-rule pin on cold code.
+- **Six goldens, every one copied from the oracle probe after diffing it against the
+  port.** `golden/L7_t1000_{pose,transform,layout,draw,stream_bound}.txt` and
+  `golden/L3_t1200_blend.txt`. All six dumps were byte-identical to `mdkprobe` before
+  they were committed, and the L3 t1200 blend was re-verified independently (122 lines,
+  `diff` empty) rather than trusted from the review. Re-checked beyond the pinned
+  cases: L3 t120/t1200, L4/L5/L6 t120, L7 t1200 and t30000, L8 t1 `transform` dumps are
+  all still byte-identical to the oracle. The suite is 438 PASS / 0 FAIL / 0 SKIP.
+- **`L3_t120_blend.txt` deliberately does NOT exist.** At t120 one object's
+  interpolated place is 1 ULP off, because `FrameBlend.Lerp` is `Vector3.Lerp` and the
+  port does not reproduce its rounding for every input. That case stays OUT of the
+  suite rather than pinned to the port's own output; the comment in `tick1.cpp` now
+  says so in those words.
+
+### Review findings — fixed, and one partially
+
+- **M1 (Medium, the verdict's blocker) — FIXED by taking the reviewer's first option.**
+  The record claimed a `L3_t1200_blend` golden that did not exist. Rather than downgrade
+  four texts, the coverage was actually added: `{3,1200}` is in `blendCases` and
+  `golden/L3_t1200_blend.txt` is committed, generated by the oracle probe and verified
+  byte-identical to the port's dump in this batch (not inherited from the review's
+  claim). The self-contradictory comment above `blendCases` is gone, and
+  `frame_blend.cpp`'s and `OPEN_ITEMS.md`'s "t1, t2 and t1200 do" sentences are now
+  true instead of aspirational.
+- **L1 (Low) — PARTIALLY fixed, with the remainder measured and deferred.** The pinned
+  sidecar now carries the rationale the frames README asks for, with the measurement:
+  the png is byte-identical to the seven records before it (`md5 6769a137…`) because
+  level 3 has no `SW_H150`. An `docs/evidence/` picture of the runner was **tried and
+  measured to be impossible from the shipped cameras**: level 7 frame 700 captured with
+  and without the runner call is byte-identical (`0.000 / 0 / 0.0000`, `DISPLAY=:99`,
+  lavapipe) because the hamster is off-screen at the start camera, and `--at`-ing Kurt
+  next to it puts him outside the arena, which draws nothing. `capture_oracle.sh` is
+  pinned to frame 1 and is owner-protected, so a late-frame oracle reference cannot be
+  produced in a normal batch. Recorded as deferred with cause in `OPEN_ITEMS.md`.
+- **L2 (Low) — FIXED.** `frame_blend.cpp` and `OPEN_ITEMS.md` no longer attribute the
+  3DS contraction to "GCC's `-ffp-contract`", which `mdk_3ds/Makefile` measures to
+  change nothing on this target (the ARM backend contracts to VFPv2 `VMLA` regardless;
+  only the VFPv4 `VFMA` form obeys the flag), and no longer say "a single `vmla.f32`":
+  the shipped spelling is one contracted `vmla.f32` **per component**. The point of the
+  deferral is unchanged — `fmaf` is three `bl fmaf` calls with spills — and the note now
+  says there is no flag to reach for, only the expression.
+- **Review's open question about `OPEN_ITEMS.md`'s 247-delta text — FIXED.** The line
+  calling the middle patch "a scene element from the object pass, which is not ported"
+  contradicted both the CONTINUATION note and the current tree (the object pass IS
+  ported); it now says the patch is not the object pass and is unidentified.
+- **Review's save/load open question — recorded, not a defect of this batch.** The C#
+  `Snapshot` packs public `MdkObject` fields, so `BankingYaw` is saved; the port has no
+  snapshot yet. When it lands it must save/restore `banking_yaw` (and
+  `previous_position`), or a load banks from a stale 0. The runner adds no new field.
+
+### Gates, as run
+
+- `make -C tests/scripts -j8` → exit 0, ended `All cases match the oracle.`,
+  **438 `PASS` lines, 0 `FAIL`, 0 `SKIP`** (was 432/0/0). No existing golden moved.
+- `bash tools/check.sh` → exit 0, ended `CHECK: ALL GATES PASSED`: `audit_c_with_classes
+  0 violations`, `gates_vfp PASS blockers=0`, `audit_arm11_math contract clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`,
+  `gates_smdh SKIP (no built .cia)`, `gates_frames PASS` (`L3_f1.bmp
+  sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256`
+  was NOT regenerated), `gates_batch_integrity PASS`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` →
+  exit 0, `LINK mdk.elf` / `3DSX mdk.3dsx`. `cmake --build build-linux --target mdk -j8`
+  → exit 0.
+- `DISPLAY=:99 tools/publish_frame.sh hamster-runner` → the pinned pair, gap unchanged
+  at `1.240 / 247 / 0.1819`. No emulator run and no Old-3DS hardware run was made;
+  Old-3DS performance readiness stays UNMEASURED.
+
+### Next, per the priority order
+
+Item 6(a): the Citro3D backend ignores `MeshDraw::world`, so the 3DS still cannot
+place an object, and its depth/blend state still differs from the C#. Item 6(d) is the
+next numeric slice (`Vector3.Lerp`'s rounding, a target codegen decision). Item 6(b),
+the middle 173 px of the pinned frame, is still unidentified.
+
 ## What this batch did (Phase 2 iteration 28 — an object leans into its turn, and the object goldens go multi-tick)
 
 Inherited work, finished and banked: the tree arrived dirty with `motionBank` written

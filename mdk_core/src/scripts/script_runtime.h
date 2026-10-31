@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "audio/sound_mixer.h"
+#include "formats/bni.h"
 #include "formats/cmi.h"
 #include "formats/model.h"
 #include "formats/model_animation.h"
@@ -99,8 +100,15 @@ public:
     // keep that decision explicit here too: pass the live Player from a
     // frontend, or pass null deliberately from a harness that does not use
     // Kurt's live state.
+    //
+    // The sprites archive (TRAVERSE/TRAVSPRT.BNI) is the C#'s `sprites`, and is
+    // borrowed for the same reason the CMI is: `Items.GetAnimation` parses the
+    // animations the built-in behaviours play out of its bytes (SW_H150's
+    // H150_R / H150_I). It is optional only because a harness may have no
+    // archive to hand; a frontend that runs the world passes it.
     ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
-                  audio::SoundBank* bank, const Player* player);
+                  audio::SoundBank* bank, const Player* player,
+                  const formats::Bni* sprites = nullptr);
 
     // Advance the world by the elapsed time. ScriptRuntime.cs:378-390 keeps
     // its own 1/30-second tick clock: a 1/60-second frontend step completes a
@@ -450,10 +458,19 @@ private:
     // ApplyVelocity for a FlagPickup object. A falling pickup lands on floor contact
     // (Fall), or — once it reaches terminal speed — clamps its fall and opens its
     // chute (spawns SW_CHUTE, attach command 74); a landed/non-gravity pickup not in
-    // the Still list spins in place. The Runner's RNG-synchronized animations and the
-    // Collected shrink are later slices.
+    // the Still list spins in place, and SW_H150 runs away (motionRunner). The
+    // Collected shrink is a later slice.
     void motionPickup(MdkObject* obj);
 
+    // The Runner (ObjectBehaviors.UpdateRunner, 0x43daf4's SW_H150 branch): idle it
+    // replays H150_I on a 72-in-32768 chance a tick, and it runs for H150_R when Kurt
+    // comes within 20 units. See motionRunner's note on the RNG.
+    void motionRunner(MdkObject* obj);
+
+    // C# Items.GetAnimation: a model animation of the sprites archive, parsed once
+    // per name (the C#'s _animations dictionary). Null when there is no archive or no
+    // such entry.
+    const formats::ModelAnimation* itemsAnimation(const char* name);
 
     // C# PlayOn (ScriptRuntime.cs:3317): a sound following an object, at an
     // offset in its frame, kept so Remove can stop it with the object.
@@ -487,6 +504,12 @@ private:
     // CMI-offset animations parsed on demand (C# _animations); the map nodes are
     // stable, so pointers into it stay valid as more animations parse.
     std::map<int32_t, formats::ModelAnimation> animations_;
+    // C# ScriptRuntime.Items' sprites archive (TRAVSPRT.BNI), borrowed, and the
+    // animations parsed out of it. Same stable-node rule as animations_ above:
+    // ObjectBehaviors compares an animation by IDENTITY (`obj.Animation != run`),
+    // so the same name must keep answering the same address.
+    const formats::Bni* sprites_ = nullptr;
+    std::map<std::string, formats::ModelAnimation> itemsAnimations_;
     // The chain followers of the last updateChain call (the C#'s _links list),
     // reused so the per-tick chain does not grow a container.
     std::vector<MdkObject*> chainLinks_;

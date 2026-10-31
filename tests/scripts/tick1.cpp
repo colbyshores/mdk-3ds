@@ -1038,6 +1038,24 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // The sprites archive, which is the C#'s `sprites` and is a constructor argument
+    // of its ScriptRuntime for a reason: the built-in behaviours play their
+    // animations out of it (SW_H150's H150_R and H150_I, ObjectBehaviors.UpdateRunner).
+    // A runtime without it is a world where those animations do not exist, which is
+    // not the oracle's world, so every runtime below is given it.
+    formats::Bni sprites;
+    const formats::Bni* spritesOrNull = nullptr;
+    {
+        std::vector<uint8_t> spriteBytes;
+        if (data.read("TRAVERSE/TRAVSPRT.BNI", &spriteBytes) &&
+            formats::Bni::parse(&sprites, spriteBytes.data(), (int32_t)spriteBytes.size())) {
+            spritesOrNull = &sprites;
+        } else {
+            printf("NOTE: TRAVERSE/TRAVSPRT.BNI did not load; the built-in behaviours "
+                   "that play their own animations cannot run\n");
+        }
+    }
+
     // Golden dumps (`tick1 dump <pose|transform|blend|layout|draw|bound|rolling> [level] [ticks]`):
     // print one dump to stdout, which is how a golden is written and how a failing
     // golden is diffed against the C# probe (the oracle twin of each of these
@@ -1074,7 +1092,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         bank.preload();
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
         runtime.option = 0;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -1124,7 +1142,7 @@ int main(int argc, char** argv) {
                 continue;
             }
             bank.preload();
-            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
             runtime.option = 0;
             for (int t = 0; t < probeTicks; t++) {
                 runtime.update(1.0f / 30.0f);
@@ -1259,7 +1277,7 @@ int main(int argc, char** argv) {
         }
         bank.preload();
 
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
         runtime.option = 0;  // the oracle's Option
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -1313,7 +1331,7 @@ int main(int argc, char** argv) {
             continue;
         }
         bank.preload();
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
         runtime.option = 0;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -1348,21 +1366,30 @@ int main(int argc, char** argv) {
     // at t120 and 9.0251 at t1200 where the port had 0.0000, and every transform
     // that turns by roll differed -- which is why all five goldens below were
     // pinned at t1. With Bank ported, the transform, layout and draw dumps match
-    // the oracle byte for byte at t120 and t1200 (and at L4-L8 t120; L7 t1000
-    // still differs by the SW_H150 animation recorded in OPEN_ITEMS.md).
+    // the oracle byte for byte at t120 and t1200 (and at L4-L8 t120).
     //
-    // The blend golden is pinned at t2 and NOT at t120: at t120 one object's
-    // interpolated place is 1 ULP off, because FrameBlend.Lerp is Vector3.Lerp
-    // and this port does not reproduce its rounding for every input. That is a
-    // separate divergence, with its evidence in OPEN_ITEMS.md; t2 and t1200 both
-    // match, so the interpolation is pinned -- just not by the case that bites.
-    const GoldenCase poseCases[] = {{3, 1}, {3, 120}, {3, 1200}};
-    const GoldenCase transformCases[] = {{3, 1}, {3, 120}, {3, 1200}};
-    const GoldenCase blendCases[] = {{3, 1}, {3, 2}};
-    const GoldenCase layoutCases[] = {{3, 1}, {3, 120}, {3, 1200}};
-    const GoldenCase drawCases[] = {{3, 1}, {3, 120}, {3, 1200}};
+    // LEVEL 7 AT t1000 is the case that bites on the BUILT-IN behaviours, not the
+    // scripted ones. SW_H150 (the hamster) has played H150_I since tick 329, so its
+    // posed corners are animation frame 36 and not the rest pose, and until
+    // ObjectBehaviors.UpdateRunner was ported the port had no animation for it at
+    // all -- every other line of level 7's dumps matched, so the whole divergence
+    // was that one object. It is also the only place the port failed to consume the
+    // shared Random when the oracle did: the idle chance is drawn from the same
+    // stream every scripted random decision takes, so a missing runner silently
+    // moves every later draw in the level.
+    //
+    // The blend golden is pinned at t1, t2 and t1200 and NOT at t120: at t120 one
+    // object's interpolated place is 1 ULP off, because FrameBlend.Lerp is
+    // Vector3.Lerp and this port does not reproduce its rounding for every input.
+    // That is a separate divergence with its evidence in OPEN_ITEMS.md, and t120
+    // stays OUT of the suite rather than being pinned to the port's own output.
+    const GoldenCase poseCases[] = {{3, 1}, {3, 120}, {3, 1200}, {7, 1000}};
+    const GoldenCase transformCases[] = {{3, 1}, {3, 120}, {3, 1200}, {7, 1000}};
+    const GoldenCase blendCases[] = {{3, 1}, {3, 2}, {3, 1200}};
+    const GoldenCase layoutCases[] = {{3, 1}, {3, 120}, {3, 1200}, {7, 1000}};
+    const GoldenCase drawCases[] = {{3, 1}, {3, 120}, {3, 1200}, {7, 1000}};
     // The loop runs the union of every list's ticks; each golden checks its own.
-    const GoldenCase tickCases[] = {{3, 1}, {3, 2}, {3, 120}, {3, 1200}};
+    const GoldenCase tickCases[] = {{3, 1}, {3, 2}, {3, 120}, {3, 1200}, {7, 1000}};
     const size_t tickCount = sizeof(tickCases) / sizeof(tickCases[0]);
     const size_t poseCount = sizeof(poseCases) / sizeof(poseCases[0]);
     const size_t transformCount = sizeof(transformCases) / sizeof(transformCases[0]);
@@ -1403,7 +1430,7 @@ int main(int argc, char** argv) {
             continue;
         }
         bank.preload();
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
         runtime.option = 0;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -1571,7 +1598,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 3)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
                     runtime.option = 0;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);
@@ -1629,7 +1656,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 8)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
                     runtime.option = 0;
                     for (int t = 0; t < 2; t++) {
                         runtime.update(1.0f / 30.0f);
@@ -1707,7 +1734,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 3)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
                     runtime.option = 0;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);

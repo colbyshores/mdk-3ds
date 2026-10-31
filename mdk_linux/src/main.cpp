@@ -208,6 +208,13 @@ int main(int argc, char** argv) {
     mdk::KurtSprite kurtSprite;
     mdk::formats::Cmi cmi;
     mdk::audio::SoundBank bank;
+    // The sprites archive is a level asset too, and it is a constructor argument of
+    // the runtime for a reason: the built-in behaviours play their animations out of
+    // it (SW_H150's H150_R / H150_I, ObjectBehaviors.UpdateRunner). So it lives out
+    // here, not inside the HUD block that first reads it: the runtime below borrows
+    // it and is rebuilt on every respawn.
+    mdk::formats::Bni sprites;
+    bool spritesReady = false;
     bool scriptAssetsReady = false;
     bool hudReady = false;
     bool kurtSpriteReady = false;
@@ -272,9 +279,9 @@ int main(int argc, char** argv) {
                     // TRAVERSE/TRAVSPRT.BNI), indexed through the level's
                     // palette like the C# HudView and KurtSprite.
                     std::vector<uint8_t> spriteBytes;
-                    mdk::formats::Bni sprites;
                     if (data.read("TRAVERSE/TRAVSPRT.BNI", &spriteBytes) &&
                         mdk::formats::Bni::parse(&sprites, std::move(spriteBytes))) {
+                        spritesReady = true;
                         if (hud.load(renderer, sprites, level.dti().palette())) {
                             hudReady = true;
                             std::printf("[main] hud: loaded\n");
@@ -363,7 +370,8 @@ int main(int argc, char** argv) {
         // tick count and random stream start over with the player.
         if (scriptAssetsReady) {
             const int32_t runtimeSeed = scriptSeedSet ? scriptSeed : freshScriptSeed();
-            runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player));
+            runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player,
+                                                          spritesReady ? &sprites : nullptr));
             runtime->option = 0;
             std::printf("[main] scripts: runtime ready (seed %d)\n", runtimeSeed);
         }

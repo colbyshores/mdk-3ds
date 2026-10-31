@@ -12,6 +12,7 @@
 
 #include "formats/ascii_case.h"
 #include "formats/bin_reader.h"
+#include "formats/bni.h"
 #include "formats/dti.h"
 #include "formats/model_animation.h"
 #include "game/bsp.h"
@@ -115,6 +116,19 @@ Vec3 fromAngle(float degrees) {
 
 float clampf(float value, float lo, float hi) {
     return value < lo ? lo : (value > hi ? hi : value);
+}
+
+// ScriptMath.Heading: the degrees from `from` to `to`, NOT folded into any range
+// (Wrap360/WrapAngle are the caller's job). This is yawTo without that helper's
+// wrap: the C# returns RadiansToDegrees(Atan2(...)) straight, and the runner's
+// turn is `WrapAngle(Heading + 180 - Yaw)`, where adding a wrapped heading would
+// add 360 to the argument of a floor-based wrap. glibc atan2f matches the oracle's
+// MathF.Atan2 bit-for-bit on this machine (probed, see yawTo's pin) and the
+// conversion is .NET's left-associative RadiansToDegrees; this is cold per-object
+// behaviour, so it keeps the libm call rather than the fastAtan2 LUT, whose error
+// would move the turned yaw.
+float heading(const Vec3& from, const Vec3& to) {
+    return radiansToDegrees(atan2f(to.y - from.y, to.x - from.x));
 }
 
 float signf(float value) {
@@ -227,10 +241,11 @@ float hermite(float p0, float p1, float m0, float m1, float u) {
 } // namespace
 
 ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
-                             audio::SoundBank* bank, const Player* player)
+                             audio::SoundBank* bank, const Player* player,
+                             const formats::Bni* sprites)
     : player_(player), level_(level), cmi_(cmi),
       decoder_(cmi->bytes().data(), (int32_t)cmi->bytes().size()), rng_(seed),
-      vm_(*this, decoder_), bank_(bank), mixer_(bank), debris_(rng_) {
+      vm_(*this, decoder_), bank_(bank), mixer_(bank), debris_(rng_), sprites_(sprites) {
     // Debris delegates (ScriptRuntime.cs:340-346): Ray and GroupFacets are
     // wired; Trail (Effects.SpawnTrail) and Updraft (Fans.Query) stay unset
     // until those slices land — neither perturbs the RNG stream (see debris.h).
@@ -929,12 +944,106 @@ void ScriptRuntime::motionPickup(MdkObject* obj) {
             obj->attached = nullptr;
         }
     }
-    // The Runner's RNG-synchronized animations are a later slice.
+    // The Runner: SW_H150 runs away, and only once its chute is gone (the C#'s
+    // `obj.Attached == null`, which is also the first tick it is on the floor).
+    if (obj->type_name == "SW_H150" && obj->attached == nullptr) {
+        motionRunner(obj);
+    }
     // Landed or non-gravity: a pickup not in the Still list spins in place at
     // PickupTurnSpeed.
     if (obj->type_name != "SW_H150" && obj->type_name != "SW_SEAL" &&
         obj->type_name != "SW_SBONE") {
         obj->yaw = wrap360(obj->yaw + kTick * kPickupTurnSpeed);
+    }
+}
+
+// The C#'s Items.GetAnimation, for the two animations the Runner plays. The
+// archive is the level's TRAVSPRT.BNI; the C# parses each name once and keeps it,
+// and ObjectBehaviors compares the RESULT BY IDENTITY (`obj.Animation != run`), so
+// the cache must answer the same address for the same name — a std::map's nodes do.
+//
+// Null when there is no archive (a harness that did not load one) or no such entry.
+// The C# has no such case: the entries are there in a real game, and the port does
+// not add a guard the oracle does not have.
+const ModelAnimation* ScriptRuntime::itemsAnimation(const char* name) {
+    if (sprites_ == nullptr) {
+        return nullptr;
+    }
+    std::map<std::string, ModelAnimation>::iterator found = itemsAnimations_.find(name);
+    if (found != itemsAnimations_.end()) {
+        return &found->second;
+    }
+    const formats::ArchiveIndex::Entry* entry = sprites_->index().find(name);
+    if (entry == nullptr) {
+        return nullptr;
+    }
+    ModelAnimation animation;
+    const std::vector<uint8_t>& bytes = sprites_->bytes();
+    if (!ModelAnimation::parse(&animation, name, bytes.data(), (int32_t)bytes.size(), entry->offset)) {
+        return nullptr;
+    }
+    std::pair<std::map<std::string, ModelAnimation>::iterator, bool> inserted =
+        itemsAnimations_.emplace(name, std::move(animation));
+    return &inserted.first->second;
+}
+
+// MdkObject.IsAnimationDone, as the runtime reads it (the VM has its own copy).
+static bool animationDone(const MdkObject* obj);
+
+// ObjectBehaviors.UpdateRunner (0x43daf4's SW_H150 branch): the hamster.
+//
+//   IDLE ──(Kurt within 20)──► RUN ──(Kurt beyond sqrt(1000))──► IDLE
+//
+// Idle, it replays H150_I on a 72-in-32768 chance a tick; running, it pushes 40
+// units/s along its yaw, turns away from Kurt at up to 270 degrees/s, and keeps
+// FlagGravity set (it is on the floor, not hovering on a chute).
+//
+// THE RNG IS THE POINT. The chance is drawn ONLY when the object is idle or its
+// animation has ended, from the same Random every scripted random decision takes.
+// Drawing it unconditionally, or not at all, moves every later draw in the level —
+// which is why this was not quietly approximated by a timer.
+void ScriptRuntime::motionRunner(MdkObject* obj) {
+    const float kRunnerStart = 20.0f;        // units: it starts when Kurt is this close
+    const float kRunnerStopSquared = 1000.0f;  // units^2 (sqrt = 31.6): stops beyond this
+    const float kRunnerSpeed = 40.0f;        // units/s
+    const float kRunnerTurn = 270.0f;        // degrees/s
+    const int32_t kRunnerIdleChance = 72;
+    const int32_t kChanceRange = 32768;
+
+    const ModelAnimation* run = itemsAnimation("H150_R");
+    const Vec3 kurt = kurtPosition_;
+    if (obj->animation != run) {
+        if ((obj->animation == nullptr || animationDone(obj)) &&
+            rng_.next(kChanceRange) < kRunnerIdleChance) {
+            restartAnimation(obj, itemsAnimation("H150_I"), false);
+            return;
+        }
+        // Vector3.DistanceSquared(Position, kurt) < (RunnerStart * RunnerStart).
+        const float dx = obj->position.x - kurt.x;
+        const float dy = obj->position.y - kurt.y;
+        const float dz = obj->position.z - kurt.z;
+        if (dx * dx + dy * dy + dz * dz < kRunnerStart * kRunnerStart) {
+            restartAnimation(obj, run, true);
+            mixer_.play("RUNNER", audio::SoundMixer::Once);
+        }
+        return;
+    }
+
+    // Running: ScriptMath.FromAngle(yaw) * RunnerSpeed joins the push, so the
+    // ApplyVelocity step that follows moves it RunnerSpeed * Dt this tick.
+    const Vec3 ahead = fromAngle(obj->yaw);
+    obj->push.x += ahead.x * kRunnerSpeed;
+    obj->push.y += ahead.y * kRunnerSpeed;
+    // It faces away from Kurt: the heading to him, plus half a turn.
+    const float away = heading(obj->position, kurt) + 180.0f;
+    const float turn = clampf(wrapAngle(away - obj->yaw), -kRunnerTurn * kTick, kRunnerTurn * kTick);
+    obj->yaw = wrap360(obj->yaw + turn);
+    obj->flags |= MdkObject::FlagGravity;
+    // The stop test is the plan-view distance only, and it is `>`, not `>=`.
+    const float ex = kurt.x - obj->position.x;
+    const float ey = kurt.y - obj->position.y;
+    if (ex * ex + ey * ey > kRunnerStopSquared) {
+        restartAnimation(obj, itemsAnimation("H150_I"), false);
     }
 }
 

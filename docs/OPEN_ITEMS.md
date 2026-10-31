@@ -45,18 +45,22 @@ measured or cited reason, and the batch that closes one should delete its entry.
   devkitARM lowers `__builtin_fmaf` to `bl fmaf` at `-march=armv6k -mtune=mpcore
   -mfloat-abi=hard -mfpu=vfp` (verified: a call with stack spills, three of them
   in a function that runs per object per frame), while the current spelling
-  lowers to a single `vmla.f32`. So the replacement is a target codegen decision
-  to measure, not a substitution — and note the two targets already disagree: the
-  3DS build contracts this expression into `vmla.f32` (GCC's default
-  `-ffp-contract`), so the host goldens pin the host build. Start by deciding
-  what `Vector3.Lerp` the 3DS can produce for free.
+  lowers to one contracted `vmla.f32` per component. So the replacement is a
+  target codegen decision to measure, not a substitution — and note the two
+  targets already disagree: the 3DS build compiles this expression to three
+  `vmla.f32`, because the ARM backend contracts a multiply-add to VFPv2's VMLA
+  regardless of `-ffp-contract` (`mdk_3ds/Makefile` measures the shipped object
+  byte-identical under the default, `=off` and `=fast`: only the VFPv4 `vfma`
+  form obeys that flag, and this is VFPv2 — so there is no flag to reach for,
+  only the expression), and the host goldens pin the host build. Start by
+  deciding what `Vector3.Lerp` the 3DS can produce for free.
 - **`ObjectMotion.Bank` is ported (2026-10-31) and the object goldens went
   multi-tick.** `ScriptRuntime::motionBank` is `ObjectMotion.Bank` (`0x43b65c`),
   called between `Roll` and `PreviousPosition` exactly where the C# calls it, and
-  it is the only writer of `roll` for a walking alien. What is left of that item
-  is the level-7 `SW_H150` animation below: at L7 t1000 the transform dump still
-  differs by that one object, and by nothing else. L3/L4/L5/L6/L8 at t120 and L3
-  at t1200 are byte-identical to the oracle including the transforms.
+  it is the only writer of `roll` for a walking alien. What was left of that item
+  was the level-7 `SW_H150` animation below, and that is now CLOSED too: L3/L4/L5/
+  L6/L8 at t120, L3 at t1200 and L7 at t1000 are byte-identical to the oracle
+  including the transforms.
 - **The object pass draws now** (`game/object_draw.{h,cpp}` uploads the frame's
   `ObjectStream` once into one dynamic mesh and issues the queued draws;
   `render/surface_cache.{h,cpp}` maps a surface + palette to a backend texture and
@@ -111,15 +115,30 @@ measured or cited reason, and the batch that closes one should delete its entry.
     frame reaches (2559 corners at L3 t1, 5616 at L8 t1).
   The mods' model replacements (`Source::Mod`) stay deferred with cause: the mods are
   the enhanced look's and are not ported.
-- **A level-7 animation the port never starts: `SW_H150` / `H150_I`.** At level 7
-  tick 1000 the oracle has that object on animation `H150_I` frame 36 and the port
-  has no animation and frame 0, so its posed corners differ — visible in the draw
-  dump as `hash=8B390A87` against `B11339E0` (and in the pose dump's `OBJ` line).
-  It is not a draw-stage defect: every other line of level 7's draw dump matches at
-  t1 and its only other differences at t1000 are the `Bank` transforms above. It
-  belongs to the pose/animation slice — find what writes `Animation`/`AnimationFrame`
-  in the oracle for that object (a script opcode or an idle-animation default) and
-  port it; do not "fix" the corners.
+- **The level-7 `SW_H150` animation is CLOSED (2026-10-31).** It was
+  `ObjectBehaviors.UpdateRunner` (0x43daf4's hamster branch), which the port had
+  deferred as "the Runner's RNG-synchronized animations": idle it replays
+  `H150_I` on a 72-in-32768 chance a tick, and running it pushes 40 units/s and
+  turns away from Kurt at up to 270 degrees/s. `ScriptRuntime::motionRunner` is
+  that, called from `motionPickup` where the C# calls it (after the chute has
+  gone, before the Still-list spin), and its animations come from the sprites
+  archive through `ScriptRuntime::itemsAnimation` (C# `Items.GetAnimation`), which
+  is why `ScriptRuntime` now takes `TRAVSPRT.BNI` the way the C# constructor does.
+  The idle chance is drawn from the SAME `Random` every scripted random decision
+  takes, and only when the object is idle or done — so the port was silently
+  running a different random stream from tick 329 of level 7. Pinned by
+  `golden/L7_t1000_{pose,transform,layout,draw,stream_bound}.txt`, all copied from
+  the oracle probe: at t1000 the hamster is on `H150_I` frame 36 and every line of
+  all five dumps matches. What is NOT pinned is the RUN branch: no captured frame
+  brings Kurt within 20 units of the hamster, so `H150_R`, the push, the turn and
+  the `RUNNER` sound are ported but unpinned by goldens. There is also **no picture
+  of any of it**, and that is measured, not forgotten: at level 7's own start camera
+  the hamster is off-screen (frame 700 captured with and without the runner call is
+  byte-identical, `0.000 / 0 / 0.0000`, `DISPLAY=:99`, lavapipe), and moving Kurt
+  with `--at` to look at it puts him outside the arena, which draws nothing. So
+  `docs/evidence/` has no runner pair and the pinned sidecar says why. A capture
+  that shows it needs a camera that looks into DANT_1 at the hamster, which the
+  frontend cannot aim today.
 - Incomplete decoy/`AlienTarget` selection.
 - Opcode 207's `MathF.Sign(NaN)` exception is accepted because C++ exceptions are
   banned; degenerate-path guards return 0 instead (this now also covers
@@ -226,9 +245,10 @@ The C++'s decoded `K_STILL` frame 0 is **byte-identical to the oracle's** (52x14
 0 differing texels, dumped from both sides), and the pixels the C++'s sprite
 actually covers (1600 of them, x 151-185 y 123-220, measured by drawing Kurt and
 not drawing Kurt and diffing) do not include them. The oracle draws something
-opaque and dark there that the port does not draw at all: a scene element from
-the object pass, which is not ported. **Porting the object pass is what moves
-`max_delta`**; nothing in the sprite path will.
+opaque and dark there that the port does not draw at all. It is **not** the object
+pass either: the object pass is ported and measured, and at frame 1 neither tree
+has a script object in view at all, so this patch is a scene element of a
+different kind and it is still open — what it is has not been identified.
 
 ## Review findings still open
 
