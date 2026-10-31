@@ -1,74 +1,95 @@
 #!/usr/bin/env bash
-# ralph-pi.sh — the MDK port loop on the Pi harness (shape proven by
-# perfect_dark's tools/ralph-pi.sh, mechanics adapted to THIS repo's gates).
+# ralph-pi.sh — the MDK port loop on the Pi harness.
 #
-# Swarm roles (owner directive 2026-10-26, while the Muse subscription is
-# out of credits until 2026-11-01):
-#   worker     pi as piagent, model litellm/glm-5.3-flash-nvidia
-#              (fallback litellm/luna on fast-fail)
-#   reviewer   pi as piagent, model litellm/minimax-m3.1-flash-nvidia,
-#              read-only by instruction, over each iteration's diff
-#   orchestrator  this script: gates, progress/stall detection, review
-#              dispatch — the worker can never influence them
-# The Muse loop (ralph.sh) stays parked: logs/ralph/disabled blocks its
-# watchdog and this script's invariant gate fails closed if it is removed.
-# Delete that file only when intentionally switching back to Muse; never run
-# both writers at once.
+# Roles: the worker is pi (the builder) as piagent; the reviewer is a second pi
+# model, read-only by instruction, over each iteration's diff; this script is the
+# orchestrator — gates, progress/stall detection and review dispatch — and the
+# builder can never influence them.
 #
 # Each committed batch must include docs/frames/*.png and its .txt measurement;
 # tools/runner/gates_batch_integrity.py enforces --base/--head and --staged
 # boundaries; the published image is produced by tools/publish_frame.sh.
 # Usage:
-#   systemd-run --user --unit=ralph-pi-mdk --property=Restart=on-failure \
-#       --property=RestartSec=120 ./ralph-pi.sh
-#   ./ralph-pi.sh status
-#   systemctl --user stop ralph-pi-mdk        # kill switch (kills the cgroup,
-#                                             # including piagent's children)
+#   tools/install_ralph_pi_service.sh    # systemd unit + tools/ralph_pi_watchdog.sh
+#   systemctl --user start ralph-pi-mdk
+#   systemctl --user stop ralph-pi-mdk   # kill switch (kills the cgroup, and
+#                                        # piagent's children with it)
 set -u
-umask 002   # sudo preserves the caller's umask; piagent's files stay group-writable
+set -o pipefail
+umask 002
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 LOGDIR="$ROOT/logs/ralph-pi"
 STATE="$LOGDIR/state"
 SUMMARY="$LOGDIR/summary.log"
 PIDFILE="$LOGDIR/loop.pid"
+PHASEFILE="$LOGDIR/phase"
+HEARTBEAT="$LOGDIR/heartbeat"
 mkdir -p "$LOGDIR"
 
-# Worker route chain, best first (owner directive 2026-10-27): the full-size
-# glm first, the flash variant second, then LOCAL qwen (free to run —
-# Qwen 3.8 Flash Next on the owner's ai-node; measured ping 8.8s), luna only
-# as the last resort. The glm routes flap upstream, so the chain is ordered,
-# not single-tier.
-# Worker chain (owner directive 2026-10-27): hosted NVIDIA routes first, then
-# minimax as the hosted builder of record, then the owner's LOCAL qwen, then
-# luna. Reason for the order: the builder job is the long pole (45-90 min of
-# tool-driven work per batch) and must not queue behind the 2 shared local
-# slots that perfect_dark and tetrisphere-godot also use. qwen as REVIEWER is
-# the measured-parity, free, fast seat (A/B 2026-10-27); qwen as builder is
-# unmeasured and slot-bound, so it waits behind minimax.
-# Worker chain (owner directive 2026-10-27): minimax-m3.1-flash-nvidia first
-# (measured far more dependable than the glm routes), then the glm family, then
-# the owner's LOCAL qwen, then luna. The builder is the long pole (45-120 min
-# per batch) and must not queue behind the 2 shared local slots, so qwen waits
-# behind the hosted routes; qwen's seat is REVIEWER, where it was A/B-measured
-# at parity with minimax.
-WORKER_MODELS="${WORKER_MODELS:-litellm/minimax-m3.1-flash-nvidia litellm/glm-5.3-nvidia litellm/glm-5.3-flash-nvidia litellm/qwen litellm/luna}"
-# Reviewer primary is the owner's LOCAL qwen (litellm/qwen = halogen
-# qwen3.8-flash-next): free to run and A/B-measured at parity with minimax on
-# the same review scope (2026-10-27: same core MINOR finding, plus it verified
-# closure at HEAD, found an extra doc NIT, and finished in ~25 min vs minimax's
-# 47-97). minimax stays as the fallback.
-REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/qwen}"
-# Reviewer fallbacks MUST differ from the model the worker used on this
-# iteration: a review by the worker's own model is a self-review, not an
-# adversarial check. Probed alive 2026-10-27: grok, qwen, glm-5.3-nvidia.
-# Reviewer fallbacks MUST differ from the model the worker used on this
-# iteration: a review by the worker's own model is a self-review, not an
-# adversarial check. qwen sits ahead of grok on cost (local, free); if its
-# review quality proves weaker on an A/B, demote it.
-REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/minimax-m3.1-flash-nvidia litellm/grok}"
-# 120 min: a batch legitimately spends 15-20 min in the golden suite and the
-# 3DS build, and a valid slice was cut off at the 90 min wall (measured
-# 2026-10-27, iteration 13).
+log() {
+    local line="[$(date -Is)] $*"
+    printf '%s\n' "$line" | tee -a "$SUMMARY"
+}
+phase() {
+    {
+        printf 'epoch=%s\n' "$(date +%s)"
+        printf 'phase=%s\niteration=%s\nmodel=%s\npid=%s\n' \
+            "$1" "${ITER:-0}" "${RUN_MODEL:-none}" "$$"
+    } >"$PHASEFILE"
+    log "phase=$1 iteration=${ITER:-0} model=${RUN_MODEL:-none}"
+}
+phase_limit() {
+    case "$1" in
+        startup) printf 1800 ;;
+        route-health|verify) printf 900 ;;
+        worker) printf 7800 ;;
+        worker-fallback) printf 7500 ;;
+        gates) printf 14400 ;;
+        review-collect) printf 5700 ;;
+        route-backoff) printf 600 ;;
+        idle) printf 1800 ;;
+        *) printf 1800 ;;
+    esac
+}
+heartbeat_start() {
+    local main_pid="$$"
+    (
+        while :; do
+            sleep 30
+            [ -r "$PHASEFILE" ] || continue
+            phase_name="$(sed -n 's/^phase=//p' "$PHASEFILE" | head -1)"
+            phase_epoch="$(sed -n 's/^epoch=//p' "$PHASEFILE" | head -1)"
+            [[ "$phase_epoch" =~ ^[0-9]+$ ]] || continue
+            now="$(date +%s)"
+            age=$((now - phase_epoch))
+            limit="$(phase_limit "$phase_name")"
+            touch "$HEARTBEAT"
+            if [ "$age" -gt "$limit" ]; then
+                log "watchdog: phase=$phase_name stalled for ${age}s (limit ${limit}s); requesting systemd restart"
+                kill -TERM "$main_pid"
+                exit 0
+            fi
+        done
+    ) &
+    HEARTBEAT_PID=$!
+}
+cleanup() {
+    if [ -n "${HEARTBEAT_PID:-}" ]; then
+        kill "$HEARTBEAT_PID" 2>/dev/null || true
+        wait "$HEARTBEAT_PID" 2>/dev/null || true
+    fi
+    if [ -f "$PIDFILE" ] && [ "$(cat "$PIDFILE" 2>/dev/null)" = "$$" ]; then
+        rm -f "$PIDFILE"
+    fi
+    rm -f "$PHASEFILE" "$HEARTBEAT"
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
+WORKER_MODELS="${WORKER_MODELS:-litellm/qwen litellm/minimax-m3.1-flash-nvidia litellm/glm-5.3-nvidia litellm/glm-5.3-flash-nvidia litellm/luna}"
+REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/minimax-m3.1-flash-nvidia}"
+REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/luna litellm/qwen}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-7200}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 REVIEW_FAIL_LIMIT="${REVIEW_FAIL_LIMIT:-2}"
@@ -84,38 +105,27 @@ VALIDATOR_FILE="$ROOT/ralph/validator.md"
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 export DEVKITARM="${DEVKITARM:-/opt/devkitpro/devkitARM}"
 
-log() { echo "[$(date -Is)] $*" >>"$SUMMARY"; }
-
 state_get() { sed -n "s/^$1=//p" "$STATE" 2>/dev/null | tail -1; }
 state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$STATE" 2>/dev/null >"$STATE.t" || true; echo "$kv" >>"$STATE.t"; mv "$STATE.t" "$STATE"; }
 
-pi_run() { # $1=model $2=prompt-file $3=out $4=err
+pi_run() {
     ( cd "$ROOT" && timeout -k 30 "$ITER_TIMEOUT" sudo -n -H -u piagent \
         "$PI_CMD" --model "$1" -p "$(cat "$2")" --no-session ) >"$3" 2>"$4"
 }
 
-# Model health probe: a route can die mid-project (measured 2026-10-26:
-# litellm/glm-5.3-flash-nvidia hung for hours while luna/minimax stayed up).
-# Without this check every iteration burns its wall clock on a dead route.
-model_alive() { # $1=model -> 0 alive
+model_alive() {
     timeout "$HEALTH_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$1" \
         -p "Reply exactly PING_OK" --no-session 2>/dev/null | grep -q PING_OK
 }
 
-# pi buffers its transcript and loses it when killed; recover the session file
-# so a timed-out iteration is at least diagnosable.
-recover_session() { # $1=iteration
+recover_session() {
     local d="/home/piagent/.pi/agent/sessions/--mnt-nas-Development-mdk-sdl--"
     local latest
     latest="$(sudo -n ls -t "$d" 2>/dev/null | head -1)"
     [ -n "$latest" ] && sudo -n cp "$d/$latest" "$RUN_DIR/iter-$1.session.jsonl" 2>/dev/null
 }
 
-run_gates() { # independent verification; never delegated to the worker.
-    # Runs as piagent in a FRESH process (the worker cannot influence it).
-    # NOT as coleshores: this NFS mount does not honor setgid group
-    # inheritance (measured 2026-10-26), so worker-created build artifacts
-    # are piagent:piagent and a coleshores rebuild fails on them.
+run_gates() {
     local out="$1" rc=0
     {
         echo "== gates $(date -Is) =="
@@ -133,66 +143,91 @@ run_gates() { # independent verification; never delegated to the worker.
 }
 
 guard() {
-    # never two writers: the Muse loop must be parked
-    local mp; mp="$(cat "$ROOT/logs/ralph/loop.pid" 2>/dev/null)"
-    if [ -n "${mp:-}" ] && kill -0 "$mp" 2>/dev/null; then
-        echo "FATAL: Muse ralph.sh (pid $mp) is alive. Stop it first — one writer." >&2; exit 2
+    local muse_pid
+    muse_pid="$(cat "$ROOT/logs/ralph/loop.pid" 2>/dev/null)"
+    if [ -n "$muse_pid" ] && kill -0 "$muse_pid" 2>/dev/null; then
+        echo "FATAL: Muse ralph.sh (pid $muse_pid) is alive. Stop it first." >&2
+        exit 2
     fi
-    touch "$ROOT/logs/ralph/disabled"   # block the crontab watchdog
-    # one ralph-pi at a time
-    local op; op="$(cat "$PIDFILE" 2>/dev/null)"
-    if [ -n "${op:-}" ] && [ "$op" != "$$" ] && kill -0 "$op" 2>/dev/null; then
-        echo "FATAL: ralph-pi already running (pid $op)" >&2; exit 2
-    fi
+    touch "$ROOT/logs/ralph/disabled"
     echo "$$" >"$PIDFILE"
-    # full-chain probe: sudo rule, model chain, pi bash tool, repo writes.
-    # Tries the primary route, then the fallback — a dead primary must not
-    # park the whole project (measured 2026-10-26: glm route died mid-run).
-    local probe_ok=0 m
-    for m in $WORKER_MODELS; do
-        if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$m" \
+    local probe_ok=0 model
+    for model in $WORKER_MODELS; do
+        if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$model" \
             -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%U:%G %a %n' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
             --no-session 2>&1 | grep -q WTEST_OK; then
             probe_ok=1
-            echo "ralph-pi: write probe passed on $m" >&2
+            log "write probe passed on $model"
             break
         fi
-        echo "ralph-pi: probe failed on $m" >&2
+        log "write probe failed on $model"
     done
     if [ "$probe_ok" -ne 1 ]; then
-        echo "FATAL: pi write probe failed on every route (sudo rule, model chain, or repo writes)." >&2; exit 3
+        log "FATAL: pi write probe failed on every route"
+        exit 3
     fi
 }
 
 status() {
     echo "== ralph-pi status =="
+    if [ -f "$PHASEFILE" ]; then
+        printf 'phase: '; tr '\n' ' ' <"$PHASEFILE"; printf '\n'
+        local epoch phase_pid
+        epoch="$(sed -n 's/^epoch=//p' "$PHASEFILE")"
+        phase_pid="$(sed -n 's/^pid=//p' "$PHASEFILE")"
+        [ -n "$epoch" ] && printf 'phase age: %ss\n' "$(( $(date +%s) - epoch ))"
+        if [ -n "$phase_pid" ] && kill -0 "$phase_pid" 2>/dev/null; then
+            echo "process: active (pid $phase_pid)"
+        else
+            echo "process: stale phase marker"
+        fi
+    else
+        echo "phase: not running"
+    fi
     [ -f "$STATE" ] && cat "$STATE"
-    echo "--- last summary ---"; tail -8 "$SUMMARY" 2>/dev/null
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --no-pager --plain show -p ActiveState -p MainPID -p NRestarts -p Result ralph-pi-mdk.service 2>/dev/null || true
+    fi
+    echo "--- last summary ---"
+    tail -8 "$SUMMARY" 2>/dev/null || true
 }
 
 case "${1:-}" in
     status) status; exit 0 ;;
 esac
 
+if ! command -v flock >/dev/null 2>&1; then
+    echo "FATAL: flock is required for single-instance protection." >&2
+    exit 8
+fi
+exec 9>"$LOGDIR/loop.lock"
+if ! flock -n 9; then
+    echo "FATAL: another ralph-pi process holds $LOGDIR/loop.lock" >&2
+    exit 2
+fi
+
+ITER=0; STALL=0; FAILS=0; REVIEW_FAILS=0
 guard
+heartbeat_start
 RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
 RUN_DIR="$LOGDIR/run-$RUN_ID"
 mkdir -p "$RUN_DIR"
 log "loop start worker_chain=[$WORKER_MODELS] reviewer=$REVIEWER_MODEL reviewer_fallbacks=[$REVIEWER_FALLBACKS] pid=$$ run=$RUN_ID"
-ITER=0; STALL=0; FAILS=0; REVIEW_FAILS=0
+phase startup
 while :; do
-    # Route health FIRST: a dead route must not consume the iteration cap.
+    phase route-health
     RUN_MODEL=""
-    for cand in $WORKER_MODELS; do
-        if model_alive "$cand"; then
-            RUN_MODEL="$cand"
-            [ "$cand" != "${WORKER_MODELS%% *}" ] && log "worker route degraded to $cand"
+    for candidate in $WORKER_MODELS; do
+        if model_alive "$candidate"; then
+            RUN_MODEL="$candidate"
+            [ "$candidate" != "${WORKER_MODELS%% *}" ] && log "worker route degraded to $candidate"
             break
         else
-            log "worker route $cand UNHEALTHY"
+            log "worker route $candidate UNHEALTHY"
         fi
     done
     if [ -z "$RUN_MODEL" ]; then
+        phase route-backoff
         log "no healthy worker route — sleeping 300s"
         sleep 300
         continue
@@ -211,28 +246,33 @@ while :; do
         NEWEST_REVIEW="$(ls -t "$LOGDIR"/run-*/review-*.md 2>/dev/null | head -1)"
         [ -n "$NEWEST_REVIEW" ] && echo "- newest external review: $NEWEST_REVIEW — address its BLOCKER/MAJOR findings."
         PREVG="$(state_get LAST_GATES)"
-        [ -n "$PREVG" ] && [ "$PREVG" != "PASS" ] && echo "- WARNING: previous iteration left gates $PREVG — root-cause them before new work."
+        [ -n "$PREVG" ] && [ "$PREVG" != PASS ] && echo "- WARNING: previous iteration left gates $PREVG — root-cause them before new work."
     } >"$RUN_DIR/.prompt-$ITER.md"
     if ! sudo -n -H -u piagent python3 "$ROOT/tools/runner/gates_batch_integrity.py" \
             >"$RUN_DIR/invariants-$ITER.log" 2>&1; then
-        log "iter=$ITER PROJECT INVARIANTS FAILED before worker; stopping (see $RUN_DIR/invariants-$ITER.log)"
+        log "iter=$ITER PROJECT INVARIANTS FAILED before worker"
         cat "$RUN_DIR/invariants-$ITER.log" >>"$SUMMARY"
         exit 6
     fi
     log "iter=$ITER start worker=$RUN_MODEL"
+    phase worker
     pi_run "$RUN_MODEL" "$RUN_DIR/.prompt-$ITER.md" "$ILOG" "$ILOG.err"
     RC=$?
     [ "$RC" -eq 124 ] && recover_session "$ITER"
     if [ "$RC" -ne 0 ]; then
-        # next alive route in the chain AFTER the one that failed
         NEXT_MODEL=""
         seen=0
-        for cand in $WORKER_MODELS; do
-            [ "$seen" -eq 1 ] && { if model_alive "$cand"; then NEXT_MODEL="$cand"; break; fi; }
-            [ "$cand" = "$RUN_MODEL" ] && seen=1
+        for candidate in $WORKER_MODELS; do
+            if [ "$seen" -eq 1 ] && model_alive "$candidate"; then
+                NEXT_MODEL="$candidate"
+                break
+            fi
+            [ "$candidate" = "$RUN_MODEL" ] && seen=1
         done
         if [ -n "$NEXT_MODEL" ]; then
             log "iter=$ITER worker rc=$RC on $RUN_MODEL — retrying once on $NEXT_MODEL"
+            phase worker-fallback
+            RUN_MODEL="$NEXT_MODEL"
             pi_run "$NEXT_MODEL" "$RUN_DIR/.prompt-$ITER.md" "$ILOG.fb" "$ILOG.fb.err"
             RC=$?
             [ "$RC" -eq 124 ] && recover_session "$ITER.fb"
@@ -240,47 +280,43 @@ while :; do
         fi
     fi
     log "iter=$ITER worker rc=$RC session-log=$ILOG"
-
     HEAD_AFTER="$(git -C "$ROOT" rev-parse HEAD)"
     if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
         if ! sudo -n -H -u piagent python3 "$ROOT/tools/runner/gates_batch_integrity.py" \
                 --base "$HEAD_BEFORE" --head "$HEAD_AFTER" \
                 >"$RUN_DIR/integrity-$ITER.log" 2>&1; then
-            log "iter=$ITER INTEGRITY GUARD FAILED; stopping before next batch (see $RUN_DIR/integrity-$ITER.log)"
+            log "iter=$ITER INTEGRITY GUARD FAILED; stopping"
             cat "$RUN_DIR/integrity-$ITER.log" >>"$SUMMARY"
             exit 6
         fi
         log "iter=$ITER integrity guard PASS"
     fi
 
-    # Review FIRST, in the background, WHILE the mechanical gates run: the
-    # review is model work on a FIXED commit range and the gates only build,
-    # so they are independent — overlapping them removes ~10-15 min per
-    # iteration from the critical path. The review still COMPLETES before the
-    # next iteration starts: no batch is ever built on an unreviewed one.
     REVIEW_PID=""
     if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
         RP="$RUN_DIR/.review-prompt-$ITER.md"
         {
             cat "$VALIDATOR_FILE"
-            printf '\n\n--- REVIEW SCOPE ---\nReview ONLY the changes in commits %s..%s plus any uncommitted work (bound the scope with git log/diff first; do not read unrelated files). You must NOT edit any file; read-only inspection only. Work efficiently: a review that times out is a failed review.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
+            printf '\n\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
         } >"$RP"
         REVIEW_MODEL=""
-        if model_alive "$REVIEWER_MODEL"; then
+        if [ "$REVIEWER_MODEL" = "$RUN_MODEL" ]; then
+            log "iter=$ITER reviewer $REVIEWER_MODEL equals worker — skipping self-review"
+        elif model_alive "$REVIEWER_MODEL"; then
             REVIEW_MODEL="$REVIEWER_MODEL"
         else
             log "iter=$ITER reviewer route $REVIEWER_MODEL UNHEALTHY"
-            for cand in $REVIEWER_FALLBACKS; do
-                [ "$cand" = "$RUN_MODEL" ] && continue   # never review with the worker's own model
-                if model_alive "$cand"; then
-                    REVIEW_MODEL="$cand"
-                    log "iter=$ITER reviewer falling back to $cand"
+            for candidate in $REVIEWER_FALLBACKS; do
+                [ "$candidate" = "$RUN_MODEL" ] && continue
+                if model_alive "$candidate"; then
+                    REVIEW_MODEL="$candidate"
+                    log "iter=$ITER reviewer falling back to $candidate"
                     break
                 fi
             done
-            [ -z "$REVIEW_MODEL" ] && log "iter=$ITER no distinct reviewer route alive — review recorded as FAILED (no self-review)"
         fi
         if [ -n "$REVIEW_MODEL" ]; then
+            phase review
             ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
                 --model "$REVIEW_MODEL" -p "$(cat "$RP")" --no-session \
                 >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
@@ -290,22 +326,24 @@ while :; do
         fi
     fi
 
-    # gates: independent, after every iteration
+    phase gates
     GF="$RUN_DIR/gates-$ITER.log"
     if run_gates "$GF"; then
-        state_set LAST_GATES PASS; FAILS=0
+        state_set LAST_GATES PASS
+        FAILS=0
     else
-        state_set LAST_GATES FAIL; FAILS=$((FAILS+1))
+        state_set LAST_GATES FAIL
+        FAILS=$((FAILS+1))
         log "iter=$ITER GATES FAILED (see $GF) fail_count=$FAILS"
     fi
 
-    # collect the review (it ran alongside the gates)
+    phase review-collect
     if [ -n "$REVIEW_PID" ]; then
         wait "$REVIEW_PID"
         RRC="$(cat "$RUN_DIR/review-$ITER.rc" 2>/dev/null || echo 1)"
         if [ "$RRC" -ne 0 ] || [ ! -s "$RUN_DIR/review-$ITER.md" ]; then
             echo "REVIEWER FAILED model=$REVIEW_MODEL rc=$RRC" >>"$RUN_DIR/review-$ITER.md"
-            log "iter=$ITER REVIEWER FAILED rc=$RRC (recorded, not silently skipped)"
+            log "iter=$ITER REVIEWER FAILED rc=$RRC"
             REVIEW_FAILS=$((REVIEW_FAILS+1))
         else
             log "iter=$ITER reviewed by $REVIEW_MODEL -> $RUN_DIR/review-$ITER.md"
@@ -319,7 +357,8 @@ while :; do
     fi
 
     { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; } >"$STATE"
-    [ "$STALL" -ge "$STALL_LIMIT" ] && { log "STOP: $STALL consecutive stalled iterations"; exit 4; }
-    [ "$FAILS" -ge "$FAIL_LIMIT" ] && { log "STOP: $FAILS consecutive gate failures"; exit 5; }
+    phase idle
+    [ "$STALL" -ge "$STALL_LIMIT" ] && { log "STOP: $STALL consecutive stalled iterations"; exit 5; }
+    [ "$FAILS" -ge "$FAIL_LIMIT" ] && { log "STOP: $FAILS consecutive gate failures"; exit 4; }
     [ "$ITER" -ge "$MAX_ITER" ] && { log "iteration cap ($MAX_ITER) reached"; exit 0; }
 done

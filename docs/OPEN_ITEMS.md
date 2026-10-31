@@ -86,6 +86,57 @@ measured or cited reason, and the batch that closes one should delete its entry.
   `DISPLAY=:99`; `tests/frames/capture_cpp.sh` now sets it unconditionally rather
   than inheriting the session's, which is the operator's `:1`.
 
+## What the 1.240% frame gap actually is (measured 2026-10-31)
+
+The gap is `bad_percent=1.240 max_delta=247 mean_delta=0.1819`. It is three
+unrelated things, and only one of them is a porting defect. Bands are the
+comparator's (max-channel delta per pixel, mean over the band).
+
+| band | bad | mean | max | what it is |
+|---|---:|---:|---:|---|
+| sky (y 0-79) | 774 (3.023%) | 0.8185 | 99 | shader-arithmetic noise in an ill-conditioned expression |
+| middle (y 80-159) | 173 (0.676%) | 0.3446 | 247 | 40 px = one unported scene element; 133 scattered edge px |
+| bottom (y 160-239) | 5 (0.020%) | 0.0054 | 58 | nothing |
+
+**The sky is not an input mismatch, and no input change will move it.** Measured
+against an instrumented scratch copy of the oracle (built by
+`tests/frames/capture_oracle.sh`'s recipe; its screenshot is byte-identical to
+the pinned reference, so it is a valid control):
+
+- the panorama index bytes and the palette bytes are **byte-identical**;
+- the uniforms are identical (`wrap_width 1800`, `horizon_row 240`, `offset 300`,
+  `height 360`, `top_colour 240`, `bottom_colour 231`, `sampling 0`);
+- the projection matrix is identical, and `clip_to_direction` differs only by the
+  Vulkan `clip.y` fold (row 1 negated) plus ~1e-7 per entry;
+- **feeding the C++'s own `clip_to_direction` into a CPU model of the oracle's
+  shader reproduces the oracle's panorama cell on 76797 of 76800 pixels** (0
+  colour differences). The camera axes, the matrix and the data are therefore not
+  the cause, and neither is the interpolated ray field.
+
+The residual is the conditioning of `clip_to_direction`'s w row: `[2][3] =
+-1.99995005` and `[3][3] = 2.00000024` cancel to `5.019e-5`, so the per-corner
+`direction.xyz / direction.w` carries a scale error of the order of the rounding
+of two numbers near 2 (~1e-7, i.e. ~2e-4 of the cancelled result). The three
+ corners' scale errors do not cancel in the interpolation, and ~2e-4 rad is
+~0.06 panorama columns — enough to pick a neighbouring texel on a few percent of
+the sky, which is exactly the scattered pattern and the ~99 maximum. The two
+shaders are the same maths in two source languages (DXC's HLSL and glslang's
+GLSL), and whether the small `cx*c2d[0][3]` terms are absorbed by the big
+cancellation depends on the summation order and FMA contraction each compiler
+chose. **Closing this needs the C++'s sky vertex stage to emit the oracle's
+operation order, not different inputs.** That is a shader-codegen question; the
+port's inputs are already exact. Do not re-litigate the panorama, the palette,
+the uniforms, the projection or the camera for this gap.
+
+**The `max_delta=247` patch is not Kurt.** It is 8x5 px at x 174-181, y 127-131.
+The C++'s decoded `K_STILL` frame 0 is **byte-identical to the oracle's** (52x146,
+0 differing texels, dumped from both sides), and the pixels the C++'s sprite
+actually covers (1600 of them, x 151-185 y 123-220, measured by drawing Kurt and
+not drawing Kurt and diffing) do not include them. The oracle draws something
+opaque and dark there that the port does not draw at all: a scene element from
+the object pass, which is not ported. **Porting the object pass is what moves
+`max_delta`**; nothing in the sprite path will.
+
 ## Review findings still open
 
 - Review-24's open question: VK `canvasWidth` reads the swapchain extent while the

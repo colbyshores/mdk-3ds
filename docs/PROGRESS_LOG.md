@@ -1,3 +1,58 @@
+## What this batch did (Phase 2 iteration 24 — the 1.240% frame gap, decomposed and two causes closed)
+
+This batch is measurement, not code: it closes two of the three things the frame
+gap is made of, and names the third precisely enough to be an increment. No
+render-path file changed, because every candidate change was measured to not be
+the cause, and the gate's ceiling is unchanged.
+
+- **Built a valid control for the oracle.** `tests/frames/capture_oracle.sh`'s
+  recipe was reproduced in a scratch tree so the oracle could be instrumented
+  without touching the read-only `src/Mdk.Game/**`. The instrumented build's
+  screenshot is byte-identical to the pinned reference frame, which is what makes
+  everything below evidence rather than speculation. It dumped the sky's
+  `clip_to_direction`, the panorama uniforms, the camera axes, the projection, the
+  panorama index bytes and the palette bytes; a second patch encoded the oracle
+  GPU's own per-pixel panorama cell into the screenshot.
+- **The sky's inputs are identical, so the sky gap is not an input mismatch.** The
+  panorama index bytes and palette bytes are byte-identical; the uniforms
+  (`wrap_width 1800`, `horizon_row 240`, `offset 300`, `height 360`, `top_colour
+  240`, `bottom_colour 231`, `sampling 0`) and the projection are identical; the
+  C++'s `clip_to_direction` differs from the oracle's only by the Vulkan `clip.y`
+  fold (row 1 negated, which is the documented convention) plus ~1e-7 per entry.
+  Feeding the C++'s own matrix into a CPU model of the oracle's shader reproduces
+  the oracle's panorama cell on **76797 of 76800 pixels with zero colour
+  differences** — so the camera, the matrix, the data and the interpolated ray
+  field are all excluded.
+- **Named the residual: the conditioning of `clip_to_direction`'s w row.**
+  `[2][3] = -1.99995005` and `[3][3] = 2.00000024` cancel to `5.019e-5`, so
+  `direction.xyz / direction.w` inherits the rounding of two numbers near 2: ~1e-7
+  absolute, ~2e-4 of the cancelled result. A uniform scale would cancel in the
+  `normalize`, but the three corners' scale errors do not, and ~2e-4 rad is ~0.06
+  panorama columns — the right size and the right shape (scattered single texel
+  swaps, max delta 99) for the 774 bad sky pixels. Whether the small `cx*c2d[0][3]`
+  terms survive the cancellation depends on the summation order and FMA contraction
+  of the compiled shader, and the two sides are the same maths through two
+  compilers (DXC's HLSL, glslang's GLSL). `OPEN_ITEMS.md` now says the sky needs
+  the oracle's operation order in the C++ vertex stage, and that the panorama,
+  palette, uniforms, projection and camera are NOT to be re-opened for this gap.
+- **The `max_delta=247` patch is not Kurt, and `CONTINUATION.md` said it was.**
+  Dumped the decoded sprite on both sides: the C++'s `K_STILL` frame 0 and the
+  oracle's are 52x146 with **0 differing texels**. Diffing a capture with Kurt
+  drawn against one without gives the 1600 pixels the sprite actually covers
+  (x 151-185, y 123-220); the 8x5 patch at x 174-181, y 127-131 is not among them.
+  The oracle draws something opaque and dark there that the port does not draw at
+  all, i.e. a scene element from the unported object pass. **`max_delta` cannot
+  move until the object pass lands**, which is now the named next increment.
+- **Bands re-measured with the comparator's own definition** (max-channel delta per
+  pixel, mean over the band): sky 774 px / 3.023% / mean 0.8185 / max 99; middle
+  173 px / 0.676% / mean 0.3446 / max 247 (40 of them the object patch, 133
+  scattered single edge pixels); bottom 5 px / 0.020% / mean 0.0054 / max 58.
+- Temporary debug hooks left in the tree by the previous, timed-out iteration
+  (`mdk_linux/src/main.cpp`, `mdk_linux/src/render/renderer_vk.cpp`, both marked
+  "not for commit") are reverted; the tree is clean.
+
+
+
 ## What this batch did (Phase 2 iteration 23 — P5.0 frame-golden harness; the camera handedness fix it exposed)
 
 - Built the P5.0 frame-golden harness (`SPEC-COMPLETION.md` §3 item 4), which

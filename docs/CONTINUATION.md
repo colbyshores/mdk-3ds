@@ -1,8 +1,9 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-31 (review-30's texture-residency MAJOR is closed; the
-next increment is the frame gap). The pinned frame is unchanged. Opcode coverage
-is unchanged: 211 true C++ dispatches / 238, 27 deferred.
+Last updated: 2026-10-31 (the 1.240% frame gap is decomposed and two of its
+three causes are closed as not-fixable-by-inputs; the next increment is the
+object pass). The pinned frame is unchanged. Opcode coverage is unchanged: 211
+true C++ dispatches / 238, 27 deferred.
 
 This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
 `docs/PROGRESS_LOG.md`.
@@ -23,13 +24,21 @@ This is persistent handoff. Keep it under ~150 lines; batch narrative goes in
    budget and the shared cache keeps the least-recently-drawn frames inside it;
    the Citro3D eviction keeps the source and the draw path restores an evicted
    texture, so no arena surface can stay untextured.
-6. **NEXT — P5: close the measured 1.240% frame gap**, one renderer slice at a
-   time. The bands now (max-channel delta, the comparator's definition): **sky
-   3.023% / mean 0.8185 / max 99** — ~774 scattered pixels, no structure;
-   **middle 0.676% / mean 0.3446 / max 247**, and every delta above 128 is one
-   8x5 patch at x 174-181, y 127-131, a detail on Kurt's own sprite; **bottom
-   0.020% / mean 0.0054 / max 58**, effectively exact. The sky is the whole
-   remaining gap; the Kurt patch is the only fully-wrong place left.
+6. **NEXT — the object pass (`ObjectView`).** The 1.240% gap is three unrelated
+   things and only one is portable; `docs/OPEN_ITEMS.md` §"What the 1.240% frame
+   gap actually is" has the measurements. **Sky, 774 px / 3.023% / max 99: not an
+   input mismatch** — panorama and palette bytes, uniforms, projection and
+   `clip_to_direction` are identical to the oracle's, and the C++'s own matrix
+   reproduces the oracle's panorama cell on 76797/76800 pixels in a CPU model of
+   its shader. What is left is the w-row cancellation in `clip_to_direction`
+   (-1.99995005 + 2.00000024 = 5.019e-5), which makes the interpolated ray ~2e-4
+   rad compiler-dependent (~0.06 columns). That is a shader-codegen question;
+   **do not re-litigate the panorama, palette, uniforms, projection or camera for
+   it.** **Middle, 173 px / 0.676% / max 247:** every delta above 128 is one 8x5
+   patch at x 174-181, y 127-131, and it is **not** Kurt — the C++'s decoded
+   `K_STILL` frame 0 is byte-identical to the oracle's and does not cover those
+   pixels, so `max_delta` cannot move until the object pass lands. The other 133
+   are scattered single edge pixels. **Bottom: 5 px**, effectively exact.
 
 Deferred with cause: 248 `push_kurt` awaits knock-back; Rides writes the alarm
 countdown; consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix
@@ -63,20 +72,20 @@ at the feet, one sprite pixel = 1/360 of the view height, hotspot 101 px above t
 feet, drawn as two row bands with the oracle's floor crossings; `Player` carries
 the C#'s visual state machine.
 
-**Sprite and texture residency.** The C# uploads every sprite frame at level
-load and keeps it for ever (its cache is keyed by `(name, frame)`). The port
-decodes the frames, keeps the **palette indices** (5.30 MiB for `TRAVSPRT.BNI`'s
-19 present animations / 360 frames, measured) and uploads a frame the first time
-it is drawn. `MdkCapabilities::sprite_residency_bytes` names the bound: 0 on the
+**Sprite and texture residency.** The C# uploads every sprite frame at level load
+and keeps it for ever (cache keyed by `(name, frame)`). The port decodes the
+frames, keeps the **palette indices** (5.30 MiB for `TRAVSPRT.BNI`'s 19 present
+animations / 360 frames, measured) and uploads a frame the first time it is
+drawn. `MdkCapabilities::sprite_residency_bytes` names the bound: 0 on the
 desktop (the C#'s own behaviour), 1 MiB on the 3DS; the shared cache drops the
-least-recently-drawn frames when it is over, and never the frame being drawn
-(`PASS SpriteResidencyPolicy`; a port policy, so there is no C# twin). On the
-3DS, `renderer_c3d.cpp` keeps every texture's source, so its LRU eviction is
-**restorable**: the draw path re-makes an evicted texture instead of leaving the
-surface untextured for the session, and a texture the GPU may still be reading is
-released or replaced at the next `C3D_FrameBegin`, where the previous queue has
-been waited for. The padded expansion copies each source row into its padded
-row, so non-square textures are not skewed.
+least-recently-drawn frames when it is over, never the one being drawn (`PASS
+SpriteResidencyPolicy`; a port policy, so no C# twin). On the 3DS
+`renderer_c3d.cpp` keeps every texture's source, so its LRU eviction is
+**restorable** (the draw path re-makes an evicted texture instead of leaving the
+surface untextured), and a texture the GPU may still be reading is released at the
+next `C3D_FrameBegin`, after the previous queue is waited for. The padded
+expansion copies each source row into its padded row, so non-square textures are
+not skewed.
 
 **Death and `Fall`.** `Player::fall` is the C#'s `Kurt.Fall` whole (`FallMove`,
 then the 50-unit fall-out test), called from `UpdateVertical`, `UpdateSpecial`
@@ -97,16 +106,22 @@ Coverage: C# 238, C++ 211 true dispatches, 27 remaining; 16 partial, 195 complet
 ## Verified on this tree
 
 - `make -C tests/scripts clean && make -C tests/scripts -j4` exited 0, ended `All
-  cases match the oracle.`; `PASS SpriteResidencyPolicy` passed and no golden
-  moved. `cmake --build build-linux --target mdk -j16` exited 0.
+  cases match the oracle.`; no golden moved. `cmake --build build-linux --target
+  mdk -j16` exited 0.
 - `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`; SMDH SKIPPED for no
-  CIA; `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009`).
+  CIA; `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009`; batch integrity
+  PASS). It FAILED first on `ralph-pi.sh` losing its invariant documentation in
+  the harness rewrite; that documentation is restored, not the gate.
 - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j4`
   exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
-- `DISPLAY=:99 tools/publish_frame.sh sprite-residency` wrote
-  `docs/frames/2026-10-31-sprite-residency.png` + `.txt` with
+- `DISPLAY=:99 tools/publish_frame.sh sky-diagnosis` wrote
+  `docs/frames/2026-10-31-sky-diagnosis.png` + `.txt` with
   `bad_percent=1.240 max_delta=247 mean_delta=0.1819` — byte-identical to the
-  previous C++ frame, as expected because the picture does not change.
+  previous C++ frame, as expected: this batch changed no render-path file.
+- The measurements came from an instrumented scratch copy of the oracle under
+  `/tmp/mdk-pi/oracle` (built with `tests/frames/capture_oracle.sh`'s recipe);
+  its screenshot is byte-identical to the pinned reference, which is what makes it
+  a control. The repository's `src/Mdk.Game/**` was not touched.
 - No emulator or Old-3DS hardware run was performed; Old-3DS timing is unmeasured.
 
 **Do not "fix" `follow_camera.cpp`'s `normalize`.** It multiplies by a reciprocal
@@ -125,14 +140,12 @@ Full list with evidence in `docs/OPEN_ITEMS.md`. The ones that bite:
   the gates and commits `docs/frames/<date>-<label>.png` + `.txt` WITH the batch.
   The oracle's pixels stay out.
 - **C3D depth and blend state still differ from the C#** (test disabled vs
-  LESS_OR_EQUAL test/write, and `Pass::Blended` glass is opaque), which is also
-  why `renderer_c3d.cpp` ignores `depth_layer`; `OnTop`/`Overlay` depth
-  exemptions are not modelled. Non-`Solid` batches are in **10 of level 3's 17**
-  arenas, not 12 (review-4's correction).
+  LESS_OR_EQUAL test/write; `Pass::Blended` glass is opaque), which is why
+  `renderer_c3d.cpp` ignores `depth_layer`. Non-`Solid` batches are in **10 of
+  level 3's 17** arenas, not 12 (review-4's correction).
 - The sprite residency bound is compile-verified only: the 3DS frontend binds no
-  Kurt, so neither the 1 MiB bound nor the system-RAM cost of the kept sources
-  (~5.3 MiB of indices, plus the arena textures' own) has been measured, and
-  `KurtSprite::load()` still leaks its palette and mesh if it is called twice.
+  Kurt, so neither the 1 MiB bound nor the ~5.3 MiB of kept index sources has been
+  measured, and `KurtSprite::load()` leaks its palette and mesh if called twice.
 - The oracle capture environment is not simplifiable (glslang flags,
   `NUGET_PACKAGES`, the `unshare` namespace for `Xvfb :99`).
 
