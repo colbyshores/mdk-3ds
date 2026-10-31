@@ -433,6 +433,63 @@ uint32_t hashCorners(const std::vector<Vertex>& vertices, int32_t first, int32_t
     return hash;
 }
 
+// The identity of a palette: an FNV-1a digest of its 1024 RGBA bytes. That is
+// what a backend needs from a palette -- the same index texture through another
+// palette is another picture -- so the digest is what the draw golden pins next
+// to the texture's name. The C# twin is ObjectView.PaletteDigest.
+uint32_t paletteDigest(const formats::Palette* palette) {
+    if (palette == nullptr) {
+        return 0;
+    }
+    uint32_t hash = 2166136261u;
+    const uint8_t* rgba = palette->rgba();
+    for (int32_t i = 0; i < formats::Palette::kSize * 4; i++) {
+        hash ^= rgba[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+// A transform as the golden prints it: the sixteen elements at %.6f for a reader,
+// then the same sixteen as raw bits, because %.6f would not see a last-bit
+// difference and the transform is what places the corners.
+std::string matrixLine(const char* label, const Mat4& m) {
+    uint32_t b[16];
+    for (int i = 0; i < 16; i++) {
+        memcpy(&b[i], &m.m[i], sizeof(b[i]));
+    }
+    char buf[640];
+    snprintf(buf, sizeof(buf),
+             "  %s %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f"
+             " b=%08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X\n",
+             label, m.m[0], m.m[1], m.m[2], m.m[3], m.m[4], m.m[5], m.m[6], m.m[7], m.m[8], m.m[9],
+             m.m[10], m.m[11], m.m[12], m.m[13], m.m[14], m.m[15],
+             b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
+             b[14], b[15]);
+    return std::string(buf);
+}
+
+// The per-object queue account (see dumpObjectDraw): the digest covers exactly the
+// corners written by this object, which is the range the stream grew by.
+std::string queueLine(int index, int32_t count, int32_t queued, const ObjectStream& stream,
+                      size_t start) {
+    uint32_t hash = 2166136261u;
+    for (size_t i = start; i < stream.vertices.size(); i++) {
+        const Vertex& v = stream.vertices[i];
+        const float values[5] = {v.pos.x, v.pos.y, v.pos.z, v.uv.x, v.uv.y};
+        for (int k = 0; k < 5; k++) {
+            uint32_t bits = 0;
+            memcpy(&bits, &values[k], sizeof(bits));
+            hash ^= bits;
+            hash *= 16777619u;
+        }
+    }
+    char line[160];
+    snprintf(line, sizeof(line), "  Q obj=%d count=%d queued=%d stream=%d hash=%08X\n", index,
+             (int)count, (int)queued, (int)stream.vertices.size(), (unsigned)hash);
+    return std::string(line);
+}
+
 // The object pass's DRAW stage (ObjectView.Draw): the batches arrange orders,
 // the posed corners each writes, and where in the frame's stream it is drawn
 // from. This is the golden that pins any of it: the layout golden stops at the
@@ -472,24 +529,16 @@ std::string dumpObjectDraw(int level, int ticks, LevelData& levelData,
         ObjectLook look = lookOf(levelData, o.arena);
         const Mat4 transform = o.transform();
         const size_t before = stream.draws.size();
+        const size_t start = stream.vertices.size();
         if (!view.addObject(o, look, transform, &stream)) {
             continue;
         }
 
         ObjectLayout* layout = view.layoutOf(o.model, look);
         const int32_t count = arrangeObjectLayout(layout, o.hidden_parts);
-        snprintf(line, sizeof(line), "DRAW obj=%d model=%s arena=%s hidden=%d frame=%d shines=%d count=%d\n",
+        snprintf(line, sizeof(line), "DRAW obj=%d model=%s arena=%s hidden=%d shines=%d count=%d\n",
                  index, o.model->name.c_str(), o.arena.c_str(), (int)o.hidden_parts,
-                 (int)(o.texture_frame >= 0 ? o.texture_frame : 0), o.effect_frames > 0 ? 1 : 0,
-                 (int)count);
-        out += line;
-
-        snprintf(line, sizeof(line),
-                 "  T %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f\n",
-                 transform.m[0], transform.m[1], transform.m[2], transform.m[3], transform.m[4],
-                 transform.m[5], transform.m[6], transform.m[7], transform.m[8], transform.m[9],
-                 transform.m[10], transform.m[11], transform.m[12], transform.m[13], transform.m[14],
-                 transform.m[15]);
+                 o.effect_frames > 0 ? 1 : 0, (int)count);
         out += line;
 
         for (size_t d = before; d < stream.draws.size(); d++) {
@@ -509,21 +558,103 @@ std::string dumpObjectDraw(int level, int ticks, LevelData& levelData,
                 sv += v.uv.y;
             }
             snprintf(line, sizeof(line),
-                     "  B%d first=%d corners=%d tex=%s colour=%.4f,%.4f,%.4f,%.4f frames=%d "
-                     "pass=%s shading=%s rowshift=%.4f sum=%.4f,%.4f,%.4f uvsum=%.4f,%.4f "
+                     "  B%d first=%d corners=%d frame=%d pal=%08X tex=%s colour=%.4f,%.4f,%.4f,%.4f "
+                     "frames=%d pass=%s shading=%s rowshift=%.4f sum=%.4f,%.4f,%.4f uvsum=%.4f,%.4f "
                      "first=%.4f,%.4f,%.4f,%.4f,%.4f last=%.4f,%.4f,%.4f,%.4f,%.4f hash=%08X\n",
-                     (int)(d - before), (int)first, (int)corners,
+                     (int)(d - before), (int)first, (int)corners, (int)draw.frame,
+                     (unsigned)paletteDigest(draw.palette),
                      s.texture ? s.texture->name().c_str() : "flat", s.colour.r, s.colour.g,
                      s.colour.b, s.colour.a, (int)s.frameCount, passName(s.pass), shadingName(s.shading),
                      s.rowShift, sx, sy, sz, su, sv, head.pos.x, head.pos.y, head.pos.z, head.uv.x,
                      head.uv.y, tail.pos.x, tail.pos.y, tail.pos.z, tail.uv.x, tail.uv.y,
                      hashCorners(stream.vertices, first, corners));
             out += line;
+            // The transform the DRAW CARRIES, not the one the dump recomputed: a
+            // queued draw that lost its transform (or got the identity) fails here.
+            out += matrixLine("W", draw.world);
         }
+
+        // The queue's own account of the object: how many batches were arranged,
+        // how many reached the queue, where the stream ended, and a digest of the
+        // corners this object wrote. `queued < count` is the oracle's refusal of a
+        // batch that did not fit (see dumpStreamBound).
+        out += queueLine(index, count, (int32_t)(stream.draws.size() - before), stream, start);
     }
 
     snprintf(line, sizeof(line), "STREAM vertices=%d\n", (int)stream.vertices.size());
     out += line;
+    return out;
+}
+
+// The frame stream's capacity rule (the C#'s Renderer.StreamVertices): a batch
+// that does not fit in what the frame has left is refused and the cursor does not
+// move, so a later, smaller batch still fits. No shipped frame comes near the
+// bound -- level 3 tick 1 streams 2559 corners of the 262144 the C# allows -- so
+// the stream is prefilled to a chosen size and the first drawable objects are
+// drawn into what is left. That is the only way to reach the rule, and the Q line
+// is the queue's own account of it: nothing here recomputes what was refused.
+std::string dumpStreamBound(int level, int ticks, LevelData& levelData,
+                            scripts::ScriptRuntime& runtime) {
+    MaterialResolver resolver(&levelData.dti());
+    ObjectView view(resolver);
+    ObjectStream stream;
+
+    // The first three drawable objects, in the draw stage's order. At level 3 tick 1
+    // they stream 150, 60 and 90 corners, which is what the prefills below are
+    // chosen against: each one refuses a different set.
+    std::vector<std::pair<int, const scripts::MdkObject*> > picks;
+    int index = 0;
+    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+         it != runtime.objects().end(); ++it, ++index) {
+        const scripts::MdkObject& o = *it;
+        if (runtime.isRemoved(&o)) {
+            index--;
+            continue;
+        }
+        if (!o.visible) {
+            continue;
+        }
+        if (picks.size() < 3) {
+            picks.push_back(std::make_pair(index, &o));
+        }
+    }
+
+    const int32_t capacity = kObjectStreamCapacity;
+    const int32_t prefills[] = {0,           capacity - 300, capacity - 299,
+                                capacity - 150, capacity - 149, capacity - 90,
+                                capacity - 60, capacity};
+
+    std::string out;
+    char line[256];
+    snprintf(line, sizeof(line), "level=%d ticks=%d seed=1 objects=%d picks=%d\n", level, ticks,
+             runtime.objectCount(), (int)picks.size());
+    out += line;
+
+    const Vertex filler = {Vec3{1.0f, 2.0f, 3.0f}, Vec2{0.25f, 0.5f}, kVertexWhite};
+    for (size_t p = 0; p < sizeof(prefills) / sizeof(prefills[0]); p++) {
+        const int32_t prefill = prefills[p];
+        snprintf(line, sizeof(line), "BOUND prefill=%d\n", (int)prefill);
+        out += line;
+
+        stream.reset();
+        stream.vertices.assign((size_t)prefill, filler);
+        for (size_t i = 0; i < picks.size(); i++) {
+            const scripts::MdkObject& o = *picks[i].second;
+            ObjectLook look = lookOf(levelData, o.arena);
+            const size_t before = stream.draws.size();
+            const size_t start = stream.vertices.size();
+            if (!view.addObject(o, look, o.transform(), &stream)) {
+                continue;
+            }
+            ObjectLayout* layout = view.layoutOf(o.model, look);
+            const int32_t count = arrangeObjectLayout(layout, o.hidden_parts);
+            out += queueLine(picks[i].first, count, (int32_t)(stream.draws.size() - before),
+                             stream, start);
+        }
+
+        snprintf(line, sizeof(line), "STREAM vertices=%d\n", (int)stream.vertices.size());
+        out += line;
+    }
     return out;
 }
 
@@ -746,7 +877,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // Golden dumps (`tick1 dump <pose|transform|layout|draw|rolling> [level] [ticks]`):
+    // Golden dumps (`tick1 dump <pose|transform|layout|draw|bound|rolling> [level] [ticks]`):
     // print one dump to stdout, which is how a golden is written and how a failing
     // golden is diffed against the C# probe (the oracle twin of each of these
     // dumps; see docs/PROGRESS_LOG.md for the probe's recipe).
@@ -791,6 +922,8 @@ int main(int argc, char** argv) {
             printf("%s", dumpObjectLayout(level, ticks, levelData, runtime).c_str());
         } else if (what == "draw") {
             printf("%s", dumpObjectDraw(level, ticks, levelData, runtime).c_str());
+        } else if (what == "bound") {
+            printf("%s", dumpStreamBound(level, ticks, levelData, runtime).c_str());
         } else {
             printf("unknown dump\n");
             return 1;
@@ -1149,17 +1282,34 @@ int main(int argc, char** argv) {
 
         // The draw stage (ObjectView.Draw), over the same tick: the frame's
         // stream, the offset and corner count of every batch, and the surface,
-        // animated frame and transform each is drawn with.
+        // palette, animated frame and transform each queued draw actually carries.
         got = dumpObjectDraw(level, ticks, levelData, runtime);
         snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_draw.txt", level, ticks);
         if (!readText(goldenPath, &expected)) {
             printf("FAIL L%d_t%d_draw: no golden file %s\n", level, ticks, goldenPath);
             failures++;
         } else if (got == expected) {
-            printf("PASS L%d_t%d_draw: every object's streamed corners, batch order, surfaces and "
-                   "transform match the oracle\n", level, ticks);
+            printf("PASS L%d_t%d_draw: every object's streamed corners, batch order, surfaces, "
+                   "palettes, frames and transforms match the oracle\n", level, ticks);
         } else {
             printf("FAIL L%d_t%d_draw: %s\n", level, ticks,
+                   firstDifference(got, expected).c_str());
+            failures++;
+        }
+
+        // The same draw stage with the frame's stream prefilled to the C#'s
+        // capacity minus a chosen amount: the refusal of a batch that does not fit,
+        // and the fact that a later smaller batch still fits.
+        got = dumpStreamBound(level, ticks, levelData, runtime);
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_stream_bound.txt", level, ticks);
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d_t%d_stream_bound: no golden file %s\n", level, ticks, goldenPath);
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L%d_t%d_stream_bound: the frame stream's capacity rule matches the oracle\n",
+                   level, ticks);
+        } else {
+            printf("FAIL L%d_t%d_stream_bound: %s\n", level, ticks,
                    firstDifference(got, expected).c_str());
             failures++;
         }

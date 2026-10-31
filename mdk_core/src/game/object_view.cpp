@@ -189,10 +189,15 @@ ObjectLayout* ObjectView::layoutOf(const formats::Model* model, const ObjectLook
 
 // The C#'s ObjectView.Draw, with the two renderer seam calls replaced by the
 // frame's stream: `renderer.Stream(corners, out mesh, out first)` is the cursor
-// bump at the end of `stream->vertices`, and `renderer.Draw(mesh, first,
-// corners, material, frame, transform)` is the queued ObjectStreamDraw. The
-// guards, PoseParts, Arrange, Visible, the per-part copy loop, Shine and the
-// frame selection are the oracle's, in the oracle's order.
+// bump at the end of `stream->vertices` -- including its refusal of a batch that
+// does not fit in kObjectStreamCapacity, which leaves the cursor where it was --
+// and `renderer.Draw(mesh, first, corners, material, frame, transform)` is the
+// queued ObjectStreamDraw. The guards, PoseParts, Arrange, Visible, the per-part
+// copy loop, Shine and the frame selection are the oracle's, in the oracle's order.
+//
+// The queued draw carries the surface, the look's PALETTE, the frame and the
+// transform, which is all the C#'s Draw call is given: nothing a backend needs
+// may be left in the caller.
 bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look,
                            const Mat4& transform, ObjectStream* stream) {
     if (obj.model == nullptr || obj.dead || stream == nullptr) {
@@ -220,29 +225,42 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
     const bool shines = obj.effect_frames > 0;
     const int32_t count = arrangeObjectLayout(layout, hidden);
 
-    // The frame's stream grows by this object's corners in ONE step. The C#
-    // asks for room per batch; the answer is the same cursor, and one resize
-    // keeps the value-initialisation that resize does (Vec3 has default member
-    // initializers, so the new corners are zeroed before the writes below
-    // overwrite them) to a single contiguous range instead of one per batch.
-    // The vectors keep their capacity between frames, so a frame after the first
-    // does not allocate at all (AGENTS.md 10).
+    // The frame's stream grows by this object's ACCEPTED corners in ONE step.
+    // The C# asks for room per batch, and a batch that does not fit in the frame's
+    // remaining stream is refused with the cursor unmoved -- so the accepted set
+    // has to be walked per batch, and is walked here once to find the size and once
+    // below to write it, with the same predicate both times. One resize keeps the
+    // value-initialisation that resize does (Vec3 has default member initializers,
+    // so the new corners are zeroed before the writes below overwrite them) to a
+    // single contiguous range instead of one per batch. The vectors keep their
+    // capacity between frames, so a frame after the first does not allocate at all
+    // (AGENTS.md 10).
+    const size_t start = stream->vertices.size();
+    size_t room = start;
     int32_t total = 0;
     for (int32_t i = 0; i < count; i++) {
-        total += objectBatchCorners(layout->batches[(size_t)layout->order[i]], hidden);
+        const int32_t corners =
+            objectBatchCorners(layout->batches[(size_t)layout->order[i]], hidden);
+        // The C#'s two refusals: a full stream (first + count > StreamVertices) and
+        // an empty span (a batch whose every part is hidden). Both leave the cursor.
+        if (corners == 0 || room + (size_t)corners > (size_t)kObjectStreamCapacity) {
+            continue;
+        }
+        room += (size_t)corners;
+        total += corners;
     }
     if (total == 0) {
         return true;
     }
-    size_t at = stream->vertices.size();
+    size_t at = start;
     stream->vertices.resize(at + (size_t)total);
 
     for (int32_t i = 0; i < count; i++) {
         const ObjectBatch& batch = layout->batches[(size_t)layout->order[i]];
         const int32_t corners = objectBatchCorners(batch, hidden);
-        if (corners == 0) {
-            // The C#'s `if (vertices.IsEmpty) continue;` -- a batch whose every
-            // part is hidden draws nothing, and the stream does not move.
+        if (corners == 0 || at + (size_t)corners > (size_t)kObjectStreamCapacity) {
+            // The C#'s empty span and its full-stream refusal: the batch draws
+            // nothing and the stream does not move, so a later smaller batch fits.
             continue;
         }
 
@@ -271,6 +289,7 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
         draw.first = first;
         draw.corners = corners;
         draw.surface = shineSurface(batch.surface, shines);
+        draw.palette = look.palette;
         draw.frame = frame;
         draw.world = transform;
         stream->draws.push_back(draw);

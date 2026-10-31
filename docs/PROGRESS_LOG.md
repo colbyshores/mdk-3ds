@@ -3086,3 +3086,102 @@ Verification on this tree:
   C++ frame, as expected with no render-path change.
 - No emulator or Original 3DS hardware run was performed; Old-3DS timing stays
   unmeasured.
+
+## Iteration 37 (2026-10-31): review-3's findings — the queued draw carries its palette, and the golden reads the queue
+
+The previous batch ported `ObjectView.Draw` up to the seam and pinned it. Review-3
+came back INCOMPLETE with two MAJORs and one MINOR, all three about what the queued
+draw holds and what the golden actually reads. All three are closed here, and none of
+them needed the GPU half to fix.
+
+**MAJOR 1 — the queued draw lost the palette.** `ObjectStreamDraw` carried the
+surface, the frame and the transform, and `Surface` has no palette: it is the
+texture, the colour, the frame count, the pass, the shading and the row shift. The
+C# makes the palette part of the material (`new Material(TextureId(texture),
+PaletteId(palette), …)`, `MaterialResolver.cs:56-61`), and the same index texture is
+legitimately drawn through different palettes in different arenas — which is why the
+3DS keys a texture by `(texture, palette)` and Vulkan keys its descriptor set the
+same way. A backend could not have resolved an object's texture from the queued
+draw: the palette was left in the caller. `ObjectStreamDraw` now carries
+`const formats::Palette* palette`, assigned from `look.palette` (the same palette the
+layout is keyed by), and the golden pins it as `pal=` — an FNV-1a digest of the
+palette's 1024 RGBA bytes, which is what a backend actually needs from a palette.
+The C# twin is `ObjectView.PaletteDigest` in the probe.
+
+**MAJOR 2 — the golden printed recomputed expectations, not the queue.** It printed
+`frame=` from `o.texture_frame` and a `T` line from a locally computed
+`o.transform()`, while the batch lines came from the queue. `draw.frame = 0` or
+`draw.world = Mat4::identity()` for every batch would have left it byte-identical.
+The draw golden now prints **only** what the queue holds: `frame=` and `pal=` moved
+onto the per-batch line, the object-level `T` line is gone, and each batch gets a `W`
+line with the sixteen elements of `draw.world` at `%.6f` **and** the same sixteen as
+raw bits (`%.6f` would not see a last-bit difference, and the transform is what
+places the corners). The probe was changed the same way for the same reason: its
+`DumpDraw` now ends in `RecordDraw(mesh, first, corners, material, frame, world)`,
+a stand-in for `renderer.Draw` that prints from its arguments, so the oracle's line
+is the seam's arguments and not a second computation of them.
+
+**MINOR — the port dropped the oracle's overflow rule.** `Renderer.Stream` refuses a
+batch that does not fit in `1 << 18` corners and leaves the cursor where it was, so a
+later, smaller batch still fits; `ObjectView.Draw` then skips the empty span. The port
+grew the stream to the frame instead, which is a picture difference for a frame over
+the bound and an unbounded allocation on the 3DS. `kObjectStreamCapacity` is now the
+C#'s bound and `addObject` asks for room per batch: the accepted set is walked once to
+size the resize and once to write it, with the same predicate both times, so the
+single-resize property (and the no-per-frame-allocation property that goes with it)
+survives. Reachability is still unproven — the whole pass peaks at 2559 corners at L3
+t1 and 5616 at L8 t1 — so the rule is pinned by a synthetic case instead of a hope.
+
+**The new golden: `golden/L3_t1_stream_bound.txt`.** `tick1 dump bound` (probe mode
+`bound`) prefills the frame's stream to the capacity minus 0, 300, 299, 150, 149, 90,
+60 and the capacity itself, then draws the first three live objects (150, 60 and 90
+corners) into what is left. Each prefill refuses a different set: at `cap-149` the
+first object's 78-corner batch and 36-corner batch fit and its second 36-corner batch
+does not, and the next object's 60-corner batch then fits in the space the refused one
+left. What each object prints is its own queue account — `Q obj= count= queued=
+stream= hash=` — where `queued` counts the draws that reached the queue and `hash`
+covers exactly the corners the object wrote, so a refused batch is not in it. The same
+`Q` line is in the draw golden, which is what makes `queued < count` visible there too.
+
+**What the raw-bit transform line bought immediately.** Levels 4-7 at t1 are now
+byte-identical to the oracle including the transform bits. L8 t1 and L3 t120/t1200
+differ only in `W` lines, and the diff says exactly what the deferred `Bank` costs:
+the yaw row matches bit for bit (`3CC2A8F8 3F7FED7F`) and the oracle's basis carries
+the small roll the port never writes — in one case as denormals (`9816708F`) where
+the port has exact zeros. L7 t1000 has eight non-transform lines, and they are the
+`SW_H150` pose divergence review-3 reported as an open question: the oracle has that
+object on animation `H150_I` frame 36 and the port has no animation and frame 0, so
+its corners hash `B11339E0` against the oracle's `8B390A87`. It is a pose/animation
+item, not a draw-stage one, and it is recorded in `docs/OPEN_ITEMS.md` with the
+evidence rather than being guessed at here.
+
+**How the goldens were produced, so they can be re-produced.** The same scratch probe
+tree (`/tmp/mdk-pi/obj3`, a **copy** of `src/Mdk.Game` plus `Probe`), rebuilt with
+`/tmp/mdk-pi/build_probe.sh` (glslang-precompiled shaders, then
+`dotnet build Probe/Probe.csproj -p:PrecompiledShaders=spirv`). The repository's
+`src/Mdk.Game/**` was not touched. `mdkprobe 3 1 1 draw` and `mdkprobe 3 1 1 bound`
+are the two goldens' bytes; `tick1 dump draw 3 1` and `tick1 dump bound 3 1`
+reproduce them, which is why the diff is empty rather than small.
+
+Verification on this tree:
+
+- `make -C tests/scripts clean && make -C tests/scripts -j8` exited 0, ended
+  `All cases match the oracle.` with **421 PASS lines**, no FAIL and no SKIP. New:
+  `PASS L3_t1_draw` (rewritten format) and `PASS L3_t1_stream_bound`; no other golden
+  moved.
+- Cross-checked beyond the pinned case against the probe: L4/L5/L6/L7 at t1 are
+  byte-identical; L8 t1 and L3 t120/t1200 differ only in `W` (transform) lines; L7
+  t1000 differs only in `W` lines plus the four `SW_H150` lines above.
+- `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`; SMDH SKIPPED for no built
+  CIA; `gates_frames PASS`, `L3_f1.bmp sha=58615fc85d02e009`). No gate needed a pin or
+  a relaxation: the new per-batch work is an integer comparison against a constant and
+  a pointer copy, so R2/R3/R4/R6/R11 still have nothing to bite on, and
+  `audit_c_with_classes` reports 0 violations.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+  exited 0 and built `mdk.3dsx`.
+- `DISPLAY=:99 tools/publish_frame.sh draw-queue-complete` published
+  `docs/frames/2026-10-31-draw-queue-complete.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819` — byte-identical to the previous
+  C++ frame, as expected with no render-path change.
+- No emulator or Original 3DS hardware run was performed; Old-3DS timing stays
+  unmeasured.

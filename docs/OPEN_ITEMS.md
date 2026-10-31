@@ -42,10 +42,12 @@ measured or cited reason, and the batch that closes one should delete its entry.
 - In the object pass, **the GPU half of the draw stage is the next slice**.
   `ObjectView::addObject` (game/object_view.{h,cpp}) is `ObjectView.Draw` up to the
   seam: it fills a per-frame `ObjectStream` (posed corners + one queued
-  `ObjectStreamDraw` per batch, with the stream offset, the surface, the animated
-  frame and the transform) and is pinned by `golden/L3_t1_draw.txt`. What is left is
-  the part the C# does inside `Renderer`: map each batch's `Surface` to a backend
-  texture and palette (that is `LevelView::textureId`/`flatColourId`'s logic — the
+  `ObjectStreamDraw` per batch, with the stream offset, the surface, the **palette**,
+  the animated frame and the transform) and is pinned by `golden/L3_t1_draw.txt`
+  (queued fields only, with the transform's raw bits) and
+  `golden/L3_t1_stream_bound.txt` (the `1 << 18` refusal). What is left is
+  the part the C# does inside `Renderer`: map each queued draw's `Surface` **and
+  palette** to a backend texture and palette (that is `LevelView::textureId`/`flatColourId`'s logic — the
   frame-stacked height and the one-pixel flat-colour texture — and it should be
   factored out of `LevelView`, not copied), upload the stream once per frame with
   `mdk_render_create_dynamic_mesh`/`mdk_render_update_mesh`, issue the queued draws,
@@ -58,10 +60,22 @@ measured or cited reason, and the batch that closes one should delete its entry.
   because a dynamic mesh already is "one buffer, uploaded once before the frame,
   drawn at an offset". One dynamic mesh per object was rejected: its lifetime would
   hang off a script-created object's identity and it would fragment linear memory
-  mid-play. The stream grows to the frame rather than carrying the C#'s `1 << 18`
-  bound; measured on the oracle the whole pass is 2559 corners at L3 t1 and 5616 at
-  L8 t1. The mods' model replacements (`Source::Mod`) stay deferred with cause: the
-  mods are the enhanced look's and are not ported.
+  mid-play. The stream grows to the frame but **keeps the C#'s `1 << 18` refusal**
+  (review-3's MINOR): a batch that does not fit is refused with the cursor unmoved,
+  so a later smaller batch still fits. Measured on the oracle the whole pass is
+  2559 corners at L3 t1 and 5616 at L8 t1, so the bound is not reachable in a
+  shipped frame — which is exactly why `dump bound` exists to pin it. The mods'
+  model replacements (`Source::Mod`) stay deferred with cause: the mods are the
+  enhanced look's and are not ported.
+- **A level-7 animation the port never starts: `SW_H150` / `H150_I`.** At level 7
+  tick 1000 the oracle has that object on animation `H150_I` frame 36 and the port
+  has no animation and frame 0, so its posed corners differ — visible in the draw
+  dump as `hash=8B390A87` against `B11339E0` (and in the pose dump's `OBJ` line).
+  It is not a draw-stage defect: every other line of level 7's draw dump matches at
+  t1 and its only other differences at t1000 are the `Bank` transforms above. It
+  belongs to the pose/animation slice — find what writes `Animation`/`AnimationFrame`
+  in the oracle for that object (a script opcode or an idle-animation default) and
+  port it; do not "fix" the corners.
 - Incomplete decoy/`AlienTarget` selection.
 - Opcode 207's `MathF.Sign(NaN)` exception is accepted because C++ exceptions are
   banned; degenerate-path guards return 0 instead (this now also covers
@@ -174,6 +188,15 @@ the object pass, which is not ported. **Porting the object pass is what moves
 
 ## Review findings still open
 
+- Review-3's three findings are **CLOSED** by this batch: `ObjectStreamDraw` carries
+  the look's palette (the C#'s `Material.PaletteId`), the draw golden prints only
+  what the queue holds — including the transform's raw bits, so a queued draw that
+  lost its transform fails — and the frame stream keeps the oracle's `1 << 18`
+  refusal, pinned by the new `golden/L3_t1_stream_bound.txt`. Its open question
+  (the level-7 `SW_H150` pose divergence) is recorded above as a pose/animation
+  item. Its other open question — that the C# buckets queued commands by `Pass`
+  before rendering (`Renderer.cs:1004,1049-1057`) while the Vulkan backend records
+  draws as they come — is the GPU slice's, and is recorded there.
 - Review-24's open question: VK `canvasWidth` reads the swapchain extent while the
   C# reads the render target — indistinguishable while both are 4:3.
 - Review-25's MINOR is CLOSED: `getDescriptorSet` caches sets by

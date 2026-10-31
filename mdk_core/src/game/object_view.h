@@ -20,10 +20,11 @@
 // per-frame stream that the renderer owns (`Renderer.Stream`, uploaded once in
 // Present) and draws each batch at its offset in it. Neither C++ backend has a
 // per-frame stream in its seam, and neither needs one: what decides the picture
-// is the ORDER and CONTENT of the corners and the offset each batch is drawn
-// at, and all of that is here. The GPU half -- mapping a batch's surface to a
-// backend texture, uploading this stream once and issuing the draws -- is the
-// next increment, and it changes none of what is here.
+// is the ORDER and CONTENT of the corners, the offset each batch is drawn at, and
+// the (texture, palette, frame, transform) each draw carries, and all of that is
+// here. The GPU half -- mapping a queued draw's surface and palette to a backend
+// texture, uploading this stream once and issuing the draws -- is the next
+// increment, and it changes none of what is here.
 //
 // WHAT IS NOT PORTED, and why:
 //
@@ -60,6 +61,18 @@ class TextureArchive;
 
 // A batch's place when no part of it has a visible triangle (the C#'s Unseen).
 static const int32_t kObjectUnseen = 2147483647; // int.MaxValue
+
+// The C#'s Renderer.StreamVertices: how many corners one frame's stream holds.
+// A batch that does not fit in what is left is NOT drawn, and the cursor does not
+// move, so a later, smaller batch still fits (Renderer.cs's Stream returns an
+// empty span and ObjectView.Draw skips the batch).
+//
+// This is the C#'s SEMANTIC bound, not an allocation: the stream below grows to
+// the frame (2559 corners at level 3 tick 1, 5616 at level 8's, measured on the
+// oracle) and only refuses a batch that would pass the bound. Dropping the rule
+// would be a picture difference between two targets with no reason to differ,
+// and on the 3DS an unbounded frame is an unbounded allocation.
+static const int32_t kObjectStreamCapacity = 1 << 18;
 
 // The C#'s ObjectView.Look: the palette and texture archives an arena's objects
 // draw with (the level's own outside an arena).
@@ -130,6 +143,16 @@ bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
 // maps it to its own texture and palette, exactly as LevelView maps an arena
 // batch's. `first` is the batch's offset in the frame's stream, which is what
 // the C#'s Renderer.Stream hands back as `first`.
+//
+// A draw carries EVERYTHING the C#'s Draw call carries, and nothing that only
+// the caller knows: the C# hands the renderer `Shine(material, glows)`, `frame`
+// and `transform`, and its Material was made with the palette in it
+// (`new Material(TextureId(texture), PaletteId(palette), ...)` in
+// MaterialResolver.cs). A backend resource is keyed by the PAIR -- the same index
+// texture is drawn through different palettes in different arenas, which is why
+// the palette is part of the key on the 3DS and of the descriptor set on Vulkan
+// (see game/level_view.h). So the palette is here too: without it a queued draw
+// cannot say which colours its texture's indices mean.
 struct ObjectStreamDraw {
     int32_t first = 0;
     int32_t corners = 0;
@@ -137,6 +160,11 @@ struct ObjectStreamDraw {
     // The surface with Shine already applied (an explosion's surfaces are
     // unlit), so the GPU half maps surfaces to textures without knowing why.
     Surface surface;
+
+    // The palette the surface's texture indices are read through (the C#'s
+    // Material.PaletteId). A queued draw always names one: a layout is keyed by the
+    // palette, and a look without one lays out nothing.
+    const formats::Palette* palette = nullptr;
 
     // The animated texture's frame (the C#'s Draw `frame` argument).
     int32_t frame = 0;
@@ -152,12 +180,10 @@ struct ObjectStreamDraw {
 // keep their capacity between frames, so a frame after the first does not
 // allocate (AGENTS.md 10: no per-frame container growth where the size is known).
 //
-// The C# sizes its stream once, for 1<<18 vertices, and a batch that does not fit
-// is skipped. This grows to the frame instead: the whole object pass measured
-// 2559 corners at level 3 tick 1 and 5616 at level 8's, so the C#'s bound is
-// never reached in a shipped level, and carrying a fixed one here would only be
-// a second number to keep true -- and a frame that overflowed it would be a
-// picture difference between two targets that have no reason to differ.
+// The C# sizes its stream once, for kObjectStreamCapacity vertices, and a batch
+// that does not fit is skipped. This keeps that rule and drops the fixed size: it
+// grows to the frame (which never reaches the bound in a shipped level) and
+// refuses a batch that would pass it, exactly as Renderer.Stream does.
 struct ObjectStream {
     std::vector<Vertex> vertices;
     std::vector<ObjectStreamDraw> draws;
@@ -187,6 +213,10 @@ public:
     // the frame's stream, and queue one draw per batch at its offset. `transform`
     // is the C#'s Draw argument (the C# passes FrameBlend.TransformOf, which is
     // obj.Transform with blending off).
+    //
+    // A batch that does not fit in what the frame's stream has left
+    // (kObjectStreamCapacity) is refused and the cursor does not move, exactly as
+    // the C#'s Renderer.Stream returns an empty span for one.
     //
     // Visibility is the CALLER's, as it is in the C#: Viewer.DrawObjects skips
     // the invisible objects and ObjectView.Draw never looks at Visible. The
