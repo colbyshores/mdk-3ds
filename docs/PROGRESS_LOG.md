@@ -2930,3 +2930,101 @@ Verification on this tree:
   previous C++ frame.
 - No emulator or Original 3DS hardware run was performed; Old-3DS timing stays
   unmeasured.
+
+## Iteration 36 (2026-10-31): review-1's findings — the rolling basis, the pose caches, and a golden for the layout
+
+`logs/ralph-pi/run-20261031-053650/review-1.md` raised five MAJORs and one MINOR
+against iteration 35. All six are closed here, and the batch is the review, not a
+new subsystem: nothing in the draw path moved, and the pinned frame is byte-identical.
+
+**MAJOR 1 — the rolling basis was never advanced.** `ObjectMotion.Roll`
+(`ObjectMotion.cs:401-413`) had no twin: `MdkObject::rolling_basis` was written once
+by `set_rolling()` and never again, so every rolling model drew with the orientation
+it started with. `MdkObject::update_rolling()` is now that port — horizontal distance
+as a `Vector2` length, radius falling back to 1, axis `(-dy, dx, 0)/distance`, angle
+`distance/radius`, and `rolling_basis = orthonormal(multiply(rolling_basis, turn))`.
+The call site matters as much as the maths: `runTick` calls it and then writes
+`previous_position = position`, **at the end of the per-object motion block**, where
+the C# does (`:139-146`). The port used to write `previous_position` twice inside
+`motionVelocity`, which is invisible while nothing reads it and fatal once something
+does — every roll would have read a zero movement and the basis would never have
+turned. `Bank` (`:145`) is still not ported, so the port still never writes `roll`
+from motion; the comment at the call site says so and `OPEN_ITEMS.md` keeps the
+measurement.
+
+**The two matrix helpers are bit-exact, and one of them took a while to earn it.**
+`mdk::orthonormal` is Gram-Schmidt over the rows, and `Vector3.Normalize` **divides**
+by the length (measured: the reciprocal form differs in the last bit) — that one
+matched first try. `mdk::create_from_axis_angle` did not: the element-wise
+axis-angle spelling `1 - (yy+zz)*(1-cos)`, `xy*(1-cos)+z*sin`, which is what the
+formula says, is off from .NET by 2-8 ULP on every element for every shape of the
+expression that was tried (plain, distributed, `fma`-contracted, double-precision).
+The reason is that `Matrix4x4.CreateFromAxisAngle` does not use that formula: it
+builds a **quaternion** — sin/cos of the HALF angle — and converts, and the extra
+roundings are visible. Written as the quaternion conversion (`1-(yy+zz)`, `xy+wz`,
+`xz-wy`, …) it reproduces all nine elements bit for bit on the rolling axes and on
+non-unit, negative-angle and large-angle inputs. That is not pedantry: at %.6f the
+element-wise version disagreed with the oracle in 76 places over the golden's
+sequence and the quaternion version disagrees in none. `sinf`/`cosf` are load-bearing
+there (MathF agrees with them bit for bit; the LUT does not), so they carry an
+`@vfp-exempt R6` pin and `audit_arm11_math` stays green.
+
+**MAJOR 2 — the pose caches had no invalidation.** `g_restPoses` and `g_baked` are
+keyed by model address, and a level load frees the old `Model` objects, so a new
+level could inherit a pose built from a freed model's vertices. The C# clears
+`RestPoses` in `Viewer.cs:185`; the port had no equivalent call. `scripts::forgetPoseCaches()`
+now lives in `scripts/pose_cache.h` — a dependency-free declaration, so the game layer
+invalidates the caches without including the scripts — and `LevelData::load` calls it
+before it builds anything. `MdkObject::forget_poses()` calls it too, so the seam the
+reviewer found is the only seam.
+
+**MAJOR 3 — the layout stage had no golden.** `game/object_view.{h,cpp}` was the one
+stage in the object pass that no golden touched: the pose goldens pin vertices and the
+transform golden pins matrices, and neither sees surface grouping, corner tables, UV
+scale, `arrange` order or the per-batch corner count. `golden/L3_t1_layout.txt` (238
+lines) pins all of it: every live object in draw order, each new (model, palette)
+layout once, per batch the texture/colour/pass/shading/row-shift and the full parts
+and indices lists, per part the corner count and the UV sum plus first and last, and
+the arrangement under hidden masks 0, 1, 3, the object's own and -1.
+
+**MAJOR 4 — `tick1` skipped its own setup failures.** A level that would not load, a
+CMI that would not parse or a sound bank that would not open fell through to
+`continue`, which silently dropped the goldens below it: a broken tree would have
+printed nothing and looked like a passing run. Those four paths now print `FAIL` and
+count. **MINOR 5 — `firstDifference()` could index past the end**: when the expected
+dump is shorter than the line being reported, `expected.substr(lineStart, …)` throws
+and the report is replaced by a crash; the start is clamped now.
+
+**MAJOR 6 — the frame sidecar named the wrong revision.** It cannot name the right
+one: a commit cannot contain its own hash, and the pair is committed WITH the code it
+shows, so `captured: … at <rev>` is necessarily the parent. The fix is to say so
+instead of letting the line mislead: `docs/frames/README.md` states the semantics and
+this batch's `.txt` carries the note. (The alternative — a second commit for the
+frame — would break the one-commit rule and split the evidence from the code.)
+
+**How the goldens were produced, so they can be re-produced.** A probe (`Probe`,
+mode `layout` and mode `roll`) built against a **copy** of `src/Mdk.Game` under
+`/tmp/mdk-pi/obj3`, instrumented for headless use: `MaterialResolver` takes a null
+renderer (the GPU ids are probe-assigned and stay 1:1 with the `Texture` objects,
+which is all the layout's grouping depends on) and `ObjectView` grew a `DumpIfNew`
+that prints the same format the C++ dump prints. The repository's `src/Mdk.Game/**`
+was not touched. `tick1` grew a `dump <pose|transform|layout|rolling> [level] [ticks]`
+mode so a failing golden can be diffed against the probe without editing the test.
+Both new goldens are the probe's bytes; the C++ reproduces them exactly, which is why
+the diff is empty rather than merely small.
+
+Verification on this tree:
+
+- `make -C tests/scripts clean && make -C tests/scripts -j8` exited 0, ended
+  `All cases match the oracle.` with **419 PASS lines**, no FAIL and no SKIP. The new
+  cases printed `PASS L3_t1_layout` and `PASS rolling_basis`; no existing golden moved.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no built
+  CIA, `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+  exited 0 and built `mdk.3dsx` (69 RomFS files, 79M staged).
+- `DISPLAY=:99 tools/publish_frame.sh rolling-basis-layout` published
+  `docs/frames/2026-10-31-rolling-basis-layout.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819` — byte-identical to the previous
+  C++ frame, as expected with no render-path change.
+- No emulator or Original 3DS hardware run was performed; Old-3DS timing stays
+  unmeasured.

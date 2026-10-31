@@ -39,6 +39,7 @@
 #include "formats/model.h"
 #include "formats/model_animation.h"
 #include "game/level_data.h"
+#include "game/object_view.h"
 #include "render/arena_scene.h"
 #include "render/material_resolver.h"
 #include "scripts/script_runtime.h"
@@ -212,6 +213,19 @@ std::string dumpObjectTransforms(int level, int ticks, scripts::ScriptRuntime& r
     return out;
 }
 
+// Comma-join a list of ints, as the oracle's string.Join(",", list) does (empty when
+// the list is empty).
+std::string joinInts(const std::vector<int32_t>& v) {
+    std::string s;
+    char n[16];
+    for (size_t i = 0; i < v.size(); i++) {
+        if (i) s += ",";
+        snprintf(n, sizeof(n), "%d", (int)v[i]);
+        s += n;
+    }
+    return s;
+}
+
 // The first line where two dumps differ, as one readable line. A whole object
 // dump is hundreds of lines and only the first difference is a cause.
 std::string firstDifference(const std::string& got, const std::string& expected) {
@@ -232,21 +246,240 @@ std::string firstDifference(const std::string& got, const std::string& expected)
     if (expectedEnd == std::string::npos) {
         expectedEnd = expected.size();
     }
+    // The expected side can be SHORTER than the line being reported (got has text
+    // the golden does not), and its line can start past the end of the golden. A
+    // substr past size() throws, which would replace the report with a crash.
+    size_t expectedStart = lineStart > expected.size() ? expected.size() : lineStart;
     return "at byte " + std::to_string((int)i) + "\n  got      " + got.substr(lineStart, lineEnd - lineStart) +
-           "\n  expected " + expected.substr(lineStart, expectedEnd - lineStart);
+           "\n  expected " + expected.substr(expectedStart, expectedEnd - expectedStart);
 }
 
-// Comma-join a list of ints, as the oracle's string.Join(",", list) does (empty when
-// the list is empty).
-std::string joinInts(const std::vector<int32_t>& v) {
-    std::string s;
-    char n[16];
-    for (size_t i = 0; i < v.size(); i++) {
-        if (i) s += ",";
-        snprintf(n, sizeof(n), "%d", (int)v[i]);
-        s += n;
+// The pass and shading names, spelled as the C# enum names print them.
+const char* passName(Pass pass) {
+    switch (pass) {
+        case Pass::Solid: return "Solid";
+        case Pass::DoubleSided: return "DoubleSided";
+        case Pass::Mirror: return "Mirror";
+        case Pass::Blended: return "Blended";
+        case Pass::OnTop: return "OnTop";
+        case Pass::Overlay: return "Overlay";
     }
-    return s;
+    return "?";
+}
+
+const char* shadingName(Shading shading) {
+    switch (shading) {
+        case Shading::Original: return "Original";
+        case Shading::Lit: return "Lit";
+        case Shading::Sprite: return "Sprite";
+    }
+    return "?";
+}
+
+// The C#'s Viewer.ObjectLook: an arena's palette and archives, the level's own
+// outside the arenas. The C++ LevelData caches the palette per arena, exactly as
+// the C# does, so asking twice hands back the same palette (which is what makes
+// the layout cache key the same across objects of one arena).
+ObjectLook lookOf(LevelData& level, const std::string& arenaName) {
+    ObjectLook look;
+    const formats::Arena* arena = level.arenaNamed(arenaName);
+    if (arena != nullptr) {
+        look.palette = &level.paletteOf(arena);
+        look.archives = level.archivesOf(arena);
+    } else {
+        look.palette = &level.dti().palette();
+        look.archives.push_back(&level.levelTextures());
+    }
+    return look;
+}
+
+// The object pass's layout: what ObjectView.Build makes once per (model,
+// palette), and what Arrange/Visible make of it per draw. The objects are walked
+// in the draw stage's order (Viewer.DrawObjects: skip invisible, skip dead, skip
+// no model) and each layout is printed the first time its pair is laid out,
+// which is the order the C#'s layout cache fills.
+//
+// This is the golden that pins the layout stage at all: the surface grouping, the
+// corner and first-triangle tables, the UV scale, the arrangement under hidden
+// masks and the per-batch corner count. The pose goldens cannot see any of it.
+std::string dumpObjectLayout(int level, int ticks, LevelData& levelData,
+                             scripts::ScriptRuntime& runtime) {
+    MaterialResolver resolver(&levelData.dti());
+    ObjectView view(resolver);
+    std::vector<std::pair<const formats::Model*, const formats::Palette*> > seen;
+
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "level=%d ticks=%d seed=1 objects=%d\n", level, ticks,
+             runtime.objectCount());
+    out += line;
+    int index = 0;
+    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+         it != runtime.objects().end(); ++it, ++index) {
+        const scripts::MdkObject& o = *it;
+        if (runtime.isRemoved(&o)) {
+            index--;
+            continue;
+        }
+        if (!o.visible || o.dead || o.model == nullptr) {
+            continue;
+        }
+        ObjectLook look = lookOf(levelData, o.arena);
+        std::pair<const formats::Model*, const formats::Palette*> key(o.model, look.palette);
+        bool done = false;
+        for (size_t i = 0; i < seen.size(); i++) {
+            done = done || seen[i] == key;
+        }
+        if (done) {
+            continue;
+        }
+        seen.push_back(key);
+
+        ObjectLayout* layout = view.layoutOf(o.model, look);
+        if (layout == nullptr) {
+            snprintf(line, sizeof(line), "LAYOUT obj=%d model=%s arena=%s batches=0\n", index,
+                     o.model->name.c_str(), o.arena.c_str());
+            out += line;
+            continue;
+        }
+        snprintf(line, sizeof(line), "LAYOUT obj=%d model=%s arena=%s batches=%d\n", index,
+                 o.model->name.c_str(), o.arena.c_str(), (int)layout->batches.size());
+        out += line;
+
+        for (size_t b = 0; b < layout->batches.size(); b++) {
+            const ObjectBatch& batch = layout->batches[b];
+            const Surface& s = batch.surface;
+            snprintf(line, sizeof(line),
+                     "  B%d tex=%s colour=%.4f,%.4f,%.4f,%.4f frames=%d pass=%s shading=%s "
+                     "rowshift=%.4f corners=%d\n",
+                     (int)b, s.texture ? s.texture->name().c_str() : "flat", s.colour.r, s.colour.g,
+                     s.colour.b, s.colour.a, (int)s.frameCount, passName(s.pass), shadingName(s.shading),
+                     s.rowShift, (int)batch.parts.size());
+            out += line;
+            out += "    parts=" + joinInts(batch.parts) + "\n";
+            out += "    indices=" + joinInts(batch.indices) + "\n";
+            for (size_t p = 0; p < batch.partCorners.size(); p++) {
+                if (batch.partCorners[p] == 0) {
+                    continue;
+                }
+                float su = 0.0f, sv = 0.0f;
+                int n = 0;
+                char first[64], last[64];
+                snprintf(first, sizeof(first), "-");
+                snprintf(last, sizeof(last), "-");
+                for (size_t c = 0; c < batch.parts.size(); c++) {
+                    if (batch.parts[c] != (int32_t)p) {
+                        continue;
+                    }
+                    su += batch.uvs[c].x;
+                    sv += batch.uvs[c].y;
+                    char text[64];
+                    snprintf(text, sizeof(text), "%.4f,%.4f", batch.uvs[c].x, batch.uvs[c].y);
+                    if (n == 0) {
+                        snprintf(first, sizeof(first), "%s", text);
+                    }
+                    snprintf(last, sizeof(last), "%s", text);
+                    n++;
+                }
+                snprintf(line, sizeof(line), "    uv p=%d n=%d sum=%.4f,%.4f first=%s last=%s\n",
+                         (int)p, n, su, sv, first, last);
+                out += line;
+            }
+        }
+
+        const int32_t masks[] = {0, 1, 3, o.hidden_parts, -1};
+        for (size_t m = 0; m < sizeof(masks) / sizeof(masks[0]); m++) {
+            int32_t hidden = masks[m];
+            int32_t count = arrangeObjectLayout(layout, hidden);
+            std::vector<int32_t> order, visible;
+            for (int32_t i = 0; i < count; i++) {
+                order.push_back(layout->order[i]);
+                visible.push_back(objectBatchCorners(layout->batches[layout->order[i]], hidden));
+            }
+            snprintf(line, sizeof(line), "  A hidden=%d count=%d order=%s visible=%s\n",
+                     (int)hidden, (int)count, joinInts(order).c_str(), joinInts(visible).c_str());
+            out += line;
+        }
+    }
+    return out;
+}
+
+// The rolling basis, driven directly (the C#'s ObjectMotion.Roll through the
+// reflection the probe used). No level the tests tick has a rolling object in a
+// live state, so the motion is synthesized here: the basis after each move, and
+// the transform that draws with it -- which is the rolling branch of
+// MdkObject::transform(), the one that reads the basis instead of the yaw.
+//
+// The basis is printed as raw bits (the transform golden's %.6f would not see a
+// last-bit difference) and the transform at %.6f, because the transform's
+// translation is the object's position and its rotation is the basis scaled.
+std::string dumpRolling() {
+    struct Step {
+        float x, y, z;
+    };
+    struct Case {
+        float yaw, pitch, roll, scale, radius, lift;
+        int steps;
+        Step move[7];
+    };
+    const Case cases[] = {
+        {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 7,
+         {{0.0f, 0.0f, 0.0f}, {1.5f, -0.25f, 0.0f}, {0.0f, 4.0f, 0.0f}, {-2.75f, 1.25f, 3.0f},
+          {0.0f, 0.0f, 3.0f}, {12.0f, 9.0f, 3.0f}, {-3.0f, -3.0f, 3.0f}}},
+        {37.0f, 11.0f, -23.0f, 2.0f, 5.15f, 5.0f, 5,
+         {{0.0f, 0.0f, 0.0f}, {1.5f, -0.25f, 0.0f}, {12.0f, 9.0f, 0.0f}, {-3.0f, -3.0f, 0.0f},
+          {0.5f, 0.25f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}}},
+        {200.0f, 0.0f, 0.0f, 1.0f, 0.5f, 0.0f, 6,
+         {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {-1.0f, -1.0f, 0.0f}, {0.25f, 0.0f, 0.0f},
+          {0.0f, 0.0f, 0.0f}, {7.0f, -7.0f, 0.0f}, {0.0f, 0.0f, 0.0f}}},
+    };
+
+    std::string out;
+    char line[512];
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        const Case& k = cases[c];
+        scripts::MdkObject obj;
+        obj.yaw = k.yaw;
+        obj.pitch = k.pitch;
+        obj.roll = k.roll;
+        obj.scale = k.scale;
+        obj.roll_radius = k.radius;
+        obj.height_offset = k.lift;
+        obj.set_rolling(true);
+        snprintf(line, sizeof(line),
+                 "ROLL case=%d yaw=%.4f pitch=%.4f roll=%.4f scale=%.4f radius=%.4f lift=%.4f\n", (int)c,
+                 k.yaw, k.pitch, k.roll, k.scale, k.radius, k.lift);
+        out += line;
+        for (int s = 0; s < k.steps; s++) {
+            obj.position.x = k.move[s].x;
+            obj.position.y = k.move[s].y;
+            obj.position.z = k.move[s].z;
+            obj.update_rolling();
+            snprintf(line, sizeof(line), " R%d pos=%.4f,%.4f,%.4f\n", s, k.move[s].x, k.move[s].y,
+                     k.move[s].z);
+            out += line;
+
+            const Mat4 b = obj.rolling_basis;
+            out += "  B";
+            for (int i = 0; i < 16; i++) {
+                uint32_t bits;
+                memcpy(&bits, &b.m[i], sizeof(bits));
+                snprintf(line, sizeof(line), " %08X", bits);
+                out += line;
+            }
+            out += "\n";
+
+            const Mat4 t = obj.transform();
+            snprintf(line, sizeof(line),
+                     "  T %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f "
+                     "%.6f %.6f\n",
+                     t.m[0], t.m[1], t.m[2], t.m[3], t.m[4], t.m[5], t.m[6], t.m[7], t.m[8], t.m[9],
+                     t.m[10], t.m[11], t.m[12], t.m[13], t.m[14], t.m[15]);
+            out += line;
+            obj.previous_position = obj.position;
+        }
+    }
+    return out;
 }
 
 // The script register file + per-object VM state, in the oracle's "script" dump format.
@@ -396,6 +629,56 @@ int main(int argc, char** argv) {
     MdkData data = locateData();
     if (!data.found()) {
         printf("SKIP: no MDK data (set MDK_DATA_DIR)\n");
+        return 0;
+    }
+
+    // Golden dumps (`tick1 dump <pose|transform|layout|rolling> [level] [ticks]`):
+    // print one dump to stdout, which is how a golden is written and how a failing
+    // golden is diffed against the C# probe (the oracle twin of each of these
+    // dumps; see docs/PROGRESS_LOG.md for the probe's recipe).
+    if (argc > 1 && std::string(argv[1]) == "dump") {
+        std::string what = argc > 2 ? argv[2] : "rolling";
+        int level = argc > 3 ? atoi(argv[3]) : 3;
+        int ticks = argc > 4 ? atoi(argv[4]) : 1;
+        if (what == "rolling") {
+            printf("%s", dumpRolling().c_str());
+            return 0;
+        }
+        LevelData levelData;
+        if (!LevelData::load(&levelData, &data, level)) {
+            printf("the level did not load\n");
+            return 1;
+        }
+        char cmiPath[128];
+        snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+        std::vector<uint8_t> cmiBytes;
+        Cmi cmi;
+        if (!data.read(cmiPath, &cmiBytes) ||
+            !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+            printf("the CMI did not parse\n");
+            return 1;
+        }
+        audio::SoundBank bank;
+        if (!audio::SoundBank::forLevel(&bank, data, level)) {
+            printf("the sound bank did not load\n");
+            return 1;
+        }
+        bank.preload();
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+        runtime.option = 0;
+        for (int t = 0; t < ticks; t++) {
+            runtime.update(1.0f / 30.0f);
+        }
+        if (what == "pose") {
+            printf("%s", dumpObjectPoses(level, ticks, runtime).c_str());
+        } else if (what == "transform") {
+            printf("%s", dumpObjectTransforms(level, ticks, runtime).c_str());
+        } else if (what == "layout") {
+            printf("%s", dumpObjectLayout(level, ticks, levelData, runtime).c_str());
+        } else {
+            printf("unknown dump\n");
+            return 1;
+        }
         return 0;
     }
 
@@ -649,25 +932,38 @@ int main(int argc, char** argv) {
     // 0, and every transform that turns by roll differs. See OPEN_ITEMS.md.
     const Case poseCases[] = {{3, 1}, {3, 120}, {3, 1200}};
     const Case transformCases[] = {{3, 1}};
+    const Case layoutCases[] = {{3, 1}};
     for (size_t c = 0; c < sizeof(poseCases) / sizeof(poseCases[0]); c++) {
         int level = poseCases[c].level;
         int ticks = poseCases[c].ticks;
+        // These are fixed acceptance cases, not optional probes: a level that will
+        // not load, a CMI that will not parse or a sound bank that will not open
+        // is a regression in the port, so it FAILS here rather than skipping the
+        // goldens below (a skipped golden reads like a passing one).
         LevelData levelData;
         if (!LevelData::load(&levelData, &data, level)) {
+            printf("FAIL L%d_t%d_object: the level did not load\n", level, ticks);
+            failures++;
             continue;
         }
         char cmiPath[128];
         snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
         std::vector<uint8_t> cmiBytes;
         if (!data.read(cmiPath, &cmiBytes)) {
+            printf("FAIL L%d_t%d_object: %s did not read\n", level, ticks, cmiPath);
+            failures++;
             continue;
         }
         Cmi cmi;
         if (!Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+            printf("FAIL L%d_t%d_object: the CMI did not parse\n", level, ticks);
+            failures++;
             continue;
         }
         audio::SoundBank bank;
         if (!audio::SoundBank::forLevel(&bank, data, level)) {
+            printf("FAIL L%d_t%d_object: the sound bank did not load\n", level, ticks);
+            failures++;
             continue;
         }
         bank.preload();
@@ -710,6 +1006,44 @@ int main(int argc, char** argv) {
         } else {
             printf("FAIL L%d_t%d_transform: %s\n", level, ticks,
                    firstDifference(got, expected).c_str());
+            failures++;
+        }
+
+        // The layout stage (ObjectView.Build/Arrange/Visible), over the same tick.
+        wanted = false;
+        for (size_t i = 0; i < sizeof(layoutCases) / sizeof(layoutCases[0]); i++) {
+            wanted = wanted || (layoutCases[i].level == level && layoutCases[i].ticks == ticks);
+        }
+        if (!wanted) {
+            continue;
+        }
+        got = dumpObjectLayout(level, ticks, levelData, runtime);
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_layout.txt", level, ticks);
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d_t%d_layout: no golden file %s\n", level, ticks, goldenPath);
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L%d_t%d_layout: every model's batches, corners, UVs and order match the "
+                   "oracle\n", level, ticks);
+        } else {
+            printf("FAIL L%d_t%d_layout: %s\n", level, ticks,
+                   firstDifference(got, expected).c_str());
+            failures++;
+        }
+    }
+
+    // The rolling basis (ObjectMotion.Roll), driven directly: see dumpRolling.
+    {
+        std::string got = dumpRolling();
+        std::string expected;
+        if (!readText("golden/rolling_basis.txt", &expected)) {
+            printf("FAIL rolling_basis: no golden file golden/rolling_basis.txt\n");
+            failures++;
+        } else if (got == expected) {
+            printf("PASS rolling_basis: the rolling basis and the transform that draws with it "
+                   "match the oracle\n");
+        } else {
+            printf("FAIL rolling_basis: %s\n", firstDifference(got, expected).c_str());
             failures++;
         }
     }

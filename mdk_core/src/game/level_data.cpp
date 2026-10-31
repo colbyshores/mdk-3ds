@@ -5,6 +5,7 @@
 #include "game/level_data.h"
 
 #include "formats/fti.h"
+#include "scripts/pose_cache.h"
 
 namespace mdk {
 
@@ -26,6 +27,14 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     if (!out || !data) {
         return false;
     }
+    // The pose caches are keyed by Model/ModelAnimation ADDRESS (the C#'s static
+    // RestPoses/Baked), and the models being made here can land on addresses the
+    // last level's models had. The C# drops the caches once per level, in the
+    // Viewer's constructor (Viewer.cs:185) between building the LevelData and
+    // laying anything out; doing it here is the same moment and covers every
+    // consumer, including a harness with no viewer. Dropping them is never wrong:
+    // they hold derived data, so the next pose is rebuilt from the model.
+    scripts::forgetPoseCaches();
     out->number_ = number;
 
     char base[128];

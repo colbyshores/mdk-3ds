@@ -1,0 +1,8 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-10-31T09:22:01Z at dad275d
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+shown: the working tree of the commit that carries this pair (the batch labelled
+  "rolling-basis-layout"). The "at" line above names that commit's PARENT: a
+  commit cannot contain its own hash, and the pair is committed with the code it
+  shows, so the tool can only name the revision it ran on top of. The pixels are
+  the batch's own output, not the named revision's. (Review 2026-10-31 finding.)

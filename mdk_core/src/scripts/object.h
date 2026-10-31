@@ -244,6 +244,21 @@ struct MdkObject {
     // Starts/stops rolling; enabling captures the current orientation once.
     void set_rolling(bool enabled);
 
+    // The C#'s ObjectMotion.Roll (0x4602c8), the per-tick half of rolling: the
+    // object has MOVED since the last tick, so its model turns by
+    // distance / radius radians about the horizontal axis across that motion,
+    // and the basis is re-orthonormalized so a long roll does not drift.
+    //
+    // It reads previous_position, which the C# writes at the END of the tick
+    // (ObjectMotion.cs:146, after this call), so the caller MUST call this
+    // before storing the position as the previous one.
+    //
+    // It is a member here rather than a private of the motion class (where the
+    // C# puts it) so the golden can drive it directly: no shipped level has a
+    // rolling object in a ticked state, so there is no in-game case to pin it
+    // through the tick loop.
+    void update_rolling();
+
     // A rolling object rests on its origin but its model is lifted by the height
     // offset (0x43b65c: z + obj+0x5c), e.g. LEVEL6's centred boulder XBO.
     float lift() const { return (flags & FlagRolling) != 0 ? height_offset : 0.0f; }

@@ -7,6 +7,7 @@
 
 #include "formats/model.h"
 #include "formats/model_animation.h"
+#include "scripts/pose_cache.h"
 
 // The object model is data-only in this slice, so this translation unit carries
 // the compile-time checks that pin the flag word — the values most likely to be
@@ -171,9 +172,16 @@ const std::vector<std::vector<mdk::formats::Vec3f> >& mdk::scripts::MdkObject::p
     return frames[static_cast<size_t>(frame)];
 }
 
-void mdk::scripts::MdkObject::forget_poses() {
+void mdk::scripts::forgetPoseCaches() {
     g_restPoses.clear();
     g_baked.clear();
+}
+
+void mdk::scripts::MdkObject::forget_poses() {
+    // The C#'s own name for the drop; the caches live in this translation unit
+    // and scripts/pose_cache.h is the dependency-free handle the game layer
+    // (LevelData::load) calls.
+    forgetPoseCaches();
 }
 
 void mdk::scripts::MdkObject::set_rolling(bool enabled) {
@@ -185,6 +193,31 @@ void mdk::scripts::MdkObject::set_rolling(bool enabled) {
         flags |= FlagRolling;
         rolling_basis = rotation();
     }
+}
+
+// ObjectMotion.Roll (0x4602c8): the model turns by distance / radius radians
+// about the horizontal axis ACROSS the motion -- `axis` is the motion turned 90
+// degrees in the plane, which is the axis a ball touches the ground along. The
+// distance is the horizontal one only (a Vector2), so a boulder rolling off a
+// ledge does not spin from the fall. A zero move leaves the basis alone.
+//
+// The trig is the same libm call rotation() makes through create_from_axis_angle
+// (the LUT would move the boundary the basis is built at, and rotation() is
+// exempted for the same reason).
+void mdk::scripts::MdkObject::update_rolling() {
+    const float dx = position.x - previous_position.x;
+    const float dy = position.y - previous_position.y;
+    // Vector2.Length: the sum of the squares, then one sqrt.
+    const float distance = sqrtf(dx * dx + dy * dy);
+    if (distance <= 0.0f) {
+        return;
+    }
+    const float radius = roll_radius > 0.0f ? roll_radius : 1.0f;
+    // The C# divides the axis vector by the distance componentwise, and
+    // CreateFromAxisAngle does NOT normalize, so this is the axis it uses.
+    const mdk::Mat4 turn =
+        mdk::create_from_axis_angle(-dy / distance, dx / distance, 0.0f, distance / radius);
+    rolling_basis = mdk::orthonormal(mdk::multiply(rolling_basis, turn));
 }
 
 mdk::Vec3 mdk::scripts::MdkObject::reference_point(int index) const {

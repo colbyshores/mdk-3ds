@@ -29,6 +29,13 @@ shrink.
   better.** A frame is evidence of what the build produced at that revision;
   the gate (`tools/runner/gates_frames.py`) is what decides whether it is
   acceptable.
+- **What `captured: … at <rev>` means.** The tool can only name the revision it
+  ran on top of, which for a batch's own frame is that batch's **parent** — a
+  commit cannot contain its own hash, and the pair is committed WITH the code it
+  shows. The pixels are the working tree's, i.e. the batch's own output. Do not
+  read `at <rev>` as "these pixels came from <rev>"; where a sidecar needs to say
+  more (a batch whose frame is not its own output, say), it says so in its own
+  text. Review 2026-10-31 raised this; the note is the fix, not a re-capture.
 - The game's own data and executable stay gitignored at `/MDK/` and are never
   committed, here or anywhere.
 

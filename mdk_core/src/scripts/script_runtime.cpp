@@ -416,6 +416,18 @@ void ScriptRuntime::runTick() {
                     playSound(obj, obj->frame_sound, 0, formats::ScriptValue());
                     obj->frame_sound.clear();
                 }
+                // Roll (ObjectMotion.cs:139-143), then PreviousPosition
+                // (ObjectMotion.cs:146) -- IN THAT ORDER, and both here rather than
+                // at the end of motionVelocity: Roll reads the PREVIOUS frame's
+                // position, so writing it any earlier makes every roll read a zero
+                // movement and the basis never turns.
+                if ((obj->flags & MdkObject::FlagRolling) != 0) {
+                    obj->update_rolling();
+                }
+                // Bank (ObjectMotion.cs:145) is NOT ported: the port never writes
+                // roll from motion, which is also why the transform golden is
+                // pinned at tick 1 only (OPEN_ITEMS.md).
+                obj->previous_position = obj->position;
             }
         }
     }
@@ -777,9 +789,9 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     obj->push.y = 0.0f;
     obj->push.z = 0.0f;
     if (motion.x == 0.0f && motion.y == 0.0f && motion.z == 0.0f) {
-        // C# ApplyVelocity returns here, but Update still records PreviousPosition
-        // at its end (ObjectMotion.cs:146), so set it even with no motion.
-        obj->previous_position = obj->position;
+        // C# ApplyVelocity returns here. Update still runs the animation, the
+        // roll and the PreviousPosition write after it (ObjectMotion.cs:132-146),
+        // which the caller does; nothing is recorded here.
         return;
     }
 
@@ -813,7 +825,6 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     if (obj->position.z < getArenaFloor(obj->arena) - 200.0f) {
         fallOut(obj);
     }
-    obj->previous_position = obj->position;  // C# Update end (ObjectMotion.cs:146)
 }
 
 // UpdatePickup (0x43d8f0), run after ApplyVelocity for a FlagPickup object. Ports the
