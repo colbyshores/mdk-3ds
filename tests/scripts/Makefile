@@ -42,6 +42,7 @@ COMMON_SOURCES := \
 	$(CORE)/game/level_data.cpp \
 	$(CORE)/game/arena_space.cpp \
 	$(CORE)/game/bsp.cpp \
+	$(CORE)/game/frame_blend.cpp \
 	$(CORE)/game/kurt.cpp \
 	$(CORE)/game/object_view.cpp \
 	$(CORE)/game/player.cpp \

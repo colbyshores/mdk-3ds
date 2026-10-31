@@ -116,6 +116,7 @@ set(SOURCES
     ${CORE}/src/game/arena_space.cpp
     ${CORE}/src/game/bsp.cpp
     ${CORE}/src/game/follow_camera.cpp
+    ${CORE}/src/game/frame_blend.cpp
     ${CORE}/src/game/hud_view.cpp
     ${CORE}/src/game/kurt.cpp
     ${CORE}/src/game/kurt_sprite.cpp

@@ -1,3 +1,75 @@
+## What this batch did (Phase 2 iteration 27 — a frame draws an object between its ticks)
+
+Review-5's remaining MAJOR, carried through review-6: the live Linux frontend handed
+`ObjectView::addObject` the object's raw transform where the oracle hands
+`blend.TransformOf(obj)`, which is `obj.TransformAt(tick)` — the pose interpolated
+between the object's previous script tick and its current one. The scripts tick at
+1/30 s and the frontend presents faster, so a moving object stood still for one
+display frame and jumped on the next. Closing it needed a subsystem, not a call site,
+and this batch is that subsystem.
+
+- **`MdkObject` has its tick snapshot.** `remember()` is the C#'s `Remember()`: the
+  place, the three angles and the arena at the START of the tick, taken by
+  `ScriptRuntime::update` for every object before each tick runs, which is where the
+  C# does it (`ScriptRuntime.cs:383-386`). The C#'s nullable tuple becomes a struct
+  plus a presence flag, because C++ has no nullable value type and the pose must not
+  be readable without the flag. `position_at()/yaw_at()/transform_at()` are the C#'
+  `PositionAt/YawAt/TransformAt` with all four of `Blends()`'s guards: `alpha < 1`, a
+  snapshot exists, the arena is unchanged, the move is not a jump. The scale and the
+  lift are NOT blended and a rolling object keeps its basis, because the C# reads both
+  off the object as it is now. `rotation()` is now `rotation_of(roll, pitch, yaw)` with
+  `rotation()` handing it the object's own angles — the C#'s split — because
+  `transform_at` turns by the blended ones; the `@vfp-exempt R6` pin moved with the
+  trig and its reason now names both callers.
+- **`game/frame_blend.{h,cpp}` is the C#'s `FrameBlend`, the half with a caller.**
+  `lerp`, `lerp_angle` and `jumped` are `Lerp/LerpAngle/Jumped`. The Kurt-pose half
+  (`Record/Update/Turn/KurtAt`) and the scalar `Lerp(float,float,float)` stay deferred
+  with `Rides`, which is also why the frontend still draws Kurt at `Player::feet` and
+  not at `FrameBlend::Feet`. The jump test is load-bearing, not a refinement: a
+  teleport lands outside the tick that snapshotted the pose, so an interpolator
+  without it draws the object back where it was for the rest of the tick — the
+  render-only-frame bug class, from the vault note
+  `30-architecture/patterns/render-only-frame-interpolation-trap.md`, which the
+  mandatory prior-solution lookup turned up before the code was written. `lerp_angle`
+  is `remainderf`, because `MathF.IEEERemainder` is the IEEE remainder and `fmod`
+  would take 350 → 10 the long way round.
+- **The frontend draws the blended transform, and the capture mode does not.**
+  `mdk_linux/src/main.cpp` passes `transform_at(fixedStep ? 1.0f : tick_blend(pending))`,
+  which is the C#'s `_blending = _test && FrameRate == null ? Off : On`
+  (Viewer.cs:280-282) spelled as alpha 1 — and `transform_at` answers alpha ≥ 1 with
+  the raw transform, so the pinned frames are the oracle's own un-blended mode. They
+  did not move: frame 60 is byte-identical to the previous batch (`377b606a165e…`,
+  `1.188 / max 175 / mean 0.1405`). **Measured A/B** with the `fixedStep` gate removed,
+  so the same capture blended at alpha 0.5: `1.220 / 206 / 0.1625`, 912 bad pixels to
+  937. That is the pair beside `docs/evidence/2026-10-31-L3-f60-blend-forced.png`: the
+  path is live and moves pixels, and the gate that stops it in a capture is the
+  oracle's own rule, measured from both sides.
+- **Two goldens, both the oracle's own output.** `golden/frame_blend.txt` is ten poses
+  blended at five alphas, driven identically on both sides the way `rolling_basis.txt`
+  is, and it reaches the branches no shipped tick reaches: a 500-unit teleport drawn
+  where it ends, an arena change, an object with no snapshot, a rolling boulder whose
+  basis is not blended, a yaw that crosses 360 the short way (358 → 2 through 360, and
+  0 → 270 through −45), and the XF's Bank lean. Every transform prints its raw bits and
+  the file is byte-identical to the oracle probe's. `golden/L3_t1_blend.txt` is the
+  same dump through the real tick loop at the tick the transform golden pins. **Why the
+  level case is only t1:** at t1 every object is spawned during the tick, so nothing
+  blends and it pins the plumbing rather than the arithmetic; from t2 the oracle's
+  `ObjectMotion.Bank` has written a roll the port does not have — the documented reason
+  the transform golden stops at t1 too. Measured at L3 t2: all 55 interpolated place
+  and yaw lines match bit for bit, and the 28 differing transforms differ only in rows
+  2 and 3, the roll-driven ones.
+- Gates: **423 PASS** (was 421) with `All cases match the oracle.` after a clean tests
+  build, no FAIL, no SKIP, no existing golden moved; `tools/check.sh` ALL GATES PASSED
+  with no new pin and no relaxation — `gates_vfp` blockers=0 reviews=0 (the R6 pin moved
+  with the trig it covers, it did not loosen), `audit_c_with_classes` 0 violations,
+  `audit_r11_idiv` no candidates, `audit_arm11_math` clean, `gates_core_parity` clean
+  with `frame_blend.cpp` in both build lists. devkitARM built `mdk.3dsx`; the Linux
+  target built and reproduced frame 60 byte for byte after the A/B was reverted.
+  Prior-solution lookup: no Obsidian MCP server in this harness, so the vault was read
+  directly (read-only) and Cognee was unreachable; the one relevant note is the
+  render-only-frame trap above and there is no MDK note in the vault. No emulator run
+  and no Old-3DS hardware run was performed.
+
 ## What this batch did (Phase 2 iteration 26 — the object pass reaches the GPU, and the Linux frontend draws objects)
 
 The last batch queued the frame's object draws; this one spends them. The GPU half of

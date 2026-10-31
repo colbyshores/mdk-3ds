@@ -227,6 +227,28 @@ struct MdkObject {
     // CreateTranslation(Position + UnitZ * Lift), in that order.
     Mat4 transform() const;
 
+    // ---- The frame blend (the C#'s _ticked / Remember / *At) ----
+    //
+    // The scripts tick at 1/30 s and the screen presents faster, so most frames
+    // draw an object part of the way from its last tick to its current one. The
+    // snapshot is taken at the START of the tick and the frame interpolates from
+    // it to where the tick left the object; `alpha` is that far-along, 0-1, and
+    // comes from the frontend (ScriptRuntime::tick_blend), never from the object.
+
+    // The C#'s Remember(): a tick starts, so frames until the next are drawn from
+    // this pose to the tick's. ScriptRuntime calls it for every object at the top
+    // of each tick, BEFORE the tick runs (ScriptRuntime.cs:383-386).
+    void remember();
+
+    // The place, yaw and transform `alpha` of the way from the last tick's start
+    // to now (a frame between ticks; a rolling object keeps its basis, which is
+    // already re-derived every tick and has no previous-tick copy to blend).
+    // alpha >= 1, a first tick, an object that changed arena and a jump each give
+    // the un-interpolated value: see blends().
+    Vec3 position_at(float alpha) const;
+    float yaw_at(float alpha) const;
+    Mat4 transform_at(float alpha) const;
+
     // The C#'s PoseParts(): the vertices of each part in the current pose
     // (model space), hidden parts INCLUDED -- the C#'s Pose() is this with the
     // hidden parts emptied, and ObjectView hides them per batch instead.
@@ -276,14 +298,41 @@ struct MdkObject {
 
     // Still unported MdkObject behavior:
     //   Footing -> the Solids footing enum (collision slice)
-    //   _ticked + remember() -> frame-blend state for position_at()/yaw_at()/transform_at()
-    //   transform_at() -> Mat4 arithmetic + FrameBlend (transform() itself is here)
     //   pose() (pose_parts() with the hidden parts emptied) and part_bounds()
+    //   FrameBlend's OTHER half -- Kurt's blended feet and yaw (Record/Update/
+    //   Turn/KurtAt) and the driven-carrier offset TransformOf adds -- which needs
+    //   Rides and Kurt.Teleports; see game/frame_blend.h.
     // Animation, pose_bounds(), sound_position(), distance_to(), part_center(),
     // and yaw_to() are implemented in ScriptRuntime, SoundMixer, or this class.
     // sound_position() and distance_to() are inlined/owned elsewhere, not members
     // here. part_center() (rest-pose box centre) is not part_bounds()/pose_bounds()
     // (current-pose boxes).
+
+  private:
+    // The C#'s RotationOf(roll, pitch, yaw): the same matrix rotation() builds,
+    // from the angles it is handed instead of from this object's. transform_at()
+    // needs it because the angles it turns by are the blended ones.
+    static Mat4 rotation_of(float roll, float pitch, float yaw);
+
+    // The C#'s nullable tuple `(Vector3, float, float, float, string)? _ticked`.
+    // C++ has no nullable value type, so the presence flag is a member beside it:
+    // the same two states, and the pose cannot be read without it.
+    struct TickedPose {
+        Vec3 position{};
+        float yaw = 0.0f;
+        float pitch = 0.0f;
+        float roll = 0.0f;
+        std::string arena = "";
+    };
+
+    // The C#'s Blends(): whether a frame draws this object between ticks. Not
+    // when it is new (no snapshot yet), after a jump (a teleport is drawn where it
+    // ends), in another arena (the snapshot is from before a connector moved it),
+    // or at alpha >= 1 (the frame IS the tick's).
+    bool blends(float alpha) const;
+
+    bool has_ticked_ = false;
+    TickedPose ticked_;
 };
 
 } // namespace scripts

@@ -285,9 +285,25 @@ void ScriptRuntime::update(float delta) {
     tickAccumulator_ += delta;
     while (tickAccumulator_ >= kTick) {
         tickAccumulator_ -= kTick;
+        // The C# snapshots every object's pose before the tick runs
+        // (ScriptRuntime.cs:383-386), because the frames until the next tick are
+        // drawn from here to there. It walks its live Objects list; the port keeps
+        // removed objects in the deque for the pointers other objects hold, and
+        // snapshotting one that is not drawn costs a pose copy and changes nothing
+        // — the snapshot of a removed object is never read.
+        for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+            it->remember();
+        }
         runTick();
         tickCount_++;
     }
+}
+
+float ScriptRuntime::tick_blend(float ahead) const {
+    // Math.Clamp((time + ahead) / Tick, 0f, 1f) — the C#'s TickBlend, with the
+    // runtime's own leftover time as `time`.
+    const float alpha = (tickAccumulator_ + ahead) / kTick;
+    return alpha < 0.0f ? 0.0f : (alpha > 1.0f ? 1.0f : alpha);
 }
 
 void ScriptRuntime::runTick() {

@@ -107,6 +107,15 @@ public:
     // tick every second call. The driver may pass a whole tick directly.
     void update(float delta);
 
+    // The C#'s TickBlend (ScriptRuntime.cs:393): how far a frame `ahead` seconds
+    // after the last step is from the last tick to the next, 0-1. A frontend that
+    // presents faster than the scripts tick passes its own leftover time here and
+    // draws the objects with MdkObject::transform_at() at the answer. A fixed-step
+    // capture has no leftover to pass: the oracle turns blending OFF there
+    // (Viewer.cs:280-282, Blending.Off) and draws the un-interpolated transform,
+    // which is what transform_at(1.0f) gives.
+    float tick_blend(float ahead) const;
+
     // ---- The seam the VM calls ----
     Random& rng() { return rng_; }
     const std::deque<MdkObject>& objects() const { return objects_; }

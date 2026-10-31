@@ -568,25 +568,30 @@ int main(int argc, char** argv) {
             // REMOVED, which the C# has taken out of its Objects list and the C++
             // runtime keeps in its deque because other objects hold pointers
             // into it.
+            //
+            // The transform is the blended one. The scripts tick at 1/30 s and this
+            // loop presents as fast as it can, so most frames draw an object part
+            // of the way from its last tick to its current one: the C# hands
+            // ObjectView.Draw `blend.TransformOf(obj)` (Viewer.cs:959), which is
+            // `obj.TransformAt(tick)` for every object but the ride that follows
+            // Kurt, and `tick` is the frame's leftover time over a tick
+            // (ScriptRuntime.TickBlend, Viewer.cs:607). A fixed-step capture has no
+            // leftover and the oracle turns blending off there (Viewer.cs:280-282),
+            // so alpha 1 -- which transform_at answers with the raw transform -- is
+            // the capture's own picture, byte for byte.
+            //
+            // What is NOT here is the other half of TransformOf: `obj == _driven`
+            // draws the object shifted by the step's lag, which needs Rides (the
+            // ridden object) and FrameBlend's Kurt pose, neither of which this port
+            // has. ScriptRuntime::ridesRidden_ is null for every tick of every
+            // shipped level, so the oracle does not take that branch either here.
+            const float tickAlpha = fixedStep ? 1.0f : runtime->tick_blend(pending);
             objectStream.reset();
             for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
                 if (!obj.visible || runtime->isRemoved(&obj)) {
                     continue;
                 }
-                // The C# hands ObjectView.Draw `blend.TransformOf(obj)`, which is
-                // `obj.TransformAt(tick)` -- the object interpolated between its
-                // previous tick and its current one -- in every ORDINARY run, because
-                // blending is on unless the run is a fixed-step capture
-                // (Viewer.cs:280-282, FrameBlend.cs:80-87). This passes the raw
-                // transform, which is what the oracle passes ONLY when blending is
-                // off, i.e. in the fixed-step capture mode this frontend uses for the
-                // goldens. In a live run a moving object therefore stands still for
-                // one display frame and jumps on the next. That is a known divergence
-                // with a subsystem behind it -- the object's tick snapshot,
-                // `transform_at()`, and the frontend's since-last-tick alpha, all
-                // listed as unported in scripts/object.h -- and not an equivalence
-                // claim: docs/OPEN_ITEMS.md, review-5's remaining MAJOR.
-                objectView.addObject(obj, objectLook(obj.arena), obj.transform(),
+                objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(tickAlpha),
                                      &objectStream);
             }
             objectDraw.draw(renderer, &surfaces, objectStream);

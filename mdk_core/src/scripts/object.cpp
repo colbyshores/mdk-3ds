@@ -7,7 +7,9 @@
 
 #include "formats/model.h"
 #include "formats/model_animation.h"
+#include "game/frame_blend.h"
 #include "scripts/pose_cache.h"
+#include "scripts/script_runtime.h"
 
 // The object model is data-only in this slice, so this translation unit carries
 // the compile-time checks that pin the flag word — the values most likely to be
@@ -58,13 +60,17 @@ static_assert(mdk::Mat4::identity().m[0] == 1.0f && mdk::Mat4::identity().m[5] =
                   mdk::Mat4::identity().m[1] == 0.0f,
               "Mat4::identity");
 
-// ReferencePoint (0x43b65c): the model's reference point `index`, scaled by the
-// object's scale and rotated about Z by yaw, added to the position. The C# is
-// Position + Vector3.Transform(ReferencePoints[i] * Scale, CreateRotationZ(yaw));
-// with the row-vector CreateRotationZ that rotation is (x*cos - y*sin, x*sin +
-// y*cos, z). Out of range (or no model) returns the position, as the C# does.
-mdk::Mat4 mdk::scripts::MdkObject::rotation() const {
-    /* @vfp-exempt R6 — set_rolling captures the gameplay orientation; LUT approximation would alter the saved rolling basis, so retain libm reference trig. measured n/a. Verified 2026-10-26. */
+// The C#'s RotationOf(roll, pitch, yaw) (MdkObject.cs:280-285): the orientation
+// from the angles it is handed, so rotation() can pass the object's own and
+// transform_at() can pass the blended ones. The row-vector basis is the C#'s:
+// CreateRotationX(roll) * CreateRotationY(-pitch) * CreateRotationZ(yaw), and the
+// angles are degrees (see the comment on the three matrices below).
+mdk::Mat4 mdk::scripts::MdkObject::rotation_of(float roll, float pitch, float yaw) {
+    /* @vfp-exempt R6 — set_rolling captures the gameplay orientation and
+     * transform_at() turns by the blended copy of it, both of which decide where
+     * a model is drawn; LUT approximation would alter the saved rolling basis and
+     * every blended frame, so retain libm reference trig. measured n/a. Verified
+     * 2026-10-31. */
     const float pi = 3.14159265358979323846f;
     // Match float.DegreesToRadians: multiply by pi before dividing by 180.
     const float roll_radians = roll * pi / 180.0f;
@@ -98,6 +104,70 @@ mdk::Mat4 mdk::scripts::MdkObject::rotation() const {
     // rounded product followed by three fused multiply-adds; mdk::multiply is
     // that arithmetic, shared with MdkObject::transform().
     return mdk::multiply(mdk::multiply(rx, ry), rz);
+}
+
+mdk::Mat4 mdk::scripts::MdkObject::rotation() const {
+    return rotation_of(roll, pitch, yaw);
+}
+
+// The C#'s Remember(): the pose at the start of the tick, which is what the
+// frames until the next tick are drawn from. The arena goes with it because a
+// connector moves an object between arenas and the C# refuses to blend across
+// that (Blends, MdkObject.cs:300). The arena name is copied, not referenced: the
+// C# holds the string and an arena's name outlives nothing that could dangle it.
+// Every shipped arena name is 7 characters or less, so the copy stays inside
+// std::string's small-buffer and the per-tick remember() allocates nothing.
+void mdk::scripts::MdkObject::remember() {
+    ticked_.position = position;
+    ticked_.yaw = yaw;
+    ticked_.pitch = pitch;
+    ticked_.roll = roll;
+    ticked_.arena = arena;
+    has_ticked_ = true;
+}
+
+// The C#'s Blends(). alpha >= 1 is the frame that IS the tick's pose; a new
+// object has no snapshot; a jump is a teleport, which is drawn where it ends and
+// not on the way (see game/frame_blend.h for why that test is load-bearing); and
+// an object that changed arena since the snapshot is drawn where it arrived.
+bool mdk::scripts::MdkObject::blends(float alpha) const {
+    return alpha < 1.0f && has_ticked_ && ticked_.arena == arena &&
+           !mdk::frame_blend::jumped(ticked_.position, position, scripts::ScriptRuntime::kTick);
+}
+
+mdk::Vec3 mdk::scripts::MdkObject::position_at(float alpha) const {
+    if (!blends(alpha)) {
+        return position;
+    }
+    return mdk::frame_blend::lerp(ticked_.position, position, alpha);
+}
+
+float mdk::scripts::MdkObject::yaw_at(float alpha) const {
+    if (!blends(alpha)) {
+        return yaw;
+    }
+    return mdk::frame_blend::lerp_angle(ticked_.yaw, yaw, alpha);
+}
+
+// The C#'s TransformAt(alpha) (MdkObject.cs:306-318). The scale and the lift are
+// NOT blended -- the C# reads Scale and Lift off the object as it is now, and only
+// the place and the three angles come from between the ticks. A rolling object
+// keeps its basis: the C# reads RollingBasis as it is now, because the basis is
+// re-derived from the movement every tick and there is no previous copy of it to
+// blend.
+mdk::Mat4 mdk::scripts::MdkObject::transform_at(float alpha) const {
+    if (!blends(alpha)) {
+        return transform();
+    }
+    const mdk::Mat4 orientation =
+        (flags & FlagRolling) != 0
+            ? rolling_basis
+            : rotation_of(mdk::frame_blend::lerp_angle(ticked_.roll, roll, alpha),
+                          mdk::frame_blend::lerp_angle(ticked_.pitch, pitch, alpha),
+                          mdk::frame_blend::lerp_angle(ticked_.yaw, yaw, alpha));
+    const mdk::Vec3 at = position_at(alpha);
+    const mdk::Mat4 lifted = mdk::create_translation(at.x, at.y, at.z + lift());
+    return mdk::multiply(mdk::multiply(mdk::create_scale(scale), orientation), lifted);
 }
 
 // The C#'s Transform (MdkObject.cs:287): scale, then the orientation (a

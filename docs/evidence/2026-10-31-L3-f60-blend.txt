@@ -1,0 +1,38 @@
+evidence pair -- NOT the pinned regression frame. See docs/evidence/README.md
+and docs/frames/README.md: the pinned frame is level 3, 320x240, seed 1, FRAME 1,
+and the object pass cannot be seen there (neither tree has a script object at
+frame 1). This is the scene where it can, and it is the same scene as
+2026-10-31-L3-f60-objects.png; what is new here is the transform each object is
+drawn with.
+
+scene: level 3, 320x240, seed 1, frame 60 (the C++ frame the oracle's --wait=1
+       frame is: 60 fixed steps of 1/60 s)
+captured: 2026-10-31T18:15Z from the working tree of revision 2473144 plus this
+       batch's own changes -- a commit cannot contain its own hash, and this pair
+       is committed WITH the code it shows (docs/frames/README.md).
+command: MDK_FRAME_CAPTURE=60 DISPLAY=:99 \
+           VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+           tests/frames/capture_cpp.sh <out.bmp>
+display: :99 (headless Xvfb, lavapipe). AGENTS.md P7: no emulator and no
+       operator-desktop display was used, and no Old-3DS hardware run was made.
+live C++ vs C# oracle: bad_percent=1.188 max_delta=175 mean_delta=0.1405
+cpp sha256: 377b606a165e668816cb5294132715038dfd6719fe7e912e2e9cecec456a646a
+oracle: /tmp/mdk-frame-reference/L3_f60.bmp, sha256 9ab0e0a4181b32f5dfe5faf369f4
+       97251525938f5a2d618289e5346a1a6e308c -- the same reference the previous
+       batch measured against, re-captured by it and unchanged since. The oracle's
+       pixels are ROM-derived and are never committed.
+
+what this picture is: the frame the shipped code draws, byte for byte. Its sha256
+       is IDENTICAL to the previous batch's frame 60, and that is the claim, not a
+       dodge: this batch's change is the transform a frame BETWEEN two script ticks
+       draws an object with, and a fixed-step capture is not such a frame. The C#
+       turns blending OFF for a capture (`_blending = _test && options.FrameRate ==
+       null ? Off : On`, Viewer.cs:280-282), so the oracle's own frame 60 is an
+       un-blended frame, and the C++ must reproduce that -- which it does, to the
+       byte. The interpolation itself is pinned by golden/frame_blend.txt, which is
+       byte-identical to the oracle probe's output including the raw bits of every
+       transform.
+
+what this picture is NOT: proof that the blend path is wired up. For that, see the
+       pair beside 2026-10-31-L3-f60-blend-forced.png, which is the same frame
+       captured with the capture-mode gate removed.

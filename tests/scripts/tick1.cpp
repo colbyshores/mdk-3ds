@@ -469,6 +469,150 @@ std::string matrixLine(const char* label, const Mat4& m) {
     return std::string(buf);
 }
 
+// The frame blend: the same object table as the transform golden, but every
+// object drawn at the alphas a frame BETWEEN two ticks would use. The scripts
+// tick at 1/30 s and a 60 Hz screen draws two frames a tick, so the frame that
+// is not the tick's own draws the object between the pose the tick started at and
+// the pose it ended at -- MdkObject::remember() plus position_at/yaw_at/
+// transform_at, and the alpha the frontend gets from ScriptRuntime::tick_blend.
+//
+// alpha=1.0000 is the tick's own pose, so the last T line of every object here is
+// the transform golden's line; the four before it are the interpolation, which is
+// what this pins. The T lines carry the raw bits (matrixLine), and the
+// interpolated place is in the transform's translation row, so the bits pin the
+// lerp to the last bit; the A line is %.6f for a reader.
+std::string dumpObjectBlend(int level, int ticks, scripts::ScriptRuntime& runtime) {
+    static const float kAlphas[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+    const int alphaCount = (int)(sizeof(kAlphas) / sizeof(kAlphas[0]));
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "BLEND level=%d ticks=%d seed=1 objects=%d alphas=%d\n", level,
+             ticks, runtime.objectCount(), alphaCount);
+    out += line;
+    int index = 0;
+    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+         it != runtime.objects().end(); ++it, ++index) {
+        const scripts::MdkObject& o = *it;
+        if (runtime.isRemoved(&o)) {
+            index--;  // the oracle's list does not contain removed objects
+            continue;
+        }
+        out += objectIdentity(index, o);
+        for (int a = 0; a < alphaCount; a++) {
+            const float alpha = kAlphas[a];
+            const Vec3 at = o.position_at(alpha);
+            snprintf(line, sizeof(line), "  A alpha=%.4f pos=%.6f,%.6f,%.6f yaw=%.6f\n", alpha,
+                     at.x, at.y, at.z, o.yaw_at(alpha));
+            out += line;
+            out += matrixLine("T", o.transform_at(alpha));
+        }
+    }
+    return out;
+}
+
+// The frame blend, driven directly (the C#'s MdkObject.Remember + PositionAt/
+// YawAt/TransformAt, fed the same numbers on both sides).
+//
+// WHY SYNTHESIZED. No shipped level's tick gives a clean in-game case: at tick 1
+// the objects are spawned DURING the tick, so nothing has a previous pose to blend
+// from, and by tick 2 the oracle's ObjectMotion.Bank has written a roll the port
+// does not have (OPEN_ITEMS.md) -- the same reason the transform golden stops at
+// t1. Measured at L3 t2: every interpolated place and yaw line matches bit for bit,
+// and the transforms differ only in rows 2 and 3 (the roll-driven ones) for the
+// seven objects Bank has turned. So the interpolation is pinned the way the rolling
+// basis is -- a table of poses blended at the frame's alphas, printed by the oracle
+// probe and by this program from the same numbers -- and the table reaches the
+// branches the corpus cannot: a teleport (drawn where it ends), an arena change, an
+// object with no snapshot yet, and a rolling object (whose basis is NOT blended).
+std::string dumpBlendCases() {
+    struct BlendCase {
+        const char* label;
+        Vec3 from;
+        float yaw, pitch, roll;
+        Vec3 to;
+        float nyaw, npitch, nroll;
+        const char* arena_from;
+        const char* arena_to;
+        float scale;
+        float lift;
+        int rolling;
+        int fresh;  // 1: no snapshot at all (spawned during the tick)
+    };
+    // The numbers are the game's, not invented ones: `gravity` is level 3's SW_BONES
+    // falling 0.0356 in a tick, `lift` is level 6's lift at 25 a tick, `bank` is the
+    // XF's lean the oracle has by tick 120, `boulder` is level 6's centred XBO
+    // (radius 5.15, lifted 5), and the yaws are the oracle's own test values for the
+    // short way round (350 -> 10, 170 -> 190, 0 -> 270).
+    static const BlendCase kCases[] = {
+        {"gravity", {-64, 349, 350}, 0, 0, 0, {-64, 349, 349.9644f}, 0, 0, 0,
+         "HMO_1", "HMO_1", 1.0f, 0.0f, 0, 0},
+        {"lift", {0, 0, 100}, 0, 0, 0, {0, 0, 125}, 0, 0, 0,
+         "OLYM_8", "OLYM_8", 1.0f, 0.0f, 0, 0},
+        {"teleport", {0, 0, 100}, 0, 0, 0, {500, 0, 100}, 0, 0, 0,
+         "HMO_1", "HMO_1", 1.0f, 0.0f, 0, 0},
+        {"short_way", {100, 200, 300}, 358, 0, 0, {100, 200, 300}, 2, 0, 0,
+         "HMO_1", "HMO_1", 1.0f, 0.0f, 0, 0},
+        {"turn_far", {100, 200, 300}, 0, 0, 0, {100, 200, 300}, 270, 0, 0,
+         "HMO_1", "HMO_1", 1.0f, 0.0f, 0, 0},
+        {"bank", {-8.7548f, 702.9811f, 303.9043f}, 190.7759f, 0, 0,
+         {-12.9303f, 702.2599f, 302.053f}, 189.498f, 0, -6.3411f,
+         "HMO_4", "HMO_4", 1.0f, 0.0f, 0, 0},
+        {"arena_change", {0, 0, 0}, 0, 0, 0, {10, 10, 10}, 45, 0, 0,
+         "HMO_1", "HMO_2", 1.0f, 0.0f, 0, 0},
+        {"boulder", {200, 300, 40}, 37, 0, 0, {204, 300, 40}, 37, 0, 0,
+         "OLYM_1", "OLYM_1", 1.0f, 5.0f, 1, 0},
+        {"scaled", {-59, 314, 104}, 0, 0, 0, {-59, 314, 105.45f}, 12, 0, 0,
+         "HMO_1", "HMO_1", 2.0f, 0.0f, 0, 0},
+        {"fresh", {13, 460, 149}, 0, 0, 0, {13, 460, 149}, 358, 0, 0,
+         "HMO_1", "HMO_1", 1.0f, 0.0f, 0, 1},
+    };
+    static const float kAlphas[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+    const int alphaCount = (int)(sizeof(kAlphas) / sizeof(kAlphas[0]));
+
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "BLEND cases=%d alphas=%d\n",
+             (int)(sizeof(kCases) / sizeof(kCases[0])), alphaCount);
+    out += line;
+    for (size_t c = 0; c < sizeof(kCases) / sizeof(kCases[0]); c++) {
+        const BlendCase& k = kCases[c];
+        scripts::MdkObject o;
+        o.position = k.from;
+        o.yaw = k.yaw;
+        o.pitch = k.pitch;
+        o.roll = k.roll;
+        o.scale = k.scale;
+        o.height_offset = k.lift;
+        o.roll_radius = k.rolling != 0 ? 5.15f : 0.0f;
+        o.arena = k.arena_from;
+        if (k.rolling != 0) {
+            o.set_rolling(true);  // captures the basis at the first pose, as the C# does
+        }
+        if (k.fresh == 0) {
+            o.remember();
+        }
+        o.position = k.to;
+        o.yaw = k.nyaw;
+        o.pitch = k.npitch;
+        o.roll = k.nroll;
+        o.arena = k.arena_to;
+
+        snprintf(line, sizeof(line),
+                 "CASE %d label=%s scale=%.4f lift=%.4f rolling=%d fresh=%d arena=%s>%s\n", (int)c,
+                 k.label, k.scale, k.lift, k.rolling, k.fresh, k.arena_from, k.arena_to);
+        out += line;
+        for (int a = 0; a < alphaCount; a++) {
+            const float alpha = kAlphas[a];
+            const Vec3 at = o.position_at(alpha);
+            snprintf(line, sizeof(line), "  A alpha=%.4f pos=%.6f,%.6f,%.6f yaw=%.6f\n", alpha,
+                     at.x, at.y, at.z, o.yaw_at(alpha));
+            out += line;
+            out += matrixLine("T", o.transform_at(alpha));
+        }
+    }
+    return out;
+}
+
 // The per-object queue account (see dumpObjectDraw): the digest covers exactly the
 // corners written by this object, which is the range the stream grew by.
 std::string queueLine(int index, int32_t count, int32_t queued, const ObjectStream& stream,
@@ -877,7 +1021,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // Golden dumps (`tick1 dump <pose|transform|layout|draw|bound|rolling> [level] [ticks]`):
+    // Golden dumps (`tick1 dump <pose|transform|blend|layout|draw|bound|rolling> [level] [ticks]`):
     // print one dump to stdout, which is how a golden is written and how a failing
     // golden is diffed against the C# probe (the oracle twin of each of these
     // dumps; see docs/PROGRESS_LOG.md for the probe's recipe).
@@ -887,6 +1031,10 @@ int main(int argc, char** argv) {
         int ticks = argc > 4 ? atoi(argv[4]) : 1;
         if (what == "rolling") {
             printf("%s", dumpRolling().c_str());
+            return 0;
+        }
+        if (what == "blendcases") {
+            printf("%s", dumpBlendCases().c_str());
             return 0;
         }
         LevelData levelData;
@@ -918,6 +1066,8 @@ int main(int argc, char** argv) {
             printf("%s", dumpObjectPoses(level, ticks, runtime).c_str());
         } else if (what == "transform") {
             printf("%s", dumpObjectTransforms(level, ticks, runtime).c_str());
+        } else if (what == "blend") {
+            printf("%s", dumpObjectBlend(level, ticks, runtime).c_str());
         } else if (what == "layout") {
             printf("%s", dumpObjectLayout(level, ticks, levelData, runtime).c_str());
         } else if (what == "draw") {
@@ -1258,6 +1408,27 @@ int main(int argc, char** argv) {
             failures++;
         }
 
+        // The frame blend at the same tick the transform golden pins (the gate above
+        // leaves this body running for that tick only). At t1 every object was
+        // spawned DURING the tick, so none has a previous pose and every alpha is the
+        // raw transform: this pins the plumbing (the snapshot runs, and a mid-tick
+        // spawn has none) rather than the arithmetic, which golden/frame_blend.txt
+        // pins. At t2 and later the oracle's Bank roll -- not ported, see above -- is
+        // what differs, exactly as it does for the transform golden.
+        got = dumpObjectBlend(level, ticks, runtime);
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_blend.txt", level, ticks);
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d_t%d_blend: no golden file %s\n", level, ticks, goldenPath);
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L%d_t%d_blend: every object's blended place, yaw and transform match the "
+                   "oracle\n", level, ticks);
+        } else {
+            printf("FAIL L%d_t%d_blend: %s\n", level, ticks,
+                   firstDifference(got, expected).c_str());
+            failures++;
+        }
+
         // The layout stage (ObjectView.Build/Arrange/Visible), over the same tick.
         wanted = false;
         for (size_t i = 0; i < sizeof(layoutCases) / sizeof(layoutCases[0]); i++) {
@@ -1327,6 +1498,23 @@ int main(int argc, char** argv) {
                    "match the oracle\n");
         } else {
             printf("FAIL rolling_basis: %s\n", firstDifference(got, expected).c_str());
+            failures++;
+        }
+    }
+
+    // The frame blend (MdkObject::remember + position_at/yaw_at/transform_at),
+    // driven directly over the same poses on both sides: see dumpBlendCases.
+    {
+        std::string got = dumpBlendCases();
+        std::string expected;
+        if (!readText("golden/frame_blend.txt", &expected)) {
+            printf("FAIL frame_blend: no golden file golden/frame_blend.txt\n");
+            failures++;
+        } else if (got == expected) {
+            printf("PASS frame_blend: the place, yaw and transform between two ticks match the "
+                   "oracle, including the teleport, arena and no-snapshot branches\n");
+        } else {
+            printf("FAIL frame_blend: %s\n", firstDifference(got, expected).c_str());
             failures++;
         }
     }

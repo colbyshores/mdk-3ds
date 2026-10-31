@@ -43,7 +43,10 @@ measured or cited reason, and the batch that closes one should delete its entry.
   contain roll, which is why this was invisible until the object-pose golden
   landed. That is also why `golden/L3_tN_transform.txt` is pinned at t1 only:
   every multi-tick transform turns by a roll the port does not have. The pose
-  goldens are unaffected (roll is not a pose input) and pass at t1/t120/t1200.
+  goldens are unaffected (roll is not a pose input) and pass at t1/t120/t1200. It is
+  also why `golden/L3_t1_blend.txt` is pinned at t1: measured at t2, every
+  interpolated place and yaw line matches the oracle bit for bit and the 28
+  differing transforms differ only in rows 2 and 3 — the roll-driven ones.
 - **The object pass draws now** (`game/object_draw.{h,cpp}` uploads the frame's
   `ObjectStream` once into one dynamic mesh and issues the queued draws;
   `render/surface_cache.{h,cpp}` maps a surface + palette to a backend texture and
@@ -62,20 +65,27 @@ measured or cited reason, and the batch that closes one should delete its entry.
     DoubleSided and frame 60 queues 154 Solid + 30-33 DoubleSided, so the queue order
     already happened to be pass-grouped. It bites in the arenas with `Blended` and
     `Mirror` batches, which the pinned camera never reaches (list below).
-  * **The live frontend draws objects with the un-interpolated transform**
-    (review-5's MAJOR, OPEN — the next slice). The C# hands `ObjectView.Draw`
-    `blend.TransformOf(obj)` (Viewer.cs:959), and `FrameBlend.TransformOf`
-    returns `obj.TransformAt(_tick)` — the object's pose interpolated between its
-    previous tick and its current one — for every displayed frame of an ordinary
-    run, because `_blending = _test && options.FrameRate == null ? Off : On`
-    (Viewer.cs:280-282) and an ordinary run is not a test capture. `mdk_linux/src/main.cpp`
-    passes `obj.transform()` instead, which is right only for the fixed-step capture
-    mode, so a moving object stands still for one display frame and jumps on the
-    next. What closing it needs is a subsystem, not a call-site change: the object's
-    tick snapshot (`_ticked` + `remember()`), `MdkObject::transform_at()`, and the
-    frontend's since-last-tick alpha. Both are listed as unported in
-    `scripts/object.h`'s header. The pinned frame cannot show it (blending is off in
-    the fixed-step capture and there is no object at frame 1 anyway).
+  * **The interpolated transform is CLOSED** (2026-10-31, review-5's remaining MAJOR).
+    `MdkObject::remember()` keeps the pose a tick started at and
+    `position_at()/yaw_at()/transform_at()` blend it to the pose the tick left, with
+    all four of the C#'s `Blends()` guards (`alpha < 1`, a snapshot exists, the arena
+    is unchanged, the move is not a jump). `ScriptRuntime::tick_blend(ahead)` is the
+    C#'s `TickBlend`, and `mdk_linux/src/main.cpp` draws each object at
+    `transform_at(fixedStep ? 1.0f : tick_blend(pending))` — the C#'s
+    `blend.TransformOf(obj)` with the capture mode's `Blending.Off` (Viewer.cs:280-282)
+    spelled as alpha 1, which `transform_at` answers with the raw transform. The
+    three statics are `game/frame_blend.{h,cpp}`, the C#'s `FrameBlend.Lerp/
+    LerpAngle/Jumped`; the jump test is load-bearing and not a refinement, because a
+    teleport lands outside the tick that snapshotted the pose and an interpolator
+    without it draws the object back where it was for the rest of the tick. Pinned by
+    `golden/frame_blend.txt` (ten poses at five alphas, driven identically on both
+    sides, transforms as raw bits, byte-identical to the oracle probe) and
+    `golden/L3_t1_blend.txt`; measured A/B in `docs/evidence/2026-10-31-L3-f60-blend-forced.txt`.
+    What is NOT ported is the other half of `TransformOf`: `obj == _driven` draws the
+    ridden object shifted by the step's lag, which needs `Rides` and `FrameBlend`'s
+    Kurt pose (`Record/Update/Turn/KurtAt`). `ScriptRuntime::ridesRidden_` is null for
+    every tick of the corpus, so the oracle does not take that branch either here; the
+    deferral is with `Rides`, below.
   * **The pinned frame does not exercise the object pass, and cannot.** At capture frame
     1 exactly 1/60 s has passed and `ScriptRuntime` completes a tick per 1/30 s, so
     neither the oracle nor the port has a single object at frame 1: the earlier
@@ -225,7 +235,7 @@ the object pass, which is not ported. **Porting the object pass is what moves
   * **MAJOR, closed:** the pass order (above).
   * **MAJOR, closed:** the frame record for the object pass is now versioned, in
     `docs/evidence/` because the pinned frame cannot show it (above).
-  * **MAJOR, open:** the interpolated transform (above), which is its own slice.
+  * **MAJOR, closed:** the interpolated transform (above), which was its own slice.
   * Its open question about the Citro3D backend ignoring `MeshDraw::world` stands:
     the 3DS has one frame-wide MVP uniform, so per-object placement needs backend
     support before the 3DS frontend binds a `ScriptRuntime`. Not a regression —
