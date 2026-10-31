@@ -22,6 +22,12 @@ bool ObjectDraw::ensure(MdkRenderer renderer, int32_t need) {
         return true;
     }
     if (mesh_ >= 0) {
+        // The old mesh is released, not destroyed: it may still be an in-flight
+        // resource, and each backend frees it at its own completion boundary
+        // (the Vulkan backend retires it for two frames, the 3DS one defers the
+        // linearFree to the next C3D_FrameBegin). So a frame that outgrows the
+        // mesh briefly holds both buffers -- a bounded transient that happens a
+        // handful of times, never in a steady state.
         mdk_render_release_mesh(renderer, mesh_);
         mesh_ = -1;
         capacity_ = 0;

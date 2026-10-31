@@ -52,6 +52,7 @@
 
 #include "render/render.h"
 #include "render/render_types.h"
+#include "render/draw_queue.h"
 #include "mdk_c3d_shbin.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
@@ -187,6 +188,10 @@ struct C3dMesh {
     int32_t capacity = 0;
     int32_t count = 0;
     bool valid = false;
+    // The caller has given the mesh up, but the linear memory is still owed to
+    // a frame that may be on the GPU. Freed at the next frame boundary, exactly
+    // like a texture's releasePending (AGENTS.md P3).
+    bool releasePending = false;
 };
 
 struct RendererC3D {
@@ -236,6 +241,14 @@ struct RendererC3D {
     // the GPU may still be reading it: it cannot be freed (AGENTS.md P3).
     uint32_t frameStartUse = 0;
     std::vector<C3dMesh> meshes;
+
+    // The frame's queued draws, submitted in the oracle's pass order. The C#
+    // collects every command of the frame and renders it one pass at a time
+    // (Renderer.cs:1000-1004); recording draws as they arrive instead puts a
+    // blended object in front of arena glass that had not been drawn yet, and
+    // on THIS backend -- where the depth test is off and paint order is the
+    // only occlusion there is -- that is the whole picture (draw_queue.h).
+    mdk::DrawQueue queue;
 
     // The palettes, kept so a texture can be expanded later. The 3DS has
     // no palette texture, so the palette's only job is the expansion.
@@ -659,6 +672,11 @@ static void settleDeferredTextures(RendererC3D* renderer) {
     }
 }
 
+// Defined with the resource code below; the frame boundary needs them and it
+// comes first in the file.
+static void settleDeferredMeshes(RendererC3D* renderer);
+static void flushDraws(RendererC3D* r);
+
  void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->ready) return;
@@ -681,6 +699,8 @@ static void settleDeferredTextures(RendererC3D* renderer) {
     // reading it, so it cannot be freed (AGENTS.md P3).
     r->frameStartUse = r->drawCounter + 1;
     settleDeferredTextures(r);
+    settleDeferredMeshes(r);
+    r->queue.reset();
 
     const uint32_t clear = params ? params->clear_colour : 0xFF000000u;
 
@@ -788,6 +808,9 @@ static void settleDeferredTextures(RendererC3D* renderer) {
  void mdk_render_end_frame(MdkRenderer rr) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->inFrame) return;
+    // The frame's queued draws, in the oracle's pass order, before the queue is
+    // submitted (draw_queue.h).
+    flushDraws(r);
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);
@@ -1348,6 +1371,10 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
     if (!mesh.valid || n > mesh.capacity) {
         return;
     }
+    // SAFE INSIDE THE FRAME IT BELONGS TO, which is the seam's contract
+    // (render.h): C3D_FrameBegin waited for the previous queue, so nothing is
+    // reading this buffer when the frame's own draws write it. An update outside a
+    // frame would be an in-flight write; no caller does one.
     float* out = static_cast<float*>(mesh.data);
     for (int32_t i = 0; i < n; i++) {
         out[i * 5 + 0] = v[i].pos.x;
@@ -1365,11 +1392,40 @@ void mdk_render_release_mesh(MdkRenderer r, MdkMeshId m) {
         return;
     }
     C3dMesh& mesh = renderer->meshes[(size_t)m];
-    if (mesh.data) {
-        linearFree(mesh.data);
-        mesh.data = nullptr;
-    }
+    // DEFERRED, LIKE A TEXTURE. The mesh may have been drawn by a frame whose
+    // queue has not been waited yet -- C3D_DrawArrays only records the command,
+    // and the queue is submitted at C3D_FrameEnd -- so the linear memory is
+    // still an in-flight resource. C3D_FrameBegin waits the previous queue, so
+    // the next frame boundary is the completion boundary (AGENTS.md P3).
+    //
+    // The cost is that a mesh that grows (the object stream's, which doubles
+    // when a frame needs more) holds its old buffer for one more frame. That is
+    // a bounded transient, and it is what P3 asks for.
     mesh.valid = false;
+    mesh.count = 0;
+    if (mesh.data) {
+        mesh.releasePending = true;
+    }
+}
+
+// Free the meshes whose frame has finished. Called at the frame boundary, after
+// C3D_FrameBegin waited for the previous queue (AGENTS.md P3).
+static void settleDeferredMeshes(RendererC3D* renderer) {
+    if (!renderer) {
+        return;
+    }
+    for (size_t i = 0; i < renderer->meshes.size(); i++) {
+        C3dMesh& mesh = renderer->meshes[i];
+        if (!mesh.releasePending) {
+            continue;
+        }
+        if (mesh.data) {
+            linearFree(mesh.data);
+            mesh.data = nullptr;
+        }
+        mesh.releasePending = false;
+        mesh.capacity = 0;
+    }
 }
 
 MdkScope mdk_render_mark(MdkRenderer r) { (void)r; return MdkScope{}; }
@@ -1379,11 +1435,10 @@ void mdk_render_release(MdkRenderer r, MdkScope s) { (void)r; (void)s; }
 // Drawing
 // ---------------------------------------------------------------------------
 
- void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
-    RendererC3D* r = asC3d(rr);
-    if (!r || !draw || !r->inFrame) {
-        return;
-    }
+// Record one queued draw. This is the oracle's `DrawOne`: the texture, the UV
+// transform for its animation frame, the combiner, the vertex buffer, one
+// C3D_DrawArrays -- issued at FLUSH time, in the frame's pass order.
+static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
         return;
     }
@@ -1559,11 +1614,43 @@ void mdk_render_release(MdkRenderer r, MdkScope s) { (void)r; (void)s; }
     }
 }
 
+// Draw everything the frame has queued, in the oracle's pass order (draw_queue.h).
+// The flush point is the end of the frame's 3D scene: before the canvas, before
+// an inset's viewport, and before C3D_FrameEnd submits the queue.
+static void flushDraws(RendererC3D* r) {
+    if (!r || r->queue.empty() || !r->inFrame) {
+        return;
+    }
+    for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
+        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+        for (size_t i = 0; i < bucket.size(); i++) {
+            drawRecorded(r, &bucket[i]);
+        }
+    }
+    r->queue.reset();
+}
+
+ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
+    RendererC3D* r = asC3d(rr);
+    if (!r || !draw || !r->inFrame) {
+        return;
+    }
+    // Queued, not recorded: the oracle renders the frame's commands one pass at
+    // a time, and render.h gives that ordering job to the backend. With the
+    // depth test off on this target, the order IS the occlusion, so this is not
+    // a tidiness change.
+    r->queue.add(*draw);
+}
+
 // ---------------------------------------------------------------------------
 // The 2D canvas
 // ---------------------------------------------------------------------------
 
- void mdk_render_canvas_begin(MdkRenderer r) { (void)r; }
+ void mdk_render_canvas_begin(MdkRenderer r) {
+    // The scene ends here: the queued draws go in before anything the canvas
+    // draws over them.
+    flushDraws(asC3d(r));
+}
  void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* q) { (void)r; (void)q; }
  void mdk_render_canvas_end(MdkRenderer r) { (void)r; }
  float mdk_render_canvas_width(MdkRenderer r) {
@@ -1586,8 +1673,11 @@ void mdk_render_release(MdkRenderer r, MdkScope s) { (void)r; (void)s; }
 // Insets
 // ---------------------------------------------------------------------------
 
- void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* i) { (void)r; (void)i; }
- void mdk_render_end_inset(MdkRenderer r) { (void)r; }
+ void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* i) {
+    (void)i;
+    flushDraws(asC3d(r));
+}
+ void mdk_render_end_inset(MdkRenderer r) { flushDraws(asC3d(r)); }
 
 // ---------------------------------------------------------------------------
 // Diagnostics

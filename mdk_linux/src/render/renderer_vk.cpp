@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "render/depth_pull.h"
+#include "render/draw_queue.h"
 #include "render/render.h"
 #include "render/render_types.h"
 #include "render/system_numerics_inverse.h"
@@ -98,13 +99,47 @@ struct PaletteVk {
     void* mapped = nullptr;
 };
 
+// THE VERTEX BUFFER SLOTS, and why a dynamic mesh needs more than one.
+//
+// A STATIC mesh is written once, when it is made, before any frame has drawn
+// with it, so one buffer is enough.
+//
+// A DYNAMIC mesh is rewritten every frame -- the object stream, Kurt's sprite,
+// the canvas -- and the frame being recorded is not the only one the GPU may be
+// working on. beginFrame waits the fence of the slot it is about to record, not
+// the fence of the slot the previous frame used, so with two frames in flight
+// the previous submission can still be reading a vertex buffer while this
+// frame's CPU code is writing it. AGENTS.md P3 puts the completion boundary
+// BEFORE CPU reuse, so a dynamic mesh has one buffer per frame in flight and
+// writes the slot its own frame will draw from: the slot whose fence beginFrame
+// just waited, which is the frame two back and never the one in front.
 struct MeshVk {
     bool used = false;
+    bool dynamic = false;
+    VkBuffer buffer[mdk::vk::kFramesInFlight] = {};
+    VkDeviceMemory memory[mdk::vk::kFramesInFlight] = {};
+    void* mapped[mdk::vk::kFramesInFlight] = {};
+    VkDeviceSize capacity = 0;   // bytes, per slot
+};
+
+// Which slot of a mesh this frame writes and draws. A static mesh always uses
+// slot 0, which no frame is rewriting.
+int meshSlot(const MeshVk& mesh, const mdk::vk::Context* ctx) {
+    return mesh.dynamic ? (int)ctx->currentFrame : 0;
+}
+
+// A buffer whose last GPU use may still be running. It is destroyed at the
+// frame boundary that proves the reading frame has finished; see `retiring`.
+struct RetiredBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
-    void* mapped = nullptr;
-    VkDeviceSize capacity = 0;
+    uint32_t safeFrame = 0;
 };
+
+void destroyBufferPair(VkDevice device, VkBuffer buffer, VkDeviceMemory memory) {
+    if (buffer) vkDestroyBuffer(device, buffer, nullptr);
+    if (memory) vkFreeMemory(device, memory, nullptr);
+}
 
 // A pipeline, keyed by (pass, blend, primitive).
 struct PipelineVk {
@@ -171,12 +206,27 @@ struct RendererVk {
     std::vector<MeshVk> meshes;
     std::vector<ResRef> creationLog;
 
+    // The buffers that were released while a frame that reads them may still be
+    // running. Each one names the frame index at which its reading frame is
+    // provably finished; `settleRetired` destroys them there, which is the
+    // CPU/GPU completion boundary AGENTS.md P3 asks for.
+    std::vector<RetiredBuffer> retiring;
+    // Counts the frames this backend has begun. The retire deadline is
+    // `frameIndex + kFramesInFlight`; see `retireBuffer`.
+    uint32_t frameIndex = 0;
+
+    // The frame's queued draws, submitted in the oracle's pass order. The
+    // caller queues a draw; the backend decides when the frame's 3D scene ends
+    // and draws the buckets then (render.h's "the backend sorts and batches",
+    // and draw_queue.h for the order).
+    mdk::DrawQueue queue;
+
     // The 2D canvas: quads accumulated between begin/end, drawn in one
-    // orthographic Overlay pass. A single dynamic vertex buffer is resized as
-    // needed.
-    VkBuffer canvasBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory canvasMemory = VK_NULL_HANDLE;
-    void* canvasMapped = nullptr;
+    // orthographic Overlay pass. A ring of dynamic vertex buffers -- one per
+    // frame in flight, for the reason MeshVk spells out -- resized as needed.
+    VkBuffer canvasBuffer[mdk::vk::kFramesInFlight] = {};
+    VkDeviceMemory canvasMemory[mdk::vk::kFramesInFlight] = {};
+    void* canvasMapped[mdk::vk::kFramesInFlight] = {};
     VkDeviceSize canvasCapacity = 0;
     // The write cursor into the canvas buffer. Each quad is uploaded at its own
     // offset and drawn from there, because the persistent map is written for
@@ -189,8 +239,48 @@ struct RendererVk {
     std::string screenshotPath;
 };
 
+// Defined with the drawing code below; the frame and the canvas need them and
+// they come later in the file.
+void flushDraws(RendererVk* r);
+
 RendererVk* asVk(MdkRenderer r) {
     return static_cast<RendererVk*>(r);
+}
+
+// Stop using a buffer without destroying it yet.
+//
+// The caller has finished with it on the CPU, but a submission that reads it may
+// still be running: a mesh released in frame N was drawn by frame N or earlier,
+// and nothing has waited for that work. The deadline is two frames out, and the
+// wait that makes it real is the fence beginFrame performs on the slot it is
+// about to record. With two frames in flight the slot frame N used is next
+// recorded at frame N+2, and the fence waited there is frame N's submission --
+// so destroying at N+2 is after the GPU's last read. A buffer retired between
+// frames (frameIndex has not advanced yet) is only more conservative.
+void retireBuffer(RendererVk* r, VkBuffer buffer, VkDeviceMemory memory) {
+    if (!buffer && !memory) {
+        return;
+    }
+    RetiredBuffer retired;
+    retired.buffer = buffer;
+    retired.memory = memory;
+    retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight;
+    r->retiring.push_back(retired);
+}
+
+// Destroy the retired buffers whose reading frame has finished. Called at the
+// frame boundary AFTER beginFrame's fence wait, which is the GPU-completion
+// boundary (AGENTS.md P3): a fence, not a lock and not a cache flush.
+void settleRetired(RendererVk* r) {
+    for (size_t i = 0; i < r->retiring.size();) {
+        const RetiredBuffer retired = r->retiring[i];
+        if (retired.safeFrame > r->frameIndex) {
+            i++;
+            continue;
+        }
+        destroyBufferPair(r->ctx.device, retired.buffer, retired.memory);
+        r->retiring.erase(r->retiring.begin() + (long)i);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,9 +1359,21 @@ void mdk_render_destroy(MdkRenderer rr) {
     }
     for (size_t i = 0; i < r->meshes.size(); i++) {
         if (r->meshes[i].used) {
-            if (r->meshes[i].buffer) vkDestroyBuffer(r->ctx.device, r->meshes[i].buffer, nullptr);
-            if (r->meshes[i].memory) vkFreeMemory(r->ctx.device, r->meshes[i].memory, nullptr);
+            for (uint32_t slot = 0; slot < mdk::vk::kFramesInFlight; slot++) {
+                destroyBufferPair(r->ctx.device, r->meshes[i].buffer[slot],
+                                  r->meshes[i].memory[slot]);
+            }
         }
+    }
+    for (size_t i = 0; i < r->retiring.size(); i++) {
+        destroyBufferPair(r->ctx.device, r->retiring[i].buffer, r->retiring[i].memory);
+    }
+    r->retiring.clear();
+    // The canvas ring. The device is idle here, so these are destroyed and not
+    // retired. (They were never freed at all before; the leak was invisible
+    // because it happened once, at exit.)
+    for (uint32_t slot = 0; slot < mdk::vk::kFramesInFlight; slot++) {
+        destroyBufferPair(r->ctx.device, r->canvasBuffer[slot], r->canvasMemory[slot]);
     }
     if (r->vertModule) vkDestroyShaderModule(r->ctx.device, r->vertModule, nullptr);
     if (r->fragModule) vkDestroyShaderModule(r->ctx.device, r->fragModule, nullptr);
@@ -1342,6 +1444,13 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     r->triangles = 0;
     r->screenshotPath = params && params->screenshot_path ? params->screenshot_path : "";
 
+    // The frame's own number, then the buffers the previous frames left behind.
+    // The order matters: `settleRetired` reads frameIndex, and the fence that
+    // makes those buffers safe is the one vk::beginFrame just waited.
+    r->frameIndex++;
+    settleRetired(r);
+    r->queue.reset();
+
     // The viewport and scissor are dynamic state; set them once per frame so
     // every pipeline shares them.
     VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
@@ -1365,6 +1474,11 @@ void mdk_render_end_frame(MdkRenderer rr) {
     if (!r || !r->inFrame) {
         return;
     }
+    // The frame's queued draws go in now, in the oracle's pass order, while the
+    // render pass is still open (draw_queue.h). A frontend that drew its HUD
+    // already flushed at canvas_begin; this is the catch-all for a frame with no
+    // canvas, and it must come before endFrame closes the render pass.
+    flushDraws(r);
     mdk::vk::endFrame(&r->ctx);
     r->inFrame = false;
     if (!r->screenshotPath.empty()) {
@@ -1582,12 +1696,12 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r_, const mdk::Vertex* v, int32_t n
     const int32_t id = acquireSlot(r->meshes);
     MeshVk& m = r->meshes[id];
     const VkDeviceSize size = sizeof(mdk::Vertex) * (VkDeviceSize)n;
-    if (!createHostBuffer(&r->ctx, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &m.buffer,
-                          &m.memory, &m.mapped)) {
+    if (!createHostBuffer(&r->ctx, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &m.buffer[0],
+                          &m.memory[0], &m.mapped[0])) {
         m.used = false;
         return -1;
     }
-    memcpy(m.mapped, v, (size_t)size);
+    memcpy(m.mapped[0], v, (size_t)size);
     m.capacity = size;
     ResRef ref;
     ref.kind = 2;
@@ -1604,11 +1718,26 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r_, int32_t cap) {
     const int32_t id = acquireSlot(r->meshes);
     MeshVk& m = r->meshes[id];
     const VkDeviceSize size = sizeof(mdk::Vertex) * (VkDeviceSize)cap;
-    if (!createHostBuffer(&r->ctx, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &m.buffer,
-                          &m.memory, &m.mapped)) {
-        m.used = false;
-        return -1;
+    // ONE BUFFER PER FRAME IN FLIGHT. The frame writes its whole stream into
+    // the slot it will draw from; the previous frame's submission may still be
+    // reading the other one (MeshVk, AGENTS.md P3). Two slots is the whole
+    // cost: the object stream is a few hundred kilobytes at its largest
+    // measured frame, and the alternative -- waiting for the previous frame
+    // before writing -- is a stall in the frame's critical path.
+    for (uint32_t slot = 0; slot < mdk::vk::kFramesInFlight; slot++) {
+        if (!createHostBuffer(&r->ctx, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &m.buffer[slot],
+                              &m.memory[slot], &m.mapped[slot])) {
+            for (uint32_t done = 0; done < slot; done++) {
+                destroyBufferPair(r->ctx.device, m.buffer[done], m.memory[done]);
+                m.buffer[done] = VK_NULL_HANDLE;
+                m.memory[done] = VK_NULL_HANDLE;
+                m.mapped[done] = nullptr;
+            }
+            m.used = false;
+            return -1;
+        }
     }
+    m.dynamic = true;
     m.capacity = size;
     ResRef ref;
     ref.kind = 2;
@@ -1627,7 +1756,23 @@ void mdk_render_update_mesh(MdkRenderer r_, MdkMeshId m_, const mdk::Vertex* v, 
     if (size > m.capacity) {
         return;
     }
-    memcpy(m.mapped, v, (size_t)size);
+    // The slot this frame draws from, which is the one whose fence has been
+    // waited. A static mesh is slot 0 and is not rewritten after it is made.
+    //
+    // BETWEEN FRAMES THERE IS NO SUCH SLOT. Outside a recorded frame the fence
+    // that was waited belongs to the slot the NEXT frame will use, and the frame
+    // before that one may still be running, so the only safe thing is to wait for
+    // the device. The seam's contract is that a dynamic mesh is updated while the
+    // frame it belongs to is being recorded (render.h), and every caller does that
+    // -- this is a guard, not a path.
+    if (!r->inFrame) {
+        vkDeviceWaitIdle(r->ctx.device);
+    }
+    void* mapped = m.mapped[meshSlot(m, &r->ctx)];
+    if (!mapped) {
+        return;
+    }
+    memcpy(mapped, v, (size_t)size);
 }
 
 void mdk_render_release_mesh(MdkRenderer r_, MdkMeshId m_) {
@@ -1636,8 +1781,15 @@ void mdk_render_release_mesh(MdkRenderer r_, MdkMeshId m_) {
         return;
     }
     MeshVk& m = r->meshes[m_];
-    if (m.buffer) vkDestroyBuffer(r->ctx.device, m.buffer, nullptr);
-    if (m.memory) vkFreeMemory(r->ctx.device, m.memory, nullptr);
+    // RETIRED, NOT DESTROYED. The mesh may have been drawn by a frame that is
+    // still on the GPU; destroying its buffer there is the use-after-free the
+    // loader would be within its rights to make visible.
+    for (uint32_t slot = 0; slot < mdk::vk::kFramesInFlight; slot++) {
+        retireBuffer(r, m.buffer[slot], m.memory[slot]);
+        m.buffer[slot] = VK_NULL_HANDLE;
+        m.memory[slot] = VK_NULL_HANDLE;
+        m.mapped[slot] = nullptr;
+    }
     m.used = false;
 }
 
@@ -1671,11 +1823,17 @@ void mdk_render_release(MdkRenderer r_, MdkScope s) {
 // Drawing
 // ---------------------------------------------------------------------------
 
-void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
-    RendererVk* r = asVk(rr);
-    if (!r || !draw || !r->inFrame) {
-        return;
-    }
+namespace {
+
+// Record one queued draw into this frame's command buffer. This is what the
+// oracle's `DrawOne` is (Renderer.cs:1060-1110): a pipeline for the pass, the
+// matrices, the texture pair, one draw.
+//
+// It runs at FLUSH time, not at queue time, so the frame-wide state it reads --
+// the camera, the viewport, the render pass -- is the state the frame is drawn
+// with, exactly as the C# reads `view.ViewProjection` when it renders the
+// command rather than when the view queued it.
+void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw) {
     if (draw->mesh < 0 || draw->mesh >= (int32_t)r->meshes.size() || !r->meshes[draw->mesh].used) {
         return;
     }
@@ -1740,14 +1898,57 @@ void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
         }
     }
 
+    // THE SLOT, not "the" buffer: a dynamic mesh is drawn from the slot this
+    // frame wrote, which is the one whose fence beginFrame waited.
+    const MeshVk& mesh = r->meshes[draw->mesh];
+    const VkBuffer buffer = mesh.buffer[meshSlot(mesh, &r->ctx)];
+    if (!buffer) {
+        return;
+    }
     const VkDeviceSize offset = sizeof(mdk::Vertex) * (VkDeviceSize)draw->first_vertex;
-    vkCmdBindVertexBuffers(cb, 0, 1, &r->meshes[draw->mesh].buffer, &offset);
+    vkCmdBindVertexBuffers(cb, 0, 1, &buffer, &offset);
     vkCmdDraw(cb, (uint32_t)draw->vertex_count, 1, 0, 0);
 
     r->drawCalls++;
     if (!primitive) {
         r->triangles += draw->vertex_count / 3;
     }
+}
+
+// Draw everything the frame has queued, in the oracle's pass order: every
+// `Solid` batch, then `DoubleSided`, `Mirror`, `Blended`, `OnTop` and
+// `Overlay`, each bucket in the order it was queued (draw_queue.h).
+//
+// The flush point is the end of the frame's 3D scene, which is where the oracle
+// closes its render pass: before the 2D canvas, before an inset changes the
+// viewport, and at the frame's end. A frontend that drew a mesh AFTER its
+// canvas would get a second, later group -- the canvas is Overlay and the
+// oracle draws the canvas last, so nothing correct does that.
+void flushDraws(RendererVk* r) {
+    if (!r || r->queue.empty() || !r->inFrame) {
+        return;
+    }
+    for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
+        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
+        for (size_t i = 0; i < bucket.size(); i++) {
+            drawRecorded(r, &bucket[i]);
+        }
+    }
+    r->queue.reset();
+}
+
+} // namespace
+
+void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
+    RendererVk* r = asVk(rr);
+    if (!r || !draw || !r->inFrame) {
+        return;
+    }
+    // Queued, not recorded: the oracle renders the frame's commands bucketed by
+    // pass, and the pass a batch belongs to is not the order it was found in.
+    // render.h gives this job to the backend ("the material carries the pass,
+    // so the backend sorts and batches; the caller does not").
+    r->queue.add(*draw);
 }
 
 // ---------------------------------------------------------------------------
@@ -1792,21 +1993,33 @@ void canvasOrtho(float out[16], float width) {
 }
 
 bool ensureCanvasBuffer(RendererVk* r, VkDeviceSize size) {
-    if (r->canvasBuffer && r->canvasCapacity >= size) {
+    const uint32_t slot = r->ctx.currentFrame;
+    if (r->canvasBuffer[slot] && r->canvasCapacity >= size) {
         return true;
     }
-    if (r->canvasBuffer) {
-        vkDestroyBuffer(r->ctx.device, r->canvasBuffer, nullptr);
-        vkFreeMemory(r->ctx.device, r->canvasMemory, nullptr);
-        r->canvasBuffer = VK_NULL_HANDLE;
-        r->canvasMemory = VK_NULL_HANDLE;
-        r->canvasMapped = nullptr;
+    // The ring is resized as a unit, and the slot that is NOT this frame's may
+    // belong to a submission that is still running, so nothing here is
+    // destroyed: it is retired and freed at the frame boundary that proves the
+    // GPU has finished with it (see MeshVk).
+    for (uint32_t i = 0; i < mdk::vk::kFramesInFlight; i++) {
+        retireBuffer(r, r->canvasBuffer[i], r->canvasMemory[i]);
+        r->canvasBuffer[i] = VK_NULL_HANDLE;
+        r->canvasMemory[i] = VK_NULL_HANDLE;
+        r->canvasMapped[i] = nullptr;
     }
-    VkDeviceSize cap = size < (64 * 1024) ? (64 * 1024) : size;
-    if (!createHostBuffer(&r->ctx, cap, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &r->canvasBuffer,
-                          &r->canvasMemory, &r->canvasMapped)) {
-        r->canvasCapacity = 0;
-        return false;
+    r->canvasCapacity = 0;
+    const VkDeviceSize cap = size < (64 * 1024) ? (64 * 1024) : size;
+    for (uint32_t i = 0; i < mdk::vk::kFramesInFlight; i++) {
+        if (!createHostBuffer(&r->ctx, cap, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              &r->canvasBuffer[i], &r->canvasMemory[i], &r->canvasMapped[i])) {
+            for (uint32_t done = 0; done < i; done++) {
+                destroyBufferPair(r->ctx.device, r->canvasBuffer[done], r->canvasMemory[done]);
+                r->canvasBuffer[done] = VK_NULL_HANDLE;
+                r->canvasMemory[done] = VK_NULL_HANDLE;
+                r->canvasMapped[done] = nullptr;
+            }
+            return false;
+        }
     }
     r->canvasCapacity = cap;
     return true;
@@ -1817,6 +2030,10 @@ bool ensureCanvasBuffer(RendererVk* r, VkDeviceSize size) {
 void mdk_render_canvas_begin(MdkRenderer r) {
     RendererVk* vk = asVk(r);
     if (vk) {
+        // The scene ends here: the queued draws go in BEFORE any canvas quad,
+        // because the canvas is the Overlay pass drawn over the scene and the
+        // oracle draws its Overlay bucket last (draw_queue.h).
+        flushDraws(vk);
         vk->canvasOffset = 0;
     }
 }
@@ -1853,7 +2070,11 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
     if (!ensureCanvasBuffer(r, r->canvasOffset + bytes)) {
         return;
     }
-    memcpy((char*)r->canvasMapped + r->canvasOffset, verts, bytes);
+    const uint32_t slot = r->ctx.currentFrame;
+    if (!r->canvasMapped[slot]) {
+        return;
+    }
+    memcpy((char*)r->canvasMapped[slot] + r->canvasOffset, verts, bytes);
 
     PushConstants pc = {};
     canvasOrtho(pc.mvp, canvasWidth(r));
@@ -1884,7 +2105,7 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
         }
     }
     VkDeviceSize offset = r->canvasOffset;
-    vkCmdBindVertexBuffers(cb, 0, 1, &r->canvasBuffer, &offset);
+    vkCmdBindVertexBuffers(cb, 0, 1, &r->canvasBuffer[slot], &offset);
     vkCmdDraw(cb, 6, 1, 0, 0);
     r->canvasOffset += bytes;
     r->drawCalls++;
@@ -1903,8 +2124,16 @@ int32_t mdk_render_canvas_capacity(MdkRenderer r) {
 // Insets
 // ---------------------------------------------------------------------------
 
-void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* i) { (void)r; (void)i; }
-void mdk_render_end_inset(MdkRenderer r) { (void)r; }
+// An inset is a 3D view inside a canvas rectangle, so its draws are their own
+// scene group: the queued draws go in before the viewport changes and before it
+// is restored, in the inset's own rectangle. This backend has no inset support
+// yet (the rectangle is ignored), but the queue boundary is still the right one
+// for the day it has.
+void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* i) {
+    (void)i;
+    flushDraws(asVk(r));
+}
+void mdk_render_end_inset(MdkRenderer r) { flushDraws(asVk(r)); }
 
 // ---------------------------------------------------------------------------
 // Diagnostics

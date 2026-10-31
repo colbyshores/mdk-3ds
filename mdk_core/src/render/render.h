@@ -160,12 +160,25 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r, const mdk::Vertex* vertices, int
 
 // Create a mesh whose contents are rewritten every frame. The backend
 // allocates the storage once; mdk_render_update_mesh writes into it.
+//
+// "Every frame" is why this is a different call from `create_mesh`: the frame
+// being recorded is not the only one the GPU may be working on, so the storage
+// a dynamic mesh writes this frame is the slot whose GPU work has already been
+// waited, not the one the frame before is still reading (AGENTS.md P3).
 MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r, int32_t capacity);
 
 // Rewrite a dynamic mesh's vertices. `count` may be less than the capacity.
+// Call it while the frame the vertices belong to is being recorded -- between
+// `mdk_render_begin_frame` and `mdk_render_end_frame` -- because that is the window
+// in which the backend knows which of its slots is safe to write.
 void mdk_render_update_mesh(MdkRenderer r, MdkMeshId mesh, const mdk::Vertex* vertices,
                             int32_t count);
 
+// Release one mesh. The id is invalid afterwards.
+//
+// The backend frees the storage at its GPU-completion boundary, NOT on this
+// call: a mesh that a frame still on the GPU has drawn is an in-flight resource,
+// and the caller has no way to say which frame that was (AGENTS.md P3).
 void mdk_render_release_mesh(MdkRenderer r, MdkMeshId mesh);
 
 // Mark the current resource scope, and release everything created since the
@@ -212,6 +225,14 @@ void mdk_render_set_gamma(MdkRenderer r, float gamma);
 
 // Draw a mesh. The material carries the pass, so the backend sorts and
 // batches; the caller does not.
+//
+// "Sorts" is not decoration: the call QUEUES the draw, and the backend submits
+// the frame's draws bucketed by pass -- every `Solid`, then `DoubleSided`,
+// `Mirror`, `Blended`, `OnTop`, `Overlay`, each bucket in queue order -- which
+// is what the oracle does with its one command list (Renderer.cs:1000-1004,
+// 1049-1057; mdk_core/src/render/draw_queue.h). The submission happens at the
+// end of the frame's 3D scene: at `canvas_begin`, at an inset's boundary, and
+// at `mdk_render_end_frame`.
 void mdk_render_draw_mesh(MdkRenderer r, const mdk::MeshDraw* draw);
 
 // ---------------------------------------------------------------------------

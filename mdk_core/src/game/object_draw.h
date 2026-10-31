@@ -29,11 +29,14 @@
 // what the frames use. Growth is rare and stops: a frame after the largest one
 // does not allocate at all.
 //
-// WHAT IS NOT HERE: the pass ORDER. The C# buckets its queued commands by Pass
-// and draws the buckets in order (Renderer.cs:1004, 1049-1057); both C++ backends
-// record draws as they come, so an object's draws follow the arena's in queue
-// order. That is a standing open item in docs/OPEN_ITEMS.md, not something this
-// file can decide.
+// WHAT IS NOT HERE: the pass ORDER, again the C#'s and not this file's. The C#
+// buckets its queued commands by Pass and draws the buckets in order
+// (Renderer.cs:1004, 1049-1057), and it does it inside `Renderer`, where the
+// arena's batches and the objects' batches are one list. So the buckets are the
+// backends' job -- render.h: "the material carries the pass, so the backend
+// sorts and batches; the caller does not" -- and they are in render/draw_queue.h.
+// This file only carries the pass through in the material, as the C#'s
+// `Renderer.Draw` receives it.
 // ============================================================================
 
 #include <stdint.h>

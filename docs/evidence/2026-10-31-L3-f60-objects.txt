@@ -1,0 +1,33 @@
+evidence pair -- NOT the pinned regression frame. See docs/evidence/README.md
+and docs/frames/README.md: the pinned frame is level 3, 320x240, seed 1, FRAME 1,
+and at frame 1 neither tree has a script object, so the pinned picture cannot
+show the object pass. This is the same scene at the frame where it can.
+
+scene: level 3, 320x240, seed 1, frame 60 (the C++ frame the oracle's --wait=1
+       frame is: 60 fixed steps of 1/60 s)
+captured: 2026-10-31T16:43Z from the working tree of revision 7628789 plus this
+       batch's own changes -- a commit cannot contain its own hash, and this pair
+       is committed WITH the code it shows (docs/frames/README.md).
+command: MDK_FRAME_CAPTURE=60 DISPLAY=:99 \
+           VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+           tests/frames/capture_cpp.sh <out.bmp>
+display: :99 (headless Xvfb, lavapipe). AGENTS.md P7: no emulator and no
+       operator-desktop display was used, and no Old-3DS hardware run was made.
+live C++ vs C# oracle: bad_percent=1.188 max_delta=175 mean_delta=0.1405
+oracle: /tmp/mdk-frame-reference/L3_f60.bmp, sha256 9ab0e0a4181b32f5...,
+       re-captured for this batch by running the built oracle with --wait=1
+       inside a private mount namespace with its own Xvfb on :99 (the same
+       procedure tests/frames/capture_oracle.sh uses for frame 1). It reproduced
+       the previous batch's capture byte for byte, which is what makes the gap
+       above comparable across batches. The oracle's pixels are ROM-derived and
+       are never committed.
+what this picture is evidence of: the object pass on the GPU. At frame 60 the
+       C++ queues 154 Solid and 33 DoubleSided draws and draws the script
+       objects; with the pass skipped the same frame measures
+       1.251 / max 231 / mean 0.1910 (measured 2026-10-31, same scene, same
+       oracle frame). The pass moves the picture TOWARD the oracle.
+what this picture is NOT evidence of: this batch's own change. The frame-60
+       bytes here (sha256 377b606a165e6688...) are identical to the previous
+       batch's, because the pass reordering is a no-op where the queue order
+       already matched the pass order -- see the sidecar beside
+       docs/frames/2026-10-31-pass-order-frame-safe-meshes.png.

@@ -3244,3 +3244,151 @@ Verification on this tree:
   C++ frame, as expected with no render-path change.
 - No emulator or Original 3DS hardware run was performed; Old-3DS timing stays
   unmeasured.
+
+## Iteration 38 (2026-10-31): review-5's findings — the pass order, and a dynamic mesh that outlives its frame
+
+One subsystem slice: **how the backends submit the frame's draws**. Review-5
+(`logs/ralph-pi/run-20261031-053650/review-5.md`) raised one BLOCKER and three
+MAJORs against the previous batch's GPU handoff; three of the four are closed
+here and the fourth is the next slice, recorded with its cause.
+
+### 1. BLOCKER — the shared dynamic mesh was overwritten and destroyed while an earlier frame could still read it (CLOSED)
+
+The previous batch put the whole frame's object stream into ONE persistently
+mapped, host-visible buffer and `memcpy`'d it at the top of the frame. The Linux
+renderer has two frames in flight and `vk::beginFrame` waits only the fence of the
+slot it is about to record — not the slot the previous frame used — so the CPU was
+writing a vertex buffer a prior submission could still be reading, and
+`ObjectDraw::ensure()` destroyed the old `VkBuffer` outright when the stream
+outgrew it. AGENTS.md P3: "Do not overwrite, resize, or free an in-flight
+resource … put the completion boundary before CPU reuse."
+
+- `MeshVk` now holds one buffer per frame in flight (`mdk::vk::kFramesInFlight`)
+  and `meshSlot()` picks it: a dynamic mesh writes and draws the slot whose fence
+  `beginFrame` just waited, which is the frame two back and never the one in
+  front. A static mesh keeps one slot — it is written once, when it is made,
+  before any frame has drawn with it.
+- A released mesh is **retired**, not destroyed: `retireBuffer()` stamps it with
+  `frameIndex + kFramesInFlight` and `settleRetired()` destroys it at that frame's
+  beginning, after the fence wait. The proof is in the comment: with two slots the
+  slot frame N used is next recorded at frame N+2, and the fence waited there is
+  frame N's submission. A buffer retired between frames is only more conservative.
+- **The canvas buffer had the same hazard** and was not in the review's scope: it
+  is rewritten every frame too. It is a ring now, and its resize retires the whole
+  ring instead of destroying it under a running submission. (It also leaked at
+  teardown; `mdk_render_destroy` frees it now, after `vkDeviceWaitIdle`.)
+- The 3DS backend defers a mesh's `linearFree` to the next `mdk_render_begin_frame`
+  — the same completion boundary it already uses for released textures, because
+  `C3D_FrameBegin(C3D_FRAME_SYNCDRAW)` waits the previous queue. A mesh that grows
+  therefore holds its old buffer for one more frame: a bounded transient, and what
+  P3 asks for.
+
+### 2. MAJOR — the draws were not ordered by `Pass` (CLOSED)
+
+`render.h` says "the material carries the pass, so the backend sorts and batches;
+the caller does not", and neither backend sorted. The oracle collects the frame's
+commands into one list and walks it once per pass (`Renderer.cs:227` builds
+`Passes` with `Enum.GetValues<Pass>()`; 1000-1004 walks it; 1049-1056 filters one
+bucket at a time), so every `Solid` of the frame is drawn before any
+`DoubleSided`, then `Mirror`, `Blended`, `OnTop`, `Overlay`. Recording draws as
+they arrive put a `Blended` object wherever its script happened to be created —
+in front of arena glass that had not been drawn yet.
+
+- New shared `render/draw_queue.{h,cpp}`: the frame's draws bucketed by pass,
+  queue order inside a bucket (the oracle FILTERS, it does not sort, so any
+  tie-breaking would be invented). `mdk_core` because the order is the oracle's,
+  not a backend's; both backends queue in `mdk_render_draw_mesh` and flush the
+  buckets at the end of the frame's 3D scene — `canvas_begin`, an inset's
+  boundary, `end_frame` — which is where the oracle closes its render pass, and
+  why the canvas (Overlay, drawn immediately) still lands on top.
+- The C3D backend got the same treatment, because on that target the depth test is
+  OFF and paint order is the only occlusion there is. Compile-verified only, as
+  everything in that backend is until hardware exists (P6).
+- **Measured, it changes no pixels at either capturable frame.** With a temporary
+  per-bucket counter in the Vulkan flush: frame 1 queues 154 Solid + 1
+  DoubleSided (Kurt's sprite), frame 60 queues 154 Solid + 30-33 DoubleSided (the
+  objects and the sprite). Nothing at all is queued in `Mirror`, `Blended`,
+  `OnTop` or `Overlay` at those frames, and the queue order already happened to be
+  pass-grouped, so the buckets reproduce the same submission order. The non-`Solid`
+  arena batches are in the other 10 of level 3's 17 arenas, which the pinned camera
+  never reaches. That is recorded rather than hidden: the fix is correct and the
+  pinned frame cannot show it.
+
+### 3. MAJOR — the committed frame record did not exercise the object pass (CLOSED, with a new rule)
+
+The last four `docs/frames/` records are the same picture, because the pin is
+frame 1 and at frame 1 neither tree has a script object. The loop's integrity gate
+requires **exactly one** new PNG in `docs/frames/` and its sidecar must carry the
+pinned scene identity, so a second frame cannot go there — the pin is a regression
+baseline, not a gallery. The answer is a separate, clearly-labelled place for
+per-claim captures:
+
+- `docs/evidence/` with its own README, and
+  `2026-10-31-L3-f60-objects.png` + `.txt`: the C++ at frame 60, the command, the
+  display (`:99`, headless lavapipe), the revision, and the oracle comparison
+  (`1.188 / 175 / 0.1405`) with the oracle capture's own hash
+  (`9ab0e0a4181b…`) — re-captured for this batch and byte-identical to the previous
+  batch's, which is what makes cross-batch numbers comparable.
+- `docs/frames/README.md` gained the "when the pinned frame cannot show the batch"
+  rule, and this batch's sidecar says in its own text why the pinned picture did
+  not move, with the bucket counts that show it.
+
+### 4. MAJOR — the live frontend draws with the un-interpolated transform (OPEN, next slice)
+
+Correct: an ordinary run has blending ON (`Viewer.cs:280-282`), and the oracle hands
+`ObjectView.Draw` `blend.TransformOf(obj)` = `obj.TransformAt(_tick)`
+(`FrameBlend.cs:80-87`), while `main.cpp` passes `obj.transform()`. The comment
+there justified it with the fixed-step capture, which is the only case where it is
+true. Closing it is a subsystem, not a call site: the object's tick snapshot
+(`_ticked` + `remember()`), `MdkObject::transform_at()`, and the frontend's
+since-last-tick alpha — all three already listed as unported in `scripts/object.h`.
+It is the first item in the priority order and in `OPEN_ITEMS.md`; the comment in
+`main.cpp` now says which case it is correct for instead of implying the whole
+oracle agrees.
+
+### Prior-solution lookup (AGENTS.md 0, added by the owner while this batch was in flight)
+
+No Obsidian MCP or Cognee MCP tool exists in this harness, so the vault was read
+read-only from `/mnt/nas/Vaults/port-docs` (the documented fallback) and Cognee is
+recorded as unreachable — `/mnt/nas/Vaults/cognee` is a chroma/vector store, not
+something to grep.
+
+- `30-architecture/patterns/frozen-submission-order-cannot-represent-camera-sorted-
+  translucency.md` is the closest prior finding: a retained order must always be
+  qualified as WHOSE order and from WHICH frame, because a source engine re-sorts
+  per camera and a retained mesh holds one order. It does NOT bite here, and the
+  check is what says so: the `DrawQueue` is rebuilt from the live object list every
+  frame — it is the oracle's per-frame `_commands`, not a compile-time freeze — and
+  the C# renderer contains no sort at all (`grep -n "Sort\|OrderBy"` over
+  `src/Mdk.Engine/Render/` finds none), so queue order inside a bucket IS the
+  oracle's order. The `Pass` comment "sorted back to front" is inherited prose, not
+  behaviour.
+- `60-references/3ds-platform/citro3d/02-frame-loop-and-rendertargets.md` confirms
+  the boundary the 3DS deferral leans on: `C3D_FrameBegin` without
+  `C3D_FRAME_NONBLOCK` waits the previous GX queue (and SYNCDRAW frame-syncs first).
+- The `never-rank-a-population-from-one-sample-scene` family is why the no-op below
+  is written as "measured at the two capturable frames" and not as "the pass order
+  does not matter": one scene cannot rank the population.
+
+### Verification on this tree
+
+- `make -C tests/scripts clean && make -C tests/scripts -j8` exited 0, ended `All
+  cases match the oracle.` with **421 PASS lines**, no FAIL, no SKIP, and no golden
+  moved — the queue is behind the renderer seam, which no host test links.
+- `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`; SMDH SKIPPED for no
+  built CIA; `gates_frames PASS`, `L3_f1.bmp sha=58615fc85d02e009`, byte-identical
+  to the pinned `cpp=`). No gate needed a pin or a relaxation: the new per-frame
+  work is an integer bucket index, a struct copy and one `memcpy`, so R2/R3/R4/R6/R11
+  have nothing to bite on, `audit_c_with_classes.py` reports 0 violations, and
+  `gates_core_parity` sees `draw_queue.cpp` in both build trees.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+  exited 0 and built `mdk.3dsx`; `cmake --build build-linux --target mdk -j8` exited 0.
+- Oracle re-captures, both byte-exact against their previous runs: frame 1
+  (`b60e72552c40…`, the pinned oracle hash) and `--wait=1` frame 60
+  (`9ab0e0a4181b…`), each in the private mount namespace with its own `Xvfb :99`
+  (AGENTS.md P7). The C++ frame 60 measures `1.188 / 175 / 0.1405` against it and is
+  byte-identical to the previous batch's frame 60.
+- `DISPLAY=:99 tools/publish_frame.sh pass-order-frame-safe-meshes` published the
+  pinned pair with `bad_percent=1.240 max_delta=247 mean_delta=0.1819`.
+- No emulator and no Original 3DS hardware run was performed; Old-3DS timing and the
+  Citro3D picture stay unmeasured.

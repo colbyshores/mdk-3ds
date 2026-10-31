@@ -574,8 +574,18 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 // The C# hands ObjectView.Draw `blend.TransformOf(obj)`, which is
-                // obj.Transform with frame blending off -- and a fixed-step
-                // capture, which is what the goldens are, has it off.
+                // `obj.TransformAt(tick)` -- the object interpolated between its
+                // previous tick and its current one -- in every ORDINARY run, because
+                // blending is on unless the run is a fixed-step capture
+                // (Viewer.cs:280-282, FrameBlend.cs:80-87). This passes the raw
+                // transform, which is what the oracle passes ONLY when blending is
+                // off, i.e. in the fixed-step capture mode this frontend uses for the
+                // goldens. In a live run a moving object therefore stands still for
+                // one display frame and jumps on the next. That is a known divergence
+                // with a subsystem behind it -- the object's tick snapshot,
+                // `transform_at()`, and the frontend's since-last-tick alpha, all
+                // listed as unported in scripts/object.h -- and not an equivalence
+                // claim: docs/OPEN_ITEMS.md, review-5's remaining MAJOR.
                 objectView.addObject(obj, objectLook(obj.arena), obj.transform(),
                                      &objectStream);
             }

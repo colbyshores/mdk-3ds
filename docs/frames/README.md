@@ -49,3 +49,14 @@ git add docs/frames && git commit ...    # with the batch
 The ralph loop (`ralph-pi.sh`) checks every committing iteration: if the batch
 changed render-relevant paths and left no frame here, the loop publishes one
 itself and commits it. A model that forgets cannot break the visual record.
+
+## When the pinned frame cannot show the batch
+
+Because the pin is one fixed moment, a subsystem that only exists after frame 1
+cannot be seen in it — the object pass is the standing example, since at frame 1
+neither tree has a script object and every object batch leaves this directory's
+picture byte-identical. That is a property of the pin, not a licence to leave no
+picture: the capture that DOES show the path goes in `docs/evidence/` (see its
+README), and the sidecar here says in its own text why the pinned picture did
+not move, with the measurement that shows it. The pin itself, and the ceiling in
+`reference.sha256`, do not move.

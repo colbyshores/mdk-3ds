@@ -1,0 +1,14 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-10-31T16:43:38Z at 7628789
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why this picture is the same as the last four: this batch changed the ORDER the
+backends submit draws (pass buckets, render/draw_queue.h) and the LIFETIME of a
+dynamic vertex buffer, and neither is visible at frame 1. Measured, with a
+temporary per-bucket counter in the Vulkan flush: frame 1 queues 154 Solid and 1
+DoubleSided (Kurt's sprite), frame 60 queues 154 Solid and 30-33 DoubleSided
+(the objects and the sprite). Nothing is queued in Mirror, Blended, OnTop or
+Overlay at either frame, and the queue order already happened to be
+pass-grouped, so the buckets change nothing that the pinned camera can see. The
+non-Solid arena batches are in the other 10 of level 3's 17 arenas, which the
+pinned camera never reaches. The frame where the object pass is visible is
+recorded in docs/evidence/2026-10-31-L3-f60-objects.png.

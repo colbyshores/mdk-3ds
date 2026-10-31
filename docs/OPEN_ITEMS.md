@@ -51,11 +51,31 @@ measured or cited reason, and the batch that closes one should delete its entry.
   `mdk_linux/src/main.cpp` runs the C#'s `DrawObjects`, skipping the invisible and the
   removed). The 3DS frontend still has no `ScriptRuntime`, so it has no objects to draw
   and never allocates the stream mesh. What is left in this area, in order:
-  * **Pass bucketing.** The C# buckets its queued commands by `Pass` and draws the
-    buckets in order (`Renderer.cs:1004, 1049-1057`); both C++ backends record draws as
-    they come, so a `Blended` object (glass) draws in queue order — after the arena,
-    among the objects — instead of after every opaque draw. This is now visible, because
-    objects are drawn.
+  * **Pass bucketing is CLOSED** (2026-10-31, review-5's MAJOR). The backends now
+    queue every `mdk_render_draw_mesh` and submit the frame's draws bucketed by
+    `Pass`, in `Pass`'s own order and in queue order inside a bucket, which is what
+    `Renderer.cs:1004,1049-1057` does with its one command list. The buckets are
+    shared code (`render/draw_queue.{h,cpp}`) because the order is the oracle's, not
+    a backend's; the flush point is the end of the frame's 3D scene — `canvas_begin`,
+    an inset's boundary, `end_frame`. Measured on the pinned scene, the reordering
+    changes no pixels at frame 1 or frame 60: frame 1 queues 154 Solid + 1
+    DoubleSided and frame 60 queues 154 Solid + 30-33 DoubleSided, so the queue order
+    already happened to be pass-grouped. It bites in the arenas with `Blended` and
+    `Mirror` batches, which the pinned camera never reaches (list below).
+  * **The live frontend draws objects with the un-interpolated transform**
+    (review-5's MAJOR, OPEN — the next slice). The C# hands `ObjectView.Draw`
+    `blend.TransformOf(obj)` (Viewer.cs:959), and `FrameBlend.TransformOf`
+    returns `obj.TransformAt(_tick)` — the object's pose interpolated between its
+    previous tick and its current one — for every displayed frame of an ordinary
+    run, because `_blending = _test && options.FrameRate == null ? Off : On`
+    (Viewer.cs:280-282) and an ordinary run is not a test capture. `mdk_linux/src/main.cpp`
+    passes `obj.transform()` instead, which is right only for the fixed-step capture
+    mode, so a moving object stands still for one display frame and jumps on the
+    next. What closing it needs is a subsystem, not a call-site change: the object's
+    tick snapshot (`_ticked` + `remember()`), `MdkObject::transform_at()`, and the
+    frontend's since-last-tick alpha. Both are listed as unported in
+    `scripts/object.h`'s header. The pinned frame cannot show it (blending is off in
+    the fixed-step capture and there is no object at frame 1 anyway).
   * **The pinned frame does not exercise the object pass, and cannot.** At capture frame
     1 exactly 1/60 s has passed and `ScriptRuntime` completes a tick per 1/30 s, so
     neither the oracle nor the port has a single object at frame 1: the earlier
@@ -192,6 +212,24 @@ the object pass, which is not ported. **Porting the object pass is what moves
 
 ## Review findings still open
 
+- Review-5 (run 20261031-053650) — three of its four findings are CLOSED by this
+  batch and one is the next slice:
+  * **BLOCKER, closed:** the shared dynamic mesh was rewritten, and its old buffer
+    destroyed, while an earlier Vulkan frame could still be reading it. A dynamic
+    mesh now has one buffer per frame in flight and writes the slot its own frame
+    draws from (the slot whose fence `beginFrame` waited), and a released mesh — or
+    a resized canvas ring — is retired and destroyed at the frame boundary that
+    proves its reading frame has finished. The 3DS backend defers `linearFree` the
+    same way it defers a texture's, at the `C3D_FrameBegin` that waits the previous
+    queue. The canvas buffer had the same hazard and is a ring now too.
+  * **MAJOR, closed:** the pass order (above).
+  * **MAJOR, closed:** the frame record for the object pass is now versioned, in
+    `docs/evidence/` because the pinned frame cannot show it (above).
+  * **MAJOR, open:** the interpolated transform (above), which is its own slice.
+  * Its open question about the Citro3D backend ignoring `MeshDraw::world` stands:
+    the 3DS has one frame-wide MVP uniform, so per-object placement needs backend
+    support before the 3DS frontend binds a `ScriptRuntime`. Not a regression —
+    nothing on the 3DS draws an object yet.
 - Review-3's three findings are **CLOSED** by this batch: `ObjectStreamDraw` carries
   the look's palette (the C#'s `Material.PaletteId`), the draw golden prints only
   what the queue holds — including the transform's raw bits, so a queued draw that
@@ -200,7 +238,7 @@ the object pass, which is not ported. **Porting the object pass is what moves
   (the level-7 `SW_H150` pose divergence) is recorded above as a pose/animation
   item. Its other open question — that the C# buckets queued commands by `Pass`
   before rendering (`Renderer.cs:1004,1049-1057`) while the Vulkan backend records
-  draws as they come — is the GPU slice's, and is recorded there.
+  draws as they come — was the GPU slice's and is CLOSED (2026-10-31, `draw_queue.h`).
 - Review-24's open question: VK `canvasWidth` reads the swapchain extent while the
   C# reads the render target — indistinguishable while both are 4:3.
 - Review-25's MINOR is CLOSED: `getDescriptorSet` caches sets by
