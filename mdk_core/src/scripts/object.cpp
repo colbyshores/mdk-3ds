@@ -1,8 +1,12 @@
 #include "scripts/object.h"
 
 #include <cmath>
+#include <map>
+#include <utility>
+#include <vector>
 
 #include "formats/model.h"
+#include "formats/model_animation.h"
 
 // The object model is data-only in this slice, so this translation unit carries
 // the compile-time checks that pin the flag word — the values most likely to be
@@ -90,21 +94,86 @@ mdk::Mat4 mdk::scripts::MdkObject::rotation() const {
     rz.m[5] = cy;
 
     // System.Numerics multiplies each row by the right-hand matrix with one
-    // rounded product followed by three fused multiply-adds (Vector4.Transform).
-    const auto multiply = [](const Mat4& left, const Mat4& right) {
-        Mat4 product{};
-        for (int row = 0; row < 4; ++row) {
-            for (int column = 0; column < 4; ++column) {
-                float value = left.m[row * 4] * right.m[column];
-                value = std::fma(left.m[row * 4 + 1], right.m[4 + column], value);
-                value = std::fma(left.m[row * 4 + 2], right.m[8 + column], value);
-                value = std::fma(left.m[row * 4 + 3], right.m[12 + column], value);
-                product.m[row * 4 + column] = value;
-            }
+    // rounded product followed by three fused multiply-adds; mdk::multiply is
+    // that arithmetic, shared with MdkObject::transform().
+    return mdk::multiply(mdk::multiply(rx, ry), rz);
+}
+
+// The C#'s Transform (MdkObject.cs:287): scale, then the orientation (a
+// rolling object turns by the basis captured when it started rolling), then
+// the translation. The order is the C#'s, left to right, because matrix
+// multiplication is not commutative and the last bit depends on it.
+mdk::Mat4 mdk::scripts::MdkObject::transform() const {
+    const mdk::Mat4 orientation = (flags & FlagRolling) != 0 ? rolling_basis : rotation();
+    const mdk::Mat4 lifted = mdk::create_translation(position.x,
+                                                     position.y,
+                                                     position.z + lift());
+    return mdk::multiply(mdk::multiply(mdk::create_scale(scale), orientation), lifted);
+}
+
+namespace {
+
+typedef std::vector<std::vector<mdk::formats::Vec3f> > ObjectPose;
+
+// The C#'s static RestPoses and Baked, shared by every object because a level
+// has a handful of models drawn by many of them. std::map, not std::vector:
+// pose_parts() hands out a reference into these, and a map's elements do not
+// move when later entries are inserted. The C# shares the model's own vertex
+// arrays; the port copies them once into the cache, which is the same read-only
+// data. Single-threaded: the C#'s lock guards its parallel test runner, and the
+// port ticks one world at a time.
+std::map<const mdk::formats::Model*, ObjectPose> g_restPoses;
+std::map<std::pair<const mdk::formats::Model*, const mdk::formats::ModelAnimation*>,
+         std::vector<ObjectPose> > g_baked;
+const ObjectPose g_noPose;
+
+const std::vector<ObjectPose>& baked(const mdk::formats::Model* model,
+                                     const mdk::formats::ModelAnimation* animation)
+{
+    const std::pair<const mdk::formats::Model*, const mdk::formats::ModelAnimation*> key(model, animation);
+    std::map<decltype(key), std::vector<ObjectPose> >::iterator found = g_baked.find(key);
+    if (found != g_baked.end()) {
+        return found->second;
+    }
+    // The C# bakes the whole animation once per (model, animation) and keeps
+    // every frame, so nothing is baked while the game plays.
+    return g_baked.emplace(key, animation->bake(*model)).first->second;
+}
+
+} // namespace
+
+const std::vector<std::vector<mdk::formats::Vec3f> >& mdk::scripts::MdkObject::pose_parts() const {
+    if (model == nullptr) {
+        return g_noPose;
+    }
+    if (animation == nullptr) {
+        std::map<const mdk::formats::Model*, ObjectPose>::iterator found = g_restPoses.find(model);
+        if (found != g_restPoses.end()) {
+            return found->second;
         }
-        return product;
-    };
-    return multiply(multiply(rx, ry), rz);
+        return g_restPoses.emplace(model, model->restPose()).first->second;
+    }
+    const std::vector<ObjectPose>& frames = baked(model, animation);
+    if (frames.empty()) {
+        return g_noPose;
+    }
+    // The C# indexes with AnimationFrame and would throw out of range; the
+    // clamp is the same guard ScriptRuntime::poseBounds already uses, and it
+    // cannot be reached from a real animation (the frame counter is taken
+    // modulo the frame count).
+    int32_t frame = animation_frame;
+    if (frame < 0) {
+        frame = 0;
+    }
+    if (frame >= static_cast<int32_t>(frames.size())) {
+        frame = static_cast<int32_t>(frames.size()) - 1;
+    }
+    return frames[static_cast<size_t>(frame)];
+}
+
+void mdk::scripts::MdkObject::forget_poses() {
+    g_restPoses.clear();
+    g_baked.clear();
 }
 
 void mdk::scripts::MdkObject::set_rolling(bool enabled) {

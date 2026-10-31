@@ -27,6 +27,35 @@ measured or cited reason, and the batch that closes one should delete its entry.
 
 ## Known divergences from the C#
 
+- **`ObjectMotion.Bank` is not ported, so the port never writes `MdkObject::roll`
+  from motion.** The C#'s automatic banking (`ObjectMotion.cs:749-763`:
+  `roll = clamp((wrap(roll) - turn) * 0.95, -10, 10)` with the turn clamped to
+  2°/tick, skipped under flag 0x80 / 0x1 / 0x40 or while thrown) is the only
+  writer of roll for a walking alien, and the port has no `Bank` at all — the
+  only writers are the script VM's turn opcodes. Measured at level 3: the
+  oracle's XF has `roll=-6.3411` at t120 and `9.0251` at t1200 where the port
+  has `0.0000`; seven objects differ by t15. The object-table golden does not
+  contain roll, which is why this was invisible until the object-pose golden
+  landed. That is also why `golden/L3_tN_transform.txt` is pinned at t1 only:
+  every multi-tick transform turns by a roll the port does not have. The pose
+  goldens are unaffected (roll is not a pose input) and pass at t1/t120/t1200.
+- **The object pass's draw stage is the next slice.** `ObjectView`'s layout
+  (`game/object_view.{h,cpp}`), `MdkObject::transform()` and
+  `MdkObject::pose_parts()` are ported and pinned; nothing draws them yet. The
+  draw stage needs a decision the C# does not settle for these backends: the C#
+  accumulates every object's posed corners into ONE per-frame stream
+  (`Renderer.Stream`, uploaded once in `Present` before the command buffer) and
+  draws each batch at its `first` offset. The Vulkan backend records draws into
+  the command buffer at call time and submits at `end_frame`, so a buffer
+  rewritten per object would show every object the LAST object's vertices; the
+  Citro3D backend issues its GPU commands at draw time, so the vertices must
+  already be in the mesh when the draw is made. Two designs survive that: a
+  real per-frame stream in the seam (reserve + write, uploaded at `end_frame`
+  before submit on Vulkan, written straight into the mesh on the 3DS), or one
+  dynamic mesh per object, sized at layout time and updated before that
+  object's draws (no seam change, per-object memory instead of one big staging
+  buffer). The mods' model replacements (`Source::Mod`) stay deferred with
+  cause: the mods are the enhanced look's and are not ported.
 - Incomplete decoy/`AlienTarget` selection.
 - Opcode 207's `MathF.Sign(NaN)` exception is accepted because C++ exceptions are
   banned; degenerate-path guards return 0 instead (this now also covers

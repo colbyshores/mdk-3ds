@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "render/render_types.h"
+#include "formats/vector_types.h"
 #include "util/matrix.h"
 
 namespace mdk {
@@ -220,6 +221,26 @@ struct MdkObject {
     // The orientation: yaw around Z, pitch raises the nose, roll turns around
     // the forward axis. Matches the C# RotationOf(roll, pitch, yaw) order.
     Mat4 rotation() const;
+
+    // The C#'s Transform: model space to the world, as the C# composes it,
+    // CreateScale(Scale) * (rolling ? RollingBasis : Rotation) *
+    // CreateTranslation(Position + UnitZ * Lift), in that order.
+    Mat4 transform() const;
+
+    // The C#'s PoseParts(): the vertices of each part in the current pose
+    // (model space), hidden parts INCLUDED -- the C#'s Pose() is this with the
+    // hidden parts emptied, and ObjectView hides them per batch instead.
+    //
+    // The reference is to a shared cache (the C#'s static RestPoses / Baked),
+    // so it stays valid until forget_poses(). The C# shares these across every
+    // object because a level has a handful of models drawn by many objects.
+    const std::vector<std::vector<formats::Vec3f> >& pose_parts() const;
+
+    // The C#'s ForgetPoses(): a level change drops the last level's models.
+    // The caches are keyed by Model/ModelAnimation ADDRESS, so a level whose
+    // models were freed MUST call this or a new model that lands on a freed
+    // address would draw the old one's pose.
+    static void forget_poses();
     // Starts/stops rolling; enabling captures the current orientation once.
     void set_rolling(bool enabled);
 
@@ -241,8 +262,8 @@ struct MdkObject {
     // Still unported MdkObject behavior:
     //   Footing -> the Solids footing enum (collision slice)
     //   _ticked + remember() -> frame-blend state for position_at()/yaw_at()/transform_at()
-    //   transform()/position_at()/yaw_at()/transform_at() -> Mat4 arithmetic + FrameBlend
-    //   pose_parts()/pose()/part_bounds() -> Model baking + Mat4
+    //   transform_at() -> Mat4 arithmetic + FrameBlend (transform() itself is here)
+    //   pose() (pose_parts() with the hidden parts emptied) and part_bounds()
     // Animation, pose_bounds(), sound_position(), distance_to(), part_center(),
     // and yaw_to() are implemented in ScriptRuntime, SoundMixer, or this class.
     // sound_position() and distance_to() are inlined/owned elsewhere, not members

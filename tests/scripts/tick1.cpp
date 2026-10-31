@@ -36,10 +36,13 @@
 #include "formats/dti.h"
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
+#include "formats/model.h"
+#include "formats/model_animation.h"
 #include "game/level_data.h"
 #include "render/arena_scene.h"
 #include "render/material_resolver.h"
 #include "scripts/script_runtime.h"
+#include "util/matrix.h"
 #include "util/math_lut.h"
 
 using namespace mdk;
@@ -110,6 +113,127 @@ std::string dumpTable(int level, int ticks, scripts::ScriptRuntime& runtime) {
         out += line;
     }
     return out;
+}
+
+// The identity line both object dumps share. `roll` is left out on purpose:
+// it is a transform input, not a pose input, and the port does not write it
+// yet (ObjectMotion.Bank is not ported), so including it would make the pose
+// golden fail for a reason that has nothing to do with the pose.
+std::string objectIdentity(int index, const scripts::MdkObject& o) {
+    char line[512];
+    snprintf(line, sizeof(line),
+             "OBJ %03d type=%s arena=%s model=%s anim=%s frame=%d hidden=%d visible=%d "
+             "dead=%d scale=%.4f pos=%.4f,%.4f,%.4f yaw=%.4f pitch=%.4f effect=%d texframe=%d\n",
+             index, o.type_name.c_str(), o.arena.c_str(),
+             o.model ? o.model->name.c_str() : "-",
+             o.animation ? o.animation->name.c_str() : "-", o.animation_frame, o.hidden_parts,
+             o.visible ? 1 : 0, o.dead ? 1 : 0, o.scale, o.position.x, o.position.y, o.position.z,
+             o.yaw, o.pitch, o.effect_frames, o.texture_frame);
+    return std::string(line);
+}
+
+// The object pass's pose: the C#'s PoseParts, per object in the C#'s draw order
+// (Viewer.DrawObjects walks ScriptRuntime.Objects). The pose is the rest
+// vertices or the baked animation frame, and it is what the draw stage copies
+// into the renderer's vertex stream, so a wrong bit here is a moved vertex.
+std::string dumpObjectPoses(int level, int ticks, scripts::ScriptRuntime& runtime) {
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "level=%d ticks=%d seed=1 objects=%d\n", level, ticks,
+             runtime.objectCount());
+    out += line;
+    int index = 0;
+    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+         it != runtime.objects().end(); ++it, ++index) {
+        const scripts::MdkObject& o = *it;
+        if (runtime.isRemoved(&o)) {
+            index--;  // the oracle's list does not contain removed objects
+            continue;
+        }
+        out += objectIdentity(index, o);
+
+        // Per part: how many vertices, their sum in order (which pins the
+        // order as well as the values), and the first and last.
+        const std::vector<std::vector<Vec3f> >& pose = o.pose_parts();
+        snprintf(line, sizeof(line), "  PARTS %d\n", (int)pose.size());
+        out += line;
+        for (size_t p = 0; p < pose.size(); p++) {
+            const std::vector<Vec3f>& v = pose[p];
+            float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+            for (size_t i = 0; i < v.size(); i++) {
+                sx += v[i].x;
+                sy += v[i].y;
+                sz += v[i].z;
+            }
+            char first[64];
+            char last[64];
+            if (v.empty()) {
+                snprintf(first, sizeof(first), "-");
+                snprintf(last, sizeof(last), "-");
+            } else {
+                snprintf(first, sizeof(first), "%.4f,%.4f,%.4f", v[0].x, v[0].y, v[0].z);
+                snprintf(last, sizeof(last), "%.4f,%.4f,%.4f", v[v.size() - 1].x, v[v.size() - 1].y,
+                         v[v.size() - 1].z);
+            }
+            snprintf(line, sizeof(line), "  P %d n=%d sum=%.4f,%.4f,%.4f first=%s last=%s\n",
+                     (int)p, (int)v.size(), sx, sy, sz, first, last);
+            out += line;
+        }
+    }
+    return out;
+}
+
+// The object pass's place: the C#'s Transform (scale * orientation *
+// translation), which is where the yaw/pitch/roll order and a rolling object's
+// captured basis show up.
+std::string dumpObjectTransforms(int level, int ticks, scripts::ScriptRuntime& runtime) {
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "level=%d ticks=%d seed=1 objects=%d\n", level, ticks,
+             runtime.objectCount());
+    out += line;
+    int index = 0;
+    for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+         it != runtime.objects().end(); ++it, ++index) {
+        const scripts::MdkObject& o = *it;
+        if (runtime.isRemoved(&o)) {
+            index--;  // the oracle's list does not contain removed objects
+            continue;
+        }
+        out += objectIdentity(index, o);
+        const Mat4 t = o.transform();
+        snprintf(line, sizeof(line),
+                 "  T %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f "
+                 "%.6f %.6f\n",
+                 t.m[0], t.m[1], t.m[2], t.m[3], t.m[4], t.m[5], t.m[6], t.m[7], t.m[8], t.m[9],
+                 t.m[10], t.m[11], t.m[12], t.m[13], t.m[14], t.m[15]);
+        out += line;
+    }
+    return out;
+}
+
+// The first line where two dumps differ, as one readable line. A whole object
+// dump is hundreds of lines and only the first difference is a cause.
+std::string firstDifference(const std::string& got, const std::string& expected) {
+    size_t i = 0;
+    while (i < got.size() && i < expected.size() && got[i] == expected[i]) {
+        i++;
+    }
+    if (i == got.size() && i == expected.size()) {
+        return "identical";
+    }
+    size_t lineStart = got.rfind('\n', i);
+    lineStart = lineStart == std::string::npos ? 0 : lineStart + 1;
+    size_t lineEnd = got.find('\n', i);
+    if (lineEnd == std::string::npos) {
+        lineEnd = got.size();
+    }
+    size_t expectedEnd = expected.find('\n', i);
+    if (expectedEnd == std::string::npos) {
+        expectedEnd = expected.size();
+    }
+    return "at byte " + std::to_string((int)i) + "\n  got      " + got.substr(lineStart, lineEnd - lineStart) +
+           "\n  expected " + expected.substr(lineStart, expectedEnd - lineStart);
 }
 
 // Comma-join a list of ints, as the oracle's string.Join(",", list) does (empty when
@@ -512,6 +636,80 @@ int main(int argc, char** argv) {
         } else {
             printf("FAIL L%d_t%d_script: script state differs\n--- got ---\n%s--- expected ---\n%s",
                    level, ticks, got.c_str(), expected.c_str());
+            failures++;
+        }
+    }
+
+    // The object pass's pose and place. The pose (the rest vertices or the
+    // baked animation frame) is pinned at ticks where the scripts have an alien
+    // walking, so the bake is exercised. The place (the transform chain) is
+    // pinned at tick 1 only, because the port does not write MdkObject::roll
+    // yet -- ObjectMotion.Bank (the automatic lean into a turn) is not ported,
+    // so by tick 120 the oracle's XF has roll -6.3411 where the port still has
+    // 0, and every transform that turns by roll differs. See OPEN_ITEMS.md.
+    const Case poseCases[] = {{3, 1}, {3, 120}, {3, 1200}};
+    const Case transformCases[] = {{3, 1}};
+    for (size_t c = 0; c < sizeof(poseCases) / sizeof(poseCases[0]); c++) {
+        int level = poseCases[c].level;
+        int ticks = poseCases[c].ticks;
+        LevelData levelData;
+        if (!LevelData::load(&levelData, &data, level)) {
+            continue;
+        }
+        char cmiPath[128];
+        snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+        std::vector<uint8_t> cmiBytes;
+        if (!data.read(cmiPath, &cmiBytes)) {
+            continue;
+        }
+        Cmi cmi;
+        if (!Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+            continue;
+        }
+        audio::SoundBank bank;
+        if (!audio::SoundBank::forLevel(&bank, data, level)) {
+            continue;
+        }
+        bank.preload();
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+        runtime.option = 0;
+        for (int t = 0; t < ticks; t++) {
+            runtime.update(1.0f / 30.0f);
+        }
+
+        std::string got = dumpObjectPoses(level, ticks, runtime);
+        char goldenPath[160];
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_pose.txt", level, ticks);
+        std::string expected;
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d_t%d_pose: no golden file %s\n", level, ticks, goldenPath);
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L%d_t%d_pose: every object's posed vertices match the oracle\n", level,
+                   ticks);
+        } else {
+            printf("FAIL L%d_t%d_pose: %s\n", level, ticks, firstDifference(got, expected).c_str());
+            failures++;
+        }
+
+        got = dumpObjectTransforms(level, ticks, runtime);
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_transform.txt", level, ticks);
+        bool wanted = false;
+        for (size_t i = 0; i < sizeof(transformCases) / sizeof(transformCases[0]); i++) {
+            wanted = wanted || (transformCases[i].level == level && transformCases[i].ticks == ticks);
+        }
+        if (!wanted) {
+            continue;
+        }
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d_t%d_transform: no golden file %s\n", level, ticks, goldenPath);
+            failures++;
+        } else if (got == expected) {
+            printf("PASS L%d_t%d_transform: every object's transform matches the oracle\n", level,
+                   ticks);
+        } else {
+            printf("FAIL L%d_t%d_transform: %s\n", level, ticks,
+                   firstDifference(got, expected).c_str());
             failures++;
         }
     }

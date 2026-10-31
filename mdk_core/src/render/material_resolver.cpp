@@ -30,9 +30,10 @@ bool MaterialResolver::resolve(int32_t value,
                                const std::vector<std::string>& names,
                                const formats::Palette& palette,
                                const std::vector<const formats::TextureArchive*>& archives,
-                               Surface* out) const {
+                               Surface* out,
+                               Pass pass) const {
     if (value < 0) {
-        return resolveColour(-value, palette, out);
+        return resolveColour(-value, palette, out, pass);
     }
 
     if (value < 0 || (size_t)value >= names.size()) {
@@ -48,8 +49,8 @@ bool MaterialResolver::resolve(int32_t value,
         }
         out->texture = texture;
         out->frameCount = texture->frameCount();
-        out->pass = Pass::Solid;
-        out->shading = shadingOf(Pass::Solid, shading_);
+        out->pass = pass;
+        out->shading = shadingOf(pass, shading_);
         out->colour = Colour{1.0f, 1.0f, 1.0f, 1.0f};
         out->rowShift = 0.0f;
         return true;
@@ -59,7 +60,7 @@ bool MaterialResolver::resolve(int32_t value,
     for (size_t i = 0; i < archives.size(); i++) {
         const int32_t index = archives[i]->findColor(name);
         if (index >= 0) {
-            return resolveColour(index, palette, out);
+            return resolveColour(index, palette, out, pass);
         }
     }
 
@@ -74,14 +75,15 @@ bool MaterialResolver::resolve(int32_t value,
             }
         }
         if (digits) {
-            return resolveColour(atoi(name.c_str() + strlen(kPenPrefix)), palette, out);
+            return resolveColour(atoi(name.c_str() + strlen(kPenPrefix)), palette, out, pass);
         }
     }
 
     return false;
 }
 
-bool MaterialResolver::resolveColour(int32_t index, const formats::Palette& palette, Surface* out) const {
+bool MaterialResolver::resolveColour(int32_t index, const formats::Palette& palette, Surface* out,
+                                     Pass pass) const {
     if (index < kSpecialFirst) {
         const uint8_t* rgba = palette.rgba();
         if (index < 0 || index >= formats::Palette::kSize) {
@@ -93,8 +95,8 @@ bool MaterialResolver::resolveColour(int32_t index, const formats::Palette& pale
                              rgba[index * 4 + 2] * kByteToUnit,
                              1.0f};
         out->frameCount = 1;
-        out->pass = Pass::Solid;
-        out->shading = shadingOf(Pass::Solid, shading_);
+        out->pass = pass;
+        out->shading = shadingOf(pass, shading_);
         out->rowShift = 0.0f;
         return true;
     }

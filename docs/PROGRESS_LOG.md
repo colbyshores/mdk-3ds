@@ -2856,3 +2856,77 @@ Verification on this tree:
   Linux/Vulkan and the picture does not change.
 - No emulator or Original 3DS hardware run was performed. The 1 MiB bound, the
   kept-source system-RAM cost and Old-3DS timing remain unmeasured.
+
+## Iteration 35 (2026-10-31): the object pass's stage 1 — place, pose and layout
+
+The priority order's next item was the object pass, and the frame gap's
+`max_delta=247` patch is an unported scene element from it. This batch is the
+pass's first stage: everything that decides *where an object's vertices are*
+before anything is drawn. The draw stage is the next batch, and why it needs a
+seam decision is written up in `docs/OPEN_ITEMS.md`.
+
+**The place.** `MdkObject::transform()` is the C#'s
+`CreateScale(Scale) * (rolling ? RollingBasis : Rotation) *
+CreateTranslation(Position + UnitZ * Lift)`, composed in that order. The
+System.Numerics element arithmetic that `rotation()` spelled out inline (one
+rounded product followed by three `fma`, because .NET contracts the dot product
+into FMA and the last bit depends on it) moved from a local lambda into
+`mdk::multiply` in `util/matrix.h`, with `create_scale` and `create_translation`
+beside it, so the composition and the rotation share one multiply rather than
+having two that can drift.
+
+**The pose.** `MdkObject::pose_parts()` is the C#'s `PoseParts`: the rest
+vertices, or `bake(model, animation)[AnimationFrame]`, from caches shared by
+every object (the C#'s static `RestPoses` and `Baked`) keyed by model address and
+released by `forget_poses()`. `std::map`, because the reference handed out has to
+survive later insertions. The out-of-range frame is clamped rather than thrown,
+the same guard `ScriptRuntime::poseBounds` already uses; the C# would throw.
+
+**The layout.** `game/object_view.{h,cpp}` is `ObjectView`'s layout stage:
+batches by surface in first-seen order, each carrying the part, vertex index and
+UV of every corner plus, per part, its corner count and the sequence number of
+its first triangle; `arrange` insertion-sorts the batches that still have a
+visible triangle by that first triangle; the corner count per batch is the
+draw-time hide check. UVs are texels of one frame, scaled by the texture's own
+size — and zero for a flat surface, which is what the C# does and which the port
+has to reproduce rather than tidy. The mods' `Source::Mod` batches are not
+ported (the mods are the enhanced look's) and are recorded as deferred with
+cause. `MaterialResolver::resolve` took the C#'s `Pass` argument, which the port
+had dropped: the arena draws Solid, objects draw DoubleSided, and the shading
+follows the pass. The default argument keeps the arena path byte-identical.
+
+**The goldens.** `golden/L3_t{1,120,1200}_pose.txt` and
+`golden/L3_t1_transform.txt` come from a probe built against a pristine copy of
+`src/Mdk.Game` (the driver's own setup, plus a dump of `Transform` and
+`PoseParts` per object), so they are oracle output. The pose goldens at t120 and
+t1200 are the first ones in the repository that pin a **baked animation pose** —
+the existing goldens pin the object table, which has no vertices in it.
+
+**What the goldens found.** The multi-tick transform golden could not be pinned:
+by t120 the oracle's XF has `roll=-6.3411` (and `9.0251` by t1200) where the port
+has `0.0000`, because `ObjectMotion.Bank` — the automatic lean into a turn,
+`roll = clamp((wrap(roll) - turn) * 0.95, -10, 10)` — is not ported at all, and
+the only writers of `roll` in the port are the script VM's turn opcodes. Seven
+objects differ by t15. The object-table golden never showed this because the
+table has no roll in it. The transform golden is therefore pinned at t1 (where
+`yaw=270` still exercises the rotation) and the multi-tick cases are held back
+until the motion slice writes roll; the pose goldens are unaffected, because
+roll is not a pose input.
+
+Verification on this tree:
+
+- `make -C tests/scripts -j8` exited 0 and ended `All cases match the oracle.`
+  The new cases printed `PASS L3_t1_pose`, `PASS L3_t120_pose`,
+  `PASS L3_t1200_pose` and `PASS L3_t1_transform`. No existing golden moved.
+- `cmake --build build-linux --target mdk -j8` exited 0.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+  exited 0, compiled `build/object_view.o` and built `mdk.3dsx`.
+- `bash tools/check.sh` exited 0: `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no
+  built CIA, `gates_frames PASS` with `L3_f1.bmp sha=58615fc85d02e009` — the
+  pinned frame is byte-unchanged, as it must be: nothing in the draw path moved.
+- `DISPLAY=:99 tools/publish_frame.sh object-pose-layout` published
+  `docs/frames/2026-10-31-object-pose-layout.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical to the
+  previous C++ frame.
+- No emulator or Original 3DS hardware run was performed; Old-3DS timing stays
+  unmeasured.

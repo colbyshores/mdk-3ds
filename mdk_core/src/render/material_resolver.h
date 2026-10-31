@@ -88,11 +88,17 @@ public:
     // and `archives` the texture archives searched for the name: the arena's
     // own, the level's, then every other arena's (some borrow, e.g. O3_*
     // in level 6).
+    //
+    // `pass` is the C#'s Resolve argument: the arena draws its meshes Solid and
+    // the objects draw theirs DoubleSided (ObjectView.cs), and the pass reaches
+    // the surface's shading. The glass and the mirrors keep their own pass in
+    // both trees, exactly as the C# hardcodes them.
     bool resolve(int32_t value,
                  const std::vector<std::string>& names,
                  const formats::Palette& palette,
                  const std::vector<const formats::TextureArchive*>& archives,
-                 Surface* out) const;
+                 Surface* out,
+                 Pass pass = Pass::Solid) const;
 
     // Whether a material value is drawn, without touching a GPU.
     static bool isDrawn(int32_t value,
@@ -104,7 +110,7 @@ public:
     static bool isDrawnColour(int32_t index);
 
 private:
-    bool resolveColour(int32_t index, const formats::Palette& palette, Surface* out) const;
+    bool resolveColour(int32_t index, const formats::Palette& palette, Surface* out, Pass pass) const;
 
     const formats::Dti* dti_ = nullptr;
     Shading shading_ = Shading::Original;
