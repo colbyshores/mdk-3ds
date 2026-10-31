@@ -29,8 +29,44 @@ and nothing in a porting batch may depend on them.
    language rules §10, the platform rules §11.
 2. `docs/CONTINUATION.md` — the PRIORITY ORDER (owner directive) and the
    current verified state. Start from its first unfinished item.
-3. The newest `logs/ralph/review-*.md`, if it exists — external adversarial
-   findings you must address.
+3. The newest `logs/ralph-pi/run-*/review-*.md`, if it exists — the external
+   **adversarial review from DeepSeek V4.1 Flash**
+   (`litellm/deepseek-v4.1-flash-nvidia`), an independent model family. You are
+   Qwen; you are not the authority on your own correctness. Treat its findings
+   as claims to investigate, not orders to obey blindly.
+
+## Remediation protocol (when a review exists)
+
+For each **Critical** or **High** finding in the newest review, in order:
+
+1. **Investigate before you change.** Reproduce the failure scenario the reviewer
+   gives, or construct it from the cited `path:line`. Confirm the finding is real
+   against the C# oracle / `SPEC.md` / `AGENTS.md`.
+2. **Fix confirmed findings.** Make the smallest change that restores oracle/spec
+   behaviour. Add or update a golden/test that would have caught it, so the fix is
+   pinned.
+3. **Rebut invalid findings with evidence.** If a finding is wrong (the reviewer
+   misread the C#, the "divergence" is the oracle's actual behaviour, the attack
+   is a strawman), do **not** change the code. Record the rebuttal — the quote,
+   the C# ground truth, why the finding does not hold — in `docs/PROGRESS_LOG.md`.
+   An unremediated Critical/High with no written rebuttal is an incomplete batch.
+4. **Do not weaken the finding to make it pass.** Never edit the review file,
+   relax a gate, or change a golden to the implementation's output to clear a
+   finding. Goldens come from the oracle, not from you.
+
+**Medium/Low** findings: fix when cheap and in-scope; otherwise log them as
+deferred with a one-line cause. Do not expand the batch to chase them.
+
+**Prior-solution lookup (mandatory before implementing):** Before starting
+work, check whether the problem has already been solved:
+- **Obsidian MCP** — search the vault for prior findings, architecture notes,
+  and incident reports related to the current subsystem. If the Obsidian MCP
+  server is unavailable, read the vault directly (read-only) from
+  `/mnt/nas/Vaults/port-docs`.
+- **Cognee MCP** — query the knowledge graph for related solutions, patterns,
+  and historical context.
+
+Record the lookup result in the commit message or progress log.
 
 Open `SPEC.md` only for the section you are working on. Do not read the whole
 of it, and do not re-read history you already have.
@@ -107,10 +143,23 @@ any agent harness.
 
 ## Before you end
 
-1. The batch is committed (code + `docs/CONTINUATION.md` + `docs/PROGRESS_LOG.md`).
-2. `docs/CONTINUATION.md` states what is done and VERIFIED (with the actual
-   command results), what changed, what is next, and any exact blocker.
-3. The tree is clean.
+**Acceptance criteria — a batch is done only when all hold:**
+- The slice is implemented (no stub presented as a port) and compiles on **both**
+  targets.
+- All three gates pass with their real output: `make -C tests/scripts`,
+  `bash tools/check.sh`, `make -C mdk_3ds`.
+- Every Critical/High finding from the newest review is either fixed (with a
+  pinning test/golden) or rebutted in `docs/PROGRESS_LOG.md` with evidence.
+- The frame pair is published and committed with the batch.
+- The tree is clean and the batch is committed.
+
+**Final report** — write this into `docs/CONTINUATION.md` (state + next) and
+`docs/PROGRESS_LOG.md` (narrative). It must state, with the actual command
+results:
+- What was implemented this batch, and the oracle/spec reference it satisfies.
+- Which review findings were fixed vs rebutted, and the evidence for each.
+- The gate results verbatim (pass/fail per gate), not a summary.
+- What is next per `docs/CONTINUATION.md` priority order, and any exact blocker.
 
 Never claim a test passed unless you ran it. Never claim Old-3DS performance
 readiness without measurements on actual Old-3DS hardware — it stays open.

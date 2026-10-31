@@ -87,9 +87,26 @@ trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 
+# Architecture (owner directive 2026-10-31): Qwen implements and remediates; an
+# INDEPENDENT model reviews adversarially; the harness (gates) is the objective
+# verification authority. The implementation agent is never the sole authority on
+# its own correctness.
+# Builder: LOCAL qwen (litellm/qwen -> openai/qwen38-flash-next). First in the
+# chain so the builder is the free local seat; hosted routes are fallbacks.
 WORKER_MODELS="${WORKER_MODELS:-litellm/qwen litellm/minimax-m3.1-flash-nvidia litellm/glm-5.3-nvidia litellm/glm-5.3-flash-nvidia litellm/luna}"
-REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/minimax-m3.1-flash-nvidia}"
-REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/luna litellm/qwen}"
+# Reviewer: DeepSeek V4.1 Flash. Verified 2026-10-31 against the live proxy:
+# alias `deepseek-v4.1-flash` resolves to upstream `deepseek/deepseek-flash`
+# at api.deepseek.com (official DeepSeek API — a genuinely different family
+# from the qwen builder) and answers a live PING through the piagent+pi harness
+# path. Model identity is the upstream string, never the alias
+# (vault: model-identity-is-the-upstream-string-not-the-alias).
+REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/deepseek-v4.1-flash}"
+# Reviewer fallbacks MUST be a different upstream family than the builder
+# (qwen38-flash-next), or the "independent" review is fake. `swarm-worker` is
+# deliberately excluded: it is the SAME upstream as qwen. Order prefers the
+# DeepSeek mirror first, then cross-family: grok=xai/grok-4.6,
+# minimax=minimaxai/*, luna=gpt-6-luna.
+REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/deepseek-v4.1-flash-nvidia litellm/grok litellm/minimax-m3.1-flash-nvidia litellm/luna}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-7200}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 REVIEW_FAIL_LIMIT="${REVIEW_FAIL_LIMIT:-2}"
@@ -244,7 +261,7 @@ while :; do
         echo "- HEAD: $(git -C "$ROOT" log --oneline -1)"
         echo "- dirty tree: $(git -C "$ROOT" status --porcelain | wc -l) file(s) — if any, finish and commit THAT work first (builder rule)."
         NEWEST_REVIEW="$(ls -t "$LOGDIR"/run-*/review-*.md 2>/dev/null | head -1)"
-        [ -n "$NEWEST_REVIEW" ] && echo "- newest external review: $NEWEST_REVIEW — address its BLOCKER/MAJOR findings."
+        [ -n "$NEWEST_REVIEW" ] && echo "- newest external review: $NEWEST_REVIEW — investigate and remediate its Critical/High findings (or rebut each with evidence)."
         PREVG="$(state_get LAST_GATES)"
         [ -n "$PREVG" ] && [ "$PREVG" != PASS ] && echo "- WARNING: previous iteration left gates $PREVG — root-cause them before new work."
     } >"$RUN_DIR/.prompt-$ITER.md"

@@ -22,9 +22,22 @@ This document provides context for Meta Muse CLI to understand the current state
 - `docs/OPCODE_COVERAGE.md` - Opcode porting status
 - `AGENTS.md` - Operating contract and rules
 
-## Ralph Loop Configuration
-- Worker chain: qwen (local) first, then minimax, then glm variants, then luna
-- Reviewer: Glyph Cluster (kilo/stealth/glyph-cluster) as primary, qwen/luna as fallbacks
+## Agent Architecture (owner directive 2026-10-31)
+Three separated roles — the implementer is never the sole authority on its own
+correctness:
+- **Implementer / remediator**: Qwen (`litellm/qwen` → `qwen38-flash-next`). First
+  in the worker chain; minimax, glm variants, luna are fallbacks.
+- **Adversarial reviewer**: DeepSeek V4.1 Flash
+  (`litellm/deepseek-v4.1-flash` → `deepseek/deepseek-flash` at api.deepseek.com), an
+  independent family. Fallbacks must stay off Qwen's upstream: the DeepSeek mirror
+  (`deepseek-v4.1-flash-nvidia`), then grok, minimax, luna (`swarm-worker` is
+  excluded — same upstream as qwen). Read-only; structured
+  findings; verdict gates remediation. Protocol: `ralph/validator.md`.
+- **Verification authority**: the harness gates — `make -C tests/scripts`,
+  `bash tools/check.sh`, `make -C mdk_3ds`, plus the batch-integrity gate. Objective
+  pass/fail, independent of any model's opinion.
+- Workflow: Qwen implements → harness gates verify → DeepSeek reviews adversarially
+  → Qwen remediates (fix confirmed, rebut invalid with evidence) → repeat.
 - Oracle boundary enforced - only port what C# implements
 - Every commit must include frame record in docs/frames/
 - Gates must pass before committing
@@ -35,3 +48,7 @@ This document provides context for Meta Muse CLI to understand the current state
 - Follow AGENTS.md §10 (C with classes) and all hot-path rules
 - Frame record required for every commit
 - Must run emulator tests on DISPLAY=:99, never operator desktop
+- **Prior-solution lookup (mandatory):** Before implementing, check Obsidian MCP
+  for prior findings/architecture notes, and Cognee MCP for related solutions.
+  If Obsidian MCP is unavailable, read the vault directly (read-only) from
+  `/mnt/nas/Vaults/port-docs`. Record the lookup result in the commit message.

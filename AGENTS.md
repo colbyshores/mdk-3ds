@@ -49,6 +49,22 @@ work, and never end a turn with verified, committed work by merely summarising �
 start the next increment. If a turn must end mid-increment, say what is in flight
 and continue on the next one rather than treating the summary as a stop.
 
+### Prior-solution lookup (mandatory before starting an increment)
+
+Before implementing an increment, check whether the problem has already been
+solved:
+
+1. **Obsidian MCP** — search the vault for prior findings, architecture notes,
+   and incident reports related to the current subsystem. If the Obsidian MCP
+   server is unavailable, read the vault directly (read-only) from
+   `/mnt/nas/Vaults/port-docs`.
+2. **Cognee MCP** — query the knowledge graph for related solutions, patterns,
+   and historical context.
+
+Only proceed to implementation after both sources have been consulted (or
+confirmed unreachable). Record the lookup result in the commit message or
+progress log.
+
 ---
 
 ## 1. What the ARM11 actually taxes
