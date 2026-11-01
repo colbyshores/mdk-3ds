@@ -123,7 +123,6 @@ export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 export DEVKITARM="${DEVKITARM:-/opt/devkitpro/devkitARM}"
 
 state_get() { sed -n "s/^$1=//p" "$STATE" 2>/dev/null | tail -1; }
-state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$STATE" 2>/dev/null >"$STATE.t" || true; echo "$kv" >>"$STATE.t"; mv "$STATE.t" "$STATE"; }
 
 # The review-record state machine lives in its own file so that it can be run
 # without starting the loop -- see tools/runner/test_review_state.sh, which
@@ -147,14 +146,38 @@ state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$STATE" 2>/dev/null
 # would be made from a record the loop does not have: "could not write" must not
 # reach the same path as "recorded". Exit 9 is new and is NOT in the unit's
 # RestartPreventExitStatus, because a full disk is often transient and
-# StartLimitBurst caps the retry at 3 per 30 minutes; a review that cannot be
-# dispatched (8) and a reviewer that keeps dying (7) are not transient.
+# StartLimitBurst caps the retry at 3 per 30 minutes. Read that list as it is
+# shipped (tools/install_ralph_pi_service.sh: RestartPreventExitStatus=2 6 7):
+# a reviewer that keeps dying (7) is prevented and is not restarted; a review
+# that cannot be dispatched (8) is NOT in the list, so systemd does retry it,
+# which is intended because a blocked reviewer route can recover when a worker
+# route comes back — it lands in `failed` after StartLimitBurst, not silently.
+# 9 joins neither list deliberately, for the same transient-disk reason above.
 state_write() {
     if ! state_apply "$@"; then
         log "STOP: could not write the review record at $STATE — the transition was NOT recorded, so every decision after this point would be made from a record the loop does not have (disk full, read-only log dir, or $STATE is not a regular file)"
         exit 9
     fi
 }
+
+# state_set <key> <value> — the single-key spelling of the SAME checked writer.
+#
+# It used to be its own hand-rolled `grep -v > tmp; echo >> tmp; mv tmp $STATE`,
+# and `mv`'s status was discarded (external review 2026-11-01,
+# run-20261101-062333/review-3.md F3). AR6-4 put the refusal on `state_apply` and
+# the stop on `state_write`, but the property it bought — "a write that did not
+# happen is never announced as done" — stopped at the multi-key arm, so every
+# single-key write kept a silent no-op (eleven call sites over eight distinct
+# keys, counted): a `$STATE` that had become a directory made `mv` succeed by
+# moving the temp file INTO it, the collector printed "REVIEW CALL #N", and
+# `REVIEW_CALLS` never landed. One writer with a checked status is the whole fix;
+# a second unchecked one is a second thing to forget. Delegation, not a copy: the
+# refusal, the temp-file check and the mv status now live in exactly one place.
+#
+# This does widen exit 9 to every record write, which is the intent and not an
+# accident: a full disk stops the loop (restartable, burst-capped) instead of
+# running an iteration on a record it did not write.
+state_set() { state_write "$1=$2"; }
 
 # --- model identity: the upstream string, never the alias --------------------
 # (vault: model-identity-is-the-upstream-string-not-the-alias). On a shared

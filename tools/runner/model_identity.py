@@ -231,17 +231,30 @@ def _read_cache(path: Path) -> dict | None:
     merely bypassed, it is unreachable, and the caller (`model_upstream`, on the
     review-decision path) has no timeout of its own.
 
-    Say the mechanism exactly, because the shortcut version is wrong on this path
-    (external review 2026-11-01, run-20261101-062333/review-2.md AR6-5, measured
-    on this host): `O_NONBLOCK` does NOT make a read open of a reader-less FIFO
-    fail with `ENXIO` — that is the write side. On the read side the non-blocking
-    open SUCCEEDS immediately and hands back a perfectly valid FIFO descriptor,
-    and it is the `S_ISREG` gate below that refuses it. So the two flags are
-    load-bearing for different reasons and neither is redundant: `O_NONBLOCK`
-    makes the open return, `S_ISREG` makes it refuse. An edit that read from the
-    descriptor before the `S_ISREG` check, justified by "`O_NONBLOCK` already
-    refused the FIFO", would block forever — the FIFO is refused by the check, not
-    by the open. A cache that can hang the caller is worse than no cache.
+    Say the mechanism exactly, because both shortcut versions are wrong on this
+    path, and the second one was this comment's own error (external review
+    2026-11-01, run-20261101-062333/review-2.md AR6-5 and review-3.md F1, each
+    measured on this host). `O_NONBLOCK` does NOT make a read open of a
+    reader-less FIFO fail with `ENXIO` — that is the write side. On the read side
+    the non-blocking open SUCCEEDS immediately and hands back a perfectly valid
+    FIFO descriptor, and it is the `S_ISREG` gate below that refuses it.
+
+    Nor is a later read the backstop, which is what the previous revision got
+    wrong when it claimed a read above the gate "would block forever": measured
+    here, `os.read` on a FIFO with no writer returns EOF (`b''`) in 0.000s, and on
+    a FIFO with a writer and no data it raises `EAGAIN` in 0.000s. A read placed
+    above the gate therefore does not hang — it silently DRAINS the descriptor and
+    returns None anyway, so the suite stayed green while the ordering went away.
+
+    So neither flag is redundant (`O_NONBLOCK` makes the open return, `S_ISREG`
+    makes it refuse), and what actually matters is that the gate runs BEFORE the
+    payload is consumed: a refusal that reads first has already taken bytes off a
+    descriptor it had no right to read. That ordering is pinned by the
+    `fifo-payload` probe below, which plants a FIFO holding a table that WOULD
+    parse and asserts the table is still unread afterwards; moving the read above
+    the gate turns that case FAIL, which is verified, and which the claim this
+    paragraph replaces never was. A cache that can hang the caller is worse than
+    no cache; a cache whose guard can be deleted silently is the same thing.
     """
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
@@ -301,12 +314,32 @@ def _write_cache(path: Path, table: dict) -> None:
 
 
 _CHILD_PROBE = """
-import pathlib, sys
+import os, pathlib, sys
 sys.path.insert(0, sys.argv[1])
 import model_identity as m
 path = pathlib.Path(sys.argv[3])
 if sys.argv[2] == "read":
     print("NONE" if m._read_cache(path) is None else "READ")
+elif sys.argv[2] == "fifo-payload":
+    # The ordering pin (external review 2026-11-01, run-20261101-062333/review-3.md
+    # F1). A FIFO holding a table that WOULD parse is refused by `_read_cache`
+    # whether the S_ISREG/uid gate runs before or after the read, so "it returned
+    # None" cannot tell the two apart. What it cannot do is refuse AND leave the
+    # bytes unread: a read above the gate has already drained the pipe. The parent
+    # keeps a reader open so the pipe survives the writer's close, then reads what
+    # is left. INTACT means the gate ran first; DRAINED means something read it.
+    payload = b'{"planted": "openai/not-the-proxy"}'
+    rfd = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
+    wfd = os.open(str(path), os.O_WRONLY | os.O_NONBLOCK)
+    os.write(wfd, payload)
+    os.close(wfd)
+    verdict = "NONE" if m._read_cache(path) is None else "READ"
+    try:
+        left = os.read(rfd, 4096)
+    except OSError:
+        left = b""
+    os.close(rfd)
+    print(verdict + ("+INTACT" if left == payload else "+DRAINED"))
 else:
     m._write_cache(path, {"planted": "openai/not-the-proxy"})
     print("WROTE")
@@ -410,6 +443,11 @@ def _selftest_cache() -> bool:
             checks.append(("a FIFO at the cache path does not block the writer",
                            _probe_in_child(fifo, "write") == "WROTE"))
             checks.append(("and the FIFO is still there, untouched, afterwards", fifo.is_fifo()))
+            # The ordering, not just the outcome: refusing a FIFO is worth nothing
+            # if the refusal happens after the payload has been read off it, and
+            # "returned None" is true on both spellings (review-3.md F1).
+            checks.append(("a FIFO's payload is refused BEFORE it is read (gate ordering)",
+                           _probe_in_child(fifo, "fifo-payload") == "NONE+INTACT"))
         for label, ok in checks:
             print(f"{'PASS' if ok else 'FAIL'} cache: {label}")
         return all(ok for _, ok in checks)

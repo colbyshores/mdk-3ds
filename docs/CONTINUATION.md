@@ -1,30 +1,27 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — changes WHEN the loop's review obligation becomes durable and who may ignore a
-failed write: dispatch now records the in-flight range before the reviewer is spawned (one
-rename, not three after it), every atomic transition is checked for its key SET rather than a
-substring, the end-of-iteration rewrite goes through the shared writer and re-emits three keys
-it used to erase, `state_apply` can now fail on a non-regular state path, and a record that
-cannot be written stops the loop with a new exit 9. Error handling, record persistence, a
-trust boundary; the test suite moved (110 -> 132 cases). No C/C++, Makefile, golden,
-frame-oracle tool or game behaviour moved.
+Risk: high — changes WHO checks a record write and WHAT may claim coverage: the single-key
+writer now delegates to the checked writer, so exit 9 reaches every record write (a
+behavioural widening), the identity cache's FIFO ordering went from an unmeasured claim to a
+real probe, and a file-wide substring pin was re-scoped to the function that owns it. Error
+handling, record persistence and a trust boundary; the test suite moved (132 -> 140 cases).
+No C/C++, Makefile, golden, frame-oracle tool or game behaviour moved.
 
-Last updated: 2026-11-01 (batch 16: run-20261101-062333/**review-2.md** dispositioned —
-**AR6-1 High, AR6-2/AR6-3 Medium, AR6-4/AR6-5/AR6-6 Low: all six confirmed, none rebutted**).
-An unreviewed commit could still be created silently, in the one arm batch 15 had not
-converted: the reviewer was spawned and the range that IS the obligation was written after it,
-so a kill in that window left `REVIEW_STATUS=done` on disk and nobody owed anything — now the
-obligation lands first, in one rename, and a kill after it folds as a lost review (owed,
-counted, re-dispatched). The two `guard_present` pins that stayed green while a whole key was
-deleted from a transition are replaced by a parser that asserts each transition's key SET and
-how many sites write it; the end-of-iteration rewrite no longer erases `LAST_GATES`,
-`LAST_RISK` and `LAST_REVIEW_DECISION`; `state_write` stops the loop when the record could not
-be written (exit 9, deliberately restartable) and `state_apply` can now detect that — a
-`mv` into a directory used to report success. `O_NONBLOCK`'s read-path claim was wrong and is
-corrected (the open succeeds; `S_ISREG` refuses). `test_review_state.sh` is **132 cases**; six
-reversion experiments all shown to FAIL. Goldens **440/0/0**, no golden moved; the pinned
-frame is byte-unchanged and its sidecar says so, and carries the AR6-6 correction that could
-not go in batch 15's committed sidecar. Narrative: `docs/PROGRESS_LOG.md`, "Iteration 44".)
+Last updated: 2026-11-01 (batch 17: run-20261101-062333/**review-3.md** dispositioned —
+**F1 Medium, F2/F3/F4/F5 Low: all five confirmed, none rebutted; no Critical or High**).
+A batch whose product was claims about its own coverage contained a claim that had never been
+measured: batch 16 asserted a read-before-`S_ISREG` edit "already prints `HUNG`", and it does
+not — a non-blocking FIFO read returns EOF (or `EAGAIN`) in 0.000 s, so that edit left the
+suite green and the property was **unpinned**. It is now pinned by a probe that plants a FIFO
+holding a parseable table and asserts the table is still unread afterwards (`NONE+INTACT`),
+shown to FAIL on that exact edit. `state_set` was a second, unchecked writer (`mv` status
+discarded, so a directory `$STATE` made eleven call sites silently no-op) and now delegates to
+the checked one; the harness stopped carrying its own copy. The `exit 9` pin — the file-wide
+substring shape the last batch argued against — is scoped to `state_write`. The systemd
+comment was half false (exit 8 is NOT restart-prevented) and the sidecar's case arithmetic was
+wrong. **140 cases**, three reversions each shown to FAIL; goldens **440/0/0**, no golden
+moved; the frame is byte-unchanged and its sidecar carries the corrections that cannot go in
+the committed pair. Narrative: `docs/PROGRESS_LOG.md`, "Iteration 45".)
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -83,7 +80,13 @@ by batch 14, from
 review-3's open question 1: the `invoked`-with-nothing-reconstructible halt is now the
 last-resort branch only. Whether even *that* should halt rather than assume the whole history
 is unreviewed is an owner policy call; the builder kept the halt, because a range nobody can
-name is a range nobody can prove covered.
+name is a range nobody can prove covered. (5) New from batch 17, from review-3's F4: the
+shipped unit is `RestartPreventExitStatus=2 6 7`, so exit 8 (BLOCKED) **is** restarted while
+exit 9 is not. The code comment now describes that as shipped and argues 8 restarting is
+intended (a blocked route can recover when a worker route comes back), but changing the unit is
+the owner's call, not a builder's. Also open from review-3's open questions: under batch 16's
+ordering every kill inside one review window costs one of `REVIEW_FAIL_LIMIT=2` strikes and
+exit 7 is non-restartable, so two restarts in one window end the loop for good.
 
 ## Current tree state (VERIFIED)
 
@@ -111,34 +114,38 @@ marked **superseded in part** where batches 14-16 changed it. The headline:
 - **Loop harness:** fail-closed on every way a mandatory review can fail to happen, and
   fail-*forward* on the ones where the obligation is recoverable: a lost review is owed,
   counted, and lands on `failed` — the halt is reserved for a state with no range, nothing
-  owed and no `HEAD` naming an **ancestor** commit. Every multi-key transition of the state
-  file goes through `state_write` (one temp file, one rename, **and a checked status**: a
-  record that cannot be written stops the loop at exit 9 rather than continuing from a stale
-  one): a transition written key by key is one a kill can stop in the middle and count twice.
-  **The obligation is created before the thing it must survive** — dispatch persists the
-  in-flight range and `invoked` before the reviewer is spawned, so no kill window can leave a
-  commit unreviewed with nothing owed. The suite asserts each transition's **key set**, not a
-  substring of one call. Independence is the resolved upstream and family; the identity is
-  re-resolved after a worker fallback; the live cache is per-uid/per-proxy at 0600, checked on
-  the descriptor it reads, never through a symlink, and never blocked by a FIFO planted at the
-  path (`O_NONBLOCK` makes the open return, `S_ISREG` makes it refuse); the state machine is
-  `tools/runner/review_state.sh`, asserted by **132 cases** in
+  owed and no `HEAD` naming an **ancestor** commit. Every transition of the state file goes
+  through `state_write` (one temp file, one rename, **and a checked status**: a record that
+  cannot be written stops the loop at exit 9 rather than continuing from a stale one), and
+  `state_set` is now the single-key spelling of that SAME writer rather than a second
+  unchecked one — **one writer, one refusal, one status** — because a transition written key
+  by key is one a kill can stop in the middle and count twice, and an unchecked `mv` is one a
+  directory can swallow. **The obligation is created before the thing it must survive** —
+  dispatch persists the in-flight range and `invoked` before the reviewer is spawned, so no
+  kill window can leave a commit unreviewed with nothing owed. The suite asserts each
+  transition's **key set**, not a substring of one call, and a pin is scoped to the function
+  that owns the property rather than matching the whole file. Independence is the resolved
+  upstream and family; the identity is re-resolved after a worker fallback; the live cache is
+  per-uid/per-proxy at 0600, checked on the descriptor it reads, never through a symlink,
+  never blocked by a FIFO planted at the path (`O_NONBLOCK` makes the open return, `S_ISREG`
+  makes it refuse), and the gate provably runs **before** the payload is consumed; the state
+  machine is `tools/runner/review_state.sh`, asserted by **140 cases** in
   `tools/runner/test_review_state.sh`.
 
-## Verified on this tree (batch 16)
+## Verified on this tree (batch 17)
 
-All gates re-run from a clean invocation; the verbatim output is in `docs/PROGRESS_LOG.md`,
-"Iteration 44". Goldens: **exit 0**, `All cases match the oracle.`, **440 PASS / 0 FAIL /
+All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`,
+"Iteration 45". Goldens **exit 0**, `All cases match the oracle.`, **440 PASS / 0 FAIL /
 0 SKIP**, no golden moved. `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`
 (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the pinned `cpp=`, so
 `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED, no CIA; batch integrity PASS).
 `make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`; `cmake --build build-linux --target mdk` —
-**exit 0**. `test_review_state.sh` — **exit 0**, **132 cases**, all PASS, six reversion
-experiments each shown to FAIL; `model_identity.py selftest --live` — `SELFTEST CLEAN`.
-Frame `docs/frames/2026-11-01-obligation-before-spawn.png` + `.txt` — `1.240 / 247 / 0.1819`,
-md5 `6769a137…`, byte-identical to its 21 predecessors. **No emulator run and no Old-3DS
-hardware run: Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was
-pinned, relaxed or edited.
+**exit 0**. `test_review_state.sh` — **exit 0**, **140 cases**, three reversions each shown to
+FAIL; `model_identity.py selftest --live` — `SELFTEST CLEAN`, 28 claims. Frame
+`docs/frames/2026-11-01-a-claim-is-a-measurement.png` + `.txt` — `1.240 / 247 / 0.1819`,
+byte-identical to its 22 predecessors. **No emulator run and no Old-3DS hardware run:
+Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned,
+relaxed or edited.
 
 ## Standing open items
 

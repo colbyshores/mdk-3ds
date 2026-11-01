@@ -5325,6 +5325,18 @@ test: the existing selftest case runs the read in a child with a 10 s deadline, 
 edit the finding feared — reading before the `S_ISREG` check — already prints `HUNG` and
 fails rather than hanging the suite. `selftest --live` → `SELFTEST CLEAN`.
 
+> **CORRECTED in batch 17 — the sentence above this one is false, and it was a measurement
+> claim.** A non-blocking read of a reader-less FIFO returns EOF (`b''`) in 0.000 s, and of a
+> FIFO with a writer and no data raises `EAGAIN` in 0.000 s, so a read placed above the
+> `S_ISREG` gate **cannot** block and the child probe never printed `HUNG`. Verified twice:
+> the exact edit (read first, `fstat` kept on the same fd) leaves `SELFTEST CLEAN` with all
+> three FIFO cases PASS. So the property was **unpinned**, not pinned-by-timeout, and this
+> batch replaced the claim with a real probe (`a FIFO's payload is refused BEFORE it is read
+> (gate ordering)`), which is shown to FAIL on that same edit. See Iteration 45, F1.
+> The same false claim is in the commit message and in
+> `docs/frames/2026-11-01-obligation-before-spawn.txt`, which cannot be edited (frame-record
+> rule); the correction stands here and in the next sidecar.
+
 ### AR6-6 (Low) — confirmed; corrected where it can be corrected
 
 Accurate: against the shipped one-write fold there is exactly one write boundary, so
@@ -5333,6 +5345,13 @@ current code produces. They are kept — they are the write boundaries of the pr
 sequence, which is what the reversion experiment fails on, and a fold re-spelled back to one
 `state_set` per key dies on them — but they are regression pins for the OLD shape, not six
 live windows.
+
+> **CORRECTED in batch 17 — the case arithmetic in this batch's sidecar is wrong.** It says
+> "six … six … four … and the twenty-six carried over unchanged", which neither reconciles
+> with the shipped suite nor sums to the +22 net. Measured by set-diff of the PASS labels
+> between `2f3d050` (110 PASS) and `3b435fb` (132 PASS): **107 carried unchanged, 25 added,
+> 3 removed.** The committed sidecar cannot be edited (frame-record rule), so the figures
+> stand here and in the next pair. See Iteration 45, F2.
 
 The reviewer's remediation named the sidecar, and **an older sidecar cannot be edited**: the
 frame-record rule (and `gates_batch_integrity.py`) forbids modifying a committed pair, and
@@ -5388,3 +5407,181 @@ The review queue is clear (review-2 dispositioned in full). The loop returns to 
 `docs/CONTINUATION.md` game list, first item (a): the missing-`TRAVSPRT.BNI` evidence pair
 from review-2 of batch 11. Owner tasks (1)-(4) are unchanged and still cannot be done in a
 batch.
+
+---
+
+## Iteration 45 — batch 17: a claim of coverage is a measurement, and this one did not reproduce
+
+**Review under remediation:** `logs/ralph-pi/run-20261101-062333/review-3.md` (DeepSeek V4.1
+Flash on `3b435fb`, verdict INCOMPLETE: **no Critical, no High — F1 Medium, F2/F3/F4/F5 Low**).
+Every finding was reproduced against the shipped code before anything was changed. **All five
+are confirmed; none is rebutted.** That is the uncomfortable outcome: a batch whose entire
+product was claims about its own coverage was found to contain a claim that had never been
+measured, and the finding that caught it is the same shape as the finding the previous batch
+had just fixed.
+
+**Prior-solution lookup (mandatory).** Obsidian vault read directly (no MCP server in this
+harness) at `/mnt/nas/Vaults/port-docs`:
+
+- `50-tooling/a-probe-must-be-able-to-fail.md` — *"Before recording any conclusion from an
+  instrument, state what it would print if the hypothesis were false. If you cannot, you have
+  not measured anything."* Failure mode 1 is *"the predicate cannot fail"*. F1 is this note
+  exactly: the batch asserted a falsification ("the edit already prints `HUNG`") that had
+  never been run, and the assertion was load-bearing for shipping no test.
+- `50-tooling/a-probe-that-cannot-fail-by-placement.md` — a probe can be unable to fail because
+  of **where** it sits, not what it compares. F5 is the source-level twin: a pin placed on the
+  whole file cannot fail when the property is deleted from the one function that needs it.
+- `30-architecture/patterns/build-invariant-guards-must-be-proven-non-vacuous.md` — a guard
+  that greps for an invariant string proves nothing until the string is proven reachable. The
+  prior art for both F1 and F5; the vault has been paying for this since Wave Race 64.
+- Cognee MCP: not reachable from this harness (no MCP server configured); recorded as
+  unreachable rather than skipped.
+
+### F1 (Medium) — confirmed; the claim was false, and it is now a probe
+
+`_read_cache`'s docstring, `docs/PROGRESS_LOG.md` Iteration 44 and the committed frame
+sidecar all said that the edit the previous finding feared — reading the payload before the
+`S_ISREG` gate — "already prints `HUNG` and fails rather than hanging the suite". **It does
+not.** Measured on this host:
+
+| measurement | result |
+|---|---|
+| non-blocking `O_RDONLY` open of a reader-less FIFO | succeeds in 0.0000 s |
+| `os.read` on it | `b''` (EOF) in 0.0000 s — **no block** |
+| `os.read` with a writer open and no data | `BlockingIOError` (`EAGAIN`) in 0.0000 s |
+| the exact edit (read first, `fstat` kept on the same fd), full selftest | `SELFTEST CLEAN`, all three FIFO cases PASS |
+
+So a read above the gate cannot hang, which means the child-with-deadline never had anything
+to time out on, which means the property was **unpinned**. The reviewer's own falsification
+reproduced exactly: the edit leaves the suite green.
+
+Two things were wrong and both are fixed. The mechanism text now says what is measured:
+`O_NONBLOCK` makes the open return, `S_ISREG` makes it refuse, and a read above the gate
+*drains the descriptor and returns `None` anyway* — a silent pass, not a hang.
+
+And the property is now pinned rather than asserted. A FIFO is not distinguishable by return
+value: `_read_cache` returns `None` whether the gate ran before or after the read. What it
+cannot do is refuse **and leave the bytes unread**. The new `fifo-payload` probe plants a FIFO
+holding a table that *would* parse, keeps a reader open so the pipe survives the writer's
+close, calls `_read_cache`, and then reads what is left: `NONE+INTACT` means the gate ran
+first, `NONE+DRAINED` means something read it, `READ` means there is no gate at all.
+
+    PASS cache: a FIFO's payload is refused BEFORE it is read (gate ordering)
+    MODEL IDENTITY: SELFTEST CLEAN
+
+Reversion (the exact edit the finding feared, read-before-gate with `fstat` on the same fd):
+
+    FAIL cache: a FIFO's payload is refused BEFORE it is read (gate ordering)
+
+The false claim in the **committed sidecar** cannot be corrected in place — the frame-record
+rule and `gates_batch_integrity.py` forbid editing an older pair — so it is marked CORRECTED
+in Iteration 44 and repeated in this batch's sidecar.
+
+### F2 (Low) — confirmed; the arithmetic was wrong in the artefact that corrects arithmetic
+
+The sidecar said "six … six … four … and the twenty-six carried over unchanged" for a suite
+that went 110 → 132. Reproduced by set-diff of the PASS labels between the two commits
+(both suites run in clean worktrees, 110 PASS and 132 PASS): **107 carried unchanged, 25
+added, 3 removed.** The old sidecar cannot be edited, so the figures are recorded in
+Iteration 44 and here. This batch's own figures, measured the same way against `3b435fb`:
+**131 carried, 9 added, 1 removed** (132 → 140); the one removal is a guard that was
+deliberately re-scoped, renamed in F5 below.
+
+### F3 (Low) — confirmed; there were two writers and only one was checked
+
+`state_set` was its own `grep -v > "$STATE.t"; echo >> "$STATE.t"; mv "$STATE.t" "$STATE"`
+with the `mv` status discarded. AR6-4 had put the refusal on `state_apply` and the stop on
+`state_write`, but the property it bought stopped at the multi-key arm, so eleven single-key
+call sites — including `REVIEW_CALLS` and `LAST_REVIEW_ITER` in the collector's **success**
+arm — still had a silent no-op, because `mv -f tmp somedir` returns 0 by moving the temp file
+*into* the directory. Reproduced: `mv -f` into a directory → `rc=0`.
+
+Fixed by delegation, not by a second copy of the check:
+
+    state_set() { state_write "$1=$2"; }
+
+One writer, one refusal, one status, one exit. This deliberately widens exit 9 to every
+record write: a full disk now stops the loop (restartable, burst-capped) instead of running an
+iteration on a record it did not write. The test harness also stopped carrying its own
+hand-rolled copy of `state_set`, which was a second implementation that could keep passing
+after the shipped one regressed; it now lifts the shipped one the way it lifts `state_write`.
+
+Five cases pin it, and the reversion (the old hand-rolled body restored) fails three of them:
+
+    FAIL F3: a state path that is a directory stops the arm, not just the announcement — expected '9', got '0'
+    FAIL F3: and the refused write left nothing behind in it — expected '0', got '1'
+    FAIL F3: state_set hand-rolls no temp file, grep or rename of its own — expected '0', got '1'
+
+The AR6-2 key-set parser now skips the `state_set` definition, because a delegation is not a
+transition of its own; the "exactly six atomic transitions" count is unchanged and still
+passes, which is what proves the skip is not hiding a seventh writer.
+
+### F4 (Low) — confirmed; the comment about the unit was half false
+
+`ralph-pi.sh` justified leaving exit 9 out of `RestartPreventExitStatus` with "a review that
+cannot be dispatched (8) and a reviewer that keeps dying (7) are not transient", implying both
+were in the list. The shipped unit is `RestartPreventExitStatus=2 6 7`: **7 is prevented, 8 is
+not**, so a blocked reviewer route is retried and lands in `failed` after `StartLimitBurst`.
+The comment now reads the list as shipped and says why 8 restarting is intended (a blocked
+route can recover when a worker route comes back) and why 9 restarts deliberately. The unit
+itself was **not** touched — that is an owner call, and it is recorded as an open question
+below rather than changed here.
+
+### F5 (Low) — confirmed; the pin was the shape the last batch argued against
+
+`guard_present "AR6-4: … stops the loop" 'exit 9'` matched anywhere in `ralph-pi.sh`, two
+screens below the AR6-2 argument that a file-wide substring pin stays green when the property
+is deleted from the arm that needs it. Re-scoped to the lifted `state_write` body via two new
+helpers (`guard_in_state_write`, `absent_in_state_write`), and proven to matter: with `exit 9`
+removed from `state_write` but still present elsewhere in the file — the exact hole —
+
+    code lines containing 'exit 9' (what the old file-wide pin sees): 1     # would have PASSED
+    FAIL AR6-4: the writer checks the primitive's status, it does not discard it — … missing from state_write itself
+    FAIL AR6-4: a record that could not be written exits the arm non-zero — expected '9', got '1'
+
+### Gate results (verbatim)
+
+All gates re-run from a clean invocation after the code and docs were final. Nothing was
+relaxed, pinned or edited to obtain these results; `tests/frames/reference.sha256` was NOT
+regenerated.
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts` | **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP** |
+| contract/parity/frame/integrity | `bash tools/check.sh` | **exit 0** — `CHECK: ALL GATES PASSED` |
+| 3DS target | `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` | **exit 0** — `3DSX mdk.3dsx` |
+| Linux frontend | `cmake --build build-linux --target mdk -j8` | **exit 0** — `[100%] Built target mdk` |
+| review-record state machine | `bash tools/runner/test_review_state.sh` | **exit 0** — `REVIEW STATE: ALL CASES PASS`, **140 PASS / 0 FAIL** |
+| identity resolver | `python3 tools/runner/model_identity.py selftest --live` | **exit 0** — `MODEL IDENTITY: SELFTEST CLEAN`, 28 claims |
+
+`tools/check.sh` tail, verbatim:
+
+    SKIP   gates_smdh               no built .cia to read
+    PASS   gates_frames             every pinned frame is deterministic and unchanged
+    PASS   gates_batch_integrity    project invariants intact
+
+    CHECK: ALL GATES PASSED
+
+`gates_frames` line, verbatim: `PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the
+pinned `cpp=`, so the frame golden did not move. `gates_smdh` is SKIPPED (no CIA built), which
+is reported as skipped, not passed.
+
+**No emulator run and no Old-3DS hardware run were performed in this batch**, so nothing here
+changes the Citro3D picture's UNVERIFIED status (AGENTS.md §11 P6) and **Old-3DS timing remains
+UNMEASURED**. No display was used, so P7 is not engaged.
+
+### Frame
+
+`docs/frames/2026-11-01-a-claim-is-a-measurement.png` + `.txt` — `1.240 / max 247 / mean
+0.1819`, md5 `6769a13731983d65cee9df02da6cff37`, byte-identical to its 22 predecessors (this
+batch touches no game code). The sidecar carries the F1 and F2 corrections that cannot go in
+the committed pair they belong to, because the frame-record rule forbids editing an older one.
+
+### What is next
+
+Unchanged from the PRIORITY ORDER: game-side item (a) is still the missing-`TRAVSPRT.BNI`
+evidence pair from review-2 of batch 11, then (b) the `dumpRunner` mixer column, then (c) the
+Citro3D per-draw matrix and depth/blend state, then (e) `FrameBlend.Lerp`'s rounding. The
+loop-harness chain (batches 13-17) has now had five consecutive reviews with no Critical or
+High left standing in the newest one; the owner tasks (1)-(5) are unchanged and still cannot be
+done in a batch.

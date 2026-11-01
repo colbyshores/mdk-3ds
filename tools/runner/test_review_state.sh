@@ -30,7 +30,7 @@ grep -vE '^[[:space:]]*#' "$LOOP" >"$LOOP_CODE"
 REPORT=$(mktemp -d)/report.md
 printf 'VERDICT: PASS\n' >"$REPORT"
 : >"$REPORT.empty"
-cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" "${DD:-}" 2>/dev/null || true; }
+cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" "${DD:-}" "${SS:-}" 2>/dev/null || true; }
 trap cleanup EXIT
 check() { # check <label> <expected> <actual>
     if [ "$2" = "$3" ]; then
@@ -202,6 +202,7 @@ check "AR6-4: a state path in an unwriteable place is refused too" "1" \
 # transition that nobody pinned also fails the count.
 APPLY_SIGS="$(awk '
 {
+    if ($0 ~ /^state_set\(\)/) next   # the single-key writer delegates; it is not a transition
     idx = index($0, "state_write ")
     if (idx == 0) next
     call = substr($0, idx + length("state_write "))
@@ -244,15 +245,21 @@ STARTUP_BLOCK="$(awk '/^if \[ -n "\$REVIEW_INFLIGHT_BASE" \]; then$/{f=1} f{prin
 # The loop's checked writer, lifted for the same reason: the arms call it, so the
 # test runs the shipped one rather than a copy that can drift from it (AR6-4).
 STATE_WRITE_FN="$(awk '/^state_write\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$LOOP")"
+# The single-key writer, lifted for the same reason (review-3 F3): the arms call
+# it, so the test must run the shipped one rather than a copy that can drift.
+STATE_SET_FN="$(awk '/^state_set\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$LOOP")"
 if [ -z "$STARTUP_BLOCK" ]; then
     check "H1: the startup block could be lifted from ralph-pi.sh" "lifted" "NOT FOUND"
 else
     SD="$(mktemp -d)"
-    # The loop's own state primitives, pointed at a scratch file.
-    state_get() { sed -n "s/^$1=//p" "$SD/state" 2>/dev/null | tail -1; }
-    state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$SD/state" 2>/dev/null >"$SD/state.t" || true; echo "$kv" >>"$SD/state.t"; mv "$SD/state.t" "$SD/state"; }
+    # The loop's own state primitives, pointed at a scratch file. `state_set` is
+    # NOT retyped here any more: a copy of the writer living in the test is a copy
+    # that can keep passing after the shipped one regressed (review-3 F3).
+    STATE="$SD/state"
+    state_get() { sed -n "s/^$1=//p" "$STATE" 2>/dev/null | tail -1; }
     log() { printf '%s\n' "$*" >>"$SD/log"; }
     eval "$STATE_WRITE_FN"
+    eval "$STATE_SET_FN"
     run_startup() { # run_startup <state-file-body> [repo-root] -> "rc|owed|fails"
         printf '%b' "$1" >"$SD/state"; : >"$SD/log"
         REVIEW_OWED_BASE="$(state_get REVIEW_OWED_BASE)"
@@ -261,7 +268,6 @@ else
         REVIEW_INFLIGHT_HEAD="$(state_get REVIEW_INFLIGHT_HEAD)"
         REVIEW_LEFTOVER="$(state_get REVIEW_STATUS)"
         REVIEW_FAIL_LIMIT=2
-        STATE="$SD/state"   # named in the refusal message; set -u would catch a rename
         local rc root="${2:-$ROOT}"
         ( ROOT="$root"; eval "$STARTUP_BLOCK" ); rc=$?
         printf '%s|%s|%s\n' "$rc" "$(state_get REVIEW_OWED_BASE)" "$(state_get REVIEW_FAILS)"
@@ -430,6 +436,29 @@ else
     check "AR6-4: a record that could not be written exits the arm non-zero" "9" "$?"
 fi
 
+# --- the single-key writer is the SAME checked writer (review-3 F3) -----------
+# `state_set` used to be its own `grep -v > tmp; echo >> tmp; mv tmp $STATE` with
+# the `mv` status discarded, so AR6-4's refusal reached only the multi-key arm and
+# every single-key write kept a silent no-op (measured: eleven call sites over `mv -f tmp somedir` SUCCEEDS by
+# moving the temp file INTO the directory, so the collector could print
+# "REVIEW CALL #N" while REVIEW_CALLS never landed. It now delegates to the
+# checked writer, so the refusal, the temp-file check and the status are one
+# implementation. These cases prove the delegation is real and not a comment that
+# says so: the lifted body must refuse a directory exactly like state_apply does.
+if [ -z "$STATE_SET_FN" ]; then
+    check "F3: state_set could not be lifted from ralph-pi.sh" "lifted" "NOT FOUND"
+else
+    SS="$(mktemp -d)"
+    mkdir -p "$SS/adir"
+    ss_rc() { ( STATE="$1"; log() { :; }; eval "$STATE_WRITE_FN"; eval "$STATE_SET_FN"; state_set REVIEW_CALLS 7 ) 2>/dev/null; printf '%s' "$?"; }
+    check "F3: state_set writes a single key" "0" "$(ss_rc "$SS/state")"
+    check "F3: and the key landed on disk" "7" "$(sed -n 's/^REVIEW_CALLS=//p' "$SS/state" | tail -1)"
+    check "F3: a state path that is a directory stops the arm, not just the announcement" "9" "$(ss_rc "$SS/adir")"
+    check "F3: and the refused write left nothing behind in it" "0" "$(find "$SS/adir" -type f | wc -l | tr -d ' ')"
+    check "F3: state_set hand-rolls no temp file, grep or rename of its own" "0" \
+          "$(printf '%s\n' "$STATE_SET_FN" | grep -cE 'mv |grep -v|\.t')"
+fi
+
 # --- the resolver's own claims -----------------------------------------------
 # reviewer_rejected is only as good as the table it reads, and the table is a
 # transcription of what the proxy said. Assert the resolver's claims here too, so
@@ -525,7 +554,30 @@ guard_absent_in_fold() { # guard_absent_in_fold <label> <fixed-string> -- must N
         printf 'PASS %s\n' "$1"
     fi
 }
-for helper in guard_absent guard_present order_before guard_in_fold order_in_fold guard_absent_in_fold; do
+# The writer's own body, scoped (external review 2026-11-01,
+# run-20261101-062333/review-3.md F5). A file-wide `guard_present … 'exit 9'` is
+# satisfied by an `exit 9` in ANY arm, which is the exact shape this suite spent a
+# whole batch arguing against: the AR6-2 finding was that a substring pin stays
+# green when the property is deleted from the arm that needs it, and this pin was
+# that shape two screens below the argument. The function is already lifted, so
+# there is no reason to match the file instead of it.
+guard_in_state_write() { # guard_in_state_write <label> <fixed-string> -- must be in state_write
+    if printf '%s\n' "$STATE_WRITE_FN" | grep -qF "$2"; then
+        printf 'PASS %s\n' "$1"
+    else
+        printf 'FAIL %s — %s is missing from state_write itself\n' "$1" "$2"
+        fails=$((fails + 1))
+    fi
+}
+absent_in_state_write() { # <label> <fixed-string> -- must NOT be in state_write
+    if printf '%s\n' "$STATE_WRITE_FN" | grep -qF "$2"; then
+        printf 'FAIL %s — %s is back inside state_write\n' "$1" "$2"
+        fails=$((fails + 1))
+    else
+        printf 'PASS %s\n' "$1"
+    fi
+}
+for helper in guard_absent guard_present order_before guard_in_fold order_in_fold guard_absent_in_fold guard_in_state_write absent_in_state_write; do
     if declare -f "$helper" >/dev/null; then
         printf 'PASS guard helper %s is defined before it is called\n' "$helper"
     else
@@ -577,8 +629,9 @@ guard_present "AR-2/AR6-3: the end-of-iteration rewrite goes through the atomic 
 guard_absent  "AR-2: the whole-file rewrite no longer truncates the live state file" '; } >"$STATE"'
 guard_absent  "AR-2: and it no longer hand-rolls its own temp file and rename" '} >"${STATE}.t.$$"'
 guard_absent  "AR-2: state_apply is defined once, in the sourced library, not forked here" 'state_apply()'
-guard_present "AR6-4: the loop calls the CHECKED writer, not the raw primitive" 'if ! state_apply "$@"; then'
-guard_present "AR6-4: and a record that could not be written stops the loop" 'exit 9'
+guard_in_state_write "AR6-4: the writer checks the primitive's status, it does not discard it" 'if ! state_apply "$@"; then'
+guard_in_state_write "AR6-4: and a record that could not be written stops the loop" 'exit 9'
+absent_in_state_write "AR6-4: the stop is not spelled so a caller could swallow it" 'state_apply "$@" || true'
 guard_present "AR-4: the reconstructed base must be an ancestor of HEAD" 'merge-base --is-ancestor "$STATE_HEAD_SHA" HEAD'
 # F4/AR6-1: the obligation is on disk before the reviewer exists, so a kill in
 # either window leaves an obligation rather than an all-clear. The order used to
