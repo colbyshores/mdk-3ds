@@ -230,9 +230,10 @@ bool parsePoint(const char* text, Vec3* out) {
 // 22.16 units from the hamster and the run needs 20 (ObjectBehaviors.RunnerStart),
 // so in every shipped scenario the hamster only ever idles. This mode places Kurt
 // where the C# probe's `runner` mode places him and prints the SW_H150's state
-// after EVERY tick, so the push, the turn clamp, the stop test, the return to idle
-// and the idle RNG that follows are all in the golden. The C# twin of this dump is
-// the oracle probe's `runner` mode and prints the same fields in the same order.
+// after EVERY tick, so the push, the turn clamp, the stop test, the return to idle,
+// the idle RNG that follows and the RUNNER voice are all in the golden. The C# twin
+// of this dump is the oracle probe's `runner` mode and prints the same fields in the
+// same order.
 std::string dumpRunner(int level, int ticks, const Vec3& kurt, scripts::ScriptRuntime& runtime) {
     std::string out;
     char line[512];
@@ -252,12 +253,16 @@ std::string dumpRunner(int level, int ticks, const Vec3& kurt, scripts::ScriptRu
             if (o.type_name != "SW_H150") {
                 continue;
             }
+            // The mixer's RUNNER voice is the audible side effect of entering H150_R
+            // (ObjectBehaviors.UpdateRunner); the oracle prints whether it is playing, so
+            // a dropped, renamed or wrongly-gated play() cannot pass the runner goldens.
             snprintf(line, sizeof(line),
                      "t=%d obj=%03d pos=%.4f,%.4f,%.4f yaw=%.4f anim=%s frame=%d "
-                     "push=%.4f,%.4f,%.4f flags=0x%08X\n",
+                     "push=%.4f,%.4f,%.4f flags=0x%08X mixer=%s\n",
                      t, index, o.position.x, o.position.y, o.position.z, o.yaw,
                      o.animation ? o.animation->name.c_str() : "-", o.animation_frame, o.push.x,
-                     o.push.y, o.push.z, (unsigned)o.flags);
+                     o.push.y, o.push.z, (unsigned)o.flags,
+                     runtime.mixer().isPlaying("RUNNER") ? "RUNNER" : "-");
             out += line;
         }
     }

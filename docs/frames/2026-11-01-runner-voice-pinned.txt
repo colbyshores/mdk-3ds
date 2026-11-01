@@ -1,0 +1,37 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-01T19:29:37Z at a97d8c0
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move, and what shows the batch instead
+--------------------------------------------------------------
+This batch changed no shipped source and no game behaviour. It closed review-1's F3, which is about
+what a golden is able to notice: `ObjectBehaviors.UpdateRunner` (ObjectBehaviors.cs:305-306) enters
+`H150_R` and plays the `RUNNER` voice, and the port does both
+(`mdk_core/src/scripts/script_runtime.cpp:1033-1034`), but the `L7_t120_runner_{a,b}` goldens printed
+position, yaw, animation, frame, push and flags and no mixer field — so dropping, renaming or
+mis-gating the `play()` was invisible to every gate. The fix is a column, added to the C# oracle probe
+*and* to its C++ twin (`tests/scripts/tick1.cpp` `dumpRunner`), and both runner goldens regenerated
+from the oracle. Nothing a frame is made of — geometry, palette, uniforms, projection, camera, draw
+order — was touched, so the digest is the same one 32 earlier frames carry and `reference.sha256` was
+not regenerated. The gap above is the standing 1.240% baseline, not a measurement of this batch.
+
+What does show it, and can fail:
+
+  * `make -C tests/scripts` — 442 PASS / 0 FAIL / 0 SKIP, the two changed lines being
+    `PASS L7_t120_runner_a` and `PASS L7_t120_runner_b`. Every line of both files now ends in
+    ` mixer=RUNNER` or ` mixer=-`, and the column is load-bearing from t4, the tick the hamster
+    enters `H150_R`.
+  * The falsification, which is the point of the batch: with `mixer_.play("RUNNER", Once)` commented
+    out at `script_runtime.cpp:1034` and nothing else changed, the suite prints
+    `FAIL L7_t120_runner_a: at byte 533` and `FAIL L7_t120_runner_b: at byte 533`. On the previous
+    commit the same removal left all 442 cases green. The file was restored and re-verified green.
+  * Provenance, which is the only thing that makes a golden a golden: both files were re-diffed in
+    this iteration against a rebuilt oracle probe — `mdkprobe 7 120 1 runner -21,-13,0.73` and
+    `... -26,-18,0.73` from `/tmp/mdk-pi/obj3` — and came back byte-identical. The scratch tree's
+    `src/**.cs` differs from the repository's oracle in exactly the three known print-only
+    instrumented files (`ScriptVm.cs`, `ObjectView.cs`, `MaterialResolver.cs`) and nothing else.
+
+Capture conditions: `DISPLAY=:99` (exported by `tests/frames/capture_cpp.sh` itself, AGENTS.md P7 —
+never the operator's desktop), lavapipe (`VK_ICD_FILENAMES` default `lvp_icd.json`), built from
+a97d8c0 plus this batch's working tree. No emulator run and no Old-3DS hardware run: Old-3DS timing
+stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6).

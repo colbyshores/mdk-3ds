@@ -1,30 +1,31 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — review-12 remediation: the refusal gate's verdict counter now moves **after** the `printf`
-it counts, so a skipped print can only make the count SHORT — the one direction the cardinality backstop
-can read — and the archive fixture helper's refusal is now gated by a counted pair instead of a NOTE
-line. Three owner-authorized obligations that batch 25 dropped under a width reflow are restored
-verbatim. No shipped source, game behaviour, renderer, golden, data format, `ralph-pi.sh` or
-`review_state.sh` change; the pinned frame is byte-unchanged. Medium rather than low because it changes
-what two existing gates mean — a tree that went green through a skipped print, or over a fixture refusal
-nobody accounted for, now goes red — and the deliverable is a falsification record.
+Risk: medium — batch 27 finishes the inherited tree and closes review-1 F3: `dumpRunner` now prints a
+`mixer=` column, so the hamster's `RUNNER` voice is pinned, and both `L7_t120_runner_{a,b}` goldens were
+regenerated from the C# oracle and re-diffed byte-identical against a rebuilt probe. **No shipped source
+changed** (`script_runtime.cpp` is byte-unchanged), no game behaviour, renderer, data format,
+`ralph-pi.sh` or `review_state.sh` change; the pinned frame is byte-unchanged. Medium rather than low
+because the deliverable is two rewritten pinned goldens, and the failure mode of that class of change is
+silent — a golden copied from the implementation it tests looks exactly like a golden copied from the
+oracle. Both provenance (byte-identical to `mdkprobe`, and the scratch tree's `src/**.cs` enumerated
+against the read-only oracle) and load-bearingness (removing `play()` now fails both cases at byte 533,
+where it left all 442 green before) were measured, not asserted.
 
-Last updated: 2026-11-01 (**batch 26** — review-12 remediation; the review had **no Critical and no
-High** findings, its verdict was **INCOMPLETE**, and all four findings — 2 Medium, 2 Low — were confirmed
-and fixed, none rebutted; full narrative, falsification tables and the erratum for batch 25's
-over-scoped claim are in `docs/PROGRESS_LOG.md` "Iteration 54"). **F1 Medium:** batch 25 moved
-`ADJUDICATED` into `verdict()` but left it *before* the `printf`, so one `return 0` between those two
-statements reproduced the same `PASS SpritesRefusal (2 arms adjudicated)` with exit 0 over zero verdict
-lines (re-measured on `07345d6`); the count now moves after the print, which is the only ordering the
-backstop can read, and the eight placements in the table in "Iteration 54" were tested. **F2 Medium:** the three clauses batch 25 deleted
-from the owner-authorized list under a reflow are restored ("the proposal is to", "and an owner check on
-it belongs on record", and item (9)'s remedy sentence). **F3 Low:** the `assert()` rationale claimed
-AGENTS.md §10 made it unavailable; §10's scope is §8's and `audit_c_with_classes.py` scans
-`mdk_core/src` and `mdk_3ds/src` only, so it is house style, and the comment now says so. **F4 Low:** a
-refused fixture was advisory, and a *negatively*-asserting caller passes vacuously on the empty bytes;
-refusals are now counted against asserted refusals and an unequal pair fails the suite (the F4 scenario
-itself: 1 check FAILED, exit 1). Goldens **442/0/0**, no PASS line moved; frame byte-unchanged.
-Previous: **batch 25** ("Iteration 53"), **batch 24** ("Iteration 52"), **batch 23** ("Iteration 51").
+Last updated: 2026-11-01 (**batch 27** — review-1 F3, the `RUNNER` voice; full narrative, the provenance
+re-measurement and the falsification are in `docs/PROGRESS_LOG.md` "Iteration 55"). `ObjectBehaviors.cs:305-306`
+enters `H150_R` **and** plays `RUNNER`; the port does both at `script_runtime.cpp:1033-1034` but the
+runner goldens printed no mixer field, so a dropped, renamed or mis-gated `play()` passed every gate in
+the repository. The column is on both sides of the seam — `tests/scripts/tick1.cpp:255-266` and the oracle
+probe's `runner` mode — and the column varies (`mixer=-` t1-t3, `mixer=RUNNER` from t4), so it is exercised
+rather than constant. Prior-solution lookup: **`pi-knowledge` is UNAVAILABLE, not empty** — `knowledge_show`
+returns `No knowledge bases.`, so there is no `mdk-sdl` KB and an empty search is an environment gap, not a
+finding (the loop's `ralph/builder.md` now requires that distinction; that edit and a `ralph-pi.sh` edit
+both appeared mid-iteration, are not this batch's, and are left uncommitted for the owner); the Obsidian vault was searched read-only for `SW_H150`, `SoundMixer`, `RUNNER voice`, `mixer_.play`
+and `golden provenance` with **zero files**; Cognee MCP is not exposed in this harness. Goldens
+**442/0/0**, no PASS line moved; frame byte-unchanged. Previous: **batch 26** ("Iteration 54", review-12:
+all four findings — 2 Medium, 2 Low — confirmed and fixed, none rebutted, the verdict counter moved after
+the print it counts, and the three owner-authorized clauses batch 25 dropped restored), **batch 25**
+("Iteration 53"), **batch 24** ("Iteration 52"), **batch 23** ("Iteration 51").
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -42,11 +43,13 @@ Previous: **batch 25** ("Iteration 53"), **batch 24** ("Iteration 52"), **batch 
    has a committed evidence pair (`docs/evidence/2026-11-01-L7-sprites-missing-scene.{png,txt}`,
    symlink farm + 4-byte archive, `DISPLAY=:99`, lavapipe, command and revision in the sidecar,
    which says in its own text that a pin cannot show an error path) and a gated pin for the guard
-   behind it (`tests/scripts/archive_guard_tests.cpp`). (b) **F3 from review-1** — `dumpRunner` has no
-   mixer field, so `mixer_.play("RUNNER", Once)` is unpinned; add the column to the probe *and* the
-   harness and regenerate `L7_t120_runner_{a,b}` from the oracle. The probe is the scratch tree at
-   `/tmp/mdk-pi/obj3` (a copy of `src/Mdk.Game` plus `Probe`, writable by this account) and already
-   builds a real `SoundMixer` over `SoundBank.ForLevel`, so the value is obtainable. (c) The C3D depth
+   behind it (`tests/scripts/archive_guard_tests.cpp`). (b) **DONE — batch 27.** `dumpRunner` prints a
+   `mixer=` column, so `mixer_.play("RUNNER", Once)` is pinned, and `L7_t120_runner_{a,b}` are regenerated
+   from the oracle. The probe is the scratch tree at `/tmp/mdk-pi/obj3` (a copy of `src/Mdk.Game` plus
+   `Probe`, writable by this account) and builds a real `SoundMixer` over `SoundBank.ForLevel`; rebuild it
+   with `/tmp/mdk-pi/build_probe.sh`, then `DOTNET_ROOT=/tmp/kilo/dotnet10 MDK_DATA_DIR=…/MDK ./mdkprobe 7
+   120 1 runner -21,-13,0.73` (and `-26,-18,0.73`) re-derives both files. Its `src/**.cs` differs from the
+   read-only oracle only in the three known print-only instrumented files. (c) The C3D depth
    and blend state still differ from the C# and the Citro3D backend ignores `MeshDraw::world`, so the
    3DS cannot place an object until it has a per-draw matrix. (d) The middle 173 px of the pinned frame
    is **not** the object pass — at frame 1 neither tree has a script object; the sky/middle/bottom
@@ -60,7 +63,7 @@ Deferred with cause: 248 `push_kurt` awaits knock-back; Rides writes the alarm c
 consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix and Kurt's muzzle
 flash, ride pose and footsteps; `Vector3.Lerp`'s rounding (above); the other half of
 `FrameBlend` (Kurt's blended feet/yaw, `Record/Update/Turn/KurtAt`) and `TransformOf`'s
-driven-carrier shift, both with `Rides`; review-1's F3 (the `RUNNER` voice). All with
+driven-carrier shift, both with `Rides`. All with
 evidence in `OPEN_ITEMS.md`. **Old-3DS timing is UNMEASURED.**
 
 **Owner-authorized tasks (cannot be done in a batch).** (1) Add `ralph-pi.sh`, `ralph.sh`,
@@ -151,25 +154,27 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `guard_fragment`, three region lifts with behavioural cases instead, `count_writes` counting
   **occurrences** not lines) is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 26)
+## Verified on this tree (batch 27)
 
-All gates re-run from a clean invocation; verbatim output and the falsification tables in
-`docs/PROGRESS_LOG.md`, "Iteration 54" — read those tables before calling any case there inert.
-Goldens **exit 0** (`All cases match the oracle.`, **442 PASS / 0 FAIL / 0 SKIP**, no PASS line moved);
-`tools/check.sh` **exit 0** (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the
-pinned `cpp=`, so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS);
-`make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk` **exit 0**;
-`test_review_state.sh` **exit 0**, **177 cases**. The reversions that went red: a `return 0` before the
-verdict `printf` and one between the `printf` and the count (both `only 0 of 2 declared arms`, exit **1**
-— where batch 25's placement printed `PASS` and exited **0**), a `return` in one arm only (`1 of 2`),
-deleting the fixture-refusal consume (1 check, `vm_tests` **exit 1**), deleting the refusal count (2
-checks), deleting the fixture bound (3 checks), a 13-character width-pin fixture (the NOTE names the
-fixture before any assertion fails), and the F4 scenario itself — a negatively-asserting caller on a
-refused fixture, whose own two checks are green and whose suite is red. `archive_guard_tests.cpp` was
-restored after each reversion and re-verified green — **no shipped source changed in this batch**. Frame
-`docs/frames/2026-11-01-count-after-the-print.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical to
-its 31 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED**,
-Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
+All gates re-run from a clean invocation; verbatim output, the provenance re-measurement and the
+falsification are in `docs/PROGRESS_LOG.md`, "Iteration 55". Goldens **exit 0** (`All cases match the
+oracle.`, **442 PASS / 0 FAIL / 0 SKIP**, no PASS line moved, both `L7_t120_runner_*` now carrying the
+`mixer=` column); `tools/check.sh` **exit 0** (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`,
+byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED;
+integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk`
+**exit 0**; `test_review_state.sh` **exit 0**, **177 cases**. Two things were measured rather than asserted, because both are the failure modes of this
+batch's own class: **provenance** — both goldens re-diffed **byte-identical** against a rebuilt
+`mdkprobe`, and the scratch tree's `src/**.cs` enumerated against the read-only oracle as differing only
+in the three known print-only files; and **load-bearingness** — commenting out `script_runtime.cpp:1034`
+(`mixer_.play("RUNNER", Once)`) and nothing else now prints `FAIL L7_t120_runner_a` and
+`FAIL L7_t120_runner_b`, both `at byte 533`, where the identical removal left all 442 cases green on the
+previous commit. The file was restored with `git checkout` and re-verified green — **no shipped source
+changed in this batch**. Frame `docs/frames/2026-11-01-runner-voice-pinned.png` + `.txt` — `1.240 / 247 /
+0.1819`, byte-identical to its 32 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS
+timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
+Batch 26's own record — the eight counter-placement reversions, the fixture-refusal counts, and the F4
+vacuous-caller scenario, each with its measured exit status — is in "Iteration 54"; read those tables
+before calling any case there inert.
 
 ## Standing open items
 

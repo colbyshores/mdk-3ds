@@ -7335,3 +7335,132 @@ from the oracle. Then (c) the Citro3D per-draw matrix and the depth/blend diverg
 `FrameBlend.Lerp`'s rounding. This batch closes review-12 with no open findings of its own; the four
 owner-authorized tasks it touched ((3), (8), (9) and the `/tmp/kilo` gap, (11)) stay open because they are
 not a batch's call.
+
+## Iteration 55 — batch 27: a golden must pin the side effect it claims to cover (review-1 F3)
+
+**Inherited tree, finished first.** This iteration opened on a dirty tree left by a timed-out
+iteration — `tests/scripts/tick1.cpp` plus both `L7_t120_runner_{a,b}.txt` goldens, already carrying
+the mixer column. Per the builder rule that inherited work is finished and committed before anything
+new starts, so this batch is that work: **PRIORITY ORDER item (b), review-1's F3**. Nothing was
+started on top of it.
+
+**What was implemented.** `ObjectBehaviors.UpdateRunner` does two things when the hamster starts
+running: it enters `H150_R` and it plays the `RUNNER` voice (`src/Mdk.Game/Scripts/ObjectBehaviors.cs:305-306`
+— `RestartAnimation(run, Loop)` then `runtime.Mixer.Play("RUNNER", Start.Once)`). The port does both
+(`mdk_core/src/scripts/script_runtime.cpp:1033-1034` — `restartAnimation(obj, run, true)` then
+`mixer_.play("RUNNER", audio::SoundMixer::Once)`). It did them **unpinned**: the runner goldens printed
+`pos`, `yaw`, `anim`, `frame`, `push` and `flags`, and no mixer field, so a `play()` that was dropped,
+renamed, or moved outside the `obj->animation != run` gate left every gate in the repository green. The
+C# `IsPlaying` is a name scan over the live voices (`SoundMixer.cs:101-112`) and the C++ `isPlaying` is
+the same scan (`sound_mixer.cpp:109-116`), so the field is a faithful observable rather than a
+port-specific invention. The fix is a column on both sides of the seam: `mixer=RUNNER` / `mixer=-`
+appended to `dumpRunner` (`tests/scripts/tick1.cpp:255-266`) and to the oracle probe's `runner` mode,
+and both goldens regenerated from the oracle. This closes review-1 F3 and removes it from the deferred
+list.
+
+**Prior-solution lookup (mandatory), with each source's actual state.** The loop's `ralph/builder.md`
+was edited during this iteration to add a `pi-knowledge` lookup and to require that an unavailable
+source be reported rather than passed off as an empty result; all three sources are reported below.
+
+  * **`pi-knowledge`: UNAVAILABLE, not empty.** `knowledge_show` returns **`No knowledge bases.`** —
+    there is no `mdk-sdl` KB on this host — and `knowledge_search` for the runner/mixer subsystem
+    returns `No results found` from an empty store. That is an environment gap, **not** a lookup that
+    found nothing, and it is recorded as such rather than as a successful consultation. (This replaces
+    the `Cannot find package 'ignore'` failure recorded in "Iteration 54": the tool now runs, and there
+    is simply nothing indexed.) Indexing the repository is not a batch's call.
+  * **Obsidian vault: reachable, read-only, no hits on this subsystem.** Searched
+    `/mnt/nas/Vaults/port-docs` for `SW_H150`, `SoundMixer`, `RUNNER voice`, `mixer_.play` and
+    `golden provenance`: **zero files**. The nearest applicable prior art remains the count/bound and
+    pass-generator notes cited in "Iteration 54", which are about gates, not audio.
+  * **Cognee MCP: not exposed in this harness**, as in every prior iteration.
+
+**Provenance: the goldens are the oracle's bytes, re-measured in this iteration.** A golden copied from
+the implementation it tests is not a golden, so both files were re-diffed against a rebuilt probe
+rather than trusted from the inherited tree. `/tmp/mdk-pi/obj3` was rebuilt with
+`/tmp/mdk-pi/build_probe.sh` (`shaders ok`, `build ok`) and run as
+
+```
+MDK_DATA_DIR=…/MDK ./mdkprobe 7 120 1 runner -21,-13,0.73   # → L7_t120_runner_a.txt
+MDK_DATA_DIR=…/MDK ./mdkprobe 7 120 1 runner -26,-18,0.73   # → L7_t120_runner_b.txt
+```
+
+Both `diff` against the working-tree goldens came back **empty — byte-identical to the oracle**, 121
+lines each. The scratch tree's `src/**.cs` was enumerated file by file against the repository's
+read-only oracle and differs in exactly the three known print-only instrumented files — `ScriptVm.cs`
+(a `ProbeTick` field and two `Console.Error` traces), `ObjectView.cs` (a `DumpIfNew` that only reads
+the oracle's own `LayoutOf`), `MaterialResolver.cs` (a `TextureIds` accessor and null-renderer
+tolerance for headless use) — and in no other file, so the probe is the oracle for this path.
+
+**Falsification: the column is load-bearing, measured.** With `mixer_.play("RUNNER", Once)` commented
+out at `script_runtime.cpp:1034` and nothing else changed anywhere in the tree:
+
+```
+FAIL L7_t120_runner_a: at byte 533
+FAIL L7_t120_runner_b: at byte 533
+```
+
+On the previous commit the identical removal left **all 442 cases green** — that is the defect review-1
+F3 named, reproduced, and it is now closed. The file was restored with `git checkout` and re-verified
+green; `mdk_core/src/scripts/script_runtime.cpp` is **byte-unchanged in this batch** (the only shipped
+source it touches is nothing). The column also varies on its own: `mixer=-` for t1-t3, `mixer=RUNNER`
+from t4, the tick the hamster enters `H150_R`, so the pin is exercised rather than constant.
+
+### Gate results, verbatim, as run on this tree
+
+```
+$ make -C tests/scripts clean && make -C tests/scripts -j8
+PASS ArchiveIndexGuards
+PASS SpritesRefusal (2 arms adjudicated)
+PASS L7_t120_runner_a: the hamster's run from tick to tick matches the oracle
+PASS L7_t120_runner_b: the hamster's run from tick to tick matches the oracle
+All cases match the oracle.
+EXIT=0                     # 442 PASS / 0 FAIL / 0 SKIP — same count as batch 26, no PASS line moved
+
+$ bash tools/check.sh
+  VERDICT: CONTRACT CLEAN -- 0 violations.            (audit_c_with_classes)
+PASS blockers=0 reviews=0                            (gates_vfp)
+VERDICT: CONTRACT CLEAN                              (audit_arm11_math)
+    VERDICT: SKIPPED -- no built .cia to read the SMDH out of.   (gates_smdh)
+PASS L3_f1.bmp sha=58615fc85d02e009                  (gates_frames)
+BATCH INTEGRITY: PASS
+CHECK: ALL GATES PASSED
+EXIT=0
+
+$ DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8
+LINK mdk.elf
+3DSX mdk.3dsx
+EXIT=0
+
+$ cmake --build build-linux --target mdk -j8
+[100%] Built target mdk
+EXIT=0
+```
+
+`gates_frames` printed the pinned digest unchanged, so `reference.sha256` was **not** regenerated. The
+frame `docs/frames/2026-11-01-runner-voice-pinned.png` + `.txt` is byte-identical to its 32
+predecessors (`6646adf1…`), which is the expected result for a harness-only batch and is said in the
+sidecar's own text; capture on `DISPLAY=:99` (exported by `capture_cpp.sh` itself, P7), lavapipe. **No
+emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED**, Citro3D picture
+UNVERIFIED (P6). No gate, test or golden was pinned, relaxed or edited, and no golden value came from
+the implementation.
+
+**Two tree notes — external edits that appeared mid-iteration and are NOT in this commit.** The loop's
+owner edited two of the loop's own files in this working tree while this batch was running:
+`ralph/builder.md` (the `pi-knowledge` lookup requirement quoted above) and `ralph-pi.sh` (four call
+sites now pass `NODE_TLS_REJECT_UNAUTHORIZED=0` to `pi`, which **disables TLS certificate verification on
+the loop's model calls**). Neither is this batch's authorship, neither is a project source file, and
+neither is verified complete — so both are deliberately **left uncommitted** for the owner to land. A
+batch whose message says "no shipped source changed" must not silently absorb a security-relevant change
+to the harness, and `ralph-pi.sh` is the file owner task (1) says belongs in the integrity gate's
+`PROTECTED` set. The consequence is recorded honestly: **this batch's commit does not leave a fully clean
+tree**; the two harness files stay dirty and the next iteration inherits them and must not fold them into
+its own batch message.
+
+### What is next
+
+**(c)** the Citro3D depth/blend divergence and `MeshDraw::world` — the 3DS cannot place an object until
+the backend has a per-draw matrix. Then **(d)** the middle 173 px of the pinned frame, then **(e)**
+`FrameBlend.Lerp`'s rounding (a target codegen decision). Item **(b)**, review-1 F3, is closed by this
+batch and leaves the deferred list. The owner-authorized tasks are unchanged, including (10)
+`tick1`'s zero-exiting `SKIP` and (11) the unwritable `/tmp/kilo`; this batch's scratch path was
+`/tmp/mdk-pi` and `/tmp`, recorded here per (11).
