@@ -40,6 +40,7 @@
 #include "formats/model_animation.h"
 #include "game/level_data.h"
 #include "game/object_view.h"
+#include "game/player.h"
 #include "render/arena_scene.h"
 #include "render/material_resolver.h"
 #include "scripts/script_runtime.h"
@@ -209,6 +210,56 @@ std::string dumpObjectTransforms(int level, int ticks, scripts::ScriptRuntime& r
                  t.m[0], t.m[1], t.m[2], t.m[3], t.m[4], t.m[5], t.m[6], t.m[7], t.m[8], t.m[9],
                  t.m[10], t.m[11], t.m[12], t.m[13], t.m[14], t.m[15]);
         out += line;
+    }
+    return out;
+}
+
+// "x,y,z" -> Vec3, for a harness argument. False unless it is three numbers.
+bool parsePoint(const char* text, Vec3* out) {
+    float v[3];
+    if (sscanf(text, "%f,%f,%f", &v[0], &v[1], &v[2]) != 3) {
+        return false;
+    }
+    out->x = v[0];
+    out->y = v[1];
+    out->z = v[2];
+    return true;
+}
+
+// The Runner's RUNNING half, which nothing else can reach: level 7's Kurt starts
+// 22.16 units from the hamster and the run needs 20 (ObjectBehaviors.RunnerStart),
+// so in every shipped scenario the hamster only ever idles. This mode places Kurt
+// where the C# probe's `runner` mode places him and prints the SW_H150's state
+// after EVERY tick, so the push, the turn clamp, the stop test, the return to idle
+// and the idle RNG that follows are all in the golden. The C# twin of this dump is
+// the oracle probe's `runner` mode and prints the same fields in the same order.
+std::string dumpRunner(int level, int ticks, const Vec3& kurt, scripts::ScriptRuntime& runtime) {
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "level=%d ticks=%d seed=1 kurt=%.4f,%.4f,%.4f\n", level, ticks,
+             kurt.x, kurt.y, kurt.z);
+    out += line;
+    for (int t = 1; t <= ticks; t++) {
+        runtime.update(1.0f / 30.0f);
+        int index = 0;
+        for (std::deque<scripts::MdkObject>::const_iterator it = runtime.objects().begin();
+             it != runtime.objects().end(); ++it, ++index) {
+            const scripts::MdkObject& o = *it;
+            if (runtime.isRemoved(&o)) {
+                index--;  // the oracle's list does not contain removed objects
+                continue;
+            }
+            if (o.type_name != "SW_H150") {
+                continue;
+            }
+            snprintf(line, sizeof(line),
+                     "t=%d obj=%03d pos=%.4f,%.4f,%.4f yaw=%.4f anim=%s frame=%d "
+                     "push=%.4f,%.4f,%.4f flags=0x%08X\n",
+                     t, index, o.position.x, o.position.y, o.position.z, o.yaw,
+                     o.animation ? o.animation->name.c_str() : "-", o.animation_frame, o.push.x,
+                     o.push.y, o.push.z, (unsigned)o.flags);
+            out += line;
+        }
     }
     return out;
 }
@@ -1092,10 +1143,30 @@ int main(int argc, char** argv) {
             return 1;
         }
         bank.preload();
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
+        // The `runner` mode drives the world with Kurt standing where no shipped
+        // start puts him (see dumpRunner). The C# probe's twin sets Kurt.Feet to
+        // the same point, so both trees feed the runtime the same live Kurt; the
+        // other dump modes keep the C#'s no-live-Kurt harness.
+        Player kurt;
+        const Player* kurtArg = nullptr;
+        Vec3 kurtAt = {0.0f, 0.0f, 0.0f};
+        if (what == "runner") {
+            if (argc <= 5 || !parsePoint(argv[5], &kurtAt)) {
+                printf("usage: tick1 dump runner <level> <ticks> <x,y,z>\n");
+                return 1;
+            }
+            kurt.feet = kurtAt;
+            kurt.yaw = levelData.dti().startAngle();
+            kurtArg = &kurt;
+        }
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, kurtArg, spritesOrNull);
         runtime.option = 0;
-        for (int t = 0; t < ticks; t++) {
-            runtime.update(1.0f / 30.0f);
+        // dumpRunner ticks the world itself, one tick per printed line; ticking it
+        // here too would print the state 2*ticks ticks in, not `ticks`.
+        if (what != "runner") {
+            for (int t = 0; t < ticks; t++) {
+                runtime.update(1.0f / 30.0f);
+            }
         }
         if (what == "pose") {
             printf("%s", dumpObjectPoses(level, ticks, runtime).c_str());
@@ -1109,6 +1180,8 @@ int main(int argc, char** argv) {
             printf("%s", dumpObjectDraw(level, ticks, levelData, runtime).c_str());
         } else if (what == "bound") {
             printf("%s", dumpStreamBound(level, ticks, levelData, runtime).c_str());
+        } else if (what == "runner") {
+            printf("%s", dumpRunner(level, ticks, kurtAt, runtime).c_str());
         } else {
             printf("unknown dump\n");
             return 1;
@@ -1544,6 +1617,85 @@ int main(int argc, char** argv) {
                        "oracle\n", level, ticks);
             } else {
                 printf("FAIL L%d_t%d_stream_bound: %s\n", level, ticks,
+                       firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The Runner's RUNNING half (ObjectBehaviors.UpdateRunner's H150_R branch).
+    // Nothing else can pin it: level 7's Kurt starts 22.16 units from the hamster
+    // and the run needs 20, so in every shipped scenario the hamster only ever
+    // idles (that half is pinned by L7_t1000_pose). These two cases place Kurt
+    // beside it, which starts the run, and the dump covers every tick, so the
+    // push, the 270 deg/s turn clamp, the plan-distance stop test, the return to
+    // H150_I and the idle RNG after it are all in the golden. Both goldens are the
+    // oracle probe's `runner` mode output with Kurt at the same point.
+    {
+        struct RunnerCase {
+            int level;
+            int ticks;
+            const char* kurt;
+            const char* tag;
+        };
+        const RunnerCase runnerCases[] = {
+            {7, 120, "-21,-13,0.73", "a"},
+            {7, 120, "-26,-18,0.73", "b"},
+        };
+        for (size_t c = 0; c < sizeof(runnerCases) / sizeof(runnerCases[0]); c++) {
+            const RunnerCase& rc = runnerCases[c];
+            char goldenPath[160];
+            snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_t%d_runner_%s.txt", rc.level,
+                     rc.ticks, rc.tag);
+            std::string expected;
+            if (!readText(goldenPath, &expected)) {
+                printf("FAIL L%d_t%d_runner_%s: no golden file %s\n", rc.level, rc.ticks, rc.tag,
+                       goldenPath);
+                failures++;
+                continue;
+            }
+            LevelData levelData;
+            if (!LevelData::load(&levelData, &data, rc.level)) {
+                printf("FAIL L%d_t%d_runner_%s: the level did not load\n", rc.level, rc.ticks,
+                       rc.tag);
+                failures++;
+                continue;
+            }
+            char cmiPath[128];
+            snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", rc.level, rc.level);
+            std::vector<uint8_t> cmiBytes;
+            Cmi cmi;
+            if (!data.read(cmiPath, &cmiBytes) ||
+                !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+                printf("FAIL L%d_t%d_runner_%s: the CMI did not load\n", rc.level, rc.ticks, rc.tag);
+                failures++;
+                continue;
+            }
+            audio::SoundBank bank;
+            if (!audio::SoundBank::forLevel(&bank, data, rc.level)) {
+                printf("FAIL L%d_t%d_runner_%s: the sound bank did not load\n", rc.level, rc.ticks,
+                       rc.tag);
+                failures++;
+                continue;
+            }
+            bank.preload();
+            Vec3 at;
+            if (!parsePoint(rc.kurt, &at)) {
+                printf("FAIL L%d_t%d_runner_%s: bad Kurt point\n", rc.level, rc.ticks, rc.tag);
+                failures++;
+                continue;
+            }
+            Player player;
+            player.feet = at;
+            player.yaw = levelData.dti().startAngle();
+            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, spritesOrNull);
+            runtime.option = 0;
+            std::string got = dumpRunner(rc.level, rc.ticks, at, runtime);
+            if (got == expected) {
+                printf("PASS L%d_t%d_runner_%s: the hamster's run from tick to tick matches the "
+                       "oracle\n", rc.level, rc.ticks, rc.tag);
+            } else {
+                printf("FAIL L%d_t%d_runner_%s: %s\n", rc.level, rc.ticks, rc.tag,
                        firstDifference(got, expected).c_str());
                 failures++;
             }

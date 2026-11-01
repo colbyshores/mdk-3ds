@@ -1,0 +1,46 @@
+evidence pair -- NOT the pinned regression frame. See docs/evidence/README.md.
+This is the same scene, frame and command as
+2026-11-01-L7-runner-scene.png with ONE number changed: Kurt's yaw, 0 -> 45
+degrees, which swings the follow camera off the line the hamster runs along so
+the hamster is no longer behind Kurt. Read the pair beside that file first: it
+carries the correction of the previous batch's "a runner picture is impossible"
+claim, the capture procedure, and the oracle's own command.
+
+scene: level 7, 320x240, seed 1, --at=-21,-13,9,45, frame 30 (= the oracle's
+       --wait=0.5 frame). Script tick 15: the hamster is at
+       pos=2.3333,-13.0000,-0.0400, anim H150_R frame 0 (golden/L7_t120_runner_a).
+captured: 2026-11-01T00:13Z from the working tree of revision bfa1c7c plus this
+       batch's own changes; committed WITH the code it shows.
+command: DISPLAY=:99 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+           MDK_DATA_DIR=$PWD/MDK ./build-linux/mdk --headless --fixed-step \
+           --level=7 --size=320x240 --seed 1 --at=-21,-13,9,45 \
+           --capture-frame=30 --capture=<out>.bmp
+display: :99 (headless Xvfb, lavapipe). AGENTS.md P7: no emulator, no
+       operator-desktop display, no Old-3DS hardware run.
+live C++ vs C# oracle: bad_percent=1.298 bad_pixels=997 max_delta=87 mean_delta=0.1580
+cpp sha256: 2f98a32dfa555a16a043cfd6640677bee116082b65c6b65d7fefdc117dd01de1
+oracle: /tmp/mdk-batch10/oracle_L7_at9y45_wait05.bmp, sha256
+       a19203aa97636b9a049727ace7579f6d6cae48e20e399827abd728159d17cfd1 -- same
+       build and procedure as the other pair, with --at=-21,-13,9,45. The oracle
+       printed "Kurt at -21.00 -13.00 0.73 yaw 45 Fall floor False arena DANT_1
+       health 100". Never committed: ROM-derived.
+
+what this picture is evidence of: the Runner on screen. The oracle's --trace puts
+       the camera at -26.48,-18.48,6.81 at this frame; projecting the hamster's
+       tick-15 position through that camera (FollowCamera.FieldOfView = 71.5 deg,
+       320x240) lands it in the upper-right of the frame, at about x 260-275,
+       y 85-105. The object there is a small creature with a yellow wheel, and
+       both trees draw it at the same pixels: over the box x 200-320, y 20-140
+       the C++ and the oracle differ in 462 of 14400 pixels (3.2%), max channel
+       delta 57, mean 0.5347. Its apparent size (~32x40 px at depth ~24, so
+       roughly 4-5 world units) matches the SW_H150 model, whose corners span
+       about 2.9 x 3.3 units (golden/L7_t1000_draw.txt, B0 first/last). The
+       identification is by that projection, that size and that agreement -- the
+       harness has no way to label a pixel with the object that drew it.
+whole-frame gap: 1.298%, worse than the yaw-0 shot's 0.422% above. That is the
+       cost of the camera sitting at an angle where more of the animated sky and
+       the lit floor is in view; it is not a new divergence and the pinned
+       level-3 frame is unchanged by any of this.
+what this picture is NOT: evidence about the pinned frame, about Old-3DS
+       performance, or a substitute for golden/L7_t120_runner_{a,b}.txt, which
+       are what actually pin the running half tick by tick.

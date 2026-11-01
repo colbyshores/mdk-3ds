@@ -1,18 +1,21 @@
 # Phase 2 continuation checkpoint
 
-Last updated: 2026-10-31 (batch 9: the **Runner** is ported — `ScriptRuntime::
-motionRunner` is `ObjectBehaviors.UpdateRunner` (0x43daf4's `SW_H150` branch), the
-hamster that idles on `H150_I` and runs from Kurt. That was the last known
-byte-divergence in any object dump: at L7 t1000 the oracle had the hamster on `H150_I`
-frame 36 and the port had no animation at all, and the idle chance is drawn from the
-**same `Random`** every scripted random decision takes, so the port was running a
-different random stream from level 7 tick 329. `ScriptRuntime` now takes `TRAVSPRT.BNI`
-the way the C# constructor does, because the runner's animations come out of it
-(`Items.GetAnimation`). Goldens are now **438 PASS / 0 FAIL / 0 SKIP** (was 432):
-`L7_t1000_{pose,transform,layout,draw,stream_bound}` plus `L3_t1200_blend`, every one
-copied from the oracle probe. The pinned frame is byte-unchanged, measured: level 3 has
-no hamster. Persistent handoff — keep it under ~150 lines; batch narrative goes in
-`docs/PROGRESS_LOG.md`.
+Risk: medium — removes a defaulted constructor argument from `ScriptRuntime` (an
+internal interface, ~47 mechanical call sites) and adds two goldens plus a harness dump
+mode; no shipped golden moved, the pinned frame is byte-unchanged, all gates green.
+
+Last updated: 2026-11-01 (batch 10: the Runner's **running** half is pinned and the
+record around it is corrected. `golden/L7_t120_runner_{a,b}.txt` dump the hamster's
+pos/yaw/anim/frame/push/flags after EVERY one of 120 ticks with Kurt placed inside
+`DANT_1` through a live `Player` — it was unpinned because no shipped start puts Kurt
+within `RunnerStart` (20) of it, and both goldens are byte-identical to the C# probe's
+new `runner` mode. Review-2's M1 was right too: a runner picture was never impossible —
+the previous batch measured at `--at` z=0, where Kurt has no floor; at z=9 the scene
+renders, so `docs/evidence/2026-11-01-L7-runner-{scene,hamster-visible}.png` exist.
+`ScriptRuntime`'s `sprites` argument is now REQUIRED, as the C#'s is: a runtime without
+the archive runs a different random stream. Goldens **440 PASS / 0 FAIL / 0 SKIP** (was
+438); the pinned frame is byte-unchanged, measured. Keep this file under ~150 lines;
+batch narrative goes in `docs/PROGRESS_LOG.md`.
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -39,29 +42,25 @@ no hamster. Persistent handoff — keep it under ~150 lines; batch narrative goe
    **NEXT, in priority order:** (a) the C3D depth and blend state still differ from the
    C# (Standing open items) and the Citro3D backend ignores `MeshDraw::world`, so the
    3DS cannot place an object until it has a per-draw matrix; (b) the middle 173 px of
-   the pinned frame, which is **not** the object pass: at frame 1 neither tree has a
-   script object, so that patch is something else and is still open. The 1.240% gap is
-   three unrelated things and only one is portable — sky 774 px / 3.023% / max 99 is
-   shader-codegen in `clip_to_direction`'s ill-conditioned w row (do NOT re-litigate the
-   panorama, palette, uniforms, projection or camera); middle 173 px / 0.676% / max 247
-   is one 8x5 patch at x 174-181, y 127-131 that is not Kurt and is not an object
-   either; bottom 5 px. (c) **DONE — `ObjectMotion.Bank` (batch 8) and the Runner (this
-   batch)**: what held the object goldens at t1, and what left L7 t1000 diverging.
+   the pinned frame, which is **not** the object pass — at frame 1 neither tree has a
+   script object, so that patch is something else and is still open. The sky / middle /
+   bottom split of the 1.240% gap, with its measurements and the "do NOT re-litigate the
+   panorama, palette, uniforms, projection or camera" note, is in `docs/OPEN_ITEMS.md`.
+   (c) **DONE — `ObjectMotion.Bank` (batch 8) and the Runner (batches 9-10)**: what held
+   the object goldens at t1, and what left L7 t1000 diverging.
    (d) The next numeric slice: `FrameBlend.Lerp` is `Vector3.Lerp` and the port's
-   `from + (to-from)*t` is not its rounding — the oracle's is `fmaf(from, 1-t, to*t)`
-   (probed 400 triples: 187 / 96 / 0 mismatches), costing 1 ULP on one object at L3 t120.
-   `fmaf` is a `bl fmaf` libm call on devkitARM at `-mfpu=vfp`, and the current spelling
-   contracts to one `vmla.f32` per component **whatever `-ffp-contract` says** (VFPv2
-   VMLA; the Makefile measures the flag changing nothing), so this needs a target codegen
-   decision, not a substitution. Evidence in `docs/OPEN_ITEMS.md`.
+   `from + (to-from)*t` is not its rounding — the oracle's is `fmaf(from, 1-t, to*t)`,
+   costing 1 ULP on one object at L3 t120. `fmaf` is a `bl fmaf` libm call on devkitARM
+   at `-mfpu=vfp`, and the current spelling contracts to one `vmla.f32` per component
+   **whatever `-ffp-contract` says**, so this needs a target codegen decision, not a
+   substitution. Probe and evidence in `docs/OPEN_ITEMS.md`.
 
 Deferred with cause: 248 `push_kurt` awaits knock-back; Rides writes the alarm
 countdown; consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix and
 Kurt's muzzle flash, ride pose and footsteps; `Vector3.Lerp`'s rounding (above); the
 other half of `FrameBlend` (Kurt's blended feet/yaw,
 `Record/Update/Turn/KurtAt`) and `TransformOf`'s driven-carrier shift, both with
-`Rides`; the runner's RUN branch and any **picture** of the runner (no camera looks at
-the hamster — measured). All with evidence in `OPEN_ITEMS.md`.
+`Rides`. All with evidence in `OPEN_ITEMS.md`.
 Old-3DS timing is UNMEASURED.
 
 ## Current tree state (VERIFIED)
@@ -108,16 +107,20 @@ before the Still-list spin — and its `H150_R` / `H150_I` come from `itemsAnima
 C#'s `Items.GetAnimation`, parsed out of the sprites archive the runtime now borrows
 (`tick1` and the Linux frontend both load `TRAVSPRT.BNI` and pass it). The idle chance
 is `rng().next(32768) < 72`, drawn **only** when the object is idle or its animation is
-done: that is the oracle's stream, not an approximation of it.
+done: that is the oracle's stream, not an approximation of it. **`sprites` is a REQUIRED
+constructor argument** (as in the C#): without the archive there is no `H150_R`/`H150_I`
+and, because the idle draw is guarded on the animation, the random stream differs — so
+omission is a compile error and a harness that means "no archive" passes `nullptr` out
+loud. Both halves are pinned: the idle by `L7_t1000_*`, the run by `L7_t120_runner_{a,b}`.
 
 **Draw submission: order and lifetime.** `mdk_render_draw_mesh` **queues**; the backend
 submits the frame's draws bucketed by `Pass` — Solid, DoubleSided, Mirror, Blended,
 OnTop, Overlay, queue order inside a bucket — `Renderer.cs:1000-1004, 1049-1057`,
 shared as `render/draw_queue.{h,cpp}` because the order is the oracle's, not a
-backend's; the flush point is the end of the frame's 3D scene. Lifetime (AGENTS.md P3):
-a Vulkan dynamic mesh has one buffer per frame in flight and writes the slot its own
-frame draws from; a released mesh or a resized canvas ring is **retired** and destroyed
-two frames out; the 3DS backend defers `linearFree` to the next `C3D_FrameBegin`.
+backend's; the flush point is the end of the frame's 3D scene. Lifetime (AGENTS.md P3)
+is in `render/draw_queue.h`: a Vulkan dynamic mesh writes the slot its own frame draws
+from and a released mesh is destroyed two frames out; the 3DS defers `linearFree` to the
+next `C3D_FrameBegin`.
 
 **Rolling (`ObjectMotion.Roll`).** `MdkObject::update_rolling()` turns the basis about
 the horizontal axis across the tick's movement, and `runTick` calls it **before**
@@ -126,24 +129,29 @@ the horizontal axis across the tick's movement, and `runTick` calls it **before*
 look-alike element-wise spelling differs by 2-8 ULP per element.
 ## Verified on this tree
 
-- `make -C tests/scripts -j8` exited 0, ended `All cases match the oracle.`, **438 PASS
-  lines** (was 432: `L7_t1000_{pose,transform,layout,draw,stream_bound}` and
-  `L3_t1200_blend`), no FAIL, no SKIP, **no existing golden moved**. Every new golden was
-  copied from the C# oracle probe (`mdkprobe <level> <ticks> 1 <mode>`) after diffing it
-  against the port's own dump; all six are byte-identical to it. Independently re-checked:
-  L3 t120/t1200, L4/L5/L6 t120, L7 t1200/t30000 and L8 t1 `transform` dumps are still
-  byte-identical to the oracle.
-- `bash tools/check.sh` exited 0 (`CHECK: ALL GATES PASSED`; SMDH SKIPPED for no CIA;
-  `gates_frames PASS`, `L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the pinned
-  `cpp=`, so `reference.sha256` was NOT regenerated). No gate needed a pin or a
-  relaxation: `gates_vfp` blockers=0, `audit_c_with_classes` 0, `audit_r11_idiv` no
-  candidates, `audit_arm11_math` clean, `gates_core_parity` clean.
+All three gates were re-run from a clean invocation on this tree, and the two new goldens
+were re-generated from the C# oracle independently of the batch that wrote them — see
+`docs/PROGRESS_LOG.md`, "Verification actually run for this batch".
+
+- `make -C tests/scripts -j8` exited 0, ended `All cases match the oracle.`, **440 PASS
+  / 0 FAIL / 0 SKIP** (was 438: `L7_t120_runner_{a,b}`), **no existing golden moved**.
+  Both new goldens are byte-identical to the oracle probe (`mdkprobe 7 120 1 runner
+  <x,y,z>`, a scratch build of the repository's own `src/`; only the three print-only
+  instrumented files differ from `src/`).
+- `bash tools/check.sh` exited 0 — `CHECK: ALL GATES PASSED`, SMDH SKIPPED for no CIA,
+  `gates_frames PASS` (`L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned
+  `cpp=`, so `reference.sha256` was NOT regenerated), `gates_vfp` blockers=0,
+  `audit_c_with_classes` 0, `audit_r11_idiv` no candidates, `audit_arm11_math` clean,
+  `gates_core_parity` clean, `gates_batch_integrity PASS`. No gate needed a pin or a
+  relaxation.
 - `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
   exited 0 and built `mdk.3dsx`; `cmake --build build-linux --target mdk -j8` exited 0.
-- `DISPLAY=:99 tools/publish_frame.sh hamster-runner` wrote the pinned pair (`1.240 /
-  max 247 / mean 0.1819`), byte-identical to the seven records before it: level 3 has no
-  `SW_H150`, so nothing runs. The sidecar says why and records the level-7 with/without
-  measurement. No emulator and no Old-3DS hardware run was performed.
+- The pinned pair (`1.240 / max 247 / mean 0.1819`) is byte-identical to its fifteen
+  predecessors: level 3 has no `SW_H150`, so nothing runs. The two `docs/evidence/`
+  pairs (level 7, frame 30, `DISPLAY=:99`, lavapipe) measure `0.422 / 324 / 58 /
+  0.0358` and `1.298 / 997 / 87 / 0.1580`; both numbers were reproduced with
+  `tests/frames/compare_frames.py --measure` against the captures, and the committed
+  PNGs are pixel-identical to them. No emulator and no Old-3DS hardware run.
 
 **Do not "fix" `follow_camera.cpp`'s `normalize`** (it multiplies by a reciprocal where
 `Vector3.Normalize` reads as a division; making it a division REGRESSES the sky from
@@ -173,6 +181,7 @@ make -C tests/scripts clean && make -C tests/scripts   # goldens
 tests/scripts/build/tick1 dump draw 3 1                # the queued draws (also `bound`)
 tests/scripts/build/tick1 dump blend 3 1               # the blended transforms (also `blendcases`)
 tests/scripts/build/tick1 dump transform 7 1000        # the hamster's animation
+tests/scripts/build/tick1 dump runner 7 120 -21,-13,0.73   # the hamster's run, per tick
 bash tools/check.sh                                    # all gates
 DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds
 cmake --build build-linux --target mdk -j8             # the Linux frontend

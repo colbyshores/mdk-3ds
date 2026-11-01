@@ -857,12 +857,19 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     }
 }
 
-// UpdatePickup (0x43d8f0), run after ApplyVelocity for a FlagPickup object. Ports the
-// branches reachable before the chute/attach subsystem (command 74) and the Runner's
-// RNG-synchronized animations exist: a falling pickup lands on floor contact (Fall),
-// and a landed/non-gravity pickup not in the Still list spins in place. The chute
-// deploy (velocity.Z below PickupChuteSpeed, unreachable until ~tick 14 at gravity 32),
-// the Runner, and the Collected shrink are later slices.
+// UpdatePickup (0x43d8f0), run after ApplyVelocity for a FlagPickup object: a
+// falling pickup lands on floor contact (Fall), opens its chute once it reaches
+// terminal speed (a SW_CHUTE hung on it by attach command 74), shrinks that chute
+// away after it lands, and — for the SW_H150, once the chute is gone — runs (the
+// Runner, below). A landed or non-gravity pickup not in the Still list spins in
+// place.
+//
+// What is NOT here is the Collected branch: an object the player has picked up
+// shrinks over ShrinkTicks and is then removed (ObjectBehaviors.cs:206-212), and
+// that waits on the inventory slice (ObjectBehaviors.cs:207-218). The guard below
+// returns early for a FlagCollected object — nothing in this port sets that flag
+// yet, and where the C# shrinks before returning, this returns without shrinking.
+
 // ObjectMotion.Bank (0x43b65c): an object leans into its turn. The turn counted is
 // the yaw change since the LAST call, at most 2 degrees of it per tick; the roll is
 // the old roll minus that turn, damped by 0.95 and kept inside +/-10 degrees.

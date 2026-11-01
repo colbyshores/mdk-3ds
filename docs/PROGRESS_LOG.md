@@ -1,3 +1,212 @@
+## What this batch did (Phase 2 iteration 3 — the Runner's running half is pinned, and the record around it is corrected)
+
+### Verification actually run for this batch (finishing iteration, 2026-11-01)
+
+The tree arrived **dirty** from a timed-out iteration: batch 10's code, goldens, evidence
+and docs were written but never gated or committed. Per the builder rule the in-flight
+work was finished and committed before anything new was started, and every claim in its
+narrative was re-checked against the tree instead of trusted.
+
+**Prior-solution lookup for this step.** Obsidian MCP is not exposed in this harness, so
+`/mnt/nas/Vaults/port-docs` was searched read-only for `segfault`, `respawn`, `SW_H150`
+and `mdkprobe`: nothing on this subsystem (the hits were unrelated PICA200/proctex and
+agent-harness notes). Cognee MCP is not exposed here. The lookup that mattered was the
+repository's own record, which is what the in-flight narrative already cited.
+
+**Each review-2 closure was verified, not assumed.**
+
+- **L2 (the RUN branch was unpinned).** `golden/L7_t120_runner_{a,b}.txt` exist, are in
+  the suite (`PASS L7_t120_runner_a` / `_b` in the gate output below), and were
+  **re-generated from the C# oracle in this iteration**: `mdkprobe 7 120 1 runner
+  -21,-13,0.73` and `... -26,-18,0.73`, run against the scratch probe tree at
+  `/tmp/mdk-pi/obj3`, whose `src/` differs from the repository's `src/` in exactly the
+  three print-only instrumented files (`ObjectView.cs`, `ScriptVm.cs`,
+  `MaterialResolver.cs`) and nothing else. Both `diff` against the committed goldens came
+  back empty — **byte-identical to the oracle**, which is the only provenance that counts.
+  Case a enters `H150_R` at t4 with `push=40.0000,0,0` and case b turns at the full
+  `yaw=9.0000` clamp on its first turning tick, so the running half really is exercised.
+- **M1 (no runner picture was claimed impossible, and the record count was wrong).** Both
+  evidence pairs exist and their measurements **reproduce** with the repository's own
+  tool: `python3 tests/frames/compare_frames.py --measure <oracle.bmp> <cpp.bmp>` gives
+  `0.422 58 0.0358` and `1.298 87 0.1580`, exactly the sidecars' numbers, and the
+  committed PNGs are **pixel-identical** to the captures those numbers were taken from
+  (checked pixel by pixel, all 76800). The reviewer's own open question — "confirm with a
+  viewer before committing the `docs/evidence` pair" — was answered by looking: a 3x
+  nearest-neighbour crop of the box x 200-320, y 20-140 shows the same small creature with
+  the yellow wheel, at the same pixels, in the C++ build and in the oracle. The hamster is
+  on screen; M1 is closed with a picture, not a projection argument.
+- **L1 (`motionPickup`'s comment contradicted its body).** The block now describes the
+  chute deploy and the Runner as present and names the one missing branch
+  (`FlagCollected`'s shrink, waiting on the inventory slice).
+- **L3 (`sprites` was optional where the C#'s is required).** The `= nullptr` default is
+  gone from `script_runtime.h`, the comment says why (a runtime without the archive runs a
+  different random stream), and the harnesses pass `nullptr` out loud.
+
+Nothing was rebutted; no gate, test or golden was weakened, and no existing golden moved.
+
+**Gate results, verbatim, as run on this tree.**
+
+```
+$ make -C tests/scripts -j8
+PASS L7_t120_runner_a: the hamster's run from tick to tick matches the oracle
+PASS L7_t120_runner_b: the hamster's run from tick to tick matches the oracle
+All cases match the oracle.
+make: Leaving directory '/mnt/nas/Development/mdk-sdl/tests/scripts'
+EXIT=0                     # 440 PASS / 0 FAIL / 0 SKIP
+
+$ bash tools/check.sh
+  VERDICT: CONTRACT CLEAN -- 0 violations.            (audit_c_with_classes)
+PASS blockers=0 reviews=0                            (gates_vfp)
+VERDICT: CONTRACT CLEAN                              (audit_arm11_math)
+    pinned: 9 suppressed by an @vfp-exempt R11 pin   (audit_r11_idiv: no candidates)
+    core sources: 59   core headers: 68              (gates_core_parity)
+    VERDICT: SKIPPED -- no built .cia                (gates_smdh)
+PASS L3_f1.bmp sha=58615fc85d02e009                  (gates_frames)
+VERDICT: CONTRACT CLEAN
+BATCH INTEGRITY: PASS
+CHECK: ALL GATES PASSED
+EXIT=0
+
+$ DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8
+stage_romfs: staged 69 files, 79M
+3DSX mdk.3dsx
+EXIT=0
+```
+
+No emulator run and no Original-3DS hardware run was performed: Old-3DS timing and the
+Citro3D picture stay unmeasured (AGENTS.md P6/P7).
+
+**One open question from review-2 stays open, deferred with cause.** The reviewer noted a
+rare segfault (rc 139, 3 of ~46 runs, no backtrace) in the degenerate `--at=-21,-13,0,0`
+scenario, where Kurt has no floor. It is a harness-only state that no shipped start
+produces, it never occurred at the z=9 captures this batch publishes, and it cannot be
+attributed from the evidence available; it is recorded in `docs/OPEN_ITEMS.md` for a batch
+that touches the respawn path with a memory checker, rather than guessed at here.
+
+**Tree note, not part of this batch.** Mid-iteration `ralph.sh` — the loop driver, owned by
+another user — had its file mode changed from 100755 to 100644 by something outside this
+iteration's process. It is not this batch's change, it cannot be reverted from this
+account (`chmod: Operation not permitted`), and it was deliberately **left out of the
+commit** (the batch was staged by path, not `git add -A`), so the committed tree still
+carries mode 100755. Whoever owns `ralph.sh` should restore the executable bit.
+
+The tree arrived clean at `bfa1c7c` with an external review (DeepSeek V4.1 Flash,
+`logs/ralph-pi/run-20261031-195148/review-2.md`) whose verdict was INCOMPLETE with **no
+Critical and no High** findings: one Medium (M1) and three Low (L1, L2, L3). All four
+were investigated against the C# oracle and all four were confirmed; all four are
+closed. Nothing was rebutted, no gate was relaxed, and no golden was moved.
+
+**Prior-solution lookup (mandatory, done first).** Obsidian MCP is not exposed in this
+harness, so the vault was searched read-only from `/mnt/nas/Vaults/port-docs` for
+`hamster`, `SW_H150`, `RunnerStart`, `H150_R`, `capture_oracle` and `mdkprobe`: nothing
+on this subsystem — the only hit was `20-runbooks/headless-reference-audio-capture-from-n64-rom.md`,
+which mentions `Xvfb :99` for an unrelated N64 audio capture. Cognee MCP is likewise not
+exposed here. The prior findings that mattered were the repository's own:
+`docs/OPEN_ITEMS.md`'s runner entry (which this batch corrects) and
+`docs/evidence/README.md`'s "a picture that cannot show the path is not evidence" rule,
+which is what M1 was enforcing.
+
+### 1. M1 (Medium) — "no picture of the Runner is possible" was false (CLOSED, with two evidence pairs)
+
+The previous batch recorded that the Runner could not be pictured: "moving Kurt with
+`--at` to look at it puts him outside the arena, which draws nothing". Reproduced: that
+attempt used `--at=-21,-13,0,0`, and at z=0 Kurt has no floor — the oracle itself prints
+`Kurt died`. At z=9 he stands inside `DANT_1` (the oracle's own line: `Kurt at -21.00
+-13.00 0.73 yaw 0 Fall floor False arena DANT_1 health 100`) and the scene renders. Two
+pairs now exist, both `DISPLAY=:99`, lavapipe, level 7, 320x240, seed 1, frame 30, the
+oracle built from the repository's `src/` and run in the private mount namespace with
+its own `Xvfb :99` that `tests/frames/capture_oracle.sh` uses:
+
+| pair | `--at` | gap |
+|---|---|---|
+| `docs/evidence/2026-11-01-L7-runner-scene.png` | `-21,-13,9,0` | `0.422 / 324 px / max 58 / mean 0.0358` |
+| `docs/evidence/2026-11-01-L7-runner-hamster-visible.png` | `-21,-13,9,45` | `1.298 / 997 px / max 87 / mean 0.1580` |
+
+The yaw-0 shot matches better but the hamster runs along `y=-13`, the same line the
+camera looks down, so Kurt's own body covers it; the reviewer's own remediation said to
+nudge the yaw, and the yaw-45 pair is that. In it the hamster's tick-15 position
+(`2.3333,-13.0000,-0.0400`, from the new golden) projects — through the oracle's traced
+camera `-26.48,-18.48,6.81` and `FollowCamera.FieldOfView = 71.5°` — into the upper
+right of the frame, and over the box x 200-320, y 20-140 the two trees differ in **462
+of 14400 pixels, max channel delta 57**. Both pictures show the same small creature with
+a yellow wheel there, at the same pixels, and its apparent size (~32x40 px at depth ~24,
+so 4-5 world units) matches the `SW_H150` model, whose corners span ~2.9 x 3.3 units in
+`golden/L7_t1000_draw.txt`. The identification is by projection, size and oracle
+agreement, and the sidecar says so: no harness labels a pixel with the object that drew
+it. A published frame is never edited (`docs/frames/README.md`), so the correction of
+the old claim lives in the two new sidecars and in `OPEN_ITEMS.md`, not in the old
+sidecar.
+
+M1's second half was also right: the old sidecar said "byte-identical to the six records
+before it" and `PROGRESS_LOG`/`CONTINUATION` said seven. `md5sum docs/frames/*.png`
+gives 15 files at `6769a13731983d65…`, i.e. **fourteen** predecessors. Measured, and
+recorded in this batch's own sidecar (which now says fifteen, correctly, for its own
+predecessors).
+
+### 2. L2 (Low) — the running half was ported but unpinned (CLOSED, two goldens)
+
+No shipped start puts Kurt within `RunnerStart` (20 units) of the hamster — level 7's
+start is 22.16 away — so `H150_R`, the 40 units/s push, the 270 deg/s turn clamp, the
+plan-distance stop test and the return to `H150_I` had no test at all. `tick1` now has
+`dump runner <level> <ticks> <x,y,z>`: it binds a live `Player` with `feet` at the given
+point (the C# probe's twin sets `Kurt.Feet`, and `ScriptRuntime.RunTick` copies it into
+`KurtPosition` every tick exactly as the C# does) and prints the `SW_H150`'s
+pos/yaw/anim/frame/push/flags **after every tick**. The oracle probe gained the matching
+`runner` mode. Two goldens, `golden/L7_t120_runner_{a,b}.txt`, are the oracle's bytes at
+`(-21,-13,0.73)` and `(-26,-18,0.73)`:
+
+- case a runs straight: `H150_R` from t4, push `40,0,0`, stop at t22 back on `H150_I`;
+- case b turns at the full clamp (`yaw 9.0000` on the first turning tick is 270/30),
+  settles at `yaw 16.4781`, stops at t17, and then the guarded idle RNG runs.
+
+Both diff byte-identical against the oracle before the golden was written, which is the
+order that matters: the golden is the oracle's output, not the port's.
+
+**The bug this found in its own harness, and why the golden is 121 lines.** The first
+version of the CLI mode ticked the world in the shared dump dispatch *and* in
+`dumpRunner`, so it printed ticks 121-240 and the hamster was at `12.97,-12.98` while
+the oracle had it at `-11,-13`. That looked like a port divergence and was a harness
+double-tick. `dumpRunner` owns the ticking now. The same trap is documented in the code
+so the next mode does not fall into it.
+
+### 3. L1 (Low) — `motionPickup`'s own comment contradicted its body (CLOSED)
+
+The doc block above `motionPickup` still said "the chute deploy …, the Runner, and the
+Collected shrink are later slices" while the function a few lines below deploys the
+chute and calls `motionRunner`. Rewritten to say what the code does and to name the one
+branch that is genuinely missing — the `FlagCollected` shrink, which nothing in the port
+sets yet, and where the C# shrinks before returning while this returns without
+shrinking.
+
+### 4. L3 (Low) — `sprites` was optional where the C#'s is required (CLOSED)
+
+`ScriptRuntime`'s `sprites` argument had `= nullptr`. A frontend that forgot it would
+compile, get no `H150_R`/`H150_I`, and — because the idle draw is guarded on
+`Animation == null || IsAnimationDone` — run a **different random stream** for the rest
+of the level, silently. The default is gone: the parameter is required, as
+`ScriptRuntime.cs:320` has it, and the 47 harness sites now pass `nullptr` out loud.
+Omission is a compile error.
+
+### Verification on this tree
+
+- `make -C tests/scripts -j8` exited 0, ended `All cases match the oracle.`, **440 PASS
+  lines** (was 438), no FAIL, no SKIP, no existing golden moved. The probe's scratch tree
+  was diffed against the repository's `src/` first: only the three print-only
+  instrumented files (`ObjectView.cs`, `ScriptVm.cs`, `MaterialResolver.cs`) differ.
+- `bash tools/check.sh` exited 0 — `CHECK: ALL GATES PASSED`, with `audit_c_with_classes
+  0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`,
+  `SKIP gates_smdh no built .cia`, `gates_frames every pinned frame is deterministic and
+  unchanged` (`L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so
+  `reference.sha256` was NOT regenerated), `gates_batch_integrity project invariants
+  intact`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+  exited 0 and built `mdk.3dsx`; `cmake --build build-linux --target mdk -j8` exited 0.
+- `DISPLAY=:99 tools/publish_frame.sh runner-pinned` wrote the pinned pair at `1.240 /
+  max 247 / mean 0.1819`, byte-identical to its fifteen predecessors: level 3 has no
+  `SW_H150`.
+- No emulator and no Original 3DS hardware run was performed; Old-3DS timing and the
+  Citro3D picture stay unmeasured.
 ## What this batch did (Phase 2 iteration 2 — the hamster runs: `ObjectBehaviors.UpdateRunner`, and the last known object-dump divergence closes)
 
 The tree arrived clean at `094ead9` with an external review (DeepSeek V4.1 Flash,

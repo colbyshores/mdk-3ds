@@ -129,16 +129,38 @@ measured or cited reason, and the batch that closes one should delete its entry.
   running a different random stream from tick 329 of level 7. Pinned by
   `golden/L7_t1000_{pose,transform,layout,draw,stream_bound}.txt`, all copied from
   the oracle probe: at t1000 the hamster is on `H150_I` frame 36 and every line of
-  all five dumps matches. What is NOT pinned is the RUN branch: no captured frame
-  brings Kurt within 20 units of the hamster, so `H150_R`, the push, the turn and
-  the `RUNNER` sound are ported but unpinned by goldens. There is also **no picture
-  of any of it**, and that is measured, not forgotten: at level 7's own start camera
-  the hamster is off-screen (frame 700 captured with and without the runner call is
-  byte-identical, `0.000 / 0 / 0.0000`, `DISPLAY=:99`, lavapipe), and moving Kurt
-  with `--at` to look at it puts him outside the arena, which draws nothing. So
-  `docs/evidence/` has no runner pair and the pinned sidecar says why. A capture
-  that shows it needs a camera that looks into DANT_1 at the hamster, which the
-  frontend cannot aim today.
+  all five dumps matches.
+- **The Runner's RUN branch is CLOSED (2026-11-01), and so is the claim that it
+  cannot be pictured.** The running half — `H150_R`, the 40 units/s push, the
+  270 deg/s turn clamp, the plan-distance stop test, the return to `H150_I` and the
+  idle RNG after it — was ported but unpinned, because no shipped start puts Kurt
+  within `RunnerStart` (20) of the hamster: level 7's Kurt begins 22.16 units away.
+  It is pinned now by `golden/L7_t120_runner_{a,b}.txt`, which place Kurt at
+  (-21,-13,0.73) and (-26,-18,0.73) through a live `Player` and dump the hamster
+  after EVERY tick (120 lines each, byte-identical to the oracle probe's `runner`
+  mode with Kurt at the same point). Case a runs straight and stops at t22; case b
+  turns at the full 9 deg/tick clamp, settles at yaw 16.4781 and stops at t17.
+  The previous batch wrote that no picture of the Runner was possible because
+  `--at` puts Kurt outside the arena, where nothing draws. That was measured at
+  `--at` z=0, where Kurt has no floor and the oracle prints "Kurt died"; at z=9 he
+  stands inside `DANT_1` and the scene renders. Two evidence pairs now carry it:
+  `docs/evidence/2026-11-01-L7-runner-scene.png` (`--at=-21,-13,9,0`, frame 30,
+  `0.422 / 324 / max 58 / mean 0.0358`, hamster behind Kurt) and
+  `docs/evidence/2026-11-01-L7-runner-hamster-visible.png` (yaw 45 so the camera
+  clears Kurt, `1.298 / 997 / max 87 / mean 0.1580`, and 462 of 14400 px differ in
+  the box the hamster projects into). Both sidecars record the correction, because
+  a published frame is never edited. The same batch's "byte-identical to the six
+  records before it" was also wrong: md5 over `docs/frames/*.png` gives 15 files
+  at `6769a13731983d65...`, i.e. fourteen identical predecessors.
+- **Unattributed rare segfault in the degenerate `--at` scenario (from review-2's open
+  questions, 2026-10-31).** `--at=-21,-13,0,0` — Kurt with no floor, a state no shipped
+  start produces — segfaulted (rc 139) in 3 of ~46 Linux-frontend runs, never at
+  `--at=...,9` (32 runs) and never under `gdb`, and the crashed run's stdout was buffered
+  away, so there is no backtrace and no attribution. The reviewer's own guess (the respawn
+  path recreating the `ScriptRuntime` while a pose cache keyed by animation address still
+  holds entries) is a guess. Deferred with cause: it needs a memory-checker run in a batch
+  that touches respawn, not a guess here. The captures this batch publishes are at z=9 and
+  are unaffected.
 - Incomplete decoy/`AlienTarget` selection.
 - Opcode 207's `MathF.Sign(NaN)` exception is accepted because C++ exceptions are
   banned; degenerate-path guards return 0 instead (this now also covers

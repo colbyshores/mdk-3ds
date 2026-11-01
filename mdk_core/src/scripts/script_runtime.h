@@ -104,11 +104,16 @@ public:
     // The sprites archive (TRAVERSE/TRAVSPRT.BNI) is the C#'s `sprites`, and is
     // borrowed for the same reason the CMI is: `Items.GetAnimation` parses the
     // animations the built-in behaviours play out of its bytes (SW_H150's
-    // H150_R / H150_I). It is optional only because a harness may have no
-    // archive to hand; a frontend that runs the world passes it.
+    // H150_R / H150_I). It is REQUIRED, as in the C# constructor, and there is
+    // no default for it on purpose: a runtime built without the archive is a
+    // world where those animations do not exist, and because the Runner draws
+    // its idle chance only while idle or done, such a world also runs a
+    // DIFFERENT random stream from the oracle's. Omitting the argument must be
+    // a compile error, not a silent different game; a harness that really has
+    // no archive says so by passing nullptr out loud.
     ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
                   audio::SoundBank* bank, const Player* player,
-                  const formats::Bni* sprites = nullptr);
+                  const formats::Bni* sprites);
 
     // Advance the world by the elapsed time. ScriptRuntime.cs:378-390 keeps
     // its own 1/30-second tick clock: a 1/60-second frontend step completes a

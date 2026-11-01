@@ -769,7 +769,7 @@ void testInheritKurtVelocityAddsScaledKurtVelocity(LevelData* levelData, const C
     player.forwardSpeed = 2.0f;
     player.strafeSpeed = 4.0f;
     player.verticalSpeed = 6.0f;
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
 
     // At yaw zero, Player::velocity is (2, -4, 6). A literal scale is applied
     // to every component and added to the receiver's existing velocity.
@@ -847,7 +847,7 @@ void testInheritKurtVelocityAddsScaledKurtVelocity(LevelData* levelData, const C
 void testFrontendTickCadenceCopiesLivePlayer(LevelData* levelData, const Cmi* cmi,
                                               audio::SoundBank* bank) {
     Player player;
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
     player.feet = runtime.kurtPosition();
     const Vec3 start = player.feet;
 
@@ -1036,7 +1036,7 @@ void testHeadShotsAddOnlyWhenEnabled(scripts::ScriptRuntime& runtime) {
 // renderer consumer remains a later slice.
 void testSetSkyModeWritesSharedLevelState(LevelData* levelData, const Cmi* cmi,
                                           audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     CHECK(runtime.skyMode == 0);
 
     scripts::MdkObject obj;
@@ -1090,7 +1090,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
     // a moved Player is observed on the next tick.
     {
         Player player;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
         const Vec3 base = runtime.kurtPosition();
         player.feet = base;
         runtime.update(scripts::ScriptRuntime::kTick);
@@ -1122,7 +1122,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
     const float yLimit = kurt.y + 1.0f;
 
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 14, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 14, bank, nullptr, nullptr);
         runtime.objects().push_back(scripts::MdkObject());
         scripts::MdkObject* obj = &runtime.objects().back();
         obj->arena = "DANT_1";
@@ -1140,7 +1140,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
     }
 
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr, nullptr);
         runtime.objects().push_back(scripts::MdkObject());
         scripts::MdkObject* obj = &runtime.objects().back();
         obj->arena = "DANT_1";
@@ -1154,7 +1154,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
     }
 
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr, nullptr);
         runtime.kurtVelocity = mdk::Vec3{40.0f, 0.0f, 0.0f};
         runtime.objects().push_back(scripts::MdkObject());
         scripts::MdkObject* obj = &runtime.objects().back();
@@ -1170,7 +1170,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
 
     // A predicted X below xMin wraps once by the full range.
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr, nullptr);
         runtime.kurtVelocity = mdk::Vec3{-40.0f, 0.0f, 0.0f};
         runtime.objects().push_back(scripts::MdkObject());
         scripts::MdkObject* obj = &runtime.objects().back();
@@ -1187,7 +1187,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
     // Kurt's X outside the range consumes the random branch even when the
     // first draw would otherwise have taken the X branch (seed 3: 29).
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr, nullptr);
         runtime.objects().push_back(scripts::MdkObject());
         scripts::MdkObject* obj = &runtime.objects().back();
         obj->arena = "DANT_1";
@@ -1202,7 +1202,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
 
     // A Kurt Y above the limit consumes the random branch the same way.
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr, nullptr);
         runtime.objects().push_back(scripts::MdkObject());
         scripts::MdkObject* obj = &runtime.objects().back();
         obj->arena = "DANT_1";
@@ -1218,7 +1218,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
     // A dead, cross-arena or different-Y object does not influence the pass,
     // and the receiver itself is skipped.
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr, nullptr);
         runtime.objects().push_back(scripts::MdkObject());
         scripts::MdkObject* obj = &runtime.objects().back();
         obj->arena = "DANT_1";
@@ -1252,7 +1252,7 @@ void testPlaceNearKurtChoosesWrapsAndSpaces(LevelData* levelData, const Cmi* cmi
     // Live objects on the same Y push X to their LEFT by twelve. Two pushes
     // in one pass are applied in list order and the next pass is stable.
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 3, bank, nullptr, nullptr);
         runtime.objects().push_back(scripts::MdkObject());
         scripts::MdkObject* obj = &runtime.objects().back();
         obj->arena = "DANT_1";
@@ -1363,7 +1363,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     // and the gun fires at Kurt anyway; the two draws are the jitter and
     // the roll.
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, aimed, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1376,7 +1376,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     // Seed 1's fire roll (7 of 70) succeeds, so the gun fires at Kurt with
     // the jittered aim as well.
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, aimed, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1392,7 +1392,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         GunAimCase scenario = aimed;
         scenario.deltas[0] = 0.0f;
         scenario.targetCount = 1;
-        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1406,7 +1406,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     {
         GunAimCase scenario = aimed;
         scenario.targetCount = 1;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1419,7 +1419,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     {
         GunAimCase scenario = aimed;
         scenario.targetCount = 1;
-        scripts::ScriptRuntime runtime(levelData, cmi, 2, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 2, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1432,7 +1432,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     // faces 270 degrees and fires 29% of the time. Seed 0's roll (81 of 100)
     // fires; seed 1's (11 of 100) does not.
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, GunAimCase(), &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1442,7 +1442,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     }
 
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, GunAimCase(), &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1455,7 +1455,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     {
         GunAimCase scenario;
         scenario.targetCount = 1;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1471,7 +1471,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         scenario.deltas[0] = 0.0f;
         scenario.deltas[1] = 1.0f;
         scenario.targetCount = 2;
-        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1485,7 +1485,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         scenario.deltas[0] = 0.0f;
         scenario.deltas[1] = 1.0f;
         scenario.targetCount = 2;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1504,7 +1504,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         scenario.deltas[3] = 2.0f;
         scenario.deltas[4] = -2.0f;
         scenario.targetCount = 5;
-        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1521,7 +1521,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         scenario.deltas[3] = 2.0f;
         scenario.deltas[4] = -2.0f;
         scenario.targetCount = 5;
-        scripts::ScriptRuntime runtime(levelData, cmi, 2, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 2, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1536,7 +1536,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         GunAimCase scenario;
         scenario.targetCount = 1;
         scenario.deadTarget = true;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1549,7 +1549,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         GunAimCase scenario;
         scenario.targetCount = 1;
         scenario.crossArena = true;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1564,7 +1564,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         GunAimCase scenario;
         scenario.targetCount = 1;
         scenario.dy = 2.0f;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1577,7 +1577,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         GunAimCase scenario;
         scenario.targetCount = 1;
         scenario.dy = 2.5f;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1591,7 +1591,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         GunAimCase scenario;
         scenario.targetCount = 1;
         scenario.dz = 3.0f;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1604,7 +1604,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         GunAimCase scenario;
         scenario.targetCount = 1;
         scenario.dz = 3.5f;
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
         GunAimResult result = runGunAim(runtime, gun, rowY, gun->position.z);
@@ -1617,7 +1617,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     // ahead of him, out of the cone: the gun faces 270 degrees and falls
     // back on the 29% roll (seed 0 fires, seed 1 does not).
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 0, bank, nullptr, nullptr);
         runtime.kurtVelocity = mdk::Vec3{30.0f, 0.0f, 0.0f};
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, aimed, &rowY);
@@ -1628,7 +1628,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     }
 
     {
-        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
         runtime.kurtVelocity = mdk::Vec3{30.0f, 0.0f, 0.0f};
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, aimed, &rowY);
@@ -1648,7 +1648,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         scenario.followLead = true;
         scenario.deltas[0] = 1.0f;
         scenario.targetCount = 1;
-        scripts::ScriptRuntime runtime(levelData, cmi, 58, bank, nullptr);
+        scripts::ScriptRuntime runtime(levelData, cmi, 58, bank, nullptr, nullptr);
         runtime.kurtVelocity = mdk::Vec3{48.5f, 0.0f, 0.0f};
         float rowY = 0.0f;
         scripts::MdkObject* gun = placeGun(runtime, scenario, &rowY);
@@ -1668,7 +1668,7 @@ void testGunAimAimsAndFires(LevelData* levelData, const Cmi* cmi, audio::SoundBa
 void testCameraTrackCalculatesPitchAndExpires(LevelData* levelData, const Cmi* cmi,
                                                audio::SoundBank* bank) {
     Player player;
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
     player.feet = runtime.kurtPosition();
     player.yaw = 0.0f;
     runtime.update(scripts::ScriptRuntime::kTick);
@@ -1768,7 +1768,7 @@ void testIfPlayerHealthComparesKurtHealth(LevelData* levelData, const Cmi* cmi,
                                            audio::SoundBank* bank) {
     // A fresh runtime keeps this fixture independent of the shared test state:
     // damaging Kurt here must not leak into any later test.
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     runtime.hurtKurt(1);
     CHECK(runtime.kurt().health() == 99);
     {
@@ -1831,7 +1831,7 @@ float runIfAmmo(scripts::ScriptRuntime& runtime, int32_t kind, int32_t compariso
 void testIfAmmoReadsSuperChainGunAndSniperAmmo(LevelData* levelData, const Cmi* cmi,
                                                 audio::SoundBank* bank) {
     // A fresh runtime keeps the injected inventory values out of other tests.
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
 
     // A fresh inventory has no super-chain-gun ticks and no sniper ammo.
     CHECK(runIfAmmo(runtime, 0, kLessThan, 1.0f, 0.0f, false) == 2.0f);
@@ -1961,7 +1961,7 @@ void testPartnerConditionsUseLiveLinkedObjectAndGeometry(scripts::ScriptRuntime&
 // and links the two objects in both directions.
 void testSpawnPartnerLinksBothObjects(LevelData* levelData, const Cmi* cmi,
                                       audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     scripts::MdkObject* receiver = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 20.0f, 30.0f},
                                                  45.0f, -1, 0, false);
@@ -2053,7 +2053,7 @@ void testSnapToPartnerUsesOnlyALivePartner(scripts::ScriptRuntime& runtime) {
 // zero second value clears only the receiver's link.
 void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const Cmi* cmi,
                                                       audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     // The widow's pair is built by the opcode itself: with only these two
     // BEAMS in the arena, link_partners pairs them (2 units apart).
@@ -2226,7 +2226,7 @@ void testLinkPartnersPairsEligibleObjectsInListOrder(LevelData* levelData, const
 // — so the retained reference reads the same way there.
 void testRemoveKeepsInboundReferences(LevelData* levelData, const Cmi* cmi,
                                        audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     // The fresh runtime's first auto-ID is 1000, so the leader is "BEAMS_1000".
     scripts::MdkObject* leader = runtime.spawn(&controller, "BEAMS", Vec3{10.0f, 0.0f, 0.0f},
@@ -2689,7 +2689,7 @@ void testAttachToSelectsNamedArenaObject(scripts::ScriptRuntime& runtime) {
 void testAlarmSoundsForTenTicksAndPlaysEveryThirtyTwo(LevelData* levelData,
                                                        const Cmi* cmi,
                                                        audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     runtime.update(scripts::ScriptRuntime::kTick);
     CHECK(runtime.currentArena().size() != 0);
 
@@ -2796,7 +2796,7 @@ bool near(const Vec3& a, const Vec3& b) {
 // id and the last one has id 0 — the link that drives the chain.
 void testSpawnChainNumbersItsLinks(LevelData* levelData, const Cmi* cmi,
                                    audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
                                                45.0f, -1, 0, false);
@@ -2888,7 +2888,7 @@ void testSpawnChainNumbersItsLinks(LevelData* levelData, const Cmi* cmi,
 // they turn 90 degrees apart. Only the link with id 0 moves the chain.
 void testChainLinksHangOffTheirLeader(LevelData* levelData, const Cmi* cmi,
                                        audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
                                                45.0f, -1, 0, false);
@@ -2956,7 +2956,7 @@ void testChainLinksHangOffTheirLeader(LevelData* levelData, const Cmi* cmi,
 // chain, one per count, and branches TRUE when the chain is empty.
 void testReleaseChildrenLetsGoOfTheChain(LevelData* levelData, const Cmi* cmi,
                                           audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     scripts::MdkObject& controller = runtime.getArenaState("DANT_1").controller;
     scripts::MdkObject* leader = runtime.spawn(&controller, "X_STRIKB", Vec3{100.0f, 200.0f, 30.0f},
                                                45.0f, -1, 0, false);
@@ -3019,7 +3019,7 @@ void testReleaseChildrenLetsGoOfTheChain(LevelData* levelData, const Cmi* cmi,
 // list's stable order decides which overlap is used.
 void testAvoidObjectsTurnsAwayFromTheFirstSolidOverlap(LevelData* levelData, const Cmi* cmi,
                                                         audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     Model model;
     model.bounds.min = Vec3f{-1.0f, -1.0f, 0.0f};
     model.bounds.max = Vec3f{1.0f, 1.0f, 2.0f};
@@ -3152,7 +3152,7 @@ void testIfHitWeaponBranchesOnExactHitType(scripts::ScriptRuntime& runtime) {
 // the current value. The runtime clears that value at the next tick.
 void testRaiseShakeKeepsTheTickMaximum(LevelData* levelData, const Cmi* cmi,
                                        audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     runtime.update(scripts::ScriptRuntime::kTick);
     CHECK(runtime.shake == 0.0f);
 
@@ -3337,7 +3337,7 @@ void testNoFlatFloorAtUsesRotatedPointAndHitNormal(scripts::ScriptRuntime& runti
 // a hit alone at another, and lets each arena win the nearest-hit contest.
 void testRaycastUsesCurrentAndSecondArena(LevelData* levelData, const Cmi* cmi,
                                           audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     runtime.update(1.0f / 30.0f);
     CHECK(runtime.currentArena() == "DANT_1");
 
@@ -3411,7 +3411,7 @@ void testRaycastUsesCurrentAndSecondArena(LevelData* levelData, const Cmi* cmi,
 // command stops on floor contact after half of the recorded flight time.
 void testTurnAndJumpTurnsLaunchesAndStopsOnFloor(LevelData* levelData, const Cmi* cmi,
                                                   audio::SoundBank* bank) {
-    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     scripts::MdkObject obj;
     obj.position = Vec3{0.0f, 0.0f, 10.0f};
     obj.move_destination = Vec3{0.0f, 100.0f, 10.0f};
@@ -3616,10 +3616,10 @@ int main() {
     // No preload: the programs play nothing, and the C# fixture only builds a
     // mixer around an unloaded bank too.
 
-    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr);
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, nullptr);
     runtime.option = 0;
 
-    scripts::ScriptRuntime attachRuntime(&levelData, &cmi, 1, &bank, nullptr);
+    scripts::ScriptRuntime attachRuntime(&levelData, &cmi, 1, &bank, nullptr, nullptr);
     testAttachToSelectsNamedArenaObject(attachRuntime);
     printf("PASS AttachToSelectsNamedArenaObject\n");
 
