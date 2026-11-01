@@ -125,6 +125,56 @@ export DEVKITARM="${DEVKITARM:-/opt/devkitpro/devkitARM}"
 state_get() { sed -n "s/^$1=//p" "$STATE" 2>/dev/null | tail -1; }
 state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$STATE" 2>/dev/null >"$STATE.t" || true; echo "$kv" >>"$STATE.t"; mv "$STATE.t" "$STATE"; }
 
+# The review-record state machine lives in its own file so that it can be run
+# without starting the loop -- see tools/runner/test_review_state.sh, which
+# asserts it. A record whose failure mode is invisible (a review that reads
+# "done" and checked nothing) is a record that must be testable.
+# shellcheck source=tools/runner/review_state.sh
+. "$ROOT/tools/runner/review_state.sh"
+
+# --- model identity: the upstream string, never the alias --------------------
+# (vault: model-identity-is-the-upstream-string-not-the-alias). On a shared
+# litellm proxy two aliases can be ONE upstream -- on this proxy today `qwen`
+# and `swarm-worker` are both openai/qwen38-flash-next, and `luna` and
+# `luna-compaction` are both openai/responses/gpt-6-luna -- and two hosts can
+# carry ONE model family (`deepseek-v4.1-flash` at api.deepseek.com and
+# `deepseek-v4.1-flash-nvidia` at integrate.api.nvidia.com are the same weights
+# twice, which is exactly the pair this script's own comment calls "the DeepSeek
+# mirror"). Comparing alias strings passes every one of those, which is what
+# external review 2026-11-01 finding F3 found. Resolution is the proxy's
+# /model/info when it answers, the committed map in tools/runner/
+# model_identity.py otherwise, and NOTHING if neither knows the alias -- and an
+# unresolved alias is refused, because "could not tell" must not reach the same
+# path as "proved different".
+model_upstream() { python3 "$ROOT/tools/runner/model_identity.py" upstream "$1" 2>/dev/null || true; }
+model_family()   { python3 "$ROOT/tools/runner/model_identity.py" family   "$1" 2>/dev/null || true; }
+
+# reviewer_rejected <candidate> — prints why this route may NOT review the
+# builder's work, or nothing when it may. RUN_MODEL / RUN_UPSTREAM / RUN_FAMILY
+# are the current iteration's builder route, resolved below.
+reviewer_rejected() {
+    local cand="$1" cand_upstream cand_family
+    [ "$cand" = "$RUN_MODEL" ] && { printf 'it is the builder route itself\n'; return; }
+    if [ -z "${RUN_FAMILY:-}" ]; then
+        printf 'the builder route %s resolves to no upstream, so no reviewer can be proved different from it\n' "$RUN_MODEL"
+        return
+    fi
+    cand_upstream="$(model_upstream "$cand")"
+    cand_family="$(model_family "$cand")"
+    if [ -z "$cand_family" ]; then
+        printf 'it resolves to no upstream, so it cannot be proved independent\n'
+        return
+    fi
+    if [ -n "$cand_upstream" ] && [ "$cand_upstream" = "$RUN_UPSTREAM" ]; then
+        printf 'it is the builder upstream %s under a different alias\n' "$cand_upstream"
+        return
+    fi
+    if [ "$cand_family" = "$RUN_FAMILY" ]; then
+        printf 'it is the builder family %s (%s and %s are one model on two hosts)\n' "$cand_family" "$cand" "$RUN_MODEL"
+        return
+    fi
+}
+
 pi_run() {
     ( cd "$ROOT" && timeout -k 30 "$ITER_TIMEOUT" sudo -n -H -u piagent \
         "$PI_CMD" --model "$1" -p "$(cat "$2")" --no-session ) >"$3" 2>"$4"
@@ -273,18 +323,30 @@ if ! flock -n 9; then
     exit 2
 fi
 
-ITER=0; STALL=0; FAILS=0; REVIEW_FAILS=0
+ITER=0; STALL=0; FAILS=0
 # Risk-based review state (persisted across restarts).
 REVIEW_CALLS="$(state_get REVIEW_CALLS)"; REVIEW_CALLS="${REVIEW_CALLS:-0}"
 ITERS_SINCE_REVIEW="$(state_get ITERS_SINCE_REVIEW)"; ITERS_SINCE_REVIEW="${ITERS_SINCE_REVIEW:-0}"
 REVIEW_SKIP_COUNT="$(state_get REVIEW_SKIP_COUNT)"; REVIEW_SKIP_COUNT="${REVIEW_SKIP_COUNT:-0}"
 LAST_REVIEW_ITER="$(state_get LAST_REVIEW_ITER)"; LAST_REVIEW_ITER="${LAST_REVIEW_ITER:-0}"
+# REVIEW_FAILS and the owed range are persisted too. They used to be reset here
+# on every start, so the commit a BLOCKED review stopped the loop on was owed
+# nothing: the next run reviewed only its own new commit and the blocked one was
+# never reviewed by anyone (external review 2026-11-01, finding F2). Both go
+# through review_int / an explicit read rather than a bare `:-0`, because a state
+# file written by an older revision simply lacks the key, and an empty
+# REVIEW_FAILS makes the `-ge` limit below error and read as FALSE.
+REVIEW_FAILS="$(review_int "$(state_get REVIEW_FAILS)")"
+REVIEW_OWED_BASE="$(state_get REVIEW_OWED_BASE)"
 guard
 heartbeat_start
 RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
 RUN_DIR="$LOGDIR/run-$RUN_ID"
 mkdir -p "$RUN_DIR"
 log "loop start worker_chain=[$WORKER_MODELS] reviewer=$REVIEWER_MODEL reviewer_fallbacks=[$REVIEWER_FALLBACKS] pid=$$ run=$RUN_ID"
+if [ -n "$REVIEW_OWED_BASE" ]; then
+    log "a review is OWED from an earlier run: ${REVIEW_OWED_BASE:0:8} is unreviewed; the next mandatory review covers ${REVIEW_OWED_BASE:0:8}..HEAD, not just the new commit"
+fi
 phase startup
 while :; do
     phase route-health
@@ -304,6 +366,10 @@ while :; do
         sleep 300
         continue
     fi
+    # Resolve the builder's identity once, before any reviewer is considered.
+    RUN_UPSTREAM="$(model_upstream "$RUN_MODEL")"
+    RUN_FAMILY="$(model_family "$RUN_MODEL")"
+    log "iter candidate worker=$RUN_MODEL upstream=${RUN_UPSTREAM:-UNRESOLVED} family=${RUN_FAMILY:-UNRESOLVED}"
     ITER=$((ITER+1))
     ILOG="$RUN_DIR/iter-$ITER.log"
     HEAD_BEFORE="$(git -C "$ROOT" rev-parse HEAD)"
@@ -325,14 +391,19 @@ they differ. Two overrides are load-bearing and are enforced by the loop script
 itself, not left to the reader:
 
 1. INDEPENDENCE. A reviewer dispatched on the builder's own upstream is NOT
-   INDEPENDENT and is not dispatched at all; isolating the review context is not a
-   substitute (vault: model-identity-is-the-upstream-string-not-the-alias). The
-   reviewer chain in `ralph-pi.sh` is cross-family by construction and skips any
-   candidate that is the builder's route.
+   INDEPENDENT and is not dispatched at all; isolating the review context is not
+   a substitute (vault: model-identity-is-the-upstream-string-not-the-alias).
+   Identity is the resolved upstream and model family, never the alias string:
+   two aliases can be one upstream and two hosts can be one family. The reviewer
+   chain in `ralph-pi.sh` skips any candidate that resolves to the builder's
+   upstream or family, and skips any candidate it cannot resolve at all.
 2. FAIL CLOSED. A mandatory review that cannot be dispatched is recorded as
    BLOCKED, counted in REVIEW_FAILS, and STOPS the loop (exit 8). It is never
-   logged as a cost skip. "Could not check" must not reach the same path as
-   "all clear" (vault: a-gate-that-skips-on-missing-input-is-a-pass-generator).
+   logged as a cost skip. A review that WAS dispatched and then died is recorded
+   as FAILED, not done, and its commit stays OWED: the range is persisted, so a
+   restart cannot forget it and the next mandatory review covers the unreviewed
+   commits instead of only the newest one. "Could not check" must not reach the
+   same path as "all clear" (vault: a-gate-that-skips-on-missing-input-is-a-pass-generator).
 
 POLICY_PRECEDENCE
         cat "$ROOT/docs/KILO_RALPH_LOOP_POLICY.md" 2>/dev/null || true
@@ -411,8 +482,13 @@ POLICY_PRECEDENCE
         # Count every committed iteration toward the batch checkpoint.
         ITERS_SINCE_REVIEW=$((ITERS_SINCE_REVIEW + 1))
         state_set ITERS_SINCE_REVIEW "$ITERS_SINCE_REVIEW"
-        # Failure-triggered: same failure persisted after remediation attempt.
-        if [ "${FAILS:-0}" -ge 2 ]; then
+        # An owed review outranks the risk policy: a review that was blocked or
+        # that died is not made optional by the next commit being small.
+        if [ -n "$REVIEW_OWED_BASE" ]; then
+            REVIEW_NEEDED=1
+            REVIEW_DECISION_REASON="carried forward: ${REVIEW_OWED_BASE:0:8} is still unreviewed from an earlier iteration"
+        elif [ "${FAILS:-0}" -ge 2 ]; then
+            # Failure-triggered: same failure persisted after remediation attempt.
             REVIEW_NEEDED=1
             REVIEW_DECISION_REASON="failure-triggered: $FAILS consecutive gate failures"
         elif [ "$RISK" = "high" ]; then
@@ -441,17 +517,24 @@ POLICY_PRECEDENCE
 
         if [ "$REVIEW_NEEDED" -eq 1 ]; then
             RP="$RUN_DIR/.review-prompt-$ITER.md"
+            REVIEW_BASE="$HEAD_BEFORE"
+            [ -n "$REVIEW_OWED_BASE" ] && REVIEW_BASE="$REVIEW_OWED_BASE"
             {
                 cat "$VALIDATOR_FILE"
-                printf '\n\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
+                printf '\n\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${REVIEW_BASE:0:8}" "${HEAD_AFTER:0:8}"
+                if [ "$REVIEW_BASE" != "$HEAD_BEFORE" ]; then
+                    printf 'This range is wider than this iteration because an earlier review could not be dispatched or died; %s..%s was never reviewed by anyone.\n' "${REVIEW_BASE:0:8}" "${HEAD_BEFORE:0:8}"
+                fi
                 printf '\n--- RISK CONTEXT ---\nDeclared risk: %s. Decision: %s.\n' "$RISK" "$REVIEW_DECISION_REASON"
             } >"$RP"
             REVIEW_MODEL=""
-            if [ "$REVIEWER_MODEL" = "$RUN_MODEL" ]; then
-                # A reviewer on the builder's own upstream is not an independent
-                # review, so it is not dispatched — but the review is still OWED.
+            REJECT="$(reviewer_rejected "$REVIEWER_MODEL")"
+            if [ -n "$REJECT" ]; then
+                # A reviewer on the builder's own upstream (or family, or one
+                # whose identity cannot be resolved at all) is not an independent
+                # review, so it is not dispatched -- but the review is still OWED.
                 # Try the cross-family fallbacks instead of dropping it.
-                log "iter=$ITER reviewer $REVIEWER_MODEL equals worker — trying cross-family fallbacks"
+                log "iter=$ITER reviewer $REVIEWER_MODEL refused: $REJECT — trying the fallbacks"
             elif model_alive "$REVIEWER_MODEL"; then
                 REVIEW_MODEL="$REVIEWER_MODEL"
             else
@@ -459,14 +542,33 @@ POLICY_PRECEDENCE
             fi
             if [ -z "$REVIEW_MODEL" ]; then
                 for candidate in $REVIEWER_FALLBACKS; do
-                    [ "$candidate" = "$RUN_MODEL" ] && continue
+                    REJECT="$(reviewer_rejected "$candidate")"
+                    if [ -n "$REJECT" ]; then
+                        log "iter=$ITER reviewer fallback $candidate refused: $REJECT"
+                        continue
+                    fi
                     if model_alive "$candidate"; then
                         REVIEW_MODEL="$candidate"
                         log "iter=$ITER reviewer falling back to $candidate"
                         break
                     fi
+                    log "iter=$ITER reviewer fallback $candidate UNHEALTHY"
                 done
             fi
+            # Record who was actually on each side, by upstream and family, so a
+            # later reader can check the independence claim instead of trusting
+            # the alias in the log line.
+            {
+                echo "builder:  $RUN_MODEL upstream=${RUN_UPSTREAM:-UNRESOLVED} family=${RUN_FAMILY:-UNRESOLVED}"
+                if [ -n "$REVIEW_MODEL" ]; then
+                    echo "reviewer: $REVIEW_MODEL upstream=$(model_upstream "$REVIEW_MODEL") family=$(model_family "$REVIEW_MODEL")"
+                else
+                    echo "reviewer: none dispatched"
+                fi
+                echo "scope:    ${REVIEW_BASE:0:8}..${HEAD_AFTER:0:8}"
+                echo "rule:     independence is the resolved upstream and model family, never the alias string."
+                echo "source:   the proxy's /model/info when it answers, else the committed map in tools/runner/model_identity.py; an unresolved alias is refused."
+            } >"$RUN_DIR/review-$ITER.identity.txt"
             if [ -n "$REVIEW_MODEL" ]; then
                 phase review
                 ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
@@ -489,15 +591,19 @@ POLICY_PRECEDENCE
                 {
                     echo "REVIEW BLOCKED — NOT REVIEWED, NOT SKIPPED."
                     echo "Reason the review was mandatory: $REVIEW_DECISION_REASON"
-                    echo "Builder route: $RUN_MODEL"
+                    echo "Builder route: $RUN_MODEL (upstream ${RUN_UPSTREAM:-UNRESOLVED}, family ${RUN_FAMILY:-UNRESOLVED})"
                     echo "Configured reviewer: $REVIEWER_MODEL (must not be the builder's route)"
                     echo "Fallbacks tried: $REVIEWER_FALLBACKS"
-                    echo "Every candidate was either unhealthy or the builder's own route, so no"
-                    echo "independent review could be dispatched. The loop stops here rather than"
-                    echo "advancing an unreviewed commit as if the review had been optional."
+                    echo "Every candidate was either unhealthy, refused as the builder's own"
+                    echo "upstream/family, or unresolvable, so no independent review could be"
+                    echo "dispatched. The loop stops here rather than advancing an unreviewed"
+                    echo "commit as if the review had been optional."
                 } >"$RUN_DIR/review-$ITER.md"
                 REVIEW_FAILS=$((REVIEW_FAILS+1))
                 state_set REVIEW_STATUS "blocked"
+                state_set REVIEW_FAILS "$REVIEW_FAILS"
+                REVIEW_OWED_BASE="$(review_owed blocked "$REVIEW_OWED_BASE" "$HEAD_BEFORE")"
+                state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
                 state_set LAST_REVIEW_DECISION "BLOCKED: $REVIEW_DECISION_REASON"
                 log "iter=$ITER review BLOCKED — $REVIEW_DECISION_REASON: no eligible reviewer route"
             fi
@@ -526,10 +632,15 @@ POLICY_PRECEDENCE
     if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
         if [ -n "$REVIEW_PID" ]; then
             wait "$REVIEW_PID"
-            RRC="$(cat "$RUN_DIR/review-$ITER.rc" 2>/dev/null || echo 1)"
-            if [ "$RRC" -ne 0 ] || [ ! -s "$RUN_DIR/review-$ITER.md" ]; then
+            # A missing, empty or corrupt .rc is a failure, not a zero. The old
+            # test was `[ "$RRC" -ne 0 ]`, and `[` itself fails on a non-numeric
+            # operand, which `if` reads as FALSE: a killed subshell that left an
+            # empty .rc took the success branch (external review 2026-11-01 F1).
+            RRC="$(review_rc_normalise "$(cat "$RUN_DIR/review-$ITER.rc" 2>/dev/null)")"
+            OUTCOME="$(review_outcome "$RRC" "$RUN_DIR/review-$ITER.md")"
+            if [ "$OUTCOME" != "done" ]; then
                 echo "REVIEWER FAILED model=$REVIEW_MODEL rc=$RRC" >>"$RUN_DIR/review-$ITER.md"
-                log "iter=$ITER REVIEWER FAILED rc=$RRC"
+                log "iter=$ITER REVIEWER FAILED rc=$RRC — the commit is still unreviewed and is now owed"
                 REVIEW_FAILS=$((REVIEW_FAILS+1))
             else
                 log "iter=$ITER reviewed by $REVIEW_MODEL -> $RUN_DIR/review-$ITER.md"
@@ -544,8 +655,15 @@ POLICY_PRECEDENCE
                 log "iter=$ITER REVIEW CALL #$REVIEW_CALLS — estimated cumulative cost ~\$${EST_COST} USD (rough; ~\$0.003/call)"
             fi
             STALL=0
-            REVIEW_STATUS="done"
-            state_set REVIEW_STATUS "done"
+            # The persisted record says which of the two happened. Writing
+            # REVIEW_STATUS=done on both arms is how a reviewer that died became
+            # an all-clear in `ralph-pi.sh status`, and the only place
+            # REVIEW_FAILS was reset (external review 2026-11-01 F1).
+            REVIEW_STATUS="$OUTCOME"
+            state_set REVIEW_STATUS "$OUTCOME"
+            state_set REVIEW_FAILS "$REVIEW_FAILS"
+            REVIEW_OWED_BASE="$(review_owed "$OUTCOME" "$REVIEW_OWED_BASE" "$HEAD_BEFORE")"
+            state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
             [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
         elif [ "$REVIEW_BLOCKED" -eq 1 ]; then
             # A mandatory review that could not be dispatched. This is NOT a cost
@@ -564,7 +682,7 @@ POLICY_PRECEDENCE
         log "iter=$ITER no commit — stall_count=$STALL"
     fi
 
-    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; echo "REVIEW_STATUS=$REVIEW_STATUS"; } >"$STATE"
+    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; echo "REVIEW_STATUS=$REVIEW_STATUS"; echo "REVIEW_FAILS=$REVIEW_FAILS"; echo "REVIEW_OWED_BASE=$REVIEW_OWED_BASE"; } >"$STATE"
     phase idle
     [ "$STALL" -ge "$STALL_LIMIT" ] && { log "STOP: $STALL consecutive stalled iterations"; exit 5; }
     [ "$FAILS" -ge "$FAIL_LIMIT" ] && { log "STOP: $FAILS consecutive gate failures"; exit 4; }

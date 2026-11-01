@@ -1,23 +1,20 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — changes the loop's review-dispatch control flow (a mandatory review that
-cannot be dispatched now BLOCKS and exits 8 instead of logging a cost skip) and the Linux
-frontend's asset-failure handling (the runtime is no longer constructed without
-`TRAVSPRT.BNI`); process/error-handling change, no arithmetic moved, all gates green.
+Risk: high — rewrites the loop's review-record control plane: how reviewer independence is
+decided (resolved upstream/family, not the alias string), what a dispatched-then-died review
+persists (`failed`, not `done`), and what survives a restart (the owed commit range). Control
+flow, persisted state and error handling; no game arithmetic, render path or golden moved.
 
-Last updated: 2026-11-01 (batch 11: review-1's findings, all four dispositioned — **F1
-High fixed** (a mandatory review can no longer be logged as a cost skip: same-upstream falls
-through to the cross-family fallbacks, none eligible ⇒ `REVIEW BLOCKED — NOT REVIEWED, NOT
-SKIPPED`, `REVIEW_FAILS++`, collect **exits 8**; the owner's generic loop policy is committed
-as written and injected under a project-precedence block instead of "authoritative"), **F2
-Medium fixed** (the C# loads `TRAVSPRT.BNI` before the runtime exists and `Bni.Load` throws,
-so the null archive was the one part of `sprites` that was *not* faithful: `mdk_linux` gates
-the runtime on `spritesReady` and passes `&sprites` outright; `tick1` FAILs with exit 1
-instead of printing a NOTE and goldening a different game), **F4 Low fixed** (`ralph.sh` back
-to 755), **F3 Low deferred** (pinning the `RUNNER` voice needs a mixer column in *both* the
-probe and the harness). Goldens **440 PASS / 0 FAIL / 0 SKIP**, no golden moved; the pinned
-frame is byte-unchanged. Narrative: `docs/PROGRESS_LOG.md`, "Iteration 39". Keep this file
-under ~150 lines.)
+Last updated: 2026-11-01 (batch 12: review-2's five findings all dispositioned — **F1/F2/F3
+Medium fixed**, **F5 Low fixed**, **F4 Medium deferred** with cause and now priority item (a).
+In short: a dispatched-then-died reviewer can no longer be recorded as reviewed
+(`review_rc_normalise`/`review_outcome`; the old `[ "$RRC" -ne 0 ]` returned 2 on a
+non-numeric operand, which `if` read as FALSE); the owed commit range and `REVIEW_FAILS`
+survive a restart and outrank the risk policy; independence is the resolved upstream **and
+family**, not the alias (the live proxy confirms the two DeepSeek aliases are one family on two
+hosts); and the `vm_tests` `nullptr` claim no longer rests on a property the fixture lacks.
+Goldens **440 PASS / 0 FAIL / 0 SKIP**, no golden moved; the pinned frame is byte-unchanged.
+Narrative: `docs/PROGRESS_LOG.md`, "Iteration 40". Keep this file under ~150 lines.)
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -31,15 +28,22 @@ under ~150 lines.)
    under a named 1 MiB budget, restore on eviction).
 6. **DONE — the object pass, all the way to the GPU**, plus review-3/-5/-6's findings on it
    (batch 8: `ObjectMotion.Bank`; batches 9-10: the Runner, both halves pinned).
-   **NEXT, in priority order:** (a) **F3 from review-1** — `dumpRunner` has no mixer field,
+   **NEXT, in priority order:** (a) **F4 from review-2** — the missing-`TRAVSPRT.BNI` path
+   has no committed evidence pair. Batch 11 changed a §11 P6 missing-asset path and shipped
+   the 17th byte-identical pin; the only capture of the new behaviour was `/tmp/f2demo/`,
+   which is not in the repository. Ship
+   `docs/evidence/2026-11-01-L7-sprites-missing-scene.{png,txt}` (symlink farm + a 4-byte
+   archive so the marker exists, the read succeeds and the parse fails; `DISPLAY=:99`,
+   lavapipe, command and revision in the sidecar) and say in the pinned sidecar that a pin
+   cannot show an error path. (b) **F3 from review-1** — `dumpRunner` has no mixer field,
    so `mixer_.play("RUNNER", Once)` is unpinned; add the column to the probe *and* the
-   harness and regenerate `L7_t120_runner_{a,b}` from the oracle. (b) The C3D depth and
+   harness and regenerate `L7_t120_runner_{a,b}` from the oracle. (c) The C3D depth and
    blend state still differ from the C# (Standing open items) and the Citro3D backend
    ignores `MeshDraw::world`, so the 3DS cannot place an object until it has a per-draw
-   matrix. (c) The middle 173 px of the pinned frame, which is **not** the object pass — at
+   matrix. (d) The middle 173 px of the pinned frame, which is **not** the object pass — at
    frame 1 neither tree has a script object. The sky/middle/bottom split of the 1.240% gap,
    with the "do NOT re-litigate the panorama, palette, uniforms, projection or camera" note,
-   is in `docs/OPEN_ITEMS.md`. (d) `FrameBlend.Lerp` is `Vector3.Lerp` and the port's
+   is in `docs/OPEN_ITEMS.md`. (e) `FrameBlend.Lerp` is `Vector3.Lerp` and the port's
    `from + (to-from)*t` is not its rounding — the oracle's is `fmaf(from, 1-t, to*t)`,
    costing 1 ULP on one object at L3 t120. `fmaf` is a libm call on devkitARM at
    `-mfpu=vfp` and the current spelling contracts to one `vmla.f32` per component
@@ -53,10 +57,14 @@ flash, ride pose and footsteps; `Vector3.Lerp`'s rounding (above); the other hal
 driven-carrier shift, both with `Rides`; review-1's F3 (the `RUNNER` voice). All with
 evidence in `OPEN_ITEMS.md`. **Old-3DS timing is UNMEASURED.**
 
-**Owner-authorized task (from review-1's F1 remediation, cannot be done in a batch):** add
-`ralph-pi.sh`, `ralph.sh`, `docs/KILO_RALPH_LOOP_POLICY.md` and `.kilo/agent/*` to the
-`PROTECTED` set of `tools/runner/gates_batch_integrity.py` — that file is gate tooling and
-is in its own `PROTECTED` list, so only the owner may widen it.
+**Owner-authorized tasks (cannot be done in a batch).** (1) From review-1's F1 remediation:
+add `ralph-pi.sh`, `ralph.sh`, `docs/KILO_RALPH_LOOP_POLICY.md` and `.kilo/agent/*` to the
+`PROTECTED` set of `tools/runner/gates_batch_integrity.py` — that file is gate tooling and is
+in its own `PROTECTED` list, so only the owner may widen it. (2) From this batch: wire
+`bash tools/runner/test_review_state.sh` into `tools/check.sh` as a gate line. It is not
+wired, so the review-record state machine is currently checked only by hand; `tools/check.sh`
+is owner-protected and adding a gate line is exactly the kind of change a builder must not
+make to obtain a green.
 
 ## Current tree state (VERIFIED)
 
@@ -107,10 +115,14 @@ and, because the idle draw is guarded on the animation, the random stream differ
 batch 11 **no shipped entry point can pass `nullptr`**: `mdk_linux` builds the runtime only
 under `scriptAssetsReady && spritesReady`, and `tick1` exits 1 when the archive does not
 parse (a zero-filled archive *does* parse as empty, and the L7 goldens then fail 31 cases —
-that is the pin). `vm_tests` still passes `nullptr` out loud for synthetic levels that
-provably contain no `SW_H150`, and `itemsAnimation` still answers `nullptr` for a missing
-**entry**, because `Items.cs:150` does: do not "guard" that. Both halves of the Runner are
-pinned: the idle by `L7_t1000_*`, the run by `L7_t120_runner_{a,b}`.
+that is the pin). `vm_tests` still passes `nullptr` out loud, and it is inert there — but not
+for the reason the record used to give ("the level has no `SW_H150`" is **false**:
+`vm_tests.cpp:3593` loads real level 7, which has one). The true reason is that `sprites_`
+reaches the RNG by exactly one route, `itemsAnimation` → `motionRunner`, and `motionRunner`
+runs only for `type_name == "SW_H150"`, which no `vm_tests` case creates. `itemsAnimation`
+still answers `nullptr` for a missing **entry**, because `Items.cs:150` does: do not "guard"
+that. Both halves of the Runner are pinned: the idle by `L7_t1000_*`, the run by
+`L7_t120_runner_{a,b}`.
 
 **Draw submission: order and lifetime.** `mdk_render_draw_mesh` **queues**; the backend
 submits the frame's draws bucketed by `Pass` — Solid, DoubleSided, Mirror, Blended, OnTop,
@@ -126,31 +138,45 @@ horizontal axis across the tick's movement, and `runTick` calls it **before**
 **bit-exact against .NET 10** because .NET builds that matrix from a quaternion; the
 look-alike element-wise spelling differs by 2-8 ULP per element.
 
-**Loop harness (`ralph-pi.sh`).** A mandatory review is fail-closed: same-upstream reviewer
-⇒ cross-family fallbacks; none eligible ⇒ BLOCKED, `REVIEW_FAILS++`, exit 8. A risk-policy
-skip logs its own reason and `REVIEW_STATUS` is in the state file. The builder prompt injects
-the owner's generic loop policy under a project-precedence block, not as "authoritative".
+**Loop harness (`ralph-pi.sh`).** A mandatory review is fail-closed on **both** halves of "it
+did not happen". Not dispatchable ⇒ BLOCKED, `REVIEW_FAILS++`, exit 8. Dispatched and died ⇒
+`REVIEW_STATUS=failed` and the commit stays **owed**: `REVIEW_OWED_BASE` and `REVIEW_FAILS` are
+persisted, re-read at startup, and outrank the risk policy, so a restart cannot forget an
+unreviewed commit and the next dispatch covers `owed..HEAD`. Independence is the **resolved
+upstream and model family**, never the alias (`tools/runner/model_identity.py`: live
+`/model/info`, else committed map, else NOTHING — and NOTHING is refused, because "could not
+tell" must not reach the same path as "proved different"); `review-$ITER.identity.txt` records
+both sides. The state machine is `tools/runner/review_state.sh`, asserted by
+`tools/runner/test_review_state.sh` (44 cases, with decay guards proven to FAIL if the old
+spellings come back). The builder prompt injects the owner's generic loop policy under a
+project-precedence block, not as "authoritative". **Testing this found one more F1-shaped
+bug**: the startup read `case "${REVIEW_FAILS:-0}" in …) REVIEW_FAILS=0` tests the
+*defaulted* value and assigns to the original, so a state file predating the key left
+`REVIEW_FAILS` **empty** — and `[ "" -ge 2 ]` errors with status 2, which `&&` reads as FALSE,
+so the reviewer-failure limit silently never fired. `review_int` replaces it, and the old
+spelling is pinned as a failing case in its own right.
 
-## Verified on this tree (batch 11)
+## Verified on this tree (batch 12)
 
-All three gates were re-run from a clean invocation on this tree; the numbers are quoted
-from their own output, and the narrative is `docs/PROGRESS_LOG.md`, "Iteration 39".
+All three gates were re-run from a clean invocation; numbers are quoted from their own output,
+and the narrative is `docs/PROGRESS_LOG.md`, "Iteration 40".
 
 - `make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**, ended
   `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP**, no existing golden moved.
-- `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes` 0
+- `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED` (`audit_c_with_classes` 0
   violations, `gates_vfp` blockers=0, `audit_arm11_math` clean, `audit_r11_idiv` no
   candidates, `gates_core_parity` clean, `gates_smdh` SKIPPED (no CIA), `gates_frames PASS`
-  (`L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so
-  `reference.sha256` was NOT regenerated), `gates_batch_integrity PASS`. No gate was
-  pinned, relaxed or edited.
-- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` —
-  **exit 0**, built `mdk.3dsx`. `cmake --build build-linux --target mdk -j8` — **exit 0**.
-- Frame `docs/frames/2026-11-01-review1-fail-closed.png` + `.txt`: `1.240 / 247 / 0.1819`,
-  sha256 `6646adf1dae3a774…`, identical to its sixteen predecessors (level 3 has no
-  `SW_H150`, and nothing in the render path moved). The F2 reproduction's frontend run used
-  `DISPLAY=:99` + lavapipe and captured to `/tmp/f2demo/`. No emulator and no Old-3DS run:
-  **Old-3DS timing stays UNMEASURED** and the Citro3D picture UNVERIFIED (P6).
+  with `L3_f1.bmp` byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
+  regenerated, `gates_batch_integrity PASS`). No gate was pinned, relaxed or edited.
+- `make -C mdk_3ds -j8` — **exit 0**, built `mdk.3dsx`; `cmake --build build-linux --target
+  mdk -j8` — **exit 0**. The change is shell and Python, so neither target was at risk; both
+  were built anyway rather than assumed.
+- `bash tools/runner/test_review_state.sh` — **exit 0**, 44/44, and proven to FAIL when a
+  fixed spelling is reintroduced.
+- Frame `docs/frames/2026-11-01-review2-review-record.png` + `.txt`: `1.240 / 247 / 0.1819`,
+  byte-identical to its predecessors, as expected when nothing in the render path or the
+  simulation moved. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays
+  UNMEASURED** and the Citro3D picture UNVERIFIED (P6).
 
 ## Standing open items
 
@@ -181,6 +207,8 @@ tests/scripts/build/tick1 dump blend 3 1               # the blended transforms 
 tests/scripts/build/tick1 dump transform 7 1000        # the hamster's animation
 tests/scripts/build/tick1 dump runner 7 120 -21,-13,0.73   # the hamster's run, per tick
 bash tools/check.sh                                    # all gates
+bash tools/runner/test_review_state.sh                 # the review-record state machine
+python3 tools/runner/model_identity.py selftest --live # alias→upstream map vs the live proxy
 DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds
 cmake --build build-linux --target mdk -j8             # the Linux frontend
 python3 tools/runner/gates_frames.py                   # gate 7 alone

@@ -4064,3 +4064,187 @@ so the committed mode and the worktree agree and the tree is clean.
   was then run directly over the committed range —
   `python3 tools/runner/gates_batch_integrity.py --base 255c49d --head d07ca1f` →
   `BATCH INTEGRITY: PASS`, exit 0 — so nothing passed that the hook would have blocked.
+
+---
+
+## Iteration 40 (2026-11-01): review-2's findings — a review record that cannot say "done" about a review that did not happen
+
+The tree arrived **dirty** from a timed-out iteration: `ralph-pi.sh` modified plus three new
+files under `tools/runner/`. Per the builder rule that in-flight work was finished, gated and
+committed before anything new was started. It is batch 12, and it is the remediation of
+`logs/ralph-pi/run-20261101-002752/review-2.md`.
+
+**Prior-solution lookup (mandatory, done first).** Obsidian MCP is not exposed in this
+harness, so `/mnt/nas/Vaults/port-docs` was read directly, read-only. Two notes are exactly
+on this subsystem and both were written before this batch existed:
+`30-architecture/patterns/model-identity-is-the-upstream-string-not-the-alias.md` (on a shared
+litellm proxy an alias is a convenience name, not a statement of fact — it documents
+`claude-3-7-sonnet-latest` resolving to `openai/qwen38-flash-next`, and says the review
+"silently becomes same-family" while every downstream check still reads green) and
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md`.
+`40-incidents/2026-08-24-headless-orchestrator-fabricated-done-audits-three-strikes.md` is
+the same failure one level up: an orchestrator that wrote its own `DONE(PASS)` audits with
+zero artefacts, three times, whose lesson is that **existence of a record entry is not
+evidence when the writer owns the pen**. Cognee MCP is not exposed in this harness. The
+in-flight code already cited the first two; this batch adds the third's lesson as a test.
+
+### Review-2's findings, in order
+
+Review-2 filed **no Critical and no High**; its verdict was INCOMPLETE on four Mediums and one
+Low. All five are dispositioned below.
+
+**F1 (Medium, confirmed) — FIXED.** A reviewer that was dispatched and then died was recorded
+as `REVIEW_STATUS=done`. Two defects, both real, both reproduced:
+
+1. `REVIEW_STATUS="done"; state_set REVIEW_STATUS "done"` sat *after* the if/else that
+   distinguished success from failure, so it ran on both arms.
+2. `[ "$RRC" -ne 0 ]` on a non-numeric `$RRC` — which is what a killed subshell that truncated
+   its `.rc` leaves behind — makes `[` itself exit **2**, and `if` reads 2 as FALSE. So the
+   failure arm was reachable only by a *clean* non-zero exit; a torn `.rc` printed
+   `reviewed by …` and reset `REVIEW_FAILS`.
+
+Fix: the decision moved into `tools/runner/review_state.sh` as `review_rc_normalise` (a
+missing, empty or non-numeric rc is a failure, never a zero) and `review_outcome` (a report
+must exist, be non-empty, and come from a zero exit — a reviewer that timed out after writing
+half a report is FAILED, because partial text is not a review of the diff). `REVIEW_STATUS`
+now takes `$OUTCOME`, and `REVIEW_FAILS` is `state_set` on both arms; it used to be incremented
+in a local and never persisted, which is why the reset was invisible.
+
+**F2 (Medium, confirmed) — FIXED.** The BLOCKED path stopped the process but persisted nothing:
+`REVIEW_FAILS` was re-zeroed at startup and `REVIEW_STATUS` was written and never read, so an
+operator who fixed the reviewer route and restarted left the blocked commit unreviewed
+forever, and the next dispatch reviewed only its own new commit. Fix: `REVIEW_FAILS` and a new
+`REVIEW_OWED_BASE` are read at startup, written to the state file every iteration, and
+`review_owed` keeps the **earliest** unreviewed base across a run of failures so a bad streak
+cannot shrink the range. An owed review now **outranks the risk policy** — a blocked commit is
+not made optional by the next commit being small — and the review prompt's scope line widens
+to `owed..HEAD` with a sentence saying why.
+
+**F3 (Medium, high confidence) — FIXED, and its open question is now answered.** The guard
+compared alias *strings* while its own comment said identity is the upstream. Review-2's open
+question 1 asked whether `deepseek-v4.1-flash` and `deepseek-v4.1-flash-nvidia` are one
+upstream on this proxy. **Answered by asking the proxy**: `GET /model/info` answers here, and
+they are `deepseek/deepseek-flash` (api.deepseek.com) and
+`openai/deepseek-ai/deepseek-v4.1-flash` (integrate.api.nvidia.com) — **different upstream
+strings, one model family**. So the fake-independence path was live in a way neither a
+string-compare nor an upstream-compare alone would catch: two hosts of the same weights are not
+two independent reviewers. `tools/runner/model_identity.py` resolves an alias to
+(upstream, family) with the order of authority **live `/model/info` → committed map →
+NOTHING**, and NOTHING is *refused* rather than guessed, because "could not tell" must not
+reach the same path as "proved different". `reviewer_rejected` in `ralph-pi.sh` refuses a
+candidate that is the builder route, that resolves to the builder's upstream, that resolves to
+the builder's family, or that resolves at all poorly; an **unresolvable builder refuses every
+reviewer**, which is fail-closed and deliberate. Each dispatch now writes
+`review-$ITER.identity.txt` recording both sides by upstream and family, so the independence
+claim is checkable after the fact instead of being inferred from an alias in a log line.
+`model_identity.py selftest --live` passes 9/9 against the live proxy, including "the static
+map agrees with the live proxy for every alias it lists".
+
+**F5 (Low, confirmed) — FIXED, and the corrected claim is stronger than the wrong one.** The
+record said `vm_tests` passes `nullptr` "for synthetic levels that provably contain no
+`SW_H150`". Review-2 was right that this is false: `vm_tests.cpp:3593` is
+`const int32_t kLevel = 7;` and `:3595` loads real level 7, whose world does have an
+`SW_H150`. Its "needs investigation" — whether any pinned value was generated under the null
+stream — resolves to **no**, and the reason is narrower and better than the sentence it
+replaces: `sprites_` reaches the RNG by exactly one route, `itemsAnimation` → `motionRunner`
+(the only two callers of `itemsAnimation` are both inside `motionRunner`), and `motionRunner`
+is reached only from `motionPickup` under `obj->type_name == "SW_H150"`. `SW_H150` appears
+nowhere in `vm_tests.cpp`, and a `vm_tests` runtime's objects come only from `spawn()` or a
+manual `push_back`, so the null archive is **inert** there, not merely unobserved. The
+strongest confirmation is the negative one: the only place `vm_tests` reads the RNG at all is
+`runGunAim`'s `nextDraw`, and `testGunAimAimsAndFires` contains **zero** `runtime.update`
+calls, so no pinned draw is taken after a world tick anywhere in the file. The sentence in
+`docs/CONTINUATION.md` now states the invariant that is actually true.
+
+**F4 (Medium, confirmed) — DEFERRED with cause, and it is now priority item (a).** The
+finding is correct: batch 11 changed a §11 P6 missing-asset path and shipped the 17th
+byte-identical pin, and the only capture of the new behaviour was `/tmp/f2demo/`, which is
+not in the repository and cannot be re-checked. It is deferred because it is a different
+subsystem — the Linux frontend's evidence record, not the loop's control plane — and the
+builder contract is one subsystem slice per batch, with Mediums fixed only when they are
+"cheap **and in-scope**". Splitting the two keeps the review packet focused. It is recorded as
+the first item of the next batch with the reproduction recipe attached (symlink farm plus a
+4-byte `TRAVSPRT.BNI` so the marker exists, the read succeeds and the parse fails;
+`DISPLAY=:99` with lavapipe; command and revision in the sidecar), and the sidecar must say in
+its own text why the pinned picture cannot show an error path.
+
+### What makes the fix testable rather than merely written
+
+`review_state.sh` exists as its own file for one reason: the review record is the only part of
+the loop whose failure is **invisible** — a review that silently reads "done" is not a crash,
+it is a commit nobody checked — and a state machine you cannot run without starting the loop is
+a state machine you cannot test. `tools/runner/test_review_state.sh` runs it in isolation:
+**44 cases, all PASS**, and every case is a failure that actually happened in this loop, not a
+hypothetical.
+
+Three groups. The state machine itself (17 cases: the torn `.rc`, the timeout that left a
+partial report, the empty report, the owed base surviving a restart, a second failure keeping
+the earliest base). The independence guard (8 cases, lifted **verbatim out of `ralph-pi.sh`**
+with `awk` so it is the shipped function under test, and run against aliases that exist on
+this proxy — `qwen`/`swarm-worker` refused as one upstream, `luna`/`luna-compaction` refused
+as one upstream under two aliases, the two DeepSeek hosts refused as one family, an unknown
+alias refused, an unresolvable builder refusing every reviewer). And **decay guards** (10
+cases) that assert the *old spellings are gone from the shipped file*: `[ "$RRC" -ne 0 ]` must
+be absent, `state_set REVIEW_STATUS "$OUTCOME"` must be present, `REVIEW_FAILS` and
+`REVIEW_OWED_BASE` must reach the state file, and both reviewer chains must ask
+`reviewer_rejected`. The guards strip comment lines before matching, because `ralph-pi.sh`
+documents its own bugs in prose to stop them being tidied back and a naive grep reads that
+prose as code — the same trap `audit_c_with_classes.py` had to solve.
+
+**The guards were proven to fail, which is the part that matters.** Reintroducing
+`[ "$RRC" -ne 0 ]` in a code position gives `FAIL F1: the raw numeric test on $RRC is gone`,
+and replacing `state_set REVIEW_STATUS "$OUTCOME"` with the old literal gives two FAILs. A
+guard that cannot fail is a pass generator, and that is the pattern this whole batch is about.
+
+**Running the state machine found a fifth bug no reviewer had named.** The startup read was
+
+```bash
+REVIEW_FAILS="$(state_get REVIEW_FAILS)"
+case "${REVIEW_FAILS:-0}" in ''|*[!0-9]*) REVIEW_FAILS=0 ;; esac
+```
+
+which looks guarded and is not: the `case` tests the **defaulted** value `${REVIEW_FAILS:-0}`
+while the assignment inside it writes to `REVIEW_FAILS`, so when the key is absent the default
+`0` is tested, matches neither pattern, and the variable is left **empty**. The shipped guard is
+`[ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]`, and `[` on an empty operand errors with status
+2, which `&&` reads as FALSE — so after a restart on a state file written before these keys
+existed, the reviewer-failure limit silently never fired. That is F1 again one variable over: a
+check that cannot answer, read as "all clear". It was found by actually running the startup
+block against the repository's real `logs/ralph-pi/state`, which predates the new keys, not by
+reading the diff. `review_int` replaces the construct, and the old spelling is now pinned as a
+failing case (`the old case-with-:-0 shape left it EMPTY`) so the reason the helper exists
+survives as a test rather than as a comment.
+
+`test_review_state.sh` is **not wired into `tools/check.sh`**: `check.sh` is owner-protected
+and adding a gate line is exactly the change a builder must not make to obtain a green. It is
+recorded as an owner-authorized task alongside the existing one.
+
+### Gate results (verbatim, all three re-run on this tree)
+
+Nothing was pinned, relaxed or edited; no golden moved; `tests/frames/reference.sha256` was not
+regenerated. The full logs are in the run directory.
+
+- `make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**, ending
+  `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP**.
+- `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`:
+  `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract
+clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`,
+  `gates_smdh SKIP no built .cia`, `gates_frames PASS every pinned frame is deterministic and
+unchanged` (`L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`),
+  `gates_batch_integrity PASS`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` —
+  **exit 0**, `3DSX mdk.3dsx`. `cmake --build build-linux --target mdk -j8` — **exit 0**,
+  `Built target mdk`. The diff is shell and Python, so neither target was at risk; both were
+  built anyway rather than assumed.
+- `bash tools/runner/test_review_state.sh` — **exit 0**, `REVIEW STATE: ALL CASES PASS`, 44
+  cases.
+- `python3 tools/runner/model_identity.py selftest --live` — **exit 0**, `MODEL IDENTITY:
+SELFTEST CLEAN`, 9/9 including the live-proxy agreement check.
+- Frame: `tools/publish_frame.sh review2-review-record` published
+  `docs/frames/2026-11-01-review2-review-record.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`; its sha256 `6646adf1dae3a774…` is
+  identical to its predecessors, as expected with no render-path and no simulation change.
+- No emulator run and no Original 3DS hardware run: **Old-3DS timing stays unmeasured**, and
+  the Citro3D picture stays unverified (AGENTS.md §11 P6). No display other than the pinned
+  frame's own headless capture was used, so P7 is not engaged this batch.
