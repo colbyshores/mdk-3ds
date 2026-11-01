@@ -1,25 +1,26 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — changes the loop's own test harness (one shared bounded lift, one shared fragment
-guard, a write counter that now counts calls) plus a documentation record correction. `ralph-pi.sh`,
-`ralph.sh`, every gate, every golden, the frame-oracle tooling and all game behaviour are untouched;
-root cause of all three findings is certain and each fix was reproduced before and after.
+Risk: medium — changes the loop's own test harness (two new pinning checks and a corrected
+rationale comment) plus four corrections to the batch-20 record. `ralph-pi.sh`, `ralph.sh`, every
+gate, every golden, the frame-oracle tooling and all game behaviour are untouched; all four findings
+were reproduced by direct experiment before the record was edited.
 
-Last updated: 2026-11-01 (batch 20: run-20261101-062333/**review-6.md** dispositioned — **F1
-Medium, F2 Low, F3 Low: all three confirmed, none rebutted; no Critical or High**). F1 was a defect
-in the *record*: the R5-2 reversion block named a one-arm edit and quoted a two-arm measurement, so
-a reviewer re-running it got `got '1'` where the record said `got '2'` — the "the named edit is not
-the one whose output is quoted" class, recurring inside the block written to close it. Re-run on
-three scratch worktrees (both arms / `then` alone / `else` alone) and corrected in place as three
-named experiments, each quoting only its own output. F2 was the fourth lift of the shape batches
-18-19 fixed — unmeasured, reading the raw file with the terminator R5-1 removed — so **one**
-`lift_fn` now bounds every function lift by the definition's own shape and **one** `guard_fragment`
-runs the same three measurements on each of the five fragments; the blanket "all three lifts are
-measured" claim is replaced by what each class actually carries. F3: the counter that derives the
-collector death-loop bound counted lines while the loop injects at write *calls* — now occurrences,
-plus two self-tests. **175 cases** (157 labels carried, 6 re-worded with a successor each, 12 new
-checks, 0 lost); six reversion experiments each shown to FAIL; goldens **440/0/0**, no golden moved;
-the frame is byte-unchanged. Narrative: `docs/PROGRESS_LOG.md`, "Iteration 48".
+Last updated: 2026-11-01 (batch 21: run-20261101-062333/**review-7.md** dispositioned — **F1
+Medium, F2/F3/F4 Low: all four confirmed, none rebutted; no Critical or High**). All four were
+defects in the *record* batch 20 had just written, and each was reproduced by experiment before being
+corrected. **F1**: `CONTINUATION.md` and the commit message said "six reversion experiments each
+shown to FAIL" while batch 20's own table records three of the six (B1/B3/B5) as **175 PASS by
+design** — controls proving insensitivity to a reformatting, not reversions. The claim overstated the
+falsification evidence 2× and hid that B1 is precisely the case where the suite does **not** fire;
+both places now name three controls and three reversions. **F2**: the B6 row quoted a "73-line
+over-run", the raw-file distance, beside a lift that reads the comment-stripped `$LOOP_CODE` where
+the same over-run is **30** lines (five definitions in both). **F3**: the R5-2b transcript showed
+four lines for a five-case set and the omitted line was a **PASS**, indistinguishable from a vanished
+case; all five are quoted now. **F4**: the doubled brackets in `lift_fn`'s start pattern were
+justified as an mawk 1.3.4 defect; the mechanism is POSIX bracket-class semantics, and it is now
+pinned by two `R7-4` cases instead of living in prose. **177 cases** (175 carried, 2 new, 0 lost);
+goldens **440/0/0**, no golden moved; frame byte-unchanged. Full narrative with the measurements:
+`docs/PROGRESS_LOG.md`, "Iteration 49".
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -76,7 +77,10 @@ startup fold classifies an in-flight review as lost **without reading the run di
 `review-$ITER.rc` and `review-$ITER.md` already say whether the reviewer finished — so a stop after
 a completed review costs a strike and a second paid call. Batch 19 removed the second site that
 could reach it; batch 20 found none left in the window. Changing the fold changes the meaning of
-`REVIEW_FAILS` and the owed set (review-5 oq1, re-asked by review-6 oq1).
+`REVIEW_FAILS` and the owed set (review-5 oq1, re-asked by review-6 oq1). (8) Whether the `Risk:`
+line is the builder's to write at all: the builder authors the input to its own review policy. The
+safety net overrode batch 20's `medium` (567-line diff) so the policy held, but the coupling is real
+and an owner check on it belongs on record (review-7 oq3).
 
 ## Current tree state (VERIFIED)
 
@@ -84,63 +88,68 @@ The full record — every invariant, every failure mode, every "do not change th
 appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of batch 13", marked
 **superseded in part** where batches 14-20 changed it. The headline:
 - **Camera/renderer:** the C#'s RIGHT-HANDED `CreateLookAt` basis; Vulkan folds clip.y into the
-  matrix and the sky inverse carries the flip on its LEFT side; shaders use `M * v`; Citro3D
-  culls per draw with the mode cached in the **Citro3D context**. **UNVERIFIED on hardware** (P6).
-- **Frame golden:** level 3, 320x240, seed 1, frame 1; `oracle=b60e72552c40…`,
-  `cpp=58615fc85d02…` (a regression baseline, NOT a fidelity reference), gap
-  `1.240 / max 247 / mean 0.1819` at tolerance 0.
+  matrix and the sky inverse carries the flip on its LEFT side; shaders use `M * v`; Citro3D culls
+  per draw with the mode cached in the **Citro3D context**. **UNVERIFIED on hardware** (P6).
+- **Frame golden:** level 3, 320x240, seed 1, frame 1; `oracle=b60e72552c40…`, `cpp=58615fc85d02…`
+  (a regression baseline, NOT a fidelity reference), gap `1.240 / max 247 / mean 0.1819` at
+  tolerance 0.
 - **Kurt/sprites:** `game/kurt_sprite.{h,cpp}` is `Kurt/KurtSprite.cs`; palette-index frames
-  (5.30 MiB measured) uploaded on first draw under `MdkCapabilities::sprite_residency_bytes`
-  (0 desktop, 1 MiB 3DS) — UNVERIFIED on hardware (P6). `Player::fall` is `Kurt.Fall` whole.
+  (5.30 MiB measured) uploaded on first draw under `MdkCapabilities::sprite_residency_bytes` (0
+  desktop, 1 MiB 3DS) — UNVERIFIED on hardware (P6). `Player::fall` is `Kurt.Fall` whole.
 - **Object pass:** `transform()` is `CreateScale * (rolling ? RollingBasis : Rotation) *
   CreateTranslation(...)` via `mdk::multiply`; `transform_at(alpha)` is what a frame draws with;
-  `rotation()` keeps the libm trig and the `@vfp-exempt R6` pin; `roll` has a writer
-  (`motionBank` is `ObjectMotion.Bank`); the Runner is `ObjectBehaviors.UpdateRunner`, and
-  **`sprites` is a REQUIRED constructor argument** (since batch 11 no shipped entry point can
-  pass `nullptr`). `mdk_render_draw_mesh` **queues** and the backend buckets by `Pass` in queue
-  order — the oracle's order, not a backend's (lifetime in `render/draw_queue.h`, P3).
-  `update_rolling()` runs **before** `previous_position = position`, where the C# does, and
-  `mdk::create_from_axis_angle` is **bit-exact against .NET 10**.
-- **Loop harness:** fail-closed on every way a mandatory review can fail to happen, and
-  fail-*forward* where the obligation is recoverable: a lost review is owed, counted, and lands on
-  `failed` — the halt is reserved for a state with no range, nothing owed and no `HEAD` naming an
-  **ancestor** commit. Every transition goes through `state_write` (one temp file, one rename, **a
-  checked status**: a record that cannot be written stops the loop at exit 9), and `state_set` is
-  the single-key spelling of that SAME writer — **one writer, one refusal, one status**. **The
-  obligation is created before the thing it must survive** — dispatch persists the in-flight range
-  and `invoked` before the reviewer is spawned. **And nothing may sit between a verdict and the
-  transition that records it — loop-wide**: the review counters land *after* it and the **gates
-  phase performs no record write at all**, because a stop boundary before the transition leaves
-  `invoked` with a half-written verdict; `LAST_GATES` reaches disk with the end-of-iteration
-  rewrite. Independence is the resolved upstream and family, re-resolved after a fallback; the live
-  cache is per-uid/per-proxy at 0600, checked on the descriptor it reads, never through a symlink,
-  never blocked by a planted FIFO. State machine: `tools/runner/review_state.sh`, **175 cases**.
-- **How that suite reads `ralph-pi.sh` (batch 20, do not re-loosen):** the script cannot be
+  `rotation()` keeps the libm trig and the `@vfp-exempt R6` pin; `roll` has a writer (`motionBank`
+  is `ObjectMotion.Bank`); the Runner is `ObjectBehaviors.UpdateRunner`, and **`sprites` is a
+  REQUIRED constructor argument** (since batch 11 no shipped entry point can pass `nullptr`).
+  `mdk_render_draw_mesh` **queues** and the backend buckets by `Pass` in queue order — the oracle's
+  order, not a backend's (lifetime in `render/draw_queue.h`, P3). `update_rolling()` runs **before**
+  `previous_position = position`, where the C# does, and `mdk::create_from_axis_angle` is
+  **bit-exact against .NET 10**.
+- **Loop harness:** fail-closed on every way a mandatory review can fail to happen, and fail-*forward*
+  where the obligation is recoverable: a lost review is owed, counted, and lands on `failed` — the
+  halt is reserved for a state with no range, nothing owed and no `HEAD` naming an **ancestor**
+  commit. Every transition goes through `state_write` (one temp file, one rename, **a checked
+  status**: a record that cannot be written stops the loop at exit 9), and `state_set` is the
+  single-key spelling of that SAME writer — **one writer, one refusal, one status**. **The obligation
+  is created before the thing it must survive** — dispatch persists the in-flight range and `invoked`
+  before the reviewer is spawned. **And nothing may sit between a verdict and the transition that
+  records it — loop-wide**: the review counters land *after* it and the **gates phase performs no
+  record write at all**, because a stop boundary before the transition leaves `invoked` with a
+  half-written verdict; `LAST_GATES` reaches disk with the end-of-iteration rewrite. Independence is
+  the resolved upstream and family, re-resolved after a fallback; the live cache is per-uid/per-proxy
+  at 0600, checked on the descriptor it reads, never through a symlink, never blocked by a planted
+  FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**.
+- **How that suite reads `ralph-pi.sh` (batches 20-21, do not re-loosen):** the script cannot be
   sourced, so pieces are lifted out and run. **Every function lift goes through one `lift_fn`**,
-  bounded by the definition's own shape (a one-line definition ends on its own line; a multi-line
-  one ends at the first `}` in column 0 — a bare `^\}` over-runs a one-liner and "the line ends in
-  `}`" truncates a function containing `{ …; }` compounds), from the **comment-stripped** copy, and
+  bounded by the definition's own shape (a one-line definition ends on its own line; a multi-line one
+  ends at the first `}` in column 0 — a bare `^\}` over-runs a one-liner and "the line ends in `}`"
+  truncates a function containing `{ …; }` compounds), from the **comment-stripped** copy, and
   **every lifted fragment goes through one `guard_fragment`** (exactly one definition, no comment
   line, `bash -n` complete). The three **region** lifts (`STARTUP_BLOCK`, `COLLECT_WINDOW`/
   `COLLECT_ARM`, `GATES_REGION`) carry non-vacuity line counts plus behavioural cases, not the
   fragment guards — say it that way, do not claim "all lifts". `count_writes` counts
-  **occurrences**, because the collector death loop injects at write *calls*; the bound it derives
-  is asserted and the loop is `seq 1 $bound`, never a literal. Every reversion in
-  `docs/PROGRESS_LOG.md` names the edit it applied and quotes only that edit's output.
+  **occurrences**, because the collector death loop injects at write *calls*; the bound it derives is
+  asserted and the loop is `seq 1 $bound`, never a literal. In that pattern the literal `()` is
+  written `[(][)]`, **two** single-character classes: `[()]` is one class matching `(`-or-`)`, so it
+  can never match `()` on any awk, and `R7-4` pins both directions. Every reversion in
+  `docs/PROGRESS_LOG.md` names the edit it applied, quotes only that edit's output, and says whether
+  it is a **control** (meant to pass) or a **reversion** (must fail).
 
-## Verified on this tree (batch 20)
+## Verified on this tree (batch 21)
 
-All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`,
-"Iteration 48". Goldens **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL /
-0 SKIP**, no golden moved. `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`
-(`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so
-`reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS).
-`make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`. `cmake --build build-linux --target mdk` —
-**exit 0**. `test_review_state.sh` — **exit 0**, **175 cases**, six reversions each shown to FAIL.
-`model_identity.py selftest --live` — `SELFTEST CLEAN`, 28 claims. Frame
-`docs/frames/2026-11-01-lifts-bounded-record-reproduces.png` + `.txt` — `1.240 / 247 / 0.1819`,
-byte-identical to its 25 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS
-timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
+All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`, "Iteration 49".
+Goldens **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP**, no golden moved.
+`bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED` (`gates_frames PASS L3_f1.bmp
+sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
+regenerated; `gates_smdh` SKIPPED; integrity PASS). `make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`.
+`cmake --build build-linux --target mdk` — **exit 0**. `test_review_state.sh` — **exit 0**, **177
+cases**: three reversions (B2/B4/B6) each FAIL the guard they pin and three controls (B1/B3/B5) PASS
+by design, and the new `R7-4` pair is shown non-vacuous (reverting `lift_fn` to the single-class
+spelling fails 26 cases with the empty-lift `got '0'` signature). `model_identity.py selftest --live`
+— `SELFTEST CLEAN`, 28 claims. Frame `docs/frames/2026-11-01-record-claims-cut-to-their-own-output.png`
++ `.txt` — `1.240 / 247 / 0.1819`, byte-identical to its 26 predecessors. **No emulator run and no
+Old-3DS hardware run: Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was
+pinned, relaxed or edited.
 
 ## Standing open items
 
@@ -159,7 +168,15 @@ pads index textures to POT with transparent padding, so a plain `C3D_TexSetWrap(
 at the padded period). From review-6 oq3, answered rather than left implicit: a sidecar's "why this
 picture did not move / what shows the change instead" narrative **is** the convention
 (`docs/frames/README.md`); `publish_frame.sh` emits only the three measured lines and the narrative
-is appended by hand, which batch 19 stopped doing and batch 20 does again.
+is appended by hand, which batch 19 stopped doing and batch 20 does again. From review-7 oq1, a
+latent harness gap with a named trigger: the collector death loop asserts the outcome **after** a
+kill, not that the kill happened — `count_writes` counts text while `_die` counts executions, so a
+record write moved onto an untaken branch would be counted by the derived bound, never reached by the
+kill, and the case would assert the uninterrupted outcome and PASS. Sound as shipped (all four arm
+writes execute on the `done` path). **The first batch that adds a conditional record write to the
+collector arm must land the exit-status assertion (require `9` per iteration) with it.** From
+review-7 oq2, a bound on a claim rather than a defect: `lift_fn` is bounded by the definition's own
+shape *while every definition in `ralph-pi.sh` keeps its `}` in column 0*.
 
 ## Verification commands
 

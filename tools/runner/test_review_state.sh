@@ -52,10 +52,17 @@ count_writes() { printf '%s\n' "$1" | grep -oE '(^|[;&|([:space:]])state_(set|wr
 # 53 (review-4 F2), while "the line ends in `}`" truncates `reviewer_reject_reason`
 # at its first guard and swallows `pi_run` (review-6 F2). Both directions are
 # measured by guard_fragment, never trusted.
-# The doubled brackets in the start pattern are load-bearing: mawk 1.3.4 does not
-# match `[()][[:space:]]` (it matches `[()]` and it matches `[[:space:]]`, never the
-# pair), and a regex that matches nothing lifts nothing, which guard_fragment
-# reports as zero definitions — loudly, but only because it is measured.
+# The doubled brackets in the start pattern are load-bearing, and the reason is POSIX
+# bracket-class semantics, not an awk defect: `[()]` is ONE character class matching
+# `(`-or-`)`, so `[()][[:space:]]` reads "a paren, then whitespace" and can never match
+# the two characters `()`. `[(][)]` is two single-character classes in sequence and does
+# match — measured on mawk 1.3.4, on busybox awk, and on every `/usr/bin/awk` here (all
+# three of awk/nawk/mawk are the same mawk binary on this host, so that name is not an
+# independent check). A pattern that matches nothing lifts nothing, which guard_fragment
+# reports as zero definitions — loudly, but only because it is measured. Both directions
+# are pinned by R7-4 below, because a rationale that blames the tool invites exactly the
+# "simplification" it forbids: on a gawk host the next reader tries `[()]`, watches it
+# fail there too, and concludes the comment is stale.
 lift_fn() { # lift_fn <name> -> that function's text, or nothing
     awk -v fn="$1" '
         !f && $0 ~ "^"fn"[(][)][[:space:]]*[{]" { f=1; print; if ($0 ~ /\}[[:space:]]*$/) exit; next }
@@ -93,6 +100,16 @@ guard_fragment() { # guard_fragment <label> <fragment>
     check "$1 is a syntactically complete fragment, not a truncation of it" "0" \
           "$(printf '%s\n' "$2" | bash -n 2>/dev/null; printf '%s' "$?")"
 }
+
+# R7-4 (external review 2026-11-01, run-20261101-062333/review-7.md F4): the comment above
+# blamed mawk 1.3.4 for what is POSIX bracket-class semantics. The observed failure was
+# real — the first `lift_fn` lifted nothing — but an attribution to a tool bug is a
+# rationale no one can act on portably, so the mechanism is measured here instead of
+# asserted in prose, on whichever awk runs this suite.
+check "R7-4: the doubled-bracket start pattern matches a one-line definition" "1" \
+      "$(printf 'state_write() {\n' | awk -v fn=state_write '$0 ~ "^"fn"[(][)][[:space:]]*[{]"{n++} END{print n+0}')"
+check "R7-4: and the single-class [()] spelling matches nothing, so the doubling is load-bearing" "0" \
+      "$(printf 'state_write() {\n' | awk -v fn=state_write '$0 ~ "^"fn"[()][[:space:]]*[{]"{n++} END{print n+0}')"
 
 # --- review_rc_normalise ------------------------------------------------------
 check "rc 0 stays 0"                 "0"   "$(review_rc_normalise 0)"

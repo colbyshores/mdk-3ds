@@ -6006,11 +6006,14 @@ failures, and the fourth behavioural case passes because the write *fails* and l
 
 *R5-2b — the `then` arm alone* (`LAST_GATES="PASS"; state_set LAST_GATES PASS` only) — the counts
 are 1, not 2, and the behavioural stop is still caught, because the behavioural case takes the
-`then` arm:
+`then` arm. Corrected in place by review-7 F3: this block used to show four lines for a five-case
+set, and the omitted line was a PASS, which a reader cannot tell from a case that vanished. All
+five, re-run for this iteration:
 
     FAIL R5-2: the gates phase performs no record write, so no stop boundary sits in the invoked window — expected '0', got '1'
     FAIL R5-2: the LAST_GATES write is gone from the loop, not hidden in another arm — expected '0', got '1'
     FAIL R5-2: and an unwritable record cannot stop the gates phase — expected '0', got '9'
+    PASS R5-2: and the gates phase left the review record exactly as it found it
     FAIL R5-2: and it wrote no key of its own, so the rewrite owns LAST_GATES — expected '0', got '1'
 
 *R5-2c — the `else` arm alone* (`LAST_GATES="FAIL"; state_set LAST_GATES FAIL` only) — two failures,
@@ -6120,7 +6123,7 @@ record was touched:
 | experiment | the edit, applied verbatim | what the suite actually printed |
 |---|---|---|
 | R5-2a | both arms restored (`…PASS` in `then`, `…FAIL` in `else`) — the true pre-fix block | `got '2'`, `got '2'`, `got '9'`, `got '1'` + the fourth case PASS |
-| R5-2b | the `then` arm alone | `got '1'`, `got '1'`, `got '9'`, `got '1'` |
+| R5-2b | the `then` arm alone | `got '1'`, `got '1'`, `got '9'`, `got '1'` + the fourth case PASS |
 | R5-2c | the `else` arm alone | `got '1'`, `got '1'`, and all three behavioural cases PASS |
 
 The reviewer's numbers reproduce exactly, including which case passes and why (the write *fails*
@@ -6147,21 +6150,32 @@ there; a multi-line one ends at the first `}` in column 0, so the `{ …; return
 inside `reviewer_reject_reason` no longer truncate it), and one `guard_fragment` runs the same
 three measurements on each fragment. Five fragments × three measurements, spelled once.
 
-Writing it found a second trap: **mawk 1.3.4 does not match `[()][[:space:]]`** — it matches `[()]`
-and it matches `[[:space:]]` and never the pair — so the first version of `lift_fn` lifted nothing
-at all. That is why the guards are the fix and not the lift: the empty fragment failed
-"scoped to one definition" (`expected '1', got '0'`) instead of passing quietly, and the comment in
-`lift_fn` says the doubled brackets are load-bearing.
+Writing it found a second trap: the first version of `lift_fn` lifted nothing at all, because its
+start pattern spelled the literal `()` as one character class, `[()]`. Corrected in place by
+review-7 F4: this used to read "**mawk 1.3.4 does not match `[()][[:space:]]`**", which blamed the
+tool for POSIX bracket-class semantics — `[()]` matches `(`-or-`)`, so the pattern reads "a paren,
+then whitespace" and cannot match `()` on *any* awk. Measured on mawk 1.3.4 and busybox awk (and
+note that `/usr/bin/awk`, `/usr/bin/nawk` and `/usr/bin/mawk` are the same mawk binary here, so
+that trio was never three independent checks). The doubled brackets `[(][)]` are two classes in
+sequence and do match. That is why the guards are the fix and not the lift: the empty fragment
+failed "scoped to one definition" (`expected '1', got '0'`) instead of passing quietly, and the
+mechanism is now pinned by two `R7-4` cases rather than left in prose.
 
-Reversions, each on a scratch worktree, each run twice — once with the shipped suite, once with the
-one line of it reverted:
+Six experiments, each on a scratch worktree, each run twice — once with the shipped suite, once
+with the one line of it reverted. Corrected in place by review-7 F1: this used to be introduced as
+"six reversion experiments, each shown to FAIL", which is false under every reading of the table
+below it. Three of the six are **controls**, and they are *supposed* to pass: they show the shipped
+suite is insensitive to a reformatting the fix was written to survive. Three are **reversions**, and
+those are the ones that must fail. "Six shown to FAIL" overstated the falsification evidence 2× and
+collapsed a real distinction — B1/B3/B5 measure insensitivity to formatting, which is a different
+property from the guards B2/B4/B6 pin:
 
 | experiment | shape | result |
 |---|---|---|
 | B1 | `reviewer_reject_reason` collapsed to one line, shipped suite | **175 PASS** — the formatting change is inert now |
 | B2 | same one-line definition, lift reverted to the raw-file `/^\}/` | `FAIL R6-2: … scoped to one definition … expected '1', got '2'` (it swallowed `pi_run`) |
 | B5 | `state_write` collapsed to one line, shipped suite | **175 PASS** |
-| B6 | same, `STATE_WRITE_FN` lift reverted to the `/^\}/` terminator | `FAIL R5-1: … scoped to one definition … expected '1', got '5'` (73-line over-run, five definitions) |
+| B6 | same, `STATE_WRITE_FN` lift reverted to the `/^\}/` terminator | `FAIL R5-1: … scoped to one definition … expected '1', got '5'` (five definitions; the over-run is **30** lines measured on the comment-stripped `$LOOP_CODE` the lift actually reads — the 73 this row used to quote is the raw-file distance, which belongs to review-5 R5-1, where the lift did read the raw file: review-7 F2) |
 
 The CONTINUATION claim is corrected to say what is measured per class of lift: five function lifts
 carry the three fragment measurements; the three **region** lifts (`STARTUP_BLOCK`,
@@ -6178,6 +6192,11 @@ match. Now `grep -oE … | wc -l`, and the counter is measured on itself:
 |---|---|---|
 | B3 | two collector counter writes coalesced onto one line, shipped counter | **175 PASS**, bound still 4, death loop still covers all four boundaries |
 | B4 | same coalescing, counter reverted to `grep -c` (lines) | `FAIL F1: … four record-write calls … expected '4', got '3'` and `FAIL R6-3: … two on one line count twice — expected '2', got '1'` |
+
+Across both tables, the split review-7 F1 asked for: **three controls — B1, B3, B5 — PASS by design**
+(the shipped suite is insensitive to the reformatting, which is the property the fix was written to
+have), and **three reversions — B2, B4, B6 — each FAIL the guard they pin**. Six experiments, three
+failures; not "six reversions each shown to FAIL".
 
 The label also changed from "record-write sites" to "record-write **calls**", because the old word
 is what made the mismatch readable as a nit.
@@ -6263,3 +6282,150 @@ any of them, and review-6's own "what I attacked and could not break" list is th
 including enumerating all 16 record-write sites to confirm the window is empty. If review-7 finds a
 ninth neighbour of a class this loop has already fixed twice, the honest move is to stop point-fixing
 the harness and hand the owner the two policy questions (7) and (3) instead.
+
+## Iteration 49 — batch 21: a record claim is only worth the output it quotes, including about its own controls
+
+**Review dispositioned:** `logs/ralph-pi/run-20261101-062333/review-7.md` (DeepSeek V4.1 Flash,
+independent family). **F1 Medium, F2 Low, F3 Low, F4 Low — no Critical, no High. All four confirmed
+against direct experiment; none rebutted.** Verdict was INCOMPLETE on F1 alone.
+
+**Prior-solution lookup (mandatory, per AGENTS.md §0).** No Obsidian MCP or Cognee MCP server is
+reachable from this harness, so the vault was read directly, read-only, from `/mnt/nas/Vaults/port-docs`.
+Nothing in it covers POSIX bracket-class semantics in an awk regex or the control-versus-reversion
+distinction; the nearest prior art is `30-architecture/patterns/a-warning-that-exits-zero-is-a-pass-
+generator-with-better-manners.md`, which is the same family as review-7's open question 1 and is
+cited below. The loop's own history is the closer precedent: review-6 F1 raised "the named edit is
+not the one whose output is quoted", and all four of review-7's findings are that defect again in
+the record batch 20 wrote to close it.
+
+### F1 (Medium) — confirmed; the record claimed six failures where the table shows three
+
+`docs/CONTINUATION.md:21` and `:139` and the `c5d929c` commit message all said **"six reversion
+experiments each shown to FAIL"**. Batch 20's own table records B1, B3 and B5 as **175 PASS** — and
+they are *supposed* to pass. Each of the six experiments was run twice, once with the shipped suite
+and once with one line reverted; the shipped-suite run of B1/B3/B5 is a **control** proving the fix
+is insensitive to a reformatting, which is a different property from the guard B2/B4/B6 pin. So the
+sentence is false under every reading: six rows, three FAIL, three PASS.
+
+Re-run on scratch worktrees before the record was touched, reproducing the reviewer's numbers
+exactly: B1 `exit 0` 175 PASS; B3 175 PASS with the derived bound still 4; B5 175 PASS; B2
+`FAIL R6-2: … expected '1', got '2'`; B4 both quoted FAILs; B6 `FAIL R5-1: … expected '1', got '5'`.
+
+Corrected in three places, and the distinction is now stated where the table sits rather than only
+in the header: **three controls (B1/B3/B5) PASS by design, three reversions (B2/B4/B6) each FAIL the
+guard they pin.** The reviewer's point about *why* this matters is the part worth keeping: B1/B3/B5
+measure insensitivity to formatting, so believing "six ways to fail" would let a future agent treat
+a six-way regression as already covered when B1 is precisely the case where the suite does **not**
+fire.
+
+### F2 (Low) — confirmed; a line count from the wrong artifact
+
+The B6 row quoted "(73-line over-run, five definitions)". Measured on a scratch copy with
+`state_write` collapsed to one line: the raw file's `/^\}/` range is **73** lines, the comment-
+stripped `$LOOP_CODE` that `lift_fn` actually reads is **30**, and the definition count is **5** in
+both (counted with `guard_fragment`'s own regex, `^[A-Za-z_][A-Za-z_0-9]*\(\)`). So "five
+definitions" was right and 73 was the raw-file distance belonging to review-5 R5-1, where the lift
+*did* read the raw file. Corrected to 30 with the artifact named.
+
+### F3 (Low) — confirmed; a five-case transcript that showed four lines
+
+Re-running R5-2b (the `then` arm restored alone) on a scratch worktree prints five lines, and the
+fourth is a PASS:
+
+    FAIL R5-2: the gates phase performs no record write, so no stop boundary sits in the invoked window — expected '0', got '1'
+    FAIL R5-2: the LAST_GATES write is gone from the loop, not hidden in another arm — expected '0', got '1'
+    FAIL R5-2: and an unwritable record cannot stop the gates phase — expected '0', got '9'
+    PASS R5-2: and the gates phase left the review record exactly as it found it
+    FAIL R5-2: and it wrote no key of its own, so the rewrite owns LAST_GATES — expected '0', got '1'
+
+The block showed only the four FAILs. An omitted PASS is worse than an omitted FAIL, because a reader
+cannot tell it from a case that vanished. All five are quoted now, in the summary row too, matching
+what R5-2a and R5-2c already did.
+
+### F4 (Low) — confirmed; a real failure with a false cause, now pinned by measurement
+
+The `lift_fn` comment said the doubled brackets are load-bearing because **"mawk 1.3.4 does not
+match `[()][[:space:]]`"**. The observed failure was real — the first `lift_fn` lifted nothing — but
+the cause is POSIX bracket-class semantics, not an awk defect. `[()]` is ONE character class matching
+`(`-or-`)`, so `[()][[:space:]]` reads "a paren, then whitespace" and can never match the two
+characters `()` on *any* conforming awk; `[(][)]` is two classes in sequence and does match.
+Measured here: the pair matches and the single class does not, on mawk 1.3.4 and on busybox awk.
+Worth recording: `/usr/bin/awk`, `/usr/bin/nawk` and `/usr/bin/mawk` are **the same mawk binary** on
+this host (all three resolve to `/usr/bin/mawk`), so "mawk, nawk and awk agree" was never three
+independent checks — busybox awk is the only second implementation available, and gawk is absent.
+
+Fixed as a measurement, not as prose: two new **R7-4** cases assert that the doubled-bracket pattern
+matches a one-line definition and that the single-class spelling matches nothing, on whichever awk
+runs the suite. Non-vacuity shown by reverting `lift_fn`'s own start pattern to `[()]` on a scratch
+worktree: **26 cases FAIL**, and every `guard_fragment` "scoped to one definition" guard reports
+`got '0'` — the empty-lift signature the comment describes. A rationale that blames a tool is a
+rationale that gets "simplified" on the next host; a rationale that is a case cannot be.
+
+### Suite arithmetic
+
+Old **175**, new **177**. **175 labels carried unchanged, 0 re-worded, 2 genuinely new checks**
+(the R7-4 pair), **0 lost**.
+
+### Reviewer open questions — dispositioned, not silently dropped
+
+1. **The death loop asserts the outcome after a kill, not that the kill happened.** Confirmed as a
+   latent gap, and it is the pass-generator family the vault note above describes: `count_writes`
+   counts *text*, `_die` counts *executions*, so a write moved onto an untaken branch would be
+   counted by the bound, never reached by the kill, and the case would assert the uninterrupted
+   outcome and PASS. Today all four arm writes execute on the `done` path, so it is sound as
+   shipped. **Deferred with cause:** the fix is to have the subshell report its exit status per
+   iteration and require `9`, which changes what eight cases assert; that is a harness-behaviour
+   slice, and this batch is the record plus a pinning check. **Trigger: the first batch that adds a
+   conditional record write to the collector arm must land the exit-status assertion with it.**
+2. **`guard_fragment`'s trio cannot see an over-run that passes no second column-0 definition.**
+   Accepted as a bound on the claim, not a defect: the lift is bounded by the definition's own shape
+   *while every definition keeps its `}` in column 0*. Not reachable in today's `ralph-pi.sh`.
+   Recorded so the next reader does not read "bounded by shape" as unconditional.
+3. **Is the `Risk:` line the builder's to write?** Owner decision, not a batch. The builder authors
+   the input to its own review policy; the safety net overrode batch 20's `medium` here anyway, so
+   the policy held, but the coupling is real. Added to the owner-authorized list.
+
+### Gate results (verbatim)
+
+All gates re-run from a clean invocation after the code and docs were final. Nothing was relaxed,
+pinned or edited to obtain these results; `tests/frames/reference.sha256` was NOT regenerated.
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts clean && make -C tests/scripts` | **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP** |
+| contract/parity/frame/integrity | `bash tools/check.sh` | **exit 0** — `CHECK: ALL GATES PASSED` |
+| 3DS target | `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` | **exit 0** — `3DSX mdk.3dsx` |
+| Linux frontend | `cmake --build build-linux --target mdk -j8` | **exit 0** — `[100%] Built target mdk` |
+| review-record state machine | `bash tools/runner/test_review_state.sh` | **exit 0** — `REVIEW STATE: ALL CASES PASS`, **177 PASS / 0 FAIL** |
+| identity resolver | `python3 tools/runner/model_identity.py selftest --live` | **exit 0** — `MODEL IDENTITY: SELFTEST CLEAN`, 28 claims |
+
+`tools/check.sh` tail, verbatim:
+
+    BATCH INTEGRITY: PASS
+
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             every pinned frame is deterministic and unchanged
+      PASS   gates_batch_integrity    project invariants intact
+
+    CHECK: ALL GATES PASSED
+
+Frame `docs/frames/2026-11-01-record-claims-cut-to-their-own-output.png` + `.txt`: `1.240 / 247 /
+0.1819`, md5 `6769a13731983d65cee9df02da6cff37`, byte-identical to its 26 predecessors — no game
+code changed, so the picture cannot move, and the sidecar says so and names what does show the
+change. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED.**
+
+### What is next
+
+Unchanged from the PRIORITY ORDER: game-side item (a) is still the missing-`TRAVSPRT.BNI` evidence
+pair from review-2 of batch 11, then (b) the `dumpRunner` mixer column, then (c) the Citro3D
+per-draw matrix and depth/blend state, then (e) `FrameBlend.Lerp`'s rounding. The loop-harness chain
+(batches 13-21) has had nine consecutive reviews with no Critical or High in any of them — but four
+of review-7's five findings are the *record* of the previous batch failing to reproduce, twice in a
+row now. That is the signal to stop point-fixing: the game-side priority order has been waiting
+behind harness work for nine iterations, and the next batch should take item (a) unless review-8
+finds a Critical or High.
