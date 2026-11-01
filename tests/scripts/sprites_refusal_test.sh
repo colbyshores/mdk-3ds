@@ -55,11 +55,25 @@
 # That is the vault's pass-generator shape (a-gate-that-skips-on-missing-input)
 # reproduced inside the gate written to close it, and the fix is the vault's rule:
 # a verdict must state how many subjects it adjudicated, and the count is checked
-# against the DECLARED number of arms. Every arm therefore either adjudicates and
-# increments ADJUDICATED, or fails loudly; and the PASS line is unreachable unless
-# ADJUDICATED equals DECLARED_ARMS. The cardinality check is the structural part
-# of the fix: it catches a future early return that forgets to set FAILED, which a
-# per-call-site `|| exit 1` would not.
+# against the DECLARED number of arms. Every arm therefore either adjudicates or
+# fails loudly, and the PASS line is unreachable unless ADJUDICATED equals
+# DECLARED_ARMS. The cardinality check is the structural part of the fix: it
+# catches a future early return that forgets to set FAILED, which a per-call-site
+# `|| exit 1` would not.
+#
+# WHERE THE COUNT MOVES (review-11 F1). It used to sit on the line before the
+# verdict `if/else`, so it measured "reached this line" rather than "printed a
+# verdict": an early return inserted between the count and the verdict printed
+# `PASS SpritesRefusal (2 arms adjudicated)` over zero verdict lines, i.e. the
+# gate asserted a count of comparisons that were never made — the same defect
+# class, reachable through the mechanism written to close it. So ADJUDICATED now
+# moves inside verdict(), the only place a verdict is printed, and the count is
+# therefore exactly the number of arms that adjudicated no matter where a future
+# return is placed. ARM_VERDICT keeps it per-arm, so an arm that prints two FAIL
+# lines (a stub that both exits 0 and stays silent) counts once and cannot push
+# the total past DECLARED_ARMS. The setup guards deliberately do NOT go through
+# verdict(): an arm that never ran has adjudicated nothing, which is precisely the
+# condition the cardinality check exists to report.
 #
 # No game data, no network, no display. Run by `make -C tests/scripts`; its exit
 # status is the gate.
@@ -78,14 +92,34 @@ trap 'rm -rf "$WORK"' EXIT INT TERM
 FAILED=0
 ADJUDICATED=0
 DECLARED_ARMS=2
+ARM_VERDICT=0
+
+# verdict <ok|fail> <text> — the only place a verdict is printed, and the only
+# place ADJUDICATED moves. Counting at the print site is what makes "N arms
+# adjudicated" mean "N verdicts were printed" (review-11 F1).
+verdict() {
+    kind=$1
+    shift
+    if [ "$ARM_VERDICT" -eq 0 ]; then
+        ARM_VERDICT=1
+        ADJUDICATED=$((ADJUDICATED + 1))
+    fi
+    if [ "$kind" = fail ]; then
+        printf '  FAIL sprites_refusal: %s\n' "$*"
+        FAILED=1
+    else
+        printf '  ok   sprites_refusal: %s\n' "$*"
+    fi
+}
 
 # arm <label> <archive-bytes> <expected: refuse|accept>
-# Returns 1 only after printing a FAIL line and setting FAILED; an arm that
-# reaches a verdict increments ADJUDICATED exactly once.
+# Returns 1 only after printing a FAIL line and setting FAILED. An arm counts
+# toward ADJUDICATED only when it prints a verdict, through verdict().
 arm() {
     label=$1
     size=$2
     expect=$3
+    ARM_VERDICT=0
     dir="$WORK/$label"
     if ! mkdir -p "$dir/TRAVERSE"; then
         printf '  FAIL sprites_refusal: the %s arm could not create its data tree; the arm never ran, and a gate that did not run has checked nothing\n' "$label"
@@ -120,33 +154,27 @@ arm() {
         return 1
     fi
 
-    # From here both $rc and $refused are numbers, so every comparison below
-    # prints a verdict: this arm has adjudicated.
-    ADJUDICATED=$((ADJUDICATED + 1))
-
+    # From here both $rc and $refused are numbers, so every branch below prints a
+    # verdict, and the count moves with the print rather than ahead of it.
     if [ "$expect" = refuse ]; then
         if [ "$rc" -eq 0 ]; then
-            printf '  FAIL sprites_refusal: the %s arm exited 0; a runtime built without the archive is a different random stream, not the oracle of the C#\n' "$label"
-            FAILED=1
+            verdict fail "the $label arm exited 0; a runtime built without the archive is a different random stream, not the oracle of the C#"
         fi
         if [ "$refused" -eq 0 ]; then
-            printf '  FAIL sprites_refusal: the %s arm did not say why it refused (the message is the only thing a player or an operator reads)\n' "$label"
-            FAILED=1
+            verdict fail "the $label arm did not say why it refused (the message is the only thing a player or an operator reads)"
         fi
         if [ "$rc" -ne 0 ] && [ "$refused" -ne 0 ]; then
-            printf '  ok   sprites_refusal: the %s arm refused (exit %s, message present)\n' "$label" "$rc"
+            verdict ok "the $label arm refused (exit $rc, message present)"
         fi
     else
         if [ "$rc" -ne 0 ]; then
-            printf '  FAIL sprites_refusal: the %s arm exited %s; a legal empty archive must not refuse, or the guard is unconditional and the pair proves nothing\n' "$label" "$rc"
-            FAILED=1
+            verdict fail "the $label arm exited $rc; a legal empty archive must not refuse, or the guard is unconditional and the pair proves nothing"
         fi
         if [ "$refused" -ne 0 ]; then
-            printf '  FAIL sprites_refusal: the %s arm refused a legal empty archive\n' "$label"
-            FAILED=1
+            verdict fail "the $label arm refused a legal empty archive"
         fi
         if [ "$rc" -eq 0 ] && [ "$refused" -eq 0 ]; then
-            printf '  ok   sprites_refusal: the %s arm was accepted (exit 0, no refusal)\n' "$label"
+            verdict ok "the $label arm was accepted (exit 0, no refusal)"
         fi
     fi
 }

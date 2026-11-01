@@ -6978,3 +6978,167 @@ slice: **(b) review-1 F3** — `dumpRunner` has no mixer field, so `mixer_.play(
 unpinned; it needs the column added to the probe *and* the harness and `L7_t120_runner_{a,b}`
 regenerated from the oracle. Then (c) the Citro3D per-draw matrix and the depth/blend divergence, then
 (e) `FrameBlend.Lerp`'s rounding. New items opened by this batch are in Standing open items.
+
+## Iteration 53 — batch 25: a counter must move where the thing it counts happens (review-11 remediation)
+
+**Review:** `logs/ralph-pi/run-20261101-062333/review-11.md` (DeepSeek V4.1 Flash, independent
+family; scope `af482d68..af2fac36`). **No Critical and no High findings; the verdict was COMPLETE.**
+Two Low findings, both advisory, both explicitly left to "ride the next batch". **Both were confirmed
+against the tree and both are fixed; neither is rebutted.** No shipped source changed: the touched
+files are one gate script, one test harness, and the two state documents. This batch is the first of
+the run whose review found nothing that had to be argued with, which is recorded because the shape of
+the batch follows from it — a small remediation, not a dispute.
+
+**Prior-solution lookup (mandatory).** Obsidian vault read directly at `/mnt/nas/Vaults/port-docs`.
+Two notes applied. `30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md`
+is the class F1 sits in, and its rule — *a verdict must state how many subjects it actually compared* —
+is what batch 24 implemented and what review-11 F1 found was implemented one line too early. The second
+is `a-warning-that-exits-zero-is-a-pass-generator-with-better-manners.md` ("loud prose in the wrong
+channel is the same defect as silence"), which is what decided the shape of the F2 fix; see the
+first-attempt note below. Cognee / the local knowledge graph could **not** be consulted again:
+`knowledge_search` still fails on this host with `Cannot find package 'ignore' imported from
+…/pi-knowledge/dist/src/indexer/chunker.js`. Recorded as an environment gap, not as "nothing found".
+
+### F1 (Low) — the verdict counter measured arrival, not a verdict (FIXED)
+
+Confirmed before changing anything, exactly as the reviewer described. On `af2fac3` the counter sat on
+the line *before* the verdict `if/else`, so it counted "reached line 125". Inserting one early return
+immediately after it:
+
+```
+=== AFTER-count insertion (HEAD, intact script passes tick1) ===
+PASS SpritesRefusal (2 arms adjudicated)
+rc=0
+```
+
+No `ok` line and no `FAIL` line for either arm, exit 0, and the PASS line asserting a count of two
+comparisons that were never made. The reviewer's placement *before* the count was already caught, so
+the published claim was true for one side of the line and false for the other, which is exactly what it
+said. The claim in the file header and in the batch record was the overstatement, not the mechanism.
+
+**The fix counts at the print site.** A `verdict <ok|fail> <text>` function is now the only place a
+verdict is printed and the only place `ADJUDICATED` moves, so "N arms adjudicated" means "N verdicts
+were printed" no matter where a future `return` is placed. `ARM_VERDICT` is reset at the top of each
+`arm()` and makes the count per-arm, so an arm that prints two `FAIL` lines counts once and cannot
+push the total past `DECLARED_ARMS`. The setup guards deliberately do **not** go through `verdict()`:
+an arm that never ran has adjudicated nothing, which is the condition the cardinality backstop exists
+to report. The header claim is now "a future early return that skips a verdict", which is what the
+mechanism pins, and the file says why the setup paths are excluded.
+
+**Falsification.** Each row is a separate copy of the gate run against the same `tick1`.
+
+| edit | kind | result |
+|---|---|---|
+| none (this batch, intact) | control | `ok` for both arms, `PASS SpritesRefusal (2 arms adjudicated)`, **rc 0** |
+| `return 0` before any verdict, both arms (the reviewer's scenario) | reversion | `FAIL … only 0 of 2 declared arms produced a verdict`, **rc 1** |
+| `return 0` in the control arm only, before its verdicts | reversion | `ok` for the stub, `FAIL … only 1 of 2 declared arms produced a verdict`, **rc 1** |
+| `return 0` at the end of `arm()`, after every verdict has printed | control | `PASS … (2 arms adjudicated)`, **rc 0** — and correct: a `return` exits one `arm()` call, and both arms did adjudicate |
+| a `tick1` that never refuses (stub arm exits 0 and stays silent) | reversion | two `FAIL` lines for the stub, **rc 1**, and **no** `3 of 2` message — the double-FAIL arm counted once, which is what `ARM_VERDICT` is for |
+
+The third row is worth keeping in the record: the first two attempts at this falsification inserted
+the return with a line-based `awk` and landed it at top level as well, where `return` acts like `exit`
+in `sh`, which produced a `FAIL` line and `rc 0` together and looked like a hole in the gate. It was a
+hole in the test harness for the gate. The rows above are single precise insertions.
+
+### F2 (Low) — the fixture helper had no bound on the name field (FIXED, with the mechanism corrected)
+
+Confirmed, but **the direction the reviewer predicted is the mirror image of what actually happens.**
+`makeArchive` does `memcpy(bytes.data() + 8, name, strlen(name))` and *then* `putU32(&bytes, 20, 20)`,
+so a 13-character name does not overwrite the payload offset — the offset write lands on top of the
+name's last byte and the fixture silently becomes a **twelve**-character one:
+
+```
+name field bytes: b'H150_R_FRAME'      # the 13th byte is gone
+offset field   : 20
+```
+
+The conclusion holds and is arguably worse than predicted: the assertions then fail as if the **reader**
+had truncated the name (`the whole 12-byte field is the name`), so a red gate blames `bni.cpp` for a
+bug in the test file. The finding is confirmed; only the corrupted field differs.
+
+**The fix refuses the fixture and says so.** `makeArchive` measures the name against
+`kNameFieldBytes = 12` (the constant `Bni.cs:14` passes and `bni.cpp:19` copies), prints a line naming
+the fixture and the field width, records the refusal, and returns no bytes. A name of exactly 12 is
+legal and is the point of `testFullNameFillsTheField`. `assert()` is not used (AGENTS.md §10).
+`testOverlongFixtureNameIsRefused` pins it: a 13-character name yields no fixture **and** the refusal
+is recorded.
+
+**The first attempt was wrong and is recorded because it is the interesting part.** It counted the
+refusal in `failures`, the same counter every `check()` moves. That made a *passing* test turn the
+suite red — `1 check(s) FAILED`, 52 PASS lines instead of 53 — because the pin asks for a refusal and
+the refusal then counted against the run. The vault's
+`a-warning-that-exits-zero-is-a-pass-generator-with-better-manners.md` is the same defect pointed the
+other way: prose in the wrong channel is not a verdict. The refusal is now a **fixture diagnostic** on
+its own counter, the pin asserts that counter, and the NOTE is suppressed for the one test that asks
+for it, because a warning printed on every green run teaches the reader to ignore warnings. A real
+overlong fixture still goes red twice over: the NOTE names it, and the caller's own checks fail because
+it got no bytes.
+
+**Falsification.**
+
+| edit | kind | result |
+|---|---|---|
+| none (this batch, intact) | control | `PASS ArchiveIndexGuards`, `vm_tests` **exit 0**, 53 PASS lines, no NOTE line |
+| bound deleted (`length > kNameFieldBytes` → `length > 1000`) | reversion | `FAIL … an overlong fixture name yields no fixture`, `FAIL … and the refusal is recorded against the fixture`, **2 checks FAILED**, `vm_tests` **exit 1** |
+| the width-pin fixture made 13 chars (`H150_R_FRAME` → `H150_R_FRAMES`) | reversion | `NOTE archive_guard: makeArchive("H150_R_FRAMES") … Fix the fixture, not the reader.` then **3 checks FAILED**, `vm_tests` **exit 1** — the diagnostic names the fixture before it names any assertion |
+| first attempt, refusal counted in `failures` | reversion of the fix itself | `1 check(s) FAILED` on an otherwise green suite, 52 PASS lines — the reason the counter is separate |
+
+`archive_guard_tests.cpp` was restored from a copy after each reversion and the harness re-verified
+green. **No shipped source was changed by this batch.**
+
+### Also recorded: two environment/record notes from the review
+
+- **`/tmp/kilo` is not writable by this account.** The reviewer hit `tee: /tmp/kilo/…: Permission
+  denied`. Confirmed here: `/tmp/kilo` is `drwxr-xr-x museagent museagent` and this agent runs as
+  `piagent` (uid 994), so AGENTS.md §11 P7's prescribed capture directory cannot be used as that user.
+  This batch and the frame capture used `/tmp/b25` and the repo's own scratch paths; `/tmp/mdk-pi` is
+  writable and is where the oracle probe lives. Not a code defect, and it is not this batch's call to
+  change P7 — but an agent that writes evidence there will fail silently unless it checks, so it is on
+  record.
+- **review-11 oq3, the `Risk:` line versus the loop's own override.** The reviewer noticed that batch
+  24 declared `medium` while `ralph-pi.sh:341-368` forced `high` on a 505-line diff. That is the
+  intended shape of the safety net, not a contradiction: the builder's declaration is an input and the
+  net overrides it for broad diffs, which is owner-authorized task (8) in the priority order below.
+  Batch 24's record did not say so, so it says so here rather than in the sidecar.
+
+### Gate results, verbatim (all run from a clean invocation of this tree)
+
+`make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**, `All cases match the
+oracle.`, **442 PASS / 0 FAIL / 0 SKIP**. The count did not move and that is the expected result: the
+two new archive-guard checks are `check()` calls inside the existing `PASS ArchiveIndexGuards` line,
+and the refusal gate is one line either way — `PASS SpritesRefusal (2 arms adjudicated)`.
+
+`bash tools/check.sh` — **exit 0**:
+
+```
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             every pinned frame is deterministic and unchanged
+      PASS   gates_batch_integrity    project invariants intact
+
+    CHECK: ALL GATES PASSED
+```
+
+`gates_frames` printed `PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so
+`tests/frames/reference.sha256` was NOT regenerated. `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`.
+`cmake --build build-linux --target mdk -j8` — **exit 0**, `Built target mdk`.
+`bash tools/runner/test_review_state.sh` — **exit 0**, **177 cases**, `REVIEW STATE: ALL CASES PASS`.
+
+Frame `docs/frames/2026-11-01-verdict-counted-at-print.png` + `.txt` — `1.240 / 247 / 0.1819`, sha256
+`6646adf1…`, byte-identical to its 30 predecessors; captured on `DISPLAY=:99` with lavapipe, and the
+sidecar carries the "why this picture did not move" narrative. **No emulator run and no Old-3DS
+hardware run: Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate, test or
+golden was pinned, relaxed or edited.
+
+### What is next
+
+Unchanged from batch 24's PRIORITY ORDER, because this batch was review remediation rather than a game
+slice: **(b) review-1 F3** — `dumpRunner` has no mixer field, so `mixer_.play("RUNNER", Once)` is
+unpinned; it needs the column added to the probe *and* the harness and `L7_t120_runner_{a,b}`
+regenerated from the oracle. Then (c) the Citro3D per-draw matrix and the depth/blend divergence, then
+(e) `FrameBlend.Lerp`'s rounding. This batch closes review-11 with no open findings of its own.

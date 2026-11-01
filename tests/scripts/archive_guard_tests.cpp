@@ -52,6 +52,18 @@ namespace {
 
 int failures = 0;
 
+// How many times makeArchive() has refused a fixture. Kept apart from `failures`
+// on purpose: the refusal is a statement about the TEST, and testOverlongFixtureNameIsRefused
+// below asks for one, so counting it as a check failure would make a passing test
+// turn the suite red. A refusal outside that test still goes red, because the
+// caller gets no bytes and its own checks fail — and the NOTE line says why.
+int fixtureRefusals = 0;
+
+// The pinning test asks for a refusal, so it does not need one shouted: a NOTE
+// printed on every green run teaches the reader to ignore NOTE lines, which is
+// the reflex this file exists to avoid. Real callers leave this true.
+bool reportFixtureRefusals = true;
+
 void check(bool condition, const char* what) {
     if (!condition) {
         failures++;
@@ -65,14 +77,44 @@ void putU32(std::vector<uint8_t>* bytes, size_t at, uint32_t value) {
     }
 }
 
+// The BNI name field, in bytes: Bni.cs:14 passes 12 to ArchiveIndex, and
+// bni.cpp:19 is the port's copy of that constant. The fixture below is exactly
+// 8 + kNameFieldBytes + 4 = 24 bytes.
+const size_t kNameFieldBytes = 12;
+
 // A well-formed one-entry archive, so the guard below can be shown to accept
 // something. The entry's stored payload offset is the whole file, so its
 // computed size is zero: the entry EXISTS, which is all these cases need.
+//
+// IT REFUSES A NAME THAT DOES NOT FIT (review-11 F2). The name is copied before
+// the payload offset is written, so a 13-character name does not corrupt the
+// offset — the offset write lands on top of the name's last byte and the fixture
+// silently becomes a TWELVE-character one. The assertions then fail as if the
+// READER had truncated the name, which is a red gate blaming the wrong file. The
+// helper is test code, so an overlong name is a broken fixture rather than a
+// parse result: it is reported by name, counted in fixtureRefusals, and no bytes
+// are returned. assert() is not available here (AGENTS.md §10) and would be the
+// wrong tool anyway, because a fixture bug must be reported the way every other
+// check in this file is. A name of exactly kNameFieldBytes is legal and is the
+// point of testFullNameFillsTheField: the field has no NUL in that case, which is
+// what makes the width load-bearing.
 std::vector<uint8_t> makeArchive(const char* name) {
+    const size_t length = strlen(name);
+    if (length > kNameFieldBytes) {
+        if (reportFixtureRefusals) {
+            std::printf("  NOTE archive_guard: makeArchive(\"%s\") was given a %u-byte name, but the BNI "
+                        "name field is %u bytes and the payload offset is written over the byte after it; "
+                        "this fixture would pin a layout its assertions do not describe. Fix the fixture, "
+                        "not the reader.\n",
+                        name, (unsigned)length, (unsigned)kNameFieldBytes);
+        }
+        fixtureRefusals++;
+        return std::vector<uint8_t>();
+    }
     std::vector<uint8_t> bytes(24, 0);
     putU32(&bytes, 0, 24);
     putU32(&bytes, 4, 1);
-    memcpy(bytes.data() + 8, name, strlen(name));
+    memcpy(bytes.data() + 8, name, length);
     putU32(&bytes, 20, 20);
     return bytes;
 }
@@ -184,6 +226,22 @@ void testFullNameFillsTheField() {
     }
 }
 
+// THE FIXTURE HELPER'S OWN BOUND, pinned (review-11 F2). A guard nobody can make
+// red is not a guard, and this one protects the two cases above, so it is checked
+// the same way the reader's guards are: by an input that must be refused. The
+// fixture is one character over the field, which is the smallest case of the
+// hazard, and both halves are asserted — that no bytes come back, and that the
+// refusal was recorded. Without the second half, deleting the bound would leave
+// this case green while a future overlong fixture silently became a shorter name.
+void testOverlongFixtureNameIsRefused() {
+    const int before = fixtureRefusals;
+    reportFixtureRefusals = false;
+    std::vector<uint8_t> bytes = makeArchive("H150_R_FRAMES");  // 13 chars, one over the field
+    reportFixtureRefusals = true;
+    check(bytes.empty(), "an overlong fixture name yields no fixture");
+    check(fixtureRefusals == before + 1, "and the refusal is recorded against the fixture");
+}
+
 // An entry count that cannot fit in the file is a broken file, not an archive.
 // This is the second rejection, and it is the one a corrupt-but-long file hits.
 void testImpossibleEntryCountIsRejected() {
@@ -205,6 +263,7 @@ int runArchiveGuardTests() {
     testZeroFilledArchiveParsesButIsEmpty();
     testWellFormedArchiveParses();
     testFullNameFillsTheField();
+    testOverlongFixtureNameIsRefused();
     testImpossibleEntryCountIsRejected();
     return failures;
 }
