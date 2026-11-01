@@ -202,11 +202,61 @@ status() {
         echo "phase: not running"
     fi
     [ -f "$STATE" ] && cat "$STATE"
+    # Review cost guardrail summary
+    _rc="$(state_get REVIEW_CALLS)"; _rc="${_rc:-0}"
+    _est="$(python3 -c "print('%.4f' % ($_rc * 0.003))" 2>/dev/null || echo n/a)"
+    echo "REVIEW_COST_EST_USD: ~\$${_est} ($_rc calls @ ~\$0.003/call)"
     if command -v systemctl >/dev/null 2>&1; then
         systemctl --no-pager --plain show -p ActiveState -p MainPID -p NRestarts -p Result ralph-pi-mdk.service 2>/dev/null || true
     fi
     echo "--- last summary ---"
     tail -8 "$SUMMARY" 2>/dev/null || true
+}
+
+# --- Risk-based review helpers -------------------------------------------------
+# Extract the builder-declared risk level from the committed state.
+# Source of truth: docs/CONTINUATION.md "Risk: low|medium|high" line; fallback to
+# a [risk: ...] tag in the latest commit message; default medium (conservative).
+extract_risk() {
+    local risk=""
+    if [ -f "$ROOT/docs/CONTINUATION.md" ]; then
+        risk="$(grep -iE '^[[:space:]]*Risk[[:space:]]*:' "$ROOT/docs/CONTINUATION.md" 2>/dev/null | head -1 | sed -E 's/^[^:]*:[[:space:]]*//; s/[[:space:]].*//' | tr '[:upper:]' '[:lower:]')"
+    fi
+    if [ -z "$risk" ]; then
+        risk="$(git -C "$ROOT" log -1 --pretty=%B 2>/dev/null | grep -oiE '\[risk:[[:space:]]*(low|medium|high)\]' | head -1 | sed -E 's/.*:[[:space:]]*//; s/\].*//' | tr '[:upper:]' '[:lower:]')"
+    fi
+    case "$risk" in
+        low|medium|high) printf '%s' "$risk" ;;
+        *) printf 'medium' ;;
+    esac
+}
+
+# Safety-net: force high risk when the diff touches protected/structural surfaces
+# or is broad, or when a failure persists. Returns 0 (true) if forced high.
+risk_force_high() {
+    local base="$1" head="$2"
+    # protected contract files changed
+    local pc
+    pc="$(git -C "$ROOT" diff --name-only "$base".."$head" 2>/dev/null | grep -E '^(AGENTS\.md|SPEC\.md|SPEC-COMPLETION\.md|tools/check\.sh|ralph-pi\.sh|ralph/builder\.md|ralph/validator\.md|tools/runner/gates_batch_integrity\.py)$' || true)"
+    [ -n "$pc" ] && return 0
+    # broad diff
+    local nfiles
+    nfiles="$(git -C "$ROOT" diff --name-only "$base".."$head" 2>/dev/null | wc -l)"
+    [ "${nfiles:-0}" -gt 6 ] && return 0
+    local nlines
+    nlines="$(git -C "$ROOT" diff --numstat "$base".."$head" 2>/dev/null | awk '{a+=$1; d+=$2} END{print a+d+0}')"
+    [ "${nlines:-0}" -gt 500 ] && return 0
+    # test weakening suspicion: net deletions in test files
+    local tdel
+    tdel="$(git -C "$ROOT" diff --numstat "$base".."$head" 2>/dev/null | grep -iE 'test|golden' | awk '{d+=$2} END{print d+0}')"
+    [ "${tdel:-0}" -gt 30 ] && return 0
+    # persistent failure
+    [ "${FAILS:-0}" -ge 2 ] && return 0
+    # milestone marker
+    if grep -qiE 'Milestone[[:space:]]*:[[:space:]]*(complete|done|shipped)' "$ROOT/docs/CONTINUATION.md" 2>/dev/null; then
+        return 0
+    fi
+    return 1
 }
 
 case "${1:-}" in
@@ -224,6 +274,11 @@ if ! flock -n 9; then
 fi
 
 ITER=0; STALL=0; FAILS=0; REVIEW_FAILS=0
+# Risk-based review state (persisted across restarts).
+REVIEW_CALLS="$(state_get REVIEW_CALLS)"; REVIEW_CALLS="${REVIEW_CALLS:-0}"
+ITERS_SINCE_REVIEW="$(state_get ITERS_SINCE_REVIEW)"; ITERS_SINCE_REVIEW="${ITERS_SINCE_REVIEW:-0}"
+REVIEW_SKIP_COUNT="$(state_get REVIEW_SKIP_COUNT)"; REVIEW_SKIP_COUNT="${REVIEW_SKIP_COUNT:-0}"
+LAST_REVIEW_ITER="$(state_get LAST_REVIEW_ITER)"; LAST_REVIEW_ITER="${LAST_REVIEW_ITER:-0}"
 guard
 heartbeat_start
 RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
@@ -260,6 +315,7 @@ while :; do
         echo "- iteration: $ITER (worker $RUN_MODEL, reviewer $REVIEWER_MODEL)"
         echo "- HEAD: $(git -C "$ROOT" log --oneline -1)"
         echo "- dirty tree: $(git -C "$ROOT" status --porcelain | wc -l) file(s) — if any, finish and commit THAT work first (builder rule)."
+        echo "- review policy: risk-based (low=skip, medium=batch every 5 iters or milestone, high=immediate). You MUST declare Risk: low|medium|high in docs/CONTINUATION.md (first 20 lines) for this batch, with a one-line reason. Default if omitted: medium."
         NEWEST_REVIEW="$(ls -t "$LOGDIR"/run-*/review-*.md 2>/dev/null | head -1)"
         [ -n "$NEWEST_REVIEW" ] && echo "- newest external review: $NEWEST_REVIEW — investigate and remediate its Critical/High findings (or rebut each with evidence)."
         PREVG="$(state_get LAST_GATES)"
@@ -310,36 +366,90 @@ while :; do
     fi
 
     REVIEW_PID=""
+    REVIEW_SKIPPED_REASON=""
     if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
-        RP="$RUN_DIR/.review-prompt-$ITER.md"
-        {
-            cat "$VALIDATOR_FILE"
-            printf '\n\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
-        } >"$RP"
-        REVIEW_MODEL=""
-        if [ "$REVIEWER_MODEL" = "$RUN_MODEL" ]; then
-            log "iter=$ITER reviewer $REVIEWER_MODEL equals worker — skipping self-review"
-        elif model_alive "$REVIEWER_MODEL"; then
-            REVIEW_MODEL="$REVIEWER_MODEL"
+        # --- Risk classification -------------------------------------------------
+        RISK="$(extract_risk)"
+        if risk_force_high "$HEAD_BEFORE" "$HEAD_AFTER"; then
+            RISK="high"
+            RISK_OVERRIDE=" (safety-net override to high)"
         else
-            log "iter=$ITER reviewer route $REVIEWER_MODEL UNHEALTHY"
-            for candidate in $REVIEWER_FALLBACKS; do
-                [ "$candidate" = "$RUN_MODEL" ] && continue
-                if model_alive "$candidate"; then
-                    REVIEW_MODEL="$candidate"
-                    log "iter=$ITER reviewer falling back to $candidate"
-                    break
-                fi
-            done
+            RISK_OVERRIDE=""
         fi
-        if [ -n "$REVIEW_MODEL" ]; then
-            phase review
-            ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
-                --model "$REVIEW_MODEL" -p "$(cat "$RP")" --no-session \
-                >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
-              echo $? >"$RUN_DIR/review-$ITER.rc" ) &
-            REVIEW_PID=$!
-            log "iter=$ITER review started in background on $REVIEW_MODEL"
+        log "iter=$ITER risk=$RISK$RISK_OVERRIDE"
+
+        # --- Review decision (risk-based, cost-guarded) --------------------------
+        REVIEW_NEEDED=0
+        REVIEW_DECISION_REASON=""
+        # Count every committed iteration toward the batch checkpoint.
+        ITERS_SINCE_REVIEW=$((ITERS_SINCE_REVIEW + 1))
+        state_set ITERS_SINCE_REVIEW "$ITERS_SINCE_REVIEW"
+        # Failure-triggered: same failure persisted after remediation attempt.
+        if [ "${FAILS:-0}" -ge 2 ]; then
+            REVIEW_NEEDED=1
+            REVIEW_DECISION_REASON="failure-triggered: $FAILS consecutive gate failures"
+        elif [ "$RISK" = "high" ]; then
+            REVIEW_NEEDED=1
+            REVIEW_DECISION_REASON="high-risk change"
+        elif [ "$RISK" = "medium" ]; then
+            # Milestone marker in CONTINUATION.md
+            if grep -qiE 'Milestone[[:space:]]*:[[:space:]]*(complete|done|shipped)' "$ROOT/docs/CONTINUATION.md" 2>/dev/null; then
+                REVIEW_NEEDED=1
+                REVIEW_DECISION_REASON="milestone checkpoint (medium-risk batch)"
+            elif [ "$ITERS_SINCE_REVIEW" -ge 5 ]; then
+                REVIEW_NEEDED=1
+                REVIEW_DECISION_REASON="5-iteration batch checkpoint (medium-risk)"
+            else
+                REVIEW_NEEDED=0
+                REVIEW_DECISION_REASON="medium-risk batched ($ITERS_SINCE_REVIEW/5 iterations)"
+            fi
+        else
+            # low risk
+            REVIEW_NEEDED=0
+            REVIEW_DECISION_REASON="low-risk routine change (skipped)"
+        fi
+
+        state_set LAST_RISK "$RISK"
+        state_set LAST_REVIEW_DECISION "$REVIEW_DECISION_REASON"
+
+        if [ "$REVIEW_NEEDED" -eq 1 ]; then
+            RP="$RUN_DIR/.review-prompt-$ITER.md"
+            {
+                cat "$VALIDATOR_FILE"
+                printf '\n\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${HEAD_BEFORE:0:8}" "${HEAD_AFTER:0:8}"
+                printf '\n--- RISK CONTEXT ---\nDeclared risk: %s. Decision: %s.\n' "$RISK" "$REVIEW_DECISION_REASON"
+            } >"$RP"
+            REVIEW_MODEL=""
+            if [ "$REVIEWER_MODEL" = "$RUN_MODEL" ]; then
+                log "iter=$ITER reviewer $REVIEWER_MODEL equals worker — skipping self-review"
+                REVIEW_SKIPPED_REASON="reviewer equals worker"
+            elif model_alive "$REVIEWER_MODEL"; then
+                REVIEW_MODEL="$REVIEWER_MODEL"
+            else
+                log "iter=$ITER reviewer route $REVIEWER_MODEL UNHEALTHY"
+                for candidate in $REVIEWER_FALLBACKS; do
+                    [ "$candidate" = "$RUN_MODEL" ] && continue
+                    if model_alive "$candidate"; then
+                        REVIEW_MODEL="$candidate"
+                        log "iter=$ITER reviewer falling back to $candidate"
+                        break
+                    fi
+                done
+            fi
+            if [ -n "$REVIEW_MODEL" ]; then
+                phase review
+                ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
+                    --model "$REVIEW_MODEL" -p "$(cat "$RP")" --no-session \
+                    >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
+                  echo $? >"$RUN_DIR/review-$ITER.rc" ) &
+                REVIEW_PID=$!
+                log "iter=$ITER review INVOKED on $REVIEW_MODEL — $REVIEW_DECISION_REASON"
+            fi
+        else
+            log "iter=$ITER review SKIPPED — $REVIEW_DECISION_REASON"
+            REVIEW_SKIPPED_REASON="$REVIEW_DECISION_REASON"
+            REVIEW_SKIP_COUNT=$((REVIEW_SKIP_COUNT + 1))
+            state_set REVIEW_SKIP_COUNT "$REVIEW_SKIP_COUNT"
         fi
     fi
 
@@ -355,25 +465,39 @@ while :; do
     fi
 
     phase review-collect
-    if [ -n "$REVIEW_PID" ]; then
-        wait "$REVIEW_PID"
-        RRC="$(cat "$RUN_DIR/review-$ITER.rc" 2>/dev/null || echo 1)"
-        if [ "$RRC" -ne 0 ] || [ ! -s "$RUN_DIR/review-$ITER.md" ]; then
-            echo "REVIEWER FAILED model=$REVIEW_MODEL rc=$RRC" >>"$RUN_DIR/review-$ITER.md"
-            log "iter=$ITER REVIEWER FAILED rc=$RRC"
-            REVIEW_FAILS=$((REVIEW_FAILS+1))
+    if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
+        if [ -n "$REVIEW_PID" ]; then
+            wait "$REVIEW_PID"
+            RRC="$(cat "$RUN_DIR/review-$ITER.rc" 2>/dev/null || echo 1)"
+            if [ "$RRC" -ne 0 ] || [ ! -s "$RUN_DIR/review-$ITER.md" ]; then
+                echo "REVIEWER FAILED model=$REVIEW_MODEL rc=$RRC" >>"$RUN_DIR/review-$ITER.md"
+                log "iter=$ITER REVIEWER FAILED rc=$RRC"
+                REVIEW_FAILS=$((REVIEW_FAILS+1))
+            else
+                log "iter=$ITER reviewed by $REVIEW_MODEL -> $RUN_DIR/review-$ITER.md"
+                REVIEW_FAILS=0
+                REVIEW_CALLS=$((REVIEW_CALLS + 1))
+                state_set REVIEW_CALLS "$REVIEW_CALLS"
+                state_set LAST_REVIEW_ITER "$ITER"
+                ITERS_SINCE_REVIEW=0
+                state_set ITERS_SINCE_REVIEW "0"
+                # Cost guardrail report
+                EST_COST="$(python3 -c "print('%.4f' % ($REVIEW_CALLS * 0.003))" 2>/dev/null || echo "n/a")"
+                log "iter=$ITER REVIEW CALL #$REVIEW_CALLS — estimated cumulative cost ~\$${EST_COST} USD (rough; ~\$0.003/call)"
+            fi
+            STALL=0
+            [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
         else
-            log "iter=$ITER reviewed by $REVIEW_MODEL -> $RUN_DIR/review-$ITER.md"
-            REVIEW_FAILS=0
+            # Review skipped this iteration.
+            STALL=0
+            log "iter=$ITER review skipped (cost guardrail) — cumulative review calls: $REVIEW_CALLS, skipped: $REVIEW_SKIP_COUNT"
         fi
-        STALL=0
-        [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
     else
         STALL=$((STALL+1))
         log "iter=$ITER no commit — stall_count=$STALL"
     fi
 
-    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; } >"$STATE"
+    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; } >"$STATE"
     phase idle
     [ "$STALL" -ge "$STALL_LIMIT" ] && { log "STOP: $STALL consecutive stalled iterations"; exit 5; }
     [ "$FAILS" -ge "$FAIL_LIMIT" ] && { log "STOP: $FAILS consecutive gate failures"; exit 4; }

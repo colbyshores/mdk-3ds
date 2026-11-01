@@ -22,7 +22,7 @@ This document provides context for Meta Muse CLI to understand the current state
 - `docs/OPCODE_COVERAGE.md` - Opcode porting status
 - `AGENTS.md` - Operating contract and rules
 
-## Agent Architecture (owner directive 2026-10-31)
+## Agent Architecture (owner directive 2026-10-31, updated 2026-11-01)
 Three separated roles — the implementer is never the sole authority on its own
 correctness:
 - **Implementer / remediator**: Qwen (`litellm/qwen` → `qwen38-flash-next`). First
@@ -37,10 +37,21 @@ correctness:
   `bash tools/check.sh`, `make -C mdk_3ds`, plus the batch-integrity gate. Objective
   pass/fail, independent of any model's opinion.
 - Workflow: Qwen implements → harness gates verify → DeepSeek reviews adversarially
-  → Qwen remediates (fix confirmed, rebut invalid with evidence) → repeat.
+  (risk-based, see below) → Qwen remediates (fix confirmed, rebut invalid with
+  evidence) → repeat.
 - Oracle boundary enforced - only port what C# implements
 - Every commit must include frame record in docs/frames/
 - Gates must pass before committing
+
+## Risk-based review policy (owner directive 2026-11-01)
+Paid DeepSeek review is NOT invoked every iteration. The builder declares
+`Risk: low|medium|high` in docs/CONTINUATION.md; the orchestrator decides:
+- low  -> skip review (routine, localized, tests pass, no interface/behavior change)
+- medium -> batch; review every 5 completed iterations or before a milestone
+- high  -> review immediately
+Failure-triggered: 2+ consecutive gate failures, uncertain root cause, test
+weakening, or unexplained behavior also trigger review. Local verification suite
+always runs. Track review-call count and estimated cost at each milestone.
 
 ## Important Constraints
 - C# in src/Mdk.Game/** is READ-ONLY oracle

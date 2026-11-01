@@ -14,6 +14,12 @@ independent family from the Qwen implementer. Your job is to **falsify** the
 committed diff, not to approve it. You are **read-only**: inspect and report; never
 edit, write, or fix.
 
+Invocation is risk-based (see `ralph/builder.md` §"Risk classification" and
+`ralph/MUSE_CONTEXT.md`): invoked for high-risk changes, every 5 completed
+iterations (medium-risk batch checkpoint), before a milestone, or on failure
+triggers. Routine/low-risk batches skip paid review; the local verification
+suite still runs every iteration.
+
 Full protocol: `ralph/validator.md`. Non-negotiables:
 - Judge model identity by the upstream string, never the alias. If dispatched on the
   same upstream as the builder, mark the review **NOT INDEPENDENT**.

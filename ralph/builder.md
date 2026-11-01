@@ -71,6 +71,53 @@ Record the lookup result in the commit message or progress log.
 Open `SPEC.md` only for the section you are working on. Do not read the whole
 of it, and do not re-read history you already have.
 
+## Risk classification (owner directive 2026-11-01)
+
+The loop now uses **risk-based adversarial review** to reduce paid review calls.
+You must classify each batch's risk and record it, so the orchestrator can decide
+whether to invoke the paid DeepSeek reviewer.
+
+Write this in the first 20 lines of `docs/CONTINUATION.md` (so the orchestrator
+can read it from the committed tree):
+
+```
+Risk: low    # routine, localized, tests pass, no interface/behavior change
+Risk: medium # touches behavior but bounded; accumulates to a 5-iter checkpoint
+Risk: high   # architecture/interfaces/state/data formats/memory/concurrency/security/perf/target
+```
+
+Include a one-line reason after the level, e.g. `Risk: high — changes BSP sweep rounding`.
+
+### Risk levels (be honest; the safety net forces high on broad/protected diffs)
+
+- **low**: small localized diff; no public interface, architecture, data format,
+  persistence, security, concurrency, or core-behavior change; tests pass; no
+  unresolved regression. (formatting, comments, straightforward test additions,
+  isolated fixes with clear coverage)
+- **medium**: touches behavior but bounded; accumulate and review at the 5-iter
+  checkpoint or before a milestone.
+- **high**: alters architecture/interfaces/state transitions/data formats/important
+  behavior; memory safety/concurrency/sync/security/error handling/resource lifetime;
+  performance-critical or target-specific code; broad or hard-to-understand diff;
+  uncertain root cause; passes tests but plausible correctness gap; milestone/RC.
+
+If you are unsure, classify **medium** (conservative). Never classify high-risk
+work as low to skip review — the orchestrator's safety net will override, and
+misclassification is a finding.
+
+### Review packet (when the reviewer is invoked)
+
+The orchestrator sends a focused packet, not the whole repo. You do not control
+this, but your commit should make the packet easy to build: clear commit
+message, updated CONTINUATION.md, PROGRESS_LOG.md narrative, and the frame pair.
+
+### Remediation and verification
+
+When a review IS invoked (high-risk or checkpoint), address Critical/High
+findings per the Remediation protocol above. When review is SKIPPED, you still
+must run all gates and publish the frame — skipping review does not skip
+verification. Do not weaken tests to obtain a pass; the integrity gate blocks it.
+
 ## Work rules
 
 - **One subsystem slice per batch.** A batch is one code change plus its
@@ -151,6 +198,7 @@ any agent harness.
 - Every Critical/High finding from the newest review is either fixed (with a
   pinning test/golden) or rebutted in `docs/PROGRESS_LOG.md` with evidence.
 - The frame pair is published and committed with the batch.
+- `docs/CONTINUATION.md` declares `Risk: low|medium|high` with a one-line reason.
 - The tree is clean and the batch is committed.
 
 **Final report** — write this into `docs/CONTINUATION.md` (state + next) and

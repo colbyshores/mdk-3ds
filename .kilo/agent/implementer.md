@@ -21,6 +21,9 @@ Non-negotiables:
 - On remediation: investigate each Critical/High finding, fix confirmed ones with a
   pinning test/golden, and rebut invalid ones with evidence in
   `docs/PROGRESS_LOG.md`. Do not blindly apply a wrong suggestion.
+- Risk classification: declare `Risk: low|medium|high` (with one-line reason) in the
+  first 20 lines of `docs/CONTINUATION.md` for every batch (see `ralph/builder.md`
+  §"Risk classification"). Never classify high-risk work as low to skip review.
 - Acceptance and final-report requirements are in `ralph/builder.md` §"Before you
   end". Never claim a gate passed without running it; Old-3DS performance readiness
   stays open until measured on real hardware.
