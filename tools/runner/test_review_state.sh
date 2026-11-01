@@ -30,7 +30,7 @@ grep -vE '^[[:space:]]*#' "$LOOP" >"$LOOP_CODE"
 REPORT=$(mktemp -d)/report.md
 printf 'VERDICT: PASS\n' >"$REPORT"
 : >"$REPORT.empty"
-cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" 2>/dev/null || true; }
+cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" "${DD:-}" 2>/dev/null || true; }
 trap cleanup EXIT
 check() { # check <label> <expected> <actual>
     if [ "$2" = "$3" ]; then
@@ -178,6 +178,61 @@ check "AR-2: keys it was not given survive the rewrite" "1" "$(grep -c '^KEEP=1$
 check "AR-2: a key it WAS given is replaced, not duplicated" "1" "$(grep -c '^A=' "$SA_DIR/state")"
 check "AR-2: and it can create the file when there is nothing to rewrite" "0" \
       "$( STATE="$SA_DIR/missing"; state_apply A=1; [ -f "$SA_DIR/missing" ] && echo 0 || echo 1 )"
+# AR6-4: the status is part of the contract, so the primitive must be able to
+# produce a bad one. `mv -f tmp somedir` SUCCEEDS by moving the temp file INTO a
+# directory, so a $STATE that had become a directory reported a committed
+# transition while the record stayed exactly as it was (external review
+# 2026-11-01, run-20261101-062333/review-2.md AR6-4).
+mkdir -p "$SA_DIR/adir"
+check "AR6-4: a state path that is a directory is refused, not renamed into" "1" \
+      "$( STATE="$SA_DIR/adir"; state_apply A=1 >/dev/null 2>&1; printf '%s' "$?" )"
+check "AR6-4: and the refused write left nothing behind in it" "0" "$(find "$SA_DIR/adir" -type f | wc -l | tr -d ' ')"
+check "AR6-4: a state path in an unwriteable place is refused too" "1" \
+      "$( STATE="$SA_DIR/no-such-dir/state"; state_apply A=1 >/dev/null 2>&1; printf '%s' "$?" )"
+
+# --- every atomic transition names its KEYS (AR6-2) ---------------------------
+# A `guard_present` pins the WORDS of one call, not the KEYS it writes, and that
+# difference is the finding: deleting `REVIEW_STATUS="$REVIEW_STATUS"` from the
+# collector's write, or `REVIEW_OWED_BASE="$REVIEW_OWED_BASE"` from the BLOCKED
+# arm's, left this suite green at 110 PASS, because the substring each guard
+# matched did not name the key that vanished (external review 2026-11-01,
+# run-20261101-062333/review-2.md AR6-2, both reproduced). So parse the call
+# sites instead: join each `state_write` call's continuation lines, take the KEY
+# of every KEY=value argument, and assert the SET each arm must write. A new
+# transition that nobody pinned also fails the count.
+APPLY_SIGS="$(awk '
+{
+    idx = index($0, "state_write ")
+    if (idx == 0) next
+    call = substr($0, idx + length("state_write "))
+    while (call ~ /\\[[:space:]]*$/) {
+        sub(/\\[[:space:]]*$/, "", call)
+        if ((getline nxt) > 0) call = call " " nxt
+    }
+    n = split(call, tok, /[[:space:]]+/); m = 0; delete keys
+    for (i = 1; i <= n; i++) {
+        t = tok[i]; sub(/^"/, "", t)
+        if (t ~ /^[A-Za-z_][A-Za-z_0-9]*=/) { m++; keys[m] = substr(t, 1, index(t, "=") - 1) }
+    }
+    for (i = 2; i <= m; i++) { v = keys[i]; for (j = i - 1; j >= 1 && keys[j] > v; j--) keys[j+1] = keys[j]; keys[j+1] = v }
+    out = ""
+    for (i = 1; i <= m; i++) out = out (i > 1 ? " " : "") keys[i]
+    print out
+}' "$LOOP_CODE")"
+sig_count() { printf '%s\n' "$APPLY_SIGS" | grep -Fxc "$1"; }
+check "AR6-2: the loop has exactly six atomic transitions" "6" "$(printf '%s\n' "$APPLY_SIGS" | grep -c .)"
+check "AR6-2: the startup fold AND the collector each write all five obligation keys" "2" \
+      "$(sig_count 'REVIEW_FAILS REVIEW_INFLIGHT_BASE REVIEW_INFLIGHT_HEAD REVIEW_OWED_BASE REVIEW_STATUS')"
+check "AR6-2: the HEAD reconstruction writes owed base, counter and status" "1" \
+      "$(sig_count 'REVIEW_FAILS REVIEW_OWED_BASE REVIEW_STATUS')"
+check "AR6-2: dispatch writes the range and the status together" "1" \
+      "$(sig_count 'REVIEW_INFLIGHT_BASE REVIEW_INFLIGHT_HEAD REVIEW_STATUS')"
+check "AR6-2: the BLOCKED arm writes its obligation, its counter, its status and its reason" "1" \
+      "$(sig_count 'LAST_REVIEW_DECISION REVIEW_FAILS REVIEW_OWED_BASE REVIEW_STATUS')"
+check "AR6-3: the end-of-iteration rewrite re-emits the three cross-iteration signals" "1" \
+      "$(sig_count 'FAILS HEAD ITER ITERS_SINCE_REVIEW LAST_GATES LAST_RC LAST_REVIEW_DECISION LAST_REVIEW_ITER LAST_RISK REVIEW_CALLS REVIEW_FAILS REVIEW_INFLIGHT_BASE REVIEW_INFLIGHT_HEAD REVIEW_OWED_BASE REVIEW_SKIP_COUNT REVIEW_STATUS STALL')"
+check "AR6-2: no atomic transition omits the status it is transitioning" "0" \
+      "$(printf '%s\n' "$APPLY_SIGS" | grep -vc 'REVIEW_STATUS')"
 
 # --- H1 end to end: the shipped startup block, lifted and run -------------------
 # The cases above prove the arithmetic; these prove the WIRING — that the startup
@@ -186,6 +241,9 @@ check "AR-2: and it can create the file when there is nothing to rewrite" "0" \
 # block is lifted out of ralph-pi.sh rather than retyped here, so a rewrite that
 # drops the call fails (the same trick the independence guard above uses).
 STARTUP_BLOCK="$(awk '/^if \[ -n "\$REVIEW_INFLIGHT_BASE" \]; then$/{f=1} f{print} f&&/^fi$/{exit}' "$LOOP")"
+# The loop's checked writer, lifted for the same reason: the arms call it, so the
+# test runs the shipped one rather than a copy that can drift from it (AR6-4).
+STATE_WRITE_FN="$(awk '/^state_write\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$LOOP")"
 if [ -z "$STARTUP_BLOCK" ]; then
     check "H1: the startup block could be lifted from ralph-pi.sh" "lifted" "NOT FOUND"
 else
@@ -194,6 +252,7 @@ else
     state_get() { sed -n "s/^$1=//p" "$SD/state" 2>/dev/null | tail -1; }
     state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$SD/state" 2>/dev/null >"$SD/state.t" || true; echo "$kv" >>"$SD/state.t"; mv "$SD/state.t" "$SD/state"; }
     log() { printf '%s\n' "$*" >>"$SD/log"; }
+    eval "$STATE_WRITE_FN"
     run_startup() { # run_startup <state-file-body> [repo-root] -> "rc|owed|fails"
         printf '%b' "$1" >"$SD/state"; : >"$SD/log"
         REVIEW_OWED_BASE="$(state_get REVIEW_OWED_BASE)"
@@ -282,6 +341,13 @@ else
     # `failed` plus a still-set in-flight marker: the restart folded the same review
     # a second time, REVIEW_FAILS hit the limit of 2, and the loop exited 7 — an
     # exit code the systemd unit deliberately does not restart.
+    #
+    # AR6-6, said plainly: against the SHIPPED one-write fold only kill_at=1 ever
+    # reaches the fake writer's death, so cases 2..6 assert a state no death of the
+    # current code can produce. They are kept because they are the write boundaries
+    # of the pre-fix five-write sequence, which is what the reversion experiment
+    # fails on, and a re-spelled fold that went back to one state_set per key dies
+    # on them. They are regression pins for the OLD shape, not six live windows.
     kill_fold_at() { # kill_fold_at <n> — die before the n-th state write, then restart
         local n="$1"
         printf 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=aaaa1111\n' >"$SD/state"
@@ -301,6 +367,67 @@ else
     done
     check "AR-2: and the fold's own death leaves the obligation on disk" "aaaa1111" \
           "$(kill_fold_at 1 >/dev/null; state_get REVIEW_OWED_BASE)"
+fi
+
+# --- AR6-1: dispatch records the obligation BEFORE the reviewer exists ---------
+# Every other arm has been pinned behaviourally; the arm that CREATES the
+# obligation was pinned only by a string naming the non-atomic form it shipped in
+# (external review 2026-11-01, run-20261101-062333/review-2.md AR6-1): the
+# reviewer was spawned first and the range that IS the obligation was written
+# after it, in three separate renames, so a kill in that window left nothing on
+# disk and a restart owed nothing. The arm is lifted and run with the spawn
+# stubbed, so what is asserted is the ORDER, not the spelling: a death injected
+# right after the obligation's rename must leave the obligation recorded and the
+# reviewer never started. Under the shipped order that is the worst case there is
+# (owed, counted, re-dispatched); under the old order it is a silent all-clear.
+DISPATCH_BLOCK="$(awk '/^[[:space:]]*phase review$/{f=1} f{print} f&&/^[[:space:]]*REVIEW_PID=\$!$/{exit}' "$LOOP")"
+if [ -z "$DISPATCH_BLOCK" ]; then
+    check "AR6-1: the dispatch arm could be lifted from ralph-pi.sh" "lifted" "NOT FOUND"
+elif [ -z "$STATE_WRITE_FN" ]; then
+    check "AR6-1: state_write could be lifted from ralph-pi.sh" "lifted" "NOT FOUND"
+else
+    DD="$(mktemp -d)"
+    printf 'the review prompt\n' >"$DD/prompt"
+    dstate_get() { sed -n "s/^$1=//p" "$DD/state" 2>/dev/null | tail -1; }
+    spawn_count() { if [ -f "$DD/spawn" ]; then wc -l <"$DD/spawn" | tr -d ' '; else echo 0; fi; }
+    run_dispatch() { # run_dispatch <1 to die right after the obligation's write, 0 to run>
+        printf 'REVIEW_STATUS=done\nREVIEW_INFLIGHT_BASE=\nREVIEW_INFLIGHT_HEAD=\nREVIEW_OWED_BASE=\n' >"$DD/state"
+        : >"$DD/log"; rm -f "$DD/spawn"
+        (
+            STATE="$DD/state"
+            phase() { :; }
+            log() { printf '%s\n' "$*" >>"$DD/log"; }
+            timeout() { printf 'spawn\n' >>"$DD/spawn"; }
+            eval "$STATE_WRITE_FN"
+            if [ "$1" != "0" ]; then
+                state_write() { state_apply "$@"; exit 9; }   # a SIGKILL in the window
+            fi
+            REVIEW_MODEL="litellm/reviewer"
+            REVIEW_TIMEOUT=1
+            PI_CMD="pi"
+            RUN_DIR="$DD"
+            ITER=1
+            RP="$DD/prompt"
+            REVIEW_BASE="aaaa1111"
+            HEAD_AFTER="bbbb2222"
+            REVIEW_DECISION_REASON="high-risk batch"
+            eval "$DISPATCH_BLOCK"
+            wait 2>/dev/null || true
+        )
+    }
+    run_dispatch 0
+    check "AR6-1: a dispatched review records the obligation" "invoked" "$(dstate_get REVIEW_STATUS)"
+    check "AR6-1: and the range it covers" "aaaa1111" "$(dstate_get REVIEW_INFLIGHT_BASE)"
+    check "AR6-1: and the reviewer really was started" "1" "$(spawn_count)"
+    run_dispatch 1
+    check "AR6-1: a death right after the obligation's write still leaves the range owed" "aaaa1111" "$(dstate_get REVIEW_INFLIGHT_BASE)"
+    check "AR6-1: and the status it died on is 'invoked', not the previous review's 'done'" "invoked" "$(dstate_get REVIEW_STATUS)"
+    check "AR6-1: and the reviewer was NEVER spawned, so nothing claims a running review" "0" "$(spawn_count)"
+    # AR6-4: the wrapper must stop the loop when the record could not be written,
+    # not log the transition as done and carry on with a stale one.
+    mkdir -p "$DD/adir"
+    ( STATE="$DD/adir"; eval "$STATE_WRITE_FN"; log() { :; }; state_write A=1 ) 2>/dev/null
+    check "AR6-4: a record that could not be written exits the arm non-zero" "9" "$?"
 fi
 
 # --- the resolver's own claims -----------------------------------------------
@@ -414,7 +541,7 @@ guard_absent  "F1: no unconditional REVIEW_STATUS=done"        'state_set REVIEW
 # F2: the obligation survives the process, and the owed base reaches the record.
 guard_present "F2: REVIEW_FAILS is read back at startup"       'REVIEW_FAILS="$(review_int "$(state_get REVIEW_FAILS)")"'
 guard_present "F2: the owed base is read back at startup"      'REVIEW_OWED_BASE="$(state_get REVIEW_OWED_BASE)"'
-guard_present "F2: both reach the persisted state file"        'echo "REVIEW_FAILS=$REVIEW_FAILS"; echo "REVIEW_OWED_BASE=$REVIEW_OWED_BASE"'
+guard_present "F2: both reach the persisted state file"        '"REVIEW_FAILS=$REVIEW_FAILS" "REVIEW_OWED_BASE=$REVIEW_OWED_BASE"'
 guard_present "F2: the counter is read through review_int"     'review_int "$(state_get REVIEW_FAILS)"'
 guard_absent  "F2: no case-with-:-0 that tests the wrong value" 'case "${REVIEW_FAILS:-0}" in'
 # F3: independence is resolved, not string-compared.
@@ -422,9 +549,9 @@ guard_present "F3: the reviewer chain asks the reject-reason guard" 'REJECT="$(r
 guard_present "F3: the fallback chain asks it too"             'REJECT="$(reviewer_reject_reason "$candidate")"'
 guard_present "F3: the identity of both sides is recorded"     'review-$ITER.identity.txt'
 # H1: the obligation is written where it cannot be lost with the collector.
-guard_present "H1: the range is persisted at dispatch"          'state_set REVIEW_INFLIGHT_BASE "$REVIEW_INFLIGHT_BASE"'
+guard_present "H1: the range is persisted at dispatch"          'state_write REVIEW_INFLIGHT_BASE="$REVIEW_INFLIGHT_BASE"'
 guard_present "H1: startup folds an uncollected review into owed" 'REVIEW_OWED_BASE="$(review_inflight_owed "$REVIEW_OWED_BASE" "$REVIEW_INFLIGHT_BASE")"'
-guard_present "H1: the in-flight range reaches the state file"  'echo "REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE"'
+guard_present "H1: the in-flight range reaches the state file"  '"REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE" "REVIEW_INFLIGHT_HEAD=$REVIEW_INFLIGHT_HEAD"'
 guard_present "H1: an invoked review with no range is refused, not guessed" 'so the obligation cannot be reconstructed at all'
 # F2: the fold rewrites the status as well as the range, so it cannot manufacture
 # the `invoked`-with-no-range state its own refusal rejects. AR-2 narrowed what
@@ -435,26 +562,37 @@ guard_present "H1: an invoked review with no range is refused, not guessed" 'so 
 # remediation wording), and a `state_set` anywhere in the fold is a failure by
 # itself. The behavioural version of this is the kill-at-every-write case above;
 # these are the source-level pins that name the spelling.
-guard_in_fold "F2: the fold rewrites REVIEW_STATUS, not only the range" 'state_apply REVIEW_OWED_BASE='
+guard_in_fold "F2: the fold rewrites REVIEW_STATUS, not only the range" 'state_write REVIEW_OWED_BASE='
 guard_in_fold "AR-2: and it writes the status, the owed base and both markers together" \
               'REVIEW_STATUS="$REVIEW_STATUS" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""'
 guard_absent_in_fold "AR-2: the fold writes no key with a separate state_set" 'state_set '
 order_in_fold "AR-2: the status variable is set BEFORE the atomic write reads it" \
-             'REVIEW_STATUS="failed"' 'state_apply REVIEW_OWED_BASE='
+             'REVIEW_STATUS="failed"' 'state_write REVIEW_OWED_BASE='
 # AR-2 applied to the other multi-key transitions: the verdict and the BLOCKED
 # record are one write each, and the end-of-iteration rewrite no longer truncates
 # the state file before filling it back in.
 guard_present "AR-2: the verdict reaches the file through the atomic write" 'REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""'
-guard_present "AR-2: the BLOCKED arm's obligation and its record are one write" '"LAST_REVIEW_DECISION=BLOCKED: $REVIEW_DECISION_REASON"'
-guard_present "AR-2: the end-of-iteration rewrite is atomic, not truncate-then-append" '} >"${STATE}.t.$$" && mv -f "${STATE}.t.$$" "$STATE"'
+guard_present "AR-2: the BLOCKED arm's obligation and its record are one write" '"LAST_REVIEW_DECISION=$LAST_REVIEW_DECISION"'
+guard_present "AR-2/AR6-3: the end-of-iteration rewrite goes through the atomic writer" 'state_write "ITER=$ITER"'
 guard_absent  "AR-2: the whole-file rewrite no longer truncates the live state file" '; } >"$STATE"'
+guard_absent  "AR-2: and it no longer hand-rolls its own temp file and rename" '} >"${STATE}.t.$$"'
 guard_absent  "AR-2: state_apply is defined once, in the sourced library, not forked here" 'state_apply()'
+guard_present "AR6-4: the loop calls the CHECKED writer, not the raw primitive" 'if ! state_apply "$@"; then'
+guard_present "AR6-4: and a record that could not be written stops the loop" 'exit 9'
 guard_present "AR-4: the reconstructed base must be an ancestor of HEAD" 'merge-base --is-ancestor "$STATE_HEAD_SHA" HEAD'
-# F4: at dispatch the RANGE is persisted before the status derived from it, so a
-# kill between the two leaves an obligation, not a refusal.
-guard_present "F4: the range is still persisted at dispatch" 'state_set REVIEW_INFLIGHT_HEAD "$REVIEW_INFLIGHT_HEAD"'
-order_before "F4: the in-flight range is written before the invoked marker" \
-             'state_set REVIEW_INFLIGHT_BASE "$REVIEW_INFLIGHT_BASE"' 'state_set REVIEW_STATUS "invoked"'
+# F4/AR6-1: the obligation is on disk before the reviewer exists, so a kill in
+# either window leaves an obligation rather than an all-clear. The order used to
+# be the reverse and the guard pinned the reverse: the spawn came first and the
+# range was written after it in three renames (external review 2026-11-01,
+# run-20261101-062333/review-2.md AR6-1). The behavioural version is the
+# kill-after-the-write case above; these are the source-level pins.
+guard_present "F4: the dispatch transition is ONE write, not a rename per key" \
+              'REVIEW_INFLIGHT_HEAD="$REVIEW_INFLIGHT_HEAD" REVIEW_STATUS="invoked"'
+guard_absent  "F4/AR6-1: dispatch writes no key with a separate state_set" 'state_set REVIEW_INFLIGHT'
+order_before "AR6-1: the obligation is written BEFORE the reviewer is spawned" \
+             'state_write REVIEW_INFLIGHT_BASE=' '( timeout -k 30 "$REVIEW_TIMEOUT"'
+order_before "AR6-1: and the spawn is what the collector waits on" \
+             '( timeout -k 30 "$REVIEW_TIMEOUT"' 'REVIEW_PID=$!'
 # M1: a builder that fell back is judged by the route that actually answered.
 guard_present "M1: the fallback re-resolves the family too"     'RUN_FAMILY="$(model_family "$RUN_MODEL")"'
 IDENTITY_READS="$(grep -cF 'RUN_UPSTREAM="$(model_upstream "$RUN_MODEL")"' "$LOOP_CODE")"

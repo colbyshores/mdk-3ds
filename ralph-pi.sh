@@ -132,6 +132,30 @@ state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$STATE" 2>/dev/null
 # shellcheck source=tools/runner/review_state.sh
 . "$ROOT/tools/runner/review_state.sh"
 
+# state_write <key=value> [...] — state_apply, and STOP if it fails.
+#
+# `set -e` is deliberately not in effect here (only -u and pipefail), so a
+# multi-key transition whose one rename failed was silently reverted in full
+# while the log line printed right after it announced the transition as done
+# (external review 2026-11-01, run-20261101-062333/review-2.md AR6-4). A full
+# disk, a read-only $LOGDIR or a $STATE that is not a regular file therefore
+# left the obligation bookkeeping stale on disk while the log claimed otherwise
+# — and a stale in-flight marker is a review that gets folded twice, which is the
+# AR-2 stop re-entered through an ignored error instead of a torn write.
+#
+# The loop stops rather than continuing, because every decision past this point
+# would be made from a record the loop does not have: "could not write" must not
+# reach the same path as "recorded". Exit 9 is new and is NOT in the unit's
+# RestartPreventExitStatus, because a full disk is often transient and
+# StartLimitBurst caps the retry at 3 per 30 minutes; a review that cannot be
+# dispatched (8) and a reviewer that keeps dying (7) are not transient.
+state_write() {
+    if ! state_apply "$@"; then
+        log "STOP: could not write the review record at $STATE — the transition was NOT recorded, so every decision after this point would be made from a record the loop does not have (disk full, read-only log dir, or $STATE is not a regular file)"
+        exit 9
+    fi
+}
+
 # --- model identity: the upstream string, never the alias --------------------
 # (vault: model-identity-is-the-upstream-string-not-the-alias). On a shared
 # litellm proxy two aliases can be ONE upstream -- on this proxy today `qwen`
@@ -361,6 +385,17 @@ REVIEW_INFLIGHT_BASE="$(state_get REVIEW_INFLIGHT_BASE)"
 # range is always at or before the current HEAD.
 REVIEW_INFLIGHT_HEAD="$(state_get REVIEW_INFLIGHT_HEAD)"
 REVIEW_LEFTOVER="$(state_get REVIEW_STATUS)"
+# The three cross-iteration signals are read back so the end-of-iteration rewrite
+# can re-emit them (external review 2026-11-01, run-20261101-062333/review-2.md
+# AR6-3). They used to be written by `state_set` and then dropped by that rewrite,
+# which emitted a fixed list of fourteen keys and never named these three, so the
+# durable record never contained them: the "previous iteration left gates FAIL"
+# warning could only fire if the previous process died between its own
+# `state_set LAST_GATES FAIL` and its rewrite, and an operator reading `status`
+# saw no gate result, no declared risk and no review decision at all.
+LAST_GATES="$(state_get LAST_GATES)"
+LAST_RISK="$(state_get LAST_RISK)"
+LAST_REVIEW_DECISION="$(state_get LAST_REVIEW_DECISION)"
 guard
 heartbeat_start
 RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
@@ -394,7 +429,7 @@ if [ -n "$REVIEW_INFLIGHT_BASE" ]; then
     REVIEW_STATUS="failed"
     REVIEW_INFLIGHT_BASE=""
     REVIEW_INFLIGHT_HEAD=""
-    state_apply REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_FAILS="$REVIEW_FAILS" \
+    state_write REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_FAILS="$REVIEW_FAILS" \
         REVIEW_STATUS="$REVIEW_STATUS" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""
     log "that review is recorded as NOT done: ${REVIEW_OWED_BASE:0:8} is owed, and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
     if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
@@ -462,7 +497,7 @@ elif [ "$REVIEW_LEFTOVER" = "invoked" ]; then
             REVIEW_OWED_BASE="$STATE_HEAD_SHA"
             REVIEW_FAILS=$((REVIEW_FAILS + 1))
             REVIEW_STATUS="failed"
-            state_apply REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_FAILS="$REVIEW_FAILS" REVIEW_STATUS="$REVIEW_STATUS"
+            state_write REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_FAILS="$REVIEW_FAILS" REVIEW_STATUS="$REVIEW_STATUS"
             log "a review was left marked 'invoked' with no range recorded; the range is widened defensively to the state file's HEAD (${STATE_HEAD:0:8}), which is the PREVIOUS iteration's commit and therefore an ancestor of the unreviewed one, so the obligation is covered by over-coverage — and the cost is NOT bounded at one redundant review, because review_outcome clears an owed base on rc 0 plus a non-empty report without reading its VERDICT (owner decision: docs/CONTINUATION.md owner-authorized task 3); ${REVIEW_OWED_BASE:0:8} is owed and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
             if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
                 log "STOP: $REVIEW_FAILS reviews have been lost without a verdict — the harness is being restarted faster than reviews can be collected, which is a phase-limit or reviewer-route problem a model cannot fix from inside the loop"
@@ -655,6 +690,8 @@ POLICY_PRECEDENCE
             REVIEW_DECISION_REASON="low-risk routine change (skipped)"
         fi
 
+        LAST_RISK="$RISK"
+        LAST_REVIEW_DECISION="$REVIEW_DECISION_REASON"
         state_set LAST_RISK "$RISK"
         state_set LAST_REVIEW_DECISION "$REVIEW_DECISION_REASON"
 
@@ -714,27 +751,40 @@ POLICY_PRECEDENCE
             } >"$RUN_DIR/review-$ITER.identity.txt"
             if [ -n "$REVIEW_MODEL" ]; then
                 phase review
+                # The obligation is recorded BEFORE the reviewer exists, as ONE
+                # write (external review 2026-11-01, run-20261101-062333
+                # /review-2.md AR6-1). The order used to be spawn-then-record, and
+                # the comment here argued that "the range IS the obligation … so
+                # the range is what has to survive a kill" while writing the range
+                # AFTER the thing it had to survive: a kill between `REVIEW_PID=$!`
+                # and the first rename left NOTHING on disk — no in-flight marker,
+                # and a REVIEW_STATUS still reading `done` from the last collected
+                # review — so a restart owed nothing and the commit under review
+                # was never reviewed by anyone. That is worse than a lost review:
+                # the reviewer's `timeout`/`sudo` child survives the parent, so a
+                # complete report could sit in the run dir that no code ever reads.
+                # One write also retires the ordering rule run-20261101-025705
+                # review-3.md F4 asked for (range before the status derived from
+                # it): there is no longer a between.
+                #
+                # Recording first inverts the failure. A kill between this rename
+                # and the spawn leaves `invoked` with a range and no reviewer, which
+                # startup folds as a lost review: owed, counted, and re-dispatched.
+                # The worst case is one review of a range nobody looked at, which is
+                # the same direction as every other arm here, and the state_write
+                # itself stops the loop (AR6-4) rather than spawning a reviewer
+                # whose verdict would have nowhere to be recorded.
+                REVIEW_INFLIGHT_BASE="$REVIEW_BASE"
+                REVIEW_INFLIGHT_HEAD="$HEAD_AFTER"
+                REVIEW_STATUS="invoked"
+                state_write REVIEW_INFLIGHT_BASE="$REVIEW_INFLIGHT_BASE" \
+                    REVIEW_INFLIGHT_HEAD="$REVIEW_INFLIGHT_HEAD" REVIEW_STATUS="invoked"
+                log "iter=$ITER review INVOKED on $REVIEW_MODEL — $REVIEW_DECISION_REASON (obligation recorded before the spawn)"
                 ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
                     --model "$REVIEW_MODEL" -p "$(cat "$RP")" --no-session \
                     >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
                   echo $? >"$RUN_DIR/review-$ITER.rc" ) &
                 REVIEW_PID=$!
-                # Persist the RANGE first, then the status that depends on it
-                # (external review 2026-11-01, run-20261101-025705/review-3.md F4).
-                # The order used to be the other way round, so a kill between these
-                # two rewrites left `invoked` with no range at all — the state the
-                # startup can only reconstruct defensively or refuse. The collector
-                # already documents this rule for its own pair (the outcome is
-                # written before the in-flight markers are cleared); dispatch now
-                # matches it. The range IS the obligation and the status is derived
-                # from it, so the range is what has to survive a kill.
-                REVIEW_INFLIGHT_BASE="$REVIEW_BASE"
-                REVIEW_INFLIGHT_HEAD="$HEAD_AFTER"
-                state_set REVIEW_INFLIGHT_BASE "$REVIEW_INFLIGHT_BASE"
-                state_set REVIEW_INFLIGHT_HEAD "$REVIEW_INFLIGHT_HEAD"
-                REVIEW_STATUS="invoked"
-                state_set REVIEW_STATUS "invoked"
-                log "iter=$ITER review INVOKED on $REVIEW_MODEL — $REVIEW_DECISION_REASON"
             else
                 # FAIL CLOSED. A mandatory review with no eligible reviewer is a
                 # BLOCKED review, not a skipped one. Recording it as a cost skip
@@ -765,8 +815,9 @@ POLICY_PRECEDENCE
                 # gone, which is the fail-open this arm exists to prevent. The
                 # gates phase sits after this and takes minutes.
                 REVIEW_STATUS="blocked"
-                state_apply REVIEW_STATUS="$REVIEW_STATUS" REVIEW_FAILS="$REVIEW_FAILS" \
-                    REVIEW_OWED_BASE="$REVIEW_OWED_BASE" "LAST_REVIEW_DECISION=BLOCKED: $REVIEW_DECISION_REASON"
+                LAST_REVIEW_DECISION="BLOCKED: $REVIEW_DECISION_REASON"
+                state_write REVIEW_STATUS="$REVIEW_STATUS" REVIEW_FAILS="$REVIEW_FAILS" \
+                    REVIEW_OWED_BASE="$REVIEW_OWED_BASE" "LAST_REVIEW_DECISION=$LAST_REVIEW_DECISION"
                 log "iter=$ITER review BLOCKED — $REVIEW_DECISION_REASON: no eligible reviewer route"
             fi
         else
@@ -782,10 +833,10 @@ POLICY_PRECEDENCE
     phase gates
     GF="$RUN_DIR/gates-$ITER.log"
     if run_gates "$GF"; then
-        state_set LAST_GATES PASS
+        LAST_GATES="PASS"; state_set LAST_GATES PASS
         FAILS=0
     else
-        state_set LAST_GATES FAIL
+        LAST_GATES="FAIL"; state_set LAST_GATES FAIL
         FAILS=$((FAILS+1))
         log "iter=$ITER GATES FAILED (see $GF) fail_count=$FAILS"
     fi
@@ -833,7 +884,7 @@ POLICY_PRECEDENCE
             # one, which is a stop issued against a loop that was working.
             REVIEW_INFLIGHT_BASE=""
             REVIEW_INFLIGHT_HEAD=""
-            state_apply REVIEW_STATUS="$REVIEW_STATUS" REVIEW_FAILS="$REVIEW_FAILS" \
+            state_write REVIEW_STATUS="$REVIEW_STATUS" REVIEW_FAILS="$REVIEW_FAILS" \
                 REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""
             [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
         elif [ "$REVIEW_BLOCKED" -eq 1 ]; then
@@ -853,12 +904,22 @@ POLICY_PRECEDENCE
         log "iter=$ITER no commit — stall_count=$STALL"
     fi
 
-    # The end-of-iteration rewrite is atomic for the same AR-2 reason, and it is
-    # the worst instance of it: `>"$STATE"` TRUNCATES first, so a kill in the
-    # middle of these fourteen `echo`s left a partial state file — potentially
-    # without the owed base or the in-flight marker, which is the obligation
-    # disappearing rather than merely being rewritten twice.
-    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; echo "REVIEW_STATUS=$REVIEW_STATUS"; echo "REVIEW_FAILS=$REVIEW_FAILS"; echo "REVIEW_OWED_BASE=$REVIEW_OWED_BASE"; echo "REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE"; echo "REVIEW_INFLIGHT_HEAD=$REVIEW_INFLIGHT_HEAD"; } >"${STATE}.t.$$" && mv -f "${STATE}.t.$$" "$STATE"
+    # The end-of-iteration rewrite goes through the same atomic writer, for the
+    # same AR-2 reason — `>"$STATE"` TRUNCATES first, so a kill in the middle of
+    # the hand-written list left a partial state file, potentially without the owed
+    # base or the in-flight marker, which is the obligation disappearing rather than
+    # merely being rewritten twice — and routing it through `state_write` fixes the
+    # drift AR6-3 found in the list itself: a hand-written key list silently DROPS
+    # any key the loop writes elsewhere, so these three vanished from the durable
+    # record every single iteration. Now an unnamed key survives the rewrite instead
+    # of disappearing from it, and the writer's status is checked (AR6-4).
+    state_write "ITER=$ITER" "LAST_RC=$RC" "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)" \
+        "STALL=$STALL" "FAILS=$FAILS" "REVIEW_CALLS=$REVIEW_CALLS" \
+        "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW" "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT" \
+        "LAST_REVIEW_ITER=$LAST_REVIEW_ITER" "REVIEW_STATUS=$REVIEW_STATUS" \
+        "REVIEW_FAILS=$REVIEW_FAILS" "REVIEW_OWED_BASE=$REVIEW_OWED_BASE" \
+        "REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE" "REVIEW_INFLIGHT_HEAD=$REVIEW_INFLIGHT_HEAD" \
+        "LAST_GATES=$LAST_GATES" "LAST_RISK=$LAST_RISK" "LAST_REVIEW_DECISION=$LAST_REVIEW_DECISION"
     phase idle
     [ "$STALL" -ge "$STALL_LIMIT" ] && { log "STOP: $STALL consecutive stalled iterations"; exit 5; }
     [ "$FAILS" -ge "$FAIL_LIMIT" ] && { log "STOP: $FAILS consecutive gate failures"; exit 4; }

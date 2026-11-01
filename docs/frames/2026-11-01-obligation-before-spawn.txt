@@ -1,0 +1,30 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-01T08:31:45Z at 2f3d050
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why this picture did not move: this batch changed the loop's review record and the
+prose of its identity cache, and nothing in the game -- ralph-pi.sh,
+tools/runner/review_state.sh, tools/runner/test_review_state.sh and
+tools/runner/model_identity.py (docstrings only). No C or C++ file, no Makefile, no
+golden and no frame-oracle tool moved, so the pinned frame is the same picture it has
+been since the panorama landed. Measured: this png is byte-identical to the twenty-one
+records before it (md5 6769a13731983d65cee9df02da6cff37 -- 22 files in docs/frames now
+carry that md5) and the gap is unchanged at 1.240 / max 247 / mean 0.1819.
+what shows the change instead: a review obligation is not a picture. The evidence is
+(1) bash tools/runner/test_review_state.sh -- 132 cases, all PASS, up from 110,
+including six that drive the DISPATCH arm with the spawn stubbed and assert the
+obligation is on disk before a reviewer exists, six that parse every atomic
+transition's KEY SET instead of the words of one call, four on the writer's failure
+status, and the twenty-six carried over unchanged; (2) python3
+tools/runner/model_identity.py selftest -- SELFTEST CLEAN, 27 claims, unchanged: the
+FIFO read pin already refused a read-before-the-S_ISREG-check edit by timing out, so
+AR6-5 needed no code and no new test, only the correct account of why it works. Six
+reversion experiments were each shown to FAIL, with output in docs/PROGRESS_LOG.md,
+Iteration 44.
+a correction carried from the last sidecar (review-2 AR6-6): the previous sidecar said
+"six that kill the shipped startup fold at every write boundary". Against the shipped
+ONE-write fold there is exactly one write boundary, so only kill_at=1 asserts a state a
+death of the current code can produce; cases 2..6 are the write boundaries of the
+PRE-FIVE-WRITE sequence and are regression pins for the old shape, which is what the
+reversion experiment fails on. That sentence cannot be corrected in its own file -- the
+frame-record rule forbids editing an older pair -- so it is corrected here and in the
+log, and the test's own comment now says the same.

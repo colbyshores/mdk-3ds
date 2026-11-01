@@ -1,26 +1,30 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — changes how the loop's review record is WRITTEN: every multi-key state
- transition (startup fold, HEAD reconstruction, collector verdict, BLOCKED record, the
- end-of-iteration rewrite) now lands in one temp-file rename instead of a sequence of them, a
- reconstructed owed base must be an ancestor of HEAD, and the identity cache's opens are
- O_NONBLOCK so a planted FIFO cannot hang the review-decision path. Error handling, record
- persistence, a trust boundary; the test suite moved (86 -> 110 cases). No C/C++, Makefile,
- golden, frame-oracle tool or game behaviour moved.
+Risk: high — changes WHEN the loop's review obligation becomes durable and who may ignore a
+failed write: dispatch now records the in-flight range before the reviewer is spawned (one
+rename, not three after it), every atomic transition is checked for its key SET rather than a
+substring, the end-of-iteration rewrite goes through the shared writer and re-emits three keys
+it used to erase, `state_apply` can now fail on a non-regular state path, and a record that
+cannot be written stops the loop with a new exit 9. Error handling, record persistence, a
+trust boundary; the test suite moved (110 -> 132 cases). No C/C++, Makefile, golden,
+frame-oracle tool or game behaviour moved.
 
-Last updated: 2026-11-01 (batch 15: run-20261101-062333/review-1.md dispositioned — **AR-1
-High (owner-gated), AR-2/AR-3 Medium, AR-4/AR-5 Low: all confirmed, none rebutted**). A lost
-review is now counted exactly once because the fold is ONE rename, and the same `state_apply`
-covers the collector (a kill there marked a *completed* review as lost), the BLOCKED arm (a
-kill there lost the obligation outright) and the end-of-iteration rewrite, which truncated the
-state file before refilling it; a reconstructed base must be an ancestor of `HEAD`, not merely
-a commit that exists; the cache refuses a FIFO instead of opening it, on read AND write (the
-writer blocks on a missing reader — a self-found half of AR-3); and AR-1's "at most one
-redundant review" rationale is withdrawn, because `review_outcome` clears an owed base on rc 0
-plus a non-empty report without reading its VERDICT (owner task (3)). `test_review_state.sh`
-is **110 cases**; five reversion experiments all shown to FAIL, including two self-caught
-vacuous pins. Goldens **440/0/0**, no golden moved; the pinned frame is byte-unchanged and its
-sidecar says so. Narrative: `docs/PROGRESS_LOG.md`, "Iteration 43".)
+Last updated: 2026-11-01 (batch 16: run-20261101-062333/**review-2.md** dispositioned —
+**AR6-1 High, AR6-2/AR6-3 Medium, AR6-4/AR6-5/AR6-6 Low: all six confirmed, none rebutted**).
+An unreviewed commit could still be created silently, in the one arm batch 15 had not
+converted: the reviewer was spawned and the range that IS the obligation was written after it,
+so a kill in that window left `REVIEW_STATUS=done` on disk and nobody owed anything — now the
+obligation lands first, in one rename, and a kill after it folds as a lost review (owed,
+counted, re-dispatched). The two `guard_present` pins that stayed green while a whole key was
+deleted from a transition are replaced by a parser that asserts each transition's key SET and
+how many sites write it; the end-of-iteration rewrite no longer erases `LAST_GATES`,
+`LAST_RISK` and `LAST_REVIEW_DECISION`; `state_write` stops the loop when the record could not
+be written (exit 9, deliberately restartable) and `state_apply` can now detect that — a
+`mv` into a directory used to report success. `O_NONBLOCK`'s read-path claim was wrong and is
+corrected (the open succeeds; `S_ISREG` refuses). `test_review_state.sh` is **132 cases**; six
+reversion experiments all shown to FAIL. Goldens **440/0/0**, no golden moved; the pinned
+frame is byte-unchanged and its sidecar says so, and carries the AR6-6 correction that could
+not go in batch 15's committed sidecar. Narrative: `docs/PROGRESS_LOG.md`, "Iteration 44".)
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -85,7 +89,7 @@ name is a range nobody can prove covered.
 
 The full record — every invariant, every failure mode, every "do not change this" — is the
 appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of batch 13", now
-marked **superseded in part** where batches 14-15 changed it. The headline:
+marked **superseded in part** where batches 14-16 changed it. The headline:
 - **Camera/renderer:** the C#'s RIGHT-HANDED `CreateLookAt` basis; Vulkan folds clip.y into the
   matrix and the sky inverse carries the flip on its LEFT side; shaders use `M * v`; Citro3D
   culls per draw with the mode cached in the **Citro3D context**. **UNVERIFIED on hardware** (P6).
@@ -108,32 +112,33 @@ marked **superseded in part** where batches 14-15 changed it. The headline:
   fail-*forward* on the ones where the obligation is recoverable: a lost review is owed,
   counted, and lands on `failed` — the halt is reserved for a state with no range, nothing
   owed and no `HEAD` naming an **ancestor** commit. Every multi-key transition of the state
-  file goes through `state_apply` (one temp file, one rename): a transition written key by
-  key is one a kill can stop in the middle and count twice. Independence is the resolved
-  upstream and family; the identity is re-resolved after a worker fallback; the live cache
-  is per-uid/per-proxy at 0600, checked on the descriptor it reads, never through a symlink,
-  and never blocked by a FIFO planted at the path (`O_NONBLOCK` on both opens); the state
-  machine is `tools/runner/review_state.sh`, asserted by **110 cases** in
+  file goes through `state_write` (one temp file, one rename, **and a checked status**: a
+  record that cannot be written stops the loop at exit 9 rather than continuing from a stale
+  one): a transition written key by key is one a kill can stop in the middle and count twice.
+  **The obligation is created before the thing it must survive** — dispatch persists the
+  in-flight range and `invoked` before the reviewer is spawned, so no kill window can leave a
+  commit unreviewed with nothing owed. The suite asserts each transition's **key set**, not a
+  substring of one call. Independence is the resolved upstream and family; the identity is
+  re-resolved after a worker fallback; the live cache is per-uid/per-proxy at 0600, checked on
+  the descriptor it reads, never through a symlink, and never blocked by a FIFO planted at the
+  path (`O_NONBLOCK` makes the open return, `S_ISREG` makes it refuse); the state machine is
+  `tools/runner/review_state.sh`, asserted by **132 cases** in
   `tools/runner/test_review_state.sh`.
 
-## Verified on this tree (batch 15)
+## Verified on this tree (batch 16)
 
 All gates re-run from a clean invocation; the verbatim output is in `docs/PROGRESS_LOG.md`,
-"Iteration 43". `make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**,
-`All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP**, no golden moved.
-`bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED` (`audit_c_with_classes` 0
-violations, `gates_vfp` 0 blockers, `audit_arm11_math` clean, `audit_r11_idiv` no candidates,
-`gates_core_parity` clean, `gates_smdh` SKIPPED (no CIA), `gates_frames PASS`
-`L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the pinned `cpp=`, so `reference.sha256`
-was NOT regenerated — `gates_batch_integrity PASS`). `make -C mdk_3ds -j8` (devkitARM env) —
-**exit 0**, `3DSX mdk.3dsx`; `cmake --build build-linux --target mdk -j8` — **exit 0**.
-`bash tools/runner/test_review_state.sh` — **exit 0**, **110 cases**, all PASS, five
-reversion experiments each shown to FAIL; `model_identity.py selftest --live` — **exit 0**,
-`SELFTEST CLEAN` (9 identity + 18 cache). Frame
-`docs/frames/2026-11-01-review1-atomic-obligation.png` + `.txt` — `1.240 / 247 / 0.1819`,
-md5 `6769a137…`, byte-identical to its 20 predecessors, sidecar explains why the pin cannot
-show a review-record change. **No emulator run and no Old-3DS hardware run: Old-3DS timing
-stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
+"Iteration 44". Goldens: **exit 0**, `All cases match the oracle.`, **440 PASS / 0 FAIL /
+0 SKIP**, no golden moved. `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`
+(`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the pinned `cpp=`, so
+`reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED, no CIA; batch integrity PASS).
+`make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`; `cmake --build build-linux --target mdk` —
+**exit 0**. `test_review_state.sh` — **exit 0**, **132 cases**, all PASS, six reversion
+experiments each shown to FAIL; `model_identity.py selftest --live` — `SELFTEST CLEAN`.
+Frame `docs/frames/2026-11-01-obligation-before-spawn.png` + `.txt` — `1.240 / 247 / 0.1819`,
+md5 `6769a137…`, byte-identical to its 21 predecessors. **No emulator run and no Old-3DS
+hardware run: Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was
+pinned, relaxed or edited.
 
 ## Standing open items
 

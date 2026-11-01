@@ -34,8 +34,21 @@
 # review is counted exactly once. `state_set` stays correct for a single key; a
 # MULTI-key transition written with it is the bug, and test_review_state.sh kills
 # the shipped fold at every write boundary to prove the difference.
+#
+# The status IS part of the contract: callers must not discard it. `ralph-pi.sh`
+# wraps this in `state_write`, which stops the loop when the record could not be
+# written (external review 2026-11-01, run-20261101-062333/review-2.md AR6-4),
+# and the primitive refuses a `$STATE` it could not have written correctly rather
+# than returning a status the caller cannot trust.
 state_apply() {
     local kv k line keep tmp="${STATE}.t.$$"
+    # A `$STATE` that exists but is NOT a regular file must be refused, not renamed
+    # over (external review 2026-11-01, run-20261101-062333/review-2.md AR6-4).
+    # `mv -f tmp somedir` SUCCEEDS by moving the temp file INTO the directory, so
+    # a state path that had become a directory reported a committed transition
+    # while the record stayed exactly as it was — an unchecked status is only
+    # useful when the primitive can actually produce a bad one.
+    if [ -e "$STATE" ] && [ ! -f "$STATE" ]; then return 1; fi
     : >"$tmp" || return 1
     if [ -f "$STATE" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
@@ -48,7 +61,7 @@ state_apply() {
         done <"$STATE"
     fi
     for kv in "$@"; do printf '%s\n' "$kv" >>"$tmp"; done
-    mv -f "$tmp" "$STATE"
+    mv -f "$tmp" "$STATE" || { rm -f "$tmp"; return 1; }
 }
 
 # review_rc_normalise <raw> — a reviewer's exit code, or 1 for "no usable code".

@@ -229,11 +229,19 @@ def _read_cache(path: Path) -> dict | None:
     under a world-writable `$TMPDIR`, and a FIFO left at it makes a plain
     `O_RDONLY` open wait for a writer forever: the ownership gate is then not
     merely bypassed, it is unreachable, and the caller (`model_upstream`, on the
-    review-decision path) has no timeout of its own. On Linux `O_NONBLOCK` is
-    inert for a regular file and turns a FIFO open into an immediate `ENXIO`, so
-    the unusable cache is refused and the live fetch answers, which is the
-    behaviour a cache must have: a cache that can hang the caller is worse than
-    no cache.
+    review-decision path) has no timeout of its own.
+
+    Say the mechanism exactly, because the shortcut version is wrong on this path
+    (external review 2026-11-01, run-20261101-062333/review-2.md AR6-5, measured
+    on this host): `O_NONBLOCK` does NOT make a read open of a reader-less FIFO
+    fail with `ENXIO` — that is the write side. On the read side the non-blocking
+    open SUCCEEDS immediately and hands back a perfectly valid FIFO descriptor,
+    and it is the `S_ISREG` gate below that refuses it. So the two flags are
+    load-bearing for different reasons and neither is redundant: `O_NONBLOCK`
+    makes the open return, `S_ISREG` makes it refuse. An edit that read from the
+    descriptor before the `S_ISREG` check, justified by "`O_NONBLOCK` already
+    refused the FIFO", would block forever — the FIFO is refused by the check, not
+    by the open. A cache that can hang the caller is worse than no cache.
     """
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
@@ -269,9 +277,12 @@ def _write_cache(path: Path, table: dict) -> None:
     `O_NOFOLLOW` for the same reason as the reader: without it, a symlink left at
     the cache path is opened THROUGH, and `O_TRUNC` then destroys whatever the link
     points at — a cache write must only ever write the cache file. `O_NONBLOCK`
-    for the reader's reason too, and it bites harder here: opening a FIFO for
-    WRITING blocks until a reader appears, so without it a planted FIFO stops the
-    loop in the middle of a cache write rather than at the read.
+    is here for its OWN reason, not the reader's (review-2.md AR6-5): opening a
+    FIFO for WRITING blocks until a reader appears, and only `O_NONBLOCK` makes
+    that open fail with `ENXIO` at once, so a planted FIFO cannot stop the loop in
+    the middle of a cache write. The read path cannot rely on that errno — see
+    `_read_cache`, where the non-blocking open succeeds and `S_ISREG` does the
+    refusing.
     """
     try:
         fd = os.open(

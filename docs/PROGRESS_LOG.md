@@ -5147,3 +5147,244 @@ moved, which this batch's own case count contradicts.
   reviewer's subject matter rather than the port's. The next batch returns to the
   `CONTINUATION.md` game list (a: the missing-`TRAVSPRT.BNI` evidence pair) unless a
   review forces otherwise.
+
+## Iteration 44 — batch 16: the obligation is written before the thing it must survive
+
+**Review under remediation:** `logs/ralph-pi/run-20261101-062333/review-2.md`
+(DeepSeek V4.1 Flash on `2f3d050`, verdict INCOMPLETE: **AR6-1 High, AR6-2 Medium,
+AR6-3 Medium, AR6-4 Low, AR6-5 Low, AR6-6 Low**). Every finding was reproduced against the
+shipped code before anything was changed. **All six are confirmed; none is rebutted.**
+AR6-6 is confirmed but only partly actionable in the place the reviewer named, and that
+constraint is recorded below rather than quietly skipped.
+
+**Prior-solution lookup (mandatory).** Obsidian vault read directly (no MCP server in this
+harness) at `/mnt/nas/Vaults/port-docs`: the primitive this batch leans on is the same one
+Iteration 43 cited — `50-tooling/ralph-pi-unattended-loop-script.md:110`, *"Patch a sibling
+temp file and `os.replace()` it — an atomic rename on the same filesystem"* — and AR6-1 is
+that rule applied one step earlier, to the moment the obligation is created rather than the
+moment it is settled. `50-tooling/a-probe-must-be-able-to-fail.md` is again the standard for
+the new pins: the dispatch case must be able to fail, so it drives the lifted arm with the
+spawn stubbed instead of grepping for it. A vault-wide grep for "persist before spawn" /
+"at dispatch" found no prior note on the ordering itself.
+**Cognee: still unreachable** — `knowledge_search` fails to load the extension
+(`Cannot find package 'ignore'` from `dist/src/indexer/chunker.js`), so the vault lookup is
+the recorded lookup, as in batches 14 and 15.
+
+### AR6-1 (High) — confirmed; dispatch now records the obligation BEFORE it spawns
+
+The reviewer's ordering claim is a source fact and reproduced as stated. The dispatch arm
+spawned the reviewer at `ralph-pi.sh:717-721` and only then persisted the range, in **three
+separate `state_set` renames** at `:733-736`, under a comment arguing that "the range IS the
+obligation … so the range is what has to survive a kill". Startup recovery keys only on
+`REVIEW_INFLIGHT_BASE` (`:379`) and on `REVIEW_STATUS=invoked` (`:419`), so a kill between
+`REVIEW_PID=$!` and the first rename left nothing on disk: no in-flight marker, and a
+`REVIEW_STATUS` still reading `done` from the last collected review. A restart owed nothing,
+printed no `a review is OWED` line, and the commit under review was never reviewed by anyone
+— while the reviewer's `timeout`/`sudo` child, surviving the parent, could leave a complete
+`review-N.md` that no code ever reads. Worse than the lost review batch 14 fixed, because a
+lost review at least leaves a marker.
+
+The fix is the batch-15 primitive applied one arm earlier: `REVIEW_INFLIGHT_BASE`,
+`REVIEW_INFLIGHT_HEAD` and `REVIEW_STATUS=invoked` are now written by **one `state_write`
+before the subshell is spawned**. A kill between that rename and the spawn leaves `invoked`
+with a range and no reviewer, which startup folds as a lost review — owed, counted,
+re-dispatched. The direction of the worst case is the same as every other arm here: an
+over-recorded obligation costs one review of a range nobody looked at; an under-recorded one
+is a commit nobody ever sees. One write also retires the ordering rule review-3 F4 asked for
+(range before the status derived from it): there is no longer a between.
+
+The pin is behavioural, not textual. The arm is lifted out of `ralph-pi.sh` with `awk`, the
+spawn is stubbed, and a death is injected immediately after the obligation's rename:
+
+```
+run_dispatch 0  -> REVIEW_STATUS=invoked, REVIEW_INFLIGHT_BASE=aaaa1111, spawn recorded (1)
+run_dispatch 1  -> REVIEW_INFLIGHT_BASE=aaaa1111, REVIEW_STATUS=invoked, spawn recorded (0)
+```
+
+Reversion (the shipped order put back: spawn, then the three writes) — **6 FAILs**:
+
+```
+FAIL AR6-1: a dispatched review records the obligation — expected 'invoked', got 'done'
+FAIL AR6-1: and the range it covers — expected 'aaaa1111', got ''
+FAIL AR6-1: a death right after the obligation's write still leaves the range owed — expected 'aaaa1111', got ''
+FAIL AR6-1: and the status it died on is 'invoked', not the previous review's 'done' — expected 'invoked', got 'done'
+FAIL AR6-1: and the reviewer was NEVER spawned, so nothing claims a running review — expected '0', got '1'
+FAIL AR6-1: the obligation is written BEFORE the reviewer is spawned — state_write REVIEW_INFLIGHT_BASE= (line 552) is not before ( timeout -k 30 "$REVIEW_TIMEOUT" (line 544)
+```
+
+The first line is the finding itself: with the old order the on-disk record says the previous
+review was `done` while a reviewer is already running. The reviewer's open question 2 asked
+for exactly this experiment ("a `kill -9` injected between `REVIEW_PID=$!` and the first
+`state_set` in a test harness would settle it"); it is now a shipped case rather than a
+one-off. The old `order_before` pin asserted the non-atomic form (`state_set
+REVIEW_INFLIGHT_HEAD` after the spawn) and is replaced.
+
+### AR6-2 (Medium) — confirmed; the pins now name KEYS, not the words of one call
+
+Both reversions reproduce exactly as reported, on a git worktree copy (the reviewer's note
+that the suite degrades outside a git repo is right: `REAL_HEAD_SHORT` is empty there and two
+`F3:` cases fail for that reason alone — noted, not a finding, and worth knowing before
+reading any future run of this suite from a tarball).
+
+```
+collector state_write without REVIEW_STATUS    -> 110 PASS (green)
+BLOCKED   state_write without REVIEW_OWED_BASE -> 110 PASS (green)
+```
+
+Substring guards cannot see a key disappear, because the substring they match is not the key
+that vanished. So the suite no longer guards these two arms with substrings at all. It
+**parses every atomic transition**: an `awk` pass joins each `state_write` call's continuation
+lines, extracts the `KEY` of every `KEY=value` argument, sorts it, and the suite asserts the
+SET each arm must write and how many sites write it:
+
+```
+AR6-2: the loop has exactly six atomic transitions                                  6
+AR6-2: the startup fold AND the collector each write all five obligation keys       2
+AR6-2: the HEAD reconstruction writes owed base, counter and status                 1
+AR6-2: dispatch writes the range and the status together                            1
+AR6-2: the BLOCKED arm writes its obligation, counter, status and reason            1
+AR6-3: the end-of-iteration rewrite re-emits the three cross-iteration signals      1
+AR6-2: no atomic transition omits the status it is transitioning                    0
+```
+
+The count is part of the pin: a new multi-key transition that nobody characterised fails the
+total, and one that drops a key fails its own set. Reversions:
+
+```
+EXP2 collector loses REVIEW_STATUS   -> 2 FAILs (the five-key set counts 1, not 2; the
+                                         "no transition omits REVIEW_STATUS" case counts 1)
+EXP3 BLOCKED loses REVIEW_OWED_BASE  -> 1 FAIL  (the BLOCKED set counts 0, not 1)
+```
+
+The reviewer's third point — that the F1 pin was relaxed from `state_set REVIEW_STATUS
+"$OUTCOME"` to `REVIEW_STATUS="$OUTCOME"`, which any assignment satisfies — is accepted as
+accurate and is **not** restored to the old spelling, because that spelling is what batch 15
+deliberately replaced (the verdict now travels inside a multi-key write, not as its own
+`state_set`). The property F1's guard was reaching for — the verdict reaches the file — is
+now carried by the key-set pin above, which is the stronger statement: it fails if the
+collector's write loses the key, which the substring guard did not.
+
+### AR6-3 (Medium) — confirmed; the rewrite no longer silently drops three keys
+
+Reproduced: the end-of-iteration rewrite emitted a fixed list of fourteen keys and never
+named `LAST_GATES`, `LAST_RISK` or `LAST_REVIEW_DECISION`, so every key written by
+`state_set` during an iteration was erased minutes later by the rewrite that did not name it.
+`PREVG="$(state_get LAST_GATES)"` therefore read empty on every normal iteration, and the
+"previous iteration left gates FAIL" prompt warning could only fire if the previous process
+died between its own `state_set LAST_GATES FAIL` and its rewrite. `git log -S` confirms no
+revision ever had them in the list.
+
+Fixed by routing the rewrite through `state_write` with the full seventeen-key set, and by
+reading the three signals back at startup so they survive into the next iteration's rewrite
+rather than being re-derived from nothing. Routing it through the shared writer is the part
+that stops the drift recurring: a hand-written key list silently drops any key the loop writes
+elsewhere, and an atomic writer that preserves unnamed keys cannot. Reversion (the three keys
+removed from the rewrite) — **1 FAIL**:
+
+```
+FAIL AR6-3: the end-of-iteration rewrite re-emits the three cross-iteration signals — expected '1', got '0'
+```
+
+### AR6-4 (Low) — confirmed; a record that could not be written now stops the loop
+
+`set -e` is not in effect (`:20-21` are `-u` and `pipefail`) and all five call sites discarded
+`state_apply`'s status, so a failed rename silently reverted the whole transition while the
+`log` line printed after it announced the transition as done. Two changes:
+
+1. **`state_write`** in `ralph-pi.sh` wraps the primitive and stops the loop on failure
+   (`exit 9`), because every decision past that point would be made from a record the loop
+   does not have. Exit 9 is deliberately **not** added to `RestartPreventExitStatus=2 6 7`:
+   a full disk is often transient and `StartLimitBurst=3`/30min caps the retry, whereas a
+   review that cannot be dispatched (8) and a reviewer that keeps dying (7) are not.
+2. **`state_apply` can now actually produce the bad status.** The reviewer's own example —
+   "a `$STATE` that is a directory" — was not detectable: `mv -f tmp somedir` **succeeds** by
+   moving the temp file *into* the directory, so the primitive returned 0 while the record
+   stayed exactly as it was. It now refuses a state path that exists and is not a regular
+   file, and removes its temp file when the rename fails.
+
+Reversions: ignoring the status — **2 FAILs** (`exit 9` case returns 0, and the wrapper guard
+fails); removing the non-regular-file refusal — **3 FAILs** (directory accepted, temp file
+left inside it, and the wrapper's exit code case).
+
+### AR6-5 (Low) — confirmed; the docstring said the wrong thing about the read path
+
+Measured on this host before touching the text:
+
+```
+RDONLY  NONBLOCK open OK  fd=3  isreg=False     # a valid FIFO descriptor, not an error
+WRONLY  NONBLOCK open FAILED ENXIO
+```
+
+So `O_NONBLOCK` does **not** turn a read open of a reader-less FIFO into `ENXIO`; the open
+succeeds and the `S_ISREG` gate below refuses it. The flag is still load-bearing on the read
+path — without it the open blocks forever and `S_ISREG` never runs — but the two flags are
+load-bearing for different reasons and neither is redundant, and the old wording hid that.
+`_read_cache` now says so, and `_write_cache` no longer claims "the reader's reason" (its own
+`ENXIO` is real, the reader's is not). **No code change**, as the reviewer said, and no new
+test: the existing selftest case runs the read in a child with a 10 s deadline, so the exact
+edit the finding feared — reading before the `S_ISREG` check — already prints `HUNG` and
+fails rather than hanging the suite. `selftest --live` → `SELFTEST CLEAN`.
+
+### AR6-6 (Low) — confirmed; corrected where it can be corrected
+
+Accurate: against the shipped one-write fold there is exactly one write boundary, so
+`kill_fold_at 2..6` never reach `_die_before`'s exit and assert a state no death of the
+current code produces. They are kept — they are the write boundaries of the pre-fix five-write
+sequence, which is what the reversion experiment fails on, and a fold re-spelled back to one
+`state_set` per key dies on them — but they are regression pins for the OLD shape, not six
+live windows.
+
+The reviewer's remediation named the sidecar, and **an older sidecar cannot be edited**: the
+frame-record rule (and `gates_batch_integrity.py`) forbids modifying a committed pair, and
+batch 15's sidecar is committed. So the correction is made in the two places a batch may
+write: the new sidecar (`docs/frames/2026-11-01-obligation-before-spawn.txt`) carries it as
+an explicit correction to its predecessor, and the test's own comment now says the same
+thing where a reader will hit it. No test was changed and no claim was deleted.
+
+### Gates and commands, as run
+
+```
+make -C tests/scripts clean && make -C tests/scripts -j8   exit 0
+    "All cases match the oracle."   440 PASS / 0 FAIL / 0 SKIP   (no golden moved)
+bash tools/check.sh                                        exit 0
+    CHECK: ALL GATES PASSED
+      PASS audit_c_with_classes 0 violations | PASS gates_vfp 0 blockers
+      PASS audit_arm11_math contract clean | PASS audit_r11_idiv no candidates
+      PASS gates_core_parity both targets link the same core
+      SKIP gates_smdh no built .cia to read
+      PASS gates_frames  (L3_f1.bmp sha=58615fc85d02e009 — byte-identical to the pinned
+                          cpp=, so tests/frames/reference.sha256 was NOT regenerated)
+      PASS gates_batch_integrity project invariants intact
+DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8   exit 0
+    3DSX mdk.3dsx
+cmake --build build-linux --target mdk -j8                 exit 0    Built target mdk
+bash tools/runner/test_review_state.sh                     exit 0
+    REVIEW STATE: ALL CASES PASS   — 132 cases (was 110), 0 FAIL
+python3 tools/runner/model_identity.py selftest --live     exit 0
+    MODEL IDENTITY: SELFTEST CLEAN (9 identity + 18 cache claims)
+```
+
+Six reversion experiments, each shown to FAIL: the dispatch order (6 FAILs), the collector's
+key set (2), the BLOCKED arm's key set (1), the rewrite's key set (1), the ignored write
+status (2), the non-regular state path (3). Baseline on the same copy: 132 PASS, 0 FAIL.
+
+**No gate, test or golden was pinned, relaxed or edited.** `tools/check.sh`,
+`tests/frames/reference.sha256`, `AGENTS.md`, `SPEC.md`, `SPEC-COMPLETION.md` and
+`ralph/*.md` are untouched. `ralph-pi.sh` is edited again, which remains the disclosed
+governance item in `docs/CONTINUATION.md` owner task (1): the script that decides whether the
+builder's work is reviewed is not itself in the `PROTECTED` set, and the integrity gate cannot
+see a change to it.
+
+Frame `docs/frames/2026-11-01-obligation-before-spawn.png` + `.txt` — `1.240 / 247 / 0.1819`,
+md5 `6769a137…`, byte-identical to its 21 predecessors; the sidecar says why a review
+obligation cannot be shown by a picture, and carries the AR6-6 correction. **No emulator run
+and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED** and the Citro3D picture stays
+UNVERIFIED (P6). Nothing in this batch could move either: no C or C++ file, Makefile, golden
+or frame-oracle tool changed.
+
+### Next
+
+The review queue is clear (review-2 dispositioned in full). The loop returns to the
+`docs/CONTINUATION.md` game list, first item (a): the missing-`TRAVSPRT.BNI` evidence pair
+from review-2 of batch 11. Owner tasks (1)-(4) are unchanged and still cannot be done in a
+batch.
