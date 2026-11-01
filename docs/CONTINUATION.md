@@ -1,29 +1,29 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — review-9 remediation: `vm_tests`'s data-missing branch now reports the failure
-counter it used to discard (so `make -C tests/scripts` can go red where it used to print FAIL over a
-green exit), a new gated harness case for the missing-`TRAVSPRT.BNI` refusal, and layout assertions
-in the archive pin. No shipped source, game behaviour, renderer, golden, data format, `ralph-pi.sh`
-or `review_state.sh` change; the pinned frame is byte-unchanged. Medium rather than low because it
-changes what an existing gate means, and the batch's deliverable is a falsification record.
+Risk: medium — review-10 remediation: the missing-`TRAVSPRT.BNI` refusal gate can no longer print
+`PASS` over arms that never ran (setup failures and an unreadable `grep` now fail, and the verdict
+count is checked against the declared two arms), the archive pin gained a fixture whose name fills the
+12-byte field so the field width is actually pinned, and two published claims that did not reproduce
+were corrected. No shipped source, game behaviour, renderer, golden, data format, `ralph-pi.sh` or
+`review_state.sh` change; the pinned frame is byte-unchanged. Medium rather than low because it changes
+what an existing gate means — a host that used to go green through a broken `dd` or `grep` now goes red
+— and the deliverable is a falsification record.
 
-Last updated: 2026-11-01 (**batch 23** — review-9 remediation; all four findings dispositioned, none
-rebutted). **F1 High:** `vm_tests.cpp`'s `SKIP: no MDK data` branch `return 0`ed past the counter, so
-the archive guards printed four FAIL lines and exited 0 on exactly the data-less machine they were
-moved above the data check to cover; it now reports the counter, and the same deliberately broken
-reader exits 0 on HEAD and 1 here. **F2 Medium:** the refusal is now gated by
-`tests/scripts/sprites_refusal_test.sh` — a 4-byte stub must exit non-zero with the message, an
-8-byte legal EMPTY archive must exit 0 without it, same argv, no ROM data — wired into
-`make -C tests/scripts`. **F4 Low:** the "well-formed archive" case now pins the entry's offset and
-size, so dropping the oracle's `4 +` (`Fti.cs:66`) or reading the name field as 8 fails. **F3 Low:**
-a quoted `git rev-list` range that did not reproduce, corrected as an erratum because
-`docs/evidence/README.md` forbids editing a published pair. Goldens **442/0/0** (one new PASS, none
-moved); frame byte-unchanged. Narrative, the six-reversion table and the exit-code class sweep:
-`docs/PROGRESS_LOG.md`, "Iteration 51". Previous: **batch 22** — the missing-`TRAVSPRT.BNI` evidence
-pair (`docs/evidence/2026-11-01-L7-sprites-missing-scene.{png,txt}`, whose control arm reproduces
-batch 10's `cpp sha256` so the measured `11.361%` gap is the archive and nothing else, and which
-says **no oracle picture for that path can exist** because the C# `Bni.Load` throws) plus
-`tests/scripts/archive_guard_tests.cpp`. Narrative: "Iteration 50".
+Last updated: 2026-11-01 (**batch 24** — review-10 remediation; all four findings confirmed against the
+tree and dispositioned, none rebutted; full narrative, falsification tables and reachability evidence
+in `docs/PROGRESS_LOG.md` "Iteration 52"). **F1 Medium:** `sprites_refusal_test.sh` printed
+`PASS SpritesRefusal` over exit 0 when an arm's `mkdir`/`dd` failed or `grep -c` errored (an empty
+`$refused` makes `[ "$refused" -ne 0 ]` a shell error inside an `if`, printing neither ok nor FAIL);
+both triggers reproduced on `af482d6`. Every non-adjudicating path now fails, and `PASS` is
+unreachable unless `ADJUDICATED == DECLARED_ARMS` — the structural half, since it also catches a future
+early return that forgets `FAILED`. **F2 Medium:** confirmed — the gate covers
+`tests/scripts/tick1.cpp:1101-1117`, **not** the shipped frontend's copy at
+`mdk_linux/src/main.cpp:383-394`; the header says so and the gap is declared below with the reason a
+behavioural gate there is not cheap. **F4 Low:** `testFullNameFillsTheField()` is the width pin the old
+fixture could not be — `nameLength = 8` now fails 7 checks and exits 1. **F3 Low:** "the PASS count
+drops to about 54" measured **3**; the 54 was a count of `printf("PASS ` sites, not a run. Goldens
+**442/0/0**, no PASS line moved (the new checks sit inside `PASS ArchiveIndexGuards`); frame
+byte-unchanged. Previous: **batch 23** ("Iteration 51") and **batch 22** ("Iteration 50").
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -112,10 +112,14 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   content check: a zero-filled archive is a legal EMPTY archive and the C# can produce a missing
   entry, so `itemsAnimation` returning `nullptr` for a missing entry is faithful. The parse guard is
   pinned by `tests/scripts/archive_guard_tests.cpp` (offset and size, not just `has()`, since batch
-  23), the **refusal branch itself** by `tests/scripts/sprites_refusal_test.sh` — a 4-byte stub must
+  23; and the **name-field width** since batch 24, by `testFullNameFillsTheField`, whose 12-char no-NUL
+  name is the only fixture where reading the field as 8 cannot pass), the **refusal branch itself** by
+  `tests/scripts/sprites_refusal_test.sh` — a 4-byte stub must
   exit non-zero with the message and an 8-byte legal empty archive must exit 0 without it, same argv,
   no ROM data — and the scene is pictured in
-  `docs/evidence/2026-11-01-L7-sprites-missing-scene.png`.
+  `docs/evidence/2026-11-01-L7-sprites-missing-scene.png`. That gate covers **`tick1`'s copy only**;
+  the shipped frontend's copy at `mdk_linux/src/main.cpp:383-394` is ungated (Standing open items,
+  review-10 F2).
 - **Object pass:** `transform()` is `CreateScale * (rolling ? RollingBasis : Rotation) *
   CreateTranslation(...)` via `mdk::multiply`; `transform_at(alpha)` is what a frame draws with;
   `rotation()` keeps the libm trig and the `@vfp-exempt R6` pin; `roll` has a writer (`motionBank`
@@ -140,40 +144,37 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   at 0600, checked on the descriptor it reads, never through a symlink, never blocked by a planted
   FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**.
 - **How that suite reads `ralph-pi.sh` (batches 20-21, do not re-loosen):** the script cannot be
-  sourced, so pieces are lifted out and run. **Every function lift goes through one `lift_fn`**,
-  bounded by the definition's own shape (a one-line definition ends on its own line; a multi-line one
-  ends at the first `}` in column 0 — a bare `^\}` over-runs a one-liner and "the line ends in `}`"
-  truncates a function containing `{ …; }` compounds), from the **comment-stripped** copy, and
-  **every lifted fragment goes through one `guard_fragment`** (exactly one definition, no comment
-  line, `bash -n` complete). The three **region** lifts (`STARTUP_BLOCK`, `COLLECT_WINDOW`/
-  `COLLECT_ARM`, `GATES_REGION`) carry non-vacuity line counts plus behavioural cases, not the
-  fragment guards — say it that way, do not claim "all lifts". `count_writes` counts
-  **occurrences**, because the collector death loop injects at write *calls*; the bound it derives is
-  asserted and the loop is `seq 1 $bound`, never a literal. In that pattern the literal `()` is
-  written `[(][)]`, **two** single-character classes: `[()]` is one class matching `(`-or-`)`, so it
-  can never match `()` on any awk, and `R7-4` pins both directions. Every reversion in
-  `docs/PROGRESS_LOG.md` names the edit it applied, quotes only that edit's output, and says whether
-  it is a **control** (meant to pass) or a **reversion** (must fail).
+  sourced, so pieces are lifted out and run. **Every function lift goes through one `lift_fn`** (bounded
+  by the definition's own shape, from the **comment-stripped** copy) and **every lifted fragment goes
+  through one `guard_fragment`** (exactly one definition, no comment line, `bash -n` complete). The
+  three **region** lifts (`STARTUP_BLOCK`, `COLLECT_WINDOW`/`COLLECT_ARM`, `GATES_REGION`) carry
+  non-vacuity line counts plus behavioural cases instead of the fragment guards — say it that way, do
+  not claim "all lifts". `count_writes` counts **occurrences**, not lines, because the collector death
+  loop injects at write *calls*; the bound it derives is asserted and the loop is `seq 1 $bound`, never
+  a literal. The awk trivia (why a literal `()` is written `[(][)]`, and the `R7-4` pair that pins both
+  directions) is in "Iteration 49". Every reversion in `docs/PROGRESS_LOG.md` names the edit it
+  applied, quotes only that edit's output, and says whether it is a **control** (meant to pass) or a
+  **reversion** (must fail).
 
-## Verified on this tree (batch 23)
+## Verified on this tree (batch 24)
 
-All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`, "Iteration 51".
-Goldens **exit 0** — `All cases match the oracle.`, **442 PASS / 0 FAIL / 0 SKIP** (441 carried plus
-the one new `PASS SpritesRefusal`; no golden moved). `bash tools/check.sh` — **exit 0**, `CHECK: ALL
+All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`, "Iteration 52".
+Goldens **exit 0** — `All cases match the oracle.`, **442 PASS / 0 FAIL / 0 SKIP**, the changed line
+being `PASS SpritesRefusal (2 arms adjudicated)`. `bash tools/check.sh` — **exit 0**, `CHECK: ALL
 GATES PASSED` (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned
 `cpp=`, so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS). `make -C
 mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`. `cmake --build build-linux --target mdk` — **exit 0**.
-`test_review_state.sh` — **exit 0**, **177 cases** (unchanged). `model_identity.py selftest --live`
-— `SELFTEST CLEAN`. Six reversions were run to prove the three new/changed checks can fail, each
-quoted from its own edit in the "Iteration 51" tables: HEAD's `vm_tests` exits **0** and this batch's
-exits **1** over the same broken reader on a data-less machine (F1); deleting the refusal's `return
-1` fails the stub arm and making the guard unconditional fails the control arm (F2); dropping the
-oracle's `4 +` and reading the name field as 8 each fail the layout pin (F4). `fti.cpp`, `bni.cpp` and
-`tick1.cpp` were reverted with `git checkout --` after their experiments — **no shipped source
-changed in this batch**. Read those tables before calling any case there inert. Frame
-`docs/frames/2026-11-01-refusal-gated-pinned.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
-to its 28 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays
-UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
+`test_review_state.sh` — **exit 0**, **177 cases** (unchanged). Five reversions prove the new and
+changed checks can fail (each quoted from its own edit in "Iteration 52"): a `dd` that only exits 1 and
+a `grep` that exits 2 both exit **1** where `af482d6` printed `PASS` and exited **0**; a simulated
+future early return that forgets `FAILED=1` is caught by the verdict count alone; deleting `tick1`'s
+`return 1` still fails the stub arm, so the rewrite did not blunt the original coverage; and
+`nameLength = 8` in `bni.cpp:19` fails **7** checks with `vm_tests` exit **1**. `bni.cpp` and
+`tick1.cpp` were reverted with `git checkout --` after their experiments and the harness re-verified
+green — **no shipped source changed in this batch**. Read those tables before calling any case there
+inert. Frame `docs/frames/2026-11-01-verdict-count-gated.png` + `.txt` — `1.240 / 247 / 0.1819`,
+byte-identical to its 29 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS timing
+stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
 
 ## Standing open items
 
@@ -204,10 +205,30 @@ shape *while every definition in `ralph-pi.sh` keeps its `}` in column 0*. From 
 bound worth keeping: **a host harness must return the counter it accumulated on every exit path** —
 `vm_tests`'s data-missing branch is fixed and every other `return 0` in both harnesses was read and
 cleared in "Iteration 51"; the first batch that adds an early return to either `main` must carry the
-counter with it. And one sibling left standing on purpose: **`tick1`'s own `SKIP: no MDK data` still
-exits 0**, so the golden suite can skip into a green `make -C tests/scripts` on a host without
-`./MDK/`; it is visible as `SKIP` and as a PASS count that drops from 442 to about 54, and making it
-fail is owner task (10) below, not a batch.
+counter with it. From review-10 F1, the sibling class bound, and it is a *gate* rule rather than a
+harness rule: **a multi-arm gate must state how many arms it adjudicated and compare that against the
+declared number** — an arm that cannot set up is a failure, not a skip, and a validator whose verdict
+count is unchecked will print PASS over nothing. `sprites_refusal_test.sh` now does this. The other two
+shell gates were read and already fail closed on a missing input, by a named mechanism rather than by
+hope: every `check.sh` gate is `$PY tools/runner/X.py` followed by `if [ $rc -ne 0 ]; then fail`, so a
+missing or unrunnable gate script exits non-zero and becomes a FAIL; and `test_review_state.sh` lifts
+its fragments through one `lift_fn`, so a missing `ralph-pi.sh` yields an empty fragment and the
+`FAIL … is missing from ralph-pi.sh` line rather than a vacuous pass. **The first batch that adds a
+multi-arm shell gate must carry a declared-cardinality check with it**, and must not express an arm's
+setup failure as a bare `return`. From review-10 F2, a declared gap rather than a fixed one: **the shipped frontend's copy of
+the missing-archive refusal, `mdk_linux/src/main.cpp:383-394`, is gated by nothing.**
+`sprites_refusal_test.sh` gates `tests/scripts/tick1.cpp:1101-1117`, the harness's copy, and its header
+says so. Narrowing `if (scriptAssetsReady && spritesReady)` to `if (scriptAssetsReady)` there builds a
+runtime against an unparsed `Bni` — the random-stream divergence — and every gate stays green. A
+behavioural gate was rejected on reachability, not on effort: that branch sits under `data.found()` →
+`LevelData::load` → `if (arena)` → `spawnPlayer()`, so it needs the licensed tree, and a gate that
+skips without the tree is review-10 F1's defect reintroduced. Trigger that closes it: owner task (10)
+landing, i.e. the golden suite being allowed to *require* the tree. And one sibling left standing on
+purpose: **`tick1`'s own `SKIP: no MDK data` still exits 0**, so the golden suite can skip into a green
+`make -C tests/scripts` on a host without `./MDK/`; it is visible as `SKIP` and as a PASS count that
+drops from 442 to **3** (measured in "Iteration 52", which also records that the "about 54" published
+before it was a count of `printf("PASS ` sites, not a run), and making it fail is owner task (10)
+below, not a batch.
 
 ## Verification commands
 

@@ -128,7 +128,11 @@ void testZeroFilledArchiveParsesButIsEmpty() {
 //   * reading the name field as 8 instead of 12 moves the offset field four
 //     bytes early, so it reports offset 4 and size 20.
 //
-// Both reversions leave `has()` green and both fail these lines. Measured, not
+// Both reversions leave `has()` green and both fail the offset and size lines.
+//
+// WHAT THIS CASE DOES NOT PIN (review-10 F4): its name assertion cannot detect a
+// width error, because a 6-byte name is also what an 8-byte field reads. The
+// width pin is testFullNameFillsTheField below, not the line here. Measured, not
 // reasoned — see the falsification table in docs/PROGRESS_LOG.md.
 void testWellFormedArchiveParses() {
     std::vector<uint8_t> bytes = makeArchive("H150_R");
@@ -139,9 +143,42 @@ void testWellFormedArchiveParses() {
     check(!bni.has("H150_I"), "a name that is not there is not found");
     check(bni.entries().size() == 1, "exactly one entry was read");
     if (bni.entries().size() == 1) {
-        check(bni.entries()[0].first == "H150_R", "the name is the whole 12-byte field");
+        check(bni.entries()[0].first == "H150_R",
+              "the name stops at its NUL inside the field (NOT the width pin; see below)");
         check(bni.entries()[0].second.offset == 24,
               "the entry's offset is the stored offset plus four (the oracle's 4 +)");
+        check(bni.entries()[0].second.size == 0,
+              "the entry's size is the file end minus its offset");
+    }
+}
+
+// THE NAME-FIELD WIDTH PIN (review-10 F4). The case above cannot pin it: a
+// 6-byte name inside a 12-byte field is also what an 8-byte field reads, so
+// reading the field as 8 left its name assertion green and left only the offset
+// and size lines on duty. A name with no NUL anywhere in the field is the only
+// fixture where the width is load-bearing: with nameLength = 8 the reader stops
+// eight bytes early, so the name comes back truncated AND the offset field is
+// read from the middle of the name. Both directions fail here.
+//
+// A full-width name is oracle behaviour, not a convenience: the C#'s
+// BinReader.Name(length) hands the whole field to Bin.Ascii (BinReader.cs:52-56
+// and :75-80), which takes the entire span when it finds no 0 byte. So "the name
+// is the field" is what the oracle does, and this fixture is the case that says
+// so. The string itself is a plausible sprite name and carries no meaning: it is
+// the width that is pinned, not the spelling.
+void testFullNameFillsTheField() {
+    std::vector<uint8_t> bytes = makeArchive("H150_R_FRAME");  // exactly 12 chars
+    mdk::formats::Bni bni;
+    check(bni.parse(&bni, bytes.data(), (int32_t)bytes.size()),
+          "a one-entry archive whose name fills the 12-byte field parses");
+    check(bni.has("H150_R_FRAME"), "the whole 12-byte field is the name");
+    check(!bni.has("H150_R_F"), "the name is not truncated to eight bytes");
+    check(bni.entries().size() == 1, "exactly one entry was read");
+    if (bni.entries().size() == 1) {
+        check(bni.entries()[0].first == "H150_R_FRAME",
+              "the name is the whole 12-byte field, with no NUL inside it");
+        check(bni.entries()[0].second.offset == 24,
+              "the offset field follows the 12-byte name (an 8-byte field reads it mid-name)");
         check(bni.entries()[0].second.size == 0,
               "the entry's size is the file end minus its offset");
     }
@@ -167,6 +204,7 @@ int runArchiveGuardTests() {
     testTruncatedArchiveIsNotAnArchive();
     testZeroFilledArchiveParsesButIsEmpty();
     testWellFormedArchiveParses();
+    testFullNameFillsTheField();
     testImpossibleEntryCountIsRejected();
     return failures;
 }
