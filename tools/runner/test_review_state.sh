@@ -114,6 +114,17 @@ else
         local reason; reason="$(reviewer_reject_reason "$2")"
         [ -z "$reason" ] && printf 'ACCEPT\n' || printf 'REJECT\n'
     }
+    stale_probe() { # stale_probe <abandoned-route> <route-that-answered> <candidate>
+        # Reproduces what the loop did BEFORE the M1 fix: RUN_MODEL is the route
+        # that answered, but the identity still belongs to the route that was
+        # abandoned. F6's point is that this, not `probe`, is the case that could
+        # fail, so it is the case that gets asserted.
+        RUN_MODEL="$2"
+        RUN_UPSTREAM="$(identity upstream "$1")"
+        RUN_FAMILY="$(identity family "$1")"
+        local reason; reason="$(reviewer_reject_reason "$3")"
+        [ -z "$reason" ] && printf 'ACCEPT\n' || printf 'REJECT\n'
+    }
     check "qwen builder, deepseek reviewer: accepted"        "ACCEPT" "$(probe litellm/qwen litellm/deepseek-v4.1-flash)"
     check "same alias twice: refused"                       "REJECT" "$(probe litellm/qwen litellm/qwen)"
     check "qwen and swarm-worker are one upstream: refused" "REJECT" "$(probe litellm/qwen litellm/swarm-worker)"
@@ -124,11 +135,21 @@ else
     check "an alias nobody can resolve is refused"          "REJECT" "$(probe litellm/qwen litellm/not-a-model)"
     check "an unresolvable BUILDER refuses every reviewer"  "REJECT" "$(probe litellm/not-a-model litellm/deepseek-v4.1-flash)"
     check "qwen builder, minimax reviewer: accepted"        "ACCEPT" "$(probe litellm/qwen litellm/minimax-m3.1-flash-nvidia)"
-    # M1, behaviourally: when the WORKER falls back to the DeepSeek seat, that is
-    # the route that wrote the batch, and the primary reviewer is its own family.
-    # This is the case that only holds if the loop re-resolves the identity after
-    # the fallback; with the abandoned route's family it reads ACCEPT.
+    # M1: when the WORKER falls back to the DeepSeek seat, that is the route that
+    # wrote the batch, and the primary reviewer is its own family. NOTE (F6): this
+    # case hands the guard a CORRECT identity, so it passes on the pre-fix loop
+    # too — it pins the guard's answer, not the loop's re-resolution. The pin for
+    # the re-resolution is the pair below plus the structural count further down.
     check "M1: a builder that fell back to DeepSeek cannot have a DeepSeek reviewer" \
+          "REJECT" "$(probe litellm/deepseek-v4.1-flash-nvidia litellm/deepseek-v4.1-flash)"
+    # F6: the behavioural half. Same builder route, same reviewer, judged twice.
+    # With the ABANDONED route's family still in RUN_FAMILY the guard reads ACCEPT
+    # — that is the self-review the fix exists to stop, and it is what the pre-fix
+    # loop produced. Re-resolved, it refuses. If someone re-implements the fallback
+    # so that one identity field stays stale, this pair fails.
+    check "F6: with the abandoned route's identity the same reviewer would be ACCEPTED" \
+          "ACCEPT" "$(stale_probe litellm/qwen litellm/deepseek-v4.1-flash-nvidia litellm/deepseek-v4.1-flash)"
+    check "F6: re-resolved to the route that answered, it is REFUSED" \
           "REJECT" "$(probe litellm/deepseek-v4.1-flash-nvidia litellm/deepseek-v4.1-flash)"
     # L3: the contract is in the name AND in the status. The answer is the text;
     # the status is 0 on both arms, so a future caller cannot branch on it and
@@ -172,11 +193,40 @@ else
           "$(run_startup 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=aaaa1111\n')"
     run_startup 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=aaaa1111\n' >/dev/null
     check "H1: and the in-flight marker is cleared, not left to fire twice" "" "$(state_get REVIEW_INFLIGHT_BASE)"
+    # F2: the fold used to rewrite everything EXCEPT the status, so it left the
+    # file saying `invoked` with nothing in flight — the state the refusal below
+    # exists for. A second kill in the long window before the end-of-iteration
+    # rewrite then turned a recorded obligation into a halt the loop could not
+    # restart from. The fold must land on a state the state machine accepts.
+    check "F2: the fold does not leave the state its own refusal rejects" "failed" "$(state_get REVIEW_STATUS)"
+    check "F2: a second start on the state the fold produced continues" "0|aaaa1111|1" \
+          "$(run_startup "$(cat "$SD/state")")"
     check "H1: a second lost review stops the loop"           "7|bbbb2222|2" \
           "$(run_startup 'REVIEW_STATUS=invoked\nREVIEW_FAILS=1\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=bbbb2222\n')"
     check "H1: an owed base is not overwritten by a newer loss" "0|aaaa1111|1" \
           "$(run_startup 'REVIEW_STATUS=skipped\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=aaaa1111\nREVIEW_INFLIGHT_BASE=bbbb2222\n')"
-    check "H1: 'invoked' with no range is refused, not guessed" "7||0" \
+    # F1: `invoked` with no range but WITH an owed base is not an unreconstructible
+    # obligation — the owed base is the obligation, and it is already on disk. The
+    # refusal used to fire regardless, which halted the loop on the very state the
+    # fold above produces, and its printed repair ("delete $STATE") discards the
+    # obligation. That is a fail-open escape hatch inside a fail-closed check.
+    check "F1: invoked with an owed base continues and still owes it" "0|aaaa1111|0" \
+          "$(run_startup 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=aaaa1111\nREVIEW_INFLIGHT_BASE=\n')"
+    check "F1: and the stale invoked marker is rewritten to the truth" "failed" "$(state_get REVIEW_STATUS)"
+    # F3: with nothing owed and no range, the HEAD line is a SOUND base, not a
+    # guess. It is written at the END of an iteration, so it names the previous
+    # iteration's commit — the base that iteration dispatched from, and therefore
+    # an ancestor of the unreviewed commit. The range it builds over-covers, which
+    # is the trade the in-flight fold already accepts; the old comment claimed the
+    # opposite and the branch halted for hand surgery on that false premise.
+    REAL_HEAD_SHORT="$(git -C "$ROOT" rev-parse --short HEAD)"
+    REAL_HEAD_FULL="$(git -C "$ROOT" rev-parse HEAD)"
+    check "F3: invoked with no range reconstructs the obligation from HEAD" "0|$REAL_HEAD_FULL|1" \
+          "$(run_startup "REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=\nHEAD=$REAL_HEAD_SHORT\n")"
+    check "F3: the reconstructed state is coherent, not 'invoked'" "failed" "$(state_get REVIEW_STATUS)"
+    check "F3: a HEAD line that names no commit is refused"    "7||0" \
+          "$(run_startup 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=\nHEAD=not-a-commit\n')"
+    check "H1: invoked with no range AND no HEAD line is the only refusal" "7||0" \
           "$(run_startup 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=\n')"
 fi
 
@@ -211,6 +261,65 @@ guard_present() { # guard_present <label> <fixed-string> -- the string must be T
         fails=$((fails + 1))
     fi
 }
+# Presence cannot see an ORDER, and a guard helper that is called before it is
+# defined fails with "command not found" on stderr WITHOUT incrementing `fails` —
+# a guard that silently does not run, which is the exact defect this suite exists
+# to catch. So it is defined here, before any call, and a missing helper is a
+# counted failure rather than a line on stderr.
+order_before() { # order_before <label> <earlier fixed string> <later fixed string>
+    local a b
+    a="$(grep -nF "$2" "$LOOP_CODE" | head -1 | cut -d: -f1)"
+    b="$(grep -nF "$3" "$LOOP_CODE" | head -1 | cut -d: -f1)"
+    if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then
+        printf 'PASS %s\n' "$1"
+    else
+        printf 'FAIL %s — %s (line %s) is not before %s (line %s)\n' "$1" "$2" "${a:-none}" "$3" "${b:-none}"
+        fails=$((fails + 1))
+    fi
+}
+# A whole-file `grep` cannot see WHICH arm a line belongs to, and that is not a
+# pedantic objection: `state_set REVIEW_STATUS "failed"` now appears in two arms
+# (the in-flight fold and the owed-base arm), so a file-wide presence/order guard
+# on it stays green when the fold's copy is deleted. That is a pin that does not
+# pin, which is the defect this suite exists to catch. So the fold is lifted as its
+# own body and the F2 guards are asserted INSIDE it.
+fold_body() { # the in-flight fold arm: owed computation .. in-flight clear
+    awk '/review_inflight_owed/,/REVIEW_INFLIGHT_HEAD=""/' "$LOOP_CODE"
+}
+FOLD_LINES="$(fold_body | wc -l)"
+if [ "$FOLD_LINES" -gt 5 ]; then
+    printf 'PASS the fold body was lifted (%s lines), so its guards are not vacuous\n' "$FOLD_LINES"
+else
+    printf 'FAIL the fold body lifted %s lines — every scoped F2 guard would pass vacuously\n' "$FOLD_LINES"
+    fails=$((fails + 1))
+fi
+guard_in_fold() { # guard_in_fold <label> <fixed-string> -- must be inside the fold
+    if fold_body | grep -qF "$2"; then
+        printf 'PASS %s\n' "$1"
+    else
+        printf 'FAIL %s — %s is missing from the in-flight fold\n' "$1" "$2"
+        fails=$((fails + 1))
+    fi
+}
+order_in_fold() { # order_in_fold <label> <earlier> <later> -- order inside the fold
+    local a b
+    a="$(fold_body | grep -nF "$2" | head -1 | cut -d: -f1)"
+    b="$(fold_body | grep -nF "$3" | head -1 | cut -d: -f1)"
+    if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then
+        printf 'PASS %s\n' "$1"
+    else
+        printf 'FAIL %s — %s (line %s) is not before %s (line %s) inside the fold\n' "$1" "$2" "${a:-none}" "$3" "${b:-none}"
+        fails=$((fails + 1))
+    fi
+}
+for helper in guard_absent guard_present order_before guard_in_fold order_in_fold; do
+    if declare -f "$helper" >/dev/null; then
+        printf 'PASS guard helper %s is defined before it is called\n' "$helper"
+    else
+        printf 'FAIL guard helper %s is not defined — every guard that uses it silently did not run\n' "$helper"
+        fails=$((fails + 1))
+    fi
+done
 # F1: the non-numeric-rc comparison, and the unconditional all-clear.
 guard_absent "F1: the raw numeric test on \$RRC is gone"        '[ "$RRC" -ne 0 ]'
 guard_present "F1: the outcome comes from review_outcome"      'OUTCOME="$(review_outcome "$RRC" "$RUN_DIR/review-$ITER.md")'
@@ -230,7 +339,20 @@ guard_present "F3: the identity of both sides is recorded"     'review-$ITER.ide
 guard_present "H1: the range is persisted at dispatch"          'state_set REVIEW_INFLIGHT_BASE "$REVIEW_INFLIGHT_BASE"'
 guard_present "H1: startup folds an uncollected review into owed" 'REVIEW_OWED_BASE="$(review_inflight_owed "$REVIEW_OWED_BASE" "$REVIEW_INFLIGHT_BASE")"'
 guard_present "H1: the in-flight range reaches the state file"  'echo "REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE"'
-guard_present "H1: an invoked review with no range is refused, not guessed" 'so the obligation cannot be reconstructed'
+guard_present "H1: an invoked review with no range is refused, not guessed" 'so the obligation cannot be reconstructed at all'
+# F2: the fold rewrites the status as well as the range, so it cannot manufacture
+# the `invoked`-with-no-range state its own refusal rejects. Presence alone is not
+# enough here (the F1 arm writes the same line), so the ORDER inside the fold is
+# pinned: the status must be rewritten before the in-flight markers go, because a
+# kill between the two must land on `failed`, never on `invoked` with no range.
+guard_in_fold "F2: the fold rewrites REVIEW_STATUS, not only the range" 'state_set REVIEW_STATUS "failed"'
+order_in_fold "F2: and it rewrites the status BEFORE clearing the in-flight range" \
+             'state_set REVIEW_STATUS "failed"' 'state_set REVIEW_INFLIGHT_BASE ""'
+# F4: at dispatch the RANGE is persisted before the status derived from it, so a
+# kill between the two leaves an obligation, not a refusal.
+guard_present "F4: the range is still persisted at dispatch" 'state_set REVIEW_INFLIGHT_HEAD "$REVIEW_INFLIGHT_HEAD"'
+order_before "F4: the in-flight range is written before the invoked marker" \
+             'state_set REVIEW_INFLIGHT_BASE "$REVIEW_INFLIGHT_BASE"' 'state_set REVIEW_STATUS "invoked"'
 # M1: a builder that fell back is judged by the route that actually answered.
 guard_present "M1: the fallback re-resolves the family too"     'RUN_FAMILY="$(model_family "$RUN_MODEL")"'
 IDENTITY_READS="$(grep -cF 'RUN_UPSTREAM="$(model_upstream "$RUN_MODEL")"' "$LOOP_CODE")"

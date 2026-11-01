@@ -355,6 +355,10 @@ REVIEW_OWED_BASE="$(state_get REVIEW_OWED_BASE)"
 # collector never runs, so the obligation is lost with it. The range is therefore
 # persisted at DISPATCH and read back here.
 REVIEW_INFLIGHT_BASE="$(state_get REVIEW_INFLIGHT_BASE)"
+# REVIEW_INFLIGHT_HEAD is an AUDIT field and nothing more: it names the far end of
+# the lost range in the log line below, and no decision reads it. The owed set is
+# keyed on the BASE alone, because the earliest base wins and the far end of a lost
+# range is always at or before the current HEAD.
 REVIEW_INFLIGHT_HEAD="$(state_get REVIEW_INFLIGHT_HEAD)"
 REVIEW_LEFTOVER="$(state_get REVIEW_STATUS)"
 guard
@@ -377,6 +381,16 @@ if [ -n "$REVIEW_INFLIGHT_BASE" ]; then
     REVIEW_FAILS=$((REVIEW_FAILS + 1))
     state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
     state_set REVIEW_FAILS "$REVIEW_FAILS"
+    # The status goes with the obligation, and BEFORE the in-flight markers are
+    # cleared (external review 2026-11-01, run-20261101-025705/review-3.md F2).
+    # The fold used to rewrite everything except REVIEW_STATUS, which left the
+    # file saying `invoked` with nothing in flight — the exact state the arm below
+    # exists to refuse, so the fix manufactured the condition it rejected and a
+    # second kill in the (long) window before the end-of-iteration rewrite turned
+    # a correctly recorded obligation into a halt. `failed` is the truth: the
+    # review was dispatched and never reached a verdict.
+    REVIEW_STATUS="failed"
+    state_set REVIEW_STATUS "failed"
     state_set REVIEW_INFLIGHT_BASE ""
     state_set REVIEW_INFLIGHT_HEAD ""
     REVIEW_INFLIGHT_BASE=""
@@ -387,13 +401,57 @@ if [ -n "$REVIEW_INFLIGHT_BASE" ]; then
         exit 7
     fi
 elif [ "$REVIEW_LEFTOVER" = "invoked" ]; then
-    # `invoked` with no recorded range: a state file written before the range was
-    # persisted at dispatch. The obligation cannot be reconstructed from what is
-    # in the file — the HEAD line records the PREVIOUS completed iteration, so
-    # pointing the owed range at it would mark the wrong commit and hand the real
-    # one a false all-clear. Refuse rather than guess.
-    log "FATAL: the state file says a review was invoked but records no range to review, so the obligation cannot be reconstructed. Either write 'REVIEW_OWED_BASE=<sha of the unreviewed commit>' into $STATE, or delete $STATE to start clean; then restart the loop."
-    exit 7
+    # `invoked` with no in-flight range. Two different states wear this face, and
+    # only one of them is unreconstructible (external review 2026-11-01,
+    # run-20261101-025705/review-3.md F1 and F3).
+    if [ -n "$REVIEW_OWED_BASE" ]; then
+        # The obligation is ALREADY on disk: an earlier loss recorded it, and the
+        # base it recorded is at or before whatever this `invoked` was covering,
+        # because the owed set only ever moves to the earliest base. Halting here
+        # stopped the loop on a state that had already done the right thing, and
+        # the printed repair ("delete $STATE") throws the obligation away — a
+        # fail-open escape hatch inside a fail-closed check. Normalise the stale
+        # marker and continue; the next mandatory review covers this range.
+        # It is NOT counted as a second lost review: the owed base already carries
+        # the count of the loss that created it, and a review cannot be lost twice.
+        REVIEW_STATUS="failed"
+        state_set REVIEW_STATUS "failed"
+        log "the state file says a review was invoked with nothing in flight, but ${REVIEW_OWED_BASE:0:8} is already recorded as owed, so the obligation survived; the stale 'invoked' marker is rewritten to 'failed' and the next mandatory review covers ${REVIEW_OWED_BASE:0:8}..HEAD"
+    else
+        # Nothing in flight and nothing owed: the range has to come from the HEAD
+        # line. That is SOUND, not a guess (review-3 F3 corrected the rationale
+        # this branch used to give, which was inverted): the HEAD line is written
+        # at the END of an iteration, so it names the previous iteration's commit,
+        # which is that iteration's HEAD_BEFORE and therefore the base the lost
+        # review was dispatched from. It is an ancestor of the unreviewed commit,
+        # so the range it builds OVER-covers — the unreviewed commit is inside it.
+        # Over-coverage is the trade the in-flight fold already accepts ("one
+        # redundant review"); under-coverage is what this branch must prevent.
+        STATE_HEAD="$(state_get HEAD)"
+        STATE_HEAD_SHA=""
+        if [ -n "$STATE_HEAD" ]; then
+            STATE_HEAD_SHA="$(git -C "$ROOT" rev-parse --verify --quiet "${STATE_HEAD}^{commit}" 2>/dev/null)"
+        fi
+        if [ -n "$STATE_HEAD_SHA" ]; then
+            REVIEW_OWED_BASE="$STATE_HEAD_SHA"
+            REVIEW_FAILS=$((REVIEW_FAILS + 1))
+            state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
+            state_set REVIEW_FAILS "$REVIEW_FAILS"
+            REVIEW_STATUS="failed"
+            state_set REVIEW_STATUS "failed"
+            log "a review was left marked 'invoked' with no range recorded; the range is widened defensively to the state file's HEAD (${STATE_HEAD:0:8}), which is the PREVIOUS iteration's commit and therefore an ancestor of the unreviewed one, so the obligation is covered at the cost of at most one redundant review; ${REVIEW_OWED_BASE:0:8} is owed and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
+            if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
+                log "STOP: $REVIEW_FAILS reviews have been lost without a verdict — the harness is being restarted faster than reviews can be collected, which is a phase-limit or reviewer-route problem a model cannot fix from inside the loop"
+                exit 7
+            fi
+        else
+            # `invoked`, no range, nothing owed, and no HEAD line that names a
+            # commit: there is genuinely nothing to reconstruct from, and guessing
+            # would hand an unreviewed commit a false all-clear. Refuse.
+            log "FATAL: the state file says a review was invoked but records no in-flight range, no owed base and no HEAD line that names a commit, so the obligation cannot be reconstructed at all. Repair it by writing 'REVIEW_OWED_BASE=<sha of the oldest unreviewed commit>' into $STATE and restarting. Deleting $STATE instead starts clean and DISCARDS the obligation, so the unreviewed commit is never reviewed by anyone; do that only if you have checked the log and know which commits were reviewed."
+            exit 7
+        fi
+    fi
 fi
 phase startup
 while :; do
@@ -637,16 +695,21 @@ POLICY_PRECEDENCE
                     >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
                   echo $? >"$RUN_DIR/review-$ITER.rc" ) &
                 REVIEW_PID=$!
-                REVIEW_STATUS="invoked"
-                state_set REVIEW_STATUS "invoked"
-                # Persist the range NOW, at dispatch, not in the collector: the
-                # collector runs after `wait`, with the gates phase in between,
-                # and a loop killed in that window would otherwise leave an
-                # unreviewed commit and no record of it (H1).
+                # Persist the RANGE first, then the status that depends on it
+                # (external review 2026-11-01, run-20261101-025705/review-3.md F4).
+                # The order used to be the other way round, so a kill between these
+                # two rewrites left `invoked` with no range at all — the state the
+                # startup can only reconstruct defensively or refuse. The collector
+                # already documents this rule for its own pair (the outcome is
+                # written before the in-flight markers are cleared); dispatch now
+                # matches it. The range IS the obligation and the status is derived
+                # from it, so the range is what has to survive a kill.
                 REVIEW_INFLIGHT_BASE="$REVIEW_BASE"
                 REVIEW_INFLIGHT_HEAD="$HEAD_AFTER"
                 state_set REVIEW_INFLIGHT_BASE "$REVIEW_INFLIGHT_BASE"
                 state_set REVIEW_INFLIGHT_HEAD "$REVIEW_INFLIGHT_HEAD"
+                REVIEW_STATUS="invoked"
+                state_set REVIEW_STATUS "invoked"
                 log "iter=$ITER review INVOKED on $REVIEW_MODEL — $REVIEW_DECISION_REASON"
             else
                 # FAIL CLOSED. A mandatory review with no eligible reviewer is a

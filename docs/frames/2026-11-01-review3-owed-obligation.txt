@@ -1,0 +1,24 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-01T06:37:13Z at 5c53d92
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why this picture did not move: this batch changed the loop's review record and
+nothing in the game -- ralph-pi.sh, tools/runner/model_identity.py and
+tools/runner/test_review_state.sh. No C or C++ file, no Makefile, no golden and
+no frame-oracle tool moved, so the pinned frame is the same picture it has been
+since the panorama landed. Measured: this png is byte-identical to the nineteen
+records before it (md5 6769a13731983d65cee9df02da6cff37 -- 20 files in
+docs/frames now carry that md5) and the gap is unchanged at 1.240 / max 247 /
+mean 0.1819.
+what shows the change instead: bash tools/runner/test_review_state.sh -- 86 cases,
+all PASS, up from 67: 2 F1 cases (an owed base survives an `invoked` with no
+range), 3 F3 cases (the HEAD-line reconstruction, its coherent status, and the
+one state that still refuses), 2 F2 cases (the fold lands on `failed`, and a
+second start continues), 1 F6 pair (the same reviewer judged with a stale
+identity and with the re-resolved one), 1 scoped-fold guard, and 11 decay guards
+including two that order writes rather than merely finding them. Every one was
+shown to FAIL when the fix it pins is reverted -- six reversion experiments, with
+output in docs/PROGRESS_LOG.md iteration 42. A review record is not a picture:
+the honest evidence that "an owed obligation is not lost and not a halt" is the
+shipped startup block lifted out of ralph-pi.sh and driven against scratch state
+files. That run, and the reversions, are recorded in docs/PROGRESS_LOG.md,
+iteration 42.

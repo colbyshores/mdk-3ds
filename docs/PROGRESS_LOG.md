@@ -4634,3 +4634,319 @@ Unchanged from `docs/CONTINUATION.md`: the game-side list is still (a) the missi
 evidence pair, (b) `dumpRunner`'s missing mixer column, (c) the C3D depth/blend state and the
 per-draw matrix, (d) the middle 173 px of the pinned frame, (e) `FrameBlend`'s `Vector3.Lerp`
 rounding. **Old-3DS performance readiness remains UNMEASURED and is not claimed.**
+
+### Appendix — the tree state, moved out of `docs/CONTINUATION.md` (iteration 41)
+
+`docs/CONTINUATION.md` is a checkpoint (priority order + current state) and the owner
+directive keeps it near 150 lines; the verified tree state had grown to 96 lines of its
+own. It is filed here verbatim, with the same text, so nothing is lost and the
+checkpoint can point at one place. Read it with the "Current tree state" heading.
+
+## Current tree state (VERIFIED) — as of batch 13
+
+**Camera and renderer.** `buildLookAtCamera` is the C#'s RIGHT-HANDED `CreateLookAt` basis
+and perspective projection. Vulkan folds clip.y into the combined matrix; the sky inverse
+carries the flip on its LEFT side; shaders use `M * v`. Citro3D uses `GPU_CULL_BACK_CCW`
+with the mirror removed and culls per draw (Solid culls back, the other passes do not), the
+mode cached in the **Citro3D context**. **The 3DS result is UNVERIFIED on hardware** (P6).
+
+**Frame golden.** `tests/frames/reference.sha256` pins level 3, 320x240, seed 1, frame 1:
+`oracle=b60e72552c40…`, `cpp=58615fc85d02…` (a regression baseline, NOT a fidelity
+reference), gap `1.240 / max 247 / mean 0.1819` at tolerance 0: determinism,
+byte-exactness to `cpp=`, and a ceiling that may only shrink.
+
+**Kurt, sprites, death.** `game/kurt_sprite.{h,cpp}` is `Kurt/KurtSprite.cs` (world quad at
+the feet, one sprite pixel = 1/360 of the view height, hotspot 101 px up, two row bands at
+the oracle's floor crossings). Sprite frames are kept as palette indices (5.30 MiB for
+`TRAVSPRT.BNI`, measured) and uploaded on first draw under
+`MdkCapabilities::sprite_residency_bytes` (0 desktop, 1 MiB 3DS) — UNVERIFIED on hardware
+(P6). `Player::fall` is `Kurt.Fall` whole.
+
+**Object pass (place, pose, layout, roll, bank, queue, GPU, blend, behaviours).**
+`MdkObject::transform()` is `CreateScale * (rolling ? RollingBasis : Rotation) *
+CreateTranslation(pos + z*lift)`, in that order, via `mdk::multiply` (System.Numerics
+element arithmetic: one rounded product + three `fma`). `pose_parts()` is `PoseParts`, from
+caches keyed by model address, invalidated by `scripts::forgetPoseCaches()` and
+`MdkObject::forget_poses()`. `game/object_view.{h,cpp}` is `ObjectView`, keyed by
+`(model, palette)`; the stream refuses a batch that would pass `kObjectStreamCapacity`
+(`1 << 18`, the C#'s `Renderer.StreamVertices`). The GPU half is `game/object_draw.{h,cpp}`
+(ONE dynamic mesh, uploaded once per frame, one draw per queued batch at its offset).
+**The transform a frame draws with** is `transform_at(alpha)` (`remember()` snapshots
+place/angles/arena at the top of each tick; `blends()` refuses to interpolate across
+`alpha >= 1`, a missing snapshot, an arena change or a jump — `frame_blend::jumped` is
+`MaxSpeed * seconds` squared, so a teleport is drawn where it ends, never on the way), and
+`rotation()` is `rotation_of(roll, pitch, yaw)` through the same libm trig and the same
+`@vfp-exempt R6` pin. **`roll` has a writer** (batch 8): `motionBank` is `ObjectMotion.Bank`,
+per object per tick between `update_rolling` and `previous_position = position`, where the C#
+calls `Bank`.
+
+**The built-in behaviours have the Runner.** `motionRunner` is
+`ObjectBehaviors.UpdateRunner`, called from `motionPickup` where the C# calls it — after the
+chute has gone (`attached == nullptr`), before the Still-list spin — and its `H150_R` /
+`H150_I` come from `itemsAnimation`, the C#'s `Items.GetAnimation`, parsed out of
+the sprites archive the runtime borrows. The idle chance is `rng().next(32768) < 72`, drawn
+**only** when the object is idle or its animation is done: that is the oracle's stream, not
+an approximation of it. **`sprites` is a REQUIRED constructor argument** (as in the C#):
+without the archive there is no `H150_R`/`H150_I` and, because the idle draw is guarded on
+the animation, the random stream differs. Since batch
+11 **no shipped entry point can pass `nullptr`**: `mdk_linux` builds the runtime only under
+`scriptAssetsReady && spritesReady`, and `tick1` exits 1 when the archive does not parse (a
+zero-filled archive *does* parse as empty, and the L7 goldens then fail 31 cases — that is
+the pin). `vm_tests` still passes `nullptr` out loud, and it is inert there — but NOT because
+"the level has no `SW_H150`" (**false**: `vm_tests.cpp:3593` loads real level 7, which has
+one): the true reason is that `sprites_` reaches the RNG by exactly one route,
+`itemsAnimation` → `motionRunner`, and `motionRunner` runs only for `type_name == "SW_H150"`,
+which no `vm_tests` case creates. `itemsAnimation` still answers `nullptr` for a missing
+**entry**, because `Items.cs:150` does: do not "guard" that. Both halves of the Runner are
+pinned: the idle by `L7_t1000_*`, the run by `L7_t120_runner_{a,b}`.
+
+**Draw submission: order and lifetime.** `mdk_render_draw_mesh` **queues**; the backend
+submits the frame's draws bucketed by `Pass` — Solid, DoubleSided, Mirror, Blended, OnTop,
+Overlay, queue order inside a bucket — `Renderer.cs:1000-1004, 1049-1057`, shared as
+`render/draw_queue.{h,cpp}` because the order is the oracle's, not a backend's; the flush
+point is the end of the frame's 3D scene. Lifetime (AGENTS.md P3) is in `render/draw_queue.h`:
+a Vulkan dynamic mesh writes the slot its own frame draws from and a released mesh is
+destroyed two frames out; the 3DS defers `linearFree` to the next `C3D_FrameBegin`.
+
+**Rolling (`ObjectMotion.Roll`).** `MdkObject::update_rolling()` turns the basis about the
+horizontal axis across the tick's movement, and `runTick` calls it **before**
+`previous_position = position`, where the C# does. `mdk::create_from_axis_angle` is
+**bit-exact against .NET 10** because .NET builds that matrix from a quaternion; the
+look-alike element-wise spelling differs by 2-8 ULP per element.
+
+**Loop harness (`ralph-pi.sh`).** A mandatory review is fail-closed on **every** way it can
+fail to happen. Not dispatchable ⇒ BLOCKED, `REVIEW_FAILS++`, exit 8. Dispatched and died ⇒
+`REVIEW_STATUS=failed` and the commit stays **owed**. Dispatched and **never collected** (the
+collector runs after `wait`, with the whole gates phase in between) ⇒ the range is persisted
+**at dispatch** (`REVIEW_INFLIGHT_BASE`/`_HEAD`) and folded into the owed set at startup by
+`review_inflight_owed` (earliest base wins); an `invoked` with no recorded range is refused,
+not guessed, and two lost reviews stop the loop at exit 7. `REVIEW_OWED_BASE` and
+`REVIEW_FAILS` are persisted, re-read at startup, and outrank the risk policy, so a restart
+cannot forget an unreviewed commit and the next dispatch covers `owed..HEAD`. Independence is
+the **resolved upstream and model family**, never the alias (`tools/runner/model_identity.py`:
+live `/model/info`, else committed map, else NOTHING — and NOTHING is refused, because "could
+not tell" must not reach the same path as "proved different"); the identity is **re-resolved
+after a worker fallback**, so the route that actually answered is the route that is judged;
+`review-$ITER.identity.txt` records both sides. The live cache is per-uid and per-proxy at
+0600, and a foreign or malformed cache file is refused in favour of asking the proxy. The
+state machine is `tools/runner/review_state.sh`, asserted by
+`tools/runner/test_review_state.sh` (67 cases, with decay guards proven to FAIL if the old
+spellings come back). The builder prompt injects the owner's generic loop policy under a
+project-precedence block, not as "authoritative". The startup's review counters go through
+`review_int`, because the old `case "${REVIEW_FAILS:-0}" in …) REVIEW_FAILS=0` tested the
+*defaulted* value and assigned the original, leaving `REVIEW_FAILS` **empty** on a state
+file that predates the key — and `[ "" -ge 2 ]` errors with status 2, which `&&` reads as
+FALSE, so the reviewer-failure limit silently never fired. Batch 13's own detail, the five
+reversion experiments and the vault notes behind each finding: `docs/PROGRESS_LOG.md`,
+"Iteration 41".
+
+
+---
+
+## Iteration 42 — batch 14: the obligation is the thing that must survive
+
+**Inherited, finished here.** This iteration opened on a dirty tree from a timed-out
+run: `ralph-pi.sh`, `tools/runner/model_identity.py`,
+`tools/runner/test_review_state.sh` and both docs were already modified with the
+review-3 remediation, with no narrative, no frame pair and `docs/CONTINUATION.md`
+still describing batch 13. Per the builder rule the inherited work was finished and
+committed rather than restarted; what this iteration added on top of it is marked
+below (one self-found weak pin, the reversion experiments, the gate runs, the frame
+and this record).
+
+**Review under remediation:** `logs/ralph-pi/run-20261101-025705/review-3.md`
+(DeepSeek V4.1 Flash on `5c53d92`, verdict INCOMPLETE: **F1 High, F2 High, F3 Medium,
+F4/F5/F6 Low**). All six were reproduced against the shipped code before anything was
+changed; all six are **confirmed and fixed**; **none is rebutted**.
+
+**Prior-solution lookup (mandatory).** Obsidian vault read directly (the MCP server is
+not running in this harness) at `/mnt/nas/Vaults/port-docs`:
+`30-architecture/patterns/order-fail-closed-branches-by-cause-specificity.md` — a
+generic "nothing to go on" branch must not swallow the specific "the obligation is
+already recorded" branch, because the two have opposite remediations. That is exactly
+F1, and it is why the new arms test *owed-base-present* before *nothing-reconstructible*
+rather than bolting a condition onto the old refusal.
+`30-architecture/patterns/a-defence-against-an-unreachable-condition-passes-as-proof-of-itself.md`
+— "did the threat fire in this run?" is the standard F5's untested `st_uid` guard
+failed, and the standard the new selftest claims meet.
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md`
+— cited by the loop policy already; it is why the lifted-fold-body case below asserts
+the body is non-empty before trusting any guard scoped inside it. Cognee: no graph
+server is reachable from this harness; the vault lookup above is the recorded lookup.
+
+### F1 (High, confirmed) — FIXED. `ralph-pi.sh`, the `invoked`-with-no-range refusal
+
+The refusal fired on `REVIEW_STATUS=invoked` with no in-flight range **without looking
+at `REVIEW_OWED_BASE`**, so it halted the loop on the one state where the obligation was
+already safely on disk — and its printed repair offered "delete `$STATE`", which throws
+that obligation away. A fail-open escape hatch inside a fail-closed check, and the
+reviewer reproduced it on the live state file. The arm now splits: **owed base present ⇒
+normalise the stale marker to `failed` and continue** (not counted again — verified, not
+assumed: every writer of a non-empty `REVIEW_OWED_BASE` in the file — the BLOCKED arm at
+`:734-738`, the collector's failed outcome at `:774`/`:797`, the in-flight fold, and the
+new HEAD reconstruction — increments `REVIEW_FAILS` in the same block, so the loss that
+created the owed base is already counted and a review cannot be lost twice); **nothing
+owed ⇒ reconstruct** (F3); **neither ⇒ refuse**, and the message now puts the safe repair
+first and says in its own text that deleting the state discards the obligation.
+Pinned by 2 cases: `0|aaaa1111|0` continues and still owes it, and the marker is rewritten
+to `failed`.
+
+### F2 (High, confirmed) — FIXED. `ralph-pi.sh`, the in-flight fold
+
+The fold wrote `REVIEW_OWED_BASE`, `REVIEW_FAILS` and cleared both in-flight markers, but
+never re-wrote `REVIEW_STATUS` — so it left the file saying `invoked` with nothing in
+flight, which is precisely the state its own refusal exists for. Any kill in the long
+window before the end-of-iteration rewrite (worker phase + gates phase, up to
+`ITER_TIMEOUT=7200 s`) turned a correctly recorded obligation into a halt, and after the
+fail-limit stop the loop could never restart without hand surgery. The fold now writes
+`REVIEW_STATUS=failed` **before** clearing the in-flight markers, so a kill between the
+writes lands on `failed`, never on `invoked`-with-no-range. Pinned by 2 behavioural cases
+(the fold's status is `failed`; a second start on the state the fold produced returns
+`0|aaaa1111|1` instead of `7|aaaa1111|2`) and 2 scoped structural guards.
+
+### F3 (Medium, confirmed) — FIXED, rationale corrected
+
+The refusal's stated premise — that reconstructing from the state file's `HEAD` line
+"would mark the wrong commit and hand the real one a false all-clear" — is **inverted**,
+and the reviewer was right. `HEAD` is written at the *end* of an iteration, so it names
+the previous iteration's commit, which is the next iteration's `HEAD_BEFORE`, which is
+the `REVIEW_BASE` the lost review was dispatched from. It is an **ancestor** of the
+unreviewed commit, so the range built from it **over**-covers. Over-coverage is the trade
+the in-flight fold already accepts ("one redundant review"); under-coverage is what this
+branch must prevent. The branch now reconstructs `REVIEW_OWED_BASE` from the state `HEAD`
+when one names a commit, counts it, logs that the range was widened defensively, and
+still stops at the fail limit. It refuses only when there is genuinely nothing to
+reconstruct from (no range, nothing owed, no `HEAD` that names a commit).
+Why the reconstruction cannot under-cover, written down because it is the whole
+justification: an `invoked` with no in-flight range means the collector never ran, and
+the state `HEAD` is only rewritten *after* the collector, so the `HEAD` on disk cannot be
+a descendant of the unreviewed commit — it is the base it was dispatched from.
+Pinned by 3 cases (reconstruction yields `0|<full HEAD sha>|1`; the reconstructed state
+is `failed`, not `invoked`; a `HEAD` line naming no commit is still refused with 7).
+
+### F4 (Low, confirmed) — FIXED. dispatch write order
+
+At dispatch the derived marker was persisted before the range that defines it, so a kill
+between the two landed in F1's path. Now the in-flight range is written first and the
+`invoked` marker second, matching the collector's already-documented rule ("the outcome
+is written BEFORE the in-flight markers are cleared"). Pinned by an **order** guard, not
+a presence guard: presence cannot see an order, and the guard was shown to FAIL when the
+two pairs are swapped back.
+
+### F5 (Low, confirmed) — FIXED. `tools/runner/model_identity.py`, cache trust boundary
+
+(a) L4's central claim — the `st_uid` ownership refusal — had **no test**: the selftest
+docstring conceded it could not be checked because "making a file here belong to another
+account needs root", which is true of the file and beside the point, because the guard
+compares against `os.getuid()`, which is a function. Deleting the guard left the whole
+suite green. It is now asserted by pretending to be the other account, with a paired case
+proving the refusal is not merely a broken read. (b) `_read_cache` did `path.stat()` then
+`path.read_text()` — a TOCTOU pair, both following symlinks, so a planted link would have
+had its *target* inspected for ownership and its *body* read as the answer. The check now
+runs on the descriptor that is then read: `O_NOFOLLOW` + `fstat` + `S_ISREG`, so there is
+nothing to swap between the check and the read. `_write_cache` got `O_NOFOLLOW` too,
+because without it `O_TRUNC` destroys whatever a planted link points at. 7 new selftest
+claims: the uid refusal and its control, symlink-refused-for-read, symlink-not-written-
+through (asserted against a victim file), the link left alone, and a directory at the
+cache path refused. Selftest is now **9 identity + 15 cache = 24 claims**, `--live` clean.
+
+### F6 (Low, confirmed) — FIXED. the "behavioural" M1 case was not behavioural
+
+`probe` calls `set_builder`, which resolves `RUN_UPSTREAM`/`RUN_FAMILY` from the alias it
+is handed, so the case labelled "M1, behaviourally" handed the guard a *correct* identity
+and passed on the pre-fix loop too. Now stated honestly: that case pins the guard's
+answer, and a new `stale_probe` — `RUN_MODEL` set to the route that answered while
+`RUN_UPSTREAM`/`RUN_FAMILY` stay at the abandoned route's values — demonstrates the
+self-review the fix exists to stop, `ACCEPT` stale against `REJECT` re-resolved, as an
+asserted pair. The structural pin (exactly 2 `model_upstream` reads) remains, and was
+shown to fail when the fallback re-resolution is deleted.
+
+### Self-found while verifying: the F2 structural guard was a pin that did not pin
+
+The first version of the F2 decay guards used a whole-file `grep` for
+`state_set REVIEW_STATUS "failed"`. F1's new arm writes the same line, so both the
+presence guard and a whole-file order guard stayed **green** with the fold's copy deleted
+— found by running the reversion, not by reading. A guard that passes on the bug is worse
+than no guard, so the fold is now lifted as its own body (`awk` from the
+`review_inflight_owed` computation to the in-flight clear) and the F2 guards are asserted
+*inside* it, with a case asserting the lifted body is non-empty first, because scoped
+guards over an empty body would pass vacuously — the pass-generator shape again, one
+level down. After the fix the reversion produces 5 FAILs where it produced 3.
+
+### Reversion experiments (all run on this iteration, output quoted)
+
+1. **F2 fold status write removed** → `FAIL H1: and the in-flight marker is cleared`,
+   `FAIL F2: the fold does not leave the state its own refusal rejects — expected
+   'failed', got 'invoked'`, `FAIL F2: a second start on the state the fold produced
+   continues — expected '0|aaaa1111|1', got '7|aaaa1111|2'`, `FAIL F2: the fold rewrites
+   REVIEW_STATUS, not only the range`, `FAIL F2: and it rewrites the status BEFORE
+   clearing the in-flight range` (5 FAILs).
+2. **F1 owed-base arm disabled** → `FAIL F1: invoked with an owed base continues and still
+   owes it — expected '0|aaaa1111|0', got '7|aaaa1111|0'` and `FAIL F1: and the stale
+   invoked marker is rewritten to the truth` (2 FAILs).
+3. **F4 dispatch order swapped back** → `FAIL F4: the in-flight range is written before
+   the invoked marker — state_set REVIEW_INFLIGHT_BASE … (line 542) is not before
+   state_set REVIEW_STATUS "invoked" (line 539)` (1 FAIL).
+4. **`st_uid` comparison deleted from `_read_cache`** → `FAIL cache: a table written by
+   another uid is REFUSED`.
+5. **`O_NOFOLLOW` removed from `_write_cache`** → `FAIL cache: a symlink at the cache path
+   is NOT written through`; **removed from `_read_cache`** → `FAIL cache: a symlink at the
+   cache path is refused for reading`.
+6. **fallback identity re-resolution deleted** → `FAIL M1: identity is resolved on the
+   first route AND the fallback (2 reads) — expected '2', got '1'`.
+Every file was restored from a copy and the suite re-run green after each experiment.
+
+### Gate results (verbatim, all run on this tree)
+
+- `make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**, ended
+  `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP**; no golden moved.
+- `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`:
+  `PASS audit_c_with_classes 0 violations`, `PASS gates_vfp 0 blockers`,
+  `PASS audit_arm11_math contract clean`, `PASS audit_r11_idiv no candidates`,
+  `PASS gates_core_parity both targets link the same core`,
+  `SKIP gates_smdh no built .cia to read`,
+  `PASS gates_frames every pinned frame is deterministic and unchanged`
+  (`PASS L3_f1.bmp sha=58615fc85d02e009`, so `reference.sha256` was NOT regenerated),
+  `PASS gates_batch_integrity project invariants intact`. No gate was pinned, relaxed or
+  edited; `tools/check.sh` is owner-protected and was not touched.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` —
+  **exit 0**, `3DSX mdk.3dsx`.
+- `cmake --build build-linux --target mdk -j8` — **exit 0**, `Built target mdk`.
+  The diff is shell and Python only, so neither target was at risk; both were built
+  anyway rather than assumed.
+- `bash tools/runner/test_review_state.sh` — **exit 0**, `REVIEW STATE: ALL CASES PASS`,
+  **86 cases** (67 + 19: 2 F1 + 3 F3 + 2 F2 behavioural + 2 F6 + 5 guard-helper-defined
+  + 2 order guards + 2 scoped-fold guards + 1 non-vacuous-body case), 0 FAIL.
+- `python3 tools/runner/model_identity.py selftest --live` — **exit 0**, `MODEL IDENTITY:
+  SELFTEST CLEAN`, 24 PASS claims (9 identity + 15 cache).
+- Frame `docs/frames/2026-11-01-review3-owed-obligation.png` + `.txt`: `1.240 / 247 /
+  0.1819`, md5 `6769a13731983d65cee9df02da6cff37` — byte-identical to its 19 predecessors,
+  and the sidecar says in its own text why a pin cannot show a review-record change.
+  **No emulator run and no Old-3DS hardware run this batch: Old-3DS timing stays
+  UNMEASURED and the Citro3D picture UNVERIFIED (P6).**
+
+### The reviewer's open questions, and what was decided
+
+1. *"Is halting on `invoked` with no reconstructible range the owner's intent, or the
+   builder's?"* The change makes the question much smaller: the halt is now the
+   last-resort branch, reached only with no range, nothing owed and no `HEAD` naming a
+   commit. Both states the reviewer demonstrated — the live file and the fold's own
+   output — now continue with the obligation intact. The residual policy question (should
+   even the last-resort halt be automatic?) stays with the owner and is recorded in
+   `docs/CONTINUATION.md`'s owner-authorized list. The reviewer's note that the live
+   `logs/ralph-pi/state` needed hand repair *now* is overtaken by events: that review was
+   collected afterwards (`review-3.md` exists, `REVIEW_STATUS=done`, nothing owed), which
+   is the collector working as designed — not evidence the branch was unreachable.
+2. *The reviewer did not re-run the goldens/check/builds.* Recorded honestly as inherited
+   at review time; **they have now been re-run on this tree**, verbatim above.
+3. *Is `REVIEW_INFLIGHT_HEAD` used or audit-only?* Audit-only, and it now says so where it
+   is read: the owed set is keyed on the base alone because the earliest base wins and the
+   far end of a lost range is always at or before the current HEAD.
+
+### What is next
+
+Unchanged from `docs/CONTINUATION.md`: the game-side list is still (a) the missing-
+`TRAVSPRT.BNI` evidence pair, (b) `dumpRunner`'s missing mixer column, (c) the C3D
+depth/blend state and the per-draw matrix, (d) the middle 173 px of the pinned frame,
+(e) `FrameBlend`'s `Vector3.Lerp` rounding. **Old-3DS performance readiness remains
+UNMEASURED and is not claimed.**

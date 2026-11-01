@@ -54,6 +54,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat as stat_module
 import sys
 import tempfile
 import time
@@ -211,12 +212,35 @@ def _read_cache(path: Path) -> dict | None:
     Ownership is checked, never assumed: /tmp is sticky precisely so that a file
     found there may belong to somebody else, and a table somebody else wrote is
     not evidence about the proxy.
+
+    The check runs on the descriptor that is then READ, not on a separate `stat`
+    of the path (external review 2026-11-01, run-20261101-025705/review-3.md F5).
+    `path.stat()` followed by `path.read_text()` is a TOCTOU pair, and both of
+    them follow a symlink, so a planted link at the cache path would have had its
+    TARGET inspected for ownership and its BODY read as the answer — which is the
+    whole attack the per-uid path exists to stop, minus the need to guess the
+    digest. `O_NOFOLLOW` refuses the link and `fstat` describes the exact open
+    file, so there is nothing left to swap between the check and the read.
     """
     try:
-        if path.stat().st_uid != os.getuid():
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat_module.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
             return None
-        table = json.loads(path.read_text())
-    except (OSError, ValueError):
+        with os.fdopen(fd, "r") as handle:
+            fd = -1
+            payload = handle.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    try:
+        table = json.loads(payload)
+    except ValueError:
         return None
     if not isinstance(table, dict):
         return None
@@ -227,9 +251,14 @@ def _read_cache(path: Path) -> dict | None:
 
 def _write_cache(path: Path, table: dict) -> None:
     """Best effort at 0600, and never fatal: the live fetch already answered, the
-    cache only saves the next round trip."""
+    cache only saves the next round trip.
+
+    `O_NOFOLLOW` for the same reason as the reader: without it, a symlink left at
+    the cache path is opened THROUGH, and `O_TRUNC` then destroys whatever the link
+    points at — a cache write must only ever write the cache file.
+    """
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
         # fchmod, not just the open mode: O_CREAT does not touch the mode of a
         # file that already existed, and a file someone else left behind would
         # keep whatever permissions it came with.
@@ -241,11 +270,18 @@ def _write_cache(path: Path, table: dict) -> None:
 
 
 def _selftest_cache() -> bool:
-    """Prove the cache refuses what it must. The uid-in-path and per-proxy keying
-    are checkable here; the st_uid refusal cannot be, because making a file in
-    this directory belong to another account needs root — so the shape checks run
-    against a real file and the ownership rule is asserted by its own code path
-    being the only reader."""
+    """Prove the cache refuses what it must.
+
+    The uid-in-path and per-proxy keying are checkable from the path string. The
+    `st_uid` refusal used to be written off as uncheckable ("making a file here
+    belong to another account needs root"), which is true of the FILE and beside
+    the point: the guard is a comparison against `os.getuid()`, and that is a
+    function, so the refusal is asserted by pretending to be the other account
+    (external review 2026-11-01, run-20261101-025705/review-3.md F5). Before this
+    the guard had no test at all and deleting it left the whole suite green, which
+    is the same defect the loop keeps filing against itself: a defence whose
+    failure is invisible is not a defence.
+    """
     tmp = tempfile.mkdtemp(prefix="mdk-identity-selftest-")
     old = os.environ.get("TMPDIR")
     os.environ["TMPDIR"] = tmp
@@ -264,6 +300,36 @@ def _selftest_cache() -> bool:
         checks.append(("the path carries the uid", f"-{os.getuid()}-" in path.name))
         checks.append(("the path changes with the proxy", _cache_path("http://a", "k") != _cache_path("http://b", "k")))
         checks.append(("the path changes with the key", _cache_path("http://a", "k1") != _cache_path("http://a", "k2")))
+        # The ownership guard, pinned. One uid over is a different account, and a
+        # table from a different account is not evidence about the proxy.
+        real_getuid = os.getuid
+        ours = _read_cache(path)
+        try:
+            os.getuid = lambda: real_getuid() + 1
+            checks.append(("a table written by another uid is REFUSED", _read_cache(path) is None))
+            checks.append(("and the refusal is not just a broken read", ours is not None))
+        finally:
+            os.getuid = real_getuid
+        checks.append(("the same file reads back when the uid matches again",
+                       _read_cache(path) == {"qwen": "openai/qwen38-flash-next"}))
+        # A symlink at the cache path is not the cache. Read: it is not what the
+        # digest named. Written: O_TRUNC would destroy the link's target.
+        victim = Path(tmp) / "someone-elses-file.json"
+        victim.write_text('{"legit": "openai/qwen38-flash-next"}')
+        link = Path(tmp) / f"mdk-model-info-{os.getuid()}-ffffffffffffffff.json"
+        try:
+            link.symlink_to(victim)
+        except OSError:
+            checks.append(("symlinks cannot be created on this filesystem", True))
+        else:
+            checks.append(("a symlink at the cache path is refused for reading",
+                           _read_cache(link) is None))
+            _write_cache(link, {"planted": "openai/not-the-proxy"})
+            checks.append(("a symlink at the cache path is NOT written through",
+                           victim.read_text() == '{"legit": "openai/qwen38-flash-next"}'))
+            checks.append(("and the link itself is left alone", link.is_symlink()))
+        # A directory at the path is not a cache file either; O_RDONLY would open it.
+        checks.append(("a directory at the cache path is refused", _read_cache(Path(tmp)) is None))
         for label, ok in checks:
             print(f"{'PASS' if ok else 'FAIL'} cache: {label}")
         return all(ok for _, ok in checks)
