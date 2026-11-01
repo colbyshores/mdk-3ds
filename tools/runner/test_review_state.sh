@@ -31,9 +31,37 @@ grep -vE '^[[:space:]]*#' "$LOOP" >"$LOOP_CODE"
 # a line that starts with something else — the gates arm used
 # `LAST_GATES="PASS"; state_set LAST_GATES PASS` — so a pattern anchored to the line
 # start counted ZERO writes in an arm that was writing the record twice, which is a
-# pass generator wearing a guard's clothes. This counts LINES containing a write,
-# anywhere in the line.
-count_writes() { printf '%s\n' "$1" | grep -cE '(^|[;&|([:space:]])state_(set|write) '; }
+# pass generator wearing a guard's clothes. So the match is anywhere in the line.
+#
+# And it counts OCCURRENCES, not lines (external review 2026-11-01,
+# run-20261101-062333/review-6.md F3). The number this produces is used as the
+# bound of the collector death loop, which injects its failure at a write CALL:
+# `state_set() { _die; …; }` counts a call, so two writes coalesced onto one line
+# are two boundaries. A line count would have derived 3 from a 4-call arm, the
+# loop would have covered three of four, and the label would still have claimed it
+# covered all of them — R5-4's PASS generator again, entered through the counter
+# instead of through a literal. Measured on itself below.
+count_writes() { printf '%s\n' "$1" | grep -oE '(^|[;&|([:space:]])state_(set|write) ' | wc -l | tr -d ' '; }
+# Lift ONE function out of the comment-stripped copy of the loop, bounded by the
+# definition's own shape rather than by a brace that happens to own a line. Two
+# spellings are legitimate in ralph-pi.sh today — `state_set` closes on its opening
+# line, `state_write` closes with `}` in column 0, and `reviewer_reject_reason`
+# contains `{ …; return 0; }` compounds whose closing braces are indented — and a
+# terminator that accepts only one of them fails silently on the other: a bare `^\}`
+# never matches a one-line definition and runs on for 73 lines (review-5 R5-1) or
+# 53 (review-4 F2), while "the line ends in `}`" truncates `reviewer_reject_reason`
+# at its first guard and swallows `pi_run` (review-6 F2). Both directions are
+# measured by guard_fragment, never trusted.
+# The doubled brackets in the start pattern are load-bearing: mawk 1.3.4 does not
+# match `[()][[:space:]]` (it matches `[()]` and it matches `[[:space:]]`, never the
+# pair), and a regex that matches nothing lifts nothing, which guard_fragment
+# reports as zero definitions — loudly, but only because it is measured.
+lift_fn() { # lift_fn <name> -> that function's text, or nothing
+    awk -v fn="$1" '
+        !f && $0 ~ "^"fn"[(][)][[:space:]]*[{]" { f=1; print; if ($0 ~ /\}[[:space:]]*$/) exit; next }
+        f  { print; if ($0 ~ /^\}[[:space:]]*$/) exit }
+    ' "$LOOP_CODE"
+}
 REPORT=$(mktemp -d)/report.md
 printf 'VERDICT: PASS\n' >"$REPORT"
 : >"$REPORT.empty"
@@ -46,6 +74,24 @@ check() { # check <label> <expected> <actual>
         printf 'FAIL %s — expected %s, got %s\n' "$1" "'$2'" "'$3'"
         fails=$((fails + 1))
     fi
+}
+# Every lifted fragment gets the SAME three measurements (review-6 F2: the claim
+# that all the scoping lifts were measured was true of one of them, and a fourth
+# lift of the identical shape had no measurement at all). An over-run turns every
+# pin below into a grep over unrelated code AND over prose — ralph-pi.sh documents
+# its own bugs, so a fragment that swallows the comment block quotes the strings
+# its pins forbid — and a truncation evals a partial function, which fails the
+# behavioural cases for the wrong reason. The first check is also the non-vacuity
+# guard: an empty fragment holds zero definitions. The second is a guard on the
+# SOURCE of the lift, because LOOP_CODE is comment-stripped: it can only fire by
+# pointing a lift back at the raw file.
+guard_fragment() { # guard_fragment <label> <fragment>
+    check "$1 is scoped to one definition, so its pins cannot read a neighbour" "1" \
+          "$(printf '%s\n' "$2" | grep -cE '^[A-Za-z_][A-Za-z_0-9]*\(\)')"
+    check "$1 carries no comment line, so its pins cannot fire on prose" "0" \
+          "$(printf '%s\n' "$2" | grep -cE '^[[:space:]]*#')"
+    check "$1 is a syntactically complete fragment, not a truncation of it" "0" \
+          "$(printf '%s\n' "$2" | bash -n 2>/dev/null; printf '%s' "$?")"
 }
 
 # --- review_rc_normalise ------------------------------------------------------
@@ -108,8 +154,22 @@ check "and the next completed review still clears it" "" "$(review_owed done "$(
 # starting the loop, so it is lifted out verbatim and run against the same
 # resolver the loop uses. Every case below is a pair of aliases on THIS proxy,
 # checked with tools/runner/model_identity.py -- not a made-up name.
-eval "$(awk '/^reviewer_reject_reason\(\) \{/,/^\}/' "$ROOT/ralph-pi.sh")"
-eval "$(grep -E '^model_(upstream|family)\(\) ' "$ROOT/ralph-pi.sh")"
+#
+# From the CODE copy, with the shared bounded lift (external review 2026-11-01,
+# run-20261101-062333/review-6.md F2). This was the fourth lift of the shape
+# review-4 F2 and review-5 R5-1 fixed, and the only one with no measurement: it
+# read the RAW file with a `/^\}/` terminator, so collapsing the definition to one
+# line — the formatting change R5-1 said must not matter — ran the lift on through
+# `pi_run`, eval'd a fragment that is not valid shell, and killed the identity block
+# (a false FAIL, but a red suite is a red suite). The two resolvers it depends on
+# are lifted the same way now, so no fragment in this file is trusted.
+REJECT_FN="$(lift_fn reviewer_reject_reason)"
+UPSTREAM_FN="$(lift_fn model_upstream)"
+FAMILY_FN="$(lift_fn model_family)"
+eval "$REJECT_FN"; eval "$UPSTREAM_FN"; eval "$FAMILY_FN"
+guard_fragment "R6-2: the reviewer_reject_reason lift" "$REJECT_FN"
+guard_fragment "R6-2: the model_upstream lift"        "$UPSTREAM_FN"
+guard_fragment "R6-2: the model_family lift"         "$FAMILY_FN"
 if ! declare -f reviewer_reject_reason model_upstream model_family >/dev/null; then
     echo "FAIL reviewer_reject_reason could not be lifted out of ralph-pi.sh"
     fails=$((fails + 1))
@@ -259,22 +319,10 @@ STARTUP_BLOCK="$(awk '/^if \[ -n "\$REVIEW_INFLIGHT_BASE" \]; then$/{f=1} f{prin
 # at lift-line 17 (`# This does widen exit 9 to every record write …`) and reported
 # PASS with ZERO `exit 9` occurrences left in code. Measured below rather than
 # trusted, for the same reason the `state_set` fragment is.
-STATE_WRITE_FN="$(awk '/^state_write\(\) \{/{f=1} f{print} f&&/\}[[:space:]]*$/{exit}' "$LOOP_CODE")"
-# Three measurements on the fragment itself, because a lift that over-runs turns
-# every pin below into a grep over unrelated code AND over prose, and the prose is
-# what makes a deleted property still pass: ralph-pi.sh documents its own bugs, so a
-# fragment that swallows the comment block quotes the strings its pins forbid.
-check "R5-1: the state_write lift is scoped to state_write (exactly one definition in it)" "1" \
-      "$(printf '%s\n' "$STATE_WRITE_FN" | grep -cE '^[A-Za-z_][A-Za-z_0-9]*\(\)')"
-check "R5-1: and the lift carries no comment line, so its pins cannot fire on prose" "0" \
-      "$(printf '%s\n' "$STATE_WRITE_FN" | grep -cE '^[[:space:]]*#')"
-# And it must not TRUNCATE: a fragment that stops early evals a partial function,
-# which would make every behavioural case below fail for the wrong reason. This is
-# a syntax check, not a shape check — `state_write` on one line is a legitimate
-# formatting choice and a pin that failed it would be the formatting-sensitive pin
-# review-4 F2 just removed.
-check "R5-1: and the lift is a syntactically complete function, not a truncation of it" "0" \
-      "$(printf '%s\n' "$STATE_WRITE_FN" | bash -n 2>/dev/null; printf '%s' "$?")"
+STATE_WRITE_FN="$(lift_fn state_write)"
+# The three measurements live in guard_fragment, which every lifted fragment now
+# goes through (review-6 F2) — one spelling of the rule, not five copies of it.
+guard_fragment "R5-1: the state_write lift" "$STATE_WRITE_FN"
 # The single-key writer, lifted for the same reason (review-3 F3): the arms call
 # it, so the test must run the shipped one rather than a copy that can drift.
 #
@@ -290,7 +338,7 @@ check "R5-1: and the lift is a syntactically complete function, not a truncation
 # fragment is measured below instead of trusted: a lift that truncates early makes
 # the eval incomplete, which fails the behavioural cases loudly rather than
 # vacuously.
-STATE_SET_FN="$(awk '/^state_set\(\) \{/{f=1} f{print} f&&/\}[[:space:]]*$/{exit}' "$LOOP_CODE")"
+STATE_SET_FN="$(lift_fn state_set)"
 if [ -z "$STARTUP_BLOCK" ]; then
     check "H1: the startup block could be lifted from ralph-pi.sh" "lifted" "NOT FOUND"
 else
@@ -502,13 +550,10 @@ else
     check "F3: state_set hand-rolls no temp file, grep or rename of its own" "0" \
           "$(printf '%s\n' "$STATE_SET_FN" | grep -cE 'mv |grep -v|\.t')"
     # The two ways the old lift could be wrong, pinned instead of trusted
-    # (review-4 F2). Over-run: the fragment must hold state_set and nothing else.
-    check "F2: the state_set lift is scoped to state_set (exactly one definition in it)" "1" \
-          "$(printf '%s\n' "$STATE_SET_FN" | grep -cE '^[A-Za-z_][A-Za-z_0-9]*\(\)')"
-    # And it must be CODE: the pin above fires on prose if the lift reads the raw
-    # file, because state_set's own doc comment quotes the commands it forbids.
-    check "F2: and the lift carries no comment line, so the pin above cannot fire on prose" "0" \
-          "$(printf '%s\n' "$STATE_SET_FN" | grep -cE '^[[:space:]]*#')"
+    # (review-4 F2), plus the third it never had: review-6 F2 counted this fragment
+    # as measured and found it short of the `bash -n` completeness check the
+    # CONTINUATION claimed for all of them.
+    guard_fragment "F2: the state_set lift" "$STATE_SET_FN"
 fi
 
 # --- review-4 F1: nothing may sit between the verdict and the in-flight clear ---
@@ -549,8 +594,19 @@ check "F1: the window holds exactly one record write, the transition itself" "1"
 # asserted the uninterrupted outcome while claiming to assert a death. A label that
 # cannot inject its own failure is a PASS generator.
 COLLECT_WRITES="$(count_writes "$COLLECT_ARM")"
-check "F1: the collector arm has four record-write sites, so the loop below covers all of them" "4" \
+check "F1: the collector arm has four record-write calls, so the loop below covers all of them" "4" \
       "$COLLECT_WRITES"
+# The counter is the instrument that DERIVES that bound, so it is measured on
+# itself (external review 2026-11-01, run-20261101-062333/review-6.md F3). The
+# death loop injects its failure at a write CALL — `state_set() { _die; …; }` — so
+# a counter that counts LINES is the wrong unit: coalescing two writes onto one line
+# would have derived 3 from a 4-call arm, the loop would have covered three of the
+# four boundaries, and the label above would still have claimed it covered all of
+# them. Same defect as R5-4, entered through the counter instead of a literal.
+check "R6-3: the write counter counts calls, not lines (two on one line count twice)" "2" \
+      "$(count_writes 'LAST_GATES="PASS"; state_set LAST_GATES PASS; state_set LAST_REVIEW_ITER 9')"
+check "R6-3: and a fragment that writes nothing counts zero" "0" \
+      "$(count_writes 'LAST_GATES="PASS"; FAILS=0')"
 
 # The behavioural half: kill the shipped collector at every write boundary in that
 # window and assert the counters can never get ahead of the verdict. Under the

@@ -5933,7 +5933,10 @@ covers every real boundary.
 Batch 18's risk line said "two of its lifts were re-scoped". One existing lift changed
 (`STATE_SET_FN`); `COLLECT_WINDOW` and `COLLECT_ARM` were **added**. Corrected here and in the
 new risk line. The related CONTINUATION claim that "the lift that does the scoping is itself
-measured" was true of two of three lifts and is now true of all three.
+measured" was true of two of three lifts and is now true of all three. **Corrected again by
+review-6 F2 / iteration 48: it was still wrong.** A fourth lift of the same shape
+(`reviewer_reject_reason`) had no measurement at all and the `bash -n` half was true of only one of
+the three. The claim now names what each class of lift actually carries.
 
 ### Gate results (verbatim)
 
@@ -5984,17 +5987,42 @@ Code `exit 9` count: 0.
 The three R5-1 lift measurements PASS under it, which is the point: they describe the fragment,
 not its formatting, and the pin that used to pass on prose now fails on the code.
 
-**R5-2 — the gates arm writing `LAST_GATES` back** (the reverted spelling is
-`LAST_GATES="PASS"; state_set LAST_GATES PASS`):
+**R5-2 — the gates arm writing `LAST_GATES` back.** Corrected in place by review-6 F1: this block
+used to name ONE line (`LAST_GATES="PASS"; state_set LAST_GATES PASS`) and quote a FOUR-failure
+measurement, which is the "the named edit is not the one whose output is quoted" defect R5-3 was
+raised for, recurring inside the block written to close it. The pre-fix block was **two** lines, one
+per arm, and the three experiments below each name its own edit and quote only its own output.
+Re-run on three scratch worktrees of `4de8a7d` for this iteration, not transcribed from batch 19.
+
+*R5-2a — both arms restored* (the true pre-fix shape: `LAST_GATES="PASS"; state_set LAST_GATES PASS`
+in the `then` arm **and** `LAST_GATES="FAIL"; state_set LAST_GATES FAIL` in the `else` arm) — four
+failures, and the fourth behavioural case passes because the write *fails* and lands nothing:
 
     FAIL R5-2: the gates phase performs no record write, so no stop boundary sits in the invoked window — expected '0', got '2'
     FAIL R5-2: the LAST_GATES write is gone from the loop, not hidden in another arm — expected '0', got '2'
     FAIL R5-2: and an unwritable record cannot stop the gates phase — expected '0', got '9'
+    PASS R5-2: and the gates phase left the review record exactly as it found it
     FAIL R5-2: and it wrote no key of its own, so the rewrite owns LAST_GATES — expected '0', got '1'
 
-The fourth behavioural case ("left the review record exactly as it found it") passes under the
-reversion because the write *fails* and lands nothing; the return-code case is the one that
-catches the stop, and it does.
+*R5-2b — the `then` arm alone* (`LAST_GATES="PASS"; state_set LAST_GATES PASS` only) — the counts
+are 1, not 2, and the behavioural stop is still caught, because the behavioural case takes the
+`then` arm:
+
+    FAIL R5-2: the gates phase performs no record write, so no stop boundary sits in the invoked window — expected '0', got '1'
+    FAIL R5-2: the LAST_GATES write is gone from the loop, not hidden in another arm — expected '0', got '1'
+    FAIL R5-2: and an unwritable record cannot stop the gates phase — expected '0', got '9'
+    FAIL R5-2: and it wrote no key of its own, so the rewrite owns LAST_GATES — expected '0', got '1'
+
+*R5-2c — the `else` arm alone* (`LAST_GATES="FAIL"; state_set LAST_GATES FAIL` only) — two failures,
+both counts; neither behavioural case can fire, because `run_gates` succeeds in the harness and the
+surviving write sits in the arm that is never taken. This is the case the one-line record hid, and
+the reason a single-arm edit and a two-arm measurement could not both be true:
+
+    FAIL R5-2: the gates phase performs no record write, so no stop boundary sits in the invoked window — expected '0', got '1'
+    FAIL R5-2: the LAST_GATES write is gone from the loop, not hidden in another arm — expected '0', got '1'
+    PASS R5-2: and an unwritable record cannot stop the gates phase
+    PASS R5-2: and the gates phase left the review record exactly as it found it
+    PASS R5-2: and it wrote no key of its own, so the rewrite owns LAST_GATES
 
 **R5-4 / F1 — the three counters back above the transition** (the batch-18 shape):
 
@@ -6052,3 +6080,186 @@ in any of them; the owner tasks (1)-(7) are unchanged and still cannot be done i
 review-6 finds another neighbour of a class this loop has already fixed twice, the honest next
 step for the harness is a sweep of *every* record-write site against the window rule rather than
 a sixth point fix.
+
+## Iteration 48 — batch 20: a reversion record that does not reproduce is a finding against the record
+
+Review dispositioned: `logs/ralph-pi/run-20261101-062333/review-6.md` — **F1 Medium, F2 Low,
+F3 Low. No Critical and no High**, so nothing here is a rebuttal: all three findings reproduced
+against the code on scratch copies and all three are fixed. The review's `VERDICT: INCOMPLETE`
+rested on F1 alone — a documentation defect in the block batch 19 wrote to close review-5 R5-3.
+
+### Prior-solution lookup
+
+- **Obsidian MCP**: no server in this harness, so the vault was read directly (read-only) from
+  `/mnt/nas/Vaults/port-docs`. Notes that applied, and how:
+  - `30-architecture/patterns/text-substitution-fixups-need-occurrence-assertions.md` — a check
+    keyed on a spelling that matches zero times reports success. F3's line-counting counter over a
+    call-injecting death loop is that shape: the instrument and the thing it bounds were counted in
+    different units.
+  - `.../build-invariant-guards-must-be-proven-non-vacuous.md` and
+    `.../a-probe-that-cannot-fail-is-not-evidence.md` — the R5-4 / R6-3 class: a guard that cannot
+    fail is not evidence, and a claim of coverage is a measurement.
+  - `.../a-universal-negative-is-a-search-claim-enumerate-the-search.md` and
+    `.../a-label-repeated-across-sections-is-one-unverified-claim-not-many.md` — F2's blanket
+    "all three lifts are measured" is a search claim that was never enumerated.
+  - Nothing in the vault covers F1's class (a reversion record naming one edit and quoting
+    another's output). The only precedent is this loop's own iterations 46 and 47, both of which
+    got it wrong once — which is the argument for measuring the record rather than writing it.
+- **Cognee / knowledge graph: UNREACHABLE in this harness.** `knowledge_search` fails with
+  `Cannot find package 'ignore' imported from …/pi-knowledge/dist/src/indexer/chunker.js` — the
+  extension's dependency is missing, same as batch 19. Recorded rather than skipped silently.
+
+### F1 (Medium) — confirmed; the R5-2 reversion named a one-arm edit and quoted a two-arm measurement
+
+The reviewer is right and the class is the one batch 19 was supposed to have closed: the block at
+`docs/PROGRESS_LOG.md` (Iteration 47, "R5-2") named `LAST_GATES="PASS"; state_set LAST_GATES PASS`
+— one line — and quoted four failures including two `got '2'`s that only a **two**-line restoration
+produces. Reproduced on three scratch worktrees of `4de8a7d`, each with its own edit, before the
+record was touched:
+
+| experiment | the edit, applied verbatim | what the suite actually printed |
+|---|---|---|
+| R5-2a | both arms restored (`…PASS` in `then`, `…FAIL` in `else`) — the true pre-fix block | `got '2'`, `got '2'`, `got '9'`, `got '1'` + the fourth case PASS |
+| R5-2b | the `then` arm alone | `got '1'`, `got '1'`, `got '9'`, `got '1'` |
+| R5-2c | the `else` arm alone | `got '1'`, `got '1'`, and all three behavioural cases PASS |
+
+The reviewer's numbers reproduce exactly, including which case passes and why (the write *fails*
+against an unwritable record, so the "left the record as it found it" case cannot see it; the
+return-code case is the one that catches the stop). The Iteration 47 block is corrected **in place**
+into those three named experiments, each quoting only its own output, and it now says the numbers
+were re-run for this iteration rather than transcribed. No code changed for F1: the defect was in
+the record, and the record is what a reviewer re-runs.
+
+### F2 (Low) — confirmed; a fourth lift of the same shape, unmeasured, under a blanket claim
+
+`reviewer_reject_reason` was lifted from the **raw** `ralph-pi.sh` with a `/^\}/` terminator — the
+exact terminator review-5 R5-1 removed eight lines below it in the same file. Collapsing the
+definition to one line (the formatting change R5-1 said must not matter) makes that range run on
+through `pi_run`. And the CONTINUATION claim that "all three scoping lifts are measured (one
+definition, no comment line, `bash -n` completeness)" was true of one of them: `STATE_SET_FN` had
+two of the three, the collector and gates regions had line-count non-vacuity only, and this fourth
+lift had none.
+
+Fixed as a class, not as a site (the batch-19 lesson): one `lift_fn` now bounds **every** function
+lift in the suite — `state_write`, `state_set`, `reviewer_reject_reason`, `model_upstream`,
+`model_family` — by the definition's own shape (a definition that closes on its opening line ends
+there; a multi-line one ends at the first `}` in column 0, so the `{ …; return 0; }` compounds
+inside `reviewer_reject_reason` no longer truncate it), and one `guard_fragment` runs the same
+three measurements on each fragment. Five fragments × three measurements, spelled once.
+
+Writing it found a second trap: **mawk 1.3.4 does not match `[()][[:space:]]`** — it matches `[()]`
+and it matches `[[:space:]]` and never the pair — so the first version of `lift_fn` lifted nothing
+at all. That is why the guards are the fix and not the lift: the empty fragment failed
+"scoped to one definition" (`expected '1', got '0'`) instead of passing quietly, and the comment in
+`lift_fn` says the doubled brackets are load-bearing.
+
+Reversions, each on a scratch worktree, each run twice — once with the shipped suite, once with the
+one line of it reverted:
+
+| experiment | shape | result |
+|---|---|---|
+| B1 | `reviewer_reject_reason` collapsed to one line, shipped suite | **175 PASS** — the formatting change is inert now |
+| B2 | same one-line definition, lift reverted to the raw-file `/^\}/` | `FAIL R6-2: … scoped to one definition … expected '1', got '2'` (it swallowed `pi_run`) |
+| B5 | `state_write` collapsed to one line, shipped suite | **175 PASS** |
+| B6 | same, `STATE_WRITE_FN` lift reverted to the `/^\}/` terminator | `FAIL R5-1: … scoped to one definition … expected '1', got '5'` (73-line over-run, five definitions) |
+
+The CONTINUATION claim is corrected to say what is measured per class of lift: five function lifts
+carry the three fragment measurements; the three **region** lifts (`STARTUP_BLOCK`,
+`COLLECT_WINDOW`/`COLLECT_ARM`, `GATES_REGION`) carry non-vacuity line counts plus behavioural cases
+and are not claimed to carry the fragment guards.
+
+### F3 (Low) — confirmed; the counter counted lines and the loop injects at calls
+
+`count_writes` counted **lines** containing a write; `run_collect`'s `_die` counts **calls**
+(`state_set() { _die; …; }`). The derived bound is the loop's population, so the units have to
+match. Now `grep -oE … | wc -l`, and the counter is measured on itself:
+
+| experiment | shape | result |
+|---|---|---|
+| B3 | two collector counter writes coalesced onto one line, shipped counter | **175 PASS**, bound still 4, death loop still covers all four boundaries |
+| B4 | same coalescing, counter reverted to `grep -c` (lines) | `FAIL F1: … four record-write calls … expected '4', got '3'` and `FAIL R6-3: … two on one line count twice — expected '2', got '1'` |
+
+The label also changed from "record-write sites" to "record-write **calls**", because the old word
+is what made the mismatch readable as a nit.
+
+### Suite arithmetic
+
+Measured by set-diff of the printed PASS labels against the committed suite (`comm` over the sorted
+label sets): old **163**, new **175**. **157 labels carried unchanged**, **6 re-worded** — the five
+R5-1/F2 fragment guards, which now share one spelling, and the F1 bound label, whose word changed
+from "sites" to "calls" — each with a successor in the new set, and **12 genuinely new checks**: 9
+fragment guards (three fragments × three measurements), 1 `bash -n` completeness on the
+`state_set` fragment, 2 self-tests on the write counter. **0 checks lost.** The five old R5-1/F2
+fragment checks are the same measurements, now spelled once inside `guard_fragment`.
+
+### Gate results (verbatim)
+
+All gates re-run from a clean invocation after the code and docs were final. Nothing was relaxed,
+pinned or edited to obtain these results; `tests/frames/reference.sha256` was NOT regenerated.
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts` | **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP** |
+| contract/parity/frame/integrity | `bash tools/check.sh` | **exit 0** — `CHECK: ALL GATES PASSED` |
+| 3DS target | `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` | **exit 0** — `3DSX mdk.3dsx` |
+| Linux frontend | `cmake --build build-linux --target mdk -j8` | **exit 0** — `[100%] Built target mdk` |
+| review-record state machine | `bash tools/runner/test_review_state.sh` | **exit 0** — `REVIEW STATE: ALL CASES PASS`, **175 PASS / 0 FAIL** |
+| identity resolver | `python3 tools/runner/model_identity.py selftest --live` | **exit 0** — `MODEL IDENTITY: SELFTEST CLEAN`, 28 claims |
+
+`tools/check.sh` tail, verbatim:
+
+    BATCH INTEGRITY: PASS
+
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             every pinned frame is deterministic and unchanged
+      PASS   gates_batch_integrity    project invariants intact
+
+    CHECK: ALL GATES PASSED
+
+and the frame gate line it ran: `PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the
+pinned `cpp=`, which is why `reference.sha256` did not move.
+
+### Frame
+
+`docs/frames/2026-11-01-lifts-bounded-record-reproduces.png` + `.txt` — `1.240 / max 247 / mean
+0.1819`, md5 `6769a13731983d65cee9df02da6cff37`, byte-identical to its 25 predecessors (26 files
+now carry that md5). This batch touches no game code, so the picture cannot move; the evidence that
+it did not is the md5 and the frame gate, not a claim. The sidecar carries the
+"why this picture did not move / what shows the change instead" narrative again.
+
+**No emulator run and no Old-3DS hardware run were performed in this batch**, so nothing here
+changes the Citro3D picture's UNVERIFIED status (AGENTS.md §11 P6) and **Old-3DS timing remains
+UNMEASURED**. No display was used, so P7 is not engaged.
+
+### Review-6's open questions
+
+1. *Does the gates→collector window still lose a completed review to a stop?* Yes, and unchanged:
+   the startup fold classifies an in-flight review as lost without reading `review-$ITER.rc`/`.md`.
+   Batch 19 removed the write sites that could reach it; batch 20 found none left to remove (the
+   reviewer enumerated them: between the `invoked` dispatch write and the collector transition
+   there is no record write). Making the fold consult the run dir changes the meaning of
+   `REVIEW_FAILS` and the owed set, so it stays owner task (7). It is now the fourth batch this has
+   been recorded as, and it is the harness's remaining known gap.
+2. *`ralph.sh:230`'s unchecked `state_set`* — unchanged, still reverted by `8cc37ad`, still owner
+   task (6).
+3. *Is the sidecar convention slipping?* It was, and it is fixed here. `publish_frame.sh` emits only
+   the three measured lines; the "why this picture did not move / what shows the change instead"
+   narrative is appended by hand, and `docs/frames/README.md` says the sidecar carries it. Batch 19
+   stopped appending it. Batch 20 appends it, and CONTINUATION now records the convention so the
+   next batch does not have to rediscover it.
+
+### What is next
+
+Unchanged from the PRIORITY ORDER: game-side item (a) is still the missing-`TRAVSPRT.BNI`
+evidence pair from review-2 of batch 11, then (b) the `dumpRunner` mixer column, then (c) the
+Citro3D per-draw matrix and depth/blend state, then (e) `FrameBlend.Lerp`'s rounding. The
+loop-harness chain (batches 13-20) has had eight consecutive reviews with no Critical or High in
+any of them, and review-6's own "what I attacked and could not break" list is the longest yet —
+including enumerating all 16 record-write sites to confirm the window is empty. If review-7 finds a
+ninth neighbour of a class this loop has already fixed twice, the honest move is to stop point-fixing
+the harness and hand the owner the two policy questions (7) and (3) instead.

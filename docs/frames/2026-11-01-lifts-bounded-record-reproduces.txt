@@ -1,0 +1,25 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-01T12:13:01Z at 4de8a7d
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why this picture did not move: this batch changed the loop's own test harness and its
+documentation record, and nothing in the game -- tools/runner/test_review_state.sh,
+docs/PROGRESS_LOG.md, docs/CONTINUATION.md and this pair. No C or C++ file, no Makefile,
+no golden and no frame-oracle tool moved, so the pinned frame is the same picture it has
+been since the panorama landed. Measured: this png is byte-identical to the twenty-five
+records before it (md5 6769a13731983d65cee9df02da6cff37 -- 26 files in docs/frames now
+carry that md5) and the gap is unchanged at 1.240 / max 247 / mean 0.1819.
+what shows the change instead: bash tools/runner/test_review_state.sh -- 175 cases, all
+PASS, up from 163 (by set-diff of the PASS labels: 157 carried, 6 re-worded with a
+successor each, 12 new checks, 0 lost). Three review-6 findings, each reproduced on a
+scratch worktree before it was changed: F1 (Medium) was a reversion record naming a
+one-arm edit and quoting a two-arm measurement, now three named experiments -- both arms
+restored prints got '2' twice plus got '9', the then arm alone prints got '1' twice plus
+got '9', the else arm alone trips only the two count guards; F2 (Low) was a fourth lift of
+the shape batches 18-19 fixed, unmeasured and reading the raw file with the terminator
+R5-1 removed, now one bounded lift_fn and one guard_fragment over five fragments --
+reverting either lift to its old terminator fails with "expected '1', got '2'" and
+"expected '1', got '5'", and collapsing either definition to one line is now inert (175
+PASS); F3 (Low) was a line-counting counter over a death loop that injects at write calls
+-- coalescing two collector writes onto one line fails the derived bound with "expected
+'4', got '3'" under the old counter and stays 4 under the new one. Goldens 440/0/0,
+tools/check.sh ALL GATES PASSED, mdk_3ds and the Linux build both exit 0.
