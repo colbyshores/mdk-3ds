@@ -30,7 +30,7 @@ grep -vE '^[[:space:]]*#' "$LOOP" >"$LOOP_CODE"
 REPORT=$(mktemp -d)/report.md
 printf 'VERDICT: PASS\n' >"$REPORT"
 : >"$REPORT.empty"
-cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" "${DD:-}" "${SS:-}" 2>/dev/null || true; }
+cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" "${DD:-}" "${SS:-}" "${CD:-}" 2>/dev/null || true; }
 trap cleanup EXIT
 check() { # check <label> <expected> <actual>
     if [ "$2" = "$3" ]; then
@@ -247,7 +247,20 @@ STARTUP_BLOCK="$(awk '/^if \[ -n "\$REVIEW_INFLIGHT_BASE" \]; then$/{f=1} f{prin
 STATE_WRITE_FN="$(awk '/^state_write\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$LOOP")"
 # The single-key writer, lifted for the same reason (review-3 F3): the arms call
 # it, so the test must run the shipped one rather than a copy that can drift.
-STATE_SET_FN="$(awk '/^state_set\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$LOOP")"
+#
+# Bounded, and from the CODE copy rather than the raw file (external review
+# 2026-11-01, run-20261101-062333/review-4.md F2). `state_set` is ONE line, so the
+# terminator this lift used — a line that is exactly `}` — never matched it, and
+# the fragment ran on for 53 lines: the whole model-identity comment block,
+# model_upstream, model_family and the tail of reviewer_reject_reason. The pin
+# below was therefore a grep over three unrelated functions and over prose that
+# QUOTES the commands the pin forbids, so moving a comment — a pure documentation
+# edit — failed it, and `eval` silently redefined those functions in this process.
+# The terminator now accepts a one-line definition or a closing brace, and the
+# fragment is measured below instead of trusted: a lift that truncates early makes
+# the eval incomplete, which fails the behavioural cases loudly rather than
+# vacuously.
+STATE_SET_FN="$(awk '/^state_set\(\) \{/{f=1} f{print} f&&/\}[[:space:]]*$/{exit}' "$LOOP_CODE")"
 if [ -z "$STARTUP_BLOCK" ]; then
     check "H1: the startup block could be lifted from ralph-pi.sh" "lifted" "NOT FOUND"
 else
@@ -439,10 +452,11 @@ fi
 # --- the single-key writer is the SAME checked writer (review-3 F3) -----------
 # `state_set` used to be its own `grep -v > tmp; echo >> tmp; mv tmp $STATE` with
 # the `mv` status discarded, so AR6-4's refusal reached only the multi-key arm and
-# every single-key write kept a silent no-op (measured: eleven call sites over `mv -f tmp somedir` SUCCEEDS by
-# moving the temp file INTO the directory, so the collector could print
-# "REVIEW CALL #N" while REVIEW_CALLS never landed. It now delegates to the
-# checked writer, so the refusal, the temp-file check and the status are one
+# every single-key write kept a silent no-op (measured: eleven call sites over
+# eight distinct keys). A `$STATE` that had become a directory made `mv -f tmp
+# somedir` SUCCEED by moving the temp file INTO the directory, so the collector
+# could print "REVIEW CALL #N" while REVIEW_CALLS never landed. It now delegates
+# to the checked writer, so the refusal, the temp-file check and the status are one
 # implementation. These cases prove the delegation is real and not a comment that
 # says so: the lifted body must refuse a directory exactly like state_apply does.
 if [ -z "$STATE_SET_FN" ]; then
@@ -457,7 +471,91 @@ else
     check "F3: and the refused write left nothing behind in it" "0" "$(find "$SS/adir" -type f | wc -l | tr -d ' ')"
     check "F3: state_set hand-rolls no temp file, grep or rename of its own" "0" \
           "$(printf '%s\n' "$STATE_SET_FN" | grep -cE 'mv |grep -v|\.t')"
+    # The two ways the old lift could be wrong, pinned instead of trusted
+    # (review-4 F2). Over-run: the fragment must hold state_set and nothing else.
+    check "F2: the state_set lift is scoped to state_set (exactly one definition in it)" "1" \
+          "$(printf '%s\n' "$STATE_SET_FN" | grep -cE '^[A-Za-z_][A-Za-z_0-9]*\(\)')"
+    # And it must be CODE: the pin above fires on prose if the lift reads the raw
+    # file, because state_set's own doc comment quotes the commands it forbids.
+    check "F2: and the lift carries no comment line, so the pin above cannot fire on prose" "0" \
+          "$(printf '%s\n' "$STATE_SET_FN" | grep -cE '^[[:space:]]*#')"
 fi
+
+# --- review-4 F1: nothing may sit between the verdict and the in-flight clear ---
+# The collector is the only place a review becomes `done`, and the record stops
+# claiming it is in flight in the SAME transition. Any record write placed between
+# "the verdict is known" and "that transition lands" is a stop boundary inside the
+# window, and batch 17 had just made every record write able to stop the loop at
+# exit 9. Three counter writes above the transition therefore meant a full disk
+# there left the durable record saying `invoked`, with the in-flight markers set,
+# and REVIEW_CALLS already advanced — a review the counter says happened and the
+# status says did not. The startup fold reads exactly that state as a lost review,
+# so a COMPLETED review was re-owed, charged against REVIEW_FAIL_LIMIT and billed
+# a second time (external review 2026-11-01, run-20261101-062333/review-4.md F1).
+#
+# The window is lifted as a body so the guard is about the window and not the file
+# — the same scoping the batch that made these writes fatal argued for.
+COLLECT_WINDOW="$(awk -v end='REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""' \
+    '/^[[:space:]]*RRC="\$\(review_rc_normalise/{f=1} f{print} f&&index($0,end){exit}' "$LOOP_CODE")"
+# The same arm, lifted to its end, so the behavioural cases below can actually
+# reach the counter writes rather than asserting about a region they never ran.
+COLLECT_ARM="$(awk -v end='[ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]' \
+    '/^[[:space:]]*RRC="\$\(review_rc_normalise/{f=1} f{print} f&&index($0,end){exit}' "$LOOP_CODE")"
+WINDOW_LINES="$(printf '%s\n' "$COLLECT_WINDOW" | wc -l | tr -d ' ')"
+ARM_LINES="$(printf '%s\n' "$COLLECT_ARM" | wc -l | tr -d ' ')"
+if [ "${WINDOW_LINES:-0}" -gt 20 ] && [ "$ARM_LINES" -gt "$WINDOW_LINES" ]; then
+    printf 'PASS the collect window (%s lines) and the full arm (%s) were lifted, so their guards are not vacuous\n' "$WINDOW_LINES" "$ARM_LINES"
+else
+    printf 'FAIL the collect window lifted %s lines and the arm %s — every guard below would pass vacuously\n' "${WINDOW_LINES:-0}" "$ARM_LINES"
+    fails=$((fails + 1))
+fi
+check "F1: the window holds exactly one record write, the transition itself" "1" \
+      "$(printf '%s\n' "$COLLECT_WINDOW" | grep -cE '^[[:space:]]*state_(set|write) ')"
+
+# The behavioural half: kill the shipped collector at every write boundary in that
+# window and assert the counters can never get ahead of the verdict. Under the
+# shipped order a death at write 1 loses the transition itself (the honest loss:
+# invoked, counters untouched) and every later death has nothing left to die in
+# front of the verdict. Under the old order a death at write 2, 3 or 4 printed
+# `invoked|4` here, which is the state the fold charges as a lost review.
+CD="$(mktemp -d)"
+printf '0\n' >"$CD/review-9.rc"
+printf 'VERDICT: PASS\n' >"$CD/review-9.md"
+cdstate_get() { sed -n "s/^$1=//p" "$CD/state" 2>/dev/null | tail -1; }
+run_collect() { # run_collect <n> — the shipped success arm, killed before its n-th rename
+    printf 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_CALLS=3\nLAST_REVIEW_ITER=2\nITERS_SINCE_REVIEW=5\nREVIEW_INFLIGHT_BASE=aaaa1111\nREVIEW_INFLIGHT_HEAD=bbbb2222\n' >"$CD/state"
+    (
+        STATE="$CD/state" ITER=9 HEAD_BEFORE=bbbb2222 REVIEW_MODEL=x REVIEW_FAIL_LIMIT=2
+        RUN_DIR="$CD" STALL=1 KILL_AT="$1" WRITES=0
+        REVIEW_STATUS=invoked REVIEW_FAILS=0 REVIEW_OWED_BASE= REVIEW_CALLS=3
+        LAST_REVIEW_ITER=2 ITERS_SINCE_REVIEW=5
+        REVIEW_INFLIGHT_BASE=aaaa1111 REVIEW_INFLIGHT_HEAD=bbbb2222
+        _die() { WRITES=$((WRITES + 1)); if [ "$WRITES" -ge "$KILL_AT" ]; then exit 9; fi; }
+        log() { :; }
+        eval "$STATE_WRITE_FN"
+        state_set() { _die; state_apply "$1=$2"; }
+        state_write() { _die; state_apply "$@"; }
+        eval "$COLLECT_ARM"
+    )
+    printf '%s|%s\n' "$(cdstate_get REVIEW_STATUS)" "$(cdstate_get REVIEW_CALLS)"
+}
+for cdie in 1 2 3 4 5 6; do
+    out="$(run_collect "$cdie")"
+    st="${out%%|*}"; calls="${out##*|}"
+    # Two things are asserted, and the first is the ordering: write 1 IS the
+    # transition, so losing it is the honest loss (`invoked`, counters untouched);
+    # every later write sits AFTER it, so the verdict has already landed. Under the
+    # old order writes 2-4 were the counters, and they printed `invoked`.
+    if [ "$cdie" -eq 1 ]; then want="invoked"; else want="done"; fi
+    check "F1: a death at write $cdie leaves the verdict as the first thing that landed" "$want" "$st"
+    # And the harm itself: a record that still says `invoked` must never show a
+    # review counter that advanced, because that is the state the startup fold
+    # charges as a lost review. A stale counter AFTER `done` is harmless — the
+    # end-of-iteration rewrite re-emits it from the in-process value.
+    if [ "$st" = "invoked" ] && [ "$calls" != "3" ]; then harm="counters ahead of the verdict"; else harm="consistent"; fi
+    check "F1: and a death at write $cdie cannot put the counters ahead of the verdict" "consistent" "$harm"
+done
+check "F1: with no interruption the verdict and its counters both land" "done|4" "$(run_collect 99)"
 
 # --- the resolver's own claims -----------------------------------------------
 # reviewer_rejected is only as good as the table it reads, and the table is a

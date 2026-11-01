@@ -882,10 +882,7 @@ POLICY_PRECEDENCE
                 log "iter=$ITER reviewed by $REVIEW_MODEL -> $RUN_DIR/review-$ITER.md"
                 REVIEW_FAILS=0
                 REVIEW_CALLS=$((REVIEW_CALLS + 1))
-                state_set REVIEW_CALLS "$REVIEW_CALLS"
-                state_set LAST_REVIEW_ITER "$ITER"
                 ITERS_SINCE_REVIEW=0
-                state_set ITERS_SINCE_REVIEW "0"
                 # Cost guardrail report
                 EST_COST="$(python3 -c "print('%.4f' % ($REVIEW_CALLS * 0.003))" 2>/dev/null || echo "n/a")"
                 log "iter=$ITER REVIEW CALL #$REVIEW_CALLS — estimated cumulative cost ~\$${EST_COST} USD (rough; ~\$0.003/call)"
@@ -909,6 +906,31 @@ POLICY_PRECEDENCE
             REVIEW_INFLIGHT_HEAD=""
             state_write REVIEW_STATUS="$REVIEW_STATUS" REVIEW_FAILS="$REVIEW_FAILS" \
                 REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""
+            # The three counters describe the review the transition above just
+            # recorded, so they land AFTER it and never before it (external review
+            # 2026-11-01, run-20261101-062333/review-4.md F1). They used to be here,
+            # three `state_set`s above the transition — and batch 17 had just made
+            # every record write able to stop the loop at exit 9, so a full disk
+            # between them and the transition left the durable record saying
+            # `invoked`, with the in-flight markers still set, AND `REVIEW_CALLS`
+            # already advanced: a review the counter says happened and the status
+            # says did not. The next start read that as a lost review and folded a
+            # COMPLETED one in as a second loss — owed again, REVIEW_FAILS + 1, and
+            # a second paid call for the same range — which is the exact failure
+            # the AR-2 comment above exists to prevent, re-opened by a counter.
+            # Measured against the shipped collector arm: a death before write 2, 3
+            # or 4 of the old sequence left `status=invoked calls=4`; the window now
+            # contains exactly ONE write, so the only way to lose the verdict is to
+            # lose the transition itself. A death between the transition and these
+            # three keys costs nothing: the fold does not fire on `done`, and the
+            # end-of-iteration rewrite re-emits all three from the in-process
+            # values, so the worst case is a cost counter one short and a checkpoint
+            # that fires one iteration early — over-review, never under-review.
+            if [ "$OUTCOME" = "done" ]; then
+                state_set REVIEW_CALLS "$REVIEW_CALLS"
+                state_set LAST_REVIEW_ITER "$ITER"
+                state_set ITERS_SINCE_REVIEW "0"
+            fi
             [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
         elif [ "$REVIEW_BLOCKED" -eq 1 ]; then
             # A mandatory review that could not be dispatched. This is NOT a cost

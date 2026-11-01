@@ -5532,12 +5532,38 @@ below rather than changed here.
 `guard_present "AR6-4: … stops the loop" 'exit 9'` matched anywhere in `ralph-pi.sh`, two
 screens below the AR6-2 argument that a file-wide substring pin stays green when the property
 is deleted from the arm that needs it. Re-scoped to the lifted `state_write` body via two new
-helpers (`guard_in_state_write`, `absent_in_state_write`), and proven to matter: with `exit 9`
-removed from `state_write` but still present elsewhere in the file — the exact hole —
+helpers (`guard_in_state_write`, `absent_in_state_write`), and proven to matter.
 
-    code lines containing 'exit 9' (what the old file-wide pin sees): 1     # would have PASSED
-    FAIL AR6-4: the writer checks the primitive's status, it does not discard it — … missing from state_write itself
+> **Corrected in Iteration 46 (review-4 F3).** The block this section originally pasted mixed
+> **two different edits** into one quoted run, so nobody re-running it got this output. Both
+> experiments are now stated separately with their own real output, re-run on a scratch copy of
+> the tree at `3b435fb..9c02583` with the suite from this batch.
+
+**Experiment A — the exact hole the file-wide pin missed**: delete `exit 9` from `state_write`
+and leave one somewhere else in the file (here an unused helper). The old file-wide pin still
+sees an `exit 9` and PASSES; the scoped one does not.
+
+    code lines containing 'exit 9': 1
+    FAIL AR6-4: a record that could not be written exits the arm non-zero — expected '9', got '0'
+    FAIL F3: a state path that is a directory stops the arm, not just the announcement — expected '9', got '0'
+    FAIL AR6-4: and a record that could not be written stops the loop — exit 9 is missing from state_write itself
+
+Note `got '0'`, not the `got '1'` originally quoted, and note that *the status-discarding pin
+PASSES* under this edit — `if ! state_apply "$@"; then` is still there, so it cannot be one of
+the failures. The `1` came from experiment B.
+
+**Experiment B — the pre-AR6-4 writer restored** (`state_write() { state_apply "$@"; }`, status
+discarded): four failures, and **zero** `exit 9` occurrences in code, so the old file-wide pin
+fails here too and this is not the hole that needed the re-scope.
+
+    code lines containing 'exit 9': 0
     FAIL AR6-4: a record that could not be written exits the arm non-zero — expected '9', got '1'
+    FAIL F3: a state path that is a directory stops the arm, not just the announcement — expected '9', got '1'
+    FAIL AR6-4: the writer checks the primitive's status, it does not discard it — … missing from state_write itself
+    FAIL AR6-4: and a record that could not be written stops the loop — exit 9 is missing from state_write itself
+
+The substantive conclusion of F5 stands — the pin was file-wide, it is now scoped, and only the
+scoped one catches experiment A. What was wrong was the record of the proof, not the proof.
 
 ### Gate results (verbatim)
 
@@ -5585,3 +5611,182 @@ Citro3D per-draw matrix and depth/blend state, then (e) `FrameBlend.Lerp`'s roun
 loop-harness chain (batches 13-17) has now had five consecutive reviews with no Critical or
 High left standing in the newest one; the owner tasks (1)-(5) are unchanged and still cannot be
 done in a batch.
+
+---
+
+## Iteration 46 — batch 18: a stop boundary must not sit inside the window it is reporting
+
+**Review dispositioned:** `logs/ralph-pi/run-20261101-062333/review-4.md` — **F1 Medium, F2
+Medium, F3/F4 Low: all four confirmed, none rebutted. No Critical or High.** The reviewer also
+listed eight things it could not break and three open questions; the open questions are owner
+calls and are recorded below, not changed here.
+
+The previous batch made every record write able to stop the loop. That was the right change and
+it had a side effect the batch did not see: one of the places it widened `exit 9` to sits
+*between* "the reviewer reached a verdict" and "the record says so".
+
+### F1 (Medium) — confirmed; a counter write was a stop boundary inside the completed-review window
+
+`ralph-pi.sh` wrote `REVIEW_CALLS`, `LAST_REVIEW_ITER` and `ITERS_SINCE_REVIEW` in the
+collector's success arm, three `state_set`s **above** the transition that records the verdict and
+clears the in-flight markers. Before batch 17 a failed write there was a silent no-op and the arm
+walked on to the transition. After batch 17 each one is `exit 9`.
+
+Reproduced by lifting the shipped collector arm into a harness and killing it before each rename
+in turn, starting from `invoked` + in-flight + `REVIEW_CALLS=3`:
+
+    die-before-write 99 -> status=done     calls=4  since=0  lastiter=9
+    die-before-write  1 -> status=invoked  calls=3  since=5  lastiter=2
+    die-before-write  2 -> status=invoked  calls=4  since=5  lastiter=2
+    die-before-write  3 -> status=invoked  calls=4  since=5  lastiter=9
+    die-before-write  4 -> status=invoked  calls=4  since=0  lastiter=9
+
+Rows 2-4 are the defect: a durable record that says `invoked`, with the in-flight markers still
+set, **and a review counter that already advanced** — a review the counter says happened and the
+status says did not. The startup fold reads exactly that state as a lost review, so a review
+that had actually completed was re-owed, charged against `REVIEW_FAIL_LIMIT`, and billed a second
+time; two of them reach exit 7, which the unit deliberately does not restart. This is the AR-2
+failure the transition above that block exists to prevent, re-opened through a counter.
+
+**Fix:** the three counters now land **after** the transition, under `if [ "$OUTCOME" = "done" ]`
+(the in-process assignments stay where they were; only the writes moved). The window between
+verdict and in-flight clear now contains exactly one write, so the only way to lose the verdict
+is to lose the transition itself. A death between the transition and the counters costs nothing:
+the fold does not fire on `done`, and the end-of-iteration rewrite re-emits all three from the
+in-process values, so the worst case is a cost counter one short and a checkpoint that fires one
+iteration early — over-review, never under-review. The reviewer's alternative ("delete them, the
+end-of-iteration write already persists all three") was considered and rejected: the file's
+established pattern is that a fact reaches the durable record when it becomes true — `LAST_GATES`
+does the same thing at the gates arm — and moving them after the transition buys that without
+widening the pinned five-key obligation transition or changing the `APPLY_SIGS` key-set the suite
+counts.
+
+**Pinned** two ways, because a structural guard alone would not have caught the harm.
+(i) The window is lifted as a body and asserted to hold exactly one record write, with a
+non-vacuity line-count guard on the lift itself. (ii) The full arm is lifted and run with a death
+injected at every write boundary, asserting both that the verdict is the first thing to land and
+that a record still saying `invoked` never shows an advanced counter. On the faithful pre-fix
+shape these fail as seven cases:
+
+    FAIL F1: the window holds exactly one record write, the transition itself — expected '1', got '4'
+    FAIL F1: a death at write 2 leaves the verdict as the first thing that landed — expected 'done', got 'invoked'
+    FAIL F1: and a death at write 2 cannot put the counters ahead of the verdict — expected 'consistent', got 'counters ahead of the verdict'
+    FAIL F1: a death at write 3 … / write 4 …   (same two lines each)
+
+### F2 (Medium) — confirmed; the lift over-ran by 53 lines and the pin was grepping prose
+
+`STATE_SET_FN` was lifted from `$LOOP` (the raw file) with a terminator of "a line that is
+exactly `}`". `state_set` is a **one-line** definition, so the terminator never matched: the
+fragment is 54 lines and contains the whole model-identity comment block, `model_upstream`,
+`model_family` and the tail of `reviewer_reject_reason`. So `F3: state_set hand-rolls no temp
+file, grep or rename of its own` was a grep over three unrelated functions and over the comment
+that quotes the very commands it forbids — and `eval "$STATE_SET_FN"` silently redefined those
+functions in the test process. The reviewer's scenario reproduced exactly: moving `state_set`'s
+own doc comment from above the definition to below it changes no code and produced
+
+    FAIL F3: state_set hand-rolls no temp file, grep or rename of its own — expected '0', got '2'
+
+**Fix:** lift from `$LOOP_CODE` (the comment-stripped copy this file already documents that
+choice for) with a terminator that accepts a one-line definition or a closing brace. Two cases
+now measure the fragment instead of trusting it: it must contain exactly one function definition
+(its own) and no comment line at all. On the old lift they report `got '4'` and `got '26'`; with
+the comment moved below the definition the old lift fails the F3 pin as above and the fixed lift
+passes the whole suite. A lift that truncates early is not a silent pass either — the `eval`
+becomes incomplete and the behavioural F3 cases fail loudly.
+
+### F3 (Low) — confirmed; the record of a proof mixed two experiments
+
+Corrected in place in Iteration 45. The quoted reversion block could not be produced by any
+single edit: the `got '1'` and the status-discarding FAIL come from restoring the pre-AR6-4
+writer, while the `exit 9` count of 1 comes from a different edit that also plants an `exit 9`
+elsewhere. Both experiments are now stated separately with their own re-run output; see the
+correction block in Iteration 45. The substantive conclusion of that finding was sound and is
+unchanged — only the evidence text was wrong.
+
+### F4 (Low) — confirmed; a comment edit lost its noun phrase
+
+The `state_set` header comment read "eleven call sites over `mv -f tmp somedir` SUCCEEDS by",
+with the object of "over" missing and the sentence running into the next clause. Restored:
+"eleven call sites over eight distinct keys … made `mv -f tmp somedir` SUCCEED by moving the
+temp file INTO the directory".
+
+### Reviewer open questions — not builder calls
+
+1. `ralph.sh:230` still carries the original unchecked `state_set`. Commit `8cc37ad` reverts
+   `ralph.sh` deliberately ("Pi loop only"), so this is intended dead code and the F3 property
+   is a property of `ralph-pi.sh`. Left alone; if the Kilo loop is live it needs the same fix and
+   that is the owner's call.
+2. Whether a stop that only follows a *completed* review should charge `REVIEW_FAILS` at all
+   (given exit 7 is restart-prevented) is a policy question about the counter's meaning. F1's fix
+   removes the case that could produce it; the policy is untouched.
+3. `absent_in_state_write … 'state_apply "$@" || true'` forbids one spelling of
+   status-discarding, not the general property. True, and noted rather than "fixed": the
+   behavioural case next to it (`a record that could not be written exits the arm non-zero`) is
+   what pins the general property, and experiment B above shows it firing.
+
+### Prior-solution lookup
+
+**Obsidian** (`/mnt/nas/Vaults/port-docs`, read directly; no Obsidian MCP server in this
+harness): two patterns applied. `30-architecture/patterns/build-invariant-guards-must-be-proven-
+non-vacuous` — every new guard here is paired with a non-vacuity check on its own lift (line
+count for the collector window, "exactly one definition" and "no comment line" for the
+`state_set` fragment) and with a reversion that is shown to FAIL.
+`30-architecture/patterns/enumerate-every-consumer-before-claiming-a-return-value-is-inert` —
+before moving the three counter writes, every consumer of `REVIEW_CALLS`, `LAST_REVIEW_ITER` and
+`ITERS_SINCE_REVIEW` was enumerated (startup read-back, the `status` subcommand, the medium-risk
+checkpoint, the end-of-iteration rewrite) rather than assumed inert; that enumeration is what
+makes "a death after the transition costs nothing" a checked statement instead of a hope.
+**Cognee MCP:** no knowledge-graph tool is exposed in this harness, so it was unreachable; the
+vault lookup above stands in for it, as in batches 13-17.
+
+### Gate results (verbatim)
+
+All gates re-run from a clean invocation after the code and docs were final. Nothing was
+relaxed, pinned or edited to obtain these results; `tests/frames/reference.sha256` was NOT
+regenerated.
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts` | **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP** |
+| contract/parity/frame/integrity | `bash tools/check.sh` | **exit 0** — `CHECK: ALL GATES PASSED` |
+| 3DS target | `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` | **exit 0** — `3DSX mdk.3dsx` |
+| Linux frontend | `cmake --build build-linux --target mdk -j8` | **exit 0** — `[100%] Built target mdk` |
+| review-record state machine | `bash tools/runner/test_review_state.sh` | **exit 0** — `REVIEW STATE: ALL CASES PASS`, **157 PASS / 0 FAIL** |
+| identity resolver | `python3 tools/runner/model_identity.py selftest --live` | **exit 0** — `MODEL IDENTITY: SELFTEST CLEAN`, 28 claims |
+
+`tools/check.sh` tail, verbatim:
+
+    SKIP   gates_smdh               no built .cia to read
+    PASS   gates_frames             every pinned frame is deterministic and unchanged
+    PASS   gates_batch_integrity    project invariants intact
+
+    CHECK: ALL GATES PASSED
+
+`gates_frames` line, verbatim: `PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the
+pinned `cpp=`, so the frame golden did not move. `gates_smdh` is SKIPPED (no CIA built), which
+is reported as skipped, not passed.
+
+Suite arithmetic, measured by set-diff of the PASS labels against the committed suite: **140
+carried unchanged, 17 added, 0 removed** (140 → 157). The 17 are the fourteen collector cases
+(six "the verdict is the first thing that landed", six "cannot put the counters ahead", the
+window-shape guard and the uninterrupted run), the two `state_set` lift-scope cases, and the
+lift non-vacuity line.
+
+**No emulator run and no Old-3DS hardware run were performed in this batch**, so nothing here
+changes the Citro3D picture's UNVERIFIED status (AGENTS.md §11 P6) and **Old-3DS timing remains
+UNMEASURED**. No display was used, so P7 is not engaged.
+
+### Frame
+
+`docs/frames/2026-11-01-stop-boundary-window.png` + `.txt` — `1.240 / max 247 / mean 0.1819`,
+md5 `6769a13731983d65cee9df02da6cff37`, byte-identical to its 23 predecessors (this batch touches
+no game code). The sidecar carries the case arithmetic and the four reversion experiments,
+because a stop boundary is not a picture.
+
+### What is next
+
+Unchanged from the PRIORITY ORDER: game-side item (a) is still the missing-`TRAVSPRT.BNI`
+evidence pair from review-2 of batch 11, then (b) the `dumpRunner` mixer column, then (c) the
+Citro3D per-draw matrix and depth/blend state, then (e) `FrameBlend.Lerp`'s rounding. The
+loop-harness chain (batches 13-18) has now had six consecutive reviews with no Critical or High
+in any of them; the owner tasks (1)-(6) are unchanged and still cannot be done in a batch.
