@@ -15,6 +15,42 @@
 # never writes the obligation either. Hence review_inflight_owed below, and the
 # rule that the range is recorded at DISPATCH, not at collection.
 
+# state_apply <key=value> [...] — write SEVERAL keys through ONE temp file and
+# ONE rename. `$STATE` must name the file (ralph-pi.sh sets it; so does the test).
+#
+# This exists because a transition written one key at a time is a transition an
+# interruption can see half of. `state_set` is one rename per key, so the startup
+# fold — owed base, counter, status, and the two in-flight markers — was five
+# separate renames, and a SIGKILL between the status write and the in-flight
+# clear left `failed` on disk WITH the in-flight marker still set (external review
+# 2026-11-01, run-20261101-062333/review-1.md AR-2). The next start therefore
+# folded the SAME lost review a second time, REVIEW_FAILS reached
+# REVIEW_FAIL_LIMIT=2, and one lost review produced the exit-7 stop that the
+# systemd unit deliberately does not restart.
+#
+# One rename is the atomic unit the filesystem actually offers: after it the file
+# holds every new value or none of them, so a kill leaves either the whole old
+# state — and the fold runs once on restart — or the whole new state, and a lost
+# review is counted exactly once. `state_set` stays correct for a single key; a
+# MULTI-key transition written with it is the bug, and test_review_state.sh kills
+# the shipped fold at every write boundary to prove the difference.
+state_apply() {
+    local kv k line keep tmp="${STATE}.t.$$"
+    : >"$tmp" || return 1
+    if [ -f "$STATE" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            k="${line%%=*}"
+            keep=1
+            for kv in "$@"; do
+                if [ "${kv%%=*}" = "$k" ]; then keep=0; break; fi
+            done
+            if [ "$keep" -eq 1 ]; then printf '%s\n' "$line" >>"$tmp"; fi
+        done <"$STATE"
+    fi
+    for kv in "$@"; do printf '%s\n' "$kv" >>"$tmp"; done
+    mv -f "$tmp" "$STATE"
+}
+
 # review_rc_normalise <raw> — a reviewer's exit code, or 1 for "no usable code".
 # The old test was `[ "$RRC" -ne 0 ]`, and on an empty or corrupt value `[`
 # itself fails with status 2, which `if` reads as FALSE: a killed subshell that

@@ -379,22 +379,23 @@ if [ -n "$REVIEW_INFLIGHT_BASE" ]; then
     log "a review was DISPATCHED and never COLLECTED: ${REVIEW_INFLIGHT_BASE:0:8}..${REVIEW_INFLIGHT_HEAD:0:8} was left marked 'invoked' and the collector never ran (restart, watchdog phase limit, operator stop, OOM or reboot — the gates phase sits in this window)"
     REVIEW_OWED_BASE="$(review_inflight_owed "$REVIEW_OWED_BASE" "$REVIEW_INFLIGHT_BASE")"
     REVIEW_FAILS=$((REVIEW_FAILS + 1))
-    state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
-    state_set REVIEW_FAILS "$REVIEW_FAILS"
-    # The status goes with the obligation, and BEFORE the in-flight markers are
-    # cleared (external review 2026-11-01, run-20261101-025705/review-3.md F2).
-    # The fold used to rewrite everything except REVIEW_STATUS, which left the
-    # file saying `invoked` with nothing in flight — the exact state the arm below
-    # exists to refuse, so the fix manufactured the condition it rejected and a
-    # second kill in the (long) window before the end-of-iteration rewrite turned
-    # a correctly recorded obligation into a halt. `failed` is the truth: the
-    # review was dispatched and never reached a verdict.
+    # The status goes with the obligation (external review 2026-11-01,
+    # run-20261101-025705/review-3.md F2) AND the whole transition lands in one
+    # rename (same review cycle, run-20261101-062333/review-1.md AR-2). F2 needed
+    # `failed` instead of the stale `invoked`, because the fold used to rewrite
+    # everything except the status and so manufactured the `invoked`-with-no-range
+    # state the arm below exists to refuse. AR-2 showed the fix was still written
+    # as five `state_set` calls — five renames — so a kill between the status and
+    # the in-flight clear left `failed` plus a still-set in-flight marker, the next
+    # start folded the SAME review again, and one lost review reached the exit-7
+    # limit. `failed` is the truth and one write is the delivery: a kill now leaves
+    # either the whole old state (the fold runs once on restart) or the whole new
+    # one (it does not run again), so a review cannot be lost twice.
     REVIEW_STATUS="failed"
-    state_set REVIEW_STATUS "failed"
-    state_set REVIEW_INFLIGHT_BASE ""
-    state_set REVIEW_INFLIGHT_HEAD ""
     REVIEW_INFLIGHT_BASE=""
     REVIEW_INFLIGHT_HEAD=""
+    state_apply REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_FAILS="$REVIEW_FAILS" \
+        REVIEW_STATUS="$REVIEW_STATUS" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""
     log "that review is recorded as NOT done: ${REVIEW_OWED_BASE:0:8} is owed, and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
     if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
         log "STOP: $REVIEW_FAILS reviews have been lost without a verdict — the harness is being restarted faster than reviews can be collected, which is a phase-limit or reviewer-route problem a model cannot fix from inside the loop"
@@ -425,21 +426,44 @@ elif [ "$REVIEW_LEFTOVER" = "invoked" ]; then
         # which is that iteration's HEAD_BEFORE and therefore the base the lost
         # review was dispatched from. It is an ancestor of the unreviewed commit,
         # so the range it builds OVER-covers — the unreviewed commit is inside it.
-        # Over-coverage is the trade the in-flight fold already accepts ("one
-        # redundant review"); under-coverage is what this branch must prevent.
+        # Over-coverage is what this branch must buy; under-coverage is what it must
+        # not produce.
+        #
+        # The price is NOT "one redundant review", and this branch used to claim it
+        # was (external review 2026-11-01, run-20261101-062333/review-1.md AR-1).
+        # A widened range only costs extra scrutiny if the review that covers it can
+        # discharge it, and `review_outcome` clears the owed base on rc 0 plus a
+        # non-empty report WITHOUT reading the report's VERDICT — so a report that
+        # says INCOMPLETE with a High finding still clears every commit the widening
+        # swept in. Until the owner decides whether a verdict should gate clearing
+        # (docs/CONTINUATION.md, owner-authorized task 3), the honest statement of
+        # the cost is "an obligation that a non-verdict can discharge", not "one
+        # redundant review". The widening is still right: an over-wide range is a
+        # review that may be wasted, an under-wide one is a commit nobody sees.
         STATE_HEAD="$(state_get HEAD)"
         STATE_HEAD_SHA=""
         if [ -n "$STATE_HEAD" ]; then
             STATE_HEAD_SHA="$(git -C "$ROOT" rev-parse --verify --quiet "${STATE_HEAD}^{commit}" 2>/dev/null)"
         fi
+        # Existence is not enough (external review 2026-11-01, run-20261101-062333
+        # review-1.md AR-4). `rev-parse --verify` accepts ANY commit in the object
+        # database, including one a builder `reset` or `rebase` abandoned, and
+        # `git diff A..B` is a tree diff with no ancestry requirement: a base that
+        # is not an ancestor of HEAD does not contain the unreviewed commit, it
+        # removes it, so the reconstruction would be reviewed as a revert of that
+        # commit instead of as the commit the lost review was covering. That is
+        # under-coverage wearing over-coverage's clothes, which is the one thing
+        # this branch is allowed not to do. Require the ancestry or refuse.
+        if [ -n "$STATE_HEAD_SHA" ] && ! git -C "$ROOT" merge-base --is-ancestor "$STATE_HEAD_SHA" HEAD 2>/dev/null; then
+            log "the state file's HEAD (${STATE_HEAD:0:8}) names a commit that is NOT an ancestor of the current HEAD, so it cannot be the base a lost review was dispatched from; refusing to build a range from it"
+            STATE_HEAD_SHA=""
+        fi
         if [ -n "$STATE_HEAD_SHA" ]; then
             REVIEW_OWED_BASE="$STATE_HEAD_SHA"
             REVIEW_FAILS=$((REVIEW_FAILS + 1))
-            state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
-            state_set REVIEW_FAILS "$REVIEW_FAILS"
             REVIEW_STATUS="failed"
-            state_set REVIEW_STATUS "failed"
-            log "a review was left marked 'invoked' with no range recorded; the range is widened defensively to the state file's HEAD (${STATE_HEAD:0:8}), which is the PREVIOUS iteration's commit and therefore an ancestor of the unreviewed one, so the obligation is covered at the cost of at most one redundant review; ${REVIEW_OWED_BASE:0:8} is owed and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
+            state_apply REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_FAILS="$REVIEW_FAILS" REVIEW_STATUS="$REVIEW_STATUS"
+            log "a review was left marked 'invoked' with no range recorded; the range is widened defensively to the state file's HEAD (${STATE_HEAD:0:8}), which is the PREVIOUS iteration's commit and therefore an ancestor of the unreviewed one, so the obligation is covered by over-coverage — and the cost is NOT bounded at one redundant review, because review_outcome clears an owed base on rc 0 plus a non-empty report without reading its VERDICT (owner decision: docs/CONTINUATION.md owner-authorized task 3); ${REVIEW_OWED_BASE:0:8} is owed and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
             if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
                 log "STOP: $REVIEW_FAILS reviews have been lost without a verdict — the harness is being restarted faster than reviews can be collected, which is a phase-limit or reviewer-route problem a model cannot fix from inside the loop"
                 exit 7
@@ -732,11 +756,17 @@ POLICY_PRECEDENCE
                     echo "commit as if the review had been optional."
                 } >"$RUN_DIR/review-$ITER.md"
                 REVIEW_FAILS=$((REVIEW_FAILS+1))
-                state_set REVIEW_STATUS "blocked"
-                state_set REVIEW_FAILS "$REVIEW_FAILS"
                 REVIEW_OWED_BASE="$(review_owed blocked "$REVIEW_OWED_BASE" "$HEAD_BEFORE")"
-                state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
-                state_set LAST_REVIEW_DECISION "BLOCKED: $REVIEW_DECISION_REASON"
+                # One rename for the whole record of the failure, for the AR-2
+                # reason: written key by key, a kill between the status and the
+                # owed base left `blocked` on disk with NOTHING owed, and a restart
+                # that finds neither an in-flight range nor an owed base has no
+                # place to carry the unreviewed commit — the obligation is simply
+                # gone, which is the fail-open this arm exists to prevent. The
+                # gates phase sits after this and takes minutes.
+                REVIEW_STATUS="blocked"
+                state_apply REVIEW_STATUS="$REVIEW_STATUS" REVIEW_FAILS="$REVIEW_FAILS" \
+                    REVIEW_OWED_BASE="$REVIEW_OWED_BASE" "LAST_REVIEW_DECISION=BLOCKED: $REVIEW_DECISION_REASON"
                 log "iter=$ITER review BLOCKED — $REVIEW_DECISION_REASON: no eligible reviewer route"
             fi
         else
@@ -792,18 +822,19 @@ POLICY_PRECEDENCE
             # an all-clear in `ralph-pi.sh status`, and the only place
             # REVIEW_FAILS was reset (external review 2026-11-01 F1).
             REVIEW_STATUS="$OUTCOME"
-            state_set REVIEW_STATUS "$OUTCOME"
-            state_set REVIEW_FAILS "$REVIEW_FAILS"
             REVIEW_OWED_BASE="$(review_owed "$OUTCOME" "$REVIEW_OWED_BASE" "$HEAD_BEFORE")"
-            state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
-            # The review reached a verdict, so the in-flight marker goes. The
-            # outcome is written BEFORE this on purpose: a kill between the two
-            # leaves the range marked as owed (one redundant review) rather than
-            # `invoked` with no range (which the startup can only refuse).
+            # The verdict, the counter, the owed base and the two in-flight markers
+            # are ONE transition and are written as one (external review
+            # 2026-11-01, run-20261101-062333/review-1.md AR-2, applied to this
+            # arm by the same argument as the startup fold). Written separately the
+            # outcome landed before the in-flight markers went, so a kill in that
+            # window left a COMPLETED review still marked in flight — and the next
+            # start folded a review that had actually happened in as a second lost
+            # one, which is a stop issued against a loop that was working.
             REVIEW_INFLIGHT_BASE=""
             REVIEW_INFLIGHT_HEAD=""
-            state_set REVIEW_INFLIGHT_BASE ""
-            state_set REVIEW_INFLIGHT_HEAD ""
+            state_apply REVIEW_STATUS="$REVIEW_STATUS" REVIEW_FAILS="$REVIEW_FAILS" \
+                REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""
             [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
         elif [ "$REVIEW_BLOCKED" -eq 1 ]; then
             # A mandatory review that could not be dispatched. This is NOT a cost
@@ -822,7 +853,12 @@ POLICY_PRECEDENCE
         log "iter=$ITER no commit — stall_count=$STALL"
     fi
 
-    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; echo "REVIEW_STATUS=$REVIEW_STATUS"; echo "REVIEW_FAILS=$REVIEW_FAILS"; echo "REVIEW_OWED_BASE=$REVIEW_OWED_BASE"; echo "REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE"; echo "REVIEW_INFLIGHT_HEAD=$REVIEW_INFLIGHT_HEAD"; } >"$STATE"
+    # The end-of-iteration rewrite is atomic for the same AR-2 reason, and it is
+    # the worst instance of it: `>"$STATE"` TRUNCATES first, so a kill in the
+    # middle of these fourteen `echo`s left a partial state file — potentially
+    # without the owed base or the in-flight marker, which is the obligation
+    # disappearing rather than merely being rewritten twice.
+    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; echo "REVIEW_STATUS=$REVIEW_STATUS"; echo "REVIEW_FAILS=$REVIEW_FAILS"; echo "REVIEW_OWED_BASE=$REVIEW_OWED_BASE"; echo "REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE"; echo "REVIEW_INFLIGHT_HEAD=$REVIEW_INFLIGHT_HEAD"; } >"${STATE}.t.$$" && mv -f "${STATE}.t.$$" "$STATE"
     phase idle
     [ "$STALL" -ge "$STALL_LIMIT" ] && { log "STOP: $STALL consecutive stalled iterations"; exit 5; }
     [ "$FAILS" -ge "$FAIL_LIMIT" ] && { log "STOP: $FAILS consecutive gate failures"; exit 4; }

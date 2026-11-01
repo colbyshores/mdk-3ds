@@ -30,7 +30,7 @@ grep -vE '^[[:space:]]*#' "$LOOP" >"$LOOP_CODE"
 REPORT=$(mktemp -d)/report.md
 printf 'VERDICT: PASS\n' >"$REPORT"
 : >"$REPORT.empty"
-cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" 2>/dev/null || true; }
+cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" 2>/dev/null || true; }
 trap cleanup EXIT
 check() { # check <label> <expected> <actual>
     if [ "$2" = "$3" ]; then
@@ -159,6 +159,26 @@ else
           "0" "$(set_builder litellm/qwen; reviewer_reject_reason litellm/qwen >/dev/null; echo $?)"
 fi
 
+# --- state_apply: the atomic write the review record now depends on -----------
+# The kill experiment below replaces the writer, so it proves the FOLD makes one
+# call — it cannot see whether that call is one RENAME. `mv` is shadowed here (a
+# function beats PATH lookup even inside another function), so the renames the
+# shipped state_apply performs are counted directly. One rename is what makes a
+# kill land on either a whole old state or a whole new one; a rename per key is
+# the AR-2 bug back again with its old shape hidden inside a helper.
+SA_DIR="$(mktemp -d)"
+printf 'KEEP=1\nA=old\nB=old\n' >"$SA_DIR/state"
+SA_RENAMES="$( ( RENAMES=0; mv() { RENAMES=$((RENAMES + 1)); command mv "$@"; }
+                 STATE="$SA_DIR/state"; state_apply A=new B=new C=new
+                 printf '%s\n' "$RENAMES" ) )"
+check "AR-2: state_apply performs exactly ONE rename for three keys" "1" "$SA_RENAMES"
+check "AR-2: and the file it leaves is complete, not half a transition" "KEEP=1 C=new" \
+      "$(grep -E '^(KEEP|C)=' "$SA_DIR/state" | tr '\n' ' ' | sed 's/ $//')"
+check "AR-2: keys it was not given survive the rewrite" "1" "$(grep -c '^KEEP=1$' "$SA_DIR/state")"
+check "AR-2: a key it WAS given is replaced, not duplicated" "1" "$(grep -c '^A=' "$SA_DIR/state")"
+check "AR-2: and it can create the file when there is nothing to rewrite" "0" \
+      "$( STATE="$SA_DIR/missing"; state_apply A=1; [ -f "$SA_DIR/missing" ] && echo 0 || echo 1 )"
+
 # --- H1 end to end: the shipped startup block, lifted and run -------------------
 # The cases above prove the arithmetic; these prove the WIRING — that the startup
 # really folds an uncollected review into the owed set, counts it, clears the
@@ -174,7 +194,7 @@ else
     state_get() { sed -n "s/^$1=//p" "$SD/state" 2>/dev/null | tail -1; }
     state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$SD/state" 2>/dev/null >"$SD/state.t" || true; echo "$kv" >>"$SD/state.t"; mv "$SD/state.t" "$SD/state"; }
     log() { printf '%s\n' "$*" >>"$SD/log"; }
-    run_startup() { # run_startup <state-file-body> -> "rc|owed|fails"
+    run_startup() { # run_startup <state-file-body> [repo-root] -> "rc|owed|fails"
         printf '%b' "$1" >"$SD/state"; : >"$SD/log"
         REVIEW_OWED_BASE="$(state_get REVIEW_OWED_BASE)"
         REVIEW_FAILS="$(review_int "$(state_get REVIEW_FAILS)")"
@@ -183,8 +203,8 @@ else
         REVIEW_LEFTOVER="$(state_get REVIEW_STATUS)"
         REVIEW_FAIL_LIMIT=2
         STATE="$SD/state"   # named in the refusal message; set -u would catch a rename
-        local rc
-        ( eval "$STARTUP_BLOCK" ); rc=$?
+        local rc root="${2:-$ROOT}"
+        ( ROOT="$root"; eval "$STARTUP_BLOCK" ); rc=$?
         printf '%s|%s|%s\n' "$rc" "$(state_get REVIEW_OWED_BASE)" "$(state_get REVIEW_FAILS)"
     }
     check "H1: a clean restart owes nothing"                 "0||0" \
@@ -228,6 +248,59 @@ else
           "$(run_startup 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=\nHEAD=not-a-commit\n')"
     check "H1: invoked with no range AND no HEAD line is the only refusal" "7||0" \
           "$(run_startup 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=\n')"
+    # AR-4: existence is not the same as ancestry. `rev-parse --verify` accepts any
+    # commit in the object database, including one a builder `reset` or `rebase`
+    # abandoned, and `git diff A..B` is a tree diff with no ancestry requirement,
+    # so a base off to one side of HEAD would be reviewed as a REVERT of that
+    # commit rather than as the commit the lost review was covering —
+    # under-coverage dressed as over-coverage. Driven against a scratch repo
+    # because the real one has no abandoned branch to borrow.
+    FAKE="$SD/repo"; mkdir -p "$FAKE"
+    if git -C "$FAKE" init -q >/dev/null 2>&1 \
+       && git -C "$FAKE" -c user.email=t@t -c user.name=t commit -q --allow-empty -m one >/dev/null 2>&1 \
+       && MAIN_SHA="$(git -C "$FAKE" rev-parse HEAD)" \
+       && MAIN_BRANCH="$(git -C "$FAKE" rev-parse --abbrev-ref HEAD)" \
+       && git -C "$FAKE" checkout -q -b side >/dev/null 2>&1 \
+       && git -C "$FAKE" -c user.email=t@t -c user.name=t commit -q --allow-empty -m two >/dev/null 2>&1 \
+       && SIDE_SHA="$(git -C "$FAKE" rev-parse HEAD)" \
+       && git -C "$FAKE" checkout -q "$MAIN_BRANCH" >/dev/null 2>&1; then
+        check "AR-4: a HEAD line naming a NON-ancestor is refused, not widened to" "7||0" \
+              "$(run_startup "REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=\nHEAD=$SIDE_SHA\n" "$FAKE")"
+        check "AR-4: and the refusal records nothing, so the operator names the base" "" "$(state_get REVIEW_OWED_BASE)"
+        check "AR-4: an ancestor HEAD line still reconstructs the obligation" "0|$MAIN_SHA|1" \
+              "$(run_startup "REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=\nHEAD=$MAIN_SHA\n" "$FAKE")"
+    else
+        check "AR-4: a scratch repo could be built for the ancestry cases" "created" "FAILED"
+    fi
+    # AR-2: the fold must be ONE write, and "it writes the status first" is not the
+    # same property. A transition written key by key is a transition a SIGKILL can
+    # interrupt between keys, and the shipped interruption is exactly that: a
+    # watchdog, an OOM kill or a reboot in the fold's window. This drives the real
+    # startup block with a writer that dies before its n-th write, then restarts on
+    # whatever survived, and asserts the lost review was counted EXACTLY ONCE.
+    # Before the fix the fold wrote five keys, so a death before write 4 or 5 left
+    # `failed` plus a still-set in-flight marker: the restart folded the same review
+    # a second time, REVIEW_FAILS hit the limit of 2, and the loop exited 7 — an
+    # exit code the systemd unit deliberately does not restart.
+    kill_fold_at() { # kill_fold_at <n> — die before the n-th state write, then restart
+        local n="$1"
+        printf 'REVIEW_STATUS=invoked\nREVIEW_FAILS=0\nREVIEW_OWED_BASE=\nREVIEW_INFLIGHT_BASE=aaaa1111\n' >"$SD/state"
+        : >"$SD/log"
+        (
+            WRITES=0
+            _die_before() { WRITES=$((WRITES + 1)); if [ "$WRITES" -ge "$n" ]; then exit 9; fi; }
+            state_set() { _die_before; local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$SD/state" 2>/dev/null >"$SD/state.t" || true; echo "$kv" >>"$SD/state.t"; mv "$SD/state.t" "$SD/state"; }
+            state_apply() { _die_before; local kv; for kv in "$@"; do printf '%s\n' "$kv" >>"$SD/state"; done; }
+            eval "$STARTUP_BLOCK"
+        )
+        run_startup "$(cat "$SD/state")"
+    }
+    for kill_at in 1 2 3 4 5 6; do
+        check "AR-2: a death at write $kill_at of the fold counts the loss exactly once" "0|aaaa1111|1" \
+              "$(kill_fold_at "$kill_at")"
+    done
+    check "AR-2: and the fold's own death leaves the obligation on disk" "aaaa1111" \
+          "$(kill_fold_at 1 >/dev/null; state_get REVIEW_OWED_BASE)"
 fi
 
 # --- the resolver's own claims -----------------------------------------------
@@ -283,8 +356,13 @@ order_before() { # order_before <label> <earlier fixed string> <later fixed stri
 # on it stays green when the fold's copy is deleted. That is a pin that does not
 # pin, which is the defect this suite exists to catch. So the fold is lifted as its
 # own body and the F2 guards are asserted INSIDE it.
-fold_body() { # the in-flight fold arm: owed computation .. in-flight clear
-    awk '/review_inflight_owed/,/REVIEW_INFLIGHT_HEAD=""/' "$LOOP_CODE"
+fold_body() { # the in-flight fold arm: owed computation .. the fold's own log line
+    # The end marker used to be `REVIEW_INFLIGHT_HEAD=""`, which the fold now also
+    # matches INSIDE its single state_apply — so the range would stop before the
+    # write every guard below is about, and they would pass vacuously. The log line
+    # is the arm's last statement and awk's range ends at the first match after the
+    # start, which is this arm's (the F3 arm's log comes later).
+    awk '/review_inflight_owed/,/reviews lost without a verdict are now/' "$LOOP_CODE"
 }
 FOLD_LINES="$(fold_body | wc -l)"
 if [ "$FOLD_LINES" -gt 5 ]; then
@@ -312,7 +390,15 @@ order_in_fold() { # order_in_fold <label> <earlier> <later> -- order inside the 
         fails=$((fails + 1))
     fi
 }
-for helper in guard_absent guard_present order_before guard_in_fold order_in_fold; do
+guard_absent_in_fold() { # guard_absent_in_fold <label> <fixed-string> -- must NOT be in the fold
+    if fold_body | grep -qF "$2"; then
+        printf 'FAIL %s — %s is back inside the in-flight fold\n' "$1" "$2"
+        fails=$((fails + 1))
+    else
+        printf 'PASS %s\n' "$1"
+    fi
+}
+for helper in guard_absent guard_present order_before guard_in_fold order_in_fold guard_absent_in_fold; do
     if declare -f "$helper" >/dev/null; then
         printf 'PASS guard helper %s is defined before it is called\n' "$helper"
     else
@@ -323,7 +409,7 @@ done
 # F1: the non-numeric-rc comparison, and the unconditional all-clear.
 guard_absent "F1: the raw numeric test on \$RRC is gone"        '[ "$RRC" -ne 0 ]'
 guard_present "F1: the outcome comes from review_outcome"      'OUTCOME="$(review_outcome "$RRC" "$RUN_DIR/review-$ITER.md")'
-guard_present "F1: REVIEW_STATUS records the outcome, not 'done" 'state_set REVIEW_STATUS "$OUTCOME"'
+guard_present "F1: the persisted status is the computed outcome, not a literal 'done'" 'REVIEW_STATUS="$OUTCOME"'
 guard_absent  "F1: no unconditional REVIEW_STATUS=done"        'state_set REVIEW_STATUS "done"'
 # F2: the obligation survives the process, and the owed base reaches the record.
 guard_present "F2: REVIEW_FAILS is read back at startup"       'REVIEW_FAILS="$(review_int "$(state_get REVIEW_FAILS)")"'
@@ -341,13 +427,29 @@ guard_present "H1: startup folds an uncollected review into owed" 'REVIEW_OWED_B
 guard_present "H1: the in-flight range reaches the state file"  'echo "REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE"'
 guard_present "H1: an invoked review with no range is refused, not guessed" 'so the obligation cannot be reconstructed at all'
 # F2: the fold rewrites the status as well as the range, so it cannot manufacture
-# the `invoked`-with-no-range state its own refusal rejects. Presence alone is not
-# enough here (the F1 arm writes the same line), so the ORDER inside the fold is
-# pinned: the status must be rewritten before the in-flight markers go, because a
-# kill between the two must land on `failed`, never on `invoked` with no range.
-guard_in_fold "F2: the fold rewrites REVIEW_STATUS, not only the range" 'state_set REVIEW_STATUS "failed"'
-order_in_fold "F2: and it rewrites the status BEFORE clearing the in-flight range" \
-             'state_set REVIEW_STATUS "failed"' 'state_set REVIEW_INFLIGHT_BASE ""'
+# the `invoked`-with-no-range state its own refusal rejects. AR-2 narrowed what
+# "rewrites" has to mean: the whole transition must land in ONE rename. Five
+# ordered `state_set` calls also put `failed` before the in-flight clear and still
+# left a window in which a kill re-folded the same review, so the guard is now
+# ONENESS of the write rather than the order of its parts (the reviewer's own
+# remediation wording), and a `state_set` anywhere in the fold is a failure by
+# itself. The behavioural version of this is the kill-at-every-write case above;
+# these are the source-level pins that name the spelling.
+guard_in_fold "F2: the fold rewrites REVIEW_STATUS, not only the range" 'state_apply REVIEW_OWED_BASE='
+guard_in_fold "AR-2: and it writes the status, the owed base and both markers together" \
+              'REVIEW_STATUS="$REVIEW_STATUS" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""'
+guard_absent_in_fold "AR-2: the fold writes no key with a separate state_set" 'state_set '
+order_in_fold "AR-2: the status variable is set BEFORE the atomic write reads it" \
+             'REVIEW_STATUS="failed"' 'state_apply REVIEW_OWED_BASE='
+# AR-2 applied to the other multi-key transitions: the verdict and the BLOCKED
+# record are one write each, and the end-of-iteration rewrite no longer truncates
+# the state file before filling it back in.
+guard_present "AR-2: the verdict reaches the file through the atomic write" 'REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""'
+guard_present "AR-2: the BLOCKED arm's obligation and its record are one write" '"LAST_REVIEW_DECISION=BLOCKED: $REVIEW_DECISION_REASON"'
+guard_present "AR-2: the end-of-iteration rewrite is atomic, not truncate-then-append" '} >"${STATE}.t.$$" && mv -f "${STATE}.t.$$" "$STATE"'
+guard_absent  "AR-2: the whole-file rewrite no longer truncates the live state file" '; } >"$STATE"'
+guard_absent  "AR-2: state_apply is defined once, in the sourced library, not forked here" 'state_apply()'
+guard_present "AR-4: the reconstructed base must be an ancestor of HEAD" 'merge-base --is-ancestor "$STATE_HEAD_SHA" HEAD'
 # F4: at dispatch the RANGE is persisted before the status derived from it, so a
 # kill between the two leaves an obligation, not a refusal.
 guard_present "F4: the range is still persisted at dispatch" 'state_set REVIEW_INFLIGHT_HEAD "$REVIEW_INFLIGHT_HEAD"'

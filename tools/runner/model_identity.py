@@ -55,6 +55,7 @@ import json
 import os
 import shutil
 import stat as stat_module
+import subprocess
 import sys
 import tempfile
 import time
@@ -221,9 +222,21 @@ def _read_cache(path: Path) -> dict | None:
     whole attack the per-uid path exists to stop, minus the need to guess the
     digest. `O_NOFOLLOW` refuses the link and `fstat` describes the exact open
     file, so there is nothing left to swap between the check and the read.
+
+    `O_NONBLOCK` is there because the check above is a check on the file it
+    opened, and an open that never returns never gets to check anything (external
+    review 2026-11-01, run-20261101-062333/review-1.md AR-3). The cache path is
+    under a world-writable `$TMPDIR`, and a FIFO left at it makes a plain
+    `O_RDONLY` open wait for a writer forever: the ownership gate is then not
+    merely bypassed, it is unreachable, and the caller (`model_upstream`, on the
+    review-decision path) has no timeout of its own. On Linux `O_NONBLOCK` is
+    inert for a regular file and turns a FIFO open into an immediate `ENXIO`, so
+    the unusable cache is refused and the live fetch answers, which is the
+    behaviour a cache must have: a cache that can hang the caller is worse than
+    no cache.
     """
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     except OSError:
         return None
     try:
@@ -255,10 +268,17 @@ def _write_cache(path: Path, table: dict) -> None:
 
     `O_NOFOLLOW` for the same reason as the reader: without it, a symlink left at
     the cache path is opened THROUGH, and `O_TRUNC` then destroys whatever the link
-    points at — a cache write must only ever write the cache file.
+    points at — a cache write must only ever write the cache file. `O_NONBLOCK`
+    for the reader's reason too, and it bites harder here: opening a FIFO for
+    WRITING blocks until a reader appears, so without it a planted FIFO stops the
+    loop in the middle of a cache write rather than at the read.
     """
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        fd = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+            0o600,
+        )
         # fchmod, not just the open mode: O_CREAT does not touch the mode of a
         # file that already existed, and a file someone else left behind would
         # keep whatever permissions it came with.
@@ -267,6 +287,38 @@ def _write_cache(path: Path, table: dict) -> None:
             json.dump(table, handle)
     except OSError:
         pass
+
+
+_CHILD_PROBE = """
+import pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import model_identity as m
+path = pathlib.Path(sys.argv[3])
+if sys.argv[2] == "read":
+    print("NONE" if m._read_cache(path) is None else "READ")
+else:
+    m._write_cache(path, {"planted": "openai/not-the-proxy"})
+    print("WROTE")
+"""
+
+
+def _probe_in_child(path: Path, mode: str, timeout: float = 10.0) -> str:
+    """Run _read_cache/_write_cache on `path` in a child that can be abandoned.
+
+    A blocking open is the exact defect being pinned, so the claim cannot be
+    checked in this process: if the guard regressed, the selftest would HANG
+    instead of failing, and a suite that hangs is indistinguishable from a suite
+    that was never run. The child prints the outcome; the parent waits with a
+    deadline and reports HUNG, which turns the regression into a FAIL line.
+    """
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c", _CHILD_PROBE, str(Path(__file__).resolve().parent), mode, str(path)],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return "HUNG"
+    return out.stdout.strip() or f"ERROR rc={out.returncode}"
 
 
 def _selftest_cache() -> bool:
@@ -330,6 +382,23 @@ def _selftest_cache() -> bool:
             checks.append(("and the link itself is left alone", link.is_symlink()))
         # A directory at the path is not a cache file either; O_RDONLY would open it.
         checks.append(("a directory at the cache path is refused", _read_cache(Path(tmp)) is None))
+        # A FIFO at the path is not a cache file either, and it is the one that can
+        # take the caller down with it: a plain open blocks until somebody opens the
+        # other end, so the ownership check behind the open never runs (AR-3). Both
+        # directions are pinned, because the writer blocks on a FIFO too — on a
+        # missing READER — and the check runs in a child so a regression prints a
+        # FAIL instead of hanging the suite.
+        fifo = Path(tmp) / f"mdk-model-info-{os.getuid()}-eeeeeeeeeeeeeeee.json"
+        try:
+            os.mkfifo(fifo)
+        except (OSError, AttributeError):
+            checks.append(("FIFOs cannot be created on this filesystem", True))
+        else:
+            checks.append(("a FIFO at the cache path is REFUSED on read, not blocked",
+                           _probe_in_child(fifo, "read") == "NONE"))
+            checks.append(("a FIFO at the cache path does not block the writer",
+                           _probe_in_child(fifo, "write") == "WROTE"))
+            checks.append(("and the FIFO is still there, untouched, afterwards", fifo.is_fifo()))
         for label, ok in checks:
             print(f"{'PASS' if ok else 'FAIL'} cache: {label}")
         return all(ok for _, ok in checks)

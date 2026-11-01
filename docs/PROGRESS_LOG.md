@@ -4644,6 +4644,16 @@ checkpoint can point at one place. Read it with the "Current tree state" heading
 
 ## Current tree state (VERIFIED) — as of batch 13
 
+> **Superseded in part by batch 14 and batch 15** (external review 2026-11-01,
+> run-20261101-062333/review-1.md AR-5). Two sentences below are no longer shipped
+> fact and must not be read as current: (1) "an `invoked` with no recorded range is
+> refused, not guessed" — since batch 14 that is the **last-resort** branch only, and
+> an `invoked` with an owed base or with a `HEAD` line naming an ancestor of `HEAD`
+> continues with the obligation reconstructed; (2) "asserted by
+> `tools/runner/test_review_state.sh` (67 cases…)" — the suite is **110 cases** as of
+> batch 15. Everything else in this appendix still describes the tree. The live
+> statement of the tree state is `docs/CONTINUATION.md`, "Current tree state".
+
 **Camera and renderer.** `buildLookAtCamera` is the C#'s RIGHT-HANDED `CreateLookAt` basis
 and perspective projection. Vulkan folds clip.y into the combined matrix; the sky inverse
 carries the flip on its LEFT side; shaders use `M * v`. Citro3D uses `GPU_CULL_BACK_CCW`
@@ -4950,3 +4960,190 @@ Unchanged from `docs/CONTINUATION.md`: the game-side list is still (a) the missi
 depth/blend state and the per-draw matrix, (d) the middle 173 px of the pinned frame,
 (e) `FrameBlend`'s `Vector3.Lerp` rounding. **Old-3DS performance readiness remains
 UNMEASURED and is not claimed.**
+
+---
+
+## Iteration 43 — batch 15: a transition is only atomic if it is one write
+
+**Review under remediation:** `logs/ralph-pi/run-20261101-062333/review-1.md`
+(DeepSeek V4.1 Flash on `b60a10c`, verdict INCOMPLETE: **AR-1 High, AR-2 Medium,
+AR-3 Medium, AR-4 Low, AR-5 Low**). Every finding was reproduced against the shipped
+code before anything was changed. **All five are confirmed; none is rebutted** — AR-1
+is confirmed but its policy half is owner-gated, and its builder-actionable half (the
+rationale that claimed a cost the shipped clearing rule does not pay) is corrected here.
+
+**Prior-solution lookup (mandatory).** Obsidian vault read directly (the MCP server is
+not running in this harness) at `/mnt/nas/Vaults/port-docs`:
+`50-tooling/ralph-pi-unattended-loop-script.md:110` already carries the primitive AR-2
+needs — *"Patch a sibling temp file and `os.replace()` it — an atomic rename on the same
+filesystem"* — derived from the sibling rule *"never edit a running loop script in
+place: bash reads a script by byte offset"*. The loop had adopted the rename for its own
+source and never applied it to the state file it writes every iteration, which is the
+same hazard one file over. `50-tooling/a-probe-must-be-able-to-fail.md` is the standard
+the new FIFO claims are held to: a pin that hangs instead of failing is not a probe, so
+the FIFO check runs in a child with a deadline and prints `HUNG` as a FAIL.
+**Cognee: no graph server is reachable from this harness** (the pi-knowledge extension
+fails to load: `Cannot find package 'ignore'`), so the vault lookup above is the
+recorded lookup.
+
+### AR-1 (High) — confirmed; the cost claim was unsound, and it is withdrawn
+
+`review_outcome` returns `done` on **rc 0 + a non-empty report** and reads nothing else;
+`grep -n VERDICT ralph-pi.sh tools/runner/review_state.sh` matches prose only, never a
+test. So an `INCOMPLETE` report — one whose own text says the work was not checked —
+clears the owed base, including every commit a widened range swept in. The reviewer's
+demonstration is this loop's own input: `review-3.md` returned `VERDICT: INCOMPLETE`
+with F1 High and F2 High, and the owed range was cleared anyway.
+
+The **policy** half — should a verdict gate clearing? — is a change to `review_outcome`,
+which is owner-authorized task (3) in `docs/CONTINUATION.md` and is not a builder's
+call, so the code keeps the shipped behaviour. The **record** half is builder work and is
+done: the F3 arm's comment and its log line no longer say the widening costs "at most one
+redundant review". They now say the cost is "an obligation that a non-verdict can
+discharge", name `review_outcome` as the reason, and point at the owner task. The
+widening itself stays: an over-wide range is scrutiny that may be wasted, an under-wide
+one is a commit nobody ever looks at, and only one of those is recoverable.
+
+*Correction to Iteration 42* (line 4815 and the F3 rationale it quotes): the sentence
+"Over-coverage is the trade the in-flight fold already accepts (one redundant review)"
+is withdrawn. It was written while the clearing rule had not been read against the
+widening, and it is false as shipped.
+
+### AR-2 (Medium) — confirmed; the fold is now ONE rename
+
+Reproduced exactly as the reviewer described, with the shipped startup block lifted and a
+writer that dies on schedule: a kill between `state_set REVIEW_STATUS "failed"` and
+`state_set REVIEW_INFLIGHT_BASE ""` left `failed` **and** a still-set in-flight marker,
+the next start folded the same lost review a second time, `REVIEW_FAILS` reached
+`REVIEW_FAIL_LIMIT=2`, and the loop exited 7 — which `RestartPreventExitStatus=2 6 7`
+deliberately does not restart. One lost review stopped the loop, while the record
+(`ralph-pi.sh:415-416`) claimed "a review cannot be lost twice".
+
+The fix is a primitive, not a reordering: **`state_apply`** in
+`tools/runner/review_state.sh` writes every key through one temp file and one `mv`, so a
+kill leaves either the whole old state (the fold runs once on restart) or the whole new
+one (it does not run again). Applied to every multi-key transition that was written key by
+key: the startup fold, the `invoked`-with-HEAD reconstruction, the collector's verdict
+(outcome + counter + owed base + both in-flight markers — a kill there used to mark a
+**completed** review as lost, a stop issued against a loop that had worked), the BLOCKED
+arm (a kill there left `blocked` with nothing owed, which is a silently vanished
+obligation, the fail-open that arm exists to prevent), and the end-of-iteration rewrite,
+which was `>"$STATE"` — a **truncate** followed by fourteen `echo`s, so a kill mid-write
+left a partial state file with the obligation possibly among the missing lines.
+
+Reversion experiment (the reviewer's scenario, on a copy of the tree, fold reverted to
+five `state_set` calls):
+
+```
+EXPERIMENT 1: fold reverted to five separate state_set writes
+FAIL AR-2: a death at write 3 of the fold counts the loss exactly once — expected '0|aaaa1111|1', got '7|aaaa1111|2'
+FAIL AR-2: a death at write 4 of the fold counts the loss exactly once — expected '0|aaaa1111|1', got '7|aaaa1111|2'
+FAIL AR-2: the fold writes no key with a separate state_set — state_set  is back inside the in-flight fold
+REVIEW STATE: 6 FAILED
+```
+
+`7|aaaa1111|2` is the reviewer's `rc=7 owed=aaaa1111 fails=2`, reproduced from the pin.
+
+**Two things found while pinning this, both self-caught.** (1) The kill experiment
+replaces the writer, so it proves the *fold* makes one call and cannot see whether that
+call is one rename: making `state_apply` internally key-by-key left the whole suite green
+until a `mv`-shadowing check was added that counts the renames the shipped `state_apply`
+performs (`got '3'` when it is reverted). (2) The collector guard first read
+`state_apply REVIEW_STATUS="$REVIEW_STATUS"`, which the BLOCKED arm also contains, so
+reverting the collector left the suite green; the guard now names a string unique to the
+collector (verified `grep -c` = 1 for each of the three scoped strings). A guard that
+matches another arm is the vacuous pin this suite has now been filed against three times.
+
+### AR-3 (Medium) — confirmed; the ownership gate no longer sits behind a blocking open
+
+`_read_cache` opened first and checked `S_ISREG`/`st_uid` on the descriptor, which is
+right for *content* and wrong for *blocking*: a FIFO at the cache path makes `O_RDONLY`
+wait for a writer forever, in a world-writable `$TMPDIR`, on the review-decision path
+(`model_upstream` is called bare, unlike `model_alive`, which has a `timeout`). Fixed with
+`O_NONBLOCK` on the read — inert for a regular file on Linux, immediate `ENXIO` for a
+FIFO. **The writer had the same hazard and the reviewer did not reach it**: opening a FIFO
+for writing blocks on a missing *reader*, so a planted FIFO could stop the loop inside a
+cache write; `O_NONBLOCK` is on both opens now.
+
+Three selftest claims pin it, run in a child process with a deadline so a regression
+prints a FAIL instead of hanging the suite:
+
+```
+PASS cache: a FIFO at the cache path is REFUSED on read, not blocked
+PASS cache: a FIFO at the cache path does not block the writer
+PASS cache: and the FIFO is still there, untouched, afterwards
+```
+
+Reversions, one flag at a time: removing `O_NONBLOCK` from the reader gives
+`FAIL cache: a FIFO at the cache path is REFUSED on read, not blocked` after the 10 s
+deadline (the child really does hang — `real 0m10.130s`); removing it from the writer
+fails only the writer claim. The reviewer's own preconditions (whether another account can
+compute the path digest) stay unproven and are not claimed proven; the robustness
+argument does not depend on them.
+
+### AR-4 (Low) — confirmed by construction; the reconstructed base must be an ANCESTOR
+
+`rev-parse --verify` accepts any commit object, and `git diff A..B` has no ancestry
+requirement, so a state `HEAD` left behind by a builder `reset`/`rebase` would be reviewed
+as a *revert* of that commit rather than as the commit the lost review covered —
+under-coverage wearing over-coverage's clothes, which is the one thing that branch is
+allowed not to do. The branch now also requires
+`git merge-base --is-ancestor "$STATE_HEAD_SHA" HEAD` and falls through to the
+last-resort refusal otherwise. The reviewer could not produce a repro; one was built:
+a scratch repo with a `side` branch that is not an ancestor of its own `HEAD`, driven
+through the shipped block. Reverting the check gives
+`FAIL AR-4: a HEAD line naming a NON-ancestor is refused, not widened to — expected '7||0',
+got '0|835d0322420201dffa3770bd5eca26735facf713|1'`.
+
+### AR-5 (Low) — confirmed; the pointer no longer lands on a superseded claim
+
+The batch-13 appendix in this file is now marked **superseded in part** with the two
+sentences that are no longer shipped fact ("refused, not guessed" — now the last-resort
+branch only — and "67 cases"). The `CONTINUATION.md` risk line no longer claims no test
+moved, which this batch's own case count contradicts.
+
+### Gates, run and verbatim
+
+- `make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**, ended
+  `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP**. No golden moved; no
+  golden could move, since no C or C++ file is in this diff.
+- `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`:
+  `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract
+  clean`, `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same
+  core`, `gates_smdh SKIP no built .cia to read`, `gates_frames PASS every pinned frame
+  is deterministic and unchanged` (`PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical
+  to the pinned `cpp=`, so `reference.sha256` was **not** regenerated),
+  `gates_batch_integrity PASS project invariants intact`. No gate was pinned, relaxed or
+  edited; `tools/check.sh` is owner-protected and was not touched.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` —
+  **exit 0**, `3DSX mdk.3dsx`.
+- `cmake --build build-linux --target mdk -j8` — **exit 0**, `Built target mdk`.
+  The diff is shell and Python only, so neither target was at risk; both were built
+  anyway rather than assumed.
+- `bash tools/runner/test_review_state.sh` — **exit 0**, `REVIEW STATE: ALL CASES PASS`,
+  **110 cases** (86 + 24: 5 `state_apply` primitive cases, 6 kill-at-write-boundary
+  cases, 1 "the obligation survived the death", 3 AR-4 ancestry cases, 1 non-vacuous
+  fold-body recount, 1 new scoped-absence guard, and 7 new decay guards), 0 FAIL. Five
+  reversion experiments, each shown to FAIL the case that pins it.
+- `python3 tools/runner/model_identity.py selftest --live` — **exit 0**,
+  `MODEL IDENTITY: SELFTEST CLEAN`, **27 PASS** claims (9 identity + 18 cache, 3 of them
+  new).
+- Frame `docs/frames/2026-11-01-review1-atomic-obligation.png` + `.txt`: `1.240 / 247 /
+  0.1819`, md5 `6769a13731983d65cee9df02da6cff37` — byte-identical to its 20 predecessors
+  (21 files now share that md5), and the sidecar says in its own text why a pin cannot
+  show a review-record change. **No emulator run and no Old-3DS hardware run this batch:
+  Old-3DS timing stays UNMEASURED and the Citro3D picture UNVERIFIED (P6).**
+
+### What this batch does not fix
+
+- **AR-1's policy half** stays owner-authorized task (3). The concrete proposal, now that
+  the rationale is honest: `review_outcome` (or the collector) reads the report's
+  `VERDICT:` line and treats anything other than a pass as `failed`, so an `INCOMPLETE`
+  keeps its obligation. That changes when a review clears, which is a policy change to a
+  gate-shaped function, not a builder edit.
+- **The harness has now had four consecutive batches** (batches 12–15) and the game-side
+  priority order has not moved at all. Nothing in this batch was optional — each finding
+  was confirmed against shipped code — but the loop is spending its iterations on the
+  reviewer's subject matter rather than the port's. The next batch returns to the
+  `CONTINUATION.md` game list (a: the missing-`TRAVSPRT.BNI` evidence pair) unless a
+  review forces otherwise.
