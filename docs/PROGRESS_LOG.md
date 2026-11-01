@@ -4174,20 +4174,24 @@ its own text why the pinned picture cannot show an error path.
 the loop whose failure is **invisible** — a review that silently reads "done" is not a crash,
 it is a commit nobody checked — and a state machine you cannot run without starting the loop is
 a state machine you cannot test. `tools/runner/test_review_state.sh` runs it in isolation:
-**44 cases, all PASS**, and every case is a failure that actually happened in this loop, not a
-hypothetical.
+**44 cases, all PASS** — and, corrected in iteration 41 against review-1 finding L2: the
+groups below were miscounted (the real split was 23 state-machine + 8 independence + 12
+decay guards + 1 resolver selftest, not 17 + 8 + 10) and one declared case was dead text,
+swallowed onto the header rule above it. Every *state-machine and decay* case is a failure
+that actually happened in this loop; the independence cases are anticipated
+misconfigurations, each a pair of aliases that exist on this proxy.
 
-Three groups. The state machine itself (17 cases: the torn `.rc`, the timeout that left a
+Three groups. The state machine itself (23 cases: the torn `.rc`, the timeout that left a
 partial report, the empty report, the owed base surviving a restart, a second failure keeping
 the earliest base). The independence guard (8 cases, lifted **verbatim out of `ralph-pi.sh`**
 with `awk` so it is the shipped function under test, and run against aliases that exist on
 this proxy — `qwen`/`swarm-worker` refused as one upstream, `luna`/`luna-compaction` refused
 as one upstream under two aliases, the two DeepSeek hosts refused as one family, an unknown
-alias refused, an unresolvable builder refusing every reviewer). And **decay guards** (10
+alias refused, an unresolvable builder refusing every reviewer). And **decay guards** (12
 cases) that assert the *old spellings are gone from the shipped file*: `[ "$RRC" -ne 0 ]` must
 be absent, `state_set REVIEW_STATUS "$OUTCOME"` must be present, `REVIEW_FAILS` and
 `REVIEW_OWED_BASE` must reach the state file, and both reviewer chains must ask
-`reviewer_rejected`. The guards strip comment lines before matching, because `ralph-pi.sh`
+`reviewer_reject_reason` (renamed in iteration 41). The guards strip comment lines before matching, because `ralph-pi.sh`
 documents its own bugs in prose to stop them being tidied back and a naive grep reads that
 prose as code — the same trap `audit_c_with_classes.py` had to solve.
 
@@ -4248,3 +4252,385 @@ SELFTEST CLEAN`, 9/9 including the live-proxy agreement check.
 - No emulator run and no Original 3DS hardware run: **Old-3DS timing stays unmeasured**, and
   the Citro3D picture stays unverified (AGENTS.md §11 P6). No display other than the pinned
   frame's own headless capture was used, so P7 is not engaged this batch.
+
+## Iteration 41 (2026-11-01): review-1's findings — a review that was DISPATCHED and never COLLECTED
+
+The tree arrived **dirty** from a timed-out iteration: `ralph-pi.sh`,
+`tools/runner/{review_state.sh,test_review_state.sh,model_identity.py}`,
+`docs/{CONTINUATION.md,PROGRESS_LOG.md}` modified, and the frame pair
+`docs/frames/2026-11-01-review1-interrupted-review.{png,txt}` present but untracked.
+Per the builder rule that in-flight work is finished, gated and committed before anything
+new is started, this is **batch 13**, and it is the remediation of
+`logs/ralph-pi/run-20261101-025705/review-1.md`. No game arithmetic, render path, golden,
+test fixture or public interface is touched by it — the slice is the loop's **review
+record**, which is the one part of the harness whose failure mode is invisible.
+
+**Prior-solution lookup (mandatory, done first).** Neither Obsidian MCP nor Cognee MCP is
+exposed to this harness, so the vault was read directly, read-only, from
+`/mnt/nas/Vaults/port-docs`. Four notes bear on this slice:
+
+- `30-architecture/patterns/a-warning-that-exits-zero-is-a-pass-generator-with-better-manners.md`
+  — finding **L3** is this note's exact shape one function smaller: a helper whose prose
+  says "refuse" while its exit status says `0` is "a pass generator with better manners",
+  and the note's rule 1 is "a validator must return in the channel its callers read".
+- `30-architecture/patterns/unattended-console-loop-needs-a-freeze-watchdog.md` — the
+  **premise** of **H1**: the watchdog restarts the unit by design, so the loop's second
+  requirement is "a way to restart from a **known state**". A restart that forgets an
+  in-flight obligation is a restart from an unknown state.
+- `30-architecture/patterns/model-identity-is-the-upstream-string-not-the-alias.md` (cited
+  in iteration 40 and still the rule **M1** touches) and
+  `30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md`.
+- `40-incidents/2026-08-24-headless-orchestrator-fabricated-done-audits-three-strikes.md` —
+  "existence of a record entry is not evidence when the writer owns the pen". **H1** is that
+  lesson inverted: the **absence** of a record entry was what cleared the obligation, and
+  the process that would have written it was the one that died.
+
+### Review-1's findings, in order
+
+Review-1 filed **no Critical** and **one High**; its verdict was INCOMPLETE on H1, M1, M2
+and four Lows. All seven are dispositioned below — none is rebutted, because each was
+confirmed against the shipped code before it was changed.
+
+**H1 (High) — FIXED.** A review that was dispatched and then died was recorded as
+`done`. The mechanism was confirmed by reading the shipped script: the owed range was
+written **only in the collector**, and the collector runs after `wait "$REVIEW_PID"`, with
+the whole gates phase in between. `REVIEW_STATUS` was written at dispatch but **never
+read at startup** (`grep -n "state_get REVIEW_STATUS" ralph-pi.sh` → no match), so a
+systemd restart, a watchdog phase limit, an operator stop, an OOM kill or a reboot inside
+that window left a commit that nobody reviewed and no record that it was owed. The
+reviewer's own scenario is this loop's history: the tree arrived dirty from a timed-out
+iteration, which is the kill window, made visible.
+
+The fix moves the obligation to where it cannot be lost with the collector:
+
+- **at dispatch** — `REVIEW_INFLIGHT_BASE` / `REVIEW_INFLIGHT_HEAD` are persisted next to
+  `state_set REVIEW_STATUS "invoked"`;
+- **at startup** — a non-empty in-flight base is folded into the owed set through the new
+  `review_inflight_owed` (earliest base wins, exactly like a failed review), counted in
+  `REVIEW_FAILS`, and the marker is cleared, so it fires once;
+- **the unreconstructible case is refused, not guessed** — a state file that says
+  `invoked` with **no** recorded range (written by the previous revision) makes the loop
+  stop with exit 7 and a message naming the manual repair. The `HEAD` line in that file
+  records the *previous* iteration, so pointing the owed range at it would clear the wrong
+  commit and hand the real one a false all-clear;
+- **the collector clears the marker only after the verdict is written** — a kill between
+  the two leaves the range owed (one redundant review), which is the safe direction, not
+  `invoked` with no range.
+
+`review_inflight_owed` lives in `tools/runner/review_state.sh` beside the other state
+transitions, so it is testable without starting the loop.
+
+**M1 (Medium) — FIXED.** The builder's identity was resolved **once**, before the worker
+ran; the run-time fallback then reassigned `RUN_MODEL` without re-resolving
+`RUN_UPSTREAM`/`RUN_FAMILY`, so the independence guard compared the reviewer against the
+**abandoned** route's family, and `review-$ITER.identity.txt` printed a self-contradictory
+builder line. The fallback arm now re-resolves both and logs the route that actually
+answered. The trigger needs an overridden `WORKER_MODELS`, so with the shipped chains it
+does not bite — but the shipped chains are not the only chains, and the guard exists for
+the case where they are not.
+
+**M2 (Medium) — FIXED.** The frame sidecar was the bare three boilerplate lines, with no
+sentence saying why the picture did not move — the omission review-2 filed inside F4
+against the previous sidecar, which `docs/frames/README.md` requires "in its own text".
+The new sidecar says what the batch changed (the loop's review record, nothing in the
+game), that the png is byte-identical to the eighteen records before it (md5
+`6769a137…`, 19 files in `docs/frames` carry that md5), that the gap is unchanged at
+1.240 / 247 / 0.1819, and **what shows the change instead**: the 67-case state-machine
+suite and the reversion experiments.
+
+**L1 (Low) — FIXED.** The header rule and the first case were concatenated onto one line,
+so the `#` swallowed `check "rc 0 stays 0"` and the case could never run. It is on its own
+line now, and the suite's count moved from 44 to **67**.
+
+**L2 (Low) — FIXED.** The Iteration 40 entry's group counts did not add up (17 + 8 + 10
+against a claimed 44) and its "every case is a failure that actually happened" was false of
+the eight independence cases, which are anticipated misconfigurations. The counts are
+corrected above the counts of the shipped file, and the claim is narrowed to the
+state-machine and decay cases.
+
+**L3 (Low) — FIXED.** `reviewer_rejected` always exited 0 on every arm while reading like
+a predicate, so a future `if reviewer_rejected x; then` or `reviewer_rejected x >/dev/null
+&& continue` would have silently refused (or accepted) every candidate. It is
+`reviewer_reject_reason` now — the answer is the text, the status is 0 on both arms by
+design, and the name says which is which. This is the vault note *"a warning that exits
+zero is a pass generator with better manners"* applied to a helper rather than a gate:
+the contract belongs in the name when the status cannot carry it.
+
+**L4 (Low) — FIXED.** The live alias→upstream table was cached at a fixed
+`$TMPDIR/mdk-model-info.json` — a fixed name in a world-writable directory, with no
+ownership check and no keying on the proxy — and then trusted for the whole TTL as *the*
+answer to "what model is this alias". The cache is now
+`mdk-model-info-<uid>-<sha256(url+key)>.json`, written 0600 with `fchmod` (because
+`O_CREAT` does not touch the mode of a file that already existed), and a cache that is
+not ours, not parseable, or not a str→str map is **refused** in favour of asking the
+proxy, which is the truth.
+
+### The guards were proven to fail — re-run here, not inherited
+
+A guard that cannot fail is a pass generator, which is the whole subject of this batch.
+Each new guard was reverted in place and the suite re-run; the tree was restored after
+each experiment and the suite re-run green:
+
+| reversion | what the suite said |
+|---|---|
+| startup fold of an uncollected review removed | `FAIL H1: an uncollected review is owed at startup — expected '0|aaaa1111|1', got '0||1'`, `FAIL H1: a second lost review stops the loop`, `FAIL H1: startup folds an uncollected review into owed` — **3 FAILED** |
+| dispatch-time persistence removed | `FAIL H1: the range is persisted at dispatch` — **1 FAILED** |
+| fallback identity re-resolve removed | `FAIL M1: identity is resolved on the first route AND the fallback (2 reads) — expected '2', got '1'` — **1 FAILED** |
+| `reviewer_reject_reason` renamed back | `FAIL reviewer_reject_reason could not be lifted out of ralph-pi.sh`, `FAIL F3: …` ×2, `FAIL L3: …` ×2 — **5 FAILED** |
+| cache path back to the fixed, unowned name | `FAIL cache: the path carries the uid`, `FAIL cache: the path changes with the proxy`, `FAIL cache: the path changes with the key` — `MODEL IDENTITY: 1 FAILED` |
+
+The H1 cases are **not** retyped: `tools/runner/test_review_state.sh` lifts the shipped
+startup block out of `ralph-pi.sh` with `awk` and runs it against a scratch state file,
+so a rewrite that drops the call fails the way a dropped call should.
+
+### Gate results (verbatim, all three re-run on this tree)
+
+Nothing was pinned, relaxed or edited; no golden moved; `tests/frames/reference.sha256`
+was not regenerated; `tools/check.sh` and the `PROTECTED` set were not touched.
+
+- `make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**, ending
+  `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP**.
+- `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`:
+
+  ```
+    PASS   audit_c_with_classes     0 violations
+    PASS   gates_vfp                0 blockers
+    PASS   audit_arm11_math         contract clean
+    PASS   audit_r11_idiv           no candidates
+    PASS   gates_core_parity        both targets link the same core
+    SKIP   gates_smdh               no built .cia to read
+    PASS   gates_frames             every pinned frame is deterministic and unchanged
+    PASS   gates_batch_integrity    project invariants intact
+  CHECK: ALL GATES PASSED
+  ```
+
+  with `PASS L3_f1.bmp sha=58615fc85d02e009` and `BATCH INTEGRITY: PASS`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` —
+  **exit 0**, `3DSX mdk.3dsx`. `cmake --build build-linux --target mdk -j8` — **exit 0**,
+  `Built target mdk`. The diff is shell and Python, so neither target was at risk; both
+  were built anyway rather than assumed.
+- `bash tools/runner/test_review_state.sh` — **exit 0**, `REVIEW STATE: ALL CASES PASS`,
+  **67 PASS / 0 FAIL**.
+- `python3 tools/runner/model_identity.py selftest --live` — **exit 0**,
+  `MODEL IDENTITY: SELFTEST CLEAN`: 9 identity claims plus 8 cache claims, including the
+  live-proxy agreement check.
+- `bash -n ralph-pi.sh` — **exit 0**.
+- Frame: `DISPLAY=:99 tools/publish_frame.sh review1-interrupted-review` published
+  `docs/frames/2026-11-01-review1-interrupted-review.png` + `.txt` with
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`; the png is md5
+  `6769a13731983d65cee9df02da6cff37`, byte-identical to the eighteen records before it,
+  as expected with no render-path and no simulation change. The capture was taken **after**
+  the gates, on the tree this batch commits.
+- No emulator run and no Original 3DS hardware run: **Old-3DS timing stays unmeasured**,
+  and the Citro3D picture stays unverified (AGENTS.md §11 P6). The only display used was
+  the pinned frame's own headless `DISPLAY=:99` capture, so P7 is not otherwise engaged.
+
+### What is next
+
+Unchanged by this batch: the priority order in `docs/CONTINUATION.md` stands, and its
+first item is still **F4 from review-2** — ship the committed evidence pair
+`docs/evidence/2026-11-01-L7-sprites-missing-scene.{png,txt}` (symlink farm plus a 4-byte
+`TRAVSPRT.BNI`, `DISPLAY=:99`, lavapipe, command and revision in the sidecar) for the
+missing-`TRAVSPRT.BNI` path, which today has no committed evidence pair. Then **F3 from
+review-1**: add the mixer column to `dumpRunner` and the harness and regenerate
+`L7_t120_runner_{a,b}` from the oracle. Then the C3D depth/blend state, `MeshDraw::world`
+on the Citro3D backend, the frame-1 middle band, and `FrameBlend.Lerp`'s rounding — all
+with evidence in `docs/OPEN_ITEMS.md`.
+
+**Owner-authorized tasks remain owner-authorized** and were not taken: protect
+`ralph-pi.sh`, `ralph.sh`, `docs/KILO_RALPH_LOOP_POLICY.md` and `.kilo/agent/*` in
+`gates_batch_integrity.py`; wire `test_review_state.sh` into `tools/check.sh`; and decide
+whether an `INCOMPLETE` verdict should keep the owed range owed (review-1's open question
+3 — a policy change to `review_outcome`, not a builder's call).
+
+**Old-3DS performance readiness is still UNMEASURED** and is not claimed by this batch.
+
+---
+
+## Iteration 41 (2026-11-01): review-1's findings — a review nobody collected is a review that did not happen
+
+The tree arrived **dirty** from a timed-out iteration: `ralph-pi.sh`,
+`tools/runner/review_state.sh`, `tools/runner/test_review_state.sh`,
+`tools/runner/model_identity.py` and both state docs modified, plus one frame pair
+published and left untracked. Per the builder rule, that in-flight work was finished, gated
+and committed before anything new was started. It is **batch 13**, and it is the remediation
+of `logs/ralph-pi/run-20261101-025705/review-1.md`, whose verdict was **INCOMPLETE** on one
+High, two Mediums and four Lows. **Nothing is rebutted**: every finding was reproduced
+against the code and fixed. What this iteration added to the inherited work is the part that
+was missing — this entry, the reversion experiments re-run rather than asserted, and a
+wrong case count in the batch's own frame sidecar.
+
+**Prior-solution lookup (mandatory, done first).** Obsidian MCP is not exposed in this
+harness, so `/mnt/nas/Vaults/port-docs` was read directly, read-only. The notes on this
+subsystem are the ones iteration 40 cited and they still describe the failure exactly:
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md` — H1 is
+that pattern one level up, because the missing input is not a file the gate failed to read
+but the gate's own collector, and its absence reaches the same record as "the diff was
+reviewed"; `model-identity-is-the-upstream-string-not-the-alias.md` — M1 and L4 are both
+"the guard keyed on the wrong thing": M1 on the abandoned alias, L4 on a file it never
+checked the owner of; and `instrument-selftest-a-deployable-adversarial-arm.md`, which is
+why `model_identity.py selftest` grew cache claims instead of a comment. **No prior solution
+in the vault covers H1's actual lesson — write the obligation down before the process that
+would write it can die** — so it is written up here as the record for it. Cognee MCP is not
+exposed in this harness.
+
+### Review-1's findings, in order
+
+**H1 (High, confirmed) — FIXED.** The owed range was written by the **collector**, and the
+collector runs after `wait`, with the entire gates phase in front of it. A restart, watchdog
+phase limit, operator stop, OOM kill or reboot inside that window meant the collector never
+ran: `REVIEW_STATUS` stayed `invoked`, nothing was owed, and the commit underneath it was
+reviewed by nobody — while `grep -n "state_get REVIEW_STATUS" ralph-pi.sh` returned nothing,
+so the persisted `invoked` was inert. This is the third way a mandatory review fails to
+happen, after review-2's F1 (it died) and F2 (it could not be dispatched).
+
+Fix, in the direction the reviewer recommended: the range is persisted **at dispatch**
+(`ralph-pi.sh:646-649`, `REVIEW_INFLIGHT_BASE`/`_HEAD` written next to
+`state_set REVIEW_STATUS "invoked"`) and cleared only once a verdict is recorded
+(`:740-743`, deliberately *after* `review_owed`, so a kill between the two leaves the range
+owed — one redundant review — rather than `invoked` with no range). At startup a non-empty
+in-flight base is folded into the owed set through `review_inflight_owed`
+(`tools/runner/review_state.sh:99`, the same earliest-base rule as a failure, so a newer
+loss cannot shrink an older obligation), counted in `REVIEW_FAILS`, and the marker is cleared
+so it cannot fire twice (`ralph-pi.sh:369-383`). Two lost reviews stop the loop at **exit 7**,
+which `tools/install_ralph_pi_service.sh:75` already lists in `RestartPreventExitStatus`, so
+the unit stops instead of restarting into a third loss. An `invoked` with **no** recorded
+range is refused (`:386-393`, exit 7 with the operator instruction) rather than
+reconstructed: the state file's `HEAD` line records the *previous* completed iteration, so
+pointing the owed range at it would clear the wrong commit and hand the real one a false
+all-clear — the "could not tell" path must not reach the "all clear" path.
+
+Pinned two ways: 5 `review_inflight_owed` cases for the arithmetic, and 6 end-to-end cases
+that **lift the shipped startup block out of `ralph-pi.sh` with `awk` and run it** against a
+scratch state file (clean restart owes nothing; an uncollected review is owed and counted;
+the marker is cleared; a second loss exits 7; an older owed base is not overwritten;
+`invoked` with no range exits 7). A rewrite that drops the call fails the lift, not just the
+arithmetic.
+
+**M1 (Medium, confirmed) — FIXED.** The builder's identity was resolved once, before the
+worker ran, and the fallback arm reassigned `RUN_MODEL` without re-resolving
+`RUN_UPSTREAM`/`RUN_FAMILY` — so on an overridden `WORKER_MODELS` a reviewer in the *actual*
+builder's family passed as independent and reviewed its own weights, and
+`review-$ITER.identity.txt` recorded a self-contradictory builder line. The fallback now
+re-resolves and logs it (`ralph-pi.sh:448-457`). Pinned behaviourally — `probe
+litellm/deepseek-v4.1-flash-nvidia litellm/deepseek-v4.1-flash` must REJECT, which only holds
+if the identity is the route that answered — and structurally, by counting exactly **2**
+`RUN_UPSTREAM="$(model_upstream "$RUN_MODEL")"` reads in the shipped file (first route *and*
+fallback), so deleting either one fails.
+
+**M2 (Medium, confirmed) — FIXED.** The previous batch's sidecar was the bare three lines,
+which is the omission review-2 filed inside F4 and which `docs/frames/README.md` requires
+"in in its own text". This batch publishes a **new** pair
+(`docs/frames/2026-11-01-review1-interrupted-review.{png,txt}`) rather than editing a
+committed one, and its sidecar says why a pinned frame cannot show a review-record change,
+with the measurement: the png is byte-identical to the eighteen records before it (md5
+`6769a13731983d65cee9df02da6cff37`, 19 files in `docs/frames` carry it — recounted, not
+copied) and the gap is unchanged at 1.240 / 247 / 0.1819.
+
+**L1 (Low, confirmed) — FIXED.** `test_review_state.sh:41` had the header rule and the first
+case on one line, so `#` swallowed `check "rc 0 stays 0"`: 45 cases declared, 44 ran, and the
+dead one can never fail. Split onto its own line; the group went 4 → 5.
+
+**L2 (Low, confirmed) — FIXED.** Iteration 40's group counts (17 + 8 + 10 against "44") did
+not reconcile, and "every case is a failure that actually happened" was false of the eight
+independence cases. Corrected in place to **23 state-machine + 8 independence + 12 decay + 1
+resolver selftest = 44 running**, and the sentence now says "every *state-machine and decay*
+case". Recounted from `git show HEAD:tools/runner/test_review_state.sh` rather than taken
+from the reviewer: 45 declared, one swallowed by L1, one sitting in the untaken `else` of the
+selftest case — 44 running, which is what the suite printed.
+
+**L3 (Low, confirmed) — FIXED.** `reviewer_rejected` always exited 0 while reading like a
+predicate, so any future `if reviewer_rejected x; then` (or `… >/dev/null && continue`) would
+silently refuse — or, inverted, accept — every candidate. Renamed to
+`reviewer_reject_reason`: the answer is the text, and the status is now **pinned to 0 on both
+arms** by two cases, so the contract is in the name and in the test.
+
+**L4 (Low, confirmed) — FIXED.** The live alias→upstream table was cached at a fixed
+`$TMPDIR/mdk-model-info.json`, world-writable directory, no ownership check, not keyed on the
+proxy, and then trusted for the TTL as *the* identity answer. The reviewer marked the trigger
+"needs investigation for this host"; **the trigger is real here**: `/home` holds
+`coleshores`, `museagent` and `piagent`, `/tmp` is `drwxrwxrwt`, the loop runs as uid 994, and
+the old fixed path is already occupied by a file owned by `piagent` — a different local
+account writing it first would have been read with no check, because the code had none. The
+path is now `mdk-model-info-<uid>-<sha256(url+key)[:16]>.json` at 0600 (`O_CREAT` mode *and*
+`fchmod`, because `O_CREAT` does not touch the mode of a file that already existed), and
+`_read_cache` refuses a file that is not ours, not parseable, not an object, or not a
+str→str map — falling through to **ask the proxy**, which is the truth, rather than to the
+static map because a file was poisoned. 8 new selftest claims, including that the path moves
+with the url and with the key.
+
+### Reversion experiments (re-run on this iteration, not inherited)
+
+A guard that cannot fail is a pass generator, so each new guard was broken and the suite
+re-run. All five FAIL, and the file was restored after each (`git diff --stat` back to the
+inherited 103/34 lines):
+
+| reverted | result |
+|---|---|
+| delete `state_set REVIEW_INFLIGHT_BASE "$REVIEW_INFLIGHT_BASE"` | 1 FAIL — `H1: the range is persisted at dispatch … is missing from ralph-pi.sh` |
+| delete the startup fold `REVIEW_OWED_BASE="$(review_inflight_owed …)"` | 3 FAIL — `an uncollected review is owed at startup — expected '0\|aaaa1111\|1', got '0\|\|1'`, `a second lost review stops the loop — expected '7\|bbbb2222\|2', got '7\|\|2'`, plus the decay guard |
+| make `review_inflight_owed` a passthrough | 3 FAIL — `an uncollected review owes its own base — expected '1111', got ''` and the two startup cases |
+| delete the fallback's `RUN_FAMILY="$(model_family "$RUN_MODEL")"` | 1 FAIL — `M1: the fallback re-resolves the family too … is missing` |
+| rename `reviewer_reject_reason` back to `reviewer_rejected` | 5 FAIL — the lift fails, both chain guards fail, and the name guards fail |
+
+The second and third rows are the important ones: they show the end-to-end cases fail on the
+**behaviour** (owed stays empty, so the loop would have advanced an unreviewed commit), not
+merely on the string they grep for.
+
+### Gate results (verbatim, all re-run on this tree)
+
+Nothing was pinned, relaxed or edited; no golden moved; `tests/frames/reference.sha256` was
+not regenerated.
+
+- `make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**, 440 `PASS` lines,
+  ending `All cases match the oracle.`
+- `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`:
+  `PASS audit_c_with_classes 0 violations`, `PASS gates_vfp 0 blockers`,
+  `PASS audit_arm11_math contract clean`, `PASS audit_r11_idiv no candidates`,
+  `PASS gates_core_parity both targets link the same core`,
+  `SKIP gates_smdh no built .cia to read`,
+  `PASS gates_frames every pinned frame is deterministic and unchanged`
+  (`PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`),
+  `PASS gates_batch_integrity project invariants intact`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` —
+  **exit 0**, `3DSX mdk.3dsx` (`stage_romfs: staged 69 files, 79M`).
+  `cmake --build build-linux --target mdk -j8` — **exit 0**, `[100%] Built target mdk`. The
+  diff is shell and Python, so neither target was at risk; both were built anyway rather than
+  assumed.
+- `bash tools/runner/test_review_state.sh` — **exit 0**, `REVIEW STATE: ALL CASES PASS`,
+  **67** cases (44 before this batch: +5 `review_inflight_owed`, +6 H1 end-to-end, +3
+  independence, +8 decay, +1 un-swallowed by L1).
+- `python3 tools/runner/model_identity.py selftest --live` — **exit 0**,
+  `MODEL IDENTITY: SELFTEST CLEAN`: the 9 identity claims (including agreement with the live
+  proxy) plus the 8 new cache claims.
+- `bash -n` on `ralph-pi.sh`, `tools/runner/review_state.sh` and
+  `tools/runner/test_review_state.sh` — clean.
+- Frame: `docs/frames/2026-11-01-review1-interrupted-review.png` + `.txt`,
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical to its predecessors, as
+  expected with no render-path and no simulation change.
+- No emulator run and no Original 3DS hardware run, so **P7 is not engaged** and **Old-3DS
+  timing stays unmeasured**; the Citro3D picture stays unverified (AGENTS.md §11 P6).
+
+### The reviewer's open questions, and what was decided
+
+1. *Auto re-dispatch an uncollected review, or refuse to start?* Both are fail-closed. The
+   implementation takes the first where the obligation is **reconstructible** — the loop stays
+   autonomous and the next mandatory review simply covers a wider range — and the second where
+   it is not, because guessing a range would clear the wrong commit. Two losses in a row stop
+   the loop either way: a harness restarted faster than reviews can be collected is a
+   phase-limit problem, not a model problem.
+2. *`ralph-pi.sh` is self-modifying and outside `PROTECTED`.* Still open, still
+   owner-authorized, and recorded as such in `docs/CONTINUATION.md`. This batch edits it
+   because the finding is *in* it and no rule forbids the edit; the owner decision is whether
+   to forbid it.
+3. *An `INCOMPLETE` verdict still clears the owed range.* Unchanged, and still an owner
+   decision (a policy change to `review_outcome`), recorded in `docs/CONTINUATION.md`.
+4. *Does the sidecar rule apply to a batch with no render change at all?* Yes — that is how
+   M2 was read and fixed, and this entry is the second place the answer is written down.
+
+### What is next
+
+Unchanged from `docs/CONTINUATION.md`: the game-side list is still (a) the missing-`TRAVSPRT.BNI`
+evidence pair, (b) `dumpRunner`'s missing mixer column, (c) the C3D depth/blend state and the
+per-draw matrix, (d) the middle 173 px of the pinned frame, (e) `FrameBlend`'s `Vector3.Lerp`
+rounding. **Old-3DS performance readiness remains UNMEASURED and is not claimed.**

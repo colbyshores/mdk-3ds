@@ -149,30 +149,40 @@ state_set() { local kv="$1=$2" k="${1%%=*}"; grep -v "^$k=" "$STATE" 2>/dev/null
 model_upstream() { python3 "$ROOT/tools/runner/model_identity.py" upstream "$1" 2>/dev/null || true; }
 model_family()   { python3 "$ROOT/tools/runner/model_identity.py" family   "$1" 2>/dev/null || true; }
 
-# reviewer_rejected <candidate> — prints why this route may NOT review the
+# reviewer_reject_reason <candidate> — prints WHY this route may NOT review the
 # builder's work, or nothing when it may. RUN_MODEL / RUN_UPSTREAM / RUN_FAMILY
-# are the current iteration's builder route, resolved below.
-reviewer_rejected() {
+# are the current iteration's builder route, resolved below (and re-resolved if
+# the worker falls back to another route).
+#
+# The answer is in the TEXT, and the exit status is always 0 by design: a reason
+# is not a failure, and a caller that wants to branch on it branches on `-n`.
+# The function used to be called `reviewer_rejected`, which reads like a
+# predicate while always exiting 0 — so `if reviewer_rejected x; then` or
+# `reviewer_rejected x >/dev/null && continue` would have silently refused (or
+# accepted) every candidate. The name now says what it returns, and
+# tools/runner/test_review_state.sh pins the status on both arms.
+reviewer_reject_reason() {
     local cand="$1" cand_upstream cand_family
-    [ "$cand" = "$RUN_MODEL" ] && { printf 'it is the builder route itself\n'; return; }
+    [ "$cand" = "$RUN_MODEL" ] && { printf 'it is the builder route itself\n'; return 0; }
     if [ -z "${RUN_FAMILY:-}" ]; then
         printf 'the builder route %s resolves to no upstream, so no reviewer can be proved different from it\n' "$RUN_MODEL"
-        return
+        return 0
     fi
     cand_upstream="$(model_upstream "$cand")"
     cand_family="$(model_family "$cand")"
     if [ -z "$cand_family" ]; then
         printf 'it resolves to no upstream, so it cannot be proved independent\n'
-        return
+        return 0
     fi
     if [ -n "$cand_upstream" ] && [ "$cand_upstream" = "$RUN_UPSTREAM" ]; then
         printf 'it is the builder upstream %s under a different alias\n' "$cand_upstream"
-        return
+        return 0
     fi
     if [ "$cand_family" = "$RUN_FAMILY" ]; then
         printf 'it is the builder family %s (%s and %s are one model on two hosts)\n' "$cand_family" "$cand" "$RUN_MODEL"
-        return
+        return 0
     fi
+    return 0
 }
 
 pi_run() {
@@ -338,6 +348,15 @@ LAST_REVIEW_ITER="$(state_get LAST_REVIEW_ITER)"; LAST_REVIEW_ITER="${LAST_REVIE
 # REVIEW_FAILS makes the `-ge` limit below error and read as FALSE.
 REVIEW_FAILS="$(review_int "$(state_get REVIEW_FAILS)")"
 REVIEW_OWED_BASE="$(state_get REVIEW_OWED_BASE)"
+# The third way a required review fails to happen (external review 2026-11-01,
+# finding H1): the collector is the only thing that turns `invoked` into an
+# outcome, and it runs after `wait` — with the whole gates phase in between. A
+# restart, watchdog kill, operator stop, OOM or reboot in that window means the
+# collector never runs, so the obligation is lost with it. The range is therefore
+# persisted at DISPATCH and read back here.
+REVIEW_INFLIGHT_BASE="$(state_get REVIEW_INFLIGHT_BASE)"
+REVIEW_INFLIGHT_HEAD="$(state_get REVIEW_INFLIGHT_HEAD)"
+REVIEW_LEFTOVER="$(state_get REVIEW_STATUS)"
 guard
 heartbeat_start
 RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
@@ -346,6 +365,35 @@ mkdir -p "$RUN_DIR"
 log "loop start worker_chain=[$WORKER_MODELS] reviewer=$REVIEWER_MODEL reviewer_fallbacks=[$REVIEWER_FALLBACKS] pid=$$ run=$RUN_ID"
 if [ -n "$REVIEW_OWED_BASE" ]; then
     log "a review is OWED from an earlier run: ${REVIEW_OWED_BASE:0:8} is unreviewed; the next mandatory review covers ${REVIEW_OWED_BASE:0:8}..HEAD, not just the new commit"
+fi
+if [ -n "$REVIEW_INFLIGHT_BASE" ]; then
+    # Dispatched, never collected: nobody knows whether the reviewer finished,
+    # so nobody may claim it did. Fold it into the owed set through the same
+    # earliest-base rule as a failed review, and count it as a review that did
+    # not happen — the counter's meaning is "consecutive reviews that never
+    # reached a verdict", which an interrupted one is.
+    log "a review was DISPATCHED and never COLLECTED: ${REVIEW_INFLIGHT_BASE:0:8}..${REVIEW_INFLIGHT_HEAD:0:8} was left marked 'invoked' and the collector never ran (restart, watchdog phase limit, operator stop, OOM or reboot — the gates phase sits in this window)"
+    REVIEW_OWED_BASE="$(review_inflight_owed "$REVIEW_OWED_BASE" "$REVIEW_INFLIGHT_BASE")"
+    REVIEW_FAILS=$((REVIEW_FAILS + 1))
+    state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
+    state_set REVIEW_FAILS "$REVIEW_FAILS"
+    state_set REVIEW_INFLIGHT_BASE ""
+    state_set REVIEW_INFLIGHT_HEAD ""
+    REVIEW_INFLIGHT_BASE=""
+    REVIEW_INFLIGHT_HEAD=""
+    log "that review is recorded as NOT done: ${REVIEW_OWED_BASE:0:8} is owed, and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
+    if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
+        log "STOP: $REVIEW_FAILS reviews have been lost without a verdict — the harness is being restarted faster than reviews can be collected, which is a phase-limit or reviewer-route problem a model cannot fix from inside the loop"
+        exit 7
+    fi
+elif [ "$REVIEW_LEFTOVER" = "invoked" ]; then
+    # `invoked` with no recorded range: a state file written before the range was
+    # persisted at dispatch. The obligation cannot be reconstructed from what is
+    # in the file — the HEAD line records the PREVIOUS completed iteration, so
+    # pointing the owed range at it would mark the wrong commit and hand the real
+    # one a false all-clear. Refuse rather than guess.
+    log "FATAL: the state file says a review was invoked but records no range to review, so the obligation cannot be reconstructed. Either write 'REVIEW_OWED_BASE=<sha of the unreviewed commit>' into $STATE, or delete $STATE to start clean; then restart the loop."
+    exit 7
 fi
 phase startup
 while :; do
@@ -400,8 +448,9 @@ itself, not left to the reader:
 2. FAIL CLOSED. A mandatory review that cannot be dispatched is recorded as
    BLOCKED, counted in REVIEW_FAILS, and STOPS the loop (exit 8). It is never
    logged as a cost skip. A review that WAS dispatched and then died is recorded
-   as FAILED, not done, and its commit stays OWED: the range is persisted, so a
-   restart cannot forget it and the next mandatory review covers the unreviewed
+   as FAILED, not done, and its commit stays OWED: the range is persisted AT
+   DISPATCH, so a restart cannot forget it — even one that kills the loop before
+   its own collector runs — and the next mandatory review covers the unreviewed
    commits instead of only the newest one. "Could not check" must not reach the
    same path as "all clear" (vault: a-gate-that-skips-on-missing-input-is-a-pass-generator).
 
@@ -442,6 +491,16 @@ POLICY_PRECEDENCE
             log "iter=$ITER worker rc=$RC on $RUN_MODEL — retrying once on $NEXT_MODEL"
             phase worker-fallback
             RUN_MODEL="$NEXT_MODEL"
+            # Re-resolve the builder's identity for the route that ACTUALLY
+            # answered (external review 2026-11-01, finding M1). The identity is
+            # resolved above, before the worker runs; if the fallback is what
+            # wrote the batch and the guard still compares against the abandoned
+            # route's family, a reviewer in the new builder's own family passes
+            # as independent and reviews its own weights. That is exactly the F3
+            # scenario, re-opened through the fallback arm instead of the chain.
+            RUN_UPSTREAM="$(model_upstream "$RUN_MODEL")"
+            RUN_FAMILY="$(model_family "$RUN_MODEL")"
+            log "iter=$ITER builder identity re-resolved for the route that answered: $RUN_MODEL upstream=${RUN_UPSTREAM:-UNRESOLVED} family=${RUN_FAMILY:-UNRESOLVED}"
             pi_run "$NEXT_MODEL" "$RUN_DIR/.prompt-$ITER.md" "$ILOG.fb" "$ILOG.fb.err"
             RC=$?
             [ "$RC" -eq 124 ] && recover_session "$ITER.fb"
@@ -465,6 +524,8 @@ POLICY_PRECEDENCE
     REVIEW_SKIPPED_REASON=""
     REVIEW_BLOCKED=0
     REVIEW_STATUS="none"
+    REVIEW_INFLIGHT_BASE=""
+    REVIEW_INFLIGHT_HEAD=""
     if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
         # --- Risk classification -------------------------------------------------
         RISK="$(extract_risk)"
@@ -528,7 +589,7 @@ POLICY_PRECEDENCE
                 printf '\n--- RISK CONTEXT ---\nDeclared risk: %s. Decision: %s.\n' "$RISK" "$REVIEW_DECISION_REASON"
             } >"$RP"
             REVIEW_MODEL=""
-            REJECT="$(reviewer_rejected "$REVIEWER_MODEL")"
+            REJECT="$(reviewer_reject_reason "$REVIEWER_MODEL")"
             if [ -n "$REJECT" ]; then
                 # A reviewer on the builder's own upstream (or family, or one
                 # whose identity cannot be resolved at all) is not an independent
@@ -542,7 +603,7 @@ POLICY_PRECEDENCE
             fi
             if [ -z "$REVIEW_MODEL" ]; then
                 for candidate in $REVIEWER_FALLBACKS; do
-                    REJECT="$(reviewer_rejected "$candidate")"
+                    REJECT="$(reviewer_reject_reason "$candidate")"
                     if [ -n "$REJECT" ]; then
                         log "iter=$ITER reviewer fallback $candidate refused: $REJECT"
                         continue
@@ -578,6 +639,14 @@ POLICY_PRECEDENCE
                 REVIEW_PID=$!
                 REVIEW_STATUS="invoked"
                 state_set REVIEW_STATUS "invoked"
+                # Persist the range NOW, at dispatch, not in the collector: the
+                # collector runs after `wait`, with the gates phase in between,
+                # and a loop killed in that window would otherwise leave an
+                # unreviewed commit and no record of it (H1).
+                REVIEW_INFLIGHT_BASE="$REVIEW_BASE"
+                REVIEW_INFLIGHT_HEAD="$HEAD_AFTER"
+                state_set REVIEW_INFLIGHT_BASE "$REVIEW_INFLIGHT_BASE"
+                state_set REVIEW_INFLIGHT_HEAD "$REVIEW_INFLIGHT_HEAD"
                 log "iter=$ITER review INVOKED on $REVIEW_MODEL — $REVIEW_DECISION_REASON"
             else
                 # FAIL CLOSED. A mandatory review with no eligible reviewer is a
@@ -664,6 +733,14 @@ POLICY_PRECEDENCE
             state_set REVIEW_FAILS "$REVIEW_FAILS"
             REVIEW_OWED_BASE="$(review_owed "$OUTCOME" "$REVIEW_OWED_BASE" "$HEAD_BEFORE")"
             state_set REVIEW_OWED_BASE "$REVIEW_OWED_BASE"
+            # The review reached a verdict, so the in-flight marker goes. The
+            # outcome is written BEFORE this on purpose: a kill between the two
+            # leaves the range marked as owed (one redundant review) rather than
+            # `invoked` with no range (which the startup can only refuse).
+            REVIEW_INFLIGHT_BASE=""
+            REVIEW_INFLIGHT_HEAD=""
+            state_set REVIEW_INFLIGHT_BASE ""
+            state_set REVIEW_INFLIGHT_HEAD ""
             [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
         elif [ "$REVIEW_BLOCKED" -eq 1 ]; then
             # A mandatory review that could not be dispatched. This is NOT a cost
@@ -682,7 +759,7 @@ POLICY_PRECEDENCE
         log "iter=$ITER no commit — stall_count=$STALL"
     fi
 
-    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; echo "REVIEW_STATUS=$REVIEW_STATUS"; echo "REVIEW_FAILS=$REVIEW_FAILS"; echo "REVIEW_OWED_BASE=$REVIEW_OWED_BASE"; } >"$STATE"
+    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; echo "REVIEW_STATUS=$REVIEW_STATUS"; echo "REVIEW_FAILS=$REVIEW_FAILS"; echo "REVIEW_OWED_BASE=$REVIEW_OWED_BASE"; echo "REVIEW_INFLIGHT_BASE=$REVIEW_INFLIGHT_BASE"; echo "REVIEW_INFLIGHT_HEAD=$REVIEW_INFLIGHT_HEAD"; } >"$STATE"
     phase idle
     [ "$STALL" -ge "$STALL_LIMIT" ] && { log "STOP: $STALL consecutive stalled iterations"; exit 5; }
     [ "$FAILS" -ge "$FAIL_LIMIT" ] && { log "STOP: $FAILS consecutive gate failures"; exit 4; }

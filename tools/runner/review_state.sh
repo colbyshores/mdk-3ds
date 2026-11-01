@@ -9,7 +9,11 @@
 # External review 2026-11-01 (run-20261101-002752/review-2.md) found both halves
 # of that in the previous revision: a dispatched reviewer that died was recorded
 # as REVIEW_STATUS=done (F1), and a BLOCKED review left nothing behind, so a
-# restart forgot the obligation (F2).
+# restart forgot the obligation (F2). The fix for F2 wrote the obligation in the
+# collector, and run-20261101-025705/review-1.md H1 found the third way: a loop
+# that is killed between dispatch and collect never reaches the collector, so it
+# never writes the obligation either. Hence review_inflight_owed below, and the
+# rule that the range is recorded at DISPATCH, not at collection.
 
 # review_rc_normalise <raw> — a reviewer's exit code, or 1 for "no usable code".
 # The old test was `[ "$RRC" -ne 0 ]`, and on an empty or corrupt value `[`
@@ -70,5 +74,33 @@ review_owed() {
         printf '%s\n' "$owed"
     else
         printf '%s\n' "$head_before"
+    fi
+}
+
+# review_inflight_owed <owed-so-far> <inflight-base> — fold a DISPATCHED-but-
+# UNCOLLECTED review into the owed set, or pass the owed set through untouched
+# when nothing is in flight.
+#
+# This is the third way a required review fails to happen (external review
+# 2026-11-01, finding H1). The collector is what turns `invoked` into `done` or
+# `failed`, and the collector runs after `wait`. Between dispatch and collection
+# the loop spends its time in the gates phase — minutes to hours — and a systemd
+# restart, a watchdog phase limit, an operator stop, an OOM kill or a host reboot
+# in that window means the collector never runs at all. The reviewer may or may
+# not have finished; nobody recorded it, so nobody knows. That is a review that
+# did not happen, and the commit under it is unreviewed by anyone.
+#
+# So the range is persisted at dispatch (REVIEW_INFLIGHT_BASE) and a startup that
+# finds it non-empty treats the review as lost: the obligation is folded in
+# through the same earliest-base rule as a failed review, and only a completed
+# review clears it. The direction is deliberate: the worst case is one redundant
+# review of an already-reviewed commit, where the alternative is a high-risk
+# batch that no model ever looked at.
+review_inflight_owed() {
+    local owed="$1" inflight="$2"
+    if [ -z "$inflight" ]; then
+        printf '%s\n' "$owed"
+    else
+        review_owed failed "$owed" "$inflight"
     fi
 }

@@ -44,12 +44,18 @@ ENVIRONMENT
     MDK_LITELLM_KEY      the proxy key (default: the file pi's apiKey points at)
     MDK_MODEL_INFO_URL   override the /model/info URL (default: baseUrl + /model/info)
     MDK_MODEL_INFO_TTL   cache seconds (default 600)
+    The cache is per-uid and per-proxy (see _cache_path). A fixed filename in a
+    world-writable directory would let another local account decide what the
+    independence guard believes.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -155,12 +161,14 @@ def live_table() -> dict:
         ttl = int(os.environ.get("MDK_MODEL_INFO_TTL", "600"))
     except ValueError:
         ttl = 600
-    cache = Path(os.environ.get("TMPDIR", "/tmp")) / "mdk-model-info.json"
+    cache = _cache_path(url, key)
     if ttl > 0 and cache.is_file() and time.time() - cache.stat().st_mtime < ttl:
-        try:
-            return json.loads(cache.read_text())
-        except (OSError, ValueError):
-            pass
+        cached = _read_cache(cache)
+        if cached is not None:
+            return cached
+        # A cache we will not trust is not a cache: fall through and ask the
+        # proxy, which is the truth, rather than falling back to the static map
+        # because a file was poisoned.
     try:
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
         with urllib.request.urlopen(req, timeout=20) as reply:
@@ -176,11 +184,95 @@ def live_table() -> dict:
         if name and upstream:
             table[bare(str(name))] = str(upstream)
     if table:
-        try:
-            cache.write_text(json.dumps(table))
-        except OSError:
-            pass
+        _write_cache(cache, table)
     return table
+
+
+def _cache_path(url: str, key: str) -> Path:
+    """Where the live table is cached: per-uid, and keyed on the proxy it came from.
+
+    This is a trust boundary, not a nicety (external review 2026-11-01, finding
+    L4). The old path was ``$TMPDIR/mdk-model-info.json``: a fixed name in a
+    world-writable directory, with no ownership check, not keyed on the proxy or
+    the key, and then trusted for the whole TTL as *the* answer to "what model is
+    this alias". Another local account that created that file first could decide
+    what the independence guard believes — either refuse every reviewer, or let
+    the builder's own family through. The uid keeps other accounts out; the
+    digest of url+key means a proxy or credential change cannot keep reading a
+    table fetched from the old one.
+    """
+    digest = hashlib.sha256(f"{url}\n{key}".encode()).hexdigest()[:16]
+    return Path(os.environ.get("TMPDIR", "/tmp")) / f"mdk-model-info-{os.getuid()}-{digest}.json"
+
+
+def _read_cache(path: Path) -> dict | None:
+    """The cached table, or None unless it is ours, well-shaped and parseable.
+
+    Ownership is checked, never assumed: /tmp is sticky precisely so that a file
+    found there may belong to somebody else, and a table somebody else wrote is
+    not evidence about the proxy.
+    """
+    try:
+        if path.stat().st_uid != os.getuid():
+            return None
+        table = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(table, dict):
+        return None
+    if not all(isinstance(k, str) and isinstance(v, str) and k and v for k, v in table.items()):
+        return None
+    return table
+
+
+def _write_cache(path: Path, table: dict) -> None:
+    """Best effort at 0600, and never fatal: the live fetch already answered, the
+    cache only saves the next round trip."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # fchmod, not just the open mode: O_CREAT does not touch the mode of a
+        # file that already existed, and a file someone else left behind would
+        # keep whatever permissions it came with.
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            json.dump(table, handle)
+    except OSError:
+        pass
+
+
+def _selftest_cache() -> bool:
+    """Prove the cache refuses what it must. The uid-in-path and per-proxy keying
+    are checkable here; the st_uid refusal cannot be, because making a file in
+    this directory belong to another account needs root — so the shape checks run
+    against a real file and the ownership rule is asserted by its own code path
+    being the only reader."""
+    tmp = tempfile.mkdtemp(prefix="mdk-identity-selftest-")
+    old = os.environ.get("TMPDIR")
+    os.environ["TMPDIR"] = tmp
+    try:
+        path = _cache_path("http://self-test.invalid/model/info", "k")
+        checks = []
+        path.write_text('{"qwen": 42}')
+        checks.append(("a non-string value is refused", _read_cache(path) is None))
+        path.write_text("not json at all")
+        checks.append(("unparseable content is refused", _read_cache(path) is None))
+        path.write_text('["a", "b"]')
+        checks.append(("a non-object is refused", _read_cache(path) is None))
+        _write_cache(path, {"qwen": "openai/qwen38-flash-next"})
+        checks.append(("a table we wrote is read back", _read_cache(path) == {"qwen": "openai/qwen38-flash-next"}))
+        checks.append(("the cache file is created 0600", (path.stat().st_mode & 0o777) == 0o600))
+        checks.append(("the path carries the uid", f"-{os.getuid()}-" in path.name))
+        checks.append(("the path changes with the proxy", _cache_path("http://a", "k") != _cache_path("http://b", "k")))
+        checks.append(("the path changes with the key", _cache_path("http://a", "k1") != _cache_path("http://a", "k2")))
+        for label, ok in checks:
+            print(f"{'PASS' if ok else 'FAIL'} cache: {label}")
+        return all(ok for _, ok in checks)
+    finally:
+        if old is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = old
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def resolve(alias: str, table: dict | None = None) -> tuple[str, str]:
@@ -288,6 +380,8 @@ def selftest(table: dict | None) -> int:
         ok = value == want
         failures += 0 if ok else 1
         print(f"{'PASS' if ok else 'FAIL'} {label}" + ("" if ok else f"  (got {value!r})"))
+    if not _selftest_cache():
+        failures += 1
     print("MODEL IDENTITY: " + ("SELFTEST CLEAN" if failures == 0 else f"{failures} FAILED"))
     return 0 if failures == 0 else 1
 
