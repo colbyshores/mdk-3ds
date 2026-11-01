@@ -1,26 +1,24 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — changes the loop's own test harness (two new pinning checks and a corrected
-rationale comment) plus four corrections to the batch-20 record. `ralph-pi.sh`, `ralph.sh`, every
-gate, every golden, the frame-oracle tooling and all game behaviour are untouched; all four findings
-were reproduced by direct experiment before the record was edited.
+Risk: medium — adds a gate-visible test that pins the archive-parse guard behind the
+missing-`TRAVSPRT.BNI` refusal, plus the committed evidence pair for that refusal. No game
+behaviour, renderer, gate, golden, data format, `ralph-pi.sh` or `review_state.sh` change; the
+pinned frame is byte-unchanged. Medium rather than low because the new test's non-vacuity is
+non-obvious — two overlapping guards mean a one-line revert prints PASS — and the batch's deliverable
+is an empirical claim about a path no pin can show.
 
-Last updated: 2026-11-01 (batch 21: run-20261101-062333/**review-7.md** dispositioned — **F1
-Medium, F2/F3/F4 Low: all four confirmed, none rebutted; no Critical or High**). All four were
-defects in the *record* batch 20 had just written, and each was reproduced by experiment before being
-corrected. **F1**: `CONTINUATION.md` and the commit message said "six reversion experiments each
-shown to FAIL" while batch 20's own table records three of the six (B1/B3/B5) as **175 PASS by
-design** — controls proving insensitivity to a reformatting, not reversions. The claim overstated the
-falsification evidence 2× and hid that B1 is precisely the case where the suite does **not** fire;
-both places now name three controls and three reversions. **F2**: the B6 row quoted a "73-line
-over-run", the raw-file distance, beside a lift that reads the comment-stripped `$LOOP_CODE` where
-the same over-run is **30** lines (five definitions in both). **F3**: the R5-2b transcript showed
-four lines for a five-case set and the omitted line was a **PASS**, indistinguishable from a vanished
-case; all five are quoted now. **F4**: the doubled brackets in `lift_fn`'s start pattern were
-justified as an mawk 1.3.4 defect; the mechanism is POSIX bracket-class semantics, and it is now
-pinned by two `R7-4` cases instead of living in prose. **177 cases** (175 carried, 2 new, 0 lost);
-goldens **440/0/0**, no golden moved; frame byte-unchanged. Full narrative with the measurements:
-`docs/PROGRESS_LOG.md`, "Iteration 49".
+Last updated: 2026-11-01 (**batch 22** — game-side PRIORITY ORDER item (a): the missing-`TRAVSPRT.BNI`
+evidence pair review-2 F4 asked for in batch 11). Review-7 had no Critical or High and was
+dispositioned by batch 21, so the priority order governs. `docs/evidence/2026-11-01-L7-sprites-
+missing-scene.{png,txt}` shows the level-7 scene with a 4-byte `TRAVSPRT.BNI` in a symlink farm
+(marker exists, read succeeds, parse fails) against a control arm whose sha256 reproduces batch 10's
+committed `cpp sha256` **byte-for-byte across fifteen revisions**, so the measured `11.361%` gap is
+the archive and nothing else; its three largest diff regions are the three things the refusal's log
+line names. The sidecar says why a pin cannot show this, and that **no oracle picture for this path
+can exist** (the C# `Bni.Load` throws). The guard behind the refusal is now pinned by
+`tests/scripts/archive_guard_tests.cpp`, which runs before the data check so it cannot skip into
+being a pass generator. Goldens **441/0/0** (one new PASS, none moved); frame byte-unchanged. Full
+narrative and the three-reversion falsification record: `docs/PROGRESS_LOG.md`, "Iteration 50".
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -34,12 +32,11 @@ goldens **440/0/0**, no golden moved; frame byte-unchanged. Full narrative with 
    under a named 1 MiB budget, restore on eviction).
 6. **DONE — the object pass, all the way to the GPU**, plus review-3/-5/-6's findings on it
    (batch 8: `ObjectMotion.Bank`; batches 9-10: the Runner, both halves pinned).
-   **NEXT, in priority order:** (a) **F4 from review-2** — the missing-`TRAVSPRT.BNI` path
-   has no committed evidence pair (batch 11's only capture was `/tmp/f2demo/`, not in the
-   repo). Ship `docs/evidence/2026-11-01-L7-sprites-missing-scene.{png,txt}` (symlink farm + a
-   4-byte archive so the marker exists, the read succeeds and the parse fails; `DISPLAY=:99`,
-   lavapipe, command and revision in the sidecar) and say in the pinned sidecar that a pin
-   cannot show an error path. (b) **F3 from review-1** — `dumpRunner` has no mixer field, so
+   **NEXT, in priority order:** (a) **DONE — batch 22.** The missing-`TRAVSPRT.BNI` path now
+   has a committed evidence pair (`docs/evidence/2026-11-01-L7-sprites-missing-scene.{png,txt}`,
+   symlink farm + 4-byte archive, `DISPLAY=:99`, lavapipe, command and revision in the sidecar,
+   which says in its own text that a pin cannot show an error path) and a gated pin for the guard
+   behind it (`tests/scripts/archive_guard_tests.cpp`). (b) **F3 from review-1** — `dumpRunner` has no mixer field, so
    `mixer_.play("RUNNER", Once)` is unpinned; add the column to the probe *and* the harness and
    regenerate `L7_t120_runner_{a,b}` from the oracle. (c) The C3D depth and blend state still
    differ from the C# and the Citro3D backend ignores `MeshDraw::world`, so the 3DS cannot
@@ -96,6 +93,14 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
 - **Kurt/sprites:** `game/kurt_sprite.{h,cpp}` is `Kurt/KurtSprite.cs`; palette-index frames
   (5.30 MiB measured) uploaded on first draw under `MdkCapabilities::sprite_residency_bytes` (0
   desktop, 1 MiB 3DS) — UNVERIFIED on hardware (P6). `Player::fall` is `Kurt.Fall` whole.
+  **When `TRAVSPRT.BNI` cannot be parsed the frontend runs the level WITHOUT scripts and says so,
+  and `tick1` exits 1 rather than hand the runtime a null archive** — the C# `Bni.Load` throws, so a
+  null archive is a different game, not a degraded one. Do not reintroduce a `nullptr` into the
+  `ScriptRuntime` constructor from a shipped entry point, and do not "tighten" `Bni::parse` into a
+  content check: a zero-filled archive is a legal EMPTY archive and the C# can produce a missing
+  entry, so `itemsAnimation` returning `nullptr` for a missing entry is faithful. Pinned by
+  `tests/scripts/archive_guard_tests.cpp`; pictured in
+  `docs/evidence/2026-11-01-L7-sprites-missing-scene.png`.
 - **Object pass:** `transform()` is `CreateScale * (rolling ? RollingBasis : Rotation) *
   CreateTranslation(...)` via `mdk::multiply`; `transform_at(alpha)` is what a frame draws with;
   `rotation()` keeps the libm trig and the `@vfp-exempt R6` pin; `roll` has a writer (`motionBank`
@@ -135,19 +140,21 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `docs/PROGRESS_LOG.md` names the edit it applied, quotes only that edit's output, and says whether
   it is a **control** (meant to pass) or a **reversion** (must fail).
 
-## Verified on this tree (batch 21)
+## Verified on this tree (batch 22)
 
-All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`, "Iteration 49".
-Goldens **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL / 0 SKIP**, no golden moved.
-`bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED` (`gates_frames PASS L3_f1.bmp
-sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
-regenerated; `gates_smdh` SKIPPED; integrity PASS). `make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`.
-`cmake --build build-linux --target mdk` — **exit 0**. `test_review_state.sh` — **exit 0**, **177
-cases**: three reversions (B2/B4/B6) each FAIL the guard they pin and three controls (B1/B3/B5) PASS
-by design, and the new `R7-4` pair is shown non-vacuous (reverting `lift_fn` to the single-class
-spelling fails 26 cases with the empty-lift `got '0'` signature). `model_identity.py selftest --live`
-— `SELFTEST CLEAN`, 28 claims. Frame `docs/frames/2026-11-01-record-claims-cut-to-their-own-output.png`
-+ `.txt` — `1.240 / 247 / 0.1819`, byte-identical to its 26 predecessors. **No emulator run and no
+All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`, "Iteration 50".
+Goldens **exit 0** — `All cases match the oracle.`, **441 PASS / 0 FAIL / 0 SKIP** (440 carried plus
+the one new `PASS ArchiveIndexGuards`; no golden moved). `bash tools/check.sh` — **exit 0**, `CHECK:
+ALL GATES PASSED` (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned
+`cpp=`, so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS). `make -C
+mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`. `cmake --build build-linux --target mdk` — **exit 0**.
+`test_review_state.sh` — **exit 0**, **177 cases** (unchanged). `model_identity.py selftest --live`
+— `SELFTEST CLEAN`. The new pin prints `PASS ArchiveIndexGuards` **with and without**
+`MDK_DATA_DIR`, and falsifying it took three experiments, because two overlapping guards each reject
+a truncated file on their own — deleting `bytes.size() < 8` alone prints PASS, and only deleting
+**both** it and the count-fit guard fails the 1/4/7-byte cases. Read the table in "Iteration 50"
+before calling any case there inert. Frame `docs/frames/2026-11-01-sprites-missing-archive-pinned.png`
++ `.txt` — `1.240 / 247 / 0.1819`, byte-identical to its 27 predecessors. **No emulator run and no
 Old-3DS hardware run: Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was
 pinned, relaxed or edited.
 

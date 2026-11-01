@@ -6429,3 +6429,149 @@ of review-7's five findings are the *record* of the previous batch failing to re
 row now. That is the signal to stop point-fixing: the game-side priority order has been waiting
 behind harness work for nine iterations, and the next batch should take item (a) unless review-8
 finds a Critical or High.
+
+---
+
+## Iteration 50 — batch 22: an error path needs a picture of its own, and a pin that survives a lazy revert
+
+**What this batch is.** Game-side PRIORITY ORDER item (a), which had waited behind nine iterations
+of loop-harness work: **F4 from review-2** (batch 11). That finding was that batch 11 changed a
+§11 P6 missing-asset path, shipped its 17th byte-identical pin, and shipped no evidence of the new
+behaviour — the only capture was `/tmp/f2demo/`, outside the repository and unverifiable. This
+batch ships that evidence and, because the evidence is a claim about a guard, ships a pin for the
+guard too. Review-7 had no Critical or High (it was dispositioned by batch 21), so the priority
+order governs.
+
+**Prior-solution lookup (mandatory, per AGENTS.md §0).** No Obsidian MCP or Cognee MCP server is
+reachable from this harness, and `knowledge_search` is broken on it (`Cannot find package 'ignore'`
+from the pi-knowledge chunker), so the vault was read directly, read-only, from
+`/mnt/nas/Vaults/port-docs`. Three notes apply and all three changed what was written here:
+
+- `30-architecture/patterns/a-defence-against-an-unreachable-condition-passes-as-proof-of-itself.md`
+  — a defence tested in a configuration where the hazard never arms proves only that it did not
+  crash. Applied: the capture arms the hazard (the archive really fails) and a control arm with the
+  intact archive runs the same command, so the two arms differ by exactly one variable.
+- `30-architecture/patterns/prove-the-claim-not-the-pixels.md` — validate the claim, not the
+  picture; and "absence of evidence must never be presentable as evidence of absence". Applied: the
+  picture is paired with the refusal's own log lines and exit codes, and the guard behind it is
+  pinned by a test rather than inferred from the screenshot.
+- `30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md` — applied
+  directly to the new test's placement, below.
+
+### The evidence pair
+
+`docs/evidence/2026-11-01-L7-sprites-missing-scene.png` + `.txt`. The archive is made to fail by a
+symlink farm, not by deleting the file: `TRAVSPRT.BNI` is also `kMdkDataMarker`
+(`mdk_core/src/formats/mdk_data.cpp:13`), so deleting it removes the data tree's marker, the level
+never loads, and the wrong path is exercised. Every entry of `MDK/` and `MDK/TRAVERSE/` is
+symlinked except `TRAVSPRT.BNI`, which is a real 4-byte file: the marker exists, `data.found()` is
+true, the read succeeds, and the parse fails.
+
+Both arms ran the same command on `DISPLAY=:99` with lavapipe, level 7, `--at=-21,-13,9,45`, frame
+30 — deliberately the same scene as the committed `2026-11-01-L7-runner-hamster-visible.png`, so
+the control already had a published number.
+
+| arm | last-frame draws | triangles | sha256 |
+|---|---|---|---|
+| intact archive | 153 | 1042 | `2f98a32d…7dd01de1` |
+| 4-byte stub | 135 | 848 | `6f04976c…dc89051e` |
+
+Three measurements make this evidence rather than a screenshot:
+
+1. **The control reproduces byte-for-byte across fifteen revisions.** The intact arm's sha256 is
+   identical to the `cpp sha256` recorded in batch 10's sidecar (`git rev-list --count
+   bfa1c7c..HEAD` = 15). So the difference below is the archive and nothing else — not drift, not a
+   different build.
+2. **The gap is localised onto exactly the three things the log line names.** `11.361%` of pixels
+   differ (8725 of 76800), max delta 255, mean 3.5438. The three largest connected components are
+   Kurt's sprite (1994 px, x 131-213 y 98-203), the HUD (1822 px, x 253-308 y 191-232) and the
+   Runner (906 px, x 247-293 y 89-121). The surviving 135 draws equal the level's own 135 batches
+   printed by `[main] view:`, so what vanished is every non-geometry draw. The log says "the HUD,
+   Kurt's sprite and the scripts" and the picture loses those three, in that order.
+3. **The half no picture can show is recorded too.** The harness refuses rather than pass a null
+   archive: `tick1` with the farm prints `FAIL: TRAVERSE/TRAVSPRT.BNI did not load…` and exits 1;
+   with the real tree it prints the normal dump and exits 0.
+
+The sidecar states in its own text why a pin cannot show this: the pinned frame is a picture of the
+build *working*, and harder still, **there is no oracle picture for this path at all** — the C#
+`Bni.Load` throws when the archive is absent, so the oracle has no such run. The control is the
+C++ build's own intact capture, deliberately.
+
+### The pin, and why a one-line revert does not falsify it
+
+The whole refusal rests on one unpinned mechanical fact: a short archive fails `Bni::parse`. Nothing
+tested it, so the guard could be broken with nothing going red. `tests/scripts/archive_guard_tests.cpp`
+now pins it, called from `vm_tests` `main()` **before** that file's `SKIP: no MDK data` check —
+placement is the point, because the refusal itself is only observable against a real data tree, and
+a check that skips without one is a pass generator, not a gate. It prints `PASS ArchiveIndexGuards`
+with and without `MDK_DATA_DIR`.
+
+**Its falsification was measured, and the first attempt at it was wrong.** Three reversions on a
+scratch copy of `mdk_core/src/formats/fti.cpp` (restored afterwards; `git status` clean):
+
+| # | edit applied | output quoted | kind |
+|---|---|---|---|
+| R1 | delete `bytes.size() < 8` from `ArchiveIndex::read` | `PASS ArchiveIndexGuards`, rc 0 | **not a falsification** |
+| R2 | delete the count-fit guard instead | `FAIL archive_guard: an entry count that does not fit is rejected`, rc 1 | reversion |
+| R3 | delete **both** | `FAIL` on the 1-, 4- and 7-byte cases and on the count case, rc 1 | reversion |
+
+R1 printed PASS and looked exactly like a dead test. It is not one: **two overlapping guards reject
+a truncated file, each sufficient on its own**, so deleting either leaves the truncation cases
+green. A third guard covers the 0-byte case — `std::vector<uint8_t>(0,0).data()` is null (verified
+by probe, not assumed), so the pointer overload's `!bytes` rejects it before either other guard is
+reached, which is why the 0-byte case did not fail even under R3. The test therefore pins the
+*behaviour* the refusal depends on, not one guard, and the file's own header says a one-guard
+reversion is not a valid falsification — the batch-21 lesson, applied before someone else had to
+point it out. A fourth case pins non-vacuity the other way: a well-formed one-entry archive parses
+and its entry is found by name, so "the stub is rejected" cannot be satisfied by a parse that
+rejects everything. A fifth pins that a zero-filled archive parses as a legal **empty** archive:
+the guard is about truncation, not content, and the C# can legitimately produce an archive with no
+such entry, so a content check there would add a branch the oracle does not have.
+
+### Gate results (verbatim)
+
+All gates run from a clean invocation after the code and docs were final. Nothing was relaxed,
+pinned or edited to obtain these results; `tests/frames/reference.sha256` was NOT regenerated.
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts clean && make -C tests/scripts` | **exit 0** — `All cases match the oracle.`, **441 PASS / 0 FAIL / 0 SKIP** (440 carried + the one new `PASS ArchiveIndexGuards`; no golden moved) |
+| contract/parity/frame/integrity | `bash tools/check.sh` | **exit 0** — `CHECK: ALL GATES PASSED` |
+| 3DS target | `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` | **exit 0** — `3DSX mdk.3dsx` |
+| Linux frontend | `cmake --build build-linux --target mdk -j8` | **exit 0** — `[100%] Built target mdk` |
+| review-record state machine | `bash tools/runner/test_review_state.sh` | **exit 0** — `REVIEW STATE: ALL CASES PASS`, **177 PASS** (unchanged) |
+| identity resolver | `python3 tools/runner/model_identity.py selftest --live` | **exit 0** — `MODEL IDENTITY: SELFTEST CLEAN` |
+
+`tools/check.sh` tail, verbatim:
+
+    BATCH INTEGRITY: PASS
+
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             every pinned frame is deterministic and unchanged
+      PASS   gates_batch_integrity    project invariants intact
+
+    CHECK: ALL GATES PASSED
+
+`gates_frames` printed `PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`,
+so the pin did not move. Frame `docs/frames/2026-11-01-sprites-missing-archive-pinned.png` +
+`.txt`: `1.240 / 247 / 0.1819`, md5 `6769a13731983d65cee9df02da6cff37`, the 28th consecutive frame
+with that digest — no drawing code changed, and the sidecar says so and names what does show the
+change. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED**, Citro3D
+picture UNVERIFIED (P6).
+
+One deviation, recorded rather than hidden: the loop policy names `/tmp/kilo` for captures, but that
+directory is owned by another uid on this host and is not writable by the loop's user, so the
+capture was made in `/tmp/kilo-mdk-batch22`. The sidecar says so.
+
+### What is next
+
+Game-side PRIORITY ORDER, item (a) now done: **(b) review-1 F3** — `dumpRunner` has no mixer field,
+so `mixer_.play("RUNNER", Once)` is unpinned; it needs the column added to the probe *and* the
+harness and `L7_t120_runner_{a,b}` regenerated from the oracle, which is a probe rebuild. Then (c)
+the Citro3D per-draw matrix and the depth/blend divergence, then (e) `FrameBlend.Lerp`'s rounding.
+The loop-harness chain's open items are unchanged and listed under Standing open items.

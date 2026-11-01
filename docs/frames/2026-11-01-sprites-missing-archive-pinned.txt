@@ -1,0 +1,14 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-01T13:42:55Z at 1fb58c7
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+why this picture did not move: no code that draws the pinned frame changed. This batch
+       adds a test and an evidence pair about the missing-TRAVSPRT.BNI path, and the
+       only shipped source file it touches is a test harness. md5 6769a13731983d65...
+       is the 28th consecutive frame with this digest.
+what shows the change instead: docs/evidence/2026-11-01-L7-sprites-missing-scene.png
+       (+ .txt) is the picture of the path this batch is about, because a pin of a
+       working frame cannot show an error path -- and for this path there is no oracle
+       picture at all, since the C# throws when the archive is absent. The new pin is
+       tests/scripts/archive_guard_tests.cpp, which prints PASS ArchiveIndexGuards in
+       the golden suite (441 PASS, one more than batch 21's 440, and no golden moved).

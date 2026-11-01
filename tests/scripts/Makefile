@@ -66,6 +66,7 @@ SOURCES := \
 
 SOURCES_VM := \
 	vm_tests.cpp \
+	archive_guard_tests.cpp \
 	layer_tests.cpp \
 	sprite_tests.cpp \
 	system_numerics_tests.cpp \

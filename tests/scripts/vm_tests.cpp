@@ -25,6 +25,7 @@
 
 #include "audio/sound_bank.h"
 #include "test_support.h"
+#include "archive_guard_tests.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/dti.h"
@@ -3583,6 +3584,16 @@ int main() {
     failures += numericsFailures;
     if (numericsFailures == 0) {
         printf("PASS SystemNumericsMatrixInverse\n");
+    }
+
+    // The archive-index guards the missing-TRAVSPRT.BNI refusal rests on. They
+    // run BEFORE the data check on purpose: the refusal can only be OBSERVED
+    // against a real data tree, so if these needed the tree they would SKIP
+    // without one and stop being a gate.
+    const int archiveFailures = mdk::test::runArchiveGuardTests();
+    failures += archiveFailures;
+    if (archiveFailures == 0) {
+        printf("PASS ArchiveIndexGuards\n");
     }
 
     MdkData data = locateData();
