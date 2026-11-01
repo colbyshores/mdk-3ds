@@ -1,28 +1,29 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — moves WHERE a record write may sit relative to the review-obligation transition, so
-it changes when the loop can stop (exit 9 boundaries) and what a kill inside the collector leaves
-on disk; the test suite moved (140 -> 157 cases) and two of its lifts were re-scoped. Error
-handling, record persistence and a trust boundary. No C/C++, Makefile, golden, frame-oracle tool
-or game behaviour moved.
+Risk: high — moves WHEN the loop is allowed to stop: the gates phase no longer writes the record,
+so the last stop boundary inside the invoked-review window is gone and `LAST_GATES` now reaches
+disk with the end-of-iteration rewrite instead of mid-iteration. Error handling, record
+persistence and a trust boundary; the test suite moved (157 -> 163 cases) and all three lifted
+fragments are now measured rather than trusted. No C/C++, Makefile, golden, frame-oracle tool or
+game behaviour moved.
 
-Last updated: 2026-11-01 (batch 18: run-20261101-062333/**review-4.md** dispositioned —
-**F1/F2 Medium, F3/F4 Low: all four confirmed, none rebutted; no Critical or High**). Batch 17
-made every record write able to stop the loop, and one of the writes it widened sat *inside* the
-collector's completed-review window: three counter `state_set`s above the transition that records
-the verdict. A full disk there left the record saying `invoked`, in-flight markers set, **and
-`REVIEW_CALLS` already advanced** — a review the counter says happened and the status says did
-not, which the startup fold charges as a lost one (re-owed, `REVIEW_FAILS` + 1, a second paid
-call; twice reaches the non-restartable exit 7). Measured by killing the shipped collector arm at
-each rename. The counters now land after the transition, so that window holds exactly one write;
-pinned structurally and behaviourally (the pre-fix shape fails 7 cases). Separately,
-`STATE_SET_FN` was lifted from the raw file with a terminator a one-line definition never matches,
-so it over-ran 53 lines and its pin grepped prose — a pure comment move failed it; it now lifts
-from the comment-stripped copy, bounded, and the fragment is measured rather than trusted. The
-Iteration 45 F5 reversion block mixed two different edits and is corrected in place with both
-experiments' real output. **157 cases** (140 carried, 17 added, 0 removed); reversions each shown
-to FAIL; goldens **440/0/0**, no golden moved; the frame is byte-unchanged. Narrative:
-`docs/PROGRESS_LOG.md`, "Iteration 46".)
+Last updated: 2026-11-01 (batch 19: run-20261101-062333/**review-5.md** dispositioned —
+**R5-1/R5-2/R5-3 Medium, R5-4/R5-5/R5-6 Low: all six confirmed, none rebutted; no Critical or
+High**). Batch 18 fixed one lifted fragment and one window; review-5 showed both were *classes
+with a neighbour*, each reproduced on a scratch copy before it was changed. `STATE_WRITE_FN`
+carried the same unbounded, prose-matching lift review-4 F2 found in `STATE_SET_FN`, one function
+up: a one-line `state_write` over-ran 73 lines and reported `PASS AR6-4: … stops the loop` with
+zero `exit 9` left in code — now bounded, comment-stripped, measured three ways. And the gates
+arm wrote `LAST_GATES` while the record still said `invoked` with both in-flight markers set,
+after a reviewer that may already have finished: a full disk there produced batch 18's harm from
+a second site (a COMPLETED review folded as a lost one — owed, `REVIEW_FAILS + 1`, re-billed,
+twice reaching the non-restartable exit 7). The gates phase now performs **no record write**; the
+verdict lands with the end-of-iteration rewrite, and the shipped region is run against an
+unwritable record to prove it. Four of the fourteen collector death cases could not inject their
+failure; the bound is now derived and asserted. Iteration 46's Experiment B and review-4 open
+question 2 are corrected in place. **163 cases** (153 carried, 10 added, 4 removed); reversions
+each shown to FAIL; goldens **440/0/0**, no golden moved; the frame is byte-unchanged. Full
+narrative: `docs/PROGRESS_LOG.md`, "Iteration 47".)
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -92,13 +93,19 @@ question 1: `ralph.sh:230` still carries the original **unchecked** `state_set` 
 discarded). Commit `8cc37ad` reverts `ralph.sh` deliberately ("Pi loop only"), so the builder
 treated it as intended dead code and left it alone — but then the "one writer, one refusal"
 property is a property of `ralph-pi.sh` only. Whether the Kilo loop is retired or needs the same
-fix is the owner's call.
+fix is the owner's call. (7) New from batch 19, from review-5's open question 1: the startup fold
+classifies an in-flight review as lost **without looking at the run dir**, where `review-$ITER.rc`
+and `review-$ITER.md` already say whether the reviewer finished. That is why a stop after a
+completed review costs a strike and a second paid call instead of being recognised as a finished
+review whose verdict was never applied. Making the fold consult the run dir is a change to the
+meaning of `REVIEW_FAILS` and the owed set, so it is the owner's call, not a builder's; batch 19
+removed the second site that could reach it and left the policy alone.
 
 ## Current tree state (VERIFIED)
 
 The full record — every invariant, every failure mode, every "do not change this" — is the
 appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of batch 13", marked
-**superseded in part** where batches 14-18 changed it. The headline:
+**superseded in part** where batches 14-19 changed it. The headline:
 - **Camera/renderer:** the C#'s RIGHT-HANDED `CreateLookAt` basis; Vulkan folds clip.y into the
   matrix and the sky inverse carries the flip on its LEFT side; shaders use `M * v`; Citro3D
   culls per draw with the mode cached in the **Citro3D context**. **UNVERIFIED on hardware** (P6).
@@ -123,40 +130,41 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   owed and no `HEAD` naming an **ancestor** commit. Every transition of the state file goes
   through `state_write` (one temp file, one rename, **and a checked status**: a record that
   cannot be written stops the loop at exit 9 rather than continuing from a stale one), and
-  `state_set` is now the single-key spelling of that SAME writer rather than a second
-  unchecked one — **one writer, one refusal, one status** — because a transition written key
-  by key is one a kill can stop in the middle and count twice, and an unchecked `mv` is one a
-  directory can swallow. **The obligation is created before the thing it must survive** —
-  dispatch persists the in-flight range and `invoked` before the reviewer is spawned, so no
-  kill window can leave a commit unreviewed with nothing owed. **And nothing may sit between a
-  verdict and the transition that records it**: the collector's review counters land *after*
-  that transition, because a stop boundary before it leaves `invoked` with the counters
-  advanced, which is a completed review the fold charges as a lost one. The suite asserts each
-  transition's **key set**, not a substring of one call, and a pin is scoped to the function or
-  window that owns the property rather than matching the whole file — and the lift that does the
-  scoping is itself measured (line count, one definition, no prose) rather than trusted.
-  Independence is the resolved upstream and family; the identity is re-resolved after a worker
+  `state_set` is the single-key spelling of that SAME writer — **one writer, one refusal, one
+  status**. **The obligation is created before the thing it must survive** — dispatch persists
+  the in-flight range and `invoked` before the reviewer is spawned. **And nothing may sit
+  between a verdict and the transition that records it — loop-wide, not just in the collector**:
+  the review counters land *after* that transition and the **gates phase performs no record
+  write at all**, because a stop boundary before the transition leaves `invoked` with a counter
+  or a verdict half-written, which is a completed review the fold charges as a lost one;
+  `LAST_GATES` reaches disk with the end-of-iteration rewrite. The only writes left inside the
+  invoked window are the transition and the counters behind it; the blocked and skipped arms are
+  alternatives that never leave `invoked` set. The suite asserts each transition's **key set**,
+  not a substring of one call; a pin is scoped to the function or window that owns the property;
+  **all three** scoping lifts are measured (one definition, no comment line, `bash -n`
+  completeness); and every write counter matches a write anywhere in the line, not only at its
+  start.  Independence is the resolved upstream and family; the identity is re-resolved after a
   fallback; the live cache is per-uid/per-proxy at 0600, checked on the descriptor it reads,
   never through a symlink, never blocked by a FIFO planted at the path (`O_NONBLOCK` makes the
   open return, `S_ISREG` makes it refuse), and the gate provably runs **before** the payload is
-  consumed; the state machine is `tools/runner/review_state.sh`, asserted by **157 cases** in
+  consumed; the state machine is `tools/runner/review_state.sh`, asserted by **163 cases** in
   `tools/runner/test_review_state.sh`.
 
-## Verified on this tree (batch 18)
+## Verified on this tree (batch 19)
 
 All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`,
-"Iteration 46". Goldens **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL /
+"Iteration 47". Goldens **exit 0** — `All cases match the oracle.`, **440 PASS / 0 FAIL /
 0 SKIP**, no golden moved. `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`
 (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so
 `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED, no CIA; integrity PASS).
 `make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`. `cmake --build build-linux --target mdk` —
-**exit 0**. `test_review_state.sh` — **exit 0**, **157 cases**, reversions each shown to FAIL.
+**exit 0**. `test_review_state.sh` — **exit 0**, **163 cases**, reversions each shown to FAIL.
 `model_identity.py selftest --live` — `SELFTEST CLEAN`, 28 claims. Frame
-`docs/frames/2026-11-01-stop-boundary-window.png` + `.txt` — `1.240 / 247 / 0.1819`,
-byte-identical to its 23 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS
+`docs/frames/2026-11-01-gates-arm-window.png` + `.txt` — `1.240 / 247 / 0.1819`,
+byte-identical to its 24 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS
 timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or
 edited. The full record of every invariant is the `docs/PROGRESS_LOG.md` appendix, "Current tree
-state (VERIFIED)", superseded in part by batches 14-18 as marked.
+state (VERIFIED)", superseded in part by batches 14-19 as marked.
 
 ## Standing open items
 

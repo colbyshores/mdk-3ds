@@ -27,10 +27,17 @@ IDENT_LOG="$(mktemp)"
 # (the same trap audit_c_with_classes.py had to solve).
 LOOP_CODE="$(mktemp)"
 grep -vE '^[[:space:]]*#' "$LOOP" >"$LOOP_CODE"
+# Counting record writes, and counting them HONESTLY. A write may sit after a `;` on
+# a line that starts with something else — the gates arm used
+# `LAST_GATES="PASS"; state_set LAST_GATES PASS` — so a pattern anchored to the line
+# start counted ZERO writes in an arm that was writing the record twice, which is a
+# pass generator wearing a guard's clothes. This counts LINES containing a write,
+# anywhere in the line.
+count_writes() { printf '%s\n' "$1" | grep -cE '(^|[;&|([:space:]])state_(set|write) '; }
 REPORT=$(mktemp -d)/report.md
 printf 'VERDICT: PASS\n' >"$REPORT"
 : >"$REPORT.empty"
-cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" "${DD:-}" "${SS:-}" "${CD:-}" 2>/dev/null || true; }
+cleanup() { rm -rf "$(dirname "$REPORT")" "$IDENT_LOG" "$LOOP_CODE" "${SD:-}" "${SA_DIR:-}" "${DD:-}" "${SS:-}" "${CD:-}" "${GR:-}" 2>/dev/null || true; }
 trap cleanup EXIT
 check() { # check <label> <expected> <actual>
     if [ "$2" = "$3" ]; then
@@ -244,7 +251,30 @@ check "AR6-2: no atomic transition omits the status it is transitioning" "0" \
 STARTUP_BLOCK="$(awk '/^if \[ -n "\$REVIEW_INFLIGHT_BASE" \]; then$/{f=1} f{print} f&&/^fi$/{exit}' "$LOOP")"
 # The loop's checked writer, lifted for the same reason: the arms call it, so the
 # test runs the shipped one rather than a copy that can drift from it (AR6-4).
-STATE_WRITE_FN="$(awk '/^state_write\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$LOOP")"
+# Bounded, and from the CODE copy (external review 2026-11-01,
+# run-20261101-062333/review-5.md R5-1). This was the identical defect review-4 F2
+# found in the `state_set` lift, one function up: a terminator that is exactly `}`.
+# Written on one line, `state_write` is never matched by it, the fragment ran on for
+# 73 lines over the model-identity block, and the AR6-4 pin below matched the PROSE
+# at lift-line 17 (`# This does widen exit 9 to every record write …`) and reported
+# PASS with ZERO `exit 9` occurrences left in code. Measured below rather than
+# trusted, for the same reason the `state_set` fragment is.
+STATE_WRITE_FN="$(awk '/^state_write\(\) \{/{f=1} f{print} f&&/\}[[:space:]]*$/{exit}' "$LOOP_CODE")"
+# Three measurements on the fragment itself, because a lift that over-runs turns
+# every pin below into a grep over unrelated code AND over prose, and the prose is
+# what makes a deleted property still pass: ralph-pi.sh documents its own bugs, so a
+# fragment that swallows the comment block quotes the strings its pins forbid.
+check "R5-1: the state_write lift is scoped to state_write (exactly one definition in it)" "1" \
+      "$(printf '%s\n' "$STATE_WRITE_FN" | grep -cE '^[A-Za-z_][A-Za-z_0-9]*\(\)')"
+check "R5-1: and the lift carries no comment line, so its pins cannot fire on prose" "0" \
+      "$(printf '%s\n' "$STATE_WRITE_FN" | grep -cE '^[[:space:]]*#')"
+# And it must not TRUNCATE: a fragment that stops early evals a partial function,
+# which would make every behavioural case below fail for the wrong reason. This is
+# a syntax check, not a shape check — `state_write` on one line is a legitimate
+# formatting choice and a pin that failed it would be the formatting-sensitive pin
+# review-4 F2 just removed.
+check "R5-1: and the lift is a syntactically complete function, not a truncation of it" "0" \
+      "$(printf '%s\n' "$STATE_WRITE_FN" | bash -n 2>/dev/null; printf '%s' "$?")"
 # The single-key writer, lifted for the same reason (review-3 F3): the arms call
 # it, so the test must run the shipped one rather than a copy that can drift.
 #
@@ -510,7 +540,17 @@ else
     fails=$((fails + 1))
 fi
 check "F1: the window holds exactly one record write, the transition itself" "1" \
-      "$(printf '%s\n' "$COLLECT_WINDOW" | grep -cE '^[[:space:]]*state_(set|write) ')"
+      "$(count_writes "$COLLECT_WINDOW")"
+# The death loop below must cover EVERY write boundary in the arm, so the bound is
+# DERIVED from the lifted arm rather than guessed (external review 2026-11-01,
+# run-20261101-062333/review-5.md R5-4). It used to be a literal `for cdie in 1 2 3 4
+# 5 6`: the arm has four write sites, so a death injected at "write 5" or "write 6"
+# never reached the kill, the arm ran to completion, and four of those fourteen cases
+# asserted the uninterrupted outcome while claiming to assert a death. A label that
+# cannot inject its own failure is a PASS generator.
+COLLECT_WRITES="$(count_writes "$COLLECT_ARM")"
+check "F1: the collector arm has four record-write sites, so the loop below covers all of them" "4" \
+      "$COLLECT_WRITES"
 
 # The behavioural half: kill the shipped collector at every write boundary in that
 # window and assert the counters can never get ahead of the verdict. Under the
@@ -539,7 +579,7 @@ run_collect() { # run_collect <n> — the shipped success arm, killed before its
     )
     printf '%s|%s\n' "$(cdstate_get REVIEW_STATUS)" "$(cdstate_get REVIEW_CALLS)"
 }
-for cdie in 1 2 3 4 5 6; do
+for cdie in $(seq 1 "$COLLECT_WRITES"); do
     out="$(run_collect "$cdie")"
     st="${out%%|*}"; calls="${out##*|}"
     # Two things are asserted, and the first is the ordering: write 1 IS the
@@ -556,6 +596,55 @@ for cdie in 1 2 3 4 5 6; do
     check "F1: and a death at write $cdie cannot put the counters ahead of the verdict" "consistent" "$harm"
 done
 check "F1: with no interruption the verdict and its counters both land" "done|4" "$(run_collect 99)"
+
+# --- review-5 R5-2: the gates phase must perform no record write ----------------
+# Batch 18 moved the three collector counters out of the window between "the verdict
+# is known" and "the transition records it", and left a SECOND stop boundary in that
+# window two screens earlier: the gates phase wrote LAST_GATES while the durable
+# record still said `invoked` with both in-flight markers set, after a reviewer that
+# may already have finished and written its report. A full disk on that one write
+# produced the batch-18 harm from a different site — a COMPLETED review the startup
+# fold reads as a lost one (owed again, REVIEW_FAILS + 1, a second paid call, and two
+# of them reach the restart-prevented exit 7). The fix is that the gates phase writes
+# nothing and the end-of-iteration rewrite carries LAST_GATES. Pinned structurally
+# (the lifted region holds no write) AND behaviourally (the shipped region, run
+# against a record that cannot be written, must not stop the loop).
+GATES_REGION="$(awk '/^[[:space:]]*phase gates$/{f=1} f{print} f&&/^[[:space:]]*phase review-collect$/{exit}' "$LOOP_CODE")"
+GATES_REGION_LINES="$(printf '%s\n' "$GATES_REGION" | wc -l | tr -d ' ')"
+if [ "${GATES_REGION_LINES:-0}" -gt 5 ]; then
+    printf 'PASS the gates phase (%s lines) was lifted, so its guards below are not vacuous\n' "$GATES_REGION_LINES"
+else
+    printf 'FAIL the gates phase lifted %s lines — every guard below would pass vacuously\n' "${GATES_REGION_LINES:-0}"
+    fails=$((fails + 1))
+fi
+check "R5-2: the gates phase performs no record write, so no stop boundary sits in the invoked window" "0" \
+      "$(count_writes "$GATES_REGION")"
+# Written as a count rather than with `guard_absent`, which is defined further down
+# and would not exist yet at this point in the file.
+check "R5-2: the LAST_GATES write is gone from the loop, not hidden in another arm" "0" \
+      "$(grep -cF 'state_set LAST_GATES' "$LOOP_CODE")"
+# The behavioural half: run the SHIPPED gates region against a record that cannot be
+# written — a $STATE that is a directory, the shipped refusal, the same stand-in for
+# a full disk the AR6-4 cases use. Pre-fix this exits 9 and leaves the record saying
+# `invoked` with the in-flight markers set while the report sits in the run dir, which
+# is the state the fold charges as a lost review.
+GR="$(mktemp -d)"; mkdir -p "$GR/adir"
+gr_rc() { # gr_rc <state-path> — the shipped gates phase, reviewer already finished
+    (
+        STATE="$1" ITER=9 FAILS=7 RUN_DIR="$GR" LAST_GATES=""
+        log() { :; }; phase() { :; }
+        run_gates() { printf 'gates ran\n' >"${1:-/dev/null}"; return 0; }
+        eval "$STATE_WRITE_FN"; eval "$STATE_SET_FN"
+        eval "$GATES_REGION"
+    )
+    printf '%s' "$?"
+}
+printf 'REVIEW_STATUS=invoked\nREVIEW_INFLIGHT_BASE=aaaa1111\nREVIEW_INFLIGHT_HEAD=bbbb2222\nREVIEW_CALLS=3\n' >"$GR/state"
+check "R5-2: and an unwritable record cannot stop the gates phase" "0" "$(gr_rc "$GR/adir")"
+check "R5-2: and the gates phase left the review record exactly as it found it" "invoked" \
+      "$(gr_rc "$GR/state" >/dev/null; sed -n 's/^REVIEW_STATUS=//p' "$GR/state")"
+check "R5-2: and it wrote no key of its own, so the rewrite owns LAST_GATES" "0" \
+      "$(grep -c 'LAST_GATES' "$GR/state")"
 
 # --- the resolver's own claims -----------------------------------------------
 # reviewer_rejected is only as good as the table it reads, and the table is a

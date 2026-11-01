@@ -416,6 +416,12 @@ REVIEW_LEFTOVER="$(state_get REVIEW_STATUS)"
 # warning could only fire if the previous process died between its own
 # `state_set LAST_GATES FAIL` and its rewrite, and an operator reading `status`
 # saw no gate result, no declared risk and no review decision at all.
+#
+# Iteration 47 (review-5 R5-2) removed the gates arm's mid-iteration write, because
+# it sat inside the invoked-review window, so this rewrite is now the ONLY place
+# LAST_GATES lands. Do not put a `state_set LAST_GATES` back here to make the warning
+# "more current": the warning still fires, because the rewrite runs at the end of
+# iteration N and the next prompt reads it at the start of iteration N+1.
 LAST_GATES="$(state_get LAST_GATES)"
 LAST_RISK="$(state_get LAST_RISK)"
 LAST_REVIEW_DECISION="$(state_get LAST_REVIEW_DECISION)"
@@ -853,13 +859,38 @@ POLICY_PRECEDENCE
         fi
     fi
 
+    # The gates phase performs NO record write (external review 2026-11-01,
+    # run-20261101-062333/review-5.md R5-2). It used to write LAST_GATES here, and
+    # batch 17 had just made every record write able to stop the loop at exit 9, so
+    # that write sat INSIDE the window the record reports: the reviewer may already
+    # have finished and written review-$ITER.md/.rc, the durable record still said
+    # `invoked` with both in-flight markers set, and a full disk on this one write
+    # left exactly the state batch 18 removed from the collector — a COMPLETED
+    # review that the startup fold reads as a lost one (owed again, REVIEW_FAILS + 1,
+    # a second paid call for the same range, and two of them reach the
+    # restart-prevented exit 7). This loop's own rule is that nothing may sit between
+    # a verdict and the transition that records it; this was a second stop boundary
+    # sitting in that window, at a site the batch-18 fix never looked at.
+    #
+    # The verdict is held in the shell and lands with the end-of-iteration rewrite,
+    # which already re-emits LAST_GATES (AR6-3 counts it among the cross-iteration
+    # signals the rewrite must re-emit). A stop AFTER the collector's transition is
+    # the harmless class the three review counters already live in: the fold does not
+    # fire on `done`, and the rewrite re-emits the key from the in-process value.
+    # The cost is honest and small: if the loop dies between the gates phase and the
+    # end of the iteration, `status` and the next prompt's PREVG warning can show the
+    # PREVIOUS iteration's gates verdict. Nothing decides anything from LAST_GATES —
+    # the gate-failure counter that stops the loop is FAILS, and it was already
+    # deferred to this same rewrite — and the gates output itself is in
+    # $RUN_DIR/gates-$ITER.log. Pinned by the gates-region guards in
+    # tools/runner/test_review_state.sh (R5-2).
     phase gates
     GF="$RUN_DIR/gates-$ITER.log"
     if run_gates "$GF"; then
-        LAST_GATES="PASS"; state_set LAST_GATES PASS
+        LAST_GATES="PASS"
         FAILS=0
     else
-        LAST_GATES="FAIL"; state_set LAST_GATES FAIL
+        LAST_GATES="FAIL"
         FAILS=$((FAILS+1))
         log "iter=$ITER GATES FAILED (see $GF) fail_count=$FAILS"
     fi
