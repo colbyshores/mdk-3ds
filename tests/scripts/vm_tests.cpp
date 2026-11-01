@@ -3598,7 +3598,20 @@ int main() {
 
     MdkData data = locateData();
     if (!data.found()) {
+        // The exit code is the ONLY channel the gate reads. `make -C tests/scripts`
+        // and ralph-pi.sh both branch on it and ignore prose, so returning 0 here
+        // would discard every failure counted above — including the archive guards,
+        // which are above the data check precisely so that they cannot skip. The
+        // FAIL lines would then print over a green exit, which is the exact
+        // pass-generator this ordering exists to avoid, and it would happen on
+        // exactly the data-less machine the ordering was moved forward to cover.
+        // (Vault: "a warning that exits zero is a pass generator with better
+        // manners" — a validator must return in the channel its callers read.)
         printf("SKIP: no MDK data (set MDK_DATA_DIR)\n");
+        if (failures != 0) {
+            printf("%d check(s) FAILED (before the data check, without game data)\n", failures);
+            return 1;
+        }
         return 0;
     }
     const int32_t kLevel = 7;

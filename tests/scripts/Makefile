@@ -85,6 +85,7 @@ bin: $(BUILD)/tick1 $(BUILD)/vm_tests
 
 test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@$(BUILD)/vm_tests
+	@sh sprites_refusal_test.sh "$(CURDIR)/$(BUILD)/tick1"
 	@$(BUILD)/tick1
 
 $(BUILD):

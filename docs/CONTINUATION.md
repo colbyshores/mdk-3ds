@@ -1,24 +1,29 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — adds a gate-visible test that pins the archive-parse guard behind the
-missing-`TRAVSPRT.BNI` refusal, plus the committed evidence pair for that refusal. No game
-behaviour, renderer, gate, golden, data format, `ralph-pi.sh` or `review_state.sh` change; the
-pinned frame is byte-unchanged. Medium rather than low because the new test's non-vacuity is
-non-obvious — two overlapping guards mean a one-line revert prints PASS — and the batch's deliverable
-is an empirical claim about a path no pin can show.
+Risk: medium — review-9 remediation: `vm_tests`'s data-missing branch now reports the failure
+counter it used to discard (so `make -C tests/scripts` can go red where it used to print FAIL over a
+green exit), a new gated harness case for the missing-`TRAVSPRT.BNI` refusal, and layout assertions
+in the archive pin. No shipped source, game behaviour, renderer, golden, data format, `ralph-pi.sh`
+or `review_state.sh` change; the pinned frame is byte-unchanged. Medium rather than low because it
+changes what an existing gate means, and the batch's deliverable is a falsification record.
 
-Last updated: 2026-11-01 (**batch 22** — game-side PRIORITY ORDER item (a): the missing-`TRAVSPRT.BNI`
-evidence pair review-2 F4 asked for in batch 11). Review-7 had no Critical or High and was
-dispositioned by batch 21, so the priority order governs. `docs/evidence/2026-11-01-L7-sprites-
-missing-scene.{png,txt}` shows the level-7 scene with a 4-byte `TRAVSPRT.BNI` in a symlink farm
-(marker exists, read succeeds, parse fails) against a control arm whose sha256 reproduces batch 10's
-committed `cpp sha256` **byte-for-byte across fifteen revisions**, so the measured `11.361%` gap is
-the archive and nothing else; its three largest diff regions are the three things the refusal's log
-line names. The sidecar says why a pin cannot show this, and that **no oracle picture for this path
-can exist** (the C# `Bni.Load` throws). The guard behind the refusal is now pinned by
-`tests/scripts/archive_guard_tests.cpp`, which runs before the data check so it cannot skip into
-being a pass generator. Goldens **441/0/0** (one new PASS, none moved); frame byte-unchanged. Full
-narrative and the three-reversion falsification record: `docs/PROGRESS_LOG.md`, "Iteration 50".
+Last updated: 2026-11-01 (**batch 23** — review-9 remediation; all four findings dispositioned, none
+rebutted). **F1 High:** `vm_tests.cpp`'s `SKIP: no MDK data` branch `return 0`ed past the counter, so
+the archive guards printed four FAIL lines and exited 0 on exactly the data-less machine they were
+moved above the data check to cover; it now reports the counter, and the same deliberately broken
+reader exits 0 on HEAD and 1 here. **F2 Medium:** the refusal is now gated by
+`tests/scripts/sprites_refusal_test.sh` — a 4-byte stub must exit non-zero with the message, an
+8-byte legal EMPTY archive must exit 0 without it, same argv, no ROM data — wired into
+`make -C tests/scripts`. **F4 Low:** the "well-formed archive" case now pins the entry's offset and
+size, so dropping the oracle's `4 +` (`Fti.cs:66`) or reading the name field as 8 fails. **F3 Low:**
+a quoted `git rev-list` range that did not reproduce, corrected as an erratum because
+`docs/evidence/README.md` forbids editing a published pair. Goldens **442/0/0** (one new PASS, none
+moved); frame byte-unchanged. Narrative, the six-reversion table and the exit-code class sweep:
+`docs/PROGRESS_LOG.md`, "Iteration 51". Previous: **batch 22** — the missing-`TRAVSPRT.BNI` evidence
+pair (`docs/evidence/2026-11-01-L7-sprites-missing-scene.{png,txt}`, whose control arm reproduces
+batch 10's `cpp sha256` so the measured `11.361%` gap is the archive and nothing else, and which
+says **no oracle picture for that path can exist** because the C# `Bni.Load` throws) plus
+`tests/scripts/archive_guard_tests.cpp`. Narrative: "Iteration 50".
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -77,13 +82,20 @@ could reach it; batch 20 found none left in the window. Changing the fold change
 `REVIEW_FAILS` and the owed set (review-5 oq1, re-asked by review-6 oq1). (8) Whether the `Risk:`
 line is the builder's to write at all: the builder authors the input to its own review policy. The
 safety net overrode batch 20's `medium` (567-line diff) so the policy held, but the coupling is real
-and an owner check on it belongs on record (review-7 oq3).
+and an owner check on it belongs on record (review-7 oq3). (9) Whether published evidence sidecars are
+correctable in place: `docs/evidence/README.md` says *never edit a published pair*, which is why
+review-9 F3's misquoted `git rev-list` range became an erratum in "Iteration 51" instead of an edit.
+If in-place correction of a **prose** claim is acceptable while the pixels and measurements stay
+frozen, that is a one-line change to that README. (10) Whether `tick1`'s data-missing `SKIP` should
+exit non-zero, i.e. whether "the golden suite could not run" is a gate failure on hosts without the
+licensed tree. It changes what `make -C tests/scripts` means for every operator and every CI box, so
+it is not a batch's call.
 
 ## Current tree state (VERIFIED)
 
 The full record — every invariant, every failure mode, every "do not change this" — is the
 appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of batch 13", marked
-**superseded in part** where batches 14-20 changed it. The headline:
+**superseded in part** where batches 14-23 changed it. The headline:
 - **Camera/renderer:** the C#'s RIGHT-HANDED `CreateLookAt` basis; Vulkan folds clip.y into the
   matrix and the sky inverse carries the flip on its LEFT side; shaders use `M * v`; Citro3D culls
   per draw with the mode cached in the **Citro3D context**. **UNVERIFIED on hardware** (P6).
@@ -98,8 +110,11 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   null archive is a different game, not a degraded one. Do not reintroduce a `nullptr` into the
   `ScriptRuntime` constructor from a shipped entry point, and do not "tighten" `Bni::parse` into a
   content check: a zero-filled archive is a legal EMPTY archive and the C# can produce a missing
-  entry, so `itemsAnimation` returning `nullptr` for a missing entry is faithful. Pinned by
-  `tests/scripts/archive_guard_tests.cpp`; pictured in
+  entry, so `itemsAnimation` returning `nullptr` for a missing entry is faithful. The parse guard is
+  pinned by `tests/scripts/archive_guard_tests.cpp` (offset and size, not just `has()`, since batch
+  23), the **refusal branch itself** by `tests/scripts/sprites_refusal_test.sh` — a 4-byte stub must
+  exit non-zero with the message and an 8-byte legal empty archive must exit 0 without it, same argv,
+  no ROM data — and the scene is pictured in
   `docs/evidence/2026-11-01-L7-sprites-missing-scene.png`.
 - **Object pass:** `transform()` is `CreateScale * (rolling ? RollingBasis : Rotation) *
   CreateTranslation(...)` via `mdk::multiply`; `transform_at(alpha)` is what a frame draws with;
@@ -140,23 +155,25 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `docs/PROGRESS_LOG.md` names the edit it applied, quotes only that edit's output, and says whether
   it is a **control** (meant to pass) or a **reversion** (must fail).
 
-## Verified on this tree (batch 22)
+## Verified on this tree (batch 23)
 
-All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`, "Iteration 50".
-Goldens **exit 0** — `All cases match the oracle.`, **441 PASS / 0 FAIL / 0 SKIP** (440 carried plus
-the one new `PASS ArchiveIndexGuards`; no golden moved). `bash tools/check.sh` — **exit 0**, `CHECK:
-ALL GATES PASSED` (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned
+All gates re-run from a clean invocation; verbatim output in `docs/PROGRESS_LOG.md`, "Iteration 51".
+Goldens **exit 0** — `All cases match the oracle.`, **442 PASS / 0 FAIL / 0 SKIP** (441 carried plus
+the one new `PASS SpritesRefusal`; no golden moved). `bash tools/check.sh` — **exit 0**, `CHECK: ALL
+GATES PASSED` (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned
 `cpp=`, so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS). `make -C
 mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`. `cmake --build build-linux --target mdk` — **exit 0**.
 `test_review_state.sh` — **exit 0**, **177 cases** (unchanged). `model_identity.py selftest --live`
-— `SELFTEST CLEAN`. The new pin prints `PASS ArchiveIndexGuards` **with and without**
-`MDK_DATA_DIR`, and falsifying it took three experiments, because two overlapping guards each reject
-a truncated file on their own — deleting `bytes.size() < 8` alone prints PASS, and only deleting
-**both** it and the count-fit guard fails the 1/4/7-byte cases. Read the table in "Iteration 50"
-before calling any case there inert. Frame `docs/frames/2026-11-01-sprites-missing-archive-pinned.png`
-+ `.txt` — `1.240 / 247 / 0.1819`, byte-identical to its 27 predecessors. **No emulator run and no
-Old-3DS hardware run: Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was
-pinned, relaxed or edited.
+— `SELFTEST CLEAN`. Six reversions were run to prove the three new/changed checks can fail, each
+quoted from its own edit in the "Iteration 51" tables: HEAD's `vm_tests` exits **0** and this batch's
+exits **1** over the same broken reader on a data-less machine (F1); deleting the refusal's `return
+1` fails the stub arm and making the guard unconditional fails the control arm (F2); dropping the
+oracle's `4 +` and reading the name field as 8 each fail the layout pin (F4). `fti.cpp`, `bni.cpp` and
+`tick1.cpp` were reverted with `git checkout --` after their experiments — **no shipped source
+changed in this batch**. Read those tables before calling any case there inert. Frame
+`docs/frames/2026-11-01-refusal-gated-pinned.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
+to its 28 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays
+UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
 
 ## Standing open items
 
@@ -183,12 +200,20 @@ kill, and the case would assert the uninterrupted outcome and PASS. Sound as shi
 writes execute on the `done` path). **The first batch that adds a conditional record write to the
 collector arm must land the exit-status assertion (require `9` per iteration) with it.** From
 review-7 oq2, a bound on a claim rather than a defect: `lift_fn` is bounded by the definition's own
-shape *while every definition in `ralph-pi.sh` keeps its `}` in column 0*.
+shape *while every definition in `ralph-pi.sh` keeps its `}` in column 0*. From review-9 F1, a class
+bound worth keeping: **a host harness must return the counter it accumulated on every exit path** —
+`vm_tests`'s data-missing branch is fixed and every other `return 0` in both harnesses was read and
+cleared in "Iteration 51"; the first batch that adds an early return to either `main` must carry the
+counter with it. And one sibling left standing on purpose: **`tick1`'s own `SKIP: no MDK data` still
+exits 0**, so the golden suite can skip into a green `make -C tests/scripts` on a host without
+`./MDK/`; it is visible as `SKIP` and as a PASS count that drops from 442 to about 54, and making it
+fail is owner task (10) below, not a batch.
 
 ## Verification commands
 
 ```
-make -C tests/scripts clean && make -C tests/scripts   # goldens
+make -C tests/scripts clean && make -C tests/scripts   # goldens (includes sprites_refusal_test.sh)
+sh tests/scripts/sprites_refusal_test.sh               # the missing-archive refusal, both arms
 tests/scripts/build/tick1 dump draw 3 1                # the queued draws (also `bound`)
 tests/scripts/build/tick1 dump blend 3 1               # the blended transforms (also `blendcases`)
 tests/scripts/build/tick1 dump runner 7 120 -21,-13,0.73   # the hamster's run, per tick

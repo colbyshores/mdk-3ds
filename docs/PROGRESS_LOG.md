@@ -6575,3 +6575,201 @@ so `mixer_.play("RUNNER", Once)` is unpinned; it needs the column added to the p
 harness and `L7_t120_runner_{a,b}` regenerated from the oracle, which is a probe rebuild. Then (c)
 the Citro3D per-draw matrix and the depth/blend divergence, then (e) `FrameBlend.Lerp`'s rounding.
 The loop-harness chain's open items are unchanged and listed under Standing open items.
+
+---
+
+## Iteration 51 — batch 23: a validator must return in the channel its callers read (review-9 remediation)
+
+**Review:** `logs/ralph-pi/run-20261101-062333/review-9.md` (DeepSeek V4.1 Flash, independent
+family, over `1fb58c74..57426883`). Verdict `INCOMPLETE` on one High. Disposition: **F1 (High)
+fixed, F2 (Medium) fixed, F4 (Low) fixed, F3 (Low) fixed as an erratum** — no finding rebutted.
+The reviewer also reproduced batch 22's evidence end to end (farm, both arm hashes, the measured
+`11.361%`, the three diff regions, the falsification table) and found nothing wrong in it, so
+batch 22's claims stand and are not re-litigated here.
+
+### Prior-solution lookup (mandatory, both sources)
+
+Obsidian vault `/mnt/nas/Vaults/port-docs` (read directly; no Obsidian MCP server in this harness)
+already holds this exact defect as a named pattern:
+`30-architecture/patterns/a-warning-that-exits-zero-is-a-pass-generator-with-better-manners.md`,
+whose rule 1 is *"a validator must return in the channel its callers read"* and whose rule 4 is
+*"audit the gap between a gate's claimed contract and its exit behaviour — grep for the assertion,
+then read the last ten lines of the function."* That is F1 verbatim: the prose asserted the guards
+could not skip, and the last line of the branch returned 0. Its sibling
+`a-gate-that-skips-on-missing-input-is-a-pass-generator.md` is the pattern batch 22 cited when it
+moved those guards above the data check. The pattern note also supplied the discipline used for the
+falsification table below: **check that the failing path is reachable before sizing the hole**, and
+**say which half of a gate is hard**. Cognee MCP is not reachable from this harness; the pi-knowledge
+index holds no prior entry for this defect class, so the vault is the prior solution and it was
+followed rather than re-derived.
+
+### F1 (High, confirmed) — the pin's failures were discarded on exactly the machine it was moved forward to cover
+
+`vm_tests.cpp` accumulated into the global `failures` and then, on the data-missing path, printed
+`SKIP` and `return 0`. `failures` is only consulted at the end of `main`, which that `return`
+skips. So on any machine without the game tree the archive guards ran, printed their FAIL lines,
+and the process exited **0** — `make -C tests/scripts` green, and `ralph-pi.sh:257-258` gates on
+`PIPESTATUS[0]` alone. The ordering that exists to prevent a skip-becoming-a-pass was itself the
+pass generator.
+
+Fix (`tests/scripts/vm_tests.cpp`, the data-missing branch): report the counter before returning.
+
+    printf("SKIP: no MDK data (set MDK_DATA_DIR)\n");
+    if (failures != 0) {
+        printf("%d check(s) FAILED (before the data check, without game data)\n", failures);
+        return 1;
+    }
+    return 0;
+
+**Falsification, both directions, same broken reader, same data-less machine.** The reviewer's R3
+(deleting `bytes.size() < 8` **and** the count-fit guard from `ArchiveIndex::read`) applied to
+`mdk_core/src/formats/fti.cpp`, binary run from `/tmp` with `env -u MDK_DATA_DIR` so no relative
+`MDK` resolves:
+
+| arm | the edit it quotes | exit | output |
+|---|---|---:|---|
+| **reversion, HEAD** | `git show HEAD:tests/scripts/vm_tests.cpp` (the shipped `return 0`) | **0** | four `FAIL archive_guard:` lines, then `SKIP: no MDK data (set MDK_DATA_DIR)` — gate green over four failures, exactly the reported defect |
+| **reversion, this batch** | the fix above | **1** | the same four FAIL lines, then `SKIP: no MDK data (set MDK_DATA_DIR)`, then `4 check(s) FAILED (before the data check, without game data)` |
+| **control, this batch** | guards intact, run from `/tmp` | **0** | `PASS SystemNumericsMatrixInverse`, `PASS ArchiveIndexGuards`, `SKIP: no MDK data` |
+
+`fti.cpp` was reverted with `git checkout --` after the experiment; the shipped reader is unchanged.
+
+### The same class, swept rather than patched at the reporting site
+
+Batch 19's lesson is that a fix belongs to the defect class. Every `return 0` in both host harnesses
+and the formats harness was read, not assumed:
+
+| site | verdict |
+|---|---|
+| `vm_tests.cpp` data-missing branch | the defect, fixed above |
+| `tick1.cpp:1089` (`SKIP: no MDK data`) | **not** this class: `failures` is a local declared at `:1243`, inside the golden path, so nothing is discarded. Its own skip-with-green-exit is a separate question, logged below with a cause |
+| `tick1.cpp:510, 1130, 1134, 1199, 1240` | dump-mode returns; no counter exists at any of them |
+| `tick1.cpp:2123`, `vm_tests.cpp:3766` | the final summary, which is the correct use of the counter |
+| `tests/formats/main.cpp:29` | already `return failures == 0 ? 0 : 1;` — clean |
+
+**Deferred with cause, not fixed:** `tick1`'s data-missing `SKIP` still exits 0, so the golden
+suite can skip into a green `make -C tests/scripts` on a machine with no game tree. That is the
+sibling vault pattern, but fixing it means *the golden suite fails wherever the licensed tree is
+not installed*, which changes what the gate means for every operator and every CI box without ROM
+data — an owner-visible gate-semantics decision, not a batch. It is also currently *visible* rather
+than silent: a skip drops the PASS count from 442 to about 54 and puts `SKIP` in the record, which
+is how the loop has always detected it. Trigger that reopens it: any host that runs the gate without
+`./MDK/`.
+
+### F2 (Medium, confirmed) — the refusal itself had nothing that could fail
+
+The refusal is the behaviour batch 11 shipped and batch 22 pictured, and neither the picture nor
+`archive_guard_tests.cpp` checks the frontend's branch: `grep -rn "did not load" tests/ tools/`
+found only the printf sites. One plausible "simplification" — drop the `return 1`, or narrow
+`if (scriptAssetsReady && spritesReady)` to `if (scriptAssetsReady)` — builds a runtime against an
+empty `Bni`, changes the random stream, and leaves all goldens green, because the goldens run
+against the intact tree and never enter the branch.
+
+New gate: **`tests/scripts/sprites_refusal_test.sh`**, wired into `tests/scripts/Makefile`'s `test`
+target between `vm_tests` and `tick1`, so its exit status is `make -C tests/scripts`'s. It builds
+its own data tree in a `mktemp -d` farm whose only file is `TRAVERSE/TRAVSPRT.BNI` and runs the
+**same argv** at both arms, so the archive is the only variable:
+
+| arm | archive | expected |
+|---|---|---|
+| stub | 4 zero bytes (truncated count field) | non-zero exit **and** the refusal on stdout |
+| control | 8 zero bytes — a legal **empty** archive, count 0, which `archive_guard_tests.cpp` pins as parseable | exit 0 **and** no refusal |
+
+The argv is `dump rolling 3 1`, the one dump mode that returns before the level load: the guard
+runs before the dispatch, so any argv shows it, and this one needs no ROM-derived level data, so
+the pair behaves identically with or without the game tree. A control that needed the tree would
+SKIP without it, which is the thing F1 was about.
+
+**Falsifications, one per direction of the pair, both applied to `tests/scripts/tick1.cpp` and then
+reverted with `git checkout --`:**
+
+| arm | the edit it applied | result |
+|---|---|---|
+| **reversion RA** (the reviewer's named edit: the refusal stops refusing — its `return 1;` deleted) | `  ok   sprites_refusal: the stub arm refused` **absent**; `  FAIL sprites_refusal: the stub arm exited 0; a runtime built without the archive is a different random stream, not the oracle of the C#` + control still ok → **rc 1** |
+| **reversion RB** (control non-vacuity: `if (false && data.read(...) && Bni::parse(...))`, i.e. the guard ignores the parse) | `  ok   sprites_refusal: the stub arm refused (exit 1, message present)`, `  FAIL sprites_refusal: the control arm exited 1; a legal empty archive must not refuse, or the guard is unconditional and the pair proves nothing`, `  FAIL sprites_refusal: the control arm refused a legal empty archive` → **rc 1** |
+| **control (shipped)** | neither edit | `  ok   sprites_refusal: the stub arm refused (exit 1, message present)`, `  ok   sprites_refusal: the control arm was accepted (exit 0, no refusal)`, `PASS SpritesRefusal` → **rc 0** |
+
+RB is the case that a one-sided test would have missed: an unconditional refusal passes the stub arm
+for the wrong reason.
+
+### F4 (Low, confirmed) — the "well-formed archive" case pinned the lookup, not the layout
+
+`testWellFormedArchiveParses` asserted only `has()`, and the fixture is built so a wrong layout
+still finds the entry: a 6-byte name inside an 12-byte field, and a stored payload offset that puts
+the entry exactly at EOF, so its size is zero either way. Both of the reviewer's reversions were
+green. Fixed by asserting the entry's identity and geometry, which is what makes the case depend on
+the record layout — and the `4 +` is the oracle's, not an invention: `src/Mdk.Formats/Fti.cs:66`
+reads `offsets.Add((4 + (int)r.U32(), name));` inside `ArchiveIndex.Read`, which is what
+`Bni.cs:14` calls with `nameLength = 12`.
+
+**Falsifications, one edit each, both reverted with `git checkout --`:**
+
+| arm | the edit it applied | result |
+|---|---|---|
+| **reversion R5** — drop the oracle's `4 +` in `mdk_core/src/formats/fti.cpp:72` | `  FAIL archive_guard: the entry's offset is the stored offset plus four (the oracle's 4 +)` and `  FAIL archive_guard: the entry's size is the file end minus its offset`, no `PASS ArchiveIndexGuards` → **rc 1** |
+| **reversion R6** — read the BNI name field as 8 instead of 12 (`mdk_core/src/formats/bni.cpp:19,31`) | the same two FAIL lines → **rc 1** (with an 8-byte field the offset field is read four bytes early, so the entry reports offset 4 / size 20 instead of 24 / 0) |
+| **control (shipped)** | neither edit | `PASS ArchiveIndexGuards` → **rc 0** |
+
+Both reversions leave `has()` green, which is exactly why the reviewer filed it: the old assertions
+could not see either one.
+
+### F3 (Low, confirmed) — a quoted command that does not reproduce, fixed as an erratum
+
+`docs/evidence/2026-11-01-L7-sprites-missing-scene.txt:67-68` quotes
+`git rev-list --count bfa1c7c..HEAD = 15`. Measured on this tree:
+
+    $ git rev-list --count bfa1c7c..HEAD      -> 16
+    $ git rev-list --count bfa1c7c..1fb58c7   -> 15
+
+The number was right for the revision the capture was taken on; the *quoted command* is what is
+wrong, and it drifts by one with every batch, so it will read 17, 18, 19 from now on. The
+load-bearing claim in that sentence — that the control arm's `cpp sha256` is byte-identical to
+batch 10's — is true and the reviewer reproduced it independently (`2f98a32dfa555a16…dd01de1`).
+
+**Why an erratum and not the edit the reviewer recommended:** `docs/evidence/README.md` states
+*"Never edit a published pair. Same rule as the frame record: a capture is evidence of what the
+build produced at that revision."* Batch 22 published that sidecar, so this batch does not rewrite
+it. The correction lives here, in the append-only record, and the corrected range is
+`bfa1c7c..1fb58c7` = 15. If the owner would rather published evidence sidecars be correctable in
+place, that is a one-line change to `docs/evidence/README.md` and is listed under open items rather
+than made silently in a batch that also carries a High.
+
+### Gate results (verbatim, all run from a clean invocation after the code and docs were final)
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts clean && make -C tests/scripts` | **exit 0** — `All cases match the oracle.`, **442 PASS / 0 FAIL / 0 SKIP** (441 carried + the one new `PASS SpritesRefusal`; no golden moved) |
+| contract/parity/frame/integrity | `bash tools/check.sh` | **exit 0** — `CHECK: ALL GATES PASSED` |
+| 3DS target | `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` | **exit 0** — `3DSX mdk.3dsx` |
+| Linux frontend | `cmake --build build-linux --target mdk -j8` | **exit 0** — `[100%] Built target mdk` |
+| review-record state machine | `bash tools/runner/test_review_state.sh` | **exit 0** — `REVIEW STATE: ALL CASES PASS`, **177 PASS** (unchanged) |
+| identity resolver | `python3 tools/runner/model_identity.py selftest --live` | **exit 0** — `MODEL IDENTITY: SELFTEST CLEAN` |
+
+`tools/check.sh` tail, verbatim:
+
+    BATCH INTEGRITY: PASS
+
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             every pinned frame is deterministic and unchanged
+      PASS   gates_batch_integrity    project invariants intact
+
+    CHECK: ALL GATES PASSED
+
+`gates_frames` printed `PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`:
+no drawing code changed, so `tests/frames/reference.sha256` was NOT regenerated. Nothing was
+relaxed, pinned or edited to obtain these results. **No shipped source changed** — the only
+non-test file touched is `tests/scripts/Makefile`. **No emulator run and no Old-3DS hardware run:
+Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6).
+
+### What is next
+
+Unchanged from batch 22's PRIORITY ORDER, because this batch was review remediation rather than a
+game slice: **(b) review-1 F3** — `dumpRunner` has no mixer field, so `mixer_.play("RUNNER", Once)`
+is unpinned; it needs the column added to the probe *and* the harness and `L7_t120_runner_{a,b}`
+regenerated from the oracle. Then (c) the Citro3D per-draw matrix and the depth/blend divergence,
+then (e) `FrameBlend.Lerp`'s rounding. New items opened by this batch are in Standing open items.

@@ -116,6 +116,20 @@ void testZeroFilledArchiveParsesButIsEmpty() {
 // Non-vacuity: the same call that rejects the stub accepts a real one-entry
 // archive. Without this, "the stub is rejected" would also be satisfied by a
 // parse that rejects everything.
+//
+// IT PINS THE LAYOUT, NOT JUST THE LOOKUP. Asserting only `has()` left two real
+// reader regressions invisible, because this fixture is built so a WRONG layout
+// still finds the entry: the name is 6 bytes (so an 8-byte name field reads it
+// too) and the stored payload offset puts the entry exactly at EOF (so its size
+// is zero either way). The two assertions on the entry's offset and size are
+// what make the case depend on the record layout:
+//
+//   * dropping the oracle's `4 +` (Fti.cs:66, fti.cpp:72) reports offset 20;
+//   * reading the name field as 8 instead of 12 moves the offset field four
+//     bytes early, so it reports offset 4 and size 20.
+//
+// Both reversions leave `has()` green and both fail these lines. Measured, not
+// reasoned — see the falsification table in docs/PROGRESS_LOG.md.
 void testWellFormedArchiveParses() {
     std::vector<uint8_t> bytes = makeArchive("H150_R");
     mdk::formats::Bni bni;
@@ -123,6 +137,14 @@ void testWellFormedArchiveParses() {
           "a well-formed one-entry archive parses");
     check(bni.has("H150_R"), "the entry is found by name");
     check(!bni.has("H150_I"), "a name that is not there is not found");
+    check(bni.entries().size() == 1, "exactly one entry was read");
+    if (bni.entries().size() == 1) {
+        check(bni.entries()[0].first == "H150_R", "the name is the whole 12-byte field");
+        check(bni.entries()[0].second.offset == 24,
+              "the entry's offset is the stored offset plus four (the oracle's 4 +)");
+        check(bni.entries()[0].second.size == 0,
+              "the entry's size is the file end minus its offset");
+    }
 }
 
 // An entry count that cannot fit in the file is a broken file, not an archive.

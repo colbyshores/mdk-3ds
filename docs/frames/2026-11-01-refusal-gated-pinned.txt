@@ -1,0 +1,30 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-01T14:45:33Z at 5742688
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move, and what shows the batch instead
+--------------------------------------------------------------
+This batch changed no shipped source: it fixed the exit status of a host test harness
+(`vm_tests`'s data-missing branch discarded the failure counter it had accumulated), added a gated
+harness case for the missing-`TRAVSPRT.BNI` refusal, and added layout assertions to the archive pin.
+Nothing a frame is made of — geometry, palette, uniforms, projection, camera, draw order — was
+touched, so the digest is the same one 28 earlier frames carry and `reference.sha256` was not
+regenerated. The gap above is the standing 1.240% baseline, not a measurement of this batch.
+
+What does show it, and can fail:
+
+  * `make -C tests/scripts` — 442 PASS / 0 FAIL / 0 SKIP, the new line being `PASS SpritesRefusal`.
+  * `sh tests/scripts/sprites_refusal_test.sh` — the refusal's two arms: a 4-byte
+    `TRAVSPRT.BNI` in a fabricated data tree must exit non-zero with the refusal on stdout, and an
+    8-byte legal EMPTY archive must exit 0 without it, same argv (`dump rolling 3 1`), so the
+    archive is the only variable and no ROM-derived level data is needed.
+  * The six reversions in `docs/PROGRESS_LOG.md` "Iteration 51": HEAD's `vm_tests` exits 0 and this
+    batch's exits 1 over the same deliberately broken archive reader on a machine with no game tree;
+    deleting the refusal's `return 1` fails the stub arm; making the guard unconditional fails the
+    control arm; dropping the oracle's `4 +` (src/Mdk.Formats/Fti.cs:66) and reading the BNI name
+    field as 8 instead of 12 each fail the layout pin.
+
+Capture conditions: `DISPLAY=:99` (AGENTS.md P7 — never the operator's desktop), lavapipe
+(`VK_ICD_FILENAMES` default `lvp_icd.json`), built from 5742688 plus this batch's working tree. No
+emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture
+stays UNVERIFIED (P6).
