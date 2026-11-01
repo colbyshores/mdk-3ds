@@ -1095,15 +1095,25 @@ int main(int argc, char** argv) {
     // A runtime without it is a world where those animations do not exist, which is
     // not the oracle's world, so every runtime below is given it.
     formats::Bni sprites;
-    const formats::Bni* spritesOrNull = nullptr;
+    const formats::Bni* spritesArg = nullptr;
     {
         std::vector<uint8_t> spriteBytes;
         if (data.read("TRAVERSE/TRAVSPRT.BNI", &spriteBytes) &&
             formats::Bni::parse(&sprites, spriteBytes.data(), (int32_t)spriteBytes.size())) {
-            spritesOrNull = &sprites;
+            spritesArg = &sprites;
         } else {
-            printf("NOTE: TRAVERSE/TRAVSPRT.BNI did not load; the built-in behaviours "
-                   "that play their own animations cannot run\n");
+            // FAIL, and fail loudly. A runtime without the archive is not the
+            // oracle's world: the Runner's idle chance is drawn only while the
+            // object is idle or its animation is done, so with no archive the
+            // random stream is consumed differently and EVERY golden that touches
+            // a scripted random decision would silently be a different game's
+            // output. The C# cannot run without it either — Viewer loads it with
+            // Bni.Load, which throws — so refusing here is the oracle's behaviour,
+            // not a convenience.
+            printf("FAIL: TRAVERSE/TRAVSPRT.BNI did not load; the built-in behaviours that play "
+                   "their own animations cannot run, and the random stream would not be the "
+                   "oracle's\n");
+            return 1;
         }
     }
 
@@ -1159,7 +1169,7 @@ int main(int argc, char** argv) {
             kurt.yaw = levelData.dti().startAngle();
             kurtArg = &kurt;
         }
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, kurtArg, spritesOrNull);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, kurtArg, spritesArg);
         runtime.option = 0;
         // dumpRunner ticks the world itself, one tick per printed line; ticking it
         // here too would print the state 2*ticks ticks in, not `ticks`.
@@ -1215,7 +1225,7 @@ int main(int argc, char** argv) {
                 continue;
             }
             bank.preload();
-            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
+            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
             runtime.option = 0;
             for (int t = 0; t < probeTicks; t++) {
                 runtime.update(1.0f / 30.0f);
@@ -1350,7 +1360,7 @@ int main(int argc, char** argv) {
         }
         bank.preload();
 
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
         runtime.option = 0;  // the oracle's Option
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -1404,7 +1414,7 @@ int main(int argc, char** argv) {
             continue;
         }
         bank.preload();
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
         runtime.option = 0;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -1503,7 +1513,7 @@ int main(int argc, char** argv) {
             continue;
         }
         bank.preload();
-        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
+        scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
         runtime.option = 0;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
@@ -1688,7 +1698,7 @@ int main(int argc, char** argv) {
             Player player;
             player.feet = at;
             player.yaw = levelData.dti().startAngle();
-            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, spritesOrNull);
+            scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, spritesArg);
             runtime.option = 0;
             std::string got = dumpRunner(rc.level, rc.ticks, at, runtime);
             if (got == expected) {
@@ -1750,7 +1760,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 3)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
                     runtime.option = 0;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);
@@ -1808,7 +1818,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 8)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
                     runtime.option = 0;
                     for (int t = 0; t < 2; t++) {
                         runtime.update(1.0f / 30.0f);
@@ -1886,7 +1896,7 @@ int main(int argc, char** argv) {
                     if (audio::SoundBank::forLevel(&bank, data, 3)) {
                         bank.preload();
                     }
-                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesOrNull);
+                    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
                     runtime.option = 0;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);

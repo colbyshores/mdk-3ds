@@ -305,7 +305,8 @@ int main(int argc, char** argv) {
                             std::printf("[main] kurt sprite: FAILED\n");
                         }
                     } else {
-                        std::printf("[main] sprites: FAILED\n");
+                        std::printf("[main] sprites: FAILED — the HUD, Kurt's sprite and the "
+                                    "scripts all need TRAVERSE/TRAVSPRT.BNI\n");
                     }
                 } else {
                     std::printf("[main] view: FAILED\n");
@@ -368,12 +369,26 @@ int main(int argc, char** argv) {
         // The C# reloads the level and constructs a fresh ScriptRuntime when
         // Kurt respawns. Recreate the runtime here too, so its object list,
         // tick count and random stream start over with the player.
-        if (scriptAssetsReady) {
+        //
+        // The sprites archive is one of the runtime's assets, not an optional
+        // decoration, so it gates the runtime exactly as the CMI and the sound
+        // bank do. The C# loads TRAVERSE/TRAVSPRT.BNI in Viewer before the
+        // runtime exists and Bni.Load throws when it is not there: the oracle has
+        // no run without it. A runtime built with a null archive is a world where
+        // H150_R and H150_I do not exist — and because the Runner draws its idle
+        // chance only while idle or done, that world consumes the random stream
+        // differently from tick one. So the nullptr is not passed: the runtime is
+        // not constructed at all, and the level runs without scripts instead of
+        // running a different game.
+        if (scriptAssetsReady && spritesReady) {
             const int32_t runtimeSeed = scriptSeedSet ? scriptSeed : freshScriptSeed();
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player,
-                                                          spritesReady ? &sprites : nullptr));
+                                                          &sprites));
             runtime->option = 0;
             std::printf("[main] scripts: runtime ready (seed %d)\n", runtimeSeed);
+        } else if (scriptAssetsReady) {
+            std::printf("[main] scripts: NOT started — TRAVERSE/TRAVSPRT.BNI did not load, and a "
+                        "runtime without it is a different random stream, not the oracle's\n");
         }
     };
     if (arena) {

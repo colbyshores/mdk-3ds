@@ -110,7 +110,10 @@ public:
     // its idle chance only while idle or done, such a world also runs a
     // DIFFERENT random stream from the oracle's. Omitting the argument must be
     // a compile error, not a silent different game; a harness that really has
-    // no archive says so by passing nullptr out loud.
+    // no archive says so by passing nullptr out loud — and after 2026-11-01 no
+    // shipped entry point does: the Linux frontend gates the runtime on the archive
+    // and the golden harness fails outright without it, because a runtime without
+    // it is a different random stream, not a degraded one.
     ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
                   audio::SoundBank* bank, const Player* player,
                   const formats::Bni* sprites);

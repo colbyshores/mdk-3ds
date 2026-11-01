@@ -311,7 +311,32 @@ while :; do
         cat "$BUILDER_FILE"
         printf '\n---\n\n'
         cat "$PROMPT_FILE"
-        printf '\n---\n\n# Loop status block (machine-generated)\n\n'
+        # docs/KILO_RALPH_LOOP_POLICY.md is the owner's GENERIC loop policy. It is
+        # not this project's contract, and two of its clauses are looser than the
+        # project's (it allows a same-model review with an isolated context, and it
+        # makes external review escalation-only). Where they differ the project
+        # wins, and the two overrides below are enforced in this script, not just
+        # asserted here.
+        printf '\n--- LOOP POLICY (generic; overridden by this project, see below) ---\n\n'
+        cat <<'POLICY_PRECEDENCE'
+This project's own contract — `ralph/builder.md`, `ralph/validator.md` and
+`.kilo/agent/adversarial-reviewer.md` — OVERRIDES the generic policy below wherever
+they differ. Two overrides are load-bearing and are enforced by the loop script
+itself, not left to the reader:
+
+1. INDEPENDENCE. A reviewer dispatched on the builder's own upstream is NOT
+   INDEPENDENT and is not dispatched at all; isolating the review context is not a
+   substitute (vault: model-identity-is-the-upstream-string-not-the-alias). The
+   reviewer chain in `ralph-pi.sh` is cross-family by construction and skips any
+   candidate that is the builder's route.
+2. FAIL CLOSED. A mandatory review that cannot be dispatched is recorded as
+   BLOCKED, counted in REVIEW_FAILS, and STOPS the loop (exit 8). It is never
+   logged as a cost skip. "Could not check" must not reach the same path as
+   "all clear" (vault: a-gate-that-skips-on-missing-input-is-a-pass-generator).
+
+POLICY_PRECEDENCE
+        cat "$ROOT/docs/KILO_RALPH_LOOP_POLICY.md" 2>/dev/null || true
+        printf '\n\n---\n\n# Loop status block (machine-generated)\n\n'
         echo "- iteration: $ITER (worker $RUN_MODEL, reviewer $REVIEWER_MODEL)"
         echo "- HEAD: $(git -C "$ROOT" log --oneline -1)"
         echo "- dirty tree: $(git -C "$ROOT" status --porcelain | wc -l) file(s) — if any, finish and commit THAT work first (builder rule)."
@@ -367,6 +392,8 @@ while :; do
 
     REVIEW_PID=""
     REVIEW_SKIPPED_REASON=""
+    REVIEW_BLOCKED=0
+    REVIEW_STATUS="none"
     if [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
         # --- Risk classification -------------------------------------------------
         RISK="$(extract_risk)"
@@ -421,12 +448,16 @@ while :; do
             } >"$RP"
             REVIEW_MODEL=""
             if [ "$REVIEWER_MODEL" = "$RUN_MODEL" ]; then
-                log "iter=$ITER reviewer $REVIEWER_MODEL equals worker — skipping self-review"
-                REVIEW_SKIPPED_REASON="reviewer equals worker"
+                # A reviewer on the builder's own upstream is not an independent
+                # review, so it is not dispatched — but the review is still OWED.
+                # Try the cross-family fallbacks instead of dropping it.
+                log "iter=$ITER reviewer $REVIEWER_MODEL equals worker — trying cross-family fallbacks"
             elif model_alive "$REVIEWER_MODEL"; then
                 REVIEW_MODEL="$REVIEWER_MODEL"
             else
                 log "iter=$ITER reviewer route $REVIEWER_MODEL UNHEALTHY"
+            fi
+            if [ -z "$REVIEW_MODEL" ]; then
                 for candidate in $REVIEWER_FALLBACKS; do
                     [ "$candidate" = "$RUN_MODEL" ] && continue
                     if model_alive "$candidate"; then
@@ -443,11 +474,38 @@ while :; do
                     >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
                   echo $? >"$RUN_DIR/review-$ITER.rc" ) &
                 REVIEW_PID=$!
+                REVIEW_STATUS="invoked"
+                state_set REVIEW_STATUS "invoked"
                 log "iter=$ITER review INVOKED on $REVIEW_MODEL — $REVIEW_DECISION_REASON"
+            else
+                # FAIL CLOSED. A mandatory review with no eligible reviewer is a
+                # BLOCKED review, not a skipped one. Recording it as a cost skip
+                # would let a high-risk batch advance unreviewed with REVIEW_FAILS
+                # still at zero — the same defect as a gate that skips on missing
+                # input and prints the success banner.
+                REVIEW_BLOCKED=1
+                REVIEW_STATUS="blocked"
+                REVIEW_SKIPPED_REASON="no eligible reviewer route for a mandatory review"
+                {
+                    echo "REVIEW BLOCKED — NOT REVIEWED, NOT SKIPPED."
+                    echo "Reason the review was mandatory: $REVIEW_DECISION_REASON"
+                    echo "Builder route: $RUN_MODEL"
+                    echo "Configured reviewer: $REVIEWER_MODEL (must not be the builder's route)"
+                    echo "Fallbacks tried: $REVIEWER_FALLBACKS"
+                    echo "Every candidate was either unhealthy or the builder's own route, so no"
+                    echo "independent review could be dispatched. The loop stops here rather than"
+                    echo "advancing an unreviewed commit as if the review had been optional."
+                } >"$RUN_DIR/review-$ITER.md"
+                REVIEW_FAILS=$((REVIEW_FAILS+1))
+                state_set REVIEW_STATUS "blocked"
+                state_set LAST_REVIEW_DECISION "BLOCKED: $REVIEW_DECISION_REASON"
+                log "iter=$ITER review BLOCKED — $REVIEW_DECISION_REASON: no eligible reviewer route"
             fi
         else
             log "iter=$ITER review SKIPPED — $REVIEW_DECISION_REASON"
             REVIEW_SKIPPED_REASON="$REVIEW_DECISION_REASON"
+            REVIEW_STATUS="skipped"
+            state_set REVIEW_STATUS "skipped"
             REVIEW_SKIP_COUNT=$((REVIEW_SKIP_COUNT + 1))
             state_set REVIEW_SKIP_COUNT "$REVIEW_SKIP_COUNT"
         fi
@@ -486,18 +544,27 @@ while :; do
                 log "iter=$ITER REVIEW CALL #$REVIEW_CALLS — estimated cumulative cost ~\$${EST_COST} USD (rough; ~\$0.003/call)"
             fi
             STALL=0
+            REVIEW_STATUS="done"
+            state_set REVIEW_STATUS "done"
             [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
+        elif [ "$REVIEW_BLOCKED" -eq 1 ]; then
+            # A mandatory review that could not be dispatched. This is NOT a cost
+            # skip and must not read as one: stop the loop and say why.
+            log "iter=$ITER review BLOCKED (not skipped) — $REVIEW_SKIPPED_REASON; stopping, a mandatory review cannot be waived"
+            echo "REVIEW BLOCKED at iter $ITER: $REVIEW_SKIPPED_REASON (see $RUN_DIR/review-$ITER.md)" >>"$SUMMARY"
+            exit 8
         else
-            # Review skipped this iteration.
+            # Review not required by the risk policy. Say the reason that made it
+            # optional; do not call every non-invoked review a cost skip.
             STALL=0
-            log "iter=$ITER review skipped (cost guardrail) — cumulative review calls: $REVIEW_CALLS, skipped: $REVIEW_SKIP_COUNT"
+            log "iter=$ITER review not required — ${REVIEW_SKIPPED_REASON:-no reason recorded} — cumulative review calls: $REVIEW_CALLS, skipped: $REVIEW_SKIP_COUNT"
         fi
     else
         STALL=$((STALL+1))
         log "iter=$ITER no commit — stall_count=$STALL"
     fi
 
-    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; } >"$STATE"
+    { echo "ITER=$ITER"; echo "LAST_RC=$RC"; echo "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)"; echo "STALL=$STALL"; echo "FAILS=$FAILS"; echo "REVIEW_CALLS=$REVIEW_CALLS"; echo "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW"; echo "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT"; echo "LAST_REVIEW_ITER=$LAST_REVIEW_ITER"; echo "REVIEW_STATUS=$REVIEW_STATUS"; } >"$STATE"
     phase idle
     [ "$STALL" -ge "$STALL_LIMIT" ] && { log "STOP: $STALL consecutive stalled iterations"; exit 5; }
     [ "$FAILS" -ge "$FAIL_LIMIT" ] && { log "STOP: $FAILS consecutive gate failures"; exit 4; }
