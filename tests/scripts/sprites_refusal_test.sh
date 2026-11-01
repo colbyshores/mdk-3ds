@@ -61,17 +61,34 @@
 # catches a future early return that forgets to set FAILED, which a per-call-site
 # `|| exit 1` would not.
 #
-# WHERE THE COUNT MOVES (review-11 F1). It used to sit on the line before the
-# verdict `if/else`, so it measured "reached this line" rather than "printed a
-# verdict": an early return inserted between the count and the verdict printed
-# `PASS SpritesRefusal (2 arms adjudicated)` over zero verdict lines, i.e. the
-# gate asserted a count of comparisons that were never made — the same defect
-# class, reachable through the mechanism written to close it. So ADJUDICATED now
-# moves inside verdict(), the only place a verdict is printed, and the count is
-# therefore exactly the number of arms that adjudicated no matter where a future
-# return is placed. ARM_VERDICT keeps it per-arm, so an arm that prints two FAIL
-# lines (a stub that both exits 0 and stays silent) counts once and cannot push
-# the total past DECLARED_ARMS. The setup guards deliberately do NOT go through
+# WHERE THE COUNT MOVES (review-11 F1, re-opened and closed by review-12 F1). The
+# count used to sit on the line before the verdict `if/else`, so it measured
+# "reached this line" rather than "printed a verdict": an early return inserted
+# between the count and the verdict printed `PASS SpritesRefusal (2 arms
+# adjudicated)` over zero verdict lines — the gate asserting a count of
+# comparisons that were never made. Batch 25 moved the count inside verdict() but
+# left it BEFORE the printf, so one `return 0` between those two statements
+# reproduced the same false PASS (re-measured on 07345d6: PASS, rc 0, no verdict
+# line printed). The window moved from one line to two; it did not close.
+#
+# THE DIRECTION OF THE ERROR IS THE FIX. ADJUDICATED now moves AFTER the printf.
+# That is the only ordering the backstop can read: the cardinality check fires on
+# a SHORT count, so an over-count is invisible to it by construction. Counting
+# ahead of the print therefore turned a skipped print into a false PASS, while
+# counting after it turns a skipped print into an UNDER-count, which is a FAIL.
+# Every increment is now preceded by a verdict line printed by the same call, and
+# ARM_VERDICT (reset at the top of each arm, set only after a print) bounds the
+# total at one per arm, so PASS with DECLARED_ARMS cannot print unless every
+# declared arm printed a verdict. An early return anywhere inside verdict() or
+# arm() is covered by that: before the print it drops the count and goes red,
+# after the count it changes nothing.
+#
+# WHAT THAT DOES NOT PIN, because a bound with no stated direction is a bound a
+# reader will over-read: an edit that calls verdict() OUTSIDE arm(), or that
+# resets ARM_VERDICT mid-arm, can still over-count, and no backstop of this shape
+# can see an over-count. That is a structural edit to this file rather than a stray
+# return; if the PASS line ever reports more arms than printed, the per-arm guard
+# is the thing to re-read. The setup guards deliberately do NOT go through
 # verdict(): an arm that never ran has adjudicated nothing, which is precisely the
 # condition the cardinality check exists to report.
 #
@@ -95,20 +112,21 @@ DECLARED_ARMS=2
 ARM_VERDICT=0
 
 # verdict <ok|fail> <text> — the only place a verdict is printed, and the only
-# place ADJUDICATED moves. Counting at the print site is what makes "N arms
-# adjudicated" mean "N verdicts were printed" (review-11 F1).
+# place ADJUDICATED moves. The count moves AFTER the printf and never before it:
+# a skipped print must be able to make the count SHORT, because a short count is
+# the only thing the cardinality backstop can see (review-12 F1).
 verdict() {
     kind=$1
     shift
-    if [ "$ARM_VERDICT" -eq 0 ]; then
-        ARM_VERDICT=1
-        ADJUDICATED=$((ADJUDICATED + 1))
-    fi
     if [ "$kind" = fail ]; then
         printf '  FAIL sprites_refusal: %s\n' "$*"
         FAILED=1
     else
         printf '  ok   sprites_refusal: %s\n' "$*"
+    fi
+    if [ "$ARM_VERDICT" -eq 0 ]; then
+        ARM_VERDICT=1
+        ADJUDICATED=$((ADJUDICATED + 1))
     fi
 }
 

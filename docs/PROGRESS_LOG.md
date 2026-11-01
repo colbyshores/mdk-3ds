@@ -7142,3 +7142,196 @@ slice: **(b) review-1 F3** — `dumpRunner` has no mixer field, so `mixer_.play(
 unpinned; it needs the column added to the probe *and* the harness and `L7_t120_runner_{a,b}`
 regenerated from the oracle. Then (c) the Citro3D per-draw matrix and the depth/blend divergence, then
 (e) `FrameBlend.Lerp`'s rounding. This batch closes review-11 with no open findings of its own.
+
+---
+
+## Iteration 54 — batch 26: a counter must move after the thing it prints (review-12 remediation)
+
+**Review:** `logs/ralph-pi/run-20261101-062333/review-12.md` (DeepSeek V4.1 Flash, independent family;
+scope `af2fac36..07345d63`). **No Critical and no High findings; the verdict was INCOMPLETE**, and the
+reason given was that the deliverable of batch 25 *is* the record and four of its claims did not
+reproduce. Four findings — **F1 Medium, F2 Medium, F3 Low, F4 Low** — and **all four were confirmed
+against the tree and fixed; none is rebutted.** No shipped source changed: the touched files are one gate
+script, one test harness, and the two state documents.
+
+**Prior-solution lookup (mandatory).** Obsidian vault read directly at `/mnt/nas/Vaults/port-docs` (no
+Obsidian MCP server in this harness). Three notes applied.
+`30-architecture/patterns/state-the-bound-direction-of-every-derived-count.md` is the note this batch
+actually sits in: *"every derived count carries a bound direction; say which"*, and a count taken ahead of
+the event it counts is a **ceiling** read as an exact number, which is precisely what review-12 F1 found.
+`a-warning-that-exits-zero-is-a-pass-generator-with-better-manners.md` (rule 9: *a verdict must state how
+many subjects it compared*; and prose in the wrong channel is not a verdict) decided the shape of the F4
+fix — the NOTE is prose, the exit status is the channel the callers read.
+`a-gate-that-skips-on-missing-input-is-a-pass-generator.md` is the family both belong to.
+Cognee / the local knowledge graph could **not** be consulted again: `knowledge_search` still fails on
+this host with `Cannot find package 'ignore' imported from …/pi-knowledge/dist/src/indexer/chunker.js`.
+Recorded as an environment gap, not as "nothing found".
+
+### F1 (Medium) — the count still sat before the print, so the false PASS survived (FIXED)
+
+Confirmed first, exactly as described, on the committed script and the committed `tick1`: one `return 0`
+inserted between the `ADJUDICATED` increment and the `printf` inside `verdict()`.
+
+```
+=== return 0 placed after the count, inside verdict() (07345d6) ===
+PASS SpritesRefusal (2 arms adjudicated)
+RC=0
+```
+
+No `ok` line, no `FAIL` line, exit 0, and a PASS asserting two adjudications that produced no output.
+Batch 25 moved the counter into the function that prints the verdict but left it **before** the print, so
+the window moved from one line to two and the defect was reachable through the mechanism written to close
+it. The reviewer is also right that the published claim was the overstatement: the header said the count
+was right "no matter where a future return is placed", which is what batch 25's own record then restated.
+
+**The fix is the direction, not the location.** `ADJUDICATED` now moves **after** the `printf`. The
+cardinality backstop fires when the count is **short**, so it structurally cannot see an over-count;
+counting ahead of the print therefore turned a skipped print into a false PASS, while counting after it
+turns the same skip into an under-count, which is a FAIL. Every increment is now preceded by a verdict
+line printed by the same call, and `ARM_VERDICT` (reset at the top of each `arm()`, set only after a
+print) bounds the total at one per arm, so `PASS (2 arms adjudicated)` cannot print unless both declared
+arms printed a verdict. The header now states the bound **and its direction**, including what it does not
+pin: an edit that calls `verdict()` outside `arm()`, or resets `ARM_VERDICT` mid-arm, can still
+over-count, and no backstop of this shape can see that. That is a structural edit rather than a stray
+`return`, and the file says so instead of claiming universality.
+
+**Falsification.** Each row is a separate copy of the gate run against the same `tick1`.
+
+| edit | kind | result |
+|---|---|---|
+| none (this batch, intact) | control | `ok` for both arms, `PASS SpritesRefusal (2 arms adjudicated)`, **rc 0** |
+| `return 0` at the top of `verdict()`, before the print | reversion | `FAIL … only 0 of 2 declared arms produced a verdict`, **rc 1** |
+| `return 0` between the print and the count (**the reviewer's scenario**) | reversion | both `ok` lines print, then `FAIL … only 0 of 2`, **rc 1** — a red gate over correct verdicts, which is the safe direction |
+| `return 0` after the count (last statement of `verdict()`) | control | `PASS … (2 arms adjudicated)`, **rc 0** — and correct: both verdicts printed |
+| `return 0` at the top of `arm()`, both arms | reversion | `FAIL … only 0 of 2`, **rc 1** |
+| `return 0` in the control arm only | reversion | `ok` for the stub, `FAIL … only 1 of 2`, **rc 1** |
+| `return 0` at the end of `arm()`, after every verdict printed | control | `PASS … (2 arms adjudicated)`, **rc 0** — correct, both arms adjudicated |
+| a `tick1` that never refuses (stub exits 0 and stays silent) | reversion | two `FAIL` lines for the stub, **rc 1**, and **no** `3 of 2` over-count |
+
+Row 3 is the one that was green on the parent. Row 3's trade is worth naming: that mutation prints both
+correct verdicts and still fails the suite, because a count that cannot be taken is a count that cannot be
+vouched for. A false alarm is cheaper than a false PASS.
+
+### F2 (Medium) — three obligations had been deleted from the owed list under a reflow (RESTORED)
+
+Confirmed by a whitespace-normalised word diff against `af2fac36:docs/CONTINUATION.md`. Batch 25's
+314-line `CONTINUATION.md` hunk was presented as a width reflow, and three clauses disappeared with it:
+
+1. owner task (3) lost "the proposal is to", turning a pending proposal into a directive (and leaving the
+   sentence ungrammatical);
+2. owner task (8) lost "and an owner check on it belongs on record", withdrawing a request for owner
+   action that review-7 and review-11 both raised;
+3. owner task (9) lost its remedy sentence ("If in-place correction of a **prose** claim is acceptable
+   while the pixels and measurements stay frozen, that is a one-line change to that README.").
+
+Nothing in batch 25's record says they were withdrawn, and the log's oq3 paragraph discusses the same
+topic without mentioning a withdrawal, so the only defensible reading is lost-in-reflow. **All three are
+restored verbatim**, and item (8) now also records that review-12 F2 re-asked it. The reviewer's own note
+that the coupling fired again is fair and is on record here too: this batch declares `medium` and its
+**code** diff is 114 lines across the two test files (the rest of the 446-line diff is the two state
+documents and the frame pair), so the safety net had nothing to override, which is not evidence that the
+declaration was right — it is evidence that the code change was small. Owner task (8) stays open.
+
+### F3 (Low) — a rationale claimed a gate forbade something the gate cannot see (FIXED)
+
+Confirmed. The comment said `assert()` "is not available here (AGENTS.md §10)". §10 takes its scope from
+§8, and `tools/runner/audit_c_with_classes.py:51` is `TREES = ("mdk_core/src", "mdk_3ds/src")`; the gate
+on this tree prints `scanned 134 files across mdk_core/src, mdk_3ds/src`, so a bare `assert()` in
+`tests/scripts/` is neither gated nor scanned. The comment now says the truth — house style, plus the
+substantive reason (a fixture bug must be reported the way every other check in the file is) — and names
+the scope so the next reader does not copy a false "§10 forbids it" into a file where the belief gets
+tested.
+
+### F4 (Low) — a refused fixture was advisory, and a negative assertion passed vacuously (FIXED)
+
+Confirmed by construction. `makeArchive` returns an empty vector when it refuses, so `bytes.data()` is
+null and the size is 0; `Bni::parse` rejects `!bytes` (`bni.cpp:19`, and the same guard in
+`fti.cpp:45`). A case written the natural **negative** way — `check(!bni.parse(...))`,
+`check(!bni.has(...))`, `check(entries().empty())` — is therefore green forever over a refused fixture,
+and the only signal was a NOTE line no caller reads. That is the vault's pass-generator again, one layer
+down: prose where the exit status should be.
+
+**The fix counts refusals twice.** `fixtureRefusals` counts every refusal; `fixtureRefusalsAsserted`
+counts the ones a case pinned on purpose, through `consumeFixtureRefusal()`, and
+`runArchiveGuardTests()` ends with `check(fixtureRefusals == fixtureRefusalsAsserted, …)`. Equality, not
+a floor: an unaccounted refusal is a broken fixture and an unearned consume is the same defect with the
+opposite sign. **The first draft used a `pending` bool and was wrong**, and the reason is worth keeping: a
+flag set by one case and cleared by another is order-dependent, so a refusal from an earlier case would
+have been silenced by a later case that asked for its own — which is exactly what the width-pin mutation
+below produced while the bool was in place. Two counters cannot do that.
+
+**Falsification.** `vm_tests` after each edit, with the file restored and re-verified green in between.
+
+| edit | kind | result |
+|---|---|---|
+| none (this batch, intact) | control | `PASS ArchiveIndexGuards`, **exit 0**, 53 PASS lines, no NOTE |
+| `consumeFixtureRefusal()` deleted from the pinning test | reversion | `FAIL … every fixture refusal was accounted for …`, **1 check FAILED**, **exit 1** |
+| `fixtureRefusals++` deleted from `makeArchive` | reversion | the pin's own "the refusal is recorded" fails **and** the closing check fails, **2 checks FAILED**, **exit 1** |
+| bound deleted (`length > kNameFieldBytes` → `length > 1000`) | reversion | **3 checks FAILED**, **exit 1** (batch 25 measured 2; the closing check is the third) |
+| the width-pin fixture made 13 chars | reversion | `NOTE … Fix the fixture, not the reader.` then **4 checks FAILED**, **exit 1** — and the refusal from the width pin is *not* silenced by the later consume, which is the counted-pair property |
+| **the F4 scenario itself**: a new case asserting `!parse(...)` and `entries().empty()` over a refused fixture | reversion | its own two checks are **green** (that is the vacuity) and the suite is **red**: 1 check FAILED, **exit 1** |
+
+The last row is the finding reproduced as a test: before this batch it would have been green and wrong;
+now the only path that may be handed an empty fixture is the case that says so.
+
+### Erratum for "Iteration 53" (batch 25)
+
+Two claims in batch 25's record are measured false and are corrected here rather than edited there, per
+owner task (9)'s convention that a published narrative gets an erratum instead of a rewrite:
+
+* *"A `verdict` function is now the only place a verdict prints and the only place the count moves, … so
+  the header claim is now what the mechanism actually pins."* The function was the only place, but the
+  count still moved **before** the print, so a `return` between them printed
+  `PASS SpritesRefusal (2 arms adjudicated)` over zero verdict lines with exit 0 (reproduced above on
+  `07345d6`). What batch 25 pinned was "a return that skips the whole verdict block", not "a return
+  anywhere".
+* `docs/CONTINUATION.md` at batch 25 said "a `PASS` can no longer be printed over zero verdicts". Measured
+  false until this batch.
+
+The batch-25 **commit message** carries the same overstatement and cannot be corrected: history in the
+loop's output range is append-only, so the correction lives here and in the current `CONTINUATION.md`, and
+this batch's own commit message states the claim the code now pins.
+
+### Gate results, verbatim (all run from a clean invocation of this tree)
+
+`make -C tests/scripts clean && make -C tests/scripts -j8` — **exit 0**, `All cases match the
+oracle.`, **442 PASS / 0 FAIL / 0 SKIP**. The count did not move and that is the expected result: the new
+archive-guard check is a `check()` call inside the existing `PASS ArchiveIndexGuards` line, and the
+refusal gate is one line either way — `PASS SpritesRefusal (2 arms adjudicated)`.
+
+`bash tools/check.sh` — **exit 0**:
+
+```
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             every pinned frame is deterministic and unchanged
+      PASS   gates_batch_integrity    project invariants intact
+
+    CHECK: ALL GATES PASSED
+```
+
+`gates_frames` printed `PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so
+`tests/frames/reference.sha256` was NOT regenerated. `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`.
+`cmake --build build-linux --target mdk -j8` — **exit 0**, `Built target mdk`.
+`bash tools/runner/test_review_state.sh` — **exit 0**, **177 cases**, `REVIEW STATE: ALL CASES PASS`.
+
+Frame `docs/frames/2026-11-01-count-after-the-print.png` + `.txt` — `1.240 / 247 / 0.1819`, sha256
+`6646adf1…`, byte-identical to its 31 predecessors; captured on `DISPLAY=:99` with lavapipe, and the
+sidecar carries the "why this picture did not move" narrative. **No emulator run and no Old-3DS hardware
+run: Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate, test or golden was
+pinned, relaxed or edited.
+
+### What is next
+
+Unchanged from batch 25's PRIORITY ORDER, because this batch was review remediation rather than a game
+slice: **(b) review-1 F3** — `dumpRunner` has no mixer field, so `mixer_.play("RUNNER", Once)` is
+unpinned; it needs the column added to the probe *and* the harness and `L7_t120_runner_{a,b}` regenerated
+from the oracle. Then (c) the Citro3D per-draw matrix and the depth/blend divergence, then (e)
+`FrameBlend.Lerp`'s rounding. This batch closes review-12 with no open findings of its own; the four
+owner-authorized tasks it touched ((3), (8), (9) and the `/tmp/kilo` gap, (11)) stay open because they are
+not a batch's call.

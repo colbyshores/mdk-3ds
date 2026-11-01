@@ -53,11 +53,30 @@ namespace {
 int failures = 0;
 
 // How many times makeArchive() has refused a fixture. Kept apart from `failures`
-// on purpose: the refusal is a statement about the TEST, and testOverlongFixtureNameIsRefused
-// below asks for one, so counting it as a check failure would make a passing test
-// turn the suite red. A refusal outside that test still goes red, because the
-// caller gets no bytes and its own checks fail — and the NOTE line says why.
+// on purpose: the refusal is a statement about the TEST, and
+// testOverlongFixtureNameIsRefused below asks for one, so counting it as a check
+// failure would make a passing test turn the suite red.
 int fixtureRefusals = 0;
+
+// How many refusals a case has ASSERTED (review-12 F4). The refusal used to be
+// advisory: the caller got no bytes, a NOTE was printed, and the claim that "the
+// caller's own checks fail anyway" holds only for a caller whose assertions are
+// POSITIVE. Written the natural negative way — check(!bni.parse(...)),
+// check(!bni.has(...)), check(entries().empty()) — a case passes VACUOUSLY on an
+// empty fixture, because parse(nullptr, 0) is false and an empty vector has no
+// entries: green forever while pinning nothing, with a NOTE line no gate reads as
+// its only signal. So every refusal is counted, every ASSERTED refusal is counted
+// beside it, and runArchiveGuardTests() fails the suite unless the two agree. A
+// refusal nobody accounted for is a broken fixture, and a consume nobody earned is
+// the same defect with the opposite sign, which is why the relation is EQUALITY and
+// not a floor. Two counters rather than a "pending" flag on purpose: a flag set by
+// one case and cleared by another is order-dependent, and a refusal from an earlier
+// case would be silenced by a later case that asked for its own.
+int fixtureRefusalsAsserted = 0;
+
+// Called by the one case that pins the refusal, after it has asserted it. The only
+// path that may be handed an empty fixture is a case that says so.
+void consumeFixtureRefusal() { fixtureRefusalsAsserted++; }
 
 // The pinning test asks for a refusal, so it does not need one shouted: a NOTE
 // printed on every green run teaches the reader to ignore NOTE lines, which is
@@ -93,11 +112,13 @@ const size_t kNameFieldBytes = 12;
 // READER had truncated the name, which is a red gate blaming the wrong file. The
 // helper is test code, so an overlong name is a broken fixture rather than a
 // parse result: it is reported by name, counted in fixtureRefusals, and no bytes
-// are returned. assert() is not available here (AGENTS.md §10) and would be the
-// wrong tool anyway, because a fixture bug must be reported the way every other
-// check in this file is. A name of exactly kNameFieldBytes is legal and is the
-// point of testFullNameFillsTheField: the field has no NUL in that case, which is
-// what makes the width load-bearing.
+// are returned. assert() is not used here as a matter of HOUSE STYLE, not of
+// enforcement (review-12 F3): AGENTS.md §10 takes its scope from §8 and
+// audit_c_with_classes.py scans mdk_core/src and mdk_3ds/src, so a bare assert() in
+// this directory would pass the gate. The reason not to use one is that a fixture
+// bug must be reported the way every other check in this file is. A name of exactly
+// kNameFieldBytes is legal and is the point of testFullNameFillsTheField: the field
+// has no NUL in that case, which is what makes the width load-bearing.
 std::vector<uint8_t> makeArchive(const char* name) {
     const size_t length = strlen(name);
     if (length > kNameFieldBytes) {
@@ -230,9 +251,15 @@ void testFullNameFillsTheField() {
 // red is not a guard, and this one protects the two cases above, so it is checked
 // the same way the reader's guards are: by an input that must be refused. The
 // fixture is one character over the field, which is the smallest case of the
-// hazard, and both halves are asserted — that no bytes come back, and that the
-// refusal was recorded. Without the second half, deleting the bound would leave
-// this case green while a future overlong fixture silently became a shorter name.
+// hazard, and three halves are asserted — that no bytes come back, that the refusal
+// was recorded, and that the record is then accounted for. Without the second half,
+// deleting the bound would leave this case green while a future overlong fixture
+// silently became a shorter name.
+//
+// IT ACCOUNTS FOR THE REFUSAL (review-12 F4). consumeFixtureRefusal() is this
+// case's way of saying "the empty fixture below is the one I asked for". Any other
+// caller leaves the two counters unequal and the suite fails, because only a case
+// that ASSERTS the refusal can be trusted not to read an empty fixture vacuously.
 void testOverlongFixtureNameIsRefused() {
     const int before = fixtureRefusals;
     reportFixtureRefusals = false;
@@ -240,6 +267,7 @@ void testOverlongFixtureNameIsRefused() {
     reportFixtureRefusals = true;
     check(bytes.empty(), "an overlong fixture name yields no fixture");
     check(fixtureRefusals == before + 1, "and the refusal is recorded against the fixture");
+    consumeFixtureRefusal();
 }
 
 // An entry count that cannot fit in the file is a broken file, not an archive.
@@ -265,6 +293,16 @@ int runArchiveGuardTests() {
     testFullNameFillsTheField();
     testOverlongFixtureNameIsRefused();
     testImpossibleEntryCountIsRejected();
+    // The fixture-bound backstop (review-12 F4). A refusal that no case accounted
+    // for means some case was handed an empty fixture and may have asserted its way
+    // to green over nothing, so it is a check failure and not a NOTE: the NOTE names
+    // the fixture for a human, and this line is the half a caller's exit status
+    // reads. Vault: a-warning-that-exits-zero-is-a-pass-generator-with-better-
+    // manners — prose in the wrong channel is not a verdict.
+    check(fixtureRefusals == fixtureRefusalsAsserted,
+          "every fixture refusal was accounted for by a case that asserted it; a caller that "
+          "received no bytes can pass vacuously, so the width bound is a precondition of "
+          "every case here, not a warning");
     return failures;
 }
 

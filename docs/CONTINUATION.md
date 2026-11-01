@@ -1,27 +1,30 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — review-11 remediation: the refusal gate's "arms adjudicated" counter now moves at the
-verdict print instead of on the line before it, so a `PASS` can no longer be printed over zero verdicts,
-and the archive fixture helper now refuses a name that does not fit the 12-byte field instead of
-silently building a fixture whose bytes contradict its assertions. No shipped source, game behaviour,
-renderer, golden, data format, `ralph-pi.sh` or `review_state.sh` change; the pinned frame is
-byte-unchanged. Medium rather than low because it changes what an existing gate means — a tree that used
-to go green through a silent early return now goes red — and the deliverable is a falsification record.
+Risk: medium — review-12 remediation: the refusal gate's verdict counter now moves **after** the `printf`
+it counts, so a skipped print can only make the count SHORT — the one direction the cardinality backstop
+can read — and the archive fixture helper's refusal is now gated by a counted pair instead of a NOTE
+line. Three owner-authorized obligations that batch 25 dropped under a width reflow are restored
+verbatim. No shipped source, game behaviour, renderer, golden, data format, `ralph-pi.sh` or
+`review_state.sh` change; the pinned frame is byte-unchanged. Medium rather than low because it changes
+what two existing gates mean — a tree that went green through a skipped print, or over a fixture refusal
+nobody accounted for, now goes red — and the deliverable is a falsification record.
 
-Last updated: 2026-11-01 (**batch 25** — review-11 remediation; the review had **no Critical and no
-High** findings and its verdict was COMPLETE, and both Low findings were confirmed and fixed, none
-rebutted; full narrative, falsification tables and the corrected mechanism in `docs/PROGRESS_LOG.md`
-"Iteration 53"). **F1 Low:** `ADJUDICATED` sat *before* the verdict `if/else`, so it counted "reached
-the line"; a `return 0` inserted after it printed `PASS SpritesRefusal (2 arms adjudicated)` over zero
-verdict lines with exit 0 (reproduced on `af2fac3`). A `verdict` function is now the only place a
-verdict prints and the only place the count moves, with `ARM_VERDICT` keeping it per-arm, so a
-double-FAIL arm counts once and cannot over-report. Four placements tested; the header claim is now
-what the mechanism actually pins. **F2 Low:** confirmed with the mechanism corrected — `memcpy` precedes
-`putU32`, so a 13-char name does not corrupt the offset, the offset write truncates the **name** and
-the assertions then blame `bni.cpp` for a bug in the test file. `makeArchive` now refuses it by name;
-`testOverlongFixtureNameIsRefused` pins it (bound deleted → 2 checks FAILED, exit 1). Goldens
-**442/0/0**, no PASS line moved; frame byte-unchanged. Previous: **batch 24** ("Iteration 52"),
-**batch 23** ("Iteration 51"), **batch 22** ("Iteration 50").
+Last updated: 2026-11-01 (**batch 26** — review-12 remediation; the review had **no Critical and no
+High** findings, its verdict was **INCOMPLETE**, and all four findings — 2 Medium, 2 Low — were confirmed
+and fixed, none rebutted; full narrative, falsification tables and the erratum for batch 25's
+over-scoped claim are in `docs/PROGRESS_LOG.md` "Iteration 54"). **F1 Medium:** batch 25 moved
+`ADJUDICATED` into `verdict()` but left it *before* the `printf`, so one `return 0` between those two
+statements reproduced the same `PASS SpritesRefusal (2 arms adjudicated)` with exit 0 over zero verdict
+lines (re-measured on `07345d6`); the count now moves after the print, which is the only ordering the
+backstop can read, and the eight placements in the table in "Iteration 54" were tested. **F2 Medium:** the three clauses batch 25 deleted
+from the owner-authorized list under a reflow are restored ("the proposal is to", "and an owner check on
+it belongs on record", and item (9)'s remedy sentence). **F3 Low:** the `assert()` rationale claimed
+AGENTS.md §10 made it unavailable; §10's scope is §8's and `audit_c_with_classes.py` scans
+`mdk_core/src` and `mdk_3ds/src` only, so it is house style, and the comment now says so. **F4 Low:** a
+refused fixture was advisory, and a *negatively*-asserting caller passes vacuously on the empty bytes;
+refusals are now counted against asserted refusals and an unequal pair fails the suite (the F4 scenario
+itself: 1 check FAILED, exit 1). Goldens **442/0/0**, no PASS line moved; frame byte-unchanged.
+Previous: **batch 25** ("Iteration 53"), **batch 24** ("Iteration 52"), **batch 23** ("Iteration 51").
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -66,8 +69,8 @@ evidence in `OPEN_ITEMS.md`. **Old-3DS timing is UNMEASURED.**
 may widen it (review-1 F1). (2) Wire `bash tools/runner/test_review_state.sh` into `tools/check.sh` as
 a gate line; `check.sh` is owner-protected, so the state machine is checked only by hand (batch 12).
 (3) A review is recorded `done` on rc 0 + a non-empty report, so an `INCOMPLETE` verdict still clears
-the owed range; whether it should is a policy change to `review_outcome` — read the report's `VERDICT:`
-line (review-1 oq3, AR-1). (4) Whether the `invoked`-with-nothing-reconstructible last-resort halt
+the owed range; whether it should is a policy change to `review_outcome` — the proposal is to read the
+report's `VERDICT:` line (review-1 oq3, AR-1). (4) Whether the `invoked`-with-nothing-reconstructible last-resort halt
 should halt at all, rather than assume the whole history is unreviewed (review-3 oq1, narrowed by
 batch 14). (5) The shipped unit is `RestartPreventExitStatus=2 6 7`, so exit 8 (BLOCKED) **is**
 restarted while 9 is not; and under batch 16's ordering two restarts in one review window end the loop
@@ -81,10 +84,12 @@ that could reach it; batch 20 found none left in the window. Changing the fold c
 `REVIEW_FAILS` and the owed set (review-5 oq1, re-asked by review-6 oq1). (8) Whether the `Risk:` line
 is the builder's to write at all: the builder authors the input to its own review policy. The safety net
 overrode batch 20's `medium` (567-line diff) and batch 24's (505 lines) so the policy held, but the
-coupling is real (review-7 oq3, re-asked by review-11 oq3). (9) Whether published evidence sidecars are
+coupling is real and an owner check on it belongs on record (review-7 oq3, re-asked by review-11 oq3,
+re-asked again by review-12 F2). (9) Whether published evidence sidecars are
 correctable in place: `docs/evidence/README.md` says *never edit a published pair*, which is why
 review-9 F3's misquoted `git rev-list` range became an erratum in "Iteration 51" instead of an edit.
-(10) Whether `tick1`'s data-missing `SKIP` should exit non-zero, i.e. whether "the golden suite could
+If in-place correction of a **prose** claim is acceptable while the pixels and measurements stay
+frozen, that is a one-line change to that README. (10) Whether `tick1`'s data-missing `SKIP` should exit non-zero, i.e. whether "the golden suite could
 not run" is a gate failure on hosts without the licensed tree. It changes what `make -C tests/scripts`
 means for every operator and every CI box, so it is not a batch's call. (11) AGENTS.md §11 P7 names
 `/tmp/kilo` as the capture directory, but it is `drwxr-xr-x museagent museagent` and **not writable by
@@ -115,7 +120,8 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `tests/scripts/archive_guard_tests.cpp` (offset and size, not just `has()`, since batch 23; the
   **name-field width** since batch 24 via `testFullNameFillsTheField`, whose 12-char no-NUL name is the
   only fixture where reading the field as 8 cannot pass; and the **fixture helper's own bound** since
-  batch 25 via `testOverlongFixtureNameIsRefused`), the **refusal branch itself** by
+  batch 25 via `testOverlongFixtureNameIsRefused`, and a refusal that no case accounted for fails the
+  suite since batch 26), the **refusal branch itself** by
   `tests/scripts/sprites_refusal_test.sh` — a 4-byte stub must exit non-zero with the message and an
   8-byte legal empty archive must exit 0 without it, same argv, no ROM data — and the scene is pictured
   in `docs/evidence/2026-11-01-L7-sprites-missing-scene.png`. That gate covers **`tick1`'s copy
@@ -145,23 +151,25 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `guard_fragment`, three region lifts with behavioural cases instead, `count_writes` counting
   **occurrences** not lines) is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 25)
+## Verified on this tree (batch 26)
 
-All gates re-run from a clean invocation; verbatim output and five falsification tables in
-`docs/PROGRESS_LOG.md`, "Iteration 53" — read those tables before calling any case there inert.
+All gates re-run from a clean invocation; verbatim output and the falsification tables in
+`docs/PROGRESS_LOG.md`, "Iteration 54" — read those tables before calling any case there inert.
 Goldens **exit 0** (`All cases match the oracle.`, **442 PASS / 0 FAIL / 0 SKIP**, no PASS line moved);
 `tools/check.sh` **exit 0** (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the
 pinned `cpp=`, so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS);
 `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk` **exit 0**;
-`test_review_state.sh` **exit 0**, **177 cases**. The reversions that went red: a `return 0` where the
-verdict counter used to sit (exit **1** where `af2fac3` printed `PASS` and exited **0**), a `return` in
-one arm only (`1 of 2`), deleting the fixture bound (2 checks, `vm_tests` **exit 1**), and a
-13-character width-pin fixture (the NOTE names the fixture before any assertion fails).
-`archive_guard_tests.cpp` was restored after each reversion and re-verified green — **no shipped source
-changed in this batch**. Frame `docs/frames/2026-11-01-verdict-counted-at-print.png` + `.txt` —
-`1.240 / 247 / 0.1819`, byte-identical to its 30 predecessors. **No emulator run and no Old-3DS
-hardware run: Old-3DS timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned,
-relaxed or edited.
+`test_review_state.sh` **exit 0**, **177 cases**. The reversions that went red: a `return 0` before the
+verdict `printf` and one between the `printf` and the count (both `only 0 of 2 declared arms`, exit **1**
+— where batch 25's placement printed `PASS` and exited **0**), a `return` in one arm only (`1 of 2`),
+deleting the fixture-refusal consume (1 check, `vm_tests` **exit 1**), deleting the refusal count (2
+checks), deleting the fixture bound (3 checks), a 13-character width-pin fixture (the NOTE names the
+fixture before any assertion fails), and the F4 scenario itself — a negatively-asserting caller on a
+refused fixture, whose own two checks are green and whose suite is red. `archive_guard_tests.cpp` was
+restored after each reversion and re-verified green — **no shipped source changed in this batch**. Frame
+`docs/frames/2026-11-01-count-after-the-print.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical to
+its 31 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED**,
+Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
 
 ## Standing open items
 
@@ -186,14 +194,20 @@ does it again). Class bounds worth keeping, each a *rule for the next batch* rat
 many arms it adjudicated and compare that against the declared number, and an arm that cannot set up is
 a failure, not a skip** (review-10 F1; `sprites_refusal_test.sh` does this, and the other two shell
 gates were read and already fail closed on a missing input, by a named mechanism); and from review-11
-F1, the sibling of that rule — **a counter must move at the site of the thing it counts, not on the way
-to it**, because a count taken before the verdict asserts comparisons that were never made and is
-reachable through the very mechanism written to close the last defect; the first batch that adds a
-multi-arm shell gate must take the count where the verdict is printed, and must not express an arm's
-setup failure as a bare `return`. From review-11 F2, the fixture-side bound: **a test helper that
-builds bytes must bound its own inputs against the field width it claims to pin** — and its refusal must
-be a fixture diagnostic, not a check result, because a passing test that increments the failure counter
-turns a green suite red (measured: `1 check(s) FAILED`, 52 PASS instead of 53). From review-7 oq1, a
+F1, refined by **review-12 F1**, the sibling of that rule — **a counter must move AFTER the observable it
+counts, never before it**, because a backstop that fires on a SHORT count cannot see an over-count, so a
+count taken ahead of the print turns a skipped print into a false PASS while a count taken after it turns
+the same skip into a red gate. Batch 25 moved the count to the print site but left it ahead of the
+`printf`, which re-opened the defect it closed (measured again on `07345d6`); the direction, not just the
+location, is the rule. The first batch that adds a multi-arm shell gate must take the count after the
+verdict prints, and must not express an arm's setup failure as a bare `return`. From review-11 F2, the
+fixture-side bound, extended by **review-12 F4**: **a test helper that builds bytes must bound its own
+inputs against the field width it claims to pin**, its refusal must be a fixture diagnostic rather than a
+check result — because a passing test that increments the failure counter turns a green suite red
+(measured: `1 check(s) FAILED`, 52 PASS instead of 53) — **and that diagnostic must be accounted for**,
+because a refusal that only prints a NOTE is invisible to a caller that asserts the negative and passes
+vacuously on the empty bytes. Count the refusals, count the asserted refusals, and require them to be
+equal; a flag set by one case and cleared by another is order-dependent. From review-7 oq1, a
 latent harness gap with a named trigger: the collector death loop asserts the outcome **after** a kill,
 not that the kill happened — `count_writes` counts text while `_die` counts executions, so a record
 write moved onto an untaken branch would be counted by the derived bound, never reached by the kill, and

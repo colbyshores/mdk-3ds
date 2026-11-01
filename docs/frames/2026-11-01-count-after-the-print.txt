@@ -1,0 +1,34 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-01T18:00:03Z at 07345d6
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move, and what shows the batch instead
+--------------------------------------------------------------
+This batch changed no shipped source. It closed review-12's four findings, all of them about a gate
+reporting more than it had checked: `sprites_refusal_test.sh` incremented its "arms adjudicated" count
+*before* the verdict line printed, so a `return` placed between the two reproduced the false PASS batch
+25 existed to remove, and `makeArchive` in `archive_guard_tests.cpp` reported a refused fixture only as
+a NOTE, which a caller asserting the negative passes straight over. Nothing a frame is made of —
+geometry, palette, uniforms, projection, camera, draw order — was touched, so the digest is the same one
+31 earlier frames carry and `reference.sha256` was not regenerated. The gap above is the standing 1.240%
+baseline, not a measurement of this batch.
+
+What does show it, and can fail:
+
+  * `sh tests/scripts/sprites_refusal_test.sh` with a `return 0` inserted anywhere inside `verdict()`
+    ahead of the count. On the previous commit the placement between the count and the print printed
+    `PASS SpritesRefusal (2 arms adjudicated)` and exited 0 with no verdict line at all; now every such
+    placement prints `FAIL … only 0 of 2 declared arms produced a verdict` and exits 1. A `return` in
+    one arm only is caught the same way (`1 of 2`). A `tick1` that never refuses produces two FAIL lines
+    for that arm and still reports two arms adjudicated, not three.
+  * `tests/scripts/archive_guard_tests.cpp` with the refusal consume deleted: 1 check FAILED, `vm_tests`
+    exit 1 — and the same for the F4 scenario itself, a case that asserts `!parse(...)` over a refused
+    fixture: its own two checks are green (that is the vacuity) and the suite is red.
+  * `make -C tests/scripts` — 442 PASS / 0 FAIL / 0 SKIP, no PASS line moved: the new archive-guard
+    check is a `check()` call inside the existing `PASS ArchiveIndexGuards` line, and the refusal gate is
+    one line either way.
+
+Capture conditions: `DISPLAY=:99` (AGENTS.md P7 — never the operator's desktop), lavapipe
+(`VK_ICD_FILENAMES` default `lvp_icd.json`), built from 07345d6 plus this batch's working tree. No
+emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays
+UNVERIFIED (P6). No gate, test or golden was pinned, relaxed or edited.
