@@ -233,43 +233,6 @@ state_set() {
     mv "$STATE.tmp" "$STATE"
 }
 
-# --- Risk-based review helpers (model-agnostic) -------------------------------
-extract_risk() {
-    local risk=""
-    if [ -f "$REPO/docs/CONTINUATION.md" ]; then
-        risk="$(grep -iE '^[[:space:]]*Risk[[:space:]]*:' "$REPO/docs/CONTINUATION.md" 2>/dev/null | head -1 | sed -E 's/^[^:]*:[[:space:]]*//; s/[[:space:]].*//' | tr '[:upper:]' '[:lower:]')"
-    fi
-    if [ -z "$risk" ]; then
-        risk="$(git -C "$REPO" log -1 --pretty=%B 2>/dev/null | grep -oiE '\[risk:[[:space:]]*(low|medium|high)\]' | head -1 | sed -E 's/.*:[[:space:]]*//; s/\].*//' | tr '[:upper:]' '[:lower:]')"
-    fi
-    case "$risk" in
-        low|medium|high) printf '%s' "$risk" ;;
-        *) printf 'medium' ;;
-    esac
-}
-
-risk_force_high() {
-    local base="$1" head="$2"
-    local pc
-    pc="$(git -C "$REPO" diff --name-only "$base".."$head" 2>/dev/null | grep -E '^(AGENTS\.md|SPEC\.md|SPEC-COMPLETION\.md|tools/check\.sh|ralph.sh|ralph/builder\.md|ralph/validator\.md|tools/runner/gates_batch_integrity\.py)$' || true)"
-    [ -n "$pc" ] && return 0
-    local nfiles
-    nfiles="$(git -C "$REPO" diff --name-only "$base".."$head" 2>/dev/null | wc -l)"
-    [ "${nfiles:-0}" -gt 6 ] && return 0
-    local nlines
-    nlines="$(git -C "$REPO" diff --numstat "$base".."$head" 2>/dev/null | awk '{a+=$1; d+=$2} END{print a+d+0}')"
-    [ "${nlines:-0}" -gt 500 ] && return 0
-    local tdel
-    tdel="$(git -C "$REPO" diff --numstat "$base".."$head" 2>/dev/null | grep -iE 'test|golden' | awk '{d+=$2} END{print d+0}')"
-    [ "${tdel:-0}" -gt 30 ] && return 0
-    [ "$(state_get FAILS 0)" -ge 2 ] && return 0
-    if grep -qiE 'Milestone[[:space:]]*:[[:space:]]*(complete|done|shipped)' "$REPO/docs/CONTINUATION.md" 2>/dev/null; then
-        return 0
-    fi
-    return 1
-}
-
-
 iterate() {
     local iter prompt_file="$PROMPT_FILE"
     iter=$(( $(state_get ITER 0) + 1 ))
@@ -277,7 +240,7 @@ iterate() {
     state_set HEAD_AT_START "$(git -C "$REPO" rev-parse HEAD)"
     local itlog="$LOGDIR/iter-$iter"
     local status_block
-    status_block="$(printf '\n\n--- LOOP STATUS (machine-generated) ---\niteration: %s of max %s\ngates from previous iteration: %s\nlast progress: iteration %s\nreview policy: risk-based (low=skip, medium=batch every 5 iters or milestone, high=immediate). You MUST declare Risk: low|medium|high in docs/CONTINUATION.md (first 20 lines) for this batch, with a one-line reason. Default if omitted: medium.\nIf logs/ralph/review-*.md exists and is newer than your last change, address its findings first.\n' "$iter" "$MAX_ITERATIONS" "$(state_get LAST_GATES n/a)" "$(state_get LAST_PROGRESS none)")"
+    status_block="$(printf '\n\n--- LOOP STATUS (machine-generated) ---\niteration: %s of max %s\ngates from previous iteration: %s\nlast progress: iteration %s\nIf logs/ralph/review-*.md exists and is newer than your last change, address its findings first.\n' "$iter" "$MAX_ITERATIONS" "$(state_get LAST_GATES n/a)" "$(state_get LAST_PROGRESS none)")"
     local full_prompt="$LOGDIR/.prompt-iter-$iter.md"
     { cat "$BUILDER_FILE"; printf '\n\n--- ITERATION MESSAGE ---\n'; cat "$prompt_file"; printf '%s' "$status_block"; } >"$full_prompt"
 
@@ -334,66 +297,15 @@ iterate() {
         echo "[$(date -Is)] iter=$iter NO PROGRESS (stall=$stall)" >>"$SUMMARY"
     fi
 
-    # Risk-based adversarial review (cost-guarded).
-    # Review only when the policy warrants it; local verification always runs.
-    local head_before head_after risk review_needed review_reason
-    head_before="$(state_get HEAD_AT_START "$(git -C "$REPO" rev-parse HEAD)")"
-    head_after="$(git -C "$REPO" rev-parse HEAD)"
-    review_needed=0
-    review_reason=""
+    # External adversarial review after any productive iteration.
     if [ "$(state_get LAST_PROGRESS)" = "$iter" ]; then
-        # A productive iteration occurred; classify risk.
-        risk="$(extract_risk)"
-        if risk_force_high "$head_before" "$head_after"; then
-            risk="high"
-        fi
-        # Failure-triggered review.
-        if [ "$(state_get FAILS 0)" -ge 2 ]; then
-            review_needed=1
-            review_reason="failure-triggered: $(state_get FAILS 0) consecutive gate failures"
-        elif [ "$risk" = "high" ]; then
-            review_needed=1
-            review_reason="high-risk change"
-        elif [ "$risk" = "medium" ]; then
-            # Count committed iterations toward the 5-iter batch checkpoint.
-            local iters_since
-            iters_since=$(( $(state_get ITERS_SINCE_REVIEW 0) + 1 ))
-            state_set ITERS_SINCE_REVIEW "$iters_since"
-            if grep -qiE 'Milestone[[:space:]]*:[[:space:]]*(complete|done|shipped)' "$REPO/docs/CONTINUATION.md" 2>/dev/null; then
-                review_needed=1
-                review_reason="milestone checkpoint (medium-risk batch)"
-            elif [ "$iters_since" -ge 5 ]; then
-                review_needed=1
-                review_reason="5-iteration batch checkpoint (medium-risk)"
-            else
-                review_needed=0
-                review_reason="medium-risk batched ($iters_since/5 iterations)"
-            fi
+        echo "[$(date -Is)] iter=$iter external review start reviewer=$REVIEWER_MODEL effort=$REVIEWER_EFFORT" >>"$SUMMARY"
+        if run_reviewer "$LOGDIR/review-$iter.md" latest; then
+            grep -q '^VERDICT: COMPLETE' "$LOGDIR/review-$iter.md" \
+                && echo "[$(date -Is)] iter=$iter review verdict COMPLETE" >>"$SUMMARY" \
+                || echo "[$(date -Is)] iter=$iter review verdict INCOMPLETE" >>"$SUMMARY"
         else
-            review_needed=0
-            review_reason="low-risk routine change (skipped)"
-        fi
-
-        state_set LAST_RISK "$risk"
-        echo "[$(date -Is)] iter=$iter risk=$risk decision=$review_reason" >>"$SUMMARY"
-
-        if [ "$review_needed" -eq 1 ]; then
-            echo "[$(date -Is)] iter=$iter review INVOKED reviewer=$REVIEWER_MODEL effort=$REVIEWER_EFFORT" >>"$SUMMARY"
-            if run_reviewer "$LOGDIR/review-$iter.md" latest; then
-                grep -q '^VERDICT: COMPLETE' "$LOGDIR/review-$iter.md" \
-                    && echo "[$(date -Is)] iter=$iter review verdict COMPLETE" >>"$SUMMARY" \
-                    || echo "[$(date -Is)] iter=$iter review verdict INCOMPLETE" >>"$SUMMARY"
-            else
-                echo "[$(date -Is)] iter=$iter reviewer ERROR (see review-$iter.md)" >>"$SUMMARY"
-            fi
-            # Reset batch counter on review.
-            state_set ITERS_SINCE_REVIEW 0
-            local rcalls
-            rcalls=$(( $(state_get REVIEW_CALLS 0) + 1 ))
-            state_set REVIEW_CALLS "$rcalls"
-        else
-            echo "[$(date -Is)] iter=$iter review SKIPPED — $review_reason (cost guardrail)" >>"$SUMMARY"
-            state_set REVIEW_SKIP_COUNT $(( $(state_get REVIEW_SKIP_COUNT 0) + 1 ))
+            echo "[$(date -Is)] iter=$iter reviewer ERROR (see review-$iter.md)" >>"$SUMMARY"
         fi
     fi
 
@@ -422,7 +334,7 @@ loop() {
     # command closes it explicitly (9>&-).
     exec 9>"$LOCK"
     flock -n 9 || { echo "ralph loop already running (lock held)"; exit 6; }
-    [ -f "$STATE" ] || { echo "ITER=0"; echo "FAILS=0"; echo "STALL=0"; echo "REVIEW_CALLS=0"; echo "ITERS_SINCE_REVIEW=0"; echo "REVIEW_SKIP_COUNT=0"; } >"$STATE"
+    [ -f "$STATE" ] || { echo "ITER=0"; echo "FAILS=0"; echo "STALL=0"; } >"$STATE"
     [ -n "$(state_get LAST_HASH)" ] || state_set LAST_HASH "$(tree_hash)"
     echo "[$(date -Is)] LOOP START builder=$WORKER_MODEL/$WORKER_EFFORT reviewer=$REVIEWER_MODEL/$REVIEWER_EFFORT max=$MAX_ITERATIONS" >>"$SUMMARY"
     # Route preflight: a dead model route must be reported now, not
@@ -481,7 +393,7 @@ case "${1:-}" in
     __run) loop ;;
     once)
         exec 9>"$LOCK"; flock -n 9 || { echo "loop already running"; exit 6; }
-        [ -f "$STATE" ] || { echo "ITER=0"; echo "FAILS=0"; echo "STALL=0"; echo "REVIEW_CALLS=0"; echo "ITERS_SINCE_REVIEW=0"; echo "REVIEW_SKIP_COUNT=0"; } >"$STATE"
+        [ -f "$STATE" ] || { echo "ITER=0"; echo "FAILS=0"; echo "STALL=0"; } >"$STATE"
         [ -n "$(state_get LAST_HASH)" ] || state_set LAST_HASH "$(tree_hash)"
         iterate
         exit $?
