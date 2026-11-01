@@ -5,10 +5,16 @@
 
 CORE := ../../mdk_core/src
 LINUX := ../../mdk_linux/src
+# The 3DS platform layer, for the ONE piece of it that is pure arithmetic and
+# can be pinned here: render/pica_matrix.{h,cpp}. The rest of that tree includes
+# <3ds.h> and cannot be compiled on a host, which is why the matrix math was
+# split out of renderer_c3d.cpp in the first place. Last on the include path so
+# it can never shadow a core or Linux header.
+3DS := ../../mdk_3ds/src
 BUILD := build
 CXX ?= g++
 CXXFLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter \
-            -fno-strict-aliasing -I$(CORE) -I$(LINUX) -I. -I../formats
+            -fno-strict-aliasing -I$(CORE) -I$(LINUX) -I. -I../formats -I$(3DS)
 LDFLAGS :=
 
 COMMON_SOURCES := \
@@ -70,7 +76,9 @@ SOURCES_VM := \
 	layer_tests.cpp \
 	sprite_tests.cpp \
 	system_numerics_tests.cpp \
+	pica_matrix_tests.cpp \
 	$(LINUX)/render/system_numerics_inverse.cpp \
+	$(3DS)/render/pica_matrix.cpp \
 	$(COMMON_SOURCES)
 
 OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))

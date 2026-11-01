@@ -37,6 +37,7 @@
 #include "game/level_data.h"
 #include "game/player.h"
 #include "layer_tests.h"
+#include "pica_matrix_tests.h"
 #include "scripts/script_runtime.h"
 #include "sprite_tests.h"
 #include "system_numerics_tests.h"
@@ -3594,6 +3595,16 @@ int main() {
     failures += archiveFailures;
     if (archiveFailures == 0) {
         printf("PASS ArchiveIndexGuards\n");
+    }
+
+    // The Citro3D per-draw matrix and the three PICA conversions. Same ordering
+    // argument as the archive guards above: the 3DS cannot be run here, so this
+    // suite is the ONLY thing that checks any of it, and it must not be able to
+    // skip on a machine with no game data.
+    const int picaFailures = mdk::test::runPicaMatrixTests();
+    failures += picaFailures;
+    if (picaFailures == 0) {
+        printf("PASS PicaMatrix\n");
     }
 
     MdkData data = locateData();

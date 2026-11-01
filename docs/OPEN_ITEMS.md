@@ -288,10 +288,29 @@ different kind and it is still open — what it is has not been identified.
   * **MAJOR, closed:** the frame record for the object pass is now versioned, in
     `docs/evidence/` because the pinned frame cannot show it (above).
   * **MAJOR, closed:** the interpolated transform (above), which was its own slice.
-  * Its open question about the Citro3D backend ignoring `MeshDraw::world` stands:
-    the 3DS has one frame-wide MVP uniform, so per-object placement needs backend
-    support before the 3DS frontend binds a `ScriptRuntime`. Not a regression —
-    nothing on the 3DS draws an object yet.
+  * Its open question about the Citro3D backend ignoring `MeshDraw::world` is
+    **CLOSED (2026-11-01, batch 28)**: the matrix math moved to
+    `mdk_3ds/src/render/pica_matrix.{h,cpp}` so a host test can reach it, and
+    `drawRecorded` now composes each queued draw's world against the frame's
+    per-eye matrix (`world * eyeVp`, one multiply, cached so an identity world
+    costs no uniform write). Pinned by `PASS PicaMatrix`
+    (`tests/scripts/pica_matrix_tests.cpp`), 8 cases, with 7 mutations of the new
+    file each turning them red. Still true: nothing on the 3DS draws an object
+    yet, because the 3DS frontend binds no `ScriptRuntime`.
+- **The Citro3D backend issues ONE pass, into the last-installed eye target**
+  (found by batch 28 while adding the per-draw matrix; recorded, not fixed).
+  `begin_frame` clears and installs both eye targets and writes the MVP twice,
+  but the frame's draws are flushed once, after it returns, so they land in the
+  right target and the left target keeps only its clear. AGENTS.md P2 asks for
+  both-eye targets and the slider to be preserved, and the fix is not free (a
+  second pass over every draw on a 268 MHz ARM11 with L2 off), so it needs its
+  own batch and its own measurement. The prior solution is in the vault,
+  `30-architecture/patterns/citro3d-display-list-stereo-replay-non-fast3d.md`:
+  record the draw list, replay it per eye with a swapped view — and
+  `render/draw_queue.h` already *is* that recorded list, so the second eye is a
+  replay with a different `r->eyeVp`, not a second scene walk. The per-draw
+  matrix this batch added is what makes the replay cheap; `r->eyeVp`'s comment
+  names the flush that has to move.
 - Review-3's three findings are **CLOSED** by this batch: `ObjectStreamDraw` carries
   the look's palette (the C#'s `Material.PaletteId`), the draw golden prints only
   what the queue holds — including the transform's raw bits, so a queued draw that

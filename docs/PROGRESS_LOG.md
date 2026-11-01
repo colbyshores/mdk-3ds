@@ -7464,3 +7464,230 @@ the backend has a per-draw matrix. Then **(d)** the middle 173 px of the pinned 
 batch and leaves the deferred list. The owner-authorized tasks are unchanged, including (10)
 `tick1`'s zero-exiting `SKIP` and (11) the unwritable `/tmp/kilo`; this batch's scratch path was
 `/tmp/mdk-pi` and `/tmp`, recorded here per (11).
+
+## Iteration 56 — batch 28: the Citro3D backend places a draw with its own world matrix
+
+Priority item **6(c)** from `docs/CONTINUATION.md`: *"the Citro3D backend ignores
+`MeshDraw::world`, so the 3DS cannot place an object until it has a per-draw
+matrix"* (`docs/OPEN_ITEMS.md` put it the same way: *"the 3DS has one frame-wide
+MVP uniform, so per-object placement needs backend support before the 3DS
+frontend binds a `ScriptRuntime`"*). This is the first game-porting batch after
+six batches of harness and record work, and it is a real gap, not a tidiness
+change: `mdk_render_draw_mesh` accepts a transform and the Citro3D backend threw
+it away.
+
+### What changed
+
+* **`mdk_3ds/src/render/pica_matrix.{h,cpp}` (new).** The Citro3D matrix math,
+  moved out of `renderer_c3d.cpp` into a file that compiles on a host, because
+  that is the only way any of it can be pinned: the three PICA conversions each
+  fail as *invisible geometry*, and the Citro3D picture is UNVERIFIED on hardware
+  (AGENTS.md P6). Four functions — `isIdentity`, `eyeViewProjection`,
+  `drawMatrix`, `registers`. `eyeViewProjection` is the old `buildEyeMvp` body
+  **element for element and in the same order**, so the frame's per-eye matrix is
+  bit-identical across the move; the multiply is the plain triple loop the Vulkan
+  backend uses (`renderer_vk.cpp:690`), deliberately **not** `mdk::multiply` from
+  `util/matrix.h`: that one spells `std::fma` out to be bit-exact against
+  System.Numerics, and VFPv2 has no FMA, so on this target it is a libm call —
+  four per element, sixteen elements, once per draw. Verified in the shipped
+  object: `arm-none-eabi-objdump --disassemble=_ZN3mdk4pica…multiply…` contains
+  **no `bl` at all**, and `eyeViewProjection`'s only call is to `multiply`.
+* **`renderer_c3d.cpp`.** `begin_frame` now keeps the eye's matrix on the
+  renderer (`r->eyeVp`) instead of building a temporary and dropping it, and
+  `drawRecorded` composes each queued draw's `world` against it:
+  `mdk::pica::drawMatrix(draw->world, r->eyeVp, m)`. The write is **cached**
+  (`r->matrixIsFrame`), because `C3D_FVUnifMtx4x4` dirties the uniform buffer on
+  every call: a frame of arena batches — every one of which carries an identity
+  world — costs no multiply and no uniform write, and only an object draw pays
+  one. Same shape as the cull-mode cache already in that function, and the same
+  lesson the vault records twice ([[citro3d-redundant-per-draw-state-writes]],
+  Turok and Perfect Dark).
+* **`tests/scripts/pica_matrix_tests.{h,cpp}` (new), wired into `vm_tests`**
+  *before* the game-data check, so it cannot skip on a data-less host — the same
+  ordering the archive guards use and for the same reason (review-9 F1). The
+  Makefile adds `-I../../mdk_3ds/src` last on the include path so it cannot
+  shadow a core or Linux header.
+
+### Why composing against the baked matrix is the same product
+
+The two PICA conversions are right-multiplications by fixed matrices — the depth
+remap is `M·E` with `E = I[E₃₂ = −1]`, the quarter turn is `M·R` with
+`R[R₁₀ = 1, R₀₁ = −1]` (determinant +1) — so for any world `W`:
+
+```
+(W * V * P) * E * R  ==  W * (V * P * E * R)
+```
+
+which is what lets the conversions be baked once per frame and a per-draw world
+composed against the result, instead of rebuilding the chain per draw. The
+identity of the two sides is pinned by a test, not asserted here: see
+`testTheWorldComposesOnTheLeftOfTheView`, which compares `drawMatrix(W,
+eyeViewProjection(V,P,e))` against `eyeViewProjection(mulIndependent(W,V), P, e)`
+— two association orders of one product, computed by different code.
+
+### The second item: the diagnostic triangle was replacing the real draw's state
+
+Found while putting the per-draw matrix into `drawRecorded`, and fixed in the
+same function because the new uniform cache is entangled with it.
+
+The diagnostic triangle ran **before** the real draw and installed its own vertex
+buffer, combiner and matrix. `C3D_GetBufInfo()` hands out the **context's** single
+`BufInfo` — this file calls it and never hands one back with `C3D_SetBufInfo`, so
+the two calls return the same struct, and citro3d keeps render state in one global
+context (the cull-mode comment in this file already says so). Drawing the triangle
+first therefore replaced the buffer description the real draw had just installed,
+and `C3D_DrawArrays` flushes the dirty state before drawing: the mesh's draw read
+the triangle's 15 floats at the mesh's offsets. `diagnosticTriangle` is `true` by
+default and nothing ever sets it false, so that was every draw, not a debug build.
+The triangle now runs **last** in the draw, where it can only affect the next draw
+— and every draw installs its own buffer, combiner and matrix at its top, except
+the matrix, which is cached, so the cache is told (`matrixIsFrame = false`).
+
+Recorded rather than hidden: this is a behaviour change on a target this host
+cannot look at. It is a code-level defect (the aliasing is not a matter of
+opinion), the fix removes state rather than adding it, and the Citro3D picture
+stays UNVERIFIED either way.
+
+### What was NOT touched, and why
+
+* **C3D depth and blend state** (the other half of item 6(c)): `C3D_DepthTest`
+  stays `GPU_ALWAYS`/no-write and there is still no `C3D_AlphaBlend`, so
+  `Pass::Blended` glass is still opaque on the 3DS. That needs a projection
+  remap, `C3D_DepthMap`, the test function, a clear value and a capture — a
+  slice of its own, and the depth pull is meaningless while the depth test is
+  off. Left as an open item.
+* **Per-eye replay.** `begin_frame` sets up both eye targets but the frame's
+  draws are issued once, into the last target `C3D_FrameDrawOn` installed, so
+  the left eye currently gets only its clear. The vault's prior solution is
+  [[citro3d-display-list-stereo-replay-non-fast3d]] — record the draw list,
+  replay it per eye with a swapped view — and `DrawQueue` already *is* that
+  recorded list, so the second eye is now a replay with a different `eyeVp`
+  rather than a second scene walk. `r->eyeVp`'s comment says where the flush has
+  to move when it lands. New open item, recorded with this evidence.
+* No shipped Linux source, no shared `mdk_core` source, no golden, no gate, no
+  `MeshDraw` layout change. `MeshDraw::world`'s default stays all-zeros (not
+  identity): a producer that never sets one now collapses on the 3DS exactly as
+  it already does on Vulkan, which makes the targets agree instead of papering
+  over the producer.
+
+### Prior-solution lookup (all three sources, as required)
+
+* **`pi-knowledge`: UNAVAILABLE, not empty.** `knowledge_status` reports
+  `Knowledge bases: 0`, so there is no `mdk-sdl` base and an empty search would
+  be an environment gap, not a finding. `knowledge_plan` on the repository
+  (excluding `MDK/`, `logs/`, frames, evidence, golden, builds, third-party)
+  reports **5962 scannable files / 23.0 MB**, with 36 suggested-excluded and 41
+  binary skips — dominated by `.kilo/worktrees/**`, which holds whole copies of
+  the repo, so a first index needs explicit `include_paths` and is a task of its
+  own (the owner's uncommitted `AGENTS.md` edit adds exactly that lifecycle).
+  Nothing was indexed by this batch.
+* **Obsidian vault** (read directly, read-only, `/mnt/nas/Vaults/port-docs`):
+  four notes used as leads and verified against the code —
+  `30-architecture/patterns/port-mvp-transform-locus-cpu-vs-gpu.md` (an HW-T&L
+  engine keeps the per-vertex transform on the GPU and folds the full MVP on the
+  CPU when GPU-bound — which is what this batch does, and it is why the shader
+  was not touched), `citro3d-redundant-per-draw-state-writes.md` (the per-draw
+  cache), `citro3d-display-list-stereo-replay-non-fast3d.md` (the per-eye item
+  above), and `60-references/3ds-platform/citro3d/*` for the API shapes.
+* **Cognee MCP: NOT CONSULTED.** The server is reachable but `recall` returned
+  `HTTP 409 Conflict` on the first call and a retry with `search_type=CHUNKS`
+  hit the 120 s tool timeout. It is recorded as unavailable; no result from it is
+  claimed or used.
+
+### Falsification: every case has teeth, measured
+
+Each row is one mutation of `pica_matrix.cpp` in `/tmp/mdk-pi/falsify` (the
+repository was not written), rebuilt against the committed test file. The
+unmutated control prints `failures=0`.
+
+| Mutation | Result |
+|---|---|
+| `drawMatrix` multiplies `eyeVp * world` (world on the right) | 3 failures — the translation case, the association cross-check, **and** the negative control |
+| depth remap removed (`col2 -= col3` → assignment) | 6 failures |
+| depth remap applied **twice** | 6 failures |
+| the 90° rotation replaced by the identity columns | 6 failures |
+| `registers()` uploads rows verbatim (the transpose trap) | 5 failures |
+| `isIdentity` loosened to a diagonal-only test | 2 failures (the translation and the −0.0 case) |
+| eye offset spread over all three translation components | 1 failure (the eye-offset case) |
+| **control, unmutated** | `failures=0` |
+
+The expected values were derived by hand before the first run — the recipe is
+"the engine's clip point `(x,y,z,w)` becomes `(y, −x, z−w, w)`", checked on
+inputs that are exact in binary — and the first run of the committed test printed
+`failures=0` with no expectation edited to match the implementation. The
+negative control inside `testTheWorldComposesOnTheLeftOfTheView` is what makes
+the association check non-vacuous: it asserts the reversed order differs by more
+than 1.0 in at least one element, and the first row of the table shows it fires.
+
+### Gate results, verbatim, as run on this tree
+
+```
+$ make -C tests/scripts -j8
+PASS L8_dti: 19 arenas, records match the oracle byte for byte
+PASS scene tagging: 104 arenas partition the drawn triangles by group (880 cross-group same-material adjacencies exercised the run-break)
+All cases match the oracle.
+EXIT=0                     # 443 PASS / 0 FAIL / 0 SKIP — 442 + the new PASS PicaMatrix
+
+$ make -C tests/scripts test | grep -c '^PASS'
+443
+$ make -C tests/scripts test | grep -E '^FAIL|^SKIP|PicaMatrix'
+PASS PicaMatrix            # the only line matching: no FAIL, no SKIP
+
+$ bash tools/check.sh
+  PASS   audit_c_with_classes     0 violations
+  PASS   gates_vfp                0 blockers
+  PASS   audit_arm11_math         contract clean
+  PASS   audit_r11_idiv           no candidates
+  PASS   gates_core_parity        both targets link the same core
+  SKIP   gates_smdh               no built .cia to read
+  PASS   gates_frames             every pinned frame is deterministic and unchanged
+  PASS   gates_batch_integrity    project invariants intact
+CHECK: ALL GATES PASSED
+EXIT=0
+
+$ DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8
+CXX  /mnt/nas/Development/mdk-sdl/mdk_3ds/src/render/pica_matrix.cpp
+CXX  /mnt/nas/Development/mdk-sdl/mdk_3ds/src/render/renderer_c3d.cpp
+LINK mdk.elf
+3DSX mdk.3dsx
+EXIT=0                     # the new source was picked up by the Makefile's own glob
+```
+
+```
+$ cmake --build build-linux --target mdk -j8
+[100%] Built target mdk
+EXIT=0                     # nothing it compiles changed; run anyway, both targets green
+```
+
+The frame
+frame `docs/frames/2026-11-01-c3d-per-draw-matrix.png` + `.txt` is byte-identical
+to its 33 predecessors (`6646adf1…`) for the reason its sidecar states, and
+`reference.sha256` was **not** regenerated (`gates_frames` printed the pinned
+`cpp=` digest unchanged). **No emulator run and no Old-3DS hardware run: the
+Citro3D picture and Old-3DS timing stay UNMEASURED** (AGENTS.md P6/P7). No gate,
+test or golden was pinned, relaxed or edited.
+
+### Review findings
+
+The newest external review is still `logs/ralph-pi/run-20261101-062333/review-12.md`
+(its verdict was `INCOMPLETE` on two Medium and two Low findings, no Critical and
+no High). **All four were remediated by batch 26** ("Iteration 54": the counter
+moved after the print it counts, the three `CONTINUATION.md` clauses restored,
+both Low rationale comments corrected, the fixture-refusal made un-ignorable), and
+no review has been dispatched since. This batch therefore had no open
+Critical/High finding to remediate; it went down the priority order instead.
+
+### What is next
+
+Priority item **6(c)** is now half done: the per-draw matrix exists, the C3D
+depth/blend divergence does not. Next in order: the **C3D depth and blend state**
+(the other half of (c): `C3D_DepthTest`/`C3D_DepthMap`/projection remap/clear
+value, and `C3D_AlphaBlend` for `Pass::Blended`), then the **per-eye replay**
+item this batch recorded, then **(d)** the middle 173 px of the pinned frame, then
+**(e)** `FrameBlend.Lerp`'s rounding. The owner-authorized tasks are unchanged,
+including (10) `tick1`'s zero-exiting `SKIP` and (11) the unwritable `/tmp/kilo`;
+this batch's scratch path was `/tmp/mdk-pi`, recorded here per (11). A new
+owner-authorized item lands with this batch: **the `mdk-sdl` pi-knowledge base
+does not exist**, and creating it needs explicit `include_paths` (the plan's
+5962-file scan is dominated by `.kilo/worktrees/**`), which is a task of its own
+rather than a side effect of a porting batch.

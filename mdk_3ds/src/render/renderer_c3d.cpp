@@ -53,6 +53,7 @@
 #include "render/render.h"
 #include "render/render_types.h"
 #include "render/draw_queue.h"
+#include "render/pica_matrix.h"
 #include "mdk_c3d_shbin.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
@@ -225,6 +226,33 @@ struct RendererC3D {
     // accounts for the constants.
     int mvpLocation = 0;
     int uvLocation = 0;
+
+    // The frame's per-eye view-projection, with both PICA conversions baked in,
+    // for the target this frame's draws go to. A queued draw that carries a
+    // world matrix composes it against THIS matrix (pica::drawMatrix), which is
+    // what lets the 3DS place an object at all: with one frame-wide matrix and
+    // no per-draw one, every object was drawn at the arena's own coordinates no
+    // matter where its script put it.
+    //
+    // begin_frame's eye loop writes it once per eye and the LAST write is the
+    // one that matters, because this backend issues ONE pass into the last
+    // target C3D_FrameDrawOn installed. When the per-eye replay lands -- the
+    // frame's draws are already recorded (DrawQueue), so the second eye is a
+    // replay with a different matrix and not a second scene walk -- the flush
+    // moves inside that loop and reads the matrix of the eye it is drawing.
+    float eyeVp[16] = {0};
+
+    // Whether the uniform currently holds `eyeVp` (the frame's matrix) or some
+    // draw's own.
+    //
+    // C3D_FVUnifMtx4x4 dirties the uniform buffer every time it is called, so
+    // the level geometry -- every draw of which carries an identity world --
+    // must not pay for a write it does not need. This is the cache the cull mode
+    // below uses, for the same reason: a per-draw C3D_* call is real ARM11 time,
+    // and the vault's "redundant per-draw PICA200 state writes" note is that
+    // lesson confirmed on two other projects. Anything that writes the matrix
+    // behind this backend's back has to say so here.
+    bool matrixIsFrame = true;
 
     // The vertex scratch. Everything the CPU writes for the frame lives
     // here until it is uploaded.
@@ -515,113 +543,16 @@ inline GpuVertex expand(const mdk::Vertex& v) {
 
 
 // ---------------------------------------------------------------------------
-// The MVP for one eye.
+// The MVP for one eye lives in render/pica_matrix.cpp.
 //
-// THE MATRIX CONVENTIONS, which are the whole difficulty here:
-//
-//   The engine's matrices are ROW-MAJOR with a ROW-VECTOR convention: the
-//   point is a row and the transform is `p_clip = p_world * M`.
-//
-//   The PICA200's vertex shader is COLUMN-VECTOR: the transform is
-//   `p_clip = M_pica * p_world`, and uniform register i holds COLUMN i of
-//   M_pica.
-//
-//   For the two to describe the SAME transform we need M_pica = M^T, and
-//   the column-major register layout means that M^T's column i is M's ROW i.
-//   So register i gets our row i, verbatim, and the transpose is FREE --
-//   exactly the "implicit transpose" the D3D->GL conversion already relies
-//   on. (Uploading our memory verbatim would give M^T's ROW i, which is M's
-//   column i, i.e. the transpose of what is wanted: a rotation would come
-//   out INVERTED. The two are one transpose apart, and only one of them is
-//   right.)
-//
-// (A) THE DEPTH CONVERSION. The engine's projection is the C# oracle's
-//     right-handed one, whose NDC z still runs [0,1] (0 at the near plane,
-//     1 at the far), with clip.w = -v.z so a point in front has w > 0. PICA200
-//     wants [-1,0]. The conversion is `row[2] -= row[3]`, in element terms
-//     _33' = _33 - 1 and _43' = _43. _34 is LEFT ALONE: dividing the converted
-//     z by the untouched w is exactly the -1 shift in NDC.
-//
-//     The conversion is applied ONCE, to the COMBINED matrix.
-//
-// THE 90-DEGREE ROTATION is applied here too, and it is a PROPER ROTATION
-// (determinant +1): the new row 0 is the old row 1 and the new row 1 is the
-// NEGATED old row 0. The upstream picaGL version used a reflection
-// (determinant -1), which flips the winding a second time and undoes the
-// cull inversion.
-//
-// THE EYE OFFSET moves the camera along its own right axis by `offset`.
-// For a row-vector view matrix V = [R | T], the camera's world position is
-// C = -R^T T, and moving C by d along the camera's right axis r = row 0 of R
-// gives T' = T - d * (R^T r), and R^T r is the first COLUMN of R. So the
-// translation's x, y and z each lose d times the first column's x, y, z.
+// It moved there so a host test can pin the three PICA conversions (the free
+// transpose, the [0,1]->[-1,0] depth remap, the 90-degree screen rotation) and
+// the SIDE a per-draw world matrix composes on -- none of which can be checked
+// from a file that includes <3ds.h>, and all of which fail as INVISIBLE
+// GEOMETRY rather than as a wrong picture. The conventions, and the identity
+// `W*(V*P*E*R) == (W*V*P)*E*R` that makes a per-draw matrix legal at all, are
+// written out in that header.
 // ---------------------------------------------------------------------------
-namespace {
-
-void buildEyeMvp(const RendererC3D* r, float eyeOffset, float out[16]) {
-    // The view matrix, with the eye's offset applied.
-    //
-    // The view is a row-major, row-vector look-at matrix: its translation row
-    // is (-dot(right, eye), -dot(trueUp, eye), -dot(forward, eye)), and its
-    // COLUMNS are the camera axes. Moving the eye by d along its own right
-    // axis therefore changes ONLY the first translation component, by -d:
-    // the other two axes are perpendicular to `right`, so their dot products
-    // are unchanged. This is the C# oracle's View.Eye (Renderer.cs:92), which
-    // rebuilds CreateLookAt at the shifted position; patching the row is the
-    // algebraically identical shortcut. A former version scaled all three
-    // translation components by the right axis, which moved the eyes along a
-    // skewed direction for any camera that was not axis-aligned.
-    float view[16];
-    memcpy(view, r->view, sizeof(view));
-    if (eyeOffset != 0.0f) {
-        view[12] -= eyeOffset;
-    }
-
-    // The combined matrix: view * projection, in the row-vector convention.
-    // A row vector p transforms as p' = p * V * P, so the combined matrix is
-    // V * P with view as the LEFT operand -- the C# oracle's `view *
-    // projection` (Renderer.cs:115, FollowCamera.cs, FallView.cs). The
-    // product below is the ordinary row-times-column product of that.
-    float m[16];
-    for (int row = 0; row < 4; row++) {
-        for (int col = 0; col < 4; col++) {
-            float sum = 0.0f;
-            for (int k = 0; k < 4; k++) {
-                sum += view[row * 4 + k] * r->projection[k * 4 + col];
-            }
-            m[row * 4 + col] = sum;
-        }
-    }
-
-    // (A) The depth remap: D3D [0,1] -> PICA [-1,0].
-    //
-    // In REGISTER space this is Forsaken's `c3d_vp.r[2] -= c3d_vp.r[3]`
-    // (render_c3d.c:1122), i.e. clip.z -= clip.w. Register i holds COLUMN i
-    // of the engine's row-vector matrix (see the upload below), so the
-    // register-row operation is a COLUMN operation here: column 2 -= column 3.
-    // A row operation would perturb clip.x/.y/.w and leave z/w untouched.
-    for (int k = 0; k < 4; k++) {
-        m[k * 4 + 2] -= m[k * 4 + 3];
-    }
-
-    // (B) The 90-degree screen rotation: the top screen is portrait-native,
-    // the game is landscape. Forsaken's register recipe is r[0] = old r[1],
-    // r[1] = -old r[0] (a proper rotation, determinant +1 -- citro3d's own
-    // Mtx_PerspTilt bakes the same quarter turn as r[0].y / r[1].x = -).
-    // Register rows are engine COLUMNS, so this is a column operation:
-    // new column 0 = old column 1, new column 1 = -old column 0.
-    float rot[16];
-    for (int k = 0; k < 4; k++) {
-        rot[k * 4 + 0] = m[k * 4 + 1];
-        rot[k * 4 + 1] = -m[k * 4 + 0];
-        rot[k * 4 + 2] = m[k * 4 + 2];
-        rot[k * 4 + 3] = m[k * 4 + 3];
-    }
-
-    memcpy(out, rot, sizeof(rot));
-}
-
-} // namespace
 
 // ---------------------------------------------------------------------------
 // The frame
@@ -726,27 +657,23 @@ static void flushDraws(RendererC3D* r);
         C3D_RenderTargetClear(target, C3D_CLEAR_ALL, clear, 0);
         C3D_FrameDrawOn(target);
 
-        // The MVP for this eye.
-        float mvp[16];
-        buildEyeMvp(r, offset, mvp);
-        // THE STRIDED READ. The shader consumes register i as the vector
-        // dotted with the position (dp4 outpos.x, mvp[0], r0), so register i
-        // is ROW i of the column-vector matrix M_pica, and M_pica = M^T for
-        // our row-vector M. Therefore register i must hold COLUMN i of our
-        // row-major matrix -- the strided read below, exactly Forsaken's
-        // matrix_to_c3d (render_c3d.c:1077). A verbatim row copy uploads the
-        // transpose: rotations come out inverted and the picture is mirrored.
-        C3D_Mtx gpuMtx;
-        for (int i = 0; i < 4; i++) {
-            gpuMtx.r[i].x = mvp[0 + i];
-            gpuMtx.r[i].y = mvp[4 + i];
-            gpuMtx.r[i].z = mvp[8 + i];
-            gpuMtx.r[i].w = mvp[12 + i];
-        }
+        // The MVP for this eye: the view-projection with both PICA conversions
+        // baked in. It is KEPT on the renderer, because a draw that carries a
+        // world matrix composes it against this matrix instead of rebuilding the
+        // whole chain per draw.
+        mdk::pica::eyeViewProjection(r->view, r->projection, offset, r->eyeVp);
+        // THE STRIDED READ -- see mdk::pica::registers: register i must hold
+        // COLUMN i of the row-major matrix, or a rotation comes out inverted.
+        //
         // ALL UNIFORM REGISTERS MUST BE WRITTEN EVERY FRAME. An unwritten
         // uniform holds the previous frame's value or garbage. The shader
-        // reads registers 0-3 (the mvp), so exactly those are written.
+        // reads registers 0-3 (the mvp), so exactly those are written. A frame
+        // whose draws all carry an identity world is placed by this one write
+        // and nothing more; drawRecorded adds one per draw that does not.
+        C3D_Mtx gpuMtx;
+        mdk::pica::registers(r->eyeVp, gpuMtx.m);
         C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
+        r->matrixIsFrame = true;
 
         C3D_BindProgram(&r->program);
 
@@ -1541,29 +1468,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                           (int)draw->vertex_count, (int)draw->material.texture,
                           vertex[0], vertex[1], vertex[2], vertex[3], vertex[4]);
     }
-    // THE DIAGNOSTIC TRIANGLE. Clip-space, with the identity matrix, and no
-    // texture: if THIS does not appear, the problem is in the frame or the
-    // program, not in the mesh, the transform or the texture.
-    if (r->diagnosticTriangle) {
-        static float triangle[15] = {
-            -0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
-             0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
-             0.0f,  0.8f, 0.0f, 0.0f, 0.0f,
-        };
-        C3D_Mtx identity;
-        for (int i = 0; i < 16; i++) {
-            identity.m[i] = (i % 5 == 0) ? 1.0f : 0.0f;
-        }
-        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &identity);
-        C3D_BufInfo* info = C3D_GetBufInfo();
-        BufInfo_Init(info);
-        BufInfo_Add(info, triangle, 5 * sizeof(float), 2, 0x10);
-        C3D_TexEnv* plain = C3D_GetTexEnv(0);
-        C3D_TexEnvInit(plain);
-        C3D_TexEnvSrc(plain, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-        C3D_TexEnvFunc(plain, C3D_Both, GPU_REPLACE);
-        C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
-    }
+    // THE DIAGNOSTIC TRIANGLE IS DRAWN LAST, AFTER THE REAL DRAW -- see below.
 
     // The draw.
     //
@@ -1576,6 +1481,41 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // respect, and it is recorded rather than hidden.
     const int32_t first = draw->first_vertex;
     const int32_t count = draw->vertex_count;
+
+    // THE PER-DRAW MATRIX.
+    //
+    // `MeshDraw::world` is the object's transform, and the seam's contract is
+    // that the backend places the draw with it: the Vulkan backend multiplies it
+    // into the same chain in its own drawRecorded. Ignoring it here meant every
+    // queued draw landed at the arena's own coordinates, so the 3DS could not
+    // place an object however the script moved it (docs/OPEN_ITEMS.md, the
+    // `MeshDraw::world` item).
+    //
+    // The composition is ONE 4x4 multiply, and only for the draws that need it.
+    // The arena batches and Kurt's sprite both carry an identity world, and for
+    // those the frame's matrix is already installed, so a frame of level
+    // geometry costs no multiply and no uniform write; an object draw pays one
+    // multiply and one write. That is the same caching the cull mode below uses,
+    // for the same reason -- a per-draw C3D_* call is real ARM11 time and this
+    // one dirties the uniform buffer.
+    //
+    // The two PICA conversions are already inside r->eyeVp and they are
+    // right-multiplications by fixed matrices, so composing the world against
+    // the baked matrix is the same product as rebuilding it (see pica_matrix.h).
+    const bool identityWorld = mdk::pica::isIdentity(draw->world);
+    if (!identityWorld || !r->matrixIsFrame) {
+        float m[16];
+        if (identityWorld) {
+            // Restoring the frame's matrix after a draw that installed its own.
+            memcpy(m, r->eyeVp, sizeof(m));
+        } else {
+            mdk::pica::drawMatrix(draw->world, r->eyeVp, m);
+        }
+        C3D_Mtx gpuMtx;
+        mdk::pica::registers(m, gpuMtx.m);
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
+        r->matrixIsFrame = identityWorld;
+    }
 
     // THE PASS'S CULLING, PER DRAW.
     //
@@ -1611,6 +1551,44 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (r->cullMode != GPU_CULL_BACK_CCW) {
         C3D_CullFace(GPU_CULL_BACK_CCW);
         r->cullMode = GPU_CULL_BACK_CCW;
+    }
+
+    // THE DIAGNOSTIC TRIANGLE, LAST. Clip-space, with the identity matrix, and
+    // no texture: if THIS does not appear, the problem is in the frame or the
+    // program, not in the mesh, the transform or the texture.
+    //
+    // IT MUST COME AFTER THE REAL DRAW, NOT BEFORE IT. The diagnostic installs
+    // its own vertex buffer, its own combiner and its own matrix, and citro3d
+    // hands out the CONTEXT's single BufInfo and TexEnv rather than a copy --
+    // C3D_GetBufInfo() is called here and never handed back with C3D_SetBufInfo,
+    // so the two calls return the SAME struct. Drawn first, the diagnostic
+    // therefore replaced the buffer description the real draw had just installed
+    // and the real draw read the triangle's 15 floats at the mesh's offsets --
+    // invisible geometry, with the diagnostic itself on screen to say the frame
+    // was fine. Drawn last, it can only affect the NEXT draw, and every draw
+    // installs its own buffer, combiner and matrix at its top -- except the
+    // matrix, which is cached, so the cache is told.
+    if (r->diagnosticTriangle) {
+        static float triangle[15] = {
+            -0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
+             0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
+             0.0f,  0.8f, 0.0f, 0.0f, 0.0f,
+        };
+        C3D_Mtx identity;
+        for (int i = 0; i < 16; i++) {
+            identity.m[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+        }
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &identity);
+        C3D_BufInfo* info = C3D_GetBufInfo();
+        BufInfo_Init(info);
+        BufInfo_Add(info, triangle, 5 * sizeof(float), 2, 0x10);
+        C3D_TexEnv* plain = C3D_GetTexEnv(0);
+        C3D_TexEnvInit(plain);
+        C3D_TexEnvSrc(plain, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(plain, C3D_Both, GPU_REPLACE);
+        C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
+        // The uniform now holds the identity, not the frame's matrix.
+        r->matrixIsFrame = false;
     }
 }
 
