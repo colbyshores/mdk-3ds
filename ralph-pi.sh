@@ -233,12 +233,12 @@ reviewer_reject_reason() {
 }
 
 pi_run() {
-    ( cd "$ROOT" && timeout -k 30 "$ITER_TIMEOUT" sudo -n -H -u piagent \
+    ( cd "$ROOT" && timeout -k 30 "$ITER_TIMEOUT" sudo -n -H -u piagent env NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
         "$PI_CMD" --model "$1" -p "$(cat "$2")" --no-session ) >"$3" 2>"$4"
 }
 
 model_alive() {
-    timeout "$HEALTH_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$1" \
+    timeout "$HEALTH_TIMEOUT" sudo -n -H -u piagent env NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt "$PI_CMD" --model "$1" \
         -p "Reply exactly PING_OK" --no-session 2>/dev/null | grep -q PING_OK
 }
 
@@ -277,7 +277,7 @@ guard() {
     echo "$$" >"$PIDFILE"
     local probe_ok=0 model
     for model in $WORKER_MODELS; do
-        if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" --model "$model" \
+        if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent env NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt "$PI_CMD" --model "$model" \
             -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%U:%G %a %n' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
             --no-session 2>&1 | grep -q WTEST_OK; then
             probe_ok=1
@@ -809,7 +809,7 @@ POLICY_PRECEDENCE
                 state_write REVIEW_INFLIGHT_BASE="$REVIEW_INFLIGHT_BASE" \
                     REVIEW_INFLIGHT_HEAD="$REVIEW_INFLIGHT_HEAD" REVIEW_STATUS="invoked"
                 log "iter=$ITER review INVOKED on $REVIEW_MODEL — $REVIEW_DECISION_REASON (obligation recorded before the spawn)"
-                ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent "$PI_CMD" \
+                ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent env NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt "$PI_CMD" \
                     --model "$REVIEW_MODEL" -p "$(cat "$RP")" --no-session \
                     >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
                   echo $? >"$RUN_DIR/review-$ITER.rc" ) &
