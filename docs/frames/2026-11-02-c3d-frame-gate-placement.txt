@@ -1,0 +1,34 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-02T04:09:51Z at 70b292c
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move. This batch changed no renderer code at all. It
+remediated review-2, whose two High findings were (B) that
+`tests/scripts/c3d_frame_test.sh` -- the only pin for batch 31's draw-order
+fix -- printed PASS over a source with the diagnostic OUTSIDE the eye loop or
+BEFORE the replay, and (A) that `ralph/validator.md` sits outside the integrity
+gate's PROTECTED set, which a batch cannot fix because that gate file protects
+itself. B is fixed here; A is recorded as owner task (1). The only product-tree
+edit is the seam paragraph of `mdk_core/src/render/render.h`, which is a comment
+describing where each backend submits (finding D). The capture above is the
+Linux/Vulkan build (lavapipe, DISPLAY=:99, exported by capture_cpp.sh itself),
+so the pixels are byte-identical to its predecessors -- 41 PNGs in docs/frames,
+40 of them md5 6769a13731983d65..., this one included -- and gates_frames still
+reports `PASS L3_f1.bmp sha=58615fc85d02e009`, the pinned cpp= digest, so
+tests/frames/reference.sha256 was NOT regenerated.
+
+What shows the change on this host, since the frame cannot:
+  * `PASS C3dFrame (6 checks, 8 arms adjudicated red)` in `make -C tests/scripts`
+    -- up from 5 checks / 5 arms. The three mutants review-2 built and ran are
+    now each caught by a CHECK, not by an arm failing to match:
+    diagnostic-after-the-loop -> `diagnostic-called-in-the-eye-loop`,
+    diagnostic-before-the-replay -> `diagnostic-drawn-after-its-replay`,
+    `replayQueue(asC3d(rr))` in `mdk_render_present` ->
+    `replay-only-at-frame-end` + `no-mid-frame-flush`. Mutants and output are in
+    docs/PROGRESS_LOG.md "Iteration 60".
+  * What still no host test reaches, unchanged from batch 31: whether the
+    triangle appears on a screen at all, whether the depth state is right, and
+    what the frame costs on a 268 MHz ARM11. No 3DS emulator is installed on
+    this host and no Old-3DS is attached, so AGENTS.md P6 stays open and no
+    emulator run was made (so P7 did not arise and no display is recorded for
+    one). Old-3DS timing remains UNMEASURED.

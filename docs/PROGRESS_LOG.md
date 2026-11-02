@@ -8275,3 +8275,222 @@ the palette expansion forces alpha 255 and the shader writes `outclr = ones`), t
 **(e)** `FrameBlend.Lerp`'s rounding. New open items from this batch: the runtime
 off-switch for the diagnostic triangle (SD file, per the vault pattern), and the
 HUD/inset queue-record requirement that replaces the deleted flush points.
+
+---
+
+## Iteration 60 — batch 32: the frame gate pins where the calls sit, not that they exist (review-2 B/C/D; A/E owner-gated)
+
+**Risk: high** — the diff is test-and-comment only, but this file is the *sole*
+evidence for batch 31's change on a target this host cannot look at, and the
+finding being fixed is that the gate printed PASS over mutants. A builder's own
+claim that its gate is now unfalsifiable is exactly the claim an independent
+reviewer should attack.
+
+### The review this batch answers
+
+`logs/ralph-pi/run-20261102-004416/review-2.md`, on `1e2593c..70b292c` plus the
+uncommitted harness work. **A High, B High, C Medium, D Low, E Low**, plus three
+carried review-1 dispositions it re-confirmed. The reviewer also independently
+cleared the renderer itself (the cull-state handoff, what the triangle occludes,
+the stale-vertex-stream hazard, the depth-cache arithmetic, the removed flush
+having no caller, the `Renderer.cs:605` citation fix), so this batch does not
+re-litigate batch 31's renderer move — it fixes the evidence for it.
+
+Every finding was reproduced or verified before anything was changed. Two of the
+three code-level findings reproduced exactly as described; the third (A) was
+verified statically, because its fix is outside a batch's reach.
+
+### Prior-solution lookup
+
+* **pi-knowledge `mdk-sdl`** (exists, 3881 chunks / 936 files): hybrid search on
+  the per-eye submission point returned `docs/OPEN_ITEMS.md` pointing at the
+  vault pattern `30-architecture/patterns/citro3d-display-list-stereo-replay-non-fast3d.md`,
+  and a stale pre-batch-31 chunk of `renderer_c3d.cpp` (the deleted `flushDraws`)
+  — a reminder that the index lags the tree and was refreshed after this batch.
+  A semantic search on mutation-arm gates surfaced only the sibling project's
+  `gates_vfp` annotation machinery, i.e. nothing that already solved this.
+* **Obsidian vault** (read directly, read-only, from `/mnt/nas/Vaults/port-docs`):
+  `a-gate-that-skips-on-missing-input-is-a-pass-generator.md` is the standing
+  pattern this batch applies to a new case — a gate whose *check* passes while an
+  *arm* fails to match is the same defect class in a new costume.
+  `retained-mesh-must-be-culled-at-replay-not-capture.md` was checked against the
+  per-eye replay and does **not** apply: it warns against culling a retained mesh
+  at capture, and MDK's queue stores whole `MeshDraw` records with the cull done
+  by the GPU at replay, which is the side that note wants it on.
+* **Cognee MCP**: not exposed in this Pi session; not consulted, and not claimed.
+
+### B (High, confirmed, FIXED): `PASS C3dFrame` could be printed with the diagnostic outside the eye loop
+
+The reviewer built two mutants and ran the gate. Reproduced here first, against
+the shipped gate:
+
+| mutant | shipped gate's verdict |
+|---|---|
+| `{ installEye; replayQueue; }` then `drawDiagnostic(r);` after the loop | all 5 checks **ok** |
+| `drawDiagnostic(r);` **before** `replayQueue(r);` inside the loop | all 5 checks **ok** |
+
+Both exited 1, but only because the arm `diagnostic-dropped-from-the-eye-loop`
+replaces the literal two-line string `"        replayQueue(r);\n        drawDiagnostic(r);"`,
+which the mutants no longer contain — so it printed "the mutation changed
+nothing". The *check* `diagnostic-called-per-eye` asked only "exactly one call,
+somewhere inside `mdk_render_end_frame`", which is true of both mutants. The
+reviewer's failure scenario is the damaging part: a builder who reverts the
+placement, sees that arm's "the mutation changed nothing", and retargets the arm
+at the lone `drawDiagnostic(r);` line, then gets `PASS C3dFrame (5 checks, 5
+arms adjudicated red)` over a frame with a triangle in one eye and a hole in the
+other. That is a pass generator whose red was incidental.
+
+Fixed by pinning the claimed shape instead of the call's existence. The gate now
+brace-matches the per-eye loop out of `mdk_render_end_frame` and asserts:
+
+* `diagnostic-called-in-the-eye-loop` — exactly one call site in the file **and
+  it is inside the loop body**;
+* `diagnostic-drawn-after-its-replay` — inside the loop, the replay's line index
+  is strictly less than the diagnostic's (before it is batch 28's invisible
+  geometry, where the mesh read the triangle's floats);
+* `replay-only-at-frame-end` — the single replay is inside the loop, not merely
+  inside the function.
+
+Two new arms reproduce the reviewer's two mutants. Measured on the three
+mutants, each now fails **on a check**, not on an arm mismatch:
+
+```
+mB1 (diag after the loop)   FAIL diagnostic-called-in-the-eye-loop: 1 call(s); inside the eye loop: no
+                            FAIL diagnostic-drawn-after-its-replay: loop line 2 replays, loop line None draws
+mB2 (diag before the replay) FAIL diagnostic-drawn-after-its-replay: loop line 3 replays, loop line 2 draws
+```
+
+and on the real source all 6 checks are ok and all 8 arms adjudicate red:
+`PASS C3dFrame (6 checks, 8 arms adjudicated red)`.
+
+Two bugs found in my own first version of the fix, both caught by the arms and
+worth recording because they are the general failure:
+
+1. `body()` no longer requires the `{` in its match, so it matched the forward
+   declaration `static void drawDiagnostic(RendererC3D* r);` first and returned
+   an unrelated block as the function body. The `{` is back in the pattern with a
+   comment saying why.
+2. The loop span was an offset **inside the function-body substring**, and the
+   checks sliced the whole file with it, so every loop-relative check silently
+   read `None` — a check that can only fail is worse than no check. `eye_loop_span`
+   is now absolute, and the header says the offsets are absolute because the arms
+   splice at them. A third bug (the after-loop arm splicing at an offset computed
+   in the mutated text against the original text) produced a mutant that still
+   had the call inside the loop, and the gate reported "the mutation was
+   accepted" — the arm design caught a bug in the arm, which is the argument for
+   keeping them.
+
+### C (Medium, confirmed, FIXED): a second replay written `replayQueue(asC3d(rr))` was invisible
+
+Reproduced: adding `replayQueue(asC3d(rr));` to `mdk_render_present` gave
+`PASS C3dFrame (5 checks, 5 arms adjudicated red)`, rc 0, on the shipped gate —
+the check matched the literal `replayQueue(r)`, and `mdk_render_present` was not
+in the seam list at all. Now `call_sites()` matches the function name with **any**
+argument list (excluding its declaration and definition lines), every hit must be
+inside the eye loop, and the seam list is five entries — `canvas_begin`,
+`canvas_end`, `present`, `begin_inset`, `end_inset` — each refused for
+`flushDraws\s*\(` **or** `replayQueue\s*\(`. A new arm `present-replay-restored`
+inserts exactly the reviewer's mutant; measured:
+
+```
+mC (replayQueue(asC3d(rr)) in present) FAIL replay-only-at-frame-end: 2 replay call site(s) in the file, any argument
+                                         FAIL no-mid-frame-flush: ... mdk_render_present:2
+```
+
+This is the more likely of the two to recur in real code: whoever wires the HUD or
+the sniper insets will look at `renderer_vk.cpp`, where `canvas_begin`,
+`begin_inset` and `end_inset` really do flush, and copy that shape.
+
+### D (Low, confirmed, FIXED): the shared seam contract told a HUD author to do the thing that blacks out the 3DS frame
+
+`mdk_core/src/render/render.h` still said submission happens "at `canvas_begin`,
+at an inset's boundary, and at `mdk_render_end_frame`", which batch 31 made false
+for Citro3D while leaving the requirement only in source comments and
+`docs/OPEN_ITEMS.md`. The paragraph now states the two backends separately —
+Vulkan flushes at `canvas_begin`, each inset boundary and the frame end
+(`mdk_linux/src/render/renderer_vk.cpp`, named by function rather than line so the
+claim does not rot), Citro3D once per eye inside `mdk_render_end_frame` — and
+states the caller-facing rule: **do not assume a flush at any seam except
+`end_frame`**, and a HUD/inset batch must put its records in the queue rather than
+flush at its own boundary. It names the gate that refuses a mid-frame flush.
+Answering review-2 oq4: the paragraph is not Vulkan-only and the 3DS backend is not
+permanently exempt from it; the divergence is now part of the contract.
+
+### A (High, confirmed, NOT fixable in a batch — owner task (1) extended)
+
+Verified, not assumed: `git ls-files ralph/` lists `ralph/validator.md`;
+`ralph-pi.sh:121` sets `VALIDATOR_FILE="$ROOT/ralph/validator.md"` and `:762`
+`cat "$VALIDATOR_FILE"` into every review prompt; and the string `validator`
+appears **nowhere** in `tools/runner/gates_batch_integrity.py` — neither in
+`PROTECTED` (lines 12-25, which does contain `ralph/builder.md` and
+`ralph/PROMPT.md`) nor in the `required` marker map (lines 181-188). So the
+judge's own instruction set is builder-writable and the `--staged` path would
+print PASS. The reviewer's own disposition is correct and so is its refusal to
+call this a batch fix: the only file that could add it is inside its own
+`PROTECTED` set, so widening it is by construction an owner action. Owner task (1)
+in `docs/CONTINUATION.md` now names `ralph/validator.md` alongside `ralph-pi.sh`
+and `tools/hooks/pre-commit`, with the marker proposal (its severity mapping and
+`VERDICT:` grammar). Answering review-2 oq1: nothing in the tree says it is
+intentionally writable, and `ralph/builder.md` sitting in the set next to it is the
+strongest available evidence that it is the same oversight.
+
+### E (Low, confirmed, NOT fixable in a batch — owner task (1) extended)
+
+Verified: `tests/scripts/Makefile:97` (`@sh c3d_frame_test.sh`) is the only
+registration of this gate; `grep tests/scripts tools/check.sh` returns nothing, so
+`tools/check.sh` cannot see it; and `ralph-pi.sh:272-273` checks only the make exit
+code, not the PASS count. Deleting that one line drops the only pin for batch 31's
+fix and every gate stays green. The remediation is either `PROTECTED` or a
+`required` marker entry, both in the self-protecting gate file — same owner task,
+now also naming `tests/scripts/Makefile`. The PASS-count floor idea is recorded
+with it. This batch could not close it and did not pretend to: the gate it protects
+is the one it just fixed, and a builder adding its own guard's guard is the same
+conflict of interest review-1 F1 is about.
+
+### Carried, re-confirmed rather than re-litigated
+
+review-1 **F1** (High, owner: `ralph-pi.sh` and `tools/hooks/pre-commit` outside
+`PROTECTED`), **F2** (Medium, the untracked `ralph-self-heal` frame pair cannot
+land in a batch that is allowed exactly one new PNG), **F6** (Low,
+`--self-test` passes by hand and nothing invokes it, `check.sh` is `PROTECTED`).
+The uncommitted owner harness work (`AGENTS.md`, `ralph/builder.md`,
+`ralph-pi.sh`, `tools/runner/gates_batch_integrity.py`, and that frame pair) is
+still left uncommitted and this batch staged only its own paths, as in batch 31.
+
+### Gate results, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` — **exit 0**,
+  `All cases match the oracle.`, **444 `^PASS` / 0 `^FAIL` / 0 `^SKIP`**, and the
+  one line that moved is `PASS C3dFrame (6 checks, 8 arms adjudicated red)`
+  (was `5 checks, 5 arms`). No golden changed: the suite's PASS count is
+  unchanged from batch 31 and no oracle output was touched.
+* `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`, with
+  `PASS gates_frames every pinned frame is deterministic and unchanged`
+  (`PASS L3_f1.bmp sha=58615fc85d02e009`, the pinned `cpp=` digest, so
+  `tests/frames/reference.sha256` was NOT regenerated) and
+  `PASS gates_batch_integrity project invariants intact`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` —
+  **exit 0**, `3DSX mdk.3dsx`, no warnings.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**, no warnings. Run
+  because `render.h` is in the shared tree; the edit is a comment, and the rebuild
+  confirms both targets still compile the header.
+* `sh tests/scripts/c3d_frame_test.sh` on the three mutants — each exits non-zero
+  with the check-level FAILs quoted above.
+
+Frame `docs/frames/2026-11-02-c3d-frame-gate-placement.png` + `.txt`:
+`1.240 / 247 / 0.1819`, byte-identical to its predecessors (md5
+`6769a13731983d65…`, 40 of the 41 PNGs in `docs/frames`), because the capture is
+the Linux backend and no renderer code changed. The sidecar says so and names what
+does show the change.
+
+### What this batch does not close
+
+* **P6 stays open.** No 3DS emulator on this host, no Old-3DS attached, so the
+  Citro3D picture and Old-3DS timing remain UNVERIFIED and UNMEASURED. No emulator
+  run was made, so P7 did not arise and no display is recorded for one.
+* The gate still reads source, so it pins structure and not pixels. A call that
+  compiles to the wrong thing, a `Pass` bucketed wrongly, or a matrix composed
+  wrongly is out of its reach; `PASS PicaMatrix` covers the matrix and depth half.
+* review-2 oq2 (did the owner actually approve `--each-commit`) and oq3 (should the
+  diagnostic ship at all, i.e. owner task 14's runtime off-switch) are the owner's.
+* No gate, test, golden or `PROTECTED` file was edited, added to or relaxed.

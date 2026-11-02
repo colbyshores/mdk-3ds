@@ -230,9 +230,23 @@ void mdk_render_set_gamma(MdkRenderer r, float gamma);
 // the frame's draws bucketed by pass -- every `Solid`, then `DoubleSided`,
 // `Mirror`, `Blended`, `OnTop`, `Overlay`, each bucket in queue order -- which
 // is what the oracle does with its one command list (Renderer.cs:1000-1004,
-// 1049-1057; mdk_core/src/render/draw_queue.h). The submission happens at the
-// end of the frame's 3D scene: at `canvas_begin`, at an inset's boundary, and
-// at `mdk_render_end_frame`.
+// 1049-1057; mdk_core/src/render/draw_queue.h).
+//
+// WHERE that submission happens belongs to the backend, and the two backends
+// differ, so a caller may NOT assume a flush at any seam except
+// `mdk_render_end_frame`:
+//   * Vulkan flushes at `canvas_begin`, at each inset boundary, and at the frame
+//     end (renderer_vk.cpp, `mdk_render_canvas_begin` / `mdk_render_begin_inset`
+//     / `mdk_render_end_inset` / `mdk_render_end_frame`).
+//   * Citro3D flushes ONCE, inside `mdk_render_end_frame`, once per eye. A
+//     mid-frame flush there emits the frame's records into whichever eye
+//     `installEye` selected last -- the previous frame's, or no target at all on
+//     frame 1 -- and empties the queue, so the per-eye replay that follows has
+//     nothing left to draw: a scene vanished behind a correct clear colour
+//     (AGENTS.md P2). The canvas and inset seams on that backend therefore emit
+//     nothing, and a HUD or inset batch must put its records IN THE QUEUE, where
+//     the per-eye replay draws them once per eye, instead of flushing at its own
+//     boundary. `tests/scripts/c3d_frame_test.sh` refuses a mid-frame flush.
 void mdk_render_draw_mesh(MdkRenderer r, const mdk::MeshDraw* draw);
 
 // ---------------------------------------------------------------------------
