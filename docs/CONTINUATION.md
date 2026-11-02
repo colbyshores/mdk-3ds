@@ -1,16 +1,15 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 35 changes only the C3D frame source gate, but narrows what its host-side stereo pin accepts: it now rejects queue resets in `installEye`, writes to the saved eye-plan count, loop increments that skip eyes, and `goto` exits. Review-5 F2/F3/F4 are fixed with checked mutants; F1's inaccurate protection statement is corrected, while the underlying owner-only integrity-policy question remains open.
+Risk: medium — batch 36 adds the sounds C# `Kurt` makes from the state machine `Player` already owns (FOOT1-4, LAND, CHUTEOUT/CHUTEON/CHUTEIN) plus the first golden that drives `Player::update`; it changes no renderer behaviour, the pinned frame is byte-identical, and the `Player::facing()` trig finding it exposed is recorded owner-gated rather than landed.
 
-Last updated: 2026-11-02 (**batch 35** — review-5 F2/F3/F4 fixed, F1 documentation corrected but owner-gated; see `docs/PROGRESS_LOG.md`, "Iteration 63"). Batch 34 was "Iteration 62" (review-4 F2/F3/F4/F5 fixed, F1 owner-gated); previous narratives are one "Iteration N" section back each: batch 33 = "Iteration 61"
-(review-3 F1/F2/F3/F6/F7 fixed, F4/F5 owner-gated), 32 = 60 (review-2 B/C/D, match-strings →
-placements), 31 = 59 (review-1 F3/F4/F5, the diagnostic once per eye), 30 = 58 (the per-eye replay),
-29 = 57 (the Citro3D depth state), 28 = 56 (the per-draw world matrix), 27 = 55 (the runner's `mixer=`
-column), 26 = 54 (review-12, all four findings confirmed and fixed, none rebutted).
+Last updated: 2026-11-02 (**batch 36** — Kurt's sounds ported and pinned by
+`golden/L3_kurt_steps.txt`; see `docs/PROGRESS_LOG.md`, "Iteration 64"). Previous narratives are one
+"Iteration N" section back each: batch 35 = "Iteration 63" (review-5 F2/F3/F4 fixed, F1 corrected but
+owner-gated), 34 = 62, 33 = 61, 32 = 60, 31 = 59, 30 = 58.
 
 Goldens
-have been **444/0/0** since batch 29 and no golden has moved since; the frame is byte-unchanged across
-batches 31-35 because no renderer behaviour was touched. Still owner-gated, and still uncommitted in the
+have been **445/0/0** since batch 36 (444 before it, and no older golden has moved) and the frame is
+byte-unchanged across batches 31-36 because no renderer behaviour was touched. Still owner-gated, and still uncommitted in the
 tree: the owner's harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
 `gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep staging
 only their own paths and never `git add -A`. Review-5 F1 also confirms that `ralph-pi.sh`'s recovery
@@ -57,9 +56,12 @@ phrase “living in `PROTECTED` files a batch may not commit” was inaccurate a
 
 Deferred with cause: 248 `push_kurt` awaits knock-back; Rides writes the alarm countdown;
 consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix and Kurt's muzzle
-flash, ride pose and footsteps; `Vector3.Lerp`'s rounding (above); the other half of
+flash and ride pose; `Vector3.Lerp`'s rounding (above); the other half of
 `FrameBlend` (Kurt's blended feet/yaw, `Record/Update/Turn/KurtAt`) and `TransformOf`'s
-driven-carrier shift, both with `Rides`. All with
+driven-carrier shift, both with `Rides`. Kurt's footsteps and `LAND` sound are **CLOSED by
+batch 36**, along with the chute sounds; what is left of that item is that **no shipped
+frontend sets `Player`'s mixer** (neither has an audio device, and `ScriptRuntime` owns the
+only mixer and hands it out `const`), with the reason in `OPEN_ITEMS.md`. All with
 evidence in `OPEN_ITEMS.md`. **Old-3DS timing is UNMEASURED.**
 
 **Owner-authorized tasks (cannot be done in a batch).** (1) Add `ralph-pi.sh`, `ralph.sh`,
@@ -137,6 +139,16 @@ eye before) but did not gate it behind an `#ifdef`, per AGENTS.md §7/§10 and t
 `build-the-off-switch-before-the-fix.md` ("prefer a runtime switch over a build flag"): the right shape is
 an SD-file switch next to `sdmc:/3ds/mdk/mdk.log`, which is a new file-reading path and so is not a
 renderer batch's call.
+**(15) `Player::facing()`'s trig, measured and ready to land.** C# `Kurt.Facing` is
+`MathF.Cos/Sin`; the port's is the trig LUT, and over the 470-step walk of
+`golden/L3_kurt_steps.txt` that drifts the feet by 1.34e-05 (which is why that golden prints the
+feet in 64ths). Replacing the two calls with `cosf/sinf` — the shape `util/matrix.h`'s
+`create_from_axis_angle` already carries an `@vfp-exempt R6` pin for — makes the golden match at four
+decimals and moves the pinned frame closer to the oracle, `1.240 / 247 / 0.1819` → **`1.095 / 247 /
+0.1636`** (measured 2026-11-02, `DISPLAY=:99`, lavapipe). A batch cannot land it: it changes the
+picture, and `tests/frames/reference.sha256` is owner-protected, so the `cpp=` baseline has to be
+regenerated with `tests/frames/regenerate_reference.sh` by the owner. Whoever lands it should
+re-tighten the golden's feet to four decimals in the same change. Write-up in `docs/OPEN_ITEMS.md`.
 
 ## Current tree state (VERIFIED)
 
@@ -192,38 +204,33 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `guard_fragment`, three region lifts with behavioural cases instead, `count_writes` counting
   **occurrences** not lines) is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 35)
+## Verified on this tree (batch 36)
 
-All gates re-run from a clean invocation; the nine mutants, the arm list, the devkitARM compile evidence
-and the verbatim output are in `docs/PROGRESS_LOG.md`, "Iteration 62". Goldens **exit 0**
-(`All cases match the oracle.`, **444 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh` **exit 0** (`CHECK: ALL
-GATES PASSED`; `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`,
-so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS); `make -C mdk_3ds`
-**exit 0** (`3DSX mdk.3dsx`, no warnings); `cmake --build build-linux --target mdk` **exit 0**, no
-warnings. What is pinned now: `PASS C3dFrame (20 checks, 25 arms adjudicated red)` — eight checks and
-nine arms added, **none removed or loosened** (the check-name and arm-label lists were diffed against
-`HEAD` and diff as additions only). The new property is that the eye loop **runs** rather than merely
-**contains**: its bound is `…->eyes.passes` and its initialiser `int eye = 0`, no `break`/`continue`/`return`
-sits in its body, no `queue.reset` lies inside `end_frame` at or before the loop's closing brace, none
-sits in `replayQueue`/`drawRecorded`/`drawDiagnostic`, the queue is cleared at a frame boundary, and the
-one `installEye` call gives the FIRST eye `targetLeft` and passes `x->eyes.offset[eye]` un-negated. Each
-of the nine new mutants was compiled with the real devkitARM compiler and the Makefile's own flags and
-**every one compiled clean**, so no compiler catches any of them, and each was re-run against the fixed
-gate and turned red on a **named check** — including the reviewer's own mutant files, which were still on
-disk. Two deviations from the review's literal recommendation are on record: the reset rule is scoped to
-`end_frame` as a *position*, not "exactly one in the file" (begin_frame's reset at `:784` is the eviction
-boundary P3 depends on), and the reviewer's `m5_no_reset` — deleting only the end-of-frame reset — is
-**not** pinned, because `begin_frame` clears the queue and no draw can be added outside a frame, so it is
-not a defect; the arm removes both boundary resets instead. What the gate still cannot reach: it reads
-source, so it pins structure and not pixels — whether the triangle appears on a screen, whether the depth
-state is right, what the frame costs on a 268 MHz ARM11, an emitter called from the loop body rather than
-from a seam, and a skipped eye spelled through a construct the check does not match (a computed `goto`, a
-macro). **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D
+All gates re-run from a clean invocation, with the full narrative, the probe recipe and the
+measurements in `docs/PROGRESS_LOG.md`, "Iteration 64". Goldens **exit 0** (`All cases match the
+oracle.`, **445 PASS / 0 FAIL / 0 SKIP** — one more than batch 35, and no older golden moved);
+`tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`; `gates_frames PASS L3_f1.bmp
+sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
+regenerated; `gates_smdh` SKIPPED; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`,
+no warnings); `cmake --build build-linux --target mdk` **exit 0**, no warnings. What is new:
+`Player` plays the sounds the ported state machine makes (`FOOT1`-`FOOT4` via `Kurt.Footstep`'s
+wrapped previous/current frames and the pair that flips only on the right foot, `LAND`, `CHUTEOUT`,
+`CHUTEON` with `Once`, `CHUTEIN` as the `Stop` plus a play, and the `Stop` of `CHUTEON` on death),
+and `golden/L3_kurt_steps.txt` — 471 lines, the oracle probe's `kurt` mode byte for byte — is the
+first golden that drives `Player::update` at all: 470 steps at `Viewer.Step`, the same scripted
+input, the same `TRAVSPRT.BNI` frame counts (printed in the header on both sides), and a `voices=`
+column that is the mixer's live voices in launch order, so a dropped, renamed, mis-gated, doubled or
+un-stopped sound fails it. Reproduce with `tests/scripts/build/tick1 dump kurt 3 470` against
+`mdkprobe 3 470 1 kurt`. What it does NOT pin: any shipped frontend's wiring (no frontend sets the
+mixer — neither has an audio device), the chute `Stop` on death, the hard landing, the firing step
+frames, or the feet finer than 1/64 unit, because `Player::facing()`'s LUT trig drifts them
+1.34e-05 over the run (owner task 15, measured). Batch 35's record — the eye-loop gate at
+`PASS C3dFrame (22 checks, 29 arms adjudicated red)`, its nine mutants each compiled clean by
+devkitARM and each turned red on a named check — is "Iteration 63", and batch 34's is "Iteration 62".
+**No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D
 picture stays UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7).
-Frame `docs/frames/2026-11-02-c3d-frame-gate-eye-loop.png` + `.txt` — `1.240 / 247 / 0.1819`,
-byte-identical to its predecessors, because no renderer behaviour changed. No gate was pinned, relaxed or
-edited. Batch 33's record is in "Iteration 61", batch 32's in "Iteration 60", batch 31's in "Iteration
-59", and batch 30's mechanism reading of `C3D_FrameDrawOn` in `libcitro3dd.a` is in "Iteration 58".
+Frame `docs/frames/2026-11-02-kurt-sounds.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical to
+its predecessors, because no renderer behaviour changed. No gate was pinned, relaxed or edited.
 
 ## Standing open items
 
@@ -303,6 +310,7 @@ sh tests/scripts/sprites_refusal_test.sh               # the missing-archive ref
 tests/scripts/build/tick1 dump draw 3 1                # the queued draws (also `bound`)
 tests/scripts/build/tick1 dump blend 3 1               # the blended transforms (also `blendcases`)
 tests/scripts/build/tick1 dump runner 7 120 -21,-13,0.73   # the hamster's run, per tick
+tests/scripts/build/tick1 dump kurt 3 470             # Kurt's 470 steps: state, feet64, sounds
 bash tools/check.sh                                    # all gates
 bash tools/runner/test_review_state.sh                 # the review-record state machine
 python3 tools/runner/model_identity.py selftest --live # alias→upstream map vs the live proxy

@@ -37,6 +37,17 @@ const float kMovingSpeed = 1.0f;
 const float kTurnFrameDegrees = 45.0f;
 const int kCrashTicksPerFrame = 2;
 const int kCrashHoldTick = 8;
+// Kurt's footsteps (Kurt.cs:88-93): the run frames that stamp, and the same pair
+// while running and firing. RunFire is not reachable from this movement-only
+// Player (nothing writes Firing yet), but its frames are ported with the rest of
+// Footstep so the firing slice cannot quietly use the walking pair.
+const int kLeftStep = 0;
+const int kRightStep = 13;
+const int kFireLeftStep = 4;
+const int kFireRightStep = 17;
+// CHUTEON flaps once the chute's opening frames are past (Kurt.cs:60-61).
+const int kChuteOpenFrames = 4;
+const char kChuteOnSound[] = "CHUTEON";
 
 const float kGravity = 64.0f;
 const float kMaxFallSpeed = 250.0f;
@@ -135,9 +146,13 @@ void Player::update(const Input& input, float delta) {
         // fell out of the arena at its death point (the post-move fall-out
         // assignment), and a corpse on a floor alternates OnFloor as the
         // oracle's Fall does.
+        stopChuteSound();
         updateDeath(delta);
         return;
     }
+    // C# Kurt.Update calls UpdateChuteSound before the Hang/HardLand branch, so a
+    // crashing Kurt's chute still closes and stops flapping.
+    updateChuteSound();
     if (_state == Kurt::HardLand) {
         // A hard landing owns the step until K_CRASHL is done (C#
         // UpdateSpecial). It also stops the ordinary walk state machine.
@@ -224,6 +239,7 @@ void Player::updateState(float forward, float strafe, float delta) {
         }
     } else if (_state == Kurt::Jump || _state == Kurt::RunJump || _state == Kurt::Fall ||
                _state == Kurt::Chute) {
+        playSound("LAND");
         setState(Kurt::Land);
     } else if (_state == Kurt::Land && !done && forward == 0.0f && strafe == 0.0f) {
         // The landing animation keeps running while he stands still.
@@ -289,7 +305,14 @@ void Player::animate(float delta) {
         if (count <= 0) {
             return;
         }
+        // C# Kurt.Animate: the wrapped frames the step starts and ends on decide
+        // which foot stamped. The floor is load-bearing when backing up: the frame
+        // runs negative and Wrap maps it back into the animation, so truncating
+        // here would drop a step every time the frame crosses zero backwards.
+        const int32_t previous = wrapAnimationFrame((int32_t)std::floor(_animationFrame), count);
         _animationFrame += runRate() * kTicks * delta;
+        const int32_t current = wrapAnimationFrame((int32_t)std::floor(_animationFrame), count);
+        footstep(previous, current);
     } else if (_state == Kurt::Turn) {
         // No guard: a missing K_TRN45 leaves the frame at zero, as the C#'s
         // multiply by frameCount(Turn) == 0 does.
@@ -297,6 +320,66 @@ void Player::animate(float delta) {
     } else {
         _animationFrame += kTicks * delta;
     }
+}
+
+void Player::footstep(int32_t previous, int32_t current) {
+    // C# Kurt.Footstep: one stamp per frame the animation crossed, the left foot on
+    // the left frame and the right foot alternating its pair. The pair flips only
+    // on the right foot, so the pairs alternate FOOT3/FOOT4 then FOOT1/FOOT2.
+    if (current == previous) {
+        return;
+    }
+
+    const bool firing = _state == Kurt::RunFire;
+    const int32_t left = firing ? kFireLeftStep : kLeftStep;
+    const int32_t right = firing ? kFireRightStep : kRightStep;
+    if (current == left) {
+        playSound(_footstepPair ? "FOOT3" : "FOOT1");
+    } else if (current == right) {
+        playSound(_footstepPair ? "FOOT4" : "FOOT2");
+        _footstepPair = !_footstepPair;
+    }
+}
+
+void Player::updateChuteSound() {
+    // C# Kurt.UpdateChuteSound: CHUTEON flaps after the opening frames, and closing
+    // the chute stops it with CHUTEIN. CHUTEON is played Once, so the flap does not
+    // stack voices; the headless device never ends a voice, so the Stop is what
+    // takes it out of the mixer's list.
+    if (chuteOpen && _state == Kurt::Chute && _animationFrame >= (float)kChuteOpenFrames) {
+        playSound(kChuteOnSound, audio::SoundMixer::Once);
+        return;
+    }
+
+    if (chuteOpen || !soundPlaying(kChuteOnSound)) {
+        return;
+    }
+
+    stopSound(kChuteOnSound);
+    playSound("CHUTEIN");
+}
+
+void Player::stopChuteSound() {
+    // C# Kurt.StopChuteSound: CHUTEON stops without CHUTEIN when Kurt leaves the
+    // chute otherwise (here: death). The ride, the cutscene and the ledge paths
+    // that also call it are not ported.
+    stopSound(kChuteOnSound);
+}
+
+void Player::playSound(const char* name, int32_t start) {
+    if (_mixer) {
+        _mixer->play(name, start);
+    }
+}
+
+void Player::stopSound(const char* name) {
+    if (_mixer) {
+        _mixer->stop(name);
+    }
+}
+
+bool Player::soundPlaying(const char* name) const {
+    return _mixer != nullptr && _mixer->isPlaying(name);
 }
 
 void Player::setState(Kurt::State state) {
@@ -419,6 +502,7 @@ void Player::updateAir(bool jumpHeld, float delta) {
 
     if (!chuteOpen && jumpHeld && verticalSpeed < kFallStartSpeed) {
         chuteOpen = true;
+        playSound("CHUTEOUT");
     } else if (chuteOpen && !jumpHeld) {
         // (no updraft to hold the chute open yet)
         chuteOpen = false;

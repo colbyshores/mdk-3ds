@@ -8957,3 +8957,139 @@ The test gate now reports **22 checks / 29 mutation arms**, all arms adjudicated
 - No full emulator was launched separately. `tools/publish_frame.sh c3d-eye-plan-gate` ran the pinned frame capture; `tests/frames/capture_cpp.sh` explicitly exports `DISPLAY=:99`. It produced `docs/frames/2026-11-02-c3d-eye-plan-gate.png` (320x240, md5 `6769a13731983d65cee9df02da6cff37`) and sidecar measurement `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical to the prior pinned frame. No viewer was opened.
 
 No AGENTS.md contract, gate, golden, or product implementation was changed. No Old-3DS hardware measurement was made; P6/Old-3DS timing remains unverified. Review-5 F1 remains an owner decision: whether to protect `ralph-pi.sh`/the hook/validator and approve or remove the `--each-commit` recovery policy. The pre-existing dirty owner harness changes and its stale `ralph-self-heal` frame pair were not staged.
+## Iteration 64 — batch 36: Kurt's sounds, and the first golden that drives `Player::update` at all
+
+**Prior-solution lookup.** Pi knowledge `mdk-sdl` (mode hybrid) returned the oracle's
+own `Kurt.Footstep` (`src/Mdk.Game/Kurt/Kurt.cs`), the `player.cpp` landing/hard-land
+region, and the `docs/OPEN_ITEMS.md` entry that deferred this exact work ("Footsteps
+(`FOOT1`-`FOOT4` on the run frames) and the `LAND` sound are not ported"), which is
+what set the slice's scope. Obsidian MCP is not exposed in this Pi session, so the
+vault was read directly (read-only) from `/mnt/nas/Vaults/port-docs`: no note mentions
+`FOOT1`/`CHUTEON`, but `30-architecture/patterns/
+harness-nondeterminism-forks-are-trajectory-not-rendering.md` is the same class of
+problem as the feet drift this batch hit (a sim trajectory fork masquerading as a
+rendering difference), and it is the reason the golden quantizes the feet instead of
+chasing the pixels. Cognee MCP is not exposed in this Pi session and was not consulted.
+
+### What landed
+
+`Player` now owns the sounds C# `Kurt` makes from the state machine this port already
+carries, and they are pinned. Oracle references, all in `src/Mdk.Game/Kurt/Kurt.cs`:
+
+| Ported | Oracle | Notes |
+|---|---|---|
+| `Player::footstep` | `Kurt.Footstep` (Kurt.cs:716-731) | `LeftStep`/`RightStep` 0/13, `FireLeftStep`/`FireRightStep` 4/17, `_footstepPair` starting `true` and flipping only on the right foot |
+| the previous/current frames in `Player::animate` | `Kurt.Animate`'s Run branch (Kurt.cs:692-705) | `Wrap((int)MathF.Floor(AnimationFrame), count)` before and after the advance; the **floor** is load-bearing because backing up runs the frame negative and `Wrap` maps it back |
+| `playSound("LAND")` | `Kurt.UpdateState` (Kurt.cs:655) | on the Jump/RunJump/Fall/Chute → Land transition, before `SetState` |
+| `playSound("CHUTEOUT")` | `Kurt.UpdateAir` (Kurt.cs:433) | where `ChuteOpen` becomes true |
+| `Player::updateChuteSound` | `Kurt.UpdateChuteSound` (Kurt.cs:455-470) | `CHUTEON` with `Once` after `ChuteOpenFrames` (4), and the `Stop` + `CHUTEIN` when the chute closes; called where the C# calls it, i.e. **before** the Hang/HardLand branch, so a crashing Kurt's chute still closes |
+| `Player::stopChuteSound` | `Kurt.StopChuteSound` (Kurt.cs:474) | on the death path; the ride, cutscene and ledge callers are not ported |
+
+`Player::setMixer` mirrors C# `Kurt`'s constructor argument; a `Player` with no mixer
+plays nothing, which is what both shipped frontends are today (the sample plane of
+`AudioDevice.cs` is not ported, and the only mixer in a shipped build is
+`ScriptRuntime`'s own, handed out `const`). That gap is recorded in `OPEN_ITEMS.md`
+with the reason it is not this batch's to close. `RunFire`'s step frames are ported
+with the rest of `Footstep` even though nothing writes `Firing` yet, so the firing
+slice cannot quietly use the walking pair.
+
+### The golden, and how it was derived
+
+`tests/scripts/golden/L3_kurt_steps.txt` — 471 lines, the oracle probe's `kurt` mode
+byte for byte. The probe (the scratch tree at `/tmp/mdk-pi/obj3`, rebuilt with
+`/tmp/mdk-pi/build_probe.sh`) drives `kurt.Update(input, Viewer.Step)` for 470 steps
+with `Input.Hold(Key.Forward/Back/Jump, …)` — the C#'s own test-input seam — from the
+level's start, and prints state, feet, yaw, the three speeds, the animation frame, the
+floor and chute flags, and the mixer's live voices in launch order. Reproduce with
+`DOTNET_ROOT=/tmp/kilo/dotnet10 MDK_DATA_DIR=$PWD/MDK mdkprobe 3 470 1 kurt`; the C++
+twin is `tests/scripts/build/tick1 dump kurt 3 470`.
+
+Two things the probe needed that it did not have. `Kurt`'s third constructor argument is
+the frame-count function, and the probe had `_ => 0`; `KurtSprite` cannot be built
+headless (it needs a `Renderer`), so the probe reads `KurtSprite`'s own private
+`Animations` table by reflection and the counts from `TRAVSPRT.BNI` — the two steps
+`KurtSprite.FrameCount(state)` performs. `tick1` has the same table written out and
+both sides print it in the header line (`counts=Still=10,…,Run=24,…`), so a table that
+disagrees fails the golden loudly instead of drifting. `K_RUN` has 24 frames, which is
+what makes `RightStep = 13` reachable at all. The mixer's voice list is private in C#
+too, so the probe reads `_voices` by reflection; the C++ side prints the public
+`SoundMixer::voices()`. Neither touches the oracle's source: the probe's `src/**.cs`
+still differs from the read-only oracle only in the three known print-only files.
+
+The schedule was chosen to cover every branch of the sound code, and it came out of
+measuring the level rather than guessing it: the forward run walks Kurt off the start
+pad, so the first `LAND` comes from a fall rather than a jump; the back-up phase runs
+the animation frame negative (that is where `Wrap` and the floor of a negative frame
+are the whole story); the second forward run crosses the step frames going the other
+way, which is what produces `FOOT3` (the pair's other branch); and the jump is held
+long enough to open the chute and released long enough to close it. The golden's
+`voices=` sequence is `LAND`, `FOOT4`, `FOOT1`, `FOOT2`, `FOOT4`, `FOOT1`, `FOOT2`,
+`FOOT3`, `CHUTEOUT`, `CHUTEON`, `CHUTEIN`, `LAND` — and because `CHUTEON` is `Stop`ped
+before `CHUTEIN`, the column also pins that a stopped voice leaves the mixer's list.
+
+### The feet drift, and the finding it exposed
+
+At four decimals the feet did **not** match: 20 printed fields differed, growing to
+1.34e-05 and no further. The cause is not the BSP and not the accumulator — it is
+`Player::facing()`, which takes its sine and cosine from the trig LUT while C#
+`Kurt.Facing` uses `MathF.Cos/Sin`, and `util/math_lut.h` documents the LUT's error as
+4.76e-06 per period. `util/matrix.h`'s `create_from_axis_angle` already carries an
+`@vfp-exempt R6` pin for exactly this reason, and Facing is gameplay: it decides where
+every walk step lands, where the follow camera sits and where the velocity points.
+
+Swapping the two calls for `cosf/sinf` makes the golden match at four decimals with no
+other change, **and** moves the pinned frame closer to the oracle: `1.240 / 247 /
+0.1819` → `1.095 / 247 / 0.1636`, measured against the same oracle pixels on
+`DISPLAY=:99` with lavapipe. It is **not** landed, because it changes the picture and
+`tests/frames/reference.sha256` is owner-protected — the `cpp=` baseline has to be
+regenerated by the owner, and a batch may not do that to obtain a green frame gate. So
+the golden prints the feet in 64ths of a unit (byte-exact, with ~1000x margin over the
+drift), the finding is recorded in `docs/OPEN_ITEMS.md` with its measurement and its
+exact one-line shape, and the frame above is the unchanged one. This is the vault's
+"trajectory, not rendering" fork, caught before it could be aimed at the renderer.
+
+### Review findings
+
+The newest external review is still `logs/ralph-pi/run-20261102-004416/review-5.md`,
+and all four of its findings were dispositioned by batch 35 (F2/F3/F4 fixed with
+checked mutants, F1's documentation corrected with the underlying integrity-policy
+question left to the owner). No newer review exists, so this batch carried no
+remediation; it added no rebuttal either.
+
+### Gate results, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` → **exit 0**,
+  `All cases match the oracle.`, **445 PASS / 0 FAIL / 0 SKIP** (was 444; the new line
+  is `PASS L3_kurt_steps: Kurt's walk, run, back-up, jump, chute and landing match the
+  oracle, footsteps and chute sounds included`). No existing golden changed.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`; `gates_frames PASS
+  L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the pinned `cpp=`, so
+  `tests/frames/reference.sha256` was **not** regenerated; `gates_smdh` SKIPPED (no
+  built `.cia`); `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
+  `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_batch_integrity PASS`.
+  One earlier `check.sh` run reported `FAIL gates_frames` because the Linux binary on
+  disk had been built while the `facing()` experiment was in the tree; after rebuilding
+  from the reverted source the gate is byte-exact again. The experiment is not in the
+  committed tree.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **exit 0**, `3DSX mdk.3dsx`, `staged 69 files, 79M`, no warnings.
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `Built target mdk`, no
+  warnings.
+* Frame `docs/frames/2026-11-02-kurt-sounds.png` + `.txt`: `1.240 / 247 / 0.1819`,
+  md5 `6769a13731983d65…`, byte-identical to its predecessors. Captured on
+  `DISPLAY=:99` (AGENTS.md P7); no viewer was opened on the operator's display.
+
+No gate, golden or contract file was pinned, relaxed or edited. `player.h` now includes
+`audio/sound_mixer.h`, so `make -C tests/scripts clean` was run before the suite
+(the harness does not track header dependencies).
+
+### What this does not pin
+
+The sounds are pinned through a real `SoundMixer` over the real level bank, but **no
+shipped frontend sets the mixer**, so nothing is audible in either build yet; the
+sample plane of `AudioDevice.cs` is not ported at all. The golden drives one level, one
+start, one scripted input and no combat, so the chute's `Stop` on death, the hard
+landing, the knock-down and the firing pair are exercised by nothing. The feet are
+pinned to 1/64 unit, not to a decimal, for the reason above. **No 3DS emulator run and
+no Old-3DS hardware run was made: P6 stays open and Old-3DS timing stays UNMEASURED.**

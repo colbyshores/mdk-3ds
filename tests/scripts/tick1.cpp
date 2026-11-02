@@ -26,11 +26,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <cmath>
 #include <string>
 #include <vector>
 
 #include "test_support.h"
 #include "audio/sound_bank.h"
+#include "audio/sound_mixer.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/dti.h"
@@ -38,6 +40,8 @@
 #include "formats/mdk_data.h"
 #include "formats/model.h"
 #include "formats/model_animation.h"
+#include "formats/sprite_animation.h"
+#include "game/arena_space.h"
 #include "game/level_data.h"
 #include "game/object_view.h"
 #include "game/player.h"
@@ -267,6 +271,158 @@ std::string dumpRunner(int level, int ticks, const Vec3& kurt, scripts::ScriptRu
         }
     }
     return out;
+}
+
+// Kurt's state names as the oracle prints them: the C# dump writes the Kurt.State
+// enum itself, and the C++ enum is in the C#'s order (kurt.h), so the index is the
+// state and the name is what both sides print.
+const char* kurtStateName(Kurt::State state) {
+    static const char* const kNames[] = {
+        "Still", "Idle", "Run", "Side", "Turn", "Jump", "RunJump", "Fall", "Chute", "Land",
+        "Shot", "RunFire", "Throw", "Knocked", "GetUp", "Dead", "Slip", "Slide", "SlideFast",
+        "SlideBrake", "Hang", "HardLand", "RollLeft", "RollRight", "HelmetOn", "HelmetOff"};
+    const int index = (int)state;
+    return index >= 0 && index < (int)(sizeof(kNames) / sizeof(kNames[0])) ? kNames[index] : "?";
+}
+
+// The frame counts Kurt's state machine needs, from TRAVSPRT.BNI. The shipped game
+// fills these from the renderer's KurtSprite; a host harness has no renderer, so it
+// reads the same two steps KurtSprite.FrameCount does: the state->animation table
+// (the C#'s KurtSprite.Animations, kurt_sprite.cpp's stateSpecs_) and the archive's
+// frame count for that name. The dump prints the counts in its header line, so a
+// table that disagrees with the oracle's fails the golden instead of drifting.
+Player::FrameCounts kurtFrameCounts(const Bni& sprites) {
+    static const char* const kAnimations[] = {
+        "K_STILL", "K_IDLE", "K_RUN", "K_SIDE", "K_TRN45", "K_JUMP", "K_RJMP", "K_FALL",
+        "K_CHUTE", "K_LAND", "K_SHOT", "K_RUNFIR", "K_SPWEP", "K_BANG", "K_BFLIP", "K_BANG",
+        "K_SLIP", "K_SLIDE", "K_FSLIDE", "K_BSLIDE", "K_HANG", "K_CRASHL", "K_ROLLL", "K_ROLLR",
+        "K_HELM", "K_HELM"};
+    Player::FrameCounts counts;
+    for (int i = 0; i < Player::kStateCount; i++) {
+        SpriteAnimation animation;
+        counts.values[i] = sprites.has(kAnimations[i]) &&
+                                      sprites.animation(kAnimations[i], &animation)
+                                  ? animation.frameCount()
+                                  : 0;
+    }
+    return counts;
+}
+
+// Kurt's own state machine and the sounds it makes, stepped the way the C# Viewer
+// steps him (Viewer.Step, 1/60 s) with a scripted input. This is the only golden
+// that drives Player::update at all: until now the walk, the run, the jump, the
+// chute, the fall and the landing were pinned by nothing, and so were FOOT1-4,
+// LAND, CHUTEOUT, CHUTEON and CHUTEIN.
+//
+// The schedule is the same literal as the oracle probe's `kurt` mode, and it was
+// chosen to cover every branch of the sound code: the forward run walks Kurt off the
+// start pad, so the first LAND comes from a fall rather than a jump; the back-up
+// phase runs the animation frame NEGATIVE, which is where Wrap and the floor of a
+// negative frame are the whole story; the second forward run crosses the step frames
+// going the other way; and the jump is held long enough to open the chute (CHUTEOUT,
+// then CHUTEON played Once) and released long enough to close it (CHUTEIN, which is
+// the Stop of CHUTEON plus a play). The `voices=` column is the mixer's live voices
+// in launch order, which is the sequence of plays minus what was stopped: the
+// headless device is never stepped, so a voice ends only when something stops it.
+//
+// WHY THE FEET ARE PRINTED IN 64THS OF A UNIT AND NOT AS DECIMALS. Player::facing()
+// takes its sine and cosine from the trig LUT, whose documented per-period error is
+// 4.76e-06 (util/math_lut.h), while C# Kurt.Facing uses MathF.Cos/Sin. Over this
+// 470-step walk that leaves a drift of 1.34e-05 in the feet: bigger than 1/1000, so
+// a decimal column straddles a rounding boundary in a dozen places, and 1000x
+// smaller than the 1/64 quantum used here, so this column is byte-exact. The speeds,
+// the yaw, the animation frame and the flags are printed as decimals and match the
+// oracle exactly, because nothing in their arithmetic uses the LUT. The finding that
+// facing() should use libm the way util/matrix.h's create_from_axis_angle does is
+// recorded in docs/OPEN_ITEMS.md with its measurement: it makes the feet match at
+// four decimals and moves the pinned frame closer to the oracle (1.240% -> 1.095%),
+// and it is owner-gated because it changes the picture and the frame manifest is
+// owner-protected.
+std::string dumpKurt(int level, int steps, Player player, const Player::FrameCounts& counts,
+                     const audio::SoundMixer& mixer) {
+    std::string out;
+    char line[512];
+    snprintf(line, sizeof(line), "level=%d steps=%d counts=", level, steps);
+    out += line;
+    for (int i = 0; i < Player::kStateCount; i++) {
+        snprintf(line, sizeof(line), "%s%s=%d", i ? "," : "", kurtStateName((Kurt::State)i),
+                 counts.values[i]);
+        out += line;
+    }
+    out += "\n";
+
+    for (int step = 1; step <= steps; step++) {
+        Input input;
+        input.down[kKeyForward] = (step >= 10 && step < 46) || (step >= 190 && step < 285);
+        input.down[kKeyBack] = step >= 100 && step < 190;
+        input.down[kKeyJump] = step >= 300 && step < 390;
+        player.update(input, 1.0f / 60.0f);
+
+        std::string voices;
+        const std::vector<audio::SoundMixer::Voice>& live = mixer.voices();
+        for (size_t i = 0; i < live.size(); i++) {
+            if (i) {
+                voices += ",";
+            }
+            voices += live[i].name;
+        }
+
+        snprintf(line, sizeof(line),
+                 "s=%d state=%s feet64=%d,%d,%d yaw=%.4f fwd=%.4f str=%.4f vert=%.4f "
+                 "frame=%.4f floor=%d chute=%d voices=%s\n",
+                 step, kurtStateName(player.state()),
+                 (int)std::floor(player.feet.x * 64.0f), (int)std::floor(player.feet.y * 64.0f),
+                 (int)std::floor(player.feet.z * 64.0f), player.yaw, player.forwardSpeed,
+                 player.strafeSpeed, player.verticalSpeed, player.animationFrame(),
+                 player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0,
+                 voices.empty() ? "-" : voices.c_str());
+        out += line;
+    }
+    return out;
+}
+
+// Build the world the Kurt dump steps through — the reachable arenas, the level's
+// sound bank, TRAVSPRT.BNI's frame counts, Kurt at the level's start — and produce
+// the dump. Shared by the golden and by `tick1 dump kurt`, so the diff of a failing
+// golden is the same text the golden compares.
+bool kurtStepsDump(int level, int steps, const MdkData& data, const Bni* sprites,
+                   std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    // The same world the oracle probe builds: the reachable arenas, and no pinned
+    // solid arena, so both sides resolve footing from the arenas around Kurt, and no
+    // ScriptRuntime, so neither has object solids or a fan to trip over.
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    audio::SoundMixer mixer(&bank);
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    const Player::FrameCounts counts = kurtFrameCounts(*sprites);
+    player.setFrameCounts(counts);
+    *out = dumpKurt(level, steps, player, counts, mixer);
+    return true;
 }
 
 // Comma-join a list of ints, as the oracle's string.Join(",", list) does (empty when
@@ -1138,6 +1294,16 @@ int main(int argc, char** argv) {
             printf("%s", dumpBlendCases().c_str());
             return 0;
         }
+        if (what == "kurt") {
+            std::string got;
+            std::string why;
+            if (!kurtStepsDump(level, ticks, data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         LevelData levelData;
         if (!LevelData::load(&levelData, &data, level)) {
             printf("the level did not load\n");
@@ -1712,6 +1878,36 @@ int main(int argc, char** argv) {
             } else {
                 printf("FAIL L%d_t%d_runner_%s: %s\n", rc.level, rc.ticks, rc.tag,
                        firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // Kurt's own state machine and the sounds it makes (Kurt.Update at Viewer.Step,
+    // which is 1/60 s). Nothing else pins any of it: the walk, the run, the jump,
+    // the chute, the fall and the landing had no golden before this, and neither did
+    // FOOT1-4, LAND, CHUTEOUT, CHUTEON or CHUTEIN. The golden is the oracle probe's
+    // `kurt` mode output, byte for byte, over the same scripted input, the same
+    // archive frame counts and the same level's sound bank; the voices column is
+    // what makes the sounds visible. See dumpKurt for what the schedule covers.
+    {
+        const int kurtLevel = 3;
+        const int kurtSteps = 470;
+        std::string expected;
+        if (!readText("golden/L3_kurt_steps.txt", &expected)) {
+            printf("FAIL L3_kurt_steps: no golden file golden/L3_kurt_steps.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtStepsDump(kurtLevel, kurtSteps, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_steps: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_steps: Kurt's walk, run, back-up, jump, chute and landing "
+                       "match the oracle, footsteps and chute sounds included\n");
+            } else {
+                printf("FAIL L3_kurt_steps: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }

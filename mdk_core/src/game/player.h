@@ -17,6 +17,7 @@
 // is in degrees with positive looking DOWN.
 // ============================================================================
 
+#include "audio/sound_mixer.h"
 #include "game/arena_space.h"
 #include "game/input.h"
 #include "game/kurt.h"
@@ -75,6 +76,14 @@ public:
     // stand-in (used only before the level is loaded).
     void setSpace(ArenaSpace* space) { _space = space; }
 
+    // The mixer his sounds go to (C# Kurt's SoundMixer constructor argument).
+    // The C# always has one; a Player without one plays nothing, which is what a
+    // frontend with no audio -- or a host harness that only wants the physics --
+    // is. The sounds are the ones the ported state machine makes: FOOT1-4, LAND,
+    // CHUTEOUT, CHUTEON and CHUTEIN. The gun, the slide, the sniper, the roll and
+    // the updraft fan belong to subsystems that are not ported (OPEN_ITEMS.md).
+    void setMixer(audio::SoundMixer* mixer) { _mixer = mixer; }
+
     Vec3 facing() const;
     Vec3 right() const;
 
@@ -114,11 +123,19 @@ private:
     void updateSpecial(float delta);
     void updateDeath(float delta);
     void animate(float delta);
+    void footstep(int32_t previous, int32_t current);  // C# Kurt.Footstep
+    void updateChuteSound();                           // C# Kurt.UpdateChuteSound
+    void stopChuteSound();                             // C# Kurt.StopChuteSound
+    void playSound(const char* name, int32_t start = audio::SoundMixer::New);
+    void stopSound(const char* name);
+    bool soundPlaying(const char* name) const;
     void setState(Kurt::State state);
     int32_t frameCount(Kurt::State state) const;
     float runRate() const;
 
     ArenaSpace* _space = nullptr;
+    audio::SoundMixer* _mixer = nullptr;
+    bool _footstepPair = true;  // C# Kurt._footstepPair: FOOT3/4 first, then FOOT1/2
     Kurt::State _state = Kurt::Still;
     float _stateTime = 0.0f;
     float _animationFrame = 0.0f;
