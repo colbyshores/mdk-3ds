@@ -1,0 +1,38 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-02T06:08:29Z at 5fadbc6
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move. This batch changed no renderer behaviour. It
+remediated review-4, whose four builder-actionable findings (F2 Medium, F3 Medium,
+F4 Low, F5 Low) were all the same gap: `tests/scripts/c3d_frame_test.sh` pinned
+which statements the per-eye loop CONTAINS, and not that the loop RUNS once per
+eye or that the queue SURVIVES the run. `if (eye == 0) break;`, a bound written
+`eye < 1`, a `queue.reset()` placed before the loop or at the end of
+`replayQueue`, `eye == 0 ? targetRight : targetLeft` and `-r->eyes.offset[eye]`
+each left every one of the 12 checks green; four of them are a one-drawn-eye or
+inside-out-stereo picture on real hardware. The product tree is untouched, so the
+capture above is byte-identical to its predecessors: md5 6769a13731983d65...,
+and gates_frames still reports `PASS L3_f1.bmp sha=58615fc85d02e009`, the pinned
+cpp= digest, so tests/frames/reference.sha256 was NOT regenerated.
+
+What shows the change on this host, since the frame cannot:
+  * `PASS C3dFrame (20 checks, 25 arms adjudicated red)` in `make -C tests/scripts`
+    -- up from 12 checks / 16 arms. Eight checks were added
+    (`frame-end-reset-after-the-eye-loop`, `per-eye-functions-do-not-empty-the-queue`,
+    `queue-reset-happens-in-the-frame`, `eye-loop-runs-every-pass`,
+    `eye-loop-bound-is-the-eye-plan`, `eye-loop-starts-at-the-first-eye`,
+    `install-eye-target-order`, `install-eye-offset-sign`) and nine arms; no check
+    and no arm was removed or loosened (the name lists diff as additions only).
+  * Each new check was verified against the reviewer's OWN mutants, not only
+    against this file's arms: all nine new mutants were compiled with the real
+    devkitARM compiler (`arm-none-eabi-g++ -fsyntax-only`, the Makefile's own
+    flags) and every one compiled CLEAN, so no compiler catches any of them and
+    the gate is the only thing between these shapes and a green suite. Evidence in
+    docs/PROGRESS_LOG.md "Iteration 62".
+  * What still no host test reaches, unchanged: whether the triangle appears on a
+    screen at all, whether the depth state is right, and what the frame costs on a
+    268 MHz ARM11. No 3DS emulator is installed on this host and no Old-3DS is
+    attached, so AGENTS.md P6 stays open. The only GUI harness run this batch was
+    the frame capture itself, on the dedicated headless display `DISPLAY=:99`
+    (AGENTS.md P7); captures went to files and no viewer was opened on the
+    operator's desktop. Old-3DS timing remains UNMEASURED.

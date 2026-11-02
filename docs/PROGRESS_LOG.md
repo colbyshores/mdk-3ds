@@ -8727,3 +8727,208 @@ right, or what the frame costs on a 268 MHz ARM11. **No 3DS emulator run and no
 Old-3DS hardware run was made: P6 stays open and Old-3DS timing stays UNMEASURED.**
 A new emitter that is *itself* called from the loop body (rather than from a seam)
 would still pass; the checks pin the seams and the emission set, not the call graph.
+
+---
+
+## Iteration 62 — batch 34: the frame gate pins that the eye loop RUNS, not just what it contains (review-4 F2/F3/F4/F5; F1 owner-gated)
+
+**Prior-solution lookup.** *Pi knowledge* (`mdk-sdl`, 3916 chunks / 937 files):
+`knowledge_search` on the per-eye replay contract returned `docs/OPEN_ITEMS.md`
+(the per-eye-replay fix and the `eyePlan` pass-count rule), the
+`renderer_c3d.cpp` `end_frame` comment, and this file's own record that the gate
+"pins structure and not pixels"; a second query on mutation-arm compile evidence
+returned the CONTINUATION note that a check which can only fail is a check that
+pins nothing. *Obsidian* (read directly from `/mnt/nas/Vaults/port-docs`, the MCP
+server is not exposed here): `30-architecture/patterns/`
+`citro3d-display-list-stereo-replay-non-fast3d.md` (the pattern batch 30
+implemented — record once, replay per eye with a swapped view),
+`build-invariant-guards-must-be-proven-non-vacuous.md` (a guard is proven by
+showing it can fail, which is the arms' whole purpose),
+`a-call-site-existing-is-not-a-call-being-emitted.md` and
+`a-functions-early-return-does-not-neutralise-the-statements-above-it.md` — both
+are the same shape as review-4 F3: a statement's presence is not a statement's
+execution. *Cognee MCP*: **not available** — no Cognee tool is exposed in this Pi
+session, so it was not consulted, and nothing below rests on it.
+
+### What the review said, and what was checked first
+
+Review-4's four actionable findings were all one gap: the gate pinned which
+statements the per-eye loop **contains**, never that the loop **runs once per
+eye** or that the queue **survives the run**. Each was reproduced before being
+changed, using the reviewer's own mutant files, which were still on disk under
+`/tmp/rev` from the review run:
+
+```
+$ for m in m1_break m2_reset_before_loop m3_reset_in_replay m4_eyes_swapped \
+          m7_mono_only m8_offset_sign; do sh tests/scripts/c3d_frame_test.sh /tmp/rev/$m.cpp; done
+m1_break               PASS C3dFrame (12 checks, 16 arms adjudicated red)
+m2_reset_before_loop   PASS C3dFrame (12 checks, 16 arms adjudicated red)
+m3_reset_in_replay     PASS C3dFrame (12 checks, 16 arms adjudicated red)
+m7_mono_only           PASS C3dFrame (12 checks, 16 arms adjudicated red)
+m4_eyes_swapped        FAIL … arm install-fixed-target-for-both-eyes: the mutation changed nothing
+m8_offset_sign         FAIL … arm install-fixed-target-for-both-eyes: the mutation changed nothing
+```
+
+F2, F3 and F5 were confirmed exactly as written: green gate over a one-eye or a
+black-screen frame. F4 was confirmed with the distinction the reviewer itself
+made — the suite went red, but only because an unrelated arm's literal string
+replacement no longer matched, "a fail-closed accident rather than a check". All
+four are **confirmed and fixed**.
+
+### The fixes — eight checks, nine arms, nothing removed
+
+| Finding | New check | What it refuses |
+|---|---|---|
+| F3 | `eye-loop-runs-every-pass` | any `break`/`continue`/`return` inside the loop body |
+| F5 | `eye-loop-bound-is-the-eye-plan` | a bound that is not `…->eyes.passes` |
+| F5 (sibling) | `eye-loop-starts-at-the-first-eye` | an initialiser other than `int eye = 0` |
+| F2 | `frame-end-reset-after-the-eye-loop` | a reset inside `end_frame` at or before the loop's closing brace |
+| F2 | `per-eye-functions-do-not-empty-the-queue` | a reset inside `replayQueue`/`drawRecorded`/`drawDiagnostic` |
+| F2 (other half) | `queue-reset-happens-in-the-frame` | a frame that never clears the queue at all |
+| F4 | `install-eye-target-order` | a ternary whose FIRST-eye branch is not `targetLeft` |
+| F4 | `install-eye-offset-sign` | an offset argument that is not `x->eyes.offset[eye]` exactly |
+
+Arms added: `eye-loop-breaks-after-the-first-eye`,
+`eye-loop-returns-after-the-first-eye`, `queue-reset-before-the-eye-loop`,
+`queue-reset-at-the-end-of-the-replay`,
+`queue-reset-removed-from-both-frame-boundaries`,
+`eye-loop-bound-hardcoded-to-one`, `eye-loop-starts-at-the-second-eye`,
+`install-targets-swapped-between-eyes`, `install-offset-negated`. The gate went
+from **12 checks / 16 arms to 20 / 25**, and the check-name and arm-label lists
+were diffed against `HEAD` to prove **no removal and no loosening** — additions
+only, as review-3's "no pre-existing check was weakened" paragraph now requires of
+every batch that touches this file.
+
+Three of the eight go past the literal finding, and each is here for a stated
+reason rather than for volume:
+
+* **`eye-loop-starts-at-the-first-eye`.** Pinning the bound without the
+  initialiser leaves `int eye = 1` free, which skips the buffer the panel shows
+  in mono — the same defect F5 refuses, entered from the other end of the header.
+* **`per-eye-functions-…` covers `drawRecorded` and `drawDiagnostic`, not only
+  `replayQueue`.** A reset in either is the same defect one level deeper (in
+  `drawRecorded` it truncates the bucket being iterated), and the loop reaches
+  all three the same way.
+* **`queue-reset-happens-in-the-frame`** is the F2 invariant's other half: the
+  queue keeps its capacity by design, so if nothing clears it at a boundary every
+  frame replays every earlier frame's records forever.
+
+### Two places the reviewer's recommendation was refined rather than followed
+
+* **F2 said "require exactly one reset site in the file."** That is not the
+  invariant, and applying it would refuse the shipped source: `renderer_c3d.cpp`
+  legitimately resets in **two** places, `mdk_render_begin_frame` (`:784`, the
+  frame's eviction boundary, which `frameStartUse` and AGENTS.md P3 depend on)
+  and after the eye loop in `mdk_render_end_frame` (`:858`). The check is
+  therefore scoped to `end_frame` and phrased as a *position* ("no reset at or
+  before the loop's closing brace"), not a count.
+* **The reviewer's `m5_no_reset` mutant is deliberately NOT pinned.** Deleting
+  only the end-of-frame reset is behaviourally equivalent here: draws cannot be
+  added outside a frame (`mdk_render_draw_mesh` returns when `!inFrame`), and
+  `begin_frame` clears the queue. A gate that refuses a non-defect is a false
+  positive waiting to be weakened, so the arm instead removes **both** boundary
+  resets, which is the real defect. This is said out loud because the mutant file
+  is in the reviewer's set and a reader would otherwise expect it to be red.
+
+### F1 (High, confirmed, OWNER-GATED — unchanged from review-3 F4/F5)
+
+Re-verified by execution, not read:
+
+```
+$ git show HEAD:ralph-pi.sh | grep -c -- '--each-commit'
+0
+$ grep -c -- '--each-commit' ralph-pi.sh          # working tree
+1
+$ grep -n '"ralph-pi.sh"' tools/runner/gates_batch_integrity.py
+182:  … "--staged", "--each-commit"],             # the guard now DEMANDS it
+```
+
+So `tools/check.sh` is green only because of an uncommitted edit to a file that is
+in its own `PROTECTED` set, and reverting the loop to its committed form turns a
+`PROTECTED` gate red for a reason no batch may fix. Nothing a batch can do about
+it: `gates_batch_integrity.py` and `ralph/builder.md` are `PROTECTED`,
+`AGENTS.md` is `PROTECTED`, and `ralph-pi.sh`'s uncommitted state is the owner's
+harness work this loop has staged around since batch 31. It stays **owner task
+(1)(c)/(d)**, and this batch — like batch 33 — ends with a High finding open by
+construction and says so rather than closing it by editing the gate.
+
+### Review-4's open questions, dispositioned
+
+* **oq1 (who owns the `--each-commit` acceptance change)** — nothing in the tree
+  answers it; owner task (1), unchanged.
+* **oq2 (is the HUD's Citro3D shape decided?)** — recorded, not opened: it is
+  already in `docs/OPEN_ITEMS.md` (a `MeshDraw` carries no projection, viewport
+  or flat flag, so the HUD is a queue/record extension with a zero-parallax
+  marker, not a seam edit). It is a HUD batch's scope, and this batch changed no
+  seam.
+* **oq3 (carried: `--self-test` invoked by nothing; `tests/scripts/Makefile` and
+  `ralph/validator.md` outside `PROTECTED`; the owner's uncommitted
+  `2026-11-02-ralph-self-heal` pair has no narrative paragraph)** — all three are
+  already owner tasks (13), (1a) and (1b); the pair is the owner's own uncommitted
+  file and a batch may not edit or commit it.
+* **oq4 (hardware)** — P6 stays open by admission; see the bound below.
+
+### Evidence: every new mutant compiles, so no compiler catches any of them
+
+Each of the nine new arms was written out and syntax-checked with the **real**
+devkitARM compiler and the Makefile's own flags (`arm-none-eabi-g++ -march=armv6k
+-mtune=mpcore -mfloat-abi=hard -mtp=soft -mfpu=vfp -O2 -fno-math-errno
+-fno-strict-aliasing -D__3DS__ -DPLATFORM_3DS -DRENDERER_C3D … -fsyntax-only`),
+alongside the unmutated source:
+
+```
+CLEAN-COMPILE  eye-loop-breaks-after-the-first-eye
+CLEAN-COMPILE  eye-loop-returns-after-the-first-eye
+CLEAN-COMPILE  queue-reset-before-the-eye-loop
+CLEAN-COMPILE  queue-reset-at-the-end-of-the-replay
+CLEAN-COMPILE  queue-reset-removed-from-both-frame-boundaries
+CLEAN-COMPILE  eye-loop-bound-hardcoded-to-one
+CLEAN-COMPILE  eye-loop-starts-at-the-second-eye
+CLEAN-COMPILE  install-targets-swapped-between-eyes
+CLEAN-COMPILE  install-offset-negated
+CLEAN-COMPILE  renderer_c3d.cpp          (the unmutated source, same command)
+```
+
+Mutants were generated from the gate's own `ARMS` table (so the file tested is the
+file the gate will test) under `/tmp/mdkmut34`; nothing in the tree was mutated to
+test the gate. Re-running the reviewer's six mutants against the fixed gate turns
+every one red on a **named check**, not on an arm accident: `m1_break` →
+`eye-loop-runs-every-pass`, `m2_reset_before_loop` →
+`frame-end-reset-after-the-eye-loop`, `m3_reset_in_replay` →
+`per-eye-functions-do-not-empty-the-queue`, `m4_eyes_swapped` →
+`install-eye-target-order`, `m7_mono_only` → `eye-loop-bound-is-the-eye-plan`,
+`m8_offset_sign` → `install-eye-offset-sign`.
+
+### Gate results, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` → **exit 0**,
+  `All cases match the oracle.`, **444 PASS / 0 FAIL / 0 SKIP**, and the one line
+  that moved: `PASS C3dFrame (20 checks, 25 arms adjudicated red)` (was
+  `12 checks, 16 arms`). No golden changed.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`;
+  `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the
+  pinned `cpp=`, so `tests/frames/reference.sha256` was **not** regenerated;
+  `gates_smdh` SKIPPED (no built `.cia` read); `gates_batch_integrity PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **exit 0**, `3DSX mdk.3dsx`, `staged 69 files, 79M`, no warnings.
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `[100%] Built target
+  mdk`, no warnings.
+* Frame `docs/frames/2026-11-02-c3d-frame-gate-eye-loop.png` + `.txt`:
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, md5 `6769a13731983d65…`,
+  byte-identical to its predecessors because no renderer behaviour changed. The
+  capture ran on `DISPLAY=:99` (AGENTS.md P7); no viewer was opened on the
+  operator's display. No gate was pinned, relaxed or edited.
+
+### What the gate still cannot reach, stated as a bound
+
+It reads source. It now pins which functions may emit, that the loop's three calls
+run unconditionally, in order, once per eye, with the right target and the right
+offset sign, and that the queue survives the run and is cleared at a boundary —
+it still cannot say whether the triangle appears on a screen, whether the depth
+state is right, or what any of it costs on a 268 MHz ARM11. Two structural holes
+remain and are named rather than hidden: a new emitter called *from the loop body*
+rather than from a seam is outside the emission-set checks, and a loop that skips
+an eye through a construct this file does not match (a computed `goto`, a macro
+that expands to one of the refused keywords) is outside the early-exit check.
+**No 3DS emulator run and no Old-3DS hardware run was made: P6 stays open and
+Old-3DS timing stays UNMEASURED.**

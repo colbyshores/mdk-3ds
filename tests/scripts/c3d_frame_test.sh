@@ -53,6 +53,22 @@
 # replayQueue. "The only emission point is the per-eye loop" is then a checked
 # property rather than a reading of the file.
 #
+# THE LOOP RUNS EVERY PASS, AND THE QUEUE SURVIVES THE RUN (review-4 F2/F3/F5).
+# "Every statement of the loop body is unconditional" is NOT the same claim as
+# "the loop runs once per eye". `if (eye == 0) break;` leaves all three
+# statements at depth 0 and still draws one eye; a bound written as a literal 1
+# does the same thing without touching the body at all; and a `queue.reset()`
+# placed BEFORE the loop — or inside `replayQueue`, which the loop calls — empties
+# the queue exactly as thoroughly as the in-loop reset the previous batch
+# refused, from a placement that check could not see. All four are plausible
+# tidy-ups on a 268 MHz ARM11 and all four left every review-3 check green. The
+# same review also found that `install-eye-per-eye-target` could not tell WHICH
+# target each eye gets, nor the SIGN of the offset (F4): `eye == 0 ? targetRight
+# : targetLeft` and `-r->eyes.offset[eye]` are both inside-out stereo, and both
+# passed. So the bound, the initialiser, the absence of an early exit, the reset's
+# position, the target ORDER and the offset SIGN are now each their own check with
+# their own arm.
+#
 # WHAT THIS DOES NOT COVER, stated plainly: it reads the source, so it pins the
 # STRUCTURE and not the pixels. Whether the triangle appears on a screen, whether
 # the depth state is right, and what any of it costs on a 268 MHz ARM11 stay
@@ -89,6 +105,12 @@ SEAMS = ("mdk_render_canvas_begin", "mdk_render_canvas_quad", "mdk_render_canvas
 EMIT_ANY = (r"flushDraws\s*\(|replayQueue\s*\(|drawRecorded\s*\(|"
             r"C3D_DrawArrays\s*\(|C3D_DrawElements\s*\(")
 EMIT_DRAW = r"C3D_DrawArrays\s*\(|C3D_DrawElements\s*\("
+
+# Anything that empties the frame's record list. It has three places it can do
+# damage — inside the eye loop, before it, or inside a function the loop calls —
+# and a check that looks in only one of them is a check with two blind spots
+# (review-4 F2).
+RESET = r"queue\.(?:reset|clear)\s*\("
 
 
 def code_lines(text):
@@ -224,6 +246,64 @@ def first_statement_line(block):
     return None
 
 
+def eye_loop_header(text):
+    """The eye loop's own header — `for` through the brace that opens its body —
+    or None. The bound and the initialiser live HERE, not in the body span, so a
+    check about how many times the loop runs has to read this (review-4 F5)."""
+    bs = body_span(text, "mdk_render_end_frame")
+    if bs is None:
+        return None
+    seg = text[bs[0]:bs[1]]
+    m = re.search(EYE_LOOP, seg)
+    if m is None:
+        return None
+    brace = seg.find("{", m.end())
+    return seg[m.start():brace] if brace >= 0 else None
+
+
+def span_lines(text, sp):
+    """1-based (first, last) lines actually OCCUPIED by a span, inclusive at both
+    ends. `line_range` is one short at the end (it counts newlines before a
+    position), which is fine for membership and wrong for "is this call after
+    that brace" — hence a second helper rather than a change to the first."""
+    if sp is None:
+        return None
+    return (text.count("\n", 0, sp[0]) + 1, text.count("\n", 0, sp[1] - 1) + 1)
+
+
+def call_args(line, name):
+    """The top-level argument strings of the first `name(...)` on `line`, or
+    None. Splitting on commas by hand is the point: the second argument of the
+    real installEye call is a ternary, and a check that wants to know which
+    branch the FIRST eye takes cannot get that from a substring test
+    (review-4 F4)."""
+    m = re.search(re.escape(name) + r"\s*\(", line)
+    if not m:
+        return None
+    i = m.end() - 1
+    depth = 0
+    cur = ""
+    args = []
+    for j in range(i, len(line)):
+        ch = line[j]
+        if ch in "([{":
+            depth += 1
+            if depth == 1:
+                continue
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                args.append(cur.strip())
+                return args
+        if ch == "," and depth == 1:
+            args.append(cur.strip())
+            cur = ""
+            continue
+        if depth >= 1:
+            cur += ch
+    return None
+
+
 def line_range(text, sp):
     """1-based inclusive (first line, last line) of an absolute (start, end)
     span, so a file-wide call site can be tested for membership in a body."""
@@ -301,6 +381,10 @@ def adjudicate(text, quiet=False):
     diag_stmt = statement_at(loop, "drawDiagnostic")
     install_stmt = statement_at(loop, "installEye")
 
+    begin_range = span_lines(text, body_span(text, "mdk_render_begin_frame"))
+    end_range = span_lines(text, body_span(text, "mdk_render_end_frame"))
+    loop_lines = span_lines(text, sp)
+
     diag = calls(text, r"C3D_DrawArrays\(GPU_TRIANGLES, 0, 3\)")
     rep.check("diagnostic-drawn-once",
               len(diag) == 1 and diag_body is not None and
@@ -352,11 +436,78 @@ def adjudicate(text, quiet=False):
     # Nothing may empty the queue between the two eyes (review-3 F2): the second
     # eye replays the SAME records, so a reset inside the loop hands eye 2 an
     # empty queue, which is the black screen this file exists to prevent.
-    in_loop_reset = sites(loop or "", r"queue\.(?:reset|clear)\s*\(")
+    in_loop_reset = sites(loop or "", RESET)
     rep.check("no-queue-reset-in-the-eye-loop", not in_loop_reset,
               "%d queue reset(s) inside the eye loop; the reset belongs after the LAST eye "
               "(reset inside it and the second eye replays nothing)"
               % len(in_loop_reset))
+
+    # "Inside the loop" was only one of the three places a reset can empty the
+    # queue between two eyes (review-4 F2). One placed BEFORE the loop empties it
+    # before the first eye ever replays, and one at the end of `replayQueue`
+    # — a function the loop calls, so the loop's own text never mentions it —
+    # empties it after the first eye. Both reproduce the exact black screen the
+    # check above exists to refuse, and both left all twelve review-3 checks green.
+    late_reset = []
+    for ln, loc in sites(text, RESET):
+        if end_range and end_range[0] <= ln <= end_range[1]:
+            if loop_lines is None or ln <= loop_lines[1]:
+                late_reset.append("%d:%s" % (ln, loc))
+    rep.check("frame-end-reset-after-the-eye-loop",
+              not late_reset and end_range is not None and loop_lines is not None,
+              "%d queue reset(s) inside mdk_render_end_frame at or before the loop's closing "
+              "brace: %s (before the loop and BOTH eyes replay an empty queue; the reset after "
+              "the last eye is the only position that leaves every eye its records)"
+              % (len(late_reset), "none" if not late_reset else "; ".join(late_reset)))
+
+    per_eye_reset = []
+    for fn in ("replayQueue", "drawRecorded", "drawDiagnostic"):
+        b = body(text, fn)
+        if b is None:
+            per_eye_reset.append(fn + "(missing)")
+            continue
+        per_eye_reset.extend("%s:%s" % (fn, loc) for _, loc in sites(b, RESET))
+    rep.check("per-eye-functions-do-not-empty-the-queue", not per_eye_reset,
+              "none of replayQueue/drawRecorded/drawDiagnostic empties the queue: %s (the eye "
+              "loop calls these, so a reset in any of them is a reset between the two eyes seen "
+              "from inside a function the loop's own text cannot see)"
+              % ("clean" if not per_eye_reset else ", ".join(per_eye_reset)))
+
+    frame_resets = [loc for ln, loc in sites(text, RESET)
+                    if (begin_range and begin_range[0] <= ln <= begin_range[1])
+                    or (end_range and end_range[0] <= ln <= end_range[1])]
+    rep.check("queue-reset-happens-in-the-frame",
+              bool(frame_resets) and begin_range is not None and end_range is not None,
+              "%d queue reset(s) across begin_frame and end_frame: %s (the queue keeps its "
+              "capacity, so if nothing clears it at a frame boundary every frame replays every "
+              "earlier frame's records forever)"
+              % (len(frame_resets), "yes" if frame_resets else "none"))
+
+    # The loop must RUN once per eye, not merely CONTAIN the calls (review-4 F3).
+    # `if (eye == 0) break;` keeps every statement at depth 0 and every call count
+    # at 1, and still draws one eye; `return` there is worse still, because it
+    # also skips C3D_FrameEnd, so the frame is never submitted at all.
+    escapes = sites(loop or "", r"\b(?:break|continue|return)\b")
+    rep.check("eye-loop-runs-every-pass",
+              sp is not None and not escapes,
+              "%d early exit(s) inside the loop body: %s (a guarded break is the tidy-up that "
+              "\"saves an eye\" on a 268 MHz ARM11: the panel then shows one drawn eye and one "
+              "clear-colour eye, and every count and depth this file checks is still clean)"
+              % (len(escapes), "none" if not escapes
+                 else "; ".join(loc for _, loc in escapes)))
+
+    header = eye_loop_header(text)
+    rep.check("eye-loop-bound-is-the-eye-plan",
+              header is not None and
+              re.search(r"eye\s*<\s*[A-Za-z_]\w*\s*->\s*eyes\.passes\b", header) is not None,
+              "the loop header is `%s` (bounded by eyePlan's pass count, so a closed slider "
+              "runs one pass and an open one two; a literal bound draws one eye whatever the "
+              "slider says and the other buffer keeps the clear colour)" % (header or "(none)"))
+
+    rep.check("eye-loop-starts-at-the-first-eye",
+              header is not None and re.search(r"int\s+eye\s*=\s*0\s*;", header) is not None,
+              "the loop initialises eye to 0: `%s` (starting at 1 skips the buffer the panel "
+              "shows when the slider is closed)" % (header or "(none)"))
 
     # installEye is the call batch 30 was written to place (review-3 F3). Hoisted
     # above the loop it is the pre-batch-30 shape: both eyes replay into the last
@@ -382,6 +533,39 @@ def adjudicate(text, quiet=False):
               "the one installEye call selects the target BY EYE and passes the per-eye "
               "offset: %s (a fixed target sends both eyes to one buffer)"
               % (install_line if install_line else "no single call"))
+
+    # Which branch the FIRST eye takes, and the sign of the offset (review-4 F4).
+    # The check above is a substring test, so `eye == 0 ? targetRight : targetLeft`
+    # and `-r->eyes.offset[eye]` both pass it, and both are inside-out stereo: a
+    # pseudoscopic picture a player takes the glasses off to escape, with every
+    # count in this file still at 1. eyePlan already gives the LEFT eye the
+    # negative half (pica_matrix.h), so the plan's value must reach the matrix
+    # un-negated and indexed by the loop variable.
+    iargs = call_args(install_line, "installEye") if install_line else None
+    first_branch = other_branch = None
+    if iargs and len(iargs) == 3:
+        tern = re.match(r"^(.*?)\s*\?\s*(.*?)\s*:\s*(.*)$", iargs[1])
+        if tern:
+            cond, tbr, fbr = tern.groups()
+            cond = cond.strip()
+            if re.search(r"eye\s*==\s*0", cond):
+                first_branch, other_branch = tbr, fbr
+            elif cond == "eye" or re.search(r"eye\s*(?:!=\s*0|>\s*0)", cond):
+                first_branch, other_branch = fbr, tbr
+    rep.check("install-eye-target-order",
+              first_branch is not None and "targetLeft" in first_branch and
+              "targetRight" not in first_branch and "targetRight" in other_branch,
+              "the FIRST eye's branch names targetLeft and the other names targetRight: %s "
+              "(swapping the branches is pseudoscopic stereo, and it changes no count anywhere)"
+              % (iargs[1] if iargs and len(iargs) == 3 else "no single three-argument call"))
+
+    offset_arg = iargs[2].strip() if iargs and len(iargs) == 3 else ""
+    rep.check("install-eye-offset-sign",
+              re.fullmatch(r"[A-Za-z_]\w*\s*->\s*eyes\.offset\s*\[\s*eye\s*\]", offset_arg)
+              is not None,
+              "the offset argument is the plan's own value, un-negated and indexed by eye: %s "
+              "(eyePlan already gives the left eye the NEGATIVE half, so a leading minus here "
+              "flips the stereo inside out)" % (offset_arg or "(none)"))
 
     leaking = []
     for seam in SEAMS:
@@ -546,6 +730,87 @@ def arm_install_after_replay(text):
     return text[:a] + loop2[:pos] + mi.group(0) + loop2[pos:] + text[b:]
 
 
+def arm_loop_early_exit(text, stmt):
+    """Add `if (eye == 0) <kw>;` as the last statement of the eye loop (review-4
+    F3). Every call count stays at 1 and every call stays a depth-0 statement of
+    the loop body, so only an early-exit check can see it: the loop now runs once
+    however many eyes eyePlan asked for. `return` is the worse spelling, because
+    it also skips C3D_FrameEnd and the frame is never submitted."""
+    sp = eye_loop_span(text)
+    if sp is None:
+        return text
+    a, b = sp
+    return text[:b - 1] + "        " + stmt + "\n    " + text[b - 1:]
+
+
+def arm_reset_before_loop(text):
+    """Put the frame's reset ABOVE the eye loop (review-4 F2). The queue is empty
+    before the first eye ever replays, so both eyes draw nothing and the panel
+    shows the clear colour — the same defect the in-loop arm produces, from a
+    placement the in-loop check cannot see."""
+    sp = eye_loop_span(text)
+    if sp is None:
+        return text
+    a = text.rfind("for", 0, sp[0])
+    if a < 0:
+        return text
+    cut = text.rfind("\n", 0, a) + 1
+    return text[:cut] + "    r->queue.reset();\n" + text[cut:]
+
+
+def arm_reset_in_replay(text):
+    """Empty the queue at the end of `replayQueue` (review-4 F2), the shape a
+    tidy-up writes when it wants the records released as soon as they are used.
+    The first eye draws and the second replays nothing, and the reset is not
+    inside the loop's own text at all."""
+    sp = body_span(text, "replayQueue")
+    if sp is None:
+        return text
+    return text[:sp[1] - 1] + "    r->queue.reset();\n" + text[sp[1] - 1:]
+
+
+def arm_reset_removed_from_the_frame(text):
+    """Remove every queue reset from both frame boundaries. The queue keeps its
+    capacity by design, so nothing else ever drops the records and each frame
+    replays every earlier frame's draws on top of its own."""
+    out, n = re.subn(r"(?m)^[ \t]*r->queue\.reset\(\);[ \t]*\n", "", text)
+    return out if n else text
+
+
+def arm_install_targets_swapped(text):
+    """Swap the two targets in the per-eye ternary (review-4 F4). The left eye's
+    matrix goes to the right buffer and vice versa: pseudoscopic stereo, which a
+    player experiences as the scene turning inside-out when they put the 3D on.
+    Every count in the file is still 1 and the offset is still the plan's."""
+    return text.replace("eye == 0 ? r->targetLeft : r->targetRight",
+                        "eye == 0 ? r->targetRight : r->targetLeft", 1)
+
+
+def arm_install_offset_negated(text):
+    """Negate the per-eye offset in the installEye call (review-4 F4). eyePlan
+    already gives the left eye the negative half, so this flips both eyes the
+    wrong way: the same inside-out picture, written on the other argument."""
+    return text.replace(", r->eyes.offset[eye]);", ", -r->eyes.offset[eye]);", 1)
+
+
+def arm_loop_bound(text, old, new):
+    """Rewrite the eye loop's header (review-4 F5). `eye < 1` is the mono-only
+    loop a builder writes when the slider is not on the desk; `int eye = 1` skips
+    the buffer the panel shows in mono. Neither changes a call count or a
+    statement depth, so only the header itself can carry the invariant."""
+    sp = eye_loop_span(text)
+    if sp is None:
+        return text
+    a = text.rfind("for", 0, sp[0])
+    if a < 0:
+        return text
+    end = text.index("{", a)
+    header = text[a:end]
+    if old not in header:
+        return text
+    return text[:a] + header.replace(old, new, 1) + text[end:]
+
+
 def arm_canvas_quad_emits(text, stmt):
     """Give mdk_render_canvas_quad a body that reaches the GPU, which is what a
     HUD batch writes if it reads the seam contract as "do not flush" instead of
@@ -598,6 +863,22 @@ ARMS = [
     ("install-fixed-target-for-both-eyes",
      lambda s: s.replace("installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);",
                          "installEye(r, r->targetLeft, 0.0f);", 1)),
+    # review-4's five mutants, each one a placement or a spelling that left every
+    # review-3 check green. Written as arms so the checks that close those findings
+    # cannot be satisfied by a reading of the file.
+    ("eye-loop-breaks-after-the-first-eye",
+     lambda s: arm_loop_early_exit(s, "if (eye == 0) break;")),
+    ("eye-loop-returns-after-the-first-eye",
+     lambda s: arm_loop_early_exit(s, "if (eye == 0) return;")),
+    ("queue-reset-before-the-eye-loop", arm_reset_before_loop),
+    ("queue-reset-at-the-end-of-the-replay", arm_reset_in_replay),
+    ("queue-reset-removed-from-both-frame-boundaries", arm_reset_removed_from_the_frame),
+    ("eye-loop-bound-hardcoded-to-one",
+     lambda s: arm_loop_bound(s, "eye < r->eyes.passes", "eye < 1")),
+    ("eye-loop-starts-at-the-second-eye",
+     lambda s: arm_loop_bound(s, "int eye = 0", "int eye = 1")),
+    ("install-targets-swapped-between-eyes", arm_install_targets_swapped),
+    ("install-offset-negated", arm_install_offset_negated),
 ]
 
 print("c3d_frame: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
