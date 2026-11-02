@@ -345,13 +345,24 @@ different kind and it is still open — what it is has not been identified.
   cost and "Slider = 0 disables stereo and restores full framerate"), and the
   clamp, the sign and the skip are host-tested with 7 mutations. Two follow-ups
   it leaves, both small and neither observable today:
-  * **The canvas and inset flush points now run *before* the per-eye replay**
-    (`mdk_render_canvas_begin` and `mdk_render_end_inset` still call
-    `flushDraws`, which empties the queue). Nothing calls them on the 3DS —
-    `grep` for `canvas_begin`/`begin_inset` outside the backends is empty, and
-    `mdk_render_canvas_quad` is a no-op on this backend — but a HUD that lands
-    has to draw inside the eye loop, once per eye, or it will appear in one eye
-    only.
+  * **The canvas and inset seams do not flush, and must not** — **CLOSED as a
+    latent defect (2026-11-02, batch 31, review-1 F4).** They used to call
+    `flushDraws`, which replays the queue and empties it. With the per-eye replay
+    at the frame end, that emits this frame's records into **whatever target
+    `installEye` last selected** — the previous frame's last eye, or no target at
+    all on frame 1 — and leaves the eye loop an empty queue: the scene vanishes
+    behind a correct clear colour, which is worse than the "one eye only" this
+    bullet first guessed (AGENTS.md P2: a draw must follow the `C3D_FrameDrawOn`
+    of the target it lands in). Nothing calls them on the 3DS — `grep` for
+    `canvas_begin`/`begin_inset` outside the backends is empty, and
+    `mdk_render_canvas_quad` is a no-op on this backend — so the flush was never
+    load-bearing. `flushDraws` is deleted and the seams are documented no-ops.
+    **The requirement for whoever lands the HUD or the sniper insets:** a canvas
+    quad or an inset is a RECORD IN THE QUEUE, drawn inside the eye loop once per
+    eye with its own viewport (the C# begins a pass per inset,
+    `Renderer.Insets.cs:RenderInset`), never a mid-frame flush. Pinned
+    structurally by `PASS C3dFrame` (`tests/scripts/c3d_frame_test.sh`), which
+    goes red — with its own arms proved — if a flush returns to a seam.
   * **`gfxSet3D(true)` is called once at init**, not per frame from the slider.
     That is the common homebrew pattern and it is what the current code needs
     (the left buffer is shown either way), but Forsaken's note says its own

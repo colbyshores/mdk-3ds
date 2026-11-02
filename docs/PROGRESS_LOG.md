@@ -8043,3 +8043,235 @@ points relative to the per-eye replay, and whether `gfxSet3D` should track the s
 per frame (Forsaken's note says it is called per-frame from slider state; MDK calls it
 once at init, which is the common homebrew pattern and is left alone without hardware
 to compare).
+
+---
+
+## Iteration 59 — batch 31: the diagnostic draws once per eye, and no seam flushes the frame mid-frame (review-1 F3/F4/F5)
+
+**Risk: high** — the frame's draw order on a target this host cannot look at, plus
+the disposition of a High finding against the loop's own guard.
+
+### The review this batch answers
+
+`logs/ralph-pi/run-20261102-004416/review-1.md`, on `14cc4b4..1e2593c` plus the
+uncommitted harness work. Six findings: **F1 High, F2 Medium, F3 Medium, F4 Low,
+F5 Low, F6 Low**. Three are fixed here, three are recorded with evidence as
+owner-gated or mechanically impossible for a batch. The reviewer also confirmed
+the committed renderer independently (the depth rule re-derived from
+`Renderer.cs:565,605-607`, the `C3D_DepthMap`/`C3D_DepthTest`/`C3D_FrameBufClear`
+disassembly re-run on the linked archive, ten mutations of `pica_matrix` all
+caught, the eye sign re-derived), which is the part of batch 29-30 this batch
+does not have to re-litigate.
+
+### F3 (Medium, confirmed, FIXED): the diagnostic triangle cost two depth writes and a draw per real draw
+
+`diagnosticTriangle` is `true` in the shipping build and nothing ever cleared it,
+and the triangle was drawn at the tail of **every** `drawRecorded`. Because the
+triangle must not be depth-tested (it sits at clip `z = 0`, the far plane, which
+is what the buffer was cleared to), it called `installDepthState({false,false})`
+every draw — so the per-draw cache missed on every following draw and re-installed
+the pass's state. Per eye, per frame, on the pinned scene's frame 1 (154 `Solid` +
+1 `DoubleSided`, `docs/OPEN_ITEMS.md`):
+
+| | before | after |
+|---|---|---|
+| `C3D_DepthTest` calls | ~310 (one per real draw + one per diagnostic) | **2** (the frame install, the diagnostic) |
+| diagnostic draws | 155 | **1** |
+| MVP uniform writes | one extra per draw — the diagnostic set `matrixIsFrame = false`, so the matrix cache was defeated every draw | only the frame's, per eye |
+| BufInfo / TexEnv rebuilds | one per real draw | one per eye |
+
+and the per-eye replay multiplied all of it by the eye count. The fix is a move,
+not a new mechanism: `drawDiagnostic(r)` is called from the eye loop in
+`mdk_render_end_frame`, immediately after that eye's `replayQueue`, so it runs
+**once per eye** — inside the loop, not after it, or stereo would get a triangle in
+one eye and a hole in the other.
+
+Moving it also made it a better instrument, which is why this is not just a cost
+cut:
+
+* it now runs on a frame that queued **nothing**. Inside the per-draw path it could
+  not — no draw, no diagnostic — and an empty frame is exactly where "is the frame
+  and the program alive at all" is the only question left; such a frame showed
+  nothing but the clear colour, i.e. the same picture as the failure it exists to
+  distinguish.
+* nothing real is drawn after it inside an eye, so the state it leaves behind (the
+  context's single `BufInfo` and `TexEnv`, the identity uniform, the test off)
+  cannot damage a draw of this frame. That hazard is not hypothetical: the vault's
+  hardware-**confirmed** `30-architecture/patterns/c3d-interleaved-draw-leaves-vertex-uniforms-stale.md`
+  is precisely an interleaved draw that switches vertex streams and leaves the
+  **vertex uniforms** stale, with a later, unrelated draw landing off-screen while
+  every state probe reads correct. Batch 28's defect in this same file was the
+  mirror-image of it (the diagnostic drawn *before* the real draw replaced the
+  context's `BufInfo` and the mesh read the triangle's 15 floats). The next
+  `installEye` now cleans up after it, and `installEye` writes every uniform and
+  every piece of fixed state anyway (AGENTS.md P2).
+
+**Why not the reviewer's `__3DS_DEBUG__` gate.** Two reasons, both on record in
+this repository. AGENTS.md §7/§10 keep this tree free of `#ifdef` forks (the
+backend split is by file), and the vault's own
+`30-architecture/patterns/build-the-off-switch-before-the-fix.md` — a confirmed
+case where five instruments agreed and a runtime toggle settled it — says prefer a
+**runtime** switch over a build flag, because a rebuild-per-arm tempts you to skip
+the negative arm. `r->diagnosticTriangle` already *is* runtime state; what it lacks
+is a way to flip it without a rebuild. That is now a named follow-up (an SD-file
+switch next to `sdmc:/3ds/mdk/mdk.log`, `log_3ds.cpp:42-49`), not a compile-time
+define. The triangle's geometry and position are deliberately unchanged: shrinking
+it to keep the scene visible is a call for whoever first looks at a screen, and
+this batch does not get to make a decision that only a screen can make.
+
+### F4 (Low, confirmed, FIXED): a canvas/inset flush emitted the frame into a stale target and consumed it
+
+`mdk_render_canvas_begin`, `mdk_render_begin_inset` and `mdk_render_end_inset`
+still called `flushDraws`, which replays the queue and empties it. Since batch 30
+the queue is replayed per eye at the frame end, so a mid-frame flush draws this
+frame's records into **whatever target `installEye` last selected** — the previous
+frame's last eye, or no target at all on frame 1 — and then leaves the eye loop an
+empty queue. The reviewer's wording is the better one than `docs/OPEN_ITEMS.md`
+had used: not "it will appear in one eye only" but **the scene vanishes behind a
+correct clear colour**. AGENTS.md P2 is the rule: a draw must follow the
+`C3D_FrameDrawOn` of the target it lands in.
+
+Nothing calls those seams on the 3DS (`grep` for `canvas_begin`/`begin_inset`
+outside the backends is empty, and `mdk_render_canvas_quad` is a no-op on this
+backend), which is the only reason this was Low and not Critical. The seams are now
+documented no-ops, `flushDraws` is deleted, and `replayQueue`'s comment states the
+contract: **the only replay point is `mdk_render_end_frame`, once per eye**. The
+requirement for whoever lands the HUD is written into `docs/OPEN_ITEMS.md`: a
+canvas quad or an inset is a *record in the queue*, drawn inside the eye loop once
+per eye with its own viewport — not a mid-frame flush.
+
+### F5 (Low, confirmed, FIXED): a citation was one line off
+
+`compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL` is `src/Mdk.Engine/Render/Renderer.cs:605`,
+not 606; 606 and 607 are the two `enable_*` lines. Two citations that quoted the
+compare-op (`pica_matrix.h:155`, `renderer_c3d.cpp:660`) now say 605 / 605-607.
+The citations that name only the two enable lines (606-607) and the block citation
+(603-607) were already right and were left alone. The "Iteration 57" table carries
+the same off-by-one; the log is append-only, so it is corrected here rather than
+edited there.
+
+### The pin: `PASS C3dFrame` (`tests/scripts/c3d_frame_test.sh`)
+
+`renderer_c3d.cpp` includes `<3ds.h>` and cannot be compiled on a host, so — unlike
+the matrix math and the depth rule — these two defects could not be moved into
+`pica_matrix.{h,cpp}` and pinned there. What was wrong in both cases is *where a
+call sits*, and a revert of either is a one-line change that no existing gate would
+notice. So the shape is pinned by a source-structure gate, run from
+`tests/scripts/Makefile`'s `test` target, with five checks:
+
+| check | what it refuses |
+|---|---|
+| `diagnostic-drawn-once` | a second `C3D_DrawArrays(GPU_TRIANGLES, 0, 3)`, or one outside `drawDiagnostic` |
+| `diagnostic-called-per-eye` | the diagnostic not called from `mdk_render_end_frame` |
+| `replay-only-at-frame-end` | a second `replayQueue(r)` call site |
+| `no-mid-frame-flush` | a `flushDraws`/`replayQueue` inside a canvas or inset seam |
+| `depth-state-single-writer` | a second `C3D_DepthTest` call site, i.e. a writer behind the cache's back |
+
+and five mutation arms, each of which must turn a check red — because a gate whose
+arms never ran is a pass generator (this loop's own `af2fac3`):
+
+```
+  ok   arm diagnostic-back-in-the-per-draw-path: turned `diagnostic-drawn-once` red as required
+  ok   arm diagnostic-dropped-from-the-eye-loop: turned `diagnostic-called-per-eye` red as required
+  ok   arm canvas-flush-restored: turned `no-mid-frame-flush` red as required
+  ok   arm inset-replay-restored: turned `no-mid-frame-flush` red as required
+  ok   arm second-depth-writer: turned `depth-state-single-writer` red as required
+PASS C3dFrame (5 checks, 5 arms adjudicated red)
+```
+
+What it does **not** cover, stated rather than implied: it reads the source, so it
+pins structure and not pixels. Whether the triangle appears, whether the depth
+state is right, and what any of it costs on a 268 MHz ARM11 with L2 off remain
+UNVERIFIED (AGENTS.md P6).
+
+### F1, F2, F6: not fixed, with the reason and the evidence
+
+* **F1 (High) — confirmed, and the fix is not a builder's.** `ralph-pi.sh` and
+  `tools/hooks/pre-commit` are not in `PROTECTED`, and the marker list is satisfied
+  by the current file, so a worker could rewrite the orchestrator's fail-closed
+  guard and pass the guard's own static check. Verified in this session, not
+  inferred:
+  ```
+  ralph-pi.sh in PROTECTED: False
+  tools/hooks/pre-commit in PROTECTED: False
+  markers present: {'gates_batch_integrity.py': True, 'publish_frame.sh': True,
+                    '--base': True, 'REVIEWER FAILED': True, '--staged': True,
+                    '--each-commit': True}
+  ```
+  The only fix is to widen `PROTECTED` in `tools/runner/gates_batch_integrity.py`,
+  which is in its **own** `PROTECTED` set — so a builder editing it *is* the failure
+  mode F1 describes. This is already owner-authorized task **(1)** in
+  `docs/CONTINUATION.md`, and it stays there, extended with two things the reviewer
+  added: `tools/hooks/pre-commit` belongs in the same set, and the uncommitted
+  `--each-commit` recovery (one frame per *commit* instead of one per *iteration*,
+  N commits ⇒ N published frames) is a widened acceptance that needs an owner
+  sign-off, not a builder's assumption. The four uncommitted harness files
+  (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`, `gates_batch_integrity.py`) are
+  **left uncommitted for the owner**, as batches 29 and 30 did: three of them are
+  `PROTECTED`, so committing them in a batch would make the loop's own post-iteration
+  guard exit 6, and their mtimes and ownership (`museagent` 13:41, `coleshores`
+  12:09/17:22-17:23, `piagent` 17:23, all before the run dir at 17:24) say owner.
+* **F2 (Medium) — confirmed, and a batch cannot land that pair.** The untracked
+  `docs/frames/2026-11-02-ralph-self-heal.{png,txt}` is byte-identical to the pinned
+  frame and its sidecar is the bare four-line header with no "why this picture did
+  not move" paragraph, which is what `docs/frames/README.md` requires. It cannot be
+  committed in *this* batch either way: the integrity gate requires **exactly one**
+  new frame PNG per batch, and this batch's own pair is that one. So the pair stays
+  untracked for the owner, and the reviewer's alternative is recorded: if it is a
+  loop self-heal proof rather than a rendering frame it belongs under
+  `docs/evidence/`, not `docs/frames/`.
+* **F6 (Low) — confirmed, owner-protected file.** `--self-test` is real and passes
+  by hand, and nothing runs it: `tools/check.sh:174-181` calls
+  `gates_batch_integrity.py` with no arguments. The fix is one line in
+  `tools/check.sh`, which is `PROTECTED` and is already owner-authorized task **(2)**'s
+  file. Recorded there rather than done here.
+
+### Prior-solution lookup (all three sources)
+
+* **Pi knowledge (`mdk-sdl`, 3881 chunks / 936 files).** `hybrid` on "Citro3D
+  per-eye replay flush point canvas inset stale render target" returned this
+  backend's own `mdk_render_canvas_begin` (i.e. the code being fixed), `render.h`'s
+  canvas-width contract, the oracle's `Renderer.Insets.cs` `RenderInset` (which
+  begins a pass per inset — the C# shape the queue-record requirement comes from),
+  and `docs/OPEN_ITEMS.md`'s own per-eye-replay entry pointing at the vault pattern.
+  Nothing newer than the repository, which is the honest result.
+* **Obsidian vault** (`/mnt/nas/Vaults/port-docs`, read-only). Two hits that changed
+  the answer, both above: `c3d-interleaved-draw-leaves-vertex-uniforms-stale.md`
+  (hardware-confirmed: the interleaved draw's real damage is the stale **uniform**,
+  and the victim is a later unrelated draw) and
+  `build-the-off-switch-before-the-fix.md` (prefer a runtime switch over a build
+  flag). `citro3d-display-list-stereo-replay-non-fast3d.md` is the pattern batch 30
+  implemented and this batch stays inside.
+* **Cognee MCP is not exposed in this Pi harness** — recorded as unavailable, not as
+  an empty result.
+
+### Gates, as run
+
+* `make -C tests/scripts` → **exit 0**, `All cases match the oracle.`; **444 `^PASS`,
+  0 `^FAIL`, 0 `^SKIP`**. The new line is `PASS C3dFrame (5 checks, 5 arms
+  adjudicated red)`; `PASS PicaMatrix` and `PASS SpritesRefusal` are unchanged and no
+  existing PASS line moved.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`; `gates_frames PASS
+  L3_f1.bmp sha=58615fc85d02e009` (the pinned `cpp=` digest, so
+  `tests/frames/reference.sha256` was NOT regenerated); `gates_smdh` `SKIP no built
+  .cia to read`; `gates_vfp` 0 blockers; `audit_c_with_classes` 0 violations;
+  `audit_arm11_math` CONTRACT CLEAN; `audit_r11_idiv` no candidates;
+  `gates_core_parity` CONTRACT CLEAN; `gates_batch_integrity` PASS.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **exit 0**, `3DSX mdk.3dsx`, no warnings from the changed TU.
+* The Linux target is untouched by this batch (no shared-core file changed), so no
+  Linux rebuild is claimed.
+
+**No emulator run and no Old-3DS run: P6 stays open and P7 did not arise** (no
+emulator was launched, so no display is recorded). The frame pair published with
+this batch is byte-identical to its predecessors and its sidecar says why in its
+own text, per `docs/frames/README.md`.
+
+### What is next
+
+Priority order unchanged: the **blend half** of 6(c) (blocked on the alpha source:
+the palette expansion forces alpha 255 and the shader writes `outclr = ones`), then
+**`DepthPull` on C3D**, then **(d)** the middle 173 px of the pinned frame, then
+**(e)** `FrameBlend.Lerp`'s rounding. New open items from this batch: the runtime
+off-switch for the diagnostic triangle (SD file, per the vault pattern), and the
+HUD/inset queue-record requirement that replaces the deleted flush points.

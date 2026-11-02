@@ -1,50 +1,34 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 30 moved the Citro3D frame's draws: the per-eye pass (target, matrix, state) left
-`begin_frame`, where it ran before a single draw existed and every draw therefore landed in the LAST
-installed target — the RIGHT one, while the panel shows the LEFT one in mono, i.e. a top screen of nothing
-but the clear colour — and now runs in `end_frame`, one eye at a time, immediately before that eye's
-replay of the queue. `pica::eyePlan` decides how many passes there are (one with the 3D slider closed, two
-with it open) and owns the slider clamp and each eye's sign. Target-specific GPU state on a backend whose
-picture cannot be looked at here — no 3DS emulator, no Old-3DS, so P6 stays open. Mitigations, measured
-not asserted: `C3D_FrameDrawOn` and `C3D_SetFrameBuf` were disassembled out of the linked `libcitro3dd.a`
-rather than reasoned about, the mono skip is Forsaken's measured behaviour on this hardware ("slider = 0
-disables stereo and restores full framerate"), the plan is host-tested and **7 mutations of it each turn
-the suite red** (table in `docs/PROGRESS_LOG.md` "Iteration 58"), and both targets build. High rather
-than medium because this is the frame's draw order on an unverifiable target — and because the bug it
-fixes is a black screen, which makes the missing hardware the most expensive gap in the port.
+Risk: high — batch 31 is review-1's remediation on the Citro3D frame's draw order. The diagnostic
+triangle left the per-draw path: it wrote the depth state off every draw, so the pinned scene's frame 1
+paid ~310 `C3D_DepthTest` calls, 155 extra draws and one extra MVP uniform write per eye, and the matrix
+cache was defeated every draw; it now runs **once per eye** from `end_frame`, and it now also runs on a
+frame that queued nothing, which is when it is the only probe left. The canvas/inset seams no longer flush
+the queue mid-frame — a flush there emitted this frame's records into the PREVIOUS frame's target and
+emptied the queue, i.e. a scene vanishing behind a correct clear colour (AGENTS.md P2) — and `flushDraws`
+is deleted. Target-specific GPU state on a backend whose picture cannot be looked at here: no 3DS
+emulator, no Old-3DS, so P6 stays open. Mitigations, counted not asserted: the invariants are pinned by a
+new gate, `PASS C3dFrame`, which **refuses to print PASS unless its 5 mutation arms each turn a check
+red**; the cost arithmetic comes from the measured queue composition in `docs/OPEN_ITEMS.md`; and both
+targets build. High rather than medium because it moves draws on an unverifiable target, and because it
+dispositions review-1's High finding (F1: the loop's own orchestrator is unprotected) which a builder is
+not permitted to fix.
 
-Last updated: 2026-11-02 (**batch 30** — the per-eye replay; full narrative, the `libcitro3dd.a`
-disassembly, the seven-mutation table and the gate output are in `docs/PROGRESS_LOG.md` "Iteration 58").
-Batch 29's "the left eye gets only its clear" was worse than written: `begin_frame` installed both eyes
-before any draw was queued, so `flushDraws` at `end_frame` put the whole frame into the RIGHT target with
-the right eye's matrix, and the panel shows the LEFT one with the slider closed — a top screen of clear
-colour. `installEye` + `replayQueue` now run once per eye from `end_frame`, `pica::eyePlan` (clamped,
-signed, host-tested) decides one pass or two, and both buffers are still cleared every frame. Goldens
-**443/0/0** (the new case is inside `PASS PicaMatrix`), no PASS line moved; frame byte-unchanged, and its
-sidecar says why. **This is the first 3DS-renderer batch whose expected effect on a real console is
-visible**, which is what makes P6's missing hardware the port's most expensive open gap. The tree still
-carries the owner's uncommitted harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
-`gates_batch_integrity.py`, an untracked frame pair) — three of them are in the integrity gate's own
-`PROTECTED` set, so batches keep staging only their own paths. Previous: **batch 29** ("Iteration 57", the
-Citro3D depth state), **batch 28** ("Iteration 56", the per-draw world matrix), **batch 27** ("Iteration
-55", review-1 F3), **batch 26** ("Iteration 54", review-12).
-
-**Batch 27, in full**: `ObjectBehaviors.cs:305-306`
-enters `H150_R` **and** plays `RUNNER`; the port does both at `script_runtime.cpp:1033-1034` but the
-runner goldens printed no mixer field, so a dropped, renamed or mis-gated `play()` passed every gate in
-the repository. The column is on both sides of the seam — `tests/scripts/tick1.cpp:255-266` and the oracle
-probe's `runner` mode — and the column varies (`mixer=-` t1-t3, `mixer=RUNNER` from t4), so it is exercised
-rather than constant. Prior-solution lookup: **`pi-knowledge` is UNAVAILABLE, not empty** — `knowledge_show`
-returns `No knowledge bases.`, so there is no `mdk-sdl` KB and an empty search is an environment gap, not a
-finding (the loop's `ralph/builder.md` now requires that distinction; that edit and a `ralph-pi.sh` edit
-both appeared mid-iteration, are not this batch's, and are left uncommitted for the owner — the owner has
-since landed them, in `4aa49ea`); the Obsidian vault was searched read-only for `SW_H150`, `SoundMixer`, `RUNNER voice`, `mixer_.play`
-and `golden provenance` with **zero files**; Cognee MCP is not exposed in this harness. Goldens
-**442/0/0**, no PASS line moved; frame byte-unchanged. Previous: **batch 26** ("Iteration 54", review-12:
-all four findings — 2 Medium, 2 Low — confirmed and fixed, none rebutted, the verdict counter moved after
-the print it counts, and the three owner-authorized clauses batch 25 dropped restored), **batch 25**
-("Iteration 53"), **batch 24** ("Iteration 52"), **batch 23** ("Iteration 51").
+Last updated: 2026-11-02 (**batch 31** — review-1 F3/F4/F5 fixed; F1/F2/F6 recorded with evidence as
+owner-gated or impossible for a batch; the narrative, the before/after call counts, the five-arm table and
+the gate output are in `docs/PROGRESS_LOG.md` "Iteration 59"). Goldens **444/0/0** — the new line is
+`PASS C3dFrame (5 checks, 5 arms adjudicated red)` and no existing PASS line moved; frame byte-unchanged,
+and its sidecar says why. F1 and F6 both need an edit to a file inside the integrity gate's own
+`PROTECTED` set (`gates_batch_integrity.py`, `tools/check.sh`), and F2's untracked frame pair cannot land
+in a batch because the gate allows exactly one new PNG per batch — so the tree still carries the owner's
+uncommitted harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`, `gates_batch_integrity.py`,
+`docs/frames/2026-11-02-ralph-self-heal.{png,txt}`) and batches keep staging only their own paths.
+Previous: **batch 30** ("Iteration 58", the per-eye replay), **batch 29** ("Iteration 57", the Citro3D
+depth state), **batch 28** ("Iteration 56", the per-draw world matrix), **batch 27** ("Iteration 55",
+review-1 F3 — the runner golden prints a `mixer=` column, so a dropped `play("RUNNER")` can no longer
+pass every gate in the repository), **batch 26** ("Iteration 54", review-12: all four findings confirmed
+and fixed, none rebutted).
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -94,7 +78,12 @@ evidence in `OPEN_ITEMS.md`. **Old-3DS timing is UNMEASURED.**
 **Owner-authorized tasks (cannot be done in a batch).** (1) Add `ralph-pi.sh`, `ralph.sh`,
 `docs/KILO_RALPH_LOOP_POLICY.md` and `.kilo/agent/*` to the `PROTECTED` set of
 `tools/runner/gates_batch_integrity.py` — that file is in its own `PROTECTED` list, so only the owner
-may widen it (review-1 F1). (2) Wire `bash tools/runner/test_review_state.sh` into `tools/check.sh` as
+may widen it (review-1 F1, re-confirmed by batch 31: `ralph-pi.sh` and `tools/hooks/pre-commit` are both
+absent from `PROTECTED`, and the `required` marker list is satisfied by the current `ralph-pi.sh`, so a
+worker could rewrite the guard's fail-closed path and still pass the guard's own static check). Same task,
+two additions from review-1: `tools/hooks/pre-commit` belongs in the set, and the uncommitted
+`--each-commit` recovery changes the acceptance from *one frame per iteration* to *one frame per commit*
+(N commits ⇒ N published frames), which needs an owner sign-off line rather than a builder's assumption. (2) Wire `bash tools/runner/test_review_state.sh` into `tools/check.sh` as
 a gate line; `check.sh` is owner-protected, so the state machine is checked only by hand (batch 12).
 (3) A review is recorded `done` on rc 0 + a non-empty report, so an `INCOMPLETE` verdict still clears
 the owed range; whether it should is a policy change to `review_outcome` — the proposal is to read the
@@ -129,7 +118,15 @@ scratch path and say so in the evidence. (12) **CLOSED by batch 29** — the `md
 that did, and it is what surfaced the sibling-project depth probes this batch checked its answer against.
 Batches should still report an *empty search* as a search that found nothing, not as proof of absence, and
 still record a source's unavailability when one is genuinely absent (Cognee MCP is not exposed in the Pi
-harness).
+harness). (13) Run `python3 tools/runner/gates_batch_integrity.py --self-test` from
+`tools/check.sh`. The self-test exists and passes by hand, but nothing invokes it, so the integrity gate's
+own range accounting can rot silently (review-1 F6); `check.sh` is `PROTECTED`, so this is the same class
+as (2). (14) The diagnostic triangle in `renderer_c3d.cpp` is `true` in the shipping build and can only be
+turned off by a rebuild. Batch 31 moved it to once per eye (it cost ~310 depth writes and 155 draws per
+eye before) but did not gate it behind an `#ifdef`, per AGENTS.md §7/§10 and the vault's
+`build-the-off-switch-before-the-fix.md` ("prefer a runtime switch over a build flag"): the right shape is
+an SD-file switch next to `sdmc:/3ds/mdk/mdk.log`, which is a new file-reading path and so is not a
+renderer batch's call.
 
 ## Current tree state (VERIFIED)
 

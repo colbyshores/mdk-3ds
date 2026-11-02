@@ -152,7 +152,7 @@ struct DepthState {
 
 // The oracle's rule, in one place so a host test can hold it to the C#.
 //
-// `Renderer.cs:606-607` builds every pipeline's depth state from the pass:
+// `Renderer.cs:605-607` builds every pipeline's depth state from the pass:
 //
 //     compare_op         = LESS_OR_EQUAL
 //     enable_depth_test  = mesh && pass is not Overlay and not OnTop

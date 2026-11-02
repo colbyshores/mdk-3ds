@@ -640,8 +640,8 @@ static void settleDeferredTextures(RendererC3D* renderer) {
 // Defined with the resource code below; the frame boundary needs them and it
 // comes first in the file.
 static void settleDeferredMeshes(RendererC3D* renderer);
-static void flushDraws(RendererC3D* r);
 static void replayQueue(RendererC3D* r);
+static void drawDiagnostic(RendererC3D* r);
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 
 // Install one pass's depth state on the citro3d context and record it in the
@@ -657,7 +657,7 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 //
 // GPU_LEQUAL and not GPU_LESS: a fragment exactly on the far plane stores
 // exactly the value the buffer was cleared to, so a strict LESS would reject the
-// far plane itself. The oracle says LESS_OR_EQUAL (Renderer.cs:606), and
+// far plane itself. The oracle says LESS_OR_EQUAL (Renderer.cs:605), and
 // `pica::depthPasses` pins that tie.
 static void installDepthState(RendererC3D* r, mdk::pica::DepthState state) {
     C3D_DepthTest(state.test, state.test ? GPU_LEQUAL : GPU_ALWAYS,
@@ -847,9 +847,13 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     //
     // The queue is reset after the LAST eye, not inside the loop: the second eye
     // replays the same records.
+    // The diagnostic is drawn INSIDE the loop, once per eye, so each eye gets
+    // its own copy in its own target: drawn once after the loop it would be a
+    // triangle in one eye and a hole in the other.
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
+        drawDiagnostic(r);
     }
     r->queue.reset();
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display
@@ -1687,62 +1691,96 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         r->cullMode = GPU_CULL_BACK_CCW;
     }
 
-    // THE DIAGNOSTIC TRIANGLE, LAST. Clip-space, with the identity matrix, and
-    // no texture: if THIS does not appear, the problem is in the frame or the
-    // program, not in the mesh, the transform or the texture.
-    //
-    // IT MUST COME AFTER THE REAL DRAW, NOT BEFORE IT. The diagnostic installs
-    // its own vertex buffer, its own combiner and its own matrix, and citro3d
-    // hands out the CONTEXT's single BufInfo and TexEnv rather than a copy --
-    // C3D_GetBufInfo() is called here and never handed back with C3D_SetBufInfo,
-    // so the two calls return the SAME struct. Drawn first, the diagnostic
-    // therefore replaced the buffer description the real draw had just installed
-    // and the real draw read the triangle's 15 floats at the mesh's offsets --
-    // invisible geometry, with the diagnostic itself on screen to say the frame
-    // was fine. Drawn last, it can only affect the NEXT draw, and every draw
-    // installs its own buffer, combiner and matrix at its top -- except the
-    // matrix, which is cached, so the cache is told.
-    if (r->diagnosticTriangle) {
-        static float triangle[15] = {
-            -0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
-             0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
-             0.0f,  0.8f, 0.0f, 0.0f, 0.0f,
-        };
-        C3D_Mtx identity;
-        for (int i = 0; i < 16; i++) {
-            identity.m[i] = (i % 5 == 0) ? 1.0f : 0.0f;
-        }
-        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &identity);
-        C3D_BufInfo* info = C3D_GetBufInfo();
-        BufInfo_Init(info);
-        BufInfo_Add(info, triangle, 5 * sizeof(float), 2, 0x10);
-        C3D_TexEnv* plain = C3D_GetTexEnv(0);
-        C3D_TexEnvInit(plain);
-        C3D_TexEnvSrc(plain, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-        C3D_TexEnvFunc(plain, C3D_Both, GPU_REPLACE);
-        // THE DIAGNOSTIC IS NOT DEPTH-TESTED, and that is load-bearing now that
-        // the scene is. Its three vertices sit at clip z = 0 through an identity
-        // matrix, which is the FAR plane — exactly what the buffer was cleared
-        // to — so with the test installed it would fail wherever any real
-        // geometry is nearer, and the one draw whose whole job is to say "the
-        // frame and the program are fine" would go missing in exactly the busy
-        // scenes it is needed for. The cache is told, because this writes the
-        // state behind the per-draw check's back.
-        installDepthState(r, mdk::pica::DepthState{false, false});
-        C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
-        // The uniform now holds the identity, not the frame's matrix.
-        r->matrixIsFrame = false;
+    // THE DIAGNOSTIC TRIANGLE IS NOT DRAWN HERE. It used to be, immediately
+    // after the real draw, and that cost the frame: the triangle needs the depth
+    // test OFF, so it wrote the state behind the per-draw cache's back and the
+    // NEXT draw had to install its pass's state again -- two effect-block-
+    // dirtying C3D_DepthTest calls per draw and one extra draw per real draw,
+    // all of it multiplied again by the eye count (review-1 F3). It now runs
+    // once per eye from mdk_render_end_frame; see drawDiagnostic.
+}
+
+// THE DIAGNOSTIC TRIANGLE, once per eye, after that eye's replay. Clip-space,
+// with the identity matrix, no texture and no depth test: if THIS does not
+// appear on a screen, the problem is in the frame or the program, not in the
+// mesh, the transform or the texture.
+//
+// WHY IT MOVED OUT OF THE PER-DRAW PATH (review-1 F3). Per-draw it cost two
+// C3D_DepthTest calls and one extra draw for every real draw, and the per-eye
+// replay multiplies that by the number of eyes: on the pinned scene's frame 1
+// (154 Solid + 1 DoubleSided, docs/OPEN_ITEMS.md) that was ~310 depth writes
+// and 155 diagnostic draws per eye, where one eye now pays 2 and 1. Moving it
+// also makes it a better instrument, not merely a cheaper one:
+//
+//   * It now runs on a frame that queued NOTHING. Inside the per-draw path it
+//     could not -- no draw, no diagnostic -- and an empty frame is exactly where
+//     "is the frame and the program alive at all" is the only question left.
+//   * Nothing real is drawn after it inside an eye, so the state it leaves
+//     behind (the context's single BufInfo and TexEnv, the identity uniform, the
+//     test off) cannot damage a draw of this frame. That was not theory: the
+//     vault's hardware-CONFIRMED pattern c3d-interleaved-draw-leaves-vertex-
+//     uniforms-stale.md is this hazard class -- an interleaved draw that switches
+//     vertex streams leaves the VERTEX UNIFORMS stale, and the victim is a
+//     later, unrelated draw that lands off-screen while every state probe reads
+//     correct. The next installEye cleans up after the diagnostic, and
+//     installEye writes every uniform and every piece of fixed state anyway
+//     (AGENTS.md P2).
+//
+// IT STILL MUST COME AFTER THE REAL DRAWS, NOT BEFORE THEM. citro3d hands out
+// the CONTEXT's single BufInfo and TexEnv rather than a copy -- C3D_GetBufInfo()
+// is called here and never handed back with C3D_SetBufInfo, so the two calls
+// return the SAME struct. Drawn first, the diagnostic replaced the buffer
+// description the real draw had just installed and the real draw read the
+// triangle's 15 floats at the mesh's offsets -- invisible geometry, with the
+// diagnostic itself on screen to say the frame was fine (batch 28's defect).
+static void drawDiagnostic(RendererC3D* r) {
+    if (!r->diagnosticTriangle) {
+        return;
     }
+    static float triangle[15] = {
+        -0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
+         0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
+         0.0f,  0.8f, 0.0f, 0.0f, 0.0f,
+    };
+    C3D_Mtx identity;
+    for (int i = 0; i < 16; i++) {
+        identity.m[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    }
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &identity);
+    C3D_BufInfo* info = C3D_GetBufInfo();
+    BufInfo_Init(info);
+    BufInfo_Add(info, triangle, 5 * sizeof(float), 2, 0x10);
+    C3D_TexEnv* plain = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(plain);
+    C3D_TexEnvSrc(plain, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+    C3D_TexEnvFunc(plain, C3D_Both, GPU_REPLACE);
+    // THE DIAGNOSTIC IS NOT DEPTH-TESTED, and that is load-bearing now that
+    // the scene is. Its three vertices sit at clip z = 0 through an identity
+    // matrix, which is the FAR plane — exactly what the buffer was cleared
+    // to — so with the test installed it would fail wherever any real
+    // geometry is nearer, and the one draw whose whole job is to say "the
+    // frame and the program are fine" would go missing in exactly the busy
+    // scenes it is needed for. The cache is told, because this writes the
+    // state behind the per-draw check's back.
+    installDepthState(r, mdk::pica::DepthState{false, false});
+    C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
+    // The uniform now holds the identity, not the frame's matrix. The next
+    // installEye -- the other eye, or this one's next frame -- is what puts it
+    // back, and it writes the uniform unconditionally.
+    r->matrixIsFrame = false;
 }
 
 // One replay of everything the frame has queued, in the oracle's pass order
-// (draw_queue.h), into whatever target is current. Split out of flushDraws
-// because a stereo frame replays the SAME queue once per eye: the queue already
-// IS the recorded draw list, so the second eye is a replay with a different
-// matrix and target, not a second walk of the scene.
+// (draw_queue.h), into whatever target is current. It is separate from the
+// frame end because a stereo frame replays the SAME queue once per eye: the
+// queue already IS the recorded draw list, so the second eye is a replay with a
+// different matrix and target, not a second walk of the scene.
 //
-// The flush point is the end of the frame's 3D scene: before the canvas, before
-// an inset's viewport, and before C3D_FrameEnd submits the queue.
+// THE ONLY REPLAY POINT IS mdk_render_end_frame, once per eye. A mid-frame
+// replay is not a harmless early flush: it draws into whatever target
+// installEye last selected and consumes the records, so the eye loop that
+// follows would replay an empty queue. That is why the canvas and inset seams
+// below do not flush (review-1 F4).
 static void replayQueue(RendererC3D* r) {
     if (!r || r->queue.empty() || !r->inFrame) {
         return;
@@ -1753,14 +1791,6 @@ static void replayQueue(RendererC3D* r) {
             drawRecorded(r, &bucket[i]);
         }
     }
-}
-
-static void flushDraws(RendererC3D* r) {
-    if (!r || r->queue.empty() || !r->inFrame) {
-        return;
-    }
-    replayQueue(r);
-    r->queue.reset();
 }
 
  void mdk_render_draw_mesh(MdkRenderer rr, const mdk::MeshDraw* draw) {
@@ -1780,9 +1810,19 @@ static void flushDraws(RendererC3D* r) {
 // ---------------------------------------------------------------------------
 
  void mdk_render_canvas_begin(MdkRenderer r) {
-    // The scene ends here: the queued draws go in before anything the canvas
-    // draws over them.
-    flushDraws(asC3d(r));
+    // NO FLUSH HERE, and that is a contract rather than an omission (review-1
+    // F4). With the per-eye replay at the frame end, a mid-frame flush emits
+    // THIS frame's queued records into whatever target installEye last
+    // selected -- the previous frame's last eye, or no target at all on frame 1
+    // -- and then empties the queue, so the eye loop replays nothing: a scene
+    // that vanished behind a correct clear colour.
+    //
+    // Nothing calls this on the 3DS today (canvas_begin outside the backends is
+    // an empty grep) and mdk_render_canvas_quad is a no-op on this backend, so
+    // the flush was never load-bearing -- it was a latent black screen. When the
+    // HUD lands it must be a RECORD IN THE QUEUE, drawn inside the eye loop once
+    // per eye; docs/OPEN_ITEMS.md carries the requirement.
+    (void)r;
 }
  void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* q) { (void)r; (void)q; }
  void mdk_render_canvas_end(MdkRenderer r) { (void)r; }
@@ -1807,10 +1847,14 @@ static void flushDraws(RendererC3D* r) {
 // ---------------------------------------------------------------------------
 
  void mdk_render_begin_inset(MdkRenderer r, const mdk::Inset* i) {
+    // The same contract as mdk_render_canvas_begin: an inset is a viewport
+    // change INSIDE one eye's replay, not a flush point, so nothing is emitted
+    // here. Wiring the sniper insets means recording the viewport with the
+    // draw, not flushing the frame at its boundary.
+    (void)r;
     (void)i;
-    flushDraws(asC3d(r));
 }
- void mdk_render_end_inset(MdkRenderer r) { flushDraws(asC3d(r)); }
+ void mdk_render_end_inset(MdkRenderer r) { (void)r; }
 
 // ---------------------------------------------------------------------------
 // Diagnostics

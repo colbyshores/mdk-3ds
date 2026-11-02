@@ -94,6 +94,7 @@ bin: $(BUILD)/tick1 $(BUILD)/vm_tests
 test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@$(BUILD)/vm_tests
 	@sh sprites_refusal_test.sh "$(CURDIR)/$(BUILD)/tick1"
+	@sh c3d_frame_test.sh
 	@$(BUILD)/tick1
 
 $(BUILD):
