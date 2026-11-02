@@ -623,20 +623,34 @@ Trigger that closes it: the knock-down slice (`UpdateKnockDamage`, `KnockDown`,
 carries `_knockdownPush` and its drain). When it lands, re-run the hurt scenario on the
 ground and the knock-down becomes visible in a golden.
 
-## `Kurt::state_` is a second copy of the entity's state with no writer (found in batch 40)
+## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 
-Batch 40 removed the duplicated *health*; the same split still duplicates the *state*.
-`Kurt::state_` (`kurt.h`) is initialised to `Still` and nothing writes it — the only
-reader in the tree is the `KURT` line of the script dump (`tick1.cpp`), and the C#
-`Hurt` reads the real `Current` (`Kurt.Combat.cs:120`: `Current is State.Dead or
-State.Knocked or State.GetUp or State.HardLand`). So the port's copy of that guard is
-inert: a hard-landing or knocked-down Kurt can be hurt again, where the oracle declines.
-It is inert rather than wrong only because the `health_ == 0` early return above it
-already covers the dead case, and because nothing can enter HardLand/Knocked/GetUp and
-survive to be hurt in the same step.
+Batch 40 removed the duplicated *health*; the same split still duplicated the *state*.
+`Kurt::state_` was initialised to `Still` and nothing wrote it, so the C#'s `Hurt`
+guard (`Kurt.Combat.cs:120`: `Current is State.Dead or State.Knocked or State.GetUp or
+State.HardLand`) was ported as a comparison against a field that never changed. Batch
+40 called that "inert rather than wrong" because the `health_ == 0` return above it
+covers the dead case and, in its words, "nothing can enter HardLand/Knocked/GetUp and
+survive to be hurt in the same step". **Review-11 R11-3 refuted the second half of that
+sentence with this repository's own golden**: `golden/L3_kurt_steps.txt` steps 656–759
+are one *non-lethal* hard landing, 104 consecutive frames at `hp=90`, and a scripted
+`hurt_kurt` inside that window damages the port (90 → 80) where the oracle declines.
+The window is 104 frames, not zero, and the dead-case argument only ever covered one of
+the four states the guard names.
 
-Not fixed in batch 40 because the honest fix is to delete the field and read the
-entity's state through the same binding `kurt()` now uses — a second state-model change
-in a batch that had already made one, and one no golden can pin until the knock-down
-states are reachable. Trigger: the knock-down slice above; then `hurt()` should take the
-entity's state (or read it through the binding) and `Kurt::state_` should go.
+Fixed by **moving** the field rather than mirroring it: the state lives in `Kurt` alone
+(`Kurt::state_`, written only by `Player::setState` through `Kurt::setState`) and
+`Player::state()` is the entity's view of it — the shape batch 40 gave the health, and
+for the same reason: a copy on either side is a copy the other half never sees.
+`Player::_state` is gone, so there is no second copy to drift. The pin is
+`golden/L3_kurt_hurtland.txt`: the same 300-unit lift, so the landing at step 183 is a
+hard one and K_CRASHL runs to 286; a hurt of 10 at step 220 lands **inside** the window
+and the oracle's health stays 90, and a hurt of 4 at step 300 lands **after** it and the
+health moves to 86. Both arms were built and run as mutants: HEAD's two-copy shape fails
+at `s=220 hp=80` while every other golden passes, and a guard that always fires fails at
+`s=300 hp=90` where the oracle is 86.
+
+What stays open is the *other* half of the guard: `Knocked` and `GetUp` cannot be
+entered at all until the knock-down slice above lands, so this golden can only show the
+HardLand arm — and the second damage is 4 rather than 5 for exactly that reason, since a
+hurt of 5 or more on a floor knocks the oracle down and the port nowhere.

@@ -1,0 +1,28 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-02T22:17:42Z at 893c459
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move: this batch moves a field between two halves of one
+class, not a pixel. Kurt's state now lives in mdk::Kurt alone (Kurt::state_, written
+only by Player::setState) and Player::state() is the entity's view of it, because
+Kurt.Hurt declines a hurt while the entity is Dead, Knocked, GetUp or HardLand
+(Kurt.Combat.cs:120) and the port had been comparing that against a copy nothing ever
+wrote -- so a hard-landing Kurt took damage the oracle refuses. At level 3 frame 1
+Kurt has just spawned standing still, no script has hurt him and no landing has
+happened, so no frame of this run can show it: the PNG is the same blob as
+2026-11-02-kurt-one-health.png (sha256 6646adf1...) and the measurement is unchanged
+at 1.240% / max 247 / mean 0.1819. What shows the change instead is the new golden
+tests/scripts/golden/L3_kurt_hurtland.txt (341 lines, sha256 9e1b4832..., the oracle
+probe's own `hurtland` mode, byte-identical to `tick1 dump hurtland 3 340`): it lifts
+Kurt 300 units so the landing at step 183 is a hard one (K_CRASHL to step 286), hurts
+him 10 inside that window -- the oracle's health stays 90 -- and 4 after it, where the
+guard has released and the health moves to 86. Built with HEAD's two-copy shape, that
+golden fails at s=220 with hp=80 where the oracle says 90, and every other golden still
+passes; built with a guard that always fires, it fails at s=300 with hp=90 where the
+oracle says 86. Suite: 448 PASS / 0 FAIL / 0 SKIP.
+
+Capture: DISPLAY=:99 (headless Xvfb, per AGENTS.md P7), lavapipe
+(VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json), command
+`bash tools/publish_frame.sh kurt-one-state`, tree at 893c459 plus this batch's
+uncommitted change. Scratch captures went to /tmp/mdk-pi (AGENTS.md P7 names
+/tmp/kilo, which is not writable by this account -- owner task 11).

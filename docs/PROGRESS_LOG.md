@@ -9659,3 +9659,125 @@ Mutants built and run:
   Citro3D picture stays UNVERIFIED (P6).** The only windowed run was the frame capture,
   on `DISPLAY=:99` (P7). Scratch captures went to `/tmp/mdk-pi` because `/tmp/kilo` is
   not writable by this account (owner task 11). No gate, test or golden was relaxed.
+
+## Iteration 69 — batch 41: Kurt has one state again, pinned from inside the crash animation (review-11 R11-3/R11-4/R11-5 fixed; R11-1/R11-2/R11-6 owner-gated)
+
+### Prior-solution lookup
+
+- **Pi knowledge (`mdk-sdl`)** — searched for the hurt guard, the hard-landing window
+  and the knock-down subsystem. It surfaced this repository's own
+  `docs/OPEN_ITEMS.md` §"`Kurt::state_` is a second copy of the entity's state with no
+  writer", which had already named the fix ("delete the field and read the entity's
+  state through the same binding `kurt()` now uses") and had deferred it to the
+  knock-down slice. Verified against the C# before using it.
+- **Obsidian** — read-only from `/mnt/nas/Vaults/port-docs` (881 notes). Nothing on
+  this subsystem: `10-projects/mdk-sdl/` holds only `ralph-pi-mandarine-setup.md`, and
+  a vault-wide grep for `Kurt`, `K_CRASHL`, `hurt_kurt` and `knock.down` returns
+  nothing. Consulted, nothing found.
+- **Cognee MCP** — **not available**: no Cognee tool is exposed in this Pi session, so
+  the knowledge graph was not consulted. Recorded rather than implied.
+
+### What landed
+
+**Review-11 R11-3 (High): the state half of the class split, so `Kurt::hurt`'s guard
+reads the state the machine is in.** The C# `Kurt` is one object: `Current` is a field
+of it (`Kurt.cs:104`) and `Hurt` reads that same field
+(`Kurt.Combat.cs:120`: `if (Invulnerable > 0f || Current is State.Dead or State.Knocked
+or State.GetUp or State.HardLand) { KnockDamage = 0f; return; }`). This port splits the
+class and had the state in `mdk::Player::_state` while `mdk::Kurt::state_` — the copy
+`hurt()` reads — had **no writer at all**, so the guard could never fire.
+
+| change | effect |
+|---|---|
+| `Kurt::setState(State)` added; `Kurt::state_` documented as the one state | the combat half owns the state, as the C#'s one object does |
+| `Player::_state` **deleted**; `Player::state()` → `combat_.state()` | there is no second copy to drift; `Player::setState` is the only writer, through `combat_.setState` |
+| `player.cpp`: 20 reads of `_state` → `state()` | mechanical, no value moved (all four Kurt goldens pass unchanged) |
+
+This is deliberately the same shape batch 40 gave the health, for the same reason: a
+copy on either side of the split is a copy the other half never sees. The alternative
+the reviewer also offered — have `Player::setState` mirror into a second field — was
+rejected because it re-introduces exactly the duplication batch 40 removed.
+
+The reviewer's second observation, that a hurt taking health to zero inside the crash
+window would defer the death (because `Player::update` returns through `updateSpecial`
+while the state is `HardLand`), is closed by the same change: with the guard live, no
+hurt reaches the health in that window at all, so there is no deferred death to defer.
+
+**Review-11 R11-4 (Low): the `L3_kurt_hurt` PASS message over-claimed.** It said the
+fixture shows hurt_kurt "takes Kurt to Dead on the landing". The step that makes him
+Dead is the health-zero-on-a-floor transition, which `L3_kurt_lethal` pins on its own;
+what this fixture discriminates is `hp == vmhp`. The message now says that, and the
+comment above the block says what the run does *not* pin.
+
+**Review-11 R11-5 (Low): `Kurt::slots_` was default-initialised, not
+value-initialised.** Now `Slot slots_[kMaxSlots]{};`, matching `ammo_[]`. The harnesses
+copy `Player` (and therefore `Kurt`) by value, so an indeterminate subarray is a read of
+uninitialised memory even with `slotCount_ == 0` gating every reader.
+
+### The pin, and what it kills
+
+`tests/scripts/golden/L3_kurt_hurtland.txt` — **341 lines, sha256 `9e1b4832…`**, the C#
+oracle probe's new `hurtland` mode (`mdkprobe 3 340 1 hurtland`), byte-identical to
+`tick1 dump hurtland 3 340`. Same world as the hurt golden (reachable arenas, the
+archive's frame counts, the level's bank, the `ScriptRuntime` bound to *this* Player),
+same step order (Kurt, then the scripts). The schedule lifts him 300 units at step 1, so
+the landing at **step 183** is a hard one (−194 u/s) and K_CRASHL runs 26 frames at 4 per
+second = **104 steps, 183..286**; then:
+
+| step | state | oracle | what a wrong port prints |
+|---|---|---|---|
+| 220 (inside the window) | `HardLand` | hurt of 10 **refused**, `hp=90` | `hp=80` — the guard read a state nothing wrote |
+| 300 (after the window) | `Still` | hurt of 4 taken, `hp=86` | `hp=90` — the guard never releases |
+
+The second damage is **4, not 5**, on purpose: on a floor a hurt of ≥5 knocks the oracle
+down (`UpdateKnockDamage`, `KnockDamage >= 5` while `OnFloor`) and the knock-down machine
+is not ported, so the release arm has to be provable without dragging in a subsystem
+neither side has. `KnockDamage` is 0 at step 300 because the C#'s `HardLanding` zeroes it
+after the damage (`Kurt.cs:584`), which the port also does.
+
+Mutants built and run (library files swapped to HEAD's, the new test kept):
+
+| mutant | result |
+|---|---|
+| HEAD's two-copy shape (`Kurt::state_` with no writer) — the pre-fix code | **FAILS** `L3_kurt_hurtland` at `s=220 hp=80 vmhp=80` where the oracle is `hp=90`; `L3_kurt_steps`, `L3_kurt_lethal` and `L3_kurt_hurt` all still **PASS**, so only the new pin sees it |
+| `Kurt::hurt`'s guard always fires | **FAILS** at `s=300 hp=90` where the oracle is `86` |
+| `Kurt::setState` made a no-op (state frozen at `Still`) | fails all four Kurt goldens — the state machine itself reads the one state now, which is the point of moving it rather than mirroring it |
+
+### Review-11 disposition
+
+| finding | disposition |
+|---|---|
+| **R11-1 (High)** — the integrity guard's fail-closed path replaced by a `--each-commit` "recovered" continue, so N commits each adding a frame pair pass where the loop used to stop | **owner-side, confirmed, not rebutted.** The only fix lives in `ralph-pi.sh` (whose working-tree edits are the owner's and must not be staged by a batch) or in `tools/runner/gates_batch_integrity.py`, which is in its own `PROTECTED` list. `ralph/builder.md:161-163` — the rule it relaxes — is itself in `PROTECTED`, so a builder cannot amend the rule either. Same hazard as review-9 R9-1/R9-2 and review-10 F1 under new numbers: owner task (1). This batch staged none of those files. |
+| **R11-2 (High)** — the relaxation is pinned into the guard's own `required` list, so deleting it is a gate failure, and the green tree depends on two uncommitted files pairing | **owner-side, confirmed, not rebutted.** Both halves are fixed inside `PROTECTED` files (`gates_batch_integrity.py`'s `required` list, and `tools/check.sh`). Batch 39 reproduced the clean-`HEAD` failure by execution (`FAIL … '--each-commit'`, rc 1). Owner tasks (1) and (13). |
+| **R11-3 (High)** — `hurt()`'s state guard reads a field nothing writes; the ~104-frame HardLand window refutes `OPEN_ITEMS.md`'s "nothing can enter HardLand and survive to be hurt" | **fixed**, with the pin above. The reviewer's failure scenario is exactly what the mutant prints (`hp=80` where the oracle keeps 90). `docs/OPEN_ITEMS.md` now records the item as CLOSED and says plainly that its own golden refuted the inertness claim — the window is 104 frames, not zero, and the `health_ == 0` argument only ever covered one of the four states the guard names. |
+| **R11-4 (Low)** — the PASS message claims a script-caused death the fixture does not discriminate | **fixed**, as above. |
+| **R11-5 (Low)** — `Kurt::slots_[kMaxSlots]` default-initialised, read through by-value copies | **fixed** (`{}`), as above. |
+| **R11-6 (Low)** — `--self-test` is invoked by nothing and returns before the static-invariant block | **owner-side, confirmed, not rebutted.** The wiring line belongs in `tools/check.sh`, which is `PROTECTED`. Owner task (13). |
+
+### Gates (all run from a clean invocation of this tree)
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts clean && make -C tests/scripts` | **exit 0** — `All cases match the oracle.`, **448 PASS / 0 FAIL / 0 SKIP** (447 + the new `L3_kurt_hurtland`) |
+| contract gates | `bash tools/check.sh` | **exit 0** — `CHECK: ALL GATES PASSED`; `gates_vfp PASS blockers=0`, `audit_arm11_math VERDICT: CONTRACT CLEAN`, `audit_r11_idiv` no candidates, `gates_core_parity` clean, `gates_smdh` **SKIPPED** (no built .cia), `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` (byte-identical to the pinned `cpp=`, so `reference.sha256` was **not** regenerated), `gates_batch_integrity PASS` |
+| 3DS | `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` | **exit 0** — `3DSX mdk.3dsx`, no warnings |
+| Linux | `cmake --build build-linux --target mdk -j8` | **exit 0** — `Built target mdk`, no warnings |
+
+No gate, test or golden was relaxed, pinned or edited; the only golden change is a **new**
+file whose bytes are the oracle's own output. The oracle probe was re-verified against
+the committed goldens before use: `mdkprobe 3 220 1 hurt` is byte-identical to
+`golden/L3_kurt_hurt.txt`.
+
+### State and next
+
+Frame `docs/frames/2026-11-02-kurt-one-state.png` + `.txt` — `1.240 / 247 / 0.1819`,
+byte-identical to its predecessors, because no renderer behaviour changed; the sidecar
+says so and names the golden that shows the change instead. Capture on `DISPLAY=:99`
+(P7), scratch in `/tmp/mdk-pi`. **No emulator run and no Old-3DS hardware run: Old-3DS
+timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6).**
+
+Next per the priority order: the knock-down slice (`UpdateKnockDamage`, `KnockDown`,
+`K_BANG`/`K_BFLIP`, the 3 s invulnerability, the `_push` drain `Player` already carries)
+— now the only way to make the `Knocked`/`GetUp` arms of the guard reachable, and the
+trigger for a ground-level hurt golden. Owner tasks (1), (10), (13) and (15) are
+unchanged and still block what they block.

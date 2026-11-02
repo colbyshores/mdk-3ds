@@ -64,7 +64,8 @@ public:
     enum Difficulty { Easy, Normal, Hard };
 
     // Kurt.Hurt (Kurt.Combat.cs:118, 0x46a604): none while dead, invulnerable,
-    // knocked down, getting up, or hard-landing.
+    // knocked down, getting up, or hard-landing. The four states are read off
+    // state() below, which is the entity's own state, not a copy of it.
     void hurt(int32_t damage);
 
     int32_t health() const { return health_; }
@@ -81,7 +82,16 @@ public:
     float invulnerable() const { return invulnerable_; }
     float knockDamage() const { return knockDamage_; }
     float whiteFlash() const { return whiteFlash_; }
+    // The entity's state, and the ONLY copy of it. C# Kurt is one object whose
+    // Hurt reads its own Current (Kurt.cs:104, read at Kurt.Combat.cs:120); this
+    // port splits the class, so the field lives here and Player::state() is the
+    // entity's view of it. Player::setState is the only writer. A second copy on
+    // either side is the defect this comment exists to prevent: with the state in
+    // Player alone, hurt()'s Dead/Knocked/GetUp/HardLand guard below reads a field
+    // nothing writes and never fires, and a hard-landing Kurt takes damage the
+    // oracle declines. Pinned by golden/L3_kurt_hurtland.txt.
     State state() const { return state_; }
+    void setState(State state) { state_ = state; }
 
     // ---- The VM's Kurt-and-screen writes (ScriptVm.cs:1580-1600) ----
     // screen_flash (opcode 215) raises the white flash; the nuke and the
@@ -132,7 +142,10 @@ private:
     Mortality mortality_ = Mortal;
     Difficulty difficulty_ = Normal;
 
-    Slot slots_[kMaxSlots];
+    // Value-initialised, not default-initialised: Player holds a Kurt and copies
+    // it by value in the host harnesses, and an indeterminate Slot array is a read
+    // of uninitialised memory even with slotCount() == 0 gating every reader.
+    Slot slots_[kMaxSlots]{};
     int32_t slotCount_ = 0;
     int32_t ammo_[kAmmoTypes]{};
     int32_t superChainGun_ = 0;

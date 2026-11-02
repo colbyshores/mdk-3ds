@@ -74,10 +74,14 @@ public:
     // Starts with another health than full (C# SetHealth: max(health, 0)).
     void setHealth(int health);
 
-    // The C# Kurt state machine's visual state. The movement half owns it
-    // because the state changes the movement (a hard landing stops walking);
-    // the renderer reads it to choose a sprite frame (KurtSprite.Pick).
-    Kurt::State state() const { return _state; }
+    // The C# Kurt state machine's visual state (Kurt.cs:104). The movement half
+    // drives it, because the state changes the movement (a hard landing stops
+    // walking), but the FIELD lives in the combat half: Kurt.Hurt reads the state
+    // the machine is in (Kurt.Combat.cs:120 -- no hurt while Dead, Knocked, GetUp
+    // or HardLand), and a copy here is a copy hurt() would never see. Same shape
+    // as the one health above, and pinned by the same kind of golden.
+    // The renderer reads it to choose a sprite frame (KurtSprite.Pick).
+    Kurt::State state() const { return combat_.state(); }
     float animationFrame() const { return _animationFrame; }
     bool chuteClosing() const { return _chuteClosing; }
     void setFrameCounts(const FrameCounts& counts) { _frameCounts = counts; }
@@ -156,7 +160,6 @@ private:
     ArenaSpace* _space = nullptr;
     audio::SoundMixer* _mixer = nullptr;
     bool _footstepPair = true;  // C# Kurt._footstepPair: FOOT3/4 first, then FOOT1/2
-    Kurt::State _state = Kurt::Still;
     float _stateTime = 0.0f;
     float _animationFrame = 0.0f;
     bool _chuteClosing = false;

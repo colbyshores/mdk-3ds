@@ -159,7 +159,7 @@ void Player::update(const Input& input, float delta) {
     // C# Kurt.Update calls UpdateChuteSound before the Hang/HardLand branch, so a
     // crashing Kurt's chute still closes and stops flapping.
     updateChuteSound();
-    if (_state == Kurt::HardLand) {
+    if (state() == Kurt::HardLand) {
         // A hard landing owns the step until K_CRASHL is done (C#
         // UpdateSpecial). It also stops the ordinary walk state machine.
         updateSpecial(delta);
@@ -207,7 +207,7 @@ void Player::update(const Input& input, float delta) {
     updateVertical(input, move, delta);
     // C# Kurt.Update returns after a hard landing, before UpdateState. The
     // landing set the state, and the next step runs UpdateSpecial instead.
-    if (_state == Kurt::HardLand) {
+    if (state() == Kurt::HardLand) {
         return;
     }
     updateState(forward, strafe, delta);
@@ -227,27 +227,27 @@ void Player::updateState(float forward, float strafe, float delta) {
     // The C# has no missing-animation guard: a missing animation has count 0,
     // so `done` is `AnimationFrame >= -1`. A missing animation is a broken
     // archive, not a state; the comparison is kept exactly as the oracle's.
-    const bool done = _animationFrame >= (float)(frameCount(_state) - 1);
+    const bool done = _animationFrame >= (float)(frameCount(state()) - 1);
     if (!onFloor) {
         if (chuteOpen) {
             setState(Kurt::Chute);
-        } else if (_state == Kurt::Chute) {
+        } else if (state() == Kurt::Chute) {
             // The closing frame is shown once, then the fall starts.
             _chuteClosing = true;
             setState(Kurt::Fall);
             return;
         } else if (verticalSpeed > 0.0f &&
-                   _state != Kurt::Jump && _state != Kurt::RunJump && _state != Kurt::Fall) {
+                   state() != Kurt::Jump && state() != Kurt::RunJump && state() != Kurt::Fall) {
             setState(std::fabs(forwardSpeed) > kMovingSpeed ? Kurt::RunJump : Kurt::Jump);
         } else if (verticalSpeed < kFallStartSpeed &&
-                   ((_state != Kurt::Jump && _state != Kurt::RunJump) || done)) {
+                   ((state() != Kurt::Jump && state() != Kurt::RunJump) || done)) {
             setState(Kurt::Fall);
         }
-    } else if (_state == Kurt::Jump || _state == Kurt::RunJump || _state == Kurt::Fall ||
-               _state == Kurt::Chute) {
+    } else if (state() == Kurt::Jump || state() == Kurt::RunJump || state() == Kurt::Fall ||
+               state() == Kurt::Chute) {
         playSound("LAND");
         setState(Kurt::Land);
-    } else if (_state == Kurt::Land && !done && forward == 0.0f && strafe == 0.0f) {
+    } else if (state() == Kurt::Land && !done && forward == 0.0f && strafe == 0.0f) {
         // The landing animation keeps running while he stands still.
     } else if (forward != 0.0f || std::fabs(forwardSpeed) > kMovingSpeed) {
         setState(Kurt::Run);
@@ -255,11 +255,11 @@ void Player::updateState(float forward, float strafe, float delta) {
         setState(Kurt::Side);
     } else if (std::fabs(turnRate) > kMovingSpeed) {
         setState(Kurt::Turn);
-    } else if (_state == Kurt::Idle && !done) {
+    } else if (state() == Kurt::Idle && !done) {
         // The idle animation keeps running.
-    } else if (_state == Kurt::Still && _stateTime > kIdleDelay) {
+    } else if (state() == Kurt::Still && _stateTime > kIdleDelay) {
         setState(Kurt::Idle);
-    } else if (_state != Kurt::Still) {
+    } else if (state() != Kurt::Still) {
         setState(Kurt::Still);
     }
 
@@ -306,8 +306,8 @@ void Player::updateDeath(float delta) {
 }
 
 void Player::animate(float delta) {
-    if (_state == Kurt::Run || _state == Kurt::RunFire) {
-        const int32_t count = frameCount(_state);
+    if (state() == Kurt::Run || state() == Kurt::RunFire) {
+        const int32_t count = frameCount(state());
         if (count <= 0) {
             return;
         }
@@ -319,7 +319,7 @@ void Player::animate(float delta) {
         _animationFrame += runRate() * kTicks * delta;
         const int32_t current = wrapAnimationFrame((int32_t)std::floor(_animationFrame), count);
         footstep(previous, current);
-    } else if (_state == Kurt::Turn) {
+    } else if (state() == Kurt::Turn) {
         // No guard: a missing K_TRN45 leaves the frame at zero, as the C#'s
         // multiply by frameCount(Turn) == 0 does.
         _animationFrame = yaw / kTurnFrameDegrees * (float)frameCount(Kurt::Turn);
@@ -336,7 +336,7 @@ void Player::footstep(int32_t previous, int32_t current) {
         return;
     }
 
-    const bool firing = _state == Kurt::RunFire;
+    const bool firing = state() == Kurt::RunFire;
     const int32_t left = firing ? kFireLeftStep : kLeftStep;
     const int32_t right = firing ? kFireRightStep : kRightStep;
     if (current == left) {
@@ -352,7 +352,7 @@ void Player::updateChuteSound() {
     // the chute stops it with CHUTEIN. CHUTEON is played Once, so the flap does not
     // stack voices; the headless device never ends a voice, so the Stop is what
     // takes it out of the mixer's list.
-    if (chuteOpen && _state == Kurt::Chute && _animationFrame >= (float)kChuteOpenFrames) {
+    if (chuteOpen && state() == Kurt::Chute && _animationFrame >= (float)kChuteOpenFrames) {
         playSound(kChuteOnSound, audio::SoundMixer::Once);
         return;
     }
@@ -389,10 +389,13 @@ bool Player::soundPlaying(const char* name) const {
 }
 
 void Player::setState(Kurt::State state) {
-    if (state == _state && _stateTime > 0.0f) {
+    // The one state, and it lives in the combat half: C# Kurt is one object whose
+    // Hurt reads its own Current (Kurt.Combat.cs:120), so a state field here would
+    // be a second copy for hurt() to miss. Same shape as the one health.
+    if (state == combat_.state() && _stateTime > 0.0f) {
         return;
     }
-    _state = state;
+    combat_.setState(state);
     _stateTime = 0.0f;
     _animationFrame = 0.0f;
 }
@@ -617,8 +620,8 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         if (health() > 0) {
             damage(kHardLandingDamage);
         }
-        if (health() > 0 && _state != Kurt::Dead && _state != Kurt::Knocked &&
-            _state != Kurt::GetUp) {
+        if (health() > 0 && state() != Kurt::Dead && state() != Kurt::Knocked &&
+            state() != Kurt::GetUp) {
             chuteOpen = false;
             setState(Kurt::HardLand);
         }

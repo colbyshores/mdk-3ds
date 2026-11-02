@@ -547,6 +547,14 @@ bool kurtStepsDump(int level, int steps, bool lethal, const MdkData& data, const
     return true;
 }
 
+// One scripted hurt_kurt: the step it fires on and the damage it deals. The
+// schedule is printed in the dump's own header, so a golden can never be compared
+// against a different one (the oracle prints the same literal on its own side).
+struct KurtHurt {
+    int step;
+    int damage;
+};
+
 // The bridge between the scripts' hurt_kurt and the ONE Kurt health, as the C++
 // twin of the oracle probe's `hurt` mode.
 //
@@ -573,6 +581,19 @@ bool kurtStepsDump(int level, int steps, bool lethal, const MdkData& data, const
 // golden/L3_kurt_lethal.txt already pins, and the hurt at step 200 is Hurt's
 // Health == 0 early return on a corpse.
 //
+// THE SECOND SCHEDULE (`hurtland`, golden/L3_kurt_hurtland.txt) pins the OTHER
+// half of Kurt.Hurt: the state guard, not the health guard. Kurt.Combat.cs:120
+// declines a hurt while Current is Dead, Knocked, GetUp or HardLand, and this port
+// splits the class, so the guard is only faithful if the state hurt() reads is the
+// state the machine is in -- a copy of its own is a field nothing writes and the
+// guard never fires. That schedule lifts him the same 300 units, so the landing at
+// step 183 is a hard one (K_CRASHL runs 26 frames at 4 per second = 104 steps,
+// 183..286), hurts him 10 INSIDE that window -- the oracle declines, hp stays 90 --
+// and 4 AFTER it, where the guard has released and the health moves. The second
+// damage is under KnockdownDamage (5) on purpose: on a floor a hurt of 5 or more
+// knocks him down, and the knock-down machine is not ported, so the release arm has
+// to be provable without dragging in a subsystem neither side has.
+//
 // The world is kurtStepsDump's (reachable arenas, no pinned solid arena, the
 // archive's frame counts, the level's sound bank) plus the ScriptRuntime the runner
 // mode builds, bound to THIS Player -- which is the point: the runtime and the
@@ -581,21 +602,14 @@ bool kurtStepsDump(int level, int steps, bool lethal, const MdkData& data, const
 // Viewer.cs:505-535, mdk_linux/src/main.cpp), and the 1/60 call lets the runtime
 // complete a script tick every second step.
 std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, Player& player,
-                         audio::SoundMixer& mixer) {
-    struct Hurt {
-        int step;
-        int damage;
-    };
-    // The schedule the oracle prints in its own header; the two sides cannot drift,
-    // because a golden compared against another schedule differs on its first line.
-    static const Hurt kHurts[] = {{20, 10}, {40, 25}, {60, 30}, {80, 35}, {200, 10}};
+                         audio::SoundMixer& mixer, const KurtHurt* kHurts, size_t hurtCount) {
     const float kLift = 300.0f;
 
     char line[512];
     std::string out;
     snprintf(line, sizeof(line), "level=%d steps=%d seed=1 lift=%.4f hurts=", level, steps, kLift);
     out += line;
-    for (size_t i = 0; i < sizeof(kHurts) / sizeof(kHurts[0]); i++) {
+    for (size_t i = 0; i < hurtCount; i++) {
         if (i) {
             out += ",";
         }
@@ -615,7 +629,7 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
         // The scripts' step, and the hurt inside it: in the oracle a hurt_kurt is
         // dispatched from a script object's program during ScriptRuntime::update,
         // never between the oracle's own statements.
-        for (size_t i = 0; i < sizeof(kHurts) / sizeof(kHurts[0]); i++) {
+        for (size_t i = 0; i < hurtCount; i++) {
             if (kHurts[i].step == step) {
                 runtime.hurtKurt(kHurts[i].damage);
             }
@@ -653,7 +667,7 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
 // Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
 // the ScriptRuntime bound to the Player it drives. Shared by the golden and by
 // `tick1 dump hurt`, so a failing golden diffs the same text it compares.
-bool kurtHurtDump(int level, int steps, const MdkData& data, const Bni* sprites,
+bool kurtHurtDump(int level, int steps, bool hurtland, const MdkData& data, const Bni* sprites,
                   std::string* out, std::string* why) {
     if (!sprites) {
         *why = "no TRAVSPRT.BNI to take the frame counts from";
@@ -700,7 +714,16 @@ bool kurtHurtDump(int level, int steps, const MdkData& data, const Bni* sprites,
     // would part on the first hurt.
     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
     runtime.option = 0;
-    *out = dumpKurtHurt(level, steps, runtime, player, mixer);
+    // The two schedules, driven on the same world: the one that pins the health
+    // bridge and the one that pins the state guard. Both literals are the oracle's
+    // own and both print themselves in the header line.
+    static const KurtHurt kHealthHurts[] = {{20, 10}, {40, 25}, {60, 30}, {80, 35}, {200, 10}};
+    static const KurtHurt kHardLandHurts[] = {{220, 10}, {300, 4}};
+    const KurtHurt* hurts = hurtland ? kHardLandHurts : kHealthHurts;
+    const size_t hurtCount =
+        hurtland ? sizeof(kHardLandHurts) / sizeof(kHardLandHurts[0])
+                 : sizeof(kHealthHurts) / sizeof(kHealthHurts[0]);
+    *out = dumpKurtHurt(level, steps, runtime, player, mixer, hurts, hurtCount);
     return true;
 }
 
@@ -1583,10 +1606,10 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
-        if (what == "hurt") {
+        if (what == "hurt" || what == "hurtland") {
             std::string got;
             std::string why;
-            if (!kurtHurtDump(level, ticks, data, spritesArg, &got, &why)) {
+            if (!kurtHurtDump(level, ticks, what == "hurtland", data, spritesArg, &got, &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
             }
@@ -2235,13 +2258,17 @@ int main(int argc, char** argv) {
                 failures++;
             }
         }
+    }
 
     // The one health, seen from both sides of the class split: hurt_kurt (opcode 109)
     // through the ScriptRuntime, and the death transition and HUD through the Player.
     // The oracle prints hp= and vmhp= off one property and cannot express a
     // divergence; a port that gave the runtime its own copy of Kurt's health would
-    // print vmhp dropping while hp stayed 100 and would never kill him. See
-    // dumpKurtHurt for why every hurt lands in the air.
+    // print vmhp dropping while hp stayed 100 while the entity kept walking. See
+    // dumpKurtHurt for why every hurt lands in the air. What this run does NOT pin
+    // is a script hurt that reaches zero and kills him: the hurts do take his health
+    // to 0 at step 80, but the step that makes him Dead is the health-zero-on-a-floor
+    // transition at the landing, which golden/L3_kurt_lethal.txt pins on its own.
     {
         std::string expected;
         if (!readText("golden/L3_kurt_hurt.txt", &expected)) {
@@ -2250,18 +2277,49 @@ int main(int argc, char** argv) {
         } else {
             std::string got;
             std::string why;
-            if (!kurtHurtDump(3, 220, data, spritesArg, &got, &why)) {
+            if (!kurtHurtDump(3, 220, false, data, spritesArg, &got, &why)) {
                 printf("FAIL L3_kurt_hurt: %s\n", why.c_str());
                 failures++;
             } else if (got == expected) {
-                printf("PASS L3_kurt_hurt: hurt_kurt moves the one health the death transition "
-                       "and the HUD read, and takes Kurt to Dead on the landing\n");
+                printf("PASS L3_kurt_hurt: the health hurt_kurt writes is the one the death "
+                       "transition and the HUD read (hp == vmhp at every step); the death on the "
+                       "landing is the health-zero-on-a-floor step L3_kurt_lethal pins\n");
             } else {
                 printf("FAIL L3_kurt_hurt: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }
     }
+
+    // The state half of the same guard (review-11 R11-3). Kurt.Hurt declines a hurt
+    // while the entity is Dead, Knocked, GetUp or HardLand (Kurt.Combat.cs:120), and
+    // this port splits the class, so the guard is only faithful if the state it reads
+    // is the state the machine is in. This run hard-lands him at 183 (K_CRASHL to 286),
+    // hurts him inside the window -- the oracle declines, hp stays 90 -- and hurts him
+    // again after it, where the guard has released and the health moves. Two mutants,
+    // one per arm: a Kurt::state_ nothing writes (the pre-fix shape) damages at 220, and
+    // a guard that always fires does not damage at 300. See dumpKurtHurt for why the
+    // second damage is 4 and not 5.
+    {
+        std::string expected;
+        if (!readText("golden/L3_kurt_hurtland.txt", &expected)) {
+            printf("FAIL L3_kurt_hurtland: no golden file golden/L3_kurt_hurtland.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtHurtDump(3, 340, true, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_hurtland: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_hurtland: hurt_kurt is refused through the whole K_CRASHL "
+                       "window and lands again the step the guard releases, so hurt() reads the "
+                       "entity's one state and not a copy\n");
+            } else {
+                printf("FAIL L3_kurt_hurtland: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
     }
 
     // The rolling basis (ObjectMotion.Roll), driven directly: see dumpRolling.
