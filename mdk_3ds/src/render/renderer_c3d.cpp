@@ -1777,10 +1777,13 @@ static void drawDiagnostic(RendererC3D* r) {
 // different matrix and target, not a second walk of the scene.
 //
 // THE ONLY REPLAY POINT IS mdk_render_end_frame, once per eye. A mid-frame
-// replay is not a harmless early flush: it draws into whatever target
-// installEye last selected and consumes the records, so the eye loop that
-// follows would replay an empty queue. That is why the canvas and inset seams
-// below do not flush (review-1 F4).
+// replay is not a harmless early flush: it emits the frame's records an extra
+// time into whatever target installEye last selected, and a flushDraws-shaped
+// one (this replay plus a reset) consumes the records as well, so the eye loop
+// that follows would replay an empty queue. That is why the canvas and inset
+// seams below do not flush (review-1 F4) -- and, since review-3 F1, why none of
+// them may draw by itself either: an immediate C3D_DrawArrays in a seam is
+// outside the per-eye replay, so it lands in one target or in none.
 static void replayQueue(RendererC3D* r) {
     if (!r || r->queue.empty() || !r->inFrame) {
         return;
@@ -1814,14 +1817,16 @@ static void replayQueue(RendererC3D* r) {
     // F4). With the per-eye replay at the frame end, a mid-frame flush emits
     // THIS frame's queued records into whatever target installEye last
     // selected -- the previous frame's last eye, or no target at all on frame 1
-    // -- and then empties the queue, so the eye loop replays nothing: a scene
-    // that vanished behind a correct clear colour.
+    // -- and a flushDraws-shaped one empties the queue too, so the eye loop
+    // replays nothing: a scene that vanished behind a correct clear colour.
     //
     // Nothing calls this on the 3DS today (canvas_begin outside the backends is
     // an empty grep) and mdk_render_canvas_quad is a no-op on this backend, so
     // the flush was never load-bearing -- it was a latent black screen. When the
     // HUD lands it must be a RECORD IN THE QUEUE, drawn inside the eye loop once
-    // per eye; docs/OPEN_ITEMS.md carries the requirement.
+    // per eye; docs/OPEN_ITEMS.md carries the requirement, and the gate that
+    // refuses a draw here covers canvas_quad, the seam hud_view.cpp actually
+    // calls (review-3 F1).
     (void)r;
 }
  void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* q) { (void)r; (void)q; }

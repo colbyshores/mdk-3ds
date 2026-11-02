@@ -73,8 +73,11 @@ measured or cited reason, and the batch that closes one should delete its entry.
     `Pass`, in `Pass`'s own order and in queue order inside a bucket, which is what
     `Renderer.cs:1004,1049-1057` does with its one command list. The buckets are
     shared code (`render/draw_queue.{h,cpp}`) because the order is the oracle's, not
-    a backend's; the flush point is the end of the frame's 3D scene — `canvas_begin`,
-    an inset's boundary, `end_frame`. Measured on the pinned scene, the reordering
+    a backend's. The **submission point is per-backend and is not this sentence**: Vulkan
+    submits at `canvas_begin`, at an inset's boundary and at `end_frame`; Citro3D submits
+    once per eye inside `end_frame` and must not submit anywhere else (`render.h` is the
+    seam statement; `draw_queue.h` deliberately names no flush point after review-3 F6).
+    Measured on the pinned scene, the reordering
     changes no pixels at frame 1 or frame 60: frame 1 queues 154 Solid + 1
     DoubleSided and frame 60 queues 154 Solid + 30-33 DoubleSided, so the queue order
     already happened to be pass-grouped. It bites in the arenas with `Blended` and
@@ -360,9 +363,29 @@ different kind and it is still open — what it is has not been identified.
     **The requirement for whoever lands the HUD or the sniper insets:** a canvas
     quad or an inset is a RECORD IN THE QUEUE, drawn inside the eye loop once per
     eye with its own viewport (the C# begins a pass per inset,
-    `Renderer.Insets.cs:RenderInset`), never a mid-frame flush. Pinned
-    structurally by `PASS C3dFrame` (`tests/scripts/c3d_frame_test.sh`), which
-    goes red — with its own arms proved — if a flush returns to a seam.
+    `Renderer.Insets.cs:RenderInset`), never a mid-frame flush **and never an
+    immediate draw in the seam itself** — `mdk_render_canvas_quad` is the seam
+    `game/hud_view.cpp:162,198,255` actually drives, and it is now covered by the
+    gate with the other five (review-3 F1). Pinned structurally by `PASS C3dFrame`
+    (`tests/scripts/c3d_frame_test.sh`), which goes red — with its own arms proved,
+    and each arm compiled clean by devkitARM first, so no compiler catches these —
+    if a flush or a bare draw returns to a seam, if a loop statement is guarded to
+    one eye, if the queue is reset inside the loop, or if `installEye` leaves its
+    place as the loop's first per-eye statement.
+  * **What the HUD's queue record has to be, when it lands** (review-3 oq3, and the
+    reason the gate line alone is not the whole answer): `DrawQueue` holds
+    `MeshDraw`, which carries no projection, no viewport and no "this is screen
+    space" marker, so "just put the HUD in the queue" is not implementable as
+    written — the record needs an orthographic/viewport payload **and** a flat flag.
+    The vault has the shape and the failure mode: `30-architecture/patterns/
+    stereo-shear-2d-ui-must-replay-flat.md` (a 2D draw replayed with the per-eye
+    transform picks up real parallax, so it must replay with the eye offset zeroed;
+    the symptom is a one-eye edge bar and it is INVISIBLE in mono) and
+    `citro3d-display-list-stereo-replay-non-fast3d.md` ("2D/HUD draws issued after
+    the replay trigger are the hard case" — Forsaken dropped its HUD and its
+    missile-cam inset to one eye this way and ended up disabling replay). So the
+    HUD batch is a `MeshDraw`/queue extension plus the flat marker, not a seam
+    edit. Not observable today: the 3DS frontend draws no HUD.
   * **`gfxSet3D(true)` is called once at init**, not per frame from the slider.
     That is the common homebrew pattern and it is what the current code needs
     (the left buffer is shown either way), but Forsaken's note says its own

@@ -34,6 +34,25 @@
 # with any argument, anywhere in the file. Three arms reproduce exactly those
 # three mutants, so the gate cannot print PASS over any of them.
 #
+# UNCONDITIONAL, AND THE EMITTERS ENUMERATED (review-3 F1/F2/F3). "Inside the
+# eye loop" is NOT the same claim as "executed once per eye". A call the loop
+# runs only for `eye == 0`, and a `queue.reset()` added inside the loop, each
+# left every review-2 check green — the guarded call is still exactly one call
+# site and still inside the loop, and the reset is what makes the SECOND eye
+# replay an empty queue, which is the defect this file exists to prevent.
+# `installEye`, the call whose misplacement WAS batch 30's black screen, was
+# pinned by nothing. And the seam list named the five canvas/inset seams but
+# not `mdk_render_canvas_quad`, the one the live HUD path calls
+# (mdk_core/src/game/hud_view.cpp:162,198,255), so an immediate draw there was
+# accepted green. So the checks now pin the loop BODY's statement set — each of
+# installEye / replayQueue / drawDiagnostic must be a depth-0 statement of the
+# loop body, installEye first, and nothing resets the queue inside it — they
+# pin canvas_quad with the other seams, and they CLOSE the set of places that
+# may emit at all: every C3D_DrawArrays/C3D_DrawElements site in the file is
+# inside drawRecorded or drawDiagnostic, and drawRecorded is called only by
+# replayQueue. "The only emission point is the per-eye loop" is then a checked
+# property rather than a reading of the file.
+#
 # WHAT THIS DOES NOT COVER, stated plainly: it reads the source, so it pins the
 # STRUCTURE and not the pixels. Whether the triangle appears on a screen, whether
 # the depth state is right, and what any of it costs on a 268 MHz ARM11 stay
@@ -58,6 +77,18 @@ SRC = open(PATH, errors="replace").read()
 # The per-eye loop inside mdk_render_end_frame. Named once here so the checks and
 # the mutation arms all resolve the same block.
 EYE_LOOP = r"for[ \t]*\([ \t]*int[ \t]+eye"
+
+# The seams a caller may drive between mdk_render_begin_frame and
+# mdk_render_end_frame. canvas_quad is here because hud_view.cpp calls it and
+# because "the seams do not flush" was never the whole rule: a seam may not draw
+# by itself either (review-3 F1).
+SEAMS = ("mdk_render_canvas_begin", "mdk_render_canvas_quad", "mdk_render_canvas_end",
+         "mdk_render_present", "mdk_render_begin_inset", "mdk_render_end_inset")
+
+# Anything that puts work in front of the GPU.
+EMIT_ANY = (r"flushDraws\s*\(|replayQueue\s*\(|drawRecorded\s*\(|"
+            r"C3D_DrawArrays\s*\(|C3D_DrawElements\s*\(")
+EMIT_DRAW = r"C3D_DrawArrays\s*\(|C3D_DrawElements\s*\("
 
 
 def code_lines(text):
@@ -143,6 +174,74 @@ def first_call_line(block, name):
     return None
 
 
+def line_depths(block):
+    """Brace depth at the START of each line of `block`, relative to the block's
+    own '{': a statement written directly in the block is depth 0, one inside an
+    `if` in the block is depth 1.
+
+    This is what turns "inside the loop" into "executed every time the loop
+    runs" (review-3 F2): `if (eye == 0) { drawDiagnostic(r); }` keeps exactly
+    one call site inside the loop, but the call sits at depth 1."""
+    depths = []
+    d = -1
+    depths.append(d)
+    for ch in block:
+        if ch == "\n":
+            depths.append(d)
+        elif ch == "{":
+            d += 1
+        elif ch == "}":
+            d -= 1
+    return depths
+
+
+def statement_at(block, name):
+    """(line index, depth) of the first code line of `block` that IS a statement
+    calling `name(` — the whole line, so a call wrapped in `if (eye == 0)` or
+    `for (...)` on the same line is not a match — or None.
+
+    Depth is the second element and is the load-bearing half: a call on its own
+    line one level deeper is a guarded call, not an unconditional one."""
+    if block is None:
+        return None
+    depths = line_depths(block)
+    for i, line in code_lines(block):
+        if re.match(re.escape(name) + r"\s*\(", line.strip()):
+            return (i, depths[i] if i < len(depths) else None)
+    return None
+
+
+def first_statement_line(block):
+    """Line index of the first depth-0 code line of `block`, or None. The
+    block's own `{` line is depth -1 by construction and comments are dropped,
+    so this is the first statement the block actually runs."""
+    if block is None:
+        return None
+    depths = line_depths(block)
+    for i, line in code_lines(block):
+        if i < len(depths) and depths[i] == 0 and line.strip():
+            return i
+    return None
+
+
+def line_range(text, sp):
+    """1-based inclusive (first line, last line) of an absolute (start, end)
+    span, so a file-wide call site can be tested for membership in a body."""
+    if sp is None:
+        return None
+    return (text.count("\n", 0, sp[0]) + 1, text.count("\n", 0, sp[1]))
+
+
+def sites(text, pattern):
+    """Call sites of a regex over the whole file, comments excluded.
+
+    Separate from calls() because that helper builds a definition-skip out of
+    the pattern, and an alternation breaks it: `A|B` would make every line
+    containing B look like a definition."""
+    return [(i + 1, line.strip()) for i, line in code_lines(text)
+            if re.search(pattern, line)]
+
+
 def calls(text, pattern):
     """Call sites of a regex pattern: comment lines and the pattern's own
     definition line are excluded."""
@@ -198,6 +297,10 @@ def adjudicate(text, quiet=False):
     replay_at = first_call_line(loop, "replayQueue")
     diag_at = first_call_line(loop, "drawDiagnostic")
 
+    replay_stmt = statement_at(loop, "replayQueue")
+    diag_stmt = statement_at(loop, "drawDiagnostic")
+    install_stmt = statement_at(loop, "installEye")
+
     diag = calls(text, r"C3D_DrawArrays\(GPU_TRIANGLES, 0, 3\)")
     rep.check("diagnostic-drawn-once",
               len(diag) == 1 and diag_body is not None and
@@ -224,22 +327,100 @@ def adjudicate(text, quiet=False):
     rep.check("replay-only-at-frame-end",
               len(replay) == 1 and replay_at is not None,
               "%d replay call site(s) in the file, any argument; inside the eye loop: %s "
-              "(a second one emits into the last-installed target and empties the queue)"
+              "(a second one emits the frame's records an extra time into whichever target "
+              "installEye last ran; a flushDraws-shaped one also empties the queue, so the "
+              "eyes after it replay nothing)"
               % (len(replay), "yes" if replay_at is not None else "no"))
 
+    # The loop body's statement set (review-3 F2). Each of the three calls must
+    # be a whole statement at depth 0 of the loop body: one call site inside the
+    # loop is not enough, because `if (eye == 0) { drawDiagnostic(r); }` is one
+    # call site inside the loop and draws the triangle in one eye only.
+    guarded = []
+    for label, stmt in (("installEye", install_stmt), ("replayQueue", replay_stmt),
+                        ("drawDiagnostic", diag_stmt)):
+        if stmt is None:
+            guarded.append(label + "(not a bare statement of the loop body)")
+        elif stmt[1] != 0:
+            guarded.append("%s(depth %s)" % (label, stmt[1]))
+    rep.check("eye-loop-statements-unconditional", not guarded,
+              "installEye/replayQueue/drawDiagnostic are each a depth-0 statement of the "
+              "loop body: %s (a call guarded to one eye is a triangle in one eye and a hole "
+              "in the other, and it is still exactly one call site inside the loop)"
+              % ("clean" if not guarded else ", ".join(guarded)))
+
+    # Nothing may empty the queue between the two eyes (review-3 F2): the second
+    # eye replays the SAME records, so a reset inside the loop hands eye 2 an
+    # empty queue, which is the black screen this file exists to prevent.
+    in_loop_reset = sites(loop or "", r"queue\.(?:reset|clear)\s*\(")
+    rep.check("no-queue-reset-in-the-eye-loop", not in_loop_reset,
+              "%d queue reset(s) inside the eye loop; the reset belongs after the LAST eye "
+              "(reset inside it and the second eye replays nothing)"
+              % len(in_loop_reset))
+
+    # installEye is the call batch 30 was written to place (review-3 F3). Hoisted
+    # above the loop it is the pre-batch-30 shape: both eyes replay into the last
+    # target installed, and the panel shows the other one.
+    install = call_sites(text, "installEye")
+    install_line = install[0][1] if len(install) == 1 else ""
+    first_stmt = first_statement_line(loop)
+    rep.check("install-eye-first-in-loop",
+              len(install) == 1 and install_stmt is not None and
+              install_stmt[1] == 0 and first_stmt is not None and
+              install_stmt[0] == first_stmt,
+              "%d installEye call(s); inside the eye loop: %s at depth %s, first statement: "
+              "%s (hoisted above the loop, every eye draws into the last target installed)"
+              % (len(install), "yes" if install_stmt is not None else "no",
+                 install_stmt[1] if install_stmt else "-",
+                 "yes" if install_stmt and first_stmt is not None and
+                 install_stmt[0] == first_stmt else "no"))
+
+    rep.check("install-eye-per-eye-target",
+              len(install) == 1 and "targetLeft" in install_line and
+              "targetRight" in install_line and
+              re.search(r"eyes\.offset\s*\[\s*eye\s*\]", install_line) is not None,
+              "the one installEye call selects the target BY EYE and passes the per-eye "
+              "offset: %s (a fixed target sends both eyes to one buffer)"
+              % (install_line if install_line else "no single call"))
+
     leaking = []
-    for seam in ("mdk_render_canvas_begin", "mdk_render_canvas_end", "mdk_render_present",
-                 "mdk_render_begin_inset", "mdk_render_end_inset"):
+    for seam in SEAMS:
         b = body(text, seam)
         if b is None:
             leaking.append(seam + "(missing)")
             continue
         for i, line in code_lines(b):
-            if re.search(r"flushDraws\s*\(|replayQueue\s*\(", line):
+            if re.search(EMIT_ANY, line):
                 leaking.append("%s:%d" % (seam, i + 1))
     rep.check("no-mid-frame-flush", not leaking,
-              "canvas/inset/present seams emit nothing: %s"
+              "the canvas (including canvas_quad, the seam hud_view.cpp drives), inset and "
+              "present seams emit nothing at all: %s"
               % ("clean" if not leaking else ", ".join(leaking)))
+
+    # The emission set is CLOSED (review-3 F1): a seam that does not call
+    # replayQueue can still draw by itself, and the queue is not the only thing
+    # that can reach the GPU. Every draw call in the file must live in one of the
+    # two functions the per-eye loop reaches, and drawRecorded must be reachable
+    # only from the replay.
+    allowed = [line_range(text, body_span(text, n))
+               for n in ("drawRecorded", "drawDiagnostic")]
+    stray = [loc for ln, loc in sites(text, EMIT_DRAW)
+             if not any(r and r[0] <= ln <= r[1] for r in allowed)]
+    rep.check("emission-sites-closed",
+              not stray and all(allowed),
+              "%d draw call(s) outside drawRecorded/drawDiagnostic: %s (an immediate draw "
+              "anywhere else is outside the per-eye replay, so it lands in one target or "
+              "none)" % (len(stray), "none" if not stray else "; ".join(stray)))
+
+    rec = call_sites(text, "drawRecorded")
+    rec_range = line_range(text, body_span(text, "replayQueue"))
+    stray_rec = [loc for ln, loc in rec
+                 if not (rec_range and rec_range[0] <= ln <= rec_range[1])]
+    rep.check("recorded-draws-only-from-the-replay",
+              len(rec) >= 1 and not stray_rec,
+              "%d drawRecorded call(s), %d outside replayQueue: %s (a record drawn from a "
+              "seam skips the eye loop)"
+              % (len(rec), len(stray_rec), "none" if not stray_rec else "; ".join(stray_rec)))
 
     depth = calls(text, r"C3D_DepthTest\(")
     rep.check("depth-state-single-writer", len(depth) == 1,
@@ -292,6 +473,91 @@ def arm_seam_replay(text, fn, arg):
     return text[:m.end()] + "\n    replayQueue(%s);" % arg + text[m.end():]
 
 
+def arm_guard_loop_statement(text, name):
+    """Wrap one statement of the eye loop in `if (eye == 0) { ... }`.
+
+    Still exactly one call site, still inside the loop, and it runs for ONE eye
+    only (review-3 F2). The optimisation that writes it is a plausible one: the
+    diagnostic is a debug aid, so "only draw it in the left eye" reads as a
+    saving on a 268 MHz ARM11."""
+    sp = eye_loop_span(text)
+    if sp is None:
+        return text
+    a, b = sp
+    loop = text[a:b]
+    m = re.search(r"(?m)^([ \t]*)(" + name + r"\w*\([A-Za-z0-9_]*\);)[ \t]*\n", loop)
+    if m is None:
+        return text
+    ind, call = m.group(1), m.group(2)
+    wrapped = "%sif (eye == 0) {\n%s    %s\n%s}\n" % (ind, ind, call, ind)
+    loop2 = loop[:m.start()] + wrapped + loop[m.end():]
+    return text[:a] + loop2 + text[b:]
+
+
+def arm_reset_in_loop(text):
+    """Add `r->queue.reset();` as the last statement of the eye loop, the shape
+    a tidy-up writes when it wants the queue released as soon as it is used.
+    The second eye then replays an empty queue (review-3 F2)."""
+    sp = eye_loop_span(text)
+    if sp is None:
+        return text
+    a, b = sp
+    return text[:b - 1] + "        r->queue.reset();\n    " + text[b - 1:]
+
+
+def arm_install_hoisted(text):
+    """Move installEye out of the eye loop and above it — the pre-batch-30 shape
+    that made the frame a screen of clear colour (review-3 F3). The hoist has to
+    name one target, because there is no `eye` outside the loop, which is itself
+    the tell: the per-eye target only exists inside the loop."""
+    sp = eye_loop_span(text)
+    if sp is None:
+        return text
+    a, b = sp
+    loop = text[a:b]
+    m = re.search(r"(?m)^([ \t]*)(installEye\([^)]*\);)[ \t]*\n", loop)
+    if m is None:
+        return text
+    ind = m.group(1)
+    loop2 = loop[:m.start()] + loop[m.end():]
+    spliced = text[:a] + loop2 + text[b:]
+    cut = text[:a].rfind("\n") + 1
+    hoisted = ind + "installEye(r, r->targetLeft, r->eyes.offset[0]);\n"
+    return spliced[:cut] + hoisted + spliced[cut:]
+
+
+def arm_install_after_replay(text):
+    """Swap installEye and replayQueue inside the loop: the replay goes to
+    whatever target the PREVIOUS eye installed. Every count is still one and
+    every call is still a depth-0 statement of the loop body, so only the
+    ORDER inside the loop can catch it."""
+    sp = eye_loop_span(text)
+    if sp is None:
+        return text
+    a, b = sp
+    loop = text[a:b]
+    mi = re.search(r"(?m)^([ \t]*)(installEye\([^)]*\);)[ \t]*\n", loop)
+    mr = re.search(r"(?m)^([ \t]*)(replayQueue\([^)]*\);)[ \t]*\n", loop)
+    if mi is None or mr is None or mi.start() > mr.start():
+        return text
+    loop2 = loop[:mi.start()] + loop[mi.end():]
+    shift = -len(mi.group(0))
+    pos = mr.end() + shift
+    return text[:a] + loop2[:pos] + mi.group(0) + loop2[pos:] + text[b:]
+
+
+def arm_canvas_quad_emits(text, stmt):
+    """Give mdk_render_canvas_quad a body that reaches the GPU, which is what a
+    HUD batch writes if it reads the seam contract as "do not flush" instead of
+    "the queue is the only way" (review-3 F1)."""
+    one = " void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* q) { (void)r; (void)q; }"
+    if one not in text:
+        return text
+    return text.replace(one,
+                        " void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* q) {\n"
+                        "    (void)r; (void)q;\n    " + stmt + "\n }", 1)
+
+
 real = adjudicate(SRC)
 
 ARMS = [
@@ -316,6 +582,22 @@ ARMS = [
      lambda s: s.replace("    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);",
                          "    C3D_DepthTest(true, GPU_LEQUAL, GPU_WRITE_ALL);\n"
                          "    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);", 1)),
+    # review-3's five mutants, reproduced as arms so the checks that close those
+    # findings cannot be satisfied by a reading of the file.
+    ("canvas-quad-draws-immediately",
+     lambda s: arm_canvas_quad_emits(s, "C3D_DrawArrays(GPU_TRIANGLE_STRIP, 0, 4);")),
+    ("canvas-quad-draws-a-record-directly",
+     lambda s: arm_canvas_quad_emits(s, "mdk::MeshDraw rec;\n    drawRecorded(asC3d(r), &rec);")),
+    ("diagnostic-guarded-to-one-eye",
+     lambda s: arm_guard_loop_statement(s, "drawDiagnostic")),
+    ("replay-guarded-to-one-eye",
+     lambda s: arm_guard_loop_statement(s, "replayQueue")),
+    ("queue-reset-inside-the-eye-loop", arm_reset_in_loop),
+    ("install-hoisted-above-the-eye-loop", arm_install_hoisted),
+    ("install-after-its-replay", arm_install_after_replay),
+    ("install-fixed-target-for-both-eyes",
+     lambda s: s.replace("installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);",
+                         "installEye(r, r->targetLeft, 0.0f);", 1)),
 ]
 
 print("c3d_frame: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

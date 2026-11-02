@@ -8494,3 +8494,236 @@ does show the change.
 * review-2 oq2 (did the owner actually approve `--each-commit`) and oq3 (should the
   diagnostic ship at all, i.e. owner task 14's runtime off-switch) are the owner's.
 * No gate, test, golden or `PROTECTED` file was edited, added to or relaxed.
+
+## Iteration 61 — batch 33: the frame gate closes the set of places that may emit (review-3 F1/F2/F3/F6/F7; F4/F5 owner-gated)
+
+**Risk: high** — the diff is test-and-comment only, but it dispositions a High
+finding against the same gate as batch 32, on the same target this host cannot look
+at, and it adds six checks whose own unfalsifiability is the exact claim review-3
+attacked. It also confirms two findings (F4, F5) that a batch is not permitted to
+fix, because the only file that can answer them protects itself.
+
+### The review this batch answers
+
+`logs/ralph-pi/run-20261102-004416/review-3.md`, on `70b292c..00312180` plus the
+uncommitted harness work. **F1 High, F5 High, F2/F3/F4/F6 Medium, F7 Low**, verdict
+INCOMPLETE. The reviewer built five mutants of its own rather than reading the arms,
+and independently cleared batch 32's remediation itself (both review-2 mutants now
+turn a CHECK red, the arms' fail-closed property, the gate being monotonically
+stricter than `70b292c`, the `eye_loop_span` offset space, `validate_commit_chain`'s
+fail-closed paths, `--self-test`'s honesty, the new `render.h` Vulkan claim, the
+frame pair, and the language/math contract). Nothing here re-litigates any of that.
+
+**Disposition: F1, F2, F3, F6, F7 fixed; F4 and F5 confirmed and owner-gated.** No
+finding was rebutted, and no gate, golden or `PROTECTED` file was touched.
+
+### Prior-solution lookup (all three sources, before implementing)
+
+* **Pi knowledge `mdk-sdl`** (3916 chunks / 937 files) — `knowledge_search` on the
+  per-eye replay seam returned the live `canvas_begin` comment, `docs/OPEN_ITEMS.md`'s
+  per-eye-replay bullet (which names the vault pattern), the gate's own check text,
+  and `hud_view.cpp`'s `fillRect`/`frameRect` — i.e. it pointed straight at the seam
+  review-3 F1 says is unpinned. Leads, verified against the tree.
+* **Obsidian** — no MCP server is exposed in this Pi session, so the vault was read
+  read-only from `/mnt/nas/Vaults/port-docs`. Two patterns answered the batch:
+  `30-architecture/patterns/citro3d-display-list-stereo-replay-non-fast3d.md`
+  (caveat: *"2D/HUD draws issued after the replay trigger are the hard case"* —
+  Forsaken's replay dropped menu text, reticles and the missile-cam inset to one eye
+  and it ended up **disabling replay**), and
+  `stereo-shear-2d-ui-must-replay-flat.md` (a 2D draw replayed with the per-eye
+  transform picks up real parallax; it must replay with the eye offset zeroed, and
+  the symptom is a one-eye edge bar **invisible in mono**). These answer review-3's
+  oq3 and are recorded in `docs/OPEN_ITEMS.md`.
+* **Cognee** — not reachable and not exposed as a tool in this harness; recorded as
+  not consulted rather than as empty.
+
+### F1 (High, confirmed, FIXED): the emission set is now closed, not listed
+
+Reproduced first: `mdk_render_canvas_quad` is a one-line no-op
+(`renderer_c3d.cpp:1827`) and `hud_view.cpp:162,198,255` calls only that seam, while
+the seam list named five functions and the forbidden pattern named only
+`flushDraws|replayQueue`. So the reviewer's `C3D_DrawArrays(GPU_QUADS, 0, 4);`
+inside `canvas_quad` was accepted green, and `docs/CONTINUATION.md` claimed the
+opposite.
+
+Three changes, because "the seams do not flush" was never the whole rule:
+
+1. `canvas_quad` joined `SEAMS`, and the seam pattern is now **every emitter**:
+   `flushDraws | replayQueue | drawRecorded | C3D_DrawArrays | C3D_DrawElements`.
+2. New check `emission-sites-closed`: every `C3D_DrawArrays`/`C3D_DrawElements`
+   call site in the file lies inside `drawRecorded` or `drawDiagnostic`.
+3. New check `recorded-draws-only-from-the-replay`: every `drawRecorded` call site
+   lies inside `replayQueue`.
+
+(2) and (3) together are what makes *"the only emission point is the per-eye loop"*
+a checked property instead of a reading of the file: a seam cannot draw, a new
+function cannot draw, and the one function that draws records is reachable only from
+the replay the loop calls.
+
+Arms: `canvas-quad-draws-immediately` and `canvas-quad-draws-a-record-directly` (the
+second is the shape a HUD batch writes when it reads the contract as "do not flush"
+rather than "the queue is the only way": it builds a `MeshDraw` and calls
+`drawRecorded` itself). Both turn two checks red.
+
+One correction to the reviewer's evidence, in its favour rather than against it: the
+quoted mutant `C3D_DrawArrays(GPU_QUADS, 0, 4)` does not compile on this target —
+citro3d has no `GPU_QUADS` (`error: 'GPU_QUADS' was not declared in this scope; did
+you mean 'GPU_GAS'?`). The arm therefore emits `GPU_TRIANGLE_STRIP`, which does
+compile, so the arm is a mutant a builder could actually ship. The finding itself
+stands unchanged.
+
+### F2 (Medium, confirmed, FIXED): "inside the loop" now means "runs every iteration"
+
+New check `eye-loop-statements-unconditional`: `installEye`, `replayQueue` and
+`drawDiagnostic` must each be a **whole statement at brace depth 0 of the loop
+body** — the line starts with the call, and `line_depths()` (a new helper, counting
+from the loop's own `{`) says depth 0. That kills both of the reviewer's shapes:
+`if (eye == 0) { drawDiagnostic(r); }` is depth 1, and `if (eye == 0)
+drawDiagnostic(r);` does not start with the call. New check
+`no-queue-reset-in-the-eye-loop` refuses `queue.(reset|clear)` anywhere inside the
+loop, since the second eye replays the same records.
+
+Arms: `diagnostic-guarded-to-one-eye`, `replay-guarded-to-one-eye` (the second is
+there to prove the check is not diagnostic-specific: `replay-only-at-frame-end`
+stays green under it, so only the new check can catch it), and
+`queue-reset-inside-the-eye-loop`.
+
+### F3 (Medium, confirmed, FIXED): `installEye` is pinned
+
+New checks `install-eye-first-in-loop` (exactly one call site in the file, inside
+the loop, at depth 0, and it is the loop body's first depth-0 statement) and
+`install-eye-per-eye-target` (that call names both `targetLeft` and `targetRight`
+and passes `eyes.offset[eye]`, so a fixed target cannot pass).
+
+Arms: `install-hoisted-above-the-eye-loop` (the pre-batch-30 shape),
+`install-after-its-replay` (valid C++, every count still one, only the order wrong —
+the replay goes to the previous eye's target), and `install-fixed-target-for-both-eyes`.
+
+### F6 / F7 (Medium / Low, confirmed, FIXED): the contract said one thing in two files
+
+`mdk_core/src/render/draw_queue.h` carried the sentence `render.h` had just been
+corrected away from, verbatim ("flushes at the end of the 3D scene — before the 2D
+canvas, before an inset's viewport changes, and at the frame's end"). It now names no
+flush point at all, says why, and points at `render.h` as the seam statement.
+`render.h`, the `replayQueue` comment and the `canvas_begin` comment now distinguish
+what a bare second `replayQueue` does (emits the records an extra time into the last
+target installed) from what a `flushDraws`-shaped emit does (that **and** emptying
+the queue), which is the distinction review-7/F7 said the old wording blurred. The
+gate's own detail string for `replay-only-at-frame-end` was wrong the same way and is
+fixed with them.
+
+### F4 / F5 (Medium / High, confirmed, OWNER-GATED — not fixable by a batch)
+
+Both were re-verified by execution, not read:
+
+```
+$ git show HEAD:ralph-pi.sh | grep -c -- '--each-commit'
+0
+$ grep -c -- '--each-commit' ralph-pi.sh          # working tree
+1
+$ grep -n 'each-commit' tools/runner/gates_batch_integrity.py
+182:        "ralph-pi.sh": [..., "--staged", "--each-commit"],
+$ python3 tools/runner/gates_batch_integrity.py --base 1e2593c --head 00312180
+BATCH INTEGRITY: FAIL
+  - batch must add exactly one frame PNG in docs/frames/; found 2      # rc 1
+$ python3 tools/runner/gates_batch_integrity.py --base 1e2593c --head 00312180 --each-commit
+BATCH INTEGRITY: PASS                                                  # rc 0
+```
+
+So the acceptance change is live, the guard's marker list now *requires* it, and
+reverting the loop to its committed form would turn `tools/check.sh` red on a
+`PROTECTED` gate. Neither file is reachable by a batch: `gates_batch_integrity.py` is
+in its own `PROTECTED` set, and `ralph-pi.sh`'s uncommitted state is the owner's
+harness work that this loop has been staging around since batch 31. Reverting it in a
+builder batch would be a builder deciding the loop's own acceptance criterion, which
+`CONTINUATION.md` owner task (1) already says needs an owner sign-off line. Recorded
+as owner task (1) with both new facts. **This batch therefore ends with a High
+finding open by construction, and says so rather than closing it by editing the gate.**
+
+### Review-3's open questions, dispositioned
+
+* **oq1 (does the owner approve `--each-commit`)** — nothing in the tree answers it;
+  owner task (1), now with the marker-list fact attached.
+* **oq2 (is `canvas_quad` deliberately out of scope)** — it is in scope now; the
+  record at `CONTINUATION.md` is corrected to the exact set the gate refuses.
+* **oq3 (what is the intended shape of the HUD on Citro3D)** — answered from the
+  vault, and the answer is that the gate line is *not* sufficient on its own:
+  `DrawQueue` holds `MeshDraw`, which carries no projection, no viewport and no
+  "screen space" marker, so the HUD is a queue/record extension with a flat
+  (zero-parallax) flag, not a seam edit. Both vault patterns and the Forsaken
+  failure are quoted in `docs/OPEN_ITEMS.md`.
+* **oq4 (what listens on `127.0.0.1:8731`)** — measured here: `ss -ltnp` shows a
+  **loopback-only** listener, and `GET /v1/models` returns
+  `['halogen-qwen3.8-flash-next', 'decider-0.8b', 'qwen3-embedding-0.6b',
+  'qwen3-reranker-0.6b', 'qwen3guard-gen-0.6b', 'flux2-klein-4b']`. The configured
+  embedding model (`qwen3-embedding-0.6b`) is served locally, so project source does
+  not leave the host for embedding. Recorded, not changed: the line is the owner's.
+
+### Three bugs in this batch's own first version, caught by its own arms
+
+1. `calls()` builds its definition-skip out of the pattern it is given, so handing it
+   the alternation `C3D_DrawArrays\s*\(|C3D_DrawElements\s*\(` made **every** line
+   containing `C3D_DrawElements(` look like a definition and silently skip it — a
+   check that could never see its own subject. Fixed by a separate `sites()` helper
+   with no definition-skip, and the reason is in its docstring.
+2. `install-after-its-replay` spliced the call back to the position it had just
+   removed (inserting at the replay's start, not its end), so the "mutant" was the
+   original file. The arm's own fail-closed rule — a mutation that changes nothing is
+   a FAIL, never a skip — reported `only 15 of 16 arms adjudicated red`.
+3. The first `install-hoisted-above-the-eye-loop` moved the call verbatim above the
+   loop, which does not compile (`error: 'eye' was not declared in this scope`): an
+   arm that cannot be shipped is not a defect. It now hoists a fixed-target call,
+   which is both valid and the realistic tidy-up.
+
+### Evidence: every new mutant compiles, so no compiler catches any of them
+
+Each of the eight new arms was written out and syntax-checked with the **real**
+devkitARM compiler and the Makefile's own flags (`arm-none-eabi-g++ -march=armv6k
+-mtune=mpcore -mfloat-abi=hard -mtp=soft -mfpu=vfp -O2 -fno-math-errno
+-fno-strict-aliasing -D__3DS__ -DPLATFORM_3DS -DRENDERER_C3D … -fsyntax-only`),
+alongside the unmutated source:
+
+```
+CLEAN-COMPILE  canvas-quad-draws-immediately.cpp
+CLEAN-COMPILE  canvas-quad-draws-a-record-directly.cpp
+CLEAN-COMPILE  diagnostic-guarded-to-one-eye.cpp
+CLEAN-COMPILE  replay-guarded-to-one-eye.cpp
+CLEAN-COMPILE  queue-reset-inside-the-eye-loop.cpp
+CLEAN-COMPILE  install-hoisted-above-the-eye-loop.cpp
+CLEAN-COMPILE  install-after-its-replay.cpp
+CLEAN-COMPILE  install-fixed-target-for-both-eyes.cpp
+CLEAN-COMPILE  renderer_c3d.cpp          (the unmutated source, same command)
+```
+
+Mutants were built under `/tmp/mdkmut33`; nothing in the tree was mutated to test the
+gate — the arms hand text to `adjudicate()` in memory.
+
+### Gate results, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` → **exit 0**,
+  `All cases match the oracle.`, **444 PASS / 0 FAIL / 0 SKIP**, and the one line
+  that moved: `PASS C3dFrame (12 checks, 16 arms adjudicated red)` (was
+  `6 checks, 8 arms`). No golden changed.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`;
+  `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the pinned
+  `cpp=`, so `tests/frames/reference.sha256` was **not** regenerated;
+  `gates_smdh` SKIPPED (no built `.cia` read); `gates_batch_integrity PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **exit 0**, `3DSX mdk.3dsx`, `staged 69 files, 79M`, no warnings.
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `[100%] Built target
+  mdk`, no warnings.
+* Frame `docs/frames/2026-11-02-c3d-frame-gate-emitters.png` + `.txt`:
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, md5 `6769a13731983d65…`,
+  byte-identical to its predecessors because no renderer behaviour changed. The
+  capture ran on `DISPLAY=:99` (exported by `capture_cpp.sh:25`); no viewer was
+  opened on the operator's display.
+
+### What the gate still cannot reach, stated as a bound
+
+It reads source. It now pins which functions may emit, that the loop's three calls
+run unconditionally and in order, and that the queue survives the loop — it still
+cannot say whether the triangle appears on a screen, whether the depth state is
+right, or what the frame costs on a 268 MHz ARM11. **No 3DS emulator run and no
+Old-3DS hardware run was made: P6 stays open and Old-3DS timing stays UNMEASURED.**
+A new emitter that is *itself* called from the loop body (rather than from a seam)
+would still pass; the checks pin the seams and the emission set, not the call graph.

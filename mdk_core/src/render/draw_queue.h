@@ -47,10 +47,20 @@ const int32_t kDrawQueuePassCount = 6;
 
 // The frame's queued draws, bucketed by pass.
 //
-// One instance lives in each backend's renderer. The backend queues in
-// `mdk_render_draw_mesh` and flushes at the end of the 3D scene -- before the
-// 2D canvas, before an inset's viewport changes, and at the frame's end -- so
-// the scene's buckets are always drawn before anything that draws over them.
+// One instance lives in each backend's renderer, and the backend queues in
+// `mdk_render_draw_mesh`. WHERE it submits is the backend's own business and the
+// two backends differ, so this header deliberately names no flush point (the
+// sentence it used to carry -- "flushes before the 2D canvas, before an inset's
+// viewport changes, and at the frame's end" -- is true of Vulkan and FALSE of
+// Citro3D, where a mid-frame flush is a black screen; review-2 D and review-3
+// F6). `render.h` states the seam for both backends and is the file a caller
+// reads: a caller may NOT assume a submission at any seam except
+// `mdk_render_end_frame`.
+//
+// What is shared, and is the reason this class is shared code, is the ORDER:
+// every `Solid`, then `DoubleSided`, `Mirror`, `Blended`, `OnTop`, `Overlay`,
+// each bucket in queue order, because that order is the oracle's and not a
+// backend's.
 class DrawQueue {
 public:
     DrawQueue();

@@ -239,14 +239,18 @@ void mdk_render_set_gamma(MdkRenderer r, float gamma);
 //     end (renderer_vk.cpp, `mdk_render_canvas_begin` / `mdk_render_begin_inset`
 //     / `mdk_render_end_inset` / `mdk_render_end_frame`).
 //   * Citro3D flushes ONCE, inside `mdk_render_end_frame`, once per eye. A
-//     mid-frame flush there emits the frame's records into whichever eye
-//     `installEye` selected last -- the previous frame's, or no target at all on
-//     frame 1 -- and empties the queue, so the per-eye replay that follows has
+//     mid-frame flush there emits the frame's records an extra time into
+//     whichever eye `installEye` selected last -- the previous frame's, or no
+//     target at all on frame 1 -- and a `flushDraws`-shaped one (replay + reset)
+//     empties the queue on top of it, so the per-eye replay that follows has
 //     nothing left to draw: a scene vanished behind a correct clear colour
 //     (AGENTS.md P2). The canvas and inset seams on that backend therefore emit
 //     nothing, and a HUD or inset batch must put its records IN THE QUEUE, where
 //     the per-eye replay draws them once per eye, instead of flushing at its own
-//     boundary. `tests/scripts/c3d_frame_test.sh` refuses a mid-frame flush.
+//     boundary -- and "emit nothing" covers drawing directly too, which is the
+//     half a HUD batch is most likely to step on, since `canvas_quad` is the seam
+//     `game/hud_view.cpp` drives. `tests/scripts/c3d_frame_test.sh` refuses a
+//     mid-frame flush and an immediate draw at every one of those seams.
 void mdk_render_draw_mesh(MdkRenderer r, const mdk::MeshDraw* draw);
 
 // ---------------------------------------------------------------------------
