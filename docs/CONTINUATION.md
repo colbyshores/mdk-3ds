@@ -1,30 +1,35 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 28 changes the Citro3D backend's per-draw GPU state: `renderer_c3d.cpp` now installs a
-per-draw MVP uniform (composed `world * eyeVP`, cached so an identity world costs no write) instead of
-ignoring `MeshDraw::world`, and the diagnostic triangle moved to after the real draw because it was
-replacing the real draw's vertex buffer through citro3d's single context-owned `BufInfo`. Target-specific
-rendering code, new renderer state (`eyeVp`, `matrixIsFrame`), and the picture it produces **cannot be
-looked at on this host** — no 3DS emulator, no Old-3DS, so P6 stays open. Mitigations, measured not
-asserted: the moved function is element-for-element the old one (the frame's matrix is bit-identical), an
-identity world reproduces it bit-for-bit (so the level geometry that exists today cannot move), the new
-`PASS PicaMatrix` suite is 8 cases and 7 separate mutations of the new file each turn it red (table in
-`docs/PROGRESS_LOG.md` "Iteration 56"), and both targets build. High rather than medium because it is
-target-specific GPU state with an unverifiable picture and a plausible-but-invisible failure mode.
+Risk: high — batch 29 changes the Citro3D backend's depth state from "depth buffer disabled" to the
+oracle's per-pass rule: `C3D_DepthTest(GPU_LEQUAL)` with the write mask on for the opaque passes and off
+for `Blended`/`OnTop`/`Overlay`, and the depth clear moves from 0 to the buffer's maximum because the map
+the frame installs stores 0 at the near plane. Target-specific GPU state on a backend whose picture
+cannot be looked at here — no 3DS emulator, no Old-3DS, so P6 stays open. Mitigations, measured not
+asserted: the pairing (`DepthMap(true,1,1)` + `GPU_LEQUAL` + clear `0xFFFFFF`) is Forsaken's on this
+hardware with the oracle's tie allowed, the two citro3d behaviours it depends on were read out of the
+linked `libcitro3dd.a` rather than recalled, the pass rule and the ordering moved into
+`pica_matrix.{h,cpp}` so a host test can reach them, the 5 new depth cases are inside `PASS PicaMatrix`
+and **9 separate mutations of the new code each turn the suite red** (table in `docs/PROGRESS_LOG.md`
+"Iteration 57"), and both targets build. High rather than medium because a wrong sign here is invisible
+geometry, and the only hardware evidence this batch can produce is a log line.
 
-Last updated: 2026-11-01 (**batch 28** — the Citro3D per-draw world matrix, priority item 6(c) first
-half; full narrative, the falsification table and the gate output are in `docs/PROGRESS_LOG.md`
-"Iteration 56"). `MeshDraw::world` was queued and thrown away by the 3DS backend, so the 3DS could not
-place an object however the script moved it; the matrix math now lives in
-`mdk_3ds/src/render/pica_matrix.{h,cpp}` (host-compilable, so it can be pinned at all), `drawRecorded`
-composes each draw's world against the frame's eye matrix with a uniform cache, and
-`tests/scripts/pica_matrix_tests.cpp` is the new `PASS PicaMatrix` case. Goldens **443/0/0** (442 + the
-new case), no PASS line moved; frame byte-unchanged, and its sidecar says why. Two things this batch
-found and recorded instead of fixing: the C3D draws ONE pass into the last-installed eye target (the left
-eye gets only its clear), and the owner-authorized `mdk-sdl` pi-knowledge base does not exist
-(`knowledge_status`: 0 bases). Previous: **batch 27** ("Iteration 55", review-1 F3, the `RUNNER` voice),
-**batch 26** ("Iteration 54", review-12: all four findings — 2 Medium, 2 Low — confirmed and fixed, none
-rebutted), **batch 25** ("Iteration 53"), **batch 24** ("Iteration 52").
+Last updated: 2026-11-02 (**batch 29** — the Citro3D depth state, priority item 6(c) depth half; full
+narrative, the evidence chain, the nine-mutation table and the gate output are in `docs/PROGRESS_LOG.md`
+"Iteration 57"). The 3DS frame now tests depth with the oracle's `LESS_OR_EQUAL` and the oracle's
+per-pass write rule instead of disabling the depth buffer: `pica::depthStateForPass`,
+`pica::storedDepth`, `pica::depthPasses` and the named `kDepthMap*`/`kDepthClearValue` constants live in
+`mdk_3ds/src/render/pica_matrix.{h,cpp}` (host-compilable, so they can be pinned at all), the backend
+installs and caches the state per pass, the clear is `0xFFFFFF`, and the diagnostic triangle now
+disables the test because it sits on the far plane. Goldens **443/0/0** (unchanged: the 5 new cases are
+inside the existing `PASS PicaMatrix`), no PASS line moved; frame byte-unchanged, and its sidecar says
+why. **The tree arrived dirty with the owner's own harness work** (`AGENTS.md`, `ralph/builder.md`,
+`ralph-pi.sh`, `gates_batch_integrity.py`, an untracked frame pair): the first, second and fourth are in
+the integrity gate's own `PROTECTED` set, so a builder commit of them fails the loop's guard at exit 6;
+they are left for the owner and this batch staged only its own paths — the evidence is in "Iteration
+57". Owner-authorized item **(12) is CLOSED**: `knowledge_show` lists `mdk-sdl` (3881 chunks / 936
+files) and it produced the sibling-project leads this batch checked its answer against. Previous:
+**batch 28** ("Iteration 56", the per-draw world matrix), **batch 27** ("Iteration 55", review-1 F3, the
+`RUNNER` voice), **batch 26** ("Iteration 54", review-12: all four findings fixed, none rebutted).
 
 **Batch 27, in full**: `ObjectBehaviors.cs:305-306`
 enters `H150_R` **and** plays `RUNNER`; the port does both at `script_runtime.cpp:1033-1034` but the
@@ -64,12 +69,14 @@ the print it counts, and the three owner-authorized clauses batch 25 dropped res
    `Probe`, writable by this account) and builds a real `SoundMixer` over `SoundBank.ForLevel`; rebuild it
    with `/tmp/mdk-pi/build_probe.sh`, then `DOTNET_ROOT=/tmp/kilo/dotnet10 MDK_DATA_DIR=…/MDK ./mdkprobe 7
    120 1 runner -21,-13,0.73` (and `-26,-18,0.73`) re-derives both files. Its `src/**.cs` differs from the
-   read-only oracle only in the three known print-only instrumented files. (c) **PARTLY DONE — batch 28.**
-   The Citro3D backend now composes each queued draw's `MeshDraw::world` against the frame's eye matrix
-   (`mdk_3ds/src/render/pica_matrix.{h,cpp}`, pinned by the new `PASS PicaMatrix`), so an object can be
-   placed where its script put it. What is LEFT of (c) is the C3D **depth and blend** state, which still
-   differs from the C# (test disabled vs `LESS_OR_EQUAL`, no `C3D_AlphaBlend`, so `Pass::Blended` glass is
-   opaque) and needs a projection remap, `C3D_DepthMap`, the test function, a clear value and a capture.
+   read-only oracle only in the three known print-only instrumented files. (c) **PARTLY DONE — batches 28
+   and 29.** The Citro3D backend composes each queued draw's `MeshDraw::world` against the frame's eye
+   matrix (`mdk_3ds/src/render/pica_matrix.{h,cpp}`, pinned by `PASS PicaMatrix`), so an object can be
+   placed where its script put it, and the frame now **tests depth** with the oracle's `LESS_OR_EQUAL`
+   and the oracle's per-pass write rule (`pica::depthStateForPass`, clear `0xFFFFFF`). What is LEFT of
+   (c) is the **blend** half only: no `C3D_AlphaBlend`, so `Pass::Blended` glass is opaque — and it is
+   blocked on a named cause, because the palette expansion forces alpha 255 and the vertex shader
+   writes `outclr = ones`, so there is no alpha to blend with yet (`OPEN_ITEMS.md`).
    (d) The middle 173 px of the pinned frame
    is **not** the object pass — at frame 1 neither tree has a script object; the sky/middle/bottom
    split of the 1.240% gap, with the "do NOT re-litigate the panorama, palette, uniforms, projection or
@@ -117,12 +124,13 @@ means for every operator and every CI box, so it is not a batch's call. (11) AGE
 `/tmp/kilo` as the capture directory, but it is `drwxr-xr-x museagent museagent` and **not writable by
 this account** (`piagent`, uid 994) — both this batch and review-11 hit that. Either P7 names a
 directory the builder can write, or the service user changes; until then every agent must pick its own
-scratch path and say so in the evidence. (12) The `mdk-sdl` **pi-knowledge base does not exist**
-(`knowledge_status` → `Knowledge bases: 0`), so the mandatory prior-solution lookup can only report
-unavailability, and every batch must say so rather than read an empty search as "no prior work". Creating it
-is not a side effect of a porting batch: `knowledge_plan` on the repository reports **5962 scannable files /
-23.0 MB**, dominated by `.kilo/worktrees/**` (whole copies of the repo), so it needs explicit `include_paths`
-and an exclusion review first — which is the lifecycle the owner's `AGENTS.md` edit describes.
+scratch path and say so in the evidence. (12) **CLOSED by batch 29** — the `mdk-sdl`
+**pi-knowledge base now exists** (`knowledge_show`: `mdk-sdl`, 3881 chunks / 936 files, plus
+`tetrisphere-godot`), so the mandatory prior-solution lookup can actually run; batch 29's is the first
+that did, and it is what surfaced the sibling-project depth probes this batch checked its answer against.
+Batches should still report an *empty search* as a search that found nothing, not as proof of absence, and
+still record a source's unavailability when one is genuinely absent (Cognee MCP is not exposed in the Pi
+harness).
 
 ## Current tree state (VERIFIED)
 
@@ -178,41 +186,44 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `guard_fragment`, three region lifts with behavioural cases instead, `count_writes` counting
   **occurrences** not lines) is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 27)
+## Verified on this tree (batch 29)
 
-All gates re-run from a clean invocation; verbatim output, the provenance re-measurement and the
-falsification are in `docs/PROGRESS_LOG.md`, "Iteration 55". Goldens **exit 0** (`All cases match the
-oracle.`, **442 PASS / 0 FAIL / 0 SKIP**, no PASS line moved, both `L7_t120_runner_*` now carrying the
-`mixer=` column); `tools/check.sh` **exit 0** (`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`,
-byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED;
-integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk`
-**exit 0**; `test_review_state.sh` **exit 0**, **177 cases**. Two things were measured rather than asserted, because both are the failure modes of this
-batch's own class: **provenance** — both goldens re-diffed **byte-identical** against a rebuilt
-`mdkprobe`, and the scratch tree's `src/**.cs` enumerated against the read-only oracle as differing only
-in the three known print-only files; and **load-bearingness** — commenting out `script_runtime.cpp:1034`
-(`mixer_.play("RUNNER", Once)`) and nothing else now prints `FAIL L7_t120_runner_a` and
-`FAIL L7_t120_runner_b`, both `at byte 533`, where the identical removal left all 442 cases green on the
-previous commit. The file was restored with `git checkout` and re-verified green — **no shipped source
-changed in this batch**. Frame `docs/frames/2026-11-01-runner-voice-pinned.png` + `.txt` — `1.240 / 247 /
-0.1819`, byte-identical to its 32 predecessors. **No emulator run and no Old-3DS hardware run: Old-3DS
-timing stays UNMEASURED**, Citro3D picture UNVERIFIED (P6). No gate was pinned, relaxed or edited.
-Batch 26's own record — the eight counter-placement reversions, the fixture-refusal counts, and the F4
-vacuous-caller scenario, each with its measured exit status — is in "Iteration 54"; read those tables
-before calling any case there inert.
+All gates re-run from a clean invocation; verbatim output, the evidence chain (vault notes, the
+`libcitro3dd.a` disassembly of `C3D_DepthMap` and `C3D_FrameBufClear`, Forsaken's shipped triple) and the
+falsification are in `docs/PROGRESS_LOG.md`, "Iteration 57". Goldens **exit 0** (`All cases match the
+oracle.`, **443 PASS / 0 FAIL / 0 SKIP**, no PASS line moved — the five new depth cases are inside the
+existing `PASS PicaMatrix`); `tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`; `gates_frames PASS
+L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
+regenerated; `gates_smdh` SKIPPED; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`);
+`cmake --build build-linux --target mdk` **exit 0**. Load-bearingness was measured, not asserted: **nine
+mutations of the new code** — the map's sign, the map's offset, the clear value, `<` instead of `<=`,
+`Blended` writing depth, the exempt passes tested, `Solid` not writing, `depthPasses` ignoring `test`,
+and the `[0,1]->[-1,0]` conversion removed — each turn the suite red, and the first attempt at that table
+silently no-opped two mutations because the mutated header was not first on the include path (the rerun
+is what is published). Frame `docs/frames/2026-11-02-c3d-depth-state.png` + `.txt` — `1.240 / 247 /
+0.1819`, byte-identical to its 33 predecessors, because `renderer_c3d.cpp` is 3DS-only. **No emulator run
+and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED
+(P6)**; the batch's only hardware evidence is the new init log line. No gate was pinned, relaxed or
+edited. Batch 28's own record — the seven matrix mutations and the identity-world bit-identity argument —
+is in "Iteration 56"; read those tables before calling any case there inert.
 
 ## Standing open items
 
 Full list with evidence in `docs/OPEN_ITEMS.md`; the frame-record rule is in
 `docs/frames/README.md` and the "the pin cannot show this" rule in `docs/evidence/README.md`. The
-ones that bite: **C3D depth and blend state still differ from the C#** (test disabled vs
-LESS_OR_EQUAL test/write; `Pass::Blended` glass is opaque), which is why `renderer_c3d.cpp` ignores
-`depth_layer` — and non-`Solid` batches are in **10 of level 3's 17** arenas; the Citro3D backend
+ones that bite: **C3D blend state still differs from the C#** (no `C3D_AlphaBlend`, so
+`Pass::Blended` glass is opaque) and it is blocked on a named cause — the palette expansion forces alpha
+255 and `mdk_c3d.v.pica` writes `outclr = ones`, so there is no alpha to blend with yet; the **depth**
+half of that item landed in batch 29 (`LESS_OR_EQUAL`, the per-pass write rule, clear `0xFFFFFF`, pinned
+by `PASS PicaMatrix`), and non-`Solid` batches are in **10 of level 3's 17** arenas; the Citro3D backend
 draws **one** pass into the last-installed eye target, so the left eye currently gets only its clear
 (found by batch 28, recorded not fixed: `DrawQueue` already *is* the recorded draw list the vault's
 per-eye-replay pattern wants, so the second eye is a replay with a different `eyeVp`, not a second
 scene walk); the sprite residency bound is
 compile-verified only (the 3DS frontend binds no Kurt); `depth_pull.cpp` is `DepthPull.Of` — Vulkan
-applies the pull, the C3D backend does not; a late-frame oracle picture needs owner-authorized tooling
+applies the pull and the C3D backend still ignores `depth_layer`, now for a different reason: the depth
+test exists, but the pull needs the **view position and the primitive**, which the render seam does not
+hand the C3D backend (a seam question, not a substitution); a late-frame oracle picture needs owner-authorized tooling
 (`capture_oracle.sh` is pinned to frame 1). **Do not "fix" `follow_camera.cpp`'s `normalize`** (a
 reciprocal where `Vector3.Normalize` reads as a division; making it a division REGRESSES the sky from
 3.023% to 5.730%), and the 3DS sampler fix stays deferred with cause (the 3DS pads index textures to

@@ -7691,3 +7691,203 @@ owner-authorized item lands with this batch: **the `mdk-sdl` pi-knowledge base
 does not exist**, and creating it needs explicit `include_paths` (the plan's
 5962-file scan is dominated by `.kilo/worktrees/**`), which is a task of its own
 rather than a side effect of a porting batch.
+
+---
+
+## Iteration 57 — batch 29: the Citro3D frame tests depth, with the oracle's per-pass rule
+
+**Risk: high** — target-specific GPU state on a backend whose picture cannot be
+looked at on this host (no 3DS emulator, no Old-3DS, so AGENTS.md P6 stays open).
+Mitigated the same way batch 28 mitigated the same problem: the arithmetic and the
+rule are moved where a host test can reach them, the pairing is taken from a
+sibling port that runs on this hardware rather than reasoned out, and nine
+mutations of the new code each turn the suite red (table below).
+
+### The inherited dirty tree, and what was done with it
+
+The tree arrived dirty with 8 paths: `AGENTS.md`, `ralph/builder.md`,
+`ralph-pi.sh`, `tools/runner/gates_batch_integrity.py` and an untracked
+`docs/frames/2026-11-02-ralph-self-heal.{png,txt}`. **This is not a timed-out
+builder batch and it was not committed here.** The evidence:
+
+* `AGENTS.md`, `ralph/builder.md` and `tools/runner/gates_batch_integrity.py` are
+  all in `gates_batch_integrity.py`'s own `PROTECTED` set, which a builder batch
+  cannot commit — the loop's post-worker guard runs the gate **without**
+  `--owner-approved`, so a commit touching any of them fails the guard, the new
+  `--each-commit` recovery fails for the same reason, and the loop stops at exit 6.
+* The files are owned by `coleshores` (the loop's own user) with mtimes
+  12:09–17:23, i.e. **before** the loop's first run dir (17:24), and the frame pair
+  was written by `coleshores`, not by `piagent`, which is the user every builder
+  iteration runs as.
+* Neither `docs/CONTINUATION.md` nor `docs/PROGRESS_LOG.md` was touched, which no
+  builder batch ever leaves undone.
+
+What the edits are: the pi-knowledge prior-solution lifecycle in `AGENTS.md` /
+`ralph/builder.md`, the `PI_KNOWLEDGE_EMBEDDING*` exports in `ralph-pi.sh`, and the
+`--each-commit` / `--self-test` recovery in the integrity gate — the recovery for
+the exit-6 stop the 20:08 run took ("batch must add exactly one frame PNG; found
+2"). They are left in the working tree for the owner, and **this batch's commit
+stages only its own paths** (`git add -A` would sweep the owner's protected edits
+into a builder batch and trip the guard). Owner-authorized item (12) — the
+`mdk-sdl` pi-knowledge base — has since landed: `knowledge_show` now lists
+`mdk-sdl` (3881 chunks / 936 files) and `tetrisphere-godot`.
+
+### What was implemented
+
+The Citro3D backend now installs the oracle's depth state instead of disabling the
+depth buffer.
+
+| | before | after | oracle |
+|---|---|---|---|
+| depth map | `C3D_DepthMap(true, 1.0f, 1.0f)` (unused) | same three numbers, now named `pica::kDepthMap*` and load-bearing | — |
+| depth test | `C3D_DepthTest(false, GPU_ALWAYS, (GPU_WRITEMASK)0)` | `GPU_LEQUAL` | `compare_op = LESS_OR_EQUAL` (`Renderer.cs:606`) |
+| test enabled | never | every pass except `OnTop`/`Overlay` | `enable_depth_test = mesh && pass ∉ {Overlay, OnTop}` (`:606`) |
+| depth write | never | every pass except `Blended`, `OnTop`, `Overlay` | `enable_depth_write = mesh && !blended && pass ≠ OnTop` (`:607`) |
+| depth clear | `0` | `0x00FFFFFF` | the buffer's maximum, because the map stores 0 at the near plane |
+| write mask | `(GPU_WRITEMASK)0` | `GPU_WRITE_ALL` / `GPU_WRITE_COLOR` | — |
+
+* `mdk_3ds/src/render/pica_matrix.{h,cpp}` gains `DepthState`,
+  `depthStateForPass(Pass)`, `storedDepth(zNdc)`, `depthPasses(state, zNdc, stored)`
+  and the four named constants. The pass rule lives there for the same reason the
+  matrix math does: it is host-testable and the backend is not.
+* `renderer_c3d.cpp`: `installDepthState()` (cached on the renderer, the same
+  shape as the cull-mode cache, because `C3D_DepthTest` dirties the effect block on
+  every call), the frame install, the per-draw transition in `drawRecorded`, the
+  clear value, and the diagnostic triangle now disables the test — it sits on the
+  far plane, so with the scene depth-tested it would go missing in exactly the busy
+  scenes it is needed for.
+* `renderer_c3d.cpp` now logs the depth state once at init
+  (`depth: map z*1.0+1.0 near=0.0000 far=1.0000 clear=0xffffff test=LEQUAL`).
+  `storedDepth` is what produces those two numbers, so the invisible state is
+  recorded by any hardware run even when nobody can see the screen (P6's only
+  evidence channel).
+
+### Prior-solution lookup (all three sources)
+
+* **Pi knowledge (`mdk-sdl`, 3881 chunks / 936 files — the base now exists, owner
+  task 12 closed).** `hybrid` on the depth-map question returned this backend's own
+  stale "THE DEPTH TEST IS OFF" comment (i.e. nothing newer than the code), and
+  `semantic_hybrid` surfaced the **sibling `tetrisphere-godot` tree**: a hardware
+  A/B probe document (`docs/validation/c3d-ink-depth-ab-2026-10-30.md`) and a
+  `RESUME.md` §12.5 note on the D3D→PICA depth range. Those were leads, and both
+  were checked against their own authorities below rather than trusted.
+* **Obsidian vault** (read directly, read-only; no Obsidian MCP in this session).
+  Three notes decided the batch:
+  `60-references/3ds-platform/citro3d/01-overview-and-init.md:87-104` — citro3d's
+  own default state, `C3D_DepthMap(true, -1.0f, 0.0f)` with
+  `C3D_DepthTest(true, GPU_GREATER, GPU_WRITE_ALL)`, i.e. the **reversed** range,
+  which is what the guide's "clearDepth = 0" advice belongs to;
+  `10-projects/forsaken/findings/citro3d-renderer-architecture-and-vertex-pipeline.md:129-131`
+  and `citro3d-missile-chase-cam-per-eye-scissored-clear.md:91` — **Forsaken, on this
+  hardware**, pairs `C3D_DepthMap(true, 1.0f, 1.0f)` with `GPU_LESS` +
+  `GPU_WRITE_ALL` and clears to `0xFFFFFF`;
+  `30-architecture/patterns/pica200-ndc-z0-is-the-far-clip-plane-billboards-vanish.md`
+  — the PICA's far **clip** plane is `z <= 0` in the `[-1,0]` range, so a vertex at
+  exactly `z = 0` is on the boundary (recorded as an open item, not fixed: it is a
+  property of the conversion the port already ships).
+* **`../forsaken/3DS_PORT_NOTES.md` "Problem 1: Depth Range"** — "PICA200 depth
+  hardware wants `z ∈ [-1, 0]` (near=-1, far=0)", and the native-citro3d form of the
+  conversion is `_33' = _33 - 1`, `_43' = _43`, i.e. `row[2] -= row[3]`, which is
+  what `pica_matrix.cpp` already does. The direction this batch installs is the one
+  that conversion implies.
+* **Cognee MCP is not exposed in this harness** — not consulted, and not claimed.
+
+Two claims were measured on the linked library rather than recalled, because both
+had a wrong version in circulation:
+
+1. `C3D_DepthMap` in the installed citro3d applies **no** hidden bias:
+   `arm-none-eabi-objdump -d $DEVKITPRO/libctru/lib/libcitro3dd.a`, section
+   `.text.C3D_DepthMap`, is `strb r0,[r4,#233]; bl f32tof24; str r0,[r4,#224];
+   vmov.f32 s0,s16; bl f32tof24; str r0,[r4,#228]` and nothing else — the two
+   floats go into the effect block verbatim, so the stored depth is `z*zScale +
+   zOffset`.
+2. `C3D_RenderTargetClear`'s `clearDepth` is the **raw fill pattern**:
+   `.text.C3D_FrameBufClear` passes it straight to `GX_MemoryFill` as the fill
+   value, so `0xFFFFFF` is the 24-bit maximum under either byte order of a
+   `DEPTH24_STENCIL8` word.
+
+The choice is deliberately robust to the one thing that could not be measured. If a
+future citro3d folds the old `z*0.5 + 0.5` bias back in, `(scale 1, offset 1)` over
+`[-1,0]` still maps monotonically **increasing with distance** into a subset of
+`[0,1]`, and `0xFFFFFF` is still the buffer's maximum — the three properties the
+depth test actually needs. A sign error is not covered by that argument, and a sign
+error is what `testTheRealMatrixPutsTheNearPlaneNearest` pins.
+
+### Falsification: nine mutations of the new code, each run out of tree
+
+The suite is `PASS PicaMatrix`, now 13 cases (8 matrix + 5 depth). Every mutation
+was applied to a copy under `$HOME/scratch/mdk/render/` and rebuilt there. **A
+harness trap worth recording:** the first attempt mutated the copy of
+`pica_matrix.h` while the compile still resolved `render/pica_matrix.h` from the
+source tree, so two mutations (M1, M6) silently no-opped and "passed"; the table
+below is the rerun with the mutated header actually first on the include path.
+
+| # | mutation | result |
+|---|---|---|
+| — | baseline | `failures=0`, rc 0 |
+| M1 | `kDepthMapOffset = -1.0f` (map direction flip) | `FAIL … depth >= 0.0f && depth <= 1.0f` ×many, rc 1 |
+| M2 | `depthPasses` uses `<` (strict LESS) | `FAIL … depthPasses(solid, 0.0f, kClearedDepth)`, rc 1 |
+| M3 | `Blended` writes depth | `FAIL … !blended.write` ×2, rc 1 |
+| M4 | `OnTop`/`Overlay` tested and written | 4 FAILs on the exempt flags, rc 1 |
+| M5 | the `[0,1] → [-1,0]` conversion removed | 4 FAILs, including the pre-existing recipe cases, rc 1 |
+| M6 | clear value back to `0` | 4 FAILs (`kClearedDepth == 1.0f`, the near/far acceptance), rc 1 |
+| M7 | `Solid` does not write | 3 FAILs on the opaque passes' `write`, rc 1 |
+| M8 | `kDepthMapScale = -1.0f` | ordering FAILs + range FAILs, rc 1 |
+| M9 | `depthPasses` ignores `state.test` | `FAIL … depthPasses(onTop, 0.0f, nearDepth)`, rc 1 |
+
+M2 is the one that pins the enum choice: a fragment exactly on the far plane stores
+exactly the cleared value, so `GPU_LESS` — what Forsaken ships — would reject the far
+plane and anything coplanar with it. The oracle says `LESS_OR_EQUAL`, and the
+equality is asserted as an equality, not as a tolerance.
+
+### Review findings
+
+The newest external review is still `logs/ralph-pi/run-20261101-062333/review-12.md`
+(two Medium, two Low, no Critical and no High, verdict `INCOMPLETE`). **All four were
+remediated by batch 26** ("Iteration 54") and no review has been dispatched since, so
+this batch had no open Critical/High finding to remediate or rebut; it went down the
+priority order. Nothing was weakened to obtain that: no golden, gate, `reference.sha256`
+or review file was touched.
+
+### Gates, verbatim
+
+* `make -C tests/scripts clean && make -C tests/scripts` → **exit 0**, last line
+  `All cases match the oracle.`; **443 `^PASS`, 0 `^FAIL`, 0 `^SKIP`**, with
+  `PASS PicaMatrix` present. The count is unchanged from batch 28 because the five
+  new cases live inside the existing `PicaMatrix` case, and no PASS line moved.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`. `gates_frames`:
+  `PASS L3_f1.bmp sha=58615fc85d02e009` / `VERDICT: CONTRACT CLEAN` — byte-identical
+  to the pinned `cpp=`, so `reference.sha256` was **not** regenerated (this batch
+  changes no Linux-visible code: `renderer_c3d.cpp` is 3DS-only). `gates_smdh`
+  `VERDICT: SKIPPED -- no built .cia to read the SMDH out of.` `gates_vfp` 0
+  blockers, `audit_c_with_classes` 0 violations, `audit_r11_idiv` no candidates,
+  `gates_batch_integrity` PASS.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **exit 0**, `CXX …/pica_matrix.cpp`, `CXX …/renderer_c3d.cpp`, `LINK mdk.elf`,
+  `3DSX mdk.3dsx`.
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `[100%] Built target mdk`.
+
+**No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and
+the Citro3D picture stays UNVERIFIED (P6).** The frame pair is byte-identical to its
+33 predecessors and its sidecar says why.
+
+### What is next
+
+Priority item **6(c)**: the depth half is done; the **blend half** is not, and it is
+now blocked on a named cause rather than on effort — the 3DS palette expansion
+forces alpha 255 on every non-index-0 texel and `mdk_c3d.v.pica` writes
+`outclr = ones`, so `C3D_AlphaBlend(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` would be an
+arithmetic no-op for glass: the alpha source the oracle blends with does not exist on
+this path yet. Next in order: the **per-eye replay** (the left eye currently gets
+only its clear), then **`DepthPull` on C3D** — unblocked by this batch but not free,
+because the pull needs the view position and the primitive, which the seam does not
+hand the backend today — then **(d)** the middle 173 px of the pinned frame, then
+**(e)** `FrameBlend.Lerp`'s rounding. Owner-authorized items are unchanged except
+(12), now closed.
+
+**One docs debt recorded rather than paid.** `docs/CONTINUATION.md` is 291 lines
+against the loop's ~150-line guidance. It is not trimmed here because review-12 F2
+measured exactly what a mid-batch reflow costs — three obligations deleted under
+cover of reformatting — and a docs-only compaction is a batch of its own, with its
+own word-diff review. The next batch that touches it should either do the compaction
+deliberately, with the word diff published, or leave it alone.

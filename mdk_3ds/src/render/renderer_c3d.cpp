@@ -31,7 +31,10 @@
 //   (A) depth: the engine's projection puts NDC z in [0,1] (the C# oracle's
 //       System.Numerics perspective, right-handed); PICA's is [-1,0], and
 //       `row[2] -= row[3]` on the combined matrix converts one to the other.
-//       Once. Not twice.
+//       Once. Not twice. The depth test is then ON, with the oracle's
+//       LESS_OR_EQUAL, because the map this backend installs stores 0 at the
+//       near plane and 1 at the far — see mdk::pica::kDepthMapScale and the
+//       evidence recorded there.
 //   (B) culling: the PICA200 has NO CW-front mode. Through the oracle's
 //       right-handed camera the meshes wind CCW on screen, so "cull the back
 //       faces" is C3D_CullFace(GPU_CULL_BACK_CCW). (Under the older
@@ -292,6 +295,16 @@ struct RendererC3D {
     // effect-block rebind at the next draw.
     GPU_CULLMODE cullMode = GPU_CULL_NONE;
 
+    // The depth state last written to the citro3d CONTEXT, for the same reason
+    // the cull mode above is cached: C3D_DepthTest dirties the effect block on
+    // every call, so an all-Solid frame must not re-install it per draw.
+    //
+    // Two bools and not one enum, because the oracle's rule has two independent
+    // bits (Renderer.cs:606-607): the blended pass tests without writing, and
+    // the exempt passes neither test nor write.
+    bool depthTest = true;
+    bool depthWrite = true;
+
     int frame = 0;
     int32_t drawCount = 0;
     int32_t triangleCount = 0;
@@ -384,6 +397,23 @@ inline GpuVertex expand(const mdk::Vertex& v) {
                               MDK_DISPLAY_TRANSFER_FLAGS);
     C3D_RenderTargetSetOutput(r->targetRight, GFX_TOP, GFX_RIGHT,
                               MDK_DISPLAY_TRANSFER_FLAGS);
+
+    // THE DEPTH STATE, IN THE LOG.
+    //
+    // WHY THIS IS HERE. The depth map, the test function and the clear value are
+    // three numbers that have to agree with each other, and the failure mode of
+    // their disagreeing is a screen showing only the clear colour — no error,
+    // no crash, nothing to look at. This host has no 3DS emulator and no
+    // Old-3DS, so the picture cannot be the evidence (AGENTS.md P6). The log
+    // file can: these are the numbers the frame actually installs, read back
+    // from the same constants the frame installs, so a run on hardware records
+    // the state even when nobody can see the screen.
+    mdk::log3dsPrintf("depth: map z*%.1f+%.1f near=%.4f far=%.4f clear=0x%06x test=LEQUAL",
+                      (double)mdk::pica::kDepthMapScale,
+                      (double)mdk::pica::kDepthMapOffset,
+                      (double)mdk::pica::storedDepth(-1.0f),
+                      (double)mdk::pica::storedDepth(0.0f),
+                      (unsigned)mdk::pica::kDepthClearValue);
 
     // The shader.
     r->dvlb = DVLB_ParseFile((u32*)mdk_c3d_shbin, mdk_c3d_shbin_size);
@@ -608,6 +638,28 @@ static void settleDeferredTextures(RendererC3D* renderer) {
 static void settleDeferredMeshes(RendererC3D* renderer);
 static void flushDraws(RendererC3D* r);
 
+// Install one pass's depth state on the citro3d context and record it in the
+// cache.
+//
+// THE WRITE MASK IS NOT THE TEST. The mask is the PICA's combined colour+depth
+// write mask, so "test, but do not write depth" is GPU_WRITE_COLOR — write the
+// colour, not the depth — and NEVER 0: a mask of 0 asks the hardware to write
+// nothing at all, which is a draw that happens and is invisible. This frame used
+// to install `(GPU_WRITEMASK)0` along with a disabled test; whether that mask
+// gates colour is exactly the sort of thing this host cannot check, so nothing
+// here relies on the answer.
+//
+// GPU_LEQUAL and not GPU_LESS: a fragment exactly on the far plane stores
+// exactly the value the buffer was cleared to, so a strict LESS would reject the
+// far plane itself. The oracle says LESS_OR_EQUAL (Renderer.cs:606), and
+// `pica::depthPasses` pins that tie.
+static void installDepthState(RendererC3D* r, mdk::pica::DepthState state) {
+    C3D_DepthTest(state.test, state.test ? GPU_LEQUAL : GPU_ALWAYS,
+                  state.write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
+    r->depthTest = state.test;
+    r->depthWrite = state.write;
+}
+
  void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->ready) return;
@@ -653,8 +705,22 @@ static void flushDraws(RendererC3D* r);
         C3D_RenderTarget* target = (eye == 0) ? r->targetLeft : r->targetRight;
         const float offset = (eye == 0) ? -eyeOffset : eyeOffset;
 
-        // The depth is cleared to 0, like every devkitPro example.
-        C3D_RenderTargetClear(target, C3D_CLEAR_ALL, clear, 0);
+        // The depth is cleared to the BUFFER'S MAXIMUM.
+        //
+        // The frame's depth map stores 0 at the near plane and 1 at the far, so
+        // the value that accepts every fragment before one is drawn is the top
+        // of the buffer, not the bottom. The devkitPro examples clear to 0 and
+        // that is correct for them: citro3d's own default map is the reversed
+        // range (see mdk::pica::kDepthMapScale for both pairings). Clearing to
+        // 0 with this map rejects everything, which is a screen showing only the
+        // clear colour and no error.
+        //
+        // The value is the raw fill pattern GX_MemoryFill writes into the
+        // DEPTH24_STENCIL8 buffer (measured: C3D_FrameBufClear passes
+        // `clearDepth` straight to GX_MemoryFill as the fill value), and
+        // 0x00FFFFFF is the 24-bit maximum under either byte order of the word.
+        C3D_RenderTargetClear(target, C3D_CLEAR_ALL, clear,
+                              mdk::pica::kDepthClearValue);
         C3D_FrameDrawOn(target);
 
         // The MVP for this eye: the view-projection with both PICA conversions
@@ -698,18 +764,21 @@ static void flushDraws(RendererC3D* r);
         C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
         C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
 
-        // THE DEPTH TEST IS OFF.
+        // THE DEPTH TEST IS ON, with the oracle's LESS_OR_EQUAL and a write
+        // mask, for the frame's default pass. The ORIGINAL look still draws
+        // back to front — the queue's pass order is the oracle's and the
+        // painter's order still holds — but the C# does not rely on that: it
+        // builds every mesh pipeline with `compare_op = LESS_OR_EQUAL`, depth
+        // test enabled and depth write enabled except on the blended and exempt
+        // passes (Renderer.cs:603-607). Without a test, an arena batch that the
+        // queue order happens to place late can paint over something nearer,
+        // and the depth pull (`render/depth_pull.cpp`, the oracle's DepthPull
+        // for a poster over its wall) has nothing to bias against.
         //
-        // The ORIGINAL look has no depth buffer: the game draws its
-        // surfaces back to front, and the C#'s original-look path does the
-        // same. The 3DS's depth convention is also the opposite of the
-        // desktop's, so a desktop-style test with a desktop-style clear
-        // rejects EVERY fragment -- and the screen shows nothing, with no
-        // error at all.
-        //
-        // The depth BUFFER is still cleared, to 0, because that is what the
-        // devkitPro examples do and the hardware expects.
-        C3D_DepthTest(false, GPU_ALWAYS, (GPU_WRITEMASK)0);
+        // The map this pairs with, and the evidence for the pairing, are in
+        // pica_matrix.h next to the constants; the ordering they imply is pinned
+        // by `PASS PicaMatrix` because no picture on this host can show it.
+        installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
         // (B) THE CULL ENUM. The game wants back-face culling, and through the
         // oracle's right-handed camera the meshes wind CCW on screen. The
         // PICA200 has no CW-front mode, so "cull the back faces of CCW-front
@@ -722,7 +791,8 @@ static void flushDraws(RendererC3D* r);
         // covers the second; re-installing it per eye is belt and braces,
         // not the mechanism.
         r->cullMode = GPU_CULL_BACK_CCW;
-        C3D_DepthMap(true, 1.0f, 1.0f);
+        C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
+                     mdk::pica::kDepthMapOffset);
 
         // The viewport is a HARDWARE CLIP RECTANGLE. A zero-area viewport
         // SILENTLY DROPS the draw -- the "invisible 3D trap". The full target
@@ -1544,6 +1614,26 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         C3D_CullFace(wantedCull);
         r->cullMode = wantedCull;
     }
+
+    // THE PASS'S DEPTH STATE, PER DRAW.
+    //
+    // The oracle derives it from the pass, per pipeline (Renderer.cs:606-607);
+    // this backend has one program and one pipeline, so the state is selected
+    // for the draw that asks for it — the same shape as the cull mode just
+    // above, and the same reason: C3D_DepthTest dirties the effect block on
+    // every call, so it is written only on a pass transition and an all-Solid
+    // frame writes it once, at the frame's install.
+    //
+    // What changes in practice: `Pass::Blended` glass is tested against the
+    // scene but does not write depth, so it can be seen through, and the
+    // `OnTop`/`Overlay` exemptions exist. The rule itself is
+    // `pica::depthStateForPass`, which the host suite holds to the oracle.
+    const mdk::pica::DepthState wantedDepth =
+        mdk::pica::depthStateForPass(draw->material.pass);
+    if (r->depthTest != wantedDepth.test || r->depthWrite != wantedDepth.write) {
+        installDepthState(r, wantedDepth);
+    }
+
     C3D_DrawArrays(GPU_TRIANGLES, first, count);
     // Restore the frame's default for the next draw, so every draw starts
     // from the state begin_frame installed. The transition back is cached in
@@ -1586,6 +1676,15 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         C3D_TexEnvInit(plain);
         C3D_TexEnvSrc(plain, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
         C3D_TexEnvFunc(plain, C3D_Both, GPU_REPLACE);
+        // THE DIAGNOSTIC IS NOT DEPTH-TESTED, and that is load-bearing now that
+        // the scene is. Its three vertices sit at clip z = 0 through an identity
+        // matrix, which is the FAR plane — exactly what the buffer was cleared
+        // to — so with the test installed it would fail wherever any real
+        // geometry is nearer, and the one draw whose whole job is to say "the
+        // frame and the program are fine" would go missing in exactly the busy
+        // scenes it is needed for. The cache is told, because this writes the
+        // state behind the per-draw check's back.
+        installDepthState(r, mdk::pica::DepthState{false, false});
         C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
         // The uniform now holds the identity, not the frame's matrix.
         r->matrixIsFrame = false;

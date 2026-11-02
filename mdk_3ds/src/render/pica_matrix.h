@@ -1,5 +1,9 @@
 #pragma once
 
+#include <stdint.h>
+
+#include "render/render_types.h"
+
 // ============================================================================
 // pica_matrix.h — the Citro3D backend's matrix math, split out so a host test
 // can reach it.
@@ -21,8 +25,11 @@
 // its own target and `tests/scripts`). Nothing in here names a libctru type.
 //
 // WHAT IS NOT HERE: the per-frame bookkeeping (which eye is installed, whether
-// the uniform already holds the frame's matrix). That is the backend's, and it
-// cannot be tested without a GPU.
+// the uniform already holds the frame's matrix, the cull mode cache). That is
+// the backend's, and it cannot be tested without a GPU.
+//
+// WHAT ELSE IS HERE: the frame's DEPTH state, below. Same reason — a bit of GPU
+// state that no picture on this host can show, so it is pinned instead.
 //
 // THE CONVENTION, in one paragraph. Every matrix in here is ROW-MAJOR with a
 // ROW-VECTOR convention — a point is a row and it transforms as `p * M` — which
@@ -128,6 +135,93 @@ void drawMatrix(const float world[16], const float eyeVp[16], float out[16]);
 // `out` may be the `m` member of a C3D_Mtx (that union's raw view of the same 16
 // floats), which is why this writes floats instead of a citro3d type.
 void registers(const float m[16], float out[16]);
+
+// ---------------------------------------------------------------------------
+// THE FRAME'S DEPTH STATE
+// ---------------------------------------------------------------------------
+
+// What one draw does with the depth buffer.
+struct DepthState {
+    // Is the fragment tested against the buffer at all? False means the draw
+    // lands over the scene.
+    bool test = true;
+    // Does a passing fragment update the buffer? False is what lets a blended
+    // surface be seen through.
+    bool write = true;
+};
+
+// The oracle's rule, in one place so a host test can hold it to the C#.
+//
+// `Renderer.cs:606-607` builds every pipeline's depth state from the pass:
+//
+//     compare_op         = LESS_OR_EQUAL
+//     enable_depth_test  = mesh && pass is not Overlay and not OnTop
+//     enable_depth_write = mesh && !blended && pass != OnTop
+//
+// with `blended` meaning `pass is Blended or Overlay` (Renderer.cs:565). This
+// seam only ever receives meshes, so the `mesh` conjunct is always true here.
+// The table is spelled out per pass rather than computed from the two
+// expressions, because the point of spelling it out is that each of the six
+// lines can be read against the oracle line it comes from.
+DepthState depthStateForPass(Pass pass);
+
+// The depth map the backend installs, as the three arguments of
+// `C3D_DepthMap(kDepthMapIsZBuffer, kDepthMapScale, kDepthMapOffset)`, and the
+// raw depth clear value for `C3D_RenderTargetClear`.
+//
+// WHY THESE NUMBERS. `eyeViewProjection` converts the engine's NDC z from [0,1]
+// to [-1,0] (near = -1, far = 0). The PICA then stores `z*zScale + zOffset`, and
+// the citro3d actually linked here applies NO hidden bias to those two
+// arguments: `C3D_DepthMap` is `strb r0,[r4,#233]; bl f32tof24; str r0,[r4,#224];
+// vmov.f32 s0,s16; bl f32tof24; str r0,[r4,#228]` and nothing else (measured on
+// the linked archive: `arm-none-eabi-objdump -d $DEVKITPRO/libctru/lib/
+// libcitro3dd.a`, section `.text.C3D_DepthMap`). So the stored depth here is
+// `zNdc + 1`: near = 0, far = 1 — the SAME direction as the oracle's [0,1] with
+// LESS_OR_EQUAL, which is why the test function is GPU_LEQUAL and not the
+// GPU_GREATER that citro3d's own default state pairs with its own default map.
+//
+// The pairing is not invented here. Forsaken — the sibling port, same house,
+// running on this hardware — installs `C3D_DepthMap(true, 1.0f, 1.0f)` with
+// `C3D_DepthTest(true, GPU_LESS, GPU_WRITE_ALL)` and clears the depth to
+// 0xFFFFFF (vault: 10-projects/forsaken/findings/
+// citro3d-renderer-architecture-and-vertex-pipeline.md,
+// citro3d-missile-chase-cam-per-eye-scissored-clear.md). citro3d's own default
+// is the REVERSED range — `C3D_DepthMap(true, -1.0f, 0.0f)` with GPU_GREATER and
+// a clear of 0 (vault: 60-references/3ds-platform/citro3d/
+// 01-overview-and-init.md) — and that is the pairing the "the 3DS's depth
+// convention is the opposite of the desktop's" note in this backend's history
+// was describing. Both conventions are in the wild; these numbers pick the one
+// that matches the oracle.
+//
+// AND THE CHOICE DOES NOT DEPEND ON THE ONE THING THAT CANNOT BE CHECKED HERE.
+// Older citro3d releases folded a bias into these arguments (`z*0.5 + 0.5` for
+// the z-buffer form). Whether the linked library does — measured above: it does
+// not — or a future one does, `(scale 1, offset 1)` over the converted range
+// maps [-1,0] monotonically INCREASING with distance into a subset of [0,1], and
+// 0xFFFFFF is the buffer's maximum under either byte order of a
+// DEPTH24_STENCIL8 word. Those are exactly the three properties the depth test
+// needs: nearer fragments store less, so GPU_LEQUAL keeps them; nothing in the
+// frustum falls outside the buffer; and the cleared buffer accepts everything.
+// A SIGN error is not covered by that argument — and a sign error is what
+// `storedDepth` against the real eye matrix pins in the test suite.
+constexpr bool kDepthMapIsZBuffer = true;
+constexpr float kDepthMapScale = 1.0f;
+constexpr float kDepthMapOffset = 1.0f;
+constexpr uint32_t kDepthClearValue = 0x00FFFFFFu;
+
+// The depth the PICA stores for a converted NDC z — the model of what the two
+// constants above do, kept next to them so the two cannot drift apart. The GPU
+// does this arithmetic; the backend never calls this per fragment. It IS called
+// once at init, to log the state the picture cannot show (AGENTS.md P6).
+float storedDepth(float zNdc);
+
+// True when a fragment whose converted NDC z is `zNdc` passes a buffer holding
+// `stored`, under the oracle's LESS_OR_EQUAL and the pass's own `test` flag.
+//
+// The equality is load-bearing, not a rounding hedge: a fragment exactly on the
+// far plane stores exactly the value the buffer was cleared to, so a strict
+// LESS would reject the far plane and anything that touches it.
+bool depthPasses(const DepthState& state, float zNdc, float stored);
 
 } // namespace pica
 } // namespace mdk

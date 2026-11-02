@@ -24,6 +24,12 @@
 //   7. THE UNIFORM REGISTER LAYOUT, applied the way the shader applies it
 //      (`dp4 outpos.x, mvp[0], r0`), which is the only form of the layout that
 //      matters.
+//   8. THE DEPTH STATE: the oracle's per-pass rule, the frame's depth map, and
+//      the ordering they imply. Every one of those is a bit of GPU state that
+//      cannot be looked at on this host (no 3DS emulator, no Old-3DS, so
+//      AGENTS.md P6 is open), which is the whole argument for pinning it here.
+//      The far-plane tie is the sharpest of them: it distinguishes the
+//      LESS_OR_EQUAL the oracle uses from the LESS that would reject it.
 //
 // The inputs are all small integers and halves, so every product and sum below
 // is exact in binary and the comparisons are exact. Where a tolerance is used
@@ -309,6 +315,146 @@ void testTheShaderReadsTheRegistersTheWayTheMatrixMeansThem() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// THE DEPTH STATE
+//
+// Three things have to agree: which passes test and which write (the oracle's
+// rule), what the fixed-function depth map stores for a converted NDC z, and
+// what the buffer was cleared to. The failure mode of their disagreeing is a
+// screen showing only the clear colour, and there is no 3DS to look at here, so
+// all three are pinned.
+// ---------------------------------------------------------------------------
+
+// The cleared buffer, as the normalised depth it stands for. The clear value is
+// the raw 24-bit fill pattern for a DEPTH24_STENCIL8 buffer, so 0xFFFFFF is 1.0.
+const float kClearedDepth = (float)mdk::pica::kDepthClearValue / 16777215.0f;
+
+void testTheDepthStateComesFromThePass() {
+    // Renderer.cs:606-607, one line per pass. The three opaque passes are
+    // ordinary: tested and written.
+    PICA_CHECK(mdk::pica::depthStateForPass(mdk::Pass::Solid).test);
+    PICA_CHECK(mdk::pica::depthStateForPass(mdk::Pass::Solid).write);
+    PICA_CHECK(mdk::pica::depthStateForPass(mdk::Pass::DoubleSided).test);
+    PICA_CHECK(mdk::pica::depthStateForPass(mdk::Pass::DoubleSided).write);
+    PICA_CHECK(mdk::pica::depthStateForPass(mdk::Pass::Mirror).test);
+    PICA_CHECK(mdk::pica::depthStateForPass(mdk::Pass::Mirror).write);
+
+    // The blended pass is tested but must NOT write: glass that writes depth
+    // hides whatever is behind it, and the queue sorts it back to front for
+    // exactly that reason. This is the pass the frame cannot show -- the pinned
+    // scene's arenas are all Solid -- so the rule is pinned here instead.
+    const mdk::pica::DepthState blended = mdk::pica::depthStateForPass(mdk::Pass::Blended);
+    PICA_CHECK(blended.test);
+    PICA_CHECK(!blended.write);
+
+    // The two exemptions neither test nor write (Renderer.cs:606-607).
+    const mdk::pica::DepthState onTop = mdk::pica::depthStateForPass(mdk::Pass::OnTop);
+    PICA_CHECK(!onTop.test);
+    PICA_CHECK(!onTop.write);
+    const mdk::pica::DepthState overlay = mdk::pica::depthStateForPass(mdk::Pass::Overlay);
+    PICA_CHECK(!overlay.test);
+    PICA_CHECK(!overlay.write);
+}
+
+void testTheDepthMapIncreasesWithDistance() {
+    // The converted NDC z runs [-1,0]: -1 at the near plane, 0 at the far. The
+    // stored depth must INCREASE with distance, or the test function that keeps
+    // nearer fragments would keep farther ones instead and the scene would be
+    // occluded by its own background. A sign error in the map, or in the
+    // [0,1] -> [-1,0] conversion, lands here.
+    PICA_CHECK(mdk::pica::storedDepth(-1.0f) < mdk::pica::storedDepth(-0.5f));
+    PICA_CHECK(mdk::pica::storedDepth(-0.5f) < mdk::pica::storedDepth(0.0f));
+
+    // And the whole frustum stays inside the buffer's [0,1], so the 24-bit clear
+    // is at or above everything the frame can produce. The loop counter is an
+    // int and the float is derived from it (AGENTS.md R5, T2).
+    for (int i = 0; i <= 100; i++) {
+        const float z = -(float)(100 - i) / 100.0f;
+        const float depth = mdk::pica::storedDepth(z);
+        PICA_CHECK(depth >= 0.0f && depth <= 1.0f);
+    }
+
+    // The cleared buffer really is the top of that range.
+    PICA_CHECK(kClearedDepth == 1.0f);
+}
+
+void testTheClearedBufferAcceptsTheWholeFrustum() {
+    const mdk::pica::DepthState solid = mdk::pica::depthStateForPass(mdk::Pass::Solid);
+
+    // The near plane passes, and strictly.
+    PICA_CHECK(mdk::pica::depthPasses(solid, -1.0f, kClearedDepth));
+    PICA_CHECK(mdk::pica::storedDepth(-1.0f) < kClearedDepth);
+
+    // The FAR plane passes ONLY because the test is LESS_OR_EQUAL: it stores
+    // exactly the value the buffer was cleared to. A strict GPU_LESS would
+    // reject the far plane and anything coplanar with it -- invisible geometry
+    // with no error, which is the failure mode this whole file exists to catch.
+    // The oracle's compare_op is LESS_OR_EQUAL (Renderer.cs:606).
+    PICA_CHECK(mdk::pica::storedDepth(0.0f) == kClearedDepth);
+    PICA_CHECK(mdk::pica::depthPasses(solid, 0.0f, kClearedDepth));
+}
+
+void testNearerFragmentsWinAndFartherOnesLose() {
+    const mdk::pica::DepthState solid = mdk::pica::depthStateForPass(mdk::Pass::Solid);
+    const float nearDepth = mdk::pica::storedDepth(-1.0f);
+    const float farDepth = mdk::pica::storedDepth(0.0f);
+
+    // A nearer surface drawn after a farther one still lands.
+    PICA_CHECK(mdk::pica::depthPasses(solid, -1.0f, farDepth));
+    // A farther surface cannot paint over a nearer one. This is the check the
+    // old "depth test disabled" frame could not make at all: with no test, the
+    // draw order was the only occlusion there was.
+    PICA_CHECK(!mdk::pica::depthPasses(solid, 0.0f, nearDepth));
+
+    // The exempt passes land whatever the scene did, which is what OnTop means.
+    const mdk::pica::DepthState onTop = mdk::pica::depthStateForPass(mdk::Pass::OnTop);
+    PICA_CHECK(mdk::pica::depthPasses(onTop, 0.0f, nearDepth));
+
+    // A blended surface is tested like an opaque one, and having not written
+    // depth it cannot hide the next draw: the buffer keeps what the opaque pass
+    // left there. `write` is the half of the rule that no depthPasses call can
+    // show, so it is asserted directly.
+    const mdk::pica::DepthState blended = mdk::pica::depthStateForPass(mdk::Pass::Blended);
+    PICA_CHECK(!blended.write);
+    PICA_CHECK(mdk::pica::depthPasses(blended, -0.5f, farDepth));
+    PICA_CHECK(!mdk::pica::depthPasses(blended, 0.0f, nearDepth));
+}
+
+void testTheRealMatrixPutsTheNearPlaneNearest() {
+    // The whole chain rather than the model of it: points go through
+    // `eyeViewProjection` -- which carries the [0,1] -> [-1,0] conversion -- and
+    // come out in the order the depth test needs. If the conversion's sign were
+    // flipped, or applied twice, this is what catches it: the depths would come
+    // out in the opposite order, and every check above would still pass.
+    //
+    // kProjection is the oracle's shape: clip.z = -z-4, clip.w = -z, so z = -4
+    // is the near plane (engine NDC z 0) and z -> -infinity is the far plane.
+    // After the conversion zNdc = 4/z, which is exact for all three points.
+    float eye[16];
+    mdk::pica::eyeViewProjection(kIdentity, kProjection, 0.0f, eye);
+
+    const float zs[3] = {-4.0f, -8.0f, -16.0f};
+    const float wantNdc[3] = {-1.0f, -0.5f, -0.25f};
+    const float wantDepth[3] = {0.0f, 0.5f, 0.75f};
+
+    float previous = -1.0f; // below every stored depth: the first one must pass
+    for (int i = 0; i < 3; i++) {
+        const float p[4] = {0, 0, zs[i], 1};
+        float clip[4];
+        xform(eye, p, clip);
+        PICA_CHECK(clip[3] > 0.0f); // in front of the camera
+        const float zNdc = clip[2] / clip[3];
+        // The conversion produced [-1,0] -- not [0,1], and not [-2,-1].
+        PICA_CHECK(zNdc >= -1.0f && zNdc <= 0.0f);
+        PICA_CHECK(zNdc == wantNdc[i]);
+
+        const float depth = mdk::pica::storedDepth(zNdc);
+        PICA_CHECK(depth == wantDepth[i]);
+        PICA_CHECK(depth > previous);
+        previous = depth;
+    }
+}
+
 } // namespace
 
 namespace test {
@@ -322,6 +468,11 @@ int runPicaMatrixTests() {
     testTheWorldComposesOnTheLeftOfTheView();
     testTheRegistersAreColumns();
     testTheShaderReadsTheRegistersTheWayTheMatrixMeansThem();
+    testTheDepthStateComesFromThePass();
+    testTheDepthMapIncreasesWithDistance();
+    testTheClearedBufferAcceptsTheWholeFrustum();
+    testNearerFragmentsWinAndFartherOnesLose();
+    testTheRealMatrixPutsTheNearPlaneNearest();
     return failures;
 }
 

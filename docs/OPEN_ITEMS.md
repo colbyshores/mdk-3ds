@@ -170,23 +170,55 @@ measured or cited reason, and the batch that closes one should delete its entry.
   no runtime binding.
 - Review-21 caveat: the post-camera solid refresh pins only the current arena, not
   the C#'s `SolidArenas`.
-- C3D depth state differs from the C#: depth test disabled versus the C#'s
-  LESS_OR_EQUAL test/write. Fixing it needs a projection remap, `C3D_DepthMap`, the
-  test function, the clear value and a capture — and it is also why
-  `renderer_c3d.cpp` ignores the now-ported `depth_layer` (with no depth test the
-  painter's order decides, exactly as in the original). The ARM11 cost of the depth
-  layer computation is unmeasured.
-- The newest external review's MINOR: the 3DS `Pass` implementation covers culling
-  only. The C# derives cull, blend and depth-test/write from `Pass`
-  (`Renderer.cs:565,596,606-607`), but `renderer_c3d.cpp` never calls
-  `C3D_AlphaBlend`, so `Pass::Blended` glass draws opaque, and the
-  `OnTop`/`Overlay` depth exemptions are not modelled. The review measured
-  non-`Solid` batches in **10 of level 3's 17** arenas (HMO_2, HMO_3, HMO_5,
-  HMO_7, HMO_8, HMO_9, HMO_10, CHMO_4, CHMO_8, CHMO_9; `HMO_3`: 75 Blended;
-  `HMO_9`: 25 Mirror + 49 Blended; `HMO_2`: 4 Blended). The seven pure-`Solid`
-  arenas are HMO_1, HMO_4, HMO_6, CHMO_1, CHMO_2, CHMO_5 and CHMO_6. They are
-  unreachable today only because the 3DS frontend draws the start arena, whose
-  154 batches are all `Solid`.
+- **The C3D depth state is CLOSED (2026-11-02, batch 29).** The backend installs
+  the oracle's `LESS_OR_EQUAL` test with the per-pass write rule
+  (`pica::depthStateForPass`, `Renderer.cs:606-607`) and clears the depth to the
+  buffer's maximum, because the map it installs stores 0 at the near plane. The
+  pairing — `C3D_DepthMap(true, 1.0f, 1.0f)` + `GPU_LEQUAL` + clear `0xFFFFFF` —
+  is Forsaken's on this hardware with the oracle's tie allowed, and the ordering
+  it implies is pinned by `PASS PicaMatrix` (five cases, nine mutations, in
+  "Iteration 57"). **What it does NOT pin:** the picture. P6 is open — no 3DS
+  emulator, no Old-3DS — so the only hardware evidence this batch can produce is
+  the init log line (`depth: map z*1.0+1.0 near=0.0000 far=1.0000
+  clear=0xffffff test=LEQUAL`).
+- **`DepthPull` on the 3DS is now unblocked but not free.** With a depth test
+  installed, the oracle's depth pull (`render/depth_pull.cpp`, a poster over its
+  wall) has something to bias against, and `renderer_c3d.cpp` still ignores
+  `depth_layer`. It is not a one-liner: the pull needs the **view position** and
+  the **primitive**, and the render seam hands the backend neither — the Vulkan
+  backend has the camera locally, the C3D one has only `view`/`projection`
+  matrices. So it is a seam question (pass the pull in, or pass the eye position),
+  not a substitution, and it moves object placement on an unverifiable target.
+  The ARM11 cost of the pull per draw is also unmeasured.
+- **The PICA's far CLIP plane is `z <= 0` in the `[-1,0]` range** (vault:
+  30-architecture/patterns/
+  pica200-ndc-z0-is-the-far-clip-plane-billboards-vanish.md — measured on another
+  project, five wrong diagnoses first). The engine's far plane converts to exactly
+  `z_ndc = 0`, so geometry that has to be *clipped* against the far plane sits on
+  the boundary and can be discarded whole. This is a property of the conversion the
+  port already ships (`row[2] -= row[3]`, and Forsaken's
+  `3DS_PORT_NOTES.md` Problem 1 says the same), **not** something batch 29
+  introduced, and nothing in the pinned scene reaches it. Recorded because the next
+  batch that touches depth, the far plane, or a CPU-projected quad pass (the
+  diagnostic triangle is at clip `z = 0` through an identity matrix) should know
+  the boundary is there.
+- The newest external review's MINOR, halved: the 3DS `Pass` implementation now
+  covers culling **and depth**, but not blend. The C# derives cull, blend and
+  depth-test/write from `Pass` (`Renderer.cs:565,596,606-607`); the depth half
+  landed in batch 29, and `renderer_c3d.cpp` still never calls `C3D_AlphaBlend`, so
+  `Pass::Blended` glass draws opaque. **Why it is not the same one-liner as the
+  depth half:** there is no alpha to blend with on this path. The palette expansion
+  forces alpha 255 on every non-index-0 texel (the C# gets its transparency from
+  the shader's index-0 discard, and the PICA has no discard), and
+  `mdk_c3d.v.pica` writes `outclr = ones`, so `C3D_AlphaBlend(SRC_ALPHA,
+  ONE_MINUS_SRC_ALPHA)` is arithmetic that changes nothing for glass. The alpha
+  source has to be decided first — the original's colour-key, or an alpha in the
+  expanded texture — and that is a batch of its own. The review measured non-`Solid`
+  batches in **10 of level 3's 17** arenas (HMO_2, HMO_3, HMO_5, HMO_7, HMO_8,
+  HMO_9, HMO_10, CHMO_4, CHMO_8, CHMO_9; `HMO_3`: 75 Blended; `HMO_9`: 25 Mirror +
+  49 Blended; `HMO_2`: 4 Blended). The seven pure-`Solid` arenas are HMO_1, HMO_4,
+  HMO_6, CHMO_1, CHMO_2, CHMO_5 and CHMO_6. They are unreachable today only because
+  the 3DS frontend draws the start arena, whose 154 batches are all `Solid`.
 - Kurt's sprite is drawn at `Player::feet`, not at the C#'s `FrameBlend.Feet`.
   With blending off — which is what a fixed-step capture and the tests are — the
   two are the same pixel, and sub-step blending is not ported.

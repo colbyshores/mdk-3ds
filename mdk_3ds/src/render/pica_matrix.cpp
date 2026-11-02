@@ -135,5 +135,47 @@ void registers(const float m[16], float out[16]) {
     }
 }
 
+DepthState depthStateForPass(Pass pass) {
+    // One line per pass, each readable against the oracle line it comes from
+    // (Renderer.cs:565,606-607). Nothing here is inferred: a pass that is
+    // neither blended nor exempt is an ordinary opaque surface.
+    switch (pass) {
+    case Pass::Blended:
+        // Tested but never written. Glass occludes nothing, and it is sorted
+        // back to front precisely because it cannot resolve against itself.
+        // This is the pass whose absence the frame cannot show: with no depth
+        // test at all the picture looks the same, which is exactly why the rule
+        // is pinned here rather than left to a screenshot.
+        return {true, false};
+    case Pass::OnTop:
+    case Pass::Overlay:
+        // Neither tested nor written: these draw over the scene, and the oracle
+        // exempts both (Renderer.cs:606-607).
+        return {false, false};
+    case Pass::Solid:
+    case Pass::DoubleSided:
+    case Pass::Mirror:
+        break;
+    }
+    return {true, true};
+}
+
+float storedDepth(float zNdc) {
+    // The fixed-function transform: `z*zScale + zOffset`, with the two constants
+    // the backend hands to C3D_DepthMap. Plain float arithmetic, no promotion:
+    // both constants are float, so no double reaches this expression on either
+    // target (AGENTS.md R4 does not apply to a cold path anyway, but there is no
+    // reason to invite one).
+    return zNdc * kDepthMapScale + kDepthMapOffset;
+}
+
+bool depthPasses(const DepthState& state, float zNdc, float stored) {
+    if (!state.test) {
+        return true;
+    }
+    // GPU_LEQUAL. See the note on the equality at the declaration.
+    return storedDepth(zNdc) <= stored;
+}
+
 } // namespace pica
 } // namespace mdk
