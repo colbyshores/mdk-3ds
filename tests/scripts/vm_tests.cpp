@@ -3559,7 +3559,7 @@ void testDeathUsesTheOraclesCompleteFallOperation(LevelData* levelData) {
 
     fallen.update(input, delta);
     CHECK(fallen.dead);
-    CHECK(fallen.health == 0);
+    CHECK(fallen.health() == 0);
     CHECK(fallen.onFloor);
     const float deathZ = fallen.feet.z;
 

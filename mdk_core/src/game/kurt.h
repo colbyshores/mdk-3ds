@@ -17,6 +17,15 @@
 // The addresses are the original's: health 0x574324, the invulnerability
 // 0x573bd4, the knock damage 0x573b20, the slots 0x57432c, the super-chain-
 // gun ticks 0x5743ef and the sniper ammo 0x5743f3.
+//
+// ONE HEALTH. The C# has exactly one Kurt.Health (Kurt.Combat.cs:76) and every
+// reader and writer goes through it: hurt_kurt (109) and the hard landing write
+// it, if_player_health (241), the death transition and the HUD read it. This
+// health_ is that field and there is no second one: Player owns a Kurt (it is the
+// movement half of the same C# object) and reads its health through this object,
+// and ScriptRuntime::kurt() hands out that same object rather than a copy of it,
+// so a script that hurts Kurt to zero is the same event that kills him and empties
+// the HUD's number. golden/L3_kurt_hurt.txt pins both columns of that.
 // ============================================================================
 
 #include <stdint.h>
@@ -59,6 +68,15 @@ public:
     void hurt(int32_t damage);
 
     int32_t health() const { return health_; }
+    // Kurt.SetHealth (Kurt.Combat.cs:169): "starts with another health than 100
+    // (the fall's)". The only other writer besides damage().
+    void setHealth(int32_t health);
+    // The `Health = Math.Max(Health - damage, 0)` line of Kurt.Damage
+    // (Kurt.Combat.cs:145) on its own: no difficulty scaling, no red flash, no
+    // knock damage. That is the arithmetic Player needs for a hard landing, and
+    // the two terms it leaves out are the ones Player does not model (see the
+    // note at Player::damage).
+    void damageHealth(int32_t damage);
     float hurtFlash() const { return hurtFlash_; }
     float invulnerable() const { return invulnerable_; }
     float knockDamage() const { return knockDamage_; }

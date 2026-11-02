@@ -9551,3 +9551,111 @@ Unchanged: the **blend half of the Citro3D object pass** (blocked on the alpha s
 then the two items this batch named — **unify Kurt's health** (the oracle has one, the
 port has two) and the **sprite-selection fixture**, which needs one of its two seams
 chosen first.
+
+## Iteration 68 — batch 40: Kurt has one health again, pinned from both sides of the class split (review-10 F4/F5 fixed; F1/F2/F3/F6 owner-gated)
+
+### What landed
+
+**Priority item 6a: the two healths are one.** The C# `Kurt` is one class with one
+`Health` (`Kurt.Combat.cs:76`): `Damage` writes it, `Hurt` reaches it from
+`hurt_kurt` (opcode 109), and the same field is what
+`Health == 0 && OnFloor → State.Dead` reads and what the HUD draws. This port splits
+the class into `mdk::Player` (movement) and `mdk::Kurt` (combat) and had **two**
+healths with nothing between them, so a script that hurt Kurt to zero neither moved
+the HUD nor killed him. Now:
+
+| change | effect |
+|---|---|
+| `Player::health` (field) → `Player::combat_` (`Kurt` member) + `health()` | the health lives in the combat half and nowhere else |
+| `Kurt::setHealth` / `Kurt::damageHealth` | `Player::setHealth`/`damage` are the C#'s `SetHealth` and the `Health` line of `Damage`, on the one field |
+| `ScriptRuntime::kurt()` → `player_->combat()` when a Player is bound | the runtime hands out the entity's own object, as C# `Viewer`'s single `Kurt` is handed in (`ScriptRuntime.cs:168`); no copy |
+| `ScriptRuntime`'s `const Player*` → `Player*` | the runtime borrows the whole entity, not a read-only view (source-compatible at every call site) |
+| `mdk_linux/src/main.cpp:633` | the HUD reads `player.health()`, i.e. the field opcode 241 reads |
+
+A runtime built with **no** Player (the harnesses that pass `nullptr`, as the ctor
+documents) falls back to the runtime's own `unboundKurt_`, renamed from `kurt_` to say
+what it is: the combat state of a world with no Kurt entity, with no second copy of
+anything. The shipped frontend binds its Player, so in the shipped unit there is one
+health, full stop.
+
+### The pin, and what it kills
+
+`tests/scripts/golden/L3_kurt_hurt.txt` — **221 lines, sha256 `35d78b3d…`**, the C#
+oracle probe's new `hurt` mode, byte-identical to `tick1 dump hurt 3 220`. It steps the
+`ScriptRuntime` and the same `Kurt` object together in the frontend's order (Kurt, then
+the scripts — `Viewer.cs:505-535`), and prints **`hp=`** (the entity's health: what the
+death transition and the HUD read) and **`vmhp=`** (what the VM reads through
+`ScriptRuntime::kurt()`). In the oracle those are one property and cannot disagree,
+which is the entire content of the golden.
+
+The scenario hurts him **in mid-air**, on purpose: on a floor any hurt of ≥5 knocks the
+oracle's Kurt down (`UpdateKnockDamage`, `KnockDamage >= 5` while `OnFloor`) and the
+port has no knock-down state machine, so a ground hurt would compare an oracle in
+`K_BANG` against a port standing still. The oracle itself declines to knock him unless
+it finds a floor within 13 units below, so the run lifts him 300 units and hurts him at
+steps 20/40/60/80 (10/25/30/35 → health 100→90→65→35→0) and again at 200, on the corpse
+(`Hurt`'s `Health == 0` early return). Step 183 is the landing: `state=Dead`, the same
+lethal hard landing batch 39 pinned.
+
+Mutants built and run:
+
+| mutant | result |
+|---|---|
+| `ScriptRuntime::kurt()` returns its own copy (the pre-fix state) | **FAILS** at the first hurt — `s=20 hp=100 vmhp=90` — and at the landing, `s=183 state=HardLand hp=90` where the oracle is `Dead` |
+| (kept) `Player::damage` floors at 0 | unchanged, as batch 39 proved |
+
+### Review-10 disposition
+
+| finding | disposition |
+|---|---|
+| **F1 (High)** — the integrity guard's fail-closed path replaced by a `--each-commit` "recovered" continue, in a `ralph-pi.sh` that is not in `PROTECTED` | **owner-side, not builder-remediable, and not rebutted.** The fix lives in `ralph-pi.sh` (whose working-tree edits are the owner's and must not be staged) and in `tools/runner/gates_batch_integrity.py`'s `PROTECTED` set — a file in its own `PROTECTED` list. Same hazard as review-9 R9-1/R9-2 under new numbers; owner task (1). This batch staged none of those files. |
+| **F2 (High)** — the tree is green only because two uncommitted files pair up; a clean `HEAD` fails its own gate | **owner-side, confirmed, not rebutted.** Batch 39 re-reproduced it by execution (clean clone + working-tree gate → `FAIL … '--each-commit'`, rc 1; same clone with its committed gate → `PASS`). The builder is forbidden to stage `ralph-pi.sh`, so it cannot close it. Owner task (1). |
+| **F3 (Medium)** — `--self-test` is invoked by nothing and returns before the static block | owner-side: the fix is a line in `tools/check.sh`, which is `PROTECTED`. Owner task (13). |
+| **F4 (Low)** — the `L3_kurt_lethal` PASS message claims three properties, the fixture discriminates one | **fixed.** The message now claims only the K_CRASHL entry and cites `L3_kurt_steps` step 656 for the chute close and `Player::damage` for the floored damage. |
+| **F5 (Low)** — the `land()` comment omits `StopFiring()` from what the C# `HardLanding` does | **fixed.** The comment now names `StopFiring()` (leave the sniper, stop the chain-gun voice, drop the muzzle flash, `Kurt.cs:589`) and says why the omission is inert: no firing, sniper or muzzle state exists in the port. |
+| **F6 (Low)** — `--each-commit` without `--base` is a silent no-op | owner-side: `gates_batch_integrity.py` is `PROTECTED`. Same class as F1/F2. |
+| oq3 — the probe lives outside the repository, so no golden can be regenerated from a clean clone | **recorded, not fixed.** It is true of every golden in the suite, not only this one: the probe tree is `/tmp/mdk-pi/obj3` (a scratch copy of the read-only oracle plus `Probe`), rebuilt by `/tmp/mdk-pi/build_probe.sh`, and the recipe is in `CONTINUATION.md`. Closing it means committing the probe, which is an owner decision about the oracle's own tree. |
+
+### Prior-solution lookup
+
+- **Pi knowledge (`mdk-sdl`)** — `knowledge_search` on the two-healths layout returned
+  the pre-edit `kurt.cpp`/`player.cpp`/`kurt.h` chunks, the `vm_tests` opcode-241
+  fixture and the `OPCODE_COVERAGE` note that 109/175 "landed with the Kurt
+  health/inventory slice": the same evidence batch 39 recorded, no prior fix. The index
+  is stale for this batch's edits and was refreshed after them.
+- **Obsidian vault** (`/mnt/nas/Vaults/port-docs`, read directly; the MCP server is not
+  exposed in this harness) — no note on Kurt's health or `hurt_kurt`. The nearest
+  pattern, `30-architecture/patterns/a-shared-bit-in-two-fields-is-a-vocabulary-collision-read-the-hex.md`,
+  is about two fields sharing a *bit position*, not a class split: adjacent, not a prior
+  solution.
+- **Cognee MCP** — not exposed in this Pi session; not consulted, and not claimed.
+
+### Gates (verbatim, all re-run from a clean build)
+
+- `make -C tests/scripts clean && make -C tests/scripts` → **exit 0**, `All cases match
+  the oracle.`, **447 PASS / 0 FAIL / 0 SKIP** (446 + the new `L3_kurt_hurt`).
+  `PASS L3_kurt_hurt: hurt_kurt moves the one health the death transition and the HUD
+  read, and takes Kurt to Dead on the landing`; `L3_kurt_steps` and `L3_kurt_lethal`
+  both still PASS, so the bridge moved neither older pin.
+- `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`; `gates_frames PASS
+  L3_f1.bmp sha=58615fc85d02e009` (byte-identical to the pinned `cpp=`, so
+  `reference.sha256` was NOT regenerated); `gates_smdh` SKIPPED (no built .cia);
+  `gates_vfp` 0 blockers; `audit_c_with_classes` 0 violations; `audit_r11_idiv` no
+  candidates; integrity PASS.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **exit 0**, `3DSX mdk.3dsx`, no warnings.
+- `cmake --build build-linux --target mdk -j8` → **exit 0**, `Built target mdk`, no
+  warnings.
+
+### Notes for the next batch
+
+- The frame is byte-unchanged (`6646adf1…`, `1.240 / 247 / 0.1819`): at level 3 frame 1
+  nothing has hurt Kurt and the HUD is not in the capture. The sidecar says so.
+- Two new open items with their triggers: the knock-down gap that forces the hurt golden
+  into the air, and `Kurt::state_`, the *second* duplicated field the same class split
+  left behind (no writer, so `hurt()`'s `Current is Dead|Knocked|GetUp|HardLand` guard
+  is inert). Both are in `docs/OPEN_ITEMS.md`.
+- **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the
+  Citro3D picture stays UNVERIFIED (P6).** The only windowed run was the frame capture,
+  on `DISPLAY=:99` (P7). Scratch captures went to `/tmp/mdk-pi` because `/tmp/kilo` is
+  not writable by this account (owner task 11). No gate, test or golden was relaxed.

@@ -1,0 +1,28 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-02T20:10:54Z at d24e5c2
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move: this batch removes a duplicated field, not a pixel.
+Kurt had two healths where the C# oracle has one -- mdk::Kurt::health_ (written by
+hurt_kurt, opcode 109, read by if_player_health, opcode 241) and mdk::Player::health
+(read by the death transition and by the Linux HUD) -- so a script that hurt Kurt to
+zero neither moved the HUD nor killed him. The health now lives on the combat half
+alone, Player owns that combat half, and ScriptRuntime::kurt() hands out the entity's
+own object instead of a copy of it, which is what C# Viewer's single Kurt is
+(ScriptRuntime.cs:168). At level 3 frame 1 nothing has hurt Kurt and the HUD is not
+in the capture at all, so no frame of this run can show it: the PNG is the same blob
+as 2026-11-02-kurt-lethal-landing.png (sha256 6646adf1...) and the measurement is
+unchanged at 1.240% / max 247 / mean 0.1819. What shows the change instead is the new
+golden tests/scripts/golden/L3_kurt_hurt.txt (221 lines, sha256 35d78b3d..., the
+oracle's own `hurt` mode output, byte-identical to `tick1 dump hurt 3 220`): it prints
+hp= off the entity and vmhp= off the runtime's Kurt, which in the oracle are one
+property and cannot disagree. Built with the runtime holding its own copy again -- the
+pre-fix state -- that golden diverges on the first hurt (s=20 hp=100 vmhp=90) and on
+the landing (s=183 state=HardLand hp=90 where the oracle is Dead). Suite: 447 PASS /
+0 FAIL / 0 SKIP.
+
+Capture: DISPLAY=:99 (headless Xvfb, per AGENTS.md P7), lavapipe
+(VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json), command
+`bash tools/publish_frame.sh kurt-one-health`, tree at d24e5c2 plus this batch's
+uncommitted change. Scratch captures went to /tmp/mdk-pi (AGENTS.md P7 names
+/tmp/kilo, which is not writable by this account -- owner task 11).

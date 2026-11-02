@@ -241,7 +241,7 @@ float hermite(float p0, float p1, float m0, float m1, float u) {
 } // namespace
 
 ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
-                             audio::SoundBank* bank, const Player* player,
+                             audio::SoundBank* bank, Player* player,
                              const formats::Bni* sprites)
     : player_(player), level_(level), cmi_(cmi),
       decoder_(cmi->bytes().data(), (int32_t)cmi->bytes().size()), rng_(seed),
@@ -2595,6 +2595,15 @@ formats::Box ScriptRuntime::kurtBox() const {
     return box;
 }
 
+// The one Kurt health, seen from the scripts' side. With a Player bound this is
+// the entity's own combat half — the C# hands its single Kurt to the runtime
+// (ScriptRuntime.cs:168) and every writer (hurt_kurt, the hard landing) and every
+// reader (if_player_health, the death transition, the HUD) goes through it. Out of
+// line because the seam needs the complete Player.
+const Kurt& ScriptRuntime::kurt() const { return player_ ? player_->combat() : unboundKurt_; }
+
+Kurt& ScriptRuntime::kurt() { return player_ ? player_->combat() : unboundKurt_; }
+
 // C# HurtKurt (ScriptRuntime.cs:2676, 0x46a498): riding the XD2 or the XE the
 // ridden object takes the hits (and dies at 0 unless indestructible); on foot or
 // on the snowboard Kurt does. Rides.TakesHits is Ridden != null && no board; the
@@ -2602,7 +2611,7 @@ formats::Box ScriptRuntime::kurtBox() const {
 // what the C# reads while nothing is ridden.
 void ScriptRuntime::hurtKurt(int32_t damage) {
     if (ridesRidden_ == nullptr || ridesBoard_) {
-        kurt_.hurt(damage);
+        kurt().hurt(damage);
         return;
     }
 

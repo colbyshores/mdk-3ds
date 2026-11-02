@@ -40,6 +40,17 @@ void Kurt::damage(int32_t damage) {
     knockDamage_ += (float)damage;
 }
 
+void Kurt::setHealth(int32_t health) {
+    // C# SetHealth: Math.Max(health, 0).
+    health_ = health > 0 ? health : 0;
+}
+
+void Kurt::damageHealth(int32_t damage) {
+    // C# Damage's Health line, Math.Max(Health - damage, 0), without the terms
+    // Player does not model. The death transition is the caller's, as in the C#.
+    health_ = health_ - damage > 0 ? health_ - damage : 0;
+}
+
 int32_t Kurt::scaled(int32_t damage) const {
     switch (difficulty_) {
         case Easy:

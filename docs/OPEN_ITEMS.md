@@ -565,7 +565,7 @@ can be written:
 Pick one of the two seams and the fixture is a normal batch. Leaving both open
 leaves `pick()` unpinned on both sides.
 
-## Kurt has two healths where the oracle has one (found in batch 39; next slice)
+## Kurt has two healths where the oracle has one (found in batch 39; **CLOSED by batch 40**)
 
 The C# is one object. `Kurt.Health` (`Kurt.Combat.cs:76`) is written by `Damage` —
 which the scripts' `hurt_kurt` reaches through `Hurt` and the movement's
@@ -585,9 +585,58 @@ was recorded: `docs/OPCODE_COVERAGE.md` lists 109 as landed, and iteration 14's
 note that "in the corpus the state moves only through the scripts" predates the
 movement health, which arrived with the hard-landing slice.
 
-Why it is not fixed here: unifying them is a state-model change across `Kurt`,
-`Player`, the VM and both frontends, and no existing golden can pin the bridge — the
+Why it was not fixed in batch 39: unifying them is a state-model change across `Kurt`,
+`Player`, the VM and both frontends, and no existing golden could pin the bridge — the
 script goldens tick no `Kurt.Update` and the kurt goldens run no `ScriptRuntime` —
 so the fix needs a new probe mode that ticks the runtime and the same `Kurt` object
 together. That is its own slice with its own risk class, not a line inside a
 review-remediation batch.
+
+**Closed by batch 40 (iteration 68).** `mdk::Player` now owns the combat half
+(`Player::combat_`) and the health lives in it alone; `ScriptRuntime::kurt()` returns
+`player_->combat()` when a Player is bound, so the runtime hands out the entity's own
+object rather than a copy — which is what C# `Viewer` is (`ScriptRuntime.cs:168` hands
+its single `Kurt` to the `ScriptRuntime`). The pin is
+`tests/scripts/golden/L3_kurt_hurt.txt` (the oracle probe's new `hurt` mode, byte-
+identical to `tick1 dump hurt 3 220`), which prints `hp=` off the entity and `vmhp=`
+off the runtime's Kurt; in the oracle they are one property. With the runtime holding
+its own copy again the golden diverges at the first hurt (`s=20 hp=100 vmhp=90`) and at
+the landing (`s=183 state=HardLand hp=90` where the oracle is `Dead`).
+
+## A hurt on the floor knocks Kurt down, and the port has no knock-down (found in batch 40)
+
+`golden/L3_kurt_hurt.txt` hurts Kurt **in mid-air**, which looks arbitrary and is not.
+The oracle's `UpdateKnockDamage` (`Kurt.Combat.cs:214`) knocks him down whenever
+`KnockDamage >= 5` while `OnFloor`, and `Damage` adds the whole damage to
+`KnockDamage` — so *any* hurt of 5 or more on a floor puts the oracle into `K_BANG`
+and, after `K_BFLIP`, back up, invulnerable for 3 s, during which `Hurt` declines.
+This port has no knock-down state machine (`Kurt::knockDamage_` has no reader;
+`Player::addKnockdownPush` has no caller), so a ground-level hurt golden would compare
+an oracle in `Knocked` against a port standing in `Still` — a different gap, wearing
+this one's golden. The oracle's own check declines to knock him unless it finds a floor
+within 13 units below (`KnockdownFloorDistance`), so the golden lifts him 300 units and
+hurts him in the part of the fall where the two halves agree, and the last hurt takes
+him to 0, whose `Health > 0` guard disables the knock check for the rest of the fall.
+
+Trigger that closes it: the knock-down slice (`UpdateKnockDamage`, `KnockDown`,
+`K_BANG`/`K_BFLIP`, the 3 s invulnerability, the `_push` drain — `Player` already
+carries `_knockdownPush` and its drain). When it lands, re-run the hurt scenario on the
+ground and the knock-down becomes visible in a golden.
+
+## `Kurt::state_` is a second copy of the entity's state with no writer (found in batch 40)
+
+Batch 40 removed the duplicated *health*; the same split still duplicates the *state*.
+`Kurt::state_` (`kurt.h`) is initialised to `Still` and nothing writes it — the only
+reader in the tree is the `KURT` line of the script dump (`tick1.cpp`), and the C#
+`Hurt` reads the real `Current` (`Kurt.Combat.cs:120`: `Current is State.Dead or
+State.Knocked or State.GetUp or State.HardLand`). So the port's copy of that guard is
+inert: a hard-landing or knocked-down Kurt can be hurt again, where the oracle declines.
+It is inert rather than wrong only because the `health_ == 0` early return above it
+already covers the dead case, and because nothing can enter HardLand/Knocked/GetUp and
+survive to be hurt in the same step.
+
+Not fixed in batch 40 because the honest fix is to delete the field and read the
+entity's state through the same binding `kurt()` now uses — a second state-model change
+in a batch that had already made one, and one no golden can pin until the knock-down
+states are reachable. Trigger: the knock-down slice above; then `hurt()` should take the
+entity's state (or read it through the binding) and `Kurt::state_` should go.

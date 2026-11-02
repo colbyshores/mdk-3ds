@@ -497,7 +497,7 @@ std::string dumpKurt(int level, int steps, Player player, const Player::FrameCou
                  (int)std::floor(player.feet.z * 64.0f), player.yaw, player.forwardSpeed,
                  player.strafeSpeed, player.verticalSpeed, player.animationFrame(),
                  player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.chuteClosing() ? 1 : 0,
-                 player.health, voices.empty() ? "-" : voices.c_str());
+                 player.health(), voices.empty() ? "-" : voices.c_str());
         out += line;
     }
     return out;
@@ -544,6 +544,163 @@ bool kurtStepsDump(int level, int steps, bool lethal, const MdkData& data, const
     const Player::FrameCounts counts = kurtFrameCounts(*sprites);
     player.setFrameCounts(counts);
     *out = dumpKurt(level, steps, player, counts, mixer, lethal);
+    return true;
+}
+
+// The bridge between the scripts' hurt_kurt and the ONE Kurt health, as the C++
+// twin of the oracle probe's `hurt` mode.
+//
+// WHY THIS EXISTS. The C# Kurt is one class with one Health (Kurt.Combat.cs:76):
+// Hurt writes it, and the same field is what "health 0 --on the floor--> DEAD"
+// reads and what the HUD draws. This port splits the class into a movement half
+// (mdk::Player) and a combat half (mdk::Kurt), and a split is where a second copy
+// hides: if ScriptRuntime::kurt() handed out its own Kurt instead of the entity's,
+// hurt_kurt (opcode 109) would move a field the death transition and the HUD never
+// read, and every gate would stay green while a script shot a full-health Kurt. The
+// two columns hp= (the entity's health, i.e. what the death check and the HUD read)
+// and vmhp= (what the VM reads through ScriptRuntime::kurt()) are the whole content
+// of the golden: in the oracle they are one property and cannot disagree.
+//
+// WHY EVERY HURT IS IN THE AIR. On a floor any hurt of 5 or more knocks Kurt down
+// (UpdateKnockDamage, Kurt.Combat.cs:214: KnockDamage >= 5 while OnFloor), and the
+// knock-down state machine is a subsystem this port has not landed -- so a hurt on
+// the ground would put the oracle into K_BANG and the port nowhere, which is a
+// different gap, not this one. The oracle's own check declines to knock him unless
+// it finds a floor within 13 units below (KnockdownFloorDistance), so the lift at
+// step 1 puts every hurt in the part of the fall where the two halves agree, and
+// the last hurt takes his health to zero, whose Health > 0 guard disables the knock
+// check for the rest of the fall. The landing is then the lethal one
+// golden/L3_kurt_lethal.txt already pins, and the hurt at step 200 is Hurt's
+// Health == 0 early return on a corpse.
+//
+// The world is kurtStepsDump's (reachable arenas, no pinned solid arena, the
+// archive's frame counts, the level's sound bank) plus the ScriptRuntime the runner
+// mode builds, bound to THIS Player -- which is the point: the runtime and the
+// movement half are the same entity, as C# Viewer's single Kurt is
+// (ScriptRuntime.cs:168). The step order is the frontend's (Kurt, then the scripts;
+// Viewer.cs:505-535, mdk_linux/src/main.cpp), and the 1/60 call lets the runtime
+// complete a script tick every second step.
+std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, Player& player,
+                         audio::SoundMixer& mixer) {
+    struct Hurt {
+        int step;
+        int damage;
+    };
+    // The schedule the oracle prints in its own header; the two sides cannot drift,
+    // because a golden compared against another schedule differs on its first line.
+    static const Hurt kHurts[] = {{20, 10}, {40, 25}, {60, 30}, {80, 35}, {200, 10}};
+    const float kLift = 300.0f;
+
+    char line[512];
+    std::string out;
+    snprintf(line, sizeof(line), "level=%d steps=%d seed=1 lift=%.4f hurts=", level, steps, kLift);
+    out += line;
+    for (size_t i = 0; i < sizeof(kHurts) / sizeof(kHurts[0]); i++) {
+        if (i) {
+            out += ",";
+        }
+        snprintf(line, sizeof(line), "%d:%d", kHurts[i].step, kHurts[i].damage);
+        out += line;
+    }
+    out += "\n";
+
+    const Vec3 kStart = player.feet;
+    for (int step = 1; step <= steps; step++) {
+        if (step == 1) {
+            player.feet = Vec3{kStart.x, kStart.y, kStart.z + kLift};
+            player.verticalSpeed = 0.0f;
+        }
+        Input input;  // nothing pressed: no walk, no jump, so no chute
+        player.update(input, 1.0f / 60.0f);
+        // The scripts' step, and the hurt inside it: in the oracle a hurt_kurt is
+        // dispatched from a script object's program during ScriptRuntime::update,
+        // never between the oracle's own statements.
+        for (size_t i = 0; i < sizeof(kHurts) / sizeof(kHurts[0]); i++) {
+            if (kHurts[i].step == step) {
+                runtime.hurtKurt(kHurts[i].damage);
+            }
+        }
+        runtime.update(1.0f / 60.0f);
+
+        // The C# probe prints one shared mixer; the port's runtime owns its own and
+        // the Player has another, so the column is the two lists concatenated. Both
+        // are empty here, which is itself the pin that a hurt plays no sound.
+        std::string voices;
+        const audio::SoundMixer* mixers[2] = {&runtime.mixer(), &mixer};
+        for (size_t m = 0; m < 2; m++) {
+            const std::vector<audio::SoundMixer::Voice>& live = mixers[m]->voices();
+            for (size_t i = 0; i < live.size(); i++) {
+                if (!voices.empty()) {
+                    voices += ",";
+                }
+                voices += live[i].name;
+            }
+        }
+
+        snprintf(line, sizeof(line),
+                 "s=%d state=%s feet64=%d,%d,%d vert=%.4f floor=%d chute=%d hp=%d vmhp=%d "
+                 "voices=%s\n",
+                 step, kurtStateName(player.state()),
+                 (int)std::floor(player.feet.x * 64.0f), (int)std::floor(player.feet.y * 64.0f),
+                 (int)std::floor(player.feet.z * 64.0f), player.verticalSpeed,
+                 player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.health(),
+                 runtime.kurt().health(), voices.empty() ? "-" : voices.c_str());
+        out += line;
+    }
+    return out;
+}
+
+// Build the world the hurt dump steps through: kurtStepsDump's, plus the CMI and
+// the ScriptRuntime bound to the Player it drives. Shared by the golden and by
+// `tick1 dump hurt`, so a failing golden diffs the same text it compares.
+bool kurtHurtDump(int level, int steps, const MdkData& data, const Bni* sprites,
+                  std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    LevelData levelData;
+    audio::SoundBank bank;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    Cmi cmi;
+    if (!data.read(cmiPath, &cmiBytes) ||
+        !Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+    const std::vector<const Arena*>& arenas = levelData.arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        if (levelData.isReachable(arenas[i]->name())) {
+            space.add(arenas[i]);
+        }
+    }
+    audio::SoundMixer mixer(&bank);
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2]};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+    // The runtime is bound to THIS Player, so its kurt() is the entity's own combat
+    // half. Passing nullptr here would be the two-healths defect wearing a harness:
+    // the runtime would fall back to its unbound combat state and hp= and vmhp=
+    // would part on the first hurt.
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 0;
+    *out = dumpKurtHurt(level, steps, runtime, player, mixer);
     return true;
 }
 
@@ -1426,6 +1583,16 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "hurt") {
+            std::string got;
+            std::string why;
+            if (!kurtHurtDump(level, ticks, data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         LevelData levelData;
         if (!LevelData::load(&levelData, &data, level)) {
             printf("the level did not load\n");
@@ -1451,7 +1618,12 @@ int main(int argc, char** argv) {
         // the same point, so both trees feed the runtime the same live Kurt; the
         // other dump modes keep the C#'s no-live-Kurt harness.
         Player kurt;
-        const Player* kurtArg = nullptr;
+        // Non-const because the runtime borrows the whole entity now, not a read-only
+        // view of it: ScriptRuntime::kurt() is this Player's combat half (the C#
+        // runtime's Kurt is the same object Viewer's Kurt is, ScriptRuntime.cs:168).
+        // The runner mode is the only arm that binds one; the others pass nullptr and
+        // get the runtime's unbound combat state.
+        Player* kurtArg = nullptr;
         Vec3 kurtAt = {0.0f, 0.0f, 0.0f};
         if (what == "runner") {
             if (argc <= 5 || !parsePoint(argv[5], &kurtAt)) {
@@ -2055,13 +2227,41 @@ int main(int argc, char** argv) {
                 printf("FAIL L3_kurt_lethal: %s\n", why.c_str());
                 failures++;
             } else if (got == expected) {
-                printf("PASS L3_kurt_lethal: a hard landing at zero health dies without K_CRASHL, "
-                       "without closing the chute and without taking the 10 points again\n");
+                printf("PASS L3_kurt_lethal: a hard landing at zero health enters no K_CRASHL "
+                       "(the one thing this run can see; the chute close and the floored damage "
+                       "are pinned by L3_kurt_steps step 656 and by Player::damage)\n");
             } else {
                 printf("FAIL L3_kurt_lethal: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }
+
+    // The one health, seen from both sides of the class split: hurt_kurt (opcode 109)
+    // through the ScriptRuntime, and the death transition and HUD through the Player.
+    // The oracle prints hp= and vmhp= off one property and cannot express a
+    // divergence; a port that gave the runtime its own copy of Kurt's health would
+    // print vmhp dropping while hp stayed 100 and would never kill him. See
+    // dumpKurtHurt for why every hurt lands in the air.
+    {
+        std::string expected;
+        if (!readText("golden/L3_kurt_hurt.txt", &expected)) {
+            printf("FAIL L3_kurt_hurt: no golden file golden/L3_kurt_hurt.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtHurtDump(3, 220, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_hurt: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_hurt: hurt_kurt moves the one health the death transition "
+                       "and the HUD read, and takes Kurt to Dead on the landing\n");
+            } else {
+                printf("FAIL L3_kurt_hurt: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
     }
 
     // The rolling basis (ObjectMotion.Roll), driven directly: see dumpRolling.

@@ -44,9 +44,24 @@ public:
     // floor is death (C# "health 0 --on the floor--> DEAD"); update() then runs
     // the C#'s UpdateDeath (the corpse falls on and the death frame advances)
     // until the frontend respawns him.
-    static constexpr int kMaxHealth = 100; // C# Inventory.MaxHealth
-    int health = kMaxHealth;
+    //
+    // THE ONE HEALTH. The C# Kurt is one class with one Health (Kurt.Combat.cs:76);
+    // this port splits the class in two, so the health is not duplicated across the
+    // split: it lives in `combat_` and nowhere else, and every reader -- the death
+    // transition below, the HUD, and ScriptRuntime::kurt() for the scripts VM --
+    // goes through this object. A Player that owns its own second health is the
+    // defect golden/L3_kurt_hurt.txt exists to catch: hurt_kurt (109) would move a
+    // field the death check and the HUD never read.
+    Kurt combat_;
     bool dead = false;
+
+    // Kurt's combat half, and the health that lives in it. `combat()` is the seam
+    // ScriptRuntime borrows (C# Viewer owns the one Kurt and hands it to the
+    // ScriptRuntime, ScriptRuntime.cs:168); `health()` is what the HUD and the
+    // death transition read.
+    Kurt& combat() { return combat_; }
+    const Kurt& combat() const { return combat_; }
+    int health() const { return combat_.health(); }
 
     // The number of frames in each C# Kurt state animation. The renderer
     // fills this after loading the sprite archive; Player's state machine
@@ -117,7 +132,12 @@ private:
     void fall(float delta);
     void fallMove(float delta);
     void land(const Vec3& before, const Vec3& normal, float delta);
-    void damage(int damage); // C# Damage (Normal difficulty): health -= damage, floored at 0
+    // The hard landing's damage: Kurt::damageHealth, i.e. the C#'s Health line
+    // alone. The terms Kurt.Damage also raises (HurtFlash, KnockDamage) are not
+    // modelled here: the red flash belongs to the combat slice that owns them and
+    // the knock-down state machine that reads KnockDamage is not ported, so a
+    // hard landing must not raise a flash nothing fades out.
+    void damage(int damage);
     void drainKnockdownPush(float delta);
     void updateState(float forward, float strafe, float delta);
     void updateSpecial(float delta);

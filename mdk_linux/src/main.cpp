@@ -630,7 +630,7 @@ int main(int argc, char** argv) {
             // an empty inventory and no target bar; those writers land with the
             // pickup and shooting subsystems, so the HUD must not invent them.
             mdk::HudState state;
-            state.health = player.health;
+            state.health = player.health();
             state.dead = player.dead;
             state.hurtFlash = player.dead ? deathTimer * kSkullFadePerSecond : 0.0f;
             mdk_render_canvas_begin(renderer);

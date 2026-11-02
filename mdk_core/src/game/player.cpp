@@ -219,7 +219,7 @@ void Player::updateState(float forward, float strafe, float delta) {
     // C# UpdateCombatState: health zero on a floor is the death state. The
     // combat knock-down, get-up and throw states are separate deferred
     // subsystems and cannot be entered by this movement-only Player.
-    if (health == 0 && onFloor) {
+    if (health() == 0 && onFloor) {
         setState(Kurt::Dead);
         return;
     }
@@ -448,14 +448,15 @@ Vec3 Player::shove(Vec3 offset) {
 }
 
 void Player::setHealth(int health) {
-    // C# SetHealth: max(health, 0).
-    this->health = health > 0 ? health : 0;
+    // C# SetHealth: max(health, 0) -- on the one health, which lives on the
+    // combat half this Player owns.
+    combat_.setHealth(health);
 }
 
 void Player::damage(int damage) {
     // C# Damage with Normal difficulty (Easy/Hard scaling lands with difficulty).
     // The death transition is the caller's (health 0 on the floor), not here.
-    health = health - damage > 0 ? health - damage : 0;
+    combat_.damageHealth(damage);
 }
 
 void Player::drainKnockdownPush(float delta) {
@@ -496,7 +497,7 @@ void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
     // health 0 on the floor is death (C# "health 0 --on the floor--> DEAD"). A
     // hard landing lands the same tick and fall-out forces OnFloor, so both die
     // now; a future mid-air damage source would wait for the landing, as in the C#.
-    if (health == 0 && onFloor) {
+    if (health() == 0 && onFloor) {
         dead = true;
     }
 }
@@ -545,7 +546,7 @@ void Player::fall(float delta) {
     fallMove(delta);
     float bottom = 0.0f;
     if (_space && _space->bottom(toVec(feet), &bottom) && feet.z <= bottom + kFallOutDepth) {
-        health = 0;
+        combat_.setHealth(0);
         verticalSpeed = 0.0f;
         onFloor = true;
     }
@@ -607,10 +608,16 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         // floors at 0 exactly like Kurt.Damage's Math.Max(Health - damage, 0) --
         // and it is kept because the C#'s Damage also raises HurtFlash and adds to
         // KnockDamage, which Player does not model yet (they live on mdk::Kurt).
-        if (health > 0) {
+        //
+        // What else the C#'s HardLanding does that this does not: Kurt.cs:589 also
+        // calls StopFiring() (leave the sniper, stop the chain-gun voice, drop the
+        // muzzle flash) inside the same guard. Nothing in the port fires -- no
+        // firing, sniper or muzzle state exists yet (grep finds no Firing member) --
+        // so the omission is inert today and lands with the firing slice.
+        if (health() > 0) {
             damage(kHardLandingDamage);
         }
-        if (health > 0 && _state != Kurt::Dead && _state != Kurt::Knocked &&
+        if (health() > 0 && _state != Kurt::Dead && _state != Kurt::Knocked &&
             _state != Kurt::GetUp) {
             chuteOpen = false;
             setState(Kurt::HardLand);

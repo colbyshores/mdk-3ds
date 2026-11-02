@@ -96,7 +96,8 @@ public:
     // The level is non-const because the MTO parses its arenas on demand.
     // The sound bank is borrowed too; it is what decides whether a script's
     // play_sound names a sound the level has. The Player is borrowed as the
-    // live source of Kurt's velocity, feet and yaw. The C# constructor requires its Kurt;
+    // live source of Kurt's velocity, feet and yaw, and the owner of Kurt's combat
+    // half (see kurt() below). The C# constructor requires its Kurt;
     // keep that decision explicit here too: pass the live Player from a
     // frontend, or pass null deliberately from a harness that does not use
     // Kurt's live state.
@@ -115,7 +116,7 @@ public:
     // and the golden harness fails outright without it, because a runtime without
     // it is a different random stream, not a degraded one.
     ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t seed,
-                  audio::SoundBank* bank, const Player* player,
+                  audio::SoundBank* bank, Player* player,
                   const formats::Bni* sprites);
 
     // Advance the world by the elapsed time. ScriptRuntime.cs:378-390 keeps
@@ -220,11 +221,19 @@ public:
     Vec3 kurtLiveVelocity() const;
     // Kurt's combat/inventory state (the Hurt/Damage half of Kurt.Combat.cs):
     // hurt_kurt (opcode 109) writes it, if_inventory (175) reads the slots.
-    const Kurt& kurt() const { return kurt_; }
+    // WITH A PLAYER BOUND this is `player_->combat()`, i.e. the one health the C#
+    // has (Kurt.Combat.cs:76): the runtime borrows the entity's combat half exactly
+    // as C# Viewer hands its single Kurt to the ScriptRuntime (ScriptRuntime.cs:
+    // 168), so hurt_kurt, the death transition and the HUD move on one field.
+    // There is deliberately no copy here: a copied Kurt is the two-healths defect,
+    // and golden/L3_kurt_hurt.txt is the pin that says so. WITH NO PLAYER BOUND
+    // there is no Kurt entity in the world at all, and the runtime's own unbound
+    // combat state answers — there is then nothing second to diverge from.
+    const Kurt& kurt() const;
     // The C# VM writes the same fields directly (Kurt and the screen,
     // ScriptVm.cs:1580-1600: 215/240/244); the mutable overload is that seam,
     // while reads and the mutators keep the const path above.
-    Kurt& kurt() { return kurt_; }
+    Kurt& kurt();
     // C# HurtKurt (ScriptRuntime.cs:2676, 0x46a498): riding the XD2 or the XE,
     // the ridden object takes the hits instead of Kurt; on foot or on the board,
     // Kurt does. Rides is a later slice — nothing mounts Kurt yet — so ridesRidden
@@ -493,7 +502,7 @@ private:
     static bool debrisFacetsTrampoline(void* ctx, const std::string& arena, int32_t group,
                                        DebrisGroup* out);
 
-    const Player* player_ = nullptr;  // borrowed; the live Kurt movement source
+    Player* player_ = nullptr;  // borrowed; the live Kurt entity (movement + combat)
     LevelData* level_;
     const formats::Cmi* cmi_;
     formats::ScriptDecoder decoder_;
@@ -536,7 +545,10 @@ private:
     std::string secondArena_;
     bool secondActive_ = false;
     Vec3 kurtPosition_{};
-    Kurt kurt_;  // C# ScriptRuntime.Kurt — the combat/inventory slice (game/kurt.h)
+    // The combat state of a runtime with NO Kurt entity bound (a harness that
+    // passes a null Player): kurt() falls back to this, and there is no second
+    // copy of it anywhere. With a Player bound, kurt() IS the entity's own.
+    Kurt unboundKurt_;  // C# ScriptRuntime.Kurt — the combat/inventory slice (game/kurt.h)
     // Rides.Ridden (Rides.cs:40) and Rides.OnBoard (Rides.cs:89): the ridden
     // object, and whether it is the snowboard. The ride slice (mount/dismount)
     // is unported, so both stay at these values — what the C# reads while Kurt
