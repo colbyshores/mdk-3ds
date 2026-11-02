@@ -9093,3 +9093,146 @@ start, one scripted input and no combat, so the chute's `Stop` on death, the har
 landing, the knock-down and the firing pair are exercised by nothing. The feet are
 pinned to 1/64 unit, not to a decimal, for the reason above. **No 3DS emulator run and
 no Old-3DS hardware run was made: P6 stays open and Old-3DS timing stays UNMEASURED.**
+
+## Iteration 65 — batch 37: pin the hard-landing and death chute sounds (review-7 F3 fixed)
+
+**Prior-solution lookup.** Pi knowledge `mdk-sdl` was consulted first. A path-filtered
+`adaptive` search for the Player sound/death/hard-land subsystem returned no result; the
+required retry in `hybrid` mode returned `mdk_core/src/game/player.cpp`, `player.h`, the
+sound-bank implementation and the prior `OPEN_ITEMS.md` sound deferral. Those were leads,
+not authority: every branch was checked against the C# source and the repository.
+Obsidian MCP was available and searched for MDK/Kurt/HardLand/chute/footstep notes; it
+returned only loop-setup and tooling notes, with no task-specific prior finding. A direct
+read-only `rg` over `/mnt/nas/Vaults/port-docs` likewise found no note about these sound
+paths. Cognee MCP was reachable, but its recall request failed with **HTTP 409 Conflict**;
+no graph result was available, so none is claimed. The repository and the C# oracle were
+the authoritative inputs.
+
+### What landed
+
+This batch is test coverage, not a product-code change. It fixes review-7 F3's confirmed
+finding that the comments claiming the hard-landing and death chute-sound behaviour were
+not pinned: the reviewer removed `stopChuteSound()` from the death branch and moved
+`updateChuteSound()` below the `HardLand` early return, and the 470-step suite stayed
+green in both cases.
+
+`tests/scripts/tick1.cpp`'s `dump kurt` scenario and the scratch C# probe's `kurt` mode
+now share the same 950-step schedule:
+
+* steps 1-470 are batch 36's walk/run/back-up/jump schedule, unchanged;
+* step 471 lifts Kurt 300 units above the start and zeroes his vertical speed, so the
+  otherwise unreachable hard-landing speed can be produced;
+* the jump at step 642 opens the chute at -182 u/s; its 3.9 u/s-per-step brake still
+  leaves a -124 u/s landing at step 656, which enters `HardLand` and closes the chute;
+* step 657 is the pin for the call order: the chute is closed but `CHUTEON` is still
+  live, and only `updateChuteSound()` **before** the `HardLand` return can stop it and
+  play `CHUTEIN`;
+* the second jump is pressed at step 770 and held; `SetHealth(0)` at step 860 is the
+  C# oracle's public kill seam (`Kurt.Combat.cs:169`); the landing at step 902 finds
+  health zero on a floor and enters `Dead`;
+* step 903 is the pin for the death path: `stopChuteSound()` removes `CHUTEON` **without**
+  `CHUTEIN`, exactly as C# `Kurt.StopChuteSound` does.
+
+The resulting `tests/scripts/golden/L3_kurt_steps.txt` is 951 lines: the header plus 950
+steps, with 104 `HardLand` rows and 49 `Dead` rows. It was regenerated from the C# probe,
+not from the C++ implementation. The oracle and C++ outputs are byte-identical:
+
+```
+$ DOTNET_ROOT=/tmp/kilo/dotnet10 MDK_DATA_DIR=$PWD/MDK \
+    /tmp/mdk-pi/obj3/Probe/bin/Debug/net10.0/mdkprobe.dll 3 950 1 kurt \
+    > /tmp/mdk-pi/kurt-950.oracle.txt
+$ MDK_DATA_DIR=$PWD/MDK tests/scripts/build/tick1 dump kurt 3 950 \
+    > /tmp/mdk-pi/kurt-950.cpp.txt
+$ cmp /tmp/mdk-pi/kurt-950.oracle.txt tests/scripts/golden/L3_kurt_steps.txt
+$ cmp /tmp/mdk-pi/kurt-950.cpp.txt tests/scripts/golden/L3_kurt_steps.txt
+3c1884ebb9e6cea62ffa8d330fd40e37c69ee4c8d7d44fbb176e76c2c1d8f6a9  /tmp/mdk-pi/kurt-950.oracle.txt
+3c1884ebb9e6cea62ffa8d330fd40e37c69ee4c8d7d44fbb176e76c2c1d8f6a9  /tmp/mdk-pi/kurt-950.cpp.txt
+3c1884ebb9e6cea62ffa8d330fd40e37c69ee4c8d7d44fbb176e76c2c1d8f6a9  tests/scripts/golden/L3_kurt_steps.txt
+```
+
+The fall-out variant of death is deliberately **not** claimed. `ArenaSpace::bottom` can
+only return the floor of an arena that contains Kurt's feet or is his pinned solid arena;
+without `setSolid`, the fall-out predicate `feet.z <= bottom - 50` is unreachable. Pinning
+that variant needs a solid-arena fixture on both sides, a separate harness slice. The
+health-zero landing reaches the same C# `Current == State.Dead` / C++ `dead` branch and
+therefore pins the reviewed `StopChuteSound` behaviour without pretending to pin fall-out.
+The fact and the exact next fixture are recorded in `docs/OPEN_ITEMS.md`.
+
+### The two mutants now fail
+
+The mutations were made only in a detached `/tmp/mdk-f3` worktree, never in the repository.
+The clean worktree first matched the golden. Each mutant was rebuilt with the real test
+Makefile and run against the same 950-step dump:
+
+* **A — remove `stopChuteSound()` from `Player::update`'s dead branch:** the output first
+  differs at **step 903**, where the mutant leaves `CHUTEON` live and the oracle stops it.
+  The mutant was killed.
+* **D — move `updateChuteSound()` below the `HardLand` early return:** the output first
+  differs at **step 657**, where the oracle has `CHUTEIN` and the mutant does not. The
+  mutant was killed.
+* after restoring `player.cpp`, the clean output matched the golden again.
+
+That is the direct inverse of review-7 F3's mutation evidence: the two paths that survived
+the 470-step suite now turn it red at their named first differing byte.
+
+### Review-7 disposition
+
+* **F3, Medium — confirmed and fixed.** The oracle-backed 950-step golden pins both
+  previously mutant-surviving paths, as measured above. No product branch was changed.
+* **F5, Low — confirmed and recorded, not coded.** `Player::runRate` omits C#'s
+  `!BackingUp`, but `BetaMoves` is wholly unported and therefore `BackingUp` can never be
+  true today. The current negative-speed run already matches the oracle byte for byte.
+  `docs/OPEN_ITEMS.md` now gives the beta-move batch the exact obligation to port
+  `BackingUp` with the term and pin a backwards run.
+* **F4, Medium — owner-owned artifact, deliberately untouched.** The review's
+  `2026-11-02-ralph-self-heal` pair is the owner's untracked file and has no narrative;
+  a batch may not edit or commit it. This batch's own frame sidecar does carry the required
+  explanation and measurement.
+* **F1/F2, High — confirmed, owner-gated, and not hidden as fixed.** The review's evidence
+  is correct: `git show HEAD:ralph-pi.sh | grep -c -- '--each-commit'` is `0`, the working
+  tree has `1`, and the working-tree `gates_batch_integrity.py` demands that marker. The
+  uncommitted `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh` and
+  `tools/runner/gates_batch_integrity.py` also contain the contract and per-commit-frame
+  acceptance edits without a recorded owner approval. They are owner harness work, three of
+  the four paths are protected, and the builder cannot widen the protected set, approve a
+  contract edit or alter the orchestrator's fail-closed path. This batch did **not** stage,
+  edit or revert any of them; it stages only its own paths and never uses `git add -A`.
+  The underlying owner task (1), including whether to commit/reject the four files together,
+  remains open. F1/F2 are therefore not represented as remediated by this batch.
+* **Hardware/open questions:** no Old-3DS run exists; P6 and the Old-3DS timing gap remain
+  open. No shipped frontend sets `Player`'s mixer, so the new audio-state coverage is not
+  an audible hardware claim.
+
+### Gate results, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` -> **exit 0**,
+  `All cases match the oracle.`, **445 PASS / 0 FAIL / 0 SKIP**. The changed line is
+  `PASS L3_kurt_steps: Kurt's walk, run, back-up, jump, chute, landing, hard landing and
+  death match the oracle, footsteps and chute sounds included`. No older golden moved.
+* `bash tools/check.sh` -> **exit 0**, `CHECK: ALL GATES PASSED`;
+  `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` (byte-identical to the pinned
+  `cpp=`, so `tests/frames/reference.sha256` was **not** regenerated); `gates_smdh` SKIPPED
+  (no built `.cia`); `audit_c_with_classes 0 violations`; `gates_vfp 0 blockers`;
+  `audit_arm11_math contract clean`; `audit_r11_idiv no candidates`;
+  `gates_core_parity both targets link the same core`; `gates_batch_integrity PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` ->
+  **exit 0**, `3DSX mdk.3dsx`, `staged 69 files, 79M`, no warnings.
+* `cmake --build build-linux --target mdk -j8` -> **exit 0**, `[100%] Built target mdk`,
+  no warnings.
+* `git diff --check` -> **exit 0**, no output.
+* Frame `docs/frames/2026-11-02-kurt-hardland-death.png` + `.txt`:
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, sha256
+  `6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8`, byte-identical to
+  its predecessors because no renderer behaviour changed. Capture ran on `DISPLAY=:99`
+  (Xvfb, lavapipe); no viewer was opened on the operator's display. The sidecar explains
+  why the fixed frame-1 picture cannot show steps 656 and 902 and records the oracle digest.
+
+### What is next
+
+The first unfinished priority item is still the **blend half of the Citro3D object pass**:
+`Pass::Blended` glass is opaque because no `C3D_AlphaBlend` is emitted. Its exact blocker
+is also unchanged: palette expansion forces alpha 255 and the vertex shader writes
+`outclr = ones`, so there is no alpha to blend until an alpha source is defined. The
+fall-out death fixture and the owner decisions for review-7 F1/F2 remain separate named
+opens. **No 3DS emulator run and no Old-3DS hardware run was made: P6 stays open and
+Old-3DS timing stays UNMEASURED.**

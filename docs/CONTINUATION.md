@@ -1,20 +1,21 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 36 adds the sounds C# `Kurt` makes from the state machine `Player` already owns (FOOT1-4, LAND, CHUTEOUT/CHUTEON/CHUTEIN) plus the first golden that drives `Player::update`; it changes no renderer behaviour, the pinned frame is byte-identical, and the `Player::facing()` trig finding it exposed is recorded owner-gated rather than landed.
+Risk: medium — batch 37 extends the oracle-backed `Player` sound golden from 470 to 950 steps so the hard-landing and death chute-sound paths are pinned; it changes no product or renderer behaviour, and the two mutants that review-7 F3 proved survived now turn the golden red.
 
-Last updated: 2026-11-02 (**batch 36** — Kurt's sounds ported and pinned by
-`golden/L3_kurt_steps.txt`; see `docs/PROGRESS_LOG.md`, "Iteration 64"). Previous narratives are one
-"Iteration N" section back each: batch 35 = "Iteration 63" (review-5 F2/F3/F4 fixed, F1 corrected but
-owner-gated), 34 = 62, 33 = 61, 32 = 60, 31 = 59, 30 = 58.
+Last updated: 2026-11-02 (**batch 37** — review-7 F3 fixed with an oracle-generated
+hard-landing/death golden; see `docs/PROGRESS_LOG.md`, "Iteration 65"). Previous narratives are one
+"Iteration N" section back each: batch 36 = "Iteration 64", 35 = "Iteration 63" (review-5
+F2/F3/F4 fixed, F1 corrected but owner-gated), 34 = 62, 33 = 61, 32 = 60, 31 = 59, 30 = 58.
 
-Goldens
-have been **445/0/0** since batch 36 (444 before it, and no older golden has moved) and the frame is
-byte-unchanged across batches 31-36 because no renderer behaviour was touched. Still owner-gated, and still uncommitted in the
-tree: the owner's harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
-`gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep staging
-only their own paths and never `git add -A`. Review-5 F1 also confirms that `ralph-pi.sh`'s recovery
-path is live in the working tree and NOT protected by the committed `PROTECTED` set; the earlier
-phrase “living in `PROTECTED` files a batch may not commit” was inaccurate and is corrected here.
+Goldens remain **445/0/0**: batch 37 regenerated `golden/L3_kurt_steps.txt` from the C# oracle
+(470 -> 950 steps), and no older golden moved. The frame is byte-unchanged across batches 31-37
+because no renderer behaviour was touched. Still owner-gated, and still uncommitted in the tree: the
+owner's harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
+`gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep
+staging only their own paths and never `git add -A`. Review-7 F1/F2 correctly reproduce that the
+working-tree gate demands an uncommitted `--each-commit` marker and that the contract/harness edits
+have no recorded owner approval; both are owner task (1), not batch-remediable. This batch did not
+stage, edit or revert those files.
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -59,10 +60,11 @@ consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix and Kurt's m
 flash and ride pose; `Vector3.Lerp`'s rounding (above); the other half of
 `FrameBlend` (Kurt's blended feet/yaw, `Record/Update/Turn/KurtAt`) and `TransformOf`'s
 driven-carrier shift, both with `Rides`. Kurt's footsteps and `LAND` sound are **CLOSED by
-batch 36**, along with the chute sounds; what is left of that item is that **no shipped
-frontend sets `Player`'s mixer** (neither has an audio device, and `ScriptRuntime` owns the
-only mixer and hands it out `const`), with the reason in `OPEN_ITEMS.md`. All with
-evidence in `OPEN_ITEMS.md`. **Old-3DS timing is UNMEASURED.**
+batch 36**, along with the chute sounds; batch 37 closes the hard-landing and death coverage of
+the chute stop; what is left of that item is that **no shipped frontend sets `Player`'s mixer**
+(neither has an audio device, and `ScriptRuntime` owns the only mixer and hands it out `const`),
+with the reason in `OPEN_ITEMS.md`. All with evidence in `OPEN_ITEMS.md`. **Old-3DS timing is
+UNMEASURED.**
 
 **Owner-authorized tasks (cannot be done in a batch).** (1) Add `ralph-pi.sh`, `ralph.sh`,
 `docs/KILO_RALPH_LOOP_POLICY.md` and `.kilo/agent/*` to the `PROTECTED` set of
@@ -204,32 +206,30 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `guard_fragment`, three region lifts with behavioural cases instead, `count_writes` counting
   **occurrences** not lines) is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 36)
+## Verified on this tree (batch 37)
 
 All gates re-run from a clean invocation, with the full narrative, the probe recipe and the
-measurements in `docs/PROGRESS_LOG.md`, "Iteration 64". Goldens **exit 0** (`All cases match the
-oracle.`, **445 PASS / 0 FAIL / 0 SKIP** — one more than batch 35, and no older golden moved);
-`tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`; `gates_frames PASS L3_f1.bmp
-sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
-regenerated; `gates_smdh` SKIPPED; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`,
-no warnings); `cmake --build build-linux --target mdk` **exit 0**, no warnings. What is new:
-`Player` plays the sounds the ported state machine makes (`FOOT1`-`FOOT4` via `Kurt.Footstep`'s
-wrapped previous/current frames and the pair that flips only on the right foot, `LAND`, `CHUTEOUT`,
-`CHUTEON` with `Once`, `CHUTEIN` as the `Stop` plus a play, and the `Stop` of `CHUTEON` on death),
-and `golden/L3_kurt_steps.txt` — 471 lines, the oracle probe's `kurt` mode byte for byte — is the
-first golden that drives `Player::update` at all: 470 steps at `Viewer.Step`, the same scripted
-input, the same `TRAVSPRT.BNI` frame counts (printed in the header on both sides), and a `voices=`
-column that is the mixer's live voices in launch order, so a dropped, renamed, mis-gated, doubled or
-un-stopped sound fails it. Reproduce with `tests/scripts/build/tick1 dump kurt 3 470` against
-`mdkprobe 3 470 1 kurt`. What it does NOT pin: any shipped frontend's wiring (no frontend sets the
-mixer — neither has an audio device), the chute `Stop` on death, the hard landing, the firing step
-frames, or the feet finer than 1/64 unit, because `Player::facing()`'s LUT trig drifts them
-1.34e-05 over the run (owner task 15, measured). Batch 35's record — the eye-loop gate at
-`PASS C3dFrame (22 checks, 29 arms adjudicated red)`, its nine mutants each compiled clean by
-devkitARM and each turned red on a named check — is "Iteration 63", and batch 34's is "Iteration 62".
-**No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D
-picture stays UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7).
-Frame `docs/frames/2026-11-02-kurt-sounds.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical to
+measurements in `docs/PROGRESS_LOG.md`, "Iteration 65". Goldens **exit 0** (`All cases match the
+oracle.`, **445 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`;
+`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so
+`reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS);
+`make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no warnings); `cmake --build build-linux --target mdk`
+**exit 0**, no warnings. What is new: review-7 F3's two mutant-surviving paths are pinned by the
+same oracle-backed `golden/L3_kurt_steps.txt`, now 951 lines / 950 steps. The C# probe and the C++
+harness agree byte for byte (sha256 `3c1884ebb9e6cea62ffa8d330fd40e37c69ee4c8d7d44fbb176e76c2c1d8f6a9`).
+The extension reaches `HardLand` at step 656 (104 rows), where the next step's `CHUTEIN` proves
+`updateChuteSound()` runs before the early return, and `Dead` at step 902 (49 rows), where the next
+step stops `CHUTEON` without `CHUTEIN`. Removing the death-path `stopChuteSound()` changes the dump
+at step 903; moving `updateChuteSound()` below the `HardLand` return changes it at step 657. Both
+mutants were built and run in `/tmp/mdk-f3`, and the restored source matches again. Reproduce with
+`tests/scripts/build/tick1 dump kurt 3 950` against `mdkprobe 3 950 1 kurt`. What it does NOT pin:
+any shipped frontend's wiring (no frontend sets the mixer — neither has an audio device), the
+fall-out variant of death (unreachable without a pinned solid arena; recorded in `OPEN_ITEMS.md`),
+the firing step frames, or the feet finer than 1/64 unit, because `Player::facing()`'s LUT trig
+drifts them 1.34e-05 over the run (owner task 15, measured). **No emulator run and no Old-3DS
+hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the
+only windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
+`docs/frames/2026-11-02-kurt-hardland-death.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical to
 its predecessors, because no renderer behaviour changed. No gate was pinned, relaxed or edited.
 
 ## Standing open items
@@ -310,7 +310,7 @@ sh tests/scripts/sprites_refusal_test.sh               # the missing-archive ref
 tests/scripts/build/tick1 dump draw 3 1                # the queued draws (also `bound`)
 tests/scripts/build/tick1 dump blend 3 1               # the blended transforms (also `blendcases`)
 tests/scripts/build/tick1 dump runner 7 120 -21,-13,0.73   # the hamster's run, per tick
-tests/scripts/build/tick1 dump kurt 3 470             # Kurt's 470 steps: state, feet64, sounds
+tests/scripts/build/tick1 dump kurt 3 950             # Kurt's 950 steps: state, feet64, sounds
 bash tools/check.sh                                    # all gates
 bash tools/runner/test_review_state.sh                 # the review-record state machine
 python3 tools/runner/model_identity.py selftest --live # alias→upstream map vs the live proxy

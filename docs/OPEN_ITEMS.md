@@ -475,6 +475,36 @@ different kind and it is still open — what it is has not been identified.
   failure path has no GPU id to lose. The C# does not diverge here — its cache
   is keyed by `(name, frame)`.
 
+- Review-7 (run 20261102-004416) **F5, Low** — `Player::runRate` drops C#'s
+  `!BackingUp`, and **`BetaMoves` is not ported at all**. C# `Kurt.RunRate`
+  (`Kurt.cs:738`) is `ForwardSpeed < 0f && !BackingUp ? -rate : rate`, where
+  `BackingUp` is `BetaMoves && Current == State.Run && ForwardSpeed < 0f`
+  (`Kurt.Beta.cs:25`). The port (`player.cpp`, `runRate()`) negates the rate on any
+  negative `ForwardSpeed`. That is **correct today** — `BetaMoves` is never true, so
+  `BackingUp` is never true, and `golden/L3_kurt_steps.txt`'s back-up phase matches the
+  oracle byte for byte with a negative, wrapping frame — but it is a latent
+  divergence, and since batch 36 the animation rate also decides which foot stamps,
+  so the day beta moves land it would look like a sound bug rather than a direction
+  bug. `grep -rn "Beta" mdk_core/src/game/` is empty: the whole beta-move subsystem
+  (`InBetaMove`, `UpdateBetaMove`, `BackingUp`, `BetaMoves`) is unported, with no
+  opcode of its own to hang the deferral on. Whoever ports beta moves owns this line:
+  port `BackingUp` and the `!BackingUp` term in the same change, and pin a backwards
+  `State.Run` while a beta move runs. Recorded rather than fixed here, because the
+  code is not wrong today and a term that can never be true would be an unpinnable
+  branch.
+- Review-7 **F3**'s remediation (batch 37) left a **testability** fact on record, since
+  it is the reason the death golden is shaped the way it is: **the fall-out death in
+  `Player::fall` is unreachable from a harness that does not pin a solid arena.**
+  `ArenaSpace::bottom` answers with the lowest `min.z` of the arenas that either
+  contain the feet or *are* Kurt's arena, and `Kurt::kurt` resolves to
+  `firstEntry(point)` unless `_solid` is non-empty — so every arena that can supply
+  `bottom` also satisfies `feet.z >= min.z - kBoundsMargin`, and the death test
+  `feet.z <= bottom - 50` can never be true. The same argument holds in the C#
+  (`ArenaSpace.Probes.cs:71`, `Kurt.cs:494`). Pinning that branch needs a harness that
+  calls `ArenaSpace::setSolid` the way `ScriptRuntime` does in the shipped game, which
+  is a new harness concept on both sides and its own slice; the chute-stop-on-death line
+  is pinned instead by a health-zero landing, which reaches the same dead branch.
+
 ## The frame-record directive (closed as an open item, kept as a rule)
 
 Owner directive 2026-10-29 landed mid-iteration 28, written by the other loop

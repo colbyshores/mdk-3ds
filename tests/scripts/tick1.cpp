@@ -312,7 +312,8 @@ Player::FrameCounts kurtFrameCounts(const Bni& sprites) {
 // steps him (Viewer.Step, 1/60 s) with a scripted input. This is the only golden
 // that drives Player::update at all: until now the walk, the run, the jump, the
 // chute, the fall and the landing were pinned by nothing, and so were FOOT1-4,
-// LAND, CHUTEOUT, CHUTEON and CHUTEIN.
+// LAND, CHUTEOUT, CHUTEON and CHUTEIN. It now reaches HardLand and Dead as well, for
+// the two lines of the chute sound that only those two states can show.
 //
 // The schedule is the same literal as the oracle probe's `kurt` mode, and it was
 // chosen to cover every branch of the sound code: the forward run walks Kurt off the
@@ -351,11 +352,74 @@ std::string dumpKurt(int level, int steps, Player player, const Player::FrameCou
     }
     out += "\n";
 
+    // The scripted scenario, as literals on both sides (the oracle probe's `kurt`
+    // mode holds the same numbers). Steps 1..470 are the original walk / run-back /
+    // jump schedule, unchanged; the phases after it exist to reach the two states the
+    // original schedule never got to, which are the two states whose sound code was
+    // pinned by nothing.
+    //
+    //   471  lifted kHardLift above the start pad, verticalSpeed zeroed
+    //   642  jump pressed: the chute opens at -182 u/s, far too fast for its brake
+    //   650  CHUTEON starts flapping
+    //   656  HARD LANDING at -124 u/s: land() closes the chute and enters HardLand
+    //   657  CHUTEON stops and CHUTEIN plays, while Kurt is still in HardLand
+    //   662  jump released (harmless: HardLand does not read the input)
+    //   760  K_CRASHL finishes, back to Still
+    //   770  jump pressed and HELD to the end of the run
+    //   833  CHUTEON starts flapping again
+    //   860  a script sets the health to zero in mid-air
+    //   902  he touches the floor with the chute open: health 0 on a floor is death
+    //   903  CHUTEON stops with NO CHUTEIN, and the chute stays open on the corpse
+    //
+    // WHY PHASE 4 IS THERE. A hard landing needs verticalSpeed below -100 u/s and
+    // nothing reachable from the level-3 start gets past -72.5, so the step at 471
+    // moves Kurt straight up the way a script teleport does and lets him fall. The
+    // press at 642 is late on purpose: the chute's brake takes 3.9 u/s off every
+    // step, so pressing earlier would land him too slowly to be a hard landing, and
+    // pressing later would land him before CHUTEON had its four opening frames. Six
+    // steps of slack each way. What that buys is the pin on Player::update calling
+    // updateChuteSound BEFORE the HardLand early return: land() has closed the chute,
+    // CHUTEON is still flapping, and only that call stops it and plays CHUTEIN, one
+    // step after the hit. Move the call below the return and CHUTEIN does not appear
+    // for another 103 steps.
+    //
+    // WHY PHASE 5 IS THERE, AND WHY IT IS NOT A FALL OUT OF THE ARENA. The dead branch
+    // of Player::update stops the chute sound, and a death that arrives with the chute
+    // already closed cannot tell whether that call is there. So the chute is open and
+    // CHUTEON is flapping when he dies, and the step after the death shows CHUTEON
+    // gone with no CHUTEIN in its place; delete the call and CHUTEON flaps for the
+    // rest of the golden. The natural death would be falling out of the arena, but
+    // that is unreachable in this harness: ArenaSpace::bottom only ever answers with
+    // the lowest point of an arena that CONTAINS the feet, and containment needs the
+    // feet to be at or above that point, so `feet.z <= bottom - 50` cannot be true
+    // unless a script has pinned a solid arena -- and this harness pins none, on
+    // purpose, so that both sides resolve footing the same way. So the kill is the
+    // health itself: setHealth(0) is the oracle's own public SetHealth (Kurt.Combat
+    // .cs:169), which is how a script or an opcode kills him, and the death is still
+    // the ported code's, because it is the landing step that finds health 0 on a
+    // floor and decides he is dead.
+    const Vec3 kStart = player.feet;
+    const int kHardLiftStep = 471;
+    const float kHardLift = 300.0f;
+    const int kHardChuteStep = 642;
+    const int kHardChuteRelease = 662;
+    const int kDeathJumpStep = 770;
+    const int kMortalStep = 860;
+
     for (int step = 1; step <= steps; step++) {
+        if (step == kHardLiftStep) {
+            player.feet = Vec3{kStart.x, kStart.y, kStart.z + kHardLift};
+            player.verticalSpeed = 0.0f;
+        }
+        if (step == kMortalStep) {
+            player.setHealth(0);
+        }
         Input input;
         input.down[kKeyForward] = (step >= 10 && step < 46) || (step >= 190 && step < 285);
         input.down[kKeyBack] = step >= 100 && step < 190;
-        input.down[kKeyJump] = step >= 300 && step < 390;
+        input.down[kKeyJump] = (step >= 300 && step < 390) ||
+                               (step >= kHardChuteStep && step < kHardChuteRelease) ||
+                               (step >= kDeathJumpStep);
         player.update(input, 1.0f / 60.0f);
 
         std::string voices;
@@ -1886,13 +1950,14 @@ int main(int argc, char** argv) {
     // Kurt's own state machine and the sounds it makes (Kurt.Update at Viewer.Step,
     // which is 1/60 s). Nothing else pins any of it: the walk, the run, the jump,
     // the chute, the fall and the landing had no golden before this, and neither did
-    // FOOT1-4, LAND, CHUTEOUT, CHUTEON or CHUTEIN. The golden is the oracle probe's
+    // FOOT1-4, LAND, CHUTEOUT, CHUTEON or CHUTEIN, nor the chute closing on a hard
+    // landing nor the chute stopping on a corpse. The golden is the oracle probe's
     // `kurt` mode output, byte for byte, over the same scripted input, the same
     // archive frame counts and the same level's sound bank; the voices column is
     // what makes the sounds visible. See dumpKurt for what the schedule covers.
     {
         const int kurtLevel = 3;
-        const int kurtSteps = 470;
+        const int kurtSteps = 950;
         std::string expected;
         if (!readText("golden/L3_kurt_steps.txt", &expected)) {
             printf("FAIL L3_kurt_steps: no golden file golden/L3_kurt_steps.txt\n");
@@ -1904,8 +1969,9 @@ int main(int argc, char** argv) {
                 printf("FAIL L3_kurt_steps: %s\n", why.c_str());
                 failures++;
             } else if (got == expected) {
-                printf("PASS L3_kurt_steps: Kurt's walk, run, back-up, jump, chute and landing "
-                       "match the oracle, footsteps and chute sounds included\n");
+                printf("PASS L3_kurt_steps: Kurt's walk, run, back-up, jump, chute, landing, "
+                       "hard landing and death match the oracle, footsteps and chute sounds "
+                       "included\n");
             } else {
                 printf("FAIL L3_kurt_steps: %s\n", firstDifference(got, expected).c_str());
                 failures++;

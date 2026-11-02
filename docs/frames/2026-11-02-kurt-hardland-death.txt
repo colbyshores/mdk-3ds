@@ -1,0 +1,9 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-02T13:46:58Z at 26f704a
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+pinned-frame note: this batch changes no renderer or gameplay product code. It extends the oracle-backed Player sound golden from 470 to 950 steps so the hard-landing and death branches of Player::update are pinned. Those states occur at steps 656 and 902, after the fixed frame-1 capture, so the pinned picture cannot show them. The PNG is byte-identical to its predecessors (sha256 6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8), and the measured gap therefore remains 1.240% / 247 / 0.1819.
+
+oracle evidence: the C# probe and the C++ harness both produce the same 951-line dump for level 3, 950 steps, seed 1, kurt mode (sha256 3c1884ebb9e6cea62ffa8d330fd40e37c69ee4c8d7d44fbb176e76c2c1d8f6a9). The dump contains 104 HardLand rows and 49 Dead rows; it pins CHUTEIN on the hard-landing step and the death step's CHUTEON stop without CHUTEIN.
+
+capture: DISPLAY=:99, Xvfb 1280x1024x24, lavapipe (VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json). No viewer was opened on the operator's display.
