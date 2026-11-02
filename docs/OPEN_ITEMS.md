@@ -538,3 +538,56 @@ asserts which sprite frame the selector then chooses, because `tick1` builds no 
 fixture that would close it is a sprite-selection dump on both sides: state + `chuteClosing`
 + `chuteOpen` in, the animation name and frame index out, over the same scripted schedule.
 That is its own slice, not a follow-up line in a sound golden.
+
+**The named blocker (batch 39).** Neither side can construct the sprite object
+headlessly, and that — not effort — is what has to be decided before the fixture
+can be written:
+
+- **C#.** `KurtSprite`'s constructor takes a `Renderer` and calls
+  `renderer.CreatePalette` and `renderer.CreateDynamicMesh` in its body
+  (`KurtSprite.cs:109`), and `Renderer` is a `sealed partial class` over the live
+  Vulkan device (`Mdk.Engine/Render/Renderer.cs:133`), so the probe cannot pass a
+  stub — which is why the probe already works around it for the frame counts
+  (`Probe/Program.cs`: "KurtSprite itself needs a Renderer (it is the drawing
+  half)"). Two ways through: reflect the private `Pick` on an instance made by
+  `RuntimeHelpers.GetUninitializedObject` with `_sprites` and `_extra` injected
+  (that is all `Pick` reads, it runs the oracle's own code, and the probe already
+  reflects a private member this way for `ObjectMotion.Roll`); or build a real
+  `Renderer` on lavapipe, which makes the whole golden suite need a GPU.
+- **C++.** `KurtSprite::load` returns false on a null `MdkRenderer`
+  (`kurt_sprite.cpp:155`) and `loadAnimation` refuses to decode while
+  `paletteRgba_` is empty (`:256`) — even though the decode copies palette
+  *indices* and every GPU texture is made lazily on first draw. So the selection
+  half is renderer-bound by a precondition only the drawing half needs, and
+  relaxing it is a change to a path that owns GPU lifetime (`palette_`/`mesh_`
+  would be `-1`), which is not a test-harness batch's call.
+
+Pick one of the two seams and the fixture is a normal batch. Leaving both open
+leaves `pick()` unpinned on both sides.
+
+## Kurt has two healths where the oracle has one (found in batch 39; next slice)
+
+The C# is one object. `Kurt.Health` (`Kurt.Combat.cs:76`) is written by `Damage` —
+which the scripts' `hurt_kurt` reaches through `Hurt` and the movement's
+`HardLanding` reaches directly — and read by the HUD, by `if_player_health`, and by
+the `Health == 0 && OnFloor → State.Dead` transition. The port split that object in
+two and never bridged the halves:
+
+| object | field | written by | read by |
+|---|---|---|---|
+| `mdk::Kurt` (combat, script-facing) | `health_` (`kurt.h:108`) | `hurt()` ← opcode 109 `hurt_kurt` | opcode 241 `if_player_health` (`script_vm.cpp:1648`), the `KURT` script-dump line |
+| `mdk::Player` (movement) | `health` (`player.h:48`) | `damage()` ← the hard landing; `setHealth()` | `dead` (`player.cpp:500`), the Linux HUD (`mdk_linux/src/main.cpp:633`), `hp=` in both kurt goldens |
+
+Nothing copies one to the other. So in the shipped unit a script that hurts Kurt to
+zero leaves the HUD at 100 and never kills him, and a hard landing moves the HUD
+while `if_player_health` still reads 100. Both diverge from the oracle, and neither
+was recorded: `docs/OPCODE_COVERAGE.md` lists 109 as landed, and iteration 14's
+note that "in the corpus the state moves only through the scripts" predates the
+movement health, which arrived with the hard-landing slice.
+
+Why it is not fixed here: unifying them is a state-model change across `Kurt`,
+`Player`, the VM and both frontends, and no existing golden can pin the bridge — the
+script goldens tick no `Kurt.Update` and the kurt goldens run no `ScriptRuntime` —
+so the fix needs a new probe mode that ticks the runtime and the same `Kurt` object
+together. That is its own slice with its own risk class, not a line inside a
+review-remediation batch.

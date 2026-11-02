@@ -139,7 +139,13 @@ void Player::addKnockdownPush(const Vec2& push) {
 
 void Player::update(const Input& input, float delta) {
     // C# Kurt.Update clears ChuteClosing before every branch, including the
-    // death branch.
+    // death branch (Kurt.cs:140, ahead of the `Current == State.Dead` return).
+    // The clear is unconditional on purpose, and it is NOT pinned to be so:
+    // `dead` and `_chuteClosing` can never be true at the same top-of-step, because
+    // the only setter of `_chuteClosing` is the `!onFloor` Chute -> Fall transition
+    // below and `dead` is set only with `onFloor`, so guarding this with `if (!dead)`
+    // is unobservable dead code, not a behaviour change (review-9 R9-5; the scenario
+    // that would have to distinguish them was built and matches byte for byte).
     _chuteClosing = false;
     if (dead) {
         // The C# UpdateDeath advances the death beat. Fall keeps a corpse that
@@ -592,6 +598,15 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         // C# HardLanding(): 10 damage, then K_CRASHL unless the damage killed
         // Kurt. The hard-landing state owns the next steps, so the ordinary
         // walk state machine cannot replace it on this tick.
+        //
+        // The C#'s own test is `Health == 0 || Current is Dead|Knocked|GetUp`
+        // (Kurt.cs:584), and the `Health == 0` half is the observable one: a Kurt
+        // already at 0 who lands at -194 u/s does not play K_CRASHL and does not
+        // have his chute closed for him. golden/L3_kurt_lethal.txt pins it. The
+        // guard around the damage call is NOT observable here -- Player::damage
+        // floors at 0 exactly like Kurt.Damage's Math.Max(Health - damage, 0) --
+        // and it is kept because the C#'s Damage also raises HurtFlash and adds to
+        // KnockDamage, which Player does not model yet (they live on mdk::Kurt).
         if (health > 0) {
             damage(kHardLandingDamage);
         }

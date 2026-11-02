@@ -9392,3 +9392,162 @@ ones`), then the sprite-selection fixture that would pin `kurt_sprite.cpp`'s use
 `chuteClosing()` (review-8 oq3), which is the consumer this batch's column can name but not
 exercise. The owner decisions in owner task (1) are the ones review-8 R8-1/R8-2/R8-3/R8-6/
 R8-7 are waiting on.
+
+## Iteration 67 — batch 39: a hard landing at zero health, pinned from the oracle (review-9 R9-5 fixed; R9-1/R9-2/R9-3/R9-4/R9-6/R9-7/R9-8 owner-gated)
+
+### What landed
+
+`golden/L3_kurt_lethal.txt` (201 lines, sha256 `0723fd82…`) is a **second scripted Kurt
+run**, generated from the C# oracle and byte-identical to the port's own dump. The
+scenario is one line of setup and no input at all: at step 1 lift Kurt 300 units above
+the start pad, zero his vertical speed, and set his health to 0 with the oracle's own
+`SetHealth`. He falls 182 steps to **-194.2676 u/s** — well past the -100 hard-landing
+line — and step 183 is the landing.
+
+What that reaches is the C#'s `HardLanding` early return, which no previous run could:
+
+```csharp
+if (Health > 0) Damage(HardLandingDamage);
+KnockDamage = 0f;
+if (Health == 0 || Current is State.Dead or State.Knocked or State.GetUp) return;   // Kurt.cs:584
+StopFiring(); ChuteOpen = false; SetState(State.HardLand);
+```
+
+The 950-step schedule visits a hard landing at full health and a death on a *soft*
+landing, and Kurt only dies once, so the two can never share a run. The new golden
+pins the third case: a Kurt already at 0 who arrives at -194 u/s does **not** enter
+`K_CRASHL`, does **not** have his chute closed for him, and does not take the 10
+points again — the oracle prints `s=183 state=Dead … vert=0.0000 floor=1 chute=0
+hp=0`, and the death frame advances from 184 on.
+
+Harness, both sides, same literal: `tick1 dump kurtlethal <level> <steps>`
+(`dumpKurt(…, bool lethal)`) and the probe's `kurtlethal` mode. The existing
+schedule is untouched — its phases are now guarded on `!lethal` — and the probe's
+`kurt` mode still reproduces `L3_kurt_steps.txt` byte for byte, so the 950-step pin
+did not move.
+
+Oracle reference: `Kurt.cs:576-590` (`HardLanding`), `Kurt.cs:560-572` (`Land`),
+`Kurt.Combat.cs:135-150` (`Damage`, `Health = Math.Max(Health - damage, 0)`),
+`Kurt.Combat.cs:373-378` (`Health == 0 && OnFloor → State.Dead`).
+
+### Review-9 disposition
+
+**R9-5 (Low, the only builder-visible finding) — fixed, in the direction the evidence
+supports.** Both mutants the review named were rebuilt and run first, and both survive,
+as claimed:
+
+```
+MUTANT3  if (!dead) { _chuteClosing = false; }   -> IDENTICAL on scenarios 0/1/2
+MUTANT4  damage(kHardLandingDamage) unguarded    -> IDENTICAL on scenarios 0/1/2
+```
+
+They survive because they are **equivalent mutants**, not because a scenario is
+missing, and the review's suggested scenario was built and run to show that:
+
+- *Mutant 3.* `_chuteClosing = true` is set only in the `!onFloor` Chute → Fall
+  transition (`player.cpp:230`); `dead = true` requires `onFloor` (`:500`); and
+  `onFloor` does not flip back inside the step that sets either. So `dead &&
+  _chuteClosing` is false at the top of every step, and `if (!dead)` around the clear
+  is dead code. The scenario the review asked for — chute closed in the air, Kurt
+  already at 0, death on the landing — was constructed (chute opens at 777, closes at
+  790, dies at 944) and matches the clean build byte for byte. No input distinguishes
+  them, so no golden can.
+- *Mutant 4.* `Player::damage` floors at 0 exactly like `Kurt.Damage`'s
+  `Math.Max(Health - damage, 0)`, so the call is a no-op at health 0 and the guard
+  only passes above 0. In the C# the guard *is* observable, through `HurtFlash` and
+  `KnockDamage`, which `Player` does not model (they live on `mdk::Kurt` — see the
+  health-split item below). The guard stays, with a comment saying why it is
+  currently inert and what has to land for it to matter.
+
+What the review's finding was really reaching for *is* now pinned: dropping the
+oracle's `Health == 0` test from the HardLand state entry (mutant A) is invisible to
+the 950-step schedule and **fails the new golden at step 183**:
+
+```
+MUTANT A (state entry guarded on health > 0 alone): KILLED by the new golden
+< s=183 state=Dead … frame=0.0000 floor=1 chute=0 closing=0 hp=0
+```
+
+The comments the review quoted were corrected to claim only what the goldens pin
+(`player.cpp`'s top-of-step clear and `land()`'s damage guard; `dumpKurt`'s header
+now states "what the columns pin is removal, not placement" with both equivalence
+proofs).
+
+**R9-1, R9-2 (High) — unchanged, owner-side, re-confirmed by execution.** A clean
+clone of `HEAD` with the working tree's `gates_batch_integrity.py` prints
+`FAIL - ralph-pi.sh: required invariant is missing: '--each-commit'` (rc 1) while the
+same clone with its own committed gate prints `PASS` (rc 0). The green state is a
+*commit-coupling* of two uncommitted files, and `ralph-pi.sh` is still outside
+`PROTECTED`. R9-2 is the same pair's contract change with no recorded approval.
+Neither file is reachable by a batch: the gate is in its own `PROTECTED` list and the
+loop script's edits are the owner's uncommitted work, which this batch did not stage,
+edit or revert.
+
+**R9-3, R9-4, R9-6, R9-7, R9-8 (Medium/Low) — owner-side, deferred with cause.**
+R9-3 (per-commit validation unreachable on the success path) and R9-6 (`--self-test`
+prints a pass in a red tree) are both inside `gates_batch_integrity.py` /
+`ralph-pi.sh`. R9-4 (the golden set is not hash-protected, so a re-pin is an
+unguarded rewrite) is a `PROTECTED`-set change — noted as a real gap: this batch
+moved a golden, and the only thing distinguishing it from a fabrication is that the
+oracle was re-run, which is recorded above with the sha256. R9-7 (the untracked
+`ralph-self-heal` frame pair) and R9-8 (`validate_png_pair` reads today's bytes) are
+the same class.
+
+### Found while investigating, recorded rather than fixed
+
+**Kurt has two healths where the oracle has one.** `mdk::Kurt::health_` (written by
+opcode 109 `hurt_kurt`, read by opcode 241 `if_player_health`) and `mdk::Player::health`
+(written by the hard landing and `setHealth`, read by `dead` and the Linux HUD at
+`mdk_linux/src/main.cpp:633`) are separate fields with nothing copying between them,
+so a script that hurts Kurt to zero neither moves the HUD nor kills him. Full write-up
+with the line numbers and the two candidate seams in `docs/OPEN_ITEMS.md`; it is the
+next slice, not a line in this one, because unifying them is a state-model change and
+no existing golden can pin the bridge.
+
+**The sprite-selection fixture has a named blocker now.** Neither side can construct
+`KurtSprite` headlessly: the C# constructor needs the sealed Vulkan `Renderer`, and
+`KurtSprite::load` refuses a null one even though the decode only copies palette
+indices. The two candidate seams are written out in `docs/OPEN_ITEMS.md`.
+
+### Prior-solution lookup
+
+`pi-knowledge` `mdk-sdl` searched for the chute-closing / hard-landing / sprite-selection
+subsystem: it surfaced `KurtSprite::pick`, `KurtSprite.cs:Pick`, `Kurt.cs`'s `Land`/
+`HardLanding` and — usefully — `mdk_core/src/game/kurt.h`, whose `hurtFlash`/
+`knockDamage` accessors are what led to the two-healths finding. Obsidian MCP is not
+exposed in this harness, so `/mnt/nas/Vaults/port-docs` was listed read-only instead
+(no entry on this subsystem). **Cognee MCP is not exposed in this Pi session and was
+not consulted**; that is recorded rather than implied.
+
+### Gates, as run
+
+- `make -C tests/scripts clean && make -C tests/scripts` → **exit 0**,
+  **446 PASS / 0 FAIL / 0 SKIP**, `All cases match the oracle.` (445 → 446: the new
+  `PASS L3_kurt_lethal: a hard landing at zero health dies without K_CRASHL, without
+  closing the chute and without taking the 10 points again`).
+- `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`; `gates_frames PASS
+  L3_f1.bmp sha=58615fc85d02e009` (byte-identical to the pinned `cpp=`, so
+  `reference.sha256` was **not** regenerated), `gates_smdh` SKIPPED (no `.cia`),
+  `gates_batch_integrity PASS`, `audit_c_with_classes 0 violations`, `gates_vfp 0
+  blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **exit 0**, `3DSX mdk.3dsx`, no warnings.
+- `cmake --build build-linux --target mdk -j8` → **exit 0**, `Built target mdk`.
+- Oracle cross-check: `mdkprobe 3 200 1 kurtlethal` and `tick1 dump kurtlethal 3 200`
+  are byte-identical (`0723fd82…`), and `mdkprobe 3 950 1 kurt` still equals the
+  committed `L3_kurt_steps.txt`.
+
+Frame `docs/frames/2026-11-02-kurt-lethal-landing.png` + `.txt` — `1.240 / 247 /
+0.1819`, the same blob as its predecessors (`6646adf1…`), because no renderer
+behaviour changed; the sidecar says so and names what shows the change instead.
+Captured on `DISPLAY=:99` with lavapipe (P7). No gate, test or golden was relaxed, and
+no `PROTECTED` path was touched. **No emulator run and no Old-3DS hardware run:
+Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6).**
+
+### Next
+
+Unchanged: the **blend half of the Citro3D object pass** (blocked on the alpha source),
+then the two items this batch named — **unify Kurt's health** (the oracle has one, the
+port has two) and the **sprite-selection fixture**, which needs one of its two seams
+chosen first.

@@ -354,8 +354,36 @@ Player::FrameCounts kurtFrameCounts(const Bni& sprites) {
 //     10 points it takes off were invisible: deleting the call changed nothing the
 //     dump could see. `hp=` shows 100 -> 90 at the landing step and holds it until
 //     the scripted kill, which is the oracle's own Health.
+//
+// WHAT THE COLUMNS PIN IS REMOVAL, NOT PLACEMENT (review-9 R9-5). Two mutants of
+// the same lines survive every scenario on both sides, and both are EQUIVALENT
+// mutants rather than gaps a schedule could close:
+//
+//   * Guarding the top-of-step clear with `if (!dead)` survives, because `dead`
+//     and `_chuteClosing` can never be true at the same top-of-step: the clear's
+//     setter (`_chuteClosing = true`, the Chute -> Fall transition) is inside the
+//     `!onFloor` branch of updateState, and `dead = true` requires `onFloor`, and
+//     `onFloor` does not flip back inside the step that sets either. So the guard
+//     is dead code, and no input -- including the scenario review-9 asked for, a
+//     chute closed in the air followed by a lethal landing, which was built and
+//     run and matches byte for byte -- can tell the two apart.
+//   * Dropping `if (health > 0)` around the hard landing's `damage` survives,
+//     because `Player::damage` floors health at 0 exactly like `Kurt.Damage`'s
+//     `Math.Max(Health - damage, 0)`, so the call is a no-op at health 0 and the
+//     guard only passes when health is above 0 anyway. In the C# the guard is
+//     observable through `HurtFlash` and `KnockDamage`, which `Player` does not
+//     model (they live on `mdk::Kurt`, and the split is OPEN_ITEMS.md's next
+//     slice); when they land, the guard lands with them and needs its own pin.
+//
+// WHY A SECOND SCENARIO. Kurt can only die once, so the lethal HARD LANDING --
+// the C#'s `HardLanding` returning early at `Health == 0`, which is what keeps a
+// dead Kurt out of K_CRASHL and leaves his chute as it was -- cannot share a run
+// with the chute-open death the schedule above already pins. It is its own run,
+// `golden/L3_kurt_lethal.txt`, and it is not decoration: guarding the HardLand
+// state entry on `health > 0` alone (dropping the C#'s `Health == 0` test) is a
+// mutant the 950-step schedule does not see and this one does.
 std::string dumpKurt(int level, int steps, Player player, const Player::FrameCounts& counts,
-                     const audio::SoundMixer& mixer) {
+                     const audio::SoundMixer& mixer, bool lethal) {
     std::string out;
     char line[512];
     snprintf(line, sizeof(line), "level=%d steps=%d counts=", level, steps);
@@ -420,21 +448,36 @@ std::string dumpKurt(int level, int steps, Player player, const Player::FrameCou
     const int kHardChuteRelease = 662;
     const int kDeathJumpStep = 770;
     const int kMortalStep = 860;
+    // The lethal scenario: the same 300-unit lift, but Kurt's health is already 0
+    // when he lands, and the fall from that height reaches -194 u/s, well past the
+    // -100 hard-landing line. Nothing is pressed: the chute never opens, so the
+    // only thing in the dump is the hard landing at zero health and the steps of
+    // death that follow it.
+    const int kLethalLiftStep = 1;
 
     for (int step = 1; step <= steps; step++) {
-        if (step == kHardLiftStep) {
+        if (lethal) {
+            if (step == kLethalLiftStep) {
+                player.feet = Vec3{kStart.x, kStart.y, kStart.z + kHardLift};
+                player.verticalSpeed = 0.0f;
+                player.setHealth(0);
+            }
+        }
+        if (step == kHardLiftStep && !lethal) {
             player.feet = Vec3{kStart.x, kStart.y, kStart.z + kHardLift};
             player.verticalSpeed = 0.0f;
         }
-        if (step == kMortalStep) {
+        if (step == kMortalStep && !lethal) {
             player.setHealth(0);
         }
         Input input;
-        input.down[kKeyForward] = (step >= 10 && step < 46) || (step >= 190 && step < 285);
-        input.down[kKeyBack] = step >= 100 && step < 190;
-        input.down[kKeyJump] = (step >= 300 && step < 390) ||
-                               (step >= kHardChuteStep && step < kHardChuteRelease) ||
-                               (step >= kDeathJumpStep);
+        if (!lethal) {
+            input.down[kKeyForward] = (step >= 10 && step < 46) || (step >= 190 && step < 285);
+            input.down[kKeyBack] = step >= 100 && step < 190;
+            input.down[kKeyJump] = (step >= 300 && step < 390) ||
+                                   (step >= kHardChuteStep && step < kHardChuteRelease) ||
+                                   (step >= kDeathJumpStep);
+        }
         player.update(input, 1.0f / 60.0f);
 
         std::string voices;
@@ -464,7 +507,7 @@ std::string dumpKurt(int level, int steps, Player player, const Player::FrameCou
 // sound bank, TRAVSPRT.BNI's frame counts, Kurt at the level's start — and produce
 // the dump. Shared by the golden and by `tick1 dump kurt`, so the diff of a failing
 // golden is the same text the golden compares.
-bool kurtStepsDump(int level, int steps, const MdkData& data, const Bni* sprites,
+bool kurtStepsDump(int level, int steps, bool lethal, const MdkData& data, const Bni* sprites,
                    std::string* out, std::string* why) {
     if (!sprites) {
         *why = "no TRAVSPRT.BNI to take the frame counts from";
@@ -500,7 +543,7 @@ bool kurtStepsDump(int level, int steps, const MdkData& data, const Bni* sprites
     player.setMixer(&mixer);
     const Player::FrameCounts counts = kurtFrameCounts(*sprites);
     player.setFrameCounts(counts);
-    *out = dumpKurt(level, steps, player, counts, mixer);
+    *out = dumpKurt(level, steps, player, counts, mixer, lethal);
     return true;
 }
 
@@ -1373,10 +1416,10 @@ int main(int argc, char** argv) {
             printf("%s", dumpBlendCases().c_str());
             return 0;
         }
-        if (what == "kurt") {
+        if (what == "kurt" || what == "kurtlethal") {
             std::string got;
             std::string why;
-            if (!kurtStepsDump(level, ticks, data, spritesArg, &got, &why)) {
+            if (!kurtStepsDump(level, ticks, what == "kurtlethal", data, spritesArg, &got, &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
             }
@@ -1980,7 +2023,7 @@ int main(int argc, char** argv) {
         } else {
             std::string got;
             std::string why;
-            if (!kurtStepsDump(kurtLevel, kurtSteps, data, spritesArg, &got, &why)) {
+            if (!kurtStepsDump(kurtLevel, kurtSteps, false, data, spritesArg, &got, &why)) {
                 printf("FAIL L3_kurt_steps: %s\n", why.c_str());
                 failures++;
             } else if (got == expected) {
@@ -1989,6 +2032,33 @@ int main(int argc, char** argv) {
                        "included\n");
             } else {
                 printf("FAIL L3_kurt_steps: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+    // The lethal hard landing, as its own run (review-9 R9-5). The C#'s HardLanding
+    // tests `Health == 0` before it enters K_CRASHL, so a Kurt who is already dead
+    // when a -194 u/s landing arrives does not play the crash and does not have his
+    // chute closed for him; the 950-step schedule cannot show that, because its
+    // hard landing happens at full health and its death happens on a soft landing,
+    // and Kurt only dies once. Guarding the state entry on `health > 0` alone --
+    // dropping the oracle's `Health == 0` test -- is a mutant only this run sees.
+    {
+        std::string expected;
+        if (!readText("golden/L3_kurt_lethal.txt", &expected)) {
+            printf("FAIL L3_kurt_lethal: no golden file golden/L3_kurt_lethal.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtStepsDump(3, 200, true, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_lethal: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_lethal: a hard landing at zero health dies without K_CRASHL, "
+                       "without closing the chute and without taking the 10 points again\n");
+            } else {
+                printf("FAIL L3_kurt_lethal: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }

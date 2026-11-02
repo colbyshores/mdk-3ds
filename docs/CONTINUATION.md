@@ -1,24 +1,27 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 38 changes no product code, but it changes the shape of an oracle-backed golden (two new columns on 950 rows, ~1.2k diff lines) and re-pins it from the C# probe; the columns are provably additive (strip them and the file is byte-identical to batch 37's) and the two mutants review-8 R8-4 proved survived now turn it red.
+Risk: medium — batch 39 changes no product behaviour (the only product-file edit is comments in `player.cpp`), but it adds a second oracle-generated golden and a new scenario to both harnesses, and it is the pin that kills a mutant the 950-step run left green.
 
-Last updated: 2026-11-02 (**batch 38** — review-8 R8-4 fixed with an oracle-generated
-`closing=`/`hp=` re-pin; see `docs/PROGRESS_LOG.md`, "Iteration 66"). Previous narratives are one
-"Iteration N" section back each: batch 37 = "Iteration 65" (review-7 F3), 36 = 64, 35 = 63
-(review-5 F2/F3/F4 fixed, F1 corrected but owner-gated), 34 = 62, 33 = 61, 32 = 60, 31 = 59.
+Last updated: 2026-11-02 (**batch 39** — review-9 R9-5 fixed with an oracle-generated
+lethal-hard-landing golden; see `docs/PROGRESS_LOG.md`, "Iteration 67"). Previous narratives are
+one "Iteration N" section back each: batch 38 = "Iteration 66" (review-8 R8-4), 37 = 65
+(review-7 F3), 36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60, 31 = 59.
 
-Goldens remain **445/0/0**: batch 38 regenerated `golden/L3_kurt_steps.txt` from the C# oracle
-(950 steps, two new columns, sha256 `b3fdabcd…`), and no older golden moved. The frame is
-byte-unchanged across batches 31-38 because no renderer behaviour was touched. Still owner-gated,
-and still uncommitted in the tree: the owner's harness work (`AGENTS.md`, `ralph/builder.md`,
-`ralph-pi.sh`, `gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so
-batches keep staging only their own paths and never `git add -A`. Review-8 **R8-1** and **R8-2**
-reproduce that again (and R8-1 was re-reproduced by execution in batch 38: a clean `git archive
-HEAD` tree plus the working-tree gate prints `FAIL … ralph-pi.sh: required invariant is missing:
-'--each-commit'`); **R8-3**, **R8-6** and **R8-7** are the same class — their only fixes are inside
-`gates_batch_integrity.py`, which is in its own `PROTECTED` set, or inside `ralph-pi.sh`, whose
-uncommitted owner edits must not be staged. All six are owner task (1), not batch-remediable, and
-this batch did not stage, edit or revert any of those files.
+Goldens are **446/0/0**: batch 39 added `golden/L3_kurt_lethal.txt` (201 lines, sha256
+`0723fd82…`, from the C# oracle's `kurtlethal` mode, byte-identical to the port's dump) and no
+older golden moved — the probe's `kurt` mode still reproduces `L3_kurt_steps.txt` exactly. The
+frame is byte-unchanged across batches 31-39 because no renderer behaviour was touched. Still
+owner-gated, and still uncommitted in the tree: the owner's harness work (`AGENTS.md`,
+`ralph/builder.md`, `ralph-pi.sh`, `gates_batch_integrity.py`,
+`docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep staging only their own paths
+and never `git add -A`. Review-9 **R9-1** and **R9-2** are that same hazard under new numbers, and
+R9-1 was re-reproduced by execution in batch 39: a clean clone of `HEAD` plus the working-tree
+gate prints `FAIL … ralph-pi.sh: required invariant is missing: '--each-commit'` (rc 1) while the
+same clone with its own committed gate prints `PASS` (rc 0). **R9-3**, **R9-4**, **R9-6**, **R9-7**
+and **R9-8** are the same class — their only fixes are inside `gates_batch_integrity.py`, which is
+in its own `PROTECTED` set, or inside `ralph-pi.sh`, whose uncommitted owner edits must not be
+staged. All seven are owner task (1), not batch-remediable, and this batch did not stage, edit or
+revert any of those files. **R9-5** was the only builder-visible finding and is fixed.
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -30,6 +33,25 @@ this batch did not stage, edit or revert any of those files.
 4. **DONE — P5.0 frame-golden harness** (`gates_frames.py` is gate 7; proven to fail).
 5. **DONE — review-30's 3DS texture-residency MAJOR** (decode at load, upload on first draw
    under a named 1 MiB budget, restore on eviction).
+6a. **NEXT (batch 39's finding, with evidence in `OPEN_ITEMS.md`): Kurt has two healths
+    where the oracle has one.** `mdk::Kurt::health_` (written by opcode 109 `hurt_kurt`,
+    read by opcode 241 `if_player_health`) and `mdk::Player::health` (written by the hard
+    landing and `setHealth`, read by `dead` at `player.cpp:500` and by the Linux HUD at
+    `mdk_linux/src/main.cpp:633`) are separate fields with nothing copying between them,
+    so a script that hurts Kurt to zero neither moves the HUD nor kills him, while the C#
+    has one `Health` (`Kurt.Combat.cs:76`) doing all of it. Unifying them is a state-model
+    change across `Kurt`, `Player`, the VM and both frontends, and no existing golden can
+    pin the bridge (the script goldens tick no `Kurt.Update`, the kurt goldens run no
+    `ScriptRuntime`), so the slice needs a probe mode that ticks the runtime and the same
+    `Kurt` object together.
+6b. **The sprite-selection fixture (review-8 oq3 / review-9 oq3) is blocked on a named
+    seam, not on effort:** neither side can build a `KurtSprite` headlessly — the C#
+    constructor needs the sealed Vulkan `Renderer` (`KurtSprite.cs:109`,
+    `Renderer.cs:133`) and `KurtSprite::load` refuses a null one (`kurt_sprite.cpp:155,
+    256`) even though the decode only copies palette indices. The two candidate seams
+    (reflect the oracle's private `Pick`, as the probe already does for
+    `ObjectMotion.Roll`; or relax the renderer precondition in `load`) are written out in
+    `OPEN_ITEMS.md`; pick one and the fixture is a normal batch.
 6. **DONE — the object pass, all the way to the GPU**, plus review-3/-5/-6's findings on it
    (batch 8: `ObjectMotion.Bank`; batches 9-10: the Runner, both halves pinned).
    **NEXT, in priority order:** (a) **DONE — batch 22.** The missing-`TRAVSPRT.BNI` path now
@@ -63,8 +85,10 @@ consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix and Kurt's m
 flash and ride pose; `Vector3.Lerp`'s rounding (above); the other half of
 `FrameBlend` (Kurt's blended feet/yaw, `Record/Update/Turn/KurtAt`) and `TransformOf`'s
 driven-carrier shift, both with `Rides`. **No harness exercises `kurt_sprite.cpp`'s use of
-`chuteClosing()`** (review-8 oq3): batch 38 pins the field the sprite selector reads, but picking
-the closing sprite frame needs a sprite-selection dump on both sides, which is its own slice.
+`chuteClosing()`** (review-8 oq3 / review-9 oq3): batch 38 pins the field the sprite selector
+reads, and batch 39 named the seam that blocks picking the closing sprite frame — see priority
+item 6b and `OPEN_ITEMS.md`. Batch 39 also adds the lethal-hard-landing run, which pins the C#'
+s `HardLanding` `Health == 0` return that the 950-step schedule cannot reach (review-9 R9-5).
 Kurt's footsteps and `LAND` sound are **CLOSED by
 batch 36**, along with the chute sounds; batch 37 closes the hard-landing and death coverage of
 the chute stop, and batch 38 adds the `closing=`/`hp=` columns so the hard-landing **damage** and
@@ -214,31 +238,33 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `guard_fragment`, three region lifts with behavioural cases instead, `count_writes` counting
   **occurrences** not lines) is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 37)
+## Verified on this tree (batch 39)
 
 All gates re-run from a clean invocation, with the full narrative, the probe recipe and the
-measurements in `docs/PROGRESS_LOG.md`, "Iteration 65". Goldens **exit 0** (`All cases match the
-oracle.`, **445 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`;
+measurements in `docs/PROGRESS_LOG.md`, "Iteration 67". Goldens **exit 0** (`All cases match the
+oracle.`, **446 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`;
 `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so
 `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS);
 `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no warnings); `cmake --build build-linux --target mdk`
-**exit 0**, no warnings. What is new: review-7 F3's two mutant-surviving paths are pinned by the
-same oracle-backed `golden/L3_kurt_steps.txt`, now 951 lines / 950 steps. The C# probe and the C++
-harness agree byte for byte (sha256 `3c1884ebb9e6cea62ffa8d330fd40e37c69ee4c8d7d44fbb176e76c2c1d8f6a9`).
-The extension reaches `HardLand` at step 656 (104 rows), where the next step's `CHUTEIN` proves
-`updateChuteSound()` runs before the early return, and `Dead` at step 902 (49 rows), where the next
-step stops `CHUTEON` without `CHUTEIN`. Removing the death-path `stopChuteSound()` changes the dump
-at step 903; moving `updateChuteSound()` below the `HardLand` return changes it at step 657. Both
-mutants were built and run in `/tmp/mdk-f3`, and the restored source matches again. Reproduce with
-`tests/scripts/build/tick1 dump kurt 3 950` against `mdkprobe 3 950 1 kurt`. What it does NOT pin:
-any shipped frontend's wiring (no frontend sets the mixer — neither has an audio device), the
-fall-out variant of death (unreachable without a pinned solid arena; recorded in `OPEN_ITEMS.md`),
-the firing step frames, or the feet finer than 1/64 unit, because `Player::facing()`'s LUT trig
-drifts them 1.34e-05 over the run (owner task 15, measured). **No emulator run and no Old-3DS
-hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the
-only windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-02-kurt-hardland-death.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical to
-its predecessors, because no renderer behaviour changed. No gate was pinned, relaxed or edited.
+**exit 0**, no warnings. What is new: `golden/L3_kurt_lethal.txt` (201 lines, sha256 `0723fd82…`),
+the oracle's own output for a Kurt lifted 300 units at health 0 — he lands at step 183 with
+`state=Dead vert=0.0000 floor=1 chute=0 hp=0` after a -194.2676 u/s fall, i.e. the C#'s
+`HardLanding` takes its `Health == 0` return instead of entering K_CRASHL. The C# probe
+(`mdkprobe 3 200 1 kurtlethal`) and the C++ harness (`tick1 dump kurtlethal 3 200`) agree byte for
+byte, and `mdkprobe 3 950 1 kurt` still equals the committed `L3_kurt_steps.txt`, so the older pin
+did not move. Mutants built and run: dropping the oracle's `Health == 0` test from the HardLand
+state entry now FAILS at step 183; guarding the top-of-step `_chuteClosing` clear with `if (!dead)`
+and unguarding the hard landing's `damage` call both survive every scenario, and both are proven
+equivalent (the clear's setter needs `!onFloor` and `dead` needs `onFloor`; `Player::damage` floors
+at 0 like `Kurt.Damage`), which is recorded in the code comments and in `OPEN_ITEMS.md` rather than
+chased. What the kurt goldens still do NOT pin: any shipped frontend's wiring (no frontend sets the
+mixer), the fall-out variant of death (unreachable without a pinned solid arena), the firing step
+frames, the sprite frame `pick()` selects from `chuteClosing` (see 6b), and the feet finer than
+1/64 unit (`Player::facing()`'s LUT trig drifts them 1.34e-05; owner task 15). **No emulator run
+and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays
+UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
+`docs/frames/2026-11-02-kurt-lethal-landing.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
+to its predecessors, because no renderer behaviour changed. No gate was pinned, relaxed or edited.
 
 ## Standing open items
 
@@ -319,6 +345,7 @@ tests/scripts/build/tick1 dump draw 3 1                # the queued draws (also 
 tests/scripts/build/tick1 dump blend 3 1               # the blended transforms (also `blendcases`)
 tests/scripts/build/tick1 dump runner 7 120 -21,-13,0.73   # the hamster's run, per tick
 tests/scripts/build/tick1 dump kurt 3 950             # Kurt's 950 steps: state, feet64, sounds
+tests/scripts/build/tick1 dump kurtlethal 3 200       # the lethal hard landing at health 0
 bash tools/check.sh                                    # all gates
 bash tools/runner/test_review_state.sh                 # the review-record state machine
 python3 tools/runner/model_identity.py selftest --live # alias→upstream map vs the live proxy
