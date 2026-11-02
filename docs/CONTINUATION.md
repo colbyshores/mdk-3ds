@@ -1,22 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 34 is review-4's remediation and it touches **one test file and no product code**:
-`tests/scripts/c3d_frame_test.sh` pinned which statements the per-eye loop *contains* and never that the
-loop *runs* once per eye or that the queue *survives* the run, so `if (eye == 0) break;`, `eye < 1`, a
-`queue.reset()` before the loop or at the end of `replayQueue`, `eye == 0 ? targetRight : targetLeft`
-and `-r->eyes.offset[eye]` each left all 12 checks green — four of them a one-drawn-eye or inside-out
-stereo picture on hardware. Eight checks and nine arms were added (now **`PASS C3dFrame (20 checks, 25
-arms adjudicated red)`**), none removed or loosened, and **all nine new mutants were compiled with the
-real devkitARM compiler and every one compiled clean**, so the gate is the only thing between those
-shapes and a green suite. Medium, not low, because it changes what the sole pin for a contract this host
-cannot look at will accept; not high, because the diff is one test file, no golden moved and the frame is
-byte-identical. **Review-4's High (F1) stays open and is owner-gated**: it is the same `--each-commit`
-acceptance change as review-3 F4/F5, living in `PROTECTED` files a batch may not commit (owner task (1)).
+Risk: medium — batch 35 changes only the C3D frame source gate, but narrows what its host-side stereo pin accepts: it now rejects queue resets in `installEye`, writes to the saved eye-plan count, loop increments that skip eyes, and `goto` exits. Review-5 F2/F3/F4 are fixed with checked mutants; F1's inaccurate protection statement is corrected, while the underlying owner-only integrity-policy question remains open.
 
-Last updated: 2026-11-02 (**batch 34** — review-4 F2/F3/F4/F5 fixed, F1 confirmed and recorded as
-owner-gated; the narrative, the nine compiled mutants, the two places the reviewer's literal
-recommendation was refined rather than followed, and the gate output are in `docs/PROGRESS_LOG.md`
-"Iteration 62"). Previous narratives are one "Iteration N" section back each: batch 33 = "Iteration 61"
+Last updated: 2026-11-02 (**batch 35** — review-5 F2/F3/F4 fixed, F1 documentation corrected but owner-gated; see `docs/PROGRESS_LOG.md`, "Iteration 63"). Batch 34 was "Iteration 62" (review-4 F2/F3/F4/F5 fixed, F1 owner-gated); previous narratives are one "Iteration N" section back each: batch 33 = "Iteration 61"
 (review-3 F1/F2/F3/F6/F7 fixed, F4/F5 owner-gated), 32 = 60 (review-2 B/C/D, match-strings →
 placements), 31 = 59 (review-1 F3/F4/F5, the diagnostic once per eye), 30 = 58 (the per-eye replay),
 29 = 57 (the Citro3D depth state), 28 = 56 (the per-draw world matrix), 27 = 55 (the runner's `mixer=`
@@ -24,10 +10,12 @@ column), 26 = 54 (review-12, all four findings confirmed and fixed, none rebutte
 
 Goldens
 have been **444/0/0** since batch 29 and no golden has moved since; the frame is byte-unchanged across
-batches 31-34 because no renderer behaviour was touched. Still owner-gated, and still uncommitted in the
+batches 31-35 because no renderer behaviour was touched. Still owner-gated, and still uncommitted in the
 tree: the owner's harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
 `gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep staging
-only their own paths and never `git add -A`.
+only their own paths and never `git add -A`. Review-5 F1 also confirms that `ralph-pi.sh`'s recovery
+path is live in the working tree and NOT protected by the committed `PROTECTED` set; the earlier
+phrase “living in `PROTECTED` files a batch may not commit” was inaccurate and is corrected here.
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -204,7 +192,7 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `guard_fragment`, three region lifts with behavioural cases instead, `count_writes` counting
   **occurrences** not lines) is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 34)
+## Verified on this tree (batch 35)
 
 All gates re-run from a clean invocation; the nine mutants, the arm list, the devkitARM compile evidence
 and the verbatim output are in `docs/PROGRESS_LOG.md`, "Iteration 62". Goldens **exit 0**

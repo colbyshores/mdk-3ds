@@ -8932,3 +8932,28 @@ an eye through a construct this file does not match (a computed `goto`, a macro
 that expands to one of the refused keywords) is outside the early-exit check.
 **No 3DS emulator run and no Old-3DS hardware run was made: P6 stays open and
 Old-3DS timing stays UNMEASURED.**
+
+
+
+## Iteration 63 — batch 35: preserve the planned eye count and keep reset checks closed over callees (review-5 F2/F3/F4 fixed; F1 corrected, owner policy open)
+
+**Prior-solution lookup.** Pi knowledge `mdk-sdl` returned `docs/OPEN_ITEMS.md`, the C3D end-frame renderer source, and this gate's prior review history on stereo replay and eye-plan pass counts. A follow-up `knowledge_search` in deep mode failed to fetch results; the usable first search was treated only as a lead and checked against source. Obsidian MCP is unavailable, so `/mnt/nas/Vaults/port-docs/30-architecture/patterns/citro3d-display-list-stereo-replay-non-fast3d.md` was read directly; it describes recording once and replaying per eye. Cognee MCP is not exposed in this Pi session and was not consulted.
+
+### Review-5 findings
+
+- **F1 High: confirmed; documentation correction applied; underlying policy is owner-gated.** The review correctly says the committed `PROTECTED` set does not include `ralph-pi.sh`, and the working-tree recovery code is live. `docs/CONTINUATION.md` previously mischaracterized it as living in protected files. It now states the actual exposure and leaves owner approval/protection of that harness path open. This batch did not stage or alter the owner's dirty harness files.
+- **F2 Medium: confirmed and fixed.** Reproducing the reviewer's `r->queue.reset()` at the start of `installEye` was source-reachable but not covered by the old tuple. Added `installEye` to the per-eye callees whose bodies may not clear the queue; added a mutation arm and it turns the named check red.
+- **F3 Medium: confirmed and fixed.** The exact defect `r->eyes.passes = 1` before the eye loop was not rejected by the old header checks. Added a no-write-in-end-frame check, a full loop-header invariant check (increment included), and arms for clamping the plan count and incrementing by the pass count. All fail the intended named check.
+- **F4 Low: confirmed and fixed.** Added `goto` to the per-eye loop early-exit pattern and a `goto` mutant arm; it turns `eye-loop-runs-every-pass` red.
+
+The test gate now reports **22 checks / 29 mutation arms**, all arms adjudicated red; no product code or golden changed. The only file change for this batch's functional slice is `tests/scripts/c3d_frame_test.sh`. The continuation record also corrects the High finding's mistaken protected-file wording. No finding was rebutted.
+
+### Verification
+
+- `sh tests/scripts/c3d_frame_test.sh` → exit 0, `PASS C3dFrame (22 checks, 29 arms adjudicated red)`.
+- `make -C tests/scripts clean && make -C tests/scripts` → exit 0, `All cases match the oracle.` The clean build completed; the output includes a pre-existing `-Wreorder` warning in `SoundMixer`, no golden failure. The frame test printed `PASS C3dFrame (22 checks, 29 arms adjudicated red)`.
+- `bash tools/check.sh` → exit 0, `CHECK: ALL GATES PASSED`; `gates_frames` reported `PASS L3_f1.bmp sha=58615fc85d02e009`; `gates_smdh` explicitly `SKIPPED` because no `.cia` exists; batch integrity PASS on the current working tree.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → exit 0, `3DSX mdk.3dsx`, 69 files / 79M staged. Existing generated ROMFS build output is not part of the commit.
+- No full emulator was launched separately. `tools/publish_frame.sh c3d-eye-plan-gate` ran the pinned frame capture; `tests/frames/capture_cpp.sh` explicitly exports `DISPLAY=:99`. It produced `docs/frames/2026-11-02-c3d-eye-plan-gate.png` (320x240, md5 `6769a13731983d65cee9df02da6cff37`) and sidecar measurement `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical to the prior pinned frame. No viewer was opened.
+
+No AGENTS.md contract, gate, golden, or product implementation was changed. No Old-3DS hardware measurement was made; P6/Old-3DS timing remains unverified. Review-5 F1 remains an owner decision: whether to protect `ralph-pi.sh`/the hook/validator and approve or remove the `--each-commit` recovery policy. The pre-existing dirty owner harness changes and its stale `ralph-self-heal` frame pair were not staged.

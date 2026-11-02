@@ -382,6 +382,7 @@ def adjudicate(text, quiet=False):
     install_stmt = statement_at(loop, "installEye")
 
     begin_range = span_lines(text, body_span(text, "mdk_render_begin_frame"))
+    end_body = body(text, "mdk_render_end_frame")
     end_range = span_lines(text, body_span(text, "mdk_render_end_frame"))
     loop_lines = span_lines(text, sp)
 
@@ -461,14 +462,14 @@ def adjudicate(text, quiet=False):
               % (len(late_reset), "none" if not late_reset else "; ".join(late_reset)))
 
     per_eye_reset = []
-    for fn in ("replayQueue", "drawRecorded", "drawDiagnostic"):
+    for fn in ("installEye", "replayQueue", "drawRecorded", "drawDiagnostic"):
         b = body(text, fn)
         if b is None:
             per_eye_reset.append(fn + "(missing)")
             continue
         per_eye_reset.extend("%s:%s" % (fn, loc) for _, loc in sites(b, RESET))
     rep.check("per-eye-functions-do-not-empty-the-queue", not per_eye_reset,
-              "none of replayQueue/drawRecorded/drawDiagnostic empties the queue: %s (the eye "
+              "none of installEye/replayQueue/drawRecorded/drawDiagnostic empties the queue: %s (the eye "
               "loop calls these, so a reset in any of them is a reset between the two eyes seen "
               "from inside a function the loop's own text cannot see)"
               % ("clean" if not per_eye_reset else ", ".join(per_eye_reset)))
@@ -487,7 +488,7 @@ def adjudicate(text, quiet=False):
     # `if (eye == 0) break;` keeps every statement at depth 0 and every call count
     # at 1, and still draws one eye; `return` there is worse still, because it
     # also skips C3D_FrameEnd, so the frame is never submitted at all.
-    escapes = sites(loop or "", r"\b(?:break|continue|return)\b")
+    escapes = sites(loop or "", r"\b(?:break|continue|return|goto)\b")
     rep.check("eye-loop-runs-every-pass",
               sp is not None and not escapes,
               "%d early exit(s) inside the loop body: %s (a guarded break is the tidy-up that "
@@ -503,6 +504,28 @@ def adjudicate(text, quiet=False):
               "the loop header is `%s` (bounded by eyePlan's pass count, so a closed slider "
               "runs one pass and an open one two; a literal bound draws one eye whatever the "
               "slider says and the other buffer keeps the clear colour)" % (header or "(none)"))
+
+    exact_plan_loop = (header is not None and re.fullmatch(
+        r"\s*for\s*\(\s*int\s+eye\s*=\s*0\s*;\s*eye\s*<\s*"
+        r"[A-Za-z_]\w*\s*->\s*eyes\s*\.\s*passes\s*;\s*eye\s*\+\+\s*\)\s*",
+        header) is not None)
+    rep.check("eye-loop-uses-the-unchanged-plan-count",
+              exact_plan_loop,
+              "the whole loop header is `%s` (the plan count must be used unchanged: "
+              "clamping it, narrowing the condition, or changing the increment skips eyes)"
+              % (header or "(none)"))
+
+    # The eye count is captured from eyePlan in begin_frame and is immutable
+    # until this replay completes. A write in end_frame can make a structurally
+    # correct loop silently draw only one eye (review-5 F3).
+    pass_writes = sites(end_body or "",
+                        r"(?:->|\.)\s*eyes\s*(?:\.\s*passes)?\s*(?:=(?!=)|\+=|-=|\+\+|--)(?=[^\w]|$)")
+    rep.check("eye-plan-count-not-written-in-end-frame",
+              not pass_writes,
+              "%d eye-plan write(s) in mdk_render_end_frame: %s (eyePlan's pass count "
+              "must survive unchanged from begin_frame through the per-eye replay)"
+              % (len(pass_writes), "none" if not pass_writes else "; ".join(
+                  "%d:%s" % (ln, loc) for ln, loc in pass_writes)))
 
     rep.check("eye-loop-starts-at-the-first-eye",
               header is not None and re.search(r"int\s+eye\s*=\s*0\s*;", header) is not None,
@@ -758,6 +781,43 @@ def arm_reset_before_loop(text):
     return text[:cut] + "    r->queue.reset();\n" + text[cut:]
 
 
+def arm_reset_in_install_eye(text):
+    """Empty the queue in installEye (review-5 F2), before replay starts for
+    either target. The eye loop calls this function, but its own reset scan
+    cannot see into the callee."""
+    sp = body_span(text, "installEye")
+    if sp is None:
+        return text
+    brace = text.find("{", sp[0], sp[1])
+    return text[:brace + 1] + "\n    r->queue.reset();" + text[brace + 1:]
+
+
+def arm_clamp_eye_pass_count(text):
+    """Clamp the saved eyePlan count just before replay (review-5 F3)."""
+    sp = eye_loop_span(text)
+    if sp is None:
+        return text
+    a = text.rfind("for", 0, sp[0])
+    if a < 0:
+        return text
+    cut = text.rfind("\n", 0, a) + 1
+    return text[:cut] + "    r->eyes.passes = 1;\n" + text[cut:]
+
+
+def arm_loop_increment_skips_eye(text):
+    """Advance by the number of passes rather than one (review-5 F3)."""
+    return text.replace("eye++", "eye += r->eyes.passes", 1)
+
+
+def arm_loop_early_goto(text):
+    """Use goto to leave after the first eye; an early-exit scan must include it."""
+    mutated = arm_loop_early_exit(text, "if (eye == 0) goto after_eyes;")
+    sp = eye_loop_span(mutated)
+    if sp is None:
+        return mutated
+    return mutated[:sp[1]] + "\n    after_eyes: ;" + mutated[sp[1]:]
+
+
 def arm_reset_in_replay(text):
     """Empty the queue at the end of `replayQueue` (review-4 F2), the shape a
     tidy-up writes when it wants the records released as soon as they are used.
@@ -872,9 +932,13 @@ ARMS = [
      lambda s: arm_loop_early_exit(s, "if (eye == 0) return;")),
     ("queue-reset-before-the-eye-loop", arm_reset_before_loop),
     ("queue-reset-at-the-end-of-the-replay", arm_reset_in_replay),
+    ("queue-reset-in-install-eye", arm_reset_in_install_eye),
     ("queue-reset-removed-from-both-frame-boundaries", arm_reset_removed_from_the_frame),
     ("eye-loop-bound-hardcoded-to-one",
      lambda s: arm_loop_bound(s, "eye < r->eyes.passes", "eye < 1")),
+    ("eye-plan-pass-count-clamped-before-loop", arm_clamp_eye_pass_count),
+    ("eye-loop-increment-skips-pass", arm_loop_increment_skips_eye),
+    ("eye-loop-exits-with-goto", arm_loop_early_goto),
     ("eye-loop-starts-at-the-second-eye",
      lambda s: arm_loop_bound(s, "int eye = 0", "int eye = 1")),
     ("install-targets-swapped-between-eyes", arm_install_targets_swapped),
