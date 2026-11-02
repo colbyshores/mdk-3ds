@@ -455,6 +455,52 @@ void testTheRealMatrixPutsTheNearPlaneNearest() {
     }
 }
 
+void testTheEyePlanFollowsTheSlider() {
+    // The slider is the physical 3D depth, 0..1. Closed means the panel shows the
+    // LEFT buffer only, so a second pass is invisible work: one pass, no offset.
+    const float kSep = 30.0f;
+    const mdk::pica::EyePlan mono = mdk::pica::eyePlan(0.0f, kSep);
+    PICA_CHECK(mono.passes == 1);
+    PICA_CHECK(mono.offset[0] == 0.0f);
+
+    // Half depth: two eyes, half the separation each way, left negative. The
+    // sign is the convention `testTheEyeOffset` pins for the matrix, and a swap
+    // here is inverted stereo -- the same geometry, crossed, which is a headache
+    // and not a crash, so it is pinned as an equality rather than argued.
+    const mdk::pica::EyePlan half = mdk::pica::eyePlan(0.5f, kSep);
+    PICA_CHECK(half.passes == 2);
+    PICA_CHECK(half.offset[0] == -7.5f);
+    PICA_CHECK(half.offset[1] == 7.5f);
+    PICA_CHECK(half.offset[1] - half.offset[0] == kSep * 0.5f);
+
+    // Full depth is the whole separation, split.
+    const mdk::pica::EyePlan full = mdk::pica::eyePlan(1.0f, kSep);
+    PICA_CHECK(full.passes == 2);
+    PICA_CHECK(full.offset[0] == -15.0f);
+    PICA_CHECK(full.offset[1] == 15.0f);
+
+    // THE CLAMP. Mandarine returns ~1.34e8 for a slider it does not model, and a
+    // sibling port multiplied that straight into the eye offset and got a black
+    // screen. Out-of-range in, in-range out -- and still stereo, because a
+    // positive reading is a slider that is open.
+    const mdk::pica::EyePlan junk = mdk::pica::eyePlan(1.34e8f, kSep);
+    PICA_CHECK(junk.passes == 2);
+    PICA_CHECK(junk.offset[0] == -15.0f);
+    PICA_CHECK(junk.offset[1] == 15.0f);
+
+    // A negative reading clamps to closed, not to a full-depth stereo with the
+    // eyes crossed.
+    const mdk::pica::EyePlan neg = mdk::pica::eyePlan(-5.0f, kSep);
+    PICA_CHECK(neg.passes == 1);
+    PICA_CHECK(neg.offset[0] == 0.0f);
+
+    // And a zero separation is still stereo, just with both eyes where the
+    // camera is: the pass count is the slider's business, not the hardware's.
+    const mdk::pica::EyePlan flat = mdk::pica::eyePlan(0.5f, 0.0f);
+    PICA_CHECK(flat.passes == 2);
+    PICA_CHECK(flat.offset[0] == 0.0f && flat.offset[1] == 0.0f);
+}
+
 } // namespace
 
 namespace test {
@@ -473,6 +519,7 @@ int runPicaMatrixTests() {
     testTheClearedBufferAcceptsTheWholeFrustum();
     testNearerFragmentsWinAndFartherOnesLose();
     testTheRealMatrixPutsTheNearPlaneNearest();
+    testTheEyePlanFollowsTheSlider();
     return failures;
 }
 

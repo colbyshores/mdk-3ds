@@ -177,5 +177,32 @@ bool depthPasses(const DepthState& state, float zNdc, float stored) {
     return storedDepth(zNdc) <= stored;
 }
 
+EyePlan eyePlan(float slider, float separation) {
+    // Clamp first, before anything is multiplied: see the declaration. A NaN
+    // fails both comparisons and passes through, which is what a NaN should do
+    // here -- it is not a value this function can rescue, and the two comparisons
+    // are cheaper than a NaN test on this target.
+    float depth = slider;
+    if (depth < 0.0f) depth = 0.0f;
+    if (depth > 1.0f) depth = 1.0f;
+
+    EyePlan plan;
+    plan.offset[0] = 0.0f;
+    plan.offset[1] = 0.0f;
+    if (depth <= 0.0f) {
+        // Mono. The panel shows the left buffer, and the left eye of a mono
+        // frame is the camera itself: no offset, one pass.
+        plan.passes = 1;
+        return plan;
+    }
+    // Stereo: the camera splits into two eyes half the separation each way along
+    // the camera's right vector, which is the sign `eyeViewProjection` expects.
+    plan.passes = 2;
+    const float half = depth * separation * 0.5f;
+    plan.offset[0] = -half;
+    plan.offset[1] = half;
+    return plan;
+}
+
 } // namespace pica
 } // namespace mdk

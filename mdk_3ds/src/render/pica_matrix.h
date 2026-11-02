@@ -223,5 +223,31 @@ float storedDepth(float zNdc);
 // LESS would reject the far plane and anything that touches it.
 bool depthPasses(const DepthState& state, float zNdc, float stored);
 
+// How many passes this frame draws, and the eye offset for each of them.
+struct EyePlan {
+    int passes;
+    float offset[2];
+};
+
+// The frame's eye plan, from the physical 3D slider (0..1) and the hardware's
+// maximum separation.
+//
+// THE CLAMP IS LOAD-BEARING. Mandarine's `osGet3DSliderState()` returns a
+// garbage value (~1.34e8) when it does not model the slider, and a sibling port
+// shipped exactly that as an eye separation of billions of units: the screen
+// went black (../forsaken/3DS_PORT_NOTES.md "Bug 3"). Anything outside [0,1] is
+// clamped, including a negative, so no caller can multiply garbage into a matrix.
+//
+// THE PASS COUNT IS THE OTHER HALF. With the slider closed the panel displays the
+// LEFT buffer only, so a second pass into the right buffer is invisible work on a
+// 268 MHz ARM11: one pass, offset zero. With it open, both eyes are drawn and the
+// left takes the NEGATIVE offset, which is the convention this backend has always
+// used and what `testTheEyeOffset` already pins for the matrix.
+//
+// It lives here rather than in the backend for the usual reason: the sign, the
+// clamp and the skip are the three things that can silently black the screen, and
+// renderer_c3d.cpp cannot be compiled on this host.
+EyePlan eyePlan(float slider, float separation);
+
 } // namespace pica
 } // namespace mdk

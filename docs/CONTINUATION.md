@@ -1,35 +1,34 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 29 changes the Citro3D backend's depth state from "depth buffer disabled" to the
-oracle's per-pass rule: `C3D_DepthTest(GPU_LEQUAL)` with the write mask on for the opaque passes and off
-for `Blended`/`OnTop`/`Overlay`, and the depth clear moves from 0 to the buffer's maximum because the map
-the frame installs stores 0 at the near plane. Target-specific GPU state on a backend whose picture
-cannot be looked at here — no 3DS emulator, no Old-3DS, so P6 stays open. Mitigations, measured not
-asserted: the pairing (`DepthMap(true,1,1)` + `GPU_LEQUAL` + clear `0xFFFFFF`) is Forsaken's on this
-hardware with the oracle's tie allowed, the two citro3d behaviours it depends on were read out of the
-linked `libcitro3dd.a` rather than recalled, the pass rule and the ordering moved into
-`pica_matrix.{h,cpp}` so a host test can reach them, the 5 new depth cases are inside `PASS PicaMatrix`
-and **9 separate mutations of the new code each turn the suite red** (table in `docs/PROGRESS_LOG.md`
-"Iteration 57"), and both targets build. High rather than medium because a wrong sign here is invisible
-geometry, and the only hardware evidence this batch can produce is a log line.
+Risk: high — batch 30 moved the Citro3D frame's draws: the per-eye pass (target, matrix, state) left
+`begin_frame`, where it ran before a single draw existed and every draw therefore landed in the LAST
+installed target — the RIGHT one, while the panel shows the LEFT one in mono, i.e. a top screen of nothing
+but the clear colour — and now runs in `end_frame`, one eye at a time, immediately before that eye's
+replay of the queue. `pica::eyePlan` decides how many passes there are (one with the 3D slider closed, two
+with it open) and owns the slider clamp and each eye's sign. Target-specific GPU state on a backend whose
+picture cannot be looked at here — no 3DS emulator, no Old-3DS, so P6 stays open. Mitigations, measured
+not asserted: `C3D_FrameDrawOn` and `C3D_SetFrameBuf` were disassembled out of the linked `libcitro3dd.a`
+rather than reasoned about, the mono skip is Forsaken's measured behaviour on this hardware ("slider = 0
+disables stereo and restores full framerate"), the plan is host-tested and **7 mutations of it each turn
+the suite red** (table in `docs/PROGRESS_LOG.md` "Iteration 58"), and both targets build. High rather
+than medium because this is the frame's draw order on an unverifiable target — and because the bug it
+fixes is a black screen, which makes the missing hardware the most expensive gap in the port.
 
-Last updated: 2026-11-02 (**batch 29** — the Citro3D depth state, priority item 6(c) depth half; full
-narrative, the evidence chain, the nine-mutation table and the gate output are in `docs/PROGRESS_LOG.md`
-"Iteration 57"). The 3DS frame now tests depth with the oracle's `LESS_OR_EQUAL` and the oracle's
-per-pass write rule instead of disabling the depth buffer: `pica::depthStateForPass`,
-`pica::storedDepth`, `pica::depthPasses` and the named `kDepthMap*`/`kDepthClearValue` constants live in
-`mdk_3ds/src/render/pica_matrix.{h,cpp}` (host-compilable, so they can be pinned at all), the backend
-installs and caches the state per pass, the clear is `0xFFFFFF`, and the diagnostic triangle now
-disables the test because it sits on the far plane. Goldens **443/0/0** (unchanged: the 5 new cases are
-inside the existing `PASS PicaMatrix`), no PASS line moved; frame byte-unchanged, and its sidecar says
-why. **The tree arrived dirty with the owner's own harness work** (`AGENTS.md`, `ralph/builder.md`,
-`ralph-pi.sh`, `gates_batch_integrity.py`, an untracked frame pair): the first, second and fourth are in
-the integrity gate's own `PROTECTED` set, so a builder commit of them fails the loop's guard at exit 6;
-they are left for the owner and this batch staged only its own paths — the evidence is in "Iteration
-57". Owner-authorized item **(12) is CLOSED**: `knowledge_show` lists `mdk-sdl` (3881 chunks / 936
-files) and it produced the sibling-project leads this batch checked its answer against. Previous:
-**batch 28** ("Iteration 56", the per-draw world matrix), **batch 27** ("Iteration 55", review-1 F3, the
-`RUNNER` voice), **batch 26** ("Iteration 54", review-12: all four findings fixed, none rebutted).
+Last updated: 2026-11-02 (**batch 30** — the per-eye replay; full narrative, the `libcitro3dd.a`
+disassembly, the seven-mutation table and the gate output are in `docs/PROGRESS_LOG.md` "Iteration 58").
+Batch 29's "the left eye gets only its clear" was worse than written: `begin_frame` installed both eyes
+before any draw was queued, so `flushDraws` at `end_frame` put the whole frame into the RIGHT target with
+the right eye's matrix, and the panel shows the LEFT one with the slider closed — a top screen of clear
+colour. `installEye` + `replayQueue` now run once per eye from `end_frame`, `pica::eyePlan` (clamped,
+signed, host-tested) decides one pass or two, and both buffers are still cleared every frame. Goldens
+**443/0/0** (the new case is inside `PASS PicaMatrix`), no PASS line moved; frame byte-unchanged, and its
+sidecar says why. **This is the first 3DS-renderer batch whose expected effect on a real console is
+visible**, which is what makes P6's missing hardware the port's most expensive open gap. The tree still
+carries the owner's uncommitted harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
+`gates_batch_integrity.py`, an untracked frame pair) — three of them are in the integrity gate's own
+`PROTECTED` set, so batches keep staging only their own paths. Previous: **batch 29** ("Iteration 57", the
+Citro3D depth state), **batch 28** ("Iteration 56", the per-draw world matrix), **batch 27** ("Iteration
+55", review-1 F3), **batch 26** ("Iteration 54", review-12).
 
 **Batch 27, in full**: `ObjectBehaviors.cs:305-306`
 enters `H150_R` **and** plays `RUNNER`; the port does both at `script_runtime.cpp:1033-1034` but the
@@ -186,26 +185,30 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `guard_fragment`, three region lifts with behavioural cases instead, `count_writes` counting
   **occurrences** not lines) is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 29)
+## Verified on this tree (batch 30)
 
-All gates re-run from a clean invocation; verbatim output, the evidence chain (vault notes, the
-`libcitro3dd.a` disassembly of `C3D_DepthMap` and `C3D_FrameBufClear`, Forsaken's shipped triple) and the
-falsification are in `docs/PROGRESS_LOG.md`, "Iteration 57". Goldens **exit 0** (`All cases match the
-oracle.`, **443 PASS / 0 FAIL / 0 SKIP**, no PASS line moved — the five new depth cases are inside the
-existing `PASS PicaMatrix`); `tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`; `gates_frames PASS
+All gates re-run from a clean invocation; verbatim output, the citro3d disassembly and the falsification
+are in `docs/PROGRESS_LOG.md`, "Iteration 58". Goldens **exit 0** (`All cases match the oracle.`, **443
+PASS / 0 FAIL / 0 SKIP**, no PASS line moved — the new eye-plan case is inside the existing `PASS
+PicaMatrix`); `tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`; `gates_frames PASS
 L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
-regenerated; `gates_smdh` SKIPPED; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`);
-`cmake --build build-linux --target mdk` **exit 0**. Load-bearingness was measured, not asserted: **nine
-mutations of the new code** — the map's sign, the map's offset, the clear value, `<` instead of `<=`,
-`Blended` writing depth, the exempt passes tested, `Solid` not writing, `depthPasses` ignoring `test`,
-and the `[0,1]->[-1,0]` conversion removed — each turn the suite red, and the first attempt at that table
-silently no-opped two mutations because the mutated header was not first on the include path (the rerun
-is what is published). Frame `docs/frames/2026-11-02-c3d-depth-state.png` + `.txt` — `1.240 / 247 /
-0.1819`, byte-identical to its 33 predecessors, because `renderer_c3d.cpp` is 3DS-only. **No emulator run
-and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED
-(P6)**; the batch's only hardware evidence is the new init log line. No gate was pinned, relaxed or
-edited. Batch 28's own record — the seven matrix mutations and the identity-world bit-identity argument —
-is in "Iteration 56"; read those tables before calling any case there inert.
+regenerated; `gates_smdh` SKIPPED; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no
+warnings); `cmake --build build-linux --target mdk` **exit 0**. Two things were measured rather than
+asserted. **The mechanism**: `.text.C3D_FrameDrawOn` in the linked `libcitro3dd.a` is
+`strb r3,[r0,#24]; add r0,r0,#8; bl C3D_SetFrameBuf; ldrh r3,[r4,#18]; ldrh r2,[r4,#16]; mov r1,#0;
+mov r0,#0; bl C3D_SetViewport` and nothing else, and `C3D_SetFrameBuf` copies the descriptor into the
+context at `+0x1d8` and sets dirty bit 32 — so the target is selected for the draws that *follow*, and an
+install in `begin_frame` was overwritten before a draw existed. **Load-bearingness**: seven mutations of
+`pica::eyePlan` — pass count both ways, the offsets swapped, the upper clamp removed, the half-separation
+dropped, the closed-slider test, the lower clamp moved — each turn the suite red from `failures=0`. What
+the suite cannot reach is stated: the replay loop itself and the `reset()` after the last eye are covered
+by reading and by both builds, not by a test. Frame
+`docs/frames/2026-11-02-c3d-per-eye-replay.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical to its
+predecessors, because the capture is the Linux backend. **No emulator run and no Old-3DS hardware run:
+Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)** — and this time the
+expected change on a console is visible, so the gap is the port's most expensive. No gate was pinned,
+relaxed or edited. Batch 29's own record — the nine depth mutations and the `libcitro3dd.a` reading of
+`C3D_DepthMap`/`C3D_FrameBufClear` — is in "Iteration 57".
 
 ## Standing open items
 
@@ -215,11 +218,13 @@ ones that bite: **C3D blend state still differs from the C#** (no `C3D_AlphaBlen
 `Pass::Blended` glass is opaque) and it is blocked on a named cause — the palette expansion forces alpha
 255 and `mdk_c3d.v.pica` writes `outclr = ones`, so there is no alpha to blend with yet; the **depth**
 half of that item landed in batch 29 (`LESS_OR_EQUAL`, the per-pass write rule, clear `0xFFFFFF`, pinned
-by `PASS PicaMatrix`), and non-`Solid` batches are in **10 of level 3's 17** arenas; the Citro3D backend
-draws **one** pass into the last-installed eye target, so the left eye currently gets only its clear
-(found by batch 28, recorded not fixed: `DrawQueue` already *is* the recorded draw list the vault's
-per-eye-replay pattern wants, so the second eye is a replay with a different `eyeVp`, not a second
-scene walk); the sprite residency bound is
+by `PASS PicaMatrix`), and non-`Solid` batches are in **10 of level 3's 17** arenas; the per-eye replay
+**landed in batch 30** (`installEye` + `replayQueue` per eye in `end_frame`, `pica::eyePlan` for the
+count/sign/clamp) — and it turned out to have been a black screen, not a stereo gap: the single pass that
+did happen went to the right target while the panel shows the left one in mono. Two follow-ups it left:
+the canvas/inset flush points now run *before* the per-eye replay (neither is called on the 3DS today,
+and `canvas_quad` is a no-op there), and `gfxSet3D` is called once at init rather than per frame from the
+slider, which is the common homebrew pattern but not what Forsaken does); the sprite residency bound is
 compile-verified only (the 3DS frontend binds no Kurt); `depth_pull.cpp` is `DepthPull.Of` — Vulkan
 applies the pull and the C3D backend still ignores `depth_layer`, now for a different reason: the depth
 test exists, but the pull needs the **view position and the primitive**, which the render seam does not

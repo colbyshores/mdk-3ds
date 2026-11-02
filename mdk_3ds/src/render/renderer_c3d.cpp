@@ -237,12 +237,12 @@ struct RendererC3D {
     // no per-draw one, every object was drawn at the arena's own coordinates no
     // matter where its script put it.
     //
-    // begin_frame's eye loop writes it once per eye and the LAST write is the
-    // one that matters, because this backend issues ONE pass into the last
-    // target C3D_FrameDrawOn installed. When the per-eye replay lands -- the
-    // frame's draws are already recorded (DrawQueue), so the second eye is a
-    // replay with a different matrix and not a second scene walk -- the flush
-    // moves inside that loop and reads the matrix of the eye it is drawing.
+    // `installEye` writes it once per eye pass, immediately before that eye's
+    // replay of the queue, and the draws read the matrix of the eye they are
+    // in. There is one entry and not two because a frame draws an eye, then the
+    // next: the queue is replayed per eye (batch 30), so the matrix that is
+    // current is always the matrix of the eye being drawn -- and a draw that
+    // carries its own world composes against it (`drawMatrix`, cached below).
     float eyeVp[16] = {0};
 
     // Whether the uniform currently holds `eyeVp` (the frame's matrix) or some
@@ -256,6 +256,10 @@ struct RendererC3D {
     // lesson confirmed on two other projects. Anything that writes the matrix
     // behind this backend's back has to say so here.
     bool matrixIsFrame = true;
+
+    // This frame's eye plan (how many passes, and each eye's offset), computed
+    // once in mdk_render_begin_frame and consumed by mdk_render_end_frame.
+    mdk::pica::EyePlan eyes;
 
     // The vertex scratch. Everything the CPU writes for the frame lives
     // here until it is uploaded.
@@ -637,6 +641,8 @@ static void settleDeferredTextures(RendererC3D* renderer) {
 // comes first in the file.
 static void settleDeferredMeshes(RendererC3D* renderer);
 static void flushDraws(RendererC3D* r);
+static void replayQueue(RendererC3D* r);
+static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 
 // Install one pass's depth state on the citro3d context and record it in the
 // cache.
@@ -658,6 +664,98 @@ static void installDepthState(RendererC3D* r, mdk::pica::DepthState state) {
                   state.write ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
     r->depthTest = state.test;
     r->depthWrite = state.write;
+}
+
+// Install ONE EYE: its target, its matrix, and every piece of fixed state the
+// draws need. Called from mdk_render_end_frame once per eye pass, immediately
+// before that eye's replay of the queue -- C3D_FrameDrawOn selects the target
+// for the draws that FOLLOW it, so an install that is not immediately followed
+// by its own draws is an install that gets overwritten.
+//
+// Most of this state is context-global in citro3d (C3D_FrameDrawOn does not
+// restore it -- see the cull-mode cache above), so re-installing it per eye is
+// belt and braces rather than the mechanism. It is written every frame anyway,
+// because an unwritten PICA register is the invisible-geometry failure mode and
+// not an error (AGENTS.md P2).
+static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
+    C3D_FrameDrawOn(target);
+
+    // The MVP for this eye: the view-projection with both PICA conversions
+    // baked in. It is KEPT on the renderer, because a draw that carries a
+    // world matrix composes it against this matrix instead of rebuilding the
+    // whole chain per draw.
+    mdk::pica::eyeViewProjection(r->view, r->projection, offset, r->eyeVp);
+    // THE STRIDED READ -- see mdk::pica::registers: register i must hold
+    // COLUMN i of the row-major matrix, or a rotation comes out inverted.
+    //
+    // ALL UNIFORM REGISTERS MUST BE WRITTEN EVERY FRAME. An unwritten
+    // uniform holds the previous frame's value or garbage. The shader
+    // reads registers 0-3 (the mvp), so exactly those are written. A frame
+    // whose draws all carry an identity world is placed by this one write
+    // and nothing more; drawRecorded adds one per draw that does not.
+    C3D_Mtx gpuMtx;
+    mdk::pica::registers(r->eyeVp, gpuMtx.m);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
+    r->matrixIsFrame = true;
+
+    C3D_BindProgram(&r->program);
+
+    // EVERY GPU STATE, EVERY FRAME. Uninitialised registers give
+    // invisible geometry, not an error.
+    C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
+    AttrInfo_Init(attrInfo);
+    // THE ATTRIBUTES MUST MATCH THE VERTEX LAYOUT EXACTLY. The mesh's
+    // vertex is FIVE floats -- the position and the texture coordinate
+    // -- and the attribute loaders say so here. Declaring a third
+    // loader (a colour) that the vertex does not have makes the
+    // attribute unit read past the end of every vertex, and the
+    // geometry vanishes with no error at all.
+    AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
+    AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord
+
+    // The combiner. The original look is an unlit, untextured surface for
+    // now; the textured path replaces this when the palette expansion
+    // lands.
+    C3D_TexEnv* env = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(env);
+    C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+    C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+
+    // THE DEPTH TEST IS ON, with the oracle's LESS_OR_EQUAL and a write
+    // mask, for the frame's default pass. The ORIGINAL look still draws
+    // back to front — the queue's pass order is the oracle's and the
+    // painter's order still holds — but the C# does not rely on that: it
+    // builds every mesh pipeline with `compare_op = LESS_OR_EQUAL`, depth
+    // test enabled and depth write enabled except on the blended and exempt
+    // passes (Renderer.cs:603-607). Without a test, an arena batch that the
+    // queue order happens to place late can paint over something nearer,
+    // and the depth pull (`render/depth_pull.cpp`, the oracle's DepthPull
+    // for a poster over its wall) has nothing to bias against.
+    //
+    // The map this pairs with, and the evidence for the pairing, are in
+    // pica_matrix.h next to the constants; the ordering they imply is pinned
+    // by `PASS PicaMatrix` because no picture on this host can show it.
+    installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
+    // (B) THE CULL ENUM. The game wants back-face culling, and through the
+    // oracle's right-handed camera the meshes wind CCW on screen. The
+    // PICA200 has no CW-front mode, so "cull the back faces of CCW-front
+    // meshes" is GPU_CULL_BACK_CCW. See the file header: this moved with
+    // the camera's handedness, and it needs a hardware look (AGENTS.md P6)
+    // before it can be called verified.
+    C3D_CullFace(GPU_CULL_BACK_CCW);
+    // The cache describes the state actually installed above. The mode
+    // is GLOBAL to the context, so the first eye's install already
+    // covers the second; re-installing it per eye is belt and braces,
+    // not the mechanism.
+    r->cullMode = GPU_CULL_BACK_CCW;
+    C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
+                 mdk::pica::kDepthMapOffset);
+
+    // The viewport is a HARDWARE CLIP RECTANGLE. A zero-area viewport
+    // SILENTLY DROPS the draw -- the "invisible 3D trap". The full target
+    // is the safe default; the insets set their own.
+    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);
+    C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, kScreenWidth, kScreenHeight);
 }
 
  void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
@@ -687,127 +785,73 @@ static void installDepthState(RendererC3D* r, mdk::pica::DepthState state) {
 
     const uint32_t clear = params ? params->clear_colour : 0xFF000000u;
 
-    // The 3DS's top screen is an AUTOSTEREOSCOPIC PARALLAX BARRIER: it has
-    // two eye buffers and the hardware shows them from slightly different
-    // angles. The slider's position says how deep the barrier is.
+    // THE EYE PLAN, read once, here, and stored on the renderer.
+    //
+    // The eye passes happen at the END of the frame -- see mdk_render_end_frame:
+    // the draws are queued between begin and end, so an eye installed here is
+    // installed before there is anything to draw into it, and every draw then
+    // lands in whichever eye was installed last. Installing both here, as this
+    // function used to, meant they all landed in the RIGHT target while the top
+    // screen shows the LEFT one: a frame of nothing but the clear colour, on a
+    // backend nobody can look at from this host.
+    //
+    // The slider must still be read here and not at the end, so that the two
+    // eyes cannot disagree if the user moves it mid-frame.
     //
     // THE SLIDER MUST BE CLAMPED. Mandarine returns a garbage value (~134
     // million) when it does not model the slider, and Forsaken shipped a bug
     // from exactly that: an unclamped depth became an eye separation of
-    // billions of units and the screen went black.
-    float slider = (float)osGet3DSliderState();
-    if (slider < 0.0f) slider = 0.0f;
-    if (slider > 1.0f) slider = 1.0f;
-    const float eyeOffset = slider * r->eyeSeparation * 0.5f;
+    // billions of units and the screen went black. The clamp, the sign of each
+    // eye and the mono skip are pica::eyePlan, which a host test pins.
+    r->eyes = mdk::pica::eyePlan((float)osGet3DSliderState(), r->eyeSeparation);
 
-    // Each eye is a full pass into its own target.
-    for (int eye = 0; eye < 2; eye++) {
-        C3D_RenderTarget* target = (eye == 0) ? r->targetLeft : r->targetRight;
-        const float offset = (eye == 0) ? -eyeOffset : eyeOffset;
-
-        // The depth is cleared to the BUFFER'S MAXIMUM.
-        //
-        // The frame's depth map stores 0 at the near plane and 1 at the far, so
-        // the value that accepts every fragment before one is drawn is the top
-        // of the buffer, not the bottom. The devkitPro examples clear to 0 and
-        // that is correct for them: citro3d's own default map is the reversed
-        // range (see mdk::pica::kDepthMapScale for both pairings). Clearing to
-        // 0 with this map rejects everything, which is a screen showing only the
-        // clear colour and no error.
-        //
-        // The value is the raw fill pattern GX_MemoryFill writes into the
-        // DEPTH24_STENCIL8 buffer (measured: C3D_FrameBufClear passes
-        // `clearDepth` straight to GX_MemoryFill as the fill value), and
-        // 0x00FFFFFF is the 24-bit maximum under either byte order of the word.
-        C3D_RenderTargetClear(target, C3D_CLEAR_ALL, clear,
-                              mdk::pica::kDepthClearValue);
-        C3D_FrameDrawOn(target);
-
-        // The MVP for this eye: the view-projection with both PICA conversions
-        // baked in. It is KEPT on the renderer, because a draw that carries a
-        // world matrix composes it against this matrix instead of rebuilding the
-        // whole chain per draw.
-        mdk::pica::eyeViewProjection(r->view, r->projection, offset, r->eyeVp);
-        // THE STRIDED READ -- see mdk::pica::registers: register i must hold
-        // COLUMN i of the row-major matrix, or a rotation comes out inverted.
-        //
-        // ALL UNIFORM REGISTERS MUST BE WRITTEN EVERY FRAME. An unwritten
-        // uniform holds the previous frame's value or garbage. The shader
-        // reads registers 0-3 (the mvp), so exactly those are written. A frame
-        // whose draws all carry an identity world is placed by this one write
-        // and nothing more; drawRecorded adds one per draw that does not.
-        C3D_Mtx gpuMtx;
-        mdk::pica::registers(r->eyeVp, gpuMtx.m);
-        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
-        r->matrixIsFrame = true;
-
-        C3D_BindProgram(&r->program);
-
-        // EVERY GPU STATE, EVERY FRAME. Uninitialised registers give
-        // invisible geometry, not an error.
-        C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
-        AttrInfo_Init(attrInfo);
-        // THE ATTRIBUTES MUST MATCH THE VERTEX LAYOUT EXACTLY. The mesh's
-        // vertex is FIVE floats -- the position and the texture coordinate
-        // -- and the attribute loaders say so here. Declaring a third
-        // loader (a colour) that the vertex does not have makes the
-        // attribute unit read past the end of every vertex, and the
-        // geometry vanishes with no error at all.
-        AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);   // position
-        AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);   // texcoord
-
-        // The combiner. The original look is an unlit, untextured surface for
-        // now; the textured path replaces this when the palette expansion
-        // lands.
-        C3D_TexEnv* env = C3D_GetTexEnv(0);
-        C3D_TexEnvInit(env);
-        C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
-
-        // THE DEPTH TEST IS ON, with the oracle's LESS_OR_EQUAL and a write
-        // mask, for the frame's default pass. The ORIGINAL look still draws
-        // back to front — the queue's pass order is the oracle's and the
-        // painter's order still holds — but the C# does not rely on that: it
-        // builds every mesh pipeline with `compare_op = LESS_OR_EQUAL`, depth
-        // test enabled and depth write enabled except on the blended and exempt
-        // passes (Renderer.cs:603-607). Without a test, an arena batch that the
-        // queue order happens to place late can paint over something nearer,
-        // and the depth pull (`render/depth_pull.cpp`, the oracle's DepthPull
-        // for a poster over its wall) has nothing to bias against.
-        //
-        // The map this pairs with, and the evidence for the pairing, are in
-        // pica_matrix.h next to the constants; the ordering they imply is pinned
-        // by `PASS PicaMatrix` because no picture on this host can show it.
-        installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
-        // (B) THE CULL ENUM. The game wants back-face culling, and through the
-        // oracle's right-handed camera the meshes wind CCW on screen. The
-        // PICA200 has no CW-front mode, so "cull the back faces of CCW-front
-        // meshes" is GPU_CULL_BACK_CCW. See the file header: this moved with
-        // the camera's handedness, and it needs a hardware look (AGENTS.md P6)
-        // before it can be called verified.
-        C3D_CullFace(GPU_CULL_BACK_CCW);
-        // The cache describes the state actually installed above. The mode
-        // is GLOBAL to the context, so the first eye's install already
-        // covers the second; re-installing it per eye is belt and braces,
-        // not the mechanism.
-        r->cullMode = GPU_CULL_BACK_CCW;
-        C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
-                     mdk::pica::kDepthMapOffset);
-
-        // The viewport is a HARDWARE CLIP RECTANGLE. A zero-area viewport
-        // SILENTLY DROPS the draw -- the "invisible 3D trap". The full target
-        // is the safe default; the insets set their own.
-        C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);
-        C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, kScreenWidth, kScreenHeight);
-    }
+    // Both eye buffers are cleared here, whether or not both get drawn: a buffer
+    // that is not cleared keeps the previous frame's picture, and the right
+    // buffer starts being displayed the moment the slider goes up.
+    //
+    // The depth is cleared to the BUFFER'S MAXIMUM.
+    //
+    // The frame's depth map stores 0 at the near plane and 1 at the far, so
+    // the value that accepts every fragment before one is drawn is the top
+    // of the buffer, not the bottom. The devkitPro examples clear to 0 and
+    // that is correct for them: citro3d's own default map is the reversed
+    // range (see mdk::pica::kDepthMapScale for both pairings). Clearing to
+    // 0 with this map rejects everything, which is a screen showing only the
+    // clear colour and no error.
+    //
+    // The value is the raw fill pattern GX_MemoryFill writes into the
+    // DEPTH24_STENCIL8 buffer (measured: C3D_FrameBufClear passes
+    // `clearDepth` straight to GX_MemoryFill as the fill value), and
+    // 0x00FFFFFF is the 24-bit maximum under either byte order of the word.
+    C3D_RenderTargetClear(r->targetLeft, C3D_CLEAR_ALL, clear,
+                          mdk::pica::kDepthClearValue);
+    C3D_RenderTargetClear(r->targetRight, C3D_CLEAR_ALL, clear,
+                          mdk::pica::kDepthClearValue);
 }
 
  void mdk_render_end_frame(MdkRenderer rr) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->inFrame) return;
-    // The frame's queued draws, in the oracle's pass order, before the queue is
-    // submitted (draw_queue.h).
-    flushDraws(r);
+    // THE PER-EYE REPLAY, and it has to happen HERE rather than in
+    // mdk_render_begin_frame: the draws are queued between the two, so this is
+    // the first moment there is anything to draw, and the last one before the
+    // queue is submitted.
+    //
+    // One pass per eye, each with its own target and matrix installed
+    // immediately before its own replay. eyePlan decides how many there are:
+    // ONE when the 3D slider is closed, because the panel then shows the left
+    // buffer and drawing the right one is invisible work on a 268 MHz ARM11 --
+    // Forsaken measures the same cost on the same hardware ("two full render
+    // passes ~ 2x CPU+GPU cost ... Slider = 0 disables stereo and restores full
+    // framerate", 3DS_PORT_NOTES.md).
+    //
+    // The queue is reset after the LAST eye, not inside the loop: the second eye
+    // replays the same records.
+    for (int eye = 0; eye < r->eyes.passes; eye++) {
+        installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
+        replayQueue(r);
+    }
+    r->queue.reset();
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);
@@ -1691,10 +1735,15 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     }
 }
 
-// Draw everything the frame has queued, in the oracle's pass order (draw_queue.h).
+// One replay of everything the frame has queued, in the oracle's pass order
+// (draw_queue.h), into whatever target is current. Split out of flushDraws
+// because a stereo frame replays the SAME queue once per eye: the queue already
+// IS the recorded draw list, so the second eye is a replay with a different
+// matrix and target, not a second walk of the scene.
+//
 // The flush point is the end of the frame's 3D scene: before the canvas, before
 // an inset's viewport, and before C3D_FrameEnd submits the queue.
-static void flushDraws(RendererC3D* r) {
+static void replayQueue(RendererC3D* r) {
     if (!r || r->queue.empty() || !r->inFrame) {
         return;
     }
@@ -1704,6 +1753,13 @@ static void flushDraws(RendererC3D* r) {
             drawRecorded(r, &bucket[i]);
         }
     }
+}
+
+static void flushDraws(RendererC3D* r) {
+    if (!r || r->queue.empty() || !r->inFrame) {
+        return;
+    }
+    replayQueue(r);
     r->queue.reset();
 }
 

@@ -7891,3 +7891,155 @@ measured exactly what a mid-batch reflow costs — three obligations deleted und
 cover of reformatting — and a docs-only compaction is a batch of its own, with its
 own word-diff review. The next batch that touches it should either do the compaction
 deliberately, with the word diff published, or leave it alone.
+
+---
+
+## Iteration 58 — batch 30: the draws go to the eye the panel actually shows
+
+**Risk: high** — the frame's draw order and the whole of the 3DS's stereo path, on
+the backend nobody can look at from this host (P6 open). Mitigated by measuring
+citro3d's own target-selection code out of the linked library rather than reasoning
+about it, and by putting the three things that can silently black the screen (the
+slider clamp, each eye's sign, the mono skip) in `pica::eyePlan`, where a host test
+pins them — **7 mutations, each of which turns the suite red** (table below).
+
+### The finding, which started as last batch's open item
+
+Batch 29 recorded, as a found-not-fixed item, that "the Citro3D backend draws **one**
+pass into the last-installed eye target, so the left eye currently gets only its
+clear". Checking that before continuing turned it into something larger. The order
+was:
+
+1. `mdk_render_begin_frame` looped over both eyes and called
+   `C3D_FrameDrawOn(targetLeft)` then `C3D_FrameDrawOn(targetRight)`, with each eye's
+   matrix in the uniform — **before a single draw existed**, because the frontend
+   queues its draws between `begin_frame` and `end_frame`.
+2. `mdk_render_end_frame` called `flushDraws`, i.e. every draw of the frame, into
+   whatever target was current: **the right one**, with the right eye's matrix still
+   in the uniform.
+3. The init sets `C3D_RenderTargetSetOutput(targetLeft, GFX_TOP, GFX_LEFT, …)` and
+   `main_3ds.cpp:98` calls `gfxSet3D(true)`. With the 3D slider closed the panel
+   displays the **left** buffer.
+
+So on hardware with the slider closed — the default, and the only state an emulator
+without a modelled slider is ever in — the top screen showed `clear_colour` and
+nothing else, and the entire scene went into a buffer nobody displays. That is not a
+stereo defect, it is a black screen, and it is the reason this batch jumped the
+priority order: every later 3DS item (blend, `DepthPull`, the middle 173 px) is
+unevaluable behind it.
+
+### What was measured, not recalled
+
+`arm-none-eabi-objdump -d $DEVKITPRO/libctru/lib/libcitro3dd.a` (the library this
+Makefile links):
+
+* `.text.C3D_FrameDrawOn` is
+  `strb r3(=1),[r0,#24]` (`target->active`) ; `add r0,r0,#8` ; `bl C3D_SetFrameBuf` ;
+  `ldrh r3,[r4,#18]` ; `ldrh r2,[r4,#16]` ; `mov r1,#0` ; `mov r0,#0` ;
+  `bl C3D_SetViewport` — and nothing else. So it **is** the target-selection call,
+  it selects it for the draws that FOLLOW it, and it also resets the viewport to the
+  target's own size (which is why the per-eye `C3D_SetViewport` stays: it is the
+  documented place an inset would narrow it).
+* `.text.C3D_SetFrameBuf` copies the 16-byte framebuffer descriptor into the context
+  slot at `+0x1d8` and sets dirty bit 32 (`orr ip, ip, #32`), i.e. the GX registers
+  are flushed at the next draw. A `FrameDrawOn` that is not followed by draws is
+  therefore not deferred work that happens later — it is work that the next
+  `FrameDrawOn` overwrites.
+
+### What was changed
+
+| | before | after |
+|---|---|---|
+| who selects the target | `begin_frame`, both eyes, before any draw exists | `end_frame`, one eye at a time, immediately before that eye's replay |
+| how many eye passes | always 2 installed, always 1 drawn (the last) | `pica::eyePlan`: 1 with the slider closed, 2 with it open |
+| the queue | flushed once at the end | `replayQueue` per eye; `queue.reset()` after the last eye |
+| the eye offset | computed in `begin_frame`, `(eye==0)?-x:+x` | `pica::eyePlan(slider, separation)`, clamped, signed, host-tested |
+
+`installEye(target, offset)` is the old loop body, unchanged in substance (target,
+matrix, program, attr info, combiner, depth state, cull, depth map, viewport,
+scissor). `flushDraws` keeps its old contract for the canvas and inset paths and is
+now `replayQueue` + `reset`.
+
+**Why mono draws one pass.** Forsaken, on this hardware and the same era of engine:
+"Two full render passes ≈ 2× CPU+GPU cost. At ~60 fps mono this gives ~26–30 fps
+stereo (measured in Mandarine). **Slider = 0 disables stereo and restores full
+framerate**" (`3DS_PORT_NOTES.md`, Hardware Stereoscopic 3D). Drawing the right eye
+with the slider closed is invisible work on a 268 MHz ARM11, so `eyePlan` returns
+one pass. The right buffer is still cleared every frame, so opening the slider
+mid-game cannot show a stale buffer.
+
+### Falsification: seven mutations of `pica::eyePlan`
+
+Run out of tree (`$HOME/scratch/mdk/mut30`), baseline `failures=0`:
+
+| # | mutation | result |
+|---|---|---|
+| E1 | `passes = 2` → `1` (stereo never happens) | 4 failures (`junk.passes`, `flat.passes`, …) |
+| E2 | the mono early-return disabled | 2 failures (`mono.passes`, `neg.passes`) |
+| E3 | the two eye offsets swapped | 7 failures (every sign assertion) |
+| E4 | the upper clamp removed | 2 failures — the Mandarine garbage reaches the matrix |
+| E5 | the `* 0.5f` dropped (full separation per eye) | 7 failures |
+| E6 | `depth <= 0` → `depth < 0` (closed slider draws stereo at zero offset) | 2 failures |
+| E7 | the lower clamp moved to 0.5 | 4 failures |
+
+What the host suite **cannot** reach is the replay structure itself (the loop in
+`end_frame`, and `reset()` after the last eye rather than inside the loop). That is
+stated rather than papered over: it is covered by reading, by the two builds, and by
+the fact that `replayQueue` only reads the buckets. The canvas and inset flush points
+still call `flushDraws`, which now runs **before** the per-eye replay; neither is
+called by the 3DS frontend or the core today (`grep` for `canvas_begin`/`begin_inset`
+outside the backends is empty), and `mdk_render_canvas_quad` is a no-op on this
+backend, so nothing is lost — recorded as an open item for whoever lands a HUD.
+
+### Review findings
+
+The newest external review is still `logs/ralph-pi/run-20261101-062333/review-12.md`
+(two Medium, two Low, no Critical/High), all four remediated by batch 26, and no
+review has been dispatched since. Nothing to remediate or rebut; the batch went down
+the priority order and took the black-screen finding with it. No golden, gate,
+`reference.sha256` or review file was touched.
+
+### Prior-solution lookup
+
+* **Pi knowledge (`mdk-sdl`)** — `hybrid` on the stereo/per-eye question returned
+  this backend's own notes (nothing newer than the code) and the sibling
+  `tetrisphere-godot` tree's citro3d notes; followed to their sources rather than
+  trusted.
+* **Obsidian vault** (read directly, read-only) —
+  `10-projects/forsaken/findings/citro3d-missile-chase-cam-per-eye-scissored-clear.md`
+  is the per-eye-replay-with-a-scissored-clear pattern this shape follows, and
+  `../forsaken/3DS_PORT_NOTES.md` supplied the slider-garbage bug, the 2× stereo cost
+  and the "slider = 0 disables stereo" behaviour.
+* **Cognee MCP is not exposed in this harness** — not consulted, not claimed.
+
+### Gates, verbatim
+
+* `make -C tests/scripts` → **exit 0**, `All cases match the oracle.`; **443 `^PASS`,
+  0 `^FAIL`, 0 `^SKIP`**, `PASS PicaMatrix` present. The total is unchanged because
+  the new `testTheEyePlanFollowsTheSlider` is a case inside the existing
+  `PicaMatrix` entry, and no PASS line moved.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`; `gates_frames PASS
+  L3_f1.bmp sha=58615fc85d02e009` (byte-identical to the pinned `cpp=`, so
+  `reference.sha256` was NOT regenerated); `gates_smdh` `SKIP no built .cia to read`;
+  `gates_vfp` 0 blockers, `audit_c_with_classes` 0 violations, `audit_r11_idiv` no
+  candidates, integrity PASS.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **exit 0**, `3DSX mdk.3dsx`, no warnings.
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `[100%] Built target mdk`.
+
+**No emulator run and no Old-3DS hardware run: P6 stays open, the Citro3D picture
+stays UNVERIFIED.** This batch is the first 3DS-renderer batch whose expected effect
+on a real console is *visible* — a screen that was the clear colour should show the
+level — which makes the missing hardware the most expensive gap in the port so far,
+and is recorded as such rather than argued away.
+
+### What is next
+
+The priority order is unchanged after this batch: the **blend half** of 6(c) (still
+blocked on the alpha source), then **`DepthPull` on C3D** (needs the view position
+and the primitive across the seam), then **(d)** the middle 173 px, then **(e)**
+`FrameBlend.Lerp`'s rounding. New open items from this batch: the canvas/inset flush
+points relative to the per-eye replay, and whether `gfxSet3D` should track the slider
+per frame (Forsaken's note says it is called per-frame from slider state; MDK calls it
+once at init, which is the common homebrew pattern and is left alone without hardware
+to compare).

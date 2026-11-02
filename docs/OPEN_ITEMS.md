@@ -329,20 +329,34 @@ different kind and it is still open — what it is has not been identified.
     (`tests/scripts/pica_matrix_tests.cpp`), 8 cases, with 7 mutations of the new
     file each turning them red. Still true: nothing on the 3DS draws an object
     yet, because the 3DS frontend binds no `ScriptRuntime`.
-- **The Citro3D backend issues ONE pass, into the last-installed eye target**
-  (found by batch 28 while adding the per-draw matrix; recorded, not fixed).
-  `begin_frame` clears and installs both eye targets and writes the MVP twice,
-  but the frame's draws are flushed once, after it returns, so they land in the
-  right target and the left target keeps only its clear. AGENTS.md P2 asks for
-  both-eye targets and the slider to be preserved, and the fix is not free (a
-  second pass over every draw on a 268 MHz ARM11 with L2 off), so it needs its
-  own batch and its own measurement. The prior solution is in the vault,
-  `30-architecture/patterns/citro3d-display-list-stereo-replay-non-fast3d.md`:
-  record the draw list, replay it per eye with a swapped view — and
-  `render/draw_queue.h` already *is* that recorded list, so the second eye is a
-  replay with a different `r->eyeVp`, not a second scene walk. The per-draw
-  matrix this batch added is what makes the replay cheap; `r->eyeVp`'s comment
-  names the flush that has to move.
+- **The Citro3D backend issues ONE pass, into the last-installed eye target** —
+  **CLOSED (2026-11-02, batch 30), and it was worse than "one eye missing".**
+  `begin_frame` installed both eye targets and wrote the MVP twice *before a
+  single draw existed* (the frontend queues between `begin_frame` and
+  `end_frame`), so `flushDraws` put the whole frame into the RIGHT target with
+  the right eye's matrix — and with the 3D slider closed the panel displays the
+  LEFT buffer (`C3D_RenderTargetSetOutput(targetLeft, GFX_TOP, GFX_LEFT)`,
+  `gfxSet3D(true)` at `main_3ds.cpp:98`). On hardware that is a top screen of
+  nothing but the clear colour, not a stereo gap. The fix is the vault's
+  per-eye-replay pattern (`30-architecture/patterns/
+  citro3d-display-list-stereo-replay-non-fast3d.md`): `installEye` +
+  `replayQueue` run once per eye from `end_frame`, `pica::eyePlan` decides the
+  pass count from the slider (one when closed — Forsaken measures stereo at ~2×
+  cost and "Slider = 0 disables stereo and restores full framerate"), and the
+  clamp, the sign and the skip are host-tested with 7 mutations. Two follow-ups
+  it leaves, both small and neither observable today:
+  * **The canvas and inset flush points now run *before* the per-eye replay**
+    (`mdk_render_canvas_begin` and `mdk_render_end_inset` still call
+    `flushDraws`, which empties the queue). Nothing calls them on the 3DS —
+    `grep` for `canvas_begin`/`begin_inset` outside the backends is empty, and
+    `mdk_render_canvas_quad` is a no-op on this backend — but a HUD that lands
+    has to draw inside the eye loop, once per eye, or it will appear in one eye
+    only.
+  * **`gfxSet3D(true)` is called once at init**, not per frame from the slider.
+    That is the common homebrew pattern and it is what the current code needs
+    (the left buffer is shown either way), but Forsaken's note says its own
+    build calls it per frame from slider state. Untested here: no hardware, and
+    Mandarine does not model the slider at all.
 - Review-3's three findings are **CLOSED** by this batch: `ObjectStreamDraw` carries
   the look's palette (the C#'s `Material.PaletteId`), the draw golden prints only
   what the queue holds — including the transform's raw bits, so a queued draw that
