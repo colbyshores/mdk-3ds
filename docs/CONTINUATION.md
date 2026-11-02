@@ -1,21 +1,24 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 37 extends the oracle-backed `Player` sound golden from 470 to 950 steps so the hard-landing and death chute-sound paths are pinned; it changes no product or renderer behaviour, and the two mutants that review-7 F3 proved survived now turn the golden red.
+Risk: medium — batch 38 changes no product code, but it changes the shape of an oracle-backed golden (two new columns on 950 rows, ~1.2k diff lines) and re-pins it from the C# probe; the columns are provably additive (strip them and the file is byte-identical to batch 37's) and the two mutants review-8 R8-4 proved survived now turn it red.
 
-Last updated: 2026-11-02 (**batch 37** — review-7 F3 fixed with an oracle-generated
-hard-landing/death golden; see `docs/PROGRESS_LOG.md`, "Iteration 65"). Previous narratives are one
-"Iteration N" section back each: batch 36 = "Iteration 64", 35 = "Iteration 63" (review-5
-F2/F3/F4 fixed, F1 corrected but owner-gated), 34 = 62, 33 = 61, 32 = 60, 31 = 59, 30 = 58.
+Last updated: 2026-11-02 (**batch 38** — review-8 R8-4 fixed with an oracle-generated
+`closing=`/`hp=` re-pin; see `docs/PROGRESS_LOG.md`, "Iteration 66"). Previous narratives are one
+"Iteration N" section back each: batch 37 = "Iteration 65" (review-7 F3), 36 = 64, 35 = 63
+(review-5 F2/F3/F4 fixed, F1 corrected but owner-gated), 34 = 62, 33 = 61, 32 = 60, 31 = 59.
 
-Goldens remain **445/0/0**: batch 37 regenerated `golden/L3_kurt_steps.txt` from the C# oracle
-(470 -> 950 steps), and no older golden moved. The frame is byte-unchanged across batches 31-37
-because no renderer behaviour was touched. Still owner-gated, and still uncommitted in the tree: the
-owner's harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
-`gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep
-staging only their own paths and never `git add -A`. Review-7 F1/F2 correctly reproduce that the
-working-tree gate demands an uncommitted `--each-commit` marker and that the contract/harness edits
-have no recorded owner approval; both are owner task (1), not batch-remediable. This batch did not
-stage, edit or revert those files.
+Goldens remain **445/0/0**: batch 38 regenerated `golden/L3_kurt_steps.txt` from the C# oracle
+(950 steps, two new columns, sha256 `b3fdabcd…`), and no older golden moved. The frame is
+byte-unchanged across batches 31-38 because no renderer behaviour was touched. Still owner-gated,
+and still uncommitted in the tree: the owner's harness work (`AGENTS.md`, `ralph/builder.md`,
+`ralph-pi.sh`, `gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so
+batches keep staging only their own paths and never `git add -A`. Review-8 **R8-1** and **R8-2**
+reproduce that again (and R8-1 was re-reproduced by execution in batch 38: a clean `git archive
+HEAD` tree plus the working-tree gate prints `FAIL … ralph-pi.sh: required invariant is missing:
+'--each-commit'`); **R8-3**, **R8-6** and **R8-7** are the same class — their only fixes are inside
+`gates_batch_integrity.py`, which is in its own `PROTECTED` set, or inside `ralph-pi.sh`, whose
+uncommitted owner edits must not be staged. All six are owner task (1), not batch-remediable, and
+this batch did not stage, edit or revert any of those files.
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -59,9 +62,14 @@ Deferred with cause: 248 `push_kurt` awaits knock-back; Rides writes the alarm c
 consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix and Kurt's muzzle
 flash and ride pose; `Vector3.Lerp`'s rounding (above); the other half of
 `FrameBlend` (Kurt's blended feet/yaw, `Record/Update/Turn/KurtAt`) and `TransformOf`'s
-driven-carrier shift, both with `Rides`. Kurt's footsteps and `LAND` sound are **CLOSED by
+driven-carrier shift, both with `Rides`. **No harness exercises `kurt_sprite.cpp`'s use of
+`chuteClosing()`** (review-8 oq3): batch 38 pins the field the sprite selector reads, but picking
+the closing sprite frame needs a sprite-selection dump on both sides, which is its own slice.
+Kurt's footsteps and `LAND` sound are **CLOSED by
 batch 36**, along with the chute sounds; batch 37 closes the hard-landing and death coverage of
-the chute stop; what is left of that item is that **no shipped frontend sets `Player`'s mixer**
+the chute stop, and batch 38 adds the `closing=`/`hp=` columns so the hard-landing **damage** and
+the per-step `ChuteClosing` clear are pinned too (review-8 R8-4); what is left of that item is
+that **no shipped frontend sets `Player`'s mixer**
 (neither has an audio device, and `ScriptRuntime` owns the only mixer and hands it out `const`),
 with the reason in `OPEN_ITEMS.md`. All with evidence in `OPEN_ITEMS.md`. **Old-3DS timing is
 UNMEASURED.**

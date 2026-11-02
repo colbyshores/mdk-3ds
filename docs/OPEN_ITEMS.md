@@ -527,3 +527,14 @@ inherit a dirty tree):
 
 - `AGENTS.md`/`SPEC.md` cite an absent `docs/DOCTRINE.md`; SPEC §9.4 names an
   unwritten `gates_romfs`. Flagged to the owner; do not invent the policy.
+
+## The closing-chute sprite frame is selected by code no harness runs (review-8 oq3)
+
+`mdk_core/src/game/kurt_sprite.cpp:336` reads `Player::chuteClosing()` to pick the
+closing-chute frame, and `src/Mdk.Game/Kurt/KurtSprite.cs:305` is the oracle's copy of that
+branch. Batch 38 pinned the **field** — `golden/L3_kurt_steps.txt` now carries a `closing=`
+column, and deleting the per-step clear turns it red at step 391 — but nothing on either side
+asserts which sprite frame the selector then chooses, because `tick1` builds no sprite. The
+fixture that would close it is a sprite-selection dump on both sides: state + `chuteClosing`
++ `chuteOpen` in, the animation name and frame index out, over the same scripted schedule.
+That is its own slice, not a follow-up line in a sound golden.

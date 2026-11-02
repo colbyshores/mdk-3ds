@@ -9236,3 +9236,159 @@ is also unchanged: palette expansion forces alpha 255 and the vertex shader writ
 fall-out death fixture and the owner decisions for review-7 F1/F2 remain separate named
 opens. **No 3DS emulator run and no Old-3DS hardware run was made: P6 stays open and
 Old-3DS timing stays UNMEASURED.**
+
+## Iteration 66 — batch 38: the Kurt golden grows `closing=` and `hp=`, so two invisible lines turn it red (review-8 R8-4 fixed; R8-1/R8-2/R8-3/R8-5/R8-6/R8-7 owner-gated)
+
+**Prior-solution lookup.** Pi knowledge `mdk-sdl` was consulted first, with a `hybrid`
+search for the Kurt dump, the chute-closing field and the hard-landing damage. It returned
+`mdk_core/src/game/kurt.h`/`kurt.cpp` (the separate combat `Kurt`, whose `hurt()` also
+suppresses damage during `HardLand`), the C# `Kurt.Land`, and — the useful lead —
+`tests/Mdk.Game.Tests/KurtMovesTests.cs::LandingFasterThan100Hurts`, the oracle's own test
+asserting that a 300-unit fall on Normal leaves `Health == 90`. That was checked against
+the source rather than trusted, and it independently corroborates the `hp=90` this golden
+now pins. Obsidian MCP is not exposed as a tool in this Pi session, so the vault was read
+directly and read-only from `/mnt/nas/Vaults/port-docs`: `rg` for `ChuteClosing`,
+"hard-landing damage", "hp column" and `kurt` found no task-specific prior finding, only
+loop-setup and tooling notes. Cognee MCP is not exposed in this session either; it was
+**not** consulted and no graph result is claimed. The C# oracle and the repository remained
+the authority.
+
+### What landed
+
+Review-8 R8-4 is confirmed and fixed. The reviewer deleted two lines that the 950-step
+schedule already visits and the suite stayed green, because the dump printed neither the
+field nor the health those lines change:
+
+* `Player::update`'s `_chuteClosing = false` (`mdk_core/src/game/player.cpp:143`), the
+  clear that runs at the top of **every** step including the death and `HardLand` branches.
+  Its only consumer is `mdk_core/src/game/kurt_sprite.cpp:336`, which no host harness runs,
+  so deleting it left the closing-chute frame stuck on and nothing noticed.
+* `Player::land`'s `damage(kHardLandingDamage)` (`mdk_core/src/game/player.cpp:594-596`).
+  The run's only hard landing is followed by a scripted `setHealth(0)`, so the 10 points
+  it takes off were invisible.
+
+The fix is two columns, added to **both** sides and re-pinned from the oracle:
+
+* `tests/scripts/tick1.cpp`'s `dumpKurt` now prints `closing=%d hp=%d` between `chute=`
+  and `voices=`, from `Player::chuteClosing()` and `Player::health`;
+* the scratch C# probe's `kurt` mode prints the same two from the oracle's own public
+  getters, `Kurt.ChuteClosing` (`src/Mdk.Game/Kurt/Kurt.cs:106`) and `Kurt.Health`
+  (`src/Mdk.Game/Kurt/Kurt.Combat.cs:76`). The probe is the scratch tree at
+  `/tmp/mdk-pi/obj3`; `diff -rq` against the read-only oracle confirms its `src/**.cs`
+  differs only in the three known print-only instrumented files
+  (`MaterialResolver.cs`, `ObjectView.cs`, `ScriptVm.cs`), and that `Kurt.cs`,
+  `Kurt.Combat.cs` and `Audio/**` are **identical**.
+
+`tests/scripts/golden/L3_kurt_steps.txt` is regenerated from the probe, not from the port:
+
+```
+$ DOTNET_ROOT=/tmp/kilo/dotnet10 MDK_DATA_DIR=$PWD/MDK DISPLAY=:99 \
+    /tmp/kilo/dotnet10/dotnet /tmp/mdk-pi/obj3/Probe/bin/Debug/net10.0/mdkprobe.dll 3 950 1 kurt
+951 lines, sha256 b3fdabcdc8e3c393f52e916a52a40ee393fb1076407d43865f55bd30fefe2764
+$ cmp <that output> tests/scripts/golden/L3_kurt_steps.txt   # identical
+$ MDK_DATA_DIR=$PWD/MDK make -C tests/scripts               # C++ dump matches it
+PASS L3_kurt_steps: Kurt's walk, run, back-up, jump, chute, landing, hard landing and
+death match the oracle, footsteps and chute sounds included
+```
+
+The new columns are **purely additive**. With ` closing=N hp=NNN` stripped by regex the
+regenerated file is byte-identical to the golden committed by batch 37 (171926 bytes both),
+so the earlier pin was not rewritten to fit the implementation — the same check the previous
+batch used to show its own 470-step prefix was preserved.
+
+What the columns actually see: `closing=1` appears exactly once, at step 390, the
+`Chute -> Fall` transition that sets it; `hp` is 100 for 655 steps, 90 for the 204 steps
+between the hard landing at 656 and the scripted kill at 860, then 0.
+
+### The two mutants now fail
+
+Both mutations were applied to `mdk_core/src/game/player.cpp`, rebuilt with the real test
+Makefile, and reverted from a saved copy; `git status --porcelain` on that path is clean
+again and the clean tree matches the golden.
+
+* **E — delete `_chuteClosing = false;` from `Player::update`:**
+  `FAIL L3_kurt_steps: at byte 64887`, which is line 392 of the golden, i.e. **step 391** —
+  the step after the chute closed, where the mutant still reports `closing=1`. Killed.
+* **K — delete the `if (health > 0) { damage(kHardLandingDamage); }` block from
+  `Player::land`:** `FAIL L3_kurt_steps: at byte 120180`, line 657, i.e. **step 656**, the
+  hard-landing step where the mutant still reports `hp=100`. Killed.
+
+Review-8's own two mutants (A: `stopChuteSound()` removed from the dead branch, first
+difference at step 903; D: `updateChuteSound()` moved below the `HardLand` return, first
+difference at step 657) remain killed by the same reasoning: the additive-columns check
+above shows every pre-existing column is byte-unchanged, so nothing those two mutants
+depended on moved.
+
+### Review-8 findings, one by one
+
+* **R8-1 (High) — confirmed, owner-side, not batch-remediable.** Reproduced independently:
+  a clean `git archive HEAD` tree with the working-tree `gates_batch_integrity.py` prints
+  `FAIL - ralph-pi.sh: required invariant is missing: '--each-commit'`, while the working
+  tree prints `PASS`. (The archive also prints "Muse loop is not parked", because
+  `logs/ralph/disabled` is untracked; that half is an artifact of the archive, as the
+  reviewer said.) No batch may fix it: the marker lives in
+  `tools/runner/gates_batch_integrity.py:182` and that file is inside its own `PROTECTED`
+  set (`:12-25`), and the committed `ralph-pi.sh` it demands is itself carrying uncommitted
+  owner edits a batch must not stage. This is owner task (1) verbatim, unchanged from
+  review-7 F1.
+* **R8-2 (High) — confirmed, owner-side, not batch-remediable.** The four contract/harness
+  edits (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`, `gates_batch_integrity.py`) and the
+  untracked frame pair are still uncommitted and still carry no owner approval anywhere in
+  the tree. `AGENTS.md`, `ralph/builder.md` and `gates_batch_integrity.py` are all
+  `PROTECTED`. This batch did not stage, edit or revert any of them; `git show --name-only`
+  on this commit touches none of them. Owner task (1).
+* **R8-3 (Medium) — confirmed by execution, deferred with cause.** Reproduced in a
+  throwaway repo from the real gate and the real history: a 3-commit range where only the
+  first commit carries a frame prints `BATCH INTEGRITY: PASS` in the aggregate and
+  `FAIL … must add exactly one frame PNG …; found 0` twice with `--each-commit`. Both of
+  the reviewer's remedies are outside a batch: the unconditional-`--each-commit` fix is in
+  the `PROTECTED` gate file, and rewording `ralph-pi.sh:9` back to "each batch" would mean
+  staging a file whose uncommitted owner edits are exactly what R8-2 says must not be
+  committed. Folded into owner task (1) with the reviewer's two options.
+* **R8-4 (Low) — FIXED by this batch**, as above, with both mutants executed.
+* **R8-5 (Low) — owner-side.** `docs/frames/2026-11-02-ralph-self-heal.{png,txt}` is still
+  untracked, still byte-identical to the committed frame, and still not something a batch
+  may commit (the README forbids publishing a pair whose picture is a duplicate of the
+  pin, and the reviewer says no batch may commit it). This batch staged its own new pair by
+  exact path and never `git add docs/frames`.
+* **R8-6 (Low) — deferred with cause.** `--self-test` returning before the static block is
+  real and latent (nothing wires it), but the fix is inside the `PROTECTED` gate file.
+  Owner task (1) already covers widening that file.
+* **R8-7 (Low) — deferred with cause.** Same file, same reason: `validate_png_pair`
+  reading `ROOT / frame` instead of `git show N:path` is a one-line change in a `PROTECTED`
+  file.
+
+### Gates, as run
+
+```
+$ MDK_DATA_DIR=$PWD/MDK make -C tests/scripts
+PASS L3_kurt_steps: Kurt's walk, run, back-up, jump, chute, landing, hard landing and death match the oracle, footsteps and chute sounds included
+All cases match the oracle.          # 445 PASS / 0 FAIL / 0 SKIP
+
+$ MDK_DATA_DIR=$PWD/MDK DISPLAY=:99 bash tools/check.sh
+  PASS   audit_c_with_classes     0 violations
+  PASS   gates_vfp                0 blockers
+  PASS   audit_arm11_math         contract clean
+  PASS   audit_r11_idiv           no candidates
+  PASS   gates_core_parity        both targets link the same core
+  SKIP   gates_smdh               no built .cia to read
+  PASS   gates_frames             every pinned frame is deterministic and unchanged
+  PASS   gates_batch_integrity    project invariants intact
+CHECK: ALL GATES PASSED
+
+$ DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds
+3DSX mdk.3dsx                        # rc=0
+```
+
+No product code changed, so both targets compile the same game as batch 37; the 3DS build
+was still run in full. No emulator run and no Old-3DS hardware run was made: **P6 stays
+open and Old-3DS timing stays UNMEASURED.**
+
+### What is next
+
+Unchanged: the **blend half of the Citro3D object pass** (no `C3D_AlphaBlend`; blocked on
+the alpha source — palette expansion forces 255 and the vertex shader writes `outclr =
+ones`), then the sprite-selection fixture that would pin `kurt_sprite.cpp`'s use of
+`chuteClosing()` (review-8 oq3), which is the consumer this batch's column can name but not
+exercise. The owner decisions in owner task (1) are the ones review-8 R8-1/R8-2/R8-3/R8-6/
+R8-7 are waiting on.

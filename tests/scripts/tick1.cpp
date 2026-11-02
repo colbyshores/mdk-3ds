@@ -339,6 +339,21 @@ Player::FrameCounts kurtFrameCounts(const Bni& sprites) {
 // four decimals and moves the pinned frame closer to the oracle (1.240% -> 1.095%),
 // and it is owner-gated because it changes the picture and the frame manifest is
 // owner-protected.
+//
+// WHY `closing=` AND `hp=` ARE COLUMNS AND NOT INVISIBLE. Two lines the schedule
+// visits had no case that went red when they were deleted (review-8 R8-4):
+//
+//   * `Player::update`'s `_chuteClosing = false` at the top of every step. The
+//     schedule does reach the one place that SETS it (the Chute -> Fall transition),
+//     but nothing printed the field, so deleting the clear left the closing-chute
+//     frame stuck on after the first hard fall and the golden still passed. The
+//     consumer is kurt_sprite.cpp's closing-frame selection, which no host harness
+//     runs; this column pins the field the consumer reads.
+//   * `Player::land`'s `damage(kHardLandingDamage)` on a hard landing. The only
+//     hard landing in the run is followed by a scripted `setHealth(0)`, so the
+//     10 points it takes off were invisible: deleting the call changed nothing the
+//     dump could see. `hp=` shows 100 -> 90 at the landing step and holds it until
+//     the scripted kill, which is the oracle's own Health.
 std::string dumpKurt(int level, int steps, Player player, const Player::FrameCounts& counts,
                      const audio::SoundMixer& mixer) {
     std::string out;
@@ -433,13 +448,13 @@ std::string dumpKurt(int level, int steps, Player player, const Player::FrameCou
 
         snprintf(line, sizeof(line),
                  "s=%d state=%s feet64=%d,%d,%d yaw=%.4f fwd=%.4f str=%.4f vert=%.4f "
-                 "frame=%.4f floor=%d chute=%d voices=%s\n",
+                 "frame=%.4f floor=%d chute=%d closing=%d hp=%d voices=%s\n",
                  step, kurtStateName(player.state()),
                  (int)std::floor(player.feet.x * 64.0f), (int)std::floor(player.feet.y * 64.0f),
                  (int)std::floor(player.feet.z * 64.0f), player.yaw, player.forwardSpeed,
                  player.strafeSpeed, player.verticalSpeed, player.animationFrame(),
-                 player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0,
-                 voices.empty() ? "-" : voices.c_str());
+                 player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.chuteClosing() ? 1 : 0,
+                 player.health, voices.empty() ? "-" : voices.c_str());
         out += line;
     }
     return out;
