@@ -166,10 +166,10 @@ void Player::update(const Input& input, float delta) {
     }
     // C# Kurt.Update runs UpdateKnockDamage here (Kurt.cs:176): after the ride and
     // noclip returns (neither is ported) and before UpdateChuteSound and the
-    // Hang/HardLand branch, so a crashing Kurt's recent-damage counter declines too.
-    // Only the decline half is ported; Kurt::declineKnockDamage says what the trigger
-    // half needs and why it waits for the knock-down state machine.
-    combat_.declineKnockDamage(delta);
+    // Hang/HardLand branch, so a crashing Kurt's recent-damage counter declines too --
+    // and so a Kurt who is knocked down mid-crash is knocked down before the crash
+    // takes the step. The whole method is ported: the trigger and the decline tail.
+    updateKnockDamage(delta);
     // C# Kurt.Update calls UpdateChuteSound before the Hang/HardLand branch, so a
     // crashing Kurt's chute still closes and stops flapping.
     updateChuteSound();
@@ -195,8 +195,16 @@ void Player::update(const Input& input, float delta) {
     }
     yaw += turnRate * delta;
 
-    const float forward = input.axis(kKeyForward, kKeyBack);
-    const float strafe = input.axis(kKeyStrafeRight, kKeyStrafeLeft);
+    const float forwardIn = input.axis(kKeyForward, kKeyBack);
+    const float strafeIn = input.axis(kKeyStrafeRight, kKeyStrafeLeft);
+    // C# Kurt.cs:213-217: thrown, knocked down, getting up -- or kept by a platform,
+    // which is not ported -- he does not walk. The INPUT is zeroed, not the speed: the
+    // C# still runs Accelerate with a zero axis, so his speed decays by friction while
+    // he is down instead of stopping dead, and a held key starts him walking the step
+    // after he gets up. Zeroing the speed instead is a different animation.
+    const bool walking = state() != Kurt::Throw && !combat_.knocked();
+    const float forward = walking ? forwardIn : 0.0f;
+    const float strafe = walking ? strafeIn : 0.0f;
     const float air = onFloor ? 1.0f : kAirControl;
     forwardSpeed = accelerate(forwardSpeed, forward, turbo, 1.0f, air, delta);
     strafeSpeed = accelerate(strafeSpeed, strafe, turbo, air, air, delta);
@@ -230,12 +238,50 @@ void Player::update(const Input& input, float delta) {
 void Player::updateState(float forward, float strafe, float delta) {
     _stateTime += delta;
 
-    // C# UpdateCombatState: health zero on a floor is the death state. The
-    // combat knock-down, get-up and throw states are separate deferred
-    // subsystems and cannot be entered by this movement-only Player.
+    // C# UpdateCombatState's first arm (Kurt.Combat.cs:371): health zero on a floor is
+    // the death state. The C# also zeroes HurtFlash there (and calls StopFiring, inert
+    // here for the reason Player::land records). The flash is left alone on purpose --
+    // nothing fades it in this port yet (FadeFlashes is unported), so writing it here
+    // would be a number nothing reads; it lands with the fade that owns it.
+    // The knock-down and get-up arms below are the C#'s next two. The Throw arm after
+    // them is unreachable here because nothing gives Kurt an item, and the C#'s version
+    // of it returns false -- falls through to the ordinary selection -- whenever it does
+    // not apply, which is the same behaviour as not having it.
     if (health() == 0 && onFloor) {
         setState(Kurt::Dead);
         return;
+    }
+
+    // C# UpdateCombatState's knock-down arms (Kurt.Combat.cs:379-399). K_BANG runs
+    // frameCount(Knocked) frames at one frame per tick; then he flips, the push is
+    // cleared at the flip, and K_BFLIP runs frameCount(GetUp). The flip carries the
+    // leftover of the frame K_BANG ended on -- AnimationFrame - bang, not a reset to
+    // zero -- so a step that crosses the boundary does not lose the fraction of the
+    // frame it overshot by.
+    if (state() == Kurt::Knocked) {
+        _animationFrame += kTicks * delta;
+        const float bang = (float)frameCount(Kurt::Knocked);
+        if (_animationFrame < bang) {
+            return;
+        }
+        const float flip = _animationFrame - bang;
+        _knockdownPush.x = 0.0f;
+        _knockdownPush.y = 0.0f;
+        setState(Kurt::GetUp);
+        _animationFrame = flip;
+        return;
+    }
+
+    if (state() == Kurt::GetUp) {
+        _animationFrame += kTicks * delta;
+        if (_animationFrame < (float)frameCount(Kurt::GetUp)) {
+            return;
+        }
+        // Back on his feet -- and the C# returns FALSE here, so the ordinary state
+        // selection and Animate run on the very step he stands up: a Kurt who was
+        // running when he went down has his run frame again at once, and one who was
+        // standing goes through the Still/Idle test like anyone else.
+        setState(Kurt::Still);
     }
 
     // The C# has no missing-animation guard: a missing animation has count 0,
@@ -474,6 +520,56 @@ void Player::damage(int damage) {
     // C# Damage with Normal difficulty (Easy/Hard scaling lands with difficulty).
     // The death transition is the caller's (health 0 on the floor), not here.
     combat_.damageHealth(damage);
+}
+
+void Player::knockDown(const Vec2& push) {
+    // C# Kurt.KnockDown (Kurt.Combat.cs:173-180), in its order: the counter is spent,
+    // the invulnerability opens, the push is added, the chute closes, K_BANG starts.
+    // The order is not cosmetic -- the counter going to zero is what stops the next
+    // step's trigger from knocking him down again while he is already down, and the
+    // invulnerability is what makes hurt() refuse him for the whole animation.
+    combat_.setKnockDamage(0.0f);
+    combat_.setInvulnerable(Kurt::kKnockdownInvulnerability);
+    addKnockdownPush(push);
+    // StopFiring() is inert here for the reason Player::land records for the C#'s own
+    // call to it: no firing, sniper or muzzle state exists in this port yet.
+    chuteOpen = false;
+    setState(Kurt::Knocked);
+}
+
+void Player::updateKnockDamage(float delta) {
+    // C# Kurt.UpdateKnockDamage (Kurt.Combat.cs:214) whole, in the C#'s order: the
+    // trigger, and the decline as its tail on every step the trigger does not fire on.
+    // The three guards are the C#'s three: a corpse is not knocked down, the counter
+    // has to reach KnockdownDamage, and a Kurt already down does not get knocked down
+    // again (which is what re-opens the 3 s of invulnerability every step otherwise).
+    if (health() > 0 && combat_.knockDamage() >= Kurt::kKnockdownDamage &&
+        !combat_.knocked()) {
+        bool down = onFloor;
+        if (!down) {
+            // In the air he goes down only if a floor is within KnockdownFloorDistance
+            // below his feet, and then he is slammed to it at KnockdownSlamSpeed. The
+            // probe is the C#'s ArenaSpace.Floor, not its FloorCrossing: the arenas
+            // around BOTH ends and the nearest crossing, which is the one that answers
+            // across an arena boundary. A Player with no space has no floor to find --
+            // the C# would have no space to ask, so this is the same answer an empty
+            // arena list gives, not a substitute for the query.
+            Vec hit;
+            const Vec probe = vSub(toVec(feet), Vec{0.0f, 0.0f, Kurt::kKnockdownFloorDistance});
+            if (_space != nullptr && _space->floor(toVec(feet), probe, &hit)) {
+                down = true;
+                verticalSpeed = std::min(verticalSpeed, Kurt::kKnockdownSlamSpeed);
+            }
+        }
+        if (down) {
+            // The C#'s KnockDown(Vector2.Zero): the push a knock-down carries comes from
+            // push_kurt (opcode 248), which is deferred with cause in OPEN_ITEMS.md.
+            knockDown(Vec2{0.0f, 0.0f});
+            return;
+        }
+    }
+
+    combat_.declineKnockDamage(delta);
 }
 
 void Player::drainKnockdownPush(float delta) {

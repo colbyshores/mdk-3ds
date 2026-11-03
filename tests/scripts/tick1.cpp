@@ -623,7 +623,8 @@ enum KurtHurtSchedule {
     kHurtHealth,  // the one health, from both sides of the class split
     kHurtHardLand,  // the state guard, inside and after K_CRASHL
     kHurtKnock,     // the recent-damage counter's decline and the landing's reset
-    kHurtInvuln     // the invulnerability timer's decline, on the floor and on a corpse
+    kHurtInvuln,    // the invulnerability timer's decline, on the floor and on a corpse
+    kHurtKnockdown  // the knock-down itself: K_BANG, K_BFLIP, and back to Still
 };
 
 // An invulnerability write: the step and the seconds. It is the write opcode 244's set
@@ -638,7 +639,8 @@ struct KurtInvulnSet {
 enum KurtHurtColumns {
     kColsVoices,  // hp= vmhp= voices=
     kColsKnock,   // hp= vmhp= knock=
-    kColsInvuln   // hp= vmhp= invuln= knock=
+    kColsInvuln,    // hp= vmhp= invuln= knock=
+    kColsKnockdown  // hp= vmhp= invuln= knock= frame=
 };
 
 // One schedule as one literal, so the dump body and the oracle probe's twin drive the
@@ -652,6 +654,12 @@ struct KurtHurtPlan {
     size_t setCount;
     int mortalStep;   // step that sets the health to 0; 0 for none
     int columns;
+    // The three the knock-down schedule uses, all zero for the older ones (they are
+    // defaulted here so the older aggregate initializers above stay warning-free).
+    float airLift = 0.0f;   // units above the pad, applied at airLiftStep; 0 for none
+    int airLiftStep = 0;
+    int forwardFrom = 0;    // first step the forward key is held (0 = never held)
+    int forwardTo = 0;      // last step it is held
 };
 
 std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, Player& player,
@@ -685,6 +693,14 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
         snprintf(line, sizeof(line), " mortal=%d", plan.mortalStep);
         out += line;
     }
+    if (plan.airLiftStep) {
+        snprintf(line, sizeof(line), " air=%d:%.4f", plan.airLiftStep, plan.airLift);
+        out += line;
+    }
+    if (plan.forwardFrom) {
+        snprintf(line, sizeof(line), " forward=%d..%d", plan.forwardFrom, plan.forwardTo);
+        out += line;
+    }
     out += "\n";
 
     const Vec3 kStart = player.feet;
@@ -693,7 +709,16 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
             player.feet = Vec3{kStart.x, kStart.y, kStart.z + kLift};
             player.verticalSpeed = 0.0f;
         }
-        Input input;  // nothing pressed: no walk, no jump, so no chute
+        if (step == plan.airLiftStep && plan.airLift != 0.0f) {
+            // The same scripted move dumpKurt uses at its hard-lift step: a script
+            // teleport, so the feet move and the vertical speed is zeroed with them.
+            player.feet = Vec3{kStart.x, kStart.y, kStart.z + plan.airLift};
+            player.verticalSpeed = 0.0f;
+        }
+        Input input;  // nothing pressed except the plan's own forward window
+        if (plan.forwardFrom) {
+            input.down[kKeyForward] = step >= plan.forwardFrom && step <= plan.forwardTo;
+        }
         player.update(input, 1.0f / 60.0f);
         // The scripts' step, and the writes inside it: in the oracle a hurt_kurt is
         // dispatched from a script object's program during ScriptRuntime::update,
@@ -730,6 +755,20 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
                 }
                 voices += live[i].name;
             }
+        }
+
+        if (plan.columns == kColsKnockdown) {
+            snprintf(line, sizeof(line),
+                     "s=%d state=%s feet64=%d,%d,%d vert=%.4f floor=%d chute=%d hp=%d vmhp=%d "
+                     "invuln=%.4f knock=%.4f frame=%.4f\n",
+                     step, kurtStateName(player.state()),
+                     (int)std::floor(player.feet.x * 64.0f), (int)std::floor(player.feet.y * 64.0f),
+                     (int)std::floor(player.feet.z * 64.0f), player.verticalSpeed,
+                     player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.health(),
+                     runtime.kurt().health(), player.combat().invulnerable(),
+                     player.combat().knockDamage(), player.animationFrame());
+            out += line;
+            continue;
         }
 
         if (plan.columns == kColsInvuln) {
@@ -855,6 +894,35 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     static const KurtHurt kInvulnHurts[] = {{40, 4}, {210, 4}, {280, 3}};
     static const KurtInvulnSet kInvulnSets[] = {{20, Kurt::kKnockdownInvulnerability},
                                                 {305, 2.0f}};
+    // THE KNOCK-DOWN SCHEDULE (golden/L3_kurt_knockdown.txt). Every schedule above kept
+    // its damage under KnockdownDamage (5) precisely so the oracle would NOT enter
+    // K_BANG, a state machine this port did not have. Now it has one, and this is the
+    // golden that was waiting for it. What each number is for:
+    //   20: a hurt of 5 on the start pad. On a floor the trigger needs no floor probe,
+    //       so step 21 is KnockDown: the counter spent, 3 s of invulnerability open,
+    //       and K_BANG (25 frames) starting on that same step.
+    //   25..60: the forward key held, entirely inside K_BANG. The C# zeroes the walk
+    //       INPUT while Kurt is thrown, knocked down or getting up (Kurt.cs:213), so
+    //       his feet must not move; drop that and he walks while flat on his back.
+    //   30: an opcode-244 write of ZERO. KnockDown had just opened 3 s of
+    //       invulnerability and the whole animation is 104 steps, so without this the
+    //       hurt at 40 would be refused by the TIMER and hurt()'s Knocked arm -- the
+    //       arm batch 41 could not reach -- would be pinned by nothing. It is the same
+    //       write opcode 244 performs, with 0 in it, and the decline keeps it there.
+    //   40: a hurt of 4 with the timer at zero and Kurt in K_BANG. The only thing that
+    //       can refuse it is the state guard.
+    //   70 and 124: K_BANG's 25 frames end and K_BFLIP's 27 begin (one frame per tick,
+    //       two steps per frame at 1/60), and Still follows. frame= pins the flip's
+    //       leftover arithmetic, which is AnimationFrame - bang and not a reset.
+    //   150: lifted 6 units above the pad, so he is airborne with a floor inside the
+    //       13-unit probe -- the geometry the port could not reach before.
+    //   156: a hurt of 5 in the air, the OTHER arm: ArenaSpace::Floor finds the pad,
+    //       the slam sets his vertical speed to -64, and he falls onto the floor
+    //       already in K_BANG. vert= pins the slam; the landing stays under the
+    //       -100 u/s hard-landing line on purpose, so the hard landing does not
+    //       overlap this one.
+    static const KurtHurt kKnockdownHurts[] = {{20, 5}, {40, 4}, {156, 5}};
+    static const KurtInvulnSet kKnockdownSets[] = {{30, 0.0f}};
     KurtHurtPlan plan = {300.0f, kHealthHurts, sizeof(kHealthHurts) / sizeof(kHealthHurts[0]),
                          nullptr, 0, 0, kColsVoices};
     if (schedule == kHurtHardLand) {
@@ -872,8 +940,101 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
         plan.setCount = sizeof(kInvulnSets) / sizeof(kInvulnSets[0]);
         plan.mortalStep = 300;
         plan.columns = kColsInvuln;
+    } else if (schedule == kHurtKnockdown) {
+        plan.lift = 0.0f;
+        plan.hurts = kKnockdownHurts;
+        plan.hurtCount = sizeof(kKnockdownHurts) / sizeof(kKnockdownHurts[0]);
+        plan.sets = kKnockdownSets;
+        plan.setCount = sizeof(kKnockdownSets) / sizeof(kKnockdownSets[0]);
+        plan.airLift = 6.0f;
+        plan.airLiftStep = 150;
+        plan.forwardFrom = 25;
+        plan.forwardTo = 60;
+        plan.columns = kColsKnockdown;
     }
     *out = dumpKurtHurt(level, steps, runtime, player, mixer, plan);
+    return true;
+}
+
+// The two floor probes, driven directly over every reachable arena: the C#'s
+// ArenaSpace.Floor and ArenaSpace.FloorCrossing side by side on the same segments.
+// The knock-down golden exercises floor THROUGH the game, but at one point on one pad,
+// and the two probes differ in which arenas they search (around BOTH ends, pin ignored,
+// vs Kurt's arenas around `from`, the pinned solid one when there is one) and in which
+// hit they keep (the one NEAREST `from` by squared distance vs the FIRST found in arena
+// order). Those differences only show on a segment that reaches across arenas or crosses
+// more than one face, so this walks a long segment through every arena the level can put
+// Kurt in, the knock-down's own 13-unit shape, and the same short segment reversed. The
+// twin of the oracle probe's `floor` mode; the golden is golden/L3_floor_probes.txt.
+//
+// What it does NOT do is claim the two probes disagree somewhere: it prints both, so if a
+// future level makes them part company the golden says where, and a port that quietly
+// implements one as the other fails the moment a segment separates them.
+bool floorProbeDump(int level, const MdkData& data, std::string* out, std::string* why) {
+    LevelData levelData;
+    ArenaSpace space;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    std::vector<const Arena*> probed;
+    for (const Arena* arena : levelData.arenas()) {
+        if (!levelData.isReachable(arena->name()) || arena->vertices().empty()) {
+            continue;
+        }
+        space.add(arena);
+        probed.push_back(arena);
+    }
+
+    char line[256];
+    std::string o;
+    snprintf(line, sizeof(line), "level=%d arenas=%d\n", level, (int)probed.size());
+    o += line;
+
+    for (size_t i = 0; i < probed.size(); i++) {
+        Vec mn = probed[i]->vertices()[0];
+        Vec mx = probed[i]->vertices()[0];
+        for (const Vec& v : probed[i]->vertices()) {
+            if (v.x < mn.x) mn.x = v.x;
+            if (v.y < mn.y) mn.y = v.y;
+            if (v.z < mn.z) mn.z = v.z;
+            if (v.x > mx.x) mx.x = v.x;
+            if (v.y > mx.y) mx.y = v.y;
+            if (v.z > mx.z) mx.z = v.z;
+        }
+        const Vec c{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f};
+        const struct { const char* tag; Vec from; Vec to; } kProbes[] = {
+            // Long, straight down through the arena and 20 units past its own floor, so
+            // the segment's far end leaves the arena that holds its near end.
+            {"long", Vec{c.x, c.y, mx.z + 1.0f}, Vec{c.x, c.y, mn.z - 20.0f}},
+            // The knock-down's own query: 6 above the middle, 13 down from there.
+            {"short", Vec{c.x, c.y, c.z + 6.0f}, Vec{c.x, c.y, c.z - 7.0f}},
+            // The same short segment reversed and pushed up: an up-facing face is only
+            // crossed one way, so this is the arm that answers "no floor".
+            {"up", Vec{c.x, c.y, mn.z - 1.0f}, Vec{c.x, c.y, mx.z + 1.0f}},
+        };
+        for (const auto& p : kProbes) {
+            Vec near;
+            ArenaSpace::Floor first;
+            const bool haveNear = space.floor(p.from, p.to, &near);
+            const bool haveFirst = space.floorCrossing(p.from, p.to, &first);
+            snprintf(line, sizeof(line), "i=%d name=%s probe=%s from=%.4f,%.4f,%.4f to=%.4f,%.4f,%.4f ",
+                     (int)i, probed[i]->name().c_str(), p.tag, p.from.x, p.from.y, p.from.z, p.to.x,
+                     p.to.y, p.to.z);
+            o += line;
+            if (haveNear) {
+                snprintf(line, sizeof(line), "floor=%.4f,%.4f,%.4f ", near.x, near.y, near.z);
+            } else {
+                snprintf(line, sizeof(line), "floor=none ");
+            }
+            o += line;
+            o += haveFirst ? (snprintf(line, sizeof(line), "cross=%.4f,%.4f,%.4f\n", first.point.x,
+                                       first.point.y, first.point.z),
+                              std::string(line))
+                            : std::string("cross=none\n");
+        }
+    }
+    *out = o;
     return true;
 }
 
@@ -1756,12 +1917,25 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
-        if (what == "hurt" || what == "hurtland" || what == "knock" || what == "invuln") {
+        if (what == "floor") {
+            std::string got;
+            std::string why;
+            if (!floorProbeDump(level, data, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
+        if (what == "hurt" || what == "hurtland" || what == "knock" || what == "invuln" ||
+            what == "knockdown") {
             std::string got;
             std::string why;
             const int schedule = what == "hurtland"                                     ? kHurtHardLand
                                  : (what == "knock"                                     ? kHurtKnock
-                                   : (what == "invuln" ? kHurtInvuln : kHurtHealth));
+                                 : (what == "invuln"                                    ? kHurtInvuln
+                                 : (what == "knockdown"                                 ? kHurtKnockdown
+                                    : kHurtHealth)));
             if (!kurtHurtDump(level, ticks, schedule, data, spritesArg, &got, &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
@@ -2534,6 +2708,61 @@ int main(int argc, char** argv) {
                        "it runs down on a corpse as well\n");
             } else {
                 printf("FAIL L3_kurt_invuln: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The knock-down itself (Kurt.Combat.cs:173 and 214, Kurt.Combat.cs:379-399): the
+    // counter's trigger, K_BANG, the flip to K_BFLIP, and the way back to Still. This is
+    // the state machine every earlier hurt golden stepped around by keeping its damage
+    // under 5, and it is what makes the Knocked and GetUp arms of hurt()'s guard -- the
+    // half of that guard batch 41 left unreachable -- testable at all. It is also the
+    // first golden to reach ArenaSpace::floor, the probe an airborne knock-down makes 13
+    // units below Kurt's feet.
+    {
+        std::string expected;
+        if (!readText("golden/L3_kurt_knockdown.txt", &expected)) {
+            printf("FAIL L3_kurt_knockdown: no golden file golden/L3_kurt_knockdown.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtHurtDump(3, 340, kHurtKnockdown, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_knockdown: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_knockdown: a hurt of KnockdownDamage knocks Kurt down on a "
+                       "floor and in the air above one, K_BANG flips to K_BFLIP and back to "
+                       "Still, the walk input is dead while he is down, and hurt() refuses him "
+                       "for the state and not only for the timer it opens\n");
+            } else {
+                printf("FAIL L3_kurt_knockdown: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The two floor probes over every reachable arena (ArenaSpace.Floor vs its
+    // FloorCrossing), driven directly: the query the knock-down's air arm makes, pinned on
+    // geometry instead of through one step of one schedule. See floorProbeDump.
+    {
+        std::string expected;
+        if (!readText("golden/L3_floor_probes.txt", &expected)) {
+            printf("FAIL L3_floor_probes: no golden file golden/L3_floor_probes.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!floorProbeDump(3, data, &got, &why)) {
+                printf("FAIL L3_floor_probes: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_floor_probes: the nearest-crossing probe and the first-crossing "
+                       "probe answer the same on every arena the level reaches, or the golden "
+                       "says exactly where they part\n");
+            } else {
+                printf("FAIL L3_floor_probes: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }

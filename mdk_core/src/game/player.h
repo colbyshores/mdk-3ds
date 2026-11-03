@@ -7,8 +7,10 @@
 // This is the movement half of src/Mdk.Game/Kurt/Kurt.cs, using the C#'s exact
 // constants and the BSP collision in game/arena_space.h. It carries the C#'s
 // visual state machine too (Kurt.UpdateState, Kurt.Animate, Kurt.UpdateSpecial
-// and Kurt.UpdateDeath), so the renderer can pick Kurt's frame; the states
-// whose branches belong to other subsystems (the firing and knock-down states,
+// and Kurt.UpdateDeath), so the renderer can pick Kurt's frame, and it carries the
+// knock-down too (Kurt.KnockDown and the Knocked/GetUp arms of
+// Kurt.UpdateCombatState); the states
+// whose branches belong to other subsystems (the firing and throwing states,
 // the crouch-slide, the ledges, the ride, the beta moves) are not reachable
 // here, and the C#'s branches on them are taken the way they are false.
 //
@@ -112,9 +114,18 @@ public:
     // drain are, so a future writer cannot silently omit this term.
     Vec3 velocity() const;
     // The velocity half of C# Kurt.KnockDown (Kurt.Combat.cs:173-177): add the
-    // horizontal knock-down push in u/s. The knock-down state itself lands with
-    // the combat slice.
+    // horizontal knock-down push in u/s. It stays separate from knockDown below
+    // because the C#'s push_kurt (opcode 248, deferred) pushes Kurt WITHOUT knocking
+    // him down.
     void addKnockdownPush(const Vec2& push);
+
+    // C# Kurt.KnockDown (Kurt.Combat.cs:173, state 901): the counter is spent, he is
+    // invulnerable for KnockdownInvulnerability seconds, the push is added, the chute
+    // closes, and K_BANG starts. The C#'s StopFiring() is inert here for the reason
+    // Player::land records for its own call to it -- nothing in this port fires.
+    // updateKnockDamage calls it with a zero push, which is all the C# can hand it
+    // until push_kurt (opcode 248) lands.
+    void knockDown(const Vec2& push);
 
     // One fixed step of delta seconds (the C# Kurt.Update: turning, the walk
     // move against the BSP, then the vertical).
@@ -143,6 +154,10 @@ private:
     // (Kurt.cs:583, reproduced in Player::land), so the omission is inert.
     void damage(int damage);
     void drainKnockdownPush(float delta);
+    // C# Kurt.UpdateKnockDamage (Kurt.Combat.cs:214) whole: the trigger first (at
+    // KnockdownDamage, on a floor, or in the air above one the floor probe reaches),
+    // and Kurt::declineKnockDamage as its tail on every other step.
+    void updateKnockDamage(float delta);
     void updateState(float forward, float strafe, float delta);
     void updateSpecial(float delta);
     void updateDeath(float delta);

@@ -3673,6 +3673,131 @@ void testDeathUsesTheOraclesCompleteFallOperation(LevelData* levelData) {
     }
 }
 
+// The knock-down's own rules, without any geometry: what KnockDown writes, what stops it
+// from firing twice, and what hurt() does with a Kurt who is on the floor of his animation.
+// The golden pins the same rules in the game; these pin the branches a schedule cannot
+// reach -- a Player with no arena space at all, and a counter raised again while he is
+// already down.
+void testKnockDownSpendsTheCounterAndOpensTheTimer() {
+    Player::FrameCounts counts;
+    // The archive's real counts (the ones L3_kurt_steps.txt prints in its header:
+    // Knocked=25, GetUp=27), so one step at 1/60 leaves him inside K_BANG.
+    counts.values[Kurt::Knocked] = 25;
+    counts.values[Kurt::GetUp] = 27;
+
+    Input input;
+    Player player;
+    player.setFrameCounts(counts);
+    player.onFloor = true;
+    player.combat().setKnockDamage(Kurt::kKnockdownDamage);
+    player.update(input, 1.0f / 60.0f);
+    CHECK(player.state() == Kurt::Knocked);
+    CHECK(player.combat().knockDamage() == 0.0f);   // the counter is spent, not left to drain
+    CHECK(player.combat().invulnerable() == Kurt::kKnockdownInvulnerability);
+    CHECK(player.health() == Kurt::kMaxHealth);     // a knock-down costs no health
+
+    // The C#'s !Knocked guard: a counter raised again while he is already down must not
+    // re-open the timer or restart the animation, and it must still drain.
+    player.combat().setKnockDamage(Kurt::kKnockdownDamage);
+    player.update(input, 1.0f / 60.0f);
+    CHECK(player.state() == Kurt::Knocked);
+    CHECK(player.combat().invulnerable() < Kurt::kKnockdownInvulnerability);
+    CHECK(player.combat().knockDamage() < Kurt::kKnockdownDamage);
+
+    // hurt() refuses him for the STATE, with the timer it opened written down to zero --
+    // the arm of Kurt.Combat.cs:125 batch 41 could not reach because nothing entered
+    // Knocked. The golden reaches it in the game; this pins it without one.
+    player.combat().setInvulnerable(0.0f);
+    player.combat().hurt(20);
+    CHECK(player.health() == Kurt::kMaxHealth);
+    CHECK(player.combat().knockDamage() == 0.0f);   // hurt()'s guard zeroes the counter
+
+    // In the air with no arena space there is no floor to find, so no slam and no
+    // knock-down: the counter just drains. The C# always has a space to ask; an empty
+    // arena list is its answer, and this is that answer, not a substitute for the query.
+    Player air;
+    air.setFrameCounts(counts);
+    air.onFloor = false;
+    air.combat().setKnockDamage(Kurt::kKnockdownDamage);
+    air.update(input, 1.0f / 60.0f);
+    CHECK(air.state() != Kurt::Knocked);
+    CHECK(air.combat().knockDamage() < Kurt::kKnockdownDamage);
+}
+
+// The airborne arm of the trigger, on real geometry: a floor inside the 13-unit probe
+// slams him to it at KnockdownSlamSpeed and knocks him down; the same height over no
+// geometry does neither. This is the arm golden/L3_kurt_knockdown.txt reaches at step 157,
+// pinned here without the schedule around it.
+void testAirborneKnockDownSlamsToTheFloorTheProbeReaches(LevelData* levelData) {
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    const float* start = levelData->dti().startPosition();
+    // Where the floor actually is, found the way the death test finds it: the level's own
+    // start does not necessarily sit on its floor, and a fixture that assumed it would
+    // assert nothing. Then the knock-down's own height: 6 above that surface, probed 13
+    // down from there.
+    const Vec high{start[0], start[1], start[2] + 100.0f};
+    const Vec low{start[0], start[1], start[2] - 100.0f};
+    Vec pad = {0.0f, 0.0f, 0.0f};
+    CHECK(space.floor(high, low, &pad));
+    const Vec at{pad.x, pad.y, pad.z + 6.0f};
+    const Vec down{at.x, at.y, at.z - Kurt::kKnockdownFloorDistance};
+
+    // The setup has to be real or the test would prove nothing: a floor must be inside the
+    // probe, which is what makes the next CHECK a verdict and not a skip.
+    Vec found = {0.0f, 0.0f, 0.0f};
+    CHECK(space.floor(at, down, &found));
+    CHECK(fabsf(found.z - pad.z) < 1e-3f);
+
+    Player::FrameCounts counts;
+    counts.values[Kurt::Knocked] = 25;
+    counts.values[Kurt::GetUp] = 27;
+    Input input;
+    Player player;
+    player.setSpace(&space);
+    player.setFrameCounts(counts);
+    player.feet = Vec3{at.x, at.y, at.z};
+    player.onFloor = false;
+    player.combat().setKnockDamage(Kurt::kKnockdownDamage);
+    player.update(input, 1.0f / 60.0f);
+    CHECK(player.state() == Kurt::Knocked);
+    // The slam: min(verticalSpeed, -64) and then the step's own gravity, so he is going
+    // at least as fast as the slam speed by the end of the step that knocked him down.
+    CHECK(player.verticalSpeed <= Kurt::kKnockdownSlamSpeed);
+}
+
+// ArenaSpace::floor's own contract, the parts a schedule cannot show: it answers the
+// trigger's question (a floor below, and where it is), and when nothing is found it leaves
+// the out point at the segment's own end, which is the value the C# initialises `point`
+// to before it searches (ArenaSpace.cs:193). The nearest-vs-first and both-ends rules that
+// separate it from FloorCrossing are pinned by golden/L3_floor_probes.txt, which prints
+// both probes over every reachable arena and does show them part company on two of the
+// level's long segments.
+void testFloorProbeAnswersWhatTheTriggerAsks(LevelData* levelData) {
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    const float* start = levelData->dti().startPosition();
+    const Vec high{start[0], start[1], start[2] + 100.0f};
+    const Vec low{start[0], start[1], start[2] - 100.0f};
+
+    Vec hit = {0.0f, 0.0f, 0.0f};
+    CHECK(space.floor(high, low, &hit));
+    CHECK(hit.z < high.z);
+
+    ArenaSpace empty;
+    Vec kept = {1.0f, 2.0f, 3.0f};
+    CHECK(!empty.floor(high, low, &kept));
+    CHECK(kept.x == low.x && kept.y == low.y && kept.z == low.z);
+}
+
 } // namespace
 
 int main() {
@@ -3857,6 +3982,12 @@ int main() {
     printf("PASS RaycastUsesCurrentAndSecondArena\n");
     testTurnAndJumpTurnsLaunchesAndStopsOnFloor(&levelData, &cmi, &bank);
     printf("PASS TurnAndJumpTurnsLaunchesAndStopsOnFloor\n");
+    testKnockDownSpendsTheCounterAndOpensTheTimer();
+    printf("PASS KnockDownSpendsTheCounterAndOpensTheTimer\n");
+    testAirborneKnockDownSlamsToTheFloorTheProbeReaches(&levelData);
+    printf("PASS AirborneKnockDownSlamsToTheFloorTheProbeReaches\n");
+    testFloorProbeAnswersWhatTheTriggerAsks(&levelData);
+    printf("PASS FloorProbeAnswersWhatTheTriggerAsks\n");
 
     // The depth layers and the depth pull: the C#'s LayerTests.cs and
     // DepthPullTests.cs, run here.

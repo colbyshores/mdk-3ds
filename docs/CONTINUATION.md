@@ -1,30 +1,35 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 43 ports one rule of one combat field: Kurt's invulnerability timer
-now runs down by `delta` every step and floors at zero (`Kurt::declineInvulnerability`,
-`Kurt.cs:139`, called from `Player::update` ahead of every early return Update has). It is
-bounded and pinned by a new oracle golden; no interface, data format, persistence,
-concurrency or renderer change, and no shipped frontend can observe it yet because opcode
-244 fires in no shipped level. It is not `low` because it changes per-frame behaviour in
-`Player::update` and because opcode 244 changes meaning from a switch to a timer.
+Risk: high — batch 44 lands the knock-down: a new BSP collision query (`ArenaSpace::floor`,
+the C#'s `Floor` — arenas around **both** ends, the nearest crossing), two new state
+transitions (`Player::knockDown` into `Knocked`, and the `Knocked`→`GetUp`→`Still` arms of the
+combat state machine), and a per-frame change in `Player::update` (the trigger that enters
+them, plus the walk-input suppression while they hold). It is not one field the way batches
+40-43 were: state transitions and a collision query are two of the things the risk rubric names
+as high. Both are pinned by new oracle goldens (six mutants built and run), and no shipped
+frontend can show them yet because none draws Kurt's `Knocked` frame (item 6b).
 
-Last updated: 2026-11-03 (**batch 43** — the invulnerability decay, the first of the four
-things `OPEN_ITEMS.md` named for the knock-down family; review-13 raised **no Critical or
-High finding**, so nothing needed remediating: its F3 is fixed (the `Player::land` comment
-no longer reads as an exhaustive list of what `Kurt.Damage` does and names the difficulty
-term the port omits), its F2 is accepted as a standing test-coverage limit with no code
-change, and its F1 is about the owner's own uncommitted frame pair, which this batch neither
-staged nor touched; see `docs/PROGRESS_LOG.md`, "Iteration 71". Previous narratives are one
-"Iteration N" section back each: batch 42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65,
+Last updated: 2026-11-03 (**batch 44** — the knock-down, the thing batches 40-43 each ended by
+naming as "NEXT, same family". Review-14 raised **no Critical or High finding** and verdicted
+COMPLETE, so nothing needed remediating: its R13-C (the `kurt.h` comment that still listed
+`KnockdownInvulnerability` as belonging to a later slice, which this batch was about to walk
+into) is fixed, and R13-A/B/D/E are owner-owned — the half-applied harness slice, the
+`--each-commit` ratification, the un-invoked `--self-test`, and committing the oracle probe; see
+`docs/PROGRESS_LOG.md`, "Iteration 72". Previous narratives are one "Iteration N" section back
+each: batch 43 = 71, 42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65,
 36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
 
-Goldens are **450/0/0**: batch 43 added `golden/L3_kurt_invuln.txt` (341 lines, sha256
+Goldens are **455/0/0**: batch 44 added `golden/L3_kurt_knockdown.txt` (341 lines, sha256
+`7e1862ea…`, the oracle probe's new `knockdown` mode, byte-identical to
+`tick1 dump knockdown 3 340`) and `golden/L3_floor_probes.txt` (49 lines, sha256 `a9e38021…`,
+the probe's `floor` mode, which does separate `floor` from `floorCrossing` on two of the
+level's 48 segments), batch 43 added `golden/L3_kurt_invuln.txt` (341 lines, sha256
 `fb00137b…`, the oracle probe's new `invuln` mode, byte-identical to
 `tick1 dump invuln 3 340`), batch 42 `golden/L3_kurt_knock.txt` (341 lines, sha256
 `5c2c3091…`), batch 41 `golden/L3_kurt_hurtland.txt` (341 lines, sha256 `9e1b4832…`) and
 batch 40 `golden/L3_kurt_hurt.txt` (221 lines, sha256 `35d78b3d…`); no older golden moved.
 The frame
-is byte-unchanged across batches 31-42 because no renderer behaviour was touched. Still
+is byte-unchanged across batches 31-43 because no renderer behaviour was touched. Still
 owner-gated, and still uncommitted in the tree: the owner's harness work (`AGENTS.md`,
 `ralph/builder.md`, `ralph-pi.sh`, `gates_batch_integrity.py`,
 `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep staging only their own
@@ -46,48 +51,37 @@ the two dirty owner files, not a deadlocked tree. All four remain owner task (1)
 4. **DONE — P5.0 frame-golden harness** (`gates_frames.py` is gate 7; proven to fail).
 5. **DONE — review-30's 3DS texture-residency MAJOR** (decode at load, upload on first
    draw under a named 1 MiB budget, restore on eviction).
-6a. **DONE — batch 40: Kurt has one health; batch 41: Kurt has one state.** `Player` owns the combat half
-    (`Player::combat_`) and the health lives in it alone; `ScriptRuntime::kurt()` returns
-    `player_->combat()` when a Player is bound (a runtime with no Player falls back to its
-    own `unboundKurt_`, the combat state of a world with no entity). The pin is
-    `golden/L3_kurt_hurt.txt`, which prints `hp=` off the entity and `vmhp=` off the
-    runtime's Kurt — one property in the oracle — and fails at the first hurt
-    (`hp=100 vmhp=90`) if the runtime keeps a copy again. **The same fix then landed for
-    the state (review-11 R11-3):** `Kurt::state_` had no writer, so `hurt()`'s `Current is
-    Dead|Knocked|GetUp|HardLand` guard could never fire and a hard-landing Kurt took damage
-    the oracle refuses. The state now lives in `Kurt` alone (`Kurt::setState`, written only
-    by `Player::setState`) and `Player::_state` is gone; the pin is
-    `golden/L3_kurt_hurtland.txt`, which hurts Kurt at step 220 **inside** the 104-step
-    K_CRASHL window (183..286) — the oracle keeps `hp=90` — and again at 300 after it, where
-    `hp` moves to 86. **Batch 42 landed two more rules of that split** (review-12 A): the
-    recent-damage counter now declines (`Kurt::declineKnockDamage` — clamp into
-    `[0, KnockdownDamage]`, then drain 2/s — called from `Player::update` at `Kurt.cs:176`'s
-    own call site) and a hard landing zeroes it where `Kurt.HardLanding` does (`Kurt.cs:583`,
-    between the damage and the dead/knocked guard), so a counter raised by opcode 240 or by a
-    hurt in the air cannot survive a landing the oracle clears. The pin is
-    `golden/L3_kurt_knock.txt` (`knock=` every step: `25.0000 → 4.9667` at the clamp, `0.0000`
-    at step 183), with three mutants run and three `vm_tests` cases for the guard's zeroing and
-    the decline's floor cases. **Batch 43 landed the invulnerability timer's decline**, the
-    first of the four things that item named: `Kurt::declineInvulnerability` is `Kurt.cs:139`,
-    `Invulnerable = MathF.Max(Invulnerable - delta, 0f)`, called from `Player::update` at the
-    C#'s own position — ahead of the `dead` return, so a corpse's timer runs down too, and ahead
-    of where the `Frozen`/noclip/`Ride` returns will sit when those land. Opcode 244
-    (`set_global_573bd4`) was the field's only writer here, so until this it was a permanent
-    switch: `hurt()` refused forever and opcode 240 could never raise the knock counter again.
-    The pin is `golden/L3_kurt_invuln.txt` (`invuln=` every step: `3.0000` at step 20, a hurt
-    refused at 40, `0.0000` from 200, hurts landing at 210 and 280, and `2.0000` re-set at 305
-    on a corpse and draining to `1.4167`), with three mutants run (no decline fails at s=21, a
-    decline with no floor at zero at s=1, a decline below the `dead` return freezes from s=306)
-    and three `vm_tests` cases for what the fixture cannot reach. **NEXT, same family:** the
-    port still has no knock-down state machine, which is why every hurt golden so far is either
-    airborne or floor-bound and why the `Knocked`/`GetUp` arms of the guard cannot be reached at
-    all. `docs/OPEN_ITEMS.md` now names the three things it needs: `ArenaSpace::floor` (the C#
-    `ArenaSpace.Floor` — nearest crossing over the arenas around **both** ends; the port's
-    `floorCrossing` is the C#'s *other* probe, first hit around `from` only), the
-    `Knocked`/`GetUp` arms of `UpdateCombatState` (K_BANG/K_BFLIP, `Kurt.Combat.cs:379-399`), and
-    `StopFiring` with the firing slice. The combat fades (`FadeFlashes`, `Kurt.Combat.cs:203`)
-    are still unported, so nothing fades `hurtFlash_` or `whiteFlash_`. `Player` already carries
-    `_knockdownPush` and its drain. It wants a ground-level hurt golden with it.
+6a. **DONE — the combat half of `Kurt` is live state, not write-only fields (batches 40-44).**
+    `Player` owns the combat half (`Player::combat_`) and the **health** lives in it alone
+    (`ScriptRuntime::kurt()` returns `player_->combat()`; a runtime with no Player falls back to
+    its own `unboundKurt_`) — pin `golden/L3_kurt_hurt.txt`, which prints `hp=` off the entity and
+    `vmhp=` off the runtime and fails at the first hurt if the runtime keeps a copy. The **state**
+    lives in `Kurt` alone (`Kurt::setState`, written only by `Player::setState`; `Player::_state` is
+    gone), which is what lets `hurt()`'s `Dead|Knocked|GetUp|HardLand` guard fire at all — pin
+    `golden/L3_kurt_hurtland.txt` (a hurt at step 220 *inside* the 104-step K_CRASHL window keeps
+    `hp=90`; one at 300 after it moves it to 86). The **recent-damage counter** declines
+    (`Kurt::declineKnockDamage`: clamp into `[0, KnockdownDamage]`, drain 2/s) and a hard landing
+    zeroes it where `Kurt.HardLanding` does — pin `golden/L3_kurt_knock.txt`. The **invulnerability
+    timer** declines (`Kurt::declineInvulnerability`, `Kurt.cs:139`, ahead of every early return
+    `Player::update` has, so a corpse's timer runs down too) — pin `golden/L3_kurt_invuln.txt`.
+    And **batch 44 landed the knock-down itself**: `ArenaSpace::floor` (the C#'s `Floor`, arenas
+    around both ends, nearest crossing — NOT the port's `floorCrossing`, which is `FloorCrossing`:
+    Kurt's arenas around `from`, first hit), `Player::knockDown` (counter spent, 3 s
+    invulnerable, chute closed, `Knocked`), `Player::updateKnockDamage` whole (the three guards,
+    on a floor or in the air within 13 units with a slam to -64, and the decline as its tail), the
+    `Knocked`→`GetUp`→`Still` arms of `updateState` (K_BANG 25 frames, push cleared at the flip,
+    K_BFLIP 27, and the GetUp arm returning false so the ordinary selection runs on the step he
+    stands), and the walk-input suppression while they hold — pins `golden/L3_kurt_knockdown.txt`
+    (six mutants run) and `golden/L3_floor_probes.txt` (the two probes printed side by side over
+    48 segments; they part company on the two long ones through HMO_9/CHMO_8). **NEXT, same
+    family, in order:** the combat fades (`FadeFlashes`, `Kurt.Combat.cs:203`) are unported, so
+    nothing fades `hurtFlash_` or `whiteFlash_` — opcode 215's screen flash and `damage()`'s red
+    flash both stay up forever, and the death transition's `HurtFlash = 0` and `UpdateDeath`'s
+    skull rise (`SkullFade`, and the `Died` event behind it) are the other half of that field;
+    `push_kurt` (opcode 248) is the only thing that can give `knockDown` a non-zero push, so the
+    push and its clearing at the flip are unpinned; `StopFiring` waits for the firing slice; and
+    `Knocked`/`GetUp` have no sprite frame drawn anywhere (item 6b's seam), which is why no shipped
+    frontend can show any of this.
 6b. **The sprite-selection fixture (review-8 oq3 / review-9 oq3) is blocked on a named
     seam, not on effort:** neither side can build a `KurtSprite` headlessly — the C#
     constructor needs the sealed Vulkan `Renderer` (`KurtSprite.cs:109`,
@@ -125,7 +119,9 @@ the two dirty owner files, not a deadlocked tree. All four remain owner task (1)
    libm call on devkitARM at `-mfpu=vfp`: a target codegen decision, not a substitution. Probe in
    `docs/OPEN_ITEMS.md`.
 
-Deferred with cause: 248 `push_kurt` awaits knock-back; Rides writes the alarm countdown;
+Deferred with cause: 248 `push_kurt` is the only thing that can hand a knock-down a push, so
+the push and its clearing at the flip stay unpinned (batch 44 landed the knock-down itself, and
+its caller passes zero); Rides writes the alarm countdown;
 consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix and Kurt's muzzle
 flash and ride pose; `Vector3.Lerp`'s rounding (above); the other half of
 `FrameBlend` (Kurt's blended feet/yaw, `Record/Update/Turn/KurtAt`) and `TransformOf`'s
@@ -249,39 +245,36 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   **177 cases**; how that suite lifts `ralph-pi.sh` is in "Iteration 49" and **must not be
   re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 42)
+## Verified on this tree (batch 44)
 
-All gates re-run from a clean invocation after the last edit, with the full narrative, the
-probe recipe and the mutant results in `docs/PROGRESS_LOG.md`, "Iteration 70". Goldens
-**exit 0** (`All cases match the oracle.`, **449 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh`
+All gates re-run from a clean invocation after the last edit; the full narrative, the probe
+recipe and the six mutant results are in `docs/PROGRESS_LOG.md`, "Iteration 72". Goldens
+**exit 0** (`All cases match the oracle.`, **455 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh`
 **exit 0** (`CHECK: ALL GATES PASSED`; `audit_c_with_classes 0 violations`, `gates_vfp 0
 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
 `gates_core_parity` clean, `gates_smdh` SKIPPED, `gates_frames PASS L3_f1.bmp
 sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
 regenerated; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no warnings);
 `cmake --build build-linux --target mdk` **exit 0**. What is new:
-`golden/L3_kurt_knock.txt` (341 lines, sha256 `5c2c3091…`), the oracle's own output for Kurt
-lifted 300 units and hurt three times — 25 at step 20 high in the air, where the oracle's own
-knock-down probe cannot reach a floor, so the counter prints `25.0000` then `4.9667` (the
-clamp and the drain on one step); 4 at step 175, so he arrives at the hard landing (step 183)
-with `3.7667` and the oracle prints `knock=0.0000`; 3 at step 300 on the floor, draining
-again. `mdkprobe 3 340 1 knock` and `tick1 dump knock 3 340` agree byte for byte, and
-`mdkprobe 3 220 1 hurt` was re-verified against its committed golden before use, so no older
-pin moved. Mutants built and run: no decline and no reset (this batch's pre-fix shape) FAILS at
-`s=21 knock=25.0000`; a decline without the clamp FAILS there with `24.9667`; a `Player::land`
-with the reset removed FAILS at `s=183 knock=3.7333` where the oracle is `0.0000`. Batches
-40's and 41's pins and mutants stand as recorded in "Iteration 68" and "Iteration 69". What the
-kurt goldens still do NOT pin: any shipped frontend's wiring (no frontend sets the mixer), the
-fall-out variant of death (unreachable without a pinned solid arena), the firing step frames,
-the sprite frame `pick()` selects from `chuteClosing` (see 6b), the knock-down a ground-level
-hurt causes in the oracle (see `OPEN_ITEMS.md`) — and therefore the `Knocked`/`GetUp` arms of
-`hurt()`'s guard, which no reachable state enters — the invulnerability decay, which the port
-still does not run at all, and the feet finer than 1/64 unit (`Player::facing()`'s LUT trig;
-owner task 15). **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the
-Citro3D picture stays UNVERIFIED (P6);** the only windowed run was the frame capture, on
-`DISPLAY=:99` (P7). Frame `docs/frames/2026-11-02-kurt-knock-damage.png` + `.txt` — `1.240 /
-247 / 0.1819`, byte-identical to its predecessors, because no renderer behaviour changed. No
-gate was pinned, relaxed or edited.
+`golden/L3_kurt_knockdown.txt` (sha256 `7e1862ea…` — hurt 5 on the pad knocks him down at
+step 21 with `invuln=3.0000 knock=0.0000`, forward held 25..60 does not move him, a hurt at 40
+is refused by the `Knocked` arm with the timer written to 0, K_BANG flips at 70 and `Still`
+returns at 124, and a hurt at 156 six units above the pad slams him to `vert=-65.0665` and
+knocks him down mid-air) and `golden/L3_floor_probes.txt` (sha256 `a9e38021…` — `floor` and
+`floorCrossing` over 48 segments, agreeing on 46 and parting on the two long ones). Both are
+the oracle probe's own output, byte-identical to the `tick1` twin, with the probe's older
+`invuln`/`knock`/`hurt` modes re-diffed against their committed goldens first. Six mutants,
+all killed (see the log table). What the kurt goldens still do NOT pin: any shipped frontend's
+wiring (no frontend sets the mixer or draws `Knocked`), the fall-out variant of death
+(unreachable without a pinned solid arena), the firing step frames, the sprite frame `pick()`
+selects from `chuteClosing` (see 6b), the knock-down *push* (only `push_kurt` can supply one),
+the flip's leftover frame (structurally 0 at a fixed 1/60 step), and the feet finer than 1/64
+unit (`Player::facing()`'s LUT trig; owner task 15). **No emulator run and no Old-3DS hardware
+run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
+windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
+`docs/frames/2026-11-03-kurt-knockdown.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
+to its predecessors, because no renderer behaviour changed. No gate was pinned, relaxed or
+edited.
 
 ## Standing open items
 
@@ -312,31 +305,7 @@ deferred with cause (the 3DS pads index textures to POT with transparent padding
 `C3D_TexSetWrap(REPEAT)` would tile at the padded period). Answered rather than left implicit: a
 sidecar's "why this picture did not move / what shows the change instead" narrative **is** the
 convention (`docs/frames/README.md`); `publish_frame.sh` emits only the three measured lines and the
-narrative is appended by hand. Class bounds worth keeping, each a *rule for the next batch* rather
-than a defect: **a host harness must return the counter it accumulated on every exit path**
-(review-9 F1); **a multi-arm gate must state how many arms it adjudicated and compare that against
-the declared number, and an arm that cannot set up is a failure, not a skip** (review-10 F1); and
-**a counter must move AFTER the observable it counts, never before it** (review-11 F1 refined by
-review-12 F1), because a backstop that fires on a SHORT count cannot see an over-count. From
-review-11 F2 extended by **review-12 F4**: **a test helper that builds bytes must bound its own
-inputs against the field width it claims to pin**, its refusal must be a fixture diagnostic rather
-than a check result, **and that diagnostic must be accounted for** — count the refusals, count the
-asserted refusals, and require them to be equal. From review-7 oq1: the collector death loop asserts
-the outcome **after** a kill, not that the kill happened; **the first batch that adds a conditional
-record write to the collector arm must land the exit-status assertion (require `9` per iteration)
-with it.** From review-7 oq2: `lift_fn` is bounded by the definition's own shape *while every
-definition in `ralph-pi.sh` keeps its `}` in column 0*. And one declared gap rather than a fixed one:
-**the shipped frontend's copy of the missing-archive refusal, `mdk_linux/src/main.cpp:383-394`, is
-gated by nothing** (review-10 F2). `sprites_refusal_test.sh` gates `tests/scripts/tick1.cpp`'s copy
-only. Narrowing `if (scriptAssetsReady && spritesReady)` there builds a runtime against an unparsed
-`Bni` — the random-stream divergence — and every gate stays green. A behavioural gate was rejected on
-reachability, not on effort: that branch sits under `data.found()` → `LevelData::load` →
-`if (arena)` → `spawnPlayer()`, so it needs the licensed tree, and a gate that skips without the tree
-is review-10 F1's defect reintroduced. Trigger that closes it: owner task (10) landing. And one
-sibling left standing on purpose: **`tick1`'s own `SKIP: no MDK data` still exits 0**, so the golden
-suite can skip into a green `make -C tests/scripts` on a host without `./MDK/`; it is visible as
-`SKIP` and as a PASS count that drops from 442 to **3** (measured in "Iteration 52"), and making it
-fail is owner task (10), not a batch.
+narrative is appended by hand. The class bounds a reviewer has made standing rules for the next batch -- the harness that must return its counter on every exit path, the multi-arm gate that must count its arms, the counter that must move after the observable it counts, the byte-building helper that must bound and account for its own refusals, and the two ungated copies of the missing-archive refusal -- are in `docs/OPEN_ITEMS.md`, "Class bounds worth keeping".
 
 ## Verification commands
 

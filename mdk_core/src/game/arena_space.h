@@ -88,6 +88,19 @@ public:
     // the face's normal when one is found.
     bool floorCrossing(Vec from, Vec to, Floor* out);
 
+    // The NEAREST up-facing face a segment crosses (C# ArenaSpace.Floor, 0x421708),
+    // written to *out. This is a DIFFERENT probe from floorCrossing and not a
+    // variant of it: it searches the arenas around BOTH ends (AddAt(from) and
+    // AddAt(to)) rather than Kurt's arenas around `from`, it ignores the pinned
+    // solid arena that floorCrossing's `kurts()` uses, and it keeps the hit
+    // CLOSEST to `from` by squared distance rather than the first one found in
+    // arena order. Kurt's knock-down uses this one (Kurt.Combat.cs:217 probes 13
+    // units straight down from his feet); the chute sprite's uses the other.
+    // Writing them as one function is the mistake to avoid: they agree on a flat
+    // floor under Kurt and disagree across an arena boundary, which is exactly
+    // where a mid-air knock-down lives.
+    bool floor(Vec from, Vec to, Vec* out);
+
     // The name of the arena around a point, or null.
     const std::string* arenaAt(Vec point) const;
 

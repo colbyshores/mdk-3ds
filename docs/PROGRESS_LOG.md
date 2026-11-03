@@ -10102,3 +10102,154 @@ knock-down trigger probes, and it needs its own oracle pin. `FadeFlashes` (nothi
 `hurtFlash_`/`whiteFlash_`) is the other small one that stands on its own. Item 6b, the
 sprite-selection fixture, stays blocked on the named `KurtSprite` seam. **Old-3DS timing
 remains UNMEASURED** — no hardware run was made, and none is claimed.
+
+## Iteration 72 — batch 44: the knock-down — K_BANG, K_BFLIP, and the floor probe that reaches them (review-14 had no Critical/High; R13-C fixed, R13-A/B/D/E owner-owned)
+
+**Prior-solution lookup (all three sources, before implementing).** *Pi knowledge
+(`mdk-sdl` KB, `knowledge_search`, mode `hybrid`, query "knock-down state machine Knocked
+GetUp K_BANG K_BFLIP ArenaSpace Floor probe knock damage")*: 2 results, `docs/CONTINUATION.md`
+(the "NEXT, same family: the port still has no knock-down state machine" paragraph) and
+`docs/OPEN_ITEMS.md` (the item naming `ArenaSpace::floor` and the `Knocked`/`GetUp` arms) —
+the KB is a revision or two behind the tree but carried the same open items, so the lookup
+confirmed the slice rather than discovering it; verified against the oracle before writing.
+*Obsidian*: no MCP server is exposed in this Pi session, so the vault was read directly
+(read-only) from `/mnt/nas/Vaults/port-docs`; a recursive case-insensitive grep for
+`knock.down` and `K_BANG` found **nothing** — no prior note on this subsystem. *Cognee MCP*:
+**not available** — no Cognee tool is exposed in this session, so the knowledge graph was
+**not** consulted; recorded rather than implied.
+
+### Review-14 disposition
+
+Review-14 (`logs/ralph-pi/run-20261102-004416/review-14.md`) raised **no Critical and no
+High** finding and closed with `VERDICT: COMPLETE` ("No actionable defect was found in the
+committed batch"), so nothing required remediation. Its five findings, in order:
+
+* **R13-A (Medium, owner)** — the owner's harness slice is half-applied between HEAD and the
+  working tree, so committing `gates_batch_integrity.py` alone would fail every later batch.
+  Not a builder action: `tools/runner/gates_batch_integrity.py`, `ralph-pi.sh`, `AGENTS.md`
+  and `ralph/builder.md` are all in the owner's uncommitted set and this batch staged none of
+  them. Stays owner task (1)/(13).
+* **R13-B (Medium, owner)** — the `--each-commit` recovery converts a batch-level frame
+  invariant into a per-commit one; the reviewer's own position is "owner decision … no
+  builder action". Stays owner task (1).
+* **R13-C (Low, FIXED)** — `mdk_core/src/game/kurt.h` defined `kKnockdownInvulnerability` on
+  one line and then said, six lines below, that `KnockdownInvulnerability` was part of "the
+  rest of that constant block" belonging to a later slice. The reviewer's predicted failure —
+  a knock-down increment adding a second copy of the constant — is exactly what this batch
+  became, so the comment was fixed first: the block now points at the one definition, and the
+  two constants that *were* still missing (`KnockdownFloorDistance`, `KnockdownSlamSpeed`)
+  joined it instead of being re-declared.
+* **R13-D (Low, owner)** — `gates_batch_integrity.py --self-test` is still uninvoked from
+  `tools/check.sh`, which is owner-protected. Stays owner task (13).
+* **R13-E (Low, owner)** — the goldens are regenerable only from the scratch oracle probe.
+  The reviewer regenerated them itself and rated this Low for that reason; committing the
+  probe is an owner decision (oq3). This batch re-verified the same property from the other
+  side: both new goldens were produced by the probe and diffed byte-for-byte against the C++
+  harness before being committed.
+
+### What landed, and the oracle lines behind it
+
+Four C# rules, all of them the ones every earlier hurt golden deliberately stepped around by
+keeping its damage under `KnockdownDamage`:
+
+1. **`ArenaSpace::floor`** is `ArenaSpace.Floor(from, to, out point)` (`ArenaSpace.cs:191`,
+   the original's 0x421708): the arenas around **both** ends (`AddAt(from)` *and* `AddAt(to)`),
+   the crossing **nearest `from`** by `Vector3.DistanceSquared`, and `point` initialised to
+   `to`. It is a different probe from the port's existing `floorCrossing`, which is the C#'s
+   `FloorCrossing` (`ArenaSpace.Probes.cs:19`): Kurt's arenas around `from` only — the pinned
+   solid ones when there are any — and the **first** hit in arena order. Both header and
+   comment say so, because writing them as one function is the mistake the pair invites.
+2. **`Kurt::knocked()`** is `Kurt.Knocked` (`Kurt.Combat.cs:105`, `Current is Knocked or
+   GetUp`), the guard the trigger needs so a Kurt already down is not knocked down again.
+3. **`Player::knockDown`** is `Kurt.KnockDown` (`Kurt.Combat.cs:173`, state 901): counter
+   spent, `Invulnerable = KnockdownInvulnerability`, push added, chute closed, `SetState
+   (Knocked)`. Its `StopFiring()` is inert for the reason `Player::land` already records for
+   the C#'s own call to it — nothing in this port fires.
+4. **`Player::updateKnockDamage`** is `Kurt.UpdateKnockDamage` (`Kurt.Combat.cs:214`) whole,
+   at the C#'s call site (`Kurt.cs:176`): the three guards (`Health > 0`, `KnockDamage >= 5`,
+   `!Knocked`), then on a floor — or in the air when the 13-unit probe finds one, slamming him
+   to `min(VerticalSpeed, -64)` — `KnockDown(Vector2.Zero)`; otherwise the decline tail that
+   batch 42 ported. `Kurt::declineKnockDamage` is now what the C#'s tail is, and its comment
+   no longer claims the trigger is unported.
+5. **The `Knocked`/`GetUp` arms of `Player::updateState`** are `Kurt.UpdateCombatState`
+   (`Kurt.Combat.cs:379-399`): `K_BANG` for `frameCount(Knocked)` frames, then the push
+   cleared at the flip, `K_BFLIP` for `frameCount(GetUp)`, then `Still` — and the GetUp arm
+   returns *false*, so the ordinary state selection and `Animate` run on the very step he
+   stands up.
+6. **The walk suppression** (`Kurt.cs:213-217`): thrown, knocked down or getting up, the walk
+   *input* is zeroed (not the speed, so friction still carries him down to a stop) and the
+   zeroed values are what reach `updateState`.
+
+### The pins, and the six mutants
+
+`tests/scripts/golden/L3_kurt_knockdown.txt` — 341 lines, sha256 `7e1862ea…`, the oracle
+probe's new `knockdown` mode, byte-identical to `tick1 dump knockdown 3 340`. Before
+generating it the probe was rebuilt (`/tmp/mdk-pi/build_probe.sh`) and its existing `invuln`,
+`knock` and `hurt` modes were re-run and re-diffed against their committed goldens (all
+identical), so the fixture is oracle output and not the port's.
+
+| step | event | what it pins |
+|---|---|---|
+| 20 | hurt 5 on the start pad | `knock=5.0000` — the threshold, on a floor, with no floor probe needed |
+| 21 | — | `state=Knocked invuln=3.0000 knock=0.0000 frame=0.5000`: KnockDown's three writes, on the step the trigger fires |
+| 25..60 | forward held | `feet64` does not move: the walk input is dead while he is down |
+| 30 | opcode-244 write of **0** | the timer is out of the way, so the next refusal can only be the state |
+| 40 | hurt 4 | `hp=95`: refused by `hurt()`'s **Knocked** arm — the arm batch 41 named unreachable |
+| 70 / 124 | — | `K_BANG` (25 frames) flips to `K_BFLIP` (27) and back to `Still`, `frame=` every step |
+| 150 | lifted 6 units | airborne, `floor=0` |
+| 156→157 | hurt 5 in the air | `vert=-65.0665` and `state=Knocked`: the 13-unit probe found the pad and the slam fired |
+
+`tests/scripts/golden/L3_floor_probes.txt` — 49 lines, sha256 `a9e38021…`, the new `floor`
+probe mode: `floor` and `floorCrossing` printed side by side over three segments (a long one
+through the arena and 20 past its floor, the knock-down's own 13-unit shape, and the same
+segment reversed) through each of level 3's 16 reachable arenas. They agree on 46 of 48 and
+**part company on two** — the long segments through `HMO_9` and `CHMO_8`, where the nearest
+crossing is `-286.0000` and the first crossing is `-326.6710` / `-326.5152`. That is the
+nearest-vs-first rule separated on real geometry; the both-ends rule is exercised by the same
+golden but no level-3 segment separates it from a `from`-only search, and that is stated here
+rather than left for a reviewer to find.
+
+Six mutants, all built and run:
+
+| mutant | first difference |
+|---|---|
+| no trigger (batch 43's shape) | `s=21 state=Still … knock=4.9667` |
+| no airborne arm | `s=157 state=Still … vert=-8.5327` |
+| no slam | `s=157 vert=-8.5327` with `state=Knocked` |
+| `KnockDown` does not spend the counter | `s=21 knock=5.0000` |
+| no `Knocked`/`GetUp` arms | `s=21 state=Still` (the ordinary selection resets him) |
+| no walk suppression | `s=25 feet64=-248,-11,12246` — he walks while flat on his back |
+
+Three `vm_tests` cases cover what a schedule cannot reach: `KnockDownSpendsTheCounterAnd
+OpensTheTimer` (the `!Knocked` guard, the timer declining rather than re-opening, `hurt()`
+refusing for the state with the timer at zero, and a Player with **no arena space** finding no
+floor to be slammed to), `AirborneKnockDownSlamsToTheFloorTheProbeReaches` (the floor found
+first, then the slam asserted at `<= -64`), and `FloorProbeAnswersWhatTheTriggerAsks` (the
+query finds a floor below, and on an empty space says no and leaves the out point at the
+segment's own end — the C#'s `point = to`).
+
+**What the goldens still cannot pin, named rather than left implicit.** The flip's leftover
+(`AnimationFrame - bang`) is *structurally* unobservable at a fixed 1/60 step: `Ticks * delta`
+is exactly 0.5 and both frame counts are integers, so the frame counter lands on the boundary
+exactly and the leftover is always `0.0000` (both flips in the golden read `frame=0.0000`).
+The port keeps the C#'s expression anyway. Also unpinned: the push `KnockDown` carries, because
+the only caller the port has passes `Vector2.Zero` — `push_kurt` (opcode 248) is deferred with
+cause — and therefore the push-clearing at the flip; and `ChuteOpen = false` inside `KnockDown`,
+because nothing opens the chute while he is on the floor.
+
+### Gates, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` — **exit 0**, `All cases match the
+  oracle.`, **455 PASS / 0 FAIL / 0 SKIP** (450 before: +2 goldens, +3 `vm_tests` cases).
+* `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`; `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh` SKIPPED (no
+  built .cia), `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` (byte-identical to the
+  pinned `cpp=`, so `reference.sha256` was NOT regenerated), `gates_batch_integrity PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**,
+  `3DSX mdk.3dsx`, no warnings.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**, `[100%] Built target mdk`.
+
+No gate, test or golden was relaxed, and no older golden moved. **No emulator run and no
+Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays
+UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7).

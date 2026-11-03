@@ -603,60 +603,39 @@ off the runtime's Kurt; in the oracle they are one property. With the runtime ho
 its own copy again the golden diverges at the first hurt (`s=20 hp=100 vmhp=90`) and at
 the landing (`s=183 state=HardLand hp=90` where the oracle is `Dead`).
 
-## A hurt on the floor knocks Kurt down, and the port has no knock-down (found in batch 40)
+## CLOSED by batch 44: a hurt on the floor knocks Kurt down, and now the port knows it
 
-`golden/L3_kurt_hurt.txt` hurts Kurt **in mid-air**, which looks arbitrary and is not.
-The oracle's `UpdateKnockDamage` (`Kurt.Combat.cs:214`) knocks him down whenever
-`KnockDamage >= 5` while `OnFloor`, and `Damage` adds the whole damage to
-`KnockDamage` — so *any* hurt of 5 or more on a floor puts the oracle into `K_BANG`
-and, after `K_BFLIP`, back up, invulnerable for 3 s, during which `Hurt` declines.
-This port has no knock-down state machine (`Kurt::knockDamage_` has no reader;
-`Player::addKnockdownPush` has no caller), so a ground-level hurt golden would compare
-an oracle in `Knocked` against a port standing in `Still` — a different gap, wearing
-this one's golden. The oracle's own check declines to knock him unless it finds a floor
-within 13 units below (`KnockdownFloorDistance`), so the golden lifts him 300 units and
-hurts him in the part of the fall where the two halves agree, and the last hurt takes
-him to 0, whose `Health > 0` guard disables the knock check for the rest of the fall.
+Batch 40 found that `golden/L3_kurt_hurt.txt` hurts Kurt **in mid-air** on purpose: the
+oracle's `UpdateKnockDamage` (`Kurt.Combat.cs:214`) knocks him down whenever `KnockDamage >= 5`
+while `OnFloor` -- so *any* hurt of 5 or more on a floor puts the oracle into `K_BANG` and, after
+`K_BFLIP`, back up, invulnerable for 3 s -- and the port had no knock-down to compare against.
+Batches 42 and 43 landed the counter's decline and the timer's decline, and named the three things
+the trigger still needed: `ArenaSpace::floor`, the `Knocked`/`GetUp` arms of `UpdateCombatState`,
+and `StopFiring` with the firing slice.
 
-Trigger that closes it: the knock-down slice (`KnockDown`, `K_BANG`/`K_BFLIP`, the 3 s
-invulnerability, the `_push` drain — `Player` already carries `_knockdownPush` and its
-drain). When it lands, re-run the hurt scenario on the ground and the knock-down becomes
-visible in a golden.
+**Batch 44 landed the state machine.** `ArenaSpace::floor` is the C#'s `Floor`
+(`ArenaSpace.cs:191`): the arenas around **both** ends and the crossing **nearest `from`** -- a
+different probe from the port's `floorCrossing` (the C#'s `FloorCrossing`, Kurt's arenas around
+`from`, first hit), and `golden/L3_floor_probes.txt` prints both over 48 of the level's segments
+and shows them part company on the two long ones through `HMO_9`/`CHMO_8` (`-286.0000` vs
+`-326.6710`). `Player::knockDown` is `Kurt.KnockDown` (`:173`), `Player::updateKnockDamage` is
+`Kurt.UpdateKnockDamage` whole (`:214`, the floor arm and the air arm with its 13-unit probe and
+-64 u/s slam, and the decline as its tail), the `Knocked`/`GetUp` arms of `Player::updateState`
+are `Kurt.UpdateCombatState`'s (`:379-399`), and the walk-input suppression is `Kurt.cs:213-217`.
+The pin is `golden/L3_kurt_knockdown.txt` (six mutants run) with three `vm_tests` cases for the
+branches a schedule cannot reach.
 
-**Batch 42 landed two pieces of `UpdateKnockDamage` and named the rest precisely.** The
-counter now declines the way the oracle's does (`Kurt::declineKnockDamage`: clamp into
-`[0, KnockdownDamage]`, then drain `KnockdownDrain` per second, from `Player::update` at
-the C#'s call site, `Kurt.cs:176`), and a hard landing zeroes it where `HardLanding`
-does (`Kurt.cs:583`, between the damage and the dead/knocked guard) — review-12 A, which
-mattered because a counter that survives a landing is the shape that knocks Kurt down on
-the step *after* every hard landing the moment the trigger exists. Both are pinned by
-`golden/L3_kurt_knock.txt` and by three `vm_tests` cases, and three mutants were built
-and run (see "Iteration 70"). What the trigger still needs, in its own words:
-
-- **`ArenaSpace::floor`, which the port does not have.** The C# probe is
-  `ArenaSpace.Floor(from, to, out point)` (`ArenaSpace.cs:191`): the arenas around
-  **both** ends (`AddAt(from)` *and* `AddAt(to)`), the nearest crossing by
-  `DistanceSquared(from, hit)`. The port's `floorCrossing` is the C#'s *other* probe,
-  `FloorCrossing` (`ArenaSpace.Probes.cs:19`): Kurt's arenas around `from` only, and it
-  returns the **first** hit, not the nearest. They agree on a flat floor under Kurt and
-  disagree across an arena boundary, which is exactly where a mid-air knock-down lives.
-  It is a small port over the existing `Bsp::segment(a, b, kSegmentFloor, …)`, but it is
-  a collision query and it needs its own oracle pin.
-- **The `Knocked`/`GetUp` arms of `Kurt.UpdateCombatState`** (`Kurt.Combat.cs:379-399`):
-  `K_BANG` for `frameCount(Knocked)` frames, then `K_BFLIP` for `frameCount(GetUp)`, the
-  push cleared when he flips up, then `Still`. `Player` already has the frame counts
-  (`setFrameCounts`) and the animation clock; what it has not got is any branch that can
-  enter or leave those two states, so entering `Knocked` today would strand Kurt in a
-  state nothing animates and nothing exits — which is why the decline was ported alone.
-- **The invulnerability decay is CLOSED by batch 43.** `Kurt::declineInvulnerability`
-  (`Kurt.cs:139`, `Invulnerable = MathF.Max(Invulnerable - delta, 0f)`) now runs from
-  `Player::update` at the C#'s own position, ahead of every early return Update has, and
-  `golden/L3_kurt_invuln.txt` pins the rate, the floor at zero and that position. What that
-  item also named is still open: the combat fades (`FadeFlashes`, `Kurt.Combat.cs:203`) are
-  unported, so nothing fades `hurtFlash_` or `whiteFlash_` either, and the hard landing
-  deliberately does not raise a flash nothing would fade (`Player::land` says why).
-- `KnockDown`'s `StopFiring()` stays inert until the firing slice: the port has no
-  firing, sniper or muzzle state at all.
+**What that item still leaves open, with the cause named.** `KnockDown`'s `StopFiring()` stays
+inert until the firing slice: the port has no firing, sniper or muzzle state at all. The push a
+knock-down carries comes only from `push_kurt` (opcode 248, deferred), so `knockDown`'s caller
+passes `Vector2.Zero` and neither the push nor its clearing at the flip is pinned. The flip's
+leftover frame (`AnimationFrame - bang`) is *structurally* unobservable at a fixed 1/60 step --
+`Ticks * delta` is exactly 0.5 and both frame counts are integers, so the boundary is always hit
+exactly and the leftover is always `0.0000`; the port keeps the C#'s expression anyway. And the
+combat fades (`FadeFlashes`, `Kurt.Combat.cs:203`) are still unported, so nothing fades
+`hurtFlash_` or `whiteFlash_` -- which is also why the hard landing deliberately does not raise a
+flash nothing fades (`Player::land` says why), and why `UpdateDeath`'s skull rise and the `Died`
+event behind it are deferred with it.
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 
@@ -689,3 +668,34 @@ What stays open is the *other* half of the guard: `Knocked` and `GetUp` cannot b
 entered at all until the knock-down slice above lands, so this golden can only show the
 HardLand arm — and the second damage is 4 rather than 5 for exactly that reason, since a
 hurt of 5 or more on a floor knocks the oracle down and the port nowhere.
+
+## Class bounds worth keeping
+
+Moved here from `docs/CONTINUATION.md` on 2026-11-03 so that file stays at
+"current state + priority order". Each of these is a *rule for the next batch*, not a
+defect to fix:
+
+**a host harness must return the counter it accumulated on every exit path**
+(review-9 F1); **a multi-arm gate must state how many arms it adjudicated and compare that against
+the declared number, and an arm that cannot set up is a failure, not a skip** (review-10 F1); and
+**a counter must move AFTER the observable it counts, never before it** (review-11 F1 refined by
+review-12 F1), because a backstop that fires on a SHORT count cannot see an over-count. From
+review-11 F2 extended by **review-12 F4**: **a test helper that builds bytes must bound its own
+inputs against the field width it claims to pin**, its refusal must be a fixture diagnostic rather
+than a check result, **and that diagnostic must be accounted for** — count the refusals, count the
+asserted refusals, and require them to be equal. From review-7 oq1: the collector death loop asserts
+the outcome **after** a kill, not that the kill happened; **the first batch that adds a conditional
+record write to the collector arm must land the exit-status assertion (require `9` per iteration)
+with it.** From review-7 oq2: `lift_fn` is bounded by the definition's own shape *while every
+definition in `ralph-pi.sh` keeps its `}` in column 0*. And one declared gap rather than a fixed one:
+**the shipped frontend's copy of the missing-archive refusal, `mdk_linux/src/main.cpp:383-394`, is
+gated by nothing** (review-10 F2). `sprites_refusal_test.sh` gates `tests/scripts/tick1.cpp`'s copy
+only. Narrowing `if (scriptAssetsReady && spritesReady)` there builds a runtime against an unparsed
+`Bni` — the random-stream divergence — and every gate stays green. A behavioural gate was rejected on
+reachability, not on effort: that branch sits under `data.found()` → `LevelData::load` →
+`if (arena)` → `spawnPlayer()`, so it needs the licensed tree, and a gate that skips without the tree
+is review-10 F1's defect reintroduced. Trigger that closes it: owner task (10) landing. And one
+sibling left standing on purpose: **`tick1`'s own `SKIP: no MDK data` still exits 0**, so the golden
+suite can skip into a green `make -C tests/scripts` on a host without `./MDK/`; it is visible as
+`SKIP` and as a PASS count that drops from 442 to **3** (measured in "Iteration 52"), and making it
+fail is owner task (10), not a batch.

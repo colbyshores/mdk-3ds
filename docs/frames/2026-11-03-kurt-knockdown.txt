@@ -1,0 +1,38 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-03T04:31:24Z at 7852a10
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move: this batch changes a state the pinned frame cannot reach. At
+level 3 frame 1 exactly 1/60 s has passed, no script has hurt Kurt, and the knock-down needs
+KnockDamage to reach 5 first, so the frame is the same blob as
+2026-11-03-kurt-invuln-timer.png (sha256 6646adf1...) and the measurement is unchanged at
+1.240% / max 247 / mean 0.1819. What shows the change instead is two new goldens, both
+regenerated from the oracle probe and byte-identical to the C++ harness:
+
+  tests/scripts/golden/L3_kurt_knockdown.txt (341 lines, sha256 7e1862ea...) -- a hurt of 5
+  on the start pad knocks him down (state=Knocked, invuln=3.0000, the counter spent), the
+  forward key held through K_BANG does not move his feet, a hurt of 4 at step 40 is refused
+  by hurt()'s Knocked arm with the timer written down to 0, K_BANG's 25 frames flip to
+  K_BFLIP's 27 and back to Still at step 124, and a hurt of 5 at step 156 -- six units above
+  the pad, airborne -- finds a floor with the 13-unit probe, slams him to -65.07 u/s and
+  knocks him down in mid-air.
+
+  tests/scripts/golden/L3_floor_probes.txt (49 lines, sha256 a9e38021...) -- ArenaSpace::floor
+  and ArenaSpace::floorCrossing printed side by side over three segments through each of
+  level 3's 16 reachable arenas. They agree on 46 of the 48 and part company on the two long
+  vertical segments through HMO_9 and CHMO_8, where the nearest crossing is -286.0000 and the
+  first crossing is -326.6710 / -326.5152: the two probes are not one function, and the port
+  now answers which-is-which the way the oracle does.
+
+Six mutants were built and run against the knock-down golden: no trigger at all fails at
+s=21 (state=Still, knock=4.9667), no airborne arm fails at s=157 (vert=-8.5327, no slam), no
+walk suppression fails at s=25 (feet64=-248,-11,12246 -- he walks while knocked down), no
+Knocked/GetUp arms fail at s=21 (state=Still: the ordinary selection resets him), no slam
+fails at s=157 (vert=-8.5327 with state=Knocked), and a KnockDown that does not spend the
+counter fails at s=21 (knock=5.0000). Suite: 455 PASS / 0 FAIL / 0 SKIP.
+
+Capture: DISPLAY=:99 (headless Xvfb, per AGENTS.md P7), lavapipe
+(VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json), command
+`bash tools/publish_frame.sh kurt-knockdown`, tree at 7852a10 plus this batch's uncommitted
+change. Scratch captures went to /tmp/mdk-pi (AGENTS.md P7 names /tmp/kilo, which is not
+writable by this account -- owner task 11).

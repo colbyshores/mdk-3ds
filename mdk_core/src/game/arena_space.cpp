@@ -225,6 +225,40 @@ bool ArenaSpace::floorCrossing(Vec from, Vec to, Floor* out) {
     return false;
 }
 
+bool ArenaSpace::floor(Vec from, Vec to, Vec* out) {
+    // C# ArenaSpace.Floor (ArenaSpace.cs:191), line for line: the arenas around BOTH
+    // ends, the nearest crossing by Vector3.DistanceSquared(from, hit), and the
+    // segment's own end as the value `point` starts at. The scratch is the same
+    // _around the move uses, exactly as the C# shares its one _around list; the
+    // cleared-and-refilled list is why the query allocates nothing per call.
+    //
+    // It is NOT floorCrossing with a different arena list. That one is the C#'s
+    // FloorCrossing (ArenaSpace.Probes.cs:19): Kurt's arenas (the pinned solid ones
+    // when there are any) around `from` only, and the FIRST hit in arena order. Two
+    // arenas around the segment whose floors are at different heights, or a pinned
+    // arena that does not hold the ends, and the two probes answer differently.
+    Vec point = to;
+    float best = FLT_MAX;
+    _around.clear();
+    addAt(from, _around);
+    addAt(to, _around);
+    for (Bsp* bsp : _around) {
+        Vec hit;
+        if (bsp->segment(from, to, Bsp::kSegmentFloor, &hit) == Bsp::kNone) {
+            continue;
+        }
+        const float distance = vDistSq(from, hit);
+        if (distance < best) {
+            best = distance;
+            point = hit;
+        }
+    }
+    if (out != nullptr) {
+        *out = point;
+    }
+    return best < FLT_MAX;
+}
+
 const std::string* ArenaSpace::arenaAt(Vec point) const {
     const Entry* e = firstEntry(point);
     return e ? &e->arena->name() : nullptr;

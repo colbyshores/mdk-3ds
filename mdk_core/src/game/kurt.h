@@ -60,20 +60,26 @@ public:
     static constexpr int32_t kEasyDenominator = 3;
     static constexpr int32_t kHardFactor = 2;
 
-    // KnockdownInvulnerability (Kurt.Combat.cs:34) is the value KnockDown would set this
-    // timer to. The knock-down state machine is a later slice (see below), so nothing in
-    // the game writes it yet; the harness that opens the timer the way a knock-down would
-    // (tests/scripts/tick1.cpp's invuln schedule) uses it, so the value the golden prints
-    // is the oracle's constant and not a copy of it in a test.
+    // KnockdownInvulnerability (Kurt.Combat.cs:34) is the value KnockDown sets this
+    // timer to, and Player::knockDown is the game's only writer of it; opcode 244 is
+    // the other one (see setInvulnerable below). The harness that opens the timer the
+    // way a knock-down would (tests/scripts/tick1.cpp's invuln schedule) uses THIS
+    // constant, so the value the golden prints is the oracle's and not a copy of it
+    // in a test.
     static constexpr float kKnockdownInvulnerability = 3.0f;
 
     // The knock-down counter's own bounds (Kurt.Combat.cs:32-33): recent damage
     // never counts above KnockdownDamage and drains by KnockdownDrain per second.
-    // The rest of that constant block -- KnockdownInvulnerability, the 13-unit floor
-    // probe and the -64 u/s slam -- belongs to the knock-down state machine, which
-    // is a later slice (see declineKnockDamage and docs/OPEN_ITEMS.md).
     static constexpr float kKnockdownDamage = 5.0f;
     static constexpr float kKnockdownDrain = 2.0f;
+
+    // The other two numbers of that constant block, the ones an AIRBORNE knock-down
+    // needs (Kurt.Combat.cs:34-35): the counter reaches him only when the probe finds
+    // a floor this far below his feet, and the slam is the vertical speed he is
+    // dropped at. Player::updateKnockDamage is the only reader; the probe is
+    // ArenaSpace::floor, the C#'s Floor and not its FloorCrossing.
+    static constexpr float kKnockdownFloorDistance = 13.0f;
+    static constexpr float kKnockdownSlamSpeed = -64.0f;
 
     enum Mortality { Mortal, God };
     enum Difficulty { Easy, Normal, Hard };
@@ -108,6 +114,11 @@ public:
     // oracle declines. Pinned by golden/L3_kurt_hurtland.txt.
     State state() const { return state_; }
     void setState(State state) { state_ = state; }
+    // C# Kurt.Knocked (Kurt.Combat.cs:105): the two states the knock-down animation
+    // owns. hurt() reads them through the guard above, UpdateKnockDamage reads this
+    // one to refuse a second knock-down while he is already down, and Player's walk
+    // suppression zeroes his input on it.
+    bool knocked() const { return state_ == Knocked || state_ == GetUp; }
 
     // ---- The VM's Kurt-and-screen writes (ScriptVm.cs:1580-1600) ----
     // screen_flash (opcode 215) raises the white flash; the nuke and the
@@ -119,6 +130,8 @@ public:
     // (Kurt.Combat.cs:82); hurt() reads it, and declineInvulnerability below is what
     // ends it. Without that decay this field is a switch, not a timer: the first
     // opcode 244 would make Kurt immortal and knock-immune for the rest of the level.
+    // Player::knockDown is the field's other writer, and the one that made the opcode
+    // a timer rather than a switch in the first place.
     void setInvulnerable(float seconds) { invulnerable_ = seconds; }
     // The invulnerability timer's own decline: Kurt.Update's second statement
     // (Kurt.cs:139), Invulnerable = MathF.Max(Invulnerable - delta, 0f). Player::update
@@ -131,27 +144,15 @@ public:
     // both sides of the window it opens.
     void declineInvulnerability(float delta);
     // set_hurt_flash (opcode 240): the knock-down counter (Kurt.Combat.cs:84).
-    // hurt() clears it while invulnerable; the knock-down state machine that
-    // reads it is Kurt movement, a later slice.
+    // hurt() clears it while invulnerable, and Player::updateKnockDamage is what
+    // reads it and decides he is knocked down.
     void setKnockDamage(float value) { knockDamage_ = value; }
 
-    // The decline half of Kurt.UpdateKnockDamage (Kurt.Combat.cs:230-231): clamp the
+    // The decline tail of Kurt.UpdateKnockDamage (Kurt.Combat.cs:230-231): clamp the
     // recent damage into [0, KnockdownDamage], then drain KnockdownDrain per second,
-    // floored at zero. Player::update calls it at the C#'s call site (Kurt.cs:176 --
-    // after the ride and noclip returns, before UpdateChuteSound and before the
-    // Hang/HardLand branch), so a crashing Kurt's counter declines too.
-    //
-    // The TRIGGER half of that method (Kurt.Combat.cs:214-228: at KnockdownDamage on
-    // a floor -- or in the air above one within KnockdownFloorDistance, slamming him
-    // down at KnockdownSlamSpeed -- Kurt.KnockDown enters State.Knocked) is NOT
-    // ported: entering Knocked needs the Knocked/GetUp arms of Kurt.UpdateCombatState
-    // and the ArenaSpace.Floor probe, and neither exists here, so a port that entered
-    // Knocked would strand Kurt in a state nothing animates and nothing exits.
-    // Deferred with cause in docs/OPEN_ITEMS.md. The decline is ported on its own
-    // because it is the counter's own rate and the trigger does not change it: the
-    // C# runs this tail on every step the trigger does not knock him down on, and
-    // Player already carries the same kind of half for the knock-down push
-    // (Player::drainKnockdownPush).
+    // floored at zero. Player::updateKnockDamage calls it on every step the trigger
+    // above it does not knock him down on -- which is the C#'s own shape, one method
+    // with the trigger first and this tail second.
     void declineKnockDamage(float delta);
 
     // Inventory.Slots: filled by pickup collection (a later slice), read by
