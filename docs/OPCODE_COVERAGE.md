@@ -399,16 +399,16 @@ Two axes, kept separate:
   oracle directly (no C# counterpart exists); the other owned cases are
   golden-covered only where they fire.
 
-**Stubs: 0.** No owned case is a fake implementation. The only no-op case (248
-`push_kurt`) is a documented honest no-op because its subsystem (Kurt's
-knock-back) does not exist yet; it decodes and advances the PC exactly as the
-C# does and writes no state the goldens read. (89 `play_sound` was the other
-honest no-op until the mixer slice landed; it is now a real implementation.
+**Stubs: 0.** No owned case is a fake implementation. (248 `push_kurt` was the only
+no-op case until the knock-down slice landed and gave its push a writer; it is now a
+faithful dispatch, listed as partial below for the single output the unported firing
+subsystem still swallows. 89 `play_sound` was the other honest no-op until the mixer
+slice landed; it is now a real implementation.
 Opcode 170 is a faithful dispatch over the borrowed live `Player` source, now
 realized by the Linux frontend integration.)
 
 **Partial — faithful dispatch, effect gated behind a partial/unported subsystem
-(16 cases), each verified against the code. The rule is consistent for input
+(14 cases), each verified against the code. The rule is consistent for input
 fields and output consumers: a required input with no reachable writer, or an
 output with no consumer, is partial even when the dispatch itself is exact.
 Thus 81/165/166/174/195 are partial for unwritten inputs, and
@@ -430,13 +430,11 @@ so both are complete.)**
 | 202 | set_574304 | writes the runtime's shared `skyMode`, but the renderer's `SkyModes.BackdropOf` and save/load snapshot consumers are not ported |
 | 203 | camera_track | writes the runtime's `cameraTrackPitch`/`cameraTrackTicks`, and the Linux follow camera consumes them, but the save/load snapshot's `camera_track_*` fields are not ported |
 | 195 | if_hit_weapon | reads `hit_type`; its only C++ writer is `ScriptRuntime::hitGroup`, which has no caller. The C# group-hit call sites (including Kurt's `HitTypeKurt = -11` touch) and direct combat writers remain deferred |
-| 215 | screen_flash | writes whiteFlash, but fade and render consumers are not ported |
-| 240 | set_hurt_flash | writes knockDamage, but Kurt's knock-down state machine is not ported |
-| 244 | set_global_573bd4 | writes invulnerability, but per-tick timer decay is not ported |
-| 248 | push_kurt | honest no-op; Kurt knock-back unported (no observable state the goldens read) |
+| 215 | screen_flash | writes whiteFlash and Player::fadeFlashes fades it (golden/L3_kurt_flashes.txt), but the renderer's white-overlay consumer is not ported |
+| 248 | push_kurt | knocks Kurt down and shoves him, from the object's frame or away from it (golden/L3_kurt_push.txt); the C#'s `StopFiring()` inside KnockDown is inert because the firing/muzzle subsystem is not ported |
 
-**Complete — effect realized with the subsystems present (195 cases):** every
-owned case not in the partial table above (211 true dispatches − 16 = 195). These are the pure
+**Complete — effect realized with the subsystems present (197 cases):** every
+owned case not in the partial table above (211 true dispatches − 14 = 197). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases, exercised by byte-for-byte goldens
 through t600 on levels 3-8 or by the synthetic tests where the corpus cannot reach them.

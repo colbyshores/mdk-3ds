@@ -1,18 +1,8 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 45 lands the combat fades, and with them the end of the death beat: a new
-`Kurt::fadeFlashes` called from `Player::update`, the death transition's `HurtFlash = 0`, the
-skull's rise in `Player::updateDeath` and the **guard that stops the corpse moving once it
-passes `SkullEnd`** (a state-transition change: the death beat now ends), the C#'s `Died` event
-as a `Player::died()` latch (no delegate, per §10), `Player::damage` promoted from the `Health`
-line alone to the C#'s `Damage` whole (so a hard landing raises the red flash), and the Linux
-frontend's respawn moved from a wall-clock timer of its own onto that latch. It is behaviour on
-both sides of the split class plus a shipped frontend, and the risk rubric names state
-transitions and resource lifetime (the respawn rebuilds the `ScriptRuntime`) as high. Pinned by
-a new 621-line oracle golden with eight mutants built and killed, and the pinned frame is
-byte-unchanged because at frame 1 both flash fields are 0.
+Risk: high — batch 46 ports opcode 248 `push_kurt` from `ScriptRuntime.cs:2826-2852`, the only C# writer of a nonzero knock-down push: VM dispatch, both object-frame and away-from-object formulas (including the zero-distance +X fallback), the vertical lift and knock-down guard, pinned by `L3_kurt_push.txt` (oracle output, 0 diff; five golden mutation checks plus two exact-float VM mutation checks). Also strengthened `L3_kurt_flashes.txt` with a corpse white-flash write at step 400, fixing review-16 V16-2's false pin claim; corrected the 255-to-256 death-beat prose (V16-3), refreshed `player.h`'s combat-scope header (V16-4), and removed duplicate `kTicks` (V16-6). This is gameplay state/VM behavior, hence high. Frame is unchanged: frame 1 contains no push or flash. V16-1 in the previous-batch review is owner-harness-only and remains open for owner disposition; this batch does not stage those files.
 
-Last updated: 2026-11-03 (**batch 45** — the combat fades, the first item on batch 44's "NEXT,
+Last updated: 2026-11-03 (**batch 46** — `push_kurt`, the first item on batch 45's "NEXT,
 same family" list. Review-15 verdicted COMPLETE and re-derived batch 44's two goldens from the
 oracle itself; its **F1 (High)** is the uncommitted owner harness (`ralph-pi.sh`'s `--each-commit`
 recovery of the guard's fail-closed path, and `ralph-pi.sh` not being in the gate's `PROTECTED`
@@ -24,7 +14,7 @@ for no action. See `docs/PROGRESS_LOG.md`, "Iteration 73". Previous narratives a
 "Iteration N" section back each: batch 44 = 72, 43 = 71, 42 = 70, 41 = 69, 40 = 68, 39 = 67,
 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
 
-Goldens are **456/0/0**. Batch 45 added `golden/L3_kurt_flashes.txt` (621 lines, sha256
+Goldens are **457/0/0**. Batch 45 added `golden/L3_kurt_flashes.txt` (621 lines, sha256
 `10c59abc…`, the oracle probe's new `flashes` mode, **0 diff lines** against
 `tick1 dump flashes 3 620`); batch 44 added `L3_kurt_knockdown.txt` (`7e1862ea…`, 341 lines) and
 `L3_floor_probes.txt` (`a9e38021…`, 49, which separates `floor` from `floorCrossing` on two of
@@ -89,11 +79,16 @@ remain owner task (1)/(13).
     raises the red flash to its 180 clamp as `Kurt.cs:580` does. The Linux frontend no longer
     fakes the skull: it had its own `kSkullFadePerSecond`/`kRespawnDelay`/`deathTimer`, and now
     reads `player.combat().hurtFlash()`/`whiteFlash()` for the HUD (`Viewer.cs:913`) and respawns
-    on `player.died()`, so the beat is 255 simulation steps and not a wall-clock guess — pins
+    on `player.died()`, so it takes 255 steps to reach SkullEnd and Died fires on the next step that passes it (256 rising steps total), not a wall-clock guess — pins
     `golden/L3_kurt_flashes.txt` (621 lines, eight mutants killed) and a `vm_tests KurtFlashes`
-    case. **NEXT, same family, in order:**
-    `push_kurt` (opcode 248) is the only thing that can give `knockDown` a non-zero push, so the
-    push and its clearing at the flip are unpinned; `StopFiring` waits for the firing slice;
+    case. **Batch 46 also landed opcode 248 `push_kurt`**: `ScriptRuntime::pushKurt` takes the
+    complete operand list; mode 0 uses the C#'s asymmetric object-frame formula and `args[3]`
+    lift, other modes normalize `KurtPosition - object.Position` with the +X zero-distance
+    fallback and `args[2]` lift; `Player::knockDown(push)` receives it before the vertical lift.
+    Guards refuse an already-Knocked Kurt and a corpse. `golden/L3_kurt_push.txt` is 362 lines,
+    0 diff from C# probe output, and four mutants were built and killed. The flash golden now
+    raises white flash on the corpse at step 400 and proves it remains 200 to the end.
+    **NEXT, same family, in order:** `StopFiring` waits for the firing slice;
     `Revive` (the C#'s other writer of `HurtFlash = 0`, `Kurt.Combat.cs:196`) waits for the
     death-screen/save flow that the `Died` event leads to (`Game.cs:448`: write `LASTGAME`, go to
     the menu — no menu, no save here); the nuke/explosion/teleport writers of `whiteFlash_`
@@ -138,9 +133,7 @@ remain owner task (1)/(13).
    libm call on devkitARM at `-mfpu=vfp`: a target codegen decision, not a substitution. Probe in
    `docs/OPEN_ITEMS.md`.
 
-Deferred with cause: 248 `push_kurt` is the only thing that can hand a knock-down a push, so
-the push and its clearing at the flip stay unpinned (batch 44 landed the knock-down itself, and
-its caller passes zero); Rides writes the alarm countdown;
+Deferred with cause: `StopFiring` inside knockDown waits for the firing slice (no firing, sniper or muzzle state); the flip's leftover frame is structurally zero at the fixed 1/60 step; Rides writes the alarm countdown;
 consumers of 135/195/202/203/81 remain partial; the 3DS sampler fix and Kurt's muzzle
 flash and ride pose; `Vector3.Lerp`'s rounding (above); the other half of
 `FrameBlend` (Kurt's blended feet/yaw, `Record/Update/Turn/KurtAt`) and `TransformOf`'s
@@ -271,37 +264,36 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   **177 cases**; how that suite lifts `ralph-pi.sh` is in "Iteration 49" and **must not be
   re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 45)
+## Verified on this tree (batch 46)
 
 All gates re-run from a clean invocation after the last edit; the full narrative, the probe
-recipe and the eight mutant results are in `docs/PROGRESS_LOG.md`, "Iteration 73". Goldens
-**exit 0** (`All cases match the oracle.`, **456 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh`
+recipe and the mutation results are in `docs/PROGRESS_LOG.md`, "Iteration 74". Goldens
+**exit 0** (`All cases match the oracle.`, **457 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh`
 **exit 0** (`CHECK: ALL GATES PASSED`; `audit_c_with_classes 0 violations`, `gates_vfp 0
 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
 `gates_core_parity` clean, `gates_smdh` SKIPPED, `gates_frames PASS L3_f1.bmp
 sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
 regenerated; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no warnings);
 `cmake --build build-linux --target mdk` **exit 0**. What is new:
-`golden/L3_kurt_flashes.txt` (sha256 `10c59abc…`, 621 lines, **0 diff lines** against
-`tick1 dump flashes 3 620` — an opcode-215 white flash of 60 at step 5 falls 2 a step and stops
-at zero, a hurt of 1 at step 10 raises the red one to its 75 minimum, the hard landing at step
-164 raises it to the 180 clamp, `SetHealth(0)` at step 330 finds it at 80 and the death
-transition zeroes it at 331, the skull rises exactly 1.0 a step, `died=` goes to 1 at step 587
-and the corpse is frozen from 588). It is the oracle probe's own output, with the probe's older
-`knockdown`/`invuln`/`knock`/`hurt` modes re-diffed against their committed goldens first. Eight
-mutants, all killed (see the log table). What the kurt goldens still do NOT pin: any shipped
+`golden/L3_kurt_flashes.txt` (621 lines, sha256 `88d26cfc…`, **0 diff** against `tick1 dump
+flashes 3 620` and the regenerated C# oracle output) now includes a white flash of 200 written on
+the corpse at step 400, which remains through the end and pins review-16 V16-2. The skull takes
+255 steps to reach SkullEnd; Died fires on step 587 when it passes it (256 rising steps total).
+`golden/L3_kurt_push.txt` (362 lines, sha256 `b5cb4fb5…`) is byte-identical to the C# oracle
+probe. The golden killed five tested mutations; two additional C#-order risks (live feet vs the
+runtime snapshot, and divide-then-multiply vs reciprocal-product) are pinned by exact-float VM
+assertions and killed there. What the Kurt goldens still do NOT pin: any shipped
 frontend's mixer wiring (no frontend has an audio device, and none draws `Knocked`), the
 fall-out variant of death (unreachable without a pinned solid arena), the firing step frames,
-the sprite frame `pick()` selects from `chuteClosing` (see 6b), the knock-down *push* (only
-`push_kurt` can supply one), the flip's leftover frame (structurally 0 at a fixed 1/60 step),
+the sprite frame `pick()` selects from `chuteClosing` (see 6b), the flip's leftover frame (structurally 0 at a fixed 1/60 step),
 the white flash's other writers (the nuke, the explosions, the teleport, the level end — each
 deferred with its subsystem), and the feet finer than 1/64 unit (`Player::facing()`'s LUT trig;
 owner task 15). **No emulator run and no Old-3DS hardware
 run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
 windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-03-kurt-flashes.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
+`docs/frames/2026-11-03-kurt-push.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
 to its predecessors, because at frame 1 both flash fields are 0 and the HUD draws no flash.
-No gate was pinned, relaxed or edited.
+No gate was pinned, relaxed or edited. The previous review's High V16-1 remains owner-only and open; it concerns dirty harness files excluded from this batch. The external review of this high-risk batch is due after commit; no review of the new diff is claimed complete.
 
 ## Standing open items
 

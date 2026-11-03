@@ -14,8 +14,11 @@ namespace mdk {
 namespace {
 
 // The C# Kurt.cs constants, converted to per-second (the original's per-tick
-// numbers times Ticks for rates and times Ticks^2 for accelerations).
-const float kTicks = 30.0f;
+// numbers times Ticks for rates and times Ticks^2 for accelerations). kTicks is
+// Kurt::kTicks and not a second copy of it: the constant behind the combat half's
+// flash and skull rates must not be able to drift from the movement half's, which is
+// the only way the two halves could ever run at different speeds.
+const float kTicks = Kurt::kTicks;
 const float kMaxSpeed = 0.6667f * kTicks;                 // 20.001 u/s (walk)
 const float kMaxSpeedTurbo = 1.3333f * kTicks;            // 39.999 u/s (run)
 const float kAcceleration = 0.04444f * kTicks * kTicks;   // 39.996 u/s^2

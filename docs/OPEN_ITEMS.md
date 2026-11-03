@@ -625,17 +625,20 @@ are `Kurt.UpdateCombatState`'s (`:379-399`), and the walk-input suppression is `
 The pin is `golden/L3_kurt_knockdown.txt` (six mutants run) with three `vm_tests` cases for the
 branches a schedule cannot reach.
 
+**Batch 46 landed `push_kurt` (opcode 248).** `ScriptRuntime::pushKurt` now passes the C#'s
+object-frame or away-from-object push and lift through `Player::knockDown(push)`. The golden
+pins the two push modes, zero-distance fallback, knock-down refusal guards and push drain; the
+VM test pins bytecode dispatch and exact normalization/snapshot order. The frame-1 image cannot
+show this later script-driven behavior (sidecar and golden carry that evidence).
+
 **What that item still leaves open, with the cause named.** `KnockDown`'s `StopFiring()` stays
-inert until the firing slice: the port has no firing, sniper or muzzle state at all. The push a
-knock-down carries comes only from `push_kurt` (opcode 248, deferred), so `knockDown`'s caller
-passes `Vector2.Zero` and neither the push nor its clearing at the flip is pinned. The flip's
+inert until the firing slice: the port has no firing, sniper or muzzle state at all. The flip's
 leftover frame (`AnimationFrame - bang`) is *structurally* unobservable at a fixed 1/60 step --
 `Ticks * delta` is exactly 0.5 and both frame counts are integers, so the boundary is always hit
-exactly and the leftover is always `0.0000`; the port keeps the C#'s expression anyway. And the
-combat fades (`FadeFlashes`, `Kurt.Combat.cs:203`) are still unported, so nothing fades
-`hurtFlash_` or `whiteFlash_` -- which is also why the hard landing deliberately does not raise a
-flash nothing fades (`Player::land` says why), and why `UpdateDeath`'s skull rise and the `Died`
-event behind it are deferred with it.
+exactly and the leftover is always `0.0000`; the port keeps the C#'s expression anyway. The
+combat fade/skull implementation is described in `docs/CONTINUATION.md`'s verified tree state
+and the batch 45/46 narratives in `docs/PROGRESS_LOG.md`; remaining flash writers and render
+consumers stay deferred with their subsystems.
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 

@@ -2803,6 +2803,77 @@ static float operandFloat(const formats::ScriptValue& v) {
     return 0.0f;
 }
 
+// An operand by index, or the null one past the end. The C# would throw
+// IndexOutOfRangeException on a short list; the port reads a missing operand as the
+// null one, which is what ScriptMath.F and ScriptMath.I already answer 0 for, so a
+// malformed script stops the opcode instead of the level.
+static const formats::ScriptValue& operandAt(const std::vector<formats::ScriptValue>& args,
+                                             size_t index) {
+    static const formats::ScriptValue kNull;
+    return index < args.size() ? args[index] : kNull;
+}
+
+// push_kurt (opcode 248, ScriptRuntime.cs:2826-2852, dispatched at ScriptVm.cs:1600):
+// knock Kurt down and shove him. It is the ONLY writer of a non-zero knock-down push in
+// the whole oracle. The operand list comes in whole because its arity depends on args[0]:
+//   [0, a, b, up]  the push is (a, b) turned into the world by the OBJECT's yaw, and
+//                  the lift comes from args[3];
+//   [n, a, up]     the push points straight away from the object in XY at a u/s, and
+//                  the lift is args[2].
+void ScriptRuntime::pushKurt(MdkObject* obj, const std::vector<formats::ScriptValue>& args) {
+    // The guard, in the C#'s order: a Kurt already on his back is not knocked down
+    // again, and a corpse is not shoved. Kurt.Knocked is Knocked or GetUp
+    // (Kurt.Combat.cs:102), so the whole animation is the refused window.
+    if (kurt().knocked() || kurt().health() == 0) {
+        return;
+    }
+    // The C# cannot reach here without a Kurt: its constructor requires one
+    // (ScriptRuntime.cs:168). With no Player bound there is no entity to shove, and
+    // writing only the combat half would invent a Kurt who is knocked but cannot move.
+    if (player_ == nullptr) {
+        return;
+    }
+
+    const Vec3 origin = obj != nullptr ? obj->position : Vec3{};
+    Vec2 push;
+    float up = 0.0f;
+    if (operandInt(operandAt(args, 0)) == 0) {
+        // fromAngle supplies (cos, sin); preserve the C#'s asymmetric expression.
+        const Vec3 heading = fromAngle(obj != nullptr ? obj->yaw : 0.0f);
+        const float c = heading.x;
+        const float s = heading.y;
+        const float a = operandFloat(operandAt(args, 1));
+        const float b = operandFloat(operandAt(args, 2));
+        push.x = -a * c - b * s;
+        push.y = -b * c - a * s;
+        up = operandFloat(operandAt(args, 3));
+    } else {
+        const float a = operandFloat(operandAt(args, 1));
+        // C# reads its per-tick KurtPosition snapshot, not live Kurt.Feet.
+        const float awayX = kurtPosition_.x - origin.x;
+        const float awayY = kurtPosition_.y - origin.y;
+        if (awayX != 0.0f || awayY != 0.0f) {
+            const float length = sqrtf(awayX * awayX + awayY * awayY);
+            // System.Numerics.Vector2.Normalize divides each component before the
+            // following multiplication by a; keep that rounding order.
+            push.x = awayX / length * a;
+            push.y = awayY / length * a;
+        } else {
+            // C# fallback when the object and Kurt share an XY position.
+            push.x = a;
+            push.y = 0.0f;
+        }
+        up = operandFloat(operandAt(args, 2));
+    }
+
+    // C# scales by Tick * TicksPerSecond (1/30 * 30), retained in the same order.
+    push.x *= kTick * kTicksPerSecond;
+    push.y *= kTick * kTicksPerSecond;
+    player_->knockDown(push);
+    // Kurt.AddVerticalSpeed is a plain += on the movement field.
+    player_->verticalSpeed += up;
+}
+
 // play_sound (opcode 89, 0x442402). flags & 3 is the start mode — play, restart,
 // play unless it is already playing, stop — and the place comes from the rest:
 // 0x80 without position, 0x10 following the object at an offset, 0x20 at a

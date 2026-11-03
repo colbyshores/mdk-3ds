@@ -625,7 +625,8 @@ enum KurtHurtSchedule {
     kHurtKnock,     // the recent-damage counter's decline and the landing's reset
     kHurtInvuln,    // the invulnerability timer's decline, on the floor and on a corpse
     kHurtKnockdown,  // the knock-down itself: K_BANG, K_BFLIP, and back to Still
-    kHurtFlashes     // the two flashes' fade, the skull's rise, and the end of the beat
+    kHurtFlashes,    // the two flashes' fade, the skull's rise, and the end of the beat
+    kHurtPush        // opcode 248: the knock-down push, its drain, and its two guards
 };
 
 // An invulnerability write: the step and the seconds. It is the write opcode 244's set
@@ -645,12 +646,31 @@ struct KurtFlashSet {
     float value;
 };
 
+// A push_kurt write (opcode 248, ScriptVm.cs:1600 -> ScriptRuntime.cs:2826). The eight
+// numbers are the operand list the VM would have handed the runtime plus the object it
+// would have handed it with: mode is args[0], and the list's arity follows the mode --
+// mode 0 reads a and b as the push in the object's frame and up as args[3], while any
+// other mode reads a as the speed away from the object and up as args[2]. objYaw is the
+// object's yaw, and dx/dy place the object relative to the runtime's own KurtPosition,
+// which is what the away branch subtracts (NOT the Player's live feet).
+struct KurtPushSet {
+    int step;
+    int mode;
+    float a;
+    float b;
+    float up;
+    float objYaw;
+    float dx;
+    float dy;
+};
+
 enum KurtHurtColumns {
     kColsVoices,  // hp= vmhp= voices=
     kColsKnock,   // hp= vmhp= knock=
     kColsInvuln,    // hp= vmhp= invuln= knock=
     kColsKnockdown,  // hp= vmhp= invuln= knock= frame=
-    kColsFlash       // hp= vmhp= hurt= white= died=
+    kColsFlash,      // hp= vmhp= hurt= white= died=
+    kColsPush        // hp= vmhp= invuln= knock= frame= vel=
 };
 
 // One schedule as one literal, so the dump body and the oracle probe's twin drive the
@@ -672,6 +692,8 @@ struct KurtHurtPlan {
     int airLiftStep = 0;
     int forwardFrom = 0;    // first step the forward key is held (0 = never held)
     int forwardTo = 0;      // last step it is held
+    const KurtPushSet* pushes = nullptr;  // opcode-248 writes; null for the others
+    size_t pushCount = 0;
 };
 
 std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, Player& player,
@@ -723,6 +745,19 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
         snprintf(line, sizeof(line), " forward=%d..%d", plan.forwardFrom, plan.forwardTo);
         out += line;
     }
+    if (plan.pushCount) {
+        out += " pushes=";
+        for (size_t i = 0; i < plan.pushCount; i++) {
+            if (i) {
+                out += ",";
+            }
+            snprintf(line, sizeof(line), "%d:%d:%.4f,%.4f,%.4f:%.4f,%.4f,%.4f",
+                     plan.pushes[i].step, plan.pushes[i].mode, plan.pushes[i].a,
+                     plan.pushes[i].b, plan.pushes[i].up, plan.pushes[i].objYaw,
+                     plan.pushes[i].dx, plan.pushes[i].dy);
+            out += line;
+        }
+    }
     out += "\n";
 
     const Vec3 kStart = player.feet;
@@ -768,6 +803,31 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
                 runtime.hurtKurt(kHurts[i].damage);
             }
         }
+        for (size_t i = 0; i < plan.pushCount; i++) {
+            if (plan.pushes[i].step != step) {
+                continue;
+            }
+            const KurtPushSet& p = plan.pushes[i];
+            // The object the pushing script belongs to. The harness builds one the way
+            // the oracle probe does: at an offset from the runtime's OWN KurtPosition,
+            // so the away branch's subtraction is the same on both sides without either
+            // side hard-coding where the start pad is.
+            scripts::MdkObject object;
+            object.yaw = p.objYaw;
+            const Vec3 at = runtime.kurtPosition();
+            object.position = Vec3{at.x + p.dx, at.y + p.dy, at.z};
+            // The operand list, with the arity the mode has: the C# reads args[3] for the
+            // lift in mode 0 and args[2] in every other mode, so one fixed four-element
+            // list would feed the wrong operand to the other branch.
+            std::vector<formats::ScriptValue> args;
+            args.push_back(formats::scriptInt(p.mode));
+            args.push_back(formats::scriptFloat(p.a));
+            args.push_back(formats::scriptFloat(p.mode == 0 ? p.b : p.up));
+            if (p.mode == 0) {
+                args.push_back(formats::scriptFloat(p.up));
+            }
+            runtime.pushKurt(&object, args);
+        }
         runtime.update(1.0f / 60.0f);
 
         // The C# probe prints one shared mixer; the port's runtime owns its own and
@@ -797,6 +857,26 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
                      player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.health(),
                      runtime.kurt().health(), player.combat().hurtFlash(),
                      player.combat().whiteFlash(), player.died() ? 1 : 0);
+            out += line;
+            continue;
+        }
+
+        if (plan.columns == kColsPush) {
+            // vel= is the knock-down push. With no key held the two walk speeds are
+            // exactly zero, so Player::velocity() (C# Kurt.Velocity) reduces to
+            // (push.x, push.y, verticalSpeed) and the column reads the push the C#
+            // cannot print directly -- _push is private there -- without reading anything
+            // the heading LUT can move: a zero walk speed times any facing is still zero.
+            const Vec3 vel = player.velocity();
+            snprintf(line, sizeof(line),
+                     "s=%d state=%s feet64=%d,%d,%d vert=%.4f floor=%d chute=%d hp=%d vmhp=%d "
+                     "invuln=%.4f knock=%.4f frame=%.4f vel=%.4f,%.4f\n",
+                     step, kurtStateName(player.state()),
+                     (int)std::floor(player.feet.x * 64.0f), (int)std::floor(player.feet.y * 64.0f),
+                     (int)std::floor(player.feet.z * 64.0f), player.verticalSpeed,
+                     player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.health(),
+                     runtime.kurt().health(), player.combat().invulnerable(),
+                     player.combat().knockDamage(), player.animationFrame(), vel.x, vel.y);
             out += line;
             continue;
         }
@@ -986,12 +1066,45 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     // 330: Kurt.SetHealth(0) on a floor. The death transition zeroes the flash
     //      (Kurt.Combat.cs:375) and the skull starts from that zero; a port that drops
     //      the zeroing starts the beat at ~80 and ends it 40 steps early.
-    // Then the skull rises one unit a step for 255 steps, the step it passes SkullEnd is
-    // the C#'s Died event (died= goes to 1 once), and from the next step the corpse is
-    // frozen -- vert, the feet and the floor column stop moving, which is the guard at
-    // Kurt.Combat.cs:238 and nothing else.
+    // 400: an opcode-215 white flash of 200 on a CORPSE, sixty-nine steps into the death
+    //      beat. UpdateDeath returns before FadeFlashes (Kurt.cs:152, ahead of :190), so a
+    //      corpse fades nothing and this value stands to the last line of the golden. It
+    //      is the only line that tells a corpse that fades nothing from one that fades
+    //      quietly, and it is white on purpose: the red one is zeroed by the transition and
+    //      only a hard landing writes it after death, which a frozen corpse cannot do.
+    // Then the skull rises one unit a step, 255 steps to fill SkullEnd, the step it passes
+    // the end is the C#'s Died event (died= goes to 1 once), and from the next step the
+    // corpse is frozen -- vert, the feet and the floor column stop moving, which is the
+    // guard at Kurt.Combat.cs:238 and nothing else.
     static const KurtHurt kFlashHurts[] = {{10, 1}, {320, 4}};
-    static const KurtFlashSet kFlashSets[] = {{5, 60.0f}};
+    static const KurtFlashSet kFlashSets[] = {{5, 60.0f}, {400, 200.0f}};
+    // THE PUSH SCHEDULE (golden/L3_kurt_push.txt). Opcode 248 is the only writer of a
+    // non-zero knock-down push in the whole oracle, so this is the golden that pins the
+    // push's own arithmetic, its drain (Kurt::kPushDrain, 1.5 u/s a step) and the two
+    // arms of the guard that refuses a shove. What each line is for:
+    //   20: mode 0, a=20 b=0 up=0 on an object yawed 37 degrees. The frame branch, whose
+    //       formula is ASYMMETRIC in the oracle (x is -a*c - b*s, y is -b*c - a*s) and is
+    //       copied rather than corrected: a port that "fixes" it into a rotation lands a
+    //       different vector in the same number of steps, and vel= says so.
+    //   40: mode 0 again, mid-K_BANG. Refused by the Knocked arm of the guard, so vel=
+    //       must keep falling by the drain alone and must not jump to the new push.
+    //  130: mode 1, a=15 up=8, the object 5 units in -X of Kurt. The away branch: away
+    //       is (5, 0), normalized and scaled to (15, 0), and the +8 lift takes him off
+    //       the floor while he is on his back -- the only fall this opcode can make.
+    //  240: mode 1, a=12 up=0, the object EXACTLY on the runtime's KurtPosition. away is
+    //       zero, so the oracle takes its own fallback and shoves him along +X at 12;
+    //       nothing else in the port reaches that branch.
+    //  350: Kurt.SetHealth(0) on a floor, so the death transition runs and the next line
+    //       is refused by the health arm of the guard and not by the state arm.
+    //  355: mode 0, a=30 up=20 on a corpse. vel= must not move: a port that drops the
+    //       health test shoves a dead man 20 units up.
+    static const KurtPushSet kPushSets[] = {
+        {20, 0, 20.0f, 0.0f, 0.0f, 37.0f, 0.0f, 0.0f},
+        {40, 0, 25.0f, 5.0f, 3.0f, 200.0f, 0.0f, 0.0f},
+        {130, 1, 15.0f, 0.0f, 8.0f, 0.0f, -5.0f, 0.0f},
+        {240, 1, 12.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+        {355, 0, 30.0f, 0.0f, 20.0f, 15.0f, 0.0f, 0.0f},
+    };
     KurtHurtPlan plan = {300.0f, kHealthHurts, sizeof(kHealthHurts) / sizeof(kHealthHurts[0]),
                          nullptr, 0, nullptr, 0, 0, kColsVoices};
     if (schedule == kHurtHardLand) {
@@ -1030,6 +1143,16 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
         plan.airLiftStep = 60;
         plan.mortalStep = 330;
         plan.columns = kColsFlash;
+    } else if (schedule == kHurtPush) {
+        plan.lift = 0.0f;
+        // No hurts at all: the default schedule would knock him down on its own and the
+        // whole point of this one is that opcode 248 is the only thing that does it.
+        plan.hurts = nullptr;
+        plan.hurtCount = 0;
+        plan.pushes = kPushSets;
+        plan.pushCount = sizeof(kPushSets) / sizeof(kPushSets[0]);
+        plan.mortalStep = 350;
+        plan.columns = kColsPush;
     }
     *out = dumpKurtHurt(level, steps, runtime, player, mixer, plan);
     return true;
@@ -2007,7 +2130,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (what == "hurt" || what == "hurtland" || what == "knock" || what == "invuln" ||
-            what == "knockdown" || what == "flashes") {
+            what == "knockdown" || what == "flashes" || what == "push") {
             std::string got;
             std::string why;
             const int schedule = what == "hurtland"                                     ? kHurtHardLand
@@ -2015,7 +2138,8 @@ int main(int argc, char** argv) {
                                  : (what == "invuln"                                    ? kHurtInvuln
                                  : (what == "knockdown"                                 ? kHurtKnockdown
                                  : (what == "flashes"                                   ? kHurtFlashes
-                                    : kHurtHealth))));
+                                 : (what == "push"                                      ? kHurtPush
+                                    : kHurtHealth)))));
             if (!kurtHurtDump(level, ticks, schedule, data, spritesArg, &got, &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
@@ -2826,9 +2950,10 @@ int main(int argc, char** argv) {
     // The two flashes and the death beat they bookend (Kurt.Combat.cs:203-206 and
     // 234-254): the red damage flash and opcode 215's white one fading to zero, the
     // hard landing's slam raising the red one to its clamp, the death transition zeroing
-    // it, the skull rising to SkullEnd, the Died event on the step it passes, and the
-    // corpse frozen from the next one. This is the golden that makes hurtFlash_ and
-    // whiteFlash_ live state rather than write-only fields.
+    // it, the skull rising to SkullEnd, the Died event on the step it passes, the corpse
+    // frozen from the next one, and a white flash raised on that corpse standing to the
+    // last line because a dead Kurt fades nothing. This is the golden that makes
+    // hurtFlash_ and whiteFlash_ live state rather than write-only fields.
     {
         std::string expected;
         if (!readText("golden/L3_kurt_flashes.txt", &expected)) {
@@ -2844,9 +2969,37 @@ int main(int argc, char** argv) {
                 printf("PASS L3_kurt_flashes: both flashes fall by FlashFade and stop at zero, "
                        "the slam raises the red one to its clamp, the death transition zeroes "
                        "it, the skull rises to SkullEnd and the beat ends on the step Died "
-                       "fires\n");
+                       "fires, and a white flash raised on the corpse stands to the end\n");
             } else {
                 printf("FAIL L3_kurt_flashes: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // Opcode 248, the only writer of a non-zero knock-down push in the oracle
+    // (ScriptRuntime.cs:2826-2852): the object-frame push with its asymmetric formula, the
+    // away-from-object push with its normalize and its zero-distance fallback, the lift
+    // added to the vertical speed, the drain, and the two arms of the guard that refuses a
+    // shove -- Kurt already on his back, and Kurt at zero health. vel= is the push itself.
+    {
+        std::string expected;
+        if (!readText("golden/L3_kurt_push.txt", &expected)) {
+            printf("FAIL L3_kurt_push: no golden file golden/L3_kurt_push.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtHurtDump(3, 360, kHurtPush, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_push: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_push: opcode 248 knocks Kurt down and shoves him, from the "
+                       "object's frame or away from the object, the zero-distance fallback shoves "
+                       "him along +X, the push drains and the guard refuses a second one while he "
+                       "is down or dead\n");
+            } else {
+                printf("FAIL L3_kurt_push: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }

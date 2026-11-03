@@ -10335,8 +10335,8 @@ the same field. One subsystem slice, five files:
   `hurtFlash`. All four are deleted: `state.hurtFlash` and `state.whiteFlash` now come off
   `player.combat()` the way `Viewer.HudStateOf` passes `kurt.HurtFlash`/`kurt.WhiteFlash`
   (`Viewer.cs:913`), and the respawn triggers on `player.died()` instead of a wall-clock timer,
-  so the beat is the oracle's 255 simulation steps and a stalled or a faster-than-real-time
-  frame cannot stretch it. The frontend's comment claimed a second divergence — "the C# beat
+  so the skull takes 255 steps to reach SkullEnd and Died fires on the next step that passes it
+  (256 rising steps total); a stalled or faster-than-real-time frame cannot stretch it. The frontend's comment claimed a second divergence — "the C# beat
   can be SHORTER when HurtFlash is already partway up when Kurt dies" — which was never true:
   the death transition zeroes the flash, so the fade always starts from zero. Corrected.
 
@@ -10394,3 +10394,43 @@ draws no flash over the same pinned blob.
 No gate, test or golden was relaxed, and no older golden moved. **No emulator run and no
 Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays
 UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7).
+
+## Iteration 74 — batch 46: opcode 248 push_kurt and review-16 Low remediations
+
+### Prior-solution lookup
+
+* **Pi knowledge (`mdk-sdl`)** — searched for push_kurt, opcode 248, and Kurt knock-down push. Results identified the C# `Kurt.Combat.cs` behavior, existing Player push state and prior deferral in opcode coverage. Verified directly against `ScriptRuntime.cs`, `Kurt.Combat.cs`, VM dispatch and runtime tick-snapshot code. A focused test-pattern search showed the case was an honest no-op with no opcode dispatch test.
+* **Obsidian MCP** — exposed and queried for `push_kurt opcode 248 Kurt knockdown push`; no MDK-relevant finding returned. No direct vault fallback was needed because the tool was available.
+* **Cognee MCP** — query attempted but rejected/unreachable; treated as unavailable, not consulted.
+
+### Review-16 remediation
+
+The newest review was `logs/ralph-pi/run-20261102-004416/review-16.md`. The review was read and its High finding investigated before changes; the external review report covers parent commit `e3f493d` and dirty owner-harness files, not this batch.
+
+* **V16-1 (High, dirty owner harness) — not builder-remediable.** Finding concerns only uncommitted owner changes in `ralph-pi.sh` and `gates_batch_integrity.py`; neither is part of this batch. Per contract those paths and corresponding `AGENTS.md` / `ralph/builder.md` owner changes remain unstaged. The reviewed committed parent itself has no builder-remediable High finding.
+* **V16-2 (Low, false pin claim about white flash on a corpse) — FIXED with an oracle-derived pin.** Added a white flash of 200 at step 400, after the Kurt death transition. Regenerated the C# probe output and C++ golden; `cmp` confirms both `/tmp/mdk-pi/b46/oracle_flashes.txt` and `/tmp/mdk-pi/b46/cpp_flashes.txt` are byte-identical to the 621-line golden (`88d26cfc…`). The C# and port retain `white=200`, distinguishing the corpse that skips `FadeFlashes` from one that silently fades.
+* **V16-3 (Low, 255-vs-256 prose) — FIXED.** Clarified: 255 rising steps reach `SkullEnd`; the next step crosses strict `>` and raises Died, for 256 rising steps from the zeroed transition. Corrected the Linux frontend comment and continuation summary. Oracle output shows `died=0` at 255 and `died=1` at 256.
+* **V16-4 (Low, stale `player.h` header) — FIXED.** Updated the scope description to match the now-ported knockdown, flashes, invulnerability and death beat, and named the remaining unported systems.
+* **V16-5 (Low, unchanged pinned frame) — no visual change is expected.** Fixed frame-1 pin is unchanged by design: `push_kurt` requires script execution after frame 1 and both flash fields are zero in that instant. Published a new frame-1 pair with unchanged metrics and an explicit sidecar note pointing to the changing oracle golden. This follows `docs/frames/README.md`; it is not claimed as visible evidence of the new behavior.
+* **V16-6 (Low, duplicate tick-rate constant) — FIXED.** `player.cpp` now uses `Kurt::kTicks`, the single existing definition.
+
+### What landed
+
+Opcode 248 had a C# implementation and was deferred only because the knockdown push had no live writer. `ScriptRuntime::pushKurt` now takes the decoded complete operand list and mirrors `ScriptRuntime.PushKurt` (`src/Mdk.Game/Scripts/ScriptRuntime.cs:2824-2852`): it refuses Kurt when already Knocked/GetUp or dead, mode 0 uses the oracle's intentionally asymmetric object-yaw formula and lift at args[3], nonzero mode normalizes C# runtime `KurtPosition - object.Position` (not live Player feet), uses the +X fallback for zero distance, and reads lift at args[2]. It passes the vector through `Player::knockDown(push)` before adding vertical speed, as C# `KnockDown` and `AddVerticalSpeed` do. VM opcode dispatch passes its entire decoded list.
+
+`docs/OPCODE_COVERAGE.md` records 248 as an implemented partial dispatch: the only missing effect is C# `StopFiring`, inert here because firing/muzzle state is not implemented. Opcode 215 remains partial because the renderer's white-overlay consumer is absent, though flash decay is now live.
+
+New 362-line `tests/scripts/golden/L3_kurt_push.txt` is byte-identical to oracle `/tmp/mdk-pi/b46/oracle_push.txt` (sha256 `b5cb4fb5…`). It pins object-frame push, drain and refusal of a second push while down; away push and lift; zero-distance +X fallback; and refusal when dead. A VM-level test runs actual opcode-248 bytecode through decoder and dispatch, asserts the bound Player receives it, and pins exact float results for C#'s divide-then-multiply `Vector2.Normalize(away) * a` order and runtime-position snapshot. The first golden mutation run showed that live-feet-vs-runtime-snapshot and reciprocal-product-vs-divide/multiply mutants survived the four-decimal output; the exact-float VM assertions were then added. On the final VM fixture, each of those two mutants was killed by the corresponding exact assertion.
+
+### Gates, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` — **exit 0**, `All cases match the oracle.`, **457 PASS / 0 FAIL / 0 SKIP**; `PushKurtDispatchesDecodedListToPlayer` passes along with the existing VM, sprite-refusal, C3D-frame and level goldens.
+* `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`; `audit_c_with_classes` 0 violations, `gates_vfp` 0 blockers, `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity` clean, `gates_smdh` SKIPPED (no built CIA), `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, `gates_batch_integrity PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`, no warnings. The build staged 69 ROM-derived files into ignored build output only; no MDK bytes are staged.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**, `[100%] Built target mdk`.
+* Oracle comparison: `cmp -s /tmp/mdk-pi/b46/oracle_push.txt tests/scripts/golden/L3_kurt_push.txt` and same for `oracle_flashes.txt` — both byte-identical.
+* `git diff --check` — first caught and we removed a trailing space in the added VM test; final run clean.
+* No review of the new diff is claimed complete here; because risk is high, the loop's independent external review is due after this commit. The available V16 report covers the parent batch.
+* Focused mutation checks: five golden-level mutants were killed (already-down guard at step 40, dead guard at step 355, asymmetric formula at step 20, zero-distance fallback at step 240, and omitting the knockDown call at step 20); two additional VM-test mutants were killed (live Player feet and reciprocal-multiply normalization order, failing exact-float assertions).
+
+Frame `docs/frames/2026-11-03-kurt-push.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, unchanged frame-1 image. Capture produced after final code/test edits at `DISPLAY=:99` by `tools/publish_frame.sh kurt-push`; the pinned instant contains neither the scripted push nor a flash. No emulator run. No actual Old-3DS hardware run: Old-3DS timing remains UNMEASURED and Citro3D picture remains UNVERIFIED (P6).

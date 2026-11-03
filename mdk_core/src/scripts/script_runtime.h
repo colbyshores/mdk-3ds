@@ -240,6 +240,14 @@ public:
     // stays null and Kurt takes every hit, which is what the C# reads while
     // nothing is ridden.
     void hurtKurt(int32_t damage);
+    // push_kurt (opcode 248, ScriptRuntime.cs:2826-2852, dispatched at
+    // ScriptVm.cs:1600): knock Kurt down and shove him. It is the ONLY writer of a
+    // non-zero knock-down push in the oracle, which is why the push's drain and its
+    // clearing at the K_BANG -> K_BFLIP flip were unpinned until it landed.
+    // The operand list comes in whole because its arity depends on args[0]:
+    // [0, a, b, up] takes the push from the object's frame with the lift at args[3],
+    // and [n, a, up] shoves Kurt away from the object at a u/s with args[2] up.
+    void pushKurt(MdkObject* obj, const std::vector<formats::ScriptValue>& args);
     // RaiseShake (ScriptRuntime.cs:1986): the strongest screen shake requested
     // during the current tick. The renderer-side camera consumer is a later
     // slice; this records the oracle's per-tick state.

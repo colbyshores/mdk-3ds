@@ -39,13 +39,15 @@ public:
     bool onFloor = false;
     bool chuteOpen = false;
 
-    // Health and death (C# Kurt.Combat). The full combat (knock-down, the hurt
-    // flash, invulnerability, difficulty scaling and weapons) is not ported; this
-    // is the health and death the vertical physics' consequences need: a hard
-    // landing damages Kurt and a fall out of the arena kills him. health 0 on the
-    // floor is death (C# "health 0 --on the floor--> DEAD"); update() then runs
-    // the C#'s UpdateDeath (the corpse falls on and the death frame advances)
-    // until the frontend respawns him.
+    // Health and death (C# Kurt.Combat). What is ported here is the health, the death
+    // beat, the knock-down (K_BANG, K_BFLIP and the way back), the hurt and white flashes,
+    // the invulnerability timer and the recent-damage counter that decides a knock-down.
+    // What is NOT is the rest of that class: weapons and difficulty scaling, the Frozen
+    // branch of the state machine, riding, and grabbing ledges. What this half needs is
+    // narrow: a hard landing damages Kurt and a fall out of the arena kills him. health 0
+    // on the floor is death (C# "health 0 --on the floor--> DEAD"); update() then runs the
+    // C#'s UpdateDeath (the corpse falls on and the death frame advances) and stops once
+    // the skull passes its end, which is where the C# raises Died.
     //
     // THE ONE HEALTH. The C# Kurt is one class with one Health (Kurt.Combat.cs:76);
     // this port splits the class in two, so the health is not duplicated across the

@@ -549,8 +549,9 @@ int main(int argc, char** argv) {
             // SkullEnd the Died event fires: Game.cs:448-456 writes SaveGames.LastGame and
             // leaves the level for the menu. This stand-in has no menu, no save and no
             // level end, so it respawns Kurt in place on the same event -- player.died()
-            // is that event, not a copy of its clock: the beat is the oracle's 255 steps
-            // of simulation, not a wall-clock timer of the frontend's, so a stalled or a
+            // is that event, not a copy of its clock: the beat is the oracle's own count,
+            // 255 steps of simulation to reach SkullEnd and the next rising step to pass it
+            // (256 rising steps total), not a wall-clock timer of the frontend's, so a stalled or a
             // faster-than-real-time frame cannot make it longer or shorter than the C#'s.
             // The one remaining divergence is the level-end flow the event leads to, and
             // it stays deferred with the menu and the save system.

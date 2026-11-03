@@ -1334,10 +1334,12 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 239:  // set_27c (not identified): ScriptVm.cs:1783 is a no-op
             break;
 
-        // Kurt's knock-down state machine is Kurt movement, a later slice: nothing
-        // in the corpus knocks him down, and no golden reads the knock-down state.
-        case 248:  // push_kurt
+        // push_kurt: the only writer of a non-zero knock-down push in the oracle. The
+        // operand list goes in whole because its arity depends on its first element.
+        case 248: {  // push_kurt
+            runtime_.pushKurt(obj, listval(op(ins, 0)));
             break;
+        }
 
         // Movement conditions.
         case 44:  // if_move_done

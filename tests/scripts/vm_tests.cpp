@@ -72,6 +72,7 @@ const int32_t kLinkPartners = 228;
 const int32_t kSet104 = 199;
 const int32_t kSet2c0 = 210;
 const int32_t kScreenFlash = 215;
+const int32_t kPushKurt = 248;
 const int32_t kSetHurtFlash = 240;
 const int32_t kSetGlobal573bd4 = 244;
 const int32_t kSet27c = 239;
@@ -3840,6 +3841,58 @@ void testAirborneKnockDownSlamsToTheFloorTheProbeReaches(LevelData* levelData) {
     CHECK(player.verticalSpeed <= Kurt::kKnockdownSlamSpeed);
 }
 
+// Opcode 248 must pass the decoder's variable-arity operand list through the VM into the
+// live Player. The L3 golden drives ScriptRuntime::pushKurt directly to cover multiple
+// branches in one long schedule; this executes the real bytecode dispatch and its mode-1
+// list shape, which a regression back to an unimplemented case would otherwise miss.
+void testPushKurtDispatchesDecodedListToPlayer(LevelData* levelData, const Cmi* cmi,
+                                                audio::SoundBank* bank) {
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    player.feet = runtime.kurtPosition();
+    scripts::MdkObject obj;
+    obj.position = Vec3{player.feet.x - 5.0f, player.feet.y, player.feet.z};
+
+    Code code;
+    // readOp248Args: mode=1, a=15, up=8 -> [1, 15, 8]. The object is 5 units
+    // behind Kurt, so the C# away vector is (+5, 0), normalized and scaled to 15.
+    code.u8(kPushKurt).u8(1).f32(15.0f).f32(8.0f).end();
+    runProgram(runtime, code, &obj);
+
+    CHECK(!sawUnimplemented(kPushKurt));
+    CHECK(player.state() == Kurt::Knocked);
+    CHECK(player.combat().invulnerable() == Kurt::kKnockdownInvulnerability);
+    const Vec3 velocity = player.velocity();
+    CHECK(fabsf(velocity.x - 15.0f) < 1e-5f);
+    CHECK(fabsf(velocity.y) < 1e-5f);
+    CHECK(fabsf(velocity.z - 8.0f) < 1e-5f);
+
+    // C# Vector2.Normalize(away) * a divides each component by the length before
+    // multiplying. This chosen input distinguishes that from away * (a / length)
+    // by one float ULP; retaining only four printed decimals would hide the change.
+    Player ordered;
+    scripts::ScriptRuntime orderedRuntime(levelData, cmi, 1, bank, &ordered, nullptr);
+    ordered.feet = orderedRuntime.kurtPosition();
+    // Put both vectors at moderate magnitudes: subtraction from the level's ~190-unit
+    // Z coordinate would erase the low bits that make this exact-rounding case useful.
+    ordered.feet.x = -456.5494384765625f;
+    ordered.feet.y = 56.5562744140625f;
+    orderedRuntime.update(1.0f / 30.0f);  // runTick snapshots these feet as KurtPosition
+    ordered.feet.y += 10.0f;  // live feet now differ; opcode must still read the snapshot
+    scripts::MdkObject offset;
+    offset.position = Vec3{0.0f, 0.0f, ordered.feet.z};
+    // kurtPosition - object.position = (-456.5494, +56.5563); negative a makes +X.
+    // Use the C#'s divide-then-multiply order and assert the exact float bits via equality.
+    std::vector<formats::ScriptValue> args;
+    args.push_back(formats::scriptInt(1));
+    args.push_back(formats::scriptFloat(-978.97198486328125f));
+    args.push_back(formats::scriptFloat(0.0f));
+    orderedRuntime.pushKurt(&offset, args);
+    const Vec3 orderedVelocity = ordered.velocity();
+    CHECK(orderedVelocity.x == 971.54583740234375f);
+    CHECK(orderedVelocity.y == -120.35282897949219f);
+}
+
 // ArenaSpace::floor's own contract, the parts a schedule cannot show: it answers the
 // trigger's question (a floor below, and where it is), and when nothing is found it leaves
 // the out point at the segment's own end, which is the value the C# initialises `point`
@@ -4060,6 +4113,8 @@ int main() {
     printf("PASS AirborneKnockDownSlamsToTheFloorTheProbeReaches\n");
     testFloorProbeAnswersWhatTheTriggerAsks(&levelData);
     printf("PASS FloorProbeAnswersWhatTheTriggerAsks\n");
+    testPushKurtDispatchesDecodedListToPlayer(&levelData, &cmi, &bank);
+    printf("PASS PushKurtDispatchesDecodedListToPlayer\n");
 
     // The depth layers and the depth pull: the C#'s LayerTests.cs and
     // DepthPullTests.cs, run here.
