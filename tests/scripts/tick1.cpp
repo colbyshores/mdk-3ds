@@ -1225,8 +1225,8 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
         //   forward 1..189: the walk axis the writer needs, held long enough to reach
         //     its own +/-10 limit and to fall out at 190 while the keys are still up.
         //   turnRight 10..99: ninety steps of +0.125 degrees, so the limit is reached
-        //     (at 80) and then held against for nineteen more -- a cap that only just
-        //     touches its limit would not be pinned.
+        //     (at step 89, after eighty increments) and then held against for ten more --
+        //     a cap that only just touches its limit would not be pinned.
         //   turnLeft 100..179: the other way from +10, which is where the 2-degree
         //     "back towards level" jump is biggest, and long enough to reach -10 too.
         //   turnRight 180..189: the jump again from -10, crossing zero.

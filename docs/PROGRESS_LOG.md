@@ -11230,3 +11230,171 @@ This batch is new work, not remediation, and it stages none of those files.
 Frame `docs/frames/2026-11-03-camera-roll-bank.png` + `.txt` — `bad_percent=1.240
 max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's,
 because a Kurt who has not yet turned has no bank to draw.
+
+## Iteration 82 — batch 54: the last four `MathF.Min`/`MathF.Max` sites in `script_runtime.cpp` stop being `fminf`/`fmaxf`, and the oracle's own numbers pin them
+
+**What landed.** `CONTINUATION.md`'s next non-owner candidate, taken in order: the four
+remaining `fminf`/`fmaxf` sites in `mdk_core/src/scripts/script_runtime.cpp` whose oracle
+side writes `MathF.Min`/`MathF.Max`. Batch 50 did the eight speed clamps (review-20 F2) and
+batch 53 the two in `CameraRoll`; these are the last ones in that file. The two spellings
+differ **only** when an operand is NaN: `fminf`/`fmaxf` return the *numeric* side, so a NaN
+silently becomes the finite bound, while `MathF.Min`/`MathF.Max` propagate the NaN. The file
+already had the NaN-propagating `mathMin`/`mathMax` pair (line 182-204) used by the other
+eight sites, so this is a substitution, not a new helper.
+
+| port site | oracle | what the NaN now does |
+|---|---|---|
+| `motionVelocity`'s friction factor (`:829`) | `ObjectMotion.cs:1066` `MathF.Max(length - Friction*Dt, 0f)/length` | a NaN friction makes the FACTOR NaN, so the velocity and the step are NaN; `fmaxf` returned the 0 and parked the object with a zeroed velocity |
+| `canSeeKurt`'s cone floor (`:1327`) | `ScriptRuntime.cs:3244` `MathF.Max(cone, MinCone)` | **unreachable** — see the guard below |
+| `flyProjectile`'s slab (`:2002-2003`) | `ScriptMath.cs:110-111` `MathF.Max(enter, MathF.Min(t0,t1))` / `MathF.Min(leave, MathF.Max(t0,t1))` | a NaN box or NaN step makes `enter` NaN; `NaN > NaN` is false so it is still a hit and the entry point is `from + d*NaN` |
+| `sweepBox`'s half height (`:3051`) | `ObjectMotion.cs:1138` `MathF.Max(bounds.Max.Z*Scale + Lift, MinHeight)*0.5f` | the half-height and the sweep centre go NaN, and the Z does **not** cancel in `end - a` |
+
+**The oracle side was measured, not assumed.** The headless C# probe (`/tmp/mdk-pi/obj3`,
+new mode `nanclamp`; `ObjectMotion.ApplyVelocity`/`Sweep` by reflection, `ScriptMath`'s
+internal `SegmentEntry` by reflection, `CanSeeKurt` directly) prints the oracle's own values.
+Transcript, level 7 (the level `vm_tests` builds its runtime from) and level 3 where it
+differs:
+
+```
+NANCLAMP level=7 arena=DANT_1 nanbits=7FC00000
+SIGN pos_zero -> 0 bits=00000000
+SIGN neg_zero -> 0 bits=00000000
+SIGN neg -> -1 bits=BF800000
+SIGN nan -> THROWS ArithmeticException
+FRICTION finite vel=1.8000001,2.4,0 bits=3FE66667,4019999A,00000000 pos=0.060000006,0.080000006,0
+FRICTION nan vel=NaN,NaN,NaN bits=7FC00000,7FC00000,7FC00000 pos=NaN,NaN,NaN
+SEGMENT finite hit=True point=-1,0,0 bits=BF800000,00000000,00000000
+SEGMENT nan_box hit=True point=NaN,NaN,NaN bits=7FC00000,7FC00000,7FC00000
+SEGMENT nan_delta hit=True point=NaN,NaN,NaN bits=7FC00000,7FC00000,7FC00000
+CONE x10 kurt=0,4,9 alien=10,4,9 c45=False cNaN=True c200=True
+CONE x30 kurt=0,4,9 alien=30,4,9 c45=False cNaN=False c200=False
+SWEEP finite pos=20,4,9 bits=41A00000,40800000,41100000
+SWEEP nan_lift pos=20,4,NaN bits=41A00000,40800000,7FC00000
+```
+(level 3, arena `HMO_1`, same first six rows; its `SWEEP finite pos=15.4893265,0.51067495,190`
+slides instead of passing free, and its clear-cone pose is 30 along +X rather than 10.)
+
+**The four pins** (`tests/scripts/vm_tests.cpp`, every expected number above is the probe's):
+
+* `FrictionClampPropagatesNaNLikeTheOracle` — the finite control row is asserted in .NET's
+  **bits** (`3FE66667,4019999A,00000000` velocity, `3D75C291,3DA3D70B` position), so the two
+  implementations are pinned bit-exactly on the ordinary path too, and then the NaN friction
+  row requires a NaN velocity and a NaN step.
+* `SegmentEntrySlabPropagatesNaNLikeTheOracle` — a projectile (command 61) one unit along the
+  yaw against a NaN Kurt box: still a `ContactTouchedKurt` hit, entry point NaN. The finite
+  control is the same shot against a box 26 units away: no contact, and it lands exactly one
+  unit from where it started. A NaN *step* is deliberately not the discriminating input —
+  `fmaxf`'s `enter` of 0 still multiplies a NaN delta (0 × NaN is NaN), so both spellings
+  come out NaN and the test would prove nothing.
+* `ConeFloorIsSkippedForNaNBeforeTheClampLikeTheOracle` — this one pins an **absence**. The
+  `cone < HalfTurn` guard in front of the clamp is false for a NaN, so a NaN cone is the
+  no-cone-test case; the probe's `c45=False cNaN=True c200=True` is the proof, and the test
+  requires the NaN row to agree with the 200 row and not the 45 row. The clamp itself cannot
+  be reached with a NaN and the site comment says so.
+* `SweepHalfHeightPropagatesNaNLikeTheOracle` — `FlagCollides` so the sweep runs, `FlagRolling`
+  so `lift()` reads `height_offset` (that is the only NaN route to this clamp, and the third
+  row proves it: the same object without `FlagRolling` stays finite). The NaN row requires a
+  NaN Z and a full-length X step; the finite row requires a finite Z.
+
+**Mutants (five built, three killed, two recorded unkillable with the reason).**
+
+| # | mutant | result |
+|---|---|---|
+| M1 | friction factor back to `fmaxf` | killed — 5 checks (velocity x/y/z, position x/y) |
+| M2 | slab `enter` back to `fmaxf(enter, fminf(t0,t1))` | killed — 3 checks (position x/y/z) |
+| M3 | slab `leave` back to `fminf(leave, fmaxf(t0,t1))` | **not killable**: a NaN `leave` can never produce a miss, because `enter > leave` is false for a NaN `leave` either way, and `enter` already goes NaN whenever either `t` is NaN. Source-form parity, like the cone. |
+| M4 | cone floor back to `fmaxf` | **not killable**: the `cone < HalfTurn` guard rejects a NaN cone first (measured `cNaN == c200`). |
+| M5 | sweep half-height back to `fmaxf` | killed — the NaN-Z check |
+
+**A measurable side effect that is not a picture.** `arm-none-eabi-nm -u` on
+`mdk_3ds/build/script_runtime.o`, before vs after this change:
+
+```
+8,9d7
+<          U fmaxf
+<          U fminf
+```
+Those four clamps were **libm callouts in the shipping ARM11 object** and now are not; the
+`mathMin`/`mathMax` pair inlines to comparisons. That is a fact about the emitted code, not
+a performance claim — the hot-path corpus is still empty and §2's staleness clocks are still
+waived, so **Old-3DS timing stays UNMEASURED**.
+
+**Review-24 disposition.** No Critical/High, so nothing was mandatory; all four findings were
+cheap and in scope except where the gate forbids it.
+
+* **F3 (Low) — fixed, and confirmed by measurement.** `MathF.Sign(float.NaN)` **throws**
+  `ArithmeticException` (the reviewer's reference-pack quote; measured here as
+  `SIGN nan -> THROWS ArithmeticException`), so `camera_roll.cpp`'s `signf` comment claiming
+  the oracle "returns 0 for a NaN … the oracle's own value is what the port owes" was wrong
+  twice over. The comment now says the port's 0 is a **deliberate divergence** (it keeps the
+  roll NaN where the oracle faults), `settle()` says it at the call site too, and the pin is
+  renamed `CameraRollNaNStaysNaNWhereTheOracleThrows` so it no longer claims parity. The
+  comment's other claim was checked and stands: `MathF.Sign(-0.0f)` is +0.0
+  (`bits=00000000`), which is why `copysignf` is still not the same function.
+* **F4 (Low) — fixed.** `tick1.cpp`'s key-window comment said the +10 limit is reached "at 80
+  and then held against for nineteen more"; the golden reaches 10.0 at step 89 after eighty
+  increments and holds for ten more (`s=88 9.8750`, `s=89 10.0000`, `s=90..99 10.0000`).
+* **F2 (Medium) — cannot be done by a batch; deferred to owner task (9).** The fix is to add
+  the "why this picture cannot move" paragraph to `2026-11-03-camera-roll-bank.txt`, but that
+  pair is history: `gates_batch_integrity` rejects it outright — `batch modifies/removes
+  historical measurement …; history is immutable` — and the immutability rule is the one the
+  reviewer itself cites. What this batch does instead is follow the convention on its **own**
+  sidecar (`2026-11-03-nanclamp-parity.txt`), which carries the paragraph and the measurement.
+  Whether a published sidecar may be corrected in place is owner task (9), unchanged.
+* **F1 (Medium) — owner-only, unchanged.** The code half is in
+  `tools/runner/gates_batch_integrity.py`, which is in its own `PROTECTED` set (owner task 1),
+  and the uncommitted `--each-commit` recovery it describes is the owner's unstaged diff, not
+  this batch's. The doc half (`docs/evidence/README.md` saying "per batch" vs
+  `ralph/builder.md` saying "EVERY COMMIT") is real and is exactly the contradiction F1
+  names — but aligning the doc with an **uncommitted** behaviour would make the committed tree
+  describe a gate that does not exist, so it goes with the code half. Recorded, not changed.
+
+**Prior-solution lookup.** pi-knowledge `mdk-sdl` (hybrid) found the pattern rather than a
+prior fix: `mathMin`/`mathMax` already exist in three TUs (`scripts/script_runtime.cpp`,
+`scripts/script_vm.cpp`, `audio/sound_mixer.cpp`) with the same NaN rationale, which is what
+made this a substitution instead of new code. Obsidian vault read directly (no Obsidian MCP
+in this session): `30-architecture/arm11-baseline-engineering-contract.md` and the VFP
+pattern notes are about the ARM11 numeric contract generally; nothing on `MathF` NaN
+semantics. **Cognee MCP is not exposed in this Pi session and was not consulted.**
+
+**Checked the neighbours, and one of them is now the next batch.** The only other
+`fminf`/`fmaxf` in the §8 trees are `scripts/debris.cpp:157-162,177-178` (the shatter's group
+box). Their oracle side is not `MathF.Min`/`MathF.Max` but `Debris.cs:160-166`'s
+`Vector3.Min`/`Vector3.Max` — so the first question was whether `System.Numerics` propagates a
+NaN like `MathF` does or loses it like `fminf` does, and the probe answers it in both argument
+orders:
+
+```
+V3MIN NaN,1,1 V3MAX NaN,3,4
+V3MIN_REV NaN,1,1 V3MAX_REV NaN,3,4
+```
+
+It propagates, both ways. So those six `fminf`/`fmaxf` are the same divergence one subsystem
+over, and they are **not** this batch's to fix: `Debris.Shatter` is its own slice and its own
+pin. Recorded as the next non-owner candidate in `CONTINUATION.md` rather than widened into
+this batch.
+
+**Gates, as run.**
+
+* `make -C tests/scripts` — **exit 0**: `All VM unit tests match the oracle.` +
+  `All cases match the oracle.`, **478 PASS / 0 FAIL** (four more than batch 53), and
+  `./build/vm_tests` alone **77 PASS / 0 FAIL**.
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no
+  built .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame is
+  unchanged, which is the expected result — `gates_batch_integrity project invariants intact`.
+  `reference.sha256` NOT regenerated.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx` (`DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM`).
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100%] Built target mdk`.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7),
+  `tools/publish_frame.sh nanclamp-parity`.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (probe, mutant
+  driver, logs): `/tmp/mdk-pi` (`/tmp/kilo` is not writable by this account — owner task 11).
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the
+  Citro3D picture stays UNVERIFIED (P6)**.
+
+Frame `docs/frames/2026-11-03-nanclamp-parity.png` + `.txt` — `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's,
+because frame 1 contains no NaN for the clamps to disagree about.

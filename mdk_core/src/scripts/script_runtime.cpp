@@ -826,7 +826,11 @@ void ScriptRuntime::motionVelocity(MdkObject* obj) {
     float mz = gravity ? 0.0f : obj->velocity.z;
     float length = sqrtf(mx * mx + my * my + mz * mz);
     if (length > 0.0f) {
-        float factor = fmaxf(length - obj->friction * kTick, 0.0f) / length;
+        // MathF.Max (ObjectMotion.cs:1066), so a NaN friction makes the FACTOR NaN and
+        // the velocity NaN; fmaxf would return the 0 and silently stop the object dead.
+        // Measured on .NET 10: friction NaN leaves Velocity = NaN,NaN,NaN (probe mode
+        // `nanclamp`, row FRICTION nan), while a finite 60 leaves 1.8,2.4,0.
+        float factor = mathMax(length - obj->friction * kTick, 0.0f) / length;
         obj->velocity.x *= factor;
         obj->velocity.y *= factor;
         if (!gravity) {
@@ -1323,8 +1327,13 @@ bool ScriptRuntime::canSeeKurt(MdkObject* obj, float range, float cone) {
     if (sqrtf(dx * dx + dy * dy + dz * dz) > range) {
         return false;
     }
+    // MathF.Max(cone, MinCone) (ScriptRuntime.cs:3244). This one CANNOT be reached with a
+    // NaN: the `cone < kHalfTurn` guard in front of it is false for a NaN, so a NaN cone
+    // skips the cone test entirely — measured on .NET 10 (probe `nanclamp`, rows CONE
+    // cone45=False / coneNaN=True / cone200=True, i.e. the NaN row is the no-test row).
+    // mathMax is here because the oracle writes MathF.Max, not because a pin can reach it.
     if (cone < kHalfTurn &&
-        fabsf(wrapAngle(yawTo(obj, kurtPosition_) - obj->yaw)) > fmaxf(cone, kMinCone)) {
+        fabsf(wrapAngle(yawTo(obj, kurtPosition_) - obj->yaw)) > mathMax(cone, kMinCone)) {
         return false;
     }
     Vec3 from{obj->position.x, obj->position.y, obj->position.z + kEyeHeight};
@@ -1999,8 +2008,13 @@ void ScriptRuntime::flyProjectile(MdkObject* obj) {
         }
         const float t0 = (boxMin[axis] - from[axis]) / delta[axis];
         const float t1 = (boxMax[axis] - from[axis]) / delta[axis];
-        enter = fmaxf(enter, fminf(t0, t1));
-        leave = fminf(leave, fmaxf(t0, t1));
+        // MathF.Max/MathF.Min (ScriptMath.cs:110-111), so a NaN box or a NaN step makes
+        // BOTH enter and leave NaN — and NaN > NaN is false, so there is still no miss and
+        // the entry point is from + d*NaN = NaN. fmaxf/fminf would return 0 and 1 and
+        // report an entry at the segment's own start. Measured on .NET 10 (probe
+        // `nanclamp`, rows SEGMENT nan_box and nan_delta: hit=True point=NaN,NaN,NaN).
+        enter = mathMax(enter, mathMin(t0, t1));
+        leave = mathMin(leave, mathMax(t0, t1));
         if (enter > leave) {
             miss = true;
         }
@@ -3048,7 +3062,11 @@ bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
     float sx = (bounds.max.x - bounds.min.x) * obj->scale;
     float sy = (bounds.max.y - bounds.min.y) * obj->scale;
     Vec half{(c * sx + s * sy) * kWidthFactor, (s * sx + c * sy) * kWidthFactor,
-             fmaxf(bounds.max.z * obj->scale + obj->lift(), kMinHeight) * 0.5f};
+             // MathF.Max (ObjectMotion.cs:1138): a NaN lift makes the half-height NaN and
+             // the sweep's centre NaN, which the oracle keeps (probe `nanclamp`, row SWEEP
+             // nan_lift ends at 16,0,NaN); fmaxf would return the 0.5 floor and sweep an
+             // ordinary box instead.
+             mathMax(bounds.max.z * obj->scale + obj->lift(), kMinHeight) * 0.5f};
     Vec3 centre = rotatedZ(Vec3{(bounds.min.x + bounds.max.x) * 0.5f, (bounds.min.y + bounds.max.y) * 0.5f,
                                 (bounds.min.z + bounds.max.z) * 0.5f},
                            obj->yaw);

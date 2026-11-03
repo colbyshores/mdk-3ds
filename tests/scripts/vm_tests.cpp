@@ -4361,6 +4361,171 @@ void testArrivalKeepsTheStuckCountTheOracleKeeps(LevelData* levelData, const Cmi
     CHECK(moving.stuck_count == 0);                  // HandleStuck: no ContactStuck yet
 }
 
+// The last four MathF.Min/MathF.Max sites in script_runtime.cpp, which the port used to
+// spell fminf/fmaxf. Every expected number below is the ORACLE's, measured on .NET 10 by
+// the headless probe (mode `nanclamp`, transcript in docs/PROGRESS_LOG.md), not by the
+// port: ApplyVelocity's friction factor (ObjectMotion.cs:1066), SegmentEntry's slab
+// (ScriptMath.cs:110-111), CanSeeKurt's cone floor (ScriptRuntime.cs:3244) and Sweep's
+// half height (ObjectMotion.cs:1138). Same rule as the eight speed clamps (review-20 F2):
+// fminf/fmaxf return the NUMERIC side when one operand is NaN, so they silently turn a NaN
+// into a finite bound, which is a different game.
+void testFrictionClampPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi,
+                                                 audio::SoundBank* bank) {
+    const float kNaN = nanFloat();
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+
+    // The control row first, in the oracle's own bits: velocity (3,4,0) is length 5, a
+    // friction of 60 spends 60 × 1/30 = 2 of it, the factor is 3/5, and the step is that
+    // velocity × Dt. FRICTION finite vel=1.8000001,2.4,0 bits=3FE66667,4019999A,00000000
+    // pos=0.060000006,0.080000006,0.
+    scripts::MdkObject finite;
+    finite.velocity = Vec3{3.0f, 4.0f, 0.0f};
+    finite.friction = 60.0f;
+    runtime.motionVelocity(&finite);
+    CHECK(floatBits(finite.velocity.x) == 0x3FE66667u);
+    CHECK(floatBits(finite.velocity.y) == 0x4019999Au);
+    CHECK(floatBits(finite.velocity.z) == 0x00000000u);
+    CHECK(floatBits(finite.position.x) == 0x3D75C291u);
+    CHECK(floatBits(finite.position.y) == 0x3DA3D70Bu);
+
+    // The row that decides it: MathF.Max(5 - NaN, 0)/5 is NaN, so the velocity is NaN and
+    // the object moves by NaN. fmaxf would return the 0, park the object at exactly
+    // (0,0,0) with a zeroed velocity, and no finite test would notice.
+    // FRICTION nan vel=NaN,NaN,NaN pos=NaN,NaN,NaN.
+    scripts::MdkObject nanObject;
+    nanObject.velocity = Vec3{3.0f, 4.0f, 0.0f};
+    nanObject.friction = kNaN;
+    runtime.motionVelocity(&nanObject);
+    CHECK(nanObject.velocity.x != nanObject.velocity.x);
+    CHECK(nanObject.velocity.y != nanObject.velocity.y);
+    CHECK(nanObject.velocity.z != nanObject.velocity.z);
+    CHECK(nanObject.position.x != nanObject.position.x);
+    CHECK(nanObject.position.y != nanObject.position.y);
+}
+
+// SegmentEntry's slab, inlined in flyProjectile. The discriminating input is a NaN BOX
+// with a finite step: a NaN STEP does not discriminate, because fmaxf's enter of 0 still
+// multiplies a NaN delta (0 x NaN is NaN) and both spellings end up NaN anyway. The
+// oracle's row is SEGMENT nan_box hit=True point=NaN,NaN,NaN: the NaN enter survives the
+// NaN > NaN test (false, so it is still a hit) and the entry point is from + d x NaN.
+// fmaxf/fminf would return enter 0 and leave the shot at its own start.
+void testSegmentEntrySlabPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi,
+                                                    audio::SoundBank* bank) {
+    const float kNaN = nanFloat();
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    player.feet = Vec3{0.0f, 4.0f, 9.0f};      // level 7's start, where the ray is free
+    runtime.update(scripts::ScriptRuntime::kTick);
+    player.feet = Vec3{kNaN, kNaN, kNaN};      // the box the slab is tested against
+    runtime.update(scripts::ScriptRuntime::kTick);  // copies the feet into the runtime
+
+    // One unit along the yaw, so the segment is finite and only the box is NaN.
+    scripts::MdkObject shot;
+    shot.arena = "DANT_1";
+    shot.position = Vec3{0.0f, 4.0f, 9.0f};
+    shot.yaw = 0.0f;
+    shot.speed = 30.0f;                       // 30 x 1/30 = one unit
+    shot.parameter = 1.0f;                    // outlives this tick
+    shot.move_command = 61;
+    runtime.motionVelocity(&shot);
+    CHECK(shot.contact_flags & scripts::MdkObject::ContactTouchedKurt);
+    CHECK(shot.position.x != shot.position.x);
+    CHECK(shot.position.y != shot.position.y);
+    CHECK(shot.position.z != shot.position.z);
+
+    // And the finite control, so this is a NaN a normal shot does not produce: the same
+    // shot against a box 26 units further along misses, and the shot lands exactly one
+    // unit from where it started.
+    Player sane;
+    scripts::ScriptRuntime saneRuntime(levelData, cmi, 1, bank, &sane, nullptr);
+    sane.feet = Vec3{26.0f, 4.0f, 9.0f};
+    saneRuntime.update(scripts::ScriptRuntime::kTick);
+    scripts::MdkObject miss;
+    miss.arena = "DANT_1";
+    miss.position = Vec3{0.0f, 4.0f, 9.0f};
+    miss.yaw = 0.0f;
+    miss.speed = 30.0f;
+    miss.parameter = 1.0f;
+    miss.move_command = 61;
+    saneRuntime.motionVelocity(&miss);
+    CHECK(!(miss.contact_flags & scripts::MdkObject::ContactTouchedKurt));
+    CHECK(miss.position.x == 1.0f);
+}
+
+// CanSeeKurt's MathF.Max(cone, MinCone) cannot be reached with a NaN, and this pins WHY:
+// the `cone < HalfTurn` guard in front of it is false for a NaN, so a NaN cone is the
+// no-cone-test case. The oracle's rows (probe `nanclamp`, level 7), an object 10 along +X
+// from Kurt facing +X, so Kurt is 180 degrees off its yaw and the ray between them is
+// clear: CONE x10 c45=False cNaN=True c200=True. The NaN row is the 200 row, not the 45
+// one. If anyone moves the clamp in front of that guard, this fails.
+void testConeFloorIsSkippedForNaNBeforeTheClampLikeTheOracle(LevelData* levelData,
+                                                             const Cmi* cmi,
+                                                             audio::SoundBank* bank) {
+    const float kNaN = nanFloat();
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    player.feet = Vec3{0.0f, 4.0f, 9.0f};
+    runtime.update(scripts::ScriptRuntime::kTick);
+
+    scripts::MdkObject alien;
+    alien.arena = "DANT_1";
+    alien.position = Vec3{10.0f, 4.0f, 9.0f};
+    alien.yaw = 0.0f;
+    CHECK(!runtime.canSeeKurt(&alien, 1000.0f, 45.0f));   // Kurt is behind it
+    CHECK(runtime.canSeeKurt(&alien, 1000.0f, 200.0f));   // no cone test at all
+    CHECK(runtime.canSeeKurt(&alien, 1000.0f, kNaN));     // the same answer, not the 45 one
+}
+
+// Sweep's MathF.Max(bounds.Max.Z x Scale + Lift, MinHeight) x 0.5 (ObjectMotion.cs:1138).
+// FlagRolling is what makes a NaN reachable at all: lift() then reads height_offset, so the
+// half-height goes NaN while the X/Y halves stay finite. The oracle's rows (probe
+// `nanclamp`, level 7), an object at the level start swept 20 along +X with the default
+// (no model) bounds:
+//   SWEEP finite   pos=20,4,9     bits=41A00000,40800000,41100000
+//   SWEEP nan_lift pos=20,4,NaN   bits=41A00000,40800000,7FC00000
+// The Z does NOT cancel: the centre is NaN, so end.Z - a.Z is NaN even though the sweep
+// met no face, and fmaxf's 0.25 would have kept the whole thing finite.
+void testSweepHalfHeightPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi,
+                                                   audio::SoundBank* bank) {
+    const float kNaN = nanFloat();
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+
+    scripts::MdkObject finite;
+    finite.arena = "DANT_1";
+    finite.position = Vec3{0.0f, 4.0f, 9.0f};
+    finite.flags = scripts::MdkObject::FlagCollides | scripts::MdkObject::FlagRolling;
+    finite.friction = 0.0f;
+    finite.height_offset = 1.0f;
+    finite.velocity = Vec3{600.0f, 0.0f, 0.0f};   // 20 units at 1/30
+    runtime.motionVelocity(&finite);
+    CHECK(finite.position.x > 19.9f && finite.position.x < 20.1f);
+    CHECK(finite.position.z == 9.0f);             // finite: the sweep ran on a real box
+
+    scripts::MdkObject nanObject;
+    nanObject.arena = "DANT_1";
+    nanObject.position = Vec3{0.0f, 4.0f, 9.0f};
+    nanObject.flags = scripts::MdkObject::FlagCollides | scripts::MdkObject::FlagRolling;
+    nanObject.friction = 0.0f;
+    nanObject.height_offset = kNaN;
+    nanObject.velocity = Vec3{600.0f, 0.0f, 0.0f};
+    runtime.motionVelocity(&nanObject);
+    CHECK(nanObject.position.z != nanObject.position.z);  // the oracle keeps the NaN
+    CHECK(nanObject.position.x > 19.9f && nanObject.position.x < 20.1f);
+
+    // The same object with a NaN height_offset but no FlagRolling: lift() is 0, the
+    // half-height is the ordinary max, and nothing is NaN. Without FlagRolling there is no
+    // NaN route to this clamp, which is why the pin above has to set the flag.
+    scripts::MdkObject notRolling;
+    notRolling.arena = "DANT_1";
+    notRolling.position = Vec3{0.0f, 4.0f, 9.0f};
+    notRolling.flags = scripts::MdkObject::FlagCollides;
+    notRolling.friction = 0.0f;
+    notRolling.height_offset = kNaN;
+    notRolling.velocity = Vec3{600.0f, 0.0f, 0.0f};
+    runtime.motionVelocity(&notRolling);
+    CHECK(notRolling.position.z == 9.0f);
+}
+
 // Small vector helpers for the camera pin below. vm_tests has no geometry of its own,
 // and the ones follow_camera.cpp uses are file-static there.
 static Vec3 vmCross(const Vec3& a, const Vec3& b) {
@@ -4478,7 +4643,14 @@ void testCameraRollBanksTheFollowCamera() {
 // it lives here and not in the golden, and it is the same rule and the same mutant as
 // the eight speed clamps in script_runtime.cpp (review-20 F2): swap the pair for the
 // fminf/fmaxf ones and the first check below fails, because fminf(NaN,10) is 10.
-void testCameraRollClampsPropagateNaNLikeTheOracle() {
+//
+// The name says "where the oracle throws" because the LAST check is NOT parity: the
+// leveller reaches MathF.Sign(NaN), and MathF.Sign(NaN) throws ArithmeticException
+// (measured on .NET 10, probe `nanclamp` row `SIGN nan`). This port's signf returns 0, so
+// the roll stays NaN and the game runs where the oracle would have faulted. That is a
+// documented divergence (camera_roll.cpp's signf comment), not a claim that the oracle
+// produces NaN here -- review-24 F3, so do not rename this back to "...LikeTheOracle".
+void testCameraRollNaNStaysNaNWhereTheOracleThrows() {
     const float kNaN = nanFloat();
     const float kStep = 1.0f / 60.0f;
 
@@ -4489,7 +4661,8 @@ void testCameraRollClampsPropagateNaNLikeTheOracle() {
     CHECK(roll.roll() != roll.roll());
     roll.walk(-1.0f, 1.0f, kStep);            // the brake arm: MathF.Max(NaN, -10)
     CHECK(roll.roll() != roll.roll());
-    roll.settle(kStep);                       // and the leveller neither fixes nor hides it
+    roll.settle(kStep);                       // the leveller neither fixes nor hides it:
+                                              // signf returns 0 where the oracle throws
     CHECK(roll.roll() != roll.roll());
 
     // The other half of the same claim: with a finite step the clamps are ordinary
@@ -5050,14 +5223,22 @@ int main() {
     printf("PASS FlyClampPropagatesNaNLikeTheOracle\n");
     testAccelerateIsOneImplementationAcrossTheArms(&levelData, &cmi, &bank);
     printf("PASS AccelerateIsOneImplementationAcrossTheArms\n");
+    testFrictionClampPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
+    printf("PASS FrictionClampPropagatesNaNLikeTheOracle\n");
+    testSegmentEntrySlabPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
+    printf("PASS SegmentEntrySlabPropagatesNaNLikeTheOracle\n");
+    testConeFloorIsSkippedForNaNBeforeTheClampLikeTheOracle(&levelData, &cmi, &bank);
+    printf("PASS ConeFloorIsSkippedForNaNBeforeTheClampLikeTheOracle\n");
+    testSweepHalfHeightPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
+    printf("PASS SweepHalfHeightPropagatesNaNLikeTheOracle\n");
     testArrivalKeepsTheStuckCountTheOracleKeeps(&levelData, &cmi, &bank);
     printf("PASS ArrivalKeepsTheStuckCountTheOracleKeeps\n");
     testCameraRollBanksTheFollowCamera();
     printf("PASS CameraRollBanksTheFollowCamera\n");
     testCameraRollMatchesTheOraclesOwnUnitTest();
     printf("PASS CameraRollMatchesTheOraclesOwnUnitTest\n");
-    testCameraRollClampsPropagateNaNLikeTheOracle();
-    printf("PASS CameraRollClampsPropagateNaNLikeTheOracle\n");
+    testCameraRollNaNStaysNaNWhereTheOracleThrows();
+    printf("PASS CameraRollNaNStaysNaNWhereTheOracleThrows\n");
     testKnockDownSpendsTheCounterAndOpensTheTimer();
     printf("PASS KnockDownSpendsTheCounterAndOpensTheTimer\n");
     testAirborneKnockDownSlamsToTheFloorTheProbeReaches(&levelData);

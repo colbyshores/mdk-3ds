@@ -47,10 +47,16 @@ float clampDecay(float value, float lo, float hi) {
     return value;
 }
 
-// MathF.Sign: 1 above zero, -1 below, 0 for zero (including -0.0) and for a NaN,
-// because both comparisons fail. copysignf is NOT the same function: it returns -1
-// for -0.0. Only reachable here through a NaN roll, but the oracle's own value is
-// what the port owes.
+// MathF.Sign: 1 above zero, -1 below, and 0 for zero — measured on .NET 10 to be +0.0
+// (bits 00000000) for BOTH +0.0 and -0.0, because Sign returns the value when it compares
+// equal to zero. copysignf is NOT the same function: it returns -1 for -0.0.
+//
+// The NaN case is a DELIBERATE DIVERGENCE, not the oracle's value: MathF.Sign(NaN) throws
+// ArithmeticException (System.Runtime.xml, and measured: `SIGN nan -> THROWS
+// ArithmeticException`), so the oracle never returns anything for a NaN roll — Settle
+// faults on the way there. This returns 0, which leaves the roll NaN (0 * NaN is NaN) and
+// lets the port run on. A shipped frontend has no way to make the roll NaN, so nothing
+// reaches the difference; the pin says "divergence", not "parity".
 float signf(float value) {
     if (value > 0.0f) {
         return 1.0f;
@@ -91,6 +97,8 @@ void CameraRoll::settle(float delta) {
     // The C#'s own order: clamp first, then * Kurt.Ticks * delta.
     const float step = clampDecay(kDecayFactor * fabsf(roll_), kDecayMin, kDecayMax) *
                        kTicks * delta;
+    // A NaN roll reaches signf here, where the ORACLE throws (see signf above); this
+    // returns 0 and the NaN survives the subtraction, which is the documented divergence.
     roll_ = fabsf(roll_) <= step ? 0.0f : roll_ - signf(roll_) * step;
 }
 
