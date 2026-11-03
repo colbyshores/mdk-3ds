@@ -281,6 +281,18 @@ The ammo-condition batch adds: 174 (`if_ammo`), over `Kurt`'s super-chain-gun
 timer and five sniper-ammo entries; its pickup and combat writers remain
 deferred.
 
+The movement-command batch adds no dispatch: it lands the two arms
+`ScriptRuntime::updateCommand` was still missing, so **6 (`move_to_target`) is
+complete** and `command_objects` command 1 finally moves its followers.
+Movement command 6 is `ObjectMotion.Chase` (`ObjectMotion.cs:894`, the runtime's
+target 8 above the feet, speed in units per *tick*), and command 1 is
+`ObjectMotion.FollowFormation` (`ObjectMotion.cs:929`, the slot in the leader's
+frame). Both dispatches were already ported and both silently did nothing: the
+opcode-6 row below said so, and command 1's gap was not recorded anywhere. Two
+`vm_tests` cases pin them (`ChaseFliesAtTheRuntimeTarget`,
+`FormationFollowersKeepTheirSlot`); neither command fires in levels 3-8, so all
+460 goldens are byte-identical.
+
 ## Remaining 27 (verified set)
 
 13 left this list with the synthetic-harness batch (port 13 is an explicit
@@ -408,17 +420,17 @@ Opcode 170 is a faithful dispatch over the borrowed live `Player` source, now
 realized by the Linux frontend integration.)
 
 **Partial — faithful dispatch, effect gated behind a partial/unported subsystem
-(14 cases), each verified against the code. The rule is consistent for input
+(13 cases), each verified against the code. The rule is consistent for input
 fields and output consumers: a required input with no reachable writer, or an
 output with no consumer, is partial even when the dispatch itself is exact.
 Thus 81/165/166/174/195 are partial for unwritten inputs, and
 135/202/203/215/240/244 for missing visual, snapshot or movement consumers. (24 and 151 left this table with the
 mixer call-sites batch: the frame-sound trigger and the door sounds now play,
-so both are complete.)**
+so both are complete. 6 left it with the movement-command batch: `Chase` is
+portable with no new subsystem, and it is ported.)**
 
 | Opcode | Name | Gating subsystem (verified) |
 |---|---|---|
-| 6 | move_to_target | sets `move_command = 6`; `ScriptRuntime::updateCommand` (script_runtime.cpp:1805) has no case for 6 → no motion |
 | 16 | set_health | on health 0 calls `kill()` (script_runtime.cpp:2976); its death-script and removal accounting are ported, but the Explode branch's sound/flash/debris/explosion effects are not |
 | 56 | add_health | on death calls the same `kill()` placeholder |
 | 81 | push_hit_dir | reads `hit_direction`; its chain-gun, mortar, Twister, sniper-round and touch-damage writers are unported, so integrated play uses the default east direction |
@@ -433,8 +445,8 @@ so both are complete.)**
 | 215 | screen_flash | writes whiteFlash and Player::fadeFlashes fades it (golden/L3_kurt_flashes.txt), but the renderer's white-overlay consumer is not ported |
 | 248 | push_kurt | knocks Kurt down and shoves him, from the object's frame or away from it (golden/L3_kurt_push.txt); the C#'s `StopFiring()` inside KnockDown is inert because the firing/muzzle subsystem is not ported |
 
-**Complete — effect realized with the subsystems present (197 cases):** every
-owned case not in the partial table above (211 true dispatches − 14 = 197). These are the pure
+**Complete — effect realized with the subsystems present (198 cases):** every
+owned case not in the partial table above (211 true dispatches − 13 = 198). These are the pure
 state, condition, orientation/aim, movement-parameter, handled-movement-command,
 path, animation-state, variable/flag, control-flow, group-state and spawn cases, exercised by byte-for-byte goldens
 through t600 on levels 3-8 or by the synthetic tests where the corpus cannot reach them.

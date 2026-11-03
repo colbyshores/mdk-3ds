@@ -3655,6 +3655,215 @@ void testTurnAndJumpTurnsLaunchesAndStopsOnFloor(LevelData* levelData, const Cmi
     CHECK(fabsf(obj.velocity.z + 32.0f * scripts::ScriptRuntime::kTick) < 1e-4f);
 }
 
+// Movement command 6 (move_to_target, ObjectMotion.cs:337 -> Chase 0x45e448 at
+// ObjectMotion.cs:894): the object flies at the runtime's target 8 above it, at
+// `Speed` UNITS PER TICK — not per second, and not through Push, so neither friction
+// nor gravity's ApplyVelocity step scales it. Every number below comes from the C#
+// constants (Behind 90, Far 30, Ahead 22.5, Gain 0.0444444/6, MaxChase 2.3333333,
+// Brake 0.05, MinChase 0.3333333, Climb 0.25, TurnSpeed 180 deg/s = 6 deg per tick)
+// applied by hand to the oracle's formula, not read off the port.
+void testChaseFliesAtTheRuntimeTarget(LevelData* levelData, const Cmi* cmi, audio::SoundBank* bank) {
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+
+    // The chase point is the runtime's target, which is Kurt's feet, 8 above them.
+    player.feet = Vec3{0.0f, 40.0f, 20.0f};
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.targetPosition().x == 0.0f);
+    CHECK(runtime.targetPosition().y == 40.0f);
+    CHECK(runtime.targetPosition().z == 20.0f);
+
+    // Straight ahead: the gain branch. Speed 1 + (22.5 - 0) * (0.0444444/6), and the
+    // step is that speed in units, so the feet move 1.1666665 along +Y. The climb is
+    // a quarter of the step toward 28, and it does not overshoot.
+    scripts::MdkObject ahead;
+    ahead.position = Vec3{0.0f, 0.0f, 10.0f};
+    ahead.yaw = 90.0f;
+    ahead.speed = 1.0f;
+    ahead.move_command = 6;
+    runtime.motionVelocity(&ahead);
+    CHECK(ahead.move_command == 6);   // the command survives: chase never ends itself
+    CHECK(fabsf(ahead.speed - 1.1666665f) < 1e-6f);
+    CHECK(fabsf(ahead.yaw - 90.0f) < 1e-5f);
+    CHECK(fabsf(ahead.position.x) < 1e-6f);
+    CHECK(fabsf(ahead.position.y - 1.1666665f) < 1e-6f);
+    CHECK(fabsf(ahead.position.z - 10.2916670f) < 1e-6f);
+    CHECK(ahead.push.x == 0.0f && ahead.push.y == 0.0f && ahead.push.z == 0.0f);
+
+    // Thirty of those ticks put the speed on the MaxChase clamp exactly, which only a
+    // gain branch that keeps running can reach.
+    scripts::MdkObject fast;
+    fast.position = Vec3{0.0f, 0.0f, 10.0f};
+    fast.yaw = 90.0f;
+    fast.speed = 1.0f;
+    fast.move_command = 6;
+    for (int i = 0; i < 30; i++) {
+        runtime.motionVelocity(&fast);
+    }
+    CHECK(fast.speed == 2.3333333f);
+    // And a hundred close the Z exactly: MoveToward lands on the point, it does not
+    // circle it. (The feet have flown past 40 and turned back by then; only the climb
+    // is exact, which is the point of the assertion.)
+    for (int i = 0; i < 70; i++) {
+        runtime.motionVelocity(&fast);
+    }
+    CHECK(fast.position.z == 28.0f);
+
+    // Behind and near (exactly 90 degrees off, 10 units away): the oracle turns and
+    // brakes only when the point is ahead of it or far away, so at offAngle == 90 and
+    // |dy| == 10 neither test passes. The object keeps its own heading and its own
+    // speed and simply steps along them.
+    player.feet = Vec3{0.0f, -10.0f, -8.0f};   // the chase point is (0,-10,0)
+    runtime.update(scripts::ScriptRuntime::kTick);
+    scripts::MdkObject behind;
+    behind.position = Vec3{0.0f, 0.0f, 0.0f};
+    behind.yaw = 0.0f;
+    behind.speed = 2.0f;
+    behind.move_command = 6;
+    runtime.motionVelocity(&behind);
+    CHECK(behind.yaw == 0.0f);
+    CHECK(behind.speed == 2.0f);
+    CHECK(fabsf(behind.position.x - 2.0f) < 1e-6f);
+    CHECK(behind.position.y == 0.0f);
+    CHECK(behind.position.z == 0.0f);
+
+    // The same 90 degrees, but 40 units to the side: past Far, so it turns — 6
+    // degrees, and the brake branch (offAngle > Ahead) takes 0.05 off the speed.
+    player.feet = Vec3{0.0f, -40.0f, -8.0f};   // the chase point is (0,-40,0)
+    runtime.update(scripts::ScriptRuntime::kTick);
+    scripts::MdkObject aside;
+    aside.position = Vec3{0.0f, 0.0f, 0.0f};
+    aside.yaw = 0.0f;
+    aside.speed = 2.0f;
+    aside.move_command = 6;
+    runtime.motionVelocity(&aside);
+    CHECK(fabsf(aside.yaw - 354.0f) < 1e-5f);
+    CHECK(fabsf(aside.speed - 1.95f) < 1e-6f);
+    CHECK(fabsf(aside.position.x - 1.9393177f) < 1e-6f);
+    CHECK(fabsf(aside.position.y + 0.2038309f) < 1e-6f);
+
+    // Directly behind and far: the wrap puts the tie at -180, so the turn goes the
+    // short way DOWN through 354, 348, ... and the brake runs every tick until the
+    // MinChase floor catches it on the fourth.
+    player.feet = Vec3{-40.0f, 0.0f, -8.0f};   // the chase point is (-40,0,0)
+    runtime.update(scripts::ScriptRuntime::kTick);
+    scripts::MdkObject astern;
+    astern.position = Vec3{0.0f, 0.0f, 0.0f};
+    astern.yaw = 0.0f;
+    astern.speed = 0.5f;
+    astern.move_command = 6;
+    for (int i = 0; i < 4; i++) {
+        runtime.motionVelocity(&astern);
+    }
+    CHECK(fabsf(astern.yaw - 336.0f) < 1e-4f);
+    CHECK(astern.speed == 0.3333333f);
+    runtime.motionVelocity(&astern);
+    CHECK(astern.speed == 0.3333333f);   // the floor holds
+
+    // The point directly overhead is not atan2(0, 0)'s answer: the C# keeps the
+    // object's own heading when the point shares its X and Y, so this is still the
+    // straight-ahead gain branch (speed 1.1666665, heading 90) and not a 90-degree
+    // swing to yaw 0 with the brake instead of the gain.
+    player.feet = Vec3{0.0f, 0.0f, 20.0f};   // the chase point is (0,0,28)
+    runtime.update(scripts::ScriptRuntime::kTick);
+    scripts::MdkObject over;
+    over.position = Vec3{0.0f, 0.0f, 10.0f};
+    over.yaw = 90.0f;
+    over.speed = 1.0f;
+    over.move_command = 6;
+    runtime.motionVelocity(&over);
+    CHECK(fabsf(over.speed - 1.1666665f) < 1e-6f);
+    CHECK(fabsf(over.yaw - 90.0f) < 1e-6f);
+    CHECK(fabsf(over.position.y - 1.1666665f) < 1e-6f);
+    CHECK(fabsf(over.position.z - 10.2916670f) < 1e-6f);
+}
+
+// A follower in the slot (0,-10,0) behind a leader at the origin facing +X.
+void startFollower(scripts::MdkObject* obj, scripts::MdkObject* leader, const Vec3& position,
+                   float yaw) {
+    obj->move_command = 1;
+    obj->leader = leader;
+    obj->waypoint = Vec3{0.0f, -10.0f, 0.0f};
+    obj->position = position;
+    obj->yaw = yaw;
+}
+
+// Movement command 1 (command_objects' formation, FollowFormation at
+// ObjectMotion.cs:929): the slot is the leader's FRAME, so the slot for waypoint
+// (0,-10,0) behind a leader facing +X is (10,0,0) — FormationPosition's off-diagonal
+// signs, not a plain rotation. Inside one step (MaxSpeed * Dt) the follower is
+// PLACED on the slot; outside it the follower pushes the unscaled heading * MaxSpeed,
+// which ApplyVelocity turns into one frame of MaxSpeed. Numbers from the C#.
+void testFormationFollowersKeepTheirSlot(scripts::ScriptRuntime& runtime) {
+    // No leader: let go of the command, and do not move first.
+    scripts::MdkObject alone;
+    alone.move_command = 1;
+    alone.position = Vec3{0.0f, -40.0f, 0.0f};
+    runtime.motionVelocity(&alone);
+    CHECK(alone.move_command == 0);
+    CHECK(alone.position.y == -40.0f);
+
+    scripts::MdkObject leader;
+    leader.position = Vec3{0.0f, 0.0f, 0.0f};
+    leader.yaw = 0.0f;
+
+    // A dead leader is no leader.
+    leader.dead = true;
+    scripts::MdkObject orphan;
+    startFollower(&orphan, &leader, Vec3{0.0f, -40.0f, 0.0f}, 90.0f);
+    runtime.motionVelocity(&orphan);
+    CHECK(orphan.move_command == 0);
+    CHECK(orphan.position.y == -40.0f);
+    leader.dead = false;
+
+    // Far from the slot: 90 degrees off, so it turns the full 6 degrees per tick
+    // (90 -> 84) and pushes along the NEW heading: (cos 84, sin 84) * 50, one frame
+    // of that = (0.17421404, 1.6575366). The slot's Z equals its own, so the vertical
+    // takes the third arm and pushes the exact remaining gap: zero.
+    scripts::MdkObject distant;
+    startFollower(&distant, &leader, Vec3{0.0f, -40.0f, 0.0f}, 90.0f);
+    runtime.motionVelocity(&distant);
+    CHECK(distant.move_command == 1);
+    CHECK(distant.move_destination.x == 10.0f && distant.move_destination.y == 0.0f &&
+          distant.move_destination.z == 0.0f);
+    CHECK(fabsf(distant.yaw - 84.0f) < 1e-5f);
+    CHECK(fabsf(distant.position.x - 0.17421404f) < 1e-6f);
+    CHECK(fabsf(distant.position.y + 38.3424644f) < 1e-6f);
+    CHECK(distant.position.z == 0.0f);
+    CHECK(distant.push.x == 0.0f && distant.push.y == 0.0f && distant.push.z == 0.0f);
+
+    // A whole unit below the slot climbs a unit per tick; a whole unit above it sinks
+    // one; half a unit away closes the exact gap. All three arms are the C#'s, and the
+    // first two are ±1 per TICK, not per second.
+    scripts::MdkObject below;
+    startFollower(&below, &leader, Vec3{0.0f, -40.0f, -5.0f}, 90.0f);
+    runtime.motionVelocity(&below);
+    CHECK(fabsf(below.position.z + 4.9666667f) < 1e-6f);
+    scripts::MdkObject above;
+    startFollower(&above, &leader, Vec3{0.0f, -40.0f, 5.0f}, 90.0f);
+    runtime.motionVelocity(&above);
+    CHECK(fabsf(above.position.z - 4.9666667f) < 1e-6f);
+    scripts::MdkObject halfup;
+    startFollower(&halfup, &leader, Vec3{0.0f, -40.0f, 0.5f}, 90.0f);
+    runtime.motionVelocity(&halfup);
+    CHECK(fabsf(halfup.position.z - 0.4833333f) < 1e-6f);
+
+    // Inside one step of the slot it is placed exactly on it, and its yaw moves
+    // toward the leader's by at most 6 degrees: 4 away reaches 0 exactly, 20 away
+    // comes to 14. Nothing moves in the same tick as the placement.
+    scripts::MdkObject placed;
+    startFollower(&placed, &leader, Vec3{10.0f, 1.0f, 0.0f}, 4.0f);
+    runtime.motionVelocity(&placed);
+    CHECK(placed.position.x == 10.0f && placed.position.y == 0.0f && placed.position.z == 0.0f);
+    CHECK(placed.yaw == 0.0f);
+    CHECK(placed.move_command == 1);
+    scripts::MdkObject turning;
+    startFollower(&turning, &leader, Vec3{10.0f, 1.0f, 0.0f}, 20.0f);
+    runtime.motionVelocity(&turning);
+    CHECK(turning.position.y == 0.0f);
+    CHECK(fabsf(turning.yaw - 14.0f) < 1e-5f);
+}
+
 // The animation wrap is the C# Wrap's exact reduction: a positive divisor
 // leaves the first remainder in (-count, count), so one conditional add is
 // enough. Zero or a negative count is the C# divide-by-zero path; the port
@@ -4139,6 +4348,10 @@ int main() {
     printf("PASS RaycastUsesCurrentAndSecondArena\n");
     testTurnAndJumpTurnsLaunchesAndStopsOnFloor(&levelData, &cmi, &bank);
     printf("PASS TurnAndJumpTurnsLaunchesAndStopsOnFloor\n");
+    testChaseFliesAtTheRuntimeTarget(&levelData, &cmi, &bank);
+    printf("PASS ChaseFliesAtTheRuntimeTarget\n");
+    testFormationFollowersKeepTheirSlot(runtime);
+    printf("PASS FormationFollowersKeepTheirSlot\n");
     testKnockDownSpendsTheCounterAndOpensTheTimer();
     printf("PASS KnockDownSpendsTheCounterAndOpensTheTimer\n");
     testAirborneKnockDownSlamsToTheFloorTheProbeReaches(&levelData);

@@ -135,6 +135,15 @@ float signf(float value) {
     return value > 0.0f ? 1.0f : (value < 0.0f ? -1.0f : 0.0f);
 }
 
+// ScriptMath.MoveToward (ScriptMath.cs:19): step from `from` toward `to` by at most
+// `step`, landing exactly on `to` rather than overshooting it. The C# applies it to
+// raw angles as well as to distances, so this does NOT wrap an angle difference:
+// FollowFormation's yaw chase relies on the unwrapped form exactly as the oracle
+// does.
+float moveToward(float from, float to, float step) {
+    return fabsf(to - from) <= step ? to : from + signf(to - from) * step;
+}
+
 // TriangleNormal (ScriptRuntime.cs:2950): the normalized cross product of the
 // hit triangle's second and third edges, or +Z when the face is degenerate.
 Vec3 triangleNormal(const formats::Arena* arena, int32_t triangle) {
@@ -2027,11 +2036,21 @@ MdkObject* ScriptRuntime::fire(MdkObject* obj, const std::vector<formats::Script
     return shot;
 }
 
-// UpdateCommand (0x45a7d4): the walk/fly dispatch for a commanded object. Only
-// move_to (78) is dispatched by the VM so far; the stuck detect/replan is a later
-// slice and does not affect the first commanded ticks.
+// UpdateCommand (0x45a7d4): the movement-command dispatch for one object, run from
+// motionVelocity before gravity and ApplyVelocity. The C#'s switch (ObjectMotion.cs:
+// 331) has one arm per command and no default; every one of them is here now.
 void ScriptRuntime::updateCommand(MdkObject* obj) {
     switch (obj->move_command) {
+        case 1:  // FollowFormation: hold the slot command_objects gave us
+            followFormation(obj);
+            break;
+        case 6: {  // Chase (move_to_target): fly at the runtime's target, 8 above it
+            const float kChaseAbove = 8.0f;  // ObjectMotion.cs:328
+            Vec3 point = targetPosition_;
+            point.z += kChaseAbove;
+            chase(obj, point);
+            break;
+        }
         case 74:
             followAttachment(obj);
             break;
@@ -3301,6 +3320,99 @@ static Vec3 formationPosition(const MdkObject* leader, const Vec3& offset) {
     out.y = leader->position.y - offset.y * s - offset.x * c;
     out.z = leader->position.z + offset.z;
     return out;
+}
+
+// ObjectMotion.TurnTowards (ObjectMotion.cs:766): turn the yaw toward a point by at
+// most TurnSpeed × Dt, returning the angle still to turn measured BEFORE the turn.
+// The point-equals-position test is the C#'s, and it is not redundant: with it a
+// zero-length offset keeps the object's own yaw instead of atan2's arbitrary answer.
+float ScriptRuntime::turnTowards(MdkObject* obj, const Vec3& point) {
+    float targetYaw = obj->yaw;
+    if (point.x != obj->position.x || point.y != obj->position.y) {
+        targetYaw = yawTo(obj, point);
+    }
+    const float diff = wrapAngle(targetYaw - obj->yaw);
+    const float maxStep = kTurnSpeed * kTick;
+    obj->yaw = wrap360(obj->yaw + clampf(diff, -maxStep, maxStep));
+    return diff;
+}
+
+// ObjectMotion.FollowFormation (ObjectMotion.cs:929, movement command 1). The slot
+// is the leader's frame, so a turning leader swings the formation around with him.
+// The step test is LengthSquared against (MaxSpeed × Dt)², and inside it the object
+// is PLACED on the slot: the push branch below can never land exactly.
+void ScriptRuntime::followFormation(MdkObject* obj) {
+    const float kTicks = 1.0f;  // ObjectMotion.Ticks: one tick, in ticks
+    MdkObject* leader = obj->leader;
+    if (leader == nullptr || leader->dead) {
+        obj->move_command = 0;
+        return;
+    }
+    const Vec3 destination = formationPosition(leader, obj->waypoint);
+    obj->move_destination = destination;
+    const float dx = destination.x - obj->position.x;
+    const float dy = destination.y - obj->position.y;
+    const float dz = destination.z - obj->position.z;
+    const float maxStep = obj->max_speed * kTick;
+    if (dx * dx + dy * dy + dz * dz < maxStep * maxStep) {
+        obj->position = destination;
+        obj->yaw = moveToward(obj->yaw, leader->yaw, kTurnSpeed * kTick);
+        return;
+    }
+    turnTowards(obj, destination);
+    // The push is a per-tick velocity, and ApplyVelocity below multiplies it by Dt;
+    // the C# adds the unscaled heading × MaxSpeed here, so the step is one frame of
+    // MaxSpeed, not MaxSpeed × Dt.
+    const Vec3 direction = fromAngle(obj->yaw);
+    obj->push.x += direction.x * obj->max_speed;
+    obj->push.y += direction.y * obj->max_speed;
+    // The vertical is three-way: a unit per tick while a whole unit away, else the
+    // exact remaining gap so the follower lands on its slot's Z.
+    if (obj->position.z <= destination.z - kTicks) {
+        obj->push.z += kTicks;
+    } else if (obj->position.z >= destination.z + kTicks) {
+        obj->push.z -= kTicks;
+    } else {
+        obj->push.z = destination.z - obj->position.z;
+    }
+}
+
+// ObjectMotion.Chase (ObjectMotion.cs:894, movement command 6, 0x45e448): the speed
+// is in units per TICK, unlike every other movement command, and it is the object's
+// own `Speed` field carried from tick to tick — the gain and the brake are what make
+// it accelerate. The step is applied to the POSITION (no push, no friction), and the
+// object only turns when the point is ahead of it or far away: a point close and
+// behind is ignored until it comes round.
+void ScriptRuntime::chase(MdkObject* obj, const Vec3& point) {
+    const float kBehind = 90.0f;      // degrees: at or past this, do not turn
+    const float kFar = 30.0f;         // units: this far to a side overrides kBehind
+    const float kAhead = 22.5f;       // degrees: within this, gain instead of brake
+    const float kGain = 0.0444444f / 6.0f;
+    const float kMaxChase = 2.3333333f;
+    const float kBrake = 0.05f;
+    const float kMinChase = 0.3333333f;
+    const float kClimb = 0.25f;       // fraction of the step spent closing Z
+    const float kTicks = 1.0f;        // ObjectMotion.Ticks: one tick, in ticks
+    float targetYaw = obj->yaw;
+    if (point.x != obj->position.x || point.y != obj->position.y) {
+        targetYaw = yawTo(obj, point);
+    }
+    const float offAngle = fabsf(wrapAngle(obj->yaw - targetYaw));
+    float chaseSpeed = obj->speed;
+    if (offAngle < kBehind || fabsf(obj->position.x - point.x) > kFar ||
+        fabsf(obj->position.y - point.y) > kFar) {
+        turnTowards(obj, point);
+        // The gain's multiply order is the C#'s: (Ahead - offAngle) * Ticks * Gain.
+        chaseSpeed = offAngle <= kAhead
+            ? fminf(chaseSpeed + (kAhead - offAngle) * kTicks * kGain, kMaxChase)
+            : fmaxf(chaseSpeed - kTicks * kBrake, kMinChase);
+        obj->speed = chaseSpeed;
+    }
+    const float step = chaseSpeed * kTicks;
+    const Vec3 direction = fromAngle(obj->yaw);
+    obj->position.x += direction.x * step;
+    obj->position.y += direction.y * step;
+    obj->position.z = moveToward(obj->position.z, point.z, step * kClimb);
 }
 
 // C# NearTargetDestination (command 43's operand): forward/side off the target's

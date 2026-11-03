@@ -1,35 +1,32 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 47 changes no shipped behaviour. It re-pins opcode 248 from the oracle: the
-accepted mode-0 push in `golden/L3_kurt_push.txt` now carries `b=5, up=3` (was `b=0, up=0`), so the
-oracle's asymmetric frame formula and its `args[3]` lift are actually observed, and a new
-exact-float VM case pins the same operands bit-for-bit; the four `player.h`/`player.cpp` edits are
-comments. Medium rather than low because a golden's content was regenerated (provenance is the
-thing to review: it is byte-identical to the C# probe, and steps 1-19 are unchanged), and because
-review-17's High (R34-1) is still open under owner disposition, not closed.
+Risk: medium — batch 48 lands shipped behaviour: `ScriptRuntime::updateCommand` now handles movement
+commands 1 (`FollowFormation`) and 6 (`Chase`), which two already-ported dispatches (opcode 4's
+formation command, opcode 6 `move_to_target`) have been setting with no effect at all. Bounded and
+pinned — two new `vm_tests` cases whose every number was derived from the C# before the port ran, 15 of
+16 mutants killed, all 460 goldens byte-identical because neither command fires in levels 3-8 — but it
+is new motion in the object pass, so it is not low. Review-18's High (F1) is still open under owner
+disposition, not closed.
 
-Last updated: 2026-11-03 (**batch 47** — review-17 remediation. **R34-2 (Medium) fixed**: both of
-its mutants were first reproduced surviving the golden *and* the VM suite on the unmodified tree,
-then killed — the golden now exercises every operand of the mode-0 branch and
-`testPushKurtModeZeroFrameAndLiftAreExact` asserts `x == -18.981785f`, `y == -16.029478f`,
-`z == 3.0f` from the probe's round-trip output. **R34-3/R34-4 (Low) fixed** (four decayed
-comments, one of which claimed the C# pushes Kurt without knocking him down — false,
-`ScriptRuntime.cs:2850` calls `Kurt.KnockDown(push)`; and the "four mutants" miscount). **R34-1
-(High) and R34-5 (Low) are owner-only** and remain open: they concern the unstaged harness files
-and wiring `--self-test` into `tools/check.sh`, and both require editing a file that is in the
-integrity gate's own `PROTECTED` list. Narrative: `docs/PROGRESS_LOG.md`, "Iteration 75".
-Previous batches are one "Iteration N" section back each: 46 = 74, 45 = 73, 44 = 72, 43 = 71,
-42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61,
-32 = 60.
+Last updated: 2026-11-03 (**batch 48** — review-18 remediation plus the last two movement-command arms.
+**F1 (High) and F2/F3/F4/F5/F6 are all owner-only**, and each was reproduced before being dispositioned:
+in a clone of the committed tree a `PROTECTED` edit fails the gate, editing a historical frame sidecar
+fails it ("history is immutable"), and the committed `gates_batch_integrity.py` does not even accept
+`--each-commit` — that whole recovery exists only in the unstaged owner diff, so there is nothing in the
+committed tree for a batch to change. `chase`/`followFormation`/`turnTowards`/`moveToward` and their
+oracle-derivation and 16-mutant tables: `docs/PROGRESS_LOG.md`, "Iteration 76". Previous batches are one
+"Iteration N" section back each: 47 = 75, 46 = 74, 45 = 73, 44 = 72, 43 = 71, 42 = 70, 41 = 69,
+40 = 68, 39 = 67, 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
 
 **Still owner-gated and still uncommitted in the tree** (so batches stage only their own paths and
 never `git add -A`): `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
 `tools/runner/gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`.
-Review-10 F1/F2/F3/F6, review-12 B, review-13 R13-B, review-15 F1/F2, review-16 V16-1 and
-review-17 R34-1/R34-5 are all the same hazard under new numbers: the `--each-commit` recovery that
-replaces the guard's fail-closed path, a green tree that depends on two uncommitted files, the
-un-invoked `--self-test`, and `--each-commit` without `--base` being a no-op. All owner tasks
-(1)/(13).
+Review-10 F1/F2/F3/F6, review-12 B, review-13 R13-B, review-15 F1/F2, review-16 V16-1,
+review-17 R34-1/R34-5 and review-18 F1-F6 are the same hazard under new numbers: the `--each-commit`
+recovery that replaces the guard's fail-closed path, a green tree that depends on uncommitted files, the
+un-invoked `--self-test`, `--each-commit` dropping the one-frame-per-**batch** rule, `--staged` accepting
+what the range check rejects, and a historical sidecar whose counts are wrong and that the immutability
+rule will not let a batch correct. All owner tasks (1)/(9)/(13).
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -182,7 +179,7 @@ part** where batches 14-47 changed it. The headlines a batch can break:
   libm trig and its `@vfp-exempt R6` pin; `sprites` is a REQUIRED constructor argument;
   `mdk_render_draw_mesh` **queues** and the backend buckets by `Pass` in queue order — the oracle's
   order, not a backend's (P3). `update_rolling()` runs **before** `previous_position = position`,
-  where the C# does, and `mdk::create_from_axis_angle` is **bit-exact against .NET 10**.
+  where the C# does, and `mdk::create_from_axis_angle` is **bit-exact against .NET 10**. **Every movement command the C#'s `UpdateCommand` dispatches now has an arm: 1 formation, 6 chase, 15 alarm, 30 chain, 43/78/197 walk-or-fly, 61 projectile, 74 attachment, 88 forward, 229 jump — commands 1 and 6 landed in batch 48 (`followFormation`, `chase`, over the new `turnTowards`/`moveToward`), after their dispatches had set `move_command` with nothing reading it; neither fires in levels 3-8.**
 - **Loop harness:** fail-closed on every way a mandatory review can fail to happen, fail-*forward*
   where the obligation is recoverable; every transition goes through `state_write` (one temp file,
   one rename, a checked status); the obligation is created **before** the thing it must survive;
@@ -192,31 +189,33 @@ part** where batches 14-47 changed it. The headlines a batch can break:
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 47)
+## Verified on this tree (batch 48)
 
-Narrative, probe recipe and the eleven-mutant table: `docs/PROGRESS_LOG.md`, "Iteration 75".
-Goldens **exit 0** (`All cases match the oracle.`, **460 PASS / 0 FAIL / 0 SKIP**; 459 in the
-parent batch, +1 is the new VM case); `tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`, with
+Narrative, the oracle-derivation table and the 16-mutant run: `docs/PROGRESS_LOG.md`, "Iteration 76".
+Goldens **exit 0** (`All VM unit tests match the oracle.` + `All cases match the oracle.`, **462 PASS /
+0 FAIL**; 460 in the parent batch, +2 are `ChaseFliesAtTheRuntimeTarget` and
+`FormationFollowersKeepTheirSlot`); `tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`:
 `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math` clean,
 `audit_r11_idiv` no candidates, `gates_core_parity` clean, `gates_smdh` SKIPPED, `gates_frames
-PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the pinned `cpp=`, so `reference.sha256`
-was NOT regenerated — `BATCH INTEGRITY: PASS`); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no
-warnings); `cmake --build build-linux --target mdk` **exit 0**. `golden/L3_kurt_push.txt` (361
-lines, sha256 `39d21a6b…`) is byte-identical to the regenerated C# probe output with the step-20
-push at `a=20 b=5 up=3` yaw 37 (`vert=3.0000 vel=-18.9818,-16.0295`), and steps 1-19 are unchanged
-from the previous golden, so no historical value was rewritten. Eleven mutants were built and run:
-nine die on the golden; the two a four-decimal print cannot see (live feet vs the runtime snapshot,
-divide vs reciprocal-multiply) die on the exact-float VM assertions. Still NOT pinned by any
-golden: a shipped frontend's mixer wiring (no frontend has an audio device, none draws `Knocked`),
-the fall-out variant of death, the firing step frames, the sprite frame `pick()` selects from
-`chuteClosing` (6b), the flip's leftover frame, the white flash's other writers, and feet finer
-than 1/64 unit (owner task 15). **No emulator run and no Old-3DS hardware run: Old-3DS timing
-stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only windowed run was the
-frame capture, on `DISPLAY=:99` (P7). Frame `docs/frames/2026-11-03-kurt-push-pinned.png` +
-`.txt` — `1.240 / 247 / 0.1819`, byte-identical to its eleven predecessors, because at frame 1 no
-script has run. No gate was pinned, relaxed or edited. Review-17's High R34-1 stays owner-only and
-open; the external review of this batch is due after commit, and no review of the new diff is
-claimed complete.
+PASS L3_f1.bmp sha=58615fc85d02e009` — `reference.sha256` NOT regenerated — `BATCH INTEGRITY: PASS`);
+`make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk` **exit 0**. No
+golden line changed: commands 1 and 6 do not fire in levels 3-8, which is why the pin is a synthetic
+`vm_tests` pair and why the frame is unchanged. Every expected value was computed from the C# formula
+first (a float32 model of `ObjectMotion.cs`) and the port matched it unedited; 15 of 16 mutants die on
+the new tests, and the one that survived had mutated the **walk** arm's inline turn instead — re-run
+against the corpus it fails 63 goldens, so that site is pinned too. Batch 47's own record (the
+`L3_kurt_push` re-pin, its eleven mutants and its frame) is in "Iteration 75"; what it listed as still
+unpinned is unchanged. Still NOT pinned by any golden: a shipped frontend's mixer wiring (no frontend
+has an audio device, none draws `Knocked`), the fall-out variant of death, the firing step frames, the
+sprite frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white flash's
+other writers, and feet finer than 1/64 unit (owner task 15). **No emulator run and no Old-3DS hardware
+run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only windowed
+run was the frame capture, on `DISPLAY=:99` (P7).
+Frame `docs/frames/2026-11-03-movement-commands-1-6.png` + `.txt` — `1.240 / 247 / 0.1819`,
+byte-identical (`6646adf1…`) to the 55 PNGs that precede it, because at frame 1 no script has run. No
+gate was pinned, relaxed or edited. Review-18's High F1 stays owner-only and open; the external review of
+this batch is due after commit, and no review of the new diff is claimed complete.
+
 
 ## Standing open items
 

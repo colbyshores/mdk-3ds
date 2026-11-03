@@ -445,10 +445,25 @@ private:
     // The movement-command half of ObjectMotion.Update (UpdateCommand 0x45a7d4):
     // walks or flies a commanded object toward its waypoint, adding to push before
     // gravity/ApplyVelocity, then watches for a stall (DetectStuck) and answers it
-    // (HandleStuck: replan once, slide through, or give up). Commands 1/6/61/74/
-    // 88/30/15 are their own slices; 229 is handled above by turnAndJump and
-    // by the command's landing check.
+    // (HandleStuck: replan once, slide through, or give up). Every command the C#
+    // dispatches has an arm here now: 1 formation, 6 chase, 43/78/197 walk-or-fly,
+    // 61 projectile, 74 attachment, 88 forward, 30 chain, 15 alarm, and 229, which
+    // turnAndJump launches and its landing check ends.
     void updateCommand(MdkObject* obj);
+    // ObjectMotion.TurnTowards (ObjectMotion.cs:766): turn the yaw toward a point by
+    // at most TurnSpeed × Dt, and return the angle that was still to turn BEFORE the
+    // turn — Walk and Fly read that return value for their speed target.
+    float turnTowards(MdkObject* obj, const Vec3& point);
+    // FollowFormation (ObjectMotion.cs:929, movement command 1): keep the slot
+    // command_objects gave the object around its leader. A follower whose leader is
+    // gone lets go (command 0); one within one step is placed exactly on the slot and
+    // turns toward the leader's heading; the rest push along the yaw toward it.
+    void followFormation(MdkObject* obj);
+    // Chase (ObjectMotion.cs:894, movement command 6, move_to_target): fly at a
+    // point at a speed in units per TICK (not per second), gaining speed when the
+    // point is ahead, braking when it is to the side, and climbing a quarter of the
+    // step toward the point's Z.
+    void chase(MdkObject* obj, const Vec3& point);
     // ObjectMotion.HandleStuck (0x45b6c8): the stuck object's once-replan, slide,
     // or give-up, driven by how far it turned this update (degrees).
     void handleStuck(MdkObject* obj, float turned);

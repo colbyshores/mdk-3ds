@@ -10491,3 +10491,88 @@ The two mutants that survive the golden are exactly the two the exact-float VM a
 * No emulator run. No Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**. The only windowed run was the frame capture, on `DISPLAY=:99` (P7), rendered by `tools/publish_frame.sh kurt-push-pinned`.
 
 Frame `docs/frames/2026-11-03-kurt-push-pinned.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical to its eleven predecessors (`6646adf1…`): frame 1 is before any script runs, so no push can appear in it. The sidecar says that in its own text and points at the golden and this narrative as the real evidence.
+
+## Iteration 76 — batch 48: the movement-command dispatch is complete — Chase (command 6) and FollowFormation (command 1) (review-18: every finding owner-owned, each reproduced first)
+
+### Prior-solution lookup
+
+* **Pi knowledge (`mdk-sdl`)** — searched for `movement command updateCommand chase formation follow object motion commands not ported`. The top hits were the oracle itself: `src/Mdk.Game/Scripts/ObjectMotion.cs`'s `UpdateCommand` switch (with `case 1: FollowFormation` and `case 6: Chase(obj, target with { Z = target.Z + ChaseAbove })`), `MdkObject.cs`'s own comment on `MoveCommand` ("1 formation, 6 chase"), `ScriptRuntime.CommandObject`'s `case 1`, and the port's `formationPosition` + `script_runtime.h`'s `updateChain` block. So the KB independently confirmed both the gap and the exact oracle text before anything was written. Verified against `src/Mdk.Game/Scripts/ObjectMotion.cs:326-392, 766-778, 893-961` and `ScriptMath.cs:19` before acting.
+* **Obsidian** — no MCP server is exposed in this Pi session; read the vault read-only at `/mnt/nas/Vaults/port-docs`. `grep -rl` for `FollowFormation`, `move_to_target`, `ObjectMotion` and `updateCommand` returns nothing, and `10-projects/mdk-sdl/` holds only `ralph-pi-mandarine-setup.md`. Nothing to reuse.
+* **Cognee MCP** — not exposed in this session. Recorded unavailable; **not** consulted, and no conclusion here rests on it.
+
+### Review-18 remediation
+
+The newest review is `logs/ralph-pi/run-20261102-004416/review-18.md` (window `345250e8..26242696` + the uncommitted owner harness). It found **no Critical/High in shipped code** — it re-derived the push golden from the oracle probe itself and accepted it. Every finding is about the loop harness, and every one of them lives in a file this batch may not edit. Each was reproduced before being dispositioned.
+
+* **F1 (High, four `PROTECTED` files dirty with no recorded approval, and `--each-commit` promoted into the gate's required markers) — confirmed, owner-only, unchanged by this batch.** Reproduced in a scratch clone of the committed tree (`/tmp/mdk-pi/gt`, gate copied from HEAD): committing an `AGENTS.md` edit yields `BATCH INTEGRITY: FAIL / protected contract changed without owner approval: AGENTS.md`, exit 1. The reviewer's mechanism is exactly right, and the same clone proves the *sharper* point: the committed `gates_batch_integrity.py` does not even accept `--each-commit` (`error: unrecognized arguments: --each-commit`) — the whole `validate_range`/`validate_commit_chain`/`self_test`/`--each-commit` machinery exists only in the unstaged diff. So the policy the reviewer objects to is not in the committed tree at all, and the only two remedies it offers (record the sign-off, or revert the marker) both mean editing `tools/runner/gates_batch_integrity.py`, which is inside its own `PROTECTED` list (line 19), or `AGENTS.md` / `ralph/builder.md` / `ralph-pi.sh`, all owner-gated and already recorded as the owner's unstaged work. This batch stages none of them; its committed diff contains no contract file. Same hazard as review-10 F1/F2, 12 B, 13 R13-B, 15 F1/F2, 16 V16-1 and 17 R34-1 — owner tasks (1) and (13).
+* **F2 (Medium, `--each-commit` drops the one-frame-per-**batch** rule) — confirmed, owner-only.** The reviewer's reading of the unstaged code is correct: `validate_commit_chain` re-runs `validate_range` per commit, so N commits × 1 frame each passes where the aggregate rejects N frames. Deciding whether the rule is per batch or per commit is the owner's (it is the same sign-off as F1, and CONTINUATION already says `--each-commit` belongs out of `required` until then). Not builder-fixable: the file is `PROTECTED`.
+* **F3 (Medium, `--staged` accepts two staged PNGs that the range check then rejects) — confirmed, owner-only**, same file. Its failure scenario needs a `git add -A` commit; this loop's batches stage their own paths precisely because the owner's untracked frame pair is still in the tree, and this batch did.
+* **F4 (Low, the push sidecar's "eleven predecessors" and "three edits" counts are wrong) — confirmed, and not builder-fixable either.** The reviewer's counts are right (55 committed PNGs carried `6646adf1…`, and the diff had four comment blocks, not three). Reproduced in the same clone: editing `docs/frames/2026-11-03-kurt-push-pinned.txt` and committing it gives `BATCH INTEGRITY: FAIL / batch modifies/removes historical measurement docs/frames/2026-11-03-kurt-push-pinned.txt; history is immutable`, exit 1. So "correct it inside this batch's own sidecar" is a gate violation by the gate's own rule; whether published sidecars are correctable in place is owner task (9). This batch's own sidecar is machine-generated by `tools/publish_frame.sh` and carries no hand-written counts, which is the lesson taken from F4.
+* **F5 (Low, `--self-test` returns before the static-invariant block) — owner task (13), unchanged.** Wiring it means editing `tools/check.sh`, which is `PROTECTED`.
+* **F6 (Low, a recovered batch logs the aggregate FAIL and the recovery PASS, and `status` tails the stale FAIL) — owner-only**, in `ralph-pi.sh`, which is owner-gated.
+
+### What landed
+
+`ScriptRuntime::updateCommand` had no arm for two of the commands the C# dispatches, so two ported dispatches silently did nothing. Both are now ports of their oracle function, and the switch covers every arm `ObjectMotion.UpdateCommand` (ObjectMotion.cs:331) has.
+
+* `mdk_core/src/scripts/script_runtime.cpp`
+  * `moveToward` — `ScriptMath.MoveToward` (`ScriptMath.cs:19`), the exact-stop step. Deliberately unwrapped, because the C# applies it to raw angles.
+  * `turnTowards` — `ObjectMotion.TurnTowards` (`ObjectMotion.cs:766`): turn by at most `TurnSpeed × Dt`, return the angle still to turn *before* the turn. Kept as its own function rather than a fifth inline copy of those four lines.
+  * `followFormation` — movement command 1 (`ObjectMotion.cs:929`): a gone leader clears the command; the slot is `formationPosition(leader, waypoint)`; inside `MaxSpeed × Dt` (the C#'s `LengthSquared` test) the object is **placed** on the slot and its yaw steps toward the leader's by at most 6°; outside it the push is the unscaled `FromAngle(yaw) * MaxSpeed` with the three-way vertical (±1 per **tick** a whole unit away, else the exact gap).
+  * `chase` — movement command 6 (`ObjectMotion.cs:894`, 0x45e448): the speed is `Speed` **units per tick**, applied to the position, not through `Push`; it turns and gains only when the point is ahead (`offAngle < 90`) or more than 30 units to a side, gains `(22.5 - offAngle) × Gain` inside 22.5° and brakes `0.05` otherwise, clamped to `[0.3333333, 2.3333333]`, and climbs `MoveToward(z, point.z, step × 0.25)`.
+  * `updateCommand` gained `case 1` and `case 6` (the C#'s `ChaseAbove = 8` on the runtime's target), and its header comment no longer claims only `move_to` is dispatched.
+* `mdk_core/src/scripts/script_runtime.h` — the three declarations, and the `updateCommand` comment now lists every arm instead of deferring 1/6/61/74/88/30/15 to "their own slices".
+* `tests/scripts/vm_tests.cpp` — `testChaseFliesAtTheRuntimeTarget` and `testFormationFollowersKeepTheirSlot`, plus the `startFollower` helper.
+* `docs/OPCODE_COVERAGE.md` — opcode 6 leaves the partial table (14 → 13 partial, 197 → 198 complete), with a batch note. **No dispatch count changed**: both dispatches were already ported; what was missing was their effect.
+
+Neither command fires in the corpus: all 460 goldens are byte-identical, so nothing in levels 3-8 reaches these arms inside the pinned window. That is exactly why the pin had to be synthetic — the same route the other 13 corpus-unreachable opcodes took.
+
+### Every expected value was derived from the oracle first
+
+The assertions are not the port's output. Each number came from a float32 model of the C# formula written from `ObjectMotion.cs` alone (`/tmp/mdk-pi/model.py`: the C# `DegreesToRadians` factor, `Wrap360`/`WrapAngle`, `yawTo`'s fmod form, `MoveToward`, the gain's left-to-right multiply order), and the port matched it on the first run, unedited.
+
+| Case | From the C# | Port |
+|---|---|---|
+| chase, point straight ahead, speed 1 | speed/step `1.1666665`, `y=1.1666665`, `z=10.2916670` | same |
+| chase ×30 | speed `== 2.3333333` (the clamp, exactly) | same |
+| chase ×100 | `z == 28.0` exactly (`MoveToward` lands) | same |
+| chase, 90° off and 10 away | no turn, no brake: `x=2.0`, speed `2.0` | same |
+| chase, 90° off and 40 away | yaw `354`, speed `1.95`, `x=1.9393177`, `y=-0.2038309` | same |
+| chase, astern and far ×4 | yaw `336`, speed `== 0.3333333` (the floor) | same |
+| formation, 40 units from the slot | slot `(10,0,0)`, yaw `84`, pos `(0.17421404, -38.3424644, 0)` | same |
+| formation, 1 unit below / above / ½ below the slot | `z = -4.9666667 / 4.9666667 / 0.4833333` | same |
+| formation, inside one step, yaw 4 / 20 | placed on the slot, yaw `0` / `14` | same |
+
+### Mutation table, as run (16 mutants built and run; 15 killed)
+
+| Mutant | Killed by |
+|---|---|
+| chase step `speed * Dt` instead of `* Ticks` | 6 checks (the per-tick trap) |
+| chase turn gate without the two `> Far` overrides | 7 checks (the "far to the side" case) |
+| `MaxChase` clamp dropped | the ×30 exact-clamp assert |
+| `MinChase` floor dropped | 2 checks (the astern floor) |
+| climb uses the whole step, not `× 0.25` | the `z=10.2916670` assert |
+| gain/brake branches swapped | 10 checks |
+| chase Z dropped entirely | 2 checks |
+| formation ignores a dead leader | 2 checks (the orphan) |
+| formation always takes the snap branch (step test removed) | 5 checks |
+| formation vertical uses `Dt` instead of `Ticks` | the `z=-4.9666667` assert |
+| formation snap sets yaw to the leader's (no `MoveToward`) | the yaw-14 assert |
+| formation snap does not place the object | 2 checks |
+| formation middle Z arm returns 0 | the `z=0.4833333` assert |
+| formation push scaled by `Dt` | 2 checks |
+| `turnTowards` clamps nothing (instant turn) | 9 checks |
+| `turnTowards` drops the own-position guard (`atan2(0,0)`) | 2 checks (the point directly overhead) |
+
+One further mutant attempt (`M12`) was mis-targeted: its anchor text matched the **walk** arm's inline copy of the same clamp rather than the new helper, and `vm_tests` alone did not notice. Re-run against the full golden suite it is killed decisively — `make -C tests/scripts` → **63 FAIL, exit 2** — so the walk arm's turn clamp is pinned by the corpus, not unpinned. The source was restored from a pre-mutation snapshot and re-verified byte-identical before the gates were run.
+
+### Gates, as run
+
+* `make -C tests/scripts` — **exit 0**, `All VM unit tests match the oracle.` and `All cases match the oracle.`, **462 PASS / 0 FAIL** (460 in the parent batch; the +2 are `PASS ChaseFliesAtTheRuntimeTarget` and `PASS FormationFollowersKeepTheirSlot`). No golden line changed.
+* `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes` 0 violations, `gates_vfp` 0 blockers, `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity` both targets link the same core, `gates_smdh` **SKIPPED** (no built `.cia`), `gates_frames` `PASS L3_f1.bmp sha=58615fc85d02e009` — `tests/frames/reference.sha256` untouched, `gates_batch_integrity` `BATCH INTEGRITY: PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`.
+* `cmake --build build-linux --target mdk` — **exit 0**, `[100%] Built target mdk`.
+* No gate, test or golden was relaxed; no protected file was touched.
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**. The only windowed run was the frame capture on `DISPLAY=:99` (P7) via `tools/publish_frame.sh movement-commands-1-6`.
+
+Frame `docs/frames/2026-11-03-movement-commands-1-6.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical (`6646adf1…`) to the 55 committed PNGs that precede it: frame 1 is before any script runs, so no commanded object can appear in it. The sidecar carries no hand-written counts (review-18 F4).
