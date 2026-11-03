@@ -3893,6 +3893,38 @@ void testPushKurtDispatchesDecodedListToPlayer(LevelData* levelData, const Cmi* 
     CHECK(orderedVelocity.y == -120.35282897949219f);
 }
 
+// The exact-float twin of the golden's step 20, and the reason it exists is a real one:
+// the golden prints four decimals, and with operands whose b and up are both zero the
+// oracle's asymmetric frame formula, its args[3] lift, and the "obvious" alternatives all
+// print the same thing. Two mutants -- "correct" the formula into a real rotation, or read
+// the lift from args[2] instead of args[3] -- survived the whole golden and the whole VM
+// suite until this case was written with every operand non-zero. These are exact equality
+// on the C# probe's own round-trip output for this operand list.
+void testPushKurtModeZeroFrameAndLiftAreExact(LevelData* levelData, const Cmi* cmi,
+                                              audio::SoundBank* bank) {
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    player.feet = runtime.kurtPosition();
+    scripts::MdkObject obj;
+    obj.yaw = 37.0f;
+    obj.position = runtime.kurtPosition();
+
+    // readOp248Args with mode 0 reads TWO floats after a: [0, a, b, up]. The arity is
+    // part of what is pinned -- a fixed three-element list would feed b as the lift.
+    Code code;
+    code.u8(kPushKurt).u8(0).f32(20.0f).f32(5.0f).f32(3.0f).end();
+    runProgram(runtime, code, &obj);
+
+    CHECK(!sawUnimplemented(kPushKurt));
+    CHECK(player.state() == Kurt::Knocked);
+    const Vec3 velocity = player.velocity();
+    // x = -a*c - b*s and y = -b*c - a*s at yaw 37 (asymmetric: swapping a and b moves
+    // both), and the lift is args[3]'s 3, NOT args[2]'s 5.
+    CHECK(velocity.x == -18.981785f);
+    CHECK(velocity.y == -16.029478f);
+    CHECK(velocity.z == 3.0f);
+}
+
 // ArenaSpace::floor's own contract, the parts a schedule cannot show: it answers the
 // trigger's question (a floor below, and where it is), and when nothing is found it leaves
 // the out point at the segment's own end, which is the value the C# initialises `point`
@@ -4115,6 +4147,8 @@ int main() {
     printf("PASS FloorProbeAnswersWhatTheTriggerAsks\n");
     testPushKurtDispatchesDecodedListToPlayer(&levelData, &cmi, &bank);
     printf("PASS PushKurtDispatchesDecodedListToPlayer\n");
+    testPushKurtModeZeroFrameAndLiftAreExact(&levelData, &cmi, &bank);
+    printf("PASS PushKurtModeZeroFrameAndLiftAreExact\n");
 
     // The depth layers and the depth pull: the C#'s LayerTests.cs and
     // DepthPullTests.cs, run here.

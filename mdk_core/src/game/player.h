@@ -120,22 +120,23 @@ public:
     Vec3 right() const;
 
     // C# Kurt.Velocity (Kurt.cs:132-133), in u/s: the walking terms, the
-    // horizontal knock-down push and the vertical speed. The combat state
-    // machine that writes the push is not ported, but the push state and its
-    // drain are, so a future writer cannot silently omit this term.
+    // horizontal knock-down push and the vertical speed. The push is live state, not
+    // a write-only field: ScriptRuntime::pushKurt (opcode 248) is its only non-zero
+    // writer in the whole oracle, and drainKnockdownPush is its only reader that
+    // lowers it, so a port that drops this term moves a shoved Kurt back.
     Vec3 velocity() const;
-    // The velocity half of C# Kurt.KnockDown (Kurt.Combat.cs:173-177): add the
-    // horizontal knock-down push in u/s. It stays separate from knockDown below
-    // because the C#'s push_kurt (opcode 248, deferred) pushes Kurt WITHOUT knocking
-    // him down.
+    // The velocity half of C# Kurt.KnockDown (Kurt.Combat.cs:177, `_push += push`),
+    // split out so the push term can be pinned on its own. Every push the oracle adds
+    // goes through knockDown: push_kurt (opcode 248, ScriptRuntime.cs:2850) hands it a
+    // shove and Kurt.UpdateKnockDamage (Kurt.Combat.cs:225) hands it Vector2.Zero.
     void addKnockdownPush(const Vec2& push);
 
     // C# Kurt.KnockDown (Kurt.Combat.cs:173, state 901): the counter is spent, he is
     // invulnerable for KnockdownInvulnerability seconds, the push is added, the chute
     // closes, and K_BANG starts. The C#'s StopFiring() is inert here for the reason
     // Player::land records for its own call to it -- nothing in this port fires.
-    // updateKnockDamage calls it with a zero push, which is all the C# can hand it
-    // until push_kurt (opcode 248) lands.
+    // The push argument is non-zero only from ScriptRuntime::pushKurt (opcode 248);
+    // updateKnockDamage passes zero, exactly as Kurt.Combat.cs:225 does.
     void knockDown(const Vec2& push);
 
     // One fixed step of delta seconds (the C# Kurt.Update: turning, the walk

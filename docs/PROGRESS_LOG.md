@@ -10434,3 +10434,60 @@ New 362-line `tests/scripts/golden/L3_kurt_push.txt` is byte-identical to oracle
 * Focused mutation checks: five golden-level mutants were killed (already-down guard at step 40, dead guard at step 355, asymmetric formula at step 20, zero-distance fallback at step 240, and omitting the knockDown call at step 20); two additional VM-test mutants were killed (live Player feet and reciprocal-multiply normalization order, failing exact-float assertions).
 
 Frame `docs/frames/2026-11-03-kurt-push.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, unchanged frame-1 image. Capture produced after final code/test edits at `DISPLAY=:99` by `tools/publish_frame.sh kurt-push`; the pinned instant contains neither the scripted push nor a flash. No emulator run. No actual Old-3DS hardware run: Old-3DS timing remains UNMEASURED and Citro3D picture remains UNVERIFIED (P6).
+
+## Iteration 75 — batch 47: the push golden now actually pins the push (review-17 R34-2 fixed; R34-3/R34-4 swept; R34-1/R34-5 owner-owned)
+
+### Prior-solution lookup
+
+* **Pi knowledge (`mdk-sdl`)** — searched for `push_kurt opcode 248 knock-down push golden mode 0 object frame formula lift`. The hits were the C# `ScriptVm.cs` dispatch chunk, `script_opcodes.cpp`'s row 248, `docs/OPCODE_COVERAGE.md`, `docs/OPEN_ITEMS.md`, and — usefully — the stale `player.h` comment that still described opcode 248 as deferred, which is review-17 R34-3's defect surfaced independently. Treated as a lead and verified against `src/Mdk.Game/Scripts/ScriptRuntime.cs:2824-2852` and `src/Mdk.Game/Kurt/Kurt.Combat.cs:173-180, 212-232` before acting on any of it.
+* **Obsidian** — no MCP server is exposed in this Pi session; read the vault read-only at `/mnt/nas/Vaults/port-docs`. `grep -rl push_kurt` over the vault returns nothing, and no note covers the mode-0 operand arity. Nothing to reuse.
+* **Cognee MCP** — not exposed in this session. Recorded unavailable; **not** consulted, and no conclusion here rests on it.
+
+### Review-17 remediation
+
+The newest review is `logs/ralph-pi/run-20261102-004416/review-17.md` (window `e3f493dd..345250e8` + the uncommitted owner harness). Each finding was investigated before anything changed.
+
+* **R34-1 (High, uncommitted contract/orchestrator edits) — not builder-remediable; recorded, not changed.** The finding is about four **unstaged** files (`AGENTS.md`, `ralph-pi.sh`, `ralph/builder.md`, `tools/runner/gates_batch_integrity.py`) and two untracked frame files. Evidence that this is the owner's in-flight harness work and not this batch's: (a) the reviewer's own confidence line says "Confirmed (facts); authorship undetermined" and its open question 1 concedes the record attributes them to the owner; (b) `docs/CONTINUATION.md` and Iteration 74 already carry them as owner-gated and unstaged; (c) **every** remediation it recommends is owner-only by the rule the reviewer itself invokes — `MDK_OWNER_APPROVED` is the owner's to set, adding `ralph-pi.sh` to `PROTECTED` means editing `tools/runner/gates_batch_integrity.py`, which is inside its own `PROTECTED` list (line 18), and wiring `--self-test` means editing `tools/check.sh`, `PROTECTED` at line 16; (d) reverting someone else's unstaged work is not a builder's call. This batch stages none of them; the committed diff contains no contract file. Same question as review-10 F1 / 11 R11-1 / 12 B / 13 R13-B / 15 F1 / 16 V16-1 — owner tasks (1) and (13).
+* **R34-2 (Medium, the mode-0 `b` term and the `args[3]` lift were unpinned) — CONFIRMED, FIXED, and pinned twice.** Confirmed by construction and by execution before touching anything: the only **accepted** mode-0 push in the schedule was step 20 with `b=0, up=0`, so `-b*c - a*s` reduces to `-a*s` and `args[3]` to `0`. Built the reviewer's two mutants against the unmodified tree and both **survived the golden and the whole VM suite** (`m1-standard-rotation: SURVIVED`, `m2-mode0-lift-from-args2: SURVIVED`, each with `vm_tests exit=0`). The fix is the reviewer's own: the step-20 entry in `kPushSets` is now `{20, 0, 20.0f, 5.0f, 3.0f, 37.0f, 0, 0}` — every operand of the frame branch non-zero — in `tests/scripts/tick1.cpp` **and** in the C# probe's twin schedule, and the golden was re-derived from the probe (`/tmp/mdk-pi/b47/oracle_push.txt`, 361 lines, sha256 `39d21a6b…`), not from the port: `cmp` says the C++ `tick1 dump push 3 360` and the C# probe output are byte-identical, and steps 1-19 (before the push) are unchanged from the previous golden, so nothing historical was silently rewritten — the header line carries the schedule both sides ran. A second durable pin was added in the repository itself: `testPushKurtModeZeroFrameAndLiftAreExact` in `tests/scripts/vm_tests.cpp` runs real opcode-248 bytecode with the mode-0 arity `[0, a, b, up]` and asserts **exact float equality** on the probe's round-trip values (`x == -18.981785f`, `y == -16.029478f`, `z == 3.0f`), so the arity and the asymmetry no longer depend on a four-decimal printout.
+* **R34-3 (Low, three comments still called 248 deferred, one of them falsely) — FIXED.** `player.h`'s `velocity()` note no longer claims the push has no writer; `addKnockdownPush`'s note no longer claims the C# "pushes Kurt WITHOUT knocking him down" (it is false — `ScriptRuntime.cs:2850` calls `Kurt.KnockDown(push)`), and now says the split exists because `KnockDown` is the oracle's only push writer, with `Kurt.Combat.cs:225` handing it `Vector2.Zero`; `player.h`'s `knockDown` note no longer says "until push_kurt lands"; and `player.cpp`'s zero-push call site in `updateKnockDamage` now names itself as the C#'s own zero rather than a placeholder for a deferred opcode. Comments only — no behaviour moved.
+* **R34-4 (Low, "four mutants" contradicted the same document) — FIXED.** The record now says five golden mutants plus two exact-float VM mutants for batch 46, and this batch's own count is stated below.
+* **R34-5 (Low, nothing invokes `gates_batch_integrity.py --self-test`) — owner task (13), unchanged.** Wiring it means editing `tools/check.sh`, which is owner-protected; it stays on the owner list rather than being "fixed" by touching a protected file.
+
+### What landed
+
+No shipped behaviour changed. The batch is the pin, plus the comments that had decayed around it.
+
+* `tests/scripts/tick1.cpp` — the step-20 `kPushSets` entry now carries `b=5, up=3`, and the schedule comment says why every operand of the frame branch has to be non-zero.
+* `tests/scripts/golden/L3_kurt_push.txt` — re-derived from the C# oracle probe, byte-identical to it (361 lines, sha256 `39d21a6b…`). Step 20 now reads `vert=3.0000 … vel=-18.9818,-16.0295`; the refused pushes at 40 and 355, the away push and lift at 130, and the zero-distance `+X` fallback at 240 all still land in the states their comments claim (checked in the regenerated output, not assumed).
+* `tests/scripts/vm_tests.cpp` — `testPushKurtModeZeroFrameAndLiftAreExact`, the exact-float mode-0 case.
+* `mdk_core/src/game/player.h`, `mdk_core/src/game/player.cpp` — the four stale comments of R34-3.
+
+### Mutation table, as run (11 mutants, each built and run against the tree)
+
+| Mutant | Killed by |
+|---|---|
+| `y = -a*s + b*c` (the "standard rotation" fix) | golden line 21 **and** `velocity.y` exact assert |
+| mode-0 lift read from `args[2]` | golden line 21 (`vert=5.0000`) **and** `velocity.z` exact assert |
+| the `b` term dropped | golden line 21 **and** both exact asserts |
+| `a`/`b` swapped in the frame formula | golden line 21 **and** both exact asserts |
+| `y = -a*c - b*s` (symmetric copy) | golden line 21 **and** `velocity.y` exact assert |
+| guard's `Knocked` arm removed | golden line 41 |
+| guard's health arm removed | golden line 356 |
+| live feet instead of the runtime's `KurtPosition` | exact-float VM asserts (survives the golden — the four-decimal print cannot see one ULP) |
+| zero-distance fallback removed | golden line 241 |
+| push added without `knockDown` | golden line 21 and the VM state asserts |
+| normalize by reciprocal-multiply | exact-float VM assert (survives the golden) |
+
+The two mutants that survive the golden are exactly the two the exact-float VM assertions exist for; the three that the reviewer found unpinned are now killed twice.
+
+### Gates, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` — **exit 0**, `All cases match the oracle.`, **460 PASS / 0 FAIL / 0 SKIP** (459 in the parent batch; the +1 is `PASS PushKurtModeZeroFrameAndLiftAreExact`). `PASS L3_kurt_push` and `PASS L3_kurt_flashes` both present.
+* `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes` `VERDICT: CONTRACT CLEAN -- 0 violations`, `gates_vfp` `PASS blockers=0 reviews=0` (corpus empty, staleness clocks waived by the freeze, as designed), `audit_arm11_math` `VERDICT: CONTRACT CLEAN`, `audit_r11_idiv` no candidates, `gates_core_parity` both targets link the same core, `gates_smdh` **SKIPPED** (no built `.cia`), `gates_frames` `PASS L3_f1.bmp sha=58615fc85d02e009` — byte-identical to the pinned `cpp=`, so `tests/frames/reference.sha256` was **not** touched, `gates_batch_integrity` `BATCH INTEGRITY: PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`, no warnings.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**, `[100%] Built target mdk`.
+* Oracle comparison: `cmp /tmp/mdk-pi/b47/oracle_push.txt tests/scripts/golden/L3_kurt_push.txt` — byte-identical; the C++ `tick1 dump push 3 360` and the C# probe agree before the golden was copied, which is the only order that keeps the golden an oracle artifact.
+* No gate, test or golden was relaxed. `tests/frames/reference.sha256`, `tools/check.sh`, `AGENTS.md`, `SPEC.md` and the gate scripts are untouched by this batch.
+* No emulator run. No Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**. The only windowed run was the frame capture, on `DISPLAY=:99` (P7), rendered by `tools/publish_frame.sh kurt-push-pinned`.
+
+Frame `docs/frames/2026-11-03-kurt-push-pinned.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical to its eleven predecessors (`6646adf1…`): frame 1 is before any script runs, so no push can appear in it. The sidecar says that in its own text and points at the golden and this narrative as the real evidence.

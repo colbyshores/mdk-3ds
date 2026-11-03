@@ -598,8 +598,10 @@ void Player::updateKnockDamage(float delta) {
             }
         }
         if (down) {
-            // The C#'s KnockDown(Vector2.Zero): the push a knock-down carries comes from
-            // push_kurt (opcode 248), which is deferred with cause in OPEN_ITEMS.md.
+            // The C#'s own KnockDown(Vector2.Zero) (Kurt.Combat.cs:225): a knock-down the
+            // counter triggered carries no shove. The only writer of a non-zero push is
+            // ScriptRuntime::pushKurt (opcode 248), which calls knockDown with its own
+            // vector, so this call site stays zero and is not a placeholder for it.
             knockDown(Vec2{0.0f, 0.0f});
             return;
         }

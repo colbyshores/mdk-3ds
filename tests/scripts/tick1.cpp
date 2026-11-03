@@ -1082,10 +1082,14 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     // non-zero knock-down push in the whole oracle, so this is the golden that pins the
     // push's own arithmetic, its drain (Kurt::kPushDrain, 1.5 u/s a step) and the two
     // arms of the guard that refuses a shove. What each line is for:
-    //   20: mode 0, a=20 b=0 up=0 on an object yawed 37 degrees. The frame branch, whose
-    //       formula is ASYMMETRIC in the oracle (x is -a*c - b*s, y is -b*c - a*s) and is
-    //       copied rather than corrected: a port that "fixes" it into a rotation lands a
-    //       different vector in the same number of steps, and vel= says so.
+    //   20: mode 0, a=20 b=5 up=3 on an object yawed 37 degrees -- every operand of the
+    //       frame branch non-zero, because a schedule whose accepted mode-0 push carries
+    //       b=0 and up=0 cannot tell the oracle's formula from a "corrected" one or the
+    //       args[3] lift from args[2]. The formula is ASYMMETRIC in the oracle (x is
+    //       -a*c - b*s, y is -b*c - a*s) and is copied rather than corrected: a port that
+    //       "fixes" it into a rotation lands a different vector in the same number of
+    //       steps, and vel= says so; a port that reads the lift from args[2] lifts him 5
+    //       instead of 3, and vert= says so.
     //   40: mode 0 again, mid-K_BANG. Refused by the Knocked arm of the guard, so vel=
     //       must keep falling by the drain alone and must not jump to the new push.
     //  130: mode 1, a=15 up=8, the object 5 units in -X of Kurt. The away branch: away
@@ -1099,7 +1103,7 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     //  355: mode 0, a=30 up=20 on a corpse. vel= must not move: a port that drops the
     //       health test shoves a dead man 20 units up.
     static const KurtPushSet kPushSets[] = {
-        {20, 0, 20.0f, 0.0f, 0.0f, 37.0f, 0.0f, 0.0f},
+        {20, 0, 20.0f, 5.0f, 3.0f, 37.0f, 0.0f, 0.0f},
         {40, 0, 25.0f, 5.0f, 3.0f, 200.0f, 0.0f, 0.0f},
         {130, 1, 15.0f, 0.0f, 8.0f, 0.0f, -5.0f, 0.0f},
         {240, 1, 12.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
