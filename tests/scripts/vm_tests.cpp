@@ -4174,11 +4174,16 @@ void testFlyClampPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi
 // Review-20 F4 read the oracle as running DetectStuck/HandleStuck unconditionally after
 // Walk/Fly, and cited ObjectMotion.cs:354-357 — the lines that hold the guard it means.
 // The oracle HAS the guard: `if (obj.MoveCommand != 0) { DetectStuck(...); HandleStuck(
-// ...); }`. So on the tick a walk arrives, Walk's Stop() zeroes MoveCommand (792-797,
-// 809-813) and BOTH calls are skipped, and a stuck_count left by an earlier replan
-// SURVIVES the arrival instead of being reset. opcode 231 (if_move_idle_flag,
-// ScriptVm.cs:1243) reads exactly that pair — MoveCommand == 0 && StuckCount != 0 — so
-// the direction is observable to a script, not just in a field. This pins which way.
+// ...); }`. So on the tick a command arrives, Stop() zeroes MoveCommand and Speed and
+// clears ContactStuck WITHOUT touching StuckCount (792-797), and BOTH calls are skipped,
+// so a stuck_count left by an earlier replan SURVIVES the arrival instead of being reset.
+// opcode 231 (if_move_idle_flag, ScriptVm.cs:1243) reads exactly that pair — MoveCommand
+// == 0 && StuckCount != 0 — so the direction is observable to a script, not just in a
+// field. Review-21 F2: the walk case alone does not pin the GUARD, because Walk returns
+// from its own body (811-813) before the switch reaches it; the guard is what skips the
+// calls on a FLY arrival (Fly returns to the switch at :860). Both arrivals are pinned
+// here, plus the other direction — a fly tick that does NOT arrive must still run
+// DetectStuck — so neither deleting the guard nor inverting it survives.
 void testArrivalKeepsTheStuckCountTheOracleKeeps(LevelData* levelData, const Cmi* cmi,
                                                  audio::SoundBank* bank) {
     scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
@@ -4196,6 +4201,43 @@ void testArrivalKeepsTheStuckCountTheOracleKeeps(LevelData* levelData, const Cmi
 
     // And the same tick the VM would read: 231 branches true here, in both trees.
     CHECK(obj.move_command == 0 && obj.stuck_count != 0);
+
+    // The FLY arrival, which is the one the guard decides. No gravity flag -> Fly; the
+    // waypoint is Manhattan 2 across and 0 up, so the turn is skipped (TurnFrom 3), the
+    // arrival test passes (horizontal < 4, vertical < 3), it is the final leg, and Fly
+    // Stops and returns to the SWITCH (no early return from the arm). Without the guard,
+    // DetectStuck runs with Speed already 0, takes its !collided || speed <= 2 branch,
+    // ResetStuck zeroes the count, and 231 would branch the other way.
+    scripts::MdkObject fly;
+    fly.move_command = 78;
+    fly.waypoint = Vec3{2.0f, 0.0f, 0.0f};
+    fly.move_destination = Vec3{2.0f, 0.0f, 0.0f};
+    fly.max_speed = 4.0f;
+    fly.speed = 4.0f;                              // == target, so Accelerate is a no-op
+    fly.stuck_count = 2;                           // what a replan left behind
+    runtime.motionVelocity(&fly);
+    CHECK(fly.move_command == 0);                  // Fly's Stop()
+    CHECK(fly.speed == 0.0f);
+    CHECK(fly.stuck_count == 2);                   // the guard skipped DetectStuck's reset
+    CHECK(fly.move_command == 0 && fly.stuck_count != 0);
+
+    // And the other direction, so the guard cannot be inverted or moved into the arrival
+    // branch: a fly tick that does NOT arrive keeps its command, so DetectStuck MUST run —
+    // collided, faster than StuckSpeed (2) and inside the 16-update window, it counts the
+    // update (stuck_ticks += 1, ObjectMotion.Ticks = 1f) and leaves the count alone.
+    scripts::MdkObject moving;
+    moving.move_command = 78;
+    moving.waypoint = Vec3{100.0f, 0.0f, 0.0f};      // far: no arrival, the command survives
+    moving.move_destination = Vec3{100.0f, 0.0f, 0.0f};
+    moving.max_speed = 5.0f;
+    moving.speed = 5.0f;
+    moving.contact_flags = scripts::MdkObject::ContactCollided;
+    moving.stuck_ticks = 0.0f;
+    moving.stuck_count = 0;
+    runtime.motionVelocity(&moving);
+    CHECK(moving.move_command == 78);
+    CHECK(moving.stuck_ticks == 1.0f);               // DetectStuck ran
+    CHECK(moving.stuck_count == 0);                  // HandleStuck: no ContactStuck yet
 }
 
 // The animation wrap is the C# Wrap's exact reduction: a positive divisor

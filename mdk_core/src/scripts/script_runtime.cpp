@@ -2213,12 +2213,17 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
                 }
             }
             // DetectStuck then HandleStuck(|yaw - yawAtEntry|) (ObjectMotion.cs:354-358).
-            // The guard is the oracle's, not a port choice: on the tick Walk or Fly
-            // stops the command (Stop: MoveCommand = 0, Speed = 0, Stuck cleared) the C#
-            // skips BOTH calls, so a walk that arrives never runs DetectStuck and never
-            // clears StuckCount on that tick. opcode 231 (if_move_idle_flag) reads
-            // move_command == 0 && stuck_count != 0, so dropping this guard would make it
-            // branch the other way on an object that arrived after a replan.
+            // The guard is the oracle's, not a port choice. Stop() sets MoveCommand = 0,
+            // Speed = 0 and clears ContactStuck — StuckCount is NOT touched
+            // (ObjectMotion.cs:792-797) — and on the tick it runs the C# skips BOTH calls.
+            // A Walk arrival gets that skip from Walk's own early return (:811-812), which
+            // is why the walk case cannot see this guard; it is load-bearing on the FLY
+            // arrival, where Fly returns to the switch at :860 with MoveCommand already 0.
+            // Without the guard DetectStuck's !collided || speed <= 2 branch would run
+            // ResetStuck and zero a stuck_count an earlier replan left, and opcode 231
+            // (if_move_idle_flag) reads move_command == 0 && stuck_count != 0, so it would
+            // branch the other way on an object that arrived after a replan. Pinned by
+            // ArrivalKeepsTheStuckCountTheOracleKeeps (both directions).
             if (obj->move_command != 0) {
                 detectStuck(obj, walking);
                 handleStuck(obj, fabsf(wrapAngle(obj->yaw - yaw)));

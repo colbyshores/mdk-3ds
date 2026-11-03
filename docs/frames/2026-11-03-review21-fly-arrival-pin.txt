@@ -1,0 +1,13 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-03T18:00:30Z at f1d13b1
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why this picture cannot move: this batch changes no shipped arithmetic at all. It
+adds two poses to one vm_tests case — a FLY arrival, which is the only arrival the
+`if (move_command != 0)` guard decides, and a non-arrival fly tick that proves the
+guard does not over-skip — corrects one comment in script_runtime.cpp (Stop clears
+ContactStuck, never StuckCount) and one wrong case count in CONTINUATION.md. Frame 1
+is before any script has run, so no movement command, no arrival and no stuck check
+appears in it; the PNG is byte-identical to its parent's and the gap is the same
+1.240/247/0.1819. There is NO frame evidence for this batch; the evidence is the
+mutation table in docs/PROGRESS_LOG.md (guard removed: 2 checks fail; guard inverted:
+3; guard replaced by `if (walking)`: 1). Capture ran on DISPLAY=:99 (AGENTS.md P7).

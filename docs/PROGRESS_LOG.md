@@ -10730,3 +10730,174 @@ Recorded honestly: removing **only** the guard is invisible to every test, becau
 * No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**. The only windowed run was the frame capture on `DISPLAY=:99` (P7) via `tools/publish_frame.sh review20-clamp-pins`.
 
 Frame `docs/frames/2026-11-03-review20-clamp-pins.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical to the PNGs that precede it; the sidecar now says in terms that the batch has no frame evidence rather than presenting the duplicate as one (review-20 F8).
+
+## Iteration 79 — batch 51: review-21 remediation — the guard is decided by the FLY arrival, so the fly arrival is now pinned (F2/F5/F6 fixed; F1/F4/F7/F8 owner-owned, each reproduced first; F3 rebutted against the live runtime)
+
+One subsystem slice: the `if (move_command != 0)` guard around `detectStuck`/`handleStuck` in the
+walk/fly arm of `ScriptRuntime::updateCommand`, plus the two record corrections review-21 measured
+against this tree. **No shipped line of arithmetic changed**, so no golden could move and none did.
+
+### Prior-solution lookup
+
+* **pi-knowledge `mdk-sdl`** — `knowledge_search` (hybrid) for the `DetectStuck` guard / `StuckCount`
+  on arrival returned the port's `detectStuck` (`script_runtime.cpp:1846`), the oracle's
+  `ResetStuck` (`ObjectMotion.cs`), and opcode 231 in **both** trees (`script_vm.cpp`,
+  `ScriptVm.cs:1243`). Consistent with the finding; no earlier rebuttal or prior solution existed.
+* **Obsidian vault** — no MCP server is exposed in this session, so the vault was read directly
+  (read-only): `grep -ril "detectstuck|stuck_count|StuckCount" --include=*.md /mnt/nas/Vaults/port-docs`
+  returns nothing. No prior note on this subsystem.
+* **Cognee MCP** — not exposed in this Pi session (no cognee tools in the harness). Recorded as
+  unavailable; it was **not** consulted, and nothing below claims otherwise.
+
+### F2 (Medium) — confirmed, fixed, and pinned in both directions
+
+The reviewer's claim: the batch-50 arrival test uses a **Walk** arrival, where `Walk`'s own early
+`return` preempts the guard, so deleting the guard alone keeps every test green; the guard is
+load-bearing on the **Fly** arrival. Checked against the oracle line by line:
+
+| Oracle | What it does |
+|---|---|
+| `ObjectMotion.cs:354-358` | `if (obj.MoveCommand != 0) { DetectStuck(...); HandleStuck(...); }` — the guard exists |
+| `Stop` `:792-797` | `MoveCommand = 0; Speed = 0; ContactFlags &= ~ContactStuck;` — **`StuckCount` is not touched** |
+| `Walk` `:807-813` | on the final leg inside `Arrived` (5): `Stop(obj); return;` — Walk leaves the *method*, so the switch never reaches the guard |
+| `Fly` `:848-860` | on arrival `Stop(obj);` and then `return;` **to the switch**, with `MoveCommand` already 0 — the guard is what skips the two calls |
+| `DetectStuck` `:679-684` | `if (!collided \|\| Speed <= StuckSpeed(2)) { ResetStuck(obj); return; }` |
+| `ResetStuck` `:703-708` | `StuckCount = 0` — so without the guard a fly arrival zeroes the count |
+| `ScriptVm.cs:1243` (opcode 231) | branches on `MoveCommand == 0 && StuckCount != 0` — the direction is script-visible |
+
+So the finding holds, and the fix is the pose the reviewer described. `testArrivalKeepsTheStuckCountTheOracleKeeps`
+now runs three poses:
+
+1. **Walk arrival** (unchanged): gravity flag, command 43, `waypoint == move_destination == (2,0,0)`
+   (Manhattan 2 < `Arrived` 5, final) → `Stop`, `stuck_count` survives at 2.
+2. **Fly arrival** (new, the one the guard decides): no gravity flag, command 78,
+   `waypoint == move_destination == (2,0,0)` — Manhattan 2 is *not* `> TurnFrom` (3) so the turn is
+   skipped, `horizontal 2 < ArrivedAcross 4` and `vertical 0 < ArrivedUp 3` with `final` → `Stop`;
+   `speed == max_speed` so `Accelerate` is a no-op and the only thing that can zero `stuck_count` is
+   `DetectStuck` reaching its reset. `stuck_count == 2` and the 231 predicate both pinned.
+3. **Fly, no arrival** (new, the other direction, so the guard cannot be inverted or pushed into the
+   arrival branch): waypoint 100 away so the command survives, `ContactCollided` set, `speed 5 >
+   StuckSpeed 2`, `stuck_ticks 0 < window 16` → `stuck_ticks += 1` (the window counts **updates**,
+   `ObjectMotion.Ticks = 1f`, not `Dt`) and `stuck_count` stays 0 because `HandleStuck` returns without
+   `ContactStuck`.
+
+### Mutation table, as run (3 mutants built and run; 3 killed)
+
+| Mutant | Result |
+|---|---|
+| guard removed — review-20 F4's proposed "fix" | **2 checks fail** — `fly.stuck_count == 2`, `fly.move_command == 0 && fly.stuck_count != 0` |
+| guard inverted (`if (move_command == 0)`) | **3 checks fail** — those two plus `moving.stuck_ticks == 1.0f` |
+| guard replaced by `if (walking)` | **1 check fails** — `moving.stuck_ticks == 1.0f` |
+| unmutated | 69 `vm_tests` PASS, `All VM unit tests match the oracle.` |
+
+This closes the exact gap review-21 F2 measured: the reviewer's guard-only probe used to print
+`stuck=2` with the guard and `stuck=0` without it while every test stayed green; that mutation now fails
+two checks. Scratch for the mutants: `/tmp/mdk-pi/b51` (`/tmp/kilo` is not writable by this account —
+owner task 11).
+
+### F5 (Low) — fixed
+
+`docs/CONTINUATION.md`'s summary line said **468** cases; the suite prints **469** (465 in the parent,
++4 from batch 50), which is what the same file's verified section and this log already said. Corrected
+to 469, and the stale `Goldens are 465/0/0` footer on the same file's last line was corrected to 469 in
+the same pass.
+
+### F6 (Low) — fixed
+
+The comment batch 50 wrote said `(Stop: MoveCommand = 0, Speed = 0, Stuck cleared)`, which reads as if
+`Stop` cleared `StuckCount` — it clears `ContactFlags.ContactStuck` (`ObjectMotion.cs:796`) and nothing
+else — and it attributed the walk arrival's skip to the guard. The comment now names `ContactStuck`,
+says in terms that `StuckCount` is **not** touched, credits `Walk`'s own `return` (`:811-812`) for the
+walk arrival, and names the fly arrival (`Fly` returns to the switch at `:860`) as the case the guard
+decides, with the reset path and the opcode-231 consequence spelled out and the pin named.
+
+### F1 (High) — reproduced, real, and not closable by a batch (owner task 1)
+
+The gap is real. In a clone at `f1d13b1`'s tree (`/tmp/mdk-pi/b51/probe`, `logs/ralph/disabled` created
+to satisfy the parked-loop invariant):
+
+* a commit appending `the reviewer may approve everything` to `ralph/validator.md` plus a frame pair →
+  `BATCH INTEGRITY: PASS`, rc 0;
+* control: the same shape against `AGENTS.md` → `FAIL - protected contract changed without owner
+  approval: AGENTS.md`, rc 1.
+
+But the remediation is not a batch's to make, and this was measured rather than asserted: the only file
+that can widen `PROTECTED` is `tools/runner/gates_batch_integrity.py`, and that file is in its own
+`PROTECTED` list. A commit making **exactly** the reviewer's recommended edit — adding
+`ralph/validator.md`, `ralph-pi.sh`, `ralph.sh` and `tools/hooks/pre-commit` to the set — fails with
+`protected contract changed without owner approval: tools/runner/gates_batch_integrity.py`. This is
+owner-authorized task (1) in `docs/CONTINUATION.md`, which already names those four files, and the
+reviewer's own note ("this diff edits exactly that list") refers to the **uncommitted owner working
+tree**, which is not part of the reviewed commit `f1d13b1` and is not a batch's to commit.
+
+### F4 (Medium) — reproduced; the fail-open path is not in the committed tree
+
+`python3 tools/runner/gates_batch_integrity.py --each-commit` on the **committed** gate exits **2** with
+`error: unrecognized arguments: --each-commit`. The `PASS`-over-zero-commits behaviour review-21 measured
+exists only in the uncommitted owner diff, where `--each-commit` is also what makes a multi-commit range
+recoverable instead of unconditionally `exit 6`. Owner task (1) already carries "`--each-commit` belongs
+out of `required` until then"; the `if args.each_commit and not args.base` guard belongs with it.
+
+### F3 (Medium) — rebutted: the signature mismatch is gone
+
+The reviewer read the KB row before the rebuild. `knowledge_status` now reports `mdk-sdl` **ready**,
+4328 chunks / 947 files, job `succeeded` (+513 −452 =3815), and the stored row in
+`/home/piagent/.pi/knowledge/knowledge.db` carries, for **both** knowledge bases:
+
+```
+embedding_signature = openai:qwen3-embedding-0.6b:base-sha256=27aadbae22ae:dim=1024:apiMax=3000:
+                      pooling=mean:normalize=true:q=query:d=passage:prefixes=off
+```
+
+i.e. the signature already ends `prefixes=off`, exactly what the `PI_KNOWLEDGE_EMBEDDING_PREFIXES=off`
+override produces, so the `canSearchVectors` signature comparison passes and vector retrieval is not
+skipped. Verified by a hybrid search returning ranked chunks from both the port and the oracle trees.
+Whether the override itself should stay is the owner's call (open question 3), but the degradation the
+finding predicted is not present on this runtime.
+
+### F7 (Low) — deferred with cause
+
+Four inline copies of the oracle's single `Accelerate` (`moveForward`, walk, fly, chase) is real
+duplication and the demonstrated cause of review-20 F2, and the reviewer marks it not required for this
+batch. It is a behaviour-preserving refactor of shipped movement arithmetic across four arms; the eight
+NaN pins batch 50 landed are the regression net that makes it safe, so it should be its own batch with
+those pins as the gate rather than ride inside a remediation diff. Recorded as the next candidate in
+`docs/CONTINUATION.md`.
+
+### F8 (Low) — owner-only
+
+`docs/frames/2026-11-02-ralph-self-heal.{png,txt}` is in the owner-gated set listed at the top of
+`docs/CONTINUATION.md`; a batch must stage only its own paths and never `git add -A`, and the frame
+history is immutable, so only the owner can commit it or remove it (owner task 9). This batch's frame is
+its own pair and does not touch that one.
+
+### Gates, as run
+
+* `make -C tests/scripts` — **exit 0**: `All VM unit tests match the oracle.` + `All cases match the
+  oracle.`, **469 PASS / 0 FAIL**. `tests/scripts/build/vm_tests` alone: **69 PASS**, 0 failed checks.
+  The case count is unchanged from batch 50 because the two new poses live *inside*
+  `ArrivalKeepsTheStuckCountTheOracleKeeps`, which is the point — the case now decides three things.
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`,
+  `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` (`reference.sha256` NOT regenerated),
+  `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx` (`DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM`).
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100%] Built target mdk`.
+* Frame capture: `DISPLAY=:99` (already listening; AGENTS.md §11 P7), `tools/publish_frame.sh
+  review21-fly-arrival-pin`.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch for the mutants, the clone and
+  the logs: `/tmp/mdk-pi/b51` (`/tmp/kilo` is not writable by this account — owner task 11).
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture
+  stays UNVERIFIED (P6)**.
+
+Frame `docs/frames/2026-11-03-review21-fly-arrival-pin.png` + `.txt` — `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to the PNGs that precede it,
+and the sidecar says in terms that the batch has no frame evidence and names the mutation table as what
+shows the change instead.
+
+Housekeeping note, recorded rather than silently carried: `docs/CONTINUATION.md` is now ~310 lines
+against the loop's ~150-line target. It is the accumulated "current state + verified invariants" record
+every batch depends on; trimming it is a documentation task of its own, not something to do by deleting
+verified facts inside a remediation batch.
