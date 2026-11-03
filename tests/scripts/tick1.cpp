@@ -622,13 +622,43 @@ struct KurtHurt {
 enum KurtHurtSchedule {
     kHurtHealth,  // the one health, from both sides of the class split
     kHurtHardLand,  // the state guard, inside and after K_CRASHL
-    kHurtKnock      // the recent-damage counter's decline and the landing's reset
+    kHurtKnock,     // the recent-damage counter's decline and the landing's reset
+    kHurtInvuln     // the invulnerability timer's decline, on the floor and on a corpse
+};
+
+// An invulnerability write: the step and the seconds. It is the write opcode 244's set
+// arm performs (ScriptVm.cs:1598, `runtime.Kurt.Invulnerable = F(o[1])`), which is what
+// the C++ twin does through Kurt::setInvulnerable and the oracle probe does through
+// scripts.Kurt.Invulnerable -- the same field, the same value, no extra arithmetic.
+struct KurtInvulnSet {
+    int step;
+    float seconds;
+};
+
+enum KurtHurtColumns {
+    kColsVoices,  // hp= vmhp= voices=
+    kColsKnock,   // hp= vmhp= knock=
+    kColsInvuln   // hp= vmhp= invuln= knock=
+};
+
+// One schedule as one literal, so the dump body and the oracle probe's twin drive the
+// same plan. Every number in it is printed in the header line, so a golden can never be
+// compared against a different schedule than the one it was captured from.
+struct KurtHurtPlan {
+    float lift;       // units above the start pad, applied at step 1
+    const KurtHurt* hurts;
+    size_t hurtCount;
+    const KurtInvulnSet* sets;
+    size_t setCount;
+    int mortalStep;   // step that sets the health to 0; 0 for none
+    int columns;
 };
 
 std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, Player& player,
-                         audio::SoundMixer& mixer, const KurtHurt* kHurts, size_t hurtCount,
-                         bool withKnock) {
-    const float kLift = 300.0f;
+                         audio::SoundMixer& mixer, const KurtHurtPlan& plan) {
+    const KurtHurt* kHurts = plan.hurts;
+    const size_t hurtCount = plan.hurtCount;
+    const float kLift = plan.lift;
 
     char line[512];
     std::string out;
@@ -641,19 +671,43 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
         snprintf(line, sizeof(line), "%d:%d", kHurts[i].step, kHurts[i].damage);
         out += line;
     }
+    if (plan.setCount) {
+        out += " sets=";
+        for (size_t i = 0; i < plan.setCount; i++) {
+            if (i) {
+                out += ",";
+            }
+            snprintf(line, sizeof(line), "%d:%.4f", plan.sets[i].step, plan.sets[i].seconds);
+            out += line;
+        }
+    }
+    if (plan.mortalStep) {
+        snprintf(line, sizeof(line), " mortal=%d", plan.mortalStep);
+        out += line;
+    }
     out += "\n";
 
     const Vec3 kStart = player.feet;
     for (int step = 1; step <= steps; step++) {
-        if (step == 1) {
+        if (step == 1 && kLift != 0.0f) {
             player.feet = Vec3{kStart.x, kStart.y, kStart.z + kLift};
             player.verticalSpeed = 0.0f;
         }
         Input input;  // nothing pressed: no walk, no jump, so no chute
         player.update(input, 1.0f / 60.0f);
-        // The scripts' step, and the hurt inside it: in the oracle a hurt_kurt is
+        // The scripts' step, and the writes inside it: in the oracle a hurt_kurt is
         // dispatched from a script object's program during ScriptRuntime::update,
-        // never between the oracle's own statements.
+        // never between the oracle's own statements. The invulnerability write is the
+        // same kind of event (opcode 244), and the health write is Kurt.SetHealth, the
+        // oracle's own public setter, which the `kurtlethal` schedule already uses.
+        for (size_t i = 0; i < plan.setCount; i++) {
+            if (plan.sets[i].step == step) {
+                runtime.kurt().setInvulnerable(plan.sets[i].seconds);
+            }
+        }
+        if (plan.mortalStep == step) {
+            runtime.kurt().setHealth(0);
+        }
         for (size_t i = 0; i < hurtCount; i++) {
             if (kHurts[i].step == step) {
                 runtime.hurtKurt(kHurts[i].damage);
@@ -678,7 +732,21 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
             }
         }
 
-        if (withKnock) {
+        if (plan.columns == kColsInvuln) {
+            snprintf(line, sizeof(line),
+                     "s=%d state=%s feet64=%d,%d,%d vert=%.4f floor=%d chute=%d hp=%d vmhp=%d "
+                     "invuln=%.4f knock=%.4f\n",
+                     step, kurtStateName(player.state()),
+                     (int)std::floor(player.feet.x * 64.0f), (int)std::floor(player.feet.y * 64.0f),
+                     (int)std::floor(player.feet.z * 64.0f), player.verticalSpeed,
+                     player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.health(),
+                     runtime.kurt().health(), player.combat().invulnerable(),
+                     player.combat().knockDamage());
+            out += line;
+            continue;
+        }
+
+        if (plan.columns == kColsKnock) {
             snprintf(line, sizeof(line),
                      "s=%d state=%s feet64=%d,%d,%d vert=%.4f floor=%d chute=%d hp=%d vmhp=%d "
                      "knock=%.4f\n",
@@ -754,23 +822,58 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     // would part on the first hurt.
     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
     runtime.option = 0;
-    // The three schedules, driven on the same world: the one that pins the health
-    // bridge, the one that pins the state guard, and the one that pins the
-    // recent-damage counter. All literals are the oracle's own and all print
-    // themselves in the header line.
+    // The schedules, driven on the same world: the one that pins the health bridge,
+    // the one that pins the state guard, the one that pins the recent-damage counter,
+    // and the one that pins the invulnerability timer. All literals are the oracle's own
+    // and all print themselves in the header line.
     static const KurtHurt kHealthHurts[] = {{20, 10}, {40, 25}, {60, 30}, {80, 35}, {200, 10}};
     static const KurtHurt kHardLandHurts[] = {{220, 10}, {300, 4}};
     static const KurtHurt kKnockHurts[] = {{20, 25}, {175, 4}, {300, 3}};
-    const KurtHurt* hurts = schedule == kHurtHardLand
-                                ? kHardLandHurts
-                                : (schedule == kHurtKnock ? kKnockHurts : kHealthHurts);
-    const size_t hurtCount =
-        schedule == kHurtHardLand
-            ? sizeof(kHardLandHurts) / sizeof(kHardLandHurts[0])
-            : (schedule == kHurtKnock ? sizeof(kKnockHurts) / sizeof(kKnockHurts[0])
-                                      : sizeof(kHealthHurts) / sizeof(kHealthHurts[0]));
-    *out = dumpKurtHurt(level, steps, runtime, player, mixer, hurts,
-                        hurtCount, schedule == kHurtKnock);
+    // The invulnerability schedule, on the FLOOR and with no lift, because the point is
+    // to refuse a hurt for no reason but the timer -- the HardLand state is the other
+    // reason hurt() refuses, and a lift would bring it in. Kurt stands on the level's own
+    // start pad, and every hurt is under KnockdownDamage (5), because on a floor a hurt
+    // of 5 or more puts the oracle into K_BANG, a state machine neither side has.
+    //   20: the timer opens for 3 s, the oracle's KnockdownInvulnerability, the value a
+    //       knock-down would have set it to (Kurt.Combat.cs:176).
+    //   40: a hurt inside the window. Refused, and hurt()'s guard zeroes the counter.
+    //  210: thirty steps after the window closes -- 3 s is 180 steps, so the timer reads
+    //       0.0000 from step 200 -- the guard has released and the health moves.
+    //  280: a second hurt, so the release is the timer expiring and not one lucky step.
+    //       It is late on purpose: the hurt at 210 leaves the recent-damage counter at 4
+    //       and it drains by 2 per second, so a hurt before step 271 would take the
+    //       counter to KnockdownDamage or past it and the oracle -- which is standing on a
+    //       floor, where the trigger needs no floor probe -- would enter K_BANG, the
+    //       knock-down state machine neither side has. At 280 the counter is at 1.6667 and
+    //       the hurt of 3 leaves it at 4.6667.
+    //  300: Kurt.SetHealth(0), the oracle's own setter, so the next step is the death
+    //       transition on the floor.
+    //  305: the timer opens again on a corpse, five steps after the death, and the oracle
+    //       keeps running it down through UpdateDeath's early return (Kurt.cs:139 is the
+    //       second statement of Update, ahead of the Dead return at :152). A decay placed
+    //       below Player::update's `if (dead) return` freezes it at 2.0000 here.
+    static const KurtHurt kInvulnHurts[] = {{40, 4}, {210, 4}, {280, 3}};
+    static const KurtInvulnSet kInvulnSets[] = {{20, Kurt::kKnockdownInvulnerability},
+                                                {305, 2.0f}};
+    KurtHurtPlan plan = {300.0f, kHealthHurts, sizeof(kHealthHurts) / sizeof(kHealthHurts[0]),
+                         nullptr, 0, 0, kColsVoices};
+    if (schedule == kHurtHardLand) {
+        plan.hurts = kHardLandHurts;
+        plan.hurtCount = sizeof(kHardLandHurts) / sizeof(kHardLandHurts[0]);
+    } else if (schedule == kHurtKnock) {
+        plan.hurts = kKnockHurts;
+        plan.hurtCount = sizeof(kKnockHurts) / sizeof(kKnockHurts[0]);
+        plan.columns = kColsKnock;
+    } else if (schedule == kHurtInvuln) {
+        plan.lift = 0.0f;
+        plan.hurts = kInvulnHurts;
+        plan.hurtCount = sizeof(kInvulnHurts) / sizeof(kInvulnHurts[0]);
+        plan.sets = kInvulnSets;
+        plan.setCount = sizeof(kInvulnSets) / sizeof(kInvulnSets[0]);
+        plan.mortalStep = 300;
+        plan.columns = kColsInvuln;
+    }
+    *out = dumpKurtHurt(level, steps, runtime, player, mixer, plan);
     return true;
 }
 
@@ -1653,11 +1756,12 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
-        if (what == "hurt" || what == "hurtland" || what == "knock") {
+        if (what == "hurt" || what == "hurtland" || what == "knock" || what == "invuln") {
             std::string got;
             std::string why;
             const int schedule = what == "hurtland"                                     ? kHurtHardLand
-                                 : (what == "knock" ? kHurtKnock : kHurtHealth);
+                                 : (what == "knock"                                     ? kHurtKnock
+                                   : (what == "invuln" ? kHurtInvuln : kHurtHealth));
             if (!kurtHurtDump(level, ticks, schedule, data, spritesArg, &got, &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
@@ -2399,6 +2503,37 @@ int main(int argc, char** argv) {
                        "cannot survive a landing the oracle clears\n");
             } else {
                 printf("FAIL L3_kurt_knock: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The invulnerability timer (Kurt.Combat.cs:82, 0x573bd4) and the decline this port
+    // did not run at all: Kurt.cs:139 takes delta off it every step, floored at zero,
+    // ahead of Update's early returns. Opcode 244 was its only writer here, so that
+    // opcode was a permanent switch: hurt() would refuse forever afterwards and opcode 240
+    // could never raise the knock-down counter again. Three mutants, one per rule: no
+    // decline at all fails at step 210 (hp stays 100 where the oracle is 96), a decline
+    // without the floor at zero fails where the timer crosses past it, and a decline
+    // placed below Player::update's `if (dead) return` freezes at 2.0000 from step 306.
+    // See dumpKurtHurt for why every hurt is under 5 and nothing is lifted.
+    {
+        std::string expected;
+        if (!readText("golden/L3_kurt_invuln.txt", &expected)) {
+            printf("FAIL L3_kurt_invuln: no golden file golden/L3_kurt_invuln.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtHurtDump(3, 340, kHurtInvuln, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_invuln: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_invuln: the invulnerability timer runs down by delta every "
+                       "step and floors at zero, so opcode 244 is a timer and not a switch, and "
+                       "it runs down on a corpse as well\n");
+            } else {
+                printf("FAIL L3_kurt_invuln: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }

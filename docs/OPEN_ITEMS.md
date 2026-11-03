@@ -648,11 +648,13 @@ and run (see "Iteration 70"). What the trigger still needs, in its own words:
   (`setFrameCounts`) and the animation clock; what it has not got is any branch that can
   enter or leave those two states, so entering `Knocked` today would strand Kurt in a
   state nothing animates and nothing exits — which is why the decline was ported alone.
-- **The invulnerability decay.** `Kurt.Update`'s first line after the mouse reset is
-  `Invulnerable = MathF.Max(Invulnerable - delta, 0f)` (`Kurt.cs:139`). The port has no
-  decay at all, so opcode 244's invulnerability lasts forever and `KnockDown`'s 3 s
-  cannot be expressed without it. It belongs with the combat fades (`FadeFlashes`, also
-  unported: nothing fades `hurtFlash_` either), which is its own small slice.
+- **The invulnerability decay is CLOSED by batch 43.** `Kurt::declineInvulnerability`
+  (`Kurt.cs:139`, `Invulnerable = MathF.Max(Invulnerable - delta, 0f)`) now runs from
+  `Player::update` at the C#'s own position, ahead of every early return Update has, and
+  `golden/L3_kurt_invuln.txt` pins the rate, the floor at zero and that position. What that
+  item also named is still open: the combat fades (`FadeFlashes`, `Kurt.Combat.cs:203`) are
+  unported, so nothing fades `hurtFlash_` or `whiteFlash_` either, and the hard landing
+  deliberately does not raise a flash nothing would fade (`Player::land` says why).
 - `KnockDown`'s `StopFiring()` stays inert until the firing slice: the port has no
   firing, sniper or muzzle state at all.
 

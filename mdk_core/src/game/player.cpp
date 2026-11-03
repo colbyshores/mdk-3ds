@@ -138,6 +138,14 @@ void Player::addKnockdownPush(const Vec2& push) {
 }
 
 void Player::update(const Input& input, float delta) {
+    // C# Kurt.Update decays the invulnerability timer as its second statement
+    // (Kurt.cs:139), ahead of the ChuteClosing clear and of every early return below.
+    // Opcode 244 (set_global_573bd4) is the only writer this port has, so without this
+    // line that opcode is a permanent switch: hurt() would refuse forever and opcode
+    // 240 could never raise the knock-down counter again. Kurt::declineInvulnerability
+    // carries why the position ahead of the returns is the oracle's, and
+    // golden/L3_kurt_invuln.txt pins it.
+    combat_.declineInvulnerability(delta);
     // C# Kurt.Update clears ChuteClosing before every branch, including the
     // death branch (Kurt.cs:140, ahead of the `Current == State.Dead` return).
     // The clear is unconditional on purpose, and it is NOT pinned to be so:
@@ -621,7 +629,13 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         // landing: Kurt.cs:583 zeroes that counter two lines after the damage call,
         // which is the line below. HurtFlash is the one that stays unmodelled, and it
         // stays unmodelled on purpose -- nothing fades the red flash here, so a hard
-        // landing must not raise a flash nothing fades out.
+        // landing must not raise a flash nothing fades out. A third term of the C#-
+        // side Damage is also left out, and is NOT inert in the same provable way:
+        // HardLanding calls Damage(HardLandingDamage), which runs Scaled(damage,
+        // Difficulty) first, so on Easy the slam would be 6 and on Hard 20, not the 10
+        // damageHealth takes. It is inert only because difficulty_ has no writer yet --
+        // the same deferral Player::damage records over its own call to damageHealth --
+        // and it moves with that, not with this.
         //
         // What else the C#'s HardLanding does that this does not: Kurt.cs:589 also
         // calls StopFiring() (leave the sniper, stop the chain-gun voice, drop the

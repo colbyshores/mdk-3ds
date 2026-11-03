@@ -1,22 +1,29 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 42 ports two rules of one combat counter (Kurt's recent-damage
-`KnockDamage`: its per-step decline, and `HardLanding`'s unconditional zeroing of it) and
-nothing else. Bounded and pinned by a new oracle golden; no interface, data format,
-persistence, concurrency or renderer change, and no shipped frontend can observe it yet
-because nothing reads the counter. It is not `low` because it changes per-frame behaviour
-in `Player::update`.
+Risk: medium — batch 43 ports one rule of one combat field: Kurt's invulnerability timer
+now runs down by `delta` every step and floors at zero (`Kurt::declineInvulnerability`,
+`Kurt.cs:139`, called from `Player::update` ahead of every early return Update has). It is
+bounded and pinned by a new oracle golden; no interface, data format, persistence,
+concurrency or renderer change, and no shipped frontend can observe it yet because opcode
+244 fires in no shipped level. It is not `low` because it changes per-frame behaviour in
+`Player::update` and because opcode 244 changes meaning from a switch to a timer.
 
-Last updated: 2026-11-02 (**batch 42** — review-12 A/C/D/E fixed: the knock counter
-clamps and drains and a hard landing zeroes it; see `docs/PROGRESS_LOG.md`,
-"Iteration 70"; review-12 B is owner task (1)/(13) and its correction to review-11 R11-2
-is adopted there). Previous narratives are one "Iteration N" section back each: batch
-41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
+Last updated: 2026-11-03 (**batch 43** — the invulnerability decay, the first of the four
+things `OPEN_ITEMS.md` named for the knock-down family; review-13 raised **no Critical or
+High finding**, so nothing needed remediating: its F3 is fixed (the `Player::land` comment
+no longer reads as an exhaustive list of what `Kurt.Damage` does and names the difficulty
+term the port omits), its F2 is accepted as a standing test-coverage limit with no code
+change, and its F1 is about the owner's own uncommitted frame pair, which this batch neither
+staged nor touched; see `docs/PROGRESS_LOG.md`, "Iteration 71". Previous narratives are one
+"Iteration N" section back each: batch 42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65,
+36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
 
-Goldens are **449/0/0**: batch 42 added `golden/L3_kurt_knock.txt` (341 lines, sha256
-`5c2c3091…`, the oracle probe's `knock` mode, byte-identical to `tick1 dump knock 3 340`),
-batch 41 added `golden/L3_kurt_hurtland.txt` (341 lines, sha256 `9e1b4832…`) and batch 40
-`golden/L3_kurt_hurt.txt` (221 lines, sha256 `35d78b3d…`); no older golden moved. The frame
+Goldens are **450/0/0**: batch 43 added `golden/L3_kurt_invuln.txt` (341 lines, sha256
+`fb00137b…`, the oracle probe's new `invuln` mode, byte-identical to
+`tick1 dump invuln 3 340`), batch 42 `golden/L3_kurt_knock.txt` (341 lines, sha256
+`5c2c3091…`), batch 41 `golden/L3_kurt_hurtland.txt` (341 lines, sha256 `9e1b4832…`) and
+batch 40 `golden/L3_kurt_hurt.txt` (221 lines, sha256 `35d78b3d…`); no older golden moved.
+The frame
 is byte-unchanged across batches 31-42 because no renderer behaviour was touched. Still
 owner-gated, and still uncommitted in the tree: the owner's harness work (`AGENTS.md`,
 `ralph/builder.md`, `ralph-pi.sh`, `gates_batch_integrity.py`,
@@ -60,15 +67,26 @@ the two dirty owner files, not a deadlocked tree. All four remain owner task (1)
     hurt in the air cannot survive a landing the oracle clears. The pin is
     `golden/L3_kurt_knock.txt` (`knock=` every step: `25.0000 → 4.9667` at the clamp, `0.0000`
     at step 183), with three mutants run and three `vm_tests` cases for the guard's zeroing and
-    the decline's floor cases. **NEXT, same family:** the port still has no knock-down state
-    machine, which is why all three hurt goldens are airborne and why the `Knocked`/`GetUp`
-    arms of the guard cannot be reached at all. `docs/OPEN_ITEMS.md` now names the four things
-    it needs instead of one: `ArenaSpace::floor` (the C# `ArenaSpace.Floor` — nearest crossing
-    over the arenas around **both** ends; the port's `floorCrossing` is the C#'s *other* probe,
-    first hit around `from` only), the `Knocked`/`GetUp` arms of `UpdateCombatState`
-    (K_BANG/K_BFLIP, `Kurt.Combat.cs:379-399`), the invulnerability decay (`Kurt.cs:139`, which
-    the port does not run at all, so opcode 244's invulnerability lasts forever and `KnockDown`'s
-    3 s cannot be expressed), and `StopFiring` with the firing slice. `Player` already carries
+    the decline's floor cases. **Batch 43 landed the invulnerability timer's decline**, the
+    first of the four things that item named: `Kurt::declineInvulnerability` is `Kurt.cs:139`,
+    `Invulnerable = MathF.Max(Invulnerable - delta, 0f)`, called from `Player::update` at the
+    C#'s own position — ahead of the `dead` return, so a corpse's timer runs down too, and ahead
+    of where the `Frozen`/noclip/`Ride` returns will sit when those land. Opcode 244
+    (`set_global_573bd4`) was the field's only writer here, so until this it was a permanent
+    switch: `hurt()` refused forever and opcode 240 could never raise the knock counter again.
+    The pin is `golden/L3_kurt_invuln.txt` (`invuln=` every step: `3.0000` at step 20, a hurt
+    refused at 40, `0.0000` from 200, hurts landing at 210 and 280, and `2.0000` re-set at 305
+    on a corpse and draining to `1.4167`), with three mutants run (no decline fails at s=21, a
+    decline with no floor at zero at s=1, a decline below the `dead` return freezes from s=306)
+    and three `vm_tests` cases for what the fixture cannot reach. **NEXT, same family:** the
+    port still has no knock-down state machine, which is why every hurt golden so far is either
+    airborne or floor-bound and why the `Knocked`/`GetUp` arms of the guard cannot be reached at
+    all. `docs/OPEN_ITEMS.md` now names the three things it needs: `ArenaSpace::floor` (the C#
+    `ArenaSpace.Floor` — nearest crossing over the arenas around **both** ends; the port's
+    `floorCrossing` is the C#'s *other* probe, first hit around `from` only), the
+    `Knocked`/`GetUp` arms of `UpdateCombatState` (K_BANG/K_BFLIP, `Kurt.Combat.cs:379-399`), and
+    `StopFiring` with the firing slice. The combat fades (`FadeFlashes`, `Kurt.Combat.cs:203`)
+    are still unported, so nothing fades `hurtFlash_` or `whiteFlash_`. `Player` already carries
     `_knockdownPush` and its drain. It wants a ground-level hurt golden with it.
 6b. **The sprite-selection fixture (review-8 oq3 / review-9 oq3) is blocked on a named
     seam, not on effort:** neither side can build a `KurtSprite` headlessly — the C#

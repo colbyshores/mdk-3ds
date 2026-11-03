@@ -54,6 +54,15 @@ void Kurt::declineKnockDamage(float delta) {
     knockDamage_ = std::max(knockDamage_ - kKnockdownDrain * delta, 0.0f);
 }
 
+void Kurt::declineInvulnerability(float delta) {
+    // C# Kurt.cs:139, verbatim: MathF.Max(Invulnerable - delta, 0f). The floor is not
+    // decoration -- the field is read as `Invulnerable > 0f` by hurt() and by opcode
+    // 240, so a timer that drains past zero and keeps going is invisible there, but it
+    // is what opcode 244's accumulate arm would then add to, and a negative timer is
+    // not the oracle's value for a golden to print. Branchless, like the knock drain.
+    invulnerable_ = std::max(invulnerable_ - delta, 0.0f);
+}
+
 void Kurt::damageHealth(int32_t damage) {
     // C# Damage's Health line, Math.Max(Health - damage, 0), without the terms
     // Player does not model. The death transition is the caller's, as in the C#.

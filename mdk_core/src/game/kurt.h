@@ -60,6 +60,13 @@ public:
     static constexpr int32_t kEasyDenominator = 3;
     static constexpr int32_t kHardFactor = 2;
 
+    // KnockdownInvulnerability (Kurt.Combat.cs:34) is the value KnockDown would set this
+    // timer to. The knock-down state machine is a later slice (see below), so nothing in
+    // the game writes it yet; the harness that opens the timer the way a knock-down would
+    // (tests/scripts/tick1.cpp's invuln schedule) uses it, so the value the golden prints
+    // is the oracle's constant and not a copy of it in a test.
+    static constexpr float kKnockdownInvulnerability = 3.0f;
+
     // The knock-down counter's own bounds (Kurt.Combat.cs:32-33): recent damage
     // never counts above KnockdownDamage and drains by KnockdownDrain per second.
     // The rest of that constant block -- KnockdownInvulnerability, the 13-unit floor
@@ -109,8 +116,20 @@ public:
     // movement — also later.
     void setWhiteFlash(float value) { whiteFlash_ = value; }
     // set_global_573bd4 (opcode 244): invulnerability time in seconds
-    // (Kurt.Combat.cs:82); hurt() reads it.
+    // (Kurt.Combat.cs:82); hurt() reads it, and declineInvulnerability below is what
+    // ends it. Without that decay this field is a switch, not a timer: the first
+    // opcode 244 would make Kurt immortal and knock-immune for the rest of the level.
     void setInvulnerable(float seconds) { invulnerable_ = seconds; }
+    // The invulnerability timer's own decline: Kurt.Update's second statement
+    // (Kurt.cs:139), Invulnerable = MathF.Max(Invulnerable - delta, 0f). Player::update
+    // calls it at the C#'s own position, AHEAD of every early return Update has -- the
+    // Dead one today, and the Frozen, noclip and Ride ones when those land -- so the
+    // timer runs down on every step the entity takes, including a cutscene freeze and a
+    // corpse's. A decay written after an early return leaves an invulnerability that
+    // never ends whenever a script set one while Kurt was frozen or dead. Pinned by
+    // golden/L3_kurt_invuln.txt, which prints the timer every step and hurts him on
+    // both sides of the window it opens.
+    void declineInvulnerability(float delta);
     // set_hurt_flash (opcode 240): the knock-down counter (Kurt.Combat.cs:84).
     // hurt() clears it while invulnerable; the knock-down state machine that
     // reads it is Kurt movement, a later slice.

@@ -2545,6 +2545,62 @@ void testKurtAndScreenWrites(scripts::ScriptRuntime& runtime) {
         runProgram(runtime, code, &obj);
         CHECK(runtime.kurt().invulnerable() == 5.0f);
     }
+
+    // The timer's own decline (Kurt.cs:139, Update's second statement). The oracle
+    // golden L3_kurt_invuln.txt pins its rate and its position in Update; these pin the two
+    // shapes that fixture cannot show, because a hurt that reaches the Damage path is by
+    // definition a hurt the timer already released: the timer must not go negative, and
+    // opcode 244's accumulate arm must add to a floored timer, not to a negative one.
+    {
+        runtime.kurt().setInvulnerable(3.0f);
+        runtime.kurt().declineInvulnerability(1.0f / 60.0f);
+        CHECK(fabsf(runtime.kurt().invulnerable() - (3.0f - 1.0f / 60.0f)) < 1e-6f);
+        for (int i = 0; i < 200; i++) {
+            runtime.kurt().declineInvulnerability(1.0f / 60.0f);
+        }
+        CHECK(runtime.kurt().invulnerable() == 0.0f);
+        runtime.kurt().declineInvulnerability(1.0f / 60.0f);
+        CHECK(runtime.kurt().invulnerable() == 0.0f);
+    }
+    {
+        // What the floor at zero is FOR: a timer that drained past it would make "1.5 s
+        // more" mean less than 1.5 s.
+        runtime.kurt().setInvulnerable(0.5f);
+        runtime.kurt().declineInvulnerability(1.0f);
+        CHECK(runtime.kurt().invulnerable() == 0.0f);
+        Code code;
+        code.u8(kSetGlobal573bd4).u8(1).f32(1.5f);
+        code.end();
+        scripts::MdkObject obj;
+        runProgram(runtime, code, &obj);
+        CHECK(runtime.kurt().invulnerable() == 1.5f);
+    }
+
+    // The reason the decline matters at all: opcode 244 is a timer, not a switch. While it
+    // runs, hurt() refuses (Kurt.Combat.cs:125); once it has run out, the same hurt lands.
+    // Without the decline the first two CHECKs pass forever and a script that ever set the
+    // timer made Kurt immortal for the rest of the level.
+    {
+        runtime.kurt().setHealth(100);
+        runtime.kurt().setKnockDamage(0.0f);
+        runtime.kurt().setInvulnerable(0.5f);
+        runtime.kurt().hurt(10);
+        CHECK(runtime.kurt().health() == 100);
+        for (int i = 0; i < 29; i++) {  // 29/60 s is under 0.5 s, so still invulnerable
+            runtime.kurt().declineInvulnerability(1.0f / 60.0f);
+        }
+        CHECK(runtime.kurt().invulnerable() > 0.0f);
+        runtime.kurt().hurt(10);
+        CHECK(runtime.kurt().health() == 100);
+        for (int i = 0; i < 60; i++) {
+            runtime.kurt().declineInvulnerability(1.0f / 60.0f);
+        }
+        CHECK(runtime.kurt().invulnerable() == 0.0f);
+        runtime.kurt().hurt(10);
+        CHECK(runtime.kurt().health() == 90);
+        runtime.kurt().setHealth(100);
+        runtime.kurt().setKnockDamage(0.0f);
+    }
 }
 
 // Opcode 85 (set_rolling) captures the object's current Rotation only when

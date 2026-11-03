@@ -9941,3 +9941,164 @@ Next per the priority order: the knock-down slice proper — `ArenaSpace::floor`
 without it. That is the slice that makes the `Knocked`/`GetUp` arms of `hurt()`'s guard
 reachable at all, and it wants a ground-level hurt golden with it. Owner tasks (1), (10),
 (13) and (15) are unchanged and still block what they block.
+
+## Iteration 71 — batch 43: Kurt's invulnerability is a timer again, not a switch (review-13 had no Critical/High; F3 fixed, F2 accepted, F1 owner-owned)
+
+**Prior-solution lookup (all three sources, before implementing).** *Pi knowledge
+(`mdk-sdl` KB, `knowledge_search`, mode `hybrid`, query "Kurt invulnerability decay
+set_global_573bd4 opcode 244 never clears")*: result [1] was `mdk_core/src/game/kurt.h`'s
+own `setInvulnerable` and result [5] was `docs/OPEN_ITEMS.md`'s "The invulnerability decay"
+entry — the KB already carried this exact open item, so the lookup confirmed the slice rather
+than discovering it; verified against the oracle before writing anything. *Obsidian*: no MCP
+server is exposed in this Pi session, so the vault was read directly (read-only) from
+`/mnt/nas/Vaults/port-docs`; a recursive grep for `invulnerab` and for `573bd4|KnockdownInvulnerability`
+found **nothing** — no prior note on this field. *Cognee MCP*: **not available** — no Cognee
+tool is exposed in this session, so the knowledge graph was **not** consulted; recorded rather
+than implied.
+
+### What landed, and the oracle line behind it
+
+`Kurt.Update`'s second statement is `Invulnerable = MathF.Max(Invulnerable - delta, 0f)`
+(`src/Mdk.Game/Kurt/Kurt.cs:139`), immediately after the mouse-turn reset and **ahead of the
+`Frozen` return (`:141`) and the `Current == State.Dead` return (`:152`)**. The field it writes
+(`Kurt.Combat.cs:82`, `public float Invulnerable`, the original's 0x573bd4) has three readers:
+`Hurt`'s guard (`Kurt.Combat.cs:125`, `Invulnerable > 0f` → no damage, and `KnockDamage = 0f`),
+opcode 240 (`ScriptVm.cs:1590`, which refuses to raise the knock-down counter while
+invulnerable), and opcode 244 itself (`ScriptVm.cs:1598`, whose accumulate arm adds to it).
+
+The port had the field, opcode 244, and both readers — and no decay. So opcode 244, the only
+writer this port has, was not a timer but a **switch**: the first script that set it made Kurt
+immune to `hurt_kurt` and to the knock counter for the rest of the level, and every gate stayed
+green because opcode 244 fires in none of levels 3-8. That is the same shape as batch 40's two
+healths and batch 41's unwritten state: a field with a reader and no writer, invisible to a
+golden that never sets it.
+
+`Kurt::declineInvulnerability(delta)` is that line, and `Player::update` calls it at the C#'s
+own position — the first statement, before `_chuteClosing = false` and before `if (dead)`, so a
+dead Kurt's timer runs down too, and so it stays above the `Frozen`/noclip/`Ride` early returns
+when those land (review-13's open question, which this batch answers for this field: the decay
+is above them in the C#, so it must not move with them). `kurt.h` carries why the position is
+load-bearing, and `docs/OPEN_ITEMS.md`'s invulnerability item is closed, with the part of it
+that is *not* closed named: `FadeFlashes` (`Kurt.Combat.cs:203`) is still unported, so nothing
+fades `hurtFlash_` or `whiteFlash_`.
+
+### The pin, and the three mutants
+
+`tests/scripts/golden/L3_kurt_invuln.txt` — 341 lines, sha256 `fb00137b09cacca4…`, the oracle
+probe's new `invuln` mode (`/tmp/mdk-pi/obj3/Probe`, rebuilt with `/tmp/mdk-pi/build_probe.sh`,
+run as `mdkprobe 3 340 1 invuln`), byte-identical to `tick1 dump invuln 3 340`. Before
+generating it the probe's `src/Mdk.Game/Kurt/Kurt.cs` and `Kurt.Combat.cs` were re-verified
+byte-identical to the repository's read-only oracle (`59ea74c4…`, `19f8c7de…`), and the probe's
+existing `knock` mode was re-run and re-diffed against `golden/L3_kurt_knock.txt` (identical),
+so the fixture is oracle output and not the port's.
+
+The schedule prints `invuln=` and `knock=` every step and prints itself in the header line:
+
+| step | event | what it pins |
+|---|---|---|
+| 20 | `Invulnerable = 3` (opcode 244's set arm) | the value a knock-down would have set (`KnockdownInvulnerability`, `Kurt.Combat.cs:34`) |
+| 40 | hurt 4 | refused: `hp=100` while `invuln=2.6667`, and the guard zeroes `knock` |
+| 199→200 | — | `0.0167 → 0.0000`: the floor at zero, on the step it lands |
+| 210 | hurt 4 | accepted: `hp=96` — the guard released because the timer expired |
+| 280 | hurt 3 | accepted: `hp=93`, `knock=4.6667`, still under `KnockdownDamage` |
+| 300→301 | `SetHealth(0)` | the death transition on the floor, `state=Dead` |
+| 305→340 | `Invulnerable = 2` | `2.0000 → 1.4167` **on a corpse**: the decay is above the `dead` return |
+
+Two design constraints, both learned by running the oracle rather than guessed. Nothing is
+**lifted**: the HardLand state is the *other* arm of `Hurt`'s guard, and a lift would have made
+every refused hurt ambiguous about which arm refused it. And the second accepted hurt sits at
+step **280**, not 260: the first draft used 260, the oracle entered `State.Knocked` at 261 (the
+counter was at 2.33, +3 crossed `KnockdownDamage`, and on a floor the trigger needs no floor
+probe), and the port could not follow — the first version of this fixture therefore diffed for
+exactly the reason the fixture exists to avoid. At 280 the counter has drained to 1.6667 and
+4.6667 stays under the threshold.
+
+Three mutants, built and run against the golden:
+
+| mutant | first difference |
+|---|---|
+| no `declineInvulnerability` call at all | `s=21 invuln=3.0000` (oracle `2.9833`) |
+| `invulnerable_ -= delta`, no floor at zero | `s=1 invuln=-0.0167` (oracle `0.0000`) |
+| the call moved below `if (dead) return` | `s=306 invuln=2.0000` (oracle `1.9833`) |
+
+`vm_tests` gains three cases for what the fixture cannot reach: the timer must not go negative
+and must stay at zero once there; opcode 244's **accumulate** arm must add to a floored timer
+(1.5 s after a drained timer is 1.5 s, not "1.5 s minus the overshoot", which is what a
+negative timer would give); and the property the whole slice is about — `hurt()` refuses at
+0.5 s and at 29/60 s and lands for 10 the step the timer reads 0.0000.
+
+### Review-13 disposition
+
+Review-13's verdict was `INCOMPLETE` with **no Critical or High finding** ("the port matches the
+oracle byte-for-byte on the reviewed path"), so there was nothing to remediate under the
+remediation protocol. Its three findings, in order:
+
+- **F1 (Medium, the owner's uncommitted frame pair `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`
+  says `captured: … at eb4879a`, twelve commits behind the tree it would land on, and says
+  nothing about being carried over) — confirmed, and owner-owned, so not touched.** The finding
+  is right about the file and about `validate_png_pair` checking only the presence of the
+  `captured:` line. It is not this batch's file: `CONTINUATION.md` records that pair as part of
+  the owner's uncommitted harness work (with `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh` and
+  `gates_batch_integrity.py`), and the standing practice the last several batches followed is to
+  stage only their own paths and never `git add -A`. This batch neither staged, edited nor
+  deleted it, and it published **its own** pair instead
+  (`docs/frames/2026-11-03-kurt-invuln-timer.{png,txt}`), captured on the tree it lands on: the
+  sidecar names `at 0140462`, which is this batch's parent, exactly as `docs/frames/README.md`
+  requires, and its own text says why the pixels did not move. F1 stays open for its owner.
+- **F2 (Low, the new knock golden cannot distinguish the *position* of the decline call inside
+  `Player::update`) — accepted as stated, no code change.** The reviewer's own recommended
+  remediation is "none required now … make the placement test-observable when the trigger
+  lands", and this batch did exactly the part that was available: the placement of the *other*
+  decline, the invulnerability one, **is** now test-observable, because the golden re-opens the
+  timer on a corpse and a decline placed below the `dead` return freezes at `2.0000` from
+  s=306 (mutant 3 above). The knock decline's position stays review-pinned until the knock-down
+  machine gives it a consequence, and `kurt.h`/`player.cpp` carry the comment that says so.
+- **F3 (Low, `Player::land`'s comment enumerates two omitted terms of `Kurt.Damage` and reads
+  as exhaustive, but the C#'s `HardLanding` also runs `Scaled(damage, Difficulty)`, so on Easy
+  the slam is 6 and on Hard 20, not the 10 `damageHealth` takes) — confirmed and fixed.** The
+  paragraph now names the third term, says it is *not* inert in the same provable way the
+  `KnockDamage` omission is, and points at the deferral that actually owns it
+  (`Player::damage`'s "C# Damage with Normal difficulty" note, `player.cpp:474` after this
+  batch's insertion), so the block cannot be read as a complete list. No behaviour changed:
+  `difficulty_` still has no writer, which is the only reason the term is inert today.
+
+### Gates, run in full, with their real output
+
+- `make -C tests/scripts` → **exit 0**, last line `All cases match the oracle.`,
+  **450 PASS / 0 FAIL / 0 SKIP** (449 before; the +1 is `PASS L3_kurt_invuln`). The new
+  `vm_tests` cases run inside `PASS KurtAndScreenWrites`.
+- `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built
+  .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` (unchanged, so
+  `tests/frames/reference.sha256` was **not** regenerated), `gates_batch_integrity PASS`.
+- `make -C mdk_3ds` → **exit 0**, `3DSX mdk.3dsx`, no warnings.
+- `cmake --build build-linux --target mdk` → **exit 0**, `[100%] Built target mdk`.
+
+No gate, threshold, protected file or existing golden was touched. The tree still carries the
+owner's four uncommitted harness files plus their frame pair, and this batch staged none of
+them (owner task (1)/(13)).
+
+### Codegen note (AGENTS.md §1/§2, inspected, not assumed)
+
+`arm-none-eabi-objdump -d mdk_3ds/build/kurt.o` for
+`_ZN3mdk4Kurt22declineInvulnerabilityEf`: `vldr`, `vldr`, `vsub.f32`, `vcmpe.f32`, `vmrs`,
+`vmovpl.f32`, `vstr`, `bx lr` — branchless (the `vcmpe`/`vmrs` pair feeds a conditional `vmov`,
+not a branch, so R3's control-flow concern does not arise), no `f64`, no `vcvt`. The only two
+`vcvt` in the object are the pre-existing `vcvt.f32.s32` int→float pair inside
+`Kurt::damage`, which is not a float→int conversion and is not new code. `gates_vfp`,
+`audit_arm11_math` and `audit_r11_idiv` are clean.
+
+### Next, per `docs/CONTINUATION.md` priority order
+
+Item 6a, same family, and `docs/OPEN_ITEMS.md` now names **three** things instead of four, the
+invulnerability decay having closed its entry: `ArenaSpace::floor` (the C#'s
+`ArenaSpace.Floor(from, to, …)` — nearest crossing over the arenas around **both** ends, where
+the port's `floorCrossing` is the C#'s *other* probe, first hit around `from` only), the
+`Knocked`/`GetUp` arms of `UpdateCombatState` (`Kurt.Combat.cs:379-399`, K_BANG/K_BFLIP), and
+`StopFiring` with the firing slice. The natural next slice is `ArenaSpace::floor`: it is a
+small port over the existing `Bsp::segment(a, b, kSegmentFloor, …)`, it is what the mid-air
+knock-down trigger probes, and it needs its own oracle pin. `FadeFlashes` (nothing fades
+`hurtFlash_`/`whiteFlash_`) is the other small one that stands on its own. Item 6b, the
+sprite-selection fixture, stays blocked on the named `KurtSprite` seam. **Old-3DS timing
+remains UNMEASURED** — no hardware run was made, and none is claimed.
