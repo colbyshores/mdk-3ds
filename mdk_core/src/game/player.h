@@ -77,7 +77,7 @@ public:
     // The C# Kurt state machine's visual state (Kurt.cs:104). The movement half
     // drives it, because the state changes the movement (a hard landing stops
     // walking), but the FIELD lives in the combat half: Kurt.Hurt reads the state
-    // the machine is in (Kurt.Combat.cs:120 -- no hurt while Dead, Knocked, GetUp
+    // the machine is in (Kurt.Combat.cs:125 -- no hurt while Dead, Knocked, GetUp
     // or HardLand), and a copy here is a copy hurt() would never see. Same shape
     // as the one health above, and pinned by the same kind of golden.
     // The renderer reads it to choose a sprite frame (KurtSprite.Pick).
@@ -137,10 +137,10 @@ private:
     void fallMove(float delta);
     void land(const Vec3& before, const Vec3& normal, float delta);
     // The hard landing's damage: Kurt::damageHealth, i.e. the C#'s Health line
-    // alone. The terms Kurt.Damage also raises (HurtFlash, KnockDamage) are not
-    // modelled here: the red flash belongs to the combat slice that owns them and
-    // the knock-down state machine that reads KnockDamage is not ported, so a
-    // hard landing must not raise a flash nothing fades out.
+    // alone. Of the two terms Kurt.Damage also raises, only HurtFlash is left out:
+    // the red flash belongs to the combat slice that owns it and nothing here fades
+    // it out, and the KnockDamage the C# adds is zeroed again by HardLanding itself
+    // (Kurt.cs:583, reproduced in Player::land), so the omission is inert.
     void damage(int damage);
     void drainKnockdownPush(float delta);
     void updateState(float forward, float strafe, float delta);

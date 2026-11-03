@@ -618,16 +618,49 @@ within 13 units below (`KnockdownFloorDistance`), so the golden lifts him 300 un
 hurts him in the part of the fall where the two halves agree, and the last hurt takes
 him to 0, whose `Health > 0` guard disables the knock check for the rest of the fall.
 
-Trigger that closes it: the knock-down slice (`UpdateKnockDamage`, `KnockDown`,
-`K_BANG`/`K_BFLIP`, the 3 s invulnerability, the `_push` drain — `Player` already
-carries `_knockdownPush` and its drain). When it lands, re-run the hurt scenario on the
-ground and the knock-down becomes visible in a golden.
+Trigger that closes it: the knock-down slice (`KnockDown`, `K_BANG`/`K_BFLIP`, the 3 s
+invulnerability, the `_push` drain — `Player` already carries `_knockdownPush` and its
+drain). When it lands, re-run the hurt scenario on the ground and the knock-down becomes
+visible in a golden.
+
+**Batch 42 landed two pieces of `UpdateKnockDamage` and named the rest precisely.** The
+counter now declines the way the oracle's does (`Kurt::declineKnockDamage`: clamp into
+`[0, KnockdownDamage]`, then drain `KnockdownDrain` per second, from `Player::update` at
+the C#'s call site, `Kurt.cs:176`), and a hard landing zeroes it where `HardLanding`
+does (`Kurt.cs:583`, between the damage and the dead/knocked guard) — review-12 A, which
+mattered because a counter that survives a landing is the shape that knocks Kurt down on
+the step *after* every hard landing the moment the trigger exists. Both are pinned by
+`golden/L3_kurt_knock.txt` and by three `vm_tests` cases, and three mutants were built
+and run (see "Iteration 70"). What the trigger still needs, in its own words:
+
+- **`ArenaSpace::floor`, which the port does not have.** The C# probe is
+  `ArenaSpace.Floor(from, to, out point)` (`ArenaSpace.cs:191`): the arenas around
+  **both** ends (`AddAt(from)` *and* `AddAt(to)`), the nearest crossing by
+  `DistanceSquared(from, hit)`. The port's `floorCrossing` is the C#'s *other* probe,
+  `FloorCrossing` (`ArenaSpace.Probes.cs:19`): Kurt's arenas around `from` only, and it
+  returns the **first** hit, not the nearest. They agree on a flat floor under Kurt and
+  disagree across an arena boundary, which is exactly where a mid-air knock-down lives.
+  It is a small port over the existing `Bsp::segment(a, b, kSegmentFloor, …)`, but it is
+  a collision query and it needs its own oracle pin.
+- **The `Knocked`/`GetUp` arms of `Kurt.UpdateCombatState`** (`Kurt.Combat.cs:379-399`):
+  `K_BANG` for `frameCount(Knocked)` frames, then `K_BFLIP` for `frameCount(GetUp)`, the
+  push cleared when he flips up, then `Still`. `Player` already has the frame counts
+  (`setFrameCounts`) and the animation clock; what it has not got is any branch that can
+  enter or leave those two states, so entering `Knocked` today would strand Kurt in a
+  state nothing animates and nothing exits — which is why the decline was ported alone.
+- **The invulnerability decay.** `Kurt.Update`'s first line after the mouse reset is
+  `Invulnerable = MathF.Max(Invulnerable - delta, 0f)` (`Kurt.cs:139`). The port has no
+  decay at all, so opcode 244's invulnerability lasts forever and `KnockDown`'s 3 s
+  cannot be expressed without it. It belongs with the combat fades (`FadeFlashes`, also
+  unported: nothing fades `hurtFlash_` either), which is its own small slice.
+- `KnockDown`'s `StopFiring()` stays inert until the firing slice: the port has no
+  firing, sniper or muzzle state at all.
 
 ## CLOSED by batch 41: `Kurt::state_` was a second copy of the entity's state with no writer
 
 Batch 40 removed the duplicated *health*; the same split still duplicated the *state*.
 `Kurt::state_` was initialised to `Still` and nothing wrote it, so the C#'s `Hurt`
-guard (`Kurt.Combat.cs:120`: `Current is State.Dead or State.Knocked or State.GetUp or
+guard (`Kurt.Combat.cs:125`: `Current is State.Dead or State.Knocked or State.GetUp or
 State.HardLand`) was ported as a comparison against a field that never changed. Batch
 40 called that "inert rather than wrong" because the `health_ == 0` return above it
 covers the dead case and, in its words, "nothing can enter HardLand/Knocked/GetUp and

@@ -1,0 +1,31 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-02T23:48:26Z at 72eecbc
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move: this batch changes a counter nothing draws. Kurt's
+recent-damage counter (Kurt.Combat.cs:84, 0x573b20) now declines the way the oracle's
+does -- clamp into [0, KnockdownDamage], then drain KnockdownDrain per second, from
+Player::update at Kurt.Update's own call site (Kurt.cs:176) -- and a hard landing zeroes
+it where Kurt.HardLanding does (Kurt.cs:583, between the damage and the dead/knocked
+guard), so a counter a script raised with set_hurt_flash (240) or a hurt taken in the air
+can no longer survive a landing the oracle clears. At level 3 frame 1 Kurt has just
+spawned standing still: no script has hurt him, no landing has happened, and nothing on
+screen reads this field, so the PNG is the same blob as 2026-11-02-kurt-one-state.png
+(sha256 6646adf1...) and the measurement is unchanged at 1.240% / max 247 / mean 0.1819.
+What shows the change instead is the new golden
+tests/scripts/golden/L3_kurt_knock.txt (341 lines, sha256 5c2c3091..., the oracle probe's
+own `knock` mode, byte-identical to `tick1 dump knock 3 340`): it lifts Kurt 300 units,
+hurts him 25 at step 20 -- high in the air, where the oracle's own knock-down probe cannot
+reach a floor, so the counter is clamped to 5 and the clamp and the 2/s drain are both
+visible on the way down -- hurts him 4 at step 175 so he arrives at the hard landing
+(step 183) with 3.7667, which the oracle prints as knock=0.0000, and hurts him 3 at step
+300 on the floor, where the drain runs again. Three mutants were built and run against
+it: no decline at all fails at s=21 with knock=25.0000, a decline without the clamp fails
+there with knock=24.9667, and no reset in Player::land fails at s=183 with knock=3.7333
+where the oracle is 0. Suite: 449 PASS / 0 FAIL / 0 SKIP.
+
+Capture: DISPLAY=:99 (headless Xvfb, per AGENTS.md P7), lavapipe
+(VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json), command
+`bash tools/publish_frame.sh kurt-knock-damage`, tree at 72eecbc plus this batch's
+uncommitted change. Scratch captures went to /tmp/mdk-pi (AGENTS.md P7 names
+/tmp/kilo, which is not writable by this account -- owner task 11).

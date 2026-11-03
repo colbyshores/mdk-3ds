@@ -156,6 +156,12 @@ void Player::update(const Input& input, float delta) {
         updateDeath(delta);
         return;
     }
+    // C# Kurt.Update runs UpdateKnockDamage here (Kurt.cs:176): after the ride and
+    // noclip returns (neither is ported) and before UpdateChuteSound and the
+    // Hang/HardLand branch, so a crashing Kurt's recent-damage counter declines too.
+    // Only the decline half is ported; Kurt::declineKnockDamage says what the trigger
+    // half needs and why it waits for the knock-down state machine.
+    combat_.declineKnockDamage(delta);
     // C# Kurt.Update calls UpdateChuteSound before the Hang/HardLand branch, so a
     // crashing Kurt's chute still closes and stops flapping.
     updateChuteSound();
@@ -390,7 +396,7 @@ bool Player::soundPlaying(const char* name) const {
 
 void Player::setState(Kurt::State state) {
     // The one state, and it lives in the combat half: C# Kurt is one object whose
-    // Hurt reads its own Current (Kurt.Combat.cs:120), so a state field here would
+    // Hurt reads its own Current (Kurt.Combat.cs:125), so a state field here would
     // be a second copy for hurt() to miss. Same shape as the one health.
     if (state == combat_.state() && _stateTime > 0.0f) {
         return;
@@ -610,7 +616,12 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         // guard around the damage call is NOT observable here -- Player::damage
         // floors at 0 exactly like Kurt.Damage's Math.Max(Health - damage, 0) --
         // and it is kept because the C#'s Damage also raises HurtFlash and adds to
-        // KnockDamage, which Player does not model yet (they live on mdk::Kurt).
+        // KnockDamage, which Player does not model here (they live on mdk::Kurt).
+        // Of those two, the KnockDamage omission is provably inert for a hard
+        // landing: Kurt.cs:583 zeroes that counter two lines after the damage call,
+        // which is the line below. HurtFlash is the one that stays unmodelled, and it
+        // stays unmodelled on purpose -- nothing fades the red flash here, so a hard
+        // landing must not raise a flash nothing fades out.
         //
         // What else the C#'s HardLanding does that this does not: Kurt.cs:589 also
         // calls StopFiring() (leave the sniper, stop the chain-gun voice, drop the
@@ -620,6 +631,15 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         if (health() > 0) {
             damage(kHardLandingDamage);
         }
+        // C# HardLanding zeroes the recent-damage counter HERE (Kurt.cs:583):
+        // unconditionally, between the damage and the dead/knocked guard, so a hard
+        // landing always starts the knock-down counter fresh. A counter a script
+        // raised (set_hurt_flash, opcode 240) or a hurt taken in the air therefore
+        // cannot survive the landing; without this line the port carries a nonzero
+        // counter through a landing the oracle clears, which is exactly the shape that
+        // would knock Kurt down on the step after every hard landing the moment the
+        // knock-down machine lands. Pinned by golden/L3_kurt_knock.txt.
+        combat_.setKnockDamage(0.0f);
         if (health() > 0 && state() != Kurt::Dead && state() != Kurt::Knocked &&
             state() != Kurt::GetUp) {
             chuteOpen = false;

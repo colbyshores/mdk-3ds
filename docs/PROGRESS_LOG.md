@@ -9781,3 +9781,163 @@ Next per the priority order: the knock-down slice (`UpdateKnockDamage`, `KnockDo
 — now the only way to make the `Knocked`/`GetUp` arms of the guard reachable, and the
 trigger for a ground-level hurt golden. Owner tasks (1), (10), (13) and (15) are
 unchanged and still block what they block.
+
+## Iteration 70 — batch 42: the knock counter declines, and a hard landing zeroes it (review-12 A/C/D/E fixed; B owner-gated)
+
+**Prior-solution lookup (all three sources, before implementing).** *Pi knowledge
+(`mdk-sdl` KB, `knowledge_search`, mode `hybrid`)*: returned `Kurt.Combat.cs`'s
+`UpdateKnockDamage` and its constant block, `docs/OPEN_ITEMS.md`'s knock-down entry, and
+`mdk_core/src/game/kurt.cpp`'s `hurt()` — i.e. the KB already carried this subsystem's
+open item and pointed at the same two rules this batch landed; treated as a lead and
+verified against the oracle. *Obsidian*: no MCP server is exposed in this Pi session, so
+the vault was read directly (read-only) from `/mnt/nas/Vaults/port-docs`; a recursive grep
+for `knockdown|knock_down|K_BANG` found **nothing** — no prior note on this subsystem.
+*Cognee MCP*: **not available** — no Cognee tool is exposed in this session, so the
+knowledge graph was **not** consulted; recorded rather than implied.
+
+### What landed, and the oracle line behind it
+
+`golden/L3_kurt_hurt.txt` and `golden/L3_kurt_hurtland.txt` both keep their hurts in the
+air, and both say why: on a floor a hurt of 5 or more knocks the oracle down, and the
+knock-down state machine is not ported. That deferral had quietly taken two more rules
+with it, and review-12 A found the second one by reading the field's writers:
+
+1. **The counter's decline** — `Kurt.UpdateKnockDamage`'s tail (`Kurt.Combat.cs:230-231`)
+   is `KnockDamage = Math.Clamp(KnockDamage, 0f, KnockdownDamage)` and then
+   `KnockDamage = MathF.Max(KnockDamage - KnockdownDrain * delta, 0f)`. Ported as
+   `Kurt::declineKnockDamage`, called from `Player::update` at the C#'s own call site
+   (`Kurt.cs:176`: after the ride and noclip returns, before `UpdateChuteSound` and
+   before the `Hang`/`HardLand` branch, so a crashing Kurt's counter declines too).
+2. **The hard landing's reset** — `Kurt.HardLanding` writes `KnockDamage = 0f`
+   unconditionally at `Kurt.cs:583`, *between* the damage call and the
+   `Health == 0 || Current is Dead|Knocked|GetUp` guard. The port wrote nothing, so a
+   counter a script raised with `set_hurt_flash` (opcode 240) or a hurt taken in the air
+   survived a landing the oracle clears. Ported as `combat_.setKnockDamage(0.0f)` in
+   `Player::land`, at that position.
+
+That second one is why this batch is not merely cosmetic: the moment the knock-down
+trigger exists, a counter that survives a hard landing knocks Kurt down on the step
+*after* every hard landing. It is also what made the previous batch's record wrong — see
+the disposition of review-12 A below.
+
+The **trigger half** of `UpdateKnockDamage` is deliberately NOT ported, and this batch
+replaced a vague deferral with the three named things it actually needs
+(`docs/OPEN_ITEMS.md`): `ArenaSpace::floor` — the C# probe is `ArenaSpace.Floor(from, to,
+out point)` (`ArenaSpace.cs:191`), which searches the arenas around **both** ends and
+keeps the **nearest** crossing, while the port's `floorCrossing` is the C#'s *other* probe
+`FloorCrossing` (`ArenaSpace.Probes.cs:19`), Kurt's arenas around `from` only and the
+**first** hit; the `Knocked`/`GetUp` arms of `Kurt.UpdateCombatState`
+(`Kurt.Combat.cs:379-399`), without which entering `Knocked` strands Kurt in a state
+nothing animates and nothing exits; and the invulnerability decay `Invulnerable =
+MathF.Max(Invulnerable - delta, 0f)` (`Kurt.cs:139`), which the port does not run at all,
+so opcode 244's invulnerability currently lasts forever. `KnockDown`'s `StopFiring()`
+stays inert with the firing slice.
+
+### The pin, and the three mutants
+
+`tests/scripts/golden/L3_kurt_knock.txt` — **341 lines, sha256 `5c2c3091…`**, the oracle
+probe's new `knock` mode (`mdkprobe 3 340 1 knock`), byte-identical to
+`tick1 dump knock 3 340`. It lifts Kurt 300 units (the hard landing's own fixture, so the
+landing is step 183 and K_CRASHL runs to 286) and prints `knock=` — the oracle's own
+`Kurt.KnockDamage` — every step:
+
+| step | oracle | what it pins |
+|---|---|---|
+| 20 | `hp=75 knock=25.0000` | `hurt_kurt` 25 high in the air, where the knock-down probe cannot reach a floor |
+| 21 | `knock=4.9667` | the **clamp** to `KnockdownDamage` and the **drain** on the same step |
+| 175→182 | `4.0000 → 3.7667` | the drain continuing, under the threshold so no knock-down |
+| 183 | `state=HardLand hp=61 knock=0.0000` | the hard landing's **reset** |
+| 300→304 | `3.0000 → 2.8667` | the drain on the floor, after the K_CRASHL window |
+
+The probe was re-verified against a committed golden before use: `mdkprobe 3 220 1 hurt`
+is byte-identical to `golden/L3_kurt_hurt.txt`. Mutants built and run (each rebuilt
+`tick1`, diffed against the oracle, then reverted):
+
+| mutant | first failure | oracle |
+|---|---|---|
+| no decline, no reset (this batch's pre-fix shape) | `s=21 knock=25.0000` | `4.9667` |
+| decline without the clamp | `s=21 knock=24.9667` | `4.9667` |
+| reset removed from `Player::land` | `s=183 knock=3.7333` | `0.0000` |
+
+`tests/scripts/vm_tests.cpp` gained three cases in `testKurtAndScreenWrites`, for the
+parts the golden's fixture cannot reach: both arms of `hurt()`'s guard **zero** the
+counter rather than leaving it (`Kurt.Combat.cs:127` — the invulnerability arm and the
+state arm, health unchanged in both), and the decline's two floor cases (a counter above
+the threshold standing on the floor, which the oracle would have knocked down; and a
+counter at or below zero, which must not go negative). Review-12 E's "removing that line
+breaks no test" is no longer true.
+
+### Review-12 disposition
+
+Review-12 recorded **no Critical and no High**; its verdict was INCOMPLETE on two Medium
+items. Disposition, in its order:
+
+- **A (Medium) — FIXED, not deferred.** Quote: *"add `combat_.setKnockDamage(0.0f);` in
+  `Player::land()`'s hard branch at the exact place `Kurt.cs:583` puts it (unconditional,
+  before the dead/knocked guard), and correct the `PROGRESS_LOG.md` sentence; or, if
+  deferred with the knock-down slice, say so there and add the item to
+  `docs/OPEN_ITEMS.md` with the same trigger."* The reset landed, at that position, and
+  the golden above pins it. The finding was checked against the oracle first:
+  `grep -n knockDamage_ mdk_core/src` before the change showed writes only at `kurt.cpp:21`
+  (the guard's zeroing) and `kurt.cpp:40` (`Damage`'s `+=`), so `Player::land` could not
+  have been clearing it, and `Kurt.cs:583` does it unconditionally. **The record it
+  corrected was this repository's, and the reviewer was right**: batch 41's entry said the
+  port zeroes `KnockDamage` at a hard landing "which the port also does". It did not. That
+  sentence stands as written in "Iteration 69" (the log is a record, not a draft) and is
+  refuted here. The `Player::land` and `player.h` comments that disclosed only the
+  *accumulation* omission now say what is actually true: the C# adds the damage to the
+  counter and zeroes it two lines later, so the accumulation is provably inert for a hard
+  landing and the reset is the line that reproduces the C#'s net state.
+- **B (Medium) — OWNER task, with its correction to the record accepted.** The clone
+  failure is real and re-confirmed here: `logs/` is gitignored (`.gitignore:44:logs/`, and
+  `git check-ignore -v logs/ralph/disabled` resolves to it), while
+  `gates_batch_integrity.py`'s static block refuses to pass unless `logs/ralph/disabled`
+  exists — so a fresh clone of any commit prints `BATCH INTEGRITY: FAIL — Muse loop is not
+  parked` while the working tree prints PASS. The fix is inside a `PROTECTED` file
+  (`gates_batch_integrity.py` is in its own `PROTECTED` set) and/or the marker's own
+  tracking, so it is owner task (1)/(13) territory, not a batch's. **Its correction to
+  review-11 R11-2 is verified and adopted**: `git show HEAD:tools/runner/gates_batch_integrity.py
+  | grep -c -- '--each-commit'` → **0** and `git show HEAD:ralph-pi.sh | grep -c --
+  '--each-commit'` → **0**, so HEAD is self-consistent and R11-2's "the committed tree
+  deadlocks and the safe fix is rejected" does not hold as written; the live hazard is
+  committing only one of the two dirty owner files, which is why batches keep staging only
+  their own paths. R11-2 is therefore **reclassified** from "confirmed, not rebutted" to
+  "over-stated premise, real residual hazard = the uncommitted owner pair".
+- **C (Low) — FIXED.** The derivation now reads as the arithmetic: `26 frames ×
+  kCrashTicksPerFrame (2) = 52 ticks`, and `UpdateSpecial` advances `kTicks × 1/60 = 0.5`
+  ticks a step, so 104 steps, 183..286 (`tests/scripts/tick1.cpp`, the `hurtland`
+  header). The golden's window was already right and is unchanged.
+- **D (Low) — FIXED where this batch wrote text.** The state guard is cited as
+  `Kurt.Combat.cs:125` (verified: 118 `public void Hurt`, 120 `if (Health == 0)`, 125 the
+  guard, 127 `KnockDamage = 0f;`) in `kurt.h`, `player.h`, `player.cpp` and
+  `tick1.cpp`, and in `docs/OPEN_ITEMS.md`. The published frame sidecars and the past
+  PROGRESS_LOG entries keep their `:120` — history is not rewritten.
+- **E (Low) — FIXED**, by the `vm_tests` cases above.
+
+### Gates (verbatim, all re-run after the last edit)
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts -j8` | **exit 0** — `All cases match the oracle.`, **449 PASS / 0 FAIL / 0 SKIP** (448 + the new `L3_kurt_knock`) |
+| contract gates | `bash tools/check.sh` | **exit 0** — `CHECK: ALL GATES PASSED`; `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`, `gates_smdh` **SKIP** (no built .cia), `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` (byte-identical to the pinned `cpp=`, so `reference.sha256` was **not** regenerated), `gates_batch_integrity PASS` |
+| 3DS | `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` | **exit 0** — `3DSX mdk.3dsx`, no warnings, `stage_romfs: staged 69 files` |
+| Linux | `cmake --build build-linux --target mdk -j8` | **exit 0** — `Built target mdk` |
+
+No gate, test or golden was relaxed, pinned or edited. The only golden change is a **new**
+file whose bytes are the oracle's own output; every older golden is byte-unchanged.
+
+### State and next
+
+Frame `docs/frames/2026-11-02-kurt-knock-damage.png` + `.txt` — `1.240 / 247 / 0.1819`,
+byte-identical to its predecessors (`6646adf1…`), because no renderer behaviour changed;
+the sidecar says so and names the golden that shows the change instead. Capture on
+`DISPLAY=:99` (P7), scratch in `/tmp/mdk-pi`. **No emulator run and no Old-3DS hardware
+run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6).**
+
+Next per the priority order: the knock-down slice proper — `ArenaSpace::floor` (the C#
+`ArenaSpace.Floor`, nearest crossing over both ends' arenas), then `KnockDown` and the
+`Knocked`/`GetUp` arms of `UpdateCombatState`, with the invulnerability decay
+(`Kurt.cs:139`) as its own small slice first, since `KnockDown`'s 3 s cannot be expressed
+without it. That is the slice that makes the `Knocked`/`GetUp` arms of `hurt()`'s guard
+reachable at all, and it wants a ground-level hurt golden with it. Owner tasks (1), (10),
+(13) and (15) are unchanged and still block what they block.

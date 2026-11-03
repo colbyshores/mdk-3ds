@@ -2480,6 +2480,53 @@ void testKurtAndScreenWrites(scripts::ScriptRuntime& runtime) {
         runtime.kurt().setInvulnerable(0.0f);
     }
 
+    // The other half of that counter (review-12 E): a hurt the guard REFUSES does not
+    // merely leave KnockDamage alone, it zeroes it (Kurt.Combat.cs:127). Both arms of
+    // the guard are pinned here, because the oracle golden cannot: a hurt that reaches
+    // the zeroing is by definition a hurt that never reaches the Damage path the
+    // golden prints. The state arm is the one review-11 R11-3 was about.
+    {
+        runtime.kurt().setHealth(100);
+        runtime.kurt().setInvulnerable(2.0f);
+        runtime.kurt().setKnockDamage(7.0f);
+        const int32_t health = runtime.kurt().health();
+        runtime.kurt().hurt(5);
+        CHECK(runtime.kurt().knockDamage() == 0.0f);
+        CHECK(runtime.kurt().health() == health);
+        runtime.kurt().setInvulnerable(0.0f);
+    }
+    {
+        runtime.kurt().setHealth(100);
+        runtime.kurt().setState(Kurt::HardLand);
+        runtime.kurt().setKnockDamage(6.0f);
+        const int32_t health = runtime.kurt().health();
+        runtime.kurt().hurt(5);
+        CHECK(runtime.kurt().knockDamage() == 0.0f);
+        CHECK(runtime.kurt().health() == health);
+        runtime.kurt().setState(Kurt::Still);
+    }
+
+    // The decline itself (Kurt.Combat.cs:230-231): clamp into [0, KnockdownDamage]
+    // FIRST, then drain KnockdownDrain per second, floored at zero. The oracle pins
+    // the same two rules in golden/L3_kurt_knock.txt; these pin the two shapes that
+    // fixture cannot reach without a knock-down state machine: a counter above the
+    // threshold standing on the floor (the oracle would have knocked him down), and a
+    // counter at or below zero, which must not go negative.
+    {
+        runtime.kurt().setKnockDamage(9.0f);
+        runtime.kurt().declineKnockDamage(1.0f / 60.0f);
+        CHECK(fabsf(runtime.kurt().knockDamage() - (5.0f - 2.0f * (1.0f / 60.0f))) < 1e-6f);
+        for (int i = 0; i < 200; i++) {
+            runtime.kurt().declineKnockDamage(1.0f / 60.0f);
+        }
+        CHECK(runtime.kurt().knockDamage() == 0.0f);
+        runtime.kurt().declineKnockDamage(1.0f / 60.0f);
+        CHECK(runtime.kurt().knockDamage() == 0.0f);
+        runtime.kurt().setKnockDamage(-1.0f);
+        runtime.kurt().declineKnockDamage(1.0f / 60.0f);
+        CHECK(runtime.kurt().knockDamage() == 0.0f);
+    }
+
     // 244: a zero mode sets the time, a non-zero mode accumulates it.
     {
         Code code;

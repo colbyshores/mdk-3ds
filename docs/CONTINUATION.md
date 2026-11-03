@@ -1,34 +1,33 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 41 is a second state-model change: Kurt's state moved out of `Player`
-into `Kurt` (the field `hurt()`'s guard reads), `Player::_state` is deleted, and the
-per-frame state machine now reads it through the entity. Pinned by a new oracle-generated
-golden; every older golden is unchanged.
+Risk: medium — batch 42 ports two rules of one combat counter (Kurt's recent-damage
+`KnockDamage`: its per-step decline, and `HardLanding`'s unconditional zeroing of it) and
+nothing else. Bounded and pinned by a new oracle golden; no interface, data format,
+persistence, concurrency or renderer change, and no shipped frontend can observe it yet
+because nothing reads the counter. It is not `low` because it changes per-frame behaviour
+in `Player::update`.
 
-Last updated: 2026-11-02 (**batch 41** — review-11 R11-3 fixed: Kurt has one state, so
-`hurt()`'s Dead/Knocked/GetUp/HardLand guard fires; see `docs/PROGRESS_LOG.md`,
-"Iteration 69"). Previous narratives are one "Iteration N" section back each: batch
-40 = 68 (review-10 F4/F5), 39 = 67 (review-9 R9-5), 38 = 66, 37 = 65, 36 = 64, 35 = 63,
-34 = 62, 33 = 61, 32 = 60.
+Last updated: 2026-11-02 (**batch 42** — review-12 A/C/D/E fixed: the knock counter
+clamps and drains and a hard landing zeroes it; see `docs/PROGRESS_LOG.md`,
+"Iteration 70"; review-12 B is owner task (1)/(13) and its correction to review-11 R11-2
+is adopted there). Previous narratives are one "Iteration N" section back each: batch
+41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
 
-Goldens are **448/0/0**: batch 41 added `golden/L3_kurt_hurtland.txt` (341 lines, sha256
-`9e1b4832…`, the oracle probe's `hurtland` mode, byte-identical to `tick1 dump hurtland
-3 340`), batch 40 added `golden/L3_kurt_hurt.txt` (221 lines, sha256 `35d78b3d…`, the
-`hurt` mode), and no older golden moved. The frame is byte-unchanged across batches 31-41 because no
-renderer behaviour was touched. Still owner-gated, and still uncommitted in the tree: the
-owner's harness work (`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
-`gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so
-batches keep staging only their own paths and never `git add -A`. **Review-10 F1, F2 and
-F3 and F6 are that same hazard under new numbers** — the `--each-commit` recovery that
-replaces the guard's fail-closed path, the green tree that depends on two uncommitted
-files (re-reproduced by execution in batch 39: a clean clone of `HEAD` plus the
-working-tree gate prints `FAIL … ralph-pi.sh: required invariant is missing:
-'--each-commit'`, rc 1, while the same clone with its own committed gate prints `PASS`),
-the un-invoked `--self-test`, and the `--each-commit`-without-`--base` no-op. All four
-have their only fix inside `gates_batch_integrity.py` (in its own `PROTECTED` set) or
-`tools/check.sh` (same) or `ralph-pi.sh` (whose uncommitted owner edits must not be
-staged), so all four are owner task (1)/(13), not batch-remediable. **F4 and F5 were the
-only builder-visible findings and both are fixed.**
+Goldens are **449/0/0**: batch 42 added `golden/L3_kurt_knock.txt` (341 lines, sha256
+`5c2c3091…`, the oracle probe's `knock` mode, byte-identical to `tick1 dump knock 3 340`),
+batch 41 added `golden/L3_kurt_hurtland.txt` (341 lines, sha256 `9e1b4832…`) and batch 40
+`golden/L3_kurt_hurt.txt` (221 lines, sha256 `35d78b3d…`); no older golden moved. The frame
+is byte-unchanged across batches 31-42 because no renderer behaviour was touched. Still
+owner-gated, and still uncommitted in the tree: the owner's harness work (`AGENTS.md`,
+`ralph/builder.md`, `ralph-pi.sh`, `gates_batch_integrity.py`,
+`docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep staging only their own
+paths and never `git add -A`. **Review-10 F1, F2 and F3 and F6 are that same hazard under
+new numbers** — the `--each-commit` recovery that replaces the guard's fail-closed path,
+the green tree that depends on two uncommitted files, the un-invoked `--self-test`, and the
+`--each-commit`-without-`--base` no-op. Review-12 B re-confirmed the clone half by execution
+and **corrected review-11 R11-2's premise**: at HEAD neither file mentions `--each-commit`
+(both greps → 0), so HEAD is self-consistent and the live hazard is committing only one of
+the two dirty owner files, not a deadlocked tree. All four remain owner task (1)/(13).
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -53,12 +52,24 @@ only builder-visible findings and both are fixed.**
     by `Player::setState`) and `Player::_state` is gone; the pin is
     `golden/L3_kurt_hurtland.txt`, which hurts Kurt at step 220 **inside** the 104-step
     K_CRASHL window (183..286) — the oracle keeps `hp=90` — and again at 300 after it, where
-    `hp` moves to 86. **NEXT, same family:** the port still has no knock-down state machine,
-    which is why both hurt goldens are airborne and why the `Knocked`/`GetUp` arms of the
-    guard cannot be reached at all. Evidence and trigger in `docs/OPEN_ITEMS.md`: the
-    knock-down (`UpdateKnockDamage`, `KnockDown`, K_BANG/K_BFLIP, the 3 s invulnerability,
-    the `_push` drain `Player` already carries) is the slice that makes them observable, and
-    it wants a ground-level hurt golden with it.
+    `hp` moves to 86. **Batch 42 landed two more rules of that split** (review-12 A): the
+    recent-damage counter now declines (`Kurt::declineKnockDamage` — clamp into
+    `[0, KnockdownDamage]`, then drain 2/s — called from `Player::update` at `Kurt.cs:176`'s
+    own call site) and a hard landing zeroes it where `Kurt.HardLanding` does (`Kurt.cs:583`,
+    between the damage and the dead/knocked guard), so a counter raised by opcode 240 or by a
+    hurt in the air cannot survive a landing the oracle clears. The pin is
+    `golden/L3_kurt_knock.txt` (`knock=` every step: `25.0000 → 4.9667` at the clamp, `0.0000`
+    at step 183), with three mutants run and three `vm_tests` cases for the guard's zeroing and
+    the decline's floor cases. **NEXT, same family:** the port still has no knock-down state
+    machine, which is why all three hurt goldens are airborne and why the `Knocked`/`GetUp`
+    arms of the guard cannot be reached at all. `docs/OPEN_ITEMS.md` now names the four things
+    it needs instead of one: `ArenaSpace::floor` (the C# `ArenaSpace.Floor` — nearest crossing
+    over the arenas around **both** ends; the port's `floorCrossing` is the C#'s *other* probe,
+    first hit around `from` only), the `Knocked`/`GetUp` arms of `UpdateCombatState`
+    (K_BANG/K_BFLIP, `Kurt.Combat.cs:379-399`), the invulnerability decay (`Kurt.cs:139`, which
+    the port does not run at all, so opcode 244's invulnerability lasts forever and `KnockDown`'s
+    3 s cannot be expressed), and `StopFiring` with the firing slice. `Player` already carries
+    `_knockdownPush` and its drain. It wants a ground-level hurt golden with it.
 6b. **The sprite-selection fixture (review-8 oq3 / review-9 oq3) is blocked on a named
     seam, not on effort:** neither side can build a `KurtSprite` headlessly — the C#
     constructor needs the sealed Vulkan `Renderer` (`KurtSprite.cs:109`,
@@ -179,7 +190,10 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   **And `Kurt::state_` is the one state** (`Player::_state` is deleted since batch 41 and
   `Player::state()` delegates to the combat half), which is what makes `hurt()`'s
   `Dead|Knocked|GetUp|HardLand` guard fire at all; a second copy is caught by
-  `golden/L3_kurt_hurtland.txt`.
+  `golden/L3_kurt_hurtland.txt`. **And the recent-damage counter is live state, not a write-only
+  field**: `Kurt::declineKnockDamage` runs from `Player::update` at the C#'s call site and
+  `Player::land` zeroes it the way `Kurt.HardLanding` does, pinned by
+  `golden/L3_kurt_knock.txt` and three `vm_tests` cases.
   **When `TRAVSPRT.BNI` cannot be parsed the frontend runs the level WITHOUT scripts and says
   so, and `tick1` exits 1 rather than hand the runtime a null archive** — the C# `Bni.Load`
   throws, so a null archive is a different game, not a degraded one. Do not reintroduce a
@@ -217,33 +231,39 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   **177 cases**; how that suite lifts `ralph-pi.sh` is in "Iteration 49" and **must not be
   re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 41)
+## Verified on this tree (batch 42)
 
-All gates re-run from a clean invocation, with the full narrative, the probe recipe and the
-mutant results in `docs/PROGRESS_LOG.md`, "Iteration 69". Goldens **exit 0** (`All cases match
-the oracle.`, **448 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh` **exit 0** (`CHECK: ALL GATES
-PASSED`; `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, byte-identical to the pinned
-`cpp=`, so `reference.sha256` was NOT regenerated; `gates_smdh` SKIPPED; integrity PASS);
-`make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no warnings); `cmake --build build-linux
---target mdk` **exit 0**, no warnings. What is new: `golden/L3_kurt_hurtland.txt` (341 lines,
-sha256 `9e1b4832…`), the oracle's own output for Kurt lifted 300 units, hard-landing at step 183
-(K_CRASHL to 286), hurt through `ScriptRuntime::hurtKurt` at 220 — **refused**, `hp=90` — and at
-300, after the window, where `hp` moves to 86. `mdkprobe 3 340 1 hurtland` and
-`tick1 dump hurtland 3 340` agree byte for byte, and `mdkprobe 3 220 1 hurt` was re-verified
-against its committed golden before use, so no older pin moved. Mutants built and run: HEAD's
-two-copy shape (the pre-fix code) FAILS at `s=220 hp=80` while every other golden passes, and a
-guard that always fires FAILS at `s=300 hp=90` where the oracle is `86`. Batch 40's pin and its
-mutant stand as recorded in "Iteration 68". What the kurt goldens still do NOT
-pin: any shipped frontend's wiring (no frontend sets the mixer), the fall-out variant of death
-(unreachable without a pinned solid arena), the firing step frames, the sprite frame `pick()`
-selects from `chuteClosing` (see 6b), the knock-down a ground-level hurt causes in the oracle
-(see `OPEN_ITEMS.md`) — and therefore the `Knocked`/`GetUp` arms of `hurt()`'s guard, which no
-reachable state enters — and the feet finer than 1/64 unit (`Player::facing()`'s LUT trig; owner
-task 15). **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the
+All gates re-run from a clean invocation after the last edit, with the full narrative, the
+probe recipe and the mutant results in `docs/PROGRESS_LOG.md`, "Iteration 70". Goldens
+**exit 0** (`All cases match the oracle.`, **449 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh`
+**exit 0** (`CHECK: ALL GATES PASSED`; `audit_c_with_classes 0 violations`, `gates_vfp 0
+blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+`gates_core_parity` clean, `gates_smdh` SKIPPED, `gates_frames PASS L3_f1.bmp
+sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
+regenerated; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no warnings);
+`cmake --build build-linux --target mdk` **exit 0**. What is new:
+`golden/L3_kurt_knock.txt` (341 lines, sha256 `5c2c3091…`), the oracle's own output for Kurt
+lifted 300 units and hurt three times — 25 at step 20 high in the air, where the oracle's own
+knock-down probe cannot reach a floor, so the counter prints `25.0000` then `4.9667` (the
+clamp and the drain on one step); 4 at step 175, so he arrives at the hard landing (step 183)
+with `3.7667` and the oracle prints `knock=0.0000`; 3 at step 300 on the floor, draining
+again. `mdkprobe 3 340 1 knock` and `tick1 dump knock 3 340` agree byte for byte, and
+`mdkprobe 3 220 1 hurt` was re-verified against its committed golden before use, so no older
+pin moved. Mutants built and run: no decline and no reset (this batch's pre-fix shape) FAILS at
+`s=21 knock=25.0000`; a decline without the clamp FAILS there with `24.9667`; a `Player::land`
+with the reset removed FAILS at `s=183 knock=3.7333` where the oracle is `0.0000`. Batches
+40's and 41's pins and mutants stand as recorded in "Iteration 68" and "Iteration 69". What the
+kurt goldens still do NOT pin: any shipped frontend's wiring (no frontend sets the mixer), the
+fall-out variant of death (unreachable without a pinned solid arena), the firing step frames,
+the sprite frame `pick()` selects from `chuteClosing` (see 6b), the knock-down a ground-level
+hurt causes in the oracle (see `OPEN_ITEMS.md`) — and therefore the `Knocked`/`GetUp` arms of
+`hurt()`'s guard, which no reachable state enters — the invulnerability decay, which the port
+still does not run at all, and the feet finer than 1/64 unit (`Player::facing()`'s LUT trig;
+owner task 15). **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the
 Citro3D picture stays UNVERIFIED (P6);** the only windowed run was the frame capture, on
-`DISPLAY=:99` (P7). Frame `docs/frames/2026-11-02-kurt-one-state.png` + `.txt` — `1.240 / 247 /
-0.1819`, byte-identical to its predecessors, because no renderer behaviour changed. No gate was
-pinned, relaxed or edited.
+`DISPLAY=:99` (P7). Frame `docs/frames/2026-11-02-kurt-knock-damage.png` + `.txt` — `1.240 /
+247 / 0.1819`, byte-identical to its predecessors, because no renderer behaviour changed. No
+gate was pinned, relaxed or edited.
 
 ## Standing open items
 
@@ -312,6 +332,7 @@ tests/scripts/build/tick1 dump kurt 3 950             # Kurt's 950 steps: state,
 tests/scripts/build/tick1 dump kurtlethal 3 200       # the lethal hard landing at health 0
 tests/scripts/build/tick1 dump hurt 3 220             # hurt_kurt on the one health, per step
 tests/scripts/build/tick1 dump hurtland 3 340         # the hurt inside and after K_CRASHL
+tests/scripts/build/tick1 dump knock 3 340            # the knock counter's decline and the landing's reset
 bash tools/check.sh                                    # all gates
 bash tools/runner/test_review_state.sh                 # the review-record state machine
 python3 tools/runner/model_identity.py selftest --live # alias→upstream map vs the live proxy

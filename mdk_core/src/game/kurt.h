@@ -60,12 +60,21 @@ public:
     static constexpr int32_t kEasyDenominator = 3;
     static constexpr int32_t kHardFactor = 2;
 
+    // The knock-down counter's own bounds (Kurt.Combat.cs:32-33): recent damage
+    // never counts above KnockdownDamage and drains by KnockdownDrain per second.
+    // The rest of that constant block -- KnockdownInvulnerability, the 13-unit floor
+    // probe and the -64 u/s slam -- belongs to the knock-down state machine, which
+    // is a later slice (see declineKnockDamage and docs/OPEN_ITEMS.md).
+    static constexpr float kKnockdownDamage = 5.0f;
+    static constexpr float kKnockdownDrain = 2.0f;
+
     enum Mortality { Mortal, God };
     enum Difficulty { Easy, Normal, Hard };
 
     // Kurt.Hurt (Kurt.Combat.cs:118, 0x46a604): none while dead, invulnerable,
-    // knocked down, getting up, or hard-landing. The four states are read off
-    // state() below, which is the entity's own state, not a copy of it.
+    // knocked down, getting up, or hard-landing (the guard is Kurt.Combat.cs:125).
+    // The four states are read off state() below, which is the entity's own state,
+    // not a copy of it.
     void hurt(int32_t damage);
 
     int32_t health() const { return health_; }
@@ -83,7 +92,7 @@ public:
     float knockDamage() const { return knockDamage_; }
     float whiteFlash() const { return whiteFlash_; }
     // The entity's state, and the ONLY copy of it. C# Kurt is one object whose
-    // Hurt reads its own Current (Kurt.cs:104, read at Kurt.Combat.cs:120); this
+    // Hurt reads its own Current (Kurt.cs:104, read at Kurt.Combat.cs:125); this
     // port splits the class, so the field lives here and Player::state() is the
     // entity's view of it. Player::setState is the only writer. A second copy on
     // either side is the defect this comment exists to prevent: with the state in
@@ -106,6 +115,25 @@ public:
     // hurt() clears it while invulnerable; the knock-down state machine that
     // reads it is Kurt movement, a later slice.
     void setKnockDamage(float value) { knockDamage_ = value; }
+
+    // The decline half of Kurt.UpdateKnockDamage (Kurt.Combat.cs:230-231): clamp the
+    // recent damage into [0, KnockdownDamage], then drain KnockdownDrain per second,
+    // floored at zero. Player::update calls it at the C#'s call site (Kurt.cs:176 --
+    // after the ride and noclip returns, before UpdateChuteSound and before the
+    // Hang/HardLand branch), so a crashing Kurt's counter declines too.
+    //
+    // The TRIGGER half of that method (Kurt.Combat.cs:214-228: at KnockdownDamage on
+    // a floor -- or in the air above one within KnockdownFloorDistance, slamming him
+    // down at KnockdownSlamSpeed -- Kurt.KnockDown enters State.Knocked) is NOT
+    // ported: entering Knocked needs the Knocked/GetUp arms of Kurt.UpdateCombatState
+    // and the ArenaSpace.Floor probe, and neither exists here, so a port that entered
+    // Knocked would strand Kurt in a state nothing animates and nothing exits.
+    // Deferred with cause in docs/OPEN_ITEMS.md. The decline is ported on its own
+    // because it is the counter's own rate and the trigger does not change it: the
+    // C# runs this tail on every step the trigger does not knock him down on, and
+    // Player already carries the same kind of half for the knock-down push
+    // (Player::drainKnockdownPush).
+    void declineKnockDamage(float delta);
 
     // Inventory.Slots: filled by pickup collection (a later slice), read by
     // if_inventory (opcode 175).

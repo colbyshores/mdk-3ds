@@ -45,6 +45,15 @@ void Kurt::setHealth(int32_t health) {
     health_ = health > 0 ? health : 0;
 }
 
+void Kurt::declineKnockDamage(float delta) {
+    // C# Kurt.UpdateKnockDamage's decline tail (Kurt.Combat.cs:230-231), in the C#'s
+    // order: Math.Clamp first, then the drain, so a counter a script set above the
+    // threshold loses the excess on the same step it loses the drain. Math.Clamp(x, 0, 5)
+    // is min(max(x, 0), 5) for every value but a NaN, and no writer here can produce one.
+    knockDamage_ = std::min(std::max(knockDamage_, 0.0f), kKnockdownDamage);
+    knockDamage_ = std::max(knockDamage_ - kKnockdownDrain * delta, 0.0f);
+}
+
 void Kurt::damageHealth(int32_t damage) {
     // C# Damage's Health line, Math.Max(Health - damage, 0), without the terms
     // Player does not model. The death transition is the caller's, as in the C#.
