@@ -10576,3 +10576,79 @@ One further mutant attempt (`M12`) was mis-targeted: its anchor text matched the
 * No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**. The only windowed run was the frame capture on `DISPLAY=:99` (P7) via `tools/publish_frame.sh movement-commands-1-6`.
 
 Frame `docs/frames/2026-11-03-movement-commands-1-6.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical (`6646adf1…`) to the 55 committed PNGs that precede it: frame 1 is before any script runs, so no commanded object can appear in it. The sidecar carries no hand-written counts (review-18 F4).
+
+## Iteration 77 — batch 49: review-19 remediation — the dispatch→arm link is now pinned, and the speed clamps propagate NaN like `MathF` (F4/F5/F6/F7 fixed; F1/F2/F3 owner-owned, each reproduced first)
+
+### Prior-solution lookup
+
+* **Pi knowledge (`mdk-sdl`)** — searched for `MathF.Min MathF.Max NaN propagation fminf fmaxf speed clamp`. The hits were the answer, already in this repository: `script_vm.cpp`'s `mathMax`/`mathMin` pair with the comment "fmaxf is NOT — it returns the numeric side when exactly one argument is NaN, so a NaN operand would silently become finite", `sound_mixer.cpp`'s same pair, and — decisively — the existing `testRaiseShakeKeepsTheTickMaximum` case, which already pins `MathF.Max`'s NaN propagation with `nanf("")`. So the house convention was established in two other translation units and `script_runtime.cpp` was the one file that had `mathMax` but no `mathMin`. Verified against `src/Mdk.Game/Scripts/ObjectMotion.cs:780-790, 913-918` before acting.
+* **Obsidian** — no MCP server is exposed in this Pi session; read the vault read-only at `/mnt/nas/Vaults/port-docs`. `grep -ril` for `followFormation`, `move_to_target` and `MathF.Min` returns nothing, and `10-projects/mdk-sdl/` still holds only `ralph-pi-mandarine-setup.md`. Nothing to reuse.
+* **Cognee MCP** — not exposed in this session. Recorded unavailable; **not** consulted, and no conclusion here rests on it.
+
+### Review-19 disposition
+
+The newest review is `logs/ralph-pi/run-20261102-004416/review-19.md` (window `26242696..f521c76a` + the dirty tree). It found **no Critical/High in shipped code** — it re-derived batch 48's chase and formation numbers by hand and accepted them — and its own summary of the commit is "its two movement-command arms are faithful to `ObjectMotion.cs` and are pinned by real oracle-derived numbers". Every finding below was checked against the tree before being dispositioned.
+
+* **F1 (High, four `PROTECTED` files dirty with no recorded approval) — confirmed, owner-only, unchanged by this batch.** Same finding as review-18 F1, and the reviewer says so itself ("correctly not staged by it"). The four files are `AGENTS.md`, `ralph-pi.sh`, `ralph/builder.md` and `tools/runner/gates_batch_integrity.py`; the last is inside its own `PROTECTED` list, so neither of the two remedies offered (commit them with `MDK_OWNER_APPROVED=1`, or revert them) is reachable from a batch. This batch stages none of them: its committed diff is `mdk_core/src/scripts/script_runtime.{cpp,h}`, `tests/scripts/vm_tests.cpp`, `docs/OPCODE_COVERAGE.md`, the two docs and the frame pair. Owner tasks (1) and (13).
+* **F2 (Medium, `--each-commit` moves the frame rule from per-batch to per-commit) — confirmed, owner-only.** The reviewer's reading of the unstaged gate is right, and it also verified the chain re-runs the whole `validate_range`, so nothing else is skipped. Which rule the owner wants is the owner's call, and the fix belongs in the `PROTECTED` file. Owner task (1).
+* **F3 (Medium, `--each-commit` with no `--base` validates nothing and exits 0) — reproduced, owner-only.** Reproduced here: `python3 tools/runner/gates_batch_integrity.py --each-commit` (working tree) prints `BATCH INTEGRITY: PASS`, rc 0. The sharper half is that the **committed** gate does not accept the flag at all — `git show HEAD:tools/runner/gates_batch_integrity.py` run with `--each-commit` exits with `error: unrecognized arguments: --each-commit` — so the fail-open path exists only in the uncommitted owner diff and cannot be reached from the committed tree. The one-line fix (`if args.each_commit and not args.base: error`) is in a `PROTECTED` file. Owner task (13).
+* **F4 (Low, `docs/OPCODE_COVERAGE.md` still lists movement command 6 as an unclosed subsystem) — confirmed and fixed.** The reviewer quoted the sentence exactly and it was self-contradictory after batch 48. The clause is gone; the sentence now names only the subsystems that are still missing.
+* **F5 (Low, the dispatch→arm link was only code-read) — confirmed and fixed, and it was the right finding.** Batch 48's two tests set `move_command`, `leader` and `waypoint` by hand, so nothing executed opcode 6 and nothing executed `command_objects` at all — `grep -n "command_objects\|commandObject" tests/scripts/vm_tests.cpp` really did return only a comment. The reviewer's own mutation ("`command_objects` case 1 skips `receiver->waypoint`") survived batch 48's tests; it is mutant **C** below and it now dies on two assertions. Two VM-level cases landed: `testMoveToTargetOpcodeRunsChase` (real bytecode through `runProgram`, then the motion step) and `testCommandObjectsFormationArmInstallsTheSlot` (opcode 4 command 1 selector 2 through the decoder, two followers, both slots, then the motion step).
+* **F6 (Low, `turnTowards`'s header claims Walk and Fly read its return value) — confirmed and fixed.** They do in the oracle (`ObjectMotion.cs:818, 838`: `var diff = TurnTowards(...)` then `Accelerate(obj, MaxSpeed * TurnSpeedFactor(diff))`); they do not in this port, whose walk/fly arms compute their own `diff` inline and whose two real callers discard the return. The comment now says which is which, and why the port's arms keep their own copy (Fly's turn is conditional on `NoTurning`, so its `diff` is not always the helper's).
+* **F7 (Low, `fminf`/`fmaxf` where the oracle uses `MathF.Min`/`MathF.Max`) — confirmed, fixed, and the reachability argument the reviewer asked for is recorded below.** The oracle's clamps are `MathF.Min`/`MathF.Max` (`ObjectMotion.cs:784, 788, 916, 917`), both NaN-propagating; `fminf`/`fmaxf` return the numeric side. `script_runtime.cpp` already had `mathMax` for exactly this reason and used it at three other sites, so this was an unfinished convention, not a new idea.
+
+### What landed
+
+* `mdk_core/src/scripts/script_runtime.cpp` — `mathMin` added beside `mathMax` (the same NaN-propagating shape as `script_vm.cpp`'s and `sound_mixer.cpp`'s), and the **eight** speed-clamp call sites that the oracle writes as `MathF.Min`/`MathF.Max` now use the pair: `moveForward`'s accelerate, the walk arm's, the fly arm's, and `chase`'s gain and brake. For every non-NaN input `mathMin`/`mathMax` return exactly what `fminf`/`fmaxf` returned, so nothing that can happen in a level changes; what changes is that a NaN speed stays NaN instead of silently becoming `MaxChase`/`MinChase`/`targetSpeed`.
+* `mdk_core/src/scripts/script_runtime.h` — `turnTowards`'s contract, attributed (F6).
+* `tests/scripts/vm_tests.cpp` — `testMoveToTargetOpcodeRunsChase`, `testCommandObjectsFormationArmInstallsTheSlot`, `testChaseSpeedClampPropagatesNaNLikeTheOracle`, and the `kCommandObjects`/`kMoveToTarget`/`kCommandFormation`/`kSelectorAllOfType` operand constants.
+* `docs/OPCODE_COVERAGE.md` — the stale clause (F4).
+
+**No golden line changed and no dispatch count changed.** The pinned frame is byte-identical.
+
+### The NaN reachability argument (F7's open question, answered)
+
+`MdkObject::speed` has exactly four kinds of writer in the port: `0.0f` (stop, stuck, arrival), the clamps themselves, opcode 53 `set_speed` (`script_vm.cpp:1058`, `obj->speed = value(obj, op(ins, 0))`), and `max_speed`/`acceleration`/`deceleration` from opcodes 50/51/52. `value()` returns either a bytecode literal or a script variable, and the VM's only variable arithmetic is `vars[i] = literal`, `vars[i] += literal` and `vars[i] += literal × Dt` (`script_vm.cpp:1082, 1094, 1106`) — no division, no indeterminate form. So a NaN speed requires a NaN literal in the shipped bytecode, and none is known. The test therefore pins the **semantics at the site**, exactly as `testRaiseShakeKeepsTheTickMaximum` already does for opcode 135, and is not claimed to be a reachable scenario.
+
+Deferred with cause, not swept in: the remaining `fmaxf`/`fminf` sites in this file — the friction factor (`:815`, the C#'s `MathF.Max` at `ObjectMotion.cs:1066`), the gun-aim cone (`:1313`), the sweep-box span (`:1969-1970`) and the minimum height (`:3016`, the C#'s `MathF.Max` at `:1138`). NaN is equally unreachable at each, they belong to other subsystems (friction, gun aim, the BSP sweep, the camera), and each would want its own pin rather than riding in on a movement batch.
+
+### Every expected value was derived from the oracle first
+
+The float32 model of the C# expressions (`/tmp/mdk-pi/b49/`: `struct`-rounded `atan2`/`cos`/`sin`, `WrapAngle`, the gain's left-to-right multiply order) produced these numbers before the port was run against them, and the port matched on the first run, unedited.
+
+| Case | From the C# | Port |
+|---|---|---|
+| opcode 6 → chase, straight ahead, speed `1` | speed `1.1666665`, `y = 1.1666665`, `z = 10.2916670` (climb `0.29166663`) | same |
+| opcode 4 cmd 1 selector 2, two followers | slots `(-5,-4,8)` then `(5,-4,8)`; `FormationPosition` at yaw 0 maps `(ox,oy,oz)` to `(ox·s − oy·c, −oy·s − ox·c, oz+8)` → `(4,5,8)` and `(4,-5,8)` | same |
+| the left follower's first tick | heading `atan2(45,4) = 84.9204°` → clamp `+6`; `(cos 6, sin 6) × 50 / 30` → `(1.6575366, -39.8257866)`, `z = 0.0333333` | same |
+| the right follower's first tick | heading `atan2(55,4) = 85.8404°` → clamp `+6` → `y = -59.8257866` | same |
+| NaN speed, gain branch | `MathF.Min(NaN, 2.3333333)` = NaN (and the step is NaN units) | NaN; `fminf` returned `2.3333333` |
+| NaN speed, brake branch | `MathF.Max(NaN, 0.3333333)` = NaN | NaN; `fmaxf` returned `0.3333333` |
+
+The formation test clears `move_command`, `leader`, `waypoint`, `move_destination` and `path` after the spawn (so whatever the type's init script left cannot be what the assertions see) and pins `max_speed`/`friction`/`flags`/`push`/`velocity` so the motion step has the inputs the C# reads.
+
+### Mutation table, as run (8 mutants built and run; 8 killed)
+
+| Mutant | Killed by |
+|---|---|
+| opcode 6 sets no command (`script_vm.cpp`) | `obj.move_command == 6` (×2) — the link F5 said was unpinned |
+| `updateCommand`'s chase arm removed | the chase speed and `y` asserts (×2) |
+| `commandObject` case 1 drops the slot offset (F5's own scenario) | both `waypoint` asserts |
+| `commandObject` case 1 returns false, so `formationIndex` never advances | the right follower's `waypoint` and `move_destination` |
+| the dispatch sets no `leader` | both `leader == &sender` asserts |
+| `chase`'s gain clamp back to `fminf` (F7's own scenario) | `gain.speed != gain.speed` and the NaN position assert |
+| `chase`'s brake clamp back to `fmaxf` | `brake.speed != brake.speed` |
+| `followFormation`'s vertical uses `Dt` instead of `Ticks` | the new `z = 0.0333333` assert **and** batch 48's `z = -4.9666667` assert |
+
+The harness restores from a pre-mutation copy, not from git: an earlier draft of it used `git checkout --`, which silently discarded this batch's own uncommitted work in `script_runtime.cpp`. Caught by the next mutant's patch failing, redone from a backup, and the whole table re-run from a clean state.
+
+### Gates, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` — **exit 0**, `All VM unit tests match the oracle.` and `All cases match the oracle.`, **465 PASS / 0 FAIL** (462 in the parent batch; the +3 are `PASS MoveToTargetOpcodeRunsChase`, `PASS CommandObjectsFormationArmInstallsTheSlot`, `PASS ChaseSpeedClampPropagatesNaNLikeTheOracle`). No golden line changed.
+* `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes` 0 violations, `gates_vfp` `PASS blockers=0`, `audit_arm11_math` `VERDICT: CONTRACT CLEAN`, `audit_r11_idiv` no candidates, `gates_core_parity` both targets link the same core, `gates_smdh` **SKIPPED** (no built `.cia`), `gates_frames` `PASS L3_f1.bmp sha=58615fc85d02e009` — `tests/frames/reference.sha256` untouched, `gates_batch_integrity` `BATCH INTEGRITY: PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**, `3DSX mdk.3dsx`.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**, `[100%] Built target mdk`.
+* No gate, test or golden was relaxed; no protected file was touched.
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**. The only windowed run was the frame capture on `DISPLAY=:99` (P7) via `tools/publish_frame.sh review19-dispatch-pins`.
+
+Frame `docs/frames/2026-11-03-review19-dispatch-pins.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical (`6646adf1…`) to the PNGs that precede it: frame 1 is before any script runs, so neither a movement command nor a speed clamp can appear in it. The sidecar carries no hand-written counts (review-18 F4).

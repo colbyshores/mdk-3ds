@@ -485,7 +485,7 @@ the alien target) is realized, so it is classified complete; the known
 decoy/`AlienTarget` targeting gap lives in the targeting *selection*, not in this
 dispatch case.
 
-Closing the partial cases requires their subsystems (movement command 6, the
+Closing the partial cases requires their subsystems (the
 death path, the renderer material remap, the Items.Bomb slice, the camera
 shake/flash and sky-backdrop consumers, the combat writers for `hit_direction`
 and `hit_type`, and the remaining camera/snapshot consumers), each of which is

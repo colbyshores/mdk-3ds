@@ -191,6 +191,20 @@ float mathMax(float a, float b) {
     return a > b ? a : b;
 }
 
+// MathF.Min: NaN-propagating, for the same reason as mathMax. The oracle's speed
+// clamps are MathF.Min/MathF.Max (ObjectMotion.cs:784,788,916,917), so a NaN
+// speed stays NaN through them there; fminf would silently turn it into the
+// finite bound. Same shape as script_vm.cpp's pair.
+float mathMin(float a, float b) {
+    if (a != a) {
+        return a;
+    }
+    if (b != b) {
+        return b;
+    }
+    return a < b ? a : b;
+}
+
 // Vector3 equality: the planner sets Waypoint to a copy of MoveDestination, so exact
 // component equality is the "already heading for the destination" test the C# uses.
 bool vecEq(const Vec3& a, const Vec3& b) {
@@ -1800,9 +1814,9 @@ void ScriptRuntime::followAttachment(MdkObject* obj) {
 void ScriptRuntime::moveForward(MdkObject* obj) {
     const float targetSpeed = obj->move_parameter != 0 ? obj->max_speed : 0.0f;
     if (obj->speed > targetSpeed) {
-        obj->speed = fmaxf(obj->speed - obj->deceleration * kTick, targetSpeed);
+        obj->speed = mathMax(obj->speed - obj->deceleration * kTick, targetSpeed);
     } else if (obj->speed < targetSpeed) {
-        obj->speed = fminf(obj->speed + obj->acceleration * kTick, targetSpeed);
+        obj->speed = mathMin(obj->speed + obj->acceleration * kTick, targetSpeed);
     }
     const Vec3 direction = fromAngle(obj->yaw);
     if ((obj->flags & MdkObject::FlagGravity) != 0) {
@@ -2114,9 +2128,9 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
                 obj->yaw = wrap360(obj->yaw + clampf(diff, -maxStep, maxStep));
                 float targetSpeed = obj->max_speed * (fabsf(diff) > kSlowTurnAngle ? 0.5f : 1.0f);
                 if (obj->speed > targetSpeed) {
-                    obj->speed = fmaxf(obj->speed - obj->deceleration * kTick, targetSpeed);
+                    obj->speed = mathMax(obj->speed - obj->deceleration * kTick, targetSpeed);
                 } else if (obj->speed < targetSpeed) {
-                    obj->speed = fminf(obj->speed + obj->acceleration * kTick, targetSpeed);
+                    obj->speed = mathMin(obj->speed + obj->acceleration * kTick, targetSpeed);
                 }
                 Vec3 direction = fromAngle(obj->yaw);
                 obj->push.x += obj->speed * direction.x;
@@ -2144,9 +2158,9 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
                 }
                 float targetSpeed = obj->max_speed * (fabsf(diff) > kSlowTurnAngle ? 0.5f : 1.0f);
                 if (obj->speed > targetSpeed) {
-                    obj->speed = fmaxf(obj->speed - obj->deceleration * kTick, targetSpeed);
+                    obj->speed = mathMax(obj->speed - obj->deceleration * kTick, targetSpeed);
                 } else if (obj->speed < targetSpeed) {
-                    obj->speed = fminf(obj->speed + obj->acceleration * kTick, targetSpeed);
+                    obj->speed = mathMin(obj->speed + obj->acceleration * kTick, targetSpeed);
                 }
                 if (!noTurning) {
                     float horizontal = sqrtf(toW.x * toW.x + toW.y * toW.y);
@@ -3404,8 +3418,8 @@ void ScriptRuntime::chase(MdkObject* obj, const Vec3& point) {
         turnTowards(obj, point);
         // The gain's multiply order is the C#'s: (Ahead - offAngle) * Ticks * Gain.
         chaseSpeed = offAngle <= kAhead
-            ? fminf(chaseSpeed + (kAhead - offAngle) * kTicks * kGain, kMaxChase)
-            : fmaxf(chaseSpeed - kTicks * kBrake, kMinChase);
+            ? mathMin(chaseSpeed + (kAhead - offAngle) * kTicks * kGain, kMaxChase)
+            : mathMax(chaseSpeed - kTicks * kBrake, kMinChase);
         obj->speed = chaseSpeed;
     }
     const float step = chaseSpeed * kTicks;

@@ -94,6 +94,11 @@ const int32_t kCameraTrack = 203;
 const int32_t kPlaceXNearPlayer = 220;
 const int32_t kIfGunAim = 219;
 const int32_t kTurnAndJump = 229;
+const int32_t kCommandObjects = 4;    // command_objects
+const int32_t kMoveToTarget = 6;      // move_to_target: movement command 6
+// command_objects' operands: the command and the selector (ScriptVm.CommandObjects).
+const int32_t kCommandFormation = 1;
+const int32_t kSelectorAllOfType = 2;
 // The chain links' movement command (ObjectMotion.cs:370).
 const int32_t kChainCommand = 30;
 const int32_t kIfNoLeader = 34;
@@ -3864,6 +3869,174 @@ void testFormationFollowersKeepTheirSlot(scripts::ScriptRuntime& runtime) {
     CHECK(fabsf(turning.yaw - 14.0f) < 1e-5f);
 }
 
+// Opcode 6 (move_to_target) through the real bytecode dispatch, then the motion
+// step: the batch that ported `chase` set move_command from two dispatches, and
+// until this test neither end had ever been joined by a test. The numbers are the
+// straight-ahead gain case of ObjectMotion.cs:894, computed the same way as
+// ChaseFliesAtTheRuntimeTarget's (speed 1 + (22.5 - 0) * (0.0444444/6) = 1.1666665,
+// the step is that many units, the climb a quarter of it toward the point's Z).
+void testMoveToTargetOpcodeRunsChase(LevelData* levelData, const Cmi* cmi,
+                                      audio::SoundBank* bank) {
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    player.feet = Vec3{0.0f, 40.0f, 20.0f};   // the chase point is (0,40,28)
+    runtime.update(scripts::ScriptRuntime::kTick);
+    CHECK(runtime.targetPosition().x == 0.0f);
+    CHECK(runtime.targetPosition().y == 40.0f);
+    CHECK(runtime.targetPosition().z == 20.0f);
+
+    Code code;
+    code.u8(kMoveToTarget);   // opcode 6 takes no operands
+    code.end();
+
+    // The command starts cleared, so the only thing that can set it is the dispatch.
+    scripts::MdkObject obj;
+    obj.position = Vec3{0.0f, 0.0f, 10.0f};
+    obj.yaw = 90.0f;
+    obj.speed = 1.0f;
+    obj.move_command = 0;
+    runProgram(runtime, code, &obj);
+    CHECK(obj.move_command == 6);
+
+    // And the motion step reads it: the same tick ChaseFliesAtTheRuntimeTarget
+    // measures, from the same starting pose.
+    runtime.motionVelocity(&obj);
+    CHECK(obj.move_command == 6);   // chase never ends itself
+    CHECK(fabsf(obj.speed - 1.1666665f) < 1e-6f);
+    CHECK(fabsf(obj.position.x) < 1e-6f);
+    CHECK(fabsf(obj.position.y - 1.1666665f) < 1e-6f);
+    CHECK(fabsf(obj.position.z - 10.2916670f) < 1e-6f);
+    CHECK(obj.push.x == 0.0f && obj.push.y == 0.0f && obj.push.z == 0.0f);
+}
+
+// Opcode 4 (command_objects) with command 1, through the real bytecode dispatch:
+// the selector walk, the slot, and the motion arm in one line. The C# installs
+// Waypoint (ScriptRuntime.cs:3071) and FollowFormation (ObjectMotion.cs:929) is the
+// only reader of it, so a dispatch that dropped the offset would put every follower
+// on the leader's own slot and no hand-built follower could notice.
+//
+// The slots come from the C#: formationIndex 0 and 1 of a non-XE pair are
+// side * (index/2 + 1) * 5 * 1 with side (-1, +1), y = 1 * -4, z = 8, so
+// (-5,-4,8) and (5,-4,8); FormationPosition with the leader at the origin facing
+// +X (s=0, c=1) maps (ox,oy,oz) to (ox*0 - oy*1, -oy*0 - ox*1, oz+8) = (4, 5, 8)
+// and (4, -5, 8).
+void testCommandObjectsFormationArmInstallsTheSlot(LevelData* levelData, const Cmi* cmi,
+                                                   audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    scripts::MdkObject& sender = runtime.getArenaState("DANT_1").controller;
+    sender.position = Vec3{0.0f, 0.0f, 0.0f};
+    sender.yaw = 0.0f;
+    scripts::MdkObject* left =
+        runtime.spawn(&sender, "X_STRIKB", Vec3{0.0f, -40.0f, 0.0f}, 0.0f, -1, 0, false);
+    scripts::MdkObject* right =
+        runtime.spawn(&sender, "X_STRIKB", Vec3{0.0f, -60.0f, 0.0f}, 0.0f, -1, 0, false);
+    CHECK(left != nullptr && right != nullptr);
+    if (left == nullptr || right == nullptr) {
+        return;
+    }
+
+    // Clear whatever the type's init script left, so every value asserted below can
+    // only have come from the dispatch, and pin the motion inputs the C# reads.
+    scripts::MdkObject* followers[] = {left, right};
+    for (size_t i = 0; i < 2; i++) {
+        scripts::MdkObject* obj = followers[i];
+        obj->move_command = 0;
+        obj->leader = nullptr;
+        obj->waypoint = Vec3{0.0f, 0.0f, 0.0f};
+        obj->move_destination = Vec3{0.0f, 0.0f, 0.0f};
+        obj->path = 0;
+        obj->flags = 0;
+        obj->speed = 0.0f;
+        obj->push = Vec3{0.0f, 0.0f, 0.0f};
+        obj->velocity = Vec3{0.0f, 0.0f, 0.0f};
+        obj->friction = 0.0f;
+        obj->max_speed = 50.0f;
+        obj->yaw = 0.0f;
+    }
+
+    // command 1, selector 2 (all of a type), the type as its only selector arg.
+    Code code;
+    code.u8(kCommandObjects).u8(kCommandFormation).u8(kSelectorAllOfType).pstr("X_STRIKB");
+    code.end();
+    runProgram(runtime, code, &sender);
+
+    CHECK(left->move_command == 1);
+    CHECK(right->move_command == 1);
+    CHECK(left->leader == &sender);
+    CHECK(right->leader == &sender);
+    CHECK(left->path == 0);
+    CHECK(left->waypoint.x == -5.0f && left->waypoint.y == -4.0f && left->waypoint.z == 8.0f);
+    CHECK(right->waypoint.x == 5.0f && right->waypoint.y == -4.0f && right->waypoint.z == 8.0f);
+    CHECK(left->move_destination.x == 4.0f && left->move_destination.y == 5.0f &&
+          left->move_destination.z == 8.0f);
+    CHECK(right->move_destination.x == 4.0f && right->move_destination.y == -5.0f &&
+          right->move_destination.z == 8.0f);
+
+    // The arm: the left follower is 45 units from its slot, so it is outside one
+    // step (MaxSpeed * Dt = 1.66667), turns the full 6 degrees toward it
+    // (atan2(45, 4) = 84.9295 degrees away), and pushes the unscaled heading *
+    // MaxSpeed, which ApplyVelocity scales by Dt: (cos 6, sin 6) * 50 / 30 =
+    // (1.6575365, 0.1742141). Its Z is a whole unit below the slot's, so the
+    // vertical push is +Ticks and the climb is 1/30.
+    runtime.motionVelocity(left);
+    CHECK(left->move_command == 1);
+    CHECK(left->move_destination.x == 4.0f && left->move_destination.y == 5.0f &&
+          left->move_destination.z == 8.0f);
+    CHECK(fabsf(left->yaw - 6.0f) < 1e-5f);
+    CHECK(fabsf(left->position.x - 1.6575365f) < 1e-6f);
+    CHECK(fabsf(left->position.y + 39.8257859f) < 1e-6f);
+    CHECK(fabsf(left->position.z - 0.0333333f) < 1e-6f);
+
+    // The right follower moves toward ITS OWN slot, not the left one's: the sign of
+    // the turn is the assertion (atan2(45, 4) from (0,-60) is the same 84.9295
+    // degrees, so it too turns +6 and pushes the same vector).
+    runtime.motionVelocity(right);
+    CHECK(fabsf(right->yaw - 6.0f) < 1e-5f);
+    CHECK(fabsf(right->position.x - 1.6575365f) < 1e-6f);
+    CHECK(fabsf(right->position.y + 59.8257859f) < 1e-6f);
+}
+
+// The oracle's speed clamps are MathF.Min/MathF.Max (ObjectMotion.cs:784,788,916,917)
+// and both propagate NaN, where fminf/fmaxf return the NUMERIC side and would turn a
+// NaN speed into the clamp bound. Nothing in the shipped data can put NaN in Speed:
+// opcodes 50-53 copy a script literal into max_speed/acceleration/deceleration/speed,
+// and the VM's only variable arithmetic is += a literal and += a literal x Dt, so a
+// NaN would have to be a NaN literal in the bytecode. This pins the semantics at the
+// site, not a reachable scenario.
+void testChaseSpeedClampPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi,
+                                                   audio::SoundBank* bank) {
+    const uint32_t kNaNBits = 0x7fc00000u;
+    float kNaN = 0.0f;
+    memcpy(&kNaN, &kNaNBits, sizeof(kNaN));
+
+    Player player;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    player.feet = Vec3{0.0f, 40.0f, 20.0f};   // straight ahead of a yaw-90 object
+    runtime.update(scripts::ScriptRuntime::kTick);
+
+    // The gain branch: MathF.Min(NaN + gain, MaxChase) is NaN, not MaxChase.
+    scripts::MdkObject gain;
+    gain.position = Vec3{0.0f, 0.0f, 10.0f};
+    gain.yaw = 90.0f;
+    gain.speed = kNaN;
+    gain.move_command = 6;
+    runtime.motionVelocity(&gain);
+    CHECK(gain.speed != gain.speed);
+    CHECK(gain.position.y != gain.position.y);   // the step is NaN units too
+
+    // The brake branch: MathF.Max(NaN - brake, MinChase) is NaN, not MinChase. The
+    // point 45 degrees off passes the turn test (Behind is 90) and fails Ahead.
+    player.feet = Vec3{10.0f, 10.0f, -8.0f};   // the chase point is (10,10,0)
+    runtime.update(scripts::ScriptRuntime::kTick);
+    scripts::MdkObject brake;
+    brake.position = Vec3{0.0f, 0.0f, 0.0f};
+    brake.yaw = 0.0f;
+    brake.speed = kNaN;
+    brake.move_command = 6;
+    runtime.motionVelocity(&brake);
+    CHECK(brake.speed != brake.speed);
+}
+
 // The animation wrap is the C# Wrap's exact reduction: a positive divisor
 // leaves the first remainder in (-count, count), so one conditional add is
 // enough. Zero or a negative count is the C# divide-by-zero path; the port
@@ -4352,6 +4525,12 @@ int main() {
     printf("PASS ChaseFliesAtTheRuntimeTarget\n");
     testFormationFollowersKeepTheirSlot(runtime);
     printf("PASS FormationFollowersKeepTheirSlot\n");
+    testMoveToTargetOpcodeRunsChase(&levelData, &cmi, &bank);
+    printf("PASS MoveToTargetOpcodeRunsChase\n");
+    testCommandObjectsFormationArmInstallsTheSlot(&levelData, &cmi, &bank);
+    printf("PASS CommandObjectsFormationArmInstallsTheSlot\n");
+    testChaseSpeedClampPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
+    printf("PASS ChaseSpeedClampPropagatesNaNLikeTheOracle\n");
     testKnockDownSpendsTheCounterAndOpensTheTimer();
     printf("PASS KnockDownSpendsTheCounterAndOpensTheTimer\n");
     testAirborneKnockDownSlamsToTheFloorTheProbeReaches(&levelData);

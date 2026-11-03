@@ -452,7 +452,11 @@ private:
     void updateCommand(MdkObject* obj);
     // ObjectMotion.TurnTowards (ObjectMotion.cs:766): turn the yaw toward a point by
     // at most TurnSpeed × Dt, and return the angle that was still to turn BEFORE the
-    // turn — Walk and Fly read that return value for their speed target.
+    // turn. In the ORACLE Walk and Fly read that return value for their speed target;
+    // in this port they do not — their arms (case 43/78/197) compute their own `diff`
+    // inline, because their turn is conditional (Fly's NoTurning) and their speed
+    // target depends on the pre-turn angle. The two callers here, followFormation
+    // and chase, discard the return value exactly as the oracle's do.
     float turnTowards(MdkObject* obj, const Vec3& point);
     // FollowFormation (ObjectMotion.cs:929, movement command 1): keep the slot
     // command_objects gave the object around its leader. A follower whose leader is
