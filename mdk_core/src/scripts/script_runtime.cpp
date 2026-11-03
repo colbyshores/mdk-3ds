@@ -18,6 +18,7 @@
 #include "game/bsp.h"
 #include "game/player.h"
 #include "util/math_lut.h"
+#include "util/math_minmax.h"
 
 namespace mdk {
 namespace scripts {
@@ -179,31 +180,11 @@ Vec3 triangleNormal(const formats::Arena* arena, int32_t triangle) {
     return normal;
 }
 
-// MathF.Max: NaN-propagating. fmaxf is not, because it returns the numeric
-// side when exactly one argument is NaN.
-float mathMax(float a, float b) {
-    if (a != a) {
-        return a;
-    }
-    if (b != b) {
-        return b;
-    }
-    return a > b ? a : b;
-}
-
-// MathF.Min: NaN-propagating, for the same reason as mathMax. The oracle's speed
+// mathMin/mathMax are the oracle's MathF.Min/MathF.Max and live in
+// util/math_minmax.h, ONE definition for the whole tree. The oracle's speed
 // clamps are MathF.Min/MathF.Max (ObjectMotion.cs:784,788,916,917), so a NaN
 // speed stays NaN through them there; fminf would silently turn it into the
-// finite bound. Same shape as script_vm.cpp's pair.
-float mathMin(float a, float b) {
-    if (a != a) {
-        return a;
-    }
-    if (b != b) {
-        return b;
-    }
-    return a < b ? a : b;
-}
+// finite bound.
 
 // Vector3 equality: the planner sets Waypoint to a copy of MoveDestination, so exact
 // component equality is the "already heading for the destination" test the C# uses.
@@ -3063,9 +3044,11 @@ bool ScriptRuntime::sweepBox(MdkObject* obj, const Vec3& motion, Vec3* normal) {
     float sy = (bounds.max.y - bounds.min.y) * obj->scale;
     Vec half{(c * sx + s * sy) * kWidthFactor, (s * sx + c * sy) * kWidthFactor,
              // MathF.Max (ObjectMotion.cs:1138): a NaN lift makes the half-height NaN and
-             // the sweep's centre NaN, which the oracle keeps (probe `nanclamp`, row SWEEP
-             // nan_lift ends at 16,0,NaN); fmaxf would return the 0.5 floor and sweep an
-             // ordinary box instead.
+             // the sweep's centre NaN, which the oracle keeps; fmaxf would return the 0.5
+             // floor and sweep an ordinary box instead. Measured on .NET 10, probe
+             // `nanclamp`, row SWEEP nan_lift: level 7 (arena DANT_1) ends at 20,4,NaN and
+             // level 3 (arena HMO_1) at 16,0,NaN — the Z is NaN in both, and the X/Y are
+             // each level's own slide of the same step.
              mathMax(bounds.max.z * obj->scale + obj->lift(), kMinHeight) * 0.5f};
     Vec3 centre = rotatedZ(Vec3{(bounds.min.x + bounds.max.x) * 0.5f, (bounds.min.y + bounds.max.y) * 0.5f,
                                 (bounds.min.z + bounds.max.z) * 0.5f},

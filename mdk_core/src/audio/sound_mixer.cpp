@@ -6,6 +6,8 @@
 
 #include <math.h>
 
+#include "util/math_minmax.h"
+
 namespace mdk {
 namespace audio {
 
@@ -32,21 +34,9 @@ float mathClamp(float value, float min, float max) {
     return value > max ? max : value;
 }
 
-// MathF.Min: NaN-propagating, for the same reason as the script VM's mathMin.
-float mathMin(float a, float b) {
-    if (a != a) {
-        return a;
-    }
-    return b != b ? b : (a < b ? a : b);
-}
-
-// MathF.Max: NaN-propagating.
-float mathMax(float a, float b) {
-    if (a != a) {
-        return a;
-    }
-    return b != b ? b : (a > b ? a : b);
-}
+// mathMin is the oracle's MathF.Min and lives in util/math_minmax.h, ONE
+// definition for the whole tree: NaN-propagating, and -0.0 sorts below +0.0
+// there, which a ternary cannot see.
 
 float length(const Vec3& v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
 

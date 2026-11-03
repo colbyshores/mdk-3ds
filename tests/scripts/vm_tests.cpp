@@ -38,6 +38,7 @@
 #include "game/follow_camera.h"
 #include "game/level_data.h"
 #include "game/player.h"
+#include "util/math_minmax.h"
 #include "layer_tests.h"
 #include "pica_matrix_tests.h"
 #include "scripts/script_runtime.h"
@@ -4526,6 +4527,90 @@ void testSweepHalfHeightPropagatesNaNLikeTheOracle(LevelData* levelData, const C
     CHECK(notRolling.position.z == 9.0f);
 }
 
+// The MathF.Min / MathF.Max twins themselves, pinned in the ORACLE'S OWN BITS.
+//
+// Every expected number below is a `MINMAX` row printed by the C# probe (mode
+// `nanclamp`, level 7; the level-3 run prints the identical rows, because these are
+// BCL functions and not game data), so this is the oracle's behaviour and not the
+// port's. The rows exist because review-25 F1 measured that the tie arm the port had
+// (`a < b ? a : b`) returns the WRONG ZERO for one of the two argument orders: the
+// oracle sorts -0.0 BELOW +0.0, and a float compare cannot see a difference between
+// them. fminf/fmaxf agreed with .NET on this; the ternary did not.
+//
+// It is data-independent, so it runs BEFORE the game-data check in main() and cannot
+// skip on a machine with no files -- the same ordering the archive guards use.
+struct MinMaxRow {
+    const char* label;
+    uint32_t a;
+    uint32_t b;
+    uint32_t min;   // the oracle's MathF.Min bits, or kNaNAnswer
+    uint32_t max;   // the oracle's MathF.Max bits, or kNaNAnswer
+};
+
+// Sentinel, not a payload: the oracle's answer is a NaN, and which NaN it hands back
+// is not part of the contract (probe rows MINMAX nan_one / one_nan keep the operand's
+// own bits, but the pins assert NaN-ness rather than a payload).
+static const uint32_t kNaNAnswer = 0xFFFFFFFFu;
+
+static float floatFromBits(uint32_t bits) {
+    float value = 0.0f;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+void testMathMinMaxMatchTheOracleOnNaNAndSignedZero() {
+    const MinMaxRow rows[] = {
+        //  label              a          b          MathF.Min  MathF.Max
+        {"negzero_poszero", 0x80000000u, 0x00000000u, 0x80000000u, 0x00000000u},
+        {"poszero_negzero", 0x00000000u, 0x80000000u, 0x80000000u, 0x00000000u},
+        {"negzero_negzero", 0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u},
+        {"poszero_poszero", 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+        {"negtie",          0xC0000000u, 0xC0000000u, 0xC0000000u, 0xC0000000u},
+        {"postie",          0x40000000u, 0x40000000u, 0x40000000u, 0x40000000u},
+        {"negone_poszero",  0xBF800000u, 0x00000000u, 0xBF800000u, 0x00000000u},
+        {"poszero_negone",  0x00000000u, 0xBF800000u, 0xBF800000u, 0x00000000u},
+        {"negzero_posone",  0x80000000u, 0x3F800000u, 0x80000000u, 0x3F800000u},
+        {"poszero_posone",  0x00000000u, 0x3F800000u, 0x00000000u, 0x3F800000u},
+        {"neginf_neginf",   0xFF800000u, 0xFF800000u, 0xFF800000u, 0xFF800000u},
+        {"neginf_posinf",   0xFF800000u, 0x7F800000u, 0xFF800000u, 0x7F800000u},
+        {"posinf_posinf",   0x7F800000u, 0x7F800000u, 0x7F800000u, 0x7F800000u},
+        {"nan_one",         0x7FC00000u, 0x3F800000u, kNaNAnswer,  kNaNAnswer},
+        {"one_nan",         0x3F800000u, 0x7FC00000u, kNaNAnswer,  kNaNAnswer},
+        {"nan_nan",         0x7FC00000u, 0x7FC00000u, kNaNAnswer,  kNaNAnswer},
+    };
+    for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+        const MinMaxRow& row = rows[i];
+        const float a = floatFromBits(row.a);
+        const float b = floatFromBits(row.b);
+        const float lo = mathMin(a, b);
+        const float hi = mathMax(a, b);
+        if (row.min == kNaNAnswer) {
+            CHECK(lo != lo);
+        } else {
+            CHECK(floatBits(lo) == row.min);
+        }
+        if (row.max == kNaNAnswer) {
+            CHECK(hi != hi);
+        } else {
+            CHECK(floatBits(hi) == row.max);
+        }
+    }
+
+    // The sign test the tie arm depends on: -0.0 only, and not -0.0 confused with any
+    // other negative, and not +0.0.
+    CHECK(isNegativeZero(floatFromBits(0x80000000u)));
+    CHECK(!isNegativeZero(0.0f));
+    CHECK(!isNegativeZero(-2.0f));
+    CHECK(!isNegativeZero(floatFromBits(0x7FC00000u)));
+
+    // And the two arms review-25 F1 named, spelled out: the order that used to return
+    // the wrong zero, in both directions, for both functions.
+    CHECK(floatBits(mathMin(-0.0f, 0.0f)) == 0x80000000u);
+    CHECK(floatBits(mathMin(0.0f, -0.0f)) == 0x80000000u);
+    CHECK(floatBits(mathMax(-0.0f, 0.0f)) == 0x00000000u);
+    CHECK(floatBits(mathMax(0.0f, -0.0f)) == 0x00000000u);
+}
+
 // Small vector helpers for the camera pin below. vm_tests has no geometry of its own,
 // and the ones follow_camera.cpp uses are file-static there.
 static Vec3 vmCross(const Vec3& a, const Vec3& b) {
@@ -5054,6 +5139,17 @@ int main() {
     failures += picaFailures;
     if (picaFailures == 0) {
         printf("PASS PicaMatrix\n");
+    }
+
+    // The MathF.Min/MathF.Max twins, in the oracle's bits. Data-independent, so it
+    // sits above the game-data check for the same reason the archive guards do: a
+    // test that can skip is a test that will.
+    {
+        const int beforeMinMax = failures;
+        testMathMinMaxMatchTheOracleOnNaNAndSignedZero();
+        if (failures == beforeMinMax) {
+            printf("PASS MathMinMaxMatchTheOracleOnNaNAndSignedZero\n");
+        }
     }
 
     MdkData data = locateData();

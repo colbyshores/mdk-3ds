@@ -11,6 +11,7 @@
 #include "formats/ascii_case.h"
 #include "formats/model.h"
 #include "scripts/script_runtime.h"
+#include "util/math_minmax.h"
 
 namespace mdk {
 namespace scripts {
@@ -53,28 +54,9 @@ int32_t ival(const ScriptValue& v) {
     return 0;
 }
 
-// The C#'s MathF.Max: NaN-propagating. fmaxf is NOT — it returns the numeric side
-// when exactly one argument is NaN, so a NaN operand would silently become finite.
-float mathMax(float a, float b) {
-    if (a != a) {
-        return a;
-    }
-    if (b != b) {
-        return b;
-    }
-    return a > b ? a : b;
-}
-
-// The C#'s MathF.Min: NaN-propagating, for the same reason as mathMax.
-float mathMin(float a, float b) {
-    if (a != a) {
-        return a;
-    }
-    if (b != b) {
-        return b;
-    }
-    return a < b ? a : b;
-}
+// mathMin/mathMax are the oracle's MathF.Min/MathF.Max and live in
+// util/math_minmax.h, ONE definition for the whole tree: NaN-propagating, and
+// -0.0 sorts below +0.0 there, which a ternary cannot see.
 
 // MathF.Round's single-argument form (MidpointRounding.ToEven): exact halves go
 // to the EVEN neighbour, where C roundf is halves-away-from-zero. Same

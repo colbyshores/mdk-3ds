@@ -1,0 +1,20 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-03T22:11:30Z at 65ff0fc
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why this picture cannot move: this batch changes only what a NaN or a SIGNED ZERO does, and
+frame 1 has neither where the two spellings disagree. The change is one helper instead of
+four: MathF.Min/MathF.Max now have a single C++ twin (mdk_core/src/util/math_minmax.h) used
+by scripts/script_runtime.cpp, scripts/script_vm.cpp, audio/sound_mixer.cpp and
+game/camera_roll.cpp, and that twin matches the oracle on the sign of zero, which the
+ternary it replaces did not (measured on .NET 10: MathF.Min(-0,+0) and MathF.Min(+0,-0) are
+both -0, bits 80000000, and MathF.Max of that pair is +0 in both orders). Every finite
+non-zero input is bit-identical, so the PNG is byte-identical (sha256 6646adf1dae3...) to
+its parent's with the same 1.240/247/0.1819 gap. There is NO frame evidence for this batch;
+the evidence is MathMinMaxMatchTheOracleOnNaNAndSignedZero in tests/scripts/vm_tests.cpp --
+16 rows whose expected bits are the C# probe's own printed MINMAX rows (mode nanclamp,
+transcript in docs/PROGRESS_LOG.md) -- plus a mutant run in which the old tie arm fails
+exactly the two rows review-25 F1 named, in the repo's own harness (make -C tests/scripts
+exit 2). This sidecar also corrects one sentence of its parent's, which the frame-immutability
+rule will not let it edit: the two spellings differ on the sign of zero as well as on NaN.
+That correction is why the helper changed rather than only the prose. Capture ran on
+DISPLAY=:99 (AGENTS.md P7).

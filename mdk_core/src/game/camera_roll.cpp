@@ -6,34 +6,17 @@
 
 #include <math.h>
 
+#include "util/math_minmax.h"
+
 namespace mdk {
 
 namespace {
 
-// MathF.Min / MathF.Max: NaN-propagating. fminf/fmaxf are NOT, because they return
-// the numeric side when exactly one argument is NaN, which would silently turn a
-// NaN roll into +/-10 degrees. The oracle writes MathF.Min/MathF.Max here
-// (CameraRoll.cs:47,52), so a NaN roll stays NaN, as it does there. Same pair as
-// scripts/script_runtime.cpp's, for the same reason.
-float mathMin(float a, float b) {
-    if (a != a) {
-        return a;
-    }
-    if (b != b) {
-        return b;
-    }
-    return a < b ? a : b;
-}
-
-float mathMax(float a, float b) {
-    if (a != a) {
-        return a;
-    }
-    if (b != b) {
-        return b;
-    }
-    return a > b ? a : b;
-}
+// mathMin/mathMax are the oracle's MathF.Min/MathF.Max and live in
+// util/math_minmax.h, ONE definition for the whole tree. The oracle writes them
+// here (CameraRoll.cs:47,52), so a NaN roll stays NaN instead of snapping to the
+// limit, which fminf/fmaxf would not do: they return the numeric side when
+// exactly one argument is NaN, turning a NaN roll into +/-10 degrees.
 
 // Math.Clamp(value, min, max) (System.Math): below min -> min, above max -> max,
 // and anything that compares to neither (a NaN) passes through unchanged.
@@ -47,9 +30,11 @@ float clampDecay(float value, float lo, float hi) {
     return value;
 }
 
-// MathF.Sign: 1 above zero, -1 below, and 0 for zero — measured on .NET 10 to be +0.0
-// (bits 00000000) for BOTH +0.0 and -0.0, because Sign returns the value when it compares
-// equal to zero. copysignf is NOT the same function: it returns -1 for -0.0.
+// MathF.Sign: 1 above zero, -1 below, and 0 for zero. It returns an INT, and the
+// int 0 for BOTH +0.0 and -0.0 (measured on .NET 10: `SIGN pos_zero -> 0`,
+// `SIGN neg_zero -> 0`), so the port's float 0.0f is a conversion of that int, not
+// the oracle's own bit pattern. copysignf is NOT the same function: it returns -1
+// for -0.0.
 //
 // The NaN case is a DELIBERATE DIVERGENCE, not the oracle's value: MathF.Sign(NaN) throws
 // ArithmeticException (System.Runtime.xml, and measured: `SIGN nan -> THROWS

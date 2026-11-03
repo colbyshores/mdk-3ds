@@ -11398,3 +11398,153 @@ this batch.
 Frame `docs/frames/2026-11-03-nanclamp-parity.png` + `.txt` — `bad_percent=1.240
 max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's,
 because frame 1 contains no NaN for the clamps to disagree about.
+
+## Iteration 83 — batch 55: the `MathF.Min`/`MathF.Max` twin is ONE function now, and it matches the oracle on the sign of zero too (review-25 F1 fixed, F2 partly rebutted with a new measurement, F3 fixed; F4 owner-owned)
+
+Review-25 carried **no Critical and no High** finding, so nothing in the Remediation protocol
+was mandatory. Its two Mediums were cheap, in scope, and both pointed at the same helper, so
+this batch closes them and takes the consolidation they imply.
+
+**The defect (F1, Medium — CONFIRMED).** Batch 54 replaced four `fminf`/`fmaxf` sites with
+the file's `mathMin`/`mathMax` on the claim that the two spellings "differ **only** when an
+operand is NaN". They also differ on the **sign of zero**, and there the *new* spelling is the
+wrong one: `fminf`/`fmaxf` agree with .NET and the ternary does not. Measured on .NET 10
+before anything was changed — probe mode `nanclamp`, new `MINMAX` rows, and the level-3 and
+level-7 runs print the identical rows because these are BCL functions and not game data:
+
+```
+MINMAX negzero_poszero a=80000000 b=00000000 min=80000000 max=00000000
+MINMAX poszero_negzero a=00000000 b=80000000 min=80000000 max=00000000
+MINMAX negzero_negzero a=80000000 b=80000000 min=80000000 max=80000000
+MINMAX poszero_poszero a=00000000 b=00000000 min=00000000 max=00000000
+MINMAX negtie          a=C0000000 b=C0000000 min=C0000000 max=C0000000
+MINMAX negone_poszero  a=BF800000 b=00000000 min=BF800000 max=00000000
+MINMAX neginf_posinf   a=FF800000 b=7F800000 min=FF800000 max=7F800000
+MINMAX nan_one         a=7FC00000 b=3F800000 min=7FC00000 max=7FC00000
+MINMAX one_nan         a=3F800000 b=7FC00000 min=7FC00000 max=7FC00000
+```
+
+The oracle sorts **-0.0 below +0.0**, and a float compare cannot see a difference between the
+two zeros, so `a < b ? a : b` returns the wrong zero for one of the two argument orders — and
+`a > b ? a : b` for `Max` returns the wrong zero for the other. The NaN **payload**, by
+contrast, *is* preserved by the oracle (`nan_one` and `one_nan` each hand back whichever
+operand was the NaN), so the port's "return the NaN operand" was already exact and the pins
+assert NaN-ness rather than a payload.
+
+**The fix, and why it is a header now.** Four .cpp files each carried their own copy of this
+pair — `scripts/script_runtime.cpp`, `scripts/script_vm.cpp`, `audio/sound_mixer.cpp`,
+`game/camera_roll.cpp` — and the audio copy had already drifted into a different shape. The
+oracle has ONE `MathF.Min`, so the port now has ONE `mathMin`, in
+`mdk_core/src/util/math_minmax.h`, included by all four. That is batch 52's argument for a
+single `accelerate()` and AGENTS.md §10's own stated reason — one implementation per
+behaviour — applied before the fourth copy drifted further, not after.
+
+The tie arm reads the sign off the bit pattern with an **integer** compare (four bytes copied,
+then `bits == 0x80000000`), so it is a VFP-to-core register move: not the float→int
+conversion R2 restricts, not a `vcmp`/`vmrs` pair R3 restricts, and reached only when the two
+operands already compare equal. The header holds **no float literal at all**, which matters
+because `mdk_3ds/Makefile` builds `script_vm.o` with `-fsingle-precision-constant`
+(AGENTS.md §10's narrow per-object scope): there is nothing in the header for that flag to
+retype.
+
+**The pin.** `MathMinMaxMatchTheOracleOnNaNAndSignedZero` in `tests/scripts/vm_tests.cpp`:
+16 rows, every expected number one of the probe's printed bits, both functions, both argument
+orders, plus four spelled-out assertions for exactly the arms F1 named. It is
+data-independent, so it runs **above** the game-data check in `main()` and cannot skip on a
+machine with no files — the same ordering argument the archive guards use.
+
+**Mutants (five built, four killed, one recorded unkillable with the reason).**
+
+| # | mutant | result |
+|---|---|---|
+| M1 | `mathMin`'s tie arm returns `b` — the ternary review-25 F1 found | **KILLED in the repo's own harness**: with M1 in the tree, `make -C tests/scripts` exits **2** with `FAIL line 4590: floatBits(lo) == row.min` and `FAIL line 4608: floatBits(mathMin(-0.0f, 0.0f)) == 0x80000000u` |
+| M2 | `mathMax`'s tie arm returns `b` | KILLED — `poszero_negzero`'s max row |
+| M3 | `isNegativeZero` tests the sign BIT instead of the −0.0 pattern | **UNKILLABLE, and correctly so**: the tie arm is only reached when the operands compare equal, so a non-zero tie means both operands hold identical bits and `a`/`b` are indistinguishable. Only the {+0.0, −0.0} pair can show a difference, and M1/M2 cover it. Recorded rather than quietly dropped |
+| M4 | the NaN arms dropped | KILLED — `nan_one` and `one_nan`, and batch 54's four site pins, which is why those exist |
+| M5 | the two tie arms swapped | KILLED — both ±0 rows, both functions |
+
+**Reachability, measured rather than argued.** F1 could not construct a gameplay-visible
+consequence and asked whether the ±0 divergence is reachable at all. At the one site where
+both operands can be zero with independent sign — `flyProjectile`'s slab — the oracle's own
+`ScriptMath.SegmentEntry` was driven with a zero-thickness box at x = −0.0…+0.0 and the start
+exactly on it, from both directions (new probe rows `SEGMENT flat_plus` / `SEGMENT
+flat_minus`): both hit, and both print `point=0,0,0 bits=00000000,00000000,00000000`. The
+`enter` the two spellings disagree about is multiplied by `delta` and added to `from` before
+anything can read it, and the two arms' errors cancel inside that expression, so **no shipped
+observable turns on this** — which is what F1 said, now measured. The fix is still the right
+one: it is a fidelity divergence at the source, the next batch (`debris.cpp`'s nine
+`fminf`/`fmaxf`, which are `Debris.cs:160-166`'s nested `Vector3.Min`/`Vector3.Max`) would
+otherwise inherit it, and `Vector3.Min`/`Vector3.Max` behave the same way in both argument
+orders (probe rows `V3MIN`/`V3MAX` and `V3MIN_REV`/`V3MAX_REV`).
+
+**F2 (Medium) — partly a rebuttal, partly a fix.** The finding says the sweep comment "cites a
+probe row that does not exist": the comment said row `SWEEP nan_lift` "ends at 16,0,NaN" where
+the committed transcript prints `20,4,NaN`. **The row does exist — it is level 3's**, and the
+transcript printed level 7's SWEEP rows and mentioned only level 3's *finite* one.
+Re-measured this batch, probe `nanclamp`, level 3 arena `HMO_1`:
+
+```
+SWEEP finite   pos=15.4893265,0.51067495,190 bits=4177D448,3F02BB98,433E0000
+SWEEP nan_lift pos=16,0,NaN                   bits=41800000,00000000,7FC00000
+```
+
+against level 7 arena `DANT_1`'s `SWEEP nan_lift pos=20,4,NaN bits=41A00000,40800000,7FC00000`.
+So the citation was real, not invented, and the "a later batch will trust a fake row" failure
+scenario does not hold. What *is* true is that the comment named no level, which is exactly the
+ambiguity that made a careful reader call it fabricated — fixed: the comment now names both
+levels and both rows, and this log carries both transcripts so the citation is checkable.
+
+**F3 (Low) — fixed.** `camera_roll.cpp`'s `MathF.Sign` comment presented the port's converted
+`+0.0` (bits `00000000`) as the oracle's own value. `MathF.Sign` returns an **int**; the
+oracle's answer is int `0` for both zeros (probe rows `SIGN pos_zero -> 0`,
+`SIGN neg_zero -> 0`, and `MathF.Sign(1.0f).GetType().Name == Int32`). The comment says that
+now, and keeps the NaN paragraph, which F3 itself confirmed rather than contradicted.
+
+**F4 (Low) — owner-owned, untouched.** The four `PROTECTED`/harness files and the stray
+`2026-11-02-ralph-self-heal` frame pair are owner tasks (1)/(9) as already listed. This batch
+stages only its own paths and does not `git add -A`. The `--staged` "at least one frame PNG"
+versus range "exactly one" asymmetry F4 names lives in `gates_batch_integrity.py`, which is in
+its own `PROTECTED` list, so a batch cannot close it.
+
+**Codegen footprint (measured; not a performance claim).** devkitARM, the Makefile's own
+`ARCH` flags at `-O2`, `.text` bytes before → after: `script_runtime.o` 74889 → 75181,
+`script_vm.o` 45804 → 45896, `sound_mixer.o` 4782 → 4786, `camera_roll.o` 408 → 412 —
+**+392 bytes** across the four. On `script_runtime.o`, `arm-none-eabi-nm -u` is unchanged (no
+new undefined symbol; `memcpy` was already undefined from five existing uses) and the `vcvt`
+count is 46 before and 46 after, so the tie arm added no float→int conversion and no libm
+callout. The corpus is still empty and **Old-3DS timing stays UNMEASURED**.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` (mode `hybrid`) on the
+MathF.Min/Max-NaN-signed-zero question returned only the four copies of the helper themselves
+— no prior finding, and nothing anywhere about the sign of zero. The Obsidian vault
+`/mnt/nas/Vaults/port-docs` was grepped for `fminf`, `MathF.Min`, "signed zero" and "negative
+zero": one unrelated hit (`30-architecture/patterns/game-data-as-validated-json-embedded-at-
+build-time.md`). **Cognee MCP is not exposed as a tool in this Pi session and was not
+consulted**; recorded rather than glossed (owner task 12).
+
+**Gates, as run.**
+
+* `make -C tests/scripts` (after `clean`, and again after the M1 mutant run was reverted) —
+  **exit 0**: `All VM unit tests match the oracle.` + `All cases match the oracle.`,
+  **479 PASS / 0 FAIL** (one PASS line more than batch 54), and `./build/vm_tests` alone
+  **78 PASS / 0 FAIL**, the extra case being `PASS MathMinMaxMatchTheOracleOnNaNAndSignedZero`.
+  **No golden changed**: every one of the 470 golden cases still matches the oracle's bytes,
+  which is the expected result, because no finite non-zero input moves.
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built
+  .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame unchanged, and
+  `reference.sha256` NOT regenerated — `gates_batch_integrity BATCH INTEGRITY: PASS`.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx` (`DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM`).
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100%] Built target mdk`.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7),
+  `tools/publish_frame.sh minmax-signed-zero`.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (probe, mutants,
+  logs): `/tmp/mdk-pi` (`/tmp/kilo` is not writable by this account — owner task 11).
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the
+  Citro3D picture stays UNVERIFIED (P6)**.
+
+Frame `docs/frames/2026-11-03-minmax-signed-zero.png` + `.txt` — `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's,
+because frame 1 has no ±0 tie for the two spellings to disagree about.
