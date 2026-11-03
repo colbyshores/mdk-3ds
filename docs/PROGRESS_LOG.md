@@ -10901,3 +10901,159 @@ Housekeeping note, recorded rather than silently carried: `docs/CONTINUATION.md`
 against the loop's ~150-line target. It is the accumulated "current state + verified invariants" record
 every batch depends on; trimming it is a documentation task of its own, not something to do by deleting
 verified facts inside a remediation batch.
+
+## Iteration 80 — batch 52: review-21 F7 — the oracle's ONE `Accelerate` is now one function, and the three arms are pinned against each other and against .NET
+
+**Slice: one subsystem — the speed step of the movement commands.** No shipped arithmetic
+changed, and the pinned frame did not move.
+
+### What the oracle says, and what the port did before
+
+`ObjectMotion.Accelerate` (`ObjectMotion.cs:780-790`) is the oracle's **one** speed step:
+
+```csharp
+if (obj.Speed > targetSpeed)      obj.Speed = MathF.Max(obj.Speed - obj.Deceleration * Dt, targetSpeed);
+else if (obj.Speed < targetSpeed) obj.Speed = MathF.Min(obj.Speed + obj.Acceleration * Dt, targetSpeed);
+```
+
+and it has exactly three callers: `MoveForward` (`:979`), `Walk` (`:819`) and `Fly` (`:840`).
+The port had **inlined** it at all three sites. Review-21 F7 named that shape as the hazard,
+and it is not a hypothetical one: batch 49 changed 2 of the 8 clamp sites and left the other 6
+as `fminf`/`fmaxf`, which review-20 F2 caught. A fidelity fix applied to one copy and not the
+others is invisible to every gate, because the copies are textually identical and no test
+compares the arms with each other.
+
+### What landed
+
+`mdk_core/src/scripts/script_runtime.cpp` now has one file-scope free function,
+
+```cpp
+static void accelerate(MdkObject* obj, float targetSpeed) {
+    if (obj->speed > targetSpeed) {
+        obj->speed = mathMax(obj->speed - obj->deceleration * ScriptRuntime::kTick, targetSpeed);
+    } else if (obj->speed < targetSpeed) {
+        obj->speed = mathMin(obj->speed + obj->acceleration * ScriptRuntime::kTick, targetSpeed);
+    }
+}
+```
+
+called from `moveForward`, the walk arm and the fly arm. It is an ordinary concrete function
+with the same file-scope-static shape as `detectStuck` next to it — no template, no virtual,
+nothing §10 forbids. **Nothing in it is new arithmetic**: the two comparisons, the two clamps
+and the multiply order are the lines that were already in all three arms, moved, so no
+hot-path rule changes state (R3's float comparison is the oracle's own, relocated rather than
+introduced; `gates_vfp` still reports `PASS blockers=0`).
+
+`chase`'s clamp pair was **not** folded in, and its comment now says why: those two lines are
+the C#'s own `Chase` formula (`ObjectMotion.cs:916-917`) — different constants, no
+`MaxSpeed`/`TurnSpeedFactor` target, no `Dt` — so it is a second oracle function, not a fifth
+copy of the first. Review-21 F7 counted it as a fourth copy; the oracle does not.
+
+### The pin: `AccelerateIsOneImplementationAcrossTheArms` (`tests/scripts/vm_tests.cpp`)
+
+17 rows × 3 arms. Each row poses the *same* movement state in each arm and runs one
+`motionVelocity`, then asserts two things:
+
+* every arm lands on the **same** speed — the property the collapse exists to hold; and
+* that speed is the **oracle's, bit for bit**. The expected values are the IEEE-754 bits .NET
+  10 prints from the private static `ObjectMotion.Accelerate` on the same inputs, read out of
+  the oracle by reflection (probe mode `accel`, the same technique the `roll` mode already
+  used for the private `Roll`). They are not the C++'s output.
+
+Each arm is posed so its own target *is* the row's target: `MoveForward` takes `MaxSpeed` when
+`MoveParameter` is non-zero; `Walk`/`Fly` take `MaxSpeed × TurnSpeedFactor(diff)`, which is
+`MaxSpeed` with the waypoint straight ahead and `MaxSpeed × 0.5` with it 90° off. So the two
+`half` rows hand those arms twice the target as `MaxSpeed` and pin, along with the step, the
+factor the target came from. Every row also asserts the command survived (88/43/78), so an arm
+that arrived and `Stop()`-ped cannot pass by leaving the speed untouched.
+
+The oracle run (`mdkprobe 3 1 1 accel`, .NET 10, `/tmp/mdk-pi/obj3` — its `ObjectMotion.cs`
+verified byte-identical to the repository's oracle):
+
+```
+ACCEL below           in=5/10/1/1        speed=5.0333333   bits=40A11111
+ACCEL above           in=15/10/1/1       speed=14.966666   bits=416F7777
+ACCEL equal           in=10/10/1/1       speed=10          bits=41200000
+ACCEL overshoot_up    in=9.9/10/100/1    speed=10          bits=41200000
+ACCEL overshoot_down  in=10.1/10/1/100   speed=10          bits=41200000
+ACCEL zero_accel      in=5/10/0/0        speed=5           bits=40A00000
+ACCEL negative_below  in=-2/10/1/1       speed=-1.9666667  bits=BFFBBBBC
+ACCEL stop_to_zero    in=4/0/1/1         speed=3.9666667   bits=407DDDDE
+ACCEL nan_accel_below in=5/10/NaN/1      speed=NaN         bits=7FC00000
+ACCEL nan_decel_above in=15/10/1/NaN     speed=NaN         bits=7FC00000
+ACCEL nan_speed       in=NaN/10/1/1      speed=NaN         bits=7FC00000
+ACCEL nan_accel_above in=15/10/NaN/1     speed=14.966666   bits=416F7777
+ACCEL nan_decel_below in=5/10/1/NaN      speed=5.0333333   bits=40A11111
+ACCEL equal_nan_decel in=10/10/1/NaN     speed=10          bits=41200000
+ACCEL equal_nan_accel in=10/10/NaN/1     speed=10          bits=41200000
+```
+
+Four of those rows are there specifically to make the *shape* of the branch unbreakable, and
+each came out of the oracle rather than out of reasoning:
+
+* `nan_accel_above` / `nan_decel_below` — the **comparison** picks the branch, not the clamp,
+  so a NaN in the field the *other* branch reads must not touch the speed.
+* `equal_nan_decel` / `equal_nan_accel` — both comparisons are **strict**, so at
+  `Speed == target` neither branch runs and a NaN in either field stays out of the speed.
+  Without these two rows, loosening `>` to `>=` is an equivalent mutant at every other row
+  (`max(10 − 1/30, 10)` is still 10) and would have survived the table.
+
+The `half` rows need no separate oracle row: the oracle takes the target directly, so their
+expected bits are `below`'s and `above`'s.
+
+### Mutation table (each mutant built into `script_runtime.cpp`, `vm_tests` rebuilt and run, then reverted)
+
+| # | Mutant | Failing checks | Rows the suite named |
+|---|---|---:|---|
+| M1 | the **walk** arm keeps an inline copy and that copy uses `fminf`/`fmaxf` (review-20 F2's exact shape, one arm only) | 6 | `nan_accel_below`, `nan_decel_above` |
+| M2 | the **fly** arm clamps to `max_speed` instead of the target (a per-arm drift only the `half` rows can see) | 2 | `half_above` |
+| M3 | `moveForward` omits the step (an arm drifts by omission) | 26 | 12 rows |
+| M4 | the helper's first comparison becomes `>=` | 3 | `equal_nan_decel` |
+| M5 | the helper's gain clamp becomes `fminf` (the original review-20 F2 defect, now in one place) | 10 | `nan_accel_below` |
+| M6 | the helper's brake adds instead of subtracts | 15 | `above`, `overshoot_down`, `stop_to_zero`, `half_above`, `nan_accel_above` |
+
+All six killed; the restored file rebuilds and runs 0 failed checks. M1 is the one that matters
+for F7: with three copies there was nothing to say "the arms must agree", and now there is.
+
+### Review-21 disposition
+
+F7 was the only Critical/High/Medium/Low item of review-21 still open for a batch (F1/F4/F8 are
+owner-only and were reproduced and dispositioned in batch 51; F3 was rebutted there against the
+live KB signature; F2/F5/F6 were fixed there). This batch closes F7.
+
+### Prior-solution lookup
+
+* **pi-knowledge `mdk-sdl`** (hybrid, "Accelerate helper duplicated in movement arms
+  moveForward walk fly chase") — top hit was `script_runtime.h`'s own `turnTowards` note ("do
+  not read the inline copies as required by anything other than history"), then `updateCommand`
+  and the `chase` comment. A lead that the duplication was already known and documented, not a
+  prior solution; verified against the source before use.
+* **Obsidian vault** read directly (no Obsidian MCP server is exposed in this Pi session) from
+  `/mnt/nas/Vaults/port-docs`: `grep -ril Accelerate` returns unrelated notes (N64 RSP/RDP,
+  SDL2, "matching-decomp-accelerates-recovery"); nothing on this duplication. No note found.
+* **Cognee MCP** is **not exposed** in this Pi session and was **not** consulted.
+
+### Gates, as run
+
+* `make -C tests/scripts clean && make -C tests/scripts` — **exit 0**: `All VM unit tests match
+  the oracle.` + `All cases match the oracle.`, **470 PASS / 0 FAIL** (was 469; `vm_tests` alone
+  is **70 PASS**, was 69 — the new case is `AccelerateIsOneImplementationAcrossTheArms`).
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built
+  .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` (`reference.sha256` NOT
+  regenerated), `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx` (`DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM`).
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100%] Built target mdk`.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7), `tools/publish_frame.sh
+  review21-f7-one-accelerate`.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (mutant driver, probe
+  rebuild, logs): `/tmp/mdk-pi` (`/tmp/kilo` is not writable by this account — owner task 11).
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the
+  Citro3D picture stays UNVERIFIED (P6)**.
+
+Frame `docs/frames/2026-11-03-review21-f7-one-accelerate.png` + `.txt` — `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's, and the
+sidecar says in terms that the batch has no frame evidence and names the mutation table as what
+shows the change instead.

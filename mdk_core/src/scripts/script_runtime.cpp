@@ -1808,16 +1808,35 @@ void ScriptRuntime::followAttachment(MdkObject* obj) {
     obj->pitch = other->pitch;
 }
 
+// ObjectMotion.Accelerate (ObjectMotion.cs:780-790): the oracle's ONE speed step, and it
+// has exactly three callers — MoveForward (:979), Walk (:819) and Fly (:840). The port had
+// inlined it at all three, which is the shape review-20 F2 came from: a fidelity fix to the
+// clamp lands in one copy and not the others and no gate sees it (batch 49 changed 2 of the
+// 8 clamp sites that way, and review-20 caught it). One implementation per behaviour, as an
+// ordinary file-scope free function — no template, no virtual, and the same shape as
+// detectStuck below (§10 permits exactly this). NOTHING here is new arithmetic: the two
+// comparisons, the two clamps and the multiply order are the lines that were already in all
+// three arms, moved, so no hot-path rule changes state (R3's float comparison is the
+// oracle's own, relocated rather than introduced). Pinned by
+// AccelerateIsOneImplementationAcrossTheArms, which drives all three arms from identical
+// state and requires each to land on the value .NET's own Accelerate prints (probe mode
+// "accel"), and by the three per-arm NaN pins of batch 50.
+static void accelerate(MdkObject* obj, float targetSpeed) {
+    if (obj->speed > targetSpeed) {
+        obj->speed = mathMax(obj->speed - obj->deceleration * ScriptRuntime::kTick,
+                             targetSpeed);
+    } else if (obj->speed < targetSpeed) {
+        obj->speed = mathMin(obj->speed + obj->acceleration * ScriptRuntime::kTick,
+                             targetSpeed);
+    }
+}
+
 // ObjectMotion.MoveForward (command 88, set_move_x): accelerate to the max speed
 // (or to a stop, parameter 0) and push along the yaw — and the pitch, when the
 // object is not held on the ground by gravity.
 void ScriptRuntime::moveForward(MdkObject* obj) {
     const float targetSpeed = obj->move_parameter != 0 ? obj->max_speed : 0.0f;
-    if (obj->speed > targetSpeed) {
-        obj->speed = mathMax(obj->speed - obj->deceleration * kTick, targetSpeed);
-    } else if (obj->speed < targetSpeed) {
-        obj->speed = mathMin(obj->speed + obj->acceleration * kTick, targetSpeed);
-    }
+    accelerate(obj, targetSpeed);
     const Vec3 direction = fromAngle(obj->yaw);
     if ((obj->flags & MdkObject::FlagGravity) != 0) {
         obj->push.x += obj->speed * direction.x;
@@ -2127,11 +2146,7 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
                 float maxStep = kTurnSpeed * kTick;
                 obj->yaw = wrap360(obj->yaw + clampf(diff, -maxStep, maxStep));
                 float targetSpeed = obj->max_speed * (fabsf(diff) > kSlowTurnAngle ? 0.5f : 1.0f);
-                if (obj->speed > targetSpeed) {
-                    obj->speed = mathMax(obj->speed - obj->deceleration * kTick, targetSpeed);
-                } else if (obj->speed < targetSpeed) {
-                    obj->speed = mathMin(obj->speed + obj->acceleration * kTick, targetSpeed);
-                }
+                accelerate(obj, targetSpeed);
                 Vec3 direction = fromAngle(obj->yaw);
                 obj->push.x += obj->speed * direction.x;
                 obj->push.y += obj->speed * direction.y;
@@ -2157,11 +2172,7 @@ void ScriptRuntime::updateCommand(MdkObject* obj) {
                     obj->yaw = wrap360(obj->yaw + clampf(diff, -maxStep, maxStep));
                 }
                 float targetSpeed = obj->max_speed * (fabsf(diff) > kSlowTurnAngle ? 0.5f : 1.0f);
-                if (obj->speed > targetSpeed) {
-                    obj->speed = mathMax(obj->speed - obj->deceleration * kTick, targetSpeed);
-                } else if (obj->speed < targetSpeed) {
-                    obj->speed = mathMin(obj->speed + obj->acceleration * kTick, targetSpeed);
-                }
+                accelerate(obj, targetSpeed);
                 if (!noTurning) {
                     float horizontal = sqrtf(toW.x * toW.x + toW.y * toW.y);
                     float vertical = fabsf(toW.z);
@@ -3404,7 +3415,10 @@ void ScriptRuntime::followFormation(MdkObject* obj) {
 // ObjectMotion.Chase (ObjectMotion.cs:894, movement command 6, 0x45e448): the speed
 // is in units per TICK, unlike every other movement command, and it is the object's
 // own `Speed` field carried from tick to tick — the gain and the brake are what make
-// it accelerate. The step is applied to the POSITION (no push, no friction), and the
+// it accelerate. Its clamp pair is the C#'s OWN Chase formula (ObjectMotion.cs:916-917),
+// not Accelerate — different constants, no MaxSpeed/TurnSpeedFactor target and no Dt — so
+// it is a second oracle function, not a fifth copy of the first, and must not be folded
+// into accelerate(). The step is applied to the POSITION (no push, no friction), and the
 // object only turns when the point is ahead of it or far away: a point close and
 // behind is ignored until it comes round.
 void ScriptRuntime::chase(MdkObject* obj, const Vec3& point) {

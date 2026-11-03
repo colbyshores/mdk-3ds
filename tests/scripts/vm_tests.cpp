@@ -4171,6 +4171,125 @@ void testFlyClampPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi
     CHECK(brake.move_command == 78);
 }
 
+// The oracle has ONE speed step, ObjectMotion.Accelerate (ObjectMotion.cs:780-790), and it
+// has exactly three callers: MoveForward (:979), Walk (:819) and Fly (:840). The port had
+// inlined it at all three, and review-21 F7 is the hazard that shape creates: a fidelity fix
+// applied to one copy and not the others, which no gate sees (batch 49 changed 2 of the 8
+// clamp sites that way and review-20 caught it). script_runtime.cpp now has one accelerate()
+// and all three arms call it, so this pins the property the collapse is meant to hold:
+//
+//   * every arm lands on the SAME speed from the SAME state, so an arm that drifts away from
+//     the shared helper fails here even when no other test looks at that arm; and
+//   * that speed is the oracle's bit for bit — the expected bits below are what .NET 10
+//     prints from the private static ObjectMotion.Accelerate on these same inputs (probe
+//     mode "accel"), not what the C++ produces.
+//
+// Each arm is posed so its own target IS the row's target: MoveForward takes MaxSpeed when
+// MoveParameter is non-zero, and Walk/Fly take MaxSpeed × TurnSpeedFactor(diff), which is
+// MaxSpeed with the waypoint straight ahead and MaxSpeed × 0.5 with it 90 degrees off. So a
+// `half` row hands those two arms twice the target as MaxSpeed and pins, along with the
+// step, the factor the target came from. Chase is deliberately NOT in this table: its clamp
+// pair is the C#'s own Chase formula (ObjectMotion.cs:916-917), a second oracle function and
+// not a copy of this one, and it has its own pin.
+struct AccelRow {
+    const char* label;
+    float speed;   // the object's Speed on entry
+    float target;  // the number every arm must aim at, however it derives it
+    float accel;
+    float decel;
+    bool half;     // Walk/Fly reach `target` through TurnSpeedFactor's 0.5
+    bool nan;      // the oracle's answer is NaN (NaN-ness pinned, not the payload)
+    uint32_t bits; // the oracle's IEEE-754 bits when the answer is finite
+};
+
+static uint32_t floatBits(float value) {
+    uint32_t bits = 0;
+    memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+// arm 0 = MoveForward (command 88), arm 1 = Walk (43), arm 2 = Fly (78).
+static void accelArmPose(scripts::MdkObject* obj, int arm, const AccelRow& row) {
+    obj->speed = row.speed;
+    obj->acceleration = row.accel;
+    obj->deceleration = row.decel;
+    obj->yaw = 0.0f;
+    if (arm == 0) {
+        obj->flags = scripts::MdkObject::FlagGravity;
+        obj->move_command = 88;
+        obj->move_parameter = 1;            // non-zero means "to MaxSpeed", not "to a stop"
+        obj->max_speed = row.target;
+    } else {
+        obj->flags = arm == 1 ? scripts::MdkObject::FlagGravity : 0;  // gravity is what walks
+        obj->move_command = arm == 1 ? 43 : 78;
+        obj->max_speed = row.half ? row.target * 2.0f : row.target;
+        // Straight ahead (factor 1) or 90 degrees off (factor 0.5), and far either way, so
+        // neither arrival branch runs and the command survives to be asserted below.
+        obj->waypoint = row.half ? Vec3{0.0f, 200.0f, 0.0f} : Vec3{100.0f, 0.0f, 0.0f};
+        obj->move_destination = obj->waypoint;
+    }
+}
+
+void testAccelerateIsOneImplementationAcrossTheArms(LevelData* levelData, const Cmi* cmi,
+                                                    audio::SoundBank* bank) {
+    const float kNaN = nanFloat();
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    const AccelRow rows[] = {
+        //  label             speed  target  accel  decel  half   nan    oracle bits
+        {"below",             5.0f,  10.0f,   1.0f,   1.0f, false, false, 0x40A11111u},
+        {"above",            15.0f,  10.0f,   1.0f,   1.0f, false, false, 0x416F7777u},
+        {"equal",            10.0f,  10.0f,   1.0f,   1.0f, false, false, 0x41200000u},
+        {"overshoot_up",      9.9f,  10.0f, 100.0f,   1.0f, false, false, 0x41200000u},
+        {"overshoot_down",   10.1f,  10.0f,   1.0f, 100.0f, false, false, 0x41200000u},
+        {"zero_accel",        5.0f,  10.0f,   0.0f,   0.0f, false, false, 0x40A00000u},
+        {"negative",         -2.0f,  10.0f,   1.0f,   1.0f, false, false, 0xBFFBBBBCu},
+        {"stop_to_zero",      4.0f,   0.0f,   1.0f,   1.0f, false, false, 0x407DDDDEu},
+        {"half_below",        5.0f,  10.0f,   1.0f,   1.0f, true,  false, 0x40A11111u},
+        {"half_above",       15.0f,  10.0f,   1.0f,   1.0f, true,  false, 0x416F7777u},
+        {"nan_accel_below",   5.0f,  10.0f,   kNaN,   1.0f, false, true,  0u},
+        {"nan_decel_above",  15.0f,  10.0f,   1.0f,   kNaN, false, true,  0u},
+        {"nan_speed",         kNaN,  10.0f,   1.0f,   1.0f, false, true,  0u},
+        // The last two are the branch selector: the comparison picks the branch, not the
+        // clamp, so a NaN in the field the OTHER branch reads must not touch the speed.
+        {"nan_accel_above",  15.0f,  10.0f,   kNaN,   1.0f, false, false, 0x416F7777u},
+        {"nan_decel_below",   5.0f,  10.0f,   1.0f,   kNaN, false, false, 0x40A11111u},
+        // And these two pin the STRICTness of both comparisons: at Speed == target neither
+        // branch may run, so a NaN in either field has to stay out of the speed. A `>=` or a
+        // `<=` would take a branch here and come back NaN where the oracle returns 10.
+        {"equal_nan_decel",  10.0f,  10.0f,   1.0f,   kNaN, false, false, 0x41200000u},
+        {"equal_nan_accel",  10.0f,  10.0f,   kNaN,   1.0f, false, false, 0x41200000u},
+    };
+    const int kArms = 3;
+    const int kCommands[kArms] = {88, 43, 78};
+    for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); ++i) {
+        const AccelRow& row = rows[i];
+        const int failuresBefore = failures;
+        float landed[kArms] = {0.0f, 0.0f, 0.0f};
+        for (int arm = 0; arm < kArms; ++arm) {
+            scripts::MdkObject obj;
+            accelArmPose(&obj, arm, row);
+            runtime.motionVelocity(&obj);
+            // The command survived, so the arm ran to its end rather than arriving and
+            // stopping — which would leave the speed untouched and look like a pass.
+            CHECK(obj.move_command == kCommands[arm]);
+            if (row.nan) {
+                CHECK(obj.speed != obj.speed);
+            } else {
+                CHECK(floatBits(obj.speed) == row.bits);
+            }
+            landed[arm] = obj.speed;
+        }
+        // The property itself, stated once: one step, three callers.
+        if (!row.nan) {
+            CHECK(floatBits(landed[0]) == floatBits(landed[1]));
+            CHECK(floatBits(landed[1]) == floatBits(landed[2]));
+        }
+        if (failures != failuresBefore) {
+            printf("  row %d (%s)\n", static_cast<int>(i), row.label);
+        }
+    }
+}
+
 // Review-20 F4 read the oracle as running DetectStuck/HandleStuck unconditionally after
 // Walk/Fly, and cited ObjectMotion.cs:354-357 — the lines that hold the guard it means.
 // The oracle HAS the guard: `if (obj.MoveCommand != 0) { DetectStuck(...); HandleStuck(
@@ -4740,6 +4859,8 @@ int main() {
     printf("PASS WalkClampPropagatesNaNLikeTheOracle\n");
     testFlyClampPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
     printf("PASS FlyClampPropagatesNaNLikeTheOracle\n");
+    testAccelerateIsOneImplementationAcrossTheArms(&levelData, &cmi, &bank);
+    printf("PASS AccelerateIsOneImplementationAcrossTheArms\n");
     testArrivalKeepsTheStuckCountTheOracleKeeps(&levelData, &cmi, &bank);
     printf("PASS ArrivalKeepsTheStuckCountTheOracleKeeps\n");
     testKnockDownSpendsTheCounterAndOpensTheTimer();
