@@ -70,6 +70,15 @@ Vec3 followCameraPoint(const Vec3& feet, const Vec3& facing, float pitch, float 
 // The view axes for the facing and pitch in radians (C# FollowCamera.Orient).
 void followCameraOrient(const Vec3& facing, float pitch, Vec3* forward, Vec3* up);
 
+// The roll half of C# FollowCamera.Turn (FollowCamera.cs:196-212): swing the up
+// vector about the forward by rollDegrees (positive banks the view to the right;
+// Kurt's moves write it). Forward is untouched, so the picture banks without
+// turning, and a roll of exactly zero leaves the axes alone exactly as the C#'s
+// early return does. The shake half of Turn is not ported (see the note on
+// FollowCamera below): the oracle draws its shake from a time-seeded
+// System.Random, so there is no reproducible oracle value to pin a shake against.
+void followCameraRoll(const Vec3& forward, Vec3* up, float rollDegrees);
+
 // The camera's clearance (C# FollowCamera.Clear, camera_clearance 0x417ee8): a
 // wall between Kurt's head (feet + 5.5) and the camera pushes Kurt d·n away
 // from it (with a floor there, else half of it to a side), and the camera moves
@@ -80,19 +89,23 @@ Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera);
 
 // Fills camera with the follow camera's view for the feet, the horizontal
 // facing (unit), the pitch in DEGREES (positive looks down) and the pivot, at
-// the game's FOV/near/far. Returns false if the look-at is degenerate.
+// the game's FOV/near/far. `rollDegrees` is Kurt's CameraRoll (0 for a view that
+// has not banked). Returns false if the look-at is degenerate.
 bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
-                       float pitchDegrees, float pivot, float aspect);
+                       float pitchDegrees, float pivot, float aspect,
+                       float rollDegrees);
 
 // As buildFollowCamera, but placed from the player and run through the camera
 // clearance (C# FollowCamera.Update: Point then Clear). The clearance may move
 // the player (Kurt is shoved off a wall) and the camera with him.
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
-                              float pitchDegrees, float pivot, float aspect);
+                              float pitchDegrees, float pivot, float aspect,
+                              float rollDegrees);
 
 // The follow camera's smoothing state (C# FollowCamera). It owns the eased arena
 // pitch, the mouse's look offset, the air tilt and the climb, and places the
-// view each step. The shake, the roll, the between-step blend, the sniper scope
+// view each step. Kurt's roll is applied here too, read off the Player the way the
+// C# reads it off Kurt. The shake, the between-step blend, the sniper scope
 // and the top-down view are not ported (they need the scripts, the moves and the
 // high-refresh blend); where the C# branches on them this takes the false side.
 class FollowCamera {

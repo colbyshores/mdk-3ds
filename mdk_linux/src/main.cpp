@@ -452,10 +452,11 @@ int main(int argc, char** argv) {
         // Seed the matrix with the NON-clearing placement: the C# places no
         // camera before its first step (FollowCamera.Update, which runs the
         // clearance, is step 1), so seeding with the cleared build would shove
-        // Kurt mid-air at spawn before any physics has run.
+        // Kurt mid-air at spawn before any physics has run. The roll is 0 because
+        // this Player has not stepped yet: C# CameraRoll starts level.
         mdk::buildFollowCamera(&camera, player.feet, player.facing(),
                                mdk::follow_camera::kDefaultPitch, mdk::follow_camera::kDefaultPivot,
-                               kAspect);
+                               kAspect, 0.0f);
     }
     while (true) {
         const auto now = std::chrono::steady_clock::now();
@@ -557,9 +558,11 @@ int main(int argc, char** argv) {
             // it stays deferred with the menu and the save system.
             if (player.died()) {
                 spawnPlayer();
+                // A fresh Player's CameraRoll is level again (the C# respawns with a
+                // new Kurt), so the respawn seed carries no roll either.
                 mdk::buildFollowCamera(&camera, player.feet, player.facing(),
                                        mdk::follow_camera::kDefaultPitch,
-                                       mdk::follow_camera::kDefaultPivot, kAspect);
+                                       mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
             }
             mdk_render_set_camera(renderer, &camera);
         }

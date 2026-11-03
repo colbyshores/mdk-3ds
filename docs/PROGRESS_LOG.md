@@ -11057,3 +11057,176 @@ Frame `docs/frames/2026-11-03-review21-f7-one-accelerate.png` + `.txt` — `bad_
 max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's, and the
 sidecar says in terms that the batch has no frame evidence and names the mutation table as what
 shows the change instead.
+
+## Iteration 81 — batch 53: the view's bank lands — `CameraRoll` is ported, wired to Kurt's step, and read by the follow camera
+
+**Slice: one subsystem — the follow camera's roll.** New shipped behaviour on a per-frame
+path. The pinned frame did not move (the bank is 0 at frame 1), but this is not a test-only
+batch: a running, turning Kurt now draws a banked view, which is what the original does and
+what this port could not draw before.
+
+### What the oracle says
+
+`src/Mdk.Game/Kurt/CameraRoll.cs` (original 0x573910 degrees) is the whole of the bank's
+state: one writer per move and one leveller.
+
+```csharp
+Walk(right, forward, delta)   // Kurt.cs:218 — running AND turning, both axes or nothing
+    if (forward == 0f || right == 0f) return;
+    _held = true;  var step = WalkRate * delta;            // 0.25 * Kurt.Ticks
+    if (right * forward > 0f) { Roll += step;
+        Roll = MathF.Min(Roll < 0f ? Roll + WalkReverse : Roll, WalkLimit); return; }
+    Roll -= step;
+    Roll = MathF.Max(Roll > 0f ? Roll - WalkReverse : Roll, -WalkLimit);
+
+Settle(delta)                 // Kurt.cs:160 — top of every step, after FadeFlashes
+    if (_held) { _held = false; return; }                 // 0x57ff74: the held step
+    var step = Math.Clamp(0.35f*|Roll|, 0.05f, 2.5f) * Kurt.Ticks * delta;
+    Roll = |Roll| <= step ? 0f : Roll - MathF.Sign(Roll) * step;
+```
+
+and the consumer is `FollowCamera.Turn` (`FollowCamera.cs:196-212`), which returns for
+`roll == 0f` and otherwise swings `Up` towards `Right` — `Up = up*cos + right*sin`, with
+`Right = Normalize(Cross(Forward, UnitZ))` from `Orient` (`:151`).
+
+### What landed
+
+* `mdk_core/src/game/camera_roll.{h,cpp}` — the class. `mathMin`/`mathMax`, not
+  `fminf`/`fmaxf`, because the oracle writes `MathF.Min`/`MathF.Max` (`CameraRoll.cs:47,52`)
+  and a NaN bank must stay NaN; `signf` rather than `copysignf`, because `MathF.Sign(-0.0)`
+  is 0 and `copysignf(1,-0.0)` is -1; `clampDecay` reproduces `Math.Clamp`'s NaN
+  pass-through. Ordinary concrete class, no virtuals/templates (AGENTS.md §10).
+* `Player` owns one (`_cameraRoll`, `cameraRoll()`), and calls it where the C# does:
+  `settle(delta)` immediately after `combat_.fadeFlashes(delta)` (Kurt.cs:159-160, ahead of
+  every early return below it, so a knocked or crashing Kurt still levels his view and a
+  corpse still does not), and `walk(-turn, forward, delta)` right after the two `accelerate`
+  calls (Kurt.cs:216-218) with the **already zeroed** walk axis — the same variable its
+  `Accelerate` calls got, so a knocked Kurt with both keys down banks nothing.
+* `followCameraRoll(forward, up, rollDegrees)` is `Turn`'s roll half, called from
+  `buildFollowCamera` and `buildFollowCameraCleared` after the orient, and
+  `FollowCamera::update` passes `player.cameraRoll().roll()` the way the C# passes
+  `kurt.CameraRoll.Roll`. The two `buildFollowCamera` calls in `mdk_linux/src/main.cpp`
+  (the pre-first-step seed and the respawn seed) pass 0.0f, which is what a fresh Player
+  holds.
+* Build lists: `camera_roll.cpp` in `tests/scripts/Makefile` and `mdk_linux/CMakeLists.txt`
+  (the 3DS globs the core); `follow_camera.cpp` joined the host test build so the consumer
+  is linkable from `vm_tests`. `gates_core_parity` confirms both targets link it.
+
+### Deferred, with cause — not stubbed, absent
+
+* `Slide` (the C#'s writer is `Kurt.Slide.cs:193`) and `Follow` (`Snowboard.cs:428`): no
+  slide and no board in this port, exactly as the C#'s own guards on them take the false
+  side. Nothing would call them, so there is nothing to fake.
+* The **shake** half of `Turn` stays unported, and the reason is a fidelity one rather than
+  an effort one: `FollowCamera._random` is a time-seeded `System.Random`
+  (`FollowCamera.cs:74`), so the oracle has no reproducible shake to be byte-identical
+  against. `follow_camera.h` now says that in terms, so nobody ports a shake and calls the
+  frame a pass.
+
+### Evidence
+
+* **`golden/L3_kurt_camroll.txt`** (201 lines, sha256 `a323ec84ad34…`) is byte-identical to
+  the oracle probe (mode `camroll`, `/tmp/mdk-pi/obj3`, .NET 10 at `/tmp/kilo/dotnet10`).
+  Both sides **press keys** over the windows in the header line — forward 1..189, turnRight
+  10..99 / 180..189 / 192..196, turnLeft 100..179 / 185..189 — so the pin runs from the input
+  to the bank and not from a poke to the field. What that reaches: the +10 limit reached at
+  step 89 and held against for 10 more, the 2-degree reverse jump from +10 (step 100:
+  10 → 7.875) and from -10 (step 180), the crossing of zero, the **-10** limit at step 179,
+  the held step (step 185 does not fall), the decay to **exactly** 0 at step 199, both turn
+  keys at once (185..189) being the C#'s axis of zero, and the walk key released with a turn
+  key still down (192..196) being the other guard.
+* **`CameraRollMatchesTheOraclesOwnUnitTest`** mirrors
+  `tests/Mdk.Game.Tests/KurtMovesTests.cs::RunningAndTurningRollsTheView` assertion for
+  assertion at `Tick = 1/30`: 1.0 after four (walk, settle) pairs, 10.0 after a hundred more,
+  7.75 after one step the other way, 5.25 after two settles, exactly 0.0 after a hundred
+  settles, and 0.0 for turning on the spot. That test was found by the pi-knowledge lookup
+  below and is the specification the C++ twin owes.
+* **`CameraRollBanksTheFollowCamera`** pins the consumer: a ±0.0 bank is bit-identical (the
+  C#'s early return, which `-0.0` satisfies), `forward` is untouched by a bank, and
+  `Dot(Up, Right)` equals `Sin(bank)` — the same property the oracle's own
+  `KurtRollsTheCameraTurningRight` asserts, tighter — plus the orthonormality the look-at
+  needs and, at the end, the **wiring**: a Player driven to a real bank through
+  `Player::update`, handed to `FollowCamera::update`, must produce a camera whose up is
+  banked by that amount, so a `FollowCamera` that passed a literal 0 fails.
+* **`CameraRollClampsPropagateNaNLikeTheOracle`** feeds a NaN delta, which no schedule can,
+  and requires the bank to stay NaN through both clamps, a normal step and the leveller.
+
+### Mutation table (each built into the tree, the suite run, then reverted; `restored+rebuilt`
+### at the end and the two files verified byte-identical to their pre-mutant state)
+
+| # | Mutant | Killed by |
+|---|---|---|
+| M1 | the gain clamp becomes `fminf` (review-20 F2's shape, in a new place) | NaN pin, 4 checks |
+| M2 | `settle` ignores the held flag | golden |
+| M3 | the walk-axis guard dropped (`forward == 0` test removed) | golden |
+| M4 | the turn-axis guard dropped (`right == 0` test removed) | golden |
+| M5 | the 2-degree reverse jump removed from both arms | golden |
+| M6 | the ±10 limits removed | golden + the finite-limit check |
+| M7 | `fastCos`/`fastSin` swapped in `followCameraRoll` | camera pin, 5 checks |
+| M8 | the roll's sign flipped | camera pin, 3 checks |
+| M9 | `FollowCamera::update` passes 0.0f instead of the Player's roll | camera pin, the wiring check |
+
+9 of 9 killed.
+
+### A measurement about `math_lut.h`, recorded and NOT changed
+
+To pin the rotated axis the LUT's error was measured at the bank limit (10 degrees =
+0.174533 rad) against libm: `fastCos(+r)` is off by 4.53e-06 and `fastSin(+r)` by 8.20e-07
+— inside the header's documented 4.76e-06 — but on the **negative** argument the same table
+is off by **1.19e-05** (cos) and 1.88e-06 (sin), because `(int)scaled` truncates toward
+zero, so a negative argument interpolates with a negative fraction along the *next* segment
+instead of the one it lies in. That is 2.5× the header's own stated bound, on a path every
+camera and sprite angle uses. It is not this batch's to fix (AGENTS.md §7: do not touch
+`math_lut.h` as part of a pass; and a fix changes angles across the tree, which is a
+frame-baseline event), so the camera pin's tolerance is 2e-5 with the measurement written
+into its comment, and the finding is recorded here for the owner.
+
+### Review-21 disposition
+
+Unchanged by this batch and still complete: F2/F5/F6 fixed in batch 51, F7 in batch 52, F3
+rebutted against the live KB signature in batch 51, and F1 (High)/F4/F8 owner-only — the gate
+that would widen `PROTECTED` is inside its own `PROTECTED` list, and the `--each-commit`
+recovery and the stray `ralph-self-heal` frame pair live only in the uncommitted owner diff.
+This batch is new work, not remediation, and it stages none of those files.
+
+### Prior-solution lookup
+
+* **pi-knowledge `mdk-sdl`** (hybrid, "follow camera roll bank CameraRoll Kurt moves view
+  tilt") — the lead that mattered was result 5, `tests/Mdk.Game.Tests/KurtMovesTests.cs`:
+  the oracle already has `RunningAndTurningRollsTheView` and
+  `KurtRollsTheCameraTurningRight`, which pin 1.0 / 10.0 / 7.75 / 5.25 / 0 and
+  `Dot(Up, right) == Sin(bank)`. Both were adopted as C++ pins rather than re-derived. The
+  other hits were the C# class itself and this port's own `follow_camera.h` note saying the
+  roll was not ported. Treated as leads and verified against the C# before use.
+* **Obsidian vault** read directly (no Obsidian MCP server is exposed in this Pi session)
+  from `/mnt/nas/Vaults/port-docs`: `grep -ril "camera roll|CameraRoll|follow camera"` hits
+  only three `wave-race-64` findings, none of which mentions MDK; `10-projects/mdk-sdl/`
+  holds only `ralph-pi-mandarine-setup.md`. No note on this subsystem.
+* **Cognee MCP** is **not exposed** in this Pi session and was **not** consulted.
+
+### Gates, as run
+
+* `make -C tests/scripts` — **exit 0**: `All VM unit tests match the oracle.` +
+  `All cases match the oracle.`, **474 PASS / 0 FAIL** (was 470; `./build/vm_tests` alone is
+  **73 PASS**, was 70 — the three new cases are `CameraRollBanksTheFollowCamera`,
+  `CameraRollMatchesTheOraclesOwnUnitTest`, `CameraRollClampsPropagateNaNLikeTheOracle`, and
+  the golden added is `L3_kurt_camroll`).
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no
+  built .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame is
+  **unchanged**, which is the expected result, not a lucky one: the bank is 0 at frame 1 —
+  `gates_batch_integrity project invariants intact`. `reference.sha256` NOT regenerated.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx` (`DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM`); `camera_roll.cpp` is picked up by the core glob.
+* `cmake --build build-linux --target mdk -j4` — **exit 0**: `[100%] Built target mdk`.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7),
+  `tools/publish_frame.sh camera-roll-bank`.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (probe, mutant
+  driver, logs): `/tmp/mdk-pi` (`/tmp/kilo` is not writable by this account — owner task 11).
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the
+  Citro3D picture stays UNVERIFIED (P6)**.
+
+Frame `docs/frames/2026-11-03-camera-roll-bank.png` + `.txt` — `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's,
+because a Kurt who has not yet turned has no bank to draw.

@@ -626,7 +626,8 @@ enum KurtHurtSchedule {
     kHurtInvuln,    // the invulnerability timer's decline, on the floor and on a corpse
     kHurtKnockdown,  // the knock-down itself: K_BANG, K_BFLIP, and back to Still
     kHurtFlashes,    // the two flashes' fade, the skull's rise, and the end of the beat
-    kHurtPush        // opcode 248: the knock-down push, its drain, and its two guards
+    kHurtPush,       // opcode 248: the knock-down push, its drain, and its two guards
+    kHurtRoll        // CameraRoll: the view's bank, its two keys and its leveller
 };
 
 // An invulnerability write: the step and the seconds. It is the write opcode 244's set
@@ -664,13 +665,23 @@ struct KurtPushSet {
     float dy;
 };
 
+// A key window for the roll schedule: the first and last step the key is held. The
+// C# probe holds the same windows with input.Hold(Key.TurnLeft/Key.TurnRight,
+// Down/Up), so both sides press keys rather than poking the roll field: what is
+// pinned is the whole path from the input to the bank, not the arithmetic alone.
+struct KurtKeyWindow {
+    int from;
+    int to;
+};
+
 enum KurtHurtColumns {
     kColsVoices,  // hp= vmhp= voices=
     kColsKnock,   // hp= vmhp= knock=
     kColsInvuln,    // hp= vmhp= invuln= knock=
     kColsKnockdown,  // hp= vmhp= invuln= knock= frame=
     kColsFlash,      // hp= vmhp= hurt= white= died=
-    kColsPush        // hp= vmhp= invuln= knock= frame= vel=
+    kColsPush,       // hp= vmhp= invuln= knock= frame= vel=
+    kColsRoll        // roll= (the view's bank in degrees)
 };
 
 // One schedule as one literal, so the dump body and the oracle probe's twin drive the
@@ -694,6 +705,11 @@ struct KurtHurtPlan {
     int forwardTo = 0;      // last step it is held
     const KurtPushSet* pushes = nullptr;  // opcode-248 writes; null for the others
     size_t pushCount = 0;
+    // The turn-key windows the roll schedule presses; null for every other one.
+    const KurtKeyWindow* turnRight = nullptr;
+    size_t turnRightCount = 0;
+    const KurtKeyWindow* turnLeft = nullptr;
+    size_t turnLeftCount = 0;
 };
 
 std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, Player& player,
@@ -745,6 +761,26 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
         snprintf(line, sizeof(line), " forward=%d..%d", plan.forwardFrom, plan.forwardTo);
         out += line;
     }
+    if (plan.turnRightCount) {
+        out += " turnRight=";
+        for (size_t i = 0; i < plan.turnRightCount; i++) {
+            if (i) {
+                out += ",";
+            }
+            snprintf(line, sizeof(line), "%d..%d", plan.turnRight[i].from, plan.turnRight[i].to);
+            out += line;
+        }
+    }
+    if (plan.turnLeftCount) {
+        out += " turnLeft=";
+        for (size_t i = 0; i < plan.turnLeftCount; i++) {
+            if (i) {
+                out += ",";
+            }
+            snprintf(line, sizeof(line), "%d..%d", plan.turnLeft[i].from, plan.turnLeft[i].to);
+            out += line;
+        }
+    }
     if (plan.pushCount) {
         out += " pushes=";
         for (size_t i = 0; i < plan.pushCount; i++) {
@@ -775,6 +811,18 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
         Input input;  // nothing pressed except the plan's own forward window
         if (plan.forwardFrom) {
             input.down[kKeyForward] = step >= plan.forwardFrom && step <= plan.forwardTo;
+        }
+        // The turn keys, for the roll schedule only (both lists are empty elsewhere).
+        // Both held is the C#'s own axis of zero, which is a case the schedule uses.
+        for (size_t i = 0; i < plan.turnRightCount; i++) {
+            if (step >= plan.turnRight[i].from && step <= plan.turnRight[i].to) {
+                input.down[kKeyTurnRight] = true;
+            }
+        }
+        for (size_t i = 0; i < plan.turnLeftCount; i++) {
+            if (step >= plan.turnLeft[i].from && step <= plan.turnLeft[i].to) {
+                input.down[kKeyTurnLeft] = true;
+            }
         }
         player.update(input, 1.0f / 60.0f);
         // The scripts' step, and the writes inside it: in the oracle a hurt_kurt is
@@ -918,6 +966,17 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
                      (int)std::floor(player.feet.z * 64.0f), player.verticalSpeed,
                      player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.health(),
                      runtime.kurt().health(), player.combat().knockDamage());
+            out += line;
+            continue;
+        }
+
+        if (plan.columns == kColsRoll) {
+            // The bank in degrees, exactly as FollowCamera reads it. state= rides along
+            // because the walk axis the writer needs is the same one the state machine
+            // zeroes: if a knock-down or a hard landing ever crept into this schedule,
+            // the state column says so instead of a silent roll that will not move.
+            snprintf(line, sizeof(line), "s=%d state=%s roll=%.4f\n", step,
+                     kurtStateName(player.state()), player.cameraRoll().roll());
             out += line;
             continue;
         }
@@ -1102,6 +1161,8 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     //       is refused by the health arm of the guard and not by the state arm.
     //  355: mode 0, a=30 up=20 on a corpse. vel= must not move: a port that drops the
     //       health test shoves a dead man 20 units up.
+    static const KurtKeyWindow kRollRight[] = {{10, 99}, {180, 189}, {192, 196}};
+    static const KurtKeyWindow kRollLeft[] = {{100, 179}, {185, 189}};
     static const KurtPushSet kPushSets[] = {
         {20, 0, 20.0f, 5.0f, 3.0f, 37.0f, 0.0f, 0.0f},
         {40, 0, 25.0f, 5.0f, 3.0f, 200.0f, 0.0f, 0.0f},
@@ -1157,6 +1218,32 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
         plan.pushCount = sizeof(kPushSets) / sizeof(kPushSets[0]);
         plan.mortalStep = 350;
         plan.columns = kColsPush;
+    } else if (schedule == kHurtRoll) {
+        // The bank schedule. Every number here is a KEY window, not a roll value:
+        // the oracle probe presses the same keys and prints what CameraRoll ends up
+        // holding, so the golden pins the input-to-bank path and not just the maths.
+        //   forward 1..189: the walk axis the writer needs, held long enough to reach
+        //     its own +/-10 limit and to fall out at 190 while the keys are still up.
+        //   turnRight 10..99: ninety steps of +0.125 degrees, so the limit is reached
+        //     (at 80) and then held against for nineteen more -- a cap that only just
+        //     touches its limit would not be pinned.
+        //   turnLeft 100..179: the other way from +10, which is where the 2-degree
+        //     "back towards level" jump is biggest, and long enough to reach -10 too.
+        //   turnRight 180..189: the jump again from -10, crossing zero.
+        //   turnLeft 185..189 OVERLAPS it: both keys is the C#'s axis of zero, so the
+        //     writer must refuse while the leveller keeps running.
+        //   turnRight 192..196 with the walk key released: the OTHER guard, the one on
+        //     the walk axis, which nothing else in the port reaches.
+        plan.lift = 0.0f;
+        plan.hurts = nullptr;
+        plan.hurtCount = 0;
+        plan.forwardFrom = 1;
+        plan.forwardTo = 189;
+        plan.turnRight = kRollRight;
+        plan.turnRightCount = sizeof(kRollRight) / sizeof(kRollRight[0]);
+        plan.turnLeft = kRollLeft;
+        plan.turnLeftCount = sizeof(kRollLeft) / sizeof(kRollLeft[0]);
+        plan.columns = kColsRoll;
     }
     *out = dumpKurtHurt(level, steps, runtime, player, mixer, plan);
     return true;
@@ -2134,7 +2221,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (what == "hurt" || what == "hurtland" || what == "knock" || what == "invuln" ||
-            what == "knockdown" || what == "flashes" || what == "push") {
+            what == "knockdown" || what == "flashes" || what == "push" || what == "camroll") {
             std::string got;
             std::string why;
             const int schedule = what == "hurtland"                                     ? kHurtHardLand
@@ -2143,7 +2230,8 @@ int main(int argc, char** argv) {
                                  : (what == "knockdown"                                 ? kHurtKnockdown
                                  : (what == "flashes"                                   ? kHurtFlashes
                                  : (what == "push"                                      ? kHurtPush
-                                    : kHurtHealth)))));
+                                 : (what == "camroll"                                   ? kHurtRoll
+                                    : kHurtHealth))))));
             if (!kurtHurtDump(level, ticks, schedule, data, spritesArg, &got, &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
@@ -3004,6 +3092,38 @@ int main(int argc, char** argv) {
                        "is down or dead\n");
             } else {
                 printf("FAIL L3_kurt_push: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // Kurt's moves bank the view (CameraRoll.cs, original 0x573910): the walk writer,
+    // the leveller, and the held step between them. Both sides PRESS KEYS -- the oracle
+    // probe holds TurnLeft/TurnRight/Forward over the windows in the header line and
+    // prints what Kurt.CameraRoll.Roll holds afterwards -- so this pins the whole path
+    // from the input to the bank, which is what makes it able to see the two guards
+    // (no walk key, or no turn key, and both keys at once) and the one-step hold that no
+    // amount of arithmetic on the roll alone would show. The consumer is pinned
+    // separately, in vm_tests' PASS CameraRollBanksTheFollowCamera.
+    {
+        std::string expected;
+        if (!readText("golden/L3_kurt_camroll.txt", &expected)) {
+            printf("FAIL L3_kurt_camroll: no golden file golden/L3_kurt_camroll.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtHurtDump(3, 200, kHurtRoll, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_camroll: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_camroll: turning while walking banks the view 0.125 degrees a "
+                       "step up to +/-10, turning the other way jumps 2 degrees back towards level, "
+                       "the held step delays the leveller by exactly one step, the bank falls by "
+                       "clamp(0.35*|roll|,0.05,2.5) a tick to EXACTLY zero, and neither key alone "
+                       "-- or both at once -- banks anything\n");
+            } else {
+                printf("FAIL L3_kurt_camroll: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }

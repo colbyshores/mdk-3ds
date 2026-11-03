@@ -115,6 +115,7 @@ set(SOURCES
     ${CORE}/src/formats/wav.cpp
     ${CORE}/src/game/arena_space.cpp
     ${CORE}/src/game/bsp.cpp
+    ${CORE}/src/game/camera_roll.cpp
     ${CORE}/src/game/follow_camera.cpp
     ${CORE}/src/game/frame_blend.cpp
     ${CORE}/src/game/hud_view.cpp

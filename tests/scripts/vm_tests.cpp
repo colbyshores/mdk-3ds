@@ -34,6 +34,8 @@
 #include "formats/model.h"
 #include "formats/script_decoder.h"
 #include "game/arena_space.h"
+#include "game/camera_roll.h"
+#include "game/follow_camera.h"
 #include "game/level_data.h"
 #include "game/player.h"
 #include "layer_tests.h"
@@ -4359,6 +4361,193 @@ void testArrivalKeepsTheStuckCountTheOracleKeeps(LevelData* levelData, const Cmi
     CHECK(moving.stuck_count == 0);                  // HandleStuck: no ContactStuck yet
 }
 
+// Small vector helpers for the camera pin below. vm_tests has no geometry of its own,
+// and the ones follow_camera.cpp uses are file-static there.
+static Vec3 vmCross(const Vec3& a, const Vec3& b) {
+    return Vec3{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
+static float vmDot(const Vec3& a, const Vec3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static Vec3 vmNormalize(const Vec3& v) {
+    const float length = sqrtf(vmDot(v, v));
+    return length > 0.0f ? Vec3{v.x / length, v.y / length, v.z / length} : v;
+}
+
+static bool nearFloat(float actual, float expected, float tolerance) {
+    return fabsf(actual - expected) <= tolerance;
+}
+
+// The follow camera's roll is the C#'s Turn (FollowCamera.cs:196-212): the up vector
+// swings towards the view's own right by the bank, the forward is untouched, and an
+// exact zero takes the C#'s early return. The oracle's own KurtRollsTheCameraTurningRight
+// (KurtMovesTests.cs:368) asserts the same property this checks -- Dot(Up, right) equals
+// Sin(DegreesToRadians(Roll)) -- to three decimals; this checks it tighter. And
+// golden/L3_kurt_camroll.txt pins the DEGREES exactly against the oracle; this pins what
+// those degrees do to the view, which no golden can, because the rotation goes through
+// the project's one trig path (fastSin/fastCos, AGENTS.md R6) and so sits within the
+// table's error of MathF.Sin/MathF.Cos rather than on top of it.
+//
+// WHY THE TOLERANCE IS 2e-5 AND NOT TIGHTER. Measured at the bank limit (10 degrees =
+// 0.174533 rad), on this tree, against libm: fastCos(+r) is off by 4.53e-06 and
+// fastSin(+r) by 8.20e-07 -- inside the header's documented 4.76e-06 -- but the SAME
+// table on a NEGATIVE argument is off by 1.19e-05 (cos) and 1.88e-06 (sin), because
+// `(int)scaled` truncates toward zero, so a negative argument interpolates with a
+// negative fraction along the NEXT segment instead of the one it lies in. That is a
+// real asymmetry in math_lut.h, it is 2.5x its own documented bound, and it is NOT
+// this batch's to change (AGENTS.md §7: do not touch the LUT as part of a pass); it is
+// recorded in the progress log instead. 2e-5 is that measurement plus room, and it is
+// still four orders below anything the eye resolves while failing every wrong sign, a
+// swapped sine and cosine, or a roll about the wrong axis, all of which are O(0.1).
+void testCameraRollBanksTheFollowCamera() {
+    const Vec3 feet{0.0f, 0.0f, 0.0f};
+    const Vec3 facing{1.0f, 0.0f, 0.0f};
+    const float kAspect = 4.0f / 3.0f;
+    const float kPivot = follow_camera::kDefaultPivot;
+    const float kBank = 10.0f;   // the walk writer's own limit, in degrees
+
+    Camera level;
+    Camera negativeZero;
+    Camera bankedRight;
+    Camera bankedLeft;
+    CHECK(buildFollowCamera(&level, feet, facing, follow_camera::kDefaultPitch, kPivot,
+                            kAspect, 0.0f));
+    CHECK(buildFollowCamera(&negativeZero, feet, facing, follow_camera::kDefaultPitch, kPivot,
+                            kAspect, -0.0f));
+    CHECK(buildFollowCamera(&bankedRight, feet, facing, follow_camera::kDefaultPitch, kPivot,
+                            kAspect, kBank));
+    CHECK(buildFollowCamera(&bankedLeft, feet, facing, follow_camera::kDefaultPitch, kPivot,
+                            kAspect, -kBank));
+
+    // The C#'s early return is `if (roll == 0f) return;`, which -0.0 satisfies too, so a
+    // level view is bit-for-bit what Orient just produced and not a rotation by zero.
+    CHECK(negativeZero.up.x == level.up.x && negativeZero.up.y == level.up.y &&
+          negativeZero.up.z == level.up.z);
+
+    // A bank tilts the picture; it does not turn it. Forward is untouched.
+    CHECK(bankedRight.forward.x == level.forward.x &&
+          bankedRight.forward.y == level.forward.y &&
+          bankedRight.forward.z == level.forward.z);
+
+    // The C#'s Right, from Orient (FollowCamera.cs:151): Cross(Forward, UnitZ). Up
+    // swings towards it for a positive bank and away for a negative one, by the bank's
+    // own sine, and it keeps its cosine along the level up.
+    const Vec3 right = vmNormalize(vmCross(level.forward, Vec3{0.0f, 0.0f, 1.0f}));
+    const float radians = kBank * 3.14159265358979323846f / 180.0f;
+    const float kTolerance = 2e-5f;
+    CHECK(nearFloat(vmDot(bankedRight.up, right), sinf(radians), kTolerance));
+    CHECK(nearFloat(vmDot(bankedLeft.up, right), -sinf(radians), kTolerance));
+    CHECK(nearFloat(vmDot(bankedRight.up, level.up), cosf(radians), kTolerance));
+    CHECK(nearFloat(vmDot(bankedLeft.up, level.up), cosf(radians), kTolerance));
+
+    // And the basis stays orthonormal, or the look-at would shear the view.
+    CHECK(nearFloat(vmDot(bankedRight.up, bankedRight.up), 1.0f, kTolerance));
+    CHECK(nearFloat(vmDot(bankedRight.up, bankedRight.forward), 0.0f, kTolerance));
+
+    // THE WIRING, not just the maths. FollowCamera::update has to read the bank off the
+    // Player the way the C# reads it off Kurt (FollowCamera.cs:139); a build that calls
+    // the roll helper with a literal 0 passes every check above and shows Kurt a level
+    // view forever. The property is pitch-independent, which is what makes it usable
+    // here: `up` is rotated about `forward`, and the view's own right is built from
+    // that same forward, so the component of `up` along it is the bank's sine whatever
+    // the arena pitch, the climb and the air tilt have done to the pitch.
+    Player player;
+    player.feet = feet;
+    Input input;
+    input.down[kKeyForward] = true;
+    input.down[kKeyTurnRight] = true;   // the C#'s -Axis(TurnLeft, TurnRight) is +1 here
+    for (int i = 0; i < 20; i++) {
+        player.update(input, 1.0f / 60.0f);
+    }
+    const float bank = player.cameraRoll().roll();
+    CHECK(bank > 0.0f);
+    FollowCamera follow;
+    Camera stepped;
+    follow.update(&stepped, nullptr, player, follow_camera::kDefaultPitch,
+                  1.0f / 60.0f, kAspect);
+    const Vec3 steppedRight = vmNormalize(vmCross(stepped.forward, Vec3{0.0f, 0.0f, 1.0f}));
+    CHECK(nearFloat(vmDot(stepped.up, steppedRight),
+                    sinf(bank * 3.14159265358979323846f / 180.0f), kTolerance));
+}
+
+// CameraRoll's two clamps are MathF.Min/MathF.Max in the oracle (CameraRoll.cs:47,52),
+// so a NaN bank STAYS NaN instead of snapping to +/-10 the way fminf/fmaxf would. No
+// schedule reaches this -- nothing in the golden can make the step NaN -- which is why
+// it lives here and not in the golden, and it is the same rule and the same mutant as
+// the eight speed clamps in script_runtime.cpp (review-20 F2): swap the pair for the
+// fminf/fmaxf ones and the first check below fails, because fminf(NaN,10) is 10.
+void testCameraRollClampsPropagateNaNLikeTheOracle() {
+    const float kNaN = nanFloat();
+    const float kStep = 1.0f / 60.0f;
+
+    CameraRoll roll;
+    roll.walk(1.0f, 1.0f, kNaN);              // the gain arm: MathF.Min(NaN, 10)
+    CHECK(roll.roll() != roll.roll());
+    roll.walk(1.0f, 1.0f, kStep);             // a normal step after it does not heal it
+    CHECK(roll.roll() != roll.roll());
+    roll.walk(-1.0f, 1.0f, kStep);            // the brake arm: MathF.Max(NaN, -10)
+    CHECK(roll.roll() != roll.roll());
+    roll.settle(kStep);                       // and the leveller neither fixes nor hides it
+    CHECK(roll.roll() != roll.roll());
+
+    // The other half of the same claim: with a finite step the clamps are ordinary
+    // clamps, so this is not a NaN that would survive anything.
+    CameraRoll finite;
+    for (int i = 0; i < 200; i++) {
+        finite.walk(1.0f, 1.0f, kStep);
+    }
+    CHECK(finite.roll() == 10.0f);            // the +limit, held against
+    finite.settle(kStep);                     // the held step spends itself
+    for (int i = 0; i < 400; i++) {
+        finite.settle(kStep);
+    }
+    CHECK(finite.roll() == 0.0f);             // and the leveller reaches EXACTLY zero
+}
+
+// The oracle's OWN unit test for this class is tests/Mdk.Game.Tests/KurtMovesTests.cs's
+// RunningAndTurningRollsTheView (Tick = 1/30), and it is the specification the C++ twin
+// has to meet assertion for assertion -- the same relationship vm_tests.cpp has to
+// ScriptVmTests.cs. Every number below is that test's, in its order:
+//   1.0   -- four (walk, settle) pairs at 0.25 degrees a tick, the settle each time
+//            spent on the held step rather than levelling;
+//   10.0  -- a hundred more, against the +10 limit;
+//   7.75  -- one step the other way: -0.25 for the step and -2 for the reverse jump;
+//   5.25  -- two settles, the first the held step again and the second the 2.5 clamp;
+//   0.0   -- a hundred settles reach EXACTLY zero, not a small number;
+//   0.0   -- and turning on the spot (no walk axis) does not roll at all.
+// It is data-independent, so it runs on a machine with no game files, which the golden
+// cannot claim.
+void testCameraRollMatchesTheOraclesOwnUnitTest() {
+    const float kTick = 1.0f / 30.0f;   // KurtMovesTests.Tick
+    const float kTolerance = 1e-4f;     // Assert.Equal(x, y, 4)
+
+    CameraRoll roll;
+    for (int i = 0; i < 4; i++) {
+        roll.walk(1.0f, 1.0f, kTick);
+        roll.settle(kTick);
+    }
+    CHECK(nearFloat(roll.roll(), 1.0f, kTolerance));
+    for (int i = 0; i < 100; i++) {
+        roll.walk(1.0f, 1.0f, kTick);
+        roll.settle(kTick);
+    }
+    CHECK(nearFloat(roll.roll(), 10.0f, kTolerance));
+    roll.walk(-1.0f, 1.0f, kTick);
+    CHECK(nearFloat(roll.roll(), 7.75f, kTolerance));
+    roll.settle(kTick);
+    roll.settle(kTick);
+    CHECK(nearFloat(roll.roll(), 5.25f, kTolerance));
+    for (int i = 0; i < 100; i++) {
+        roll.settle(kTick);
+    }
+    CHECK(roll.roll() == 0.0f);
+    roll.walk(1.0f, 0.0f, kTick);       // turning on the spot
+    roll.settle(kTick);
+    CHECK(roll.roll() == 0.0f);
+}
+
 // The animation wrap is the C# Wrap's exact reduction: a positive divisor
 // leaves the first remainder in (-count, count), so one conditional add is
 // enough. Zero or a negative count is the C# divide-by-zero path; the port
@@ -4863,6 +5052,12 @@ int main() {
     printf("PASS AccelerateIsOneImplementationAcrossTheArms\n");
     testArrivalKeepsTheStuckCountTheOracleKeeps(&levelData, &cmi, &bank);
     printf("PASS ArrivalKeepsTheStuckCountTheOracleKeeps\n");
+    testCameraRollBanksTheFollowCamera();
+    printf("PASS CameraRollBanksTheFollowCamera\n");
+    testCameraRollMatchesTheOraclesOwnUnitTest();
+    printf("PASS CameraRollMatchesTheOraclesOwnUnitTest\n");
+    testCameraRollClampsPropagateNaNLikeTheOracle();
+    printf("PASS CameraRollClampsPropagateNaNLikeTheOracle\n");
     testKnockDownSpendsTheCounterAndOpensTheTimer();
     printf("PASS KnockDownSpendsTheCounterAndOpensTheTimer\n");
     testAirborneKnockDownSlamsToTheFloorTheProbeReaches(&levelData);

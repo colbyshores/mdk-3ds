@@ -175,6 +175,12 @@ void Player::update(const Input& input, float delta) {
     // therefore stays up for the whole death beat, which is the oracle's behaviour and is
     // pinned by golden/L3_kurt_flashes.txt, not an oversight of this port's.
     combat_.fadeFlashes(delta);
+    // C# Kurt.Update levels the view's bank here (Kurt.cs:160), immediately after
+    // FadeFlashes and ahead of every early return below -- so a knocked, crashing or
+    // noclipping Kurt still settles his roll, and a corpse (the Dead return above)
+    // still does not. It runs BEFORE the step's writers, which is why the roll can
+    // hold one extra step after the keys come off (CameraRoll's held flag).
+    _cameraRoll.settle(delta);
     // C# Kurt.Update runs UpdateKnockDamage here (Kurt.cs:176): after the ride and
     // noclip returns (neither is ported) and before UpdateChuteSound and the
     // Hang/HardLand branch, so a crashing Kurt's recent-damage counter declines too --
@@ -219,6 +225,12 @@ void Player::update(const Input& input, float delta) {
     const float air = onFloor ? 1.0f : kAirControl;
     forwardSpeed = accelerate(forwardSpeed, forward, turbo, 1.0f, air, delta);
     strafeSpeed = accelerate(strafeSpeed, strafe, turbo, air, air, delta);
+    // C# Kurt.cs:218, right after the two Accelerate calls: running while turning
+    // with the keys rolls the view. The C# negates its own axis (TurnLeft is the
+    // positive key but a left turn banks the view right), and it passes the ALREADY
+    // zeroed `forward` from above, so a knocked Kurt with the keys down banks nothing
+    // -- the same variable its Accelerate calls just used.
+    _cameraRoll.walk(-turn, forward, delta);
 
     const Vec3 f = facing();
     const Vec3 r = right();

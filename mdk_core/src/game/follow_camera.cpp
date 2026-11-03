@@ -115,13 +115,41 @@ void followCameraOrient(const Vec3& facing, float pitch, Vec3* forward, Vec3* up
     *up = normalize(cross(cross(f, z), f));
 }
 
+void followCameraRoll(const Vec3& forward, Vec3* up, float rollDegrees) {
+    // C# FollowCamera.Turn's roll half (FollowCamera.cs:207-212). The early return on
+    // an exact zero is the C#'s own, so a level view is bit-for-bit what Orient just
+    // produced rather than a rotation by 0 that could round.
+    if (rollDegrees == 0.0f) {
+        return;
+    }
+    // The C# uses MathF.Cos/MathF.Sin; this is camera trig, so it goes through the
+    // project's one trig path (AGENTS.md R6), the same one followCameraOrient uses.
+    // The roll never exceeds 10 degrees (0.175 rad), where that table's own measured
+    // error is 4.5e-06 on a positive argument and 1.2e-05 on a negative one (the
+    // negative side is worse than math_lut.h's documented bound because its index
+    // truncates toward zero -- measured, and recorded in vm_tests' camera-roll pin).
+    // That is why golden/L3_kurt_camroll.txt pins the DEGREES exactly and vm_tests pins
+    // the rotated axis to 2e-5 rather than bit-for-bit.
+    const float radians = rollDegrees * kPi / 180.0f;
+    const float cosine = fastCos(radians);
+    const float sine = fastSin(radians);
+    // The C#'s Right, from Orient (FollowCamera.cs:151): Cross(Forward, UnitZ).
+    const Vec3 right = normalize(cross(forward, Vec3{0.0f, 0.0f, 1.0f}));
+    const Vec3 before = *up;
+    *up = Vec3{before.x * cosine + right.x * sine,
+               before.y * cosine + right.y * sine,
+               before.z * cosine + right.z * sine};
+}
+
 bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
-                       float pitchDegrees, float pivot, float aspect) {
+                       float pitchDegrees, float pivot, float aspect,
+                       float rollDegrees) {
     const float pitch = clampViewPitch(pitchDegrees) * kPi / 180.0f;
     const Vec3 position = followCameraPoint(feet, facing, pitch, pivot);
     Vec3 forward;
     Vec3 up;
     followCameraOrient(facing, pitch, &forward, &up);
+    followCameraRoll(forward, &up, rollDegrees);
     if (!buildLookAtCamera(camera, position,
                            Vec3{position.x + forward.x, position.y + forward.y,
                                 position.z + forward.z},
@@ -174,7 +202,8 @@ Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera) {
 }
 
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
-                              float pitchDegrees, float pivot, float aspect) {
+                              float pitchDegrees, float pivot, float aspect,
+                              float rollDegrees) {
     const float pitch = clampViewPitch(pitchDegrees) * kPi / 180.0f;
     const Vec3 facing = player.facing();
     Vec3 position = followCameraPoint(player.feet, facing, pitch, pivot);
@@ -182,6 +211,7 @@ bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
     Vec3 forward;
     Vec3 up;
     followCameraOrient(facing, pitch, &forward, &up);
+    followCameraRoll(forward, &up, rollDegrees);
     if (!buildLookAtCamera(camera, position,
                            Vec3{position.x + forward.x, position.y + forward.y,
                                 position.z + forward.z},
@@ -264,10 +294,12 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     }
     _lookOffset = clampf(_lookOffset, follow_camera::kMinPitch - _arenaPitch - _airPitch,
                          follow_camera::kMaxPitch - _arenaPitch - _airPitch);
-    // CameraTilt (a script) and CameraRoll are not ported (both 0).
+    // CameraTilt (a script) is not ported; CameraRoll is, and the C# reads it off Kurt
+    // here (FollowCamera.cs:139), so this reads it off the Player it was handed.
     const float degrees =
         _arenaPitch + _lookOffset + _airPitch - follow_camera::kClimbPitch * _climb;
-    buildFollowCameraCleared(camera, space, player, degrees, follow_camera::kDefaultPivot, aspect);
+    buildFollowCameraCleared(camera, space, player, degrees, follow_camera::kDefaultPivot,
+                             aspect, player.cameraRoll().roll());
 }
 
 } // namespace mdk

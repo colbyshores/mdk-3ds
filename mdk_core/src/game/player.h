@@ -21,6 +21,7 @@
 
 #include "audio/sound_mixer.h"
 #include "game/arena_space.h"
+#include "game/camera_roll.h"
 #include "game/input.h"
 #include "game/kurt.h"
 #include "render/render_types.h"
@@ -125,6 +126,14 @@ public:
     // writer in the whole oracle, and drainKnockdownPush is its only reader that
     // lowers it, so a port that drops this term moves a shoved Kurt back.
     Vec3 velocity() const;
+
+    // C# Kurt.CameraRoll (Kurt.cs:114): the view's bank, which Kurt's moves write and
+    // the follow camera reads (FollowCamera.cs:139). It is live state on the same
+    // terms as the flashes: walk() runs inside update() and settle() runs at the top
+    // of it, and FollowCamera::update reads the result every frame, so a copy here
+    // that nothing reads is the write-only-field defect again. Its two writers and
+    // the order they run in are pinned by golden/L3_kurt_camroll.txt.
+    const CameraRoll& cameraRoll() const { return _cameraRoll; }
     // The velocity half of C# Kurt.KnockDown (Kurt.Combat.cs:177, `_push += push`),
     // split out so the push term can be pinned on its own. Every push the oracle adds
     // goes through knockDown: push_kurt (opcode 248, ScriptRuntime.cs:2850) hands it a
@@ -195,6 +204,9 @@ private:
     bool _died = false;  // the C#'s Died event, once per death; see died() above
     FrameCounts _frameCounts;
     Vec2 _knockdownPush = {0.0f, 0.0f};  // C# Kurt.Combat.cs:_push, in u/s
+    // C# Kurt.CameraRoll (Kurt.cs:114). One instance, written by update() and read by
+    // the follow camera; see cameraRoll() above.
+    CameraRoll _cameraRoll;
     Vec3 _floorNormal = {0.0f, 0.0f, 1.0f};
     int _jumpTicksLeft = 0;
     bool _jumpReleased = true;

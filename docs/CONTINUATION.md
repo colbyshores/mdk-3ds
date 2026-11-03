@@ -1,28 +1,33 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 52 closes review-21 F7 by collapsing the oracle's ONE `Accelerate`
-(`ObjectMotion.cs:780-790`), which the port had inlined at three movement arms, into one
-file-scope `accelerate()` all three call. **No arithmetic changed** — same two comparisons, same
-two NaN-propagating clamps, moved — and the pinned frame is byte-identical, but this is shipped
-movement math on a per-object-per-tick path, so it is not a formatting diff. The new pin is
-`AccelerateIsOneImplementationAcrossTheArms`: 17 rows × 3 arms, each arm required to land on the
-bits .NET's own private `Accelerate` prints (probe mode `accel`), and 6 of 6 mutants killed
-(including review-20 F2's shape: one arm keeping an inline copy with `fminf`/`fmaxf`). 470 cases
-pass. Review-21 is now fully dispositioned: F2/F5/F6 fixed in batch 51, F7 here, F3 rebutted
-against the live KB signature, and F1 (High)/F4/F8 owner-only and each reproduced first — F1 is
-not closable from a batch, because the gate that would widen `PROTECTED` protects itself.
+Risk: medium — batch 53 ports a whole oracle class this tree did not have: `CameraRoll`
+(`src/Mdk.Game/Kurt/CameraRoll.cs`), the view's bank. It is new shipped behaviour on a
+per-frame path — a running, turning Kurt now draws a banked view — wired into
+`Player::update` at the C#'s two call sites (Kurt.cs:160 and :218) and read by
+`FollowCamera::update` the way the C# reads it off Kurt, so it is not a test-only batch. It
+is bounded and it is pinned three ways: `golden/L3_kurt_camroll.txt` (201 lines) is
+byte-identical to the C# probe over 200 steps of **pressed keys**, the oracle's own
+`KurtMovesTests.RunningAndTurningRollsTheView` is matched assertion for assertion, and the
+consumer is pinned by the property the oracle's own `KurtRollsTheCameraTurningRight` uses.
+9 of 9 mutants killed. 474 cases pass and the pinned frame is byte-identical (`sha
+6646adf1dae3…`), because a Kurt who has not yet turned has no bank to draw. Review-21 stays
+fully dispositioned (F2/F5/F6 batch 51, F7 batch 52, F3 rebutted, F1/F4/F8 owner-only); this
+batch is new work, not remediation, and it stages none of the owner's uncommitted files.
 
-Last updated: 2026-11-03 (**batch 52** — review-21 F7: one `accelerate()` replaces the three
-inlined copies, `chase`'s clamp pair documented as the C#'s own second formula rather than a
-fourth copy, and the arms pinned against each other and against .NET's bits with a 6-mutant table.
-The record — the oracle's `Accelerate` body, the probe table, the four rows that make the branch
-shape unbreakable and the mutant table — is `docs/PROGRESS_LOG.md`, "Iteration 80". Batch 51's
+Last updated: 2026-11-03 (**batch 53** — `CameraRoll` lands: `game/camera_roll.{h,cpp}`, the
+walk writer and the leveller, wired at the C#'s two call sites, and `followCameraRoll` as
+`FollowCamera.Turn`'s roll half; `Slide`/`Follow` deferred with their absent subsystems and
+the shake deferred because the oracle's own `Random` is time-seeded, so there is nothing to
+be byte-identical against. The record — the oracle's class, the key-window schedule, the
+9-mutant table and the `math_lut.h` negative-angle measurement — is `docs/PROGRESS_LOG.md`,
+"Iteration 81". Batch 52's record (one `accelerate()`, the probe table and the 6-mutant
+table) is "Iteration 80". Batch 51's
 record (the fly-arrival pin and the three-mutant guard table, the F1 unclosability proof, the F3
 rebuttal) is "Iteration 79". Batch 50's record (the six clamp pins,
 the .NET derivation, the F4 rebuttal) is "Iteration 78". Batch 49's own record (the dispatch→arm pins, the clamp change,
 the NaN reachability argument, its 8-mutant table) is "Iteration 77"; batch 48's — `chase`/
 `followFormation`/`turnTowards`/`moveToward` and their derivation and 16-mutant tables — is "Iteration
-76". Earlier batches are one "Iteration N" section back each: 51 = 79, 50 = 78, 49 = 77, 48 = 76, 47 = 75,
+76". Earlier batches are one "Iteration N" section back each: 53 = 81, 52 = 80, 51 = 79, 50 = 78, 49 = 77, 48 = 76, 47 = 75,
 46 = 74, 45 = 73, 44 = 72,
 43 = 71, 42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61,
 32 = 60.
@@ -185,7 +190,14 @@ part** where batches 14-47 changed it. The headlines a batch can break:
   `L3_kurt_knock`, `L3_kurt_invuln`, `L3_kurt_flashes`, `L3_kurt_push`. The push's only non-zero
   writer in the whole oracle is `ScriptRuntime::pushKurt` (opcode 248); `updateKnockDamage` hands
   `knockDown` a zero push exactly as `Kurt.Combat.cs:225` does. A frontend that re-derives the
-  skull from its own clock is the duplication batch 45 removed.
+  skull from its own clock is the duplication batch 45 removed. **The view's bank is live state
+  too** (batch 53): `Player::_cameraRoll` is `Kurt.CameraRoll`, written only by `Player::update`
+  at the C#'s two places (Kurt.cs:160 and :218) and read by `FollowCamera::update`; its two
+  guards, its held step, its ±10 limits and its 2-degree reverse jump are pinned by
+  `L3_kurt_camroll` against the oracle probe, and what the bank does to the drawn view — plus the
+  wiring that makes the camera read it at all — by `CameraRollBanksTheFollowCamera`. Do not
+  re-derive the bank in the camera, and do not add a `Slide`/`Follow` writer before the subsystem
+  that owns it.
 - **Missing-archive path:** an unparseable `TRAVSPRT.BNI` makes the frontend run the level WITHOUT
   scripts and say so, and `tick1` exits 1 rather than hand the runtime a null archive — the C#
   `Bni.Load` throws, so a null archive is a different game, not a degraded one. Never reintroduce
@@ -208,38 +220,47 @@ part** where batches 14-47 changed it. The headlines a batch can break:
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 52)
+## Verified on this tree (batch 53)
 
-Narrative, the oracle's `Accelerate` body, the .NET probe table (mode `accel`, reflection on the
-private static), the four rows that make the branch shape unbreakable and the six-mutant table:
-`docs/PROGRESS_LOG.md`, "Iteration 80". Batch 51's — the fly-arrival pin, the three-mutant guard
-table, the F1 unclosability proof and the F3 signature check — is "Iteration 79"; batch 50's — the
-review-20 disposition, the .NET derivation of the six clamps and its 5-mutant run — is "Iteration 78".
-`make -C tests/scripts clean && make -C tests/scripts` **exit 0** (`All VM unit tests match the
-oracle.` + `All cases match the oracle.`, **470 PASS / 0 FAIL**, and `./build/vm_tests` **70 PASS /
-0 FAIL** — one case more than batch 51, `AccelerateIsOneImplementationAcrossTheArms`, alongside
-`MoveForward`/`Walk`/`Fly` `…ClampPropagatesNaNLikeTheOracle`, `ChaseSpeedClampPropagatesNaN…` and
-`ArrivalKeepsTheStuckCountTheOracleKeeps`);
+Narrative, the oracle's `CameraRoll` body, the key-window schedule and what each window is
+for, the 9-mutant table and the `math_lut.h` negative-angle measurement: `docs/PROGRESS_LOG.md`,
+"Iteration 81". Batch 52's — one `accelerate()`, the .NET probe table (mode `accel`) and the
+six-mutant table — is "Iteration 80"; batch 51's — the fly-arrival pin, the three-mutant guard
+table, the F1 unclosability proof and the F3 signature check — is "Iteration 79"; batch 50's —
+the review-20 disposition, the .NET derivation of the six clamps and its 5-mutant run — is
+"Iteration 78".
+`make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All cases match the
+oracle.`, **474 PASS / 0 FAIL**, and `./build/vm_tests` **73 PASS / 0 FAIL** — three cases more
+than batch 52, `CameraRollBanksTheFollowCamera`, `CameraRollMatchesTheOraclesOwnUnitTest` and
+`CameraRollClampsPropagateNaNLikeTheOracle`, plus the new golden `L3_kurt_camroll`, alongside
+`AccelerateIsOneImplementationAcrossTheArms`, the four `…ClampPropagatesNaNLikeTheOracle` sites
+and `ArrivalKeepsTheStuckCountTheOracleKeeps`);
 `bash tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`:
 `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math` contract clean,
 `audit_r11_idiv` no candidates, `gates_core_parity` both targets link the same core, `gates_smdh`
-SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — `reference.sha256` NOT
-regenerated — `gates_batch_integrity` project invariants intact); `make -C mdk_3ds` **exit 0**
-(`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk` **exit 0**.
+SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame
+unchanged, and `reference.sha256` NOT regenerated — `gates_batch_integrity` project invariants
+intact); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, `camera_roll.cpp` reached by the core
+glob); `cmake --build build-linux --target mdk` **exit 0**.
 
-**No shipped line of arithmetic changed in this batch**, so no golden could move and none did. What
-changed is where the step lives and what proves it: the oracle's single `Accelerate`
-(`ObjectMotion.cs:780-790`) is now one `accelerate(MdkObject*, float)` free function in
-`script_runtime.cpp` called by `moveForward`, the walk arm and the fly arm, instead of three inline
-copies — the shape review-20 F2 came from — and `AccelerateIsOneImplementationAcrossTheArms` makes
-the arms prove they still agree, against the bits .NET's own private `Accelerate` returns. `chase`'s
-clamp pair is **not** a copy of it (it is the C#'s own `Chase` formula, `:916-917`) and its comment
-now says so, so nobody folds it in. Batch 51's and 50's invariants stand: the `move_command != 0`
-guard is killable on the arrival it decides *and* on the tick it must not skip; all eight speed-clamp
-sites the oracle writes as `MathF.Min`/`MathF.Max` are killable by a test; and the discriminating
-input for the six is a NaN `acceleration`/`deceleration`, **not** a NaN `speed` —
-`Accelerate`'s branches are strict comparisons, so a NaN speed never reaches those clamps (measured
-on .NET 10, table in the log; the two `equal_nan_*` rows are what pin that strictness itself).
+**What changed is shipped behaviour, not a test.** The oracle's `CameraRoll`
+(`src/Mdk.Game/Kurt/CameraRoll.cs`) is now `mdk_core/src/game/camera_roll.{h,cpp}`: `walk()`
+runs at Kurt.cs:218's place with the ALREADY zeroed walk axis and the C#'s own negation of
+the turn axis, `settle()` at Kurt.cs:160's place (after `fadeFlashes`, ahead of every early
+return, so a knocked or crashing Kurt still levels his view and a corpse still does not), and
+`followCameraRoll` is `FollowCamera.Turn`'s roll half, fed from `player.cameraRoll().roll()`
+where the C# reads `kurt.CameraRoll.Roll`. The held step (0x57ff74) is behaviour, not
+bookkeeping: it is what makes the bank start to fall one step after the keys come off, and
+mutant M2 proves a test sees it. `Slide` and `Follow` are absent with their absent subsystems
+(`Kurt.Slide.cs:193`, `Snowboard.cs:428`) and the **shake** half of `Turn` stays unported
+because `FollowCamera._random` is a time-seeded `System.Random` — there is no reproducible
+oracle value to be byte-identical against, and `follow_camera.h` says so. Batch 52's and 51's
+invariants stand: the oracle's one `Accelerate` is one `accelerate()` all three arms call, the
+`move_command != 0` guard is killable on the arrival it decides *and* on the tick it must not
+skip, and all eight speed-clamp sites the oracle writes as `MathF.Min`/`MathF.Max` are
+killable by a test — the discriminating input for the six is a NaN `acceleration`/
+`deceleration`, **not** a NaN `speed`, because `Accelerate`'s branches are strict comparisons
+(measured on .NET 10, table in the log; the two `equal_nan_*` rows pin that strictness).
 Still NOT pinned by any golden: a shipped frontend's mixer wiring (no
 frontend has an audio device, none draws `Knocked`), the fall-out variant of death, the firing step
 frames, the sprite frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white
@@ -247,7 +268,14 @@ flash's other writers, and feet finer than 1/64 unit (owner task 15). **The next
 in order:** the four remaining `fminf`/`fmaxf` sites in `script_runtime.cpp` whose oracle side reads
 `MathF.Max`/`Min` (the friction factor `:815`, the gun-aim cone `:1313`, the sweep-box span
 `:1969-1970`, the minimum height `:3016`) — same NaN-only difference, other subsystems, each wanting its
-own pin, and each now able to reuse the probe-mode pattern batch 52 established. **No emulator run and
+own pin, and each now able to reuse the probe-mode pattern batch 52 established; then the follow
+camera's **blend** (`FollowCamera.Blend` over its `Aim` triple, which needs the high-refresh frame
+blend `FrameBlend`'s Kurt half already carries), and its sniper scope and top-down view. A new owner
+candidate from this batch: `math_lut.h`'s `fastSin`/`fastCos` are 2.5× their own documented error on a
+**negative** argument (measured 1.19e-05 at −10° against libm, because `(int)scaled` truncates toward
+zero and the interpolation runs along the next segment with a negative fraction) — every camera and
+sprite angle in the tree passes through that path, and fixing it is a frame-baseline event, so it is
+recorded in Iteration 81 rather than changed. **No emulator run and
 no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D
 picture stays UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7).
 Frame `docs/frames/2026-11-03-review21-f7-one-accelerate.png` + `.txt` — `1.240 / 247 / 0.1819`,
