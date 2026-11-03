@@ -84,6 +84,15 @@ public:
     // as the one health above, and pinned by the same kind of golden.
     // The renderer reads it to choose a sprite frame (KurtSprite.Pick).
     Kurt::State state() const { return combat_.state(); }
+    // The C#'s `Died` event (Kurt.Combat.cs:94, raised by UpdateDeath at :253 when the
+    // skull finishes fading in) without a delegate, which §10 forbids: a latch set on
+    // the one step the skull crosses SkullEnd and cleared when Kurt leaves the Dead
+    // state, so it fires once per death exactly as the event does -- the guard at
+    // Kurt.Combat.cs:238 stops the rise, so nothing re-crosses it. The C#'s subscriber
+    // is the viewer's (Viewer.cs:239 -> Game.cs:448: write LASTGAME, go to the menu);
+    // this port has no menu and no save, so the Linux frontend uses it as the respawn
+    // beat it already had, and the level-end flow stays deferred with them.
+    bool died() const { return _died; }
     float animationFrame() const { return _animationFrame; }
     bool chuteClosing() const { return _chuteClosing; }
     void setFrameCounts(const FrameCounts& counts) { _frameCounts = counts; }
@@ -147,11 +156,13 @@ private:
     void fall(float delta);
     void fallMove(float delta);
     void land(const Vec3& before, const Vec3& normal, float delta);
-    // The hard landing's damage: Kurt::damageHealth, i.e. the C#'s Health line
-    // alone. Of the two terms Kurt.Damage also raises, only HurtFlash is left out:
-    // the red flash belongs to the combat slice that owns it and nothing here fades
-    // it out, and the KnockDamage the C# adds is zeroed again by HardLanding itself
-    // (Kurt.cs:583, reproduced in Player::land), so the omission is inert.
+    // The hard landing's damage: Kurt::damage, i.e. the C#'s Damage whole (scaled
+    // damage, the red flash, health, the knock counter). Of the terms the C#'s Damage
+    // leaves the Player out, only the difficulty scaling is still missing: the KnockDamage
+    // it adds is zeroed again by HardLanding itself (Kurt.cs:583, reproduced in
+    // Player::land), and the scaling is inert because difficulty_ has no writer yet -- the
+    // same deferral the note at land() records. The red flash is NOT left out any more:
+    // it is live state now that Kurt::fadeFlashes runs, and the HUD reads it.
     void damage(int damage);
     void drainKnockdownPush(float delta);
     // C# Kurt.UpdateKnockDamage (Kurt.Combat.cs:214) whole: the trigger first (at
@@ -178,6 +189,7 @@ private:
     float _stateTime = 0.0f;
     float _animationFrame = 0.0f;
     bool _chuteClosing = false;
+    bool _died = false;  // the C#'s Died event, once per death; see died() above
     FrameCounts _frameCounts;
     Vec2 _knockdownPush = {0.0f, 0.0f};  // C# Kurt.Combat.cs:_push, in u/s
     Vec3 _floorNormal = {0.0f, 0.0f, 1.0f};

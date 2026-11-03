@@ -81,6 +81,18 @@ public:
     static constexpr float kKnockdownFloorDistance = 13.0f;
     static constexpr float kKnockdownSlamSpeed = -64.0f;
 
+    // The two flashes' own numbers (Kurt.Combat.cs:25-27), written in the original's
+    // per-tick units: Ticks is 30 (Kurt.cs:25), so a flash falls by 4 per tick = 120/s
+    // and the skull rises by 2 per tick = 60/s up to 255. At the fixed 1/60 step that is
+    // two units off a flash per step and one unit of skull per step, so the smallest
+    // flash damage() can leave (75) is on screen for 38 steps and the skull takes 255
+    // steps to fill. Player::update is what applies the first, Player::updateDeath the
+    // second, and kurt.cpp says why the same field is both numbers.
+    static constexpr float kTicks = 30.0f;
+    static constexpr float kFlashFade = 4.0f * kTicks;
+    static constexpr float kSkullFade = 2.0f * kTicks;
+    static constexpr float kSkullEnd = 255.0f;
+
     enum Mortality { Mortal, God };
     enum Difficulty { Easy, Normal, Hard };
 
@@ -90,16 +102,18 @@ public:
     // not a copy of it.
     void hurt(int32_t damage);
 
+    // Damage (0x46a77c): the difficulty scaling, the red flash, health, knock damage.
+    // It is public because the C#'s HardLanding calls Damage directly (Kurt.cs:580)
+    // instead of going through Hurt, and the hard landing lives on Player in this port.
+    // Its red flash used to be inert -- nothing faded it -- and now that something does
+    // (fadeFlashes below), a slam that raised no flash leaves the HUD showing a
+    // different screen from the oracle's for the next 90 steps.
+    void damage(int32_t damage);
+
     int32_t health() const { return health_; }
     // Kurt.SetHealth (Kurt.Combat.cs:169): "starts with another health than 100
     // (the fall's)". The only other writer besides damage().
     void setHealth(int32_t health);
-    // The `Health = Math.Max(Health - damage, 0)` line of Kurt.Damage
-    // (Kurt.Combat.cs:145) on its own: no difficulty scaling, no red flash, no
-    // knock damage. That is the arithmetic Player needs for a hard landing, and
-    // the two terms it leaves out are the ones Player does not model (see the
-    // note at Player::damage).
-    void damageHealth(int32_t damage);
     float hurtFlash() const { return hurtFlash_; }
     float invulnerable() const { return invulnerable_; }
     float knockDamage() const { return knockDamage_; }
@@ -123,9 +137,38 @@ public:
     // ---- The VM's Kurt-and-screen writes (ScriptVm.cs:1580-1600) ----
     // screen_flash (opcode 215) raises the white flash; the nuke and the
     // explosion flash write it too, but their slices are later (Kurt.Combat
-    // .cs:80). The per-tick fade (FadeFlashes, Kurt.Combat.cs:203) is Kurt
-    // movement — also later.
+    // .cs:80). The opcode itself MAXES (MathF.Max(WhiteFlash, Round(Value)), so a
+    // weaker flash cannot lower a stronger one); the opcode does that at its own call
+    // site and this setter is the plain write underneath it.
     void setWhiteFlash(float value) { whiteFlash_ = value; }
+    // The other half of the death transition (Kurt.Combat.cs:375, `HurtFlash = 0f`
+    // on the step health 0 on a floor becomes State.Dead). The C# sets it through a
+    // private setter from inside Kurt; this port splits the class, so the movement
+    // half that owns the transition needs the write. It is NOT cosmetic: without it a
+    // Kurt hit just before he dies starts the skull from wherever the red flash had
+    // got to, and the death beat is shorter than the oracle's.
+    void setHurtFlash(float value) { hurtFlash_ = value; }
+
+    // Kurt.FadeFlashes (Kurt.Combat.cs:203-206): both flashes fall by kFlashFade per
+    // second and stop at zero. Player::update calls it where Kurt.Update does
+    // (Kurt.cs:159) — after the Frozen and Dead early returns, so a corpse fades
+    // nothing (its hurtFlash_ is the skull, rising below) and a cutscene freeze fades
+    // through its own branch (Kurt.cs:144, unported: no Frozen yet). Both fields are
+    // read by the HUD (HudView.DrawFlashes), so a flash that never fades is a red or
+    // white screen for the rest of the level, not a cosmetic gap.
+    void fadeFlashes(float delta);
+
+    // The skull's rise, the other life of hurtFlash_ once Kurt is dead
+    // (Kurt.Combat.cs:250-253): HurtFlash += SkullFade * delta, and the step that
+    // takes it past SkullEnd is the C#'s `Died?.Invoke()`. Returns that step, because
+    // the C#'s event has no port shape here (§10 forbids the delegate): the caller
+    // latches it, and Player::died is what a frontend polls.
+    bool fadeSkullIn(float delta);
+
+    // Whether the skull has finished fading (Kurt.Combat.cs:238, the guard that stops
+    // UpdateDeath). Strictly greater, as the oracle's is: at exactly 255 the corpse is
+    // still live, and the same predicate is what makes Died fire once and only once.
+    bool skullFinished() const { return hurtFlash_ > kSkullEnd; }
     // set_global_573bd4 (opcode 244): invulnerability time in seconds
     // (Kurt.Combat.cs:82); hurt() reads it, and declineInvulnerability below is what
     // ends it. Without that decay this field is a switch, not a timer: the first
@@ -176,8 +219,6 @@ public:
     void setSuperChainGun(int32_t ticks);
 
 private:
-    // Damage (0x46a77c): the difficulty scaling, the red flash, health, knock damage.
-    void damage(int32_t damage);
     // Scaled: easy takes 2/3 (at least 1), hard takes double, normal as-is.
     int32_t scaled(int32_t damage) const;
 

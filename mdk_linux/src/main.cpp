@@ -439,15 +439,6 @@ int main(int argc, char** argv) {
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
     const float kHudStep = 1.0f / 30.0f; // the C# HUD blink's 30 Hz boundary
     const float kAspect = 1280.0f / 960.0f;
-    // The beat a dead Kurt is left frozen before respawning. The C# skull fade
-    // runs at SkullFade = 2*Ticks = 60/s from HurtFlash 0 to SkullEnd 255
-    // (Kurt.Combat.cs:26-27,238-253). This frontend still has no menu, save or
-    // level end, so it respawns in place when that fade completes rather than
-    // leaving the level as the oracle does.
-    const float kSkullFadePerSecond = 60.0f;
-    const float kSkullEnd = 255.0f;
-    const float kRespawnDelay = kSkullEnd / kSkullFadePerSecond;
-    float deathTimer = 0.0f;
     float hudPending = 0.0f;
     float pending = 0.0f;
     auto last = std::chrono::steady_clock::now();
@@ -546,36 +537,28 @@ int main(int argc, char** argv) {
                 }
                 pending -= kStep;
             }
-            // Death: Player::update stays in updateDeath until the beat ends. The
-            // frontend then respawns him at the start and re-seeds the camera.
+            // Death: Player::update stays in updateDeath until the skull has faded in,
+            // and the frontend respawns him at the start when the beat ends.
             //
             // Scripts keep running during the beat HERE AND IN THE ORACLE: the C#
             // play tick calls _scripts.Update(Step) with no Dead guard
-            // (Viewer.cs:509-512), so this is not a divergence. What actually
-            // differs is what happens when the beat ENDS. The C# runs a skull fade
-            // of HurtFlash/SkullFade -- SkullFade = 2*Ticks = 60/s, SkullEnd = 255
-            // (Kurt.Combat.cs:26-27,238-253), so at most ~4.25 s and less if
-            // HurtFlash is already partway up -- and when it completes, Died fires,
-            // Game.cs:448-456 writes SaveGames.LastGame and leaves the level for
-            // the menu. This stand-in has no menu, no save and no level end: it
-            // respawns Kurt in place after the whole 4.25 s fade (kRespawnDelay
-            // = SkullEnd/SkullFade). The C# beat can be SHORTER when HurtFlash is
-            // already partway up when Kurt dies; that path is unreachable here
-            // only because the alive-state damage flash is not ported, so
-            // state.hurtFlash is 0 while alive. So the divergences are the
-            // level-end flow and the missing HurtFlash head start, not the
-            // script clock.
-            if (player.dead) {
-                deathTimer += elapsed;
-                if (deathTimer >= kRespawnDelay) {
-                    spawnPlayer();
-                    deathTimer = 0.0f;
-                    mdk::buildFollowCamera(&camera, player.feet, player.facing(),
-                                           mdk::follow_camera::kDefaultPitch,
-                                           mdk::follow_camera::kDefaultPivot, kAspect);
-                }
-            } else {
-                deathTimer = 0.0f;
+            // (Viewer.cs:509-512), so this is not a divergence. What does differ is what
+            // happens when the beat ENDS. In the oracle the skull fade is Kurt's own
+            // HurtFlash, rising at SkullFade = 2*Ticks = 60/s from the zero the death
+            // transition itself set (Kurt.Combat.cs:238-253 and :375), and when it passes
+            // SkullEnd the Died event fires: Game.cs:448-456 writes SaveGames.LastGame and
+            // leaves the level for the menu. This stand-in has no menu, no save and no
+            // level end, so it respawns Kurt in place on the same event -- player.died()
+            // is that event, not a copy of its clock: the beat is the oracle's 255 steps
+            // of simulation, not a wall-clock timer of the frontend's, so a stalled or a
+            // faster-than-real-time frame cannot make it longer or shorter than the C#'s.
+            // The one remaining divergence is the level-end flow the event leads to, and
+            // it stays deferred with the menu and the save system.
+            if (player.died()) {
+                spawnPlayer();
+                mdk::buildFollowCamera(&camera, player.feet, player.facing(),
+                                       mdk::follow_camera::kDefaultPitch,
+                                       mdk::follow_camera::kDefaultPivot, kAspect);
             }
             mdk_render_set_camera(renderer, &camera);
         }
@@ -629,10 +612,19 @@ int main(int argc, char** argv) {
             // The health, skull and its fade are Kurt's now. The C# starts with
             // an empty inventory and no target bar; those writers land with the
             // pickup and shooting subsystems, so the HUD must not invent them.
+            //
+            // Both flashes are read off the combat half, exactly as Viewer.HudStateOf
+            // passes kurt.HurtFlash and kurt.WhiteFlash (Viewer.cs:913). The frontend
+            // used to fake the skull with a timer of its own because nothing else rose
+            // or faded it; that copy is gone, so the skull's rate and its end are the
+            // oracle's constants in mdk::Kurt and there is no second beat to keep in
+            // step, and the red damage flash and opcode 215's white one now reach the
+            // screen at all -- which is what the fade in Player::update is for.
             mdk::HudState state;
             state.health = player.health();
             state.dead = player.dead;
-            state.hurtFlash = player.dead ? deathTimer * kSkullFadePerSecond : 0.0f;
+            state.hurtFlash = player.combat().hurtFlash();
+            state.whiteFlash = player.combat().whiteFlash();
             mdk_render_canvas_begin(renderer);
             hud.draw(renderer, state);
             mdk_render_canvas_end(renderer);

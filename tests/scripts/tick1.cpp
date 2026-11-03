@@ -624,7 +624,8 @@ enum KurtHurtSchedule {
     kHurtHardLand,  // the state guard, inside and after K_CRASHL
     kHurtKnock,     // the recent-damage counter's decline and the landing's reset
     kHurtInvuln,    // the invulnerability timer's decline, on the floor and on a corpse
-    kHurtKnockdown  // the knock-down itself: K_BANG, K_BFLIP, and back to Still
+    kHurtKnockdown,  // the knock-down itself: K_BANG, K_BFLIP, and back to Still
+    kHurtFlashes     // the two flashes' fade, the skull's rise, and the end of the beat
 };
 
 // An invulnerability write: the step and the seconds. It is the write opcode 244's set
@@ -636,11 +637,20 @@ struct KurtInvulnSet {
     float seconds;
 };
 
+// A white screen-flash write: the step and the level. It is what opcode 215 (screen_flash,
+// ScriptVm.cs:1585) does -- `Kurt.WhiteFlash = MathF.Max(Kurt.WhiteFlash, Round(Value))` --
+// so the harness raises the field the same way rather than inventing a setter that maxes.
+struct KurtFlashSet {
+    int step;
+    float value;
+};
+
 enum KurtHurtColumns {
     kColsVoices,  // hp= vmhp= voices=
     kColsKnock,   // hp= vmhp= knock=
     kColsInvuln,    // hp= vmhp= invuln= knock=
-    kColsKnockdown  // hp= vmhp= invuln= knock= frame=
+    kColsKnockdown,  // hp= vmhp= invuln= knock= frame=
+    kColsFlash       // hp= vmhp= hurt= white= died=
 };
 
 // One schedule as one literal, so the dump body and the oracle probe's twin drive the
@@ -652,6 +662,8 @@ struct KurtHurtPlan {
     size_t hurtCount;
     const KurtInvulnSet* sets;
     size_t setCount;
+    const KurtFlashSet* flashes;   // opcode-215 white-flash writes; null for the others
+    size_t flashCount;
     int mortalStep;   // step that sets the health to 0; 0 for none
     int columns;
     // The three the knock-down schedule uses, all zero for the older ones (they are
@@ -686,6 +698,16 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
                 out += ",";
             }
             snprintf(line, sizeof(line), "%d:%.4f", plan.sets[i].step, plan.sets[i].seconds);
+            out += line;
+        }
+    }
+    if (plan.flashCount) {
+        out += " flashes=";
+        for (size_t i = 0; i < plan.flashCount; i++) {
+            if (i) {
+                out += ",";
+            }
+            snprintf(line, sizeof(line), "%d:%.4f", plan.flashes[i].step, plan.flashes[i].value);
             out += line;
         }
     }
@@ -733,6 +755,14 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
         if (plan.mortalStep == step) {
             runtime.kurt().setHealth(0);
         }
+        for (size_t i = 0; i < plan.flashCount; i++) {
+            if (plan.flashes[i].step == step) {
+                // The opcode's own max, not a plain write: a weaker flash must not
+                // lower a stronger one (ScriptVm.cs:1585).
+                const float raise = plan.flashes[i].value;
+                runtime.kurt().setWhiteFlash(std::max(runtime.kurt().whiteFlash(), raise));
+            }
+        }
         for (size_t i = 0; i < hurtCount; i++) {
             if (kHurts[i].step == step) {
                 runtime.hurtKurt(kHurts[i].damage);
@@ -755,6 +785,20 @@ std::string dumpKurtHurt(int level, int steps, scripts::ScriptRuntime& runtime, 
                 }
                 voices += live[i].name;
             }
+        }
+
+        if (plan.columns == kColsFlash) {
+            snprintf(line, sizeof(line),
+                     "s=%d state=%s feet64=%d,%d,%d vert=%.4f floor=%d chute=%d hp=%d vmhp=%d "
+                     "hurt=%.4f white=%.4f died=%d\n",
+                     step, kurtStateName(player.state()),
+                     (int)std::floor(player.feet.x * 64.0f), (int)std::floor(player.feet.y * 64.0f),
+                     (int)std::floor(player.feet.z * 64.0f), player.verticalSpeed,
+                     player.onFloor ? 1 : 0, player.chuteOpen ? 1 : 0, player.health(),
+                     runtime.kurt().health(), player.combat().hurtFlash(),
+                     player.combat().whiteFlash(), player.died() ? 1 : 0);
+            out += line;
+            continue;
         }
 
         if (plan.columns == kColsKnockdown) {
@@ -923,8 +967,33 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     //       overlap this one.
     static const KurtHurt kKnockdownHurts[] = {{20, 5}, {40, 4}, {156, 5}};
     static const KurtInvulnSet kKnockdownSets[] = {{30, 0.0f}};
+    // THE FLASH SCHEDULE (golden/L3_kurt_flashes.txt). Nothing printed a flash before,
+    // so every writer of the two fields was unpinned and neither side ever faded one.
+    // What each number is for:
+    //   5: an opcode-215 white flash of 60. It falls by Kurt::kFlashFade (4 per tick,
+    //      120/s) and stops at zero, which is the whole of what screen_flash (215) ever
+    //      did on its own: without the fade the screen is white for the rest of the level.
+    //  10: a hurt of 1, whose flash is clamp(25, 75, 180) = 75 -- the MIN arm of the
+    //      damage flash, and small enough to be gone (floored at zero) before the next
+    //      writer arrives, so the two rises never overlap.
+    //  60: lifted 100 units above the pad. The fall ends in a hard landing (the slam
+    //      needs VerticalSpeed under -100), which is the only caller of Player::damage
+    //      and therefore the only way this port reaches Kurt::damage from the movement
+    //      half: its flash is clamp(0 + 10*25, 75, 180) = 180, the MAX arm, and it is
+    //      the term the port used to leave out because nothing faded it.
+    // 320: a hurt of 4 on the pad, after K_CRASHL has let him up again, so the red flash
+    //      is up (100) when the next line arrives.
+    // 330: Kurt.SetHealth(0) on a floor. The death transition zeroes the flash
+    //      (Kurt.Combat.cs:375) and the skull starts from that zero; a port that drops
+    //      the zeroing starts the beat at ~80 and ends it 40 steps early.
+    // Then the skull rises one unit a step for 255 steps, the step it passes SkullEnd is
+    // the C#'s Died event (died= goes to 1 once), and from the next step the corpse is
+    // frozen -- vert, the feet and the floor column stop moving, which is the guard at
+    // Kurt.Combat.cs:238 and nothing else.
+    static const KurtHurt kFlashHurts[] = {{10, 1}, {320, 4}};
+    static const KurtFlashSet kFlashSets[] = {{5, 60.0f}};
     KurtHurtPlan plan = {300.0f, kHealthHurts, sizeof(kHealthHurts) / sizeof(kHealthHurts[0]),
-                         nullptr, 0, 0, kColsVoices};
+                         nullptr, 0, nullptr, 0, 0, kColsVoices};
     if (schedule == kHurtHardLand) {
         plan.hurts = kHardLandHurts;
         plan.hurtCount = sizeof(kHardLandHurts) / sizeof(kHardLandHurts[0]);
@@ -951,6 +1020,16 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
         plan.forwardFrom = 25;
         plan.forwardTo = 60;
         plan.columns = kColsKnockdown;
+    } else if (schedule == kHurtFlashes) {
+        plan.lift = 0.0f;
+        plan.hurts = kFlashHurts;
+        plan.hurtCount = sizeof(kFlashHurts) / sizeof(kFlashHurts[0]);
+        plan.flashes = kFlashSets;
+        plan.flashCount = sizeof(kFlashSets) / sizeof(kFlashSets[0]);
+        plan.airLift = 100.0f;
+        plan.airLiftStep = 60;
+        plan.mortalStep = 330;
+        plan.columns = kColsFlash;
     }
     *out = dumpKurtHurt(level, steps, runtime, player, mixer, plan);
     return true;
@@ -1928,14 +2007,15 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (what == "hurt" || what == "hurtland" || what == "knock" || what == "invuln" ||
-            what == "knockdown") {
+            what == "knockdown" || what == "flashes") {
             std::string got;
             std::string why;
             const int schedule = what == "hurtland"                                     ? kHurtHardLand
                                  : (what == "knock"                                     ? kHurtKnock
                                  : (what == "invuln"                                    ? kHurtInvuln
                                  : (what == "knockdown"                                 ? kHurtKnockdown
-                                    : kHurtHealth)));
+                                 : (what == "flashes"                                   ? kHurtFlashes
+                                    : kHurtHealth))));
             if (!kurtHurtDump(level, ticks, schedule, data, spritesArg, &got, &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
@@ -2738,6 +2818,35 @@ int main(int argc, char** argv) {
                        "for the state and not only for the timer it opens\n");
             } else {
                 printf("FAIL L3_kurt_knockdown: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The two flashes and the death beat they bookend (Kurt.Combat.cs:203-206 and
+    // 234-254): the red damage flash and opcode 215's white one fading to zero, the
+    // hard landing's slam raising the red one to its clamp, the death transition zeroing
+    // it, the skull rising to SkullEnd, the Died event on the step it passes, and the
+    // corpse frozen from the next one. This is the golden that makes hurtFlash_ and
+    // whiteFlash_ live state rather than write-only fields.
+    {
+        std::string expected;
+        if (!readText("golden/L3_kurt_flashes.txt", &expected)) {
+            printf("FAIL L3_kurt_flashes: no golden file golden/L3_kurt_flashes.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!kurtHurtDump(3, 620, kHurtFlashes, data, spritesArg, &got, &why)) {
+                printf("FAIL L3_kurt_flashes: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_kurt_flashes: both flashes fall by FlashFade and stop at zero, "
+                       "the slam raises the red one to its clamp, the death transition zeroes "
+                       "it, the skull rises to SkullEnd and the beat ends on the step Died "
+                       "fires\n");
+            } else {
+                printf("FAIL L3_kurt_flashes: %s\n", firstDifference(got, expected).c_str());
                 failures++;
             }
         }

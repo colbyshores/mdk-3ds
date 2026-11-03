@@ -10253,3 +10253,144 @@ because nothing opens the chute while he is on the floor.
 No gate, test or golden was relaxed, and no older golden moved. **No emulator run and no
 Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays
 UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7).
+
+## Iteration 73 — batch 45: the combat fades land, so the flashes are live state and the death beat ends (review-15 F3 fixed; F1/F2 owner-owned, F4 no action)
+
+### Prior-solution lookup
+
+* **Pi knowledge (`mdk-sdl`)** — searched for the flash/skull slice. Top hits were `kurt.h`'s
+  own stale comment ("The per-tick fade (FadeFlashes, Kurt.Combat.cs:203) is Kurt movement —
+  also later"), `Kurt.Combat.cs`'s constant block, and `docs/CONTINUATION.md`'s own
+  "NEXT, same family" item naming this slice. Treated as a lead; verified against the oracle.
+* **Obsidian vault** (`/mnt/nas/Vaults/port-docs`, read directly — no Obsidian MCP tools are
+  exposed in this Pi session) — `grep -ril "hurtflash|whiteflash|skull"` returns two
+  Perfect-Dark findings and nothing MDK-specific. No prior solution for this subsystem.
+* **Cognee MCP** — not exposed in this Pi session; recorded as unavailable, not consulted.
+
+### Review-15 disposition
+
+Review-15 verdicted **COMPLETE** on the committed batch and re-derived both of batch 44's
+goldens from the oracle itself (0 diff lines each), plus a six-level generalisation of the
+knock-down schedule. Its findings:
+
+* **F1 (High, `ralph-pi.sh` / `gates_batch_integrity.py`) — not builder-remediable; owner
+  task (1)/(13), unchanged.** The finding is that the integrity guard's fail-closed `exit 6`
+  is replaced by a per-commit "recovered" continue in the **uncommitted** owner harness files,
+  and that `ralph-pi.sh` is not in the gate's `PROTECTED` set. Confirmed as a description of
+  the uncommitted tree, and it is the same question as review-10 F1, review-11 R11-1,
+  review-12 B, review-13 R13-B and review-15 oq1. Nothing in a batch may stage those paths:
+  `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh` and `tools/runner/gates_batch_integrity.py`
+  are dirty in the tree from the owner and are excluded from every batch's `git add` list, and
+  `gates_batch_integrity.py` is in its own `PROTECTED` list, so a builder cannot widen it or
+  amend `ralph/builder.md`'s "exactly one commit" rule. No code change; the batch staged only
+  its own paths.
+* **F2 (Medium, `gates_batch_integrity.py:218-222`) — owner-owned file, deferred with cause.**
+  `--each-commit` without `--base` is a no-op that exits 0. The recommended fix is one line in
+  a file that is in its own `PROTECTED` set, so it is owner task (13)'s, not this batch's. The
+  finding is accepted as real (the flag is honoured only inside `if (args.base)`).
+* **F3 (Low, `player.cpp`'s updraft note) — FIXED.** The note enumerated the unported updraft
+  cap but omitted `Current != State.Knocked` (`Kurt.Updraft.cs:29`), the clause batch 44 made
+  reachable for the first time. The comment now carries the whole `if` and says why dropping
+  the state test would cap a knocked-down Kurt's upward speed where the oracle leaves it
+  alone. Comment-only; no behaviour moved.
+* **F4 (Low, the uncommitted `2026-11-02-ralph-self-heal` frame pair) — no action, as the
+  reviewer asked for none.** It is the owner's harness pair, byte-identical to the 52 earlier
+  copies of the pinned L3 frame, and the reviewer's own text calls it "not fabrication" and
+  recommends nothing.
+
+### What landed: the two flash fields become live state
+
+`docs/CONTINUATION.md`'s "NEXT, same family" named this: nothing faded `hurtFlash_` or
+`whiteFlash_`, so opcode 215's screen flash and `damage()`'s red flash stayed up forever, and
+the death transition's `HurtFlash = 0` and `UpdateDeath`'s skull rise were the other half of
+the same field. One subsystem slice, five files:
+
+* **`Kurt::fadeFlashes`** (`Kurt.Combat.cs:203-206`, both lines verbatim) — both flashes fall
+  by `kFlashFade` (4 per tick = 120/s) and floor at zero. `Player::update` calls it where
+  `Kurt.Update` does (`Kurt.cs:159`): after the Frozen return (unported, and the note says it
+  must fade on its own branch when it lands) and after the Dead return, so a corpse fades
+  nothing — which is why a white flash that was up when Kurt died stays up for the whole death
+  beat, the oracle's behaviour, now printed by the golden instead of assumed.
+* **The death transition zeroes the flash** (`Kurt.Combat.cs:375`). `Player::updateState`'s
+  death arm now calls `combat_.setHurtFlash(0.0f)`; the port splits the class, so the movement
+  half needs the write the C# does through a private setter. The comment that deliberately left
+  it out ("nothing fades it in this port yet") is gone, because that reason expired with this
+  batch.
+* **`Kurt::fadeSkullIn` + `skullFinished`** (`Kurt.Combat.cs:238, 250-253`) — `Player::updateDeath`
+  returns before anything else once `hurtFlash_ > kSkullEnd`, and otherwise rises it by
+  `kSkullFade` (60/s) and reports the step that passes the end. That step is the C#'s
+  `Died?.Invoke()`, which §10 cannot spell as a delegate: it is a latch, `Player::died()`, set
+  once and cleared by `setState` when Kurt leaves `Dead` (the C#'s `Revive` is the writer that
+  would do it and is not ported), so it fires once per death exactly as the event does.
+* **`Player::damage` is the C#'s `Damage` whole.** It used to call `Kurt::damageHealth`, the
+  `Health` line alone, because the two terms it left out were inert while nothing faded the
+  flash. `Kurt::damage` is now public (the C#'s `HardLanding` calls `Damage` directly,
+  `Kurt.cs:580`, and the hard landing lives on Player here) and `damageHealth` is deleted — one
+  implementation per behaviour. The slam now raises the red flash to its 180 clamp and adds to
+  the knock counter, which `Player::land` zeroes two lines later exactly as `Kurt.cs:583` does.
+  What is still left out is `Scaled(damage, Difficulty)`, inert because `difficulty_` has no
+  writer, and the note at `land()` now says that instead of the expired one.
+* **The Linux frontend stops faking the skull.** It had its own `kSkullFadePerSecond`,
+  `kSkullEnd`, `kRespawnDelay` and `deathTimer`, and passed `deathTimer * 60` as the HUD's
+  `hurtFlash`. All four are deleted: `state.hurtFlash` and `state.whiteFlash` now come off
+  `player.combat()` the way `Viewer.HudStateOf` passes `kurt.HurtFlash`/`kurt.WhiteFlash`
+  (`Viewer.cs:913`), and the respawn triggers on `player.died()` instead of a wall-clock timer,
+  so the beat is the oracle's 255 simulation steps and a stalled or a faster-than-real-time
+  frame cannot stretch it. The frontend's comment claimed a second divergence — "the C# beat
+  can be SHORTER when HurtFlash is already partway up when Kurt dies" — which was never true:
+  the death transition zeroes the flash, so the fade always starts from zero. Corrected.
+
+### The golden, from the oracle
+
+`tests/scripts/golden/L3_kurt_flashes.txt` — **621 lines, sha256 `10c59abc…`**, the oracle
+probe's new `flashes` mode (`mdkprobe 3 620 1 flashes`), **0 diff lines** against
+`tick1 dump flashes 3 620`. Schedule: an opcode-215 white flash of 60 at step 5 (falls 2 a
+step, floors at zero by step 35); a hurt of 1 at step 10 → `clamp(25, 75, 180) = 75`, the MIN
+arm, gone by step 48; a 100-unit script teleport at step 60 whose fall ends in a hard landing
+at step 164 → `clamp(250, 75, 180) = 180`, the MAX arm, from the only caller of `Player::damage`
+the port has; a hurt of 4 at step 320 → 100; `SetHealth(0)` at step 330 with the flash at 80,
+so the transition's zeroing is visible at step 331 (`hurt=0.0000`) rather than smuggled; the
+skull then rises exactly 1.0 a step (60 × 1/60 rounds to exactly 1.0f), `died=` goes to 1 on
+the step it passes 255 (step 587) and the corpse is frozen from step 588 — `vert`, the feet and
+the `floor` column all stop moving, which is the guard at `:238` and nothing else.
+
+Eight mutants were built and run against it, and all eight were killed:
+
+| Mutant | First line it fails on |
+|---|---|
+| no `fadeFlashes` call in `Player::update` | s=6 — `white=60.0000` stays up |
+| the death arm does not zero the flash | s=331 — `hurt=78.0000` |
+| no skull guard in `updateDeath` | s=588 — `hurt=257.0000`, the corpse still falling |
+| guard is `>=` instead of `>` | s=587 — `died=1` one step early |
+| the red flash fades past zero | s=1 — `hurt=-2.0000` |
+| the skull rises at half the rate | s=332 — `hurt=0.5000` |
+| the hard landing raises no flash | s=164 — `hurt=0.0000` |
+| the white flash never fades | s=6 — `white=60.0000` |
+
+`vm_tests` grew a `KurtFlashes` case for the two shapes the fixture cannot reach: `damage()`'
+clamp driven past 180 by a second hit (and not lowered by a weaker one), a fade asked to go
+below zero, and the skull crossing reported **once** across 300 steps of the guarded loop.
+No older golden moved: the death beat in `L3_kurt_lethal.txt` (17 steps) and
+`L3_kurt_invuln.txt` (39 steps) is far shorter than the skull's 255, so the new guard cannot
+reach either, and both re-diffed byte-identical.
+
+### Gates, as run
+
+* `make -C tests/scripts` — **exit 0**, `All cases match the oracle.`, **456 PASS / 0 FAIL /
+  0 SKIP** (455 before: +1 golden; the `vm_tests` case is inside the existing count).
+* `bash tools/check.sh` — **exit 0**, `CHECK: ALL GATES PASSED`; `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh` SKIPPED (no
+  built .cia), `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` (byte-identical to the
+  pinned `cpp=`, so `reference.sha256` was NOT regenerated), `gates_batch_integrity PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**,
+  `3DSX mdk.3dsx`, no warnings.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**, `Built target mdk`.
+
+Frame `docs/frames/2026-11-03-kurt-flashes.png` + `.txt` — `1.240 / 247 / 0.1819`,
+byte-identical to its predecessors, because at frame 1 both flash fields are 0 and the HUD
+draws no flash over the same pinned blob.
+
+No gate, test or golden was relaxed, and no older golden moved. **No emulator run and no
+Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays
+UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7).

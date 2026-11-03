@@ -2603,6 +2603,76 @@ void testKurtAndScreenWrites(scripts::ScriptRuntime& runtime) {
     }
 }
 
+// The two flash fields as state, not as write-only numbers: the clamp arms of the red one
+// (Kurt.Combat.cs:145, which the golden reaches only from the hard landing's side), the
+// fade both of them fall by (:203-206), and the skull's end (:238-253). The oracle golden
+// L3_kurt_flashes.txt pins the same rules through the level -- the fade's rate, the slam's
+// 180, the death transition's zero, the step Died fires on -- and these pin the two shapes
+// that fixture cannot reach: a flash driven past its clamp by a second hit, and a fade
+// asked to go below zero.
+void testKurtFlashes(scripts::ScriptRuntime& runtime) {
+    // Damage's clamp, both arms (0x573b70): +25 per point, kept within 75-180. A hit of 1
+    // is 25 raw and still flashes 75; a hit of 10 is 250 raw and stops at 180; a second
+    // hit on top of a full flash cannot raise it further, and cannot lower it either.
+    runtime.kurt().setHurtFlash(0.0f);
+    runtime.kurt().setHealth(100);
+    runtime.kurt().damage(1);
+    CHECK(runtime.kurt().hurtFlash() == Kurt::kHurtFlashMin);
+    runtime.kurt().setHurtFlash(0.0f);
+    runtime.kurt().damage(10);
+    CHECK(runtime.kurt().hurtFlash() == Kurt::kHurtFlashMax);
+    runtime.kurt().damage(10);
+    CHECK(runtime.kurt().hurtFlash() == Kurt::kHurtFlashMax);
+    runtime.kurt().setHealth(100);
+
+    // The fade (Kurt.Combat.cs:204-205): both fields fall by kFlashFade per second and
+    // stop at zero -- the floor is what keeps a finished flash off the screen, because
+    // HudView.DrawFlashes tests `> 0f` and opcode 215 maxes onto whatever is there.
+    runtime.kurt().setHurtFlash(100.0f);
+    runtime.kurt().setWhiteFlash(60.0f);
+    runtime.kurt().fadeFlashes(1.0f / 60.0f);
+    CHECK(fabsf(runtime.kurt().hurtFlash() - (100.0f - Kurt::kFlashFade / 60.0f)) < 1e-4f);
+    CHECK(fabsf(runtime.kurt().whiteFlash() - (60.0f - Kurt::kFlashFade / 60.0f)) < 1e-4f);
+    for (int i = 0; i < 200; i++) {
+        runtime.kurt().fadeFlashes(1.0f / 60.0f);
+    }
+    CHECK(runtime.kurt().hurtFlash() == 0.0f);
+    CHECK(runtime.kurt().whiteFlash() == 0.0f);
+    runtime.kurt().fadeFlashes(1.0f / 60.0f);
+    CHECK(runtime.kurt().hurtFlash() == 0.0f);
+    CHECK(runtime.kurt().whiteFlash() == 0.0f);
+
+    // The skull: it rises kSkullFade per second, it is not finished AT SkullEnd (the
+    // oracle's guard is a strict >, Kurt.Combat.cs:238), and the step that passes it is
+    // the one that reports the C#'s Died event -- once, because the guard stops the rise
+    // and nothing re-crosses it. The golden pins the same crossing at step 587 of its own
+    // schedule; this pins that it is the crossing and not the value 256 that matters.
+    runtime.kurt().setHurtFlash(0.0f);
+    CHECK(!runtime.kurt().skullFinished());
+    int died = 0;
+    for (int i = 0; i < 300; i++) {
+        // The guard UpdateDeath runs before the rise (Kurt.Combat.cs:238). It is what
+        // makes the event fire once: without it every later step re-crosses SkullEnd.
+        if (runtime.kurt().skullFinished()) {
+            continue;
+        }
+        if (runtime.kurt().fadeSkullIn(1.0f / 60.0f)) {
+            died++;
+        }
+    }
+    CHECK(runtime.kurt().hurtFlash() > Kurt::kSkullEnd);
+    CHECK(runtime.kurt().skullFinished());
+    CHECK(died == 1);
+    runtime.kurt().setHurtFlash(Kurt::kSkullEnd);
+    CHECK(!runtime.kurt().skullFinished());
+    runtime.kurt().setHurtFlash(0.0f);
+    CHECK(!runtime.kurt().fadeSkullIn(0.0f));
+    // Leave the combat half as the cases after this one expect it: damage() above moved
+    // the health and the knock counter on the way to the flash.
+    runtime.kurt().setKnockDamage(0.0f);
+    runtime.kurt().setHealth(100);
+}
+
 // Opcode 85 (set_rolling) captures the object's current Rotation only when
 // transitioning from off to on; repeated on and off preserve the saved basis.
 void testSetRollingCapturesRotationOnTransition(scripts::ScriptRuntime& runtime) {
@@ -3958,6 +4028,8 @@ int main() {
     printf("PASS UnidentifiedValueSlotsStoreTheirOperand\n");
     testKurtAndScreenWrites(runtime);
     printf("PASS KurtAndScreenWrites\n");
+    testKurtFlashes(runtime);
+    printf("PASS KurtFlashes\n");
     testUnidentifiedSet27cIsNoOp(runtime);
     printf("PASS UnidentifiedSet27cIsNoOp\n");
     testDebugMessageIsNoOp(runtime);

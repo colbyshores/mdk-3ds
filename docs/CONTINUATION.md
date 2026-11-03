@@ -1,45 +1,48 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 44 lands the knock-down: a new BSP collision query (`ArenaSpace::floor`,
-the C#'s `Floor` — arenas around **both** ends, the nearest crossing), two new state
-transitions (`Player::knockDown` into `Knocked`, and the `Knocked`→`GetUp`→`Still` arms of the
-combat state machine), and a per-frame change in `Player::update` (the trigger that enters
-them, plus the walk-input suppression while they hold). It is not one field the way batches
-40-43 were: state transitions and a collision query are two of the things the risk rubric names
-as high. Both are pinned by new oracle goldens (six mutants built and run), and no shipped
-frontend can show them yet because none draws Kurt's `Knocked` frame (item 6b).
+Risk: high — batch 45 lands the combat fades, and with them the end of the death beat: a new
+`Kurt::fadeFlashes` called from `Player::update`, the death transition's `HurtFlash = 0`, the
+skull's rise in `Player::updateDeath` and the **guard that stops the corpse moving once it
+passes `SkullEnd`** (a state-transition change: the death beat now ends), the C#'s `Died` event
+as a `Player::died()` latch (no delegate, per §10), `Player::damage` promoted from the `Health`
+line alone to the C#'s `Damage` whole (so a hard landing raises the red flash), and the Linux
+frontend's respawn moved from a wall-clock timer of its own onto that latch. It is behaviour on
+both sides of the split class plus a shipped frontend, and the risk rubric names state
+transitions and resource lifetime (the respawn rebuilds the `ScriptRuntime`) as high. Pinned by
+a new 621-line oracle golden with eight mutants built and killed, and the pinned frame is
+byte-unchanged because at frame 1 both flash fields are 0.
 
-Last updated: 2026-11-03 (**batch 44** — the knock-down, the thing batches 40-43 each ended by
-naming as "NEXT, same family". Review-14 raised **no Critical or High finding** and verdicted
-COMPLETE, so nothing needed remediating: its R13-C (the `kurt.h` comment that still listed
-`KnockdownInvulnerability` as belonging to a later slice, which this batch was about to walk
-into) is fixed, and R13-A/B/D/E are owner-owned — the half-applied harness slice, the
-`--each-commit` ratification, the un-invoked `--self-test`, and committing the oracle probe; see
-`docs/PROGRESS_LOG.md`, "Iteration 72". Previous narratives are one "Iteration N" section back
-each: batch 43 = 71, 42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65,
-36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
+Last updated: 2026-11-03 (**batch 45** — the combat fades, the first item on batch 44's "NEXT,
+same family" list. Review-15 verdicted COMPLETE and re-derived batch 44's two goldens from the
+oracle itself; its **F1 (High)** is the uncommitted owner harness (`ralph-pi.sh`'s `--each-commit`
+recovery of the guard's fail-closed path, and `ralph-pi.sh` not being in the gate's `PROTECTED`
+set) and is **not builder-remediable** — same question as review-10 F1 / 11 R11-1 / 12 B /
+13 R13-B / oq1; **F2 (Medium)** is a one-line fix inside `gates_batch_integrity.py`, which is in
+its own `PROTECTED` list, so it is owner task (13) too; **F3 (Low)** is fixed (the updraft note
+now carries `Current != State.Knocked`, the clause batch 44 made reachable); **F4 (Low)** asked
+for no action. See `docs/PROGRESS_LOG.md`, "Iteration 73". Previous narratives are one
+"Iteration N" section back each: batch 44 = 72, 43 = 71, 42 = 70, 41 = 69, 40 = 68, 39 = 67,
+38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
 
-Goldens are **455/0/0**: batch 44 added `golden/L3_kurt_knockdown.txt` (341 lines, sha256
-`7e1862ea…`, the oracle probe's new `knockdown` mode, byte-identical to
-`tick1 dump knockdown 3 340`) and `golden/L3_floor_probes.txt` (49 lines, sha256 `a9e38021…`,
-the probe's `floor` mode, which does separate `floor` from `floorCrossing` on two of the
-level's 48 segments), batch 43 added `golden/L3_kurt_invuln.txt` (341 lines, sha256
-`fb00137b…`, the oracle probe's new `invuln` mode, byte-identical to
-`tick1 dump invuln 3 340`), batch 42 `golden/L3_kurt_knock.txt` (341 lines, sha256
-`5c2c3091…`), batch 41 `golden/L3_kurt_hurtland.txt` (341 lines, sha256 `9e1b4832…`) and
-batch 40 `golden/L3_kurt_hurt.txt` (221 lines, sha256 `35d78b3d…`); no older golden moved.
-The frame
-is byte-unchanged across batches 31-43 because no renderer behaviour was touched. Still
-owner-gated, and still uncommitted in the tree: the owner's harness work (`AGENTS.md`,
-`ralph/builder.md`, `ralph-pi.sh`, `gates_batch_integrity.py`,
+Goldens are **456/0/0**. Batch 45 added `golden/L3_kurt_flashes.txt` (621 lines, sha256
+`10c59abc…`, the oracle probe's new `flashes` mode, **0 diff lines** against
+`tick1 dump flashes 3 620`); batch 44 added `L3_kurt_knockdown.txt` (`7e1862ea…`, 341 lines) and
+`L3_floor_probes.txt` (`a9e38021…`, 49, which separates `floor` from `floorCrossing` on two of
+the level's 48 segments); batch 43 `L3_kurt_invuln.txt` (`fb00137b…`), batch 42
+`L3_kurt_knock.txt` (`5c2c3091…`), batch 41 `L3_kurt_hurtland.txt` (`9e1b4832…`) and batch 40
+`L3_kurt_hurt.txt` (`35d78b3d…`). No older golden moved, and the frame is byte-unchanged across
+batches 31-44 because no renderer behaviour was touched. Still owner-gated, and still
+uncommitted in the tree: the owner's harness work (`AGENTS.md`, `ralph/builder.md`,
+`ralph-pi.sh`, `gates_batch_integrity.py`,
 `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`), so batches keep staging only their own
-paths and never `git add -A`. **Review-10 F1, F2 and F3 and F6 are that same hazard under
-new numbers** — the `--each-commit` recovery that replaces the guard's fail-closed path,
-the green tree that depends on two uncommitted files, the un-invoked `--self-test`, and the
-`--each-commit`-without-`--base` no-op. Review-12 B re-confirmed the clone half by execution
-and **corrected review-11 R11-2's premise**: at HEAD neither file mentions `--each-commit`
-(both greps → 0), so HEAD is self-consistent and the live hazard is committing only one of
-the two dirty owner files, not a deadlocked tree. All four remain owner task (1)/(13).
+paths and never `git add -A`. **Review-10 F1, F2, F3 and F6 are that same hazard under new
+numbers** (review-15 re-numbers them F1/F2/oq2/oq3) — the `--each-commit` recovery that replaces
+the guard's fail-closed path, the green tree that depends on two uncommitted files, the
+un-invoked `--self-test`, and the `--each-commit`-without-`--base` no-op. Review-12 B
+re-confirmed the clone half by execution and **corrected review-11 R11-2's premise**: at HEAD
+neither file mentions `--each-commit` (both greps → 0), so HEAD is self-consistent and the live
+hazard is committing only one of the two dirty owner files, not a deadlocked tree. All four
+remain owner task (1)/(13).
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -73,15 +76,31 @@ the two dirty owner files, not a deadlocked tree. All four remain owner task (1)
     K_BFLIP 27, and the GetUp arm returning false so the ordinary selection runs on the step he
     stands), and the walk-input suppression while they hold — pins `golden/L3_kurt_knockdown.txt`
     (six mutants run) and `golden/L3_floor_probes.txt` (the two probes printed side by side over
-    48 segments; they part company on the two long ones through HMO_9/CHMO_8). **NEXT, same
-    family, in order:** the combat fades (`FadeFlashes`, `Kurt.Combat.cs:203`) are unported, so
-    nothing fades `hurtFlash_` or `whiteFlash_` — opcode 215's screen flash and `damage()`'s red
-    flash both stay up forever, and the death transition's `HurtFlash = 0` and `UpdateDeath`'s
-    skull rise (`SkullFade`, and the `Died` event behind it) are the other half of that field;
+    48 segments; they part company on the two long ones through HMO_9/CHMO_8). **And batch 45
+    landed the combat fades**: `Kurt::fadeFlashes` (both fields fall by `kFlashFade` = 4/tick and
+    floor at zero) called from `Player::update` at `Kurt.cs:159`'s own position — after the Dead
+    return, so a corpse fades nothing and a white flash that was up when he died stays up for the
+    whole beat, which is the oracle's and is now printed, not assumed; the death transition's
+    `HurtFlash = 0` (`Kurt.Combat.cs:375`); `Kurt::fadeSkullIn` + `skullFinished` (`:238, 250-253`)
+    so `Player::updateDeath` freezes the corpse once the skull passes `SkullEnd` and reports the
+    step it passes it — the C#'s `Died` event as the `Player::died()` latch §10 allows, once per
+    death, cleared by `setState` when he leaves `Dead`; and `Player::damage` promoted to the C#'
+    `Damage` whole (`Kurt::damage` is public now, `damageHealth` is deleted) so the hard landing
+    raises the red flash to its 180 clamp as `Kurt.cs:580` does. The Linux frontend no longer
+    fakes the skull: it had its own `kSkullFadePerSecond`/`kRespawnDelay`/`deathTimer`, and now
+    reads `player.combat().hurtFlash()`/`whiteFlash()` for the HUD (`Viewer.cs:913`) and respawns
+    on `player.died()`, so the beat is 255 simulation steps and not a wall-clock guess — pins
+    `golden/L3_kurt_flashes.txt` (621 lines, eight mutants killed) and a `vm_tests KurtFlashes`
+    case. **NEXT, same family, in order:**
     `push_kurt` (opcode 248) is the only thing that can give `knockDown` a non-zero push, so the
-    push and its clearing at the flip are unpinned; `StopFiring` waits for the firing slice; and
-    `Knocked`/`GetUp` have no sprite frame drawn anywhere (item 6b's seam), which is why no shipped
-    frontend can show any of this.
+    push and its clearing at the flip are unpinned; `StopFiring` waits for the firing slice;
+    `Revive` (the C#'s other writer of `HurtFlash = 0`, `Kurt.Combat.cs:196`) waits for the
+    death-screen/save flow that the `Died` event leads to (`Game.cs:448`: write `LASTGAME`, go to
+    the menu — no menu, no save here); the nuke/explosion/teleport writers of `whiteFlash_`
+    (`ScriptRuntime.cs:479,1734`, `Items.cs:365,527`, `EndLevel.cs:146`) wait for their own
+    subsystems, so only opcode 215 can raise that field today; and `Knocked`/`GetUp` have no
+    sprite frame drawn anywhere (item 6b's seam), which is why no shipped frontend can show any
+    of this.
 6b. **The sprite-selection fixture (review-8 oq3 / review-9 oq3) is blocked on a named
     seam, not on effort:** neither side can build a `KurtSprite` headlessly — the C#
     constructor needs the sealed Vulkan `Renderer` (`KurtSprite.cs:109`,
@@ -207,7 +226,14 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   `golden/L3_kurt_hurtland.txt`. **And the recent-damage counter is live state, not a write-only
   field**: `Kurt::declineKnockDamage` runs from `Player::update` at the C#'s call site and
   `Player::land` zeroes it the way `Kurt.HardLanding` does, pinned by
-  `golden/L3_kurt_knock.txt` and three `vm_tests` cases.
+  `golden/L3_kurt_knock.txt` and three `vm_tests` cases. **And the two flash fields are live
+  state**: `Kurt::fadeFlashes` runs from `Player::update` where `Kurt.Update` puts it, the death
+  transition zeroes `hurtFlash_`, `Player::updateDeath` rises it as the skull and stops the beat
+  when it passes `SkullEnd` (the C#'s `Died` as the `Player::died()` latch), the Linux frontend
+  reads both for the HUD and respawns on that latch, and `Player::damage` is the C#'s `Damage`
+  whole so the slam raises the red flash to its clamp — pinned by `golden/L3_kurt_flashes.txt`
+  (eight mutants) and the `vm_tests KurtFlashes` case. A frontend that re-derives the skull from
+  its own clock is the duplication this removed.
   **When `TRAVSPRT.BNI` cannot be parsed the frontend runs the level WITHOUT scripts and says
   so, and `tick1` exits 1 rather than hand the runtime a null archive** — the C# `Bni.Load`
   throws, so a null archive is a different game, not a degraded one. Do not reintroduce a
@@ -245,36 +271,37 @@ appendix to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of bat
   **177 cases**; how that suite lifts `ralph-pi.sh` is in "Iteration 49" and **must not be
   re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 44)
+## Verified on this tree (batch 45)
 
 All gates re-run from a clean invocation after the last edit; the full narrative, the probe
-recipe and the six mutant results are in `docs/PROGRESS_LOG.md`, "Iteration 72". Goldens
-**exit 0** (`All cases match the oracle.`, **455 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh`
+recipe and the eight mutant results are in `docs/PROGRESS_LOG.md`, "Iteration 73". Goldens
+**exit 0** (`All cases match the oracle.`, **456 PASS / 0 FAIL / 0 SKIP**); `tools/check.sh`
 **exit 0** (`CHECK: ALL GATES PASSED`; `audit_c_with_classes 0 violations`, `gates_vfp 0
 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
 `gates_core_parity` clean, `gates_smdh` SKIPPED, `gates_frames PASS L3_f1.bmp
 sha=58615fc85d02e009`, byte-identical to the pinned `cpp=`, so `reference.sha256` was NOT
 regenerated; integrity PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`, no warnings);
 `cmake --build build-linux --target mdk` **exit 0**. What is new:
-`golden/L3_kurt_knockdown.txt` (sha256 `7e1862ea…` — hurt 5 on the pad knocks him down at
-step 21 with `invuln=3.0000 knock=0.0000`, forward held 25..60 does not move him, a hurt at 40
-is refused by the `Knocked` arm with the timer written to 0, K_BANG flips at 70 and `Still`
-returns at 124, and a hurt at 156 six units above the pad slams him to `vert=-65.0665` and
-knocks him down mid-air) and `golden/L3_floor_probes.txt` (sha256 `a9e38021…` — `floor` and
-`floorCrossing` over 48 segments, agreeing on 46 and parting on the two long ones). Both are
-the oracle probe's own output, byte-identical to the `tick1` twin, with the probe's older
-`invuln`/`knock`/`hurt` modes re-diffed against their committed goldens first. Six mutants,
-all killed (see the log table). What the kurt goldens still do NOT pin: any shipped frontend's
-wiring (no frontend sets the mixer or draws `Knocked`), the fall-out variant of death
-(unreachable without a pinned solid arena), the firing step frames, the sprite frame `pick()`
-selects from `chuteClosing` (see 6b), the knock-down *push* (only `push_kurt` can supply one),
-the flip's leftover frame (structurally 0 at a fixed 1/60 step), and the feet finer than 1/64
-unit (`Player::facing()`'s LUT trig; owner task 15). **No emulator run and no Old-3DS hardware
+`golden/L3_kurt_flashes.txt` (sha256 `10c59abc…`, 621 lines, **0 diff lines** against
+`tick1 dump flashes 3 620` — an opcode-215 white flash of 60 at step 5 falls 2 a step and stops
+at zero, a hurt of 1 at step 10 raises the red one to its 75 minimum, the hard landing at step
+164 raises it to the 180 clamp, `SetHealth(0)` at step 330 finds it at 80 and the death
+transition zeroes it at 331, the skull rises exactly 1.0 a step, `died=` goes to 1 at step 587
+and the corpse is frozen from 588). It is the oracle probe's own output, with the probe's older
+`knockdown`/`invuln`/`knock`/`hurt` modes re-diffed against their committed goldens first. Eight
+mutants, all killed (see the log table). What the kurt goldens still do NOT pin: any shipped
+frontend's mixer wiring (no frontend has an audio device, and none draws `Knocked`), the
+fall-out variant of death (unreachable without a pinned solid arena), the firing step frames,
+the sprite frame `pick()` selects from `chuteClosing` (see 6b), the knock-down *push* (only
+`push_kurt` can supply one), the flip's leftover frame (structurally 0 at a fixed 1/60 step),
+the white flash's other writers (the nuke, the explosions, the teleport, the level end — each
+deferred with its subsystem), and the feet finer than 1/64 unit (`Player::facing()`'s LUT trig;
+owner task 15). **No emulator run and no Old-3DS hardware
 run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
 windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-03-kurt-knockdown.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
-to its predecessors, because no renderer behaviour changed. No gate was pinned, relaxed or
-edited.
+`docs/frames/2026-11-03-kurt-flashes.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
+to its predecessors, because at frame 1 both flash fields are 0 and the HUD draws no flash.
+No gate was pinned, relaxed or edited.
 
 ## Standing open items
 
@@ -320,6 +347,7 @@ tests/scripts/build/tick1 dump kurtlethal 3 200       # the lethal hard landing 
 tests/scripts/build/tick1 dump hurt 3 220             # hurt_kurt on the one health, per step
 tests/scripts/build/tick1 dump hurtland 3 340         # the hurt inside and after K_CRASHL
 tests/scripts/build/tick1 dump knock 3 340            # the knock counter's decline and the landing's reset
+tests/scripts/build/tick1 dump flashes 3 620         # the two flashes' fade, the skull's rise, the end of the beat
 bash tools/check.sh                                    # all gates
 bash tools/runner/test_review_state.sh                 # the review-record state machine
 python3 tools/runner/model_identity.py selftest --live # alias→upstream map vs the live proxy

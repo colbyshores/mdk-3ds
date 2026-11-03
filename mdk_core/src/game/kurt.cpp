@@ -45,6 +45,26 @@ void Kurt::setHealth(int32_t health) {
     health_ = health > 0 ? health : 0;
 }
 
+void Kurt::fadeFlashes(float delta) {
+    // C# Kurt.FadeFlashes (Kurt.Combat.cs:204-205), both lines verbatim: the red flash
+    // and the white one fall by the same rate and floor at zero. The floor is not
+    // decoration -- HudView.DrawFlashes tests `> 0f` before it fills the screen, so a
+    // field that went negative would still be a flash the HUD would draw (clamped, but
+    // drawn) and opcode 215's MathF.Max would keep adding to a negative base.
+    hurtFlash_ = std::max(hurtFlash_ - kFlashFade * delta, 0.0f);
+    whiteFlash_ = std::max(whiteFlash_ - kFlashFade * delta, 0.0f);
+}
+
+bool Kurt::fadeSkullIn(float delta) {
+    // C# Kurt.UpdateDeath's last two statements (Kurt.Combat.cs:250-253). No clamp on
+    // the way up: the oracle lets HurtFlash pass 255 and stop there only because the
+    // guard at :238 returns before the next rise, and the HUD clamps the alpha itself
+    // (Math.Clamp(HurtFlash/FlashMax, 0, 1)). Keeping the overshoot is what makes the
+    // guard's strict `>` the thing that ends the death beat.
+    hurtFlash_ += kSkullFade * delta;
+    return hurtFlash_ > kSkullEnd;
+}
+
 void Kurt::declineKnockDamage(float delta) {
     // C# Kurt.UpdateKnockDamage's decline tail (Kurt.Combat.cs:230-231), in the C#'s
     // order: Math.Clamp first, then the drain, so a counter a script set above the
@@ -61,12 +81,6 @@ void Kurt::declineInvulnerability(float delta) {
     // is what opcode 244's accumulate arm would then add to, and a negative timer is
     // not the oracle's value for a golden to print. Branchless, like the knock drain.
     invulnerable_ = std::max(invulnerable_ - delta, 0.0f);
-}
-
-void Kurt::damageHealth(int32_t damage) {
-    // C# Damage's Health line, Math.Max(Health - damage, 0), without the terms
-    // Player does not model. The death transition is the caller's, as in the C#.
-    health_ = health_ - damage > 0 ? health_ - damage : 0;
 }
 
 int32_t Kurt::scaled(int32_t damage) const {

@@ -1,0 +1,35 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-03T07:09:09Z at dbd9727
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move: at level 3 frame 1 exactly 1/60 s has passed, Kurt is alive at
+full health, no script has hurt him and opcode 215 has not fired, so both flash fields are 0
+and the HUD draws no flash over the same blob as 2026-11-03-kurt-knockdown.png (sha256
+6646adf1...); the measurement is unchanged at 1.240% / max 247 / mean 0.1819. That is the
+point of wiring the flashes into the HUD at all -- the picture only moves when something
+actually flashes, and the pinned frame is a frame where nothing does. What shows the change
+instead is a new golden, regenerated from the oracle probe and byte-identical to the C++
+harness (0 diff lines over all 621):
+
+  tests/scripts/golden/L3_kurt_flashes.txt (621 lines, sha256 10c59abc...) -- an opcode-215
+  white flash of 60 at step 5 falls by 2 a step and stops at zero; a hurt of 1 at step 10
+  raises the red flash to its 75 minimum and it too fades out; the fall from 100 units ends in
+  a hard landing at step 164 whose Damage raises it to the 180 clamp; a hurt of 4 at step 320
+  leaves it at 100 and SetHealth(0) at step 330 finds it at 80, so the death transition's own
+  zeroing is visible at step 331 (hurt=0.0000) rather than smuggled; the skull then rises one
+  unit a step, died= goes to 1 on the step it passes 255 (step 587) and the corpse is frozen
+  from the next one -- vert, the feet and the floor column all stop moving.
+
+Eight mutants were built and run against it: no FadeFlashes in Player::update fails at s=6
+(white stays up), no zeroing in the death arm fails at s=331 (hurt=78.0000), no skull guard
+fails at s=588 (hurt=257.0000, the corpse still falling), a >= guard instead of > fails at
+s=587 (died one step early), a fade with no floor at zero fails at s=1 (hurt=-2.0000), a
+half-rate skull fails at s=332 (hurt=0.5000), a hard landing that raises no flash fails at
+s=164 (hurt=0.0000), and a white flash that never fades fails at s=6. Suite: 456 PASS /
+0 FAIL / 0 SKIP.
+
+Capture: DISPLAY=:99 (headless Xvfb, per AGENTS.md P7), lavapipe
+(VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json), command
+`bash tools/publish_frame.sh kurt-flashes`, tree at dbd9727 plus this batch's uncommitted
+change. Scratch captures went to /tmp/mdk-pi (AGENTS.md P7 names /tmp/kilo, which is not
+writable by this account -- owner task 11).

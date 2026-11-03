@@ -164,6 +164,14 @@ void Player::update(const Input& input, float delta) {
         updateDeath(delta);
         return;
     }
+    // C# Kurt.Update fades both flashes here (Kurt.cs:159): after the Frozen return
+    // (Kurt.cs:144, which fades them too -- no Frozen in this port yet, and when it lands
+    // it must fade them on its own branch, above the Dead one) and after the Dead return,
+    // so a corpse fades nothing at all: its hurtFlash_ is the skull, which rises below and
+    // is the only thing UpdateDeath does to it. A white flash that was up when Kurt died
+    // therefore stays up for the whole death beat, which is the oracle's behaviour and is
+    // pinned by golden/L3_kurt_flashes.txt, not an oversight of this port's.
+    combat_.fadeFlashes(delta);
     // C# Kurt.Update runs UpdateKnockDamage here (Kurt.cs:176): after the ride and
     // noclip returns (neither is ported) and before UpdateChuteSound and the
     // Hang/HardLand branch, so a crashing Kurt's recent-damage counter declines too --
@@ -239,15 +247,19 @@ void Player::updateState(float forward, float strafe, float delta) {
     _stateTime += delta;
 
     // C# UpdateCombatState's first arm (Kurt.Combat.cs:371): health zero on a floor is
-    // the death state. The C# also zeroes HurtFlash there (and calls StopFiring, inert
-    // here for the reason Player::land records). The flash is left alone on purpose --
-    // nothing fades it in this port yet (FadeFlashes is unported), so writing it here
-    // would be a number nothing reads; it lands with the fade that owns it.
-    // The knock-down and get-up arms below are the C#'s next two. The Throw arm after
-    // them is unreachable here because nothing gives Kurt an item, and the C#'s version
-    // of it returns false -- falls through to the ordinary selection -- whenever it does
-    // not apply, which is the same behaviour as not having it.
+    // the death state. The knock-down and get-up arms below are the C#'s next two. The
+    // Throw arm after them is unreachable here because nothing gives Kurt an item, and
+    // the C#'s version of it returns false -- falls through to the ordinary selection --
+    // whenever it does not apply, which is the same behaviour as not having it.
     if (health() == 0 && onFloor) {
+        // C# UpdateCombatState's first arm (Kurt.Combat.cs:371-377): StopFiring, the
+        // flash zeroed, State.Dead. StopFiring is inert here for the reason Player::land
+        // records for the C#'s own call to it. The zeroing is not: it is what makes the
+        // death beat the oracle's 255 steps whatever the red flash was doing a step
+        // earlier, and it is the reason the frontend's old stand-in (a skull fade of its
+        // own, started from its own clock) could not be too far out -- it was starting
+        // from the same zero, for the same 255/60 s.
+        combat_.setHurtFlash(0.0f);
         setState(Kurt::Dead);
         return;
     }
@@ -349,6 +361,14 @@ void Player::updateSpecial(float delta) {
 }
 
 void Player::updateDeath(float delta) {
+    // C# UpdateDeath's first statement (Kurt.Combat.cs:238): once the skull has faded
+    // in, the corpse is finished -- no gravity, no fall, no state time, no frame. It is
+    // not a cosmetic freeze: a corpse below the arena stops falling here, and the one on
+    // a pad stops alternating OnFloor the way Fall makes it while the skull is still
+    // rising. golden/L3_kurt_flashes.txt prints the step it starts on.
+    if (combat_.skullFinished()) {
+        return;
+    }
     forwardSpeed = 0.0f;
     strafeSpeed = 0.0f;
     verticalSpeed = onFloor ? 0.0f : std::max(verticalSpeed - kGravity * delta, -kMaxFallSpeed);
@@ -363,6 +383,11 @@ void Player::updateDeath(float delta) {
     _stateTime += delta;
     _animationFrame = std::min(_animationFrame + kTicks * delta,
                                (float)(frameCount(Kurt::Dead) - 1));
+    // The skull's rise and the one step it completes (Kurt.Combat.cs:250-253). The C#
+    // raises its Died event there; see Player::died for the latch this port uses instead.
+    if (combat_.fadeSkullIn(delta)) {
+        _died = true;
+    }
 }
 
 void Player::animate(float delta) {
@@ -458,6 +483,13 @@ void Player::setState(Kurt::State state) {
     combat_.setState(state);
     _stateTime = 0.0f;
     _animationFrame = 0.0f;
+    // The Died latch belongs to one death, and a death is over when Kurt leaves the
+    // Dead state (the C#'s Revive, Kurt.Combat.cs:190-197, is the writer that would do
+    // it -- SetState(Still) -- and it is not ported yet). Clearing here is what lets a
+    // later death raise the event a second time instead of silently swallowing it.
+    if (state != Kurt::Dead) {
+        _died = false;
+    }
 }
 
 int32_t Player::frameCount(Kurt::State state) const {
@@ -517,9 +549,10 @@ void Player::setHealth(int health) {
 }
 
 void Player::damage(int damage) {
-    // C# Damage with Normal difficulty (Easy/Hard scaling lands with difficulty).
-    // The death transition is the caller's (health 0 on the floor), not here.
-    combat_.damageHealth(damage);
+    // C# Damage with Normal difficulty (Easy/Hard scaling lands with difficulty): the
+    // scaling, the red flash, the health and the knock counter, all of it -- the C#'s
+    // HardLanding calls Damage, not the Health line out of it.
+    combat_.damage(damage);
 }
 
 void Player::knockDown(const Vec2& push) {
@@ -602,10 +635,14 @@ void Player::updateVertical(const Input& input, const Vec3& move, float delta) {
         updateAir(jumpHeld, delta);
     }
 
-    // UpdateUpdraft is not ported (no fans/wind zones yet). When it lands it
-    // also caps upward speed at 40 u/s on leaving an updraft (Kurt.Updraft.cs);
-    // today upward speed never exceeds the 40 u/s jump, so the omission is
-    // inert -- add the cap with the fan subsystem.
+    // UpdateUpdraft is not ported (no fans/wind zones yet). When it lands it is
+    // `if (Current != State.Knocked && VerticalSpeed > UpdraftExitSpeed) VerticalSpeed =
+    // UpdraftExitSpeed;` (Kurt.Updraft.cs:29): it caps upward speed at 40 u/s on leaving
+    // an updraft, and it does NOT cap it while Kurt is knocked down -- that exception is
+    // reachable now that K_BANG is (batch 44), so a port that drops the state test would
+    // cap a knocked-down Kurt's upward speed where the oracle leaves it alone. Today
+    // upward speed never exceeds the 40 u/s jump, so the whole omission is inert -- add
+    // the cap and its Knocked exception with the fan subsystem.
     fall(delta);
     // health 0 on the floor is death (C# "health 0 --on the floor--> DEAD"). A
     // hard landing lands the same tick and fall-out forces OnFloor, so both die
@@ -717,21 +754,20 @@ void Player::land(const Vec3& before, const Vec3& normal, float delta) {
         // (Kurt.cs:584), and the `Health == 0` half is the observable one: a Kurt
         // already at 0 who lands at -194 u/s does not play K_CRASHL and does not
         // have his chute closed for him. golden/L3_kurt_lethal.txt pins it. The
-        // guard around the damage call is NOT observable here -- Player::damage
-        // floors at 0 exactly like Kurt.Damage's Math.Max(Health - damage, 0) --
-        // and it is kept because the C#'s Damage also raises HurtFlash and adds to
-        // KnockDamage, which Player does not model here (they live on mdk::Kurt).
-        // Of those two, the KnockDamage omission is provably inert for a hard
+        // guard around the damage call is the C#'s own `if (Health > 0)` and is not
+        // observable here -- Player::damage floors at 0 exactly like Kurt.Damage's
+        // Math.Max(Health - damage, 0) -- but the call is the C#'s Damage whole, so the
+        // slam raises the red flash to its 180 clamp and adds to KnockDamage as the
+        // oracle's does. Of those two the KnockDamage is provably inert for a hard
         // landing: Kurt.cs:583 zeroes that counter two lines after the damage call,
-        // which is the line below. HurtFlash is the one that stays unmodelled, and it
-        // stays unmodelled on purpose -- nothing fades the red flash here, so a hard
-        // landing must not raise a flash nothing fades out. A third term of the C#-
-        // side Damage is also left out, and is NOT inert in the same provable way:
-        // HardLanding calls Damage(HardLandingDamage), which runs Scaled(damage,
-        // Difficulty) first, so on Easy the slam would be 6 and on Hard 20, not the 10
-        // damageHealth takes. It is inert only because difficulty_ has no writer yet --
-        // the same deferral Player::damage records over its own call to damageHealth --
-        // and it moves with that, not with this.
+        // which is the line below. The flash is NOT inert and is no longer left out:
+        // Kurt::fadeFlashes runs now, so a slam that raised no flash would leave the HUD
+        // red for 90 steps fewer than the oracle leaves it -- golden/L3_kurt_flashes.txt
+        // ends its fall in exactly this landing. What is still left out of the C#'s
+        // Damage is Scaled(damage, Difficulty): on Easy the slam would be 6 and on Hard
+        // 20, not the 10 the port deals. It is inert only because difficulty_ has no
+        // writer yet -- the same deferral Player::damage records -- and it moves with
+        // that, not with this.
         //
         // What else the C#'s HardLanding does that this does not: Kurt.cs:589 also
         // calls StopFiring() (leave the sniper, stop the chain-gun voice, drop the
