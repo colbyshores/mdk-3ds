@@ -3974,9 +3974,9 @@ void testCommandObjectsFormationArmInstallsTheSlot(LevelData* levelData, const C
 
     // The arm: the left follower is 45 units from its slot, so it is outside one
     // step (MaxSpeed * Dt = 1.66667), turns the full 6 degrees toward it
-    // (atan2(45, 4) = 84.9295 degrees away), and pushes the unscaled heading *
-    // MaxSpeed, which ApplyVelocity scales by Dt: (cos 6, sin 6) * 50 / 30 =
-    // (1.6575365, 0.1742141). Its Z is a whole unit below the slot's, so the
+    // (atan2(45, 4) = 84.9204 degrees away, past the 6-degree cap), and pushes the
+    // unscaled heading * MaxSpeed, which ApplyVelocity scales by Dt: (cos 6, sin 6) *
+    // 50 / 30 = (1.6575365, 0.1742141). Its Z is a whole unit below the slot's, so the
     // vertical push is +Ticks and the climb is 1/30.
     runtime.motionVelocity(left);
     CHECK(left->move_command == 1);
@@ -3988,8 +3988,9 @@ void testCommandObjectsFormationArmInstallsTheSlot(LevelData* levelData, const C
     CHECK(fabsf(left->position.z - 0.0333333f) < 1e-6f);
 
     // The right follower moves toward ITS OWN slot, not the left one's: the sign of
-    // the turn is the assertion (atan2(45, 4) from (0,-60) is the same 84.9295
-    // degrees, so it too turns +6 and pushes the same vector).
+    // the turn is the assertion. Its heading is atan2(55, 4) = 85.8404 degrees, a
+    // different angle from the left follower's 84.9204, but past the same 6-degree
+    // cap, so it too turns exactly +6 and pushes the same vector.
     runtime.motionVelocity(right);
     CHECK(fabsf(right->yaw - 6.0f) < 1e-5f);
     CHECK(fabsf(right->position.x - 1.6575365f) < 1e-6f);
@@ -4035,6 +4036,166 @@ void testChaseSpeedClampPropagatesNaNLikeTheOracle(LevelData* levelData, const C
     brake.move_command = 6;
     runtime.motionVelocity(&brake);
     CHECK(brake.speed != brake.speed);
+}
+
+// A quiet NaN float32 — the value a script literal would carry into a movement field.
+static float nanFloat() {
+    const uint32_t bits = 0x7fc00000u;
+    float value = 0.0f;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+// The other six speed-clamp call sites are the oracle's Accelerate (ObjectMotion.cs:
+// 780-790), which MoveForward (command 88) and Walk and Fly (commands 43/78/197) each
+// run twice, once per branch. A NaN Speed does NOT discriminate them, and the reason is
+// worth writing down: Accelerate's branches are `Speed > target` and `Speed < target`,
+// both false for NaN, so a NaN speed walks out of it untouched whichever clamp is in the
+// body. What does reach a clamp is a NaN Acceleration or Deceleration — opcodes 51/52
+// copy a script literal into them exactly as 53 does into Speed — and there
+// MathF.Min/MathF.Max propagate the NaN where fminf/fmaxf return the finite target and
+// silently un-NaN the speed. Both sides were run, not assumed: .NET 10 gives
+// MathF.Min(NaN,10) = MathF.Max(NaN,10) = NaN, glibc gives fminf(NaN,10) =
+// fmaxf(NaN,10) = 10. Same caveat as the chase pin above: this pins the semantics at the
+// site, not a scenario the shipped data reaches.
+void testMoveForwardClampPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi,
+                                                    audio::SoundBank* bank) {
+    const float kNaN = nanFloat();
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+
+    // Gain: MathF.Min(5 + NaN × Dt, 10) is NaN, not the 10 the target is. Gravity keeps
+    // the push horizontal (the other branch adds a pitch trig), and a non-zero parameter
+    // means "accelerate to MaxSpeed" rather than "brake to a stop".
+    scripts::MdkObject gain;
+    gain.flags = scripts::MdkObject::FlagGravity;
+    gain.move_command = 88;
+    gain.move_parameter = 1;
+    gain.max_speed = 10.0f;
+    gain.speed = 5.0f;
+    gain.acceleration = kNaN;
+    gain.deceleration = 1.0f;
+    runtime.motionVelocity(&gain);
+    CHECK(gain.speed != gain.speed);
+    CHECK(gain.position.x != gain.position.x);   // the NaN reaches the tick's motion too
+    CHECK(gain.move_command == 88);             // speed == target is false for NaN, so
+                                                // the stop never claims the command
+
+    // Brake: MathF.Max(15 - NaN × Dt, 10) is NaN, not 10.
+    scripts::MdkObject brake;
+    brake.flags = scripts::MdkObject::FlagGravity;
+    brake.move_command = 88;
+    brake.move_parameter = 1;
+    brake.max_speed = 10.0f;
+    brake.speed = 15.0f;
+    brake.acceleration = 1.0f;
+    brake.deceleration = kNaN;
+    runtime.motionVelocity(&brake);
+    CHECK(brake.speed != brake.speed);
+    CHECK(brake.position.x != brake.position.x);
+    CHECK(brake.move_command == 88);
+}
+
+void testWalkClampPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi,
+                                             audio::SoundBank* bank) {
+    const float kNaN = nanFloat();
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+
+    // Walk's target is MaxSpeed × TurnSpeedFactor(diff). The waypoint is straight ahead
+    // of the yaw and 100 units away, so diff is 0, the factor is 1 and the target is
+    // MaxSpeed; and it is the final leg (Waypoint == MoveDestination) 100 away, so Walk
+    // does not Stop() — arrival is Manhattan < 5 — and the command survives to assert.
+    scripts::MdkObject gain;
+    gain.flags = scripts::MdkObject::FlagGravity;   // FlagGravity is what makes this arm walk
+    gain.move_command = 43;
+    gain.waypoint = Vec3{100.0f, 0.0f, 0.0f};
+    gain.move_destination = Vec3{100.0f, 0.0f, 0.0f};
+    gain.max_speed = 10.0f;
+    gain.speed = 5.0f;
+    gain.acceleration = kNaN;
+    gain.deceleration = 1.0f;
+    runtime.motionVelocity(&gain);
+    CHECK(gain.speed != gain.speed);
+    CHECK(gain.position.x != gain.position.x);
+    CHECK(gain.move_command == 43);
+
+    // Brake: same pose, Speed above the target, NaN Deceleration.
+    scripts::MdkObject brake;
+    brake.flags = scripts::MdkObject::FlagGravity;
+    brake.move_command = 43;
+    brake.waypoint = Vec3{100.0f, 0.0f, 0.0f};
+    brake.move_destination = Vec3{100.0f, 0.0f, 0.0f};
+    brake.max_speed = 10.0f;
+    brake.speed = 15.0f;
+    brake.acceleration = 1.0f;
+    brake.deceleration = kNaN;
+    runtime.motionVelocity(&brake);
+    CHECK(brake.speed != brake.speed);
+    CHECK(brake.position.x != brake.position.x);
+    CHECK(brake.move_command == 43);
+}
+
+void testFlyClampPropagatesNaNLikeTheOracle(LevelData* levelData, const Cmi* cmi,
+                                            audio::SoundBank* bank) {
+    const float kNaN = nanFloat();
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+
+    // Fly (no gravity flag) runs the same Accelerate with the target taken from the
+    // pre-turn diff. The waypoint is straight ahead, 100 across and 5 up: past TurnFrom
+    // (3) so the turn runs, diff 0 so the factor is 1, and nowhere near the arrival test
+    // (horizontal < 4), so the command is not stopped.
+    scripts::MdkObject gain;
+    gain.move_command = 78;
+    gain.waypoint = Vec3{100.0f, 0.0f, 5.0f};
+    gain.move_destination = Vec3{100.0f, 0.0f, 5.0f};
+    gain.max_speed = 10.0f;
+    gain.speed = 5.0f;
+    gain.acceleration = kNaN;
+    gain.deceleration = 1.0f;
+    runtime.motionVelocity(&gain);
+    CHECK(gain.speed != gain.speed);
+    CHECK(gain.position.x != gain.position.x);
+    CHECK(gain.position.z != gain.position.z);   // the climb carries it too
+    CHECK(gain.move_command == 78);
+
+    scripts::MdkObject brake;
+    brake.move_command = 78;
+    brake.waypoint = Vec3{100.0f, 0.0f, 5.0f};
+    brake.move_destination = Vec3{100.0f, 0.0f, 5.0f};
+    brake.max_speed = 10.0f;
+    brake.speed = 15.0f;
+    brake.acceleration = 1.0f;
+    brake.deceleration = kNaN;
+    runtime.motionVelocity(&brake);
+    CHECK(brake.speed != brake.speed);
+    CHECK(brake.position.x != brake.position.x);
+    CHECK(brake.move_command == 78);
+}
+
+// Review-20 F4 read the oracle as running DetectStuck/HandleStuck unconditionally after
+// Walk/Fly, and cited ObjectMotion.cs:354-357 — the lines that hold the guard it means.
+// The oracle HAS the guard: `if (obj.MoveCommand != 0) { DetectStuck(...); HandleStuck(
+// ...); }`. So on the tick a walk arrives, Walk's Stop() zeroes MoveCommand (792-797,
+// 809-813) and BOTH calls are skipped, and a stuck_count left by an earlier replan
+// SURVIVES the arrival instead of being reset. opcode 231 (if_move_idle_flag,
+// ScriptVm.cs:1243) reads exactly that pair — MoveCommand == 0 && StuckCount != 0 — so
+// the direction is observable to a script, not just in a field. This pins which way.
+void testArrivalKeepsTheStuckCountTheOracleKeeps(LevelData* levelData, const Cmi* cmi,
+                                                 audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    scripts::MdkObject obj;
+    obj.flags = scripts::MdkObject::FlagGravity;   // FlagGravity is what makes this arm walk
+    obj.move_command = 43;
+    obj.waypoint = Vec3{2.0f, 0.0f, 0.0f};         // Manhattan 2, inside Arrived (5) ...
+    obj.move_destination = Vec3{2.0f, 0.0f, 0.0f}; // ... and it IS the final leg
+    obj.speed = 4.0f;
+    obj.stuck_count = 2;                           // what a replan left behind
+    runtime.motionVelocity(&obj);
+    CHECK(obj.move_command == 0);                  // Walk's Stop()
+    CHECK(obj.speed == 0.0f);
+    CHECK(obj.stuck_count == 2);                   // DetectStuck never ran, so no reset
+
+    // And the same tick the VM would read: 231 branches true here, in both trees.
+    CHECK(obj.move_command == 0 && obj.stuck_count != 0);
 }
 
 // The animation wrap is the C# Wrap's exact reduction: a positive divisor
@@ -4531,6 +4692,14 @@ int main() {
     printf("PASS CommandObjectsFormationArmInstallsTheSlot\n");
     testChaseSpeedClampPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
     printf("PASS ChaseSpeedClampPropagatesNaNLikeTheOracle\n");
+    testMoveForwardClampPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
+    printf("PASS MoveForwardClampPropagatesNaNLikeTheOracle\n");
+    testWalkClampPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
+    printf("PASS WalkClampPropagatesNaNLikeTheOracle\n");
+    testFlyClampPropagatesNaNLikeTheOracle(&levelData, &cmi, &bank);
+    printf("PASS FlyClampPropagatesNaNLikeTheOracle\n");
+    testArrivalKeepsTheStuckCountTheOracleKeeps(&levelData, &cmi, &bank);
+    printf("PASS ArrivalKeepsTheStuckCountTheOracleKeeps\n");
     testKnockDownSpendsTheCounterAndOpensTheTimer();
     printf("PASS KnockDownSpendsTheCounterAndOpensTheTimer\n");
     testAirborneKnockDownSlamsToTheFloorTheProbeReaches(&levelData);

@@ -10652,3 +10652,81 @@ The harness restores from a pre-mutation copy, not from git: an earlier draft of
 * No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**. The only windowed run was the frame capture on `DISPLAY=:99` (P7) via `tools/publish_frame.sh review19-dispatch-pins`.
 
 Frame `docs/frames/2026-11-03-review19-dispatch-pins.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical (`6646adf1…`) to the PNGs that precede it: frame 1 is before any script runs, so neither a movement command nor a speed clamp can appear in it. The sidecar carries no hand-written counts (review-18 F4).
+
+## Iteration 78 — batch 50: review-20 remediation — the six unpinned speed clamps are pinned, and review-20's F4 is a misread of the oracle (F2/F5/F6/F7/F8 fixed, F4 rebutted and pinned; F1/F3 owner-only)
+
+### Prior-solution lookup
+
+* **Pi knowledge (`mdk-sdl`)** — searched `speed clamp NaN propagation mathMin mathMax MathF.Min oracle movement`. The top hits were this repository's own answers: `script_runtime.cpp`'s NaN-propagating `mathMax`/`mathMin` pair with its "fminf would silently turn it into the finite bound" comment, the batch-49 `CONTINUATION` line, and the existing `ChaseSpeedClampPropagatesNaNLikeTheOracle`. So the convention was already recorded; what was missing was coverage, not knowledge. Verified against `src/Mdk.Game/Scripts/ObjectMotion.cs:354-358, 780-790, 803-823, 826-891` before acting.
+* **Obsidian** — no MCP server is exposed in this Pi session; read the vault read-only at `/mnt/nas/Vaults/port-docs`. `grep -ril` for `detectstuck`, `handlestuck`, `stuck_count`, `StuckCount`, `MathF.Min`, "speed clamp" returns nothing. Nothing to reuse.
+* **Cognee MCP** — not exposed in this session. Recorded unavailable; **not** consulted, and no conclusion here rests on it.
+
+### Review-20 disposition
+
+The newest review is `logs/ralph-pi/run-20261102-004416/review-20.md` (window `f521c76a..7e098d3a` + the dirty tree). It found no Critical, and it independently re-derived batch 48/49's chase, formation and NaN numbers and could not break them. Every finding below was checked against the tree — or, for F4, against the exact lines it cited — before being dispositioned.
+
+* **F1 (High, four `PROTECTED` files dirty plus a stray frame pair, no recorded owner approval) — confirmed, owner-only, unchanged by this batch.** Reproduced again: `git status --porcelain` lists ` M AGENTS.md`, ` M ralph-pi.sh`, ` M ralph/builder.md`, ` M tools/runner/gates_batch_integrity.py` and the untracked `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`. The gate that would reject them is itself in its own `PROTECTED` set, so neither remedy the reviewer offers (`MDK_OWNER_APPROVED=1`, or revert) is reachable from a batch — the reviewer says so itself ("Nothing in the builder's hands"). This batch stages none of them; its committed diff is `mdk_core/src/scripts/script_runtime.{cpp,h}`, `tests/scripts/vm_tests.cpp`, `docs/OPCODE_COVERAGE.md`, the two docs and its own frame pair. Owner tasks (1)/(9)/(13).
+* **F2 (Medium, six of the eight clamp call sites had no discriminating test) — confirmed and fixed, and the finding was better than it looks.** The reviewer is right that reverting `moveForward`/Walk/Fly to `fminf`/`fmaxf` was invisible, and its own mutant survived. Its recommended remedy (three NaN cases "in the shape of `ChaseSpeedClampPropagatesNaNLikeTheOracle`") would **not** have worked as written, and that is worth recording: `Accelerate`'s two branches are `Speed > target` and `Speed < target`, both false for NaN, so a NaN *speed* never reaches those clamps — batch 49's chase pin discriminates only because `Chase` assigns its clamp unconditionally. The input that reaches the clamp is a NaN `acceleration` or `deceleration` (opcodes 51/52 write them from a script literal exactly as 53 writes `speed`). Three tests landed on that shape, each covering both branches of its arm: `testMoveForwardClampPropagatesNaNLikeTheOracle`, `testWalkClampPropagatesNaNLikeTheOracle`, `testFlyClampPropagatesNaNLikeTheOracle`. All six sites are now individually killable (mutation table below).
+* **F3 (Medium, `--each-commit` with no `--base` validates nothing and exits 0) — reproduced, owner-only.** Reproduced again on the working tree: `python3 tools/runner/gates_batch_integrity.py --each-commit` prints `BATCH INTEGRITY: PASS`, rc 0. The committed gate does not accept the flag at all (`error: unrecognized arguments: --each-commit`), so the fail-open exists only in the uncommitted owner diff. The one-line fix belongs in a `PROTECTED` file. Owner task (13).
+* **F4 (Medium, "the oracle runs both unconditionally after `Walk`/`Fly`") — REBUTTED: the port is faithful, and the finding cites the guard as its evidence.** The quote is "The oracle runs both unconditionally after `Walk`/`Fly` (`ObjectMotion.cs:354-357`)". Those lines, verbatim from the oracle in this tree:
+
+  ```csharp
+  354:                if (obj.MoveCommand != 0)
+  355:                {
+  356:                    DetectStuck(obj, walking ? Moving.Walking : Moving.Flying);
+  357:                    HandleStuck(obj, MathF.Abs(WrapAngle(obj.Yaw - yaw)));
+  358:                }
+  ```
+
+  The cited range *is* the guard the finding says the oracle lacks; `script_runtime.cpp:2221` is the same `if (move_command != 0)`. The failure scenario is then backwards: `Walk`'s `Stop()` (`ObjectMotion.cs:792-797, 809-813`) sets `MoveCommand = 0`, so on the arrival tick the **oracle** also skips `DetectStuck`, also leaves `StuckCount` at whatever the replan left, and opcode 231 (`ScriptVm.cs:1243`, `MoveCommand == 0 && StuckCount != 0`) branches **true in both trees**. Making the call unconditional is the change that would diverge. The reviewer's secondary point — that the port's `return` inside the walk-stop branch "skips even the guard" — is also equivalent, because nothing follows the oracle's guard but a `break`. Pinned by `testArrivalKeepsTheStuckCountTheOracleKeeps` (an object that arrives with `stuck_count = 2` keeps it, and the 231 predicate holds), and the guard's comment now cites `ObjectMotion.cs:354-358` and names opcode 231 so the next reader cannot re-derive the wrong reading.
+* **F5 (Low, two wrong angles in the formation test's derivation comment) — confirmed and fixed.** Recomputed: `degrees(atan2(45,4)) = 84.92039213998542`, `degrees(atan2(55,4)) = 85.84035770628736`. The comment now says 84.9204 for the left follower and names the right follower's own heading as `atan2(55, 4) = 85.8404` — a *different* angle that clamps to the same +6, which is the real reason both push the same vector.
+* **F6 (Low, `turnTowards`'s contract comment states the right fact with a reason that does not hold) — confirmed and fixed.** The oracle does read the return (`ObjectMotion.cs:818, 837`), and returning the pre-turn angle is what the helper exists for, so "their speed target depends on the pre-turn angle" was not a reason to bypass it, and Walk's turn is not conditional. The comment now separates the fact (the port's arms compute `diff` inline) from the status (routing Walk/Fly through the helper inside the existing guard would be faithful; it is simply not what the file does today).
+* **F7 (Low, `docs/OPCODE_COVERAGE.md` says 13 in one sentence and 16 in the next) — confirmed and fixed, and the real count is 13.** Counted the partial table: 16, 56, 81, 135, 140, 165, 166, 174, 195, 202, 203, 215, 248 — 13 rows, so `211 − 13 = 198` was right and "the owned set minus the 16 partial cases" was the wrong sentence. The same paragraph disagreed with the table a second way, which the reviewer did not reach: it listed 240/244 among the partial-for-consumers cases, but neither is in the table and both have ported consumers now (240 writes `knockDamage`, 244 writes `invulnerable`; `Player` declines both every tick and `L3_kurt_knock`/`L3_kurt_invuln` pin them), so they are named as left-the-table instead, with the reason.
+* **F8 (Low, a byte-identical frame presented as the batch's evidence) — confirmed and adopted.** This batch's sidecar says in terms that there is **no** frame evidence for it and points at the mutation table instead, rather than dressing up the same `6646adf1…` pixels.
+
+### What landed
+
+* `tests/scripts/vm_tests.cpp` — `nanFloat()`, the three clamp tests above (six call sites, both branches each), and `testArrivalKeepsTheStuckCountTheOracleKeeps`; the two corrected angles in the formation test's comment.
+* `mdk_core/src/scripts/script_runtime.cpp` — no behaviour change. The walk/fly arm's stuck-pair guard now carries the oracle citation and the opcode-231 consequence (F4's recurrence risk).
+* `mdk_core/src/scripts/script_runtime.h` — `turnTowards`'s contract, de-rationalised (F6).
+* `docs/OPCODE_COVERAGE.md` — 16 → 13, and 240/244 moved out of the consumers clause with their evidence (F7).
+
+**No shipped arithmetic changed, no golden line changed, no dispatch count changed.** The pinned frame is byte-identical, and this batch says so instead of implying otherwise.
+
+### The oracle derivation for the three NaN pins
+
+A float32 model of `ObjectMotion.Accelerate` (`ObjectMotion.cs:780-790`, verbatim expressions) run on the real runtime — `/tmp/mdk-pi/b50/accel`, `dotnet 10.0.402`:
+
+| input | .NET 10 result |
+|---|---|
+| `MathF.Min(NaN,10)` / `MathF.Max(NaN,10)` (either order) | NaN / NaN |
+| gain branch: `Speed=5`, `target=10`, `Acceleration=NaN` | **NaN** (this is what the tests feed) |
+| brake branch: `Speed=15`, `target=10`, `Deceleration=NaN` | **NaN** |
+| `Speed=NaN`, finite everything else | NaN, but **without reaching either clamp** (both tests false) |
+| `target=NaN` (a NaN `MaxSpeed`), `Speed=5` | `5` — unchanged, the clamp never runs |
+| control: `Speed=5`, `Acceleration=1`, `Dt=1/30` | `5.0333333` |
+
+And on the C side actually linked: glibc `fminf(NaN,10) = 10`, `fmaxf(NaN,10) = 10`. So the tests' expected values are the oracle's, the discriminating input is the one that reaches the clamp, and the pose for each arm is chosen so the command is not stopped on the tick under test (Walk/Fly: waypoint straight ahead and 100 away, so `diff = 0`, the factor is 1 and arrival is nowhere near; `MoveForward`: a non-zero `move_parameter`, so the target is `MaxSpeed` and not a stop).
+
+### Mutation table, as run (5 mutants built and run; 5 killed)
+
+| Mutant | Killed by |
+|---|---|
+| all six sites back to `fminf`/`fmaxf` at once | 13 checks across the three new tests |
+| `moveForward`'s two sites back to `fmaxf`/`fminf` | 4 checks — `MoveForwardClampPropagatesNaNLikeTheOracle` alone |
+| the walk arm's two sites | 4 checks — `WalkClampPropagatesNaNLikeTheOracle` alone |
+| the fly arm's two sites | 5 checks — `FlyClampPropagatesNaNLikeTheOracle` alone |
+| F4's proposed "fix": the guard removed **and** the walk arrival no longer returning | 3 checks — `ArrivalKeepsTheStuckCountTheOracleKeeps` (`speed == 0`, `stuck_count == 2`, the 231 predicate) |
+
+Recorded honestly: removing **only** the guard is invisible to every test, because the port's walk arrival also `return`s (the C#'s `return` from `Walk`, which then falls to the same guard). The test pins the observable state on an arrival tick, not one line of the mechanism.
+
+### Gates, as run
+
+* `make -C tests/scripts` — **exit 0**: `All VM unit tests match the oracle.` + `All cases match the oracle.`, **469 PASS / 0 FAIL** (465 in the parent, +4: `MoveForwardClampPropagatesNaNLikeTheOracle`, `WalkClampPropagatesNaNLikeTheOracle`, `FlyClampPropagatesNaNLikeTheOracle`, `ArrivalKeepsTheStuckCountTheOracleKeeps`).
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx` (with `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM` exported).
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100%] Built target mdk`.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch for the .NET model and the mutants: `/tmp/mdk-pi/b50` (`/tmp/kilo` is not writable by this account — owner task 11).
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**. The only windowed run was the frame capture on `DISPLAY=:99` (P7) via `tools/publish_frame.sh review20-clamp-pins`.
+
+Frame `docs/frames/2026-11-03-review20-clamp-pins.png` + `.txt` — `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, byte-identical to the PNGs that precede it; the sidecar now says in terms that the batch has no frame evidence rather than presenting the duplicate as one (review-20 F8).

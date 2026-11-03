@@ -1,29 +1,31 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 49 is review-19 remediation: three new `vm_tests` cases that pin the
-dispatch→arm link review-19 F5 proved was untested (opcode 6 → `chase`, opcode 4 command 1 → the
-formation slot), and eight speed-clamp call sites moved from `fminf`/`fmaxf` to the NaN-propagating
-`mathMin`/`mathMax` the oracle's `MathF.Min`/`MathF.Max` actually are. The clamp change is identical for
-every non-NaN input and NaN is not reachable from shipped data (argument in `PROGRESS_LOG`), but it is
-shipped arithmetic in the movement path, so it is not low. All 465 goldens byte-identical, 8 of 8
-mutants killed. Review-19's High (F1) is still open under owner disposition, not closed.
+Risk: low — batch 50 is review-20 remediation and changes **no shipped arithmetic**: three `vm_tests`
+NaN cases that pin the six speed-clamp call sites batch 49 moved but did not pin, one case pinning the
+`stuck_count` the oracle keeps on a walk-arrival tick, three comment corrections and one coverage count.
+The one substantive finding (review-20 F4, "the oracle runs `DetectStuck` unconditionally after
+Walk/Fly") is rebutted against the lines it cites — `ObjectMotion.cs:354-358` *is* the guard the finding
+says the oracle lacks — and pinned, so the proposed "fix" now fails a test. 468 cases pass with the
+corpus byte-identical; 5 of 5 mutants killed. Review-20's High (F1) is still open under owner
+disposition, not closed.
 
-Last updated: 2026-11-03 (**batch 49** — review-19 remediation: F4/F5/F6/F7 fixed, F1/F2/F3 owner-only
-each reproduced first. **Review-19's F1 (High) and F2/F3 are owner-only** (the four dirty `PROTECTED`
-harness files and the `--each-commit` rule inside the gate that protects itself); F4 (the stale
-movement-command-6 clause), F5 (the dispatch→arm link), F6 (`turnTowards`'s comment) and F7
-(`MathF.Min`/`Max` NaN semantics) are fixed here, with the NaN reachability argument and the eight-mutant
-table in `docs/PROGRESS_LOG.md`, "Iteration 77". Batch 48's own record — `chase`/`followFormation`/
-`turnTowards`/`moveToward` and their oracle-derivation and 16-mutant tables — is "Iteration 76". Earlier
-batches are one "Iteration N" section back each: 47 = 75, 46 = 74, 45 = 73, 44 = 72, 43 = 71,
-42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61, 32 = 60.
+Last updated: 2026-11-03 (**batch 50** — review-20 remediation: F2/F5/F6/F7/F8 fixed, F4 rebutted with
+the oracle's own lines plus a pinning test, F1 (High) and F3 owner-only and each reproduced first. The
+record — the .NET derivation of the six clamps, the five-mutant table and the F4 rebuttal — is
+`docs/PROGRESS_LOG.md`, "Iteration 78". Batch 49's own record (the dispatch→arm pins, the clamp change,
+the NaN reachability argument, its 8-mutant table) is "Iteration 77"; batch 48's — `chase`/
+`followFormation`/`turnTowards`/`moveToward` and their derivation and 16-mutant tables — is "Iteration
+76". Earlier batches are one "Iteration N" section back each: 47 = 75, 46 = 74, 45 = 73, 44 = 72,
+43 = 71, 42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61,
+32 = 60.
 Review-18's F1-F6 were owner-only too, each reproduced before being dispositioned: in a clone of the
 committed tree a `PROTECTED` edit fails the gate, editing a historical frame sidecar fails it ("history
 is immutable"), and the committed `gates_batch_integrity.py` does not even accept `--each-commit` — that
 whole recovery exists only in the unstaged owner diff, so there is nothing in the committed tree for a
-batch to change. Review-19 F3 adds one line to that same owner task: `--each-commit` with no `--base`
-prints `BATCH INTEGRITY: PASS` over zero commits (reproduced), while the **committed** gate rejects the
-flag as unrecognized, so the fail-open path exists only in the uncommitted owner diff.
+batch to change. Review-19 F3 and review-20 F3 add one line each to that same owner task: `--each-commit`
+with no `--base` prints `BATCH INTEGRITY: PASS` over zero commits (reproduced again in batch 50), while
+the **committed** gate rejects the flag as unrecognized, so the fail-open path exists only in the
+uncommitted owner diff.
 
 **Still owner-gated and still uncommitted in the tree** (so batches stage only their own paths and
 never `git add -A`): `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
@@ -186,7 +188,7 @@ part** where batches 14-47 changed it. The headlines a batch can break:
   libm trig and its `@vfp-exempt R6` pin; `sprites` is a REQUIRED constructor argument;
   `mdk_render_draw_mesh` **queues** and the backend buckets by `Pass` in queue order — the oracle's
   order, not a backend's (P3). `update_rolling()` runs **before** `previous_position = position`,
-  where the C# does, and `mdk::create_from_axis_angle` is **bit-exact against .NET 10**. **Every movement command the C#'s `UpdateCommand` dispatches now has an arm: 1 formation, 6 chase, 15 alarm, 30 chain, 43/78/197 walk-or-fly, 61 projectile, 74 attachment, 88 forward, 229 jump — commands 1 and 6 landed in batch 48 (`followFormation`, `chase`, over the new `turnTowards`/`moveToward`), after their dispatches had set `move_command` with nothing reading it; neither fires in levels 3-8.** The speed clamps those arms run (`moveForward`, walk, fly, chase's gain and brake) use `mathMin`/`mathMax`, not `fminf`/`fmaxf`, because the oracle writes them as `MathF.Min`/`MathF.Max` and both propagate NaN; a NaN speed must stay NaN, and the pin is `ChaseSpeedClampPropagatesNaNLikeTheOracle`.
+  where the C# does, and `mdk::create_from_axis_angle` is **bit-exact against .NET 10**. **Every movement command the C#'s `UpdateCommand` dispatches now has an arm: 1 formation, 6 chase, 15 alarm, 30 chain, 43/78/197 walk-or-fly, 61 projectile, 74 attachment, 88 forward, 229 jump — commands 1 and 6 landed in batch 48 (`followFormation`, `chase`, over the new `turnTowards`/`moveToward`), after their dispatches had set `move_command` with nothing reading it; neither fires in levels 3-8.** The speed clamps those arms run (`moveForward`, walk, fly, chase's gain and brake) use `mathMin`/`mathMax`, not `fminf`/`fmaxf`, because the oracle writes them as `MathF.Min`/`MathF.Max` and both propagate NaN; a NaN speed must stay NaN. All eight sites are pinned (batch 50): `ChaseSpeedClampPropagatesNaNLikeTheOracle` plus `MoveForward`/`Walk`/`Fly` `…ClampPropagatesNaNLikeTheOracle`, which feed a NaN `acceleration`/`deceleration` because `Accelerate`'s strict comparisons mean a NaN *speed* never reaches those three clamps. And the walk/fly arm's `if (move_command != 0)` guard around `detectStuck`/`handleStuck` is the oracle's own (`ObjectMotion.cs:354-358`): an object that arrives after a replan keeps its `stuck_count`, which is what opcode 231 reads — pinned by `ArrivalKeepsTheStuckCountTheOracleKeeps`.
 - **Loop harness:** fail-closed on every way a mandatory review can fail to happen, fail-*forward*
   where the obligation is recoverable; every transition goes through `state_write` (one temp file,
   one rename, a checked status); the obligation is created **before** the thing it must survive;
@@ -196,41 +198,40 @@ part** where batches 14-47 changed it. The headlines a batch can break:
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 49)
+## Verified on this tree (batch 50)
 
-Narrative, the review-19 disposition, the NaN reachability argument, the oracle-derivation table and the
-8-mutant run: `docs/PROGRESS_LOG.md`, "Iteration 77".
-Goldens **exit 0** (`All VM unit tests match the oracle.` + `All cases match the oracle.`, **465 PASS /
-0 FAIL**; 462 in the parent batch, +3 are `MoveToTargetOpcodeRunsChase`,
-`CommandObjectsFormationArmInstallsTheSlot` and `ChaseSpeedClampPropagatesNaNLikeTheOracle`);
-`tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`:
-`audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math` clean,
-`audit_r11_idiv` no candidates, `gates_core_parity` clean, `gates_smdh` SKIPPED, `gates_frames
-PASS L3_f1.bmp sha=58615fc85d02e009` — `reference.sha256` NOT regenerated — `BATCH INTEGRITY: PASS`);
-`make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk` **exit 0**. No
-golden line changed: the clamp change differs from `fminf`/`fmaxf` only on NaN, and NaN is not reachable
-from shipped data, so the corpus cannot show it — which is why the pin is a `vm_tests` case that asserts
-the NaN directly, in the same shape as the existing opcode-135 `MathF.Max` pin. Every expected value was
-computed from the C# formula first (a float32 model of `ObjectMotion.cs`) and the port matched it
-unedited; **8 of 8 mutants die**, including review-19's own two scenarios (drop the formation slot
-offset; put `fminf` back). Batch 48's record (the two movement-command arms, their derivation table and
-16 mutants) is "Iteration 76"; batch 47's own record (the
-`L3_kurt_push` re-pin, its eleven mutants and its frame) is in "Iteration 75"; what it listed as still
-unpinned is unchanged, except that the dispatch→arm link of commands 1 and 6 is now pinned at the VM
-level. Still NOT pinned by any golden: a shipped frontend's mixer wiring (no frontend
-has an audio device, none draws `Knocked`), the fall-out variant of death, the firing step frames, the
-sprite frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white flash's
-other writers, and feet finer than 1/64 unit (owner task 15). Also still open, deferred with cause: the
-four remaining `fminf`/`fmaxf` sites in `script_runtime.cpp` whose oracle side reads `MathF.Max`/`Min`
-(the friction factor `:815`, the gun-aim cone `:1313`, the sweep-box span `:1969-1970`, the minimum
-height `:3016`) — same NaN-only difference, other subsystems, each wanting its own pin. **No emulator run
-and no Old-3DS hardware
-run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only windowed
-run was the frame capture, on `DISPLAY=:99` (P7).
-Frame `docs/frames/2026-11-03-review19-dispatch-pins.png` + `.txt` — `1.240 / 247 / 0.1819`,
-byte-identical (`6646adf1…`) to the PNGs that precede it, because at frame 1 no script has run. No
-gate was pinned, relaxed or edited. Review-19's High F1 stays owner-only and open; the external review of
-this batch is due after commit, and no review of the new diff is claimed complete.
+Narrative, the review-20 disposition (including the F4 rebuttal quoted against the oracle), the .NET
+derivation of the six clamps and the 5-mutant run: `docs/PROGRESS_LOG.md`, "Iteration 78".
+`make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All cases match the
+oracle.`, **469 PASS / 0 FAIL**; 465 in the parent, +4 are `MoveForwardClampPropagatesNaNLikeTheOracle`,
+`WalkClampPropagatesNaNLikeTheOracle`, `FlyClampPropagatesNaNLikeTheOracle` and
+`ArrivalKeepsTheStuckCountTheOracleKeeps`); `bash tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`:
+`audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math` contract clean,
+`audit_r11_idiv` no candidates, `gates_core_parity` both targets link the same core, `gates_smdh`
+SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — `reference.sha256` NOT
+regenerated — `gates_batch_integrity` project invariants intact); `make -C mdk_3ds` **exit 0**
+(`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk` **exit 0**.
+
+**No shipped line of arithmetic changed in this batch**, so no golden could move and none did. What
+changed is coverage and attribution: all eight speed-clamp sites the oracle writes as
+`MathF.Min`/`MathF.Max` are now killable by a test (batch 49 pinned only `chase`'s two), and the
+walk-arrival `stuck_count` review-20 F4 claimed was wrong is pinned the way the oracle leaves it. The
+discriminating input for the six is a NaN `acceleration`/`deceleration`, **not** a NaN `speed` —
+`Accelerate`'s branches are strict comparisons, so a NaN speed never reaches those clamps (measured on
+.NET 10, table in the log). Still NOT pinned by any golden: a shipped frontend's mixer wiring (no
+frontend has an audio device, none draws `Knocked`), the fall-out variant of death, the firing step
+frames, the sprite frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white
+flash's other writers, and feet finer than 1/64 unit (owner task 15). Also still open, deferred with
+cause: the four remaining `fminf`/`fmaxf` sites in `script_runtime.cpp` whose oracle side reads
+`MathF.Max`/`Min` (the friction factor `:815`, the gun-aim cone `:1313`, the sweep-box span
+`:1969-1970`, the minimum height `:3016`) — same NaN-only difference, other subsystems, each wanting its
+own pin. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D
+picture stays UNVERIFIED (P6);** the only windowed run was the frame capture, on `DISPLAY=:99` (P7).
+Frame `docs/frames/2026-11-03-review20-clamp-pins.png` + `.txt` — `1.240 / 247 / 0.1819`, and the
+sidecar states in terms that this batch has **no** frame evidence (review-20 F8): frame 1 is before any
+script has run, so no clamp and no movement command can appear in it. No gate was pinned, relaxed or
+edited. Review-20's High F1 stays owner-only and open; the external review of this batch is due after
+commit, and no review of the new diff is claimed complete.
 
 
 ## Standing open items

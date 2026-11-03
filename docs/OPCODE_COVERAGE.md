@@ -424,7 +424,11 @@ realized by the Linux frontend integration.)
 fields and output consumers: a required input with no reachable writer, or an
 output with no consumer, is partial even when the dispatch itself is exact.
 Thus 81/165/166/174/195 are partial for unwritten inputs, and
-135/202/203/215/240/244 for missing visual, snapshot or movement consumers. (24 and 151 left this table with the
+135/202/203/215 for missing visual, snapshot or movement consumers. (240 and 244 are
+not in this table and no longer belong to that second group: 240 writes
+`knockDamage` and 244 writes `invulnerable`, and both fields are live state that
+`Player` declines each tick and the `L3_kurt_knock`/`L3_kurt_invuln` goldens pin, so
+their consumers landed with the Kurt combat-state slices. 24 and 151 left this table with the
 mixer call-sites batch: the frame-sound trigger and the door sounds now play,
 so both are complete. 6 left it with the movement-command batch: `Chase` is
 portable with no new subsystem, and it is ported.)**
@@ -464,7 +468,7 @@ conditions/flags/variables
 9, 12, 64, 94, 95, 125, 183); explicit no-ops (77, 239); group state (98, 99, 162, 163, 168, 194); spawn
 (113, 149, 150, 152, 153, 156, 206); partner links (179, 180, 228); chain links
 (29, 49 — with movement command 30, which moves the chain); alarm state (15, 27). The authoritative complete set is the owned set minus
-the 16 partial cases, not this illustrative grouping. (121 joined the conditions group with the floor-below batch; 192 joined it with the no-flat-floor batch; 206 joined the spawn group with the 206 batch; 217 joined the new stats-counters group with the stats slice; 243 joins the conditions group with the vision-condition batch. 81, 174 and 195 are partial until their input writers exist; 135 and 203 are partial until their remaining camera/snapshot consumers exist; 170, 219 and 220 joined the complete set when the Linux frontend constructed `ScriptRuntime` and bound the live `Player`.)
+the 13 partial cases in the table above, not this illustrative grouping. (121 joined the conditions group with the floor-below batch; 192 joined it with the no-flat-floor batch; 206 joined the spawn group with the 206 batch; 217 joined the new stats-counters group with the stats slice; 243 joins the conditions group with the vision-condition batch. 81, 174 and 195 are partial until their input writers exist; 135 and 203 are partial until their remaining camera/snapshot consumers exist; 170, 219 and 220 joined the complete set when the Linux frontend constructed `ScriptRuntime` and bound the live `Player`.)
 
 All three oracle `Linked` writers are now ported: `find_object` (245),
 `spawn_partner` (179), and `link_partners` (228). The partner-condition cases
