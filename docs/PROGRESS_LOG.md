@@ -11717,3 +11717,90 @@ have failed for a reason unrelated to the slice:
 
 Either one is a normal batch: pick the site, decide the spelling, re-pin. Neither is a
 min/max question.
+
+## Iteration 85 — batch 57: the shatter's velocity associates its speed the way the C# does, and a direction with three real components is what proves it
+
+**What landed.** `scripts/debris.cpp`'s two velocity lines now multiply the way the oracle
+does. The C# is `shot.Direction * shot.Speed * f` (`Debris.cs:210`) and
+`Vector3.Normalize(piece.Center - shot.Point) * shot.Speed * f` (`:219`) — C# `*` is
+left-associative, so both are `(v * Speed) * f`, **two** multiplies. The port wrote
+`vscale(v, shot.speed * f)`, **one** multiply by a pre-multiplied scalar. Different floats.
+
+**How it hid.** Every direction the batch-56 pin used was `(0,1,0)`. On an axis-aligned direction
+the two spellings agree exactly: the off-axes are `0 * Speed * f` either way and the on-axis is
+`1 * Speed * f` versus `1 * (Speed * f)`, and multiplying by 1.0 is exact. So the 18 `dir` rows
+that passed also passed *for the wrong reason*, and the radial gap this site was filed as was
+never a `vnormalize` problem at all. Measured: `vnormalize` (`a / sqrtf(sum)`) is **bit-exact
+against `Vector3.Normalize` on 16 of 16 probe vectors**, including the zero vector (NaN), a NaN
+component, an overflowing sum (Inf → 0), a denormal sum, and `-0` components. The reciprocal
+spelling `a * (1/len)` matches on only 9 of 16, and accumulating the sum in double on 12 of 16 —
+so the port's existing spelling is the oracle's and is now pinned.
+
+**The fix and its pin.** Three new groups in `DebrisGroupBoxPropagatesNaNLikeTheOracle` —
+`oblique` (direction `0.5,-1,0.25`), `oblique2` (`-1.25,0.75,3.5`) and `radial` (zero direction),
+18 rows of centre and velocity bits taken from the C# probe's own printed `SHATTER` rows.
+Against the pre-fix code the suite fails **27 assertions**, all of them 1 ULP, e.g.
+`oblique piece 0 velocity.x is 3F0045FE, the oracle's is 3F0045FF`; after the fix all pass.
+`ShatterCase` grew a `direction` field so the harness can drive a non-axis direction at all.
+
+**Mutants (built, run, reverted).**
+
+| # | mutant | result |
+|---|---|---|
+| N1 | both lines back to `v * (speed * f)` (the pre-fix code) | **KILLED** — `oblique piece 0 velocity.x is 3F0045FE, the oracle's is 3F0045FF` |
+| N2 | the directional line only | **KILLED** by `oblique` |
+| N3 | the radial line only | **KILLED** by `radial` — `radial piece 2 velocity.x is BF37FC75, the oracle's is BF37FC76` |
+| N4 | `vnormalize` via `a * (1/len)` | **KILLED** by `radial` |
+| N5 | the `center == point` branch reassociated as `((0,0,1)*speed)*f` | equivalent, and provably so |
+
+N5 is equivalent because `0.0f * 1.5f` is `+0.0` and `(1.0f * speed) * f` is `speed * f`, so it
+produces the same three bits — and it records something worth keeping: the `center == point`
+branch is **not** part of this divergence, because the C# writes `new Vector3(0f, 0f, shot.Speed * f)`
+there with the parentheses in that position, and the port already matched it.
+
+**Why the goldens could not have caught this.** `tests/scripts/golden/L5_t540_script.txt` prints
+piece velocities to 4 decimals (`v0.0000,-1.9138,-0.8676`); a 1-ULP difference is below that
+resolution, so every golden passed both before and after. This is the second batch running whose
+only evidence is probe-bit pins, and it is the argument for owner task (14) — a checked-in probe
+driver — getting more urgent, not less.
+
+**Codegen footprint (measured; not a performance claim).** devkitARM, the Makefile's own `ARCH`
+flags at `-O2`, `debris.o` `.text` **9673 → 9697 (+24 bytes)**; `nm -u` **identical**; `vcvt`
+count **15 before and 15 after**. The corpus is still empty, nothing here is HOT by §2, and
+**Old-3DS timing stays UNMEASURED**.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` (mode `hybrid`) on the shatter velocity and
+`Vector3.Normalize` returned the debris sources and batch 56's own note, which had filed this as
+"a radial normalize gap" — the framing was wrong and this batch corrected it. The Obsidian vault
+`/mnt/nas/Vaults/port-docs` was grepped for `Vector3.Normalize`, `vnormalize` and "association":
+nothing on this site. **Cognee MCP is not exposed as a tool in this Pi session and was not
+consulted** (owner task 12).
+
+**Gates, as run.**
+
+* `make -C tests/scripts` (after `clean`) — **exit 0**: `All VM unit tests match the oracle.` +
+  `All cases match the oracle.`, **480 PASS / 0 FAIL** (same count as batch 56 — the three new
+  groups went into an existing test case, and **no golden moved**).
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built
+  .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame unchanged, and
+  `reference.sha256` NOT regenerated — `gates_batch_integrity BATCH INTEGRITY: PASS`.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx`.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100] Built target mdk`.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7),
+  `tools/publish_frame.sh shatter-velocity-association`.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (probe, drivers,
+  mutants, logs): `/tmp/mdk-pi/b57`.
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the
+  Citro3D picture stays UNVERIFIED (P6)**.
+
+Frame `docs/frames/2026-11-04-shatter-velocity-association.png` + `.txt` — `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's,
+because level 3 frame 1 contains no shatter.
+
+**What is left in this family.** The piece **spin quaternion** is ≤ 2 ULP from
+`Quaternion.CreateFromYawPitchRoll` because `quatFromYawPitchRoll` is libm `sinf`/`cosf` under an
+`@vfp-exempt R6` pin; no golden prints spin, so nothing shows it, and it is the next candidate.
+The radial-normalize item batch 56 filed as a gap is **closed by this batch** and was never a
+normalize problem.

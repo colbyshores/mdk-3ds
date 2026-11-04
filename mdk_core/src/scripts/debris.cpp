@@ -250,13 +250,22 @@ void Debris::split(const Vec3 c[3], const Vec2 uv[3], int32_t material, const Sh
     // Slower farther from the point.
     float f = shot.far > 0.0f ? 1.0f - vlenSq(vsub(piece->center, shot.point)) / shot.far : 1.0f;
     bool zeroDir = shot.direction.x == 0.0f && shot.direction.y == 0.0f && shot.direction.z == 0.0f;
+    // The C# associates the speed LEFT: `shot.Direction * shot.Speed * f` is
+    // `(Direction * Speed) * f`, two multiplies, and the radial line below is spelled the
+    // same way. Folding it into `Direction * (Speed * f)` is one multiply and a different
+    // float: measured 1 ULP off on every piece of a group whose direction has three real
+    // components (probe rows `oblique`, pinned by DebrisGroupBoxPropagatesNaNLikeTheOracle).
+    // An axis-aligned direction hides the difference, because multiplying by 1.0 is exact,
+    // which is how it survived the first version of the pin. The `center == point` branch is
+    // NOT part of this: the C# writes `new Vector3(0f, 0f, shot.Speed * f)` there, with the
+    // parentheses in that position, and the port already matches it.
     if (!zeroDir) {
-        piece->velocity = vscale(shot.direction, shot.speed * f);
+        piece->velocity = vscale(vscale(shot.direction, shot.speed), f);
     } else if (piece->center.x == shot.point.x && piece->center.y == shot.point.y &&
                piece->center.z == shot.point.z) {
         piece->velocity = Vec3{0.0f, 0.0f, shot.speed * f};
     } else {
-        piece->velocity = vscale(vnormalize(vsub(piece->center, shot.point)), shot.speed * f);
+        piece->velocity = vscale(vscale(vnormalize(vsub(piece->center, shot.point)), shot.speed), f);
     }
     randomSpin(kShatterSpinDegrees * f, piece->spin);
     piece->ticks = (int32_t)rintf(shot.life * kTicksPerSecond);

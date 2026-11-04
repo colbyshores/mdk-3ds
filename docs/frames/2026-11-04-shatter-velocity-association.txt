@@ -1,0 +1,17 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-04T00:30:36Z at 5f712fa
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why this picture cannot move: this batch changes the association of one multiply in the debris
+shatter's velocity, and level 3 frame 1 contains no shatter at all. The C# writes
+`shot.Direction * shot.Speed * f`, which associates LEFT as `(Direction * Speed) * f`, and the
+radial line the same way; the port wrote `Direction * (Speed * f)`, one multiply by a
+pre-multiplied scalar, and those are different floats -- 1 ULP on every piece of a group whose
+direction has three real components. An axis-aligned direction hides it, because multiplying by
+1.0 is exact, and every direction the previous batch's pin used was (0,1,0), which is how the
+difference survived. There is NO frame evidence for this batch; the evidence is three new groups
+in DebrisGroupBoxPropagatesNaNLikeTheOracle (oblique, oblique2, radial -- 18 rows of velocity
+bits that are the C# probe's own printed SHATTER rows, mode shatter, transcript in
+docs/PROGRESS_LOG.md "Iteration 85"), which fail 27 assertions against the pre-fix code and pass
+after it, in the repo's own harness (make -C tests/scripts exit 2 before the fix). The goldens
+cannot see this at all: they print velocities to 4 decimals, and a 1-ULP difference is below
+that. Capture ran on DISPLAY=:99 (AGENTS.md P7).

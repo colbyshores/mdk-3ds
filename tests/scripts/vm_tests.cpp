@@ -4646,6 +4646,7 @@ struct ShatterCase {
     const char* label;
     std::vector<scripts::DebrisFacet> facets;
     Vec3 point;
+    Vec3 direction;
     int32_t pieces;
     const ShatterRow* rows;
     int32_t rowCount;
@@ -4800,16 +4801,55 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
                                             0x41400000u, zero, 3));
     bigNanFacets.push_back(nanCornerFacets[1]);
 
+    // The velocity is `(direction OR radial) * Speed * f`, and the C# associates that LEFT:
+    // `shot.Direction * shot.Speed * f` is `(d * Speed) * f`, two multiplies. The port had
+    // `d * (Speed * f)`, one multiply by a pre-multiplied scalar, and those are different
+    // floats. An axis-aligned direction hides it -- multiplying by 1.0 is exact, so the
+    // `dir` rows above pass under either spelling -- which is why these two groups exist.
+    // They are the same finite group with a direction that has three real components, so
+    // every axis of both the directional and the radial path is pinned to the oracle's bits.
+    const ShatterRow radialRows[] = {
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0xBDF0EBA9u, 0x3F8F0BECu, 0xBE70EBA9u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0xBE4E8B34u, 0x3F572656u, 0xBE09B222u}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0xBF37FC76u, 0x3F7E137Du, 0x3F0C2E10u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0xBEA3AF89u, 0x3FA8CD06u, 0x3E75874Du}},
+        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0xBF197899u, 0x3F3A7F1Du, 0x3ED1CF01u}},
+        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0xBF3EF419u, 0x3F4E1BCAu, 0x3F0B6D26u}},
+    };
+    const ShatterRow obliqueRows[] = {
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x3F0045FFu, 0xBF8045FFu, 0x3E8045FFu}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x3EC37456u, 0xBF437456u, 0x3E437456u}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x3F15F4C9u, 0xBF95F4C9u, 0x3E95F4C9u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x3F19F53Au, 0xBF99F53Au, 0x3E99F53Au}},
+        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0x3EE5D8FAu, 0xBF65D8FAu, 0x3E65D8FAu}},
+        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0x3F08E4A9u, 0xBF88E4A9u, 0x3E88E4A9u}},
+    };
+    const ShatterRow oblique2Rows[] = {
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0xBEC1CCA6u, 0x3E688F2Du, 0x3F87A8DAu}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0xBE93A636u, 0x3E312DDAu, 0x3F4EB57Fu}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0xBEE28EF3u, 0x3E87EF5Eu, 0x3F9E9743u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0xBEE89AB5u, 0x3E8B9006u, 0x3FA2D2B1u}},
+        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0xBEADA160u, 0x3E505B3Fu, 0x3F73151Eu}},
+        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0xBECED28Bu, 0x3E782FD9u, 0x3F90C694u}},
+    };
+    const Vec3 obliqueDir{0.5f, -1.0f, 0.25f};
+    const Vec3 oblique2Dir{-1.25f, 0.75f, 3.5f};
+    const Vec3 up{0.0f, 1.0f, 0.0f};
+    const Vec3 noDir{0.0f, 0.0f, 0.0f};
+
     const ShatterCase cases[] = {
-        //  label              facets                point      pieces  rows            count  every v.y
-        {"finite", finiteFacets, mid, 18, finiteRows, 18, nullptr},
-        {"nan_corner", nanCornerFacets, mid, 3, nanCornerRows, 3, &fullSpeed},
-        {"nan_high", nanHighFacets, mid, 3, nanHighRows, 3, &fullSpeed},
-        {"signed_zero", signedZeroFacets, mid, 2, signedZeroRows, 2, nullptr},
-        {"signed_zero_plain", signedZeroPlainFacets, mid, 2, signedZeroRows, 2, nullptr},
-        {"big_nan", bigNanFacets, mid, 129, bigNanRows, 4, &fullSpeed},
-        {"inside", finiteFacets, insidePoint, 18, insideRows, 4, nullptr},
-        {"near_max", finiteFacets, nearMaxPoint, 18, nearMaxRows, 4, nullptr},
+        //  label              facets                point     direction pieces rows          count every v.y
+        {"finite", finiteFacets, mid, up, 18, finiteRows, 18, nullptr},
+        {"nan_corner", nanCornerFacets, mid, up, 3, nanCornerRows, 3, &fullSpeed},
+        {"nan_high", nanHighFacets, mid, up, 3, nanHighRows, 3, &fullSpeed},
+        {"signed_zero", signedZeroFacets, mid, up, 2, signedZeroRows, 2, nullptr},
+        {"signed_zero_plain", signedZeroPlainFacets, mid, up, 2, signedZeroRows, 2, nullptr},
+        {"big_nan", bigNanFacets, mid, up, 129, bigNanRows, 4, &fullSpeed},
+        {"inside", finiteFacets, insidePoint, up, 18, insideRows, 4, nullptr},
+        {"near_max", finiteFacets, nearMaxPoint, up, 18, nearMaxRows, 4, nullptr},
+        {"oblique", finiteFacets, mid, obliqueDir, 18, obliqueRows, 6, nullptr},
+        {"oblique2", finiteFacets, mid, oblique2Dir, 18, oblique2Rows, 6, nullptr},
+        {"radial", finiteFacets, mid, noDir, 18, radialRows, 6, nullptr},
     };
 
     std::vector<std::string> names;
@@ -4824,8 +4864,7 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
         group.facets = c.facets;
         scripts::Debris debris(rng);
         debris.setCallbacks(&group, nullptr, nullptr, nullptr, shatterGroupFacets);
-        debris.shatter("TEST", 3, 2.5f, 4.0f, 1.5f, c.point,
-                       Vec3{0.0f, 1.0f, 0.0f});
+        debris.shatter("TEST", 3, 2.5f, 4.0f, 1.5f, c.point, c.direction);
         if ((int)debris.pieces().size() != c.pieces) {
             printf("  FAIL: %s made %d pieces, the oracle made %d\n", c.label,
                    (int)debris.pieces().size(), (int)c.pieces);
