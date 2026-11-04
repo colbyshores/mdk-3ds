@@ -56,6 +56,19 @@ measured or cited reason, and the batch that closes one should delete its entry.
   expression). The gap is port-vs-oracle on both targets, not host-vs-target, and
   the host goldens pin the host build. Start by
   deciding what `Vector3.Lerp` the 3DS can produce for free.
+- **The host builds do not pin `-ffp-contract`, so an FMA-capable host build would stop
+  describing the shipped 3DS object (review-29 F2).** Several records — `frame_blend.cpp`,
+  `mdk_3ds/Makefile`, the pinned spin — now say the two targets compute identical bits for a
+  twice-rounded expression. That is true **for the flags the builds actually use**: neither
+  `tests/scripts/Makefile` nor `mdk_linux/CMakeLists.txt` sets `-march` or `-ffp-contract`, and the
+  x86-64 baseline has no fused multiply-add, so nothing can contract. Measured on this machine:
+  the same source at `-O2 -march=native` (znver3) emits **4 `vfmadd*`**, at the default **0**. So a
+  host built with an FMA-capable `-march` would compute a third value and the goldens — the
+  fidelity ceiling — would describe that instead of the 3DS. The fix is one line in each host build
+  (`-ffp-contract=off`), and it is provably a no-op today for exactly the reason above; it is not in
+  this batch because touching the goldens harness's flags is a build change, not a record fix.
+  Note the dialect is NOT the lever: `-std=c++17`, `-std=gnu++17` and `-std=c++20` all report
+  `-ffp-contract=fast` on devkitARM 15.2 and host gcc 13.3.
 - **The 3DS build's libm trig leaf is unmeasured against the oracle, and it is the
   last unmeasured link in the pinned shatter spin.** Every `sinf`/`cosf` the port
   calls resolves on the target to **newlib's** `libm.a` (`arm-none-eabi-nm

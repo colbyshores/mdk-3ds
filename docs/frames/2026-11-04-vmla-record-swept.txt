@@ -1,0 +1,28 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-04T03:52:49Z at 93f1ac1
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture is byte-identical to its parent (md5 6769a137…, same as the last five): batch 60
+moves no code. It is the record-repair batch review-29 asked for — the inverted VMLA mechanism
+removed from the three PROGRESS_LOG entries that still called it "the correct mechanism" (F3), the
+false GNU-dialect cause removed from the Makefile and from Iteration 87 (F2), the "the two targets
+DO compute identical bits" claim scoped to the flags that were actually measured, and the FPSCR.FZ
+scope added (F5). The shipped `debris.o` is unchanged: `.text` 9717, four MACs in `randomSpin`,
+`vcvt` 15 — re-measured after the rebuild. There is NO frame evidence for this batch and none is
+claimed.
+
+What shows the change instead is measurement, not the picture. (1) `-ffp-contract` defaults to
+`fast` for `-std=c++17`, `-std=gnu++17` AND `-std=c++20` on devkitARM 15.2 and host gcc 13.3
+(`-Q --help=common`), so the dialect clause batch 59 wrote was false and no dialect makes the flag
+bite here. (2) The identical-bits claim is conditional and now says so: the same lerp source at
+`-O2 -march=native` (znver3) emits 4 `vfmadd*`, at the default 0, and neither host build sets
+`-march` — that is the only reason the host goldens describe the shipped object. Pinning
+`-ffp-contract=off` host-side is a named OPEN_ITEMS.md follow-up, not taken here because it is a
+build change, not a record fix. (3) The FZ scope was recomputed rather than copied: randomSpin's
+smallest non-zero half-angle is 7.457e-06 rad, its triple products ~4.15e-16, and a denormal would
+need the shatter falloff f < 3.05e-08 — not reachable in the shipped geometry, not proven
+impossible.
+
+Capture ran on DISPLAY=:99 (AGENTS.md §11 P7), lavapipe, 320x240, seed 1, frame 1. The `at 93f1ac1`
+above is the parent commit: publish_frame.sh records HEAD, and the frame must be published before
+the commit that carries it.

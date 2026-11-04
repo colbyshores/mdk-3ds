@@ -275,16 +275,28 @@ $(BUILD)/audio_device.o: CXXFLAGS += -fsingle-precision-constant
 # backend still selects VFPv2's VMLA.F32/VNMLS.F32 for that shape, and
 # -ffp-contract does not stop it: with the shipped flags debris.cpp.o is BYTE-
 # IDENTICAL under the default, -ffp-contract=off and -ffp-contract=fast (4 MACs
-# in Debris::randomSpin each way), and the default here is `fast`, not `off`,
-# because -std=gnu++17 is a GNU dialect (`arm-none-eabi-g++ -Q --help=common`,
-# devkitARM 15.2.0; the host gcc 13.3 defaults to `fast` too).
+# in Debris::randomSpin each way). The default here is `fast`, not `off`
+# (`arm-none-eabi-g++ -Q --help=common`, devkitARM 15.2.0; host gcc 13.3 too) --
+# and NOT because -std=gnu++17 is a GNU dialect, which an earlier draft of this
+# comment claimed: the dialect is not the cause, because -std=c++17, -std=gnu++17
+# and -std=c++20 all report `fast` on BOTH compilers (review-29 F2, re-measured).
+# Do not infer "ISO mode means off" from this file; there is no dialect that makes
+# the flag bite on this target.
 #
 # The reason the flag has nothing to gate is that VMLA.F32 is NOT a fused MAC:
 # VMLA/VMLS/VNMLA/VNMLS round their product to the destination format before
 # accumulating, and the single-rounded forms are the VFPv4 VFMA/VFMS this target
-# cannot encode. Forming a VMLA is therefore value-preserving, which is why the
-# flag does not mention it. Measured four ways on this tree with the shipped
-# flags (docs/PROGRESS_LOG.md, "Iteration 87"):
+# cannot encode. Forming a VMLA is therefore value-preserving -- for normal-range
+# intermediates, which is all this path reaches: the target runs with FPSCR.FZ set
+# (AGENTS.md R1, mdk_3ds/src/platform/vfp_fpscr.h) and the host does not, so a
+# DENORMAL product would flush on the 3DS and not here. randomSpin's half-angles
+# are (draw - 0x41c2)*degrees/2, so its triple products are ~4e-16 at falloff f=1
+# and only reach the 1.18e-38 flush bound if f < ~3e-8, i.e. if the shatter point
+# sits essentially exactly on the box's far corner: not reachable in the shipped
+# geometry, and not proven impossible for arbitrary geometry. A future caller with
+# subnormal-capable magnitudes would not inherit that. Which is why the flag does
+# not mention it. Measured four
+# ways on this tree with the shipped flags (docs/PROGRESS_LOG.md, "Iteration 87"):
 #   * `float t = a*b; return c + t;` -- twice-rounded by construction -- compiles
 #     to ONE vmla.f32 under -ffp-contract=off. A fused VMLA could not do that.
 #   * the same source at -mfpu=vfpv4 gives vmla.f32 under =off and vfma.f32 under
@@ -294,10 +306,19 @@ $(BUILD)/audio_device.o: CXXFLAGS += -fsingle-precision-constant
 #     frame_blend.cpp).
 #   * the shipped randomSpin disassembly's own operand grouping, replayed with a
 #     rounded product, reproduces 0/72 of the oracle's pinned spin components
-#     wrong; replayed as a fused MAC it gets 23/72 wrong on 12 of 18 pieces.
+#     wrong; replayed as a fused MAC it gets 23/72 wrong on 12 of 18 pieces. That
+#     last pair is a scratch model of the disassembly, not a committed harness, and
+#     review-29 F7 is right that it cannot be re-derived from this tree today.
 # So the shipped object's MACs compute the same twice-rounded value as the C
-# source and as the host harness: there is no VMLA rounding gap to measure and no
-# expression to "fix". What IS still unmeasured on Old-3DS hardware is the libm
+# source and as the host harness -- for the flags the two host build systems
+# actually use: neither tests/scripts/Makefile nor mdk_linux/CMakeLists.txt sets
+# -march, so the x86-64 baseline has no fused multiply-add to contract into
+# (measured: the same source at -march=native on this FMA-capable host gives 4
+# vfmadd*, at the default 0). A host build with an FMA-capable -march WOULD
+# contract and would stop describing this object; pinning -ffp-contract=off in the
+# host builds is the named follow-up in docs/OPEN_ITEMS.md. There is no VMLA
+# rounding gap to measure and no expression to "fix". What IS still unmeasured on
+# Old-3DS hardware is the libm
 # leaf -- the shipped sinf/cosf come from newlib, and only glibc's have been
 # checked bit-for-bit against MathF.Sin/MathF.Cos. Look there first if a capture
 # ever shows a divergence.

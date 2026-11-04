@@ -24,13 +24,21 @@ namespace frame_blend {
 // on the target, not a substitution. Recorded with this evidence in
 // docs/OPEN_ITEMS.md.
 //
-// The two targets DO compute identical bits for the spelling below: the 3DS build
-// compiles the expression to three `vmla.f32` (one per component) and VFPv2's
-// VMLA is NOT fused -- it rounds its product before accumulating -- so it lands on
-// the same twice-rounded value the host's multiply-then-add does. Measured in
-// mdk_3ds/Makefile and "Iteration 87": the shipped object is byte-identical under
-// -ffp-contract default/=off/=fast, an explicitly twice-rounded intermediate also
-// lowers to one vmla.f32, and only the VFPv4 VFMA form obeys that flag. So the
+// The two targets DO compute identical bits for the spelling below -- for the
+// flags both builds actually use: the 3DS build compiles the expression to three
+// `vmla.f32` (one per component) and VFPv2's VMLA is NOT fused -- it rounds its
+// product before accumulating -- so it lands on the same twice-rounded value the
+// host's multiply-then-add does. Measured in mdk_3ds/Makefile and "Iteration 87":
+// the shipped object is byte-identical under -ffp-contract default/=off/=fast, an
+// explicitly twice-rounded intermediate also lowers to one vmla.f32, and only the
+// VFPv4 VFMA form obeys that flag. TWO conditions on that sentence, both measured
+// (review-29 F2, F5): (1) it holds because neither host build sets -march, so the
+// x86-64 baseline has no FMA to contract into -- an -march=native host build on
+// this machine emits 4 `vfmadd*` for this function and would stop describing the
+// shipped object (the follow-up is to pin -ffp-contract=off host-side, named in
+// docs/OPEN_ITEMS.md); (2) the 3DS runs with FPSCR.FZ (AGENTS.md R1) and the host
+// does not, so a DENORMAL intermediate would flush on the target and not here --
+// unreachable for coordinates of this magnitude, but not proven impossible. So the
 // gap here is port-vs-oracle, not host-vs-target: `fmaf` would match the oracle on
 // BOTH targets and would cost a libm call per component on this one. There is no
 // flag to reach for; the expression is the only lever, and the host goldens pin

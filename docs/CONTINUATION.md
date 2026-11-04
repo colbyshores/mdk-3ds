@@ -1,28 +1,28 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 59 changes **no behaviour, no golden and no build flag**; it settles an ISA
-question three parts of the record had wrong. review-28 F2 said batch 58's `vmla.f32` sentence was
-inverted and that the shipped 3DS therefore diverges from the oracle on the pinned spin, and cited
-`mdk_3ds/Makefile:274-283` — which says VFPv2's VMLA is a **fused** MAC whose rounding is
-"UNMEASURED on Old-3DS hardware" — as ground truth. Both were measured on the shipped flags: the
-default is `-ffp-contract=fast` on devkitARM 15.2 **and** host gcc 13.3 (not `off`), `debris.cpp.o`
-is **byte-identical** at default/`=off`/`=fast`, an explicitly twice-rounded `float t=a*b; return
-c+t;` still lowers to ONE `vmla.f32` under `=off`, the same source at `-mfpu=vfpv4` becomes
-`vfma.f32` only under `=fast`, and `__builtin_fmaf` at `-mfpu=vfp` is `b fmaf`. **VMLA is unfused**,
-so the shipped object computes the oracle's bits: the shipped `randomSpin` grouping, replayed with
-a rounded product, gets **0/72** pinned components wrong, and the fused model gets **23/72 on
-12/18 pieces**. So the change is to the record — the Makefile comment, three source comments, and
-three numbers review-28 could not reproduce (M1 is **93** spin failures, not 90; M2 is **95**;
-the shipped-flags `.text` pair is **9697→9717**). Medium, not low: it rewrites claims in a build
-file and three comments that later batches act on, and it opens a named unmeasured target gap (the
-shipped `sinf`/`cosf` are **newlib**; only glibc's were checked against `MathF.Sin`/`Cos`). Nothing
-executable moved: the shipped objects are bit-for-bit what batch 58 shipped.
+Risk: medium — batch 60 changes **no behaviour, no golden and no build flag**; it finishes the
+record repair batch 59 started and dispositions review-29's one High. review-29 F3 was right that
+three `PROGRESS_LOG` entries still stated the disproven mechanism as "the correct mechanism"
+(`:388`, `:872-877`, `:926-938` — "VMLA.F32 is the fused, single-rounded MAC"), and F2 was right
+that batch 59 replaced one false cause with another: `-ffp-contract` defaults to `fast` on
+**both** compilers for `-std=c++17`, `-std=gnu++17` **and** `-std=c++20` (re-measured here with
+`-Q --help=common`), so the GNU-dialect clause in the Makefile and in Iteration 87 was false, and
+the "the two targets DO compute identical bits" sentence is conditional, not absolute — measured
+here: the same source at `-O2 -march=native` (znver3) emits **4 `vfmadd*`**, at the default **0**,
+and neither host build sets `-march`, which is the only reason the claim holds. All three
+statements are now scoped to what was measured, with the FPSCR.FZ scope review-29 F5 asked for, and
+the host-side `-ffp-contract=off` pin is a named `OPEN_ITEMS.md` follow-up. Medium, not low: it
+rewrites claims in a build file and in the log that later batches act on, and it records review-29
+**F1 as confirmed-and-owner-gated rather than rebutted** (the `--each-commit`-without-`--base`
+fail-open is reproduced again here: `PASS`, rc 0, over zero commits). Nothing executable moved.
 
-Last updated: 2026-11-04 (**batch 59** — VFPv2's VMLA is measured **unfused**, so the shipped 3DS
-spin is the oracle's bits after all, review-28 F2 is fixed at its source in `mdk_3ds/Makefile`, and
-F3/F4's numbers are reproduced and corrected). The record — the four codegen experiments, the
-shipped-grouping replay (0/72 unfused vs 23/72 fused), the M1/M2 re-runs and the shipped-flags
-`.text` pair — is `docs/PROGRESS_LOG.md`, "Iteration 87". Batch 58's record (the spin angle's two
+Last updated: 2026-11-04 (**batch 60** — review-29 remediated: the inverted VMLA mechanism is
+removed from every remaining place in the tree, the false GNU-dialect cause is gone, the
+identical-bits claim is scoped to the flags that were actually measured, and review-29 F1/F7 are
+recorded as confirmed-but-owner-gated / deferred-with-cause instead of "rebutted"). The record is
+`docs/PROGRESS_LOG.md`, "Iteration 88"; batch 59's (the four codegen experiments, the
+shipped-grouping replay 0/72 vs 23/72, the M1/M2 re-runs, the `.text` pair) is "Iteration 87".
+Batch 58's record (the spin angle's two
 roundings, the 56 new spin rows, the 8-mutant table, the `assoc` group that pins `LengthSquared`'
 left-assoc fold per review-27 F6) is "Iteration 86". Batch 57's record (the velocity's association, the 18 new rows, the
 `NORM`/`SHATTER` rows) is "Iteration 85"; batch 56's (the shatter group box's NaN, the 31-row pin)
@@ -120,10 +120,11 @@ UNMEASURED.**
 **Still owner-gated and still uncommitted in the tree** (so batches stage only their own paths and
 never `git add -A`): `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
 `tools/runner/gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`. All
-five are dirty right now (re-verified with `git status` in batch 58), the frame pair is byte-identical
-to the current pinned frame, and committing any of them without `--owner-approved` makes the loop's
-own post-batch integrity call halt at exit 6 — which is review-27 F1's failure scenario, and the
-reason a batch must not "helpfully" bank them (review-27 F4, F7).
+five are dirty right now (re-verified with `git status` in batch 60), the frame pair is byte-identical
+to the current pinned frame (md5 `6769a137…`, same as `2026-11-04-vmla-unfused.png`), and committing
+any of them without `--owner-approved` makes the loop's own post-batch integrity call halt at exit 6
+— which is review-27 F1's failure scenario, and the reason a batch must not "helpfully" bank them
+(review-27 F4, F7).
 
 **Owner-authorized tasks (cannot be done in a batch).** (1) Add `ralph-pi.sh`, `ralph.sh`,
 `docs/KILO_RALPH_LOOP_POLICY.md`, `.kilo/agent/*`, `ralph/validator.md` and `tests/hooks/pre-commit`
@@ -131,7 +132,12 @@ to the `PROTECTED` set of `tools/runner/gates_batch_integrity.py` — that file 
 `PROTECTED` list, so only the owner may widen it (review-1 F1, review-2 A/E, review-9 R9-1/R9-2,
 review-10 F1/F2, review-17 R34-1). Same task: the uncommitted `--each-commit` recovery moves
 acceptance from one frame per **iteration** to one per **commit**, which needs an owner sign-off
-line, and `--each-commit` belongs out of `required` until then (review-3 F4/F5). Same task also now
+line, and `--each-commit` belongs out of `required` until then (review-3 F4/F5) — **note the
+contradiction review-29 F1 caught**: the uncommitted gate diff *adds* `"--each-commit"` to the
+`required` markers for `ralph-pi.sh` (`gates_batch_integrity.py:182`), so landing that diff as it
+stands makes an unsigned policy change a gate requirement. The owner must either drop the marker or
+write the sign-off line; a batch may not touch either file, so this note is the record. Same task
+also now
 carries review-27 **F2** (`--each-commit` with no `--base` prints `BATCH INTEGRITY: PASS` over zero
 commits — reproduced) and **F3** (the per-commit path is only reached after an aggregate failure,
 while `ralph-pi.sh`'s header states a per-commit rule and the two frame READMEs still say "per
@@ -222,10 +228,11 @@ rows.
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 59)
+## Verified on this tree (batch 60)
 
-Narrative, the four codegen experiments, the shipped-grouping replay, the M1/M2 re-runs and the
-corrected `.text` pair: `docs/PROGRESS_LOG.md`, "Iteration 87". Batch 58's (the spin angle's two
+Narrative, the review-29 disposition table, the dialect re-measurement and the `-march` FMA
+measurement: `docs/PROGRESS_LOG.md`, "Iteration 88". Batch 59's (the four codegen experiments, the
+shipped-grouping replay, the M1/M2 re-runs and the corrected `.text` pair) is "Iteration 87".Batch 58's (the spin angle's two
 roundings, the 56 spin rows, the 8-mutant table, the `SPIN`/`ASSOC` probe rows) is "Iteration 86";
 batch 57's (the velocity's association, the `NORM`/`SHATTER` rows) is "Iteration 85"; batch 56's
 (the group box's NaN, the 31-row pin, the ±0-unobservable measurement) is "Iteration 84"; batches
@@ -233,7 +240,7 @@ batch 57's (the velocity's association, the `NORM`/`SHATTER` rows) is "Iteration
 `CameraRoll` and the `math_lut.h` negative-angle measurement, the six clamp pins, the fly-arrival
 pin, one `accelerate()`) are "Iteration 78-83".
 `make -C tests/scripts` (after `clean`) **exit 0** (`All VM unit tests match the oracle.` + `All
-cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 58, and **no golden moved**, which
+cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 59, and **no golden moved**, which
 is the point: this batch may not change any number the oracle owns); `bash tools/check.sh` **exit 0**
 (`CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
 `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity` both targets
@@ -246,77 +253,70 @@ shipped `debris.o` still reads `.text` 9717 with the same four MACs in `randomSp
 nothing executable moved.
 
 **VFPv2's VMLA is UNFUSED, and that is the fact the record had backwards.** `mdk_3ds/Makefile`
-claimed VMLA.F32 was a fused single-rounded MAC whose rounding was "UNMEASURED on Old-3DS
+used to claim VMLA.F32 was a fused single-rounded MAC whose rounding was "UNMEASURED on Old-3DS
 hardware", and review-28 F2 used that to conclude the shipped 3DS spin diverges from the oracle.
 Measured on the shipped flags: the default is `-ffp-contract=fast` on devkitARM 15.2 **and** host
-gcc 13.3 (`-Q --help=common`), `debris.cpp.o` is **byte-identical** at default/`=off`/`=fast`, an
-explicitly twice-rounded `float t=a*b; return c+t;` still lowers to ONE `vmla.f32` under `=off`,
-the same source at `-mfpu=vfpv4` becomes `vfma.f32` only under `=fast`, and `__builtin_fmaf` at
-`-mfpu=vfp` is `b fmaf`. VMLA rounds its product, so forming it is value-preserving and the flag
-has nothing to gate. Replaying the shipped `randomSpin` grouping with a rounded product gets **0
-of 72** pinned components wrong; the fused model gets **23 of 72 on 12 of 18 pieces**. Do NOT
+gcc 13.3 (`-Q --help=common`) — and **not** because of the GNU dialect, which batch 59 then got
+wrong and review-29 F2 corrected: `-std=c++17`, `-std=gnu++17` and `-std=c++20` all report `fast`
+on both compilers, so no dialect makes the flag bite here. `debris.cpp.o` is **byte-identical** at
+default/`=off`/`=fast`, an explicitly twice-rounded `float t=a*b; return c+t;` still lowers to ONE
+`vmla.f32` under `=off`, the same source at `-mfpu=vfpv4` becomes `vfma.f32` only under `=fast`, and
+`__builtin_fmaf` at `-mfpu=vfp` is `b fmaf`. VMLA rounds its product, so forming it is
+value-preserving **for normal-range intermediates** (the target runs FPSCR.FZ per R1, the host does
+not — a denormal product would flush on the target; unreachable at `randomSpin`'s magnitudes,
+review-29 F5) and the flag has nothing to gate. Replaying the shipped `randomSpin` grouping with a
+rounded product gets **0 of 72** pinned components wrong; the fused model gets **23 of 72 on 12 of
+18 pieces** — a scratch model, not a committed harness, and review-29 F7 is right that it cannot be
+re-derived from this tree today. Do NOT
 "fix" the four expressions in `quatFromYawPitchRoll` because they lower to `vmla`/`vnmls`, and do
 NOT resurrect "the two targets disagree" for `frame_blend.cpp`'s `lerp`: both targets twice-round
-it identically, so that gap is port-vs-oracle on both. **What IS unmeasured on the target is the
+it identically **for the flags both builds use** — neither host build sets `-march`, and the
+x86-64 baseline has no FMA (measured: `-march=native` on this host emits 4 `vfmadd*` for that
+function, the default 0), so that gap is port-vs-oracle on both. Pinning `-ffp-contract=off`
+host-side is the named `OPEN_ITEMS.md` follow-up. **What IS unmeasured on the target is the
 libm leaf** — the shipped `sinf`/`cosf` come from newlib and only glibc's were checked against
 `MathF.Sin`/`MathF.Cos`; named in `docs/OPEN_ITEMS.md`, unclosable here (no newlib sources, no
 `qemu-arm`), and the first place to look if a capture ever shows a trig divergence.
 
-**The debris shatter is oracle-exact end to end — host harness and shipped object — and the spin is
-what proves it.**
-`degreesToRadians` is `(degrees * kPi) / 180.0f`, because .NET's `float.DegreesToRadians` is
-`degrees * (float)Math.PI / 180f` — two roundings. The single-rounding factor spelling is 1 ULP low
-in magnitude on 8 of the first 12 shatter draws and reproduces 4/12 of the oracle's angles; the
-two-rounding spelling reproduces 12/12, and the port's spin then matches the oracle's `s=` bits on
-**all 54 pieces** of the finite group's dir/radial/oblique variants. The pre-fix code fails **93
-spin assertions and 0 velocity assertions** (re-measured in batch 59; the published 90 was a
-transcription error, and M2's is 95, not 93), which is the whole lesson: no golden printed spin, so
-a 1-ULP angle error was invisible, and `w` hid it because a 1-ULP angle move is ~0.3 ULP of a
-near-1 cosine product while it moves `x`/`y`/`z` by 1-2 ULP. The trig and the quaternion were both
-ruled out by measurement first (glibc `sinf`/`cosf` are bit-identical to `MathF.Sin`/`MathF.Cos` on
-these angles; the port's `quatFromYawPitchRoll` product shape scores 17/17 against .NET), so this
-is neither a libm gap nor a library problem. Measured footprint, not a perf claim, with the command
-stated (`arm-none-eabi-size mdk_3ds/build/debris.o | tail -1`): `.text` **9697 → 9717** (+20) under
-the shipped flags — the earlier 9667/9687 pair came from a scratch compile with other includes, and
-`size -A`'s summed `.text.*` reads 9484/9516 for the same objects — `nm -u` identical (no new libm
-symbol — the divide is a hardware `vdiv.f32`, visible in the devkitARM object), `vcvt` 15/15.
-
-**The velocity association and the normalize, settled in batch 57 and still true:**
-`Debris.cs:210,219` write `Direction * Speed * f`, which C# associates LEFT as `(v * Speed) * f`,
-and the port writes that; do not "tidy" it into a pre-multiplied scalar, because an axis-aligned
-direction hides the difference (`1 * x` is exact) and only `oblique`/`oblique2`/`radial` can see it.
-And `vnormalize`'s `a / sqrtf(sum)` is **bit-exact against `Vector3.Normalize` on 16/16 probe
-vectors** including zero (NaN), a NaN component, an overflowing sum (Inf → 0), a denormal sum and
-`-0` components — the reciprocal spelling `a * (1/len)` matches only 9/16, so do not "optimise"
-the division into a reciprocal-multiply.
+**The debris shatter is oracle-exact end to end — host harness and shipped object.** Settled facts
+a later batch must not undo, each pinned by `DebrisGroupBoxPropagatesNaNLikeTheOracle`, whose
+expectations are the C# probe's own printed `SHATTER` rows:
+- `degreesToRadians` is `(degrees * kPi) / 180.0f`, because .NET's `float.DegreesToRadians` is
+  `degrees * (float)Math.PI / 180f` — **two** roundings. The single-rounding factor spelling is 1 ULP
+  low on 8 of the first 12 angles and reproduces only 4/12; the port's reproduces 12/12 and then
+  matches the oracle's `s=` bits on all 54 pieces. Do not "tidy" it into a precomputed `pi/180`
+  factor or a reciprocal divide: both are mutants the pin kills (M1/M3/M4), and the pre-fix code
+  fails **93** spin assertions and 0 velocity ones — no golden prints spin, which is why a 1-ULP
+  angle error sat here for dozens of batches, and `w` hid it because a 1-ULP angle move is ~0.3 ULP
+  of a near-1 cosine product while `x`/`y`/`z` move 1-2 ULP. The trig and the quaternion were both
+  ruled out by measurement first (glibc `sinf`/`cosf` are bit-identical to `MathF.Sin`/`MathF.Cos`
+  on these angles; the port's `quatFromYawPitchRoll` product shape scores 17/17 against .NET).
+- `Debris.cs:210,219` write `Direction * Speed * f`, which C# associates LEFT as `(v * Speed) * f`,
+  and the port writes that; do not "tidy" it into a pre-multiplied scalar, because an axis-aligned
+  direction hides the difference (`1 * x` is exact) and only `oblique`/`oblique2`/`radial` can see it.
+- `vnormalize`'s `a / sqrtf(sum)` is bit-exact against `Vector3.Normalize` on 16/16 probe vectors
+  including zero (NaN), a NaN component, an overflowing sum (Inf → 0), a denormal sum and `-0`
+  components; the reciprocal spelling `a * (1/len)` matches only 9/16, so do not "optimise" it.
+- `vdot`'s fold is LEFT-assoc, pinned by the `assoc` group (3DAF1718, not 3DAF1719 — review-27 F6).
+- Measured footprint, not a perf claim (`arm-none-eabi-size mdk_3ds/build/debris.o | tail -1`):
+  `.text` **9697 → 9717** under the shipped flags, `vcvt` 15/15, `nm -u` identical (the divide is a
+  hardware `vdiv.f32`).
 
 **There is no `fminf`/`fmaxf` left anywhere in the port** (batch 56): not in `mdk_core/src`,
 `mdk_3ds/src` or `mdk_linux/src`, and `arm-none-eabi-nm mdk_3ds/mdk.elf | grep -iE 'fmin|fmax'` is
 empty. Every `MathF.Min`/`MathF.Max` in the oracle goes through the ONE pair in
-`util/math_minmax.h`, which is NaN-propagating, -0.0-aware, and reads the sign off the bits with
-an **integer** compare. Do not put a `fminf` back: its ±0 tie order is implementation-defined
-(glibc 2.39 returns its **second** operand, matching .NET in one argument order and not the
-other; the same source with visible constants folds to a **third** answer at `-O2`). And the
-group box is oracle-exact: `DebrisGroupBoxPropagatesNaNLikeTheOracle` pins seven groups, including
-`inside`/`near_max`, which exist to pin which side of the box each axis reads its far corner from,
-and `assoc`, which pins that `Vector3.LengthSquared` folds its squares left-assoc (3DAF1718, not
-3DAF1719 — review-27 F6).
+`util/math_minmax.h`, which is NaN-propagating, -0.0-aware, and reads the sign off the bits with an
+**integer** compare. Do not put a `fminf` back: its ±0 tie order is implementation-defined
+(glibc 2.39 returns its **second** operand, matching .NET in one argument order and not the other;
+the same source with visible constants folds to a **third** answer at `-O2`). The box itself is
+pinned from both ends by `inside`/`near_max`, which pin which side each axis reads its far corner
+from.
 
 Still NOT pinned by any golden: a shipped frontend's mixer wiring (no frontend has an audio
 device, none draws `Knocked`), the fall-out variant of death, the firing step frames, the sprite
 frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white flash's
 other writers, and feet finer than 1/64 unit (owner task 15). **The piece spin quaternion is no
-longer one of them** (batch 58): it was 0-2 ULP because `degreesToRadians` rounded once where
-`float.DegreesToRadians` rounds twice (`degrees * (float)Math.PI / 180f`), and the whole
-`DebrisGroupBoxPropagatesNaNLikeTheOracle` table now carries the oracle's `s=` bits — 56 pieces —
-plus an `assoc` group that pins `Vector3.LengthSquared`'s left-assoc fold (review-27 F6). The
-earlier "it must be the quaternion's own products, because `w` is exact" reading was wrong in both
-halves: `w` being exact is what an **input** difference looks like (a 1-ULP angle move is ~0.3 ULP
-of a near-1 cosine product), and the port's `quatFromYawPitchRoll` shape is the runtime's own —
-all four candidate spellings of its products scored 17/17, 2/17, 4/17, 17/17 against .NET, and the
-port's is a 17/17. Do not "tidy" `degreesToRadians` back into a single multiply by a precomputed
-`pi/180` factor, and do not turn its `/ 180.0f` into a reciprocal multiply: both are mutants that
-the pin now kills (M1, M3, M4). **The next non-owner candidate is the follow camera's blend
+longer one of them** (batch 58). **The next non-owner candidate is the follow camera's blend **The next non-owner candidate is the follow camera's blend
 (`FollowCamera.Blend` over its `Aim` triple, which needs the high-refresh frame blend `FrameBlend`'s
 Kurt half already carries**); then its sniper scope and top-down view. Owner candidates unchanged:
 `math_lut.h`'s
@@ -330,7 +330,7 @@ accept an explicit `visual delta: none, justification: …` field; both live in 
 tooling, so a batch can only keep writing the honest sidecar narrative (this one does). **No emulator run and no Old-3DS hardware run:
 Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
 windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-04-vmla-unfused.png` + `.txt`.
+`docs/frames/2026-11-04-vmla-record-swept.png` + `.txt`.
 
 ## Standing open items
 
