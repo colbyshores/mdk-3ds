@@ -1,0 +1,34 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-04T02:53:15Z at 597547e
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture is byte-identical to its parent (sha256 6646adf1dae3...): batch 59 changes no
+behaviour at all. It rewrites comments in mdk_3ds/Makefile, debris.cpp and frame_blend.cpp, and the
+three docs. The shipped objects are bit-for-bit what batch 58 shipped, so there is NO frame evidence
+for this batch and none is claimed -- the capture is published because the frame rule is per commit,
+and it says so here.
+
+What the batch actually settled, and what shows it instead: the record claimed two opposite things
+about VFPv2's VMLA. mdk_3ds/Makefile said VMLA.F32 is a FUSED single-rounded MAC whose rounding is
+"UNMEASURED on Old-3DS hardware"; batch 58's entry said the emitted vmla.f32 is not a contraction
+because both builds default to -ffp-contract=off. Measured on the shipped flags: the default is
+`fast` on devkitARM 15.2 and host gcc 13.3 (`-Q --help=common`); debris.cpp.o is byte-identical at
+default/=off/=fast; `float t=a*b; return c+t;` -- twice-rounded by construction -- still lowers to
+ONE vmla.f32 under =off; the same source at -mfpu=vfpv4 becomes vfma.f32 only under =fast; and
+__builtin_fmaf at -mfpu=vfp is `b fmaf`. VMLA is unfused, so the shipped object computes the
+source's twice-rounded value. The evidence that closes it is the shipped randomSpin disassembly's
+own operand grouping replayed against the 18 pinned finite pieces: with the product rounded it gets
+0 of 72 components wrong, and as a fused MAC it gets 23 of 72 wrong on 12 of 18 pieces. The spin
+pin therefore describes the shipped 3DS build, not only the host harness.
+
+Also corrected here, because review-28 could not reproduce them: M1 (the pre-fix single-rounding
+factor) fails 93 spin assertions, not 90, and M2 fails 95, not 93 -- both re-run in this repo's own
+harness, spin-only and 0 velocity either way; and the .text pair, measured with
+`arm-none-eabi-size mdk_3ds/build/debris.o | tail -1` under the shipped flags, is 9697 -> 9717.
+
+What remains unmeasured on the target, and is now a named item: the shipped sinf/cosf come from
+newlib, and only glibc's were checked bit-for-bit against MathF.Sin/MathF.Cos. No emulator run and
+no Old-3DS hardware run: Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED
+(P6). Capture ran on DISPLAY=:99 (AGENTS.md P7), lavapipe, 320x240, seed 1, frame 1. The `at
+597547e` above is the parent commit: publish_frame.sh records HEAD, and the frame must be published
+before the commit that carries it.

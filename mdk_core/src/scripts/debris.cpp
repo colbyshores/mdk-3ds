@@ -82,6 +82,18 @@ float degreesToRadians(float degrees) {
  * System.Numerics values, and a LUT would change the spin orientation the
  * renderer shows. measured n/a (corpus empty). Verified 2026-10-25. */
 void quatFromYawPitchRoll(float yaw, float pitch, float roll, float out[4]) {
+    // Do not "fix" these four expressions because the shipped object lowers them to
+    // vmla.f32/vnmls.f32. VFPv2's VMLA is NOT fused -- it rounds its product before
+    // accumulating -- so those MACs compute exactly the twice-rounded value
+    // the source says, and -ffp-contract cannot change that (measured four ways in
+    // mdk_3ds/Makefile and "Iteration 87"): the shipped object is byte-identical
+    // under the default, =off and =fast, an explicitly twice-rounded intermediate
+    // also lowers to one vmla.f32, and the same source at -mfpu=vfpv4 becomes
+    // vfma.f32 only under =fast. Replaying the shipped grouping with a rounded
+    // product reproduces all 72 of the oracle's pinned spin components; replaying
+    // it as a fused MAC gets 23 of 72 wrong. What is NOT measured on the target is
+    // the libm leaf above: the pin's "sinf/cosf match" claim was measured against
+    // glibc, and the shipped link resolves them from newlib (docs/OPEN_ITEMS.md).
     float sr = sinf(roll * 0.5f), cr = cosf(roll * 0.5f);
     float sp = sinf(pitch * 0.5f), cp = cosf(pitch * 0.5f);
     float sy = sinf(yaw * 0.5f), cy = cosf(yaw * 0.5f);

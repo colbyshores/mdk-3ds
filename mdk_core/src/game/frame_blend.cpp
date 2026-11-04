@@ -19,19 +19,22 @@ namespace frame_blend {
 // not exist while t1, t2 and t1200 do. It is NOT fixed here because the fix is not
 // one line: `fmaf` is what matches, and devkitARM lowers `fmaf` to a `bl fmaf`
 // libm call at -march=armv6k -mfpu=vfp (three calls with stack spills, in a path
-// that runs per object per frame), while this spelling lowers to one contracted
-// `vmla.f32` per component -- so the replacement is a codegen decision to measure
+// that runs per object per frame), while this spelling lowers to one `vmla.f32`
+// per component -- so the replacement is a codegen decision to measure
 // on the target, not a substitution. Recorded with this evidence in
 // docs/OPEN_ITEMS.md.
 //
-// The two targets do not compute identical bits today either way: the 3DS build
-// compiles the expression below to three `vmla.f32` (one per component), because
-// the ARM backend contracts a multiply-add to VFPv2's VMLA regardless of
-// -ffp-contract -- mdk_3ds/Makefile measures the shipped object byte-identical
-// under the default, =off and =fast, because only the VFPv4 VFMA form obeys that
-// flag and this is VFPv2. So there is no flag to reach for here; the expression is
-// the only lever. The host goldens therefore pin the host build. Same caveat as
-// every other float golden in this repository.
+// The two targets DO compute identical bits for the spelling below: the 3DS build
+// compiles the expression to three `vmla.f32` (one per component) and VFPv2's
+// VMLA is NOT fused -- it rounds its product before accumulating -- so it lands on
+// the same twice-rounded value the host's multiply-then-add does. Measured in
+// mdk_3ds/Makefile and "Iteration 87": the shipped object is byte-identical under
+// -ffp-contract default/=off/=fast, an explicitly twice-rounded intermediate also
+// lowers to one vmla.f32, and only the VFPv4 VFMA form obeys that flag. So the
+// gap here is port-vs-oracle, not host-vs-target: `fmaf` would match the oracle on
+// BOTH targets and would cost a libm call per component on this one. There is no
+// flag to reach for; the expression is the only lever, and the host goldens pin
+// the host build. Same caveat as every other float golden in this repository.
 Vec3 lerp(Vec3 from, Vec3 to, float t)
 {
     if (t >= 1.0f) {

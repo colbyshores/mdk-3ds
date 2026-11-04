@@ -269,19 +269,38 @@ $(BUILD)/bsp.o:        CXXFLAGS += -fsingle-precision-constant
 $(BUILD)/script_vm.o:  CXXFLAGS += -fsingle-precision-constant
 $(BUILD)/audio_device.o: CXXFLAGS += -fsingle-precision-constant
 
-# FP contraction -- deliberately NOT disabled here.
+# FP contraction -- deliberately NOT disabled here, and it would change nothing.
 #
-# C# never contracts a multiply-add, so `a + b*c` rounds twice there. VFPv2's
-# VMLA.F32 is nevertheless a fused multiply-accumulate (single-rounded), and
-# GCC's ARM backend contracts to it even under -ffp-contract=off; only the
-# VFPv4 VFMA form is gated by that flag. Measured on this tree with the
-# shipped flags: script_runtime.cpp compiles to a byte-identical object under
-# the default, -ffp-contract=off and -ffp-contract=fast (161 vmla/vmls, 0
-# vfma each). The flag therefore changes nothing on this target: the shipped
-# object already contains contracted VMLA MACs. Whether ARM11 VMLA's rounding
-# differs from the C# twice-rounded expression remains UNMEASURED on Old-3DS
-# hardware. If a capture ever shows a divergence, fix the expression, not
-# this flag.
+# C# never contracts a multiply-add, so `a + b*c` rounds twice there. GCC's ARM
+# backend still selects VFPv2's VMLA.F32/VNMLS.F32 for that shape, and
+# -ffp-contract does not stop it: with the shipped flags debris.cpp.o is BYTE-
+# IDENTICAL under the default, -ffp-contract=off and -ffp-contract=fast (4 MACs
+# in Debris::randomSpin each way), and the default here is `fast`, not `off`,
+# because -std=gnu++17 is a GNU dialect (`arm-none-eabi-g++ -Q --help=common`,
+# devkitARM 15.2.0; the host gcc 13.3 defaults to `fast` too).
+#
+# The reason the flag has nothing to gate is that VMLA.F32 is NOT a fused MAC:
+# VMLA/VMLS/VNMLA/VNMLS round their product to the destination format before
+# accumulating, and the single-rounded forms are the VFPv4 VFMA/VFMS this target
+# cannot encode. Forming a VMLA is therefore value-preserving, which is why the
+# flag does not mention it. Measured four ways on this tree with the shipped
+# flags (docs/PROGRESS_LOG.md, "Iteration 87"):
+#   * `float t = a*b; return c + t;` -- twice-rounded by construction -- compiles
+#     to ONE vmla.f32 under -ffp-contract=off. A fused VMLA could not do that.
+#   * the same source at -mfpu=vfpv4 gives vmla.f32 under =off and vfma.f32 under
+#     =fast: the flag gates the FUSED form, and only the fused form.
+#   * __builtin_fmaf at -mfpu=vfp is `b fmaf`, a libm call, because VFPv2 has no
+#     fused instruction to use (the fact docs/OPEN_ITEMS.md records for
+#     frame_blend.cpp).
+#   * the shipped randomSpin disassembly's own operand grouping, replayed with a
+#     rounded product, reproduces 0/72 of the oracle's pinned spin components
+#     wrong; replayed as a fused MAC it gets 23/72 wrong on 12 of 18 pieces.
+# So the shipped object's MACs compute the same twice-rounded value as the C
+# source and as the host harness: there is no VMLA rounding gap to measure and no
+# expression to "fix". What IS still unmeasured on Old-3DS hardware is the libm
+# leaf -- the shipped sinf/cosf come from newlib, and only glibc's have been
+# checked bit-for-bit against MathF.Sin/MathF.Cos. Look there first if a capture
+# ever shows a divergence.
 
 clean:
 	@echo "CLEAN"

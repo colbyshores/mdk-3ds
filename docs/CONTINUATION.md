@@ -1,27 +1,30 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 58 changes shipped arithmetic: `degreesToRadians` in `debris.cpp` was
-`degrees * (float)(pi/180)` and .NET's `float.DegreesToRadians` is `degrees * (float)Math.PI /
-180f` — two roundings, not one. It moves the **debris piece spin quaternion** (and the spark's,
-same helper) by 1-2 ULP on x/y/z, and it is invisible to every golden because none of them printed
-spin: the pre-fix code fails **90 spin assertions and 0 velocity assertions** on the pin this batch
-adds. Measured, not guessed: the trig was ruled out first (glibc `sinf`/`cosf` are bit-identical to
-`MathF.Sin`/`MathF.Cos` on the shatter's own angles) and so was the quaternion's own arithmetic
-(feeding the port's angles to `Quaternion.CreateFromYawPitchRoll` reproduces the **port's** bits);
-what was left is that the port's angle is 1 ULP low in magnitude on 8 of the first 12 draws. After
-the fix the port's spin matches the oracle's `s=` bits on all 54 pieces of three direction
-variants. No golden moved, the pinned frame is byte-identical (`sha 6646adf1dae3…`), the ARM object
-grows 20 bytes with `nm -u` unchanged and `vcvt` 15→15, and 8 mutants were built — 6 killed, 2
-provably equivalent with the proof written down. Medium rather than low because it is shipped
-arithmetic in a path that fires in level 5 and it changes a drawn quantity (piece orientation),
-but every finite input moves by at most two representable steps and in the oracle's direction.
+Risk: medium — batch 59 changes **no behaviour, no golden and no build flag**; it settles an ISA
+question three parts of the record had wrong. review-28 F2 said batch 58's `vmla.f32` sentence was
+inverted and that the shipped 3DS therefore diverges from the oracle on the pinned spin, and cited
+`mdk_3ds/Makefile:274-283` — which says VFPv2's VMLA is a **fused** MAC whose rounding is
+"UNMEASURED on Old-3DS hardware" — as ground truth. Both were measured on the shipped flags: the
+default is `-ffp-contract=fast` on devkitARM 15.2 **and** host gcc 13.3 (not `off`), `debris.cpp.o`
+is **byte-identical** at default/`=off`/`=fast`, an explicitly twice-rounded `float t=a*b; return
+c+t;` still lowers to ONE `vmla.f32` under `=off`, the same source at `-mfpu=vfpv4` becomes
+`vfma.f32` only under `=fast`, and `__builtin_fmaf` at `-mfpu=vfp` is `b fmaf`. **VMLA is unfused**,
+so the shipped object computes the oracle's bits: the shipped `randomSpin` grouping, replayed with
+a rounded product, gets **0/72** pinned components wrong, and the fused model gets **23/72 on
+12/18 pieces**. So the change is to the record — the Makefile comment, three source comments, and
+three numbers review-28 could not reproduce (M1 is **93** spin failures, not 90; M2 is **95**;
+the shipped-flags `.text` pair is **9697→9717**). Medium, not low: it rewrites claims in a build
+file and three comments that later batches act on, and it opens a named unmeasured target gap (the
+shipped `sinf`/`cosf` are **newlib**; only glibc's were checked against `MathF.Sin`/`Cos`). Nothing
+executable moved: the shipped objects are bit-for-bit what batch 58 shipped.
 
-Last updated: 2026-11-04 (**batch 58** — the shatter's spin angle rounds the way .NET rounds, the
-spin quaternion is bit-exact and pinned for the first time, and review-27 F6's `LengthSquared`
-sum order is measured left-assoc and pinned by a new `assoc` group). The record — the instrumented
-probe's `SPIN`/`ASSOC` rows, the 56 new spin rows, the 8-mutant table with its two equivalents and
-the reasons, and the devkitARM `.text`/`nm -u`/`vcvt` before-and-after — is `docs/PROGRESS_LOG.md`,
-"Iteration 86". Batch 57's record (the velocity's association, the 18 new rows, the
+Last updated: 2026-11-04 (**batch 59** — VFPv2's VMLA is measured **unfused**, so the shipped 3DS
+spin is the oracle's bits after all, review-28 F2 is fixed at its source in `mdk_3ds/Makefile`, and
+F3/F4's numbers are reproduced and corrected). The record — the four codegen experiments, the
+shipped-grouping replay (0/72 unfused vs 23/72 fused), the M1/M2 re-runs and the shipped-flags
+`.text` pair — is `docs/PROGRESS_LOG.md`, "Iteration 87". Batch 58's record (the spin angle's two
+roundings, the 56 new spin rows, the 8-mutant table, the `assoc` group that pins `LengthSquared`'
+left-assoc fold per review-27 F6) is "Iteration 86". Batch 57's record (the velocity's association, the 18 new rows, the
 `NORM`/`SHATTER` rows) is "Iteration 85"; batch 56's (the shatter group box's NaN, the 31-row pin)
 is "Iteration 84"; batch 55's (one `math_minmax.h`, the sign-of-zero tie arm) is "Iteration 83";
 batch 54's (the last four `script_runtime.cpp` clamps, the `nanclamp` probe mode and four pins) is
@@ -219,43 +222,64 @@ rows.
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 58)
+## Verified on this tree (batch 59)
 
-Narrative, the instrumented probe's `SPIN`/`ASSOC` rows, the 56 new spin rows, the 8-mutant table
-with its two equivalents and the reasons, and the devkitARM `.text`/`nm -u`/`vcvt`
-before-and-after: `docs/PROGRESS_LOG.md`, "Iteration 86". Batch 57's (the velocity's association,
-the `NORM`/`SHATTER` rows, the 5-mutant table) is "Iteration 85"; batch 56's (the shatter group
-box's NaN, the 31-row pin, the 10-mutant table, the ±0-unobservable measurement) is "Iteration
-84"; batch 55's (one `math_minmax.h`, the `MINMAX` rows, the sign-of-zero tie arm) is "Iteration
-83"; batch 54's (the last four `script_runtime.cpp` clamps, the `nanclamp` probe mode and four
-pins) is "Iteration 82"; batch 53's (`CameraRoll`, the key-window schedule, the `math_lut.h`
-negative-angle measurement) is "Iteration 81"; batches 50-52 (the six clamp pins, the fly-arrival
-pin, one `accelerate()`) are "Iteration 78-80".
-`make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All cases match the
-oracle.`, **480 PASS / 0 FAIL**, unchanged in count from batch 57 because the new rows and the new
-`assoc` group went into an existing case, and **no golden moved**); `bash tools/check.sh` **exit 0**
+Narrative, the four codegen experiments, the shipped-grouping replay, the M1/M2 re-runs and the
+corrected `.text` pair: `docs/PROGRESS_LOG.md`, "Iteration 87". Batch 58's (the spin angle's two
+roundings, the 56 spin rows, the 8-mutant table, the `SPIN`/`ASSOC` probe rows) is "Iteration 86";
+batch 57's (the velocity's association, the `NORM`/`SHATTER` rows) is "Iteration 85"; batch 56's
+(the group box's NaN, the 31-row pin, the ±0-unobservable measurement) is "Iteration 84"; batches
+50-55 (one `math_minmax.h` and the sign-of-zero tie arm, the last four `script_runtime.cpp` clamps,
+`CameraRoll` and the `math_lut.h` negative-angle measurement, the six clamp pins, the fly-arrival
+pin, one `accelerate()`) are "Iteration 78-83".
+`make -C tests/scripts` (after `clean`) **exit 0** (`All VM unit tests match the oracle.` + `All
+cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 58, and **no golden moved**, which
+is the point: this batch may not change any number the oracle owns); `bash tools/check.sh` **exit 0**
 (`CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
 `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity` both targets
-link the same core,
-`gates_smdh` SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the
-pinned frame unchanged, and `reference.sha256` NOT regenerated — `gates_batch_integrity` BATCH
-INTEGRITY: PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux
---target mdk -j8` **exit 0**.
+link the same core, `gates_smdh` SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp
+sha=58615fc85d02e009` — the pinned frame unchanged, and `reference.sha256` NOT regenerated —
+`gates_batch_integrity` BATCH INTEGRITY: PASS); `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`);
+`cmake --build build-linux --target mdk -j8` **exit 0** (`[100%] Built target mdk`). The rebuilt
+shipped `debris.o` still reads `.text` 9717 with the same four MACs in `randomSpin` and `vcvt` 15 —
+nothing executable moved.
 
-**The debris shatter is oracle-exact end to end now, and the spin is what proves it.**
+**VFPv2's VMLA is UNFUSED, and that is the fact the record had backwards.** `mdk_3ds/Makefile`
+claimed VMLA.F32 was a fused single-rounded MAC whose rounding was "UNMEASURED on Old-3DS
+hardware", and review-28 F2 used that to conclude the shipped 3DS spin diverges from the oracle.
+Measured on the shipped flags: the default is `-ffp-contract=fast` on devkitARM 15.2 **and** host
+gcc 13.3 (`-Q --help=common`), `debris.cpp.o` is **byte-identical** at default/`=off`/`=fast`, an
+explicitly twice-rounded `float t=a*b; return c+t;` still lowers to ONE `vmla.f32` under `=off`,
+the same source at `-mfpu=vfpv4` becomes `vfma.f32` only under `=fast`, and `__builtin_fmaf` at
+`-mfpu=vfp` is `b fmaf`. VMLA rounds its product, so forming it is value-preserving and the flag
+has nothing to gate. Replaying the shipped `randomSpin` grouping with a rounded product gets **0
+of 72** pinned components wrong; the fused model gets **23 of 72 on 12 of 18 pieces**. Do NOT
+"fix" the four expressions in `quatFromYawPitchRoll` because they lower to `vmla`/`vnmls`, and do
+NOT resurrect "the two targets disagree" for `frame_blend.cpp`'s `lerp`: both targets twice-round
+it identically, so that gap is port-vs-oracle on both. **What IS unmeasured on the target is the
+libm leaf** — the shipped `sinf`/`cosf` come from newlib and only glibc's were checked against
+`MathF.Sin`/`MathF.Cos`; named in `docs/OPEN_ITEMS.md`, unclosable here (no newlib sources, no
+`qemu-arm`), and the first place to look if a capture ever shows a trig divergence.
+
+**The debris shatter is oracle-exact end to end — host harness and shipped object — and the spin is
+what proves it.**
 `degreesToRadians` is `(degrees * kPi) / 180.0f`, because .NET's `float.DegreesToRadians` is
 `degrees * (float)Math.PI / 180f` — two roundings. The single-rounding factor spelling is 1 ULP low
 in magnitude on 8 of the first 12 shatter draws and reproduces 4/12 of the oracle's angles; the
 two-rounding spelling reproduces 12/12, and the port's spin then matches the oracle's `s=` bits on
-**all 54 pieces** of the finite group's dir/radial/oblique variants. The pre-fix code fails **90
-spin assertions and 0 velocity assertions**, which is the whole lesson: no golden printed spin, so
+**all 54 pieces** of the finite group's dir/radial/oblique variants. The pre-fix code fails **93
+spin assertions and 0 velocity assertions** (re-measured in batch 59; the published 90 was a
+transcription error, and M2's is 95, not 93), which is the whole lesson: no golden printed spin, so
 a 1-ULP angle error was invisible, and `w` hid it because a 1-ULP angle move is ~0.3 ULP of a
 near-1 cosine product while it moves `x`/`y`/`z` by 1-2 ULP. The trig and the quaternion were both
 ruled out by measurement first (glibc `sinf`/`cosf` are bit-identical to `MathF.Sin`/`MathF.Cos` on
 these angles; the port's `quatFromYawPitchRoll` product shape scores 17/17 against .NET), so this
-is neither a libm gap nor a library problem. Measured footprint, not a perf claim: `debris.cpp.o`
-`.text` 9667 → 9687 (+20), `nm -u` identical (no new libm symbol — the divide is a hardware
-`vdiv.f32`, visible in the devkitARM object), `vcvt` 15 before and 15 after.
+is neither a libm gap nor a library problem. Measured footprint, not a perf claim, with the command
+stated (`arm-none-eabi-size mdk_3ds/build/debris.o | tail -1`): `.text` **9697 → 9717** (+20) under
+the shipped flags — the earlier 9667/9687 pair came from a scratch compile with other includes, and
+`size -A`'s summed `.text.*` reads 9484/9516 for the same objects — `nm -u` identical (no new libm
+symbol — the divide is a hardware `vdiv.f32`, visible in the devkitARM object), `vcvt` 15/15.
 
 **The velocity association and the normalize, settled in batch 57 and still true:**
 `Debris.cs:210,219` write `Direction * Speed * f`, which C# associates LEFT as `(v * Speed) * f`,
@@ -299,11 +323,14 @@ Kurt half already carries**); then its sniper scope and top-down view. Owner can
 `fastSin`/`fastCos` measure 2.5x their own documented error on a **negative** argument (1.19e-05
 at -10 degrees against libm; every camera and sprite angle uses that path, so fixing it is a
 frame-baseline event — Iteration 81), and the `--each-commit`, sidecar-immutability,
-`PROTECTED`-set and checked-in-probe tasks. **No emulator run and no Old-3DS hardware run:
+`PROTECTED`-set and checked-in-probe tasks. **A sixteenth owner ask from review-28 F5:** the frame
+gate counts PNGs, so it cannot tell a re-published copy from a capture — 12 consecutive pairs share
+`6646adf1dae3…` — and the fix is either to require the new PNG to differ from its parent or to
+accept an explicit `visual delta: none, justification: …` field; both live in protected frame
+tooling, so a batch can only keep writing the honest sidecar narrative (this one does). **No emulator run and no Old-3DS hardware run:
 Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
 windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-04-shatter-spin-angle-rounding.png` + `.txt` — `1.240 / 247 / 0.1819`,
-byte-identical (`6646adf1dae3…`) to its parent's.
+`docs/frames/2026-11-04-vmla-unfused.png` + `.txt`.
 
 ## Standing open items
 

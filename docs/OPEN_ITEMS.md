@@ -45,15 +45,30 @@ measured or cited reason, and the batch that closes one should delete its entry.
   devkitARM lowers `__builtin_fmaf` to `bl fmaf` at `-march=armv6k -mtune=mpcore
   -mfloat-abi=hard -mfpu=vfp` (verified: a call with stack spills, three of them
   in a function that runs per object per frame), while the current spelling
-  lowers to one contracted `vmla.f32` per component. So the replacement is a
-  target codegen decision to measure, not a substitution — and note the two
-  targets already disagree: the 3DS build compiles this expression to three
-  `vmla.f32`, because the ARM backend contracts a multiply-add to VFPv2's VMLA
-  regardless of `-ffp-contract` (`mdk_3ds/Makefile` measures the shipped object
-  byte-identical under the default, `=off` and `=fast`: only the VFPv4 `vfma`
-  form obeys that flag, and this is VFPv2 — so there is no flag to reach for,
-  only the expression), and the host goldens pin the host build. Start by
+  lowers to one `vmla.f32` per component. So the replacement is a
+  target codegen decision to measure, not a substitution — and the two targets do
+  **not** already disagree: the 3DS build compiles this expression to three
+  `vmla.f32`, VFPv2's VMLA is unfused (it rounds its product before accumulating),
+  and so it computes the same twice-rounded value the host does
+  (`mdk_3ds/Makefile` and "Iteration 87": the shipped object is byte-identical
+  under `-ffp-contract` default, `=off` and `=fast`; only the VFPv4 `vfma` form
+  obeys that flag, and this is VFPv2 — so there is no flag to reach for, only the
+  expression). The gap is port-vs-oracle on both targets, not host-vs-target, and
+  the host goldens pin the host build. Start by
   deciding what `Vector3.Lerp` the 3DS can produce for free.
+- **The 3DS build's libm trig leaf is unmeasured against the oracle, and it is the
+  last unmeasured link in the pinned shatter spin.** Every `sinf`/`cosf` the port
+  calls resolves on the target to **newlib's** `libm.a` (`arm-none-eabi-nm
+  mdk_3ds/build/debris.o` shows `sinf`/`cosf` undefined; the link takes `-lm` from
+  devkitARM), and what batch 58 proved bit-identical to `MathF.Sin`/`MathF.Cos` was
+  **glibc's**, on the shatter's own angles. The angle→quaternion arithmetic is now
+  confirmed oracle-exact on the shipped object too ("Iteration 87": the shipped
+  `randomSpin` grouping, replayed with a rounded product, reproduces 0/72 wrong
+  against the pinned `s=` bits), so if a capture ever shows a spin or trig
+  divergence the libm leaf is where to look, not the MACs and not `degreesToRadians`.
+  Not closable on this host: devkitARM ships no newlib sources, there is no
+  `qemu-arm` here, and the only faithful measurement is an Old-3DS capture (P6) or
+  a host build of newlib's `s_sinf.c`/`s_cosf.c` from upstream.
 - **`ObjectMotion.Bank` is ported (2026-10-31) and the object goldens went
   multi-tick.** `ScriptRuntime::motionBank` is `ObjectMotion.Bank` (`0x43b65c`),
   called between `Roll` and `PreviousPosition` exactly where the C# calls it, and

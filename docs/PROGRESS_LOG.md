@@ -11870,6 +11870,10 @@ M1 is the point of the batch: **90 spin assertions fail and 0 velocity assertion
 velocity could not see this bug at all, which is how a 1-ULP angle error survived every previous
 debris batch.
 
+> **[Corrected by "Iteration 87", which re-ran both mutants in this harness: M1 is 93 spin
+> failures, not 90, and M2 is 95, not 93 — the published counts were shifted by one row. The
+> substantive half — spin-only, velocity blind, 0 centre — reproduces exactly for both.]**
+
 **review-27 F6, closed with a pin rather than a disclaimer.** The reviewer could not tell whether
 `Vector3.LengthSquared`'s sum order was constrained, having reproduced every pinned row under both
 groupings. It is now measured and pinned. Six triples were searched whose two folds differ; the
@@ -11939,6 +11943,14 @@ consulted** (owner task 12).
   the divide is hardware). The emitted `vmla.f32` in `randomSpin` is not an FMA contraction of the
   source: both builds compile C++ with GCC's default `-ffp-contract=off`, so GCC may only use it
   where it is value-preserving.
+
+  > **[Corrected by "Iteration 87".]** The default is `-ffp-contract=fast` on both compilers (a GNU
+  > dialect), so the reason given here is wrong — and so is the *opposite* claim in
+  > `mdk_3ds/Makefile`, that VFPv2's VMLA is fused and its rounding unmeasured. VMLA is **unfused**
+  > (it rounds its product), which is why the flag has nothing to gate and why the conclusion here
+  > does stand: the shipped object computes the source's twice-rounded value, 0/72 pinned spin
+  > components wrong. The `.text` absolutes above are from a scratch compile; with the shipped flags
+  > the pair is 9697 → 9717.
 * No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (probe, drivers,
   mutants, logs): `/tmp/mdk-pi/b58`.
 * No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D
@@ -11962,3 +11974,165 @@ the `mathMin` spelling alike (the reviewer rebuilt the pre-fix tree and got 17 v
 no count failure; this batch's model agrees). The count difference described is NaN-group vs
 finite-group, which the pin's count assertion does pin — the NaN-triangle behaviour is real coverage,
 it was just never this batch's effect.
+
+## Iteration 87 — batch 59: review-28 F2 investigated and **reversed** — VFPv2's VMLA is unfused, so the shipped spin really is the oracle's bits (F2 fixed at its source, F3 and F4 corrected with reproductions, F1 rebutted as owner-gated)
+
+**What this batch is.** review-28 returned INCOMPLETE on two counts. **F1 (High)** is the
+uncommitted `PROTECTED` integrity work; a batch cannot touch it (§F1 below). **F2 (Medium)** is a
+sentence in batch 58's record: the `vmla.f32` in `randomSpin` "is not an FMA contraction of the
+source: both builds compile C++ with GCC's default `-ffp-contract=off`, so GCC may only use it
+where it is value-preserving." The reviewer was right that the sentence is wrong, and right that
+it re-used an attribution the project had retired once already ("Iteration 49"-era item L2). But
+the citation it offered as ground truth — `mdk_3ds/Makefile:274-283` — is wrong too, in the
+opposite direction, and it has been in the build file since before the spin was pinned:
+
+> "VFPv2's VMLA.F32 is nevertheless a **fused** multiply-accumulate (single-rounded), and GCC's
+> ARM backend contracts to it even under `-ffp-contract=off` … Whether ARM11 VMLA's rounding
+> differs from the C# twice-rounded expression remains **UNMEASURED** on Old-3DS hardware."
+
+Neither half of that had been measured, and the two documents disagreed about whether the shipped
+3DS spin matches the oracle. So this batch measured it. **The Makefile was the false half.** VMLA
+is not fused, the shipped object computes exactly the twice-rounded value the source says, and
+there is no target rounding gap to leave open. No behaviour, no golden and no build flag moved:
+the shipped arithmetic was already right. What changed is every place the tree asserted otherwise,
+plus three numbers review-28 could not reproduce.
+
+### The measurement (devkitARM 15.2.0, the shipped `ARCH`/`COMMONFLAGS`/`-std=gnu++17`)
+
+1. **The default is `fast`, not `off`, on both compilers.** `arm-none-eabi-g++ -Q --help=common`
+   → `-ffp-contract=fast` (a GNU dialect, because the Makefile uses `-std=gnu++17`), and the host
+   `gcc 13.3.0` says the same. Batch 58's sentence named the wrong default.
+2. **The flag changes nothing on this target, confirmed on the file that matters.** `debris.cpp`
+   compiled with the shipped flags at the default, at `-ffp-contract=off` and at
+   `-ffp-contract=fast` produces **byte-identical** objects (`cmp` clean, `.text` 9717 each), with
+   the same four MACs in `randomSpin` — `vmla.f32` ×2 and `vnmls.f32` ×2.
+3. **VMLA is not a fusion, and the compiler says so.** `float t = a*b; return c + t;` is
+   twice-rounded *by construction*, and under `-ffp-contract=off` it still compiles to **one
+   `vmla.f32`**. A fused VMLA could not do that without changing the value. The control: the same
+   source at `-mfpu=vfpv4` gives `vmla.f32` under `=off` and `vfma.f32` under `=fast` — the flag
+   gates the **fused** `VFMA` form and only that, which is exactly why the ARM backend is free to
+   form `VMLA` regardless of it. And at `-mfpu=vfp`, `__builtin_fmaf` lowers to `b fmaf`, a libm
+   call — the fact `frame_blend.cpp` already records for `Vector3.Lerp`, seen from the other side:
+   VFPv2 has no fused instruction for GCC to use.
+4. **The shipped grouping reproduces the oracle, the fused model does not.** From the shipped
+   `debris.o` disassembly of `randomSpin`, with `sr cr sp cp sy cy` the six half-angle trig values,
+   the emitted products are `s11=sp*cy`, `s12=cp*sy`, `s16=sp*sy`, `s17=cp*cy` and the four
+   accumulations are `out0 = (sr*s12) vmla cr*s11`, `out1 = (sr*s11) vnmls cr*s12`, `out2 =
+   (cr*s16) vnmls sr*s17`, `out3 = (sr*s16) vmla cr*s17`. Those are the source's four products with
+   their operands commuted (exact in IEEE) and each component's second product taken as the MAC's
+   multiply. Replaying that grouping **with the product rounded** (VMLA's real semantics) against
+   the 18 finite pieces' pinned `s=` bits: **0 of 72 components differ.** Replaying it **fused**
+   (the reviewer's `fmaf` model): **23 of 72 differ, on 12 of 18 pieces.** The inputs were the
+   post-fix radians, taken from the tree itself by a temporary `fprintf` of `randomSpin`'s three
+   angles under the repo harness — the pre-fix `angles.txt` in the batch-58 scratch is 1 ULP off
+   and reproduces nothing under either model, which is worth recording because it is the second
+   time a stale scratch input nearly produced a wrong conclusion here.
+
+So review-28 F2's *observation* stands and its *conclusion* does not: the sentence was wrong, but
+the shipped 3DS spin is not divergent. The reviewer's 2/18 `fmaf` mismatches were the prediction
+error of modelling VMLA as fused — with the grouping read off the disassembly the same model gives
+12/18, and the unfused model gives 0/18.
+
+### Corrections to "Iteration 86" (review-28 F2, F3, F4)
+
+- **F2 — the sentence itself.** Replaced, in place, by the measured statement. The claim that
+  survives is narrower and both-target: the host harness reproduces the oracle's spin bits, **and
+  so does the shipped 3DS object**, because its four MACs are unfused. What is *not* measured on
+  the target is the libm leaf: the shipped `sinf`/`cosf` come from **newlib**, and what batch 58
+  proved bit-identical to `MathF.Sin`/`MathF.Cos` was **glibc's**. That is now a named item in
+  `docs/OPEN_ITEMS.md` ("Known divergences from the C#") with the reason it cannot be closed on
+  this host (no newlib sources in devkitARM, no `qemu-arm` on this box, so only an OG capture or a
+  host build of newlib's `s_sinf.c`/`s_cosf.c` settles it). Batch 58's published sidecar
+  (`docs/frames/2026-11-04-shatter-spin-angle-rounding.txt`) repeats the 90 and the
+  `-ffp-contract` sentence and is **left untouched on purpose**: the batch-integrity gate forbids
+  modifying older frame pairs, and whether a published sidecar is correctable in place is owner
+  task (9). Fixed in four places, because the
+  false claim had propagated: `mdk_3ds/Makefile` (the source of it), `debris.cpp`'s
+  `quatFromYawPitchRoll` (with a "do not fix these expressions because they lower to `vmla`"
+  warning), `frame_blend.cpp` and `docs/OPEN_ITEMS.md`. The last two also carried the corollary
+  that "the two targets do not compute identical bits today" for `from + (to-from)*t`; they do —
+  the `FrameBlend.Lerp` gap is port-vs-oracle on **both** targets, not host-vs-target, which makes
+  the open item's decision cleaner, not harder: `fmaf` would match the oracle everywhere and cost a
+  libm call per component here.
+- **F3 — the mutant counts.** Reproduced in the repo harness with a fresh backup/restore runner
+  (`/tmp/mdk-pi/b59/mut.sh`; note batch 58's `mut.sh` restores from a scratch copy that predates
+  the `ASSOC` comment, so it would have silently reverted part of the committed file — this runner
+  backs up the committed file instead). **M1, the verbatim pre-fix `degrees * (float)(pi/180)`:
+  93 spin failures, 0 velocity, 0 centre** — the reviewer's 93 is right and the published 90 was
+  wrong. **M2, the double intermediate: 95**, not the published 93. The published table's numbers
+  were shifted by one row; the substantive half of the claim — spin-only, velocity blind —
+  reproduces exactly for both mutants.
+- **F4 — the footprint absolutes.** The published 9667 → 9687 came from a scratch compile with a
+  different include/flag set (batch 58's `before.o`/`after.o`, which do read 9667 and 9687). With
+  the **shipped** flags the pair is **9697 → 9717**, still **+20 bytes**, and the command is
+  `arm-none-eabi-size mdk_3ds/build/debris.o | tail -1` (text column). `arm-none-eabi-size -A |
+  awk '/^\.text/{s+=$2}'` sums the per-function sections and reads 9484 → 9516 for the same two
+  objects, which is the third number the reviewer saw. The `vcvt` 15 → 15 and the unchanged
+  `nm -u` (no new libm symbol) both re-verified.
+
+### review-28 F1 — rebutted as owner-gated, with the hole re-verified
+
+F1 is about `tools/runner/gates_batch_integrity.py` and `ralph-pi.sh`, both uncommitted and both
+outside what a batch may edit: `gates_batch_integrity.py` lists **itself** in its `PROTECTED` set
+(line 18), and `AGENTS.md`/`tools/check.sh`/`ralph/builder.md` are in the same set. The reviewer
+reaches the same disposition in its own words ("This is not the builder's edit — the builder's
+disposition of F1/F2/F3/F7 as owner-gated is correct"), and CONTINUATION already carries the whole
+set as owner-authorized task (1), including review-27 F2 and F3. Re-verified here rather than
+restated: `python3 tools/runner/gates_batch_integrity.py --each-commit` with no `--base` prints
+`BATCH INTEGRITY: PASS` and returns **0** over zero commits, so the recovery path F1 describes is
+still a pass-generator, and the review's own reachability note (the loop always has a `HEAD_BEFORE`
+SHA) means it is latent, not live. The two concrete asks — require `--base` for `--each-commit`,
+and a written owner sign-off for the batch→commit frame-policy change — stay owner task (1)
+verbatim. Nothing in this batch stages any of those five paths.
+
+**F5 and F6 — deferred with cause.** F5 (a batch frame byte-identical to its parent, with the
+sidecar saying so) is the reviewer's own owner-level remediation: the gate cannot tell a copy from
+a capture, and 12 consecutive pairs already share the sha; changing that is frame-tooling policy,
+which is protected. F6 (the untracked `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`) is part
+of the same owner-gated set.
+
+### Files changed here
+
+`mdk_3ds/Makefile` (the contraction comment, rewritten with the four measurements),
+`mdk_core/src/scripts/debris.cpp` (the `quatFromYawPitchRoll` codegen note),
+`mdk_core/src/game/frame_blend.cpp` (the two targets-do-not-agree sentences), `docs/OPEN_ITEMS.md`
+(the same correction plus the newlib libm item), `docs/PROGRESS_LOG.md`, `docs/CONTINUATION.md`,
+and the frame pair. No gate, test, golden, `PROTECTED` file or build flag was changed; the shipped
+objects are bit-for-bit what batch 58 shipped.
+
+### Prior-solution lookup
+
+`pi-knowledge` `mdk-sdl` hybrid search on "VFPv2 VMLA fused multiply-add contraction
+-ffp-contract": the top project hit was `mdk_3ds/Makefile`'s own comment — the false claim,
+indexed — and nothing else in the KB addressed it, so there was no prior solution to reuse. The
+vault was read directly (the Obsidian MCP server is not exposed to this harness) and contributed
+two corroborations: `60-references/3ds-platform/pica200/04-shader-pipeline.md:71` documents the
+PICA200's `MADI` as "rounded multiply-add, **not fused**" — the same distinction on the other
+programmable block of this console — and `10-projects/cruisin-usa/translation-principles.md:97`
+records a sibling port measuring `-ffp-contract=off` against the default as **byte-identical
+machine code**, the same observation as experiment 2 above. Cognee MCP is not exposed in the Pi
+harness; it was not consulted, and is not claimed.
+
+### Gates and evidence (this batch)
+
+* `make -C tests/scripts clean && make -C tests/scripts` — **exit 0**: `All VM unit tests match the
+  oracle.` + `All cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 58, and **no
+  golden moved**, which is the constraint this batch had to respect: it may not change any number the
+  oracle owns.
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built
+  .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame unchanged, and
+  `reference.sha256` NOT regenerated — `gates_batch_integrity BATCH INTEGRITY: PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**:
+  `3DSX mdk.3dsx`. The rebuilt `mdk_3ds/build/debris.o` reads `.text` **9717**, `randomSpin` still
+  has its **4** MACs and `vcvt` is **15** — the shipped code is unchanged, as intended.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100%] Built target mdk`.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7),
+  `tools/publish_frame.sh vmla-unfused` — `docs/frames/2026-11-04-vmla-unfused.png` + `.txt`,
+  `1.240 / 247 / 0.1819`, byte-identical (`6646adf1dae3…`) to its parent's, because nothing this
+  batch changed is executable. The sidecar says so rather than dressing it up.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (mutants, the VMLA model,
+  the disassembly dumps, the logs): `/tmp/mdk-pi/b59`.
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D
+  picture stays UNVERIFIED (P6)**.
