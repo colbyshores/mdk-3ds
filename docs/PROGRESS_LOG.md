@@ -11548,3 +11548,172 @@ consulted**; recorded rather than glossed (owner task 12).
 Frame `docs/frames/2026-11-03-minmax-signed-zero.png` + `.txt` — `bad_percent=1.240
 max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's,
 because frame 1 has no ±0 tie for the two spellings to disagree about.
+
+## Iteration 84 — batch 56: the shatter's group box propagates a NaN like `Vector3.Min` does, and the oracle's own pieces pin it (review-26 F1 and F2 fixed; F3/F4 owner-owned)
+
+**What landed.** `scripts/debris.cpp`'s shatter group box — nine `fminf`/`fmaxf` — now goes
+through `mdk::mathMin`/`mathMax`. That was the site batch 55 named as its own successor, and
+it is the last one: `grep -rn "fminf\|fmaxf" mdk_core/src mdk_3ds/src mdk_linux/src` is now
+**empty**, and `arm-none-eabi-nm mdk_3ds/mdk.elf | grep -iE 'fmin|fmax'` is empty too, so the
+shipped 3DS binary no longer references libm's min/max at all.
+
+The oracle side is `Debris.cs:160-161`, a nested `Vector3.Min`/`Vector3.Max` per facet, and
+the box is the only input to `Shot.Far` (`:166`), which scales every piece's speed and spin.
+`System.Numerics` propagates a NaN the way `MathF.Min`/`MathF.Max` does and NOT the way
+libm's NaN-silent `fminf`/`fmaxf` does, in **both** argument orders — re-measured this batch
+rather than inherited from batch 54:
+
+```
+V3MIN NaN,1,1 V3MAX NaN,3,4
+V3MIN_REV NaN,1,1 V3MAX_REV NaN,3,4
+V3MINBITS 7FC00000,3F800000,3F800000 V3MAXBITS 7FC00000,40400000,40800000
+```
+
+**Why it is observable, and by how much.** `Far` NaN makes the `Far > 0` falloff test FALSE,
+so `f` stays at exactly 1.0 and every piece of the group keeps the full shatter speed. The
+`fminf` port dropped the NaN, kept the box finite, and gave a different `f` to every piece.
+Measured on a two-facet group with one NaN corner (oracle probe mode `shatter`, which drives
+the C# `Debris` directly — public ctor taking the `Random`, public `GroupFacets`, public
+`Pieces` — with a synthetic group, seed 1, `Shatter("TEST", 3, 2.5f, 4.0f, 1.5f, point, dir)`):
+
+| group | oracle P0 velocity | the `fminf` port's P0 velocity | after the fix |
+|---|---|---|---|
+| `finite` (control) | `3F92F4A6` (1.1479) | `3F92F4A6` — same | same |
+| `nan_corner` | `3FC00000` (1.5 = full speed) | `3F8A5E98` (1.0810) | `3FC00000` |
+| `nan_high` | `3FC00000` | `3F9901A3` | `3FC00000` |
+| `big_nan` (129 pieces) | `3FC00000` on all 129 | 0 of 129 matched | 129 of 129 |
+
+The piece COUNT moves too (`3`, not `18`): a NaN triangle compares false against `maxCross`,
+so it is never split. Both halves are the oracle's and both are pinned.
+
+Per-section centre+velocity agreement against the oracle, before → after: `finite/dir`
+18/18 → 18/18, `nan_corner/dir` **0/3 → 3/3**, `nan_high/dir` **0/3 → 3/3**, `big_nan/dir`
+**0/129 → 129/129**, `signed_zero/dir` 2/2 → 2/2. The finite and signed-zero sections are
+**byte-identical before and after**, which is what makes the NaN rows a fix rather than a
+trade.
+
+**The ±0 half is not observable here, measured.** `Far` is
+`Max(Abs(min - point), Abs(max - point)).LengthSquared()` and `Abs` erases the sign of a
+zero, so a group whose corners are ±0 shatters into bit-identical pieces to the same group
+with plain `0.0` — probe rows `signed_zero` and `signed_zero_plain`, in both directions, in
+the oracle AND in the port. The pin asserts both groups against the same rows so the claim
+cannot rot.
+
+**The pin.** `DebrisGroupBoxPropagatesNaNLikeTheOracle` in `tests/scripts/vm_tests.cpp`:
+six groups, 31 rows of centre and velocity bits, every expectation a row the C# probe
+printed. It runs **above** the game-data check, so it cannot skip on a data-less machine.
+Two of the groups exist only to pin *which side of the box each axis reads its far corner
+from*: `inside` sits next to the min corner (every axis must reach the max side) and
+`near_max` next to the max corner (every axis must reach the min side). The first version of
+the pin had only the mid point and let a mutant that lost one axis's min side through —
+measured, not assumed — and those two groups are what closed it.
+
+**Mutants (built, run, reverted).**
+
+| # | mutant | result |
+|---|---|---|
+| M1 | all nine sites back to `fminf`/`fmaxf` (the pre-batch code) | **KILLED** — `nan_corner piece 0 velocity.y is 3F8A5E98, the oracle's is 3FC00000` |
+| M6 | `farVec` uses `mathMin` | **KILLED** — the `finite` control fails, so the pin is not NaN-only |
+| M7 | `min.y` folds with `mathMax` | **KILLED** by `near_max` |
+| M8 | `farVec.x` drops `dMax` | **KILLED** by `inside` |
+| M9 | `farVec.z` drops `dMin` | **KILLED** by `signed_zero` |
+| M10 | `min.z` folds with `mathMax` | **KILLED** by `signed_zero` |
+| M2 | the three `min` lines only back to `fminf` | equivalent, and provably so |
+| M3 | the three `max` lines only back to `fmaxf` | equivalent, and provably so |
+| M4 | the three `farVec` maxes only back to `fmaxf` | equivalent, and provably so |
+| M5 | box `min`/`max` swapped on one axis | equivalent, and provably so |
+
+M2–M5 are not gaps in the pin; they are equivalent mutants, and the reason is worth writing
+down because it says what this pin can and cannot express. A NaN corner is folded into BOTH
+the min and the max, so with any one link still propagating, `Far` is NaN anyway — and
+`fmaxf(NaN, NaN)` is NaN, so even a silent `farVec` max propagates when both of its operands
+are NaN. And `farVec` is `max(|min - p|, |max - p|)`, which is symmetric in `min`/`max` per
+axis, so a swapped box cannot change any observable. Only the whole-chain revert (M1, which
+is the code that was actually shipped) changes what a piece does.
+
+**Codegen footprint (measured; not a performance claim).** devkitARM, the Makefile's own
+`ARCH` flags at `-O2`, `debris.o` `.text` **9069 → 9673 (+604 bytes)**. `arm-none-eabi-nm -u`
+loses `fminf` and `fmaxf` — the only change to the undefined-symbol set — so the two newlib
+call sites are gone, and the `vcvt` count is **15 before and 15 after**, so the helper's
+integer tie-arm added no float→int conversion. The corpus is still empty, nothing here is
+HOT by §2, and **Old-3DS timing stays UNMEASURED**.
+
+**Review-26 disposition.**
+
+* **F1 (Medium) — fixed, with my own measurement, not the reviewer's.** The header claimed
+  `fminf`/`fmaxf` "DO agree with .NET" on ±0. Reproduced on this host (x86-64, glibc 2.39,
+  gcc 13.3, forced through the libm entry points with a `volatile` function pointer so the
+  compiler could not fold it): `fminf(-0,+0) = +0 (00000000)`, `fminf(+0,-0) = -0 (80000000)`,
+  `fmaxf(-0,+0) = +0`, `fmaxf(+0,-0) = -0` — glibc returns its **second** operand on a ±0
+  tie, so each function matches .NET in one order and disagrees in the other. One detail the
+  finding did not have: with the constants visible at `-O2` gcc folds the same calls to a
+  **third** answer (`fminf(-0,+0) → -0`, `fmaxf(+0,-0) → +0`), which is the actual point —
+  the tie order is a property of the implementation and of the optimiser, not of the
+  operation, and on the 3DS `fminf` is a real newlib call and a fourth implementation. The
+  sentence is replaced with that, and the header now says the helper is the only spelling
+  that matches on both targets. Per the append-only rule the historical sentence at
+  `PROGRESS_LOG.md:11411` is left as written; this entry is its correction.
+* **F2 (Medium) — fixed.** "470 golden cases" was not a number any command prints. The
+  measured totals for this batch: `make -C tests/scripts` prints **480 PASS / 0 FAIL** and
+  `All cases match the oracle.`; `./build/vm_tests` alone is **79 PASS / 0 FAIL**; the
+  previous batch's own run was 479. `CONTINUATION.md`'s stale "Goldens are 470/0/0" line is
+  corrected to the measured number. No golden file changed: `git show --name-only` for this
+  commit contains no `golden/` path.
+* **F3 (Medium) — owner-owned, untouched, and confirmed as such.** The four unstaged
+  gate/harness files and the stray `2026-11-02-ralph-self-heal` pair are owner tasks
+  (1)/(9)/(13) as already listed. This batch stages only its own paths and does not
+  `git add -A`. The `--staged`-allows-n-frames versus range-allows-exactly-one asymmetry the
+  finding names lives in `gates_batch_integrity.py`, which is in its own `PROTECTED` list,
+  so a batch cannot close it.
+* **F4 (Low) — owner decision, untouched.** The probe driver is still outside the tree, so
+  these pins are measured artifacts a reader cannot regenerate from the repository alone.
+  The driver used for this batch is recorded below in full enough to rebuild it, but the
+  policy question (check a probe driver in, or declare the pins non-reproducible) is the
+  owner's.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` (mode `hybrid`) on the shatter group box
+and `Vector3.Min` NaN propagation returned the debris sources and batch 54's own note naming
+this as the successor — a lead, not a prior fix. The Obsidian vault `/mnt/nas/Vaults/port-docs`
+was grepped for `Vector3.Min`, `fminf` and "shatter": nothing on this site. **Cognee MCP is
+not exposed as a tool in this Pi session and was not consulted** (owner task 12).
+
+**Gates, as run.**
+
+* `make -C tests/scripts` (after `clean`) — **exit 0**: `All VM unit tests match the oracle.`
+  + `All cases match the oracle.`, **480 PASS / 0 FAIL** (one PASS line more than batch 55),
+  and `./build/vm_tests` alone **79 PASS / 0 FAIL**, the extra case being
+  `PASS DebrisGroupBoxPropagatesNaNLikeTheOracle`. **No golden changed.**
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no
+  built .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame
+  unchanged, and `reference.sha256` NOT regenerated — `gates_batch_integrity BATCH
+  INTEGRITY: PASS`.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx` (`DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM`).
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100%] Built target mdk`.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7),
+  `tools/publish_frame.sh debris-nan-box`.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (probe, drivers,
+  mutants, logs): `/tmp/mdk-pi/b56` (`/tmp/kilo` is not writable by this account — owner
+  task 11).
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the
+  Citro3D picture stays UNVERIFIED (P6)**.
+
+Frame `docs/frames/2026-11-04-debris-nan-box.png` + `.txt` — `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's,
+because no shipped arena geometry contains a NaN.
+
+**Two new gaps this batch measured and deliberately did NOT pin.** Both are pre-existing and
+unchanged by this batch (measured identical before and after), and pinning them here would
+have failed for a reason unrelated to the slice:
+
+1. The **radial** (zero-direction) shatter velocity is **1 ULP** from the oracle on some
+   pieces — `Vector3.Normalize` against `debris.cpp`'s `vnormalize`. `finite/radial` matches
+   the oracle on 6 of 18 pieces' velocities, max 1 ULP, before and after.
+2. The piece **spin quaternion** is **≤ 2 ULP** from `Quaternion.CreateFromYawPitchRoll` —
+   `quatFromYawPitchRoll` is libm `sinf`/`cosf` and carries an `@vfp-exempt R6` pin. No
+   golden prints spin, so nothing shows this today.
+
+Either one is a normal batch: pick the site, decide the spelling, re-pin. Neither is a
+min/max question.

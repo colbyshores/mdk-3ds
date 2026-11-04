@@ -10,6 +10,8 @@
 
 #include <cmath>
 
+#include "util/math_minmax.h"
+
 namespace mdk {
 namespace scripts {
 
@@ -149,17 +151,38 @@ void Debris::shatter(const std::string& arena, int32_t group, float life, float 
     const std::vector<DebrisFacet>& facets = shape.facets;
 
     // The squared distance to the farthest corner of the group's box.
+    //
+    // The oracle side is Debris.cs:160-161, a NESTED `Vector3.Min`/`Vector3.Max` per facet.
+    // `System.Numerics` propagates a NaN the way `MathF.Min`/`MathF.Max` does and NOT the
+    // way libm's NaN-silent `fminf`/`fmaxf` does, in BOTH argument orders (oracle probe
+    // mode `shatter`, rows `V3MIN`/`V3MAX` and `V3MIN_REV`/`V3MAX_REV`: a NaN corner wins
+    // whichever side it is on). So a NaN corner makes the box NaN, which makes `far` NaN,
+    // which makes the `far > 0` test below FALSE and leaves `f` at exactly 1.0 -- every
+    // piece flies at full speed. `fminf` dropped the NaN instead, kept the box finite, and
+    // gave a different `f` for every piece in the group: measured on a two-facet group with
+    // one NaN corner, the oracle's first piece velocity is 1.5 (bits 3FC00000) and the
+    // fminf port's was 1.0810 (bits 3F8A5E98). Pinned by
+    // DebrisGroupBoxPropagatesNaNLikeTheOracle in tests/scripts/vm_tests.cpp.
+    //
+    // The ±0 half of the helper is NOT observable here, and that is measured too: the only
+    // consumer of the box is `Max(Abs(min - point), Abs(max - point)).LengthSquared()`, and
+    // `Abs` erases the sign of a zero, so a group whose corners are ±0 shatters into
+    // bit-identical pieces to the same group with plain 0.0 (probe rows `signed_zero` and
+    // `signed_zero_plain`, both directions). The fold order is the C#'s own -- the nested
+    // `Min(min, Min(A, Min(B, C)))` and this per-corner loop put the same four values
+    // through the same three comparisons, and `mathMin` is associative because a NaN wins
+    // and a tie returns the same bits either way.
     Vec3 min = facets[0].a;
     Vec3 max = min;
     for (size_t i = 0; i < facets.size(); i++) {
         const Vec3 corners[3] = {facets[i].a, facets[i].b, facets[i].c};
         for (int k = 0; k < 3; k++) {
-            min.x = fminf(min.x, corners[k].x);
-            min.y = fminf(min.y, corners[k].y);
-            min.z = fminf(min.z, corners[k].z);
-            max.x = fmaxf(max.x, corners[k].x);
-            max.y = fmaxf(max.y, corners[k].y);
-            max.z = fmaxf(max.z, corners[k].z);
+            min.x = mathMin(min.x, corners[k].x);
+            min.y = mathMin(min.y, corners[k].y);
+            min.z = mathMin(min.z, corners[k].z);
+            max.x = mathMax(max.x, corners[k].x);
+            max.y = mathMax(max.y, corners[k].y);
+            max.z = mathMax(max.z, corners[k].z);
         }
     }
 
@@ -174,8 +197,10 @@ void Debris::shatter(const std::string& arena, int32_t group, float life, float 
     shot.direction = zeroDir ? Vec3{} : vnormalize(direction);
     Vec3 dMin = vsub(min, point);
     Vec3 dMax = vsub(max, point);
-    Vec3 farVec{fmaxf(fabsf(dMin.x), fabsf(dMax.x)), fmaxf(fabsf(dMin.y), fabsf(dMax.y)),
-                fmaxf(fabsf(dMin.z), fabsf(dMax.z))};
+    // The same pair again: the C# is `Vector3.Max(Vector3.Abs(min - point), Vector3.Abs(max
+    // - point))`, so the max has to propagate the NaN the Abs passed through.
+    Vec3 farVec{mathMax(fabsf(dMin.x), fabsf(dMax.x)), mathMax(fabsf(dMin.y), fabsf(dMax.y)),
+                mathMax(fabsf(dMin.z), fabsf(dMax.z))};
     shot.far = vlenSq(farVec);
     for (size_t i = 0; i < facets.size(); i++) {
         const Vec3 c[3] = {facets[i].a, facets[i].b, facets[i].c};

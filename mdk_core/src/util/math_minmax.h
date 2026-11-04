@@ -28,8 +28,28 @@
 //
 // i.e. the oracle orders -0.0 BELOW +0.0. A float compare cannot see that,
 // because -0.0 == +0.0, so `a < b ? a : b` returns the wrong zero for one of the
-// two argument orders, and so does `a > b ? a : b` for Max. fminf/fmaxf DO agree
-// with .NET here — the ternary is the divergence, and it is the only one.
+// two argument orders, and so does `a > b ? a : b` for Max.
+//
+// fminf/fmaxf are NOT the answer, and an earlier revision of this comment said they
+// were. The ±0 tie order of `fmin`/`fmax` is IMPLEMENTATION-DEFINED: IEEE 754-2008
+// minNum/maxNum may return either operand when the two compare equal and only require
+// the sign of a ±0 result to be one of the two. Measured on this host (x86-64, glibc
+// 2.39, gcc 13.3, forced through the libm entry points so the compiler could not fold
+// it, identical at -O0 and -O2):
+//
+//     libm  fminf(-0,+0) = +0 bits 00000000   fminf(+0,-0) = -0 bits 80000000
+//     libm  fmaxf(-0,+0) = +0 bits 00000000   fmaxf(+0,-0) = -0 bits 80000000
+//
+// i.e. glibc returns its SECOND operand on a ±0 tie, so each of the two agrees with
+// .NET in ONE argument order and disagrees in the other. And the same source compiled
+// with the constants visible folds to a THIRD answer at -O2 (fminf(-0,+0) becomes -0,
+// fmaxf(+0,-0) becomes +0), which is the point: the tie order is a property of the
+// implementation and of the optimiser, not of the operation. On the 3DS `fminf` is a
+// real newlib call rather than a fold, so it is a fourth implementation again, and it
+// has not been measured here (no hardware or emulator run in this batch).
+//
+// So the ternary diverges, libm diverges, and this helper is the only spelling that
+// matches the oracle on both targets. That is the whole reason it exists.
 // Pinned by MathMinMaxMatchTheOracleOnNaNAndSignedZero in tests/scripts/vm_tests.cpp.
 //
 // The NaN PAYLOAD is not part of the contract: the oracle returns whichever

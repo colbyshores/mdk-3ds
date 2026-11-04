@@ -41,6 +41,7 @@
 #include "util/math_minmax.h"
 #include "layer_tests.h"
 #include "pica_matrix_tests.h"
+#include "scripts/debris.h"
 #include "scripts/script_runtime.h"
 #include "sprite_tests.h"
 #include "system_numerics_tests.h"
@@ -4611,6 +4612,260 @@ void testMathMinMaxMatchTheOracleOnNaNAndSignedZero() {
     CHECK(floatBits(mathMax(0.0f, -0.0f)) == 0x00000000u);
 }
 
+// ---------------------------------------------------------------------------
+// The shatter's group box.
+//
+// Debris.cs:160-161 folds each facet through a NESTED `Vector3.Min`/`Vector3.Max`, and
+// that box is the only thing that decides `Shot.Far` (:166), which scales every piece's
+// speed and spin. The port spelled those components `fminf`/`fmaxf`, which are
+// NaN-SILENT, so a NaN corner dropped out of the box, `Far` stayed finite, and every
+// piece in the group got a different speed: the oracle's first piece of the nan_corner
+// group moves at exactly the shatter's speed (1.5, bits 3FC00000, because `Far > 0` is
+// false for a NaN and the falloff `f` is left at exactly 1.0) while the fminf port had
+// 1.0810 (3F8A5E98). The expectations below are the ORACLE's own pieces: the C#
+// `Debris` is constructible on its own (a public ctor taking the Random, a public
+// `GroupFacets` delegate, a public `Pieces`), so the probe drove it with the same
+// synthetic group, the same seed and the same Shatter arguments and printed the bits
+// (probe mode `shatter`; the transcript is in docs/PROGRESS_LOG.md, "Iteration 84").
+//
+// The spin quaternion is deliberately NOT pinned here: `quatFromYawPitchRoll` is libm
+// `sinf`/`cosf` and sits 1 ULP from `System.Numerics` on most draws, which is a separate
+// known gap (docs/OPEN_ITEMS.md) and not this site. The radial (zero-direction) arm is
+// not pinned either, for the same reason: it normalises, and the normalise is a separate
+// known 1-ULP gap. Both were measured identical before and after this change.
+// ---------------------------------------------------------------------------
+
+// One piece of the oracle's output: its index and the bits of its centre and velocity.
+struct ShatterRow {
+    int32_t index;
+    uint32_t center[3];
+    uint32_t velocity[3];
+};
+
+struct ShatterCase {
+    const char* label;
+    std::vector<scripts::DebrisFacet> facets;
+    Vec3 point;
+    int32_t pieces;
+    const ShatterRow* rows;
+    int32_t rowCount;
+    // When non-null, EVERY piece's velocity.y must be exactly these bits. That is the
+    // whole point of the NaN rows: `f` is exactly 1.0 for every piece of the group, so
+    // the assertion covers all 129 pieces of `big_nan` without 129 rows.
+    const uint32_t* everyVelocityY;
+};
+
+// The GroupFacets seam, fed from the case under test.
+static bool shatterGroupFacets(void* ctx, const std::string& arena, int32_t group,
+                               scripts::DebrisGroup* out) {
+    (void)arena;
+    (void)group;
+    *out = *static_cast<scripts::DebrisGroup*>(ctx);
+    return true;
+}
+
+static scripts::DebrisFacet shatterFacet(const float a[3], const float b[3], const float c[3],
+                                         int32_t material) {
+    scripts::DebrisFacet facet;
+    facet.a = Vec3{a[0], a[1], a[2]};
+    facet.b = Vec3{b[0], b[1], b[2]};
+    facet.c = Vec3{c[0], c[1], c[2]};
+    facet.uvA = Vec2{0.0f, 0.0f};
+    facet.uvB = Vec2{1.0f, 0.0f};
+    facet.uvC = Vec2{0.0f, 1.0f};
+    facet.material = material;
+    return facet;
+}
+
+static scripts::DebrisFacet shatterFacetBits(uint32_t ax, uint32_t ay, uint32_t az,
+                                             uint32_t bx, uint32_t by, uint32_t bz,
+                                             uint32_t cx, uint32_t cy, uint32_t cz,
+                                             int32_t material) {
+    const float a[3] = {floatFromBits(ax), floatFromBits(ay), floatFromBits(az)};
+    const float b[3] = {floatFromBits(bx), floatFromBits(by), floatFromBits(bz)};
+    const float c[3] = {floatFromBits(cx), floatFromBits(cy), floatFromBits(cz)};
+    return shatterFacet(a, b, c, material);
+}
+
+void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
+    const uint32_t nan = 0x7fc00000u;
+    const uint32_t zero = 0x00000000u;
+    const uint32_t negzero = 0x80000000u;
+    const uint32_t fullSpeed = 0x3fc00000u;  // the shatter's speed, 1.5: f == 1.0 exactly
+
+    // The control: an all-finite group. 18 pieces, every one of them a different
+    // fraction of the speed, because Far is finite and real. Without this row set the
+    // NaN rows could be matched by a box that simply always produced a NaN.
+    const ShatterRow finiteRows[] = {
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F92F4A6u, 0x00000000u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F5FEBD3u, 0x00000000u}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3FABCBE0u, 0x00000000u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3FB06186u, 0x00000000u}},
+        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0x00000000u, 0x3F83A968u, 0x00000000u}},
+        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0x00000000u, 0x3F9CD4B4u, 0x00000000u}},
+        {6, {0x3EB55555u, 0xBFE00000u, 0x3F900000u}, {0x00000000u, 0x3FB96A5Au, 0x00000000u}},
+        {7, {0x3F300000u, 0xC0155555u, 0x3F755555u}, {0x00000000u, 0x3FBCD4B4u, 0x00000000u}},
+        {8, {0x3F800000u, 0xBF9AAAABu, 0x3F155555u}, {0x00000000u, 0x3FBB348Cu, 0x00000000u}},
+        {9, {0x3EEAAAABu, 0xBFB00000u, 0x3F800000u}, {0x00000000u, 0x3FB8EEC4u, 0x00000000u}},
+        {10, {0x3F7AAAABu, 0x3F000000u, 0x3EC00000u}, {0x00000000u, 0x3F90967Du, 0x00000000u}},
+        {11, {0x3FA80000u, 0xBDAAAAABu, 0x3E555555u}, {0x00000000u, 0x3FA2D22Eu, 0x00000000u}},
+        {12, {0x3FD00000u, 0x3F855555u, 0xBE2AAAABu}, {0x00000000u, 0x3F675B38u, 0x00000000u}},
+        {13, {0x3F8AAAABu, 0x3F600000u, 0x3E800000u}, {0x00000000u, 0x3F80EEC4u, 0x00000000u}},
+        {14, {0x00000000u, 0x3F0AAAABu, 0x3F8AAAABu}, {0x00000000u, 0x3F84FA89u, 0x00000000u}},
+        {15, {0xBF0AAAABu, 0x3EC00000u, 0x3FC00000u}, {0x00000000u, 0x3F778A4Du, 0x00000000u}},
+        {16, {0x3F455555u, 0xBE800000u, 0x3F200000u}, {0x00000000u, 0x3FA84FDEu, 0x00000000u}},
+        {17, {0x3EE00000u, 0x3EAAAAABu, 0x3F4AAAABu}, {0x00000000u, 0x3F93C44Fu, 0x00000000u}},
+    };
+    // A NaN on the MIN side of one corner. The box goes NaN, Far goes NaN, the
+    // `Far > 0` falloff test is false, and every piece keeps the full speed. Note the
+    // piece COUNT also changes (3, not 18): a NaN triangle compares false against
+    // maxCross, so it is never split. Both halves are the oracle's.
+    const ShatterRow nanCornerRows[] = {
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {2, {0x7FC00000u, 0xBEAAAAABu, 0x3F555555u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+    };
+    // The same on the MAX side, and on the other corner, so a one-sided fold fails.
+    const ShatterRow nanHighRows[] = {
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {2, {0xBF555555u, 0x7FC00000u, 0x3F955555u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+    };
+    // The ±0 half of the helper is NOT observable at this site, and that is measured, not
+    // argued: Far is `Max(Abs(min - point), Abs(max - point)).LengthSquared()` and Abs
+    // erases the sign of a zero, so this group and the identical one with plain 0.0 shatter
+    // into bit-identical pieces (probe rows `signed_zero` / `signed_zero_plain`). The two
+    // cases below assert the same rows for both groups.
+    const ShatterRow signedZeroRows[] = {
+        {0, {0x3EAAAAABu, 0x00000000u, 0x3E2AAAABu}, {0x00000000u, 0x3F381382u, 0x00000000u}},
+        {1, {0xBE2AAAABu, 0x3E2AAAABu, 0x3E2AAAABu}, {0x00000000u, 0x3EE2BE2Bu, 0x00000000u}},
+    };
+    // A NaN in a group big enough to split: 129 pieces, every one of them at full speed.
+    const ShatterRow bigNanRows[] = {
+        {0, {0x40980000u, 0x40100000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {1, {0x40A80000u, 0x40300000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {2, {0x40700000u, 0x40300000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {3, {0x40880000u, 0x40100000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+    };
+    // Which SIDE of the box each axis takes its far corner from is pinned from both ends.
+    // `inside` sits next to the min corner, so every axis must reach the MAX side; the
+    // same group from a point next to the MAX corner must reach the MIN side instead. With
+    // only the mid-group point above, a box that lost its min side on one axis still
+    // shattered identically -- measured, not assumed (the first version of this pin let
+    // exactly that mutant through, and these two cases are what closed it).
+    const ShatterRow insideRows[] = {
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F82D70Fu, 0x00000000u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F613CBDu, 0x00000000u}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3FA20FE6u, 0x00000000u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3F9AFC40u, 0x00000000u}},
+    };
+    const ShatterRow nearMaxRows[] = {
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F9C4244u, 0x00000000u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F9E8027u, 0x00000000u}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3F89CFDAu, 0x00000000u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3F920F3Du, 0x00000000u}},
+    };
+    const Vec3 mid{1.0f, -2.0f, 0.5f};
+    const Vec3 insidePoint{-1.0f, -2.5f, 0.0f};
+    const Vec3 nearMaxPoint{1.9f, 2.0f, 1.9f};
+
+    std::vector<scripts::DebrisFacet> finiteFacets;
+    finiteFacets.push_back(shatterFacetBits(zero, zero, zero, 0x3FC00000u, zero, zero,
+                                            zero, 0x40100000u, zero, 3));
+    finiteFacets.push_back(shatterFacetBits(0xBFA00000u, 0x3F000000u, 0x40000000u, 0x3F400000u,
+                                            0xC0400000u, 0x3F800000u, 0x40000000u, 0x3FC00000u,
+                                            0xBF000000u, 7));
+    std::vector<scripts::DebrisFacet> nanCornerFacets;
+    nanCornerFacets.push_back(finiteFacets[0]);
+    nanCornerFacets.push_back(shatterFacetBits(nan, 0x3F000000u, 0x40000000u, 0x3F400000u,
+                                               0xC0400000u, 0x3F800000u, 0x40000000u,
+                                               0x3FC00000u, 0xBF000000u, 7));
+    std::vector<scripts::DebrisFacet> nanHighFacets;
+    nanHighFacets.push_back(finiteFacets[0]);
+    nanHighFacets.push_back(shatterFacetBits(0xBFA00000u, 0x3F000000u, 0x40000000u, 0x3F400000u,
+                                             nan, 0x3F800000u, 0xC0000000u, 0xBFC00000u,
+                                             0x3F000000u, 7));
+    std::vector<scripts::DebrisFacet> signedZeroFacets;
+    signedZeroFacets.push_back(shatterFacetBits(negzero, negzero, zero, 0x3F000000u, negzero,
+                                                0x3F000000u, 0x3F000000u, zero, negzero, 5));
+    signedZeroFacets.push_back(shatterFacetBits(0xBF000000u, zero, negzero, zero, negzero,
+                                                0x3F000000u, zero, 0x3F000000u, zero, 9));
+    std::vector<scripts::DebrisFacet> signedZeroPlainFacets;
+    signedZeroPlainFacets.push_back(shatterFacetBits(zero, zero, zero, 0x3F000000u, zero,
+                                                     0x3F000000u, 0x3F000000u, zero, zero, 5));
+    signedZeroPlainFacets.push_back(shatterFacetBits(0xBF000000u, zero, zero, zero, zero,
+                                                     0x3F000000u, zero, 0x3F000000u, zero, 9));
+    std::vector<scripts::DebrisFacet> bigNanFacets;
+    bigNanFacets.push_back(shatterFacetBits(zero, zero, zero, 0x41400000u, zero, zero, zero,
+                                            0x41400000u, zero, 3));
+    bigNanFacets.push_back(nanCornerFacets[1]);
+
+    const ShatterCase cases[] = {
+        //  label              facets                point      pieces  rows            count  every v.y
+        {"finite", finiteFacets, mid, 18, finiteRows, 18, nullptr},
+        {"nan_corner", nanCornerFacets, mid, 3, nanCornerRows, 3, &fullSpeed},
+        {"nan_high", nanHighFacets, mid, 3, nanHighRows, 3, &fullSpeed},
+        {"signed_zero", signedZeroFacets, mid, 2, signedZeroRows, 2, nullptr},
+        {"signed_zero_plain", signedZeroPlainFacets, mid, 2, signedZeroRows, 2, nullptr},
+        {"big_nan", bigNanFacets, mid, 129, bigNanRows, 4, &fullSpeed},
+        {"inside", finiteFacets, insidePoint, 18, insideRows, 4, nullptr},
+        {"near_max", finiteFacets, nearMaxPoint, 18, nearMaxRows, 4, nullptr},
+    };
+
+    std::vector<std::string> names;
+    names.push_back("MAT_A");
+    names.push_back("MAT_B");
+
+    for (size_t ci = 0; ci < sizeof(cases) / sizeof(cases[0]); ci++) {
+        const ShatterCase& c = cases[ci];
+        Random rng(1);
+        scripts::DebrisGroup group;
+        group.names = &names;
+        group.facets = c.facets;
+        scripts::Debris debris(rng);
+        debris.setCallbacks(&group, nullptr, nullptr, nullptr, shatterGroupFacets);
+        debris.shatter("TEST", 3, 2.5f, 4.0f, 1.5f, c.point,
+                       Vec3{0.0f, 1.0f, 0.0f});
+        if ((int)debris.pieces().size() != c.pieces) {
+            printf("  FAIL: %s made %d pieces, the oracle made %d\n", c.label,
+                   (int)debris.pieces().size(), (int)c.pieces);
+            failures++;
+            continue;
+        }
+        for (int32_t r = 0; r < c.rowCount; r++) {
+            const ShatterRow& row = c.rows[r];
+            const scripts::Debris::Piece* p = debris.pieces()[row.index];
+            const uint32_t center[3] = {floatBits(p->center.x), floatBits(p->center.y),
+                                        floatBits(p->center.z)};
+            const uint32_t velocity[3] = {floatBits(p->velocity.x), floatBits(p->velocity.y),
+                                          floatBits(p->velocity.z)};
+            for (int k = 0; k < 3; k++) {
+                if (center[k] != row.center[k]) {
+                    printf("  FAIL: %s piece %d centre.%c is %08X, the oracle's is %08X\n",
+                           c.label, (int)row.index, 'x' + k, center[k], row.center[k]);
+                    failures++;
+                }
+                if (velocity[k] != row.velocity[k]) {
+                    printf("  FAIL: %s piece %d velocity.%c is %08X, the oracle's is %08X\n",
+                           c.label, (int)row.index, 'x' + k, velocity[k], row.velocity[k]);
+                    failures++;
+                }
+            }
+        }
+        if (c.everyVelocityY != nullptr) {
+            for (size_t pi = 0; pi < debris.pieces().size(); pi++) {
+                if (floatBits(debris.pieces()[pi]->velocity.y) != *c.everyVelocityY) {
+                    printf("  FAIL: %s piece %zu velocity.y is %08X, the oracle's is %08X\n",
+                           c.label, pi, floatBits(debris.pieces()[pi]->velocity.y),
+                           *c.everyVelocityY);
+                    failures++;
+                    break;
+                }
+            }
+        }
+    }
+}
+
 // Small vector helpers for the camera pin below. vm_tests has no geometry of its own,
 // and the ones follow_camera.cpp uses are file-static there.
 static Vec3 vmCross(const Vec3& a, const Vec3& b) {
@@ -5149,6 +5404,16 @@ int main() {
         testMathMinMaxMatchTheOracleOnNaNAndSignedZero();
         if (failures == beforeMinMax) {
             printf("PASS MathMinMaxMatchTheOracleOnNaNAndSignedZero\n");
+        }
+    }
+
+    // The shatter's group box, in the oracle's bits: the same helper, at the site the
+    // last batch left behind. Data-independent for the same reason as above.
+    {
+        const int beforeGroupBox = failures;
+        testDebrisGroupBoxPropagatesNaNLikeTheOracle();
+        if (failures == beforeGroupBox) {
+            printf("PASS DebrisGroupBoxPropagatesNaNLikeTheOracle\n");
         }
     }
 

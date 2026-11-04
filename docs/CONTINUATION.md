@@ -1,60 +1,57 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 55 replaces FOUR local copies of the `MathF.Min`/`MathF.Max` twin (in
-`script_runtime.cpp`, `script_vm.cpp`, `sound_mixer.cpp`, `camera_roll.cpp`) with ONE header,
-`mdk_core/src/util/math_minmax.h`, and that one now matches the oracle on the **sign of zero**,
-which the ternary it replaces did not: measured on .NET 10, `MathF.Min(-0,+0)` and
-`MathF.Min(+0,-0)` are both `-0` (bits `80000000`) and `MathF.Max` of that pair is `+0` in both
-orders. So this is shipped arithmetic at ~20 call sites in four subsystems, on NaN (already
-matched) and on ±0 (newly matched) — but every finite non-zero input is bit-identical, no
-golden moved, the pinned frame is byte-identical (`sha 6646adf1dae3…`), the pin is 16 rows of
-the oracle's own bits, and the ±0 case is measured unobservable at the one site that can
-produce it. Not low-risk (four files, one behaviour, target codegen touched); not high (no
-interface, format, state or concurrency change, and the defect's blast radius is measured).
-Review-25 is fully dispositioned: F1 fixed with a pin and a real-harness mutant, F2 partly
-rebutted with a fresh measurement and partly fixed, F3 fixed, F4 owner-owned. No owner file is
+Risk: medium — batch 56 changes shipped arithmetic in the debris shatter path: the group box's
+nine `fminf`/`fmaxf` become the oracle-exact `mathMin`/`mathMax`, because the oracle there is
+`Debris.cs:160-161`'s nested `Vector3.Min`/`Vector3.Max` and `System.Numerics` propagates a NaN
+that libm silently dropped. The box decides `Shot.Far`, which scales every piece's speed and
+spin, so a NaN corner moves the whole group: the oracle's first piece keeps the full speed
+(`3FC00000`) where the `fminf` port had `3F8A5E98`. Measured blast radius: the finite and ±0
+groups are **byte-identical before and after**, the three NaN groups go from 0/3, 0/3 and 0/129
+pieces agreeing with the oracle to all of them agreeing, no golden moved, the pinned frame is
+byte-identical (`sha 6646adf1dae3…`), the pin is 31 rows of the oracle's own printed bits, and
+10 mutants were built — 6 killed, 4 provably equivalent with the proof written down. Not
+low-risk (target codegen touched: +604 bytes `.text`, two newlib call sites removed from the
+ELF; and it is behaviour); not high (no interface, format, state or concurrency change, and the
+divergence is unreachable from the shipped arena geometry). Review-26 is fully dispositioned:
+F1 fixed with an independent measurement, F2 fixed, F3 and F4 owner-owned. No owner file is
 staged.
 
-Last updated: 2026-11-03 (**batch 55** — the `MathF.Min`/`MathF.Max` twin is ONE function now,
-in `mdk_core/src/util/math_minmax.h`, included by the four files that each had their own copy,
-and it matches the oracle on the sign of zero as well as on NaN. The record — the probe's
-`MINMAX` rows, the 16-row pin, the 5-mutant table with the one unkillable and why, the
-`SEGMENT flat_*` reachability measurement, the level-3 `SWEEP nan_lift` row that rebuts part of
-review-25 F2, and the devkitARM `.text`/`nm -u`/`vcvt` before/after — is `docs/PROGRESS_LOG.md`,
-"Iteration 83". Batch 54's record (the last four `fminf`/`fmaxf` sites in `script_runtime.cpp`,
-the `nanclamp` probe mode, the four pins and the 5-mutant table) is "Iteration 82". Batch 53's record
-(`CameraRoll`, the key-window schedule, the 9-mutant table, the `math_lut.h` negative-angle
-measurement) is "Iteration 81". Batch 52's record (one `accelerate()`, the probe table and the 6-mutant
-table) is "Iteration 80". Batch 51's
-record (the fly-arrival pin and the three-mutant guard table, the F1 unclosability proof, the F3
-rebuttal) is "Iteration 79". Batch 50's record (the six clamp pins,
-the .NET derivation, the F4 rebuttal) is "Iteration 78". Batch 49's own record (the dispatch→arm pins, the clamp change,
-the NaN reachability argument, its 8-mutant table) is "Iteration 77"; batch 48's — `chase`/
-`followFormation`/`turnTowards`/`moveToward` and their derivation and 16-mutant tables — is "Iteration
-76". Earlier batches are one "Iteration N" section back each: 55 = 83, 54 = 82, 53 = 81, 52 = 80, 51 = 79, 50 = 78, 49 = 77, 48 = 76, 47 = 75,
-46 = 74, 45 = 73, 44 = 72,
-43 = 71, 42 = 70, 41 = 69, 40 = 68, 39 = 67, 38 = 66, 37 = 65, 36 = 64, 35 = 63, 34 = 62, 33 = 61,
-32 = 60.
-Review-18's F1-F6 were owner-only too, each reproduced before being dispositioned: in a clone of the
-committed tree a `PROTECTED` edit fails the gate, editing a historical frame sidecar fails it ("history
-is immutable"), and the committed `gates_batch_integrity.py` does not even accept `--each-commit` — that
-whole recovery exists only in the unstaged owner diff, so there is nothing in the committed tree for a
-batch to change. Review-19 F3 and review-20 F3 add one line each to that same owner task: `--each-commit`
-with no `--base` prints `BATCH INTEGRITY: PASS` over zero commits (reproduced again in batches 50 and
-51), while the **committed** gate rejects the flag as unrecognized (rc 2), so the fail-open path exists
-only in the uncommitted owner diff. Review-21 F1 is that same task's `PROTECTED` half and review-21 F8
-is its frame half (the untracked `ralph-self-heal` pair); review-21 F3 is **closed by the runtime**, not
-by this batch: both KBs' stored `embedding_signature` now ends `prefixes=off`, matching the override.
+Last updated: 2026-11-04 (**batch 56** — the shatter's group box propagates a NaN like the
+oracle's `Vector3.Min`/`Vector3.Max` does, and `fminf`/`fmaxf` are now absent from both source
+trees and from the linked 3DS ELF). The record — the probe's `V3MIN`/`SHATTER` rows, the 31-row
+pin, the before/after agreement table, the 10-mutant table with its four equivalent mutants and
+why, the ±0-unobservable measurement, and the devkitARM `.text`/`nm -u`/`vcvt` before-and-after
+— is `docs/PROGRESS_LOG.md`, "Iteration 84". Batch 55's record (one `math_minmax.h`, the
+`MINMAX` rows, the sign-of-zero tie arm) is "Iteration 83"; batch 54's (the last four
+`script_runtime.cpp` clamps, the `nanclamp` mode) is "Iteration 82"; batch 53's (`CameraRoll`)
+is "Iteration 81"; batch 52's (one `accelerate()`) is "Iteration 80"; batch 51's is 79, 50's 78,
+49's 77, 48's 76, 47's 75, 46's 74, 45's 73, 44's 72, 43's 71, 42's 70, 41's 69, 40's 68,
+39's 67, 38's 66, 37's 65, 36's 64, 35's 63, 34's 62, 33's 61, 32's 60.
+
+Review-18's F1-F6 were owner-only, each reproduced before being dispositioned: in a clone of the
+committed tree a `PROTECTED` edit fails the gate, editing a historical frame sidecar fails it
+("history is immutable"), and the committed `gates_batch_integrity.py` does not accept
+`--each-commit` at all — that recovery exists only in the unstaged owner diff. Review-19 F3 and
+review-20 F3 add one line each to that same owner task: `--each-commit` with no `--base` prints
+`BATCH INTEGRITY: PASS` over zero commits, while the **committed** gate rejects the flag (rc 2),
+so the fail-open path exists only in the uncommitted owner diff. Review-21 F1 is that task's
+`PROTECTED` half and review-21 F8 its frame half; review-21 F3 is **closed by the runtime**.
+Review-26 F3 is the same task again, and the reviewer confirms the four files and the stray
+`2026-11-02-ralph-self-heal` pair are owner-owned (mtimes two days before the reviewed commits,
+owners `coleshores`/`museagent`), not a builder edit.
 
 **Still owner-gated and still uncommitted in the tree** (so batches stage only their own paths and
 never `git add -A`): `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
 `tools/runner/gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`.
 Review-10 F1/F2/F3/F6, review-12 B, review-13 R13-B, review-15 F1/F2, review-16 V16-1,
-review-17 R34-1/R34-5 and review-18 F1-F6 are the same hazard under new numbers: the `--each-commit`
-recovery that replaces the guard's fail-closed path, a green tree that depends on uncommitted files, the
-un-invoked `--self-test`, `--each-commit` dropping the one-frame-per-**batch** rule, `--staged` accepting
-what the range check rejects, and a historical sidecar whose counts are wrong and that the immutability
-rule will not let a batch correct. All owner tasks (1)/(9)/(13).
+review-17 R34-1/R34-5, review-18 F1-F6, review-24 F1/F2, review-25 F4 and review-26 F3/F4 are the
+same family of hazards under new numbers: the `--each-commit` recovery that replaces the guard's
+fail-closed path, a green tree that depends on uncommitted files, the un-invoked `--self-test`,
+`--each-commit` dropping the one-frame-per-**batch** rule, `--staged` accepting what the range
+check rejects (`:202` allows n frames, `:69` allows exactly one), a historical sidecar whose
+counts are wrong and that the immutability rule will not let a batch correct, and probe pins that
+cannot be regenerated from the repository alone. All owner tasks (1)/(9)/(13), plus a new one:
+whether a probe driver gets checked in (review-26 F4).
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -214,7 +211,14 @@ part** where batches 14-55 changed it. The headlines a batch can break:
   libm trig and its `@vfp-exempt R6` pin; `sprites` is a REQUIRED constructor argument;
   `mdk_render_draw_mesh` **queues** and the backend buckets by `Pass` in queue order — the oracle's
   order, not a backend's (P3). `update_rolling()` runs **before** `previous_position = position`,
-  where the C# does, and `mdk::create_from_axis_angle` is **bit-exact against .NET 10**. **Every movement command the C#'s `UpdateCommand` dispatches now has an arm: 1 formation, 6 chase, 15 alarm, 30 chain, 43/78/197 walk-or-fly, 61 projectile, 74 attachment, 88 forward, 229 jump — commands 1 and 6 landed in batch 48 (`followFormation`, `chase`, over the new `turnTowards`/`moveToward`), after their dispatches had set `move_command` with nothing reading it; neither fires in levels 3-8.** The speed clamps those arms run (`moveForward`, walk, fly, chase's gain and brake) use `mathMin`/`mathMax`, not `fminf`/`fmaxf`, because the oracle writes them as `MathF.Min`/`MathF.Max`: both propagate NaN (a NaN speed must stay NaN) and both sort -0.0 below +0.0, and since batch 55 that pair is ONE function in `util/math_minmax.h` shared by the whole tree rather than four local copies. The oracle's `Accelerate` (`ObjectMotion.cs:780-790`) is **one** function with three callers, and the port now matches that: one file-scope `accelerate(MdkObject*, float)` called by `moveForward`, the walk arm and the fly arm (batch 52, review-21 F7) — do not re-inline it, and do not fold `chase`'s clamp pair into it, because those two lines are the C#'s own `Chase` formula (`:916-917`), not a copy. All eight sites are pinned (batch 50): `ChaseSpeedClampPropagatesNaNLikeTheOracle` plus `MoveForward`/`Walk`/`Fly` `…ClampPropagatesNaNLikeTheOracle`, which feed a NaN `acceleration`/`deceleration` because `Accelerate`'s strict comparisons mean a NaN *speed* never reaches those three clamps; and `AccelerateIsOneImplementationAcrossTheArms` (batch 52) drives all three arms from identical state over 17 rows and requires each to land on the bits .NET's private `Accelerate` prints, so an arm that drifts from the shared helper fails. And the walk/fly arm's `if (move_command != 0)` guard around `detectStuck`/`handleStuck` is the oracle's own (`ObjectMotion.cs:354-358`): an object that arrives after a replan keeps its `stuck_count`, which is what opcode 231 reads — pinned by `ArrivalKeepsTheStuckCountTheOracleKeeps` on **both** arrivals (the walk arrival's skip comes from `Walk`'s own `return`, `ObjectMotion.cs:811-812`, so only the fly arrival exercises the guard) plus a non-arrival fly tick where `detectStuck` must still run (`stuck_ticks == 1`).
+  where the C# does, and `mdk::create_from_axis_angle` is **bit-exact against .NET 10**. **Every movement command the C#'s `UpdateCommand` dispatches now has an arm: 1 formation, 6 chase, 15 alarm, 30 chain, 43/78/197 walk-or-fly, 61 projectile, 74 attachment, 88 forward, 229 jump — commands 1 and 6 landed in batch 48 (`followFormation`, `chase`, over the new `turnTowards`/`moveToward`), after their dispatches had set `move_command` with nothing reading it; neither fires in levels 3-8.** The speed clamps those arms run (`moveForward`, walk, fly, chase's gain and brake) use `mathMin`/`mathMax`, not `fminf`/`fmaxf`, because the oracle writes them as `MathF.Min`/`MathF.Max`: both propagate NaN (a NaN speed must stay NaN) and both sort -0.0 below +0.0, and since batch 55 that pair is ONE function in `util/math_minmax.h` shared by the whole tree rather than four local copies. The oracle's `Accelerate` (`ObjectMotion.cs:780-790`) is **one** function with three callers, and the port now matches that: one file-scope `accelerate(MdkObject*, float)` called by `moveForward`, the walk arm and the fly arm (batch 52, review-21 F7) — do not re-inline it, and do not fold `chase`'s clamp pair into it, because those two lines are the C#'s own `Chase` formula (`:916-917`), not a copy. All eight sites are pinned (batch 50): `ChaseSpeedClampPropagatesNaNLikeTheOracle` plus `MoveForward`/`Walk`/`Fly` `…ClampPropagatesNaNLikeTheOracle`, which feed a NaN `acceleration`/`deceleration` because `Accelerate`'s strict comparisons mean a NaN *speed* never reaches those three clamps; and `AccelerateIsOneImplementationAcrossTheArms` (batch 52) drives all three arms from identical state over 17 rows and requires each to land on the bits .NET's private `Accelerate` prints, so an arm that drifts from the shared helper fails. And the walk/fly arm's `if (move_command != 0)` guard around `detectStuck`/`handleStuck` is the oracle's own (`ObjectMotion.cs:354-358`): an object that arrives after a replan keeps its `stuck_count`, which is what opcode 231 reads — pinned by `ArrivalKeepsTheStuckCountTheOracleKeeps` on **both** arrivals (the walk arrival's skip comes from `Walk`'s own `return`, `ObjectMotion.cs:811-812`, so only the fly arrival exercises the guard) plus a non-arrival fly tick where `detectStuck` must still run (`stuck_ticks == 1`). The **debris shatter's group box** is the same family and is now
+oracle-exact too (batch 56): `Debris.cs:160-166` folds each facet's three corners with nested
+`Vector3.Min`/`Vector3.Max`, which propagate a NaN, and the box is the only input to `Shot.Far`,
+which scales every piece's speed and spin — so a NaN corner leaves `Far > 0` false, `f` at exactly
+1.0, and every piece of the group at the full shatter speed, while the `fminf` spelling dropped
+the NaN and gave a different `f` to every piece. Pinned by
+`DebrisGroupBoxPropagatesNaNLikeTheOracle` on six groups (finite, two NaN, a 129-piece NaN, and
+two ±0) whose expectations are the C# probe's own printed `SHATTER` rows.
 - **Loop harness:** fail-closed on every way a mandatory review can fail to happen, fail-*forward*
   where the obligation is recoverable; every transition goes through `state_write` (one temp file,
   one rename, a checked status); the obligation is created **before** the thing it must survive;
@@ -224,66 +228,71 @@ part** where batches 14-55 changed it. The headlines a batch can break:
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 55)
+## Verified on this tree (batch 56)
 
-Narrative, the probe's `MINMAX`/`SEGMENT flat_*`/`SWEEP` rows (the oracle's own printed bits),
-the 16-row pin, the 5-mutant table with its one unkillable and the reason, and the devkitARM
-`.text`/`nm -u`/`vcvt` before-and-after: `docs/PROGRESS_LOG.md`, "Iteration 83". Batch 54's —
-the last four `fminf`/`fmaxf` sites in `script_runtime.cpp`, the `nanclamp` probe mode and its
-four pins — is "Iteration 82"; batch 53's (`CameraRoll`, the key-window schedule, the
-9-mutant table, the `math_lut.h` negative-angle measurement) is "Iteration 81"; batch 52's (one
-`accelerate()`, the `accel` probe table, six mutants) is "Iteration 80"; batch 51's (the
-fly-arrival pin) is "Iteration 79"; batch 50's (the six clamp pins) is "Iteration 78".
-`make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All cases match
-the oracle.`, **479 PASS / 0 FAIL**, and `./build/vm_tests` **78 PASS / 0 FAIL** — the extra
-case is `MathMinMaxMatchTheOracleOnNaNAndSignedZero`, and **no golden moved**);
-`bash tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`:
+Narrative, the oracle probe's `V3MIN`/`V3MAX`/`SHATTER` rows, the 31-row pin, the before/after
+agreement table, the 10-mutant table with its four equivalent mutants and the proof, the
+±0-unobservable measurement and the devkitARM `.text`/`nm -u`/`vcvt` before-and-after:
+`docs/PROGRESS_LOG.md`, "Iteration 84". Batch 55's (one `math_minmax.h`, the `MINMAX` rows, the
+sign-of-zero tie arm, its 5-mutant table) is "Iteration 83"; batch 54's (the last four
+`script_runtime.cpp` clamps, the `nanclamp` probe mode and four pins) is "Iteration 82"; batch
+53's (`CameraRoll`, the key-window schedule, the `math_lut.h` negative-angle measurement) is
+"Iteration 81"; batch 52's (one `accelerate()`, the `accel` probe table) is "Iteration 80"; batch
+51's (the fly-arrival pin) is "Iteration 79"; batch 50's (the six clamp pins) is "Iteration 78".
+`make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All cases match the
+oracle.`, **480 PASS / 0 FAIL**, and `./build/vm_tests` **79 PASS / 0 FAIL** — the extra case is
+`DebrisGroupBoxPropagatesNaNLikeTheOracle`, and **no golden moved**: the commit's `--name-only`
+list contains no `golden/` path); `bash tools/check.sh` **exit 0** (`CHECK: ALL GATES PASSED`:
 `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math` contract clean,
 `audit_r11_idiv` no candidates, `gates_core_parity` both targets link the same core, `gates_smdh`
 SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame
 unchanged, and `reference.sha256` NOT regenerated — `gates_batch_integrity` BATCH INTEGRITY:
-PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux --target
-mdk -j8` **exit 0**.
+PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux --target mdk
+-j8` **exit 0**.
 
-**The `MathF.Min`/`MathF.Max` twin is ONE function now: `mdk_core/src/util/math_minmax.h`.**
-Four .cpp files each had a copy (`script_runtime.cpp`, `script_vm.cpp`, `sound_mixer.cpp`,
-`camera_roll.cpp`) and one had already drifted; do not put a fifth copy back. It is
-NaN-propagating AND -0.0-aware, because the oracle is: `MathF.Min(-0,+0)` and `MathF.Min(+0,-0)`
-are both `-0` (bits `80000000`) and `MathF.Max` of that pair is `+0` in both orders, measured on
-.NET 10, and a float compare cannot see the difference, so the tie arm reads the sign off the
-bits with an **integer** compare (no `vcvt`, no libm, no float literal — which matters because
-`script_vm.o` is built `-fsingle-precision-constant`). The oracle preserves the NaN **payload**
-and returns whichever operand was the NaN, so the pins assert NaN-ness, not a payload. The
-ternary form (`a < b ? a : b`) is the divergence, not a style choice: mutant M1 — the exact
-ternary review-25 F1 found — makes `make -C tests/scripts` exit 2. Batch 50-54's invariants
-stand: the eight speed clamps, the two `CameraRoll` ones and the four `nanclamp` sites all go
-through this one pair, the oracle's one `Accelerate` is one `accelerate()`, the
-`move_command != 0` arrival guard is killable on both sides, and `CameraRoll` is the only writer
-of the view's bank. Measured footprint, not a perf claim: +392 bytes of `.text` across the four
-ARM objects, `nm -u` unchanged, `vcvt` count 46 before and after.
+**There is no `fminf`/`fmaxf` left anywhere in the port.** Not in `mdk_core/src`, `mdk_3ds/src`
+or `mdk_linux/src`, and `arm-none-eabi-nm mdk_3ds/mdk.elf | grep -iE 'fmin|fmax'` is empty, so
+the shipped binary does not reference libm's min/max at all. Every `MathF.Min`/`MathF.Max` in
+the oracle — the eight speed clamps, the two `CameraRoll` ones, the four `nanclamp` sites, and
+now the shatter's group box — goes through the ONE pair in `util/math_minmax.h`. Do not put a
+`fminf` back: its ±0 tie order is implementation-defined (measured on glibc 2.39: it returns its
+**second** operand, so it matches .NET in one argument order and not the other; the same source
+with the constants visible folds to a **third** answer at `-O2`), and the header now says that
+in those terms instead of claiming libm was already correct. The helper is NaN-propagating and
+-0.0-aware, and its tie arm reads the sign off the bits with an **integer** compare.
+
+**The shatter's group box is oracle-exact now, and the pin says which side of the box each axis
+reads.** `DebrisGroupBoxPropagatesNaNLikeTheOracle` drives `Debris::shatter` with synthetic
+groups whose expectations are the C# probe's own printed rows, and it runs above the game-data
+check so it cannot skip. Two of its groups exist only to pin the far-corner side: `inside` sits
+next to the min corner (every axis must reach the max side) and `near_max` next to the max corner
+(every axis must reach the min side) — without them a box that lost one axis's min side passed,
+which was measured, not assumed. The ±0 half of the helper is **not** observable at this site and
+that is measured too (`Abs` erases the sign: `signed_zero` and `signed_zero_plain` shatter into
+bit-identical pieces in both the oracle and the port), so the pin asserts both groups against
+the same rows. Measured footprint, not a perf claim: `debris.o` `.text` 9069 → 9673 (+604),
+`nm -u` loses `fminf`/`fmaxf` and nothing else, `vcvt` 15 before and 15 after.
 
 Still NOT pinned by any golden: a shipped frontend's mixer wiring (no frontend has an audio
 device, none draws `Knocked`), the fall-out variant of death, the firing step frames, the sprite
 frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white flash's
 other writers, and feet finer than 1/64 unit (owner task 15). **The next non-owner candidates,
-in order:** `scripts/debris.cpp:157-162,177-178` — the shatter's group box — is the same defect
-one subsystem over: the oracle there is `Debris.cs:160-166`'s nested `Vector3.Min`/`Vector3.Max`,
-and **`System.Numerics` propagates a NaN like `MathF.Min`/`MathF.Max` does and orders ±0 the same
-way, in both argument orders** (probe rows `V3MIN`/`V3MAX` and the two `_REV` rows), so those
-`fminf`/`fmaxf` are a real (if unreachable-by-anything-in-the-shipped-data) divergence. Batch 55
-removed the reason it was waiting: the shared helper is now oracle-exact, so that batch is a
-substitution plus its own pin. Then the follow camera's **blend** (`FollowCamera.Blend` over its
-`Aim` triple, which needs the high-refresh frame blend `FrameBlend`'s Kurt half already
-carries); then its sniper scope and top-down view. `script_runtime.cpp` has no `fminf`/`fmaxf`
-left. Owner candidates unchanged: `math_lut.h`'s `fastSin`/`fastCos` measure 2.5x their own
-documented error on a **negative** argument (1.19e-05 at -10 degrees against libm; every camera
-and sprite angle uses that path, so fixing it is a frame-baseline event — Iteration 81), and
-review-24 F1/F2 plus review-25 F4, which are the `--each-commit`, sidecar-immutability and
-`PROTECTED`-set owner tasks. **No emulator run and no Old-3DS hardware run: Old-3DS timing stays
-UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only windowed run was the frame
-capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-03-minmax-signed-zero.png` + `.txt` — `1.240 / 247 / 0.1819`,
-byte-identical (`6646adf1dae3…`) to its parent's.
+in order:** the shatter's **radial** velocity, 1 ULP from the oracle on some pieces because
+`Vector3.Normalize` and `debris.cpp`'s `vnormalize` disagree (measured identical before and
+after this batch, so it is pre-existing, and `finite/radial` agrees on only 6 of 18 pieces);
+then the piece **spin quaternion**, ≤ 2 ULP from `Quaternion.CreateFromYawPitchRoll` because
+`quatFromYawPitchRoll` is libm `sinf`/`cosf` under an `@vfp-exempt R6` pin (no golden prints
+spin, so nothing shows it today); then the follow camera's **blend** (`FollowCamera.Blend` over
+its `Aim` triple, which needs the high-refresh frame blend `FrameBlend`'s Kurt half already
+carries); then its sniper scope and top-down view. Owner candidates unchanged: `math_lut.h`'s
+`fastSin`/`fastCos` measure 2.5x their own documented error on a **negative** argument (1.19e-05
+at -10 degrees against libm; every camera and sprite angle uses that path, so fixing it is a
+frame-baseline event — Iteration 81), and the `--each-commit`, sidecar-immutability,
+`PROTECTED`-set and checked-in-probe tasks. **No emulator run and no Old-3DS hardware run:
+Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
+windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
+`docs/frames/2026-11-04-debris-nan-box.png` + `.txt` — `1.240 / 247 / 0.1819`, byte-identical
+(`6646adf1dae3…`) to its parent's.
 
 ## Standing open items
 
@@ -343,5 +352,5 @@ cmake --build build-linux --target mdk -j8             # the Linux frontend
 tests/frames/regenerate_reference.sh                   # intentional frame change only
 ```
 
-Goldens are **470/0/0**. Tests do not track header dependencies: run `make -C tests/scripts clean`
+The suite prints **480 PASS / 0 FAIL** (`make -C tests/scripts`); `./build/vm_tests` alone prints **79**. Tests do not track header dependencies: run `make -C tests/scripts clean`
 after header changes. Never weaken a gate or test.

@@ -1,0 +1,20 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-04T00:05:07Z at f22a39e
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why this picture cannot move: this batch changes only what a NaN does inside a shattered
+triangle group's bounding box, and nothing in the shipped arena geometry contains a NaN.
+The change is scripts/debris.cpp's shatter group box: nine fminf/fmaxf became mathMin/
+mathMax, because the oracle there is Debris.cs:160-161's nested Vector3.Min/Vector3.Max and
+System.Numerics propagates a NaN where libm's NaN-silent fminf/fmaxf dropped it. The box is
+the only thing that decides Shot.Far, and Far > 0 is false for a NaN, so a NaN corner leaves
+every piece's falloff at exactly 1.0 -- the oracle's first piece of a two-facet group with
+one NaN corner moves at the shatter's full speed (1.5, bits 3FC00000) where the fminf port
+had 1.0810 (3F8A5E98). Every finite input is bit-identical, so the PNG is byte-identical
+(sha256 6646adf1dae3...) to its parent's with the same 1.240/247/0.1819 gap. There is NO
+frame evidence for this batch; the evidence is DebrisGroupBoxPropagatesNaNLikeTheOracle in
+tests/scripts/vm_tests.cpp -- 31 rows of centre and velocity bits that are the C# probe's
+own printed SHATTER rows (mode shatter, transcript in docs/PROGRESS_LOG.md, "Iteration 84")
+-- plus a mutant run in which the pre-batch fminf spelling fails in the repo's own harness.
+Level 5 does shatter real groups (golden/L5_t540_script.txt and L5_t577_script.txt carry 21
+and 71 pieces) and both still match the oracle byte for byte. Capture ran on DISPLAY=:99
+(AGENTS.md P7).
