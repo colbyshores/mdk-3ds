@@ -16,9 +16,9 @@
 // Only the first half is here, because only the first half has a caller: the
 // object pass. The second is deferred with its subsystem (docs/OPEN_ITEMS.md),
 // which is also why the frontend still draws Kurt at Player::feet and not at
-// FrameBlend::Feet. The scalar Lerp(float,float,float) the C# also has is not
-// ported either: its callers are the cutscene camera and the follow camera's
-// blended pitch, both later slices.
+// FrameBlend::Feet. The scalar Lerp(float,float,float) the C# also has is here
+// for the follow camera's blended pitch, pivot and roll; the cutscene camera is
+// a later caller.
 //
 // WHY THE JUMP TEST IS NOT AN OPTIMIZATION. A teleport is a move no frame should
 // be drawn on the way of, and it lands OUTSIDE the tick that snapshotted the pose,
@@ -45,6 +45,12 @@ constexpr float kMaxSpeed = 1500.0f;
 // and the frame at the end of a tick must be the tick's own pose, not a rounding
 // of it.
 Vec3 lerp(Vec3 from, Vec3 to, float t);
+
+// FrameBlend.Lerp(float,float,float): from -> to by t, and EXACTLY `to` once
+// t reaches 1. This is System.MathF.Lerp's own arithmetic, which is
+// `fmaf(from, 1-t, to*t)` -- measured, see the .cpp -- not the twice-rounded form
+// the vector overload above ships, and not the shortest-way angle lerp below.
+float lerp(float from, float to, float t);
 
 // FrameBlend.LerpAngle: degrees, the short way round, so 350 -> 10 goes through
 // 0 and not through 180.

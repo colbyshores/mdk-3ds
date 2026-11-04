@@ -33,6 +33,14 @@ public:
     // The C# Kurt state this increment owns.
     Vec3 feet = {0.0f, 0.0f, 0.0f};
     float yaw = 0.0f;          // degrees, unnormalised, CCW
+    // C# Kurt.CameraPivot and Kurt.CameraTilt (Kurt.Ride.cs:32,37). They belong
+    // to Kurt, not to the camera: the follow camera reads them when it places
+    // the view and when it blends between two steps. The ride that changes the
+    // pivot is not ported, so the pivot stays at its oracle default and the
+    // tilt stays zero, but the fields live here so the camera does not keep a
+    // second copy of them.
+    float cameraPivot = 4.5f;   // C# Kurt.DefaultPivot
+    float cameraTilt = 0.0f;    // degrees, negative looks up
     float forwardSpeed = 0.0f;
     float strafeSpeed = 0.0f;
     float turnRate = 0.0f;     // degrees/s
@@ -133,6 +141,9 @@ public:
     // of it, and FollowCamera::update reads the result every frame, so a copy here
     // that nothing reads is the write-only-field defect again. Its two writers and
     // the order they run in are pinned by golden/L3_kurt_camroll.txt.
+    // Read-only on purpose: C# Kurt.CameraRoll.Roll is `{ get; private set; }`, and
+    // the only writers are CameraRoll's own methods, which run inside update(). A
+    // mutable accessor here would let a caller set the bank behind CameraRoll's back.
     const CameraRoll& cameraRoll() const { return _cameraRoll; }
     // The velocity half of C# Kurt.KnockDown (Kurt.Combat.cs:177, `_push += push`),
     // split out so the push term can be pinned on its own. Every push the oracle adds

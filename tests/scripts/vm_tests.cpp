@@ -5052,6 +5052,259 @@ void testCameraRollBanksTheFollowCamera() {
                     sinf(bank * 3.14159265358979323846f / 180.0f), kTolerance));
 }
 
+// The follow camera's between-step blend (C# FollowCamera.Blend, FollowCamera.cs
+// 170-186): a frame drawn between two steps places the view at Kurt AS DRAWN --
+// the caller's feet and yaw, because the oracle takes them from FrameBlend -- with
+// its pitch, pivot and roll interpolated between the last two steps' Aim.
+//
+// WHAT THIS PINS AND WHY EACH PART IS WHERE IT IS.
+//
+// * The oracle rows are the probe's own (`mdkprobe 3 60 1 followblend`): eight
+//   steps with the feet, yaw, vertical speed and mouse driven by hand -- the camera
+//   reads only those and OnFloor off Kurt, and the C++ Player's own Update is not
+//   part of this slice -- then the blend at alpha 0, .25, .5, .75 and 1, and again
+//   with the feet moved 1 along +X. The oracle's own test (FrameBlendTests
+//   .TheCameraIsPlacedForKurtAsDrawn) asserts only the +X row and only to four
+//   decimals; this pins every row, and it pins the orientation as well as the place,
+//   because a blend that forgets Orient or Turn leaves the frame drawing on the
+//   previous step's view with no visible symptom in the place alone.
+//
+// * WHY A TOLERANCE AND NOT BITS. The blend's trig goes through the project's one
+//   trig path (fastSin/fastCos, AGENTS.md R6) and its normalize takes a reciprocal,
+//   where the oracle uses MathF.Cos/MathF.Sin and divides by the length; the view is
+//   therefore within the table's error of the oracle rather than on top of it, the
+//   same reason golden/L3_kurt_camroll.txt pins degrees and this file's roll test
+//   pins 2e-5. The tolerance below is RELATIVE, because the place is ~100 units and
+//   one ULP of that is already 8e-6.
+//
+// * WHAT IS BIT-EXACT ANYWAY. alpha = 1 returns the current Aim untouched (the
+//   oracle's own `t >= 1` arm), so the blend at 1 with the step's own feet and yaw
+//   IS the step's view, bit for bit, and after the first step the previous Aim and
+//   the current one are the same, so every alpha of the first frame is that frame's
+//   step. The oracle says exactly this for all eight steps and all five alphas of
+//   step 1; the port has to, or its blend is not the same function. That is the
+//   strongest check here and it needs no oracle table to be wrong about.
+void testFollowCameraBlendPlacesTheFrame() {
+    // The step's own view (pos, forward, up), raw bits, one row per step.
+    static const uint32_t kStep[8][9] = {
+        {0xC0FAB62D, 0xBF2ACA7E, 0x42D22CA0, 0x3F7F127E, 0x3D55E263, 0xBD898320, 0x3D8952E1, 0x3B664C75, 0x3F7F6C1B},   // step 1
+        {0xC0F5C352, 0xBFAAAFAE, 0x42D2373E, 0x3F7E1581, 0x3DD5A477, 0xBD8205AA, 0x3D814F53, 0x3BD974CA, 0x3F7F7BCB},   // step 2
+        {0xC0EFE08C, 0xBFFF92DD, 0x42D2663F, 0x3F7C4029, 0x3E1FCF70, 0xBD8CB8D2, 0x3D8AFD4B, 0x3C301C30, 0x3F7F651B},   // step 3
+        {0xC0E96975, 0xC02A073E, 0x42D28480, 0x3F79CB50, 0x3E5461B0, 0xBD8F0CEE, 0x3D8BECAD, 0x3C6DEF5D, 0x3F7F5FF0},   // step 4
+        {0xC0E284A6, 0xC0541BD3, 0x42D27B9C, 0x3F76CF5E, 0x3E8443DD, 0xBD7B9C63, 0x3D730997, 0x3C823E4E, 0x3F7F843C},   // step 5
+        {0xC0DAA483, 0xC07DADC2, 0x42D2A270, 0x3F72F606, 0x3E9DE2BA, 0xBD846AC4, 0x3D7BDF48, 0x3CA3AD2D, 0x3F7F76DF},   // step 6
+        {0xC0D23F94, 0xC0937479, 0x42D2B155, 0x3F6E8941, 0x3EB72183, 0xBD7E21E3, 0x3D6D40C4, 0x3CB62553, 0x3F7F81BD},   // step 7
+        {0xC0C91AFC, 0xC0A7C904, 0x42D2D017, 0x3F69660A, 0x3ECFD4DD, 0xBD81A51E, 0x3D6CDF88, 0x3CD2ECEC, 0x3F7F7C8F},   // step 8
+    };
+    // The blended view at alpha = 0, .25, .5, .75, 1 (pos, forward, up).
+    static const uint32_t kBlend[8][5][9] = {
+        {   // step 1
+            {0xC0FAB62D, 0xBF2ACA7E, 0x42D22CA0, 0x3F7F127E, 0x3D55E263, 0xBD898320, 0x3D8952E1, 0x3B664C75, 0x3F7F6C1B},
+            {0xC0FAB62D, 0xBF2ACA7E, 0x42D22CA0, 0x3F7F127E, 0x3D55E263, 0xBD898320, 0x3D8952E1, 0x3B664C75, 0x3F7F6C1B},
+            {0xC0FAB62D, 0xBF2ACA7E, 0x42D22CA0, 0x3F7F127E, 0x3D55E263, 0xBD898320, 0x3D8952E1, 0x3B664C75, 0x3F7F6C1B},
+            {0xC0FAB62D, 0xBF2ACA7E, 0x42D22CA0, 0x3F7F127E, 0x3D55E263, 0xBD898320, 0x3D8952E1, 0x3B664C75, 0x3F7F6C1B},
+            {0xC0FAB62D, 0xBF2ACA7E, 0x42D22CA0, 0x3F7F127E, 0x3D55E263, 0xBD898320, 0x3D8952E1, 0x3B664C75, 0x3F7F6C1B},
+        },
+        {   // step 2
+            {0xC0F5BC3A, 0xBFAAACB3, 0x42D23B86, 0x3F7E1123, 0x3DD5A0CA, 0xBD842984, 0x3D83702C, 0x3BDD090A, 0x3F7F7766},
+            {0xC0F5BE04, 0xBFAAAD73, 0x42D23A74, 0x3F7E123C, 0x3DD5A1B7, 0xBD83A08E, 0x3D82E7F6, 0x3BDC23FB, 0x3F7F7880},
+            {0xC0F5BFC9, 0xBFAAAE32, 0x42D23962, 0x3F7E1354, 0x3DD5A2A3, 0xBD831798, 0x3D825FC1, 0x3BDB3EED, 0x3F7F799A},
+            {0xC0F5C190, 0xBFAAAEF1, 0x42D23850, 0x3F7E146B, 0x3DD5A38D, 0xBD828EA0, 0x3D81D788, 0x3BDA59DA, 0x3F7F7AB3},
+            {0xC0F5C352, 0xBFAAAFAE, 0x42D2373E, 0x3F7E1581, 0x3DD5A477, 0xBD8205AA, 0x3D814F53, 0x3BD974CA, 0x3F7F7BCB},
+        },
+        {   // step 3
+            {0xC0EFE08C, 0xBFFF92DD, 0x42D2663F, 0x3F7C4029, 0x3E1FCF70, 0xBD8CB8D2, 0x3D8AFD4B, 0x3C301C30, 0x3F7F651B},
+            {0xC0EFE08C, 0xBFFF92DD, 0x42D2663F, 0x3F7C4029, 0x3E1FCF70, 0xBD8CB8D2, 0x3D8AFD4B, 0x3C301C30, 0x3F7F651B},
+            {0xC0EFE08C, 0xBFFF92DD, 0x42D2663F, 0x3F7C4029, 0x3E1FCF70, 0xBD8CB8D2, 0x3D8AFD4B, 0x3C301C30, 0x3F7F651B},
+            {0xC0EFE08C, 0xBFFF92DD, 0x42D2663F, 0x3F7C4029, 0x3E1FCF70, 0xBD8CB8D2, 0x3D8AFD4B, 0x3C301C30, 0x3F7F651B},
+            {0xC0EFE08C, 0xBFFF92DD, 0x42D2663F, 0x3F7C4029, 0x3E1FCF70, 0xBD8CB8D2, 0x3D8AFD4B, 0x3C301C30, 0x3F7F651B},
+        },
+        {   // step 4
+            {0xC0E98411, 0xC02A128E, 0x42D27525, 0x3F79DBB0, 0x3E546F9B, 0xBD875F5B, 0x3D846A0D, 0x3C612A06, 0x3F7F70AD},
+            {0xC0E97D8D, 0xC02A0FC9, 0x42D278FC, 0x3F79D7AE, 0x3E546C33, 0xBD894ACC, 0x3D864AC2, 0x3C645B71, 0x3F7F6C93},
+            {0xC0E976F2, 0xC02A0CFA, 0x42D27CD2, 0x3F79D39D, 0x3E5468BE, 0xBD8B3635, 0x3D882B6E, 0x3C678CCD, 0x3F7F686B},
+            {0xC0E97040, 0xC02A0A22, 0x42D280A9, 0x3F79CF7F, 0x3E54653D, 0xBD8D2195, 0x3D8A0C10, 0x3C6ABE18, 0x3F7F6434},
+            {0xC0E96975, 0xC02A073E, 0x42D28480, 0x3F79CB50, 0x3E5461B0, 0xBD8F0CEE, 0x3D8BECAD, 0x3C6DEF5D, 0x3F7F5FF0},
+        },
+        {   // step 5
+            {0xC0E25E21, 0xC054072E, 0x42D29367, 0x3F76B7AA, 0x3E843729, 0xBD89B394, 0x3D850268, 0x3C8E8F1E, 0x3F7F6BB1},
+            {0xC0E26815, 0xC0540C84, 0x42D28D75, 0x3F76BDCA, 0x3E843A72, 0xBD86BA58, 0x3D82231C, 0x3C8B7B08, 0x3F7F7209},
+            {0xC0E271D3, 0xC05411BC, 0x42D28782, 0x3F76C3C9, 0x3E843DA9, 0xBD83C108, 0x3D7E877B, 0x3C8866DD, 0x3F7F783E},
+            {0xC0E27B58, 0xC05416D6, 0x42D2818F, 0x3F76C9A4, 0x3E8440CC, 0xBD80C7A5, 0x3D78C899, 0x3C85529E, 0x3F7F7E4E},
+            {0xC0E284A6, 0xC0541BD3, 0x42D27B9C, 0x3F76CF5E, 0x3E8443DD, 0xBD7B9C63, 0x3D730997, 0x3C823E4E, 0x3F7F843C},
+        },
+        {   // step 6
+            {0xC0DA9733, 0xC07DA51B, 0x42D2AA9D, 0x3F72EDD5, 0x3E9DDD67, 0xBD8881B9, 0x3D81D35C, 0x3CA8BB4A, 0x3F7F6E42},
+            {0xC0DA9A92, 0xC07DA74C, 0x42D2A892, 0x3F72EFE8, 0x3E9DDEC0, 0xBD877BFF, 0x3D80DA71, 0x3CA777C6, 0x3F7F706F},
+            {0xC0DA9DE9, 0xC07DA977, 0x42D2A686, 0x3F72F1F6, 0x3E9DE016, 0xBD867644, 0x3D7FC309, 0x3CA63441, 0x3F7F7299},
+            {0xC0DAA139, 0xC07DAB9F, 0x42D2A47B, 0x3F72F400, 0x3E9DE169, 0xBD857085, 0x3D7DD12B, 0x3CA4F0B9, 0x3F7F74BE},
+            {0xC0DAA483, 0xC07DADC2, 0x42D2A270, 0x3F72F606, 0x3E9DE2BA, 0xBD846AC4, 0x3D7BDF48, 0x3CA3AD2D, 0x3F7F76DF},
+        },
+        {   // step 7
+            {0xC0D23F94, 0xC0937479, 0x42D2B155, 0x3F6E8941, 0x3EB72183, 0xBD7E21E3, 0x3D6D40C4, 0x3CB62553, 0x3F7F81BD},
+            {0xC0D23F94, 0xC0937479, 0x42D2B155, 0x3F6E8941, 0x3EB72183, 0xBD7E21E3, 0x3D6D40C4, 0x3CB62553, 0x3F7F81BD},
+            {0xC0D23F94, 0xC0937479, 0x42D2B155, 0x3F6E8941, 0x3EB72183, 0xBD7E21E3, 0x3D6D40C4, 0x3CB62553, 0x3F7F81BD},
+            {0xC0D23F94, 0xC0937479, 0x42D2B155, 0x3F6E8941, 0x3EB72183, 0xBD7E21E3, 0x3D6D40C4, 0x3CB62553, 0x3F7F81BD},
+            {0xC0D23F94, 0xC0937479, 0x42D2B155, 0x3F6E8941, 0x3EB72183, 0xBD7E21E3, 0x3D6D40C4, 0x3CB62553, 0x3F7F81BD},
+        },
+        {   // step 8
+            {0xC0C93226, 0xC0A7D354, 0x42D2C03B, 0x3F69744A, 0x3ECFE18D, 0xBD736DCB, 0x3D5E6224, 0x3CC605DD, 0x3F7F8C2A},
+            {0xC0C92C7E, 0xC0A7D0D0, 0x42D2C432, 0x3F6970D0, 0x3ECFDE75, 0xBD7764FF, 0x3D620191, 0x3CC93FB3, 0x3F7F885A},
+            {0xC0C926BF, 0xC0A7CE40, 0x42D2C829, 0x3F696D47, 0x3ECFDB4F, 0xBD7B5C23, 0x3D65A0F2, 0x3CCC797D, 0x3F7F847B},
+            {0xC0C920EA, 0xC0A7CBA8, 0x42D2CC20, 0x3F6969AF, 0x3ECFD81C, 0xBD7F5335, 0x3D694043, 0x3CCFB339, 0x3F7F808D},
+            {0xC0C91AFC, 0xC0A7C904, 0x42D2D017, 0x3F69660A, 0x3ECFD4DD, 0xBD81A51E, 0x3D6CDF88, 0x3CD2ECEC, 0x3F7F7C8F},
+        },
+    };
+    // The same five blends with the feet moved 1 along +X: the place moves with
+    // them (the oracle asserts exactly this), the orientation does not.
+    static const uint32_t kShift[8][5][3] = {
+        {   // step 1
+            {0xC0DAB62D, 0xBF2ACA7E, 0x42D22CA0},
+            {0xC0DAB62D, 0xBF2ACA7E, 0x42D22CA0},
+            {0xC0DAB62D, 0xBF2ACA7E, 0x42D22CA0},
+            {0xC0DAB62D, 0xBF2ACA7E, 0x42D22CA0},
+            {0xC0DAB62D, 0xBF2ACA7E, 0x42D22CA0},
+        },
+        {   // step 2
+            {0xC0D5BC3A, 0xBFAAACB3, 0x42D23B86},
+            {0xC0D5BE04, 0xBFAAAD73, 0x42D23A74},
+            {0xC0D5BFC9, 0xBFAAAE32, 0x42D23962},
+            {0xC0D5C190, 0xBFAAAEF1, 0x42D23850},
+            {0xC0D5C352, 0xBFAAAFAE, 0x42D2373E},
+        },
+        {   // step 3
+            {0xC0CFE08C, 0xBFFF92DD, 0x42D2663F},
+            {0xC0CFE08C, 0xBFFF92DD, 0x42D2663F},
+            {0xC0CFE08C, 0xBFFF92DD, 0x42D2663F},
+            {0xC0CFE08C, 0xBFFF92DD, 0x42D2663F},
+            {0xC0CFE08C, 0xBFFF92DD, 0x42D2663F},
+        },
+        {   // step 4
+            {0xC0C98411, 0xC02A128E, 0x42D27525},
+            {0xC0C97D8D, 0xC02A0FC9, 0x42D278FC},
+            {0xC0C976F2, 0xC02A0CFA, 0x42D27CD2},
+            {0xC0C97040, 0xC02A0A22, 0x42D280A9},
+            {0xC0C96975, 0xC02A073E, 0x42D28480},
+        },
+        {   // step 5
+            {0xC0C25E21, 0xC054072E, 0x42D29367},
+            {0xC0C26815, 0xC0540C84, 0x42D28D75},
+            {0xC0C271D3, 0xC05411BC, 0x42D28782},
+            {0xC0C27B58, 0xC05416D6, 0x42D2818F},
+            {0xC0C284A6, 0xC0541BD3, 0x42D27B9C},
+        },
+        {   // step 6
+            {0xC0BA9733, 0xC07DA51B, 0x42D2AA9D},
+            {0xC0BA9A92, 0xC07DA74C, 0x42D2A892},
+            {0xC0BA9DE9, 0xC07DA977, 0x42D2A686},
+            {0xC0BAA139, 0xC07DAB9F, 0x42D2A47B},
+            {0xC0BAA483, 0xC07DADC2, 0x42D2A270},
+        },
+        {   // step 7
+            {0xC0B23F94, 0xC0937479, 0x42D2B155},
+            {0xC0B23F94, 0xC0937479, 0x42D2B155},
+            {0xC0B23F94, 0xC0937479, 0x42D2B155},
+            {0xC0B23F94, 0xC0937479, 0x42D2B155},
+            {0xC0B23F94, 0xC0937479, 0x42D2B155},
+        },
+        {   // step 8
+            {0xC0A93226, 0xC0A7D354, 0x42D2C03B},
+            {0xC0A92C7E, 0xC0A7D0D0, 0x42D2C432},
+            {0xC0A926BF, 0xC0A7CE40, 0x42D2C829},
+            {0xC0A920EA, 0xC0A7CBA8, 0x42D2CC20},
+            {0xC0A91AFC, 0xC0A7C904, 0x42D2D017},
+        },
+    };
+
+    // Measured on this tree against every row above: the worst relative delta over
+    // the 8 steps x 5 alphas x 9 values is 6.15e-06 (on the place, whose magnitude
+    // is ~100, so a ULP of it is already 7.6e-09 and the delta is the trig path and
+    // the reciprocal normalize, not the blend). 2e-05 is that with room, and it is
+    // still four orders under what a wrong sign, a swapped sine and cosine, a
+    // missing term or a blended pivot that forgot the pivot would produce.
+    const float kTolerance = 2e-5f;
+    auto nearOracle = [&](float actual, uint32_t expectedBits) {
+        uint32_t e = expectedBits;
+        float want;
+        memcpy(&want, &e, sizeof(want));
+        const float scale = fabsf(want) > 1.0f ? fabsf(want) : 1.0f;
+        return fabsf(actual - want) <= kTolerance * scale;
+    };
+    auto checkView = [&](const Camera& camera, const uint32_t* want, const char* what, int step,
+                         int alpha) {
+        const float got[9] = {camera.position.x, camera.position.y, camera.position.z,
+                              camera.forward.x, camera.forward.y, camera.forward.z,
+                              camera.up.x,       camera.up.y,       camera.up.z};
+        for (int i = 0; i < 9; i++) {
+            if (!nearOracle(got[i], want[i])) {
+                printf("  FAIL: %s step %d alpha %d value %d was %.9g, the oracle has %08X\n", what,
+                       step, alpha, i, got[i], want[i]);
+                failures++;
+                return;
+            }
+        }
+    };
+    auto sameBits = [](const Vec3& a, const Vec3& b) {
+        return a.x == b.x && a.y == b.y && a.z == b.z;
+    };
+
+    const float kAspect = 4.0f / 3.0f;
+    const float kStepSeconds = 1.0f / 60.0f;
+    const float kAlphas[5] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+
+    FollowCamera follow;
+    Player player;
+    Camera step;
+    Camera blend;
+
+    // Before the first step there is no Aim to interpolate, and the C# returns with
+    // the camera untouched (FollowCamera.cs:179-182, `if (_previousAim is not {})`).
+    // A blend that placed the view here would show a frame of a camera that has never
+    // seen Kurt at all -- the blank-first-frame class of bug.
+    Camera untouched;
+    CHECK(!follow.blend(&untouched, Vec3{0.0f, 0.0f, 0.0f}, 0.0f, 0.5f, kAspect));
+    Camera fresh;
+    CHECK(memcmp(&untouched, &fresh, sizeof(Camera)) == 0);
+
+    for (int s = 1; s <= 8; s++) {
+        player.feet = Vec3{s * 0.125f, -s * 0.25f, 100.0f + s * 0.05f};
+        player.yaw = s * 3.0f;
+        player.verticalSpeed = (s % 4 == 0) ? -20.0f : 0.0f;
+        player.onFloor = (s % 4) != 0;
+        Input input;
+        input.mouseY = (s % 3 == 0) ? 2.0f : -1.0f;
+        // The mouse goes in through mouseLook, which consumes it, so the step adds no
+        // mouse of its own -- the side the port takes, and the side the probe drives.
+        follow.mouseLook(input);
+        follow.update(&step, nullptr, player, 4.0f, kStepSeconds, kAspect);
+        checkView(step, kStep[s - 1], "step", s, -1);
+
+        for (int i = 0; i < 5; i++) {
+            CHECK(follow.blend(&blend, player.feet, player.yaw, kAlphas[i], kAspect));
+            checkView(blend, kBlend[s - 1][i], "blend", s, i);
+            if (s == 1 || kAlphas[i] == 1.0f) {
+                CHECK(sameBits(blend.position, step.position));
+                CHECK(sameBits(blend.forward, step.forward));
+                CHECK(sameBits(blend.up, step.up));
+            }
+
+            // Kurt drawn 1 further along +X: the place moves with him and the
+            // orientation does not (the oracle's own assertion, to four decimals;
+            // the port lands on the same bits the oracle prints).
+            CHECK(follow.blend(&blend, Vec3{player.feet.x + 1.0f, player.feet.y, player.feet.z},
+                               player.yaw, kAlphas[i], kAspect));
+            const float shifted[3] = {blend.position.x, blend.position.y, blend.position.z};
+            for (int v = 0; v < 3; v++) {
+                if (!nearOracle(shifted[v], kShift[s - 1][i][v])) {
+                    printf("  FAIL: shifted step %d alpha %d place %d was %.9g, the oracle has %08X\n",
+                           s, i, v, shifted[v], kShift[s - 1][i][v]);
+                    failures++;
+                }
+            }
+        }
+    }
+}
+
 // CameraRoll's two clamps are MathF.Min/MathF.Max in the oracle (CameraRoll.cs:47,52),
 // so a NaN bank STAYS NaN instead of snapping to +/-10 the way fminf/fmaxf would. No
 // schedule reaches this -- nothing in the golden can make the step NaN -- which is why
@@ -5670,6 +5923,7 @@ int main() {
     testArrivalKeepsTheStuckCountTheOracleKeeps(&levelData, &cmi, &bank);
     printf("PASS ArrivalKeepsTheStuckCountTheOracleKeeps\n");
     testCameraRollBanksTheFollowCamera();
+    testFollowCameraBlendPlacesTheFrame();
     printf("PASS CameraRollBanksTheFollowCamera\n");
     testCameraRollMatchesTheOraclesOwnUnitTest();
     printf("PASS CameraRollMatchesTheOraclesOwnUnitTest\n");

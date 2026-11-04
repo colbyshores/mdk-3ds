@@ -1,0 +1,17 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-04T23:54:00Z at e521a25
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture is byte-identical to its parent (md5 6769a137…, same as the last seven): batch 62
+ports `FollowCamera.Blend`, and nothing shipped calls it yet. The C# draws a frame between two steps
+at FrameBlend's blended Kurt pose; that half of FrameBlend (Record/Update/Turn/KurtAt) is deferred
+with Rides, so every frontend still draws Kurt at Player::feet with the step's own camera and the
+blend never runs. The two changes that DO execute — the scalar `frame_blend::lerp` and the arena-pitch
+ease in `FollowCamera::update`, both moved to the oracle's fused `from*(1-t) + to*t` shape — move the
+view by at most a ULP of a pitch in degrees, and at level 3 frame 1 the eased arena pitch has not yet
+separated from its target, so no pixel moves. That is measured against a binary that contains this
+batch (`cmake --build build-linux --target mdk` rebuilt `frame_blend.cpp.o` and `follow_camera.cpp.o`
+at 16:53 and the capture ran after it): the same 64092 bytes and the same md5 as
+`2026-11-04-r6-pin-at-the-site.png`. The gap to the oracle is therefore unchanged at 1.240% bad pixels
+/ max 247 / mean 0.1819, and it is still the panorama, palette and object-pass gap recorded in
+`docs/OPEN_ITEMS.md`, not a camera gap.

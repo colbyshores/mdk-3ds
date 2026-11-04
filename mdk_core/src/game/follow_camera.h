@@ -34,6 +34,10 @@ constexpr float kCloseUpPitch = -20.0f;   // degrees
 constexpr float kCloseUpRange = 80.0f;
 constexpr float kCloseUpBias = 100.0f;
 constexpr float kDefaultPitch = 4.0f;     // degrees
+// The C#'s FollowCamera reads its pivot off Kurt (Kurt.CameraPivot, default
+// Kurt.DefaultPivot), so the live value is Player::cameraPivot; this is the same
+// 4.5 the C# ships as Kurt.DefaultPivot, kept for the camera's own default Aim
+// and for callers that place a view without a Player.
 constexpr float kDefaultPivot = 4.5f;
 // The view's pitch stays short of straight up or down: past it the view turns
 // over (C# FollowCamera.ViewPitchLimit). The orient's up-vector degenerates at
@@ -105,14 +109,24 @@ bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
 // The follow camera's smoothing state (C# FollowCamera). It owns the eased arena
 // pitch, the mouse's look offset, the air tilt and the climb, and places the
 // view each step. Kurt's roll is applied here too, read off the Player the way the
-// C# reads it off Kurt. The shake, the between-step blend, the sniper scope
-// and the top-down view are not ported (they need the scripts, the moves and the
-// high-refresh blend); where the C# branches on them this takes the false side.
+// C# reads it off Kurt. The between-step blend is ported for the camera's own
+// Aim triple; wiring it to a frontend still needs FrameBlend's Kurt pose. The
+// shake, the sniper scope and the top-down view are not ported (they need the
+// scripts and the moves); where the C# branches on them this takes the false
+// side.
 class FollowCamera {
 public:
     // The per-frame mouse look up/down (C# FollowCamera.MouseLook): the look
     // offset, clamped against the eased arena pitch and the air tilt.
     void mouseLook(Input& input);
+
+    // A frame between two steps (C# FollowCamera.Blend): place the camera for
+    // Kurt as drawn (`feet`, `yaw`) and blend the camera's pitch, pivot and roll
+    // from the last two steps by `alpha`. The feet and yaw are supplied by the
+    // caller because the oracle gets them from FrameBlend's Kurt pose. Returns
+    // false before the first step (there is no Aim to blend) or when the
+    // look-at is degenerate; the camera is left alone in that case.
+    bool blend(Camera* camera, const Vec3& feet, float yaw, float alpha, float aspect);
 
     // One step (C# FollowCamera.Update): ease the arena pitch toward its target,
     // update the air time and the climb, compute the pitch, then place the camera
@@ -122,6 +136,12 @@ public:
                 float delta, float aspect);
 
 private:
+    struct Aim {
+        float pitch = 0.0f;
+        float pivot = follow_camera::kDefaultPivot;
+        float roll = 0.0f;
+    };
+
     void updateAirTime(const Player& player, float delta);
     void updateClimb(float feetZ, float delta);
     static float climbStep(float climb, float rise, float ticks);
@@ -134,6 +154,9 @@ private:
     bool _haveLastFeetZ = false;
     float _lastFeetZ = 0.0f;
     float _climbTime = 0.0f;
+    Aim _previousAim;
+    Aim _aim;
+    bool _haveAim = false;
 };
 
 } // namespace mdk

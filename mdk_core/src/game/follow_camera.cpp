@@ -9,6 +9,7 @@
 
 #include "formats/arena.h"
 #include "game/arena_space.h"
+#include "game/frame_blend.h"
 #include "game/player.h"
 #include "game/vec_util.h"
 #include "render/camera_builder.h"
@@ -41,6 +42,15 @@ float clampViewPitch(float degrees) {
         return -follow_camera::kViewPitchLimit;
     }
     return degrees;
+}
+
+// C# float.DegreesToRadians: multiply by pi, then divide by 180 -- TWO roundings,
+// left-assoc. Measured on .NET 10 (probe mode `deg2rad`, 200 pseudo-random angles
+// plus 8 edges, raw bits): `degrees * kPi / 180.0f` differs from the oracle on 0
+// of 208, `degrees * (kPi / 180.0f)` on 84 and `degrees / 180.0f * kPi` on 77. The
+// two roundings are load-bearing, so do not "tidy" this into a precomputed constant.
+float degreesToRadians(float degrees) {
+    return degrees * kPi / 180.0f;
 }
 
 float clampf(float v, float lo, float hi) {
@@ -277,9 +287,15 @@ void FollowCamera::updateClimb(float feetZ, float delta) {
 
 void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, float arenaPitchTarget,
                           float delta, float aspect) {
-    // Ease the arena pitch toward its target (C# Lerp(target, old, Pow(ease, dt))).
-    _arenaPitch = arenaPitchTarget + (_arenaPitch - arenaPitchTarget) *
-                                    powf(follow_camera::kPitchEase, delta * follow_camera::kTicks);
+    // Ease the arena pitch toward its target: C# `float.Lerp(target, old, Pow(ease,
+    // dt))`, and MathF.Lerp's arithmetic is the FUSED `from*(1-t) + to*t` -- see the
+    // measurement on frame_blend::lerp, whose scalar twin this now matches. The
+    // twice-rounded `target + (old-target)*t` this used sits 1 ULP off the oracle on
+    // most frames (87 of the probe's 200 random triples). Whether powf and MathF.Pow
+    // agree bit for bit is a separate question this does NOT answer; the SHAPE is what
+    // this fixes, and the blend pin below covers the result with the trig tolerance.
+    const float ease = powf(follow_camera::kPitchEase, delta * follow_camera::kTicks);
+    _arenaPitch = fmaf(arenaPitchTarget, 1.0f - ease, _arenaPitch * ease);
     // The per-step input.MouseY (C# line 108) is always zero: the mouse look is
     // applied per frame in mouseLook, which consumes the accumulated mouse.
     updateAirTime(player, delta);
@@ -294,12 +310,62 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     }
     _lookOffset = clampf(_lookOffset, follow_camera::kMinPitch - _arenaPitch - _airPitch,
                          follow_camera::kMaxPitch - _arenaPitch - _airPitch);
-    // CameraTilt (a script) is not ported; CameraRoll is, and the C# reads it off Kurt
-    // here (FollowCamera.cs:139), so this reads it off the Player it was handed.
+    // CameraTilt and CameraPivot live on the Player (C# Kurt.Ride), and CameraRoll
+    // is read off it here exactly as the C# reads it off Kurt (FollowCamera.cs:139).
     const float degrees =
-        _arenaPitch + _lookOffset + _airPitch - follow_camera::kClimbPitch * _climb;
-    buildFollowCameraCleared(camera, space, player, degrees, follow_camera::kDefaultPivot,
+        _arenaPitch + _lookOffset + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt;
+    buildFollowCameraCleared(camera, space, player, degrees, player.cameraPivot,
                              aspect, player.cameraRoll().roll());
+
+    // The Aim the next Blend interpolates (C# FollowCamera.cs:141-143): the
+    // pitch WITHOUT the mouse look (Blend adds the current look on top), the
+    // pivot and the roll. The first step makes previous and current the same;
+    // after that the previous one is the one before this step.
+    const Aim aim{
+        _arenaPitch + _airPitch - follow_camera::kClimbPitch * _climb + player.cameraTilt,
+        player.cameraPivot,
+        player.cameraRoll().roll()};
+    if (!_haveAim) {
+        _previousAim = aim;
+        _haveAim = true;
+    } else {
+        _previousAim = _aim;
+    }
+    _aim = aim;
+}
+
+bool FollowCamera::blend(Camera* camera, const Vec3& feet, float yaw, float alpha, float aspect) {
+    // C# Blend returns immediately before the first step; after one step the
+    // previous Aim and the current Aim are the same, which makes that frame
+    // hold the step's view.
+    if (!_haveAim || camera == nullptr) {
+        return false;
+    }
+
+    const float yawRadians = degreesToRadians(yaw);
+    const Vec3 facing{fastCos(yawRadians), fastSin(yawRadians), 0.0f};
+    const float pitchDegrees = frame_blend::lerp(_previousAim.pitch, _aim.pitch, alpha) + _lookOffset;
+    const float pitch = degreesToRadians(pitchDegrees);
+    const float pivot = frame_blend::lerp(_previousAim.pivot, _aim.pivot, alpha);
+    const Vec3 position = followCameraPoint(feet, facing, pitch, pivot);
+    Vec3 forward;
+    Vec3 up;
+    followCameraOrient(facing, pitch, &forward, &up);
+    followCameraRoll(forward, &up, frame_blend::lerp(_previousAim.roll, _aim.roll, alpha));
+    if (!buildLookAtCamera(camera, position,
+                           Vec3{position.x + forward.x, position.y + forward.y,
+                                position.z + forward.z},
+                           up, follow_camera::kFieldOfView, aspect, follow_camera::kNear,
+                           follow_camera::kFar)) {
+        return false;
+    }
+    // The C#'s Blend leaves Position, Forward and Up set (Orient and Turn write them,
+    // FollowCamera.cs:180-185), so the blended view is readable from the camera the
+    // same way the step's is. Without these two the frame would draw on the blended
+    // matrix while anything reading the view still saw the last step's.
+    camera->forward = forward;
+    camera->up = up;
+    return true;
 }
 
 } // namespace mdk

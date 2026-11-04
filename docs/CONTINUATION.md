@@ -1,20 +1,18 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 61 moves **no behaviour, no golden and no build flag**, but it moves a
-contract-gate annotation, so it is not low. review-30 **Finding A (Critical)** was confirmed and
-fixed at its site: batch 60's comment expansion left `debris.cpp`'s `@vfp-exempt R6` pin 26 lines
-above the `sinf`/`cosf` calls — one line past `audit_arm11_math.py`'s 25-line look-back
-(`has_pin_above`, `:113-118`) — so the gate stopped honouring the pin and `bash tools/check.sh`
-exited 1 on the committed tree while batch 60 had published `exit 0`. The pin now sits on the three
-calls (`debris.cpp:103-109`), same reason, `Verified 2026-11-04`, and `max_back` was NOT widened.
-`audit_arm11_math` is `CONTRACT CLEAN` again (R6-PIN 71→73), all three gates pass, and `debris.o` is
-unchanged (`.text` 9717, 4 MACs, `vcvt` 15). Findings **E/F/G (Low)** are fixed — the FPSCR.FZ clause
-is now proven impossible rather than "not proven impossible" — and **B (High)**, **C** and **D** stay
-open as owner-gated with evidence, not rebutted.
+Risk: medium — batch 62 ports one oracle method (`FollowCamera.Blend`) and changes the **rounding of a
+live camera path**: the inherited draft's scalar `frame_blend::lerp` was NOT the oracle's arithmetic
+(its own comment claimed "matches every row"; the probe says it differs on **87 of 200** random rows),
+so the scalar lerp and `FollowCamera::update`'s arena-pitch ease now ship the oracle's fused
+`fmaf(from, 1-t, to*t)` shape, pinned bit-for-bit on 256 oracle rows. Bounded (one subsystem, no
+interface, no data format, no concurrency, no golden moved: 480 PASS / 0 FAIL as batch 61), but it is
+numeric behaviour plus a target-specific codegen decision (`fmaf` is a tail `b fmaf` on VFPv2, measured
+on the shipped object), so it is not low. The inherited dirty tree was finished, not restarted; the
+five owner-gated dirty paths were again NOT staged.
 
-Last updated: 2026-11-04 (**batch 61** — review-30 remediated: the R6 pin moved to the site the gate
-reads, the tree's gates are green again, and the three cheap record corrections landed). The record
-is `docs/PROGRESS_LOG.md`, "Iteration 89"; batch 60's (the record sweep, the false GNU-dialect
+Last updated: 2026-11-04 (**batch 62** — the follow camera's between-step blend lands, and its scalar
+`Lerp` turns out to have been the wrong shape). The record is `docs/PROGRESS_LOG.md`, "Iteration 90";
+batch 61's (the R6 pin moved to the site the gate reads, the tree green again) is "Iteration 89"; batch 60's (the record sweep, the false GNU-dialect
 cause, the scoped identical-bits claim) is "Iteration 88"; batch 59's (the four codegen experiments,
 the shipped-grouping replay 0/72 vs 23/72, the M1/M2 re-runs, the `.text` pair) is "Iteration 87".
 Batch 58's record (the spin angle's two roundings, the 56 new spin rows, the 8-mutant table, the
@@ -203,7 +201,12 @@ part** where batches 14-55 changed it. The headlines a batch can break:
   `L3_kurt_camroll` against the oracle probe, and what the bank does to the drawn view — plus the
   wiring that makes the camera read it at all — by `CameraRollBanksTheFollowCamera`. Do not
   re-derive the bank in the camera, and do not add a `Slide`/`Follow` writer before the subsystem
-  that owns it.
+  that owns it. **The between-step blend is ported** (batch 62): `FollowCamera::blend` is the C#'s
+  `Blend` over its `Aim` triple (pitch-without-the-look, pivot, roll), fed by the `Aim` that
+  `FollowCamera::update` now stores, and `cameraPivot`/`cameraTilt` live on `Player` because in the C#
+  they are Kurt's (`Kurt.Ride.cs:32,37`), not the camera's. It has no shipped caller until
+  `FrameBlend`'s Kurt half lands — that is a caller gap, not a stub: the method is complete and pinned
+  by `FollowCameraBlendPlacesTheFrame`, including bit-for-bit at α=1.
 - **Missing-archive path:** an unparseable `TRAVSPRT.BNI` makes the frontend run the level WITHOUT
   scripts and say so, and `tick1` exits 1 rather than hand the runtime a null archive — the C#
   `Bni.Load` throws, so a null archive is a different game, not a degraded one. Never reintroduce
@@ -235,9 +238,10 @@ rows.
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 61)
+## Verified on this tree (batch 62)
 
-Narrative and the review-30 disposition table: `docs/PROGRESS_LOG.md`, "Iteration 89". Batch 60's
+Narrative: `docs/PROGRESS_LOG.md`, "Iteration 90". Batch 61's (the R6 pin at the site the gate reads,
+the review-30 disposition table) is "Iteration 89". Batch 60's
 (the record sweep, the dialect re-measurement, the `-march` FMA measurement) is "Iteration 88";
 batch 59's (the four codegen experiments, the shipped-grouping replay, the M1/M2 re-runs and the
 corrected `.text` pair) is "Iteration 87". Batch 58's (the spin angle's two
@@ -247,18 +251,37 @@ batch 57's (the velocity's association, the `NORM`/`SHATTER` rows) is "Iteration
 50-55 (one `math_minmax.h` and the sign-of-zero tie arm, the last four `script_runtime.cpp` clamps,
 `CameraRoll` and the `math_lut.h` negative-angle measurement, the six clamp pins, the fly-arrival
 pin, one `accelerate()`) are "Iteration 78-83".
-`make -C tests/scripts` (after `clean`) **exit 0** (`All VM unit tests match the oracle.` + `All
-cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 60, and **no golden moved**);
-`bash tools/check.sh` **exit 0** — **this is the gate batch 60 left red** (`CHECK: ALL GATES
+`make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All
+cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 61, and **no golden moved**, which
+is the point: the two arithmetic changes are pinned by new oracle rows, not by moving one); `bash
+tools/check.sh` **exit 0** (`CHECK: ALL GATES
 PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
 `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity` both targets
-link the same core, `gates_smdh` SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp
-sha=58615fc85d02e009` — the pinned frame unchanged, and `reference.sha256` NOT regenerated —
+link the same core, `gates_smdh` SKIPPED — no built .cia, `gates_frames PASS` — the pinned frame
+unchanged, and `reference.sha256` NOT regenerated —
 `gates_batch_integrity` BATCH INTEGRITY: PASS); `DEVKITPRO=/opt/devkitpro
 DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`);
-`cmake --build build-linux --target mdk -j8` **exit 0** (`[100%] Built target mdk`). The rebuilt
-shipped `debris.o` still reads `.text` 9717 with the same four MACs in `randomSpin` and `vcvt` 15 —
-nothing executable moved.
+`cmake --build build-linux --target mdk -j8` **exit 0** (`[100%] Built target mdk`, and it did rebuild
+`frame_blend.cpp.o` and `follow_camera.cpp.o`, so the published frame came from a binary containing
+this batch).
+
+**The scalar `Lerp` was the oracle's output but not the oracle's arithmetic, and now it is both.**
+`System.MathF.Lerp` is `(from*(1-t)) + (to*t)` with the first product contracted into a fused
+multiply-add, so its bits are `fmaf(from, 1-t, to*t)`. Measured with the probe (`lerp1`, 200 random
+triples + 56 edge rows, raw bits): the twice-rounded `from + (to-from)*t` the inherited draft shipped
+differs on **87 of 200**, `from*(1-t)+to*t` twice rounded on **55 of 256**, and the fused shape on
+**none**. `Lerp(-0, +0, -1)` is `-0`, which only the fused shape gives. Both ported `float.Lerp` sites
+(`frame_blend::lerp(float,float,float)` and `FollowCamera::update`'s arena-pitch ease, C#
+`FollowCamera.cs:104`) now use it; the oracle's other `float.Lerp` callers (`CameraRoll.Slide`,
+`UpscaleImages`, `EnhancedLook`) are not ported, so there is no third site. **Target cost, measured on
+the shipped object**: `mdk_3ds/build/frame_blend.o`'s `lerp(float,float,float)` is the `t>=1` compare,
+one `vmul.f32`, one `vsub.f32` and a **tail `b 0 <fmaf>`** — no spill, no frame — while the `Vec3`
+overload is still three `vmla.f32` (unchanged, and it stays twice-rounded on purpose: per component per
+object per frame, see its note) and `follow_camera.o` gained one `bl fmaf`. Three software FMAs a frame
+in a path that is not hot by AGENTS.md §2 is a different budget; if that ever changes it gets a
+measurement, not an edit. Pins: 256 bit-exact rows in `system_numerics_tests.cpp`, and the blend's own
+8 steps × 5 α × (pos, forward, up) in `vm_tests.cpp` at a measured worst relative delta of **6.15e-06**
+(tolerance 2e-05, and the LUT trig is what spends it) with α=1 and the first frame pinned bit-for-bit.
 
 **VFPv2's VMLA is UNFUSED, and that is the fact the record had backwards.** `mdk_3ds/Makefile`
 used to claim VMLA.F32 was a fused single-rounded MAC whose rounding was "UNMEASURED on Old-3DS
@@ -325,9 +348,13 @@ Still NOT pinned by any golden: a shipped frontend's mixer wiring (no frontend h
 device, none draws `Knocked`), the fall-out variant of death, the firing step frames, the sprite
 frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white flash's
 other writers, and feet finer than 1/64 unit (owner task 15). **The piece spin quaternion is no
-longer one of them** (batch 58). **The next non-owner candidate is the follow camera's blend
-(`FollowCamera.Blend` over its `Aim` triple, which needs the high-refresh frame blend `FrameBlend`'s
-Kurt half already carries**); then its sniper scope and top-down view. Owner candidates unchanged:
+longer one of them** (batch 58). **The follow camera's blend is ported and pinned (batch 62) but has
+no shipped caller**: the C# calls it from `Viewer.cs:619` with `FrameBlend`'s blended Kurt pose, and
+that half of `FrameBlend` (`Record/Update/Turn/KurtAt`, `Kurt.Teleports`, the carrier) is deferred
+with Rides, so the frontends still draw at `Player::feet` with the step's camera. **The next
+non-owner candidates are the follow camera's sniper scope and its top-down view** (both are branches
+`Blend` and `Update` currently take the false side of), then `FrameBlend`'s Kurt half with Rides.
+Owner candidates unchanged:
 `math_lut.h`'s
 `fastSin`/`fastCos` measure 2.5x their own documented error on a **negative** argument (1.19e-05
 at -10 degrees against libm; every camera and sprite angle uses that path, so fixing it is a
@@ -339,7 +366,8 @@ accept an explicit `visual delta: none, justification: …` field; both live in 
 tooling, so a batch can only keep writing the honest sidecar narrative (this one does). **No emulator run and no Old-3DS hardware run:
 Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
 windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-04-vmla-record-swept.png` + `.txt`.
+`docs/frames/2026-11-04-follow-camera-blend.png` + `.txt` (md5 `6769a137…`, unchanged, and the sidecar
+says why: the blend has no caller yet and the two executed changes move the pitch by a ULP at most).
 
 ## Standing open items
 

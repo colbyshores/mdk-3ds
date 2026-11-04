@@ -12389,3 +12389,148 @@ substantive claim (neither host build sets `-march`) was re-verified tree-wide a
   same and read this as unreproducible evidence. It is not: the gates are written to run in the
   repository, and `audit_arm11_math` — the gate this batch is about — is `CONTRACT CLEAN` in an
   extracted tree too, with `ALLOWED-R6-PIN: 73`.
+
+## Iteration 90 — batch 62: the follow camera's between-step blend lands, and its scalar `Lerp` turns out not to have been the oracle's arithmetic
+
+**What this batch is.** The tree was inherited dirty from a timed-out iteration: `FollowCamera::blend`,
+the scalar `frame_blend::lerp(float,float,float)` and `Player::cameraPivot`/`cameraTilt` were written
+but uncommitted, untested and undocumented in the state files. Per the builder rule the batch is that
+work, finished — not a new slice. The slice is the oracle's `FollowCamera.Blend`
+(`FollowCamera.cs:170-186`): a frame drawn between two steps places the view at Kurt **as drawn** —
+the caller's feet and yaw, because the C# takes them from `FrameBlend` — with its pitch, pivot and
+roll interpolated `alpha` of the way between the last two steps' `Aim` record struct
+(`FollowCamera.cs:88-92, 141-143`). CONTINUATION named exactly this as "the next non-owner candidate".
+
+**What the oracle says, and what the inherited draft did with it.**
+
+* `Update` ends by storing `new Aim(_arenaPitch + _airPitch - ClimbPitch*_climb + kurt.CameraTilt,
+  kurt.CameraPivot, kurt.CameraRoll.Roll)` and rotating `_previousAim` — the pitch **without** the
+  mouse look, because `Blend` adds the current look on top. The draft had this, and it is what the
+  draft's `update` now writes.
+* `Blend` returns before the first step (`if (_previousAim is not { } from) return;`), does **not**
+  clamp its pitch (unlike `Update`, which clamps to ±`ViewPitchLimit`), and leaves `Position`,
+  `Forward` and `Up` set. The draft returned the look-at matrix but left `camera->forward` and
+  `camera->up` at the previous step's, so a frame would draw on the blended matrix while anything
+  reading the view axes still saw the step's. **Fixed**: `blend` now writes both, like
+  `buildFollowCamera` and `buildFollowCameraCleared` do.
+* `CameraTilt` and `CameraPivot` are Kurt's (`Kurt.Ride.cs:32,37`), not the camera's. They now live on
+  `Player` (`cameraPivot = 4.5f` = `Kurt.DefaultPivot`, `cameraTilt = 0`), `update` adds the tilt to
+  the step's degrees and passes the pivot instead of the literal, and the camera keeps no second
+  copy. Both stay at their oracle defaults because the ride that writes them (`Snowboard.cs:453,482`)
+  is not ported — the fields are read by live code, which is the point: the defect this port keeps
+  hitting is the write-only field, and this is its mirror (a read with no writer yet, named).
+* The draft also added a non-const `Player::cameraRoll()` so a caller *could* write the bank. Nothing
+  does, and C#'s `CameraRoll.Roll` is `{ get; private set; }`. **Removed** — a mutable accessor for a
+  value only `CameraRoll`'s own methods may set is speculative API that breaks the encapsulation the
+  oracle has.
+
+**The finding of the batch: the scalar `Lerp` was not the oracle's arithmetic, and the inherited
+comment claimed it was.** The draft's comment read *"Measured on .NET 10 against the oracle probe's
+raw bits, `from + (to - from) * t` matches every row"*. It does not. A new probe mode (`lerp1`: 200
+pseudo-random `(from, to, t)` triples off a fixed LCG plus 56 edge rows, printing
+`FrameBlend.Lerp(float,float,float)`'s raw bits) says:
+
+| spelling | differs from the oracle on |
+|---|---|
+| `from + (to - from) * t` (what the draft shipped) | **87 of 200** random rows |
+| `from*(1-t) + to*t`, twice rounded (what a host build of the vector overload emits) | 55 of 256 rows |
+| `fmaf(from, 1-t, to*t)` | **0 of 256** |
+
+`System.MathF.Lerp` is `(from * (1 - amount)) + (to * amount)` and the JIT contracts the first
+product into a fused multiply-add, so the oracle's bits are the **fused** shape. The edges are what
+makes it undeniable rather than merely 1-ULP: `Lerp(-0, +0, -1)` is `-0` and only the fused shape
+says so. The scalar `frame_blend::lerp` now ships `std::fmaf(from, 1.0f - t, to * t)`.
+
+**The other inherited claim, checked rather than trusted.** The same draft asserted
+`float.DegreesToRadians` is "multiply by pi, then divide by 180" and that the two roundings are
+load-bearing. That one is true, and now it is measured too (probe mode `deg2rad`, 200 pseudo-random
+angles + 8 edges, raw bits): `degrees * kPi / 180.0f` differs from the oracle on **0 of 208**,
+`degrees * (kPi / 180.0f)` on **84** and `degrees / 180.0f * kPi` on **77**. The port's existing
+left-assoc convention is the oracle's, and the constant must not be pre-folded.
+
+**Why `fmaf` here and not in the vector overload above it, which deliberately does not use it.** The
+vector one runs per component per object per frame and devkitARM has no hardware FMA, so `fmaf` there
+is three libm calls with stack spills in a hot path — that trade is recorded on the function and in
+`docs/OPEN_ITEMS.md`, and it is unchanged. The scalar one runs **three times a step** for the camera's
+own triple, which is not a hot path by AGENTS.md §2 and never will be. Measured on the shipped target
+object: `arm-none-eabi-objdump -d mdk_3ds/build/frame_blend.o` shows the scalar `lerp(float,float,float)`
+as the `t>=1` compare, one `vmul.f32`, one `vsub.f32` and a **tail `b 0 <fmaf>`** — no spill, no frame
+— while the `Vec3` overload is still three `vmla.f32` and `lerp_angle` still one `remainderf`.
+`follow_camera.o` gained one `bl fmaf` (the ease below). Three software FMAs a frame against hundreds
+is not the same budget, and here the oracle's arithmetic is affordable, so it is what ships. If a
+caller ever moves this into a per-object loop, the vector overload's question applies to it too; that
+gets answered with a measurement, not by editing this line.
+
+**The same shape at the one other ported `float.Lerp`.** `FollowCamera.cs:104` is
+`float.Lerp(arenaPitch, _arenaPitch, MathF.Pow(PitchEase, delta*Ticks))` and the port had it twice
+rounded too, so `FollowCamera::update` now writes `fmaf(target, 1-ease, old*ease)`. Bounded on
+purpose: the oracle's other `float.Lerp` sites (`CameraRoll.Slide`, `HdTextures/UpscaleImages.cs`,
+`Level/EnhancedLook.cs`) are not ported, so there is no third site to sweep. What this does **not**
+claim: that `powf` and `MathF.Pow` agree bit for bit — the shape is what this fixes, not the power.
+
+**The pins.**
+
+* `tests/scripts/system_numerics_tests.cpp::testScalarLerpIsTheDotnetsFmaShape` — all 256 oracle rows,
+  **bit-exact**, from `mdkprobe 3 60 1 lerp1`. The first mutant of the spelling fails on row 4.
+* `tests/scripts/vm_tests.cpp::testFollowCameraBlendPlacesTheFrame` — the oracle's own scenario
+  (`mdkprobe 3 60 1 followblend`): eight steps with feet, yaw, vertical speed, `OnFloor` and the mouse
+  driven by hand (the camera reads only those off Kurt, and the C++ `Player`'s own `Update` is not part
+  of this slice), then the blend at α = 0, .25, .5, .75, 1 and again with the feet moved 1 along +X —
+  the oracle's own test (`FrameBlendTests.TheCameraIsPlacedForKurtAsDrawn`) checks only the +X row and
+  only to four decimals. Position, forward **and** up for every row, at a **relative** tolerance of
+  2e-05: measured on this tree the worst relative delta over all 8×5×9 values is **6.15e-06**, and it
+  is the LUT trig and the reciprocal normalize, not the blend (same reason `L3_kurt_camroll.txt` pins
+  degrees instead of bits). Three things are pinned **bit-for-bit** because they have to be: no blend
+  before the first step and the camera left untouched; α = 1 reproducing that step's view exactly; and
+  every α of the first frame reproducing the first step (previous `Aim` == current `Aim`). The oracle
+  says all three for every row, so a port that misses them is not the same function.
+* No golden moved: `make -C tests/scripts` is **480 PASS / 0 FAIL**, identical to batch 61.
+
+**Not wired, and exactly why.** No shipped frontend calls `FollowCamera::blend`. The C# calls it from
+`Viewer.cs:619` with `_blend.Feet`/`_blend.Yaw`, and `FrameBlend`'s Kurt half (`Record/Update/Turn/
+KurtAt`, plus `Kurt.Teleports` and the carrier) is deferred with Rides — so the frontend still draws
+Kurt at `Player::feet` with the step's camera. The blend is not a stub: it is the whole oracle method,
+parameters and all, and it is pinned; only its caller waits on that half. Same for the top-down branch
+inside `Blend` (the `TopDownHeight` view is not ported, so the port takes the false side, as it does
+wherever the C# branches on it).
+
+**Review findings.** The newest external review is still `logs/ralph-pi/run-20261102-004416/review-30.md`;
+its Critical/High were dispositioned in batch 61 (Iteration 89) and nothing newer arrived, so this
+batch remediates nothing new. It does retire one thing review-30 left open in spirit: the
+`--each-commit`/`PROTECTED`-set items stay owner-gated and untouched — the five owner-owned dirty paths
+(`AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`, `tools/runner/gates_batch_integrity.py`,
+`docs/frames/2026-11-02-ralph-self-heal.{png,txt}`) were again **not** staged, and this batch stages
+only its own paths.
+
+**Gates, verbatim.** `make -C tests/scripts` → exit 0, `All VM unit tests match the oracle.` +
+`All cases match the oracle.`, 480 `PASS`, 0 `FAIL`. `bash tools/check.sh` → exit 0,
+`CHECK: ALL GATES PASSED` (`audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
+`audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity both targets
+link the same core`, `gates_smdh SKIPPED no built .cia to read`, `gates_frames every pinned frame is
+deterministic and unchanged`, `gates_batch_integrity project invariants intact`).
+`DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → exit 0,
+`3DSX mdk.3dsx`. `cmake --build build-linux --target mdk -j8` → exit 0, `[100%] Built target mdk`,
+rebuilding `frame_blend.cpp.o` and `follow_camera.cpp.o` (the host target compiles the changed code
+too, and the published frame came from that binary).
+
+**Frame.** `DISPLAY=:99 tools/publish_frame.sh follow-camera-blend` (Xvfb `:99` already listening,
+AGENTS.md §11 P7) → `docs/frames/2026-11-04-follow-camera-blend.png` + `.txt`, `1.240 / 247 /
+0.1819`, md5 `6769a137…` — byte-identical to its seven predecessors, and the sidecar says why: the
+blend has no caller yet and the two executed changes move the pitch by a ULP at most, which does not
+move a pixel at level 3 frame 1.
+
+**Prior-solution lookup.** **pi-knowledge `mdk-sdl`** (present, 4407 chunks / 951 files):
+`knowledge_search` for "MathF.Lerp scalar lerp arithmetic fmaf oracle bits" returned 2 hits, top
+`mdk_3ds/Makefile` — the note that neither host build sets `-march`, so the x86-64 baseline has no FMA
+to contract into (which is exactly why a host `std::fmaf` is a correctly-rounded libm call and matches
+the oracle's hardware-FMA bits) — and `docs/OPEN_ITEMS.md` on the `fmaf`-is-a-libm-call trade. A second
+search for the blend surfaced `FollowCamera.cs`'s own `Aim` doc comment and, usefully,
+`CameraRoll.cs:58`'s `float.Lerp`, which was checked and is **not** ported. Nothing in the KB recorded
+the fused shape of the scalar `Lerp`; that came from the probe. **Obsidian MCP**: no MCP tools are
+exposed in this Pi session, so it was NOT consulted. **Cognee MCP**: not exposed in the Pi harness
+(owner task 12 records this), so it was NOT consulted. No lookup was claimed that did not happen.
+
+**Still open.** Old-3DS timing is **UNMEASURED** and the Citro3D picture **UNVERIFIED** (P6): no
+emulator run and no hardware run this batch; the only windowed run was the frame capture on `:99`. The
+blend's caller waits on `FrameBlend`'s Kurt half (with Rides). Scratch: `/tmp/mdk-pi` (probe tree and
+logs; the probe is scratch and is not committed).
