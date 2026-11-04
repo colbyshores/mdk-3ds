@@ -1,34 +1,28 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 60 changes **no behaviour, no golden and no build flag**; it finishes the
-record repair batch 59 started and dispositions review-29's one High. review-29 F3 was right that
-three `PROGRESS_LOG` entries still stated the disproven mechanism as "the correct mechanism"
-(`:388`, `:872-877`, `:926-938` — "VMLA.F32 is the fused, single-rounded MAC"), and F2 was right
-that batch 59 replaced one false cause with another: `-ffp-contract` defaults to `fast` on
-**both** compilers for `-std=c++17`, `-std=gnu++17` **and** `-std=c++20` (re-measured here with
-`-Q --help=common`), so the GNU-dialect clause in the Makefile and in Iteration 87 was false, and
-the "the two targets DO compute identical bits" sentence is conditional, not absolute — measured
-here: the same source at `-O2 -march=native` (znver3) emits **4 `vfmadd*`**, at the default **0**,
-and neither host build sets `-march`, which is the only reason the claim holds. All three
-statements are now scoped to what was measured, with the FPSCR.FZ scope review-29 F5 asked for, and
-the host-side `-ffp-contract=off` pin is a named `OPEN_ITEMS.md` follow-up. Medium, not low: it
-rewrites claims in a build file and in the log that later batches act on, and it records review-29
-**F1 as confirmed-and-owner-gated rather than rebutted** (the `--each-commit`-without-`--base`
-fail-open is reproduced again here: `PASS`, rc 0, over zero commits). Nothing executable moved.
+Risk: medium — batch 61 moves **no behaviour, no golden and no build flag**, but it moves a
+contract-gate annotation, so it is not low. review-30 **Finding A (Critical)** was confirmed and
+fixed at its site: batch 60's comment expansion left `debris.cpp`'s `@vfp-exempt R6` pin 26 lines
+above the `sinf`/`cosf` calls — one line past `audit_arm11_math.py`'s 25-line look-back
+(`has_pin_above`, `:113-118`) — so the gate stopped honouring the pin and `bash tools/check.sh`
+exited 1 on the committed tree while batch 60 had published `exit 0`. The pin now sits on the three
+calls (`debris.cpp:103-109`), same reason, `Verified 2026-11-04`, and `max_back` was NOT widened.
+`audit_arm11_math` is `CONTRACT CLEAN` again (R6-PIN 71→73), all three gates pass, and `debris.o` is
+unchanged (`.text` 9717, 4 MACs, `vcvt` 15). Findings **E/F/G (Low)** are fixed — the FPSCR.FZ clause
+is now proven impossible rather than "not proven impossible" — and **B (High)**, **C** and **D** stay
+open as owner-gated with evidence, not rebutted.
 
-Last updated: 2026-11-04 (**batch 60** — review-29 remediated: the inverted VMLA mechanism is
-removed from every remaining place in the tree, the false GNU-dialect cause is gone, the
-identical-bits claim is scoped to the flags that were actually measured, and review-29 F1/F7 are
-recorded as confirmed-but-owner-gated / deferred-with-cause instead of "rebutted"). The record is
-`docs/PROGRESS_LOG.md`, "Iteration 88"; batch 59's (the four codegen experiments, the
-shipped-grouping replay 0/72 vs 23/72, the M1/M2 re-runs, the `.text` pair) is "Iteration 87".
-Batch 58's record (the spin angle's two
-roundings, the 56 new spin rows, the 8-mutant table, the `assoc` group that pins `LengthSquared`'
-left-assoc fold per review-27 F6) is "Iteration 86". Batch 57's record (the velocity's association, the 18 new rows, the
-`NORM`/`SHATTER` rows) is "Iteration 85"; batch 56's (the shatter group box's NaN, the 31-row pin)
-is "Iteration 84"; batch 55's (one `math_minmax.h`, the sign-of-zero tie arm) is "Iteration 83";
-batch 54's (the last four `script_runtime.cpp` clamps, the `nanclamp` probe mode and four pins) is
-"Iteration 82"; batch
+Last updated: 2026-11-04 (**batch 61** — review-30 remediated: the R6 pin moved to the site the gate
+reads, the tree's gates are green again, and the three cheap record corrections landed). The record
+is `docs/PROGRESS_LOG.md`, "Iteration 89"; batch 60's (the record sweep, the false GNU-dialect
+cause, the scoped identical-bits claim) is "Iteration 88"; batch 59's (the four codegen experiments,
+the shipped-grouping replay 0/72 vs 23/72, the M1/M2 re-runs, the `.text` pair) is "Iteration 87".
+Batch 58's record (the spin angle's two roundings, the 56 new spin rows, the 8-mutant table, the
+`assoc` group that pins `LengthSquared`' left-assoc fold per review-27 F6) is "Iteration 86". Batch
+57's record (the velocity's association, the 18 new rows, the `NORM`/`SHATTER` rows) is "Iteration
+85"; batch 56's (the shatter group box's NaN, the 31-row pin) is "Iteration 84"; batch 55's (one
+`math_minmax.h`, the sign-of-zero tie arm) is "Iteration 83"; batch 54's (the last four
+`script_runtime.cpp` clamps, the `nanclamp` probe mode and four pins) is "Iteration 82"; batch
 53's (`CameraRoll`, the key-window schedule, the `math_lut.h` negative-angle measurement) is
 "Iteration 81"; batch 52's (one `accelerate()`, the `accel` probe table) is "Iteration 80"; batch
 51's (the fly-arrival pin) is "Iteration 79"; batch 50's (the six clamp pins) is "Iteration 78".
@@ -157,7 +151,8 @@ batch 29** — the `mdk-sdl` pi-knowledge base exists; report an *empty search* 
 found nothing, and record a source's unavailability (Cognee MCP is not exposed in the Pi harness).
 (13) Run `python3 tools/runner/gates_batch_integrity.py --self-test` from `tools/check.sh`: it
 exists and passes by hand but nothing invokes it, and it returns before the static-invariant block
-(review-1 F6, review-10 F3, review-17 R34-5). (14) The diagnostic triangle in `renderer_c3d.cpp`
+(review-1 F6, review-10 F3, review-17 R34-5, review-30 F-C — and note the recovery path is now the
+only code that can turn a gate FAIL into a PASS, which is what makes the unwired self-test matter). (14) The diagnostic triangle in `renderer_c3d.cpp`
 is `true` in the shipping build; the right shape is an SD-file switch (batch 31). (15)
 **`Player::facing()`'s trig, measured and ready to land.** C# `Kurt.Facing` is `MathF.Cos/Sin`;
 the port's is the trig LUT, and over the 470-step walk of `golden/L3_kurt_steps.txt` that drifts
@@ -168,7 +163,19 @@ closer to the oracle, `1.240 / 247 / 0.1819` → **`1.095 / 247 / 0.1636`** (mea
 `DISPLAY=:99`, lavapipe). A batch cannot land it: it changes the picture, and
 `tests/frames/reference.sha256` is owner-protected, so the `cpp=` baseline must be regenerated
 with `tests/frames/regenerate_reference.sh` by the owner, and the golden's feet re-tightened to
-four decimals in the same change. Write-up in `docs/OPEN_ITEMS.md`.
+four decimals in the same change. Write-up in `docs/OPEN_ITEMS.md`. (16) **The frame unit.** The
+integrity gate counts PNGs and cannot tell a fresh capture from a byte-identical copy, so a
+record-only batch necessarily publishes a picture that proves nothing (review-28 F5, review-29 F4,
+review-30 "could not break" 10 — six identical `6769a137…` frames in a row, each honestly declared in
+its sidecar). Either the pinned scene gets a second, behaviour-sensitive capture point or the gate
+gets a rule about repeats; a batch may not decide which. (17) **Bind an `@vfp-exempt` pin to its
+site instead of to a 25-line text window.** `audit_arm11_math.has_pin_above` (`:113-118`) honours a
+pin only within `max_back = 25` lines above the call, so the length of the prose between a pin and
+its code decides whether the exemption is live: batch 60 documented a pinned site, the calls moved
+from 24/25 to **26** lines below the pin, and the gate went red on a comment-only diff
+(review-30 F-A Critical, F-D). The hardening is to accept a pin anywhere in the enclosing function or
+immediately above the site — a tightening of the gate's semantics, not a loosening, and it belongs in
+its own owner-reviewed change with the corpus untouched, not in a batch that is fixing one site.
 
 ## Current tree state (VERIFIED)
 
@@ -228,11 +235,12 @@ rows.
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 60)
+## Verified on this tree (batch 61)
 
-Narrative, the review-29 disposition table, the dialect re-measurement and the `-march` FMA
-measurement: `docs/PROGRESS_LOG.md`, "Iteration 88". Batch 59's (the four codegen experiments, the
-shipped-grouping replay, the M1/M2 re-runs and the corrected `.text` pair) is "Iteration 87".Batch 58's (the spin angle's two
+Narrative and the review-30 disposition table: `docs/PROGRESS_LOG.md`, "Iteration 89". Batch 60's
+(the record sweep, the dialect re-measurement, the `-march` FMA measurement) is "Iteration 88";
+batch 59's (the four codegen experiments, the shipped-grouping replay, the M1/M2 re-runs and the
+corrected `.text` pair) is "Iteration 87". Batch 58's (the spin angle's two
 roundings, the 56 spin rows, the 8-mutant table, the `SPIN`/`ASSOC` probe rows) is "Iteration 86";
 batch 57's (the velocity's association, the `NORM`/`SHATTER` rows) is "Iteration 85"; batch 56's
 (the group box's NaN, the 31-row pin, the ±0-unobservable measurement) is "Iteration 84"; batches
@@ -240,9 +248,9 @@ batch 57's (the velocity's association, the `NORM`/`SHATTER` rows) is "Iteration
 `CameraRoll` and the `math_lut.h` negative-angle measurement, the six clamp pins, the fly-arrival
 pin, one `accelerate()`) are "Iteration 78-83".
 `make -C tests/scripts` (after `clean`) **exit 0** (`All VM unit tests match the oracle.` + `All
-cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 59, and **no golden moved**, which
-is the point: this batch may not change any number the oracle owns); `bash tools/check.sh` **exit 0**
-(`CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
+cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 60, and **no golden moved**);
+`bash tools/check.sh` **exit 0** — **this is the gate batch 60 left red** (`CHECK: ALL GATES
+PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
 `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity` both targets
 link the same core, `gates_smdh` SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp
 sha=58615fc85d02e009` — the pinned frame unchanged, and `reference.sha256` NOT regenerated —
@@ -263,8 +271,9 @@ default/`=off`/`=fast`, an explicitly twice-rounded `float t=a*b; return c+t;` s
 `vmla.f32` under `=off`, the same source at `-mfpu=vfpv4` becomes `vfma.f32` only under `=fast`, and
 `__builtin_fmaf` at `-mfpu=vfp` is `b fmaf`. VMLA rounds its product, so forming it is
 value-preserving **for normal-range intermediates** (the target runs FPSCR.FZ per R1, the host does
-not — a denormal product would flush on the target; unreachable at `randomSpin`'s magnitudes,
-review-29 F5) and the flag has nothing to gate. Replaying the shipped `randomSpin` grouping with a
+not — a denormal product would flush on the target, and review-30 F-E proved that cannot happen here:
+the smallest non-zero shatter falloff `1.0f - r` can produce is `2^-24 = 5.96e-8`, twice the
+`3.05e-8` a denormal would need) and the flag has nothing to gate. Replaying the shipped `randomSpin` grouping with a
 rounded product gets **0 of 72** pinned components wrong; the fused model gets **23 of 72 on 12 of
 18 pieces** — a scratch model, not a committed harness, and review-29 F7 is right that it cannot be
 re-derived from this tree today. Do NOT
@@ -316,7 +325,7 @@ Still NOT pinned by any golden: a shipped frontend's mixer wiring (no frontend h
 device, none draws `Knocked`), the fall-out variant of death, the firing step frames, the sprite
 frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white flash's
 other writers, and feet finer than 1/64 unit (owner task 15). **The piece spin quaternion is no
-longer one of them** (batch 58). **The next non-owner candidate is the follow camera's blend **The next non-owner candidate is the follow camera's blend
+longer one of them** (batch 58). **The next non-owner candidate is the follow camera's blend
 (`FollowCamera.Blend` over its `Aim` triple, which needs the high-refresh frame blend `FrameBlend`'s
 Kurt half already carries**); then its sniper scope and top-down view. Owner candidates unchanged:
 `math_lut.h`'s

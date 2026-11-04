@@ -77,10 +77,6 @@ float degreesToRadians(float degrees) {
 }
 
 // System.Numerics Quaternion.CreateFromYawPitchRoll, stored as (x, y, z, w).
-/* @vfp-exempt R6 — piece-spawn spin construction (cold: once per created
- * piece, never in the per-frame update); libm sinf/cosf match the C#'s
- * System.Numerics values, and a LUT would change the spin orientation the
- * renderer shows. measured n/a (corpus empty). Verified 2026-10-25. */
 void quatFromYawPitchRoll(float yaw, float pitch, float roll, float out[4]) {
     // Do not "fix" these four expressions because the shipped object lowers them to
     // vmla.f32/vnmls.f32. VFPv2's VMLA is NOT fused -- it rounds its product before
@@ -88,19 +84,29 @@ void quatFromYawPitchRoll(float yaw, float pitch, float roll, float out[4]) {
     // says, for normal-range intermediates (the target runs with FPSCR.FZ per
     // AGENTS.md R1 and the host does not, so a DENORMAL product would flush here and
     // not on the host; randomSpin's smallest non-zero half-angle is ~7.5e-6 rad and
-    // its triple products ~4e-16, so a denormal needs the shatter falloff f below
-    // ~3e-8 -- not reachable in the shipped geometry, not proven impossible). -ffp-contract cannot change any of that
-    // (measured four ways in mdk_3ds/Makefile and "Iteration 87"): the shipped
-    // object is byte-identical under the default, =off and =fast, an explicitly
-    // twice-rounded intermediate also lowers to one vmla.f32, and the same source at
-    // -mfpu=vfpv4 becomes vfma.f32 only under =fast. Replaying the shipped grouping
-    // with a rounded product reproduces all 72 of the oracle's pinned spin
-    // components; replaying it as a fused MAC gets 23 of 72 wrong -- that pair is a
-    // scratch model of the disassembly's grouping, not a committed harness, and the
-    // recipe to re-derive it is in "Iteration 88". What is NOT measured on the
-    // target is the libm leaf above: the pin's "sinf/cosf match" claim was measured
-    // against glibc, and the shipped link resolves them from newlib
-    // (docs/OPEN_ITEMS.md).
+    // its triple products ~4e-16, so a denormal would need the shatter falloff f
+    // below ~3e-8 -- and f cannot be that small. f is `1.0f - r` with r a float
+    // (debris.cpp split()), so for r in [0.5,2] the subtraction is exact and the
+    // smallest non-zero |f| it can produce is 2^-24 = 5.96e-8, twice that bound;
+    // f == 0 makes the angles exactly 0 and the products exact zeros, not
+    // denormals). -ffp-contract cannot change any of that (measured four ways in
+    // mdk_3ds/Makefile and "Iteration 87"): the shipped object is byte-identical
+    // under the default, =off and =fast, an explicitly twice-rounded intermediate
+    // also lowers to one vmla.f32, and the same source at -mfpu=vfpv4 becomes
+    // vfma.f32 only under =fast. Replaying the shipped grouping with a rounded
+    // product reproduces all 72 of the oracle's pinned spin components; replaying it
+    // as a fused MAC gets 23 of 72 wrong -- that pair is a scratch model of the
+    // disassembly's grouping, not a committed harness, and the recipe to re-derive
+    // it is in "Iteration 88". What is NOT measured on the target is the libm leaf
+    // itself: the R6 pin's "sinf/cosf match" claim was measured against glibc, and
+    // the shipped link resolves them from newlib (docs/OPEN_ITEMS.md).
+    /* @vfp-exempt R6 — piece-spawn spin construction, cold: once per created piece
+     * and never in the per-frame update; these libm sinf/cosf are what the C#'s
+     * System.Numerics calls and a LUT would change the spin orientation shown. The
+     * pin sits on the three calls and not on the function because
+     * audit_arm11_math.py honours a pin only within 25 lines above the site, and the
+     * paragraph above is long enough to push a function-level pin out of that window
+     * (review-30 Finding A). measured n/a (corpus empty). Verified 2026-11-04. */
     float sr = sinf(roll * 0.5f), cr = cosf(roll * 0.5f);
     float sp = sinf(pitch * 0.5f), cp = cosf(pitch * 0.5f);
     float sy = sinf(yaw * 0.5f), cy = cosf(yaw * 0.5f);

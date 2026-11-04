@@ -12178,10 +12178,10 @@ restates, and dispositions F1 honestly.
 | Finding | Disposition | Evidence |
 |---|---|---|
 | **F1 (High)** — `--each-commit` without `--base` prints `PASS` over zero commits, and the uncommitted gate diff adds `"--each-commit"` to the `required` markers while `CONTINUATION` says it belongs out of `required` until an owner signs off | **Confirmed, NOT rebutted; owner-gated, not fixable in a batch.** | Reproduced here: `python3 tools/runner/gates_batch_integrity.py --each-commit` → `BATCH INTEGRITY: PASS`, rc 0; `--base "" --head 597547e --each-commit` → same. The file is in its own `PROTECTED` set (line 18), so no batch may edit it. The contradiction is real and is now written into owner task (1) verbatim: the owner must drop the marker or write the sign-off line. Batch 59's word "rebutted" is withdrawn — the reviewer's own note that only that word overstates it is accepted. |
-| **F2 (Medium)** — "the default is `fast` because `-std=gnu++17` is a GNU dialect" is false, and "the two targets DO compute identical bits" is flag-dependent | **FIXED** (record), follow-up named | Re-measured with `-Q --help=common`: `fast` for `-std=c++17`, `-std=gnu++17` **and** `-std=c++20` on devkitARM 15.2.0 **and** host gcc 13.3.0 — the dialect is not the cause, so the clause is gone from `mdk_3ds/Makefile` and corrected in Iteration 87's own entry. The identical-bits sentence in `frame_blend.cpp` and the Makefile is now scoped: measured on this host, the same lerp source at `-O2 -march=native` (znver3) emits **4 `vfmadd*`**, at the default **0**; `tests/scripts/Makefile` (`-std=c++17 -O1`) and `mdk_linux/CMakeLists.txt` (`CMAKE_CXX_FLAGS=""`, `RelWithDebInfo`) set no `-march`, which is the only reason the host describes the shipped object. Pinning `-ffp-contract=off` host-side is added to `docs/OPEN_ITEMS.md` rather than done here: it is a build change to the goldens harness, not a record fix, and one batch is one slice. |
+| **F2 (Medium)** — "the default is `fast` because `-std=gnu++17` is a GNU dialect" is false, and "the two targets DO compute identical bits" is flag-dependent | **FIXED** (record), follow-up named | Re-measured with `-Q --help=common`: `fast` for `-std=c++17`, `-std=gnu++17` **and** `-std=c++20` on devkitARM 15.2.0 **and** host gcc 13.3.0 — the dialect is not the cause, so the clause is gone from `mdk_3ds/Makefile` and corrected in Iteration 87's own entry. The identical-bits sentence in `frame_blend.cpp` and the Makefile is now scoped: measured on this host, the same lerp source at `-O2 -march=native` (znver3) emits **4 `vfmadd*`**, at the default **0**; `tests/scripts/Makefile` (`-std=c++17 -O1`) and `mdk_linux/CMakeLists.txt` set no `-march`, which is the only reason the host describes the shipped object — and the file's real contents are `CMAKE_BUILD_TYPE` defaulting to `RelWithDebInfo` plus `target_compile_options(-Wall -Wextra -Wno-unused-parameter, -fno-strict-aliasing, -fno-exceptions -fno-rtti)`, with **no** `CMAKE_CXX_FLAGS` line at all (the `CMAKE_CXX_FLAGS=""` spelling in this row was wrong — it is CMake's default, not a setting in the file; corrected by "Iteration 89", review-30 F-G). Pinning `-ffp-contract=off` host-side is added to `docs/OPEN_ITEMS.md` rather than done here: it is a build change to the goldens harness, not a record fix, and one batch is one slice. |
 | **F3 (Medium)** — three `PROGRESS_LOG` entries still assert the fused-VMLA mechanism as the corrected one | **FIXED** | `[Corrected by "Iteration 88" (review-29 F3)]` blockquotes attached to all three: the `frame_blend` corollary ("the two targets do not compute identical bits … the 3DS contracts and the host cannot"), the review-20 MINOR closure, and the review-18 MINOR-1 closure. The sweep was then re-run tree-wide rather than trusting the three line numbers: `grep -rniE "vmla|vfma|ffp-contract|fused"` over `*.md`, `Makefile`, `*.cpp`, `*.h` shows no remaining claim that VFPv2's VMLA is fused. `docs/OPEN_ITEMS.md` was already corrected by batch 59 (the KB index was stale, not the file). `mdk_core/src/util/matrix.h:18`, `object.cpp:104` and `mdk_3ds/src/render/pica_matrix.cpp:14` were checked and are **not** violations: the first two describe .NET's JIT on FMA-capable hardware, the third correctly says "VFPv2 has no fused multiply-add". |
 | **F4 (Medium)** — the uncommitted `--each-commit` recovery cannot rescue a legitimate multi-commit iteration (a docs commit carries no frame) and can turn it into `exit 6` | **Deferred with cause (owner-level).** | Same protected files as F1. The reviewer's own remediation is "owner decision on the unit", and it converges with review-28 F5 (the frame gate counts PNGs and cannot tell a copy from a capture), already owner task (16). Not a batch edit. |
-| **F5 (Low)** — "value-preserving" omits `FPSCR.FZ`, which the target sets and the host does not | **FIXED**, with the magnitude recomputed rather than copied | Confirmed the host never sets FTZ/DAZ (no `fenv`/CSR write anywhere in `mdk_linux` or `tests/scripts`). The comment now scopes the claim to normal-range intermediates and the arithmetic was re-derived here: `randomSpin`'s smallest non-zero half-angle is `(28/32768)°/2 = 7.457e-06` rad, triple products ≈ `4.15e-16`, and a denormal needs the shatter falloff `f < 3.05e-08` — not reachable in the shipped geometry, not proven impossible. (The reviewer's "≳1e-15" and batch 59's framing are both replaced by the computed pair.) |
+| **F5 (Low)** — "value-preserving" omits `FPSCR.FZ`, which the target sets and the host does not | **FIXED**, with the magnitude recomputed rather than copied | Confirmed the host never sets FTZ/DAZ (no `fenv`/CSR write anywhere in `mdk_linux` or `tests/scripts`). The comment now scopes the claim to normal-range intermediates and the arithmetic was re-derived here: `randomSpin`'s smallest non-zero half-angle is `(28/32768)°/2 = 7.457e-06` rad, triple products ≈ `4.15e-16`, and a denormal needs the shatter falloff `f < 3.05e-08`. The "not proven impossible" close here was weaker than provable and is corrected by "Iteration 89" (review-30 F-E): `f` is `1.0f - r` with `r` a float, so for `r` in `[0.5,2]` the subtraction is exact and the smallest non-zero `|f|` it can produce is `2^-24 = 5.96e-8`, twice the bound, while `f = 0` makes the angles exactly 0 and the products exact zeros — a denormal is **impossible** on this path, not merely unreachable. (The reviewer's "≳1e-15" and batch 59's framing are both replaced by the computed pair.) |
 | **F6 (Low)** — the vault's PICA200 `MADI` note was cited as corroboration for an ARM11 VFP claim | **Accepted; relabelled here.** | A commit message cannot be edited, so the relabel lives in this entry. The vault line is real — `60-references/3ds-platform/pica200/04-shader-pipeline.md:71`, `MADI | DST=SRC3+SRC2·SRC1 (rounded multiply-add, not fused)` — but it documents the **GPU shader ALU**, a different processor, and `grep -rl VMLA /mnt/nas/Vaults/port-docs/` returns nothing at all. It is an analogy about the same distinction on the other programmable block of the console, not evidence about `VMLA.F32`. The four compiler measurements stand alone and the reviewer reproduced them. |
 | **F7 (Low)** — the 0/72 vs 23/72 replay is a scratch measurement with no committed script and no printed inputs | **Accepted, deferred with cause.** | True: nothing under `tests/` or `tools/` produces those numbers, and the pinned rows store output bits, not the `(yaw,pitch,roll)` that produced them. Re-deriving them needs an instrumented scratch build (a print inside `Debris::randomSpin` of the three `rng_.next(32768)` draws and the `degrees` argument, then a float32 model of the disassembly's grouping compared against `finiteRows`) — the shipped code must not carry a debug print, so that is its own batch, not a comment fix. The Makefile and `debris.cpp` now say plainly that this pair is a scratch model that cannot be re-derived from the tree today, which is the honest state until someone commits the harness. |
 | **F8 (Low)** — two sidecars publish the superseded 90 and 9667/9687 numbers with no cross-reference | **Recorded here (sidecars are immutable).** | The superseded sidecars are `docs/frames/2026-11-04-shatter-spin-angle-rounding.txt` (`.text 9667 → 9687`, "90 spin assertions") and `docs/frames/2026-11-04-vmla-unfused.txt` (which already restates the correction). Frame history is immutable by gate, so the cross-reference lives in the log: those two files' `.text` pair and M1 count are superseded by Iteration 87's re-measurement (9697 → 9717, 93), and owner task (9) covers whether sidecars may be corrected in place. |
@@ -12242,3 +12242,150 @@ not claimed.
   nothing executable moved. The sidecar says so rather than dressing it up.
 * No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D
   picture stays UNVERIFIED (P6)**. Scratch: `/tmp/b60`.
+
+## Iteration 89 — batch 61: review-30 remediated — the R6 pin now sits where the gate can read it, and the tree's gates are green again
+
+review-30's verdict on batch 60 was `INCOMPLETE`, and this time it was right about the code, not
+about the record: batch 60 lengthened a comment above `quatFromYawPitchRoll` and thereby turned a
+contract gate red on the committed tree, while publishing `check.sh — exit 0`. The loop's own
+`gates-30.log` carried that failure into the state file (`LAST_GATES=FAIL`, `FAILS=1`). This batch
+fixes the Critical at its site, dispositions the one High (owner-gated, as before), and takes the
+three cheap Lows. No behaviour, no golden and no build flag moved.
+
+### Finding A (Critical) — FIXED at the site, not by moving the window
+
+Confirmed before touching anything, on this tree: `python3 tools/runner/audit_arm11_math.py` printed
+`ALLOWED-R6-PIN: 71`, `VIOLATIONS: 2` (`debris.cpp:106 sinf`, `debris.cpp:106 cosf`) and
+`VERDICT: 2 trig site(s) off-policy`, and `bash tools/check.sh` printed
+`FAIL audit_arm11_math exit 1` / `CHECK: 1 gate FAILED -- exit 1` — byte-for-byte the reviewer's
+result and the orchestrator's `gates-30.log`. The mechanism is as filed: `has_pin_above`
+(`tools/runner/audit_arm11_math.py:113-118`) takes `lo = max(0, line - 1 - 25)`, so a pin must be
+within 25 lines above the call; the pin was at `:80` and the calls had moved to `:104/:105/:106`,
+distances 24, 25 and **26**.
+
+The fix is the reviewer's first option: the `@vfp-exempt R6` pin now sits immediately above the three
+`trig` calls (`debris.cpp:103-109`, calls at `:110-112`), with the same reason it has carried since
+2026-10-25 and `Verified 2026-11-04`. The function-level position is **removed**, so there is still
+exactly one R6 pin on this site — no duplicate exemption was created. The grammar was checked against
+the gate's own parser rather than assumed: `gates_vfp.EXEMPT_RE.match()` parses the new pin with
+`rules=R6`, `verified=2026-11-04`, exactly as it parses the old one (both land on `measured=None`,
+because `measured n/a (corpus empty)` is absorbed into the reason by that regex — a pre-existing
+property of every such pin in the tree, not something this batch introduced).
+
+The reviewer's second option — trim the paragraph by ≥1 line — was **rejected on purpose**. This
+batch's assignment was to document the site; a fix that breaks the next time anyone adds a line of
+prose is the same defect waiting to recur, and the pin now says in its own text why it sits where it
+does. What was NOT done: `max_back` is still 25, the pin's reason is unchanged in substance, no
+golden moved, and no gate file was touched. The verdict changed because the annotation moved into
+the window the gate already defines.
+
+Evidence after: `ALLOWED-R6-PIN: 73`, `VIOLATIONS: 0`, `VERDICT: CONTRACT CLEAN`, rc 0; and
+`bash tools/check.sh` → `CHECK: ALL GATES PASSED`, rc 0 (full text in "Gates" below). The gate is
+itself the pinning test: the parent tree fails it, this tree passes it, and any future edit that
+pushes the pin out of the window fails it again.
+
+### Finding B (High) — CONFIRMED, owner-gated, NOT rebutted
+
+Reproduced here, again: `python3 tools/runner/gates_batch_integrity.py --each-commit` →
+`BATCH INTEGRITY: PASS`, rc 0, zero commits examined; `--base "" --each-commit` → the same, because
+the empty string is falsy at `:169`. The reviewer's failure scenario is real: an empty
+`HEAD_BEFORE` would certify an unexamined range through the recovery path. It is also not fixable by
+a batch: `tools/runner/gates_batch_integrity.py` is in its own `PROTECTED` set (line 18) and
+`ralph-pi.sh` is loop-harness, so both halves (the fail-open, and `"--each-commit"` sitting in
+`required` while `CONTINUATION` says it belongs out of it until an owner signs off) stay in owner
+task (1). Recorded as open, not rebutted.
+
+### Finding C (Medium) — CONFIRMED, and already owner task (13)
+
+`tools/check.sh` invokes the integrity gate with no flags, so `--self-test` runs only when someone
+types it; the reviewer is right that an unwired self-test is not coverage, and right that the
+recovery path — the only code that can turn a gate FAIL into a PASS — is the least-exercised code in
+the file. `tools/check.sh` is `PROTECTED`, so this is an owner edit. It is the **same** defect as
+owner task (13) (review-1 F6, review-10 F3, review-17 R34-5), now with review-30 F-C appended to
+that task's list rather than counted as a new finding.
+
+### Finding D (Medium) — DEFERRED WITH CAUSE (owner: gate semantics, not a batch edit)
+
+Also true: a pin's validity currently depends on how verbose the prose between it and its site is, so
+adding documentation can silently de-register a reviewed exemption (Finding A is the first observed
+instance) and deleting prose can silently re-register one. The reviewer's own remediation is a
+hardening of `has_pin_above` — bind the pin to the enclosing function or the line above the call —
+done "as its own reviewed change with the corpus untouched". A batch editing the audit script to
+widen its own look-back is precisely the "loosen a check to obtain green" pattern the builder rules
+forbid, and it changes what an `@vfp-exempt` pin *means* in a contract gate, which is owner territory
+(AGENTS.md §5). Added as owner task (17). Finding A is fixed at the site regardless, exactly as the
+reviewer required ("Finding A should be fixed at the site either way").
+
+### Finding E (Low) — FIXED, with the stronger bound re-derived rather than copied
+
+The reviewer's argument was checked independently before being written down. `f` is
+`1.0f - vlenSq(center - point) / shot.far` (`debris.cpp:291`, in `split()`), so `f = 1.0f - r` with
+`r` a float. For `r` in `[0.5, 2]` the subtraction is exact (Sterbenz), and the floats adjacent to 1
+are `1 - 2^-24` and `1 + 2^-23`, so the smallest non-zero `|f|` this expression can produce is
+`2^-24 = 5.96e-8`; outside `[0.5, 2]`, `|f| >= 0.5`. The denormal threshold derived in "Iteration 88"
+was `f < 3.05e-8`, and `5.96e-8` is twice that, so **no float `f` on this path can put a triple
+product below `1.175e-38`** — and at `f = 0` the angles are exactly 0 and the products are exact
+zeros, not denormals. The comment now says impossible instead of "not proven impossible", and the
+other `randomSpin` caller was checked too: `spark()` passes the constant `kSpinDegrees = 28/32768`
+(`debris.cpp:349`), so the shatter falloff is the only path that can produce a small angle at all.
+The "Iteration 88" F5 row carries the correction with a marker rather than being silently rewritten.
+
+### Finding F (Low) — FIXED
+
+Two sentences batch 60 garbled in `docs/CONTINUATION.md`: a duplicated fragment
+("**The next non-owner candidate is the follow camera's blend **" repeated) and a missing space after
+`is "Iteration 87".`. Both were in the committed blob (the reviewer showed them as `+` lines of
+`git show 4c58bdc`); both are repaired here.
+
+### Finding G (Low) — FIXED, against the file rather than against memory
+
+`mdk_linux/CMakeLists.txt` has **no** `CMAKE_CXX_FLAGS` line at all — verified here with
+`grep -n "CMAKE_CXX_FLAGS\|CMAKE_BUILD_TYPE\|target_compile_options\|march\|ffp-contract"`: it
+defaults `CMAKE_BUILD_TYPE` to `RelWithDebInfo` (`:21-26`) and sets `target_compile_options` at
+`:205` (`-Wall -Wextra -Wno-unused-parameter`), `:210` (`-fno-strict-aliasing`) and `:215`
+(`-fno-exceptions -fno-rtti`), pinning neither `-march` nor `-ffp-contract`. The empty value batch 60
+quoted is CMake's default, not a setting in the file. The F2 row is corrected with a marker; the
+substantive claim (neither host build sets `-march`) was re-verified tree-wide and stands.
+
+### Gates and evidence (this batch)
+
+* `make -C tests/scripts clean && make -C tests/scripts` — **exit 0**: `All VM unit tests match the
+  oracle.` + `All cases match the oracle.`, **480 PASS / 0 FAIL**. No golden moved.
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `PASS audit_c_with_classes 0
+  violations`, `PASS gates_vfp 0 blockers`, `PASS audit_arm11_math contract clean`, `PASS
+  audit_r11_idiv no candidates`, `PASS gates_core_parity both targets link the same core`, `SKIP
+  gates_smdh no built .cia to read`, `PASS gates_frames every pinned frame is deterministic and
+  unchanged`, `PASS gates_batch_integrity project invariants intact`. This is the gate that was red
+  at the start of the batch.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` — **exit 0**:
+  `3DSX mdk.3dsx`. `arm-none-eabi-size mdk_3ds/build/debris.o` → `.text` **9717**; the disassembly of
+  `Debris::randomSpin` still holds exactly **4** MACs and `vcvt` is **15** — the shipped object is
+  byte-for-byte what batch 60 published, which is the point of a comment-and-pin-only change.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `Building CXX object
+  CMakeFiles/mdk.dir/mnt/nas/Development/mdk-sdl/mdk_core/src/scripts/debris.cpp.o`,
+  `Linking CXX executable mdk`, `[100%] Built target mdk`. Both targets compile the changed file.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7),
+  `tools/publish_frame.sh r6-pin-at-the-site` — `docs/frames/2026-11-04-r6-pin-at-the-site.png` +
+  `.txt`, `1.240 / 247 / 0.1819`, md5 `6769a137…`, byte-identical to its six predecessors because
+  nothing executable moved. The sidecar says so rather than dressing it up.
+* Prior-solution lookup. **pi-knowledge `mdk-sdl`** (present: 4407 chunks / 951 files):
+  `knowledge_search` for the pin look-back returned 4 hits, top `AGENTS.md` §1 (which names this very
+  audit script) and `SPEC.md` §9.4 (gate order), and a second pass surfaced `docs/OPEN_ITEMS.md`'s
+  note that `util/matrix.h::create_from_axis_angle` already carries an `@vfp-exempt R6` pin for the
+  same "the LUT would change the picture" reason — a precedent for the pin's reason, not for its
+  position. Nothing in the KB described the 25-line window; that came from reading the source.
+  **Obsidian MCP**: no MCP tools are exposed in this Pi session, so it was NOT consulted; the vault
+  was read read-only instead, and `grep -r` over `/mnt/nas/Vaults/port-docs` for
+  `has_pin_above|max_back|vfp-exempt R6` and for `exempt pin|trig pin` found no note on this
+  mechanism. **Cognee MCP**: not exposed in the Pi harness (owner task 12 already records this), so
+  it was NOT consulted. No lookup was claimed that did not happen.
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D
+  picture stays UNVERIFIED (P6)**. Scratch: `/tmp/b61`.
+* **A `git archive` of this commit does NOT reproduce `gates_core_parity`.** An extracted tree fails
+  it with `[PARITY-LINUX-GHOST] mdk_linux/third_party/volk/volk.c — listed in the Linux SOURCES but
+  does not exist on disk`, because that vendored file is gitignored and so absent from any archive;
+  the gate is correct and the working tree passes it (`PASS gates_core_parity both targets`).
+  Recorded because review-30 built its evidence from `git archive` and a later reviewer may do the
+  same and read this as unreproducible evidence. It is not: the gates are written to run in the
+  repository, and `audit_arm11_math` — the gate this batch is about — is `CONTRACT CLEAN` in an
+  extracted tree too, with `ALLOWED-R6-PIN: 73`.
