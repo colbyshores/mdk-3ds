@@ -11804,3 +11804,161 @@ because level 3 frame 1 contains no shatter.
 `@vfp-exempt R6` pin; no golden prints spin, so nothing shows it, and it is the next candidate.
 The radial-normalize item batch 56 filed as a gap is **closed by this batch** and was never a
 normalize problem.
+
+---
+
+## Iteration 86 — batch 58: the shatter's spin angle rounds the way .NET rounds
+
+**The slice.** The piece **spin quaternion**, the next candidate the CONTINUATION named. It was
+0-2 ULP from `Quaternion.CreateFromYawPitchRoll` on `x`/`y`/`z` and exact on `w`, and no golden
+printed spin, so nothing showed it. It is now bit-exact and pinned.
+
+**The measurement the CONTINUATION asked for, and what it killed.** The instruction was to print
+the port's yaw/pitch/roll for piece 0 and feed those exact floats to the runtime's own trig. That
+one measurement separated the two hypotheses outright, and both of the earlier guesses lost:
+
+* `sinf`/`cosf` (host glibc) and `MathF.Sin`/`MathF.Cos` are **bit-identical on the shatter's own
+  angles** — so the trig was never the gap, exactly as batch 57's `sincos` probe had said.
+* Feeding the port's own angles to `Quaternion.CreateFromYawPitchRoll` reproduces the **port's**
+  quaternion, not the oracle's — so the quaternion's arithmetic was never the gap either. The
+  four candidate spellings of its products (float trig + float products; double half-angles +
+  double trig + double products; float trig + double products; double trig rounded then float
+  products) scored 17/17, 2/17, 4/17, 17/17 against the runtime, and the port's own shape is the
+  17/17 one. `w` being exact while `x`/`y`/`z` moved was the tell that the *inputs* differed, not
+  the products.
+* The inputs differed because **`float.DegreesToRadians` is not `degrees * (float)(pi/180)`**. It
+  is `degrees * (float)Math.PI / 180f` — two roundings: multiply by the float pi (0x40490FDB),
+  then divide by 180f. Measured on the oracle's own angles: the single-rounding factor spelling
+  is 1 ULP low in magnitude on 8 of the first 12 draws, and the two-rounding spelling reproduces
+  all 12 bit-for-bit. `DegreesToRadians(1) == (float)(Math.PI/180.0) == 3C8EFA35`, which is why
+  every earlier proof of the *factor* passed: the factor's VALUE is the same float either way and
+  only its ROUNDING was wrong. The old comment in `degreesToRadians` claimed the double-factor
+  spelling was "proven against the runtime"; it proved the constant, not the rounding.
+
+**The fix.** `mdk_core/src/scripts/debris.cpp`'s `degreesToRadians` is now
+`(degrees * kPi) / 180.0f` with `kPi = (float)3.14159265358979323846`. Cold code (once per created
+piece), so R4/R7 do not bite; the divisor is a compile-time constant, so it stays a real
+`vdiv.f32` — confirmed in the devkitARM object (`vmul.f32` by the degrees, `vmul.f32` by pi,
+`vdiv.f32` by 180.0, all single precision, no double, no reciprocal-multiply). This is the same
+helper the spark spin (`SpinDegrees`) uses, so both spin paths moved together.
+
+**Oracle evidence.** The C# probe's `Debris.RandomSpin` was instrumented in the scratch tree
+(`/tmp/mdk-pi/obj3`, never the repo) behind `MDK_SPIN_DEBUG=1` to print its own `degrees` and its
+three angles. The `deg` column matches the port exactly on every piece — the constant
+`0.000854492f` and the falloff `f` were never wrong — and the angles are 1 ULP apart. After the
+fix, the port's spin matches the oracle's `s=` bits on **all 54 pieces** of the three direction
+variants of the finite group (18 pieces × dir/radial/oblique), 0 diffs.
+
+**The pin.** `DebrisGroupBoxPropagatesNaNLikeTheOracle` now carries the oracle's spin bits: every
+one of its 10 row tables gained `spin[4]` (56 pieces' worth of `s=` bits, copied out of the
+probe's own `SHATTER` rows), and the assertion loop compares them. The comment that used to
+explain why spin was deliberately NOT pinned is replaced by the reason it now is.
+
+**Mutants (8 built, 6 killed, 2 provably equivalent).**
+
+| # | mutation | result |
+|---|---|---|
+| M1 | the pre-fix single-rounding factor `degrees * (float)(pi/180)` | **KILLED** — 90 spin failures, 0 velocity |
+| M2 | `(float)(degrees * (pi/180.0))`, the double intermediate | **KILLED** — 93 spin failures |
+| M3 | `degrees * kPi * (1.0f/180.0f)` — reciprocal instead of divide | **KILLED** — 45 spin failures |
+| M4 | `(degrees / 180.0f) * kPi` — the two operations swapped | **KILLED** — 66 spin failures |
+| M5 | `out[0]`'s addition commuted | survived — **equivalent**: IEEE add is commutative, and no NaN reaches it |
+| M6 | `out[0]` computed in double and rounded once | **KILLED** — 12 spin failures |
+| M7 | half angle as `roll / 2.0f` instead of `roll * 0.5f` | survived — **equivalent**: both are exact (power of two) |
+
+M1 is the point of the batch: **90 spin assertions fail and 0 velocity assertions do.** The
+velocity could not see this bug at all, which is how a 1-ULP angle error survived every previous
+debris batch.
+
+**review-27 F6, closed with a pin rather than a disclaimer.** The reviewer could not tell whether
+`Vector3.LengthSquared`'s sum order was constrained, having reproduced every pinned row under both
+groupings. It is now measured and pinned. Six triples were searched whose two folds differ; the
+runtime's `Vector3.LengthSquared`, `Vector3.Dot` and `Vector3.DistanceSquared` all return the
+**left-assoc** fold on all six — the fold `vdot` already writes. The probe prints it
+(`ASSOC far 3E0D8004,3DE4D6F4,3E6DC3C0 lensq 3DAF1718 left 3DAF1718 right 3DAF1719`) and a new
+`assoc` case in the pin drives a group searched so its `far` discriminates and whose centroid sits
+off the point, so `f` actually reads `far`. Mutant M8 (swap `y` and `z` in `vdot`) is **KILLED** by
+one velocity row.
+
+**Review findings, disposition.**
+
+* **F1 (Critical) — not the builder's, rebutted as a batch item and still open for the owner.** The
+  finding is that the uncommitted `PROTECTED` set (this tree's `AGENTS.md`, `ralph/builder.md`,
+  `tools/runner/gates_batch_integrity.py`, `ralph-pi.sh`, `ralph-pi.sh`'s `--each-commit` recovery
+  and the stray `2026-11-02` frame pair) needs an owner sign-off line, and the reviewer says so
+  itself: "Nothing here is the builder's to decide." Landing it would require editing files this
+  loop may not edit, and the loop's own post-batch integrity call passes no `--owner-approved`, so
+  a builder commit that touched them would halt the loop at exit 6 — the reviewer's own failure
+  scenario. This batch therefore stages only its own paths (never `git add -A`), which is the
+  standing convention recorded in F4's restored paragraph. Owner-authorized task (1) already
+  carries it; it is carried again here with review-27's reproduction attached.
+* **F2 / F3 (Medium) — same owner gate.** Both are inside
+  `tools/runner/gates_batch_integrity.py`, which is in its own `PROTECTED` list, so a batch cannot
+  add the `--each-commit`-without-`--base` refusal (F2) or make the per-commit path unconditional
+  (F3) without the owner. Confirmed as real by reproduction on the working tree:
+  `python3 tools/runner/gates_batch_integrity.py --each-commit` prints `BATCH INTEGRITY: PASS`
+  with rc 0 over zero commits. Deferred with cause to owner task (1); not weakened, not worked
+  around.
+* **F4 (Medium) — FIXED.** The live checkpoint's paragraph naming the five owner-gated dirty paths
+  and the "stage only your own paths, never `git add -A`" rule is restored to
+  `docs/CONTINUATION.md`, re-verified against `git status` today.
+* **F5 (Low) — FIXED.** Correction below, in this file's correction style: the piece count does
+  **not** move between the `fminf` and `mathMin` spellings of the box. The split decision reads the
+  triangle's own cross length against `maxCross`, not the box, so `nan_corner` makes 3 pieces
+  either way; the count difference the sentence appeared to describe is NaN-group vs finite-group.
+  The reviewer rebuilt the pre-fix tree and got the same thing (17 velocity failures, no count
+  failure). The pin's count assertion stays, because it does pin the NaN-triangle behaviour — it
+  just was never a before/after of batch 56.
+* **F7 (Low) — owner, same as F1.** The stray `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`
+  pair is untouched: untracked, uncommitted, and not swept into this batch.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` (mode `hybrid`) on the spin angle returned
+`debris.cpp`'s own `degreesToRadians` with the stale "proven against the runtime" comment and the
+C#'s `RandomSpin` — i.e. the KB surfaced the wrong claim, which is why it was verified against the
+runtime rather than trusted. The Obsidian vault `/mnt/nas/Vaults/port-docs` has nothing on
+`DegreesToRadians` (grep: 0 hits; the only `quaternion` hits are PICA200 fragment-lighting
+outmap semantics, unrelated). **Cognee MCP is not exposed as a tool in this Pi session and was not
+consulted** (owner task 12).
+
+**Gates, as run.**
+
+* `make -C tests/scripts` — **exit 0**: `All VM unit tests match the oracle.` + `All cases match
+  the oracle.`, **480 PASS / 0 FAIL** (same count as batch 57 — the new rows and the new `assoc`
+  group went into an existing test case), and **no golden moved**.
+* `bash tools/check.sh` — **exit 0**: `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built
+  .cia)`, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the pinned frame unchanged, and
+  `reference.sha256` NOT regenerated — `gates_batch_integrity BATCH INTEGRITY: PASS`.
+* `make -C mdk_3ds` — **exit 0**: `3DSX mdk.3dsx`.
+* `cmake --build build-linux --target mdk -j8` — **exit 0**: `[100] Built target mdk`.
+* Frame capture on `DISPLAY=:99` (already listening; AGENTS.md §11 P7),
+  `tools/publish_frame.sh shatter-spin-angle-rounding`.
+* Measured footprint, not a perf claim: `debris.cpp.o` `.text` **9667 → 9687** (+20 bytes) under
+  the devkitARM flags, `vcvt` 15 before and 15 after, `nm -u` byte-identical (no new libm symbol —
+  the divide is hardware). The emitted `vmla.f32` in `randomSpin` is not an FMA contraction of the
+  source: both builds compile C++ with GCC's default `-ffp-contract=off`, so GCC may only use it
+  where it is value-preserving.
+* No gate, test, golden or `PROTECTED` file was relaxed or edited. Scratch (probe, drivers,
+  mutants, logs): `/tmp/mdk-pi/b58`.
+* No emulator run and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D
+  picture stays UNVERIFIED (P6)**.
+
+Frame `docs/frames/2026-11-04-shatter-spin-angle-rounding.png` + `.txt` — `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, byte-identical (`sha256 6646adf1dae3…`) to its parent's, because
+level 3 frame 1 contains no debris.
+
+**What is left in this family.** The spin is bit-exact and pinned, so the debris shatter is now
+oracle-exact end to end: box (batch 56), velocity association (57), spin angle (this batch). The
+next candidate the CONTINUATION names is the follow camera's **`Blend`** over its `Aim` triple,
+which needs the high-refresh frame blend `FrameBlend`'s Kurt half already carries; then the
+sniper scope and top-down view.
+
+**Correction (review-27 F5), to "Iteration 84".** The sentences "The piece COUNT moves too (`3`,
+not `18`)" and "the piece count moves too, because a NaN triangle compares false against `maxCross`"
+are not a before/after of batch 56: the split test reads the triangle's own cross length against
+`maxCross`, never the box, so `nan_corner` makes 3 pieces under the old `fminf` spelling and under
+the `mathMin` spelling alike (the reviewer rebuilt the pre-fix tree and got 17 velocity failures and
+no count failure; this batch's model agrees). The count difference described is NaN-group vs
+finite-group, which the pin's count assertion does pin — the NaN-triangle behaviour is real coverage,
+it was just never this batch's effect.

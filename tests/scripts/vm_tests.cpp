@@ -4628,18 +4628,21 @@ void testMathMinMaxMatchTheOracleOnNaNAndSignedZero() {
 // synthetic group, the same seed and the same Shatter arguments and printed the bits
 // (probe mode `shatter`; the transcript is in docs/PROGRESS_LOG.md, "Iteration 84").
 //
-// The spin quaternion is deliberately NOT pinned here: `quatFromYawPitchRoll` is libm
-// `sinf`/`cosf` and sits 1 ULP from `System.Numerics` on most draws, which is a separate
-// known gap (docs/OPEN_ITEMS.md) and not this site. The radial (zero-direction) arm is
-// not pinned either, for the same reason: it normalises, and the normalise is a separate
-// known 1-ULP gap. Both were measured identical before and after this change.
+// The spin quaternion IS pinned here now, and it is the reason this batch exists:
+// `degreesToRadians` was the single-rounding `degrees * (float)(pi/180)`, while .NET's
+// `float.DegreesToRadians` is `degrees * (float)Math.PI / 180f` -- two roundings. The
+// factor VALUE is the same float either way, so every earlier proof of the factor passed;
+// the rounding was not the same, and 8 of the first 12 shatter angles came out 1 ULP low in
+// magnitude. `w` hid it (a 1-ULP angle move is ~0.3 ULP of a near-1 cosine product) while
+// x/y/z moved 1-2 ULP. See the comment at debris.cpp's degreesToRadians.
 // ---------------------------------------------------------------------------
 
-// One piece of the oracle's output: its index and the bits of its centre and velocity.
+// One piece of the oracle's output: its index and the bits of its centre, velocity and spin.
 struct ShatterRow {
     int32_t index;
     uint32_t center[3];
     uint32_t velocity[3];
+    uint32_t spin[4];
 };
 
 struct ShatterCase {
@@ -4698,39 +4701,39 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
     // fraction of the speed, because Far is finite and real. Without this row set the
     // NaN rows could be matched by a box that simply always produced a NaN.
     const ShatterRow finiteRows[] = {
-        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F92F4A6u, 0x00000000u}},
-        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F5FEBD3u, 0x00000000u}},
-        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3FABCBE0u, 0x00000000u}},
-        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3FB06186u, 0x00000000u}},
-        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0x00000000u, 0x3F83A968u, 0x00000000u}},
-        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0x00000000u, 0x3F9CD4B4u, 0x00000000u}},
-        {6, {0x3EB55555u, 0xBFE00000u, 0x3F900000u}, {0x00000000u, 0x3FB96A5Au, 0x00000000u}},
-        {7, {0x3F300000u, 0xC0155555u, 0x3F755555u}, {0x00000000u, 0x3FBCD4B4u, 0x00000000u}},
-        {8, {0x3F800000u, 0xBF9AAAABu, 0x3F155555u}, {0x00000000u, 0x3FBB348Cu, 0x00000000u}},
-        {9, {0x3EEAAAABu, 0xBFB00000u, 0x3F800000u}, {0x00000000u, 0x3FB8EEC4u, 0x00000000u}},
-        {10, {0x3F7AAAABu, 0x3F000000u, 0x3EC00000u}, {0x00000000u, 0x3F90967Du, 0x00000000u}},
-        {11, {0x3FA80000u, 0xBDAAAAABu, 0x3E555555u}, {0x00000000u, 0x3FA2D22Eu, 0x00000000u}},
-        {12, {0x3FD00000u, 0x3F855555u, 0xBE2AAAABu}, {0x00000000u, 0x3F675B38u, 0x00000000u}},
-        {13, {0x3F8AAAABu, 0x3F600000u, 0x3E800000u}, {0x00000000u, 0x3F80EEC4u, 0x00000000u}},
-        {14, {0x00000000u, 0x3F0AAAABu, 0x3F8AAAABu}, {0x00000000u, 0x3F84FA89u, 0x00000000u}},
-        {15, {0xBF0AAAABu, 0x3EC00000u, 0x3FC00000u}, {0x00000000u, 0x3F778A4Du, 0x00000000u}},
-        {16, {0x3F455555u, 0xBE800000u, 0x3F200000u}, {0x00000000u, 0x3FA84FDEu, 0x00000000u}},
-        {17, {0x3EE00000u, 0x3EAAAAABu, 0x3F4AAAABu}, {0x00000000u, 0x3F93C44Fu, 0x00000000u}},
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F92F4A6u, 0x00000000u}, {0xBD992301u, 0xBD4D152Au, 0xBC4BB726u, 0x3F7EF106u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F5FEBD3u, 0x00000000u}, {0x3CA4348Eu, 0x3D175FB1u, 0xBC492938u, 0x3F7FC11Cu}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3FABCBE0u, 0x00000000u}, {0x3DC5D103u, 0xBCD64320u, 0xBDB0D465u, 0x3F7DC110u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3FB06186u, 0x00000000u}, {0xBDE19600u, 0x3CB5BF1Fu, 0xBD65C796u, 0x3F7DF91Fu}},
+        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0x00000000u, 0x3F83A968u, 0x00000000u}, {0x3DA127D8u, 0xBD0D9898u, 0x3CFB61B1u, 0x3F7EEE83u}},
+        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0x00000000u, 0x3F9CD4B4u, 0x00000000u}, {0xBD3A57E4u, 0x3CEE1A95u, 0x3CB07CB4u, 0x3F7F9131u}},
+        {6, {0x3EB55555u, 0xBFE00000u, 0x3F900000u}, {0x00000000u, 0x3FB96A5Au, 0x00000000u}, {0x3D476F53u, 0x3D24412Eu, 0x3DCDDDD2u, 0x3F7E30E3u}},
+        {7, {0x3F300000u, 0xC0155555u, 0x3F755555u}, {0x00000000u, 0x3FBCD4B4u, 0x00000000u}, {0xBDA5F63Au, 0xBDD32570u, 0xBD2386FBu, 0x3F7D955Eu}},
+        {8, {0x3F800000u, 0xBF9AAAABu, 0x3F155555u}, {0x00000000u, 0x3FBB348Cu, 0x00000000u}, {0xBD9DD33Du, 0x3D94F43Fu, 0x3D93168Eu, 0x3F7DE4D2u}},
+        {9, {0x3EEAAAABu, 0xBFB00000u, 0x3F800000u}, {0x00000000u, 0x3FB8EEC4u, 0x00000000u}, {0x3D8B7E2Fu, 0xBD5FC632u, 0x3DB9F03Bu, 0x3F7DF5FFu}},
+        {10, {0x3F7AAAABu, 0x3F000000u, 0x3EC00000u}, {0x00000000u, 0x3F90967Du, 0x00000000u}, {0x3D19F197u, 0x3BD66921u, 0x3D0A8535u, 0x3F7FAAC7u}},
+        {11, {0x3FA80000u, 0xBDAAAAABu, 0x3E555555u}, {0x00000000u, 0x3FA2D22Eu, 0x00000000u}, {0x3DBC56D2u, 0xBDDEA30Bu, 0x3D8FB71Eu, 0x3F7CC102u}},
+        {12, {0x3FD00000u, 0x3F855555u, 0xBE2AAAABu}, {0x00000000u, 0x3F675B38u, 0x00000000u}, {0xBD87C2D1u, 0x3D4F832Cu, 0x3B630412u, 0x3F7F1B1Du}},
+        {13, {0x3F8AAAABu, 0x3F600000u, 0x3E800000u}, {0x00000000u, 0x3F80EEC4u, 0x00000000u}, {0xBD20C743u, 0x3BA386BCu, 0x3DA12CBDu, 0x3F7F0142u}},
+        {14, {0x00000000u, 0x3F0AAAABu, 0x3F8AAAABu}, {0x00000000u, 0x3F84FA89u, 0x00000000u}, {0xBCB37362u, 0x3CF369ADu, 0xBC51701Fu, 0x3F7FCDF9u}},
+        {15, {0xBF0AAAABu, 0x3EC00000u, 0x3FC00000u}, {0x00000000u, 0x3F778A4Du, 0x00000000u}, {0x3CD1B5AFu, 0x3CD1D9C0u, 0xBBE8459Eu, 0x3F7FD35Cu}},
+        {16, {0x3F455555u, 0xBE800000u, 0x3F200000u}, {0x00000000u, 0x3FA84FDEu, 0x00000000u}, {0xBD0CFE22u, 0xBD6B8FD5u, 0x3A3661A4u, 0x3F7F6C9Du}},
+        {17, {0x3EE00000u, 0x3EAAAAABu, 0x3F4AAAABu}, {0x00000000u, 0x3F93C44Fu, 0x00000000u}, {0xBD094510u, 0xBD823B37u, 0x3D005C5Au, 0x3F7F3634u}},
     };
     // A NaN on the MIN side of one corner. The box goes NaN, Far goes NaN, the
     // `Far > 0` falloff test is false, and every piece keeps the full speed. Note the
     // piece COUNT also changes (3, not 18): a NaN triangle compares false against
     // maxCross, so it is never split. Both halves are the oracle's.
     const ShatterRow nanCornerRows[] = {
-        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
-        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
-        {2, {0x7FC00000u, 0xBEAAAAABu, 0x3F555555u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0xBDC768FBu, 0xBD86331Du, 0xBC90FFE4u, 0x3F7E30BDu}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0x3D0A72A6u, 0x3D82428Cu, 0xBCB3BE06u, 0x3F7F45F8u}},
+        {2, {0x7FC00000u, 0xBEAAAAABu, 0x3F555555u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0x3DDD9516u, 0xBCE5BF52u, 0xBDC46E8Fu, 0x3F7D354Bu}},
     };
     // The same on the MAX side, and on the other corner, so a one-sided fold fails.
     const ShatterRow nanHighRows[] = {
-        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
-        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
-        {2, {0xBF555555u, 0x7FC00000u, 0x3F955555u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0xBDC768FBu, 0xBD86331Du, 0xBC90FFE4u, 0x3F7E30BDu}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0x3D0A72A6u, 0x3D82428Cu, 0xBCB3BE06u, 0x3F7F45F8u}},
+        {2, {0xBF555555u, 0x7FC00000u, 0x3F955555u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0x3DDD9516u, 0xBCE5BF52u, 0xBDC46E8Fu, 0x3F7D354Bu}},
     };
     // The ±0 half of the helper is NOT observable at this site, and that is measured, not
     // argued: Far is `Max(Abs(min - point), Abs(max - point)).LengthSquared()` and Abs
@@ -4738,15 +4741,15 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
     // into bit-identical pieces (probe rows `signed_zero` / `signed_zero_plain`). The two
     // cases below assert the same rows for both groups.
     const ShatterRow signedZeroRows[] = {
-        {0, {0x3EAAAAABu, 0x00000000u, 0x3E2AAAABu}, {0x00000000u, 0x3F381382u, 0x00000000u}},
-        {1, {0xBE2AAAABu, 0x3E2AAAABu, 0x3E2AAAABu}, {0x00000000u, 0x3EE2BE2Bu, 0x00000000u}},
+        {0, {0x3EAAAAABu, 0x00000000u, 0x3E2AAAABu}, {0x00000000u, 0x3F381382u, 0x00000000u}, {0xBD407DB2u, 0xBD001177u, 0xBBE30A8Bu, 0x3F7F95F1u}},
+        {1, {0xBE2AAAABu, 0x3E2AAAABu, 0x3E2AAAABu}, {0x00000000u, 0x3EE2BE2Bu, 0x00000000u}, {0x3C281C7Cu, 0x3C98DAD5u, 0xBBC5AA23u, 0x3F7FEFF3u}},
     };
     // A NaN in a group big enough to split: 129 pieces, every one of them at full speed.
     const ShatterRow bigNanRows[] = {
-        {0, {0x40980000u, 0x40100000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
-        {1, {0x40A80000u, 0x40300000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
-        {2, {0x40700000u, 0x40300000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
-        {3, {0x40880000u, 0x40100000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}},
+        {0, {0x40980000u, 0x40100000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0xBDC768FBu, 0xBD86331Du, 0xBC90FFE4u, 0x3F7E30BDu}},
+        {1, {0x40A80000u, 0x40300000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0x3D0A72A6u, 0x3D82428Cu, 0xBCB3BE06u, 0x3F7F45F8u}},
+        {2, {0x40700000u, 0x40300000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0x3DDD9516u, 0xBCE5BF52u, 0xBDC46E8Fu, 0x3F7D354Bu}},
+        {3, {0x40880000u, 0x40100000u, 0x00000000u}, {0x00000000u, 0x3FC00000u, 0x00000000u}, {0xBDF5B555u, 0x3CC063DCu, 0xBD788FA7u, 0x3F7D9AB9u}},
     };
     // Which SIDE of the box each axis takes its far corner from is pinned from both ends.
     // `inside` sits next to the min corner, so every axis must reach the MAX side; the
@@ -4755,16 +4758,16 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
     // shattered identically -- measured, not assumed (the first version of this pin let
     // exactly that mutant through, and these two cases are what closed it).
     const ShatterRow insideRows[] = {
-        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F82D70Fu, 0x00000000u}},
-        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F613CBDu, 0x00000000u}},
-        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3FA20FE6u, 0x00000000u}},
-        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3F9AFC40u, 0x00000000u}},
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F82D70Fu, 0x00000000u}, {0xBD887DFDu, 0xBD367434u, 0xBC2F872Cu, 0x3F7F2953u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F613CBDu, 0x00000000u}, {0x3CA525F4u, 0x3D1844AEu, 0xBC4A6A01u, 0x3F7FC05Du}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3FA20FE6u, 0x00000000u}, {0x3DBA643Cu, 0xBCCE0E42u, 0xBDA74927u, 0x3F7DFF36u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3F9AFC40u, 0x00000000u}, {0xBDC609B4u, 0x3CA5B25Cu, 0xBD4B9AABu, 0x3F7E6DFFu}},
     };
     const ShatterRow nearMaxRows[] = {
-        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F9C4244u, 0x00000000u}},
-        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F9E8027u, 0x00000000u}},
-        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3F89CFDAu, 0x00000000u}},
-        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3F920F3Du, 0x00000000u}},
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x00000000u, 0x3F9C4244u, 0x00000000u}, {0xBDA2B989u, 0xBD5A2746u, 0xBC5CA22Cu, 0x3F7ECD85u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x00000000u, 0x3F9E8027u, 0x00000000u}, {0x3CE63AE3u, 0x3D56C1F6u, 0xBC91E3F9u, 0x3F7F8187u}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x00000000u, 0x3F89CFDAu, 0x00000000u}, {0x3D9E039Bu, 0xBCB78429u, 0xBD8F3CD4u, 0x3F7E8B24u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x00000000u, 0x3F920F3Du, 0x00000000u}, {0xBDBA8DA4u, 0x3C9E8060u, 0xBD4088DCu, 0x3F7E9A77u}},
     };
     const Vec3 mid{1.0f, -2.0f, 0.5f};
     const Vec3 insidePoint{-1.0f, -2.5f, 0.0f};
@@ -4801,6 +4804,26 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
                                             0x41400000u, zero, 3));
     bigNanFacets.push_back(nanCornerFacets[1]);
 
+    // An ASSOCIATION case. `Shot.Far` is `Vector3.LengthSquared()` of the box's far corner,
+    // and whether that sums the per-axis squares as ((x*x + y*y) + z*z) or ((x*x + z*z) + y*y)
+    // is not visible from any other row here -- review-27 F6 reproduced every earlier row under
+    // BOTH groupings. This group is searched so that its far vector discriminates: left-assoc
+    // gives 3DAF1718, the other grouping gives 3DAF1719, and the triangle's centroid sits off
+    // the point so `f = 1 - DistanceSquared(center,point)/far` actually reads `far`. The oracle
+    // prints `ASSOC far 3E0D8004,3DE4D6F4,3E6DC3C0 lensq 3DAF1718 left 3DAF1718 right 3DAF1719`
+    // (probe mode `shatter`), so `Vector3.LengthSquared`/`Dot`/`DistanceSquared` are all
+    // LEFT-assoc, which is what debris.cpp's vdot writes and what the rows below now pin.
+    std::vector<scripts::DebrisFacet> assocFacets;
+    assocFacets.push_back(shatterFacetBits(0xBD0059C6u, 0xBCE16BA3u, 0xBE02F83Cu, 0x3D0059C6u,
+                                           0x3CE16BA3u, 0x3E02F83Cu, 0x3D0059C6u, 0xBCE16BA3u,
+                                           0x3E02F83Cu, 4));
+    const Vec3 assocPoint = {floatFromBits(0x3DDAD325u), floatFromBits(0xBDAC7C0Bu),
+                             floatFromBits(0xBDD59707u)};
+    const ShatterRow assocRows[] = {
+        {0, {0x3C2B225Du, 0xBC1647C2u, 0x3D2EA050u}, {0x00000000u, 0x3F5BFFE1u, 0x00000000u},
+         {0xBD65CF1Du, 0xBD193934u, 0xBC0D30E8u, 0x3F7F6862u}},
+    };
+
     // The velocity is `(direction OR radial) * Speed * f`, and the C# associates that LEFT:
     // `shot.Direction * shot.Speed * f` is `(d * Speed) * f`, two multiplies. The port had
     // `d * (Speed * f)`, one multiply by a pre-multiplied scalar, and those are different
@@ -4809,28 +4832,28 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
     // They are the same finite group with a direction that has three real components, so
     // every axis of both the directional and the radial path is pinned to the oracle's bits.
     const ShatterRow radialRows[] = {
-        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0xBDF0EBA9u, 0x3F8F0BECu, 0xBE70EBA9u}},
-        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0xBE4E8B34u, 0x3F572656u, 0xBE09B222u}},
-        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0xBF37FC76u, 0x3F7E137Du, 0x3F0C2E10u}},
-        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0xBEA3AF89u, 0x3FA8CD06u, 0x3E75874Du}},
-        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0xBF197899u, 0x3F3A7F1Du, 0x3ED1CF01u}},
-        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0xBF3EF419u, 0x3F4E1BCAu, 0x3F0B6D26u}},
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0xBDF0EBA9u, 0x3F8F0BECu, 0xBE70EBA9u}, {0xBD992301u, 0xBD4D152Au, 0xBC4BB726u, 0x3F7EF106u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0xBE4E8B34u, 0x3F572656u, 0xBE09B222u}, {0x3CA4348Eu, 0x3D175FB1u, 0xBC492938u, 0x3F7FC11Cu}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0xBF37FC76u, 0x3F7E137Du, 0x3F0C2E10u}, {0x3DC5D103u, 0xBCD64320u, 0xBDB0D465u, 0x3F7DC110u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0xBEA3AF89u, 0x3FA8CD06u, 0x3E75874Du}, {0xBDE19600u, 0x3CB5BF1Fu, 0xBD65C796u, 0x3F7DF91Fu}},
+        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0xBF197899u, 0x3F3A7F1Du, 0x3ED1CF01u}, {0x3DA127D8u, 0xBD0D9898u, 0x3CFB61B1u, 0x3F7EEE83u}},
+        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0xBF3EF419u, 0x3F4E1BCAu, 0x3F0B6D26u}, {0xBD3A57E4u, 0x3CEE1A95u, 0x3CB07CB4u, 0x3F7F9131u}},
     };
     const ShatterRow obliqueRows[] = {
-        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x3F0045FFu, 0xBF8045FFu, 0x3E8045FFu}},
-        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x3EC37456u, 0xBF437456u, 0x3E437456u}},
-        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x3F15F4C9u, 0xBF95F4C9u, 0x3E95F4C9u}},
-        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x3F19F53Au, 0xBF99F53Au, 0x3E99F53Au}},
-        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0x3EE5D8FAu, 0xBF65D8FAu, 0x3E65D8FAu}},
-        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0x3F08E4A9u, 0xBF88E4A9u, 0x3E88E4A9u}},
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0x3F0045FFu, 0xBF8045FFu, 0x3E8045FFu}, {0xBD992301u, 0xBD4D152Au, 0xBC4BB726u, 0x3F7EF106u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0x3EC37456u, 0xBF437456u, 0x3E437456u}, {0x3CA4348Eu, 0x3D175FB1u, 0xBC492938u, 0x3F7FC11Cu}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0x3F15F4C9u, 0xBF95F4C9u, 0x3E95F4C9u}, {0x3DC5D103u, 0xBCD64320u, 0xBDB0D465u, 0x3F7DC110u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0x3F19F53Au, 0xBF99F53Au, 0x3E99F53Au}, {0xBDE19600u, 0x3CB5BF1Fu, 0xBD65C796u, 0x3F7DF91Fu}},
+        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0x3EE5D8FAu, 0xBF65D8FAu, 0x3E65D8FAu}, {0x3DA127D8u, 0xBD0D9898u, 0x3CFB61B1u, 0x3F7EEE83u}},
+        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0x3F08E4A9u, 0xBF88E4A9u, 0x3E88E4A9u}, {0xBD3A57E4u, 0x3CEE1A95u, 0x3CB07CB4u, 0x3F7F9131u}},
     };
     const ShatterRow oblique2Rows[] = {
-        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0xBEC1CCA6u, 0x3E688F2Du, 0x3F87A8DAu}},
-        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0xBE93A636u, 0x3E312DDAu, 0x3F4EB57Fu}},
-        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0xBEE28EF3u, 0x3E87EF5Eu, 0x3F9E9743u}},
-        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0xBEE89AB5u, 0x3E8B9006u, 0x3FA2D2B1u}},
-        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0xBEADA160u, 0x3E505B3Fu, 0x3F73151Eu}},
-        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0xBECED28Bu, 0x3E782FD9u, 0x3F90C694u}},
+        {0, {0x3F400000u, 0x3EC00000u, 0x00000000u}, {0xBEC1CCA6u, 0x3E688F2Du, 0x3F87A8DAu}, {0xBD992301u, 0xBD4D152Au, 0xBC4BB726u, 0x3F7EF106u}},
+        {1, {0x3E800000u, 0x3F900000u, 0x00000000u}, {0xBE93A636u, 0x3E312DDAu, 0x3F4EB57Fu}, {0x3CA4348Eu, 0x3D175FB1u, 0xBC492938u, 0x3F7FC11Cu}},
+        {2, {0x3E000000u, 0xBF4AAAABu, 0x3F955555u}, {0xBEE28EF3u, 0x3E87EF5Eu, 0x3F9E9743u}, {0x3DC5D103u, 0xBCD64320u, 0xBDB0D465u, 0x3F7DC110u}},
+        {3, {0x3F2AAAABu, 0xBF200000u, 0x3F400000u}, {0xBEE89AB5u, 0x3E8B9006u, 0x3FA2D2B1u}, {0xBDE19600u, 0x3CB5BF1Fu, 0xBD65C796u, 0x3F7DF91Fu}},
+        {4, {0xBF255555u, 0x00000000u, 0x3FD00000u}, {0xBEADA160u, 0x3E505B3Fu, 0x3F73151Eu}, {0x3DA127D8u, 0xBD0D9898u, 0x3CFB61B1u, 0x3F7EEE83u}},
+        {5, {0xBEA00000u, 0xBF155555u, 0x3FBAAAABu}, {0xBECED28Bu, 0x3E782FD9u, 0x3F90C694u}, {0xBD3A57E4u, 0x3CEE1A95u, 0x3CB07CB4u, 0x3F7F9131u}},
     };
     const Vec3 obliqueDir{0.5f, -1.0f, 0.25f};
     const Vec3 oblique2Dir{-1.25f, 0.75f, 3.5f};
@@ -4850,6 +4873,7 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
         {"oblique", finiteFacets, mid, obliqueDir, 18, obliqueRows, 6, nullptr},
         {"oblique2", finiteFacets, mid, oblique2Dir, 18, oblique2Rows, 6, nullptr},
         {"radial", finiteFacets, mid, noDir, 18, radialRows, 6, nullptr},
+        {"assoc", assocFacets, assocPoint, up, 1, assocRows, 1, nullptr},
     };
 
     std::vector<std::string> names;
@@ -4878,6 +4902,8 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
                                         floatBits(p->center.z)};
             const uint32_t velocity[3] = {floatBits(p->velocity.x), floatBits(p->velocity.y),
                                           floatBits(p->velocity.z)};
+            const uint32_t spin[4] = {floatBits(p->spin[0]), floatBits(p->spin[1]),
+                                      floatBits(p->spin[2]), floatBits(p->spin[3])};
             for (int k = 0; k < 3; k++) {
                 if (center[k] != row.center[k]) {
                     printf("  FAIL: %s piece %d centre.%c is %08X, the oracle's is %08X\n",
@@ -4887,6 +4913,16 @@ void testDebrisGroupBoxPropagatesNaNLikeTheOracle() {
                 if (velocity[k] != row.velocity[k]) {
                     printf("  FAIL: %s piece %d velocity.%c is %08X, the oracle's is %08X\n",
                            c.label, (int)row.index, 'x' + k, velocity[k], row.velocity[k]);
+                    failures++;
+                }
+            }
+            // The spin is the piece's own quaternion, from three RNG draws and the same `f`
+            // the velocity used, so it fails on an angle-rounding change the velocity alone
+            // cannot see.
+            for (int k = 0; k < 4; k++) {
+                if (spin[k] != row.spin[k]) {
+                    printf("  FAIL: %s piece %d spin.%c is %08X, the oracle's is %08X\n",
+                           c.label, (int)row.index, "xyzw"[k], spin[k], row.spin[k]);
                     failures++;
                 }
             }

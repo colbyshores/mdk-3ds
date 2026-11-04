@@ -1,0 +1,23 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-04T01:49:49Z at be1bf75
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture is byte-identical to its parent (sha256 6646adf1dae3...): nothing this batch
+changed is drawn at level 3 frame 1. The change is `degreesToRadians` in debris.cpp, which is
+`Debris.RandomSpin`'s angle -- it moves a debris piece's SPIN quaternion, and no piece exists at
+L3 f1. There is NO frame evidence for this batch.
+
+What shows the change instead: the spin quaternion is now pinned at all. The 10 row tables of
+DebrisGroupBoxPropagatesNaNLikeTheOracle each gained the oracle's own `s=` bits (4 per piece, 56
+pieces, from probe mode `shatter`), plus a new `assoc` group, and the pin fails 90 spin
+assertions against the pre-fix code and 0 after it, in the repo's own harness. Before this batch
+no golden or pin printed spin at all, which is exactly why a 1-ULP angle error sat in the tree for
+dozens of batches: `w` is a product of three near-1 cosines, so a 1-ULP angle move is ~0.3 ULP of
+`w` and hides, while x/y/z move 1-2 ULP.
+
+Also pinned here, and also invisible to the picture: `Vector3.LengthSquared`'s sum order (review-27
+F6). The `assoc` group's far vector is searched so ((x*x+y*y)+z*z) and ((x*x+z*z)+y*y) differ
+(3DAF1718 vs 3DAF1719); the oracle prints 3DAF1718, and swapping the two terms in vdot fails this
+pin on one velocity row.
+
+Capture ran on DISPLAY=:99 (AGENTS.md P7), lavapipe, 320x240, seed 1, frame 1.

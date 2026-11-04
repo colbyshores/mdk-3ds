@@ -1,27 +1,31 @@
 # Phase 2 continuation checkpoint
 
-Risk: low — batch 57 changes the association of one multiply in the debris shatter's velocity:
-the C#'s `Direction * Speed * f` is `(Direction * Speed) * f` and the port wrote
-`Direction * (Speed * f)`, which is one multiply and a different float. The blast radius is
-**1 ULP on the piece velocity**, on the directional and radial paths both, and it is invisible to
-every golden because they print velocities to 4 decimals. Measured: the pre-fix code fails 27
-probe-bit assertions and the fix passes them; `vnormalize` itself turned out to be bit-exact
-against `Vector3.Normalize` on 16/16 probe vectors, so this is not a normalize change; the
-`center == point` branch is untouched because the C# parenthesises that one differently. No
-golden moved, the pinned frame is byte-identical (`sha 6646adf1dae3…`), the ARM object grows 24
-bytes with `nm -u` and the `vcvt` count unchanged, and 5 mutants were built — 4 killed, 1
-provably equivalent with the proof written down. Not zero-risk (it is shipped arithmetic in a
-path that fires in level 5), but every finite input moves by at most one representable step and
-in the oracle's direction.
+Risk: medium — batch 58 changes shipped arithmetic: `degreesToRadians` in `debris.cpp` was
+`degrees * (float)(pi/180)` and .NET's `float.DegreesToRadians` is `degrees * (float)Math.PI /
+180f` — two roundings, not one. It moves the **debris piece spin quaternion** (and the spark's,
+same helper) by 1-2 ULP on x/y/z, and it is invisible to every golden because none of them printed
+spin: the pre-fix code fails **90 spin assertions and 0 velocity assertions** on the pin this batch
+adds. Measured, not guessed: the trig was ruled out first (glibc `sinf`/`cosf` are bit-identical to
+`MathF.Sin`/`MathF.Cos` on the shatter's own angles) and so was the quaternion's own arithmetic
+(feeding the port's angles to `Quaternion.CreateFromYawPitchRoll` reproduces the **port's** bits);
+what was left is that the port's angle is 1 ULP low in magnitude on 8 of the first 12 draws. After
+the fix the port's spin matches the oracle's `s=` bits on all 54 pieces of three direction
+variants. No golden moved, the pinned frame is byte-identical (`sha 6646adf1dae3…`), the ARM object
+grows 20 bytes with `nm -u` unchanged and `vcvt` 15→15, and 8 mutants were built — 6 killed, 2
+provably equivalent with the proof written down. Medium rather than low because it is shipped
+arithmetic in a path that fires in level 5 and it changes a drawn quantity (piece orientation),
+but every finite input moves by at most two representable steps and in the oracle's direction.
 
-Last updated: 2026-11-04 (**batch 57** — the shatter's velocity multiplies the way the C#
-associates, and the "radial normalize gap" batch 56 filed is closed: `vnormalize` was already
-bit-exact and the gap was the multiply). The record — the probe's `NORM`/`SHATTER` rows, the 18
-new pin rows, the 5-mutant table with its equivalent and the reason, and the devkitARM
-`.text`/`nm -u`/`vcvt` before-and-after — is `docs/PROGRESS_LOG.md`, "Iteration 85". Batch 56's
-record (the shatter group box's NaN, the 31-row pin, the 10-mutant table) is "Iteration 84"; batch
-55's (one `math_minmax.h`, the sign-of-zero tie arm) is "Iteration 83"; batch 54's (the last four
-`script_runtime.cpp` clamps, the `nanclamp` probe mode and four pins) is "Iteration 82"; batch
+Last updated: 2026-11-04 (**batch 58** — the shatter's spin angle rounds the way .NET rounds, the
+spin quaternion is bit-exact and pinned for the first time, and review-27 F6's `LengthSquared`
+sum order is measured left-assoc and pinned by a new `assoc` group). The record — the instrumented
+probe's `SPIN`/`ASSOC` rows, the 56 new spin rows, the 8-mutant table with its two equivalents and
+the reasons, and the devkitARM `.text`/`nm -u`/`vcvt` before-and-after — is `docs/PROGRESS_LOG.md`,
+"Iteration 86". Batch 57's record (the velocity's association, the 18 new rows, the
+`NORM`/`SHATTER` rows) is "Iteration 85"; batch 56's (the shatter group box's NaN, the 31-row pin)
+is "Iteration 84"; batch 55's (one `math_minmax.h`, the sign-of-zero tie arm) is "Iteration 83";
+batch 54's (the last four `script_runtime.cpp` clamps, the `nanclamp` probe mode and four pins) is
+"Iteration 82"; batch
 53's (`CameraRoll`, the key-window schedule, the `math_lut.h` negative-angle measurement) is
 "Iteration 81"; batch 52's (one `accelerate()`, the `accel` probe table) is "Iteration 80"; batch
 51's (the fly-arrival pin) is "Iteration 79"; batch 50's (the six clamp pins) is "Iteration 78".
@@ -110,13 +114,25 @@ shipped frontend sets `Player`'s mixer (neither has an audio device) — reason 
 **No harness exercises `kurt_sprite.cpp`'s use of `chuteClosing()`** (see 6b). **Old-3DS timing is
 UNMEASURED.**
 
+**Still owner-gated and still uncommitted in the tree** (so batches stage only their own paths and
+never `git add -A`): `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
+`tools/runner/gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`. All
+five are dirty right now (re-verified with `git status` in batch 58), the frame pair is byte-identical
+to the current pinned frame, and committing any of them without `--owner-approved` makes the loop's
+own post-batch integrity call halt at exit 6 — which is review-27 F1's failure scenario, and the
+reason a batch must not "helpfully" bank them (review-27 F4, F7).
+
 **Owner-authorized tasks (cannot be done in a batch).** (1) Add `ralph-pi.sh`, `ralph.sh`,
 `docs/KILO_RALPH_LOOP_POLICY.md`, `.kilo/agent/*`, `ralph/validator.md` and `tests/hooks/pre-commit`
 to the `PROTECTED` set of `tools/runner/gates_batch_integrity.py` — that file is in its own
 `PROTECTED` list, so only the owner may widen it (review-1 F1, review-2 A/E, review-9 R9-1/R9-2,
 review-10 F1/F2, review-17 R34-1). Same task: the uncommitted `--each-commit` recovery moves
 acceptance from one frame per **iteration** to one per **commit**, which needs an owner sign-off
-line, and `--each-commit` belongs out of `required` until then (review-3 F4/F5). (2) Wire
+line, and `--each-commit` belongs out of `required` until then (review-3 F4/F5). Same task also now
+carries review-27 **F2** (`--each-commit` with no `--base` prints `BATCH INTEGRITY: PASS` over zero
+commits — reproduced) and **F3** (the per-commit path is only reached after an aggregate failure,
+while `ralph-pi.sh`'s header states a per-commit rule and the two frame READMEs still say "per
+batch"), because both live in that same protected file and no batch may edit it. (2) Wire
 `bash tools/runner/test_review_state.sh` into `tools/check.sh`. (3) A review is recorded `done` on
 rc 0 + a non-empty report, so an `INCOMPLETE` verdict still clears the owed range (review-1 oq3).
 (4) Whether the `invoked`-with-nothing-reconstructible last-resort halt should halt at all. (5) The
@@ -190,8 +206,10 @@ oracle-exact too (batch 56): `Debris.cs:160-166` folds each facet's three corner
 which scales every piece's speed and spin — so a NaN corner leaves `Far > 0` false, `f` at exactly
 1.0, and every piece of the group at the full shatter speed, while the `fminf` spelling dropped
 the NaN and gave a different `f` to every piece. Pinned by
-`DebrisGroupBoxPropagatesNaNLikeTheOracle` on six groups (finite, two NaN, a 129-piece NaN, and
-two ±0) whose expectations are the C# probe's own printed `SHATTER` rows.
+`DebrisGroupBoxPropagatesNaNLikeTheOracle` on seven groups (finite, two NaN, a 129-piece NaN, two
+±0, and an `assoc` group whose `far` discriminates the sum order) and on their centres, velocities
+**and spin quaternions** (batch 58), whose expectations are the C# probe's own printed `SHATTER`
+rows.
 - **Loop harness:** fail-closed on every way a mandatory review can fail to happen, fail-*forward*
   where the obligation is recoverable; every transition goes through `state_write` (one temp file,
   one rename, a checked status); the obligation is created **before** the thing it must survive;
@@ -201,41 +219,52 @@ two ±0) whose expectations are the C# probe's own printed `SHATTER` rows.
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 57)
+## Verified on this tree (batch 58)
 
-Narrative, the oracle probe's `NORM`/`SHATTER` rows, the 18 new pin rows, the 5-mutant table with
-its one equivalent and the reason, and the devkitARM `.text`/`nm -u`/`vcvt` before-and-after:
-`docs/PROGRESS_LOG.md`, "Iteration 85". Batch 56's (the shatter group box's NaN, the 31-row pin,
-the 10-mutant table, the ±0-unobservable measurement) is "Iteration 84"; batch 55's (one
-`math_minmax.h`, the `MINMAX` rows, the sign-of-zero tie arm) is "Iteration 83"; batch 54's (the
-last four `script_runtime.cpp` clamps, the `nanclamp` probe mode and four pins) is "Iteration 82";
-batch 53's (`CameraRoll`, the key-window schedule, the `math_lut.h` negative-angle measurement) is
-"Iteration 81"; batch 52's (one `accelerate()`, the `accel` probe table) is "Iteration 80"; batch
-51's (the fly-arrival pin) is "Iteration 79"; batch 50's (the six clamp pins) is "Iteration 78".
+Narrative, the instrumented probe's `SPIN`/`ASSOC` rows, the 56 new spin rows, the 8-mutant table
+with its two equivalents and the reasons, and the devkitARM `.text`/`nm -u`/`vcvt`
+before-and-after: `docs/PROGRESS_LOG.md`, "Iteration 86". Batch 57's (the velocity's association,
+the `NORM`/`SHATTER` rows, the 5-mutant table) is "Iteration 85"; batch 56's (the shatter group
+box's NaN, the 31-row pin, the 10-mutant table, the ±0-unobservable measurement) is "Iteration
+84"; batch 55's (one `math_minmax.h`, the `MINMAX` rows, the sign-of-zero tie arm) is "Iteration
+83"; batch 54's (the last four `script_runtime.cpp` clamps, the `nanclamp` probe mode and four
+pins) is "Iteration 82"; batch 53's (`CameraRoll`, the key-window schedule, the `math_lut.h`
+negative-angle measurement) is "Iteration 81"; batches 50-52 (the six clamp pins, the fly-arrival
+pin, one `accelerate()`) are "Iteration 78-80".
 `make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All cases match the
-oracle.`, **480 PASS / 0 FAIL**, unchanged in count from batch 56 because the new groups went into
-an existing case, and **no golden moved**); `bash tools/check.sh` **exit 0** (`CHECK: ALL GATES
-PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math` contract
-clean, `audit_r11_idiv` no candidates, `gates_core_parity` both targets link the same core,
+oracle.`, **480 PASS / 0 FAIL**, unchanged in count from batch 57 because the new rows and the new
+`assoc` group went into an existing case, and **no golden moved**); `bash tools/check.sh` **exit 0**
+(`CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
+`audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity` both targets
+link the same core,
 `gates_smdh` SKIPPED — no built .cia, `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009` — the
 pinned frame unchanged, and `reference.sha256` NOT regenerated — `gates_batch_integrity` BATCH
 INTEGRITY: PASS); `make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`); `cmake --build build-linux
 --target mdk -j8` **exit 0**.
 
-**The shatter's piece velocity is the oracle's expression now, and the pin can see it.**
-`Debris.cs:210,219` write `Direction * Speed * f` and `Normalize(...) * Speed * f`, which C#
-associates LEFT as `(v * Speed) * f`; the port wrote `v * (Speed * f)`. One multiply versus two,
-1 ULP apart, on every piece of any group whose direction has three real components. Do not
-"tidy" it back into a pre-multiplied scalar. The reason it survived one batch of pinning is the
-lesson here: **an axis-aligned direction makes the two spellings bit-identical** (`1 * x` is
-exact), and every direction in the earlier pin was `(0,1,0)`. `ShatterCase` now carries a
-`direction` field precisely so a non-axis direction can be driven; `oblique`, `oblique2` and
-`radial` are the groups that fail the old spelling (27 assertions). Related and now settled:
-`vnormalize`'s `a / sqrtf(sum)` is **bit-exact against `Vector3.Normalize` on 16/16 probe vectors**
-including zero (NaN), a NaN component, an overflowing sum (Inf → 0), a denormal sum and `-0`
-components — the reciprocal spelling `a * (1/len)` matches only 9/16, so do not "optimise" the
-division into a reciprocal-multiply. Measured footprint, not a perf claim: `debris.o` `.text`
-9673 → 9697 (+24), `nm -u` identical, `vcvt` 15 before and 15 after.
+**The debris shatter is oracle-exact end to end now, and the spin is what proves it.**
+`degreesToRadians` is `(degrees * kPi) / 180.0f`, because .NET's `float.DegreesToRadians` is
+`degrees * (float)Math.PI / 180f` — two roundings. The single-rounding factor spelling is 1 ULP low
+in magnitude on 8 of the first 12 shatter draws and reproduces 4/12 of the oracle's angles; the
+two-rounding spelling reproduces 12/12, and the port's spin then matches the oracle's `s=` bits on
+**all 54 pieces** of the finite group's dir/radial/oblique variants. The pre-fix code fails **90
+spin assertions and 0 velocity assertions**, which is the whole lesson: no golden printed spin, so
+a 1-ULP angle error was invisible, and `w` hid it because a 1-ULP angle move is ~0.3 ULP of a
+near-1 cosine product while it moves `x`/`y`/`z` by 1-2 ULP. The trig and the quaternion were both
+ruled out by measurement first (glibc `sinf`/`cosf` are bit-identical to `MathF.Sin`/`MathF.Cos` on
+these angles; the port's `quatFromYawPitchRoll` product shape scores 17/17 against .NET), so this
+is neither a libm gap nor a library problem. Measured footprint, not a perf claim: `debris.cpp.o`
+`.text` 9667 → 9687 (+20), `nm -u` identical (no new libm symbol — the divide is a hardware
+`vdiv.f32`, visible in the devkitARM object), `vcvt` 15 before and 15 after.
+
+**The velocity association and the normalize, settled in batch 57 and still true:**
+`Debris.cs:210,219` write `Direction * Speed * f`, which C# associates LEFT as `(v * Speed) * f`,
+and the port writes that; do not "tidy" it into a pre-multiplied scalar, because an axis-aligned
+direction hides the difference (`1 * x` is exact) and only `oblique`/`oblique2`/`radial` can see it.
+And `vnormalize`'s `a / sqrtf(sum)` is **bit-exact against `Vector3.Normalize` on 16/16 probe
+vectors** including zero (NaN), a NaN component, an overflowing sum (Inf → 0), a denormal sum and
+`-0` components — the reciprocal spelling `a * (1/len)` matches only 9/16, so do not "optimise"
+the division into a reciprocal-multiply.
 
 **There is no `fminf`/`fmaxf` left anywhere in the port** (batch 56): not in `mdk_core/src`,
 `mdk_3ds/src` or `mdk_linux/src`, and `arm-none-eabi-nm mdk_3ds/mdk.elf | grep -iE 'fmin|fmax'` is
@@ -244,25 +273,36 @@ empty. Every `MathF.Min`/`MathF.Max` in the oracle goes through the ONE pair in
 an **integer** compare. Do not put a `fminf` back: its ±0 tie order is implementation-defined
 (glibc 2.39 returns its **second** operand, matching .NET in one argument order and not the
 other; the same source with visible constants folds to a **third** answer at `-O2`). And the
-group box is oracle-exact: `DebrisGroupBoxPropagatesNaNLikeTheOracle` pins six groups, including
-`inside`/`near_max`, which exist to pin which side of the box each axis reads its far corner from.
+group box is oracle-exact: `DebrisGroupBoxPropagatesNaNLikeTheOracle` pins seven groups, including
+`inside`/`near_max`, which exist to pin which side of the box each axis reads its far corner from,
+and `assoc`, which pins that `Vector3.LengthSquared` folds its squares left-assoc (3DAF1718, not
+3DAF1719 — review-27 F6).
 
 Still NOT pinned by any golden: a shipped frontend's mixer wiring (no frontend has an audio
 device, none draws `Knocked`), the fall-out variant of death, the firing step frames, the sprite
 frame `pick()` selects from `chuteClosing` (6b), the flip's leftover frame, the white flash's
-other writers, and feet finer than 1/64 unit (owner task 15). **The next non-owner candidates,
-in order:** the piece **spin quaternion**, ≤ 2 ULP from `Quaternion.CreateFromYawPitchRoll`
-because `quatFromYawPitchRoll` is libm `sinf`/`cosf` under an `@vfp-exempt R6` pin (no golden
-prints spin, so nothing shows it today); then the follow camera's **blend** (`FollowCamera.Blend`
-over its `Aim` triple, which needs the high-refresh frame blend `FrameBlend`'s Kurt half already
-carries); then its sniper scope and top-down view. Owner candidates unchanged: `math_lut.h`'s
+other writers, and feet finer than 1/64 unit (owner task 15). **The piece spin quaternion is no
+longer one of them** (batch 58): it was 0-2 ULP because `degreesToRadians` rounded once where
+`float.DegreesToRadians` rounds twice (`degrees * (float)Math.PI / 180f`), and the whole
+`DebrisGroupBoxPropagatesNaNLikeTheOracle` table now carries the oracle's `s=` bits — 56 pieces —
+plus an `assoc` group that pins `Vector3.LengthSquared`'s left-assoc fold (review-27 F6). The
+earlier "it must be the quaternion's own products, because `w` is exact" reading was wrong in both
+halves: `w` being exact is what an **input** difference looks like (a 1-ULP angle move is ~0.3 ULP
+of a near-1 cosine product), and the port's `quatFromYawPitchRoll` shape is the runtime's own —
+all four candidate spellings of its products scored 17/17, 2/17, 4/17, 17/17 against .NET, and the
+port's is a 17/17. Do not "tidy" `degreesToRadians` back into a single multiply by a precomputed
+`pi/180` factor, and do not turn its `/ 180.0f` into a reciprocal multiply: both are mutants that
+the pin now kills (M1, M3, M4). **The next non-owner candidate is the follow camera's blend
+(`FollowCamera.Blend` over its `Aim` triple, which needs the high-refresh frame blend `FrameBlend`'s
+Kurt half already carries**); then its sniper scope and top-down view. Owner candidates unchanged:
+`math_lut.h`'s
 `fastSin`/`fastCos` measure 2.5x their own documented error on a **negative** argument (1.19e-05
 at -10 degrees against libm; every camera and sprite angle uses that path, so fixing it is a
 frame-baseline event — Iteration 81), and the `--each-commit`, sidecar-immutability,
 `PROTECTED`-set and checked-in-probe tasks. **No emulator run and no Old-3DS hardware run:
 Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
 windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-04-shatter-velocity-association.png` + `.txt` — `1.240 / 247 / 0.1819`,
+`docs/frames/2026-11-04-shatter-spin-angle-rounding.png` + `.txt` — `1.240 / 247 / 0.1819`,
 byte-identical (`6646adf1dae3…`) to its parent's.
 
 ## Standing open items

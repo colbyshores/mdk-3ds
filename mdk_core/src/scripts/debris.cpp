@@ -45,6 +45,12 @@ const int32_t kSparkFaces[12] = {0, 2, 1, 0, 3, 2, 0, 1, 3, 1, 2, 3};
 Vec3 vadd(const Vec3& a, const Vec3& b) { return Vec3{a.x + b.x, a.y + b.y, a.z + b.z}; }
 Vec3 vsub(const Vec3& a, const Vec3& b) { return Vec3{a.x - b.x, a.y - b.y, a.z - b.z}; }
 Vec3 vscale(const Vec3& a, float s) { return Vec3{a.x * s, a.y * s, a.z * s}; }
+// The sum order is the oracle's, and that is measured, not assumed: .NET's
+// `Vector3.LengthSquared`/`Dot`/`DistanceSquared` all return the LEFT-assoc fold
+// (((x*x + y*y) + z*z)) on triples whose two groupings differ -- probe mode `shatter`, row
+// `ASSOC` (far 3E0D8004,3DE4D6F4,3E6DC3C0 -> lensq 3DAF1718, where the other fold is
+// 3DAF1719). The `assoc` case of DebrisGroupBoxPropagatesNaNLikeTheOracle pins it at this
+// site: swapping the two terms here fails that pin on one velocity row (review-27 F6).
 float vdot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 float vlenSq(const Vec3& a) { return vdot(a, a); }
 Vec3 vcross(const Vec3& a, const Vec3& b) {
@@ -55,10 +61,19 @@ Vec3 vnormalize(const Vec3& a) {
     return Vec3{a.x / len, a.y / len, a.z / len};
 }
 float degreesToRadians(float degrees) {
-    // .NET's MathF.DegreesToRadians factor: pi/180 computed in double, then
-    // cast to float. The float-division spelling differs by 1 ULP in about
-    // half of draws (proven against the runtime by the adversarial review).
-    return degrees * (float)(3.14159265358979323846 / 180.0);
+    // .NET's `float.DegreesToRadians` is NOT `degrees * (float)(pi/180)`. It is
+    // `degrees * (float)Math.PI / 180f`: TWO roundings, a multiply by the float pi
+    // (0x40490FDB) and then a divide by 180f. Measured against the runtime on the
+    // exact angles the shatter draws: the single-rounding factor spelling is 1 ULP
+    // low in magnitude on 8 of the first 12 angles, and the two-rounding spelling
+    // reproduces all 12 bit-for-bit. The old comment here claimed the double factor
+    // had been proven; it proved the FACTOR's value, not the rounding, and
+    // `(float)(pi/180.0) == 0.017453292f` is the same float either way -- the
+    // difference is one multiply-and-round versus a multiply, a round and a divide.
+    // Keep the divide: it is a constant divisor, so it is a real vdiv.f32 on VFPv2
+    // (no -freciprocal-math in either build) and it is what .NET's divss does.
+    const float kPi = (float)3.14159265358979323846;  // 0x40490FDB, .NET's (float)Math.PI
+    return (degrees * kPi) / 180.0f;
 }
 
 // System.Numerics Quaternion.CreateFromYawPitchRoll, stored as (x, y, z, w).
