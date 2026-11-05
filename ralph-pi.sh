@@ -468,6 +468,46 @@ fi
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 self_sha() { sha256sum "$SELF_PATH" 2>/dev/null | cut -c1-16 || true; }
 SELF_SHA_START="$(self_sha)"
+# The staleness verdict, as a function, because it is needed at more than one
+# moment. Three separate defects from external review 2026-11-05
+# (run-20261105-062743/review-3.md F1/F3/F6), one place to fix them:
+#
+#   F3 — the sample used to be taken ONCE, at the top of the iteration, before the
+#        worker existed. The batch that edits THIS file is therefore reviewed by
+#        the copy that started before the edit, and its artifact carried no label:
+#        the one review that certifies a harness fix was certified by the harness
+#        without it. So the verdict is recomputed, and it is recomputed again
+#        immediately before any artifact that certifies a commit is written.
+#   F6 — an unreadable self-hash used to fall through the `&&` chain and skip the
+#        guard, so "could not check" reached the same path as "checked, and fresh"
+#        (vault: a-gate-that-skips-on-missing-input-is-a-pass-generator). Not being
+#        able to read the file is a verdict of its own, not an absence of one.
+#   F1 — the verdict is POSITIVE as well as negative. A current loop now writes
+#        `harness:  CURRENT sha=…` on every artifact, so the ABSENCE of the line is
+#        itself the signal — which is the only form that can survive being read by
+#        a loop too old to write it (vault:
+#        a-scorer-that-prints-incompleteness-and-exits-zero-turns-absence-into-a-pass).
+#        Until this copy runs, no artifact carries any harness: line at all, and
+#        that silence is the pre-fix loop, not an all-clear.
+#
+# Sets HARNESS_STALE (0/1), HARNESS_SHA_NOW and HARNESS_NOTE (never empty).
+harness_verdict() {
+    HARNESS_SHA_NOW="$(self_sha)"
+    HARNESS_STALE=0
+    HARNESS_NOTE=""
+    if [ -z "$HARNESS_SHA_NOW" ] || [ -z "$SELF_SHA_START" ]; then
+        HARNESS_STALE=1
+        HARNESS_NOTE="harness:  UNREADABLE — cannot hash $SELF_PATH now (this process hashed itself as ${SELF_SHA_START:-nothing} at startup), so it cannot show it is the copy on disk; treat every harness fix committed since startup as NOT IN EFFECT."
+        return
+    fi
+    if [ "$HARNESS_SHA_NOW" != "$SELF_SHA_START" ]; then
+        HARNESS_STALE=1
+        HARNESS_NOTE="harness:  STALE — the loop producing this artifact started on ralph-pi.sh ${SELF_SHA_START} while the tree now holds ${HARNESS_SHA_NOW}; every harness fix committed since startup is NOT IN EFFECT and must not be accepted as fixed."
+        return
+    fi
+    HARNESS_NOTE="harness:  CURRENT sha=${SELF_SHA_START} — the loop producing this artifact is the ralph-pi.sh on disk. A harness: line is written by this copy and by no older one, so its ABSENCE from any artifact means the loop that wrote it predates this guard and its silence proves nothing."
+}
+harness_verdict
 log "startup: this process is ralph-pi.sh sha=${SELF_SHA_START:-UNAVAILABLE} mode=$(stat -c %a "$SELF_PATH" 2>/dev/null || echo '??') path=$SELF_PATH"
 
 ITER=0; STALL=0; FAILS=0
@@ -636,13 +676,15 @@ while :; do
     # (review-2 F1) Has the tree moved past this process? Checked at the top of an
     # iteration, before any worker or reviewer exists, so stopping here loses no
     # work and leaves nothing in flight to be folded as a lost review.
-    SELF_SHA_NOW="$(self_sha)"
-    HARNESS_STALE=0
-    if [ -n "$SELF_SHA_START" ] && [ -n "$SELF_SHA_NOW" ] \
-        && [ "$SELF_SHA_NOW" != "$SELF_SHA_START" ]; then
-        HARNESS_STALE=1
-        log "HARNESS STALE: ralph-pi.sh on disk is $SELF_SHA_NOW but this process runs $SELF_SHA_START — every harness fix committed since startup is NOT in effect"
-        if [ -x "$SELF_PATH" ]; then
+    harness_verdict
+    if [ "${HARNESS_STALE:-0}" = "1" ]; then
+        log "HARNESS STALE: ralph-pi.sh on disk is ${HARNESS_SHA_NOW:-UNREADABLE} but this process runs ${SELF_SHA_START:-nothing} — every harness fix committed since startup is NOT in effect"
+        # Stop only on a PROVEN mismatch. An unreadable file is unknown, not
+        # evidence of movement, and a transient read failure must not stop the loop
+        # (review-3 F6 asks that it be labelled, which it is, in the same words a
+        # proven mismatch uses). The verdict is fail-closed; the stop is a repair
+        # action and repairing an unknown by killing the loop is the wrong trade.
+        if [ -x "$SELF_PATH" ] && [ -n "$HARNESS_SHA_NOW" ] && [ -n "$SELF_SHA_START" ]; then
             # The stop is the fix: systemd restarts onto the on-disk copy, which is
             # the only event that makes the committed harness real.
             log "HARNESS STALE: stopping now (exit 8) so the restart loads the on-disk copy; a harness edit is not evidence until it does"
@@ -652,9 +694,9 @@ while :; do
         # stops is worse than a loop that says it is stale: this uid cannot chmod a
         # coleshores-owned file (owner task 18), so the choice is between a stale
         # loop that labels itself and no loop at all. The label is not a pass — the
-        # review prompt and the identity artifact both carry HARNESS STALE from here
-        # on, so a reviewer is never told a fix is live when it is not.
-        log "HARNESS STALE: NOT stopping — $SELF_PATH is mode $(stat -c %a "$SELF_PATH" 2>/dev/null || echo '??') so a systemd restart would fail 203/EXEC; continuing stale and saying so in every artifact until the mode is restored"
+        # review prompt and the identity artifact both carry it from here on, so a
+        # reviewer is never told a fix is live when it is not.
+        log "HARNESS STALE: NOT stopping — $SELF_PATH is mode $(stat -c %a "$SELF_PATH" 2>/dev/null || echo '??') so a systemd restart would fail 203/EXEC, or it could not be re-read; continuing stale and saying so in every artifact until the mode is restored"
     fi
     phase route-health
     RUN_MODEL=""
@@ -919,9 +961,22 @@ POLICY_PRECEDENCE
             # (review-2 F1) If this process is not the script on disk, say so in
             # the evidence instead of letting a stale loop certify a fix it is not
             # running. See the startup hash for the whole argument.
-            HARNESS_NOTE=""
-            if [ "${HARNESS_STALE:-0}" = "1" ]; then
-                HARNESS_NOTE="harness:  STALE — the loop running this review started on ralph-pi.sh ${SELF_SHA_START} while the tree now holds ${SELF_SHA_NOW}; every harness fix committed since startup is NOT IN EFFECT and must not be accepted as fixed."
+            #
+            # (review-3 F3) RE-SAMPLE HERE. The worker has committed by now, so a
+            # batch that edited ralph-pi.sh is caught by the artifact that certifies
+            # it rather than one iteration too late. The STOP stays at the iteration
+            # boundary: the review obligation is not recorded until below this block,
+            # so exiting here would lose an unrecorded obligation, and a lost review
+            # is the worse failure. Labelling is the whole of what is safe to do at
+            # this point, and labelling is what the reviewer asked for.
+            harness_verdict  # review-3 F3 re-sample after the worker commit
+            if [ "${HARNESS_STALE:-0}" = "1" ] \
+                && git -C "$ROOT" diff --name-only "${REVIEW_BASE:-$HEAD_AFTER}".."$HEAD_AFTER" 2>/dev/null \
+                   | grep -qx 'ralph-pi.sh'; then
+                # The one case F1 was written about, named in the artifact instead
+                # of left for the reader to reconstruct: this range moves the harness
+                # and the copy reviewing it is the one the range replaces.
+                HARNESS_NOTE="$HARNESS_NOTE This range edits ralph-pi.sh itself, so the copy producing this review predates the change it is being asked to certify."
             fi
             # Record who was actually on each side, by upstream and family, so a
             # later reader can check the independence claim instead of trusting

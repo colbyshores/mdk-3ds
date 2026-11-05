@@ -953,9 +953,53 @@ guard_present "review-2 F3: and so does the prompt, from the same variable" 'ind
 # loop must not be the authority on whether it is stale. Scoped to the arm, for
 # the usual reason: `exit 8` and `-x` both appear elsewhere in the file, so a
 # file-wide presence pin would stay green with the arm deleted.
-stale_guard() { # the staleness arm, between its own two anchors
-    awk '/SELF_SHA_NOW=/,/so a systemd restart would fail/' "$LOOP_CODE"
+stale_guard() { # the in-loop staleness arm, between its own two anchors
+    # review-3 F3 moved the comparison into harness_verdict, so the arm is now the
+    # call and the stop. Anchored on the call line, which nothing else in the file
+    # spells this way, and not on the old `SELF_SHA_NOW=` assignment that the
+    # refactor removed — an anchor that matches nothing makes every guard inside
+    # pass vacuously, which is the failure mode this suite keeps hitting.
+    awk '/^    harness_verdict$/,/so a systemd restart would fail/' "$LOOP_CODE"
 }
+# The verdict itself, as its own lift: review-3 F1/F6 live here, not in the arm.
+verdict_body() { awk '/^harness_verdict\(\)/,/^}/' "$LOOP_CODE"; }
+VB_LINES="$(verdict_body | wc -l)"
+if [ "$VB_LINES" -ge 10 ]; then
+    printf 'PASS the verdict function was lifted (%s lines), so its guards are not vacuous\n' "$VB_LINES"
+else
+    printf 'FAIL the verdict function lifted %s lines — its guards would pass vacuously\n' "$VB_LINES"
+    fails=$((fails + 1))
+fi
+guard_in_verdict() { # guard_in_verdict <label> <fixed-string>
+    if verdict_body | grep -qF "$2"; then
+        printf 'PASS %s\n' "$1"
+    else
+        printf 'FAIL %s — %s is missing from harness_verdict\n' "$1" "$2"
+        fails=$((fails + 1))
+    fi
+}
+# review-3 F1: the verdict must be POSITIVE, because the only reader that can
+# observe an absent `harness: STALE` line is a loop too old to have written one.
+# A warning that is only ever written when things are wrong turns absence into a
+# pass (vault: a-scorer-that-prints-incompleteness-and-exits-zero-turns-absence-
+# into-a-pass). So a current loop stamps itself CURRENT and absence becomes signal.
+guard_in_verdict "review-3 F1: a CURRENT loop says so, so absence is itself the signal" 'harness:  CURRENT sha='
+guard_in_verdict "review-3 F1: and the note is never left empty" 'HARNESS_NOTE=""'
+# review-3 F6: an unreadable self-hash used to fall through the `&&` chain and
+# skip the guard entirely — "could not check" on the all-clear path.
+guard_in_verdict "review-3 F6: an unreadable self-hash is its own verdict, not an absent one" 'harness:  UNREADABLE'
+order_in_verdict() { # order_in_verdict <label> <earlier> <later>
+    local a b
+    a="$(verdict_body | grep -nF "$2" | head -1 | cut -d: -f1)"
+    b="$(verdict_body | grep -nF "$3" | head -1 | cut -d: -f1)"
+    if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]; then
+        printf 'PASS %s\n' "$1"
+    else
+        printf 'FAIL %s — %s (line %s) is not before %s (line %s)\n' "$1" "$2'" "${a:-none}" "$3" "${b:-none}"
+        fails=$((fails + 1))
+    fi
+}
+order_in_verdict "review-3 F6: the unreadable case is decided BEFORE the mismatch comparison" 'HARNESS_SHA_NOW" ] || [ -z "$SELF_SHA_START"' '[ "$HARNESS_SHA_NOW" != "$SELF_SHA_START" ]'
 SG_LINES="$(stale_guard | wc -l)"
 if [ "$SG_LINES" -ge 8 ]; then
     printf 'PASS the staleness arm was lifted (%s lines), so its guards are not vacuous\n' "$SG_LINES"
@@ -973,9 +1017,22 @@ guard_in_stale() { # guard_in_stale <label> <fixed-string>
 }
 guard_present "review-2 F1: the running copy is hashed at startup" 'SELF_SHA_START="$(self_sha)"'
 order_before "review-2 F1: and it is hashed before the first iteration exists" 'SELF_SHA_START="$(self_sha)"' 'phase startup'
-guard_in_stale "review-2 F1: the arm compares the startup hash with the file on disk" '[ "$SELF_SHA_NOW" != "$SELF_SHA_START" ]'
+guard_in_stale "review-2 F1: the arm asks for the verdict rather than recomputing it" 'harness_verdict'
 guard_in_stale "review-2 F1: a stale loop stops when a restart is possible" 'exit 8'
 guard_in_stale "review-2 F1: and it checks the restart is possible before taking it" '[ -x "$SELF_PATH" ]'
+# review-3 F6's other half: a stop is a repair, and an unknown is not a proven
+# mismatch. Stopping on a transient read failure would take the loop down without
+# evidence that the tree moved; labelling it is the fail-closed part.
+guard_in_stale "review-3 F6: only a PROVEN mismatch may stop the loop" '[ -n "$HARNESS_SHA_NOW" ] && [ -n "$SELF_SHA_START" ]'
+# review-3 F3: the batch that edits ralph-pi.sh is reviewed by the copy that
+# started before the edit, so the verdict must be re-taken after the worker
+# commits and before the artifact that certifies the commit is written. An ORDER
+# pin, because the call was already present in the file at the wrong moment.
+order_before "review-3 F3: the verdict is re-sampled after the worker commits" \
+             'review-3 F3 re-sample after the worker commit' 'review-$ITER.identity.txt'
+order_before "review-3 F3: and before the review prompt is written" \
+             'review-3 F3 re-sample after the worker commit' '} >"$RP"'
+guard_present "review-3 F3: a range that edits the harness is named in the artifact" 'edits ralph-pi.sh itself'
 guard_present "review-2 F1: staleness reaches the review artifacts, not just the log" 'HARNESS_NOTE'
 guard_present "review-2 F1: and it is named to the reviewer as NOT IN EFFECT" 'NOT IN EFFECT'
 # H1: the obligation is written where it cannot be lost with the collector.

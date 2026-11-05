@@ -1,23 +1,32 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 68 rewrites the loop's review-identity path (who is dispatched, and in which order it is
-recorded), adds a self-hash guard that can stop the loop, and changes the emulator harness's mount-release and
-config-forcing rules — i.e. both halves of the loop's evidence chain plus the instrument that measures the
-3DS build. No game code changed. Emulator evidence is attached; hardware evidence is not.
+Risk: high — batch 69 changes the loop's evidence chain in three places at once (the self-staleness verdict
+becomes positive and is re-sampled per artifact, an unreadable hash stops reading as "fresh", and an
+unclaimable process now counts as foreign for FUSE mount release) plus the emulator instrument's INI
+section-ownership rule — i.e. who may certify a harness fix, whether a mount may be detached, and whether a
+forced config key may be reported as forced. No game code changed. Emulator evidence is attached; hardware
+evidence is not.
 
-Last updated: 2026-11-05 (**batch 68** — review-2 remediated: the loop now knows which copy of itself it is
-running and stops rather than certifying a harness it is not running; the reviewer is chosen before the prompt
-names it; the emulator harness releases only mounts it can prove are its own and can no longer report a forced
-config key it never placed. A latent backslash-in-INI-key defect was found and fixed under F5. The record is
-`docs/PROGRESS_LOG.md`, "Iteration 96"; batch 67's (the guest boots) is "Iteration 95", batch 66's (the
-harness instrument) "Iteration 94", batch 65's "Iteration 93", batch 64's "Iteration 92", batch 63's
-"Iteration 91", batch 62's "Iteration 90"; earlier batches are indexed by number in that file.).
+Last updated: 2026-11-05 (**batch 69** — review-3 remediated, all six findings confirmed and fixed, none
+rebutted: the staleness stamp is now positive (`harness: CURRENT sha=…`) so its absence is signal, it is
+re-sampled after the worker commits, an unreadable self-hash is its own verdict, an inert INI key in the wrong
+section is moved and reported as moved instead of being claimed as a forced override, and a process this uid
+cannot read is now foreign so the emulator lane leaves the mount alone — which fired for real on this batch's
+emulator run. The record is `docs/PROGRESS_LOG.md`, "Iteration 97"; batch 68's (the stale-loop guard) is
+"Iteration 96", batch 67's (the guest boots) "Iteration 95", batch 66's (the harness instrument) "Iteration
+94", batch 65's "Iteration 93", batch 64's "Iteration 92", batch 63's "Iteration 91", batch 62's "Iteration
+90"; earlier batches are indexed by number in that file.).
 
 **Owner action still open (blocks the loop's own fixes taking effect):** the worktree `ralph-pi.sh` is mode
 `664` while the index says `100755`, this uid cannot `chmod` it (owner task 18), and the systemd unit execs it
 directly — so a restart today fails `203/EXEC` and the loop keeps running a pre-fix copy. Restore `0755` and
-restart `ralph-pi-mdk.service`. Until then every review artifact is stamped `harness: STALE`, which is the
-loop admitting it rather than hiding it.
+restart `ralph-pi-mdk.service`. **Until that restart, no review artifact carries any `harness:` line at all**
+(review-3 F1, confirmed: `review-3.identity.txt` has none, nor even the `independence:` line batch 68 added).
+Batch 68's wording here claimed every artifact was stamped `harness: STALE`; that was false and is corrected —
+the guard that writes the stamp lives in the copy that is not running. So **the absence of a `harness:` line
+means nothing**, and must not be read as "the running loop is current". From the first restart onward the
+stamp is positive (`harness:  CURRENT sha=…` on every artifact), which is the only form that survives being
+read by a loop too old to write it.
 
 ## PRIORITY ORDER (owner directive 2026-11-05, in force until withdrawn)
 
@@ -45,16 +54,16 @@ work opens unless a listed item needs it.
 into a level), rides/snowboard/stream-fall view/sniper/cutscene camera, the 27 deferred opcodes, the
 Old-3DS optimisation pass (take a first capture; do not optimise against a corpus that does not exist).
 
-## NEXT (batch 69)
+## NEXT (batch 70)
 
-Item 1 stays closed and item 2 (`Game.cs`) is next — batch 68 changed no game code. Two measured facts to
-carry into it, both from a real emulator run:
+Item 1 stays closed and item 2 (`Game.cs`) is next — batch 69 changed no game code. Two measured facts to
+carry into it, both from a real emulator run and both unchanged by this batch:
 
 * **The 3DS picture is a red clear with a sliver of geometry.** The guest logs 3 draws/frame with real
   vertex data (`view: 154 batches, 1188 vertices, 399 triangles`) and the frame counter advances at 60 fps,
   so the frame path runs; what reaches the screen is not a level. That is item 6's neighbourhood (alpha/colour
   source) and AGENTS P2's "all GPU state every frame" list, and it is a visible, measurable defect instead of
-  an inference. Capture: `/tmp/kilo-pi/batch68-3ds.png` (emulator window, top screen).
+  an inference. Capture: `/tmp/kilo-pi/batch69-3ds.png` (emulator window, top screen).
 * **`draws issued: 0` is printed while draws happen.** `main_3ds.cpp:277-281` reads
   `mdk_render_stats(renderer, &draws, nullptr)` at `frame == 3` and gets 0 while the same frame logs three
   `draw N:` lines. Either the counter is reset before it is read or it counts a different path. It is the
@@ -72,6 +81,10 @@ carry into it, both from a real emulator run:
   file at startup, re-checks every iteration, and exits 8 when the tree has moved past it — unless the file is
   not executable, where a restart would fail `203/EXEC` and stopping would be worse than a labelled stale run.
   So: never claim a harness fix is in effect from a commit alone, and expect a restart to be required.
+  Two refinements from review-3: the verdict is **re-sampled before each review artifact** (F3, so the batch
+  that edits the harness is labelled in the artifact that certifies it) and an **unreadable** self-hash is
+  itself a verdict rather than a skipped guard (F6). Neither is in effect until the restart, for the reason
+  in the paragraph above.
 * **`ralph-pi.sh` worktree mode is `664` and this uid cannot `chmod` it** (owner task 18; the file is
   `coleshores`-owned, index says `100755`). A batch that edits it must re-assert the bit with
   `git update-index --chmod=+x ralph-pi.sh` after staging, or the commit records `100644` and the systemd
@@ -84,7 +97,15 @@ carry into it, both from a real emulator run:
 * **Emulator-green is not hardware-pass.** Mandarine masks FCRAM/VRAM exhaustion, `GPU_CLAMP_TO_EDGE`
   leniency and FCRAM smear across soft relaunches. Old-3DS timing stays **UNMEASURED** and the Citro3D
   picture stays **UNVERIFIED** against the oracle (AGENTS P6/P8).
-* `/tmp/kilo` is `museagent`-owned and not writable by this uid; captures go to `/tmp/kilo-pi` (P7's rule
+* **A cross-uid co-tenant running `mandarine.AppImage` on this box is real, not hypothetical** (review-3 F4
+  open question, answered by measurement on batch 69's run: `/proc/<pid>/environ` → `Permission denied`). So
+  an unreadable `/proc` entry is a normal condition an emulator lane must survive, and `emurun.sh` now treats
+  it as *foreign* — the lane leaves the mount alone and says so. Do not "simplify" that back to a bare
+  `readlink` check.
+* **`test_review_state.sh` is not wired into `tools/check.sh`** (check.sh is owner-protected, so wiring it is
+  an owner task). Run `bash tools/runner/test_review_state.sh` by hand with the gates; a green
+  `tools/check.sh` says nothing about the review state machine.
+* **`/tmp/kilo` is `museagent`-owned and not writable by this uid**; captures go to `/tmp/kilo-pi` (P7's rule
   is "capture to files, never to the operator's display", which this satisfies).
 
 ## Verification commands

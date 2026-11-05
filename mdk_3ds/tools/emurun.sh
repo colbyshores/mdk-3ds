@@ -35,11 +35,13 @@
 #      Handing the PID to `fusermount -uz` fails every time, silently, and the
 #      dead /tmp/.mount_mandarXXXXXX mounts accumulate until a launch fails for
 #      a reason that looks like the game dying.
-#  10. That mount is a SHARED path, not a private one: the AppImage runtime hands
-#      every launch of the same AppImage the same /tmp/.mount_mandarXXXXXX, so
-#      unmounting "the mount I saw" detaches a co-tenant's RomFS, and a status
-#      discarded from `fusermount -uz` makes the mount that stayed behind
-#      invisible (review-2 F4).
+#  10. That mount is not reliably a private path. The AppImage runtime mints a
+#      fresh /tmp/.mount_mandarXXXX for a launch, but when it finds one it left
+#      behind for the same AppImage it REUSES it — measured 2026-11-05, three
+#      concurrent launches held three distinct mounts, while review-2 watched a
+#      stale one get handed to two campaigns. So unmounting "the mount I saw" can
+#      still detach a co-tenant's RomFS, and a status discarded from
+#      `fusermount -uz` makes the mount that stayed behind invisible (review-2 F4).
 #
 # And the reason this file is pinned to a version: Mandarine r1.3.0 segfaults
 # deterministically during level load. Running it produces an empty log, which
@@ -169,6 +171,37 @@ cfg_present() { # key -> 0 when some line begins with `key=`
   EMURUN_AWK_K="$1=" awk 'index($0, ENVIRON["EMURUN_AWK_K"]) == 1 { found = 1 }
                           END { exit found ? 0 : 1 }' "$EMU_CFG" 2>/dev/null
 }
+# Which section owns `key` — the last [Header] before its line, which is the
+# QSettings rule the harness has to satisfy. PRESENT IS NOT GOVERNING: a key that
+# sits under a header the emulator does not read this value from is inert, and
+# `cfg_present` cannot tell the two apart (review-3 F2: it reported an inert key
+# under [General] as "an explicit override the emulator kept"). Prints the bare
+# section name, or NONE for a key that precedes every header.
+cfg_section_of() { # key -> owning section, or NONE
+  EMURUN_AWK_K="$1=" awk '
+    /^\[.*\]$/ { sec = substr($0, 2, length($0) - 2) }
+    index($0, ENVIRON["EMURUN_AWK_K"]) == 1 && !seen { print (sec == "" ? "NONE" : sec); seen = 1 }
+  ' "$EMU_CFG" 2>/dev/null | head -1
+}
+# Rewrite every line that begins with `key=` to `key=value`, wherever it sits.
+# awk + ENVIRON rather than sed, and not for style: the companion keys are
+# `name\default` and a BRE reads the `\d` as an escape, which is the same trap
+# cfg_present exists to avoid. A sed pattern built from such a key matches nothing
+# and every caller then believes the rewrite succeeded.
+cfg_rewrite() { # key value
+  EMURUN_AWK_K="$1=" EMURUN_AWK_LINE="$1=$2" awk '
+    index($0, ENVIRON["EMURUN_AWK_K"]) == 1 { print ENVIRON["EMURUN_AWK_LINE"]; next }
+    { print }
+  ' "$EMU_CFG" >"$EMU_CFG.tmp" && mv "$EMU_CFG.tmp" "$EMU_CFG"
+}
+# Drop every line that begins with `key=`, wherever it sits. Used only to MOVE a
+# key out of a section the emulator does not read it from, so the file ends with
+# exactly one governing line rather than two that disagree — and so cfg_get's
+# first match is the value that actually governs.
+cfg_drop() { # key
+  EMURUN_AWK_K="$1=" awk 'index($0, ENVIRON["EMURUN_AWK_K"]) != 1' "$EMU_CFG" >"$EMU_CFG.tmp" \
+    && mv "$EMU_CFG.tmp" "$EMU_CFG"
+}
 # Where each forced key actually landed, and it is part of the verdict because a
 # key in the wrong section is inert. `existing` = the seed had the key and it was
 # rewritten in place; `inserted` = it went under a header that was already there;
@@ -192,11 +225,27 @@ cfg_place() { # key value section -> 0 when the key is now in the file
   return 0
 }
 cfg_set() { # key value [section]
-  local key="$1" val="$2" sec="${3:-}"
+  local key="$1" val="$2" sec="${3:-}" owner
+  # ONE backslash, because this is the key as it appears in the file. It must not
+  # reach a BRE, which is why every use below is cfg_rewrite/cfg_present/cfg_drop
+  # (fixed-string) and none of them is sed.
+  local ckey="$key\\default"
   mkdir -p "$(dirname "$EMU_CFG")" 2>/dev/null || true
   [ -f "$EMU_CFG" ] || : >"$EMU_CFG"
   if cfg_present "$key"; then
-    sed -i "s|^$key=.*|$key=$val|" "$EMU_CFG" && CFG_PLACED[$key]=existing
+    # (review-3 F2) Only a key already under $sec may be called `existing`. The
+    # headerless F5 fix closed the append-at-EOF case and left this one: the seed
+    # had `graphics_api` under [General], the rewrite landed there, the emulator
+    # read [Renderer], found nothing of its own, and the verdict still printed
+    # "an explicit override the emulator kept". Move it to where the emulator
+    # looks and say that it moved.
+    owner="$(cfg_section_of "$key")"
+    if [ -n "$sec" ] && [ "$owner" != "$sec" ]; then
+      cfg_drop "$key"
+      if cfg_place "$key" "$val" "$sec"; then CFG_PLACED[$key]=moved; else CFG_PLACED[$key]=UNPLACED; fi
+    elif cfg_rewrite "$key" "$val"; then
+      CFG_PLACED[$key]=existing
+    fi
   elif [ -n "$sec" ]; then
     # AN ABSENT KEY CANNOT GO AT THE END OF THE FILE. An INI key belongs to the
     # section whose header precedes it, so appending `volume=0` after the last
@@ -217,10 +266,19 @@ cfg_set() { # key value [section]
     printf '%s=%s\n' "$key" "$val" >>"$EMU_CFG"
     CFG_PLACED[$key]=UNPLACED
   fi
-  if grep -q "^$key\\\\default=" "$EMU_CFG" 2>/dev/null; then
-    sed -i "s|^$key\\\\default=.*|$key\\\\default=false|" "$EMU_CFG"
+  # The companion gets the same section test the key does (review-3 F2): a
+  # `name\default` sitting under the wrong header governs nothing, and the
+  # readback note would quote a flag the emulator never consulted.
+  if cfg_present "$ckey"; then
+    owner="$(cfg_section_of "$ckey")"
+    if [ -n "$sec" ] && [ "$owner" != "$sec" ]; then
+      cfg_drop "$ckey"
+      cfg_place "$ckey" false "$sec" || CFG_PLACED[$key]=UNPLACED
+    else
+      cfg_rewrite "$ckey" false
+    fi
   elif [ -n "$sec" ]; then
-    cfg_place "$key\\default" false "$sec" || CFG_PLACED[$key]=UNPLACED
+    cfg_place "$ckey" false "$sec" || CFG_PLACED[$key]=UNPLACED
   else
     printf '%s\\default=false\n' "$key" >>"$EMU_CFG"
     CFG_PLACED[$key]=UNPLACED
@@ -245,6 +303,10 @@ cfg_default_note() {
     UNPLACED)
       printf ' [placement UNPLACED — the key never landed in a named section, so it is inert and proves nothing]'
       return ;;
+    moved)
+      # It did land in the right section, so the readback below is meaningful; the
+      # reader just has to know the harness had to move it to get there.
+      printf ' [moved by this harness out of a section the emulator does not read]' ;;
     new-section)
       printf ' [section created by this harness]' ;;
   esac
@@ -353,9 +415,29 @@ emurun_mount_in_use() {
 emurun_mount_foreign() {
   local m="$1" p env exe
   for p in $(pgrep -f 'mandarine\.AppImage|AppRun\.wrapped' 2>/dev/null); do
-    env=$( { tr '\0' '\n' < "/proc/$p/environ"; printf '\n'; } 2>/dev/null || true )
-    case "$env" in *$'\n'"MDK_EMURUN_LANE=$LANE"$'\n'*) continue ;; esac
-    exe=$(readlink "/proc/$p/exe" 2>/dev/null || true)
+    # Can THIS lane claim the process? The token is the only proof, and a failed
+    # environ read is the absence of proof rather than proof of absence: it must
+    # not fall through to the exe check (review-3 F4 — the comment above promised
+    # the safe direction and the code took the other one, so a process this uid
+    # cannot read at all was judged "not foreign" and the mount was detached under
+    # it). Same rule emurun_own_pids already applies to the kill path.
+    # The `2>/dev/null` wraps the GROUP, not `tr`: a failed `<` redirect is
+    # reported by the shell before tr runs, so a per-command redirect does not
+    # catch it and the harness verdict used to be followed by a bare
+    # "emurun.sh: line N: /proc/PID/environ: Permission denied" (measured live
+    # 2026-11-05 with a cross-uid co-tenant present). The refusal must be silent
+    # and still counted.
+    if env="$( { tr '\0' '\n' < "/proc/$p/environ"; } 2>/dev/null)"; then
+      case $'\n'"$env"$'\n' in
+        *$'\n'"MDK_EMURUN_LANE=$LANE"$'\n'*) continue ;;   # ours: not foreign
+      esac
+    else
+      return 0
+    fi
+    # Unclaimable by token. If its exe is unreadable too, we cannot say where it
+    # runs from, and "unknown" must never read as "free".
+    exe="$(readlink "/proc/$p/exe" 2>/dev/null)" || return 0
+    [ -n "$exe" ] || return 0
     case "$exe" in "$m"/*) return 0 ;; esac
   done
   return 1

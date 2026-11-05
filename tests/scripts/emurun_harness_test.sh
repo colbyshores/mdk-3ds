@@ -157,6 +157,51 @@ check "F5 header-present case: the companion is written once, with its backslash
 check "F5 header-present case: and it is under the same header" "[Renderer]" \
       "$(printf '%s\n' "$out" | sed -n 's/^dsection=//p')"
 
+# --- case 2c: the key is present but under the WRONG section (review-3 F2) ----
+# The headerless F5 fix closed "appended at EOF" and left this: `cfg_present` said
+# yes, the rewrite landed under [General], the emulator read [Renderer], found
+# nothing of its own there, and the verdict still printed "an explicit override
+# the emulator kept". A key in the wrong section is inert — the harness's own
+# comment says so — so an inert key must never be reported as a forced value.
+out=$(run_case '[General]
+graphics_api=2
+graphics_api\default=false
+
+[Audio]
+volume=100
+volume\default=true')
+check "F2 wrong-section key: it is MOVED, not rewritten where it sits" "moved" \
+      "$(printf '%s\n' "$out" | sed -n 's/^placed=//p')"
+check "F2 wrong-section key: and it lands under the section the emulator reads" "[Renderer]" \
+      "$(printf '%s\n' "$out" | sed -n 's/^section=//p')"
+check "F2 wrong-section key: the companion moves with it" "[Renderer]" \
+      "$(printf '%s\n' "$out" | sed -n 's/^dsection=//p')"
+check "F2 wrong-section key: exactly one governing line survives, not two" "1" \
+      "$(awk '/^graphics_api=/{n++} END{print n+0}' "$EMU_CFG")"
+check "F2 wrong-section key: the inert [General] copy is gone" "0" \
+      "$(awk '/^\[General\]$/{g=1;next} /^\[/{g=0} g && /^graphics_api=/{n++} END{print n+0}' "$EMU_CFG")"
+check "F2 wrong-section key: the readback is the moved value, so it is the one that governs" "1" \
+      "$(printf '%s\n' "$out" | grep -c '^value=1$')"
+check "F2 wrong-section key: the verdict discloses the move before it claims a kept override" "1" \
+      "$(printf '%s\n' "$out" | grep -c 'note=.*moved by this harness out of a section')"
+
+# --- case 2d: only the \default companion is in the wrong section -------------
+# The companion decides whether the value is read as an override at all, so an
+# inert companion is as much a false instrument as an inert key.
+out=$( ( set -u; : >"$EMU_CFG"
+        printf '[General]\nvolume\\default=true\n\n[Audio]\nvolume=100\n' >>"$EMU_CFG"
+        . "$WORK/fn.sh"
+        cfg_set volume 0 Audio
+        printf 'dsection=%s\n' "$(owns_key "$EMU_CFG" 'volume\default=')"
+        printf 'dcount=%s\n' "$(awk '/^volume\\default=/{n++} END{print n+0}' "$EMU_CFG")"
+        printf 'dflt=%s\n' "$(cfg_default_get volume)" ) )
+check "F2 wrong-section companion: moved under the header the emulator reads" "[Audio]" \
+      "$(printf '%s\n' "$out" | sed -n 's/^dsection=//p')"
+check "F2 wrong-section companion: and it is not duplicated" "1" \
+      "$(printf '%s\n' "$out" | sed -n 's/^dcount=//p')"
+check "F2 wrong-section companion: the rewrite actually landed (false, not the seed's true)" "false" \
+      "$(printf '%s\n' "$out" | sed -n 's/^dflt=//p')"
+
 # --- case 3: a key with no section named is UNPROVEN, never a forced value ----
 out=$( ( set -u; : >"$EMU_CFG"; . "$WORK/fn.sh"; cfg_set mystery 7
         printf 'placed=%s\n' "$(cfg_placed mystery)"
@@ -202,6 +247,43 @@ check "F4 emurun_mount_foreign exists and is scoped to one definition" "1" \
       "$([ "$(printf '%s\n' "$FOREIGN_FN" | wc -l)" -ge 6 ] && echo 1 || echo 0)"
 check "F4 and it skips processes carrying this lane's token" "1" \
       "$(printf '%s\n' "$FOREIGN_FN" | grep -cF 'MDK_EMURUN_LANE=$LANE' | head -1)"
+
+# The predicate, RUN. The mount itself cannot be conjured, but the ownership
+# question can: pgrep is stubbed to name processes that really exist, and their
+# /proc entries are the real thing. This is what catches review-3 F4, which a
+# source-shape grep could not: the old body swallowed a failed environ read with
+# `|| true`, so a process this uid cannot read at all fell through to a readlink
+# that also fails on it, and the guard answered "free" for a mount it could not
+# prove was free.
+MOUNT=/tmp/.mount_mandarZZTEST
+foreign_of() { # <pids...> -> exit 0 foreign / 1 not foreign
+    (
+        LANE="$FAKE_LANE"
+        FAKE_PIDS="$*"
+        pgrep() { printf '%s\n' $FAKE_PIDS; }   # the args are the real caller's pattern
+        # shellcheck disable=SC2034
+        eval "$(printf 'emurun_mount_foreign() { %s\n' "$(printf '%s\n' "$FOREIGN_FN" | tail -n +2)")"
+        emurun_mount_foreign "$MOUNT" >/dev/null 2>&1
+    )
+}
+# A live process carrying this lane's token is ours, whoever else is running.
+FAKE_LANE="testlane$$"
+MDK_EMURUN_LANE="$FAKE_LANE" sleep 30 & OWN_PID=$!
+# A live process WITHOUT the token, executing outside the test mount: not ours,
+# but provably not in the mount either.
+sleep 30 & STRANGER_PID=$!
+check "F4 a process carrying the lane token is ours, not foreign" "1" \
+      "$(foreign_of "$OWN_PID"; printf '%s' "$?")"
+check "F4 a tokenless process outside the mount is not foreign either" "1" \
+      "$(foreign_of "$STRANGER_PID"; printf '%s' "$?")"
+# The defect: a pid with no readable /proc entry. The old code read "not foreign"
+# — i.e. unmount it — out of two failed reads.
+check "F4 an UNREADABLE process is foreign, so the mount is left alone" "0" \
+      "$(foreign_of 999999; printf '%s' "$?")"
+check "F4 and the guard still answers for a mix of ours and unreadable" "0" \
+      "$(foreign_of "$OWN_PID" 999999; printf '%s' "$?")"
+kill $OWN_PID $STRANGER_PID 2>/dev/null
+wait 2>/dev/null
 
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership)"

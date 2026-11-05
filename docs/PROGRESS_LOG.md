@@ -13209,10 +13209,20 @@ down with no way back. There it continues and **labels itself**: `HARNESS STALE`
 identity artifact and into the review prompt as "every harness fix committed since startup is NOT IN EFFECT
 and must not be accepted as fixed". A stale loop can still be wrong; it can no longer be silent about it.
 
+> **Corrected by iteration 97 (review-3 F1).** The three sentences above describe what the *committed* file
+> does, and were written as though they were already true of the running loop. They are not: the copy that
+> writes the label is the copy that is not running. Measured — `review-3.identity.txt` carries no `harness:`
+> line and not even the `independence:` line this batch added. So until the restart **nothing is stamped, and
+> a missing stamp is not evidence**. Iteration 97 makes the stamp positive (`harness:  CURRENT sha=…`) so
+> that absence is signal from the first restart onward, and re-samples it per artifact (review-3 F3).
+
 Two things stated plainly rather than glossed. The guard **cannot protect the run that installs it** — the
 process that would enforce it is the pre-fix process — so it takes effect at the first restart that loads
 this file. And the two owner actions remain: restore `0755` on the worktree `ralph-pi.sh` (owner task 18) and
 restart `ralph-pi-mdk.service`. Until both happen the loop runs the pre-fix reviewer chain and says so.
+
+> **Corrected by iteration 97 (review-3 F1):** "and says so" was false. It says nothing, because the saying
+> is done by the copy that is not loaded. See the correction above.
 
 ### F2 (High) — the prompt named a reviewer that had not been chosen yet. Fixed.
 
@@ -13247,7 +13257,13 @@ property each named is unchanged and still pinned.
 
 `emurun_cleanup` detached `$OUR_MOUNT` unconditionally, by path, discarding `fusermount`'s status. The
 AppImage runtime hands every launch of the same AppImage the same `/tmp/.mount_mandarXXXXXX`, so the first
-lane out detaches the RomFS a co-tenant is executing from — the rc=4 "the game DIED" symptom review-1 F3 was
+lane out detaches the RomFS a co-tenant is executing from
+
+> **Corrected by iteration 97 (review-3 F5).** The mechanism is narrower than that sentence. Measured during
+> review-3: three concurrent launches of the pinned AppImage held three *distinct* mounts. The runtime mints a
+> fresh `/tmp/.mount_mandarXXXX` per launch and **reuses one it left behind**; sharing is the stale-mount case
+> review-2 actually observed, not the rule. The guard is still required — the shared case is reachable — but
+> both arms of the cleanup are live, not just the shared one. — the rc=4 "the game DIED" symptom review-1 F3 was
 written about. The vault says the same thing independently
 (`50-tooling/multi-tenant-emulator-harness-isolate-by-display.md`: "Only unmount a squashfs/FUSE mount nobody
 is executing from"), and the sibling campaigns' statecap notes record a foreign `.mount_mandary*` being
@@ -13369,3 +13385,202 @@ Owner-directive item 2 is untouched by this batch and is still next: `src/Mdk.Ga
 — level start, tick order, level end, death/restart. The two leads from batch 67 still stand (the 3DS picture
 is a red clear plus a sliver; `draws issued: 0` is a broken instrument). **Old-3DS timing remains
 UNMEASURED** and the Citro3D picture remains **UNVERIFIED** against the oracle (P6).
+
+---
+
+## Iteration 97 — batch 69: review-3 remediated — the staleness stamp becomes positive, an inert INI key stops reading as a forced one, and an unclaimable process is foreign
+
+Scope: `ralph-pi.sh` (the self-staleness guard), `mdk_3ds/tools/emurun.sh` (the instrument and the mount
+guard), their two test suites, and the record. **No game code changed** — no `mdk_core/**`, no
+`mdk_3ds/src/**`. Source: `logs/ralph-pi/run-20261105-062743/review-3.md`, scope `71732689..4795a4ea`.
+
+All six findings were investigated before anything was changed. **All six are confirmed and fixed; none is
+rebutted.** The reviewer's own re-measurement of the previous batch's claims held up, so the starting
+position was that its findings were worth reproducing rather than arguing with.
+
+### F1 (High) — the record claimed a stamp that the running loop cannot write. Fixed, and the stamp is now positive.
+
+Reproduced exactly. `logs/ralph-pi/run-20261105-062743/review-3.identity.txt` contains `builder:`,
+`reviewer:`, `scope:`, `rule:`, `source:` and **no `harness:` line — and not even the `independence:` line
+batch 68 added**, which is itself proof that the writing process predates batch 68. `ps` gives pid 3569109
+started `Wed Nov 4 23:27:04 2026`; `systemctl show -p ExecMainStartTimestamp` gives the same minute. So the
+CONTINUATION sentence "Until then every review artifact is stamped `harness: STALE`" was false one line after
+the same file admitted "the guard cannot protect the run that installs it", and a reader who took it at face
+value would conclude from an unstamped artifact that the loop was current — the exact false PASS batch 68 was
+written to prevent.
+
+Two changes, the second stronger than the reviewer asked for:
+
+* **The record is corrected in place**, at both cited lines, with a dated `Corrected by iteration 97` marker
+  rather than a silent rewrite: until the restart **nothing is stamped, and a missing stamp is not evidence**.
+* **The verdict is now positive.** `harness_verdict` always emits a `harness:` line — `harness:  CURRENT
+  sha=…` when the process matches the file on disk, `harness:  STALE — …` on a proven mismatch, `harness:
+  UNREADABLE — …` when it cannot hash itself. Absence of the line is then itself the signal, which is the
+  only form that survives being read by a loop too old to write it. This is the vault rule
+  `50-tooling/a-scorer-that-prints-incompleteness-and-exits-zero-turns-absence-into-a-pass.md`: a warning
+  written only when things are wrong turns its own absence into a pass.
+
+### F3 (Medium) — the staleness sample was taken before the worker committed. Fixed.
+
+Confirmed by reading the order: `SELF_SHA_NOW` was sampled once at the top of the iteration, and the identity
+artifact and the review prompt are written hundreds of lines later, after the commit. So the one review that
+certifies a harness edit was written by the copy that lacks it, unlabelled, and only the *next* iteration
+noticed.
+
+The verdict is now a function, and it is **re-sampled immediately before the artifact and the prompt are
+written**, with a marker string the test pins by order. What was deliberately *not* taken from the
+remediation is its second half — "decide there whether to stop before dispatching". Stopping at that point
+would exit with the review obligation still unrecorded (it is written below the artifact block), and a lost
+obligation is the worse failure: an unreviewed commit that nobody knows is unreviewed. Instead, when the
+range being reviewed edits `ralph-pi.sh` itself, the artifact says so explicitly: *"This range edits
+ralph-pi.sh itself, so the copy producing this review predates the change it is being asked to certify."*
+The reader is told, and the obligation survives.
+
+### F6 (Low) — an unreadable self-hash skipped the guard. Fixed, with the stop held back deliberately.
+
+`if [ -n "$SELF_SHA_START" ] && [ -n "$SELF_SHA_NOW" ] && [ … != … ]` meant a failed `sha256sum` (missing
+binary, a `git checkout` mid-iteration, an editor rename) fell through the `&&` chain and produced **no label
+at all** — "could not check" on the all-clear path, which is
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md`. An unreadable self-hash
+is now its own verdict (`harness:  UNREADABLE`) and is decided **before** the mismatch comparison.
+
+One deliberate divergence from the recommended remediation: an unreadable hash is labelled but does **not**
+trigger the `exit 8`. A stop is a repair, and repairing an *unknown* by killing the loop would let a transient
+read failure take the loop down with no evidence that the tree moved. Only a **proven** mismatch may stop it;
+the pin `review-3 F6: only a PROVEN mismatch may stop the loop` holds that line. The verdict is fail-closed;
+the stop is not, and that split is stated in the code comment rather than left to inference.
+
+### F2 (Medium) — an inert INI key was reported as a forced instrument. Fixed.
+
+Reproduced with the reviewer's own seed (`[General] graphics_api=2` + companion, no `[Renderer]`), using the
+functions lifted from the real file: `placed=existing`, the value rewritten **inside `[General]`**, `[Renderer]`
+never created, and the verdict printing `[default=false — an explicit override the emulator kept]`. The F5 fix
+in batch 68 closed the append-at-EOF case and left this one, and the file's own comment already stated the rule
+it was breaking: *a key in the wrong section is inert*.
+
+`cfg_set` now resolves the **owning header** (`cfg_section_of`: the last `[Section]` before the line, the
+QSettings rule) and only records `existing` when it equals the requested section. Otherwise it **moves** the
+key (`cfg_drop` + `cfg_place`) and records `moved`, which `cfg_default_note` prints before the readback so the
+claim is disclosed rather than implied. The `\default` companion gets the same test, because an inert
+companion is as much a false instrument as an inert key. Measured after the fix on the same seed:
+
+```
+placed=moved   value=1   dflt=false
+note= [moved by this harness out of a section the emulator does not read] [default=false — an explicit override the emulator kept]
+[Renderer] holds graphics_api=1 and its companion; [General] holds neither; exactly one graphics_api= line survives
+```
+
+`cfg_rewrite` replaces the `sed` calls, and not for style: the companion keys are `name\default` and a BRE
+reads `\d` as an escape, so a sed pattern built from such a key can match nothing while every caller believes
+the rewrite succeeded. All key matching is now fixed-string through `ENVIRON`, one spelling for the whole file.
+
+### F4 (Low) — an unclaimable process was judged "not foreign", so the mount was detached under it. Fixed, and it fired for real on this run.
+
+The comment promised "one whose environ this uid cannot read is not ours either"; the code did the opposite.
+`env=$( … 2>/dev/null || true )` swallowed the failure, the token `continue` was not taken, and the fallback
+`readlink /proc/$p/exe` also fails for another uid's process, so `case "$exe" in "$m"/*` fell through and the
+guard answered **free** for a mount it could not prove was free — the inverse of the safe direction
+`emurun_own_pids` already uses for the kill path.
+
+This is no longer hypothetical. **The first emulator run of this batch produced a live instance of the failure
+scenario**, which also answers the reviewer's open question 1 (is a cross-uid co-tenant reachable on this
+box — yes):
+
+```
+mdk_3ds/tools/emurun.sh: line 424: /proc/419661/environ: Permission denied
+emurun: NOTE /tmp/.mount_mandarjxAIV0 has a process outside this lane executing from it; left mounted.
+```
+
+Under the old code that run would have lazily detached a mount a foreign-uid process was executing from — the
+rc=4 "the game DIED" symptom review-1 F3 was written about. The guard now returns *foreign* when the environ
+cannot be read, and also when the exe cannot be read, so neither leg can fail open. The leaked
+`Permission denied` line the run exposed was itself fixed: a failed `<` redirect is reported by the shell
+before `tr` runs, so the redirect had to move onto the group.
+
+### F5 (Low) — the shared-mount rationale overstated the mechanism. Fixed.
+
+The header said the AppImage runtime "hands every launch of the same AppImage the same
+`/tmp/.mount_mandarXXXXXX`". Review-3 measured three concurrent launches holding three **distinct** mounts.
+The runtime mints a fresh one per launch and **reuses one it left behind**; sharing is the stale-mount case
+review-2 actually observed, not the rule. Corrected in the file header, in the test's header, and in
+batch 68's log entry. The guard is still required — the shared case is reachable — but both arms of the
+cleanup are live, not just the shared one, which is worth knowing before someone declares the `WARNING … STILL
+MOUNTED` branch dead code.
+
+### Tests added, and their non-vacuity measured
+
+`tests/scripts/emurun_harness_test.sh` **41 → 55 checks**; `tools/runner/test_review_state.sh` gains 13 pins
+plus two new lifts (`verdict_body`, a re-anchored `stale_guard`). Every new pin was run against the **pre-fix**
+file to prove it can go red:
+
+| suite | new pins vs `HEAD` code | vs this batch's code |
+|---|---|---|
+| `emurun_harness_test.sh` | **8 FAILED** (5 × F2 wrong-section, 1 × F2 companion, 2 × F4 unreadable) | `PASS EmurunHarness (55 checks)` |
+| `test_review_state.sh` | **13 FAILED** (all of F1/F3/F6, plus the re-anchored F1 arm) | `REVIEW STATE: ALL CASES PASS` |
+
+The F4 pins are **behavioural, not greps**: `pgrep` is stubbed to name real live processes, so the lane-token
+skip, the tokenless-outside-the-mount case, and the unreadable-pid case all execute against real `/proc`
+entries. A source-shape grep could not have caught F4, which is exactly why the old shape passed review-2.
+
+### Gates, as run
+
+| gate | command | result |
+|---|---|---|
+| goldens | `make -C tests/scripts` | `All cases match the oracle.` — exit 0, 539 `PASS` lines, incl. `PASS EmurunHarness (55 checks)` |
+| contract | `bash tools/check.sh` | `CHECK: ALL GATES PASSED` — exit 0 (`gates_smdh` SKIPPED, no built `.cia`) |
+| 3DS | `make -C mdk_3ds` | `3DSX mdk.3dsx` — exit 0 |
+| review state | `bash tools/runner/test_review_state.sh` | `REVIEW STATE: ALL CASES PASS` |
+| emulator | `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 25 --shot …` | exit **0** |
+
+### Emulator evidence (AGENTS P7/P8)
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6      (pinned r1.2.1; verified before the run)
+build     : mdk_3ds/mdk.3dsx
+frames    : reached 1320 (27 frame lines logged)
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+graphics_api=1  render_3d=0 factor_3d=0 (mono)  cfg volume=0 [default=false — override kept]
+lane      : /tmp/mdk-emurun.764455 (mount /tmp/.mount_mandarjxAIV0)
+NOTE /tmp/.mount_mandarHTeSXu has a process outside this lane executing from it; left mounted.
+EMURUN_EXIT=0
+```
+
+Emulator-green is not hardware-pass: Mandarine masks FCRAM/VRAM exhaustion, `GPU_CLAMP_TO_EDGE` leniency and
+FCRAM smear across relaunches. **Old-3DS timing remains UNMEASURED** and the Citro3D picture remains
+**UNVERIFIED** against the oracle (P6/P8).
+
+Two measured facts carried forward unchanged, both still open:
+
+* **`draws issued: 0` while draws happen** — `main_3ds.cpp:277-281` reads `mdk_render_stats` at `frame == 3`
+  and gets 0 while the same frame logs three `draw N:` lines. Not this batch; named so nobody quotes it.
+* **The 3DS picture is a red clear with a sliver of geometry** — owner-directive item 6's neighbourhood.
+
+### Owner actions still open
+
+1. **Restore `0755` on the worktree `ralph-pi.sh` and restart `ralph-pi-mdk.service`** (owner task 18). Until
+   that happens none of this batch's harness changes are in effect, and no artifact carries a `harness:` line —
+   including the review of this batch. The commit re-asserts the bit in the index with
+   `git update-index --chmod=+x ralph-pi.sh`; the worktree file is `coleshores`-owned and this uid cannot
+   `chmod` it.
+2. `tools/check.sh` is owner-protected and does not run `test_review_state.sh`, so that suite is still run by
+   hand with the gates.
+
+### Prior-solution lookup
+
+**pi-knowledge** `mdk-sdl` searched first (`harness staleness self-hash guard review artifact identity`,
+`INI key section ownership QSettings emulator config forced instrument`). The KB is present and searchable
+(4494 chunks / 953 files) but holds no prior solution for either topic — the first query returned only a
+pointer back to `docs/CONTINUATION.md`, the second returned nothing. That is an empty result, not a failed
+lookup, and is not treated as evidence that nothing exists. **Obsidian MCP** is not exposed in this Pi
+session — a session configuration fault to report, not a licence to claim the lookup happened — so the vault
+was read read-only from `/mnt/nas/Vaults/port-docs`, which supplied the two rules this batch leans on:
+`50-tooling/a-scorer-that-prints-incompleteness-and-exits-zero-turns-absence-into-a-pass.md` (F1) and
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md` (F6), with
+`50-tooling/every-continue-in-a-gate-must-be-reachable-only-by-proven-present-data.md` the same argument for
+F4's `continue`. **Cognee MCP** is not exposed in this harness, so it was **not** consulted.
+
+### Next
+
+Owner-directive item 2 is untouched by this batch and is still next: `src/Mdk.Game/Flow/Game.cs` (689 lines)
+— level start, tick order, level end, death/restart. Transliteration, not research.
