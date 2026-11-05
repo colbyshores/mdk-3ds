@@ -1,17 +1,18 @@
 # Phase 2 continuation checkpoint
 
-Risk: low — batch 64 remediates review-5. It corrects two published claim-precision errors (the
-tolerance-headroom ratio B1 and the arena-pitch pin's discrimination list B2), measures the
-`powf`/`MathF.Pow` leaf the review left open, and dispositions A1/A2/A3 with evidence. No behaviour,
-interface, data-format or state change: the only source edits are comments, and no golden, tolerance or
-gate moved. A1 (the lost `ralph-pi.sh` exec bit) is confirmed but NOT fixable by this builder — the file
-belongs to another uid and `chmod` is refused — so it is an owner action item, not a cleared finding.
+Risk: high — batch 65 changes FollowCamera's NaN/signed-zero clamp behaviour and its public observation
+surface (the oracle-public `Climb` plus a read-only air tilt), and adds exact oracle pins; the slice is
+bounded to one camera subsystem, but the public-interface and behavioural edges make this high-risk.
 
-Last updated: 2026-11-05 (**batch 64** — review-5 remediated: the tolerance-headroom and fused-ease-pin
-claims corrected, `MathF.Pow(0.85f,0.5f)` measured equal to host `powf` at the only exponent the shipped
-step produces, and A1/A2/A3 recorded as owner-side (A1's `chmod` is refused to this uid). A2/A3 stay
-owner-gated). The record is
-`docs/PROGRESS_LOG.md`, "Iteration 92"; batch 63's (review-4's camera pins now make the pivot, roll and
+Last updated: 2026-11-05 (**batch 65** — review-6 F1/F2/F3 fixed: FollowCamera's five `MathF.Min`/`MathF.Max`
+sites now use the shared NaN- and signed-zero-exact helper, the climb's `-0` and the air pitch's NaN are
+pinned in the oracle's bits, the arena-pitch test now carries its own fused-vs-product-sum discriminator,
+and the record's 87/200 and 53/256 figures name their different expressions. The owner-authored
+`docs/OWNER_DIRECTIVE_2026-11-05.md` appeared in the dirty tree during this batch and SUPERSEDES the
+priority order below: the next slice is the integration sprint's Mandarine harness, not more 1-ULP
+fidelity work). The record is
+`docs/PROGRESS_LOG.md`, "Iteration 93"; batch 64's (review-5's two claim corrections and the
+arena-pitch powf leaf) is "Iteration 92"; batch 63's (review-4's camera pins now make the pivot, roll and
 arena-pitch mutants fail; the published tolerance figure corrected; `float.Lerp` and degrees-to-radians
 named accurately) is "Iteration 91"; batch 62's (the follow
 camera's between-step blend lands, and its scalar `Lerp` turns out to have been the wrong shape) is
@@ -30,6 +31,12 @@ Batch 58's record (the spin angle's two roundings, the 56 new spin rows, the 8-m
 51's (the fly-arrival pin) is "Iteration 79".
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
+
+**SUPERSEDED by `docs/OWNER_DIRECTIVE_2026-11-05.md` until the owner withdraws it.** The integration
+sprint's six items are now the priority: (1) the Mandarine emulator harness and its first real verdict,
+(2) `Game.cs` game-flow glue, (3) 3DS input, (4) frontend wiring, (5) ndsp audio, and (6) Citro3D
+alpha blend. Batch 65 was already in review-6 remediation when the directive appeared and did not start
+a new fidelity slice. The old numbered list below is the historical checkpoint, not the next queue.
 
 1. **DONE — mixer call-sites** (`ObjectMotion.cs:133`, `ObjectBehaviors.cs:90-115`).
 2. **DONE — `Debris.Shatter` + opcodes 137/138/139.** BreakUp/Trail/Updraft await Effects.
@@ -103,7 +110,6 @@ Batch 58's record (the spin angle's two roundings, the 56 new spin rows, the 8-m
    `Vector3.Lerp` (`fmaf(from, 1-t, to*t)`), 1 ULP from the port on one object at L3 t120, and
    `fmaf` is a libm call on devkitARM at `-mfpu=vfp`: a target codegen decision, not a
    substitution. Probe in `docs/OPEN_ITEMS.md`.
-
 Deferred with cause: `StopFiring` inside knockDown waits for the firing slice; the flip's leftover
 frame is structurally zero at the fixed 1/60 step; Rides writes the alarm countdown; consumers of
 135/195/202/203/81 remain partial; the 3DS sampler fix and Kurt's muzzle flash and ride pose;
@@ -115,24 +121,22 @@ UNMEASURED.**
 
 **Still owner-gated and still uncommitted in the tree** (so batches stage only their own paths and
 never `git add -A`): `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
-`tools/runner/gates_batch_integrity.py`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`. All
-five are dirty right now (re-verified with `git status` in batch 60), the frame pair is byte-identical
-to the current pinned frame (md5 `6769a137…`, same as `2026-11-04-vmla-unfused.png`), and committing
-any of them without `--owner-approved` makes the loop's own post-batch integrity call halt at exit 6
-— which is review-27 F1's failure scenario, and the reason a batch must not "helpfully" bank them
-(review-27 F4, F7). Batch 64 re-verified the list and it is now **six** paths (`.kilo/agent/
-adversarial-reviewer.md` joined them); none was staged, edited or reverted. Review-5 **A1** is CONFIRMED
-and **not clearable by a batch**: `ralph-pi.sh` is mode `0644` in the worktree while the index holds
-`100755`, and `chmod +x ralph-pi.sh` fails here with `Operation not permitted` (this agent is uid 994
-`piagent`, the file belongs to `coleshores`, and `sudo -n -l` asks for a password). The owner fix is
-`chmod 755 ralph-pi.sh` — or `git update-index --chmod=+x ralph-pi.sh` at the moment of the owner commit,
-since a later `git add -A` re-records the worktree mode. Review-5 **A2** is confirmed as a fact —
-`tools/hooks/pre-commit` does reject a staged protected path, so a `git add -A` batch cannot land here —
-and its remediation is owner-only (it needs `MDK_OWNER_APPROVED=1`, which no batch may set); the
-mitigation that has actually kept the loop banking work since batch 60 is the stage-only-your-own-paths
-rule above, not a `git add -A`. Review-5 **A3** (`--each-commit` with no `--base` validates nothing; a
-range FAIL now recovers to PASS when the per-commit chain passes) lives in that same protected gate and
-is owner-gated item 1/13 below.
+`tools/runner/gates_batch_integrity.py`, `.kilo/agent/adversarial-reviewer.md`,
+`ralph/MUSE_CONTEXT.md`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`,
+`docs/OWNER_DIRECTIVE_2026-11-05.md`, and `mdk_3ds/tools/emurun.sh`. Batch 65 re-verified the list at
+**ten** paths; `ralph/MUSE_CONTEXT.md`, the integration-sprint directive and the emulator harness are
+owner-authored files that appeared in the dirty tree during this batch. None was staged, edited or
+reverted here. The self-heal frame pair is
+byte-identical to the current pinned frame (md5 `6769a137…`), and committing a protected path without
+`--owner-approved` makes the loop's own post-batch integrity call halt at exit 6 — review-27 F1's
+failure scenario and the reason a batch must not "helpfully" bank these paths. Review-5 **A1** is now
+repaired **owner-side**: `ralph-pi.sh` is mode `0755` in the worktree again and matches the index's
+`100755`; the rest of that file's owner changes remain uncommitted. Review-5 **A2** is confirmed as a
+fact — `tools/hooks/pre-commit` rejects a staged protected path, so a `git add -A` batch cannot land
+here — and its remediation is owner-only (`MDK_OWNER_APPROVED=1`, which no batch may set); the
+mitigation that has kept the loop banking work since batch 60 is the stage-only-your-own-paths rule
+above. Review-5 **A3** (`--each-commit` with no `--base` validates nothing) lives in that same protected
+gate and is owner-gated item 1/13 below.
 
 **Owner-authorized tasks (cannot be done in a batch).** (1) Add `ralph-pi.sh`, `ralph.sh`,
 `docs/KILO_RALPH_LOOP_POLICY.md`, `.kilo/agent/*`, `ralph/validator.md` and `tests/hooks/pre-commit`
@@ -201,7 +205,10 @@ do it: `chmod +x` returns `Operation not permitted` for uid 994 on a `coleshores
 The full record — every invariant, every failure mode, every "do not change this" — is the appendix
 to `docs/PROGRESS_LOG.md`, "Current tree state (VERIFIED) — as of batch 13", marked **superseded in
 part** where batches 14-55 changed it. The headlines a batch can break:
-- **Camera/renderer:** the C#'s RIGHT-HANDED `CreateLookAt` basis; Vulkan folds clip.y into the
+- **Camera/renderer:** FollowCamera's five oracle `MathF.Min`/`MathF.Max` sites use the shared
+  NaN- and signed-zero-exact `mathMin`/`mathMax` pair (batch 65); `FollowCamera::climbStep` is public
+  like C# `FollowCamera.Climb`, and `airPitch()` is a read-only harness observation. The C#'s
+  RIGHT-HANDED `CreateLookAt` basis; Vulkan folds clip.y into the
   matrix and the sky inverse carries the flip on its LEFT side; shaders use `M * v`; Citro3D culls
   per draw with the mode cached in the **Citro3D context**. **UNVERIFIED on hardware** (P6).
 - **Frame golden:** level 3, 320x240, seed 1, frame 1; `oracle=b60e72552c40…`,
@@ -259,17 +266,20 @@ rows.
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 64)
+## Verified on this tree (batch 65)
 
-Batch 64 moved no arithmetic — its only source edit is a comment in `FollowCamera::update` — and re-ran
-all three gates green on the tree it committed: `make -C tests/scripts` exit 0 (`All VM unit tests match
-the oracle.` + `All cases match the oracle.`, **482 PASS / 0 FAIL**, no golden moved), `bash
-tools/check.sh` exit 0 (`CHECK: ALL GATES PASSED`, `gates_frames` still `L3_f1.bmp sha=58615fc85d02e009`,
-`reference.sha256` NOT regenerated), `make -C mdk_3ds` exit 0 (`3DSX mdk.3dsx`), and the Linux `mdk`
-target rebuilt `follow_camera.cpp.o` before the frame was captured. The measurements below are batch 62
-and 63's and still stand.
+Batch 65 converted FollowCamera's five oracle `MathF.Min`/`MathF.Max` sites to the shared
+NaN- and signed-zero-exact pair, added the oracle-public `Climb` and a read-only air-tilt observation,
+and pinned the climb's `-0`, the air pitch's NaN and a camera-site fused-versus-product-sum row from
+the .NET 10 oracle. It re-ran all three gates green on the tree it committed: `make -C tests/scripts`
+exit 0 (`All VM unit tests match the oracle.` + `All cases match the oracle.`, **483 PASS / 0 FAIL**, no
+golden moved), `bash tools/check.sh` exit 0 (`CHECK: ALL GATES PASSED`, `gates_frames` still
+`L3_f1.bmp sha=58615fc85d02e009`, `reference.sha256` NOT regenerated), `make -C mdk_3ds` exit 0
+(`3DSX mdk.3dsx`), and the Linux `mdk` target rebuilt `follow_camera.cpp.o` before the frame was
+captured. The measurements below are batch 62 and 63's and still stand.
 
-Narrative: `docs/PROGRESS_LOG.md`, "Iteration 91". Batch 62's (the follow camera's blend and the
+Narrative: `docs/PROGRESS_LOG.md`, "Iteration 93". Batch 64's (review-5's two claim corrections and the
+arena-pitch powf leaf) is "Iteration 92". Batch 62's (the follow camera's blend and the
 oracle's fused scalar `Lerp`) is "Iteration 90". Batch 61's (the R6 pin at the site the gate reads,
 the review-30 disposition table) is "Iteration 89". Batch 60's
 (the record sweep, the dialect re-measurement, the `-march` FMA measurement) is "Iteration 88";
@@ -282,7 +292,8 @@ batch 57's (the velocity's association, the `NORM`/`SHATTER` rows) is "Iteration
 `CameraRoll` and the `math_lut.h` negative-angle measurement, the six clamp pins, the fly-arrival
 pin, one `accelerate()`) are "Iteration 78-83".
 `make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All
-cases match the oracle.`, **482 PASS / 0 FAIL** — two new review-4 pins, and **no golden moved**);
+cases match the oracle.`, **483 PASS / 0 FAIL** — the new review-6 camera min/max pin, and **no golden
+moved**);
 `bash
 tools/check.sh` **exit 0** (`CHECK: ALL GATES
 PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
@@ -292,8 +303,7 @@ unchanged, and `reference.sha256` NOT regenerated —
 `gates_batch_integrity` BATCH INTEGRITY: PASS); `DEVKITPRO=/opt/devkitpro
 DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`);
 `cmake --build build-linux --target mdk -j8` **exit 0** (`[100%] Built target mdk`, and it did rebuild
-`frame_blend.cpp.o` and `follow_camera.cpp.o`, so the published frame came from a binary containing
-this batch).
+`follow_camera.cpp.o`, so the published frame came from a binary containing this batch).
 
 **The scalar `Lerp` was the oracle's output but not the oracle's arithmetic, and now it is both.**
 `float.Lerp` (`Single.Lerp`) is `(from*(1-t)) + (to*t)` with the first product contracted into a fused
@@ -372,9 +382,11 @@ expectations are the C# probe's own printed `SHATTER` rows:
 
 **There is no `fminf`/`fmaxf` left anywhere in the port** (batch 56): not in `mdk_core/src`,
 `mdk_3ds/src` or `mdk_linux/src`, and `arm-none-eabi-nm mdk_3ds/mdk.elf | grep -iE 'fmin|fmax'` is
-empty. Every `MathF.Min`/`MathF.Max` in the oracle goes through the ONE pair in
-`util/math_minmax.h`, which is NaN-propagating, -0.0-aware, and reads the sign off the bits with an
-**integer** compare. Do not put a `fminf` back: its ±0 tie order is implementation-defined
+empty. FollowCamera's five oracle `MathF.Min`/`MathF.Max` sites now use the ONE pair in
+`util/math_minmax.h` (batch 65), which is NaN-propagating, -0.0-aware, and reads the sign off the bits
+with an **integer** compare. The remaining `std::min`/`std::max` candidates outside this camera are
+item 7 and the `docs/OPEN_ITEMS.md` list, not silently-equivalent sites. Do not put a `fminf` back: its
+±0 tie order is implementation-defined
 (glibc 2.39 returns its **second** operand, matching .NET in one argument order and not the other;
 the same source with visible constants folds to a **third** answer at `-O2`). The box itself is
 pinned from both ends by `inside`/`near_max`, which pin which side each axis reads its far corner
@@ -464,5 +476,5 @@ cmake --build build-linux --target mdk -j8             # the Linux frontend
 tests/frames/regenerate_reference.sh                   # intentional frame change only
 ```
 
-The suite prints **482 PASS / 0 FAIL** (`make -C tests/scripts`); `./build/vm_tests` alone prints **81**. Tests do not track header dependencies: run `make -C tests/scripts clean`
+The suite prints **483 PASS / 0 FAIL** (`make -C tests/scripts`); `./build/vm_tests` alone prints **82**. Tests do not track header dependencies: run `make -C tests/scripts clean`
 after header changes. Never weaken a gate or test.

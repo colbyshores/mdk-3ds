@@ -710,6 +710,29 @@ entered at all until the knock-down slice above lands, so this golden can only s
 HardLand arm — and the second damage is 4 rather than 5 for exactly that reason, since a
 hurt of 5 or more on a floor knocks the oracle down and the port nowhere.
 
+## DEFERRED by the 2026-11-05 owner directive: review-6's remaining `MathF.Min`/`MathF.Max` sites
+
+**Not the next slice.** `docs/OWNER_DIRECTIVE_2026-11-05.md` supersedes the old priority order and
+cuts new 1-ULP fidelity work in favour of the integration sprint. This list is retained so the class
+is not lost; do not start it while the directive stands.
+
+Review-6 F1's class is wider than the file it reviewed. Batch 65 converted FollowCamera's five
+sites to the shared `mathMin`/`mathMax` pair and pinned the reachable NaN/signed-zero differences
+(`FollowCameraMathFMinMaxMatchTheOracle`). The remaining candidates in this class are:
+
+- `mdk_core/src/game/player.cpp` — the eight float sites in `Kurt.cs`/`Kurt.Combat.cs`/`Kurt.Ride.cs`:
+  the dead-step gravity and death animation, the knock-down slam, air gravity, the chute brake, the
+  downhill speed and the final gravity. (`updateAir`'s `std::max` on the integer jump ticks is NOT in
+  this class — the C# writes `Math.Max` there.)
+- `mdk_core/src/game/kurt.cpp` — the four float `MathF.Max` sites: the two flash fades, the knock
+  counter's drain and the invulnerability timer. The same file's integer health/scaled-damage max and
+  `hurtFlash_`'s `Math.Clamp` spelling are separate oracle shapes, not blind conversions.
+- `mdk_core/src/game/bsp.cpp` — the two `Bsp.cs` sites: the plane offset and the retry `t2`.
+
+One file per batch: match each site to the exact C# line first, pin the branch or value the oracle
+can reach, and record any site whose ternary is deliberately the oracle's own spelling rather than a
+missed conversion. Do not sweep all three files as a mechanical `std::min`/`std::max` rewrite.
+
 ## Class bounds worth keeping
 
 Moved here from `docs/CONTINUATION.md` on 2026-11-03 so that file stays at

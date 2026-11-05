@@ -4,7 +4,6 @@
 
 #include "game/follow_camera.h"
 
-#include <algorithm>
 #include <math.h>
 
 #include "formats/arena.h"
@@ -14,6 +13,7 @@
 #include "game/vec_util.h"
 #include "render/camera_builder.h"
 #include "util/math_lut.h"
+#include "util/math_minmax.h"
 
 namespace mdk {
 
@@ -249,10 +249,10 @@ float FollowCamera::climbStep(float climb, float rise, float ticks) {
     const float keep = powf(follow_camera::kClimbKeep, ticks);
     climb = rise * (1.0f - keep) + climb * keep;
     if (climb < 0.0f && rise >= 0.0f) {
-        return std::min(climb + follow_camera::kClimbReturn * ticks, rise);
+        return mathMin(climb + follow_camera::kClimbReturn * ticks, rise);
     }
     if (climb > 0.0f && rise <= 0.0f) {
-        return std::max(climb - follow_camera::kClimbReturn * ticks, rise);
+        return mathMax(climb - follow_camera::kClimbReturn * ticks, rise);
     }
     return climb;
 }
@@ -282,9 +282,10 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     // dt))`, and Single.Lerp's arithmetic is the FUSED `from*(1-t) + to*t` -- see the
     // measurement on frame_blend::lerp, whose scalar twin this now matches. The
     // twice-rounded `target + (old-target)*t` this used sits 1 ULP off the oracle on
-    // most frames (87 of the probe's 200 random triples; re-measured 2026-11-05 against
-    // .NET 10 on 256 fresh triples: fused 0/256 wrong, twice-rounded 53/256). The LEAF is
-    // measured too: .NET 10 `MathF.Pow(0.85f, 0.5f)` is 0x3F6C0535 and host `powf` gives
+    // most frames (87 of the probe's 200 random triples). On 256 fresh triples, the
+    // OTHER twice-rounded form `from*(1-t) + to*t` is wrong on 53 and the fused form on
+    // 0). The LEAF is measured too: .NET 10 `MathF.Pow(0.85f, 0.5f)` is 0x3F6C0535
+    // and host `powf` gives
     // the same bits, and 0.5 is the only exponent the shipped fixed step can produce
     // (delta 1/60 x kTicks 30, and mdk_linux/src/main.cpp:523 is the only shipped caller).
     // What stays unmeasured is newlib's powf on the target -- the same libm-leaf gap as
@@ -298,10 +299,10 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     // Rising (the end-of-level lift) is not ported, so the air pitch only decays
     // on the ground or grows in the air.
     if (_airTime == 0.0f) {
-        _airPitch = std::max(_airPitch - follow_camera::kAirPitchDecay * delta, 0.0f);
+        _airPitch = mathMax(_airPitch - follow_camera::kAirPitchDecay * delta, 0.0f);
     } else {
-        _airPitch = std::max(_airPitch,
-                             std::min(_airTime * follow_camera::kAirPitchRate, follow_camera::kAirPitchMax));
+        _airPitch = mathMax(_airPitch,
+                            mathMin(_airTime * follow_camera::kAirPitchRate, follow_camera::kAirPitchMax));
     }
     _lookOffset = clampf(_lookOffset, follow_camera::kMinPitch - _arenaPitch - _airPitch,
                          follow_camera::kMaxPitch - _arenaPitch - _airPitch);

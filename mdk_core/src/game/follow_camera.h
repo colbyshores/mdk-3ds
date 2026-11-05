@@ -143,6 +143,14 @@ public:
     // gameplay path needs to read it back.
     float arenaPitch() const { return _arenaPitch; }
 
+    // The air tilt, in degrees. Read-only for the same reason as arenaPitch(): the
+    // host harness pins the oracle's NaN propagation at this camera's MathF.Max.
+    float airPitch() const { return _airPitch; }
+
+    // One step of the climb (C# FollowCamera.Climb). The oracle's method is public,
+    // so this one is too; the host harness uses it to pin the MathF.Min/Max arms.
+    static float climbStep(float climb, float rise, float ticks);
+
     // One step (C# FollowCamera.Update): ease the arena pitch toward its target,
     // update the air time and the climb, compute the pitch, then place the camera
     // and run the clearance (buildFollowCameraCleared). `arenaPitchTarget` is the
@@ -159,7 +167,6 @@ private:
 
     void updateAirTime(const Player& player, float delta);
     void updateClimb(float feetZ, float delta);
-    static float climbStep(float climb, float rise, float ticks);
 
     float _arenaPitch = follow_camera::kDefaultPitch;
     float _lookOffset = 0.0f;

@@ -12745,3 +12745,126 @@ consulted.
 **top-down view**, then `FrameBlend`'s Kurt half with `Rides`. No exact blocker on those. The owner owes
 item **18** (the `ralph-pi.sh` exec bit, which a unit restart would expose today) and the standing
 protected-path commit or revert; the inherited paths remain unstaged and unmodified.
+
+## Iteration 93 — batch 65: review-6's camera min/max class fixed, and the ease pin now discriminates
+
+**What this batch is.** The newest external review is
+`logs/ralph-pi/run-20261104-205721/review-6.md`, scope `79999cf0..ca30d9d0` plus the inherited dirty
+tree. It found no new Critical/High defect in the port, but it did file one Medium and two Low
+findings against the follow camera, all of them cheap and inside one subsystem. This batch fixes all
+three, measures the oracle rows instead of inferring them, and leaves the review's inherited owner
+items where they were. **Risk: high** — the five clamp sites change their NaN/signed-zero behaviour,
+and the camera's public header gains the oracle-public `Climb` plus a read-only air-tilt observation.
+The slice is bounded to `FollowCamera`; no golden, tolerance, gate or shipped finite path moved.
+
+**Review disposition.**
+
+* **F1 (Medium) — CONFIRMED and fixed, with one illustrative path corrected.** The reviewer is right
+  that `mdk_core/src/game/follow_camera.cpp`'s five `std::min`/`std::max` spellings are the C#'s five
+  `MathF.Min`/`MathF.Max` spellings (`FollowCamera.cs:120,124,350,355`) and that the tree already has
+  the one correct pair in `util/math_minmax.h`. All five sites now use `mathMin`/`mathMax`; the file no
+  longer includes `<algorithm>`. The review's particular **NaN-rise-through-Climb** scenario does not
+  reach its cited `MathF.Min`: a NaN rise makes the eased climb NaN, so the oracle's
+  `climb < 0f && rise >= 0f` guard is false and `Climb` returns that NaN before the min arm. That part
+  of the scenario is therefore rebutted by `FollowCamera.cs:346-357`, not by an unreachability claim.
+  The core finding remains real, and two reachable differences were measured and pinned instead: the
+  climb's signed-zero result and the air pitch's NaN result (below). The port's `climbStep` was private;
+  it is now public because the oracle's `FollowCamera.Climb` is public, and `airPitch()` is a read-only
+  observation in the same spirit as the existing `arenaPitch()`.
+* **F2 (Low) — CONFIRMED and fixed.** The test was named
+  `testFollowCameraArenaPitchUsesTheOraclesFusedEase` while its own comment said that its five rows
+  could not distinguish fused from the twice-rounded product sum. It is now
+  `testFollowCameraArenaPitchUsesTheOraclesEaseRows`, and the test carries its own discriminator: the
+  oracle-measured 1e30/-1e30 target pair produces `6F7C2DC4` then `ED9D738D`, while the product sum
+  produces `ED9D7390` on the second row. The five ordinary rows remain, because they separately kill
+  the old `target + (old-target)*ease` form.
+* **F3 (Low) — CONFIRMED and fixed.** The source comment no longer attaches the 53/256 figure to
+  `target + (old-target)*t`. It now says that the predecessor form was wrong on 87 of the probe's 200
+  triples, while the **other** twice-rounded form `from*(1-t) + to*t` was wrong on 53 of 256 fresh
+  triples and the fused form on none. One number, one referent.
+* **No new Critical/High.** Review-6's A2 and A3 are the already-recorded
+  protected-working-tree-gate findings and remain owner actions 1/13. Review-6's A1 (the lost
+  `ralph-pi.sh` executable bit) was repaired **owner-side during this batch**: the worktree file is
+  mode `0755` again and matches the index's `100755`; the owner still has to commit the surrounding
+  `ralph-pi.sh` changes. This batch neither staged nor edited any inherited owner path.
+
+**The oracle rows were measured, not read off the port.** The scratch oracle at
+`/tmp/mdk-pi/obj3` still had a byte-identical `src/Mdk.Game/Kurt/FollowCamera.cs` (checked with
+`cmp` against the read-only repository oracle). A new scratch-only probe mode `cameraminmax` read the
+C#'s private `_airPitch`/`_climb`/`_arenaPitch` by reflection and called the public `FollowCamera.Climb`.
+After rebuilding with `/tmp/mdk-pi/build_probe.sh`, the command
+
+```
+DOTNET_ROOT=/tmp/kilo/dotnet10 MDK_DATA_DIR=/mnt/nas/Development/mdk-sdl/MDK \
+  /tmp/mdk-pi/obj3/Probe/bin/Debug/net10.0/mdkprobe 3 1 1 cameraminmax
+```
+
+printed, on .NET 10:
+
+```
+CAMERAMINMAX climb_signed=80000000 climb_nan=7FC00000
+CAMERAMINMAX nan_air=7FC00000 nan_climb=7FC00000
+CAMERAMINMAX ease_first=6F7C2DC4 ease_second=ED9D738D
+```
+
+The signed-zero row is deliberately constructed, not random: the initial climb
+`-0.020618556067347527f * 0.97f` is exactly `-0.02f`; adding one `ClimbReturn` step is exactly
+`+0.0f`; and the rise is `-0.0f`. The oracle's `MathF.Min(+0.0f, -0.0f)` is `-0.0f`
+(`80000000`), while `std::min` returns its first argument there and gives `+0.0f`. The air-pitch row
+uses a NaN step: the air time becomes NaN, the inner min is NaN, and the oracle's outer
+`MathF.Max` stays NaN; `std::max(_airPitch, NaN)` instead returns the finite first argument, zero.
+The new `FollowCameraMathFMinMaxMatchTheOracle` pins all three behaviours and a finite zero control,
+without changing a golden.
+
+**The pins were mutation-tested.** One temporary mutant replaced the climb's `mathMin` with
+`std::min`'s shape, the air-pitch outer `mathMax` with `std::max`'s shape, and the arena ease's
+`fmaf` with the twice-rounded product sum. `make -C tests/scripts build/vm_tests` exited 0 and the
+mutant binary exited 1 with exactly the intended failures:
+
+```
+FAIL line 5456: floatBits(signedClimb) == 0x80000000u
+FAIL line 5467: follow.airPitch() != follow.airPitch()
+FAIL: huge arena pitch step 2 was ED9D7390, the oracle has ED9D738D (the product sum gives ED9D7390)
+```
+
+The mutant was then removed and the final tree rebuilt; no mutant text remains in the commit.
+
+**Gates, verbatim, as run.**
+
+* `make -C tests/scripts` → **exit 0**: `PASS FollowCameraMathFMinMaxMatchTheOracle`,
+  `PASS FollowCameraArenaPitchUsesTheOraclesEaseRows`, `All VM unit tests match the oracle.`,
+  `All cases match the oracle.`, **483 PASS / 0 FAIL**. No golden moved and no assertion was relaxed.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh SKIPPED no built .cia to read`,
+  `gates_frames PASS` (`L3_f1.bmp sha=58615fc85d02e009`, `reference.sha256` NOT regenerated),
+  `gates_batch_integrity BATCH INTEGRITY: PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → **exit 0**,
+  `3DSX mdk.3dsx`; it rebuilt `follow_camera.cpp.o` and linked `mdk.elf`.
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `[100%] Built target mdk`; it rebuilt
+  `follow_camera.cpp.o`, so the published frame came from a binary containing this batch.
+
+**Frame.** After the Linux rebuild,
+`DISPLAY=:99 tools/publish_frame.sh review-6-camera-minmax` produced
+`docs/frames/2026-11-05-review-6-camera-minmax.png` + `.txt`, gap `1.240 / 247 / 0.1819`, md5
+`6769a137…`. It is byte-identical to the parent because the finite pinned frame never reaches a NaN
+or the climb's signed-zero edge; the sidecar names the exact pins that carry the change. Display was
+`DISPLAY=:99` (Xvfb, lavapipe). No emulator and no Old-3DS hardware run: **Old-3DS timing stays
+UNMEASURED and the Citro3D picture stays UNVERIFIED (P6)**.
+
+**Prior-solution lookup.** **Pi knowledge `mdk-sdl`** was present and searched for FollowCamera,
+`mathMin`/`mathMax`, NaN propagation and signed zero. The useful leads were the repository's own
+`util/math_minmax.h` and Iteration 83's measured `MathF.Min`/`MathF.Max` rows; the returned source
+chunks were stale, so every claim was checked against the current files and the read-only C# oracle.
+**Obsidian MCP** is not exposed in this Pi session, so the vault was read read-only from
+`/mnt/nas/Vaults/port-docs`; searches for `FollowCamera`, `MathF.Min`, `mathMin` and signed zero found
+no MDK-camera prior beyond the harness setup note. **Cognee MCP** is not exposed in this Pi harness
+(owner task 12), so it was **not** consulted. No absent source is claimed as consulted.
+
+**Next.** The owner-authored `docs/OWNER_DIRECTIVE_2026-11-05.md` appeared in the dirty tree
+during this batch and **supersedes** CONTINUATION's old priority order. Its integration sprint is now
+the queue: first the Mandarine emulator harness and a real verdict, then `Game.cs` game-flow glue,
+3DS input, frontend wiring, ndsp audio and Citro3D alpha blend. The remaining review-6
+`MathF.Min`/`Max` class (`game/player.cpp`, `game/kurt.cpp`, `game/bsp.cpp`) is explicitly deferred
+by that directive's “no new 1-ULP fidelity work” cut and is recorded in `docs/OPEN_ITEMS.md` rather
+than queued. The inherited owner paths remain unstaged and unmodified.

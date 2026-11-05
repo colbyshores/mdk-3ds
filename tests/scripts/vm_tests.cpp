@@ -5384,11 +5384,17 @@ void testFollowCameraBlendInterpolatesThePivotAndRoll() {
 // The fused spelling and the old twice-rounded `target + (old-target)*ease`
 // differ on steps 3, 4 and 5 (re-measured 2026-11-05: 40DAC5F8/40C9B2F4/40E5A9B0
 // against the three rows below), so this pin fails if that exact defect returns;
-// the view-level tolerance above cannot see a one-ULP pitch shift. What these five
-// rows do NOT separate is the fused form from the twice-rounded product sum
-// `target*(1-ease) + old*ease`: both reproduce all five bits. Fused-versus-not is
-// carried by the 256-row `lerp1` pin in system_numerics_tests.cpp, not by this one.
-void testFollowCameraArenaPitchUsesTheOraclesFusedEase() {
+// the view-level tolerance above cannot see a one-ULP pitch shift.
+//
+// These five rows do NOT separate the fused form from the twice-rounded product
+// sum `target*(1-ease) + old*ease`: both reproduce all five bits. The huge-target
+// pair below DOES separate them at this camera site. It is the same 1e30/-1e30
+// pair as the discriminating edge row in system_numerics_tests.cpp; after the
+// first update the old pitch is 0x6F7C2DC4, and the second update's oracle bits
+// are 0xED9D738D. The product sum gives 0xED9D7390 there. The two rows were
+// measured from the C# oracle on .NET 10 (probe mode `cameraminmax`, 2026-11-05),
+// not read off this port.
+void testFollowCameraArenaPitchUsesTheOraclesEaseRows() {
     static const uint32_t kExpected[5] = {
         0x4093FACBu, 0x4080F02Au, 0x40DAC5FDu, 0x40C9B2F8u, 0x40E5A9B3u};
     static const float kTargets[5] = {12.0f, -3.0f, 40.0f, 0.0f, 17.5f};
@@ -5407,6 +5413,64 @@ void testFollowCameraArenaPitchUsesTheOraclesFusedEase() {
             return;
         }
     }
+
+    FollowCamera huge;
+    huge.update(&camera, nullptr, player, 1.0e30f, 1.0f / 60.0f, 4.0f / 3.0f);
+    if (floatBits(huge.arenaPitch()) != 0x6F7C2DC4u) {
+        printf("  FAIL: huge arena pitch step 1 was %08X, the oracle has 6F7C2DC4\n",
+               floatBits(huge.arenaPitch()));
+        failures++;
+        return;
+    }
+    huge.update(&camera, nullptr, player, -1.0e30f, 1.0f / 60.0f, 4.0f / 3.0f);
+    if (floatBits(huge.arenaPitch()) != 0xED9D738Du) {
+        printf("  FAIL: huge arena pitch step 2 was %08X, the oracle has ED9D738D "
+               "(the product sum gives ED9D7390)\n",
+               floatBits(huge.arenaPitch()));
+        failures++;
+        return;
+    }
+}
+
+// FollowCamera's five MathF.Min/MathF.Max sites are the C#'s MathF operations,
+// not ordinary std::min/std::max. The helper propagates a NaN and keeps the
+// oracle's sign-of-zero order; the C++ standard pair does neither. These rows are
+// the C# oracle's own bits (probe mode `cameraminmax`, .NET 10, 2026-11-05).
+//
+// The signed-zero row reaches FollowCamera.Climb's MathF.Min arm: the initial
+// climb times 0.97f is exactly -0.02f, adding one return step is exactly +0.0f,
+// and the rise is -0.0f. MathF.Min(+0.0f, -0.0f) is -0.0f (0x80000000), while
+// std::min returns its first argument there and therefore gives +0.0f.
+//
+// The NaN row reaches the air-pitch MathF.Max arm: a NaN step makes the air time
+// NaN, the inner MathF.Min is NaN, and the outer MathF.Max must stay NaN.
+// std::max(_airPitch, NaN) instead returns the finite first argument, zero.
+// A NaN rise does NOT reach Climb's MathF.Min: the oracle's `rise >= 0f` guard
+// is false for NaN, so Climb returns its already-NaN eased value. The direct
+// NaN-climb row below pins that path too.
+void testFollowCameraMathFMinMaxMatchTheOracle() {
+    const float kNaN = nanFloat();
+
+    const float signedClimb =
+        FollowCamera::climbStep(-0.020618556067347527f, -0.0f, 1.0f);
+    CHECK(floatBits(signedClimb) == 0x80000000u);
+
+    const float nanClimb = FollowCamera::climbStep(-0.1f, kNaN, 1.0f);
+    CHECK(nanClimb != nanClimb);
+
+    FollowCamera follow;
+    Player player;
+    Camera camera;
+    player.verticalSpeed = -20.0f;
+    player.onFloor = false;
+    follow.update(&camera, nullptr, player, 4.0f, kNaN, 4.0f / 3.0f);
+    CHECK(follow.airPitch() != follow.airPitch());
+
+    FollowCamera finite;
+    player.verticalSpeed = 0.0f;
+    player.onFloor = true;
+    finite.update(&camera, nullptr, player, 4.0f, 1.0f / 60.0f, 4.0f / 3.0f);
+    CHECK(finite.airPitch() == 0.0f);
 }
 
 // CameraRoll's two clamps are MathF.Min/MathF.Max in the oracle (CameraRoll.cs:47,52),
@@ -5839,6 +5903,16 @@ int main() {
         }
     }
 
+    // The follow camera's MathF.Min/MathF.Max sites, in the oracle's bits. This is
+    // data-independent too, so it sits above the game-data check for the same reason.
+    {
+        const int beforeFollowCameraMinMax = failures;
+        testFollowCameraMathFMinMaxMatchTheOracle();
+        if (failures == beforeFollowCameraMinMax) {
+            printf("PASS FollowCameraMathFMinMaxMatchTheOracle\n");
+        }
+    }
+
     // The shatter's group box, in the oracle's bits: the same helper, at the site the
     // last batch left behind. Data-independent for the same reason as above.
     {
@@ -6031,8 +6105,8 @@ int main() {
     printf("PASS CameraRollBanksTheFollowCamera\n");
     testFollowCameraBlendInterpolatesThePivotAndRoll();
     printf("PASS FollowCameraBlendInterpolatesThePivotAndRoll\n");
-    testFollowCameraArenaPitchUsesTheOraclesFusedEase();
-    printf("PASS FollowCameraArenaPitchUsesTheOraclesFusedEase\n");
+    testFollowCameraArenaPitchUsesTheOraclesEaseRows();
+    printf("PASS FollowCameraArenaPitchUsesTheOraclesEaseRows\n");
     testCameraRollMatchesTheOraclesOwnUnitTest();
     printf("PASS CameraRollMatchesTheOraclesOwnUnitTest\n");
     testCameraRollNaNStaysNaNWhereTheOracleThrows();
