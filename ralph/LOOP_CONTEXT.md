@@ -1,6 +1,6 @@
-# MDK C++ Port - Progress Context for Meta Muse CLI
+# MDK C++ Port - Loop Context (Pi harness)
 
-This document provides context for Meta Muse CLI to understand the current state of the MDK C++ port.
+This document provides context for the Pi harness to understand the current state of the MDK C++ port.
 
 ## Project Overview
 - Converting Metal Dungeon (MDK) from C# to C++ 
@@ -26,13 +26,17 @@ This document provides context for Meta Muse CLI to understand the current state
 Three separated roles — the implementer is never the sole authority on its own
 correctness:
 - **Implementer / remediator**: Qwen (`litellm/qwen` → `qwen38-flash-next`). First
-  in the worker chain; minimax, glm variants, luna are fallbacks.
+  in the worker chain; `litellm/deepseek-v4.1-flash-th` is the only fallback.
 - **Adversarial reviewer**: DeepSeek V4.1 Flash
   (`litellm/deepseek-v4.1-flash` → `deepseek/deepseek-flash` at api.deepseek.com), an
   independent family. Fallbacks must stay off Qwen's upstream: the DeepSeek mirror
-  (`deepseek-v4.1-flash-nvidia`), then grok, minimax, luna (`swarm-worker` is
-  excluded — same upstream as qwen). Read-only; structured
+  (`deepseek-v4.1-flash-nvidia`), then minimax, luna (`swarm-worker` is
+  excluded — same upstream as qwen). When the builder has itself fallen back to
+  `deepseek-v4.1-flash-th`, the reviewer chain skips both DeepSeek variants as
+  same-family and lands on minimax or luna. Read-only; structured
   findings; verdict gates remediation. Protocol: `ralph/validator.md`.
+  **grok is retired by operator decision 2026-11-05** and must not be re-added to
+  any chain here or in the shared router.
 - **Verification authority**: the harness gates — `make -C tests/scripts`,
   `bash tools/check.sh`, `make -C mdk_3ds`, plus the batch-integrity gate. Objective
   pass/fail, independent of any model's opinion.

@@ -1018,9 +1018,10 @@ target-dependent assumptions.* The 3DS-specific suspects are enumerated in
 ## 12. Adversarial validation
 
 The primary coding agent writes the code; a **stronger model** reviews it
-adversarially. Both roles run on the Muse subscription via `muse exec`
-(see `SPEC-COMPLETION.md` §8): the builder is `muse-spark-1.3` and the
-reviewer is `muse-wonder-1.0`.
+adversarially. Both roles run through the Pi harness (`ralph-pi.sh`) against the
+local LiteLLM router: the builder is `litellm/qwen` and the reviewer is
+`litellm/deepseek-v4.1-flash`. `ralph-pi.sh` is the source of truth for the
+current chains and their fallbacks.
 
 - `ralph/validator.md` defines the reviewer: its job is to **disprove** the
   code, not to praise it. It is given the spec, the diff, and the evidence,

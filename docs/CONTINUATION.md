@@ -122,9 +122,9 @@ UNMEASURED.**
 **Still owner-gated and still uncommitted in the tree** (so batches stage only their own paths and
 never `git add -A`): `AGENTS.md`, `ralph/builder.md`, `ralph-pi.sh`,
 `tools/runner/gates_batch_integrity.py`, `.kilo/agent/adversarial-reviewer.md`,
-`ralph/MUSE_CONTEXT.md`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`,
+`ralph/LOOP_CONTEXT.md`, `docs/frames/2026-11-02-ralph-self-heal.{png,txt}`,
 `docs/OWNER_DIRECTIVE_2026-11-05.md`, and `mdk_3ds/tools/emurun.sh`. Batch 65 re-verified the list at
-**ten** paths; `ralph/MUSE_CONTEXT.md`, the integration-sprint directive and the emulator harness are
+**ten** paths; `ralph/LOOP_CONTEXT.md`, the integration-sprint directive and the emulator harness are
 owner-authored files that appeared in the dirty tree during this batch. None was staged, edited or
 reverted here. The self-heal frame pair is
 byte-identical to the current pinned frame (md5 `6769a137…`), and committing a protected path without

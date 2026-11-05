@@ -6,9 +6,9 @@
 # orchestrator — gates, progress/stall detection and review dispatch — and the
 # builder can never influence them.
 #
-# Each committed batch must include docs/frames/*.png and its .txt measurement;
-# tools/runner/gates_batch_integrity.py enforces --base/--head and --staged
-# boundaries; the published image is produced by tools/publish_frame.sh.
+# Each commit must include docs/frames/*.png and its .txt measurement;
+# tools/runner/gates_batch_integrity.py validates per-commit --base/--head and
+# --staged boundaries; the published image is produced by tools/publish_frame.sh.
 # Usage:
 #   tools/install_ralph_pi_service.sh    # systemd unit + tools/ralph_pi_watchdog.sh
 #   systemctl --user start ralph-pi-mdk
@@ -93,7 +93,7 @@ trap 'exit 130' INT
 # its own correctness.
 # Builder: LOCAL qwen (litellm/qwen -> openai/qwen38-flash-next). First in the
 # chain so the builder is the free local seat; hosted routes are fallbacks.
-WORKER_MODELS="${WORKER_MODELS:-litellm/qwen litellm/minimax-m3.1-flash-nvidia litellm/glm-5.3-nvidia litellm/glm-5.3-flash-nvidia litellm/luna}"
+WORKER_MODELS="${WORKER_MODELS:-litellm/qwen litellm/deepseek-v4.1-flash-th}"
 # Reviewer: DeepSeek V4.1 Flash. Verified 2026-10-31 against the live proxy:
 # alias `deepseek-v4.1-flash` resolves to upstream `deepseek/deepseek-flash`
 # at api.deepseek.com (official DeepSeek API — a genuinely different family
@@ -104,13 +104,14 @@ REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/deepseek-v4.1-flash}"
 # Reviewer fallbacks MUST be a different upstream family than the builder
 # (qwen38-flash-next), or the "independent" review is fake. `swarm-worker` is
 # deliberately excluded: it is the SAME upstream as qwen. Order prefers the
-# DeepSeek mirror first, then cross-family: grok=xai/grok-4.6,
-# minimax=minimaxai/*, luna=gpt-6-luna.
-REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/deepseek-v4.1-flash-nvidia litellm/grok litellm/minimax-m3.1-flash-nvidia litellm/luna}"
+# DeepSeek mirror first, then cross-family: minimax=minimaxai/*,
+# luna=gpt-6-luna. grok is retired by operator decision 2026-11-05 and must
+# not be re-added to any chain.
+REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/deepseek-v4.1-flash-nvidia litellm/minimax-m3.1-flash-nvidia litellm/luna}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-7200}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 REVIEW_FAIL_LIMIT="${REVIEW_FAIL_LIMIT:-2}"
-MAX_ITER="${MAX_ITER:-30}"
+MAX_ITER="${MAX_ITER:-80}"
 STALL_LIMIT="${STALL_LIMIT:-3}"
 FAIL_LIMIT="${FAIL_LIMIT:-3}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-300}"
@@ -121,6 +122,10 @@ PROMPT_FILE="$ROOT/ralph/PROMPT.md"
 VALIDATOR_FILE="$ROOT/ralph/validator.md"
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 export DEVKITARM="${DEVKITARM:-/opt/devkitpro/devkitARM}"
+export PI_KNOWLEDGE_EMBEDDING="${PI_KNOWLEDGE_EMBEDDING:-openai:qwen3-embedding-0.6b}"
+export PI_KNOWLEDGE_EMBEDDING_BASE_URL="${PI_KNOWLEDGE_EMBEDDING_BASE_URL:-http://127.0.0.1:8731/v1}"
+export PI_KNOWLEDGE_EMBEDDING_PREFIXES="${PI_KNOWLEDGE_EMBEDDING_PREFIXES:-off}"
+export PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="${PI_KNOWLEDGE_EMBEDDING_MAX_CHARS:-3000}"
 
 state_get() { sed -n "s/^$1=//p" "$STATE" 2>/dev/null | tail -1; }
 
@@ -233,12 +238,23 @@ reviewer_reject_reason() {
 }
 
 pi_run() {
-    ( cd "$ROOT" && timeout -k 30 "$ITER_TIMEOUT" sudo -n -H -u piagent env NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
+    ( cd "$ROOT" && timeout -k 30 "$ITER_TIMEOUT" sudo -n -H -u piagent env \
+        NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
+        PI_KNOWLEDGE_EMBEDDING="$PI_KNOWLEDGE_EMBEDDING" \
+        PI_KNOWLEDGE_EMBEDDING_BASE_URL="$PI_KNOWLEDGE_EMBEDDING_BASE_URL" \
+        PI_KNOWLEDGE_EMBEDDING_PREFIXES="$PI_KNOWLEDGE_EMBEDDING_PREFIXES" \
+        PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="$PI_KNOWLEDGE_EMBEDDING_MAX_CHARS" \
         "$PI_CMD" --model "$1" -p "$(cat "$2")" --no-session ) >"$3" 2>"$4"
 }
 
 model_alive() {
-    timeout "$HEALTH_TIMEOUT" sudo -n -H -u piagent env NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt "$PI_CMD" --model "$1" \
+    timeout "$HEALTH_TIMEOUT" sudo -n -H -u piagent env \
+        NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
+        PI_KNOWLEDGE_EMBEDDING="$PI_KNOWLEDGE_EMBEDDING" \
+        PI_KNOWLEDGE_EMBEDDING_BASE_URL="$PI_KNOWLEDGE_EMBEDDING_BASE_URL" \
+        PI_KNOWLEDGE_EMBEDDING_PREFIXES="$PI_KNOWLEDGE_EMBEDDING_PREFIXES" \
+        PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="$PI_KNOWLEDGE_EMBEDDING_MAX_CHARS" \
+        "$PI_CMD" --model "$1" \
         -p "Reply exactly PING_OK" --no-session 2>/dev/null | grep -q PING_OK
 }
 
@@ -267,17 +283,23 @@ run_gates() {
 }
 
 guard() {
-    local muse_pid
-    muse_pid="$(cat "$ROOT/logs/ralph/loop.pid" 2>/dev/null)"
-    if [ -n "$muse_pid" ] && kill -0 "$muse_pid" 2>/dev/null; then
-        echo "FATAL: Muse ralph.sh (pid $muse_pid) is alive. Stop it first." >&2
+    local other_loop_pid
+    other_loop_pid="$(cat "$ROOT/logs/ralph/loop.pid" 2>/dev/null)"
+    if [ -n "$other_loop_pid" ] && kill -0 "$other_loop_pid" 2>/dev/null; then
+        echo "FATAL: another ralph loop (pid $other_loop_pid) is alive. Stop it first." >&2
         exit 2
     fi
     touch "$ROOT/logs/ralph/disabled"
     echo "$$" >"$PIDFILE"
     local probe_ok=0 model
     for model in $WORKER_MODELS; do
-        if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent env NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt "$PI_CMD" --model "$model" \
+        if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent env \
+            NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
+            PI_KNOWLEDGE_EMBEDDING="$PI_KNOWLEDGE_EMBEDDING" \
+            PI_KNOWLEDGE_EMBEDDING_BASE_URL="$PI_KNOWLEDGE_EMBEDDING_BASE_URL" \
+            PI_KNOWLEDGE_EMBEDDING_PREFIXES="$PI_KNOWLEDGE_EMBEDDING_PREFIXES" \
+            PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="$PI_KNOWLEDGE_EMBEDDING_MAX_CHARS" \
+            "$PI_CMD" --model "$model" \
             -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%U:%G %a %n' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
             --no-session 2>&1 | grep -q WTEST_OK; then
             probe_ok=1
@@ -659,11 +681,20 @@ POLICY_PRECEDENCE
         if ! sudo -n -H -u piagent python3 "$ROOT/tools/runner/gates_batch_integrity.py" \
                 --base "$HEAD_BEFORE" --head "$HEAD_AFTER" \
                 >"$RUN_DIR/integrity-$ITER.log" 2>&1; then
-            log "iter=$ITER INTEGRITY GUARD FAILED; stopping"
+            log "iter=$ITER INTEGRITY GUARD FAILED; checking individual commits before recovery"
             cat "$RUN_DIR/integrity-$ITER.log" >>"$SUMMARY"
-            exit 6
+            if ! sudo -n -H -u piagent python3 "$ROOT/tools/runner/gates_batch_integrity.py" \
+                    --base "$HEAD_BEFORE" --head "$HEAD_AFTER" --each-commit \
+                    >"$RUN_DIR/integrity-$ITER.recovery.log" 2>&1; then
+                log "iter=$ITER per-commit integrity recovery FAILED; stopping fail-closed"
+                cat "$RUN_DIR/integrity-$ITER.recovery.log" >>"$SUMMARY"
+                exit 6
+            fi
+            log "iter=$ITER integrity guard recovered: each commit in range independently passed"
+            cat "$RUN_DIR/integrity-$ITER.recovery.log" >>"$SUMMARY"
+        else
+            log "iter=$ITER integrity guard PASS"
         fi
-        log "iter=$ITER integrity guard PASS"
     fi
 
     REVIEW_PID=""
@@ -809,7 +840,13 @@ POLICY_PRECEDENCE
                 state_write REVIEW_INFLIGHT_BASE="$REVIEW_INFLIGHT_BASE" \
                     REVIEW_INFLIGHT_HEAD="$REVIEW_INFLIGHT_HEAD" REVIEW_STATUS="invoked"
                 log "iter=$ITER review INVOKED on $REVIEW_MODEL — $REVIEW_DECISION_REASON (obligation recorded before the spawn)"
-                ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent env NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt "$PI_CMD" \
+                ( timeout -k 30 "$REVIEW_TIMEOUT" sudo -n -H -u piagent env \
+                    NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
+                    PI_KNOWLEDGE_EMBEDDING="$PI_KNOWLEDGE_EMBEDDING" \
+                    PI_KNOWLEDGE_EMBEDDING_BASE_URL="$PI_KNOWLEDGE_EMBEDDING_BASE_URL" \
+                    PI_KNOWLEDGE_EMBEDDING_PREFIXES="$PI_KNOWLEDGE_EMBEDDING_PREFIXES" \
+                    PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="$PI_KNOWLEDGE_EMBEDDING_MAX_CHARS" \
+                    "$PI_CMD" \
                     --model "$REVIEW_MODEL" -p "$(cat "$RP")" --no-session \
                     >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"
                   echo $? >"$RUN_DIR/review-$ITER.rc" ) &

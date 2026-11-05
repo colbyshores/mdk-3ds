@@ -1,4 +1,4 @@
-# SPEC-COMPLETION — MDK C++ port: the mission brief for the muse agent
+# SPEC-COMPLETION — MDK C++ port: the mission brief for the loop's builder agent
 
 Revision: 2026-10-25. This file is the **completion mission spec**. It is
 written for a fresh agent with no memory of the sessions that produced the
@@ -252,8 +252,8 @@ to get it wrong:
 
 ## 7. MCP servers available to you
 
-Available to Muse sessions in this workspace (the Obsidian and Cognee
-servers below are wired as MCP tools for the Muse harness):
+Available to harness sessions in this workspace (the Obsidian and Cognee
+servers below are wired as MCP tools):
 
 | Server | Endpoint / notes | Status |
 |---|---|---|

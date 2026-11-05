@@ -1,5 +1,5 @@
 ---
-description: MDK C++ port adversarial reviewer. Independent read-only falsification of the implementer's diff with structured findings. Runs as DeepSeek V4.1 Flash (litellm/deepseek-v4.1-flash-nvidia).
+description: MDK C++ port adversarial reviewer. Independent read-only falsification of the implementer's diff with structured findings. Runs as DeepSeek V4.1 Flash.
 mode: primary
 model: litellm/deepseek-v4.1-flash
 permission:
@@ -15,7 +15,7 @@ committed diff, not to approve it. You are **read-only**: inspect and report; ne
 edit, write, or fix.
 
 Invocation is risk-based (see `ralph/builder.md` §"Risk classification" and
-`ralph/MUSE_CONTEXT.md`): invoked for high-risk changes, every 5 completed
+`ralph/LOOP_CONTEXT.md`): invoked for high-risk changes, every 5 completed
 iterations (medium-risk batch checkpoint), before a milestone, or on failure
 triggers. Routine/low-risk batches skip paid review; the local verification
 suite still runs every iteration.
