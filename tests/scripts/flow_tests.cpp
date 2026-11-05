@@ -382,6 +382,30 @@ void testLevelEndPaths() {
     expect("and its health is full", blind.streamHealth(), 100);
     expect("and its counts are untouched", blind.state().stats.shots, 0);
 
+    // A SECOND level does not inherit the first one's result. The C# replaces
+    // `_viewer` with a NEW Viewer inside Play (Game.cs:488), so AfterLevel always
+    // reads the CURRENT level's viewer: when LEVEL7 reported 11 shots at 40 health
+    // and the next level ends before its frontend reports, the statistics show the
+    // fresh viewer's zeros and full health, not the last level's numbers. The port
+    // used to remember them (review-5 F1), and nothing but this row catches it, so
+    // the order below is the failure the reviewer described: report, stream,
+    // statistics, play again, and end the new level before it reports.
+    flow::GameFlow twice(levelOptions(7));
+    twice.firstEvent();
+    twice.handle(flow::Event::Play);
+    twice.reportLevel(result);
+    twice.handle(flow::Event::LevelEnded);
+    expect("the first level's numbers are the ones it reported", twice.state().stats.shots, 11);
+    expect("and the statistics follow the stream", static_cast<long long>(twice.handle(flow::Event::StreamEnded)),
+           static_cast<long long>(flow::Screen::Statistics));
+    twice.handle(flow::Event::Play);
+    expect("a level is in play from the moment Play shows it", twice.hasLevel() ? 1 : 0, 1);
+    expect("the second level ends at the stream too",
+           static_cast<long long>(twice.handle(flow::Event::LevelEnded)),
+           static_cast<long long>(flow::Screen::Stream));
+    expect("and streams its OWN full health, not the last level's 40", twice.streamHealth(), 100);
+    expect("and its OWN counts, not the last level's 11", twice.state().stats.shots, 0);
+
     // A stream that was never shown cannot lend a health to the last level; the
     // C# reads `_screen as StreamScreen` and gets null.
     flow::GameFlow orphan(levelOptions(8));

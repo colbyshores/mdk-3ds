@@ -113,6 +113,15 @@ Screen GameFlow::play() {
     // Menu/ is cut and the Viewer is not ported; the level's own test options
     // (--frames, --event, the sound mode) land with it.
     show(Screen::None);
+    // C# `_viewer = new Viewer(...)` sits at this exact point, so from here the C#
+    // reads a FRESH viewer's counts and health: the previous level's result must
+    // not outlive the level that produced it. Without this, a level that ends
+    // before its frontend calls reportLevel would stream the LAST level's shots
+    // and health (review-5 F1). A fresh LevelResult is zero counts and
+    // kFullHealth, which is what a viewer that has taken no damage yet reports;
+    // when the Viewer is ported, its start health comes from the carry instead.
+    level_ = LevelResult();
+    hasLevel_ = true;
     return show(Screen::Level);
 }
 

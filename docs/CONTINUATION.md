@@ -1,18 +1,18 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — the batch changes the emulator harness's mount-ownership decision (a lane now releases its own
-mount where it used to leak it) and re-pins two rows of `emurun_harness_test.sh` that had been certifying the
-defect; no game code, no core source, no golden, no gate and no PROTECTED path is touched. The re-pin is the
-part worth a reviewer's eye, and the new rows are proved non-vacuous against the pre-fix harness.
+Risk: high — the batch adds a new 3DS platform subsystem (the HID -> `Input` mapping, a new interface and
+a new state owner for the accumulated mouse), changes the 3DS frontend's frame loop so the poll is the only
+`hidScanInput`, and changes a `GameFlow` state transition (`play()` now installs a fresh level result, which
+is review-5 F1). No golden, no gate, no PROTECTED path and no `mdk_core` numeric path is touched, and every
+new number is hand-derived and re-derived twice; the two parts worth a reviewer's eye are the control scheme
+(it is this target's, not the C#'s) and the `play()` reset.
 
-Last updated: 2026-11-05 (**batch 71** — owner-directive item 3 is done: `mdk_3ds/tools/emurun.sh` no longer
-answers "foreign" about a mount it never asked the process about, a vanished pid is not an unreadable process,
-and a `pgrep -f` hit is a candidate rather than a verdict. review-4 F1 and F5 are fixed and pinned, review-5
-F4 is fixed, review-5 F3 is answered in the frame sidecar, and review-5 F1 and F2 are confirmed and deferred
-with a cause. The record is `docs/PROGRESS_LOG.md`, "Iteration 99"; batch 70's is "Iteration 98", batch 69's
-"Iteration 97", batch 68's "Iteration 96", batch 67's "Iteration 95", batch 66's "Iteration 94", batch 65's
-"Iteration 93", batch 64's "Iteration 92", batch 63's "Iteration 91"; earlier batches are indexed by number
-in that file.).
+Last updated: 2026-11-05 (**batch 72** — owner-directive item 4 is done: libctru HID fills `mdk::Input`
+(`mdk_3ds/src/platform/input_3ds.{h,cpp}` + `input_3ds_hid.cpp`), pinned by `PASS Input3dsMap` and proved
+on-target by the guest log's `input selftest: fwd=1 fire=1 look=20.0000`, which is the host golden's
+0x41A00000. review-5 F1 is fixed and pinned (the `play()` reset), F3 is answered in this batch's frame
+sidecar, F4 stays closed by batch 71, and F2 is rebutted in part and deferred in part. The record is
+`docs/PROGRESS_LOG.md`, "Iteration 100"; earlier batches are indexed by number in that file.).
 
 **Owner action still open (blocks the loop's own fixes taking effect):** the worktree `ralph-pi.sh` is mode
 `664` while the index says `100755`, this uid cannot `chmod` it (owner task 18), and the systemd unit execs it
@@ -48,11 +48,15 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    vanished pid is no longer mistaken for an unreadable live one, and a `pgrep -f` hit is a candidate that must
    be confirmed as an emulator by comm or by an exe under `.mount_mandar*`. Re-pinned with a real-EACCES
    fixture (`PASS EmurunHarness (68 checks)`), and the batch carries emulator evidence.
-4. **NEXT — 3DS input.** Fill `mdk_core/src/game/input.h` from libctru HID. Adapt `../forsaken/input_3ds.c`; heed
-   the double-swap and axis-exists traps in `../forsaken/3DS_PORT_NOTES.md`.
-5. **Wire the frontend.** `main_3ds.cpp` drives the real game: input → player → the ported `FollowCamera`
+4. **DONE (batch 72) — 3DS input.** `mdk_3ds/src/platform/input_3ds.{h,cpp}` maps HID to `mdk::Input` and
+   `input_3ds_hid.cpp` is the one `hidScanInput` per frame; the scheme and its causes are in the header, the
+   pinned rows and their derivations are in `tests/scripts/input_3ds_tests.cpp`, and the narrative is
+   "Iteration 100". The C-Stick is deferred with a cause (its read is `irrstCstickRead`, a second service,
+   on a New 3DS-only path).
+5. **NEXT — wire the frontend.** `main_3ds.cpp` drives the real game: input → player → the ported `FollowCamera`
    (not the framing camera) → Kurt's sprite → the HUD, through `GameFlow` — whose `handle(Event)` returns the
-   `Screen` to build and whose header states the tick order. It reads only START/SELECT today.
+   `Screen` to build and whose header states the tick order. It now *polls* the controls but still reads only
+   START/SELECT as a quit chord and drives no game object.
 6. **ndsp audio backend.** The control plane in `mdk_core/src/audio/` is ported; the sample plane is not
    (`sound_device.h:13`). Adapt `../forsaken/sound_3ds.c` and `../t2k/t2k_3ds/src/audio/sfx_3ds.cpp`, then
    set the mixer on both frontends.
@@ -63,20 +67,25 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 into a level), rides/snowboard/stream-fall view/sniper/cutscene camera, the 27 deferred opcodes, the
 Old-3DS optimisation pass (take a first capture; do not optimise against a corpus that does not exist).
 
-## NEXT (batch 72)
+## NEXT (batch 73)
 
-**Take review-5 F1 first — it is a confirmed defect, three lines and a test row, and item 5's frontend will be
-written against the code it is wrong about.** `GameFlow::play()` never resets `level_`/`hasLevel_`, so a level
-that ends without calling `reportLevel` streams the *previous* level's stats and health; the C# replaces
-`_viewer` with a fresh `Viewer` inside `Play()` (`Game.cs:488`), so `_viewer != null` holds from `Play` onward
-and its stats are always the current level's. Fix: `level_ = LevelResult(); hasLevel_ = true;` in `play()`,
-correct the `_viewer != null` claim at `game_flow.h:181`, and add the two-level row (Play L7 → report → Play
-L6 → no report → LevelEnded) that `flow_tests.cpp` does not have.
+**Item 5 — wire the frontend.** `main_3ds.cpp` drives the real game: `mdk::Input` from `input3dsPoll` →
+`Player` → the ported `FollowCamera` (not the framing camera at `main_3ds.cpp`'s `view.bounds()` block) →
+Kurt's sprite → the HUD, through `GameFlow`. What the frontend must get right and does not do today: call
+`handle(Event)` and show the `Screen` it returns, drain the mouse once per simulation step (the game takes
+it — `Player::mouseLook`, `FollowCamera::mouseLook` — so the frontend must not), and use
+`GameFlow::stepFor`/`elapsedFor` instead of its own clamped wall delta. `reportLevel` is now optional (batch
+72 made `play()` stand a fresh result in its place), but a frontend that skips it reports a level that fired
+nothing, so call it.
 
-Then item 4 (3DS input) is a clean slice: `mdk_core/src/game/input.h` is a latched `Input` with 13 actions and
-a relative mouse, and libctru HID has to fill it.
+**From review-5's open questions, for when the screens land:** `FlowOptions` must grow three things
+`handle()` cannot carry yet — `MenuPage Page` (`Game.cs:404`), `StatsScreen.Phase` (`Game.cs:408/412`) and
+the fall's `ViewerOptions(0, …)` vs `_options.Level` (`Game.cs:466`). `firstLevel()` already exists for the
+third; the header does not record that the first two will be needed. Also deferred from batch 72:
+`FlowOptions::setCounts(values, count)` keeps its raw pointer + count (review-5 F2) and the CLI that first
+calls it owns the length.
 
-Two measured facts carry forward, both unchanged by batch 71:
+Two measured facts carry forward, both unchanged by batch 72:
 
 * **The 3DS picture is a red clear with a sliver of geometry.** The guest logs 3 draws/frame with real
   vertex data (`view: 154 batches, 1188 vertices, 399 triangles`) and the frame counter advances at 60 fps,
@@ -88,6 +97,12 @@ Two measured facts carry forward, both unchanged by batch 71:
 
 ## Standing facts a batch must not re-derive
 
+* **Exactly one `input3dsPoll()` per frame, and it is the only `hidScanInput()`.** libctru recomputes its
+  edge bits on every scan, so a second scan in the same frame discards the first one's presses (the same
+  class as `../forsaken/3DS_PORT_NOTES.md` "Input Double-Swap"). The poll RETURNS the held mask so a
+  frontend never needs its own scan, and it does not drain the mouse — the game does. The control scheme is
+  documented in `mdk_3ds/src/platform/input_3ds.h`; the C-Stick is absent by decision (`irrstCstickRead`, a
+  second service, New 3DS only), not by oversight.
 * **Never `git add -A`.** Owner-authored paths sit uncommitted in the worktree and at least one is
   PROTECTED (`ralph/builder.md`); staging a protected path halts the loop at exit 6. Stage your own paths
   by name. Do not trust a list of them — read `git status --porcelain` in the batch that needs to know.

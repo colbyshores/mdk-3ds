@@ -24,6 +24,7 @@
 #include "render/render.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
+#include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
 
@@ -198,8 +199,27 @@ int main(int argc, char** argv) {
     const char* exitReason = "aptMainLoop returned false";
 
     while (aptMainLoop()) {
-        hidScanInput();
-        const u32 held = hidKeysHeld();
+        // The frame's clock FIRST: the look integrates over the time since the
+        // previous frame, so the input poll needs the same delta the renderer is
+        // about to get. Clamp it here — a long stall (a sleep, a load) must not
+        // be handed to the simulation as one enormous step (AGENTS P1); MDK's own
+        // frame policy is in the shared game code and this is the platform's floor.
+        const double now = nowSeconds();
+        double delta = now - last;
+        last = now;
+        if (delta < 0.0) delta = 0.0;
+        if (delta > 0.25) delta = 0.25;
+        elapsed = (float)delta;
+
+        // The controls. ONE scan of HID for the whole frame, inside the poll:
+        // libctru recomputes its edge bits on every hidScanInput(), so a second
+        // scan anywhere in this loop would discard the first one's presses. The
+        // held mask comes back from the poll for exactly that reason. The Input is
+        // the frame's own because the look accumulates into it and the game drains
+        // it — until the flow is wired (owner directive item 5) nothing consumes
+        // it, which is why the self-test below is what proves the mapping runs.
+        mdk::Input input;
+        const u32 held = mdk::input3dsPoll(&input, elapsed);
         if (held & KEY_START) {
             exitReason = "START pressed";
             break;
@@ -209,15 +229,26 @@ int main(int argc, char** argv) {
             break;
         }
 
-        const double now = nowSeconds();
-        double delta = now - last;
-        last = now;
-        // Clamp the delta: a long stall (a sleep, a load) must not be
-        // handed to the simulation as one enormous step. MDK's own frame
-        // policy is in the shared game code; this is the platform's floor.
-        if (delta < 0.0) delta = 0.0;
-        if (delta > 0.25) delta = 0.25;
-        elapsed = (float)delta;
+        if (frame == 0u) {
+            mdk::log3dsPrintf("input: held=%08lX mx=%.4f my=%.4f", (unsigned long)held,
+                              (double)input.mouseX, (double)input.mouseY);
+            // A number the guest log and the host golden agree on. A stick hard
+            // right for one 60 Hz step is 3 degrees of look, and 3 degrees at 0.15
+            // degrees a count is EXACTLY 20 counts (180.0f * (1/60f) is
+            // 3.0000001, and that divided by 0.15f rounds back to 20.0), which is
+            // a pinned row of tests/scripts/input_3ds_tests.cpp. If the ARM11's
+            // VFP disagreed with the host about any of it, this line would not read
+            // 20.0000.
+            mdk::HidFrame probe;
+            probe.held = mdk::kHidDUp | mdk::kHidR;
+            probe.padX = 155;
+            probe.padY = 0;
+            mdk::Input selftest;
+            mdk::input3dsApply(probe, 1.0f / 60.0f, &selftest);
+            mdk::log3dsPrintf("input selftest: fwd=%d fire=%d look=%.4f",
+                              selftest.isDown(mdk::kKeyForward) ? 1 : 0,
+                              selftest.isDown(mdk::kKeyFire) ? 1 : 0, (double)selftest.mouseX);
+        }
 
         MdkFrameParams params;
         params.elapsed = elapsed;

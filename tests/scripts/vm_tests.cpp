@@ -27,6 +27,7 @@
 #include "test_support.h"
 #include "archive_guard_tests.h"
 #include "flow_tests.h"
+#include "input_3ds_tests.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/dti.h"
@@ -5891,6 +5892,16 @@ int main() {
     failures += picaFailures;
     if (picaFailures == 0) {
         printf("PASS PicaMatrix\n");
+    }
+
+    // The 3DS control mapping: the buttons, the circle pad's look, and who owns
+    // the accumulated mouse. Data-independent for the same reason, and it is the
+    // only thing in the tree that checks the controls at all -- the console cannot
+    // be run here, and the C# oracle reads SDL, not libctru.
+    const int inputFailures = mdk::test::runInput3dsTests();
+    failures += inputFailures;
+    if (inputFailures == 0) {
+        printf("PASS Input3dsMap\n");
     }
 
     // The MathF.Min/MathF.Max twins, in the oracle's bits. Data-independent, so it

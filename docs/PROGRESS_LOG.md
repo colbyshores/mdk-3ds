@@ -13991,3 +13991,176 @@ deliberately left dirty; the batch staged its own paths by name. No inherited bu
 Batch 72: review-5 F1 (the `play()` level-result reset, with the two-level row), then owner-directive item 4
 (3DS input from libctru HID). Owner actions still open and unchanged: restore `0755` on `ralph-pi.sh` and
 restart the service; commit or revert `ralph/builder.md`.
+
+---
+
+## Iteration 100 — batch 72: the 3DS controls land — circle pad to look, D-pad to walk — and review-5 F1's stale level result is fixed
+
+### What was implemented
+
+**1. Owner-directive item 4 — 3DS input from libctru HID.** Two new sources and one host test module:
+
+* `mdk_3ds/src/platform/input_3ds.h` — the control scheme, the constants, `HidFrame`,
+  `input3dsApply()` and `input3dsPoll()`.
+* `mdk_3ds/src/platform/input_3ds.cpp` — the **mapping**, naming no libctru type, so a host can
+  compile and pin it. This is the `render/pica_matrix.{h,cpp}` precedent applied to input: the part
+  that can be wrong in a way a host can check is separated from the part that needs the console.
+* `mdk_3ds/src/platform/input_3ds_hid.cpp` — the **service**: one `hidScanInput()`, the reads, the
+  `static_assert`s that mirror libctru's `KEY_*` bit values, and nothing else.
+* `tests/scripts/input_3ds_tests.{h,cpp}` — `PASS Input3dsMap`, wired into `vm_tests` and into
+  `tests/scripts/Makefile` (which now compiles `$(3DS)/platform/input_3ds.cpp` alongside
+  `$(3DS)/render/pica_matrix.cpp`).
+* `mdk_3ds/src/main_3ds.cpp` — the frame now calls `mdk::input3dsPoll()` once, takes the held mask
+  from its return value instead of scanning HID itself, and logs a self-test line on frame 0.
+
+**The scheme.** Circle Pad → look (yaw and pitch, as relative mouse counts); D-pad → forward / back /
+strafe; A jump, B turbo, X use item, Y next item, R and ZR fire, L and ZL previous item, Start escape,
+Select unbound. The C# `GamepadMap` is the oracle for a controller and it puts walk on the left stick
+and look on the right one; the original 3DS has **one** analog stick, so one of the two must go digital,
+and the look is the one that stays analog — MDK aims by turning Kurt's view, the walk is four binary
+axes (`Input::axis` is ±1 from two `down[]` bits), and a digital look is unplayable where a digital walk
+is what the keyboard already does. `../forsaken/input_3ds.c` made the same call on this hardware (circle
+pad to pitch/yaw, D-pad to the digital axes), which is why the D-pad walks here rather than doing the C#
+pad's d-pad items/zoom, and why the item keys moved to Y and L. ZL joins L because the sniper the C#
+trigger binds is not in this port's input vocabulary at all (the sniper overlay is cut).
+
+**What is taken from the C# unchanged** — because the 3DS has no C# counterpart to measure against (the
+C# reads SDL), the *model* is the C#'s, so a stick on the 3DS turns the view at the same rate with the
+same curve as a stick on the PC: `GamepadMap.DeadZone` 0.15 of the reach, `Curve` 2, `LookRate`
+(180, 120) deg/s, `Input.LookDegrees` 0.15 deg per mouse count (the same 0.15 `kMouseDegrees` the
+player and the follow camera multiply a count by), and `Gamepads.MaxStep` 0.1 s as the frame-gap clamp.
+The circle pad's reach (155) is the number Forsaken measured on this hardware. The arithmetic follows the
+C#'s expression operation for operation: `n = pad/reach`, `length = sqrt(nx²+ny²)`, `tilt = min(length,1)`,
+`ramp = (tilt-0.15f)/(1-0.15f)`, `strength = ramp²`, `degrees = ((n/length · strength) · rate) · step`,
+`counts = degrees / 0.15f`.
+
+**The trap this shape avoids.** libctru recomputes its edge bits inside `hidScanInput()`, so a second scan
+in the same frame discards the first one's presses — the same class as the "Input Double-Swap" note in
+`../forsaken/3DS_PORT_NOTES.md`, where a double buffer swap made every release undetectable and the player
+could not respawn. `input3dsPoll` is therefore the only scan, and it **returns** the held mask so the
+frontend never needs a second one. And the poll does not consume the mouse: the game drains it
+(`Player::mouseLook`, `FollowCamera::mouseLook`), exactly as the C# does — pinned as its own test section.
+
+**Deferred with cause:** the C-Stick. Its analog read is not in `hid.h` at all — libctru's
+`hidCstickRead` is a compatibility macro for `irrstCstickRead` in `irrst.h`, so it costs an extra service
+(`irrstInit`/`irrstExit`) on a path that only exists on a New 3DS, while the original 3DS is this port's
+target. The circle pad carries the look on both models, so nothing is missing on either; the C-Stick is a
+New 3DS comfort.
+
+**2. review-5 F1 (Medium, confirmed) — `GameFlow::play()` now resets the level result.** The C# replaces
+`_viewer` with a *new* `Viewer` inside `Play()` (`Game.cs:488`), so `AfterLevel` always reads the current
+level's viewer; the port remembered the previous level's `level_`/`hasLevel_` until a frontend called
+`reportLevel`, so a level that ended before its report streamed the *last* level's shots and health.
+`play()` now installs `level_ = LevelResult(); hasLevel_ = true;` at the point the C# constructs the
+viewer, and `game_flow.h`'s comment on `hasLevel()` no longer claims it is "whether a level has reported".
+
+### Verification
+
+**The new tests are proved non-vacuous by mutation**, three ways, each reverted after:
+
+| mutation to `input_3ds.cpp` | result |
+|---|---|
+| drop the Y negation (`ny = padY/reach`) | `FAIL: libctru's dy is UP, and the look's y is down was 41555555, the derivation has C1555555` + 2 more |
+| disable the frame-gap clamp | `FAIL: a stalled frame buys no more look than the clamp was 47EA5FFF, the derivation has 42EFFFFF` |
+| bind `kKeyStrafeLeft` to `kHidDRight` | `FAIL: D-pad left strafes left -- action 2 was 0, expected 1` + 1 more |
+
+**And the new flow row is proved non-vacuous** by reverting the F1 fix:
+`FAIL: and streams its OWN full health, not the last level's 40 was 40, the oracle has 100` and
+`FAIL: and its OWN counts, not the last level's 11 was 11, the oracle has 0`.
+
+**The pinned float rows are hand-derived, then re-derived independently.** Every pinned bit pattern in
+`input_3ds_tests.cpp` was derived by hand one operation at a time (the derivation of the 20.0 and
+119.99999237060547 rows is written out in the test's comment block, including the tie-to-even that makes
+`1.0f - 0.15f` equal `0.85f` and the reason `180.0f * (1/60f)` rounds up one ulp while
+`120.0f * (1/60f)` rounds down). Each was then produced a second time by an exact-rational model of the
+same operation chain, and the two agree on every row. Nothing was read off the implementation's output.
+The rows that are *not* hand-derivable (the diagonal, the just-past-the-dead-zone tilt) are pinned as
+properties — sign, symmetry, monotonicity, convexity, the dead-zone boundary at 23/24 of 155 — not as
+magic numbers.
+
+### Emulator evidence (AGENTS P7, P8)
+
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --grep 'input'`, exit code **0**:
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6            (r1.2.1, the pinned known-good; r1.3.0 is forbidden)
+build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+guest log : /tmp/mdk-emurun.1816164/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log
+frames    : reached 1680 by the deadline (33 frame lines logged, every 60th after #5); the post-reap
+            line below is the log's real last frame
+lane      : /tmp/mdk-emurun.1816164 (mount /tmp/.mount_mandarj530sR)
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+stereo    : render_3d=0 factor_3d=0 (0 = mono)
+backend: PICA200 Citro3D
+frame 1560 elapsed=0.0167 / frame 1620 elapsed=0.0167 / frame 1680 elapsed=0.0167
+input: held=00000000 mx=0.0000 my=0.0000
+input selftest: fwd=1 fire=1 look=20.0000
+emurun: after the reap the guest log ends at frame 1740 (34 frame lines logged)
+```
+
+The line that matters is `input selftest: fwd=1 fire=1 look=20.0000`. The frontend feeds the mapping a
+hard-right stick for one 60 Hz step and logs the resulting mouse counts; **20.0 is the value the host
+golden pins in bits (0x41A00000)**, so the ARM11/VFP build and the host build agree on the look's
+arithmetic, on the emulator's ARM translation of it, and the poll demonstrably runs every frame without
+poisoning the accumulator (`mx=0.0000 my=0.0000` with no input). This is also the first guest-log evidence
+that review-5 F4's "reached N" question is closed: the harness now prints the post-reap frame count
+(1740) next to the deadline count (1680) instead of letting a reader diff them.
+
+Emulator-green is not hardware-pass: Mandarine masks FCRAM/VRAM exhaustion, `GPU_CLAMP_TO_EDGE` leniency
+and FCRAM smear across soft relaunches, and Old-3DS timing remains **UNMEASURED**.
+
+### Gates (all three, actual output)
+
+| gate | result |
+|---|---|
+| `make -C tests/scripts` | **PASS** — 554 `PASS` lines, ending `All cases match the oracle.` (includes the new `PASS Input3dsMap` and `PASS GameFlowMatchesTheOracle`) |
+| `bash tools/check.sh` | **PASS** — `CHECK: ALL GATES PASSED`; `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`, `gates_frames every pinned frame is deterministic and unchanged`, `gates_batch_integrity project invariants intact` |
+| `make -C mdk_3ds` | **PASS** — `3DSX mdk.3dsx` (DEVKITPRO=/opt/devkitpro, DEVKITARM=/opt/devkitpro/devkitARM) |
+
+### Review findings (newest review: `logs/ralph-pi/run-20261105-062743/review-5.md`, no Critical or High)
+
+* **F1 (Medium, confirmed) — FIXED**, with the two-level row the reviewer asked for (Play → report →
+  LevelEnded → StreamEnded → Play again → end without reporting), and the header claim corrected. Proved
+  non-vacuous above.
+* **F2 (Low) — REBUTTED in part, deferred in part.** The reviewer's `countCount() == 9` case is not a
+  divergence: the C# oracle is `IReadOnlyList<int> Counts` and `ApplyTestCounts` reads `.Count`, so
+  mirroring the caller's count *is* the oracle's value, and clamping it to the seven retained fields
+  would move away from the C#, not toward it. What remains is the raw-pointer over-read risk, which is a
+  caller-side contract the C++ cannot check without a different signature — and there is no caller yet
+  (`FlowOptions::setCounts` is reached only from tests). Deferred with that cause; the CLI frontend that
+  first calls it will own the length.
+* **F3 (Low) — FIXED** going forward: this batch's sidecar carries the provenance clause the reviewer
+  asked for, naming what does prove the link (`make -C mdk_3ds`, `PASS Input3dsMap`, the guest-log lines).
+* **F4 (Low) — closed by batch 71 and demonstrated by this batch's verdict block** above.
+* Review-5 open question 2 (what `FlowOptions` must grow when the screens land: `MenuPage Page`,
+  `StatsScreen.Phase`, the fall's `ViewerOptions(0, …)`) is recorded in `docs/CONTINUATION.md` for item 5.
+
+### Prior-solution lookup
+
+* **pi-knowledge (`mdk-sdl`)** — searched for prior art on 3DS HID mapping (hybrid). The hits were this
+  repository's own `AGENTS.md` §12 table, the C# `Input.cs`/`Gamepads.cs` sources, and a sibling project's
+  3DS button poll; nothing that contradicted the plan. Retrieved content was treated as a lead and verified
+  against the C# and libctru's own headers.
+* **Obsidian** — MCP tools are absent from this session (a session configuration fault to report, AGENTS P9),
+  so the disk fallback was used, narrowly: `30-architecture/patterns/synthetic-input-must-set-the-enable-flags-not-just-the-values.md`
+  is the "axis exists" trap in another target's words (a value with its enable left default is silently
+  substituted with zero), which is why the C-Stick is not read at all rather than read and assumed, and
+  `10-projects/mdk-sdl/ralph-pi-mandarine-setup.md` for the lane.
+* **Cognee** — unavailable in this session (no `cognee_*` tools); not consulted, and not claimed.
+* **Named sibling sources, read as the owner directive instructs:** `../forsaken/input_3ds.c` and the
+  "Input Double-Swap" / "Axis Exists Flag" sections of `../forsaken/3DS_PORT_NOTES.md`. One correction to
+  carry: Forsaken calls `hidCstickRead()` as if it were a hid call; on this libctru it is
+  `irrstCstickRead`, which needs the `irrst` service — the reason the C-Stick is deferred here.
+
+### Inherited dirty tree
+
+`ralph-pi.sh` (mode-only, `664` worktree vs `100755` index — owner task 18) and `ralph/builder.md`
+(operator-authored, PROTECTED, review-4 F3). Both owner-owned, both deliberately left dirty; this batch
+staged its own paths by name. No inherited builder work was pending.
+
+### Next
+
+Batch 73: owner-directive item 5 — wire the frontend (`main_3ds.cpp` drives input → `Player` → the ported
+`FollowCamera` → Kurt's sprite → the HUD, through `GameFlow`). Owner actions still open and unchanged:
+restore `0755` on `ralph-pi.sh` and restart the service; commit or revert `ralph/builder.md`.

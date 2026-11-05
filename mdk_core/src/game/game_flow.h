@@ -178,7 +178,11 @@ public:
     // The health the stream was opened with (C# ShowStream's argument, and what
     // AfterStream reads back off the stream screen).
     int32_t streamHealth() const { return streamHealth_; }
-    // Whether a level has reported a result, which is the C#'s `_viewer != null`.
+    // Whether a level is in play, which is the C#'s `_viewer != null`: the C# sets
+    // it inside Play, so it is true from the moment a level is shown and NOT only
+    // once the level has reported. play() therefore clears the remembered result
+    // when it shows a level, and a level that ends without reporting streams this
+    // level's fresh counts and health rather than the last level's (review-5 F1).
     bool hasLevel() const { return hasLevel_; }
 
     // The first screen from the command line (C# FirstEvent). It applies the
@@ -192,7 +196,10 @@ public:
 
     // The level's live counts and health (C# _viewer.Stats and _viewer.Health).
     // Call it with the level's current values when the level ends, which is when
-    // the C# reads them; it is what AfterLevel keeps for the statistics.
+    // the C# reads them; it is what AfterLevel keeps for the statistics. It is
+    // optional: play() already stands a fresh result in its place, exactly as the
+    // C#'s new Viewer does, so a frontend that forgets it degrades to a level that
+    // took no damage and fired nothing rather than to the previous level's numbers.
     void reportLevel(const LevelResult& result);
 
     // The step Game.Run picks (C# Game.cs:246-249): the soak test's frames are
