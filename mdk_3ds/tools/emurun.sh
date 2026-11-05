@@ -35,6 +35,11 @@
 #      Handing the PID to `fusermount -uz` fails every time, silently, and the
 #      dead /tmp/.mount_mandarXXXXXX mounts accumulate until a launch fails for
 #      a reason that looks like the game dying.
+#  10. That mount is a SHARED path, not a private one: the AppImage runtime hands
+#      every launch of the same AppImage the same /tmp/.mount_mandarXXXXXX, so
+#      unmounting "the mount I saw" detaches a co-tenant's RomFS, and a status
+#      discarded from `fusermount -uz` makes the mount that stayed behind
+#      invisible (review-2 F4).
 #
 # And the reason this file is pinned to a version: Mandarine r1.3.0 segfaults
 # deterministically during level load. Running it produces an empty log, which
@@ -139,33 +144,86 @@ EMU_CFG="$LANE/cfg/mandarine-emu/qt-config.ini"
 # Every override must clear its `\default=true` companion or Citra-lineage
 # ignores the value — the same trap as use_gdbstub.
 cfg_insert() { # section key value — writes `key=value` directly under [section]
-  awk -v sec="$1" -v k="$2" -v v="$3" '
+  # THE KEY AND THE VALUE TRAVEL THROUGH THE ENVIRONMENT, NOT `-v`. `awk -v` runs
+  # its assignment through escape processing, so a key containing a DEFINED escape
+  # is written wrong: measured on this box's mawk 1.3.4, `-v k='a\b'` yields `a`
+  # followed by a backspace. An undefined one survives (`-v k='a\d'` stays `a\d`,
+  # which is why the `name\default` companions were not already broken), but this
+  # harness writes keys whose spelling contains a backslash and should not depend
+  # on which escape table the local awk happens to implement. ENVIRON performs no
+  # escape processing at all, so the class of bug is gone, not just one instance.
+  EMURUN_AWK_SEC="$1" EMURUN_AWK_KEY="$2" EMURUN_AWK_VAL="$3" awk '
     { print }
-    $0 == "[" sec "]" { print k "=" v }
+    $0 == "[" ENVIRON["EMURUN_AWK_SEC"] "]" {
+      print ENVIRON["EMURUN_AWK_KEY"] "=" ENVIRON["EMURUN_AWK_VAL"]
+    }
   ' "$EMU_CFG" > "$EMU_CFG.tmp" && mv "$EMU_CFG.tmp" "$EMU_CFG"
+}
+# Does a line START with `key=`? Fixed-string on purpose: the companion keys are
+# `name\default`, and a backslash in a grep BRE is an escape, not a backslash —
+# measured, the pattern ^a\d= does NOT match the line a\b=. A pattern that matches
+# nothing makes every caller believe the key is missing and write a second one.
+cfg_present() { # key -> 0 when some line begins with `key=`
+  # ENVIRON for the same reason cfg_insert does: `-v` would hand the program the
+  # key with its escapes already resolved, and then it agrees with a broken writer.
+  EMURUN_AWK_K="$1=" awk 'index($0, ENVIRON["EMURUN_AWK_K"]) == 1 { found = 1 }
+                          END { exit found ? 0 : 1 }' "$EMU_CFG" 2>/dev/null
+}
+# Where each forced key actually landed, and it is part of the verdict because a
+# key in the wrong section is inert. `existing` = the seed had the key and it was
+# rewritten in place; `inserted` = it went under a header that was already there;
+# `new-section` = the header had to be created first; `UNPLACED` = it never landed
+# in a named section, which proves nothing and must never read as a forced value.
+declare -A CFG_PLACED=()
+cfg_placed() { printf '%s' "${CFG_PLACED[$1]:-UNPLACED}"; }
+# Put `key=value` under [section], creating the header if the file has none.
+# Returns 0 only if the key is present afterwards.
+cfg_place() { # key value section -> 0 when the key is now in the file
+  local key="$1" val="$2" sec="$3" had=1
+  if grep -q "^\[$sec\]$" "$EMU_CFG" 2>/dev/null; then
+    had=1
+  else
+    printf '\n[%s]\n' "$sec" >>"$EMU_CFG" || return 1
+    had=0
+  fi
+  cfg_insert "$sec" "$key" "$val"
+  cfg_present "$key" || return 1
+  CFG_PLACED[$key]=$([ "$had" -eq 1 ] && printf inserted || printf new-section)
+  return 0
 }
 cfg_set() { # key value [section]
   local key="$1" val="$2" sec="${3:-}"
   mkdir -p "$(dirname "$EMU_CFG")" 2>/dev/null || true
   [ -f "$EMU_CFG" ] || : >"$EMU_CFG"
-  if grep -q "^$key=" "$EMU_CFG" 2>/dev/null; then
-    sed -i "s|^$key=.*|$key=$val|" "$EMU_CFG"
-  elif [ -n "$sec" ] && grep -q "^\[$sec\]$" "$EMU_CFG" 2>/dev/null; then
+  if cfg_present "$key"; then
+    sed -i "s|^$key=.*|$key=$val|" "$EMU_CFG" && CFG_PLACED[$key]=existing
+  elif [ -n "$sec" ]; then
     # AN ABSENT KEY CANNOT GO AT THE END OF THE FILE. An INI key belongs to the
     # section whose header precedes it, so appending `volume=0` after the last
     # header ([WebService] on this box) writes a key in the wrong section, where
     # it is inert — review-1 F5(a): the append branch was the exact trap the
     # comment above names. Insert under the header instead.
-    cfg_insert "$sec" "$key" "$val"
+    #
+    # AND NEITHER CAN AN ABSENT SECTION (review-2 F5). The first fix only took
+    # the insert branch when the header already existed, so a fresh or badly
+    # seeded config — the CI case, and any box where EMURUN_CFG_SRC points at
+    # nothing — fell back to the bare append while the verdict still printed
+    # "an explicit override the emulator kept". QSettings writes a header for
+    # every section it uses, so creating the header is what the emulator itself
+    # would do, and the key then sits where the emulator looks for it.
+    cfg_place "$key" "$val" "$sec" || CFG_PLACED[$key]=UNPLACED
   else
+    # No section named: the key cannot be placed, so say so instead of guessing.
     printf '%s=%s\n' "$key" "$val" >>"$EMU_CFG"
+    CFG_PLACED[$key]=UNPLACED
   fi
   if grep -q "^$key\\\\default=" "$EMU_CFG" 2>/dev/null; then
     sed -i "s|^$key\\\\default=.*|$key\\\\default=false|" "$EMU_CFG"
-  elif [ -n "$sec" ] && grep -q "^\[$sec\]$" "$EMU_CFG" 2>/dev/null; then
-    cfg_insert "$sec" "$key\\default" false
+  elif [ -n "$sec" ]; then
+    cfg_place "$key\\default" false "$sec" || CFG_PLACED[$key]=UNPLACED
   else
     printf '%s\\default=false\n' "$key" >>"$EMU_CFG"
+    CFG_PLACED[$key]=UNPLACED
   fi
 }
 cfg_get() { grep -m1 "^$1=" "$EMU_CFG" 2>/dev/null | head -1 | cut -d= -f2; }
@@ -181,6 +239,15 @@ cfg_default_get() { grep -m1 "^$1\\\\default=" "$EMU_CFG" 2>/dev/null | head -1 
 # number is right, it just was not forced by us), `default=false` means the stored
 # value is an override the emulator accepted and kept (review-1 F5(b)).
 cfg_default_note() {
+  # Placement comes FIRST, because a key that never reached a section cannot
+  # have governed anything no matter what the readback says (review-2 F5).
+  case "$(cfg_placed "$1")" in
+    UNPLACED)
+      printf ' [placement UNPLACED — the key never landed in a named section, so it is inert and proves nothing]'
+      return ;;
+    new-section)
+      printf ' [section created by this harness]' ;;
+  esac
   case "$(cfg_default_get "$1")" in
     false) printf ' [default=false — an explicit override the emulator kept]' ;;
     true)  printf ' [default=true — the emulator counts this as its compiled default, so the stored value matches what ran]' ;;
@@ -275,6 +342,29 @@ emurun_mount_in_use() {
   done
   return 1
 }
+# (review-2 F4) The same question, but EXCLUDING this lane's own processes, so it
+# answers "does anybody ELSE live in this mount?". The lane token is the only
+# ownership proof this file trusts (see emurun_own_pids): a process that does not
+# carry it is not ours, and one whose environ this uid cannot read is not ours
+# either — an unclaimable process inside a mount means leave the mount alone.
+# `readlink` without -f on purpose: the raw symlink is the path the kernel
+# recorded, and resolving it walks INTO the FUSE mount, which fails for exactly
+# the dead endpoints this question has to survive.
+emurun_mount_foreign() {
+  local m="$1" p env exe
+  for p in $(pgrep -f 'mandarine\.AppImage|AppRun\.wrapped' 2>/dev/null); do
+    env=$( { tr '\0' '\n' < "/proc/$p/environ"; printf '\n'; } 2>/dev/null || true )
+    case "$env" in *$'\n'"MDK_EMURUN_LANE=$LANE"$'\n'*) continue ;; esac
+    exe=$(readlink "/proc/$p/exe" 2>/dev/null || true)
+    case "$exe" in "$m"/*) return 0 ;; esac
+  done
+  return 1
+}
+# Is this path still a mount after an unmount attempt? Field 2 of /proc/mounts,
+# compared whole, so a prefix can never match a longer mountpoint.
+emurun_is_mounted() {
+  awk -v m="$1" '$2 == m { found = 1 } END { exit found ? 0 : 1 }' /proc/mounts 2>/dev/null
+}
 # Was this mount already here when the lane started? grep -xF is a whole-line
 # fixed match, so /tmp/.mount_mandarAAAA never matches a longer path that merely
 # starts with it.
@@ -291,10 +381,33 @@ emurun_cleanup() {
   for p in $(emurun_own_pids 2>/dev/null); do
     kill -9 "$p" 2>/dev/null || true
   done
-  # (9) unmount the FUSE root THIS run started, by path.
+  # (9) unmount the FUSE root THIS run started, by path — but only what this
+  # lane can PROVE is its own (review-2 F4: this was unconditional, and the
+  # status was discarded). The AppImage runtime reuses an existing mount for the
+  # same AppImage file, so two campaigns can execute out of one
+  # /tmp/.mount_mandarXXXX, and whichever exits first used to lazily detach the
+  # mount the other was running from: that guest loses its RomFS under it and
+  # comes back as rc=4 "the game DIED", which is the exact symptom review-1 F3
+  # was written about. Either proof is enough to leave it alone:
+  #   * it was already mounted when this lane launched (PRE_MOUNTS), so the
+  #     runtime handed us a mount somebody else made; or
+  #   * a process without this lane's token executes out of it.
   if [ -n "$OUR_MOUNT" ]; then
-    fusermount -uz "$OUR_MOUNT" 2>/dev/null || true
-    rmdir "$OUR_MOUNT" 2>/dev/null || true
+    if emurun_pre_existing_mount "$OUR_MOUNT"; then
+      echo "emurun: NOTE $OUR_MOUNT predates this lane (the AppImage runtime shared it); left mounted." >&2
+    elif emurun_mount_foreign "$OUR_MOUNT"; then
+      echo "emurun: NOTE $OUR_MOUNT has a process outside this lane executing from it; left mounted." >&2
+    else
+      um_out=$(fusermount -uz "$OUR_MOUNT" 2>&1)
+      um_rc=$?
+      rmdir "$OUR_MOUNT" 2>/dev/null || true
+      # A discarded status is how a mount that never went away reads as cleaned
+      # up, and the reviewer's open question 1 could not be answered for want of
+      # exactly this. Report it with the reason instead of swallowing it.
+      if emurun_is_mounted "$OUR_MOUNT"; then
+        echo "emurun: WARNING $OUR_MOUNT is STILL MOUNTED after fusermount -uz (rc=$um_rc${um_out:+: $um_out}); not this harness's to force." >&2
+      fi
+    fi
   else
     echo "emurun: NOTE the AppImage FUSE mount was never identified; it may linger." >&2
   fi
@@ -306,8 +419,9 @@ emurun_cleanup() {
   #   * only mounts that existed BEFORE this lane launched are candidates;
   #   * the in-use test is consulted unconditionally, before anything else;
   #   * death must be PROVEN. A mount that answers `stat` is live and is left
-  #     alone even if nothing executes from it (this lane's own mount was already
-  #     unmounted above by path), and a `stat` that times out or fails for any
+  #     alone even if nothing executes from it (this lane's own mount was handled
+  #     above, and only if this lane could prove it was ours), and a `stat` that
+  #     times out or fails for any
   #     reason other than "Transport endpoint is not connected" is inconclusive,
   #     which means leave it alone. An inconclusive probe is never evidence of
   #     death — the same rule every other guard in this file follows.

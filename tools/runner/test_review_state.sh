@@ -924,11 +924,60 @@ guard_absent  "retired grok is in no chain"                        'litellm/grok
 guard_present "F3: the identity of both sides is recorded"     'review-$ITER.identity.txt'
 # Review-1 F2: the identity artifact must STATE whether independence held, and
 # the prompt must be told who actually wrote the batch instead of a hard-coded
-# name that goes stale the moment the worker falls back.
-guard_present "review-1 F2: the identity file states a proved independence" 'independence: PROVED'
-guard_present "review-1 F2: a same-family dispatch is named in the artifact" 'SAME-FAMILY ('
-guard_present "review-1 F2: an unresolvable side is UNPROVEN, not silent" 'independence: UNPROVEN'
-guard_present "review-1 F2: the builder route is templated into the prompt" 'The builder of this batch was'
+# name that goes stale the moment the worker falls back. The three verdict
+# spellings moved into one computed variable when review-2 F3 asked that the
+# artifact and the prompt stop disagreeing; the property each pin names is
+# unchanged, the string it lives in is not.
+guard_present "review-1 F2: the identity file states a proved independence" 'INDEP="PROVED — builder family'
+guard_present "review-1 F2: a same-family dispatch is named in the artifact" 'INDEP="SAME-FAMILY ('
+guard_present "review-1 F2: an unresolvable side is UNPROVEN, not silent" 'INDEP="UNPROVEN —'
+guard_present "review-1 F2: the builder route is templated into the prompt" 'builder:  %s upstream=%s family=%s'
+# Review-2 F2 (external review 2026-11-05, run-20261105-062743/review-2.md): the
+# prompt used to be written ABOVE the reviewer selection while interpolating
+# ${REVIEW_MODEL:-…}, so it named the previous iteration's reviewer — or "nobody,
+# this review was BLOCKED" on iteration 1 — and the reviewer's only in-prompt
+# source for its own identity was a value the harness had not resolved yet. This
+# is an ORDER pin on purpose: every string involved was already present in the
+# broken file, so presence cannot express the defect.
+order_before "review-2 F2: the reviewer is selected before the prompt is written" \
+             'REVIEW_MODEL="$candidate"' '} >"$RP"'
+order_before "review-2 F2: and before the identity artifact is written" \
+             'REVIEW_MODEL="$candidate"' 'review-$ITER.identity.txt'
+guard_absent  "review-2 F2: nothing interpolates a not-yet-chosen reviewer" '${REVIEW_MODEL:-'
+# Review-2 F3: the prompt tells the reviewer to compare two `family=` fields, so
+# both sides must print one, and both must come from the same computed verdict.
+guard_present "review-2 F3: the prompt prints the reviewer's family as a literal field" 'reviewer: %s upstream=%s family=%s'
+guard_present "review-2 F3: the artifact prints the computed verdict" 'echo "independence: $INDEP"'
+guard_present "review-2 F3: and so does the prompt, from the same variable" 'independence: %s\n'
+# Review-2 F1: a harness edit is not true until the process restarts, and a stale
+# loop must not be the authority on whether it is stale. Scoped to the arm, for
+# the usual reason: `exit 8` and `-x` both appear elsewhere in the file, so a
+# file-wide presence pin would stay green with the arm deleted.
+stale_guard() { # the staleness arm, between its own two anchors
+    awk '/SELF_SHA_NOW=/,/so a systemd restart would fail/' "$LOOP_CODE"
+}
+SG_LINES="$(stale_guard | wc -l)"
+if [ "$SG_LINES" -ge 8 ]; then
+    printf 'PASS the staleness arm was lifted (%s lines), so its guards are not vacuous\n' "$SG_LINES"
+else
+    printf 'FAIL the staleness arm lifted %s lines — its guards would pass vacuously\n' "$SG_LINES"
+    fails=$((fails + 1))
+fi
+guard_in_stale() { # guard_in_stale <label> <fixed-string>
+    if stale_guard | grep -qF "$2"; then
+        printf 'PASS %s\n' "$1"
+    else
+        printf 'FAIL %s — %s is missing from the staleness arm\n' "$1" "$2"
+        fails=$((fails + 1))
+    fi
+}
+guard_present "review-2 F1: the running copy is hashed at startup" 'SELF_SHA_START="$(self_sha)"'
+order_before "review-2 F1: and it is hashed before the first iteration exists" 'SELF_SHA_START="$(self_sha)"' 'phase startup'
+guard_in_stale "review-2 F1: the arm compares the startup hash with the file on disk" '[ "$SELF_SHA_NOW" != "$SELF_SHA_START" ]'
+guard_in_stale "review-2 F1: a stale loop stops when a restart is possible" 'exit 8'
+guard_in_stale "review-2 F1: and it checks the restart is possible before taking it" '[ -x "$SELF_PATH" ]'
+guard_present "review-2 F1: staleness reaches the review artifacts, not just the log" 'HARNESS_NOTE'
+guard_present "review-2 F1: and it is named to the reviewer as NOT IN EFFECT" 'NOT IN EFFECT'
 # H1: the obligation is written where it cannot be lost with the collector.
 guard_present "H1: the range is persisted at dispatch"          'state_write REVIEW_INFLIGHT_BASE="$REVIEW_INFLIGHT_BASE"'
 guard_present "H1: startup folds an uncollected review into owed" 'REVIEW_OWED_BASE="$(review_inflight_owed "$REVIEW_OWED_BASE" "$REVIEW_INFLIGHT_BASE")"'

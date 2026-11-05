@@ -633,6 +633,56 @@ def adjudicate(text, quiet=False):
     rep.check("depth-state-single-writer", len(depth) == 1,
               "%d C3D_DepthTest call site(s); the cache is the only writer, so a second one "
               "writes behind its back" % len(depth))
+
+    # THE MICROCODE IS UPLOADED FROM INSIDE THE FRAME (review-6 F6, external review
+    # 2026-11-05). Batch 66 hung the guest between `shaderProgramSetVsh ok` and the
+    # `backend:` token; batch 67 found the cause by DELETING the create-time
+    # `shaderProgramConfigure` and watching the guest boot. That is the whole
+    # functional fix of a batch, and nothing in any gate could see it: the shipped
+    # citro3d sends the configure itself from `C3Di_UpdateContext`, right after the
+    # bind, so a second send at create is GPUCMD_Add into whatever command buffer
+    # happened to be current before the first frame existed. A one-line "restore
+    # symmetry with the sibling port" edit re-opens a hang that costs an emulator
+    # run to find, so the shape is pinned here with the upload and the bind it goes
+    # with — otherwise the check would be satisfied by deleting the shader setup.
+    conf = call_sites(text, "shaderProgramConfigure")
+    rep.check("shader-configure-never-sent-by-hand",
+              not conf,
+              "%d shaderProgramConfigure call site(s): %s (C3Di_UpdateContext sends it "
+              "after the bind, inside the frame; a hand-written one at create is a "
+              "GPUCMD_Add outside any C3D_FrameBegin, which is what stopped the guest "
+              "before `backend:` in batch 66)"
+              % (len(conf), "none" if not conf else "; ".join(loc for _, loc in conf)))
+
+    # The span must start BEFORE the opening brace: block_span_from looks for the
+    # first `{` at or after the match end, so a pattern that swallows the brace
+    # hands back the first inner block and every line of the real function reads as
+    # "outside" it — which is a check that fails on the good file, the only kind of
+    # failure a source gate can honestly have.
+    create_span = block_span(text, r"MdkRenderer mdk_render_create\(const MdkRenderDesc\* desc\)")
+    create_range = line_range(text, create_span)
+    vsh = call_sites(text, "shaderProgramSetVsh")
+    vsh_stray = [loc for ln, loc in vsh
+                 if not (create_range and create_range[0] <= ln <= create_range[1])]
+    rep.check("shader-uploaded-exactly-once-at-create",
+              len(vsh) == 1 and not vsh_stray and create_range,
+              "%d shaderProgramSetVsh call(s), %d outside mdk_render_create: %s "
+              "(setVsh builds the instance the configure later uploads; zero means the "
+              "program has no microcode, two means something rebinds it mid-life)"
+              % (len(vsh), len(vsh_stray),
+                 "none" if not vsh_stray else "; ".join(vsh_stray)))
+
+    eye_range = line_range(text, body_span(text, "installEye"))
+    bind = call_sites(text, "C3D_BindProgram")
+    bind_stray = [loc for ln, loc in bind
+                  if not (eye_range and eye_range[0] <= ln <= eye_range[1])]
+    rep.check("program-bound-only-where-an-eye-is-installed",
+              len(bind) == 1 and not bind_stray and eye_range,
+              "%d C3D_BindProgram call(s), %d outside installEye: %s (the bind is what "
+              "marks the shader dirty so UpdateContext configures it once per frame; a "
+              "bind outside the eye install runs outside the frame contract)"
+              % (len(bind), len(bind_stray),
+                 "none" if not bind_stray else "; ".join(bind_stray)))
     return rep
 
 
@@ -885,6 +935,11 @@ def arm_canvas_quad_emits(text, stmt):
 
 real = adjudicate(SRC)
 
+# The last line the guest wrote while it was hanging (batch 66), used as the
+# anchor for the arms that restore the create-time shader traffic.
+SHADER_OK_LINE = ('    mdk::log3dsPrintf("shaderProgramSetVsh ok result=0x%08lx", '
+                  '(unsigned long)spVsh);')
+
 ARMS = [
     ("diagnostic-back-in-the-per-draw-path",
      lambda s: s.replace("    C3D_DrawArrays(GPU_TRIANGLES, first, count);",
@@ -943,6 +998,17 @@ ARMS = [
      lambda s: arm_loop_bound(s, "int eye = 0", "int eye = 1")),
     ("install-targets-swapped-between-eyes", arm_install_targets_swapped),
     ("install-offset-negated", arm_install_offset_negated),
+    # review-6 F6's mutants: the batch-66 hang, restored three ways. Each is a
+    # plausible edit and none of them is visible to any other gate.
+    ("create-time-shader-configure-restored",
+     lambda s: s.replace(SHADER_OK_LINE,
+                         SHADER_OK_LINE + "\n    shaderProgramConfigure(&r->program, false);", 1)),
+    ("shader-upload-removed-from-create",
+     lambda s: s.replace("        ? shaderProgramSetVsh(&r->program, &r->dvlb->DVLE[0])",
+                         "        ? (Result)0", 1)),
+    ("program-bound-at-create-as-well",
+     lambda s: s.replace(SHADER_OK_LINE,
+                         "    C3D_BindProgram(&r->program);\n" + SHADER_OK_LINE, 1)),
 ]
 
 print("c3d_frame: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

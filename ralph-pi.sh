@@ -454,6 +454,22 @@ if ! flock -n 9; then
     exit 2
 fi
 
+# --- do not certify a harness this process is not running --------------------
+# (external review 2026-11-05, run-20261105-062743/review-2.md F1). Batch 67
+# committed the reviewer-independence fixes and its own review then proved the
+# running loop had not picked them up: the artifacts that "certify" a harness fix
+# were written by the copy of ralph-pi.sh that predates it. bash reads a script
+# incrementally, so editing this file does not change the copy a live loop is
+# executing, and a restart is the only thing that makes a harness edit true.
+# The loop therefore records which copy it IS, and refuses to keep going once the
+# tree has moved past it — otherwise the stale process is the authority on whether
+# it is stale. The hash is taken here, before the first iteration, and compared at
+# every iteration boundary, where nothing is in flight.
+SELF_PATH="${BASH_SOURCE[0]:-$0}"
+self_sha() { sha256sum "$SELF_PATH" 2>/dev/null | cut -c1-16 || true; }
+SELF_SHA_START="$(self_sha)"
+log "startup: this process is ralph-pi.sh sha=${SELF_SHA_START:-UNAVAILABLE} mode=$(stat -c %a "$SELF_PATH" 2>/dev/null || echo '??') path=$SELF_PATH"
+
 ITER=0; STALL=0; FAILS=0
 # Risk-based review state (persisted across restarts).
 REVIEW_CALLS="$(state_get REVIEW_CALLS)"; REVIEW_CALLS="${REVIEW_CALLS:-0}"
@@ -617,6 +633,29 @@ elif [ "$REVIEW_LEFTOVER" = "invoked" ]; then
 fi
 phase startup
 while :; do
+    # (review-2 F1) Has the tree moved past this process? Checked at the top of an
+    # iteration, before any worker or reviewer exists, so stopping here loses no
+    # work and leaves nothing in flight to be folded as a lost review.
+    SELF_SHA_NOW="$(self_sha)"
+    HARNESS_STALE=0
+    if [ -n "$SELF_SHA_START" ] && [ -n "$SELF_SHA_NOW" ] \
+        && [ "$SELF_SHA_NOW" != "$SELF_SHA_START" ]; then
+        HARNESS_STALE=1
+        log "HARNESS STALE: ralph-pi.sh on disk is $SELF_SHA_NOW but this process runs $SELF_SHA_START — every harness fix committed since startup is NOT in effect"
+        if [ -x "$SELF_PATH" ]; then
+            # The stop is the fix: systemd restarts onto the on-disk copy, which is
+            # the only event that makes the committed harness real.
+            log "HARNESS STALE: stopping now (exit 8) so the restart loads the on-disk copy; a harness edit is not evidence until it does"
+            exit 8
+        fi
+        # Restarting would fail 203/EXEC on a non-executable file, and a loop that
+        # stops is worse than a loop that says it is stale: this uid cannot chmod a
+        # coleshores-owned file (owner task 18), so the choice is between a stale
+        # loop that labels itself and no loop at all. The label is not a pass — the
+        # review prompt and the identity artifact both carry HARNESS STALE from here
+        # on, so a reviewer is never told a fix is live when it is not.
+        log "HARNESS STALE: NOT stopping — $SELF_PATH is mode $(stat -c %a "$SELF_PATH" 2>/dev/null || echo '??') so a systemd restart would fail 203/EXEC; continuing stale and saying so in every artifact until the mode is restored"
+    fi
     phase route-health
     RUN_MODEL=""
     for candidate in $WORKER_MODELS; do
@@ -817,21 +856,22 @@ POLICY_PRECEDENCE
             RP="$RUN_DIR/.review-prompt-$ITER.md"
             REVIEW_BASE="$HEAD_BEFORE"
             [ -n "$REVIEW_OWED_BASE" ] && REVIEW_BASE="$REVIEW_OWED_BASE"
-            {
-                cat "$VALIDATOR_FILE"
-                printf '\n\n--- REVIEW IDENTITY ---\n'
-                printf 'The builder of this batch was %s (upstream %s, family %s).\n' \
-                    "$RUN_MODEL" "${RUN_UPSTREAM:-UNRESOLVED}" "${RUN_FAMILY:-UNRESOLVED}"
-                printf 'You are dispatched as %s. Judge independence from the resolved upstream and family above, NOT from any model name written in the text you are reading: the reviewer prompt is a fixed file and the builder route changes when the worker falls back.\n' \
-                    "${REVIEW_MODEL:-nobody — this review was BLOCKED}"
-                printf 'If the two families above are the same, mark the review NOT INDEPENDENT whatever the prompt says about who wrote the code.\n'
-                printf '\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${REVIEW_BASE:0:8}" "${HEAD_AFTER:0:8}"
-                if [ "$REVIEW_BASE" != "$HEAD_BEFORE" ]; then
-                    printf 'This range is wider than this iteration because an earlier review could not be dispatched or died; %s..%s was never reviewed by anyone.\n' "${REVIEW_BASE:0:8}" "${HEAD_BEFORE:0:8}"
-                fi
-                printf '\n--- RISK CONTEXT ---\nDeclared risk: %s. Decision: %s.\n' "$RISK" "$REVIEW_DECISION_REASON"
-            } >"$RP"
+            # THE REVIEWER IS CHOSEN BEFORE THE PROMPT IS WRITTEN (external review
+            # 2026-11-05, run-20261105-062743/review-2.md F2). The prompt used to be
+            # built here, above the selection, and it interpolated
+            # ${REVIEW_MODEL:-nobody — this review was BLOCKED}. At that point
+            # REVIEW_MODEL still held the PREVIOUS iteration's reviewer, because
+            # nothing cleared it until the line below the write — so iteration 1
+            # told its reviewer "you are nobody, this review was BLOCKED" while a
+            # reviewer was about to be dispatched, and iteration N told it the alias
+            # of whoever ran last while a different fallback was about to answer. The
+            # reviewer has no other in-prompt source for its own identity, so the one
+            # number it is asked to check was the one number the harness had not
+            # resolved yet. Order now: select, resolve, record, then write the prompt
+            # from the same values the artifact carries.
             REVIEW_MODEL=""
+            REV_UPSTREAM=""
+            REV_FAMILY=""
             REJECT="$(reviewer_reject_reason "$REVIEWER_MODEL")"
             if [ -n "$REJECT" ]; then
                 # A reviewer on the builder's own upstream (or family, or one
@@ -859,6 +899,30 @@ POLICY_PRECEDENCE
                     log "iter=$ITER reviewer fallback $candidate UNHEALTHY"
                 done
             fi
+            if [ -n "$REVIEW_MODEL" ]; then
+                REV_UPSTREAM="$(model_upstream "$REVIEW_MODEL")"
+                REV_FAMILY="$(model_family "$REVIEW_MODEL")"
+            fi
+            # The verdict is COMPUTED ONCE and handed to both artifacts, so the
+            # prompt and the file on disk cannot disagree about who reviewed what
+            # (external review 2026-11-05, review-2.md F3: the prompt told the
+            # reviewer to compare two `family=` fields and then printed neither).
+            if [ -z "$REVIEW_MODEL" ]; then
+                INDEP="NONE — no reviewer was dispatched; this review is BLOCKED, not skipped"
+            elif [ -z "$REV_FAMILY" ] || [ -z "$RUN_FAMILY" ]; then
+                INDEP="UNPROVEN — a side resolves to no family, so difference cannot be shown"
+            elif [ "$REV_FAMILY" = "$RUN_FAMILY" ]; then
+                INDEP="SAME-FAMILY ($RUN_FAMILY) — NOT AN ADVERSARIAL CHECK; this dispatch is a contract violation"
+            else
+                INDEP="PROVED — builder family $RUN_FAMILY is not reviewer family $REV_FAMILY"
+            fi
+            # (review-2 F1) If this process is not the script on disk, say so in
+            # the evidence instead of letting a stale loop certify a fix it is not
+            # running. See the startup hash for the whole argument.
+            HARNESS_NOTE=""
+            if [ "${HARNESS_STALE:-0}" = "1" ]; then
+                HARNESS_NOTE="harness:  STALE — the loop running this review started on ralph-pi.sh ${SELF_SHA_START} while the tree now holds ${SELF_SHA_NOW}; every harness fix committed since startup is NOT IN EFFECT and must not be accepted as fixed."
+            fi
             # Record who was actually on each side, by upstream and family, so a
             # later reader can check the independence claim instead of trusting
             # the alias in the log line. The verdict line is COMPUTED, not
@@ -867,28 +931,42 @@ POLICY_PRECEDENCE
             # (external review 2026-11-05, run-20261105-062743/review-1.md F2).
             {
                 echo "builder:  $RUN_MODEL upstream=${RUN_UPSTREAM:-UNRESOLVED} family=${RUN_FAMILY:-UNRESOLVED}"
-                if [ -n "$REVIEW_MODEL" ]; then
-                    REV_UPSTREAM="$(model_upstream "$REVIEW_MODEL")"
-                    REV_FAMILY="$(model_family "$REVIEW_MODEL")"
-                    echo "reviewer: $REVIEW_MODEL upstream=${REV_UPSTREAM:-UNRESOLVED} family=${REV_FAMILY:-UNRESOLVED}"
-                else
-                    REV_UPSTREAM=""
-                    REV_FAMILY=""
-                    echo "reviewer: none dispatched"
-                fi
                 if [ -z "$REVIEW_MODEL" ]; then
-                    echo "independence: NONE — no reviewer was dispatched; this review is BLOCKED, not skipped"
-                elif [ -z "$REV_FAMILY" ] || [ -z "$RUN_FAMILY" ]; then
-                    echo "independence: UNPROVEN — a side resolves to no family, so difference cannot be shown"
-                elif [ "$REV_FAMILY" = "$RUN_FAMILY" ]; then
-                    echo "independence: SAME-FAMILY ($RUN_FAMILY) — NOT AN ADVERSARIAL CHECK; this dispatch is a contract violation"
+                    echo "reviewer: none dispatched"
                 else
-                    echo "independence: PROVED — builder family $RUN_FAMILY is not reviewer family $REV_FAMILY"
+                    echo "reviewer: $REVIEW_MODEL upstream=${REV_UPSTREAM:-UNRESOLVED} family=${REV_FAMILY:-UNRESOLVED}"
                 fi
+                echo "independence: $INDEP"
+                [ -n "$HARNESS_NOTE" ] && echo "$HARNESS_NOTE"
                 echo "scope:    ${REVIEW_BASE:0:8}..${HEAD_AFTER:0:8}"
                 echo "rule:     independence is the resolved upstream and model family, never the alias string."
                 echo "source:   the proxy's /model/info when it answers, else the committed map in tools/runner/model_identity.py; an unresolved alias is refused."
             } >"$RUN_DIR/review-$ITER.identity.txt"
+            # The prompt, written LAST, from the values the artifact just recorded.
+            # The two `family=` fields are literal, because ralph/validator.md tells
+            # the reviewer to compare exactly those two fields and the first version
+            # of this block printed `family qwen` for the builder and nothing at all
+            # for the reviewer (review-2 F3).
+            {
+                cat "$VALIDATOR_FILE"
+                printf '\n\n--- REVIEW IDENTITY ---\n'
+                printf 'builder:  %s upstream=%s family=%s\n' \
+                    "$RUN_MODEL" "${RUN_UPSTREAM:-UNRESOLVED}" "${RUN_FAMILY:-UNRESOLVED}"
+                if [ -n "$REVIEW_MODEL" ]; then
+                    printf 'reviewer: %s upstream=%s family=%s\n' \
+                        "$REVIEW_MODEL" "${REV_UPSTREAM:-UNRESOLVED}" "${REV_FAMILY:-UNRESOLVED}"
+                else
+                    printf 'reviewer: none dispatched — this review is BLOCKED, not skipped\n'
+                fi
+                printf 'independence: %s\n' "$INDEP"
+                [ -n "$HARNESS_NOTE" ] && printf '%s\n' "$HARNESS_NOTE"
+                printf 'Compare the two family= fields above. They are the resolved identity of each side, computed by the harness from the route that actually answered — not from any model name written in the prose you are reading. The reviewer prompt is a fixed file and the builder route changes when the worker falls back, so the prose proves nothing and the artifact on disk was not given to you. If the two families are the same, or either says UNRESOLVED, mark the review NOT INDEPENDENT whatever the prompt says about who wrote the code.\n'
+                printf '\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${REVIEW_BASE:0:8}" "${HEAD_AFTER:0:8}"
+                if [ "$REVIEW_BASE" != "$HEAD_BEFORE" ]; then
+                    printf 'This range is wider than this iteration because an earlier review could not be dispatched or died; %s..%s was never reviewed by anyone.\n' "${REVIEW_BASE:0:8}" "${HEAD_BEFORE:0:8}"
+                fi
+                printf '\n--- RISK CONTEXT ---\nDeclared risk: %s. Decision: %s.\n' "$RISK" "$REVIEW_DECISION_REASON"
+            } >"$RP"
             if [ -n "$REVIEW_MODEL" ] && [ "$(model_family "$REVIEW_MODEL")" = "$RUN_FAMILY" ]; then
                 # Unreachable through the chain above (reviewer_reject_reason
                 # refuses it), so this is a tripwire, not a branch: if it ever

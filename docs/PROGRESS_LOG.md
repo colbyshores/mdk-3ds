@@ -13181,3 +13181,191 @@ death/restart. Two measured leads carried into it are in `docs/CONTINUATION.md`:
 clear plus a sliver (draws happen, so look at the colour/GPU-state path), and `draws issued: 0` is a broken
 instrument that must not be quoted until its cause is named. **Old-3DS timing remains UNMEASURED** and the
 Citro3D picture remains **UNVERIFIED** against the oracle (P6).
+
+## Iteration 96 — batch 68: the loop stops certifying a harness it is not running, and the emulator harness stops sharing mounts
+
+Review-2 of `logs/ralph-pi/run-20261105-062743/review-2.md` (DeepSeek V4.1 Flash, independence PROVED
+qwen/deepseek) raised one Critical, one High and five lower findings, all against the loop harness and the
+Mandarine harness rather than the game. Every one was reproduced before it was touched. None was rebutted:
+F1–F6 are fixed, F7 is a stale documentation list, and F1 has an owner-owned remainder named below.
+
+### F1 (Critical) — a stale loop was certifying its own fix. Fixed in code; the restart is owner-owned.
+
+Confirmed, with the reviewer's mechanism reproduced rather than accepted:
+
+| Fact | Measured |
+|---|---|
+| the live loop predates batch 67 | `ps -o lstart -p 3569109` → `Wed Nov 4 23:27:04 2026`; batch 67 (`7173268`) is dated `2026-11-05 00:54:44 -0700` |
+| the worktree file is not executable | `stat -c %a` → `664 coleshores:development`; `git ls-files -s` → `100755` |
+| this uid cannot fix it | `chmod +x ralph-pi.sh` → `chmod: changing permissions of 'ralph-pi.sh': Operation not permitted`; `sudo -n true` → `a password is required` |
+| a restart would fail | unit `ExecStart=/mnt/nas/Development/mdk-sdl/ralph-pi.sh`, `RestartPreventExitStatus=2 6 7` — a `203/EXEC` start failure is not in that list, so systemd retries a file it cannot exec |
+
+What the batch adds is the thing that was missing: the loop now knows which copy of itself it is running.
+`SELF_SHA_START="$(self_sha)"` is taken before the first iteration; every iteration boundary re-hashes
+`$SELF_PATH` and compares. On a difference the loop **stops (exit 8)** so systemd starts the on-disk copy —
+because a harness edit is not evidence until it runs. The one case where stopping is the wrong answer is the
+case this box is in: if the file is not executable, a restart cannot succeed, so stopping would take the loop
+down with no way back. There it continues and **labels itself**: `HARNESS STALE` goes into the log, into the
+identity artifact and into the review prompt as "every harness fix committed since startup is NOT IN EFFECT
+and must not be accepted as fixed". A stale loop can still be wrong; it can no longer be silent about it.
+
+Two things stated plainly rather than glossed. The guard **cannot protect the run that installs it** — the
+process that would enforce it is the pre-fix process — so it takes effect at the first restart that loads
+this file. And the two owner actions remain: restore `0755` on the worktree `ralph-pi.sh` (owner task 18) and
+restart `ralph-pi-mdk.service`. Until both happen the loop runs the pre-fix reviewer chain and says so.
+
+### F2 (High) — the prompt named a reviewer that had not been chosen yet. Fixed.
+
+Reproduced by reading the order: the prompt block interpolated `${REVIEW_MODEL:-nobody — this review was
+BLOCKED}` above the line that clears `REVIEW_MODEL`, so iteration 1 told its reviewer it was nobody and
+iteration N named the previous iteration's alias. Selection now happens first, the identity artifact is
+written from it, and the prompt is written last from the same values. Smoke-tested both arms by lifting the
+block out of the file and running it with stubs:
+
+```
+builder:  litellm/qwen upstream=openai/qwen38-flash-next family=qwen
+reviewer: litellm/deepseek-v4.1-flash upstream=deepseek/deepseek-flash family=deepseek
+independence: PROVED — builder family qwen is not reviewer family deepseek
+```
+and, with the DeepSeek route made unhealthy and the builder on the `-th` fallback:
+```
+builder:  litellm/deepseek-v4.1-flash-th upstream=deepseek/deepseek-flash family=deepseek
+reviewer: litellm/minimax-m3.1-flash-nvidia upstream=minimax/minimax family=minimax
+independence: PROVED — builder family deepseek is not reviewer family minimax
+```
+Pinned by `order_before` guards in `tools/runner/test_review_state.sh` — presence could not express this
+defect, since every string involved was already in the broken file.
+
+### F3 (Medium) — the prompt asked for a `family=` comparison it never printed. Fixed.
+
+The block now prints `builder: … family=qwen` and `reviewer: … family=deepseek` literally, which is what
+`ralph/validator.md` tells the reviewer to compare, and one computed `INDEP` feeds both the artifact and the
+prompt so they cannot disagree. Three review-1 F2 pins moved to the new spellings (`INDEP="PROVED — …`); the
+property each named is unchanged and still pinned.
+
+### F4 (Medium) — the lane unmounted a mount that was not its own. Fixed.
+
+`emurun_cleanup` detached `$OUR_MOUNT` unconditionally, by path, discarding `fusermount`'s status. The
+AppImage runtime hands every launch of the same AppImage the same `/tmp/.mount_mandarXXXXXX`, so the first
+lane out detaches the RomFS a co-tenant is executing from — the rc=4 "the game DIED" symptom review-1 F3 was
+written about. The vault says the same thing independently
+(`50-tooling/multi-tenant-emulator-harness-isolate-by-display.md`: "Only unmount a squashfs/FUSE mount nobody
+is executing from"), and the sibling campaigns' statecap notes record a foreign `.mount_mandary*` being
+encountered and left alone. The arm now refuses to release a mount on either of two proofs — it predates the
+lane (`PRE_MOUNTS`), or a process without this lane's `MDK_EMURUN_LANE` token executes out of it
+(`emurun_mount_foreign`, unreadable environ counts as *not ours*) — and a mount that survives the attempt is
+reported as a WARNING with `fusermount`'s exit code and stderr. `emurun_is_mounted` re-reads `/proc/mounts`
+rather than trusting the call's return.
+
+The reviewer's open question 1 (why the earlier `fusermount -uz` did not clear the mount) is **not** answered
+— the status was discarded at the time and there is no way to recover it. It is answerable next time, which is
+the point of capturing it.
+
+### F5 (Medium) — a forced key could land outside every section and still be reported as forced. Fixed, plus a latent defect found under it.
+
+The reviewer's repro was run first: with a config that has no `[Renderer]` header, `cfg_set` appended bare
+keys at EOF, QSettings reads those as `[General]`, and the verdict printed "an explicit override the
+emulator kept". `cfg_place` now creates the header when the file has none (which is what QSettings itself
+writes), and every key records where it landed — `existing`, `inserted`, `new-section`, `UNPLACED` — and
+`cfg_default_note` refuses to call an unplaced key a forced value.
+
+Fixing it exposed a second, older defect in the batch-67 insert path. These keys contain a literal backslash
+(`graphics_api\default`), and:
+
+* a backslash in a grep BRE is an escape, not a backslash — measured, the pattern `^a\d=` does **not** match
+  the line `a\b=` — so a pattern-based "is the key already there?" test answers *no* forever and the caller
+  writes a duplicate;
+* `awk -v` runs its assignment through escape processing — measured on this box's mawk 1.3.4, `-v k='a\b'`
+  yields `a` followed by a backspace (an undefined escape like `\d` survives, which is why the companions were
+  not already broken).
+
+Both now pass keys and values through `ENVIRON` and match with fixed-string `index()`. This is a class
+removed, not one instance.
+
+### F6 (Low) — the batch's central fix had no pin. Fixed.
+
+`tests/scripts/c3d_frame_test.sh` gains three checks — no hand-written `shaderProgramConfigure` anywhere,
+exactly one `shaderProgramSetVsh` and it inside `mdk_render_create`, exactly one `C3D_BindProgram` and it
+inside `installEye` — each with a mutation arm that restores the defect. The suite is now **25 checks, 32
+arms adjudicated red**. Writing the span for the create function initially made the good file fail, because
+`block_span` wants the pattern to stop *before* the opening brace; that is documented in the file, since a
+source gate whose check fails on the good file is the one failure mode it cannot afford.
+
+### F7 (Low) — the "currently uncommitted and owner-owned" list was stale. Fixed.
+
+`docs/CONTINUATION.md` no longer enumerates a file set that rots; it names the two paths actually dirty and
+points at `git status`.
+
+### New gate: `tests/scripts/emurun_harness_test.sh`
+
+Nothing in the suite could reach the emulator harness, which is why both instrument rules could be broken
+under a green gate. The new test **lifts the config functions out of the real file** (a copy here would drift
+and certify the copy) and runs them against a temp config: bare config, seeded config, header-present-key-
+absent, and an unplaceable key — asserting which section owns each key, that the companion keeps its
+backslash, and that nothing is appended outside a section. The mount guards are pinned as source shape scoped
+to the `OUR_MOUNT` arm, because their behaviour needs a live FUSE mount and a co-tenant. Result:
+**PASS EmurunHarness (41 checks)**, wired into `make -C tests/scripts`. Three mutants were run against it to
+prove it is not a pass generator: removing the header creation → 6 FAIL, restoring the unconditional
+`fusermount` → 6 FAIL, and reverting `cfg_present` to `awk -v` → 0 FAIL, which is how the `awk -v` claim above
+got corrected: mawk preserves an *undefined* escape, so that mutant is not a defect and the test is right not
+to catch it.
+
+### Gates, as run
+
+* `make -C tests/scripts` → **`All cases match the oracle.`** (exit 0), including
+  `PASS C3dFrame (25 checks, 32 arms adjudicated red)` and `PASS EmurunHarness (41 checks)`.
+* `bash tools/check.sh` → **`CHECK: ALL GATES PASSED`** (exit 0): `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`,
+  `gates_frames every pinned frame is deterministic and unchanged`, `gates_batch_integrity project
+  invariants intact`.
+* `make -C mdk_3ds` (with `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM`) → **`3DSX mdk.3dsx`**
+  (exit 0).
+* `bash tools/runner/test_review_state.sh` (not wired into `check.sh`; run by hand) →
+  **`REVIEW STATE: ALL CASES PASS`**.
+
+### Emulator evidence (AGENTS P7/P8)
+
+`DISPLAY=:99 bash mdk_3ds/tools/emurun.sh --secs 8 --min-frames 120 --shot /tmp/kilo-pi/batch68-3ds.png`
+→ **exit 0**.
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6   (full: 0d2adab6ad078c78e6d03e72086f2eb6 = pinned r1.2.1)
+build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+frames    : reached 360 (11 frame lines logged, every 60th after #5)
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+          graphics_api=1 [default=true — the emulator counts this as its compiled default]
+stereo    : render_3d=0 [default=true] factor_3d=0 [default=true] (0 = mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0 [default=false — kept override]
+lane      : /tmp/mdk-emurun.441231 (mount /tmp/.mount_mandarFdGCHq)
+backend: PICA200 Citro3D
+view: 154 batches, 1188 vertices, 399 triangles
+frame 240 elapsed=0.0167 / frame 300 elapsed=0.0167 / frame 360 elapsed=0.0167
+```
+
+No `WARNING … STILL MOUNTED` line and `grep mount_mandar /proc/mounts` is empty afterwards, so the new
+ownership guard released the lane's own mount and left nothing behind. The instrument readback still reports
+the emulator's own flags, and the operator's seed config already carried those keys, so this run exercised
+the `existing` placement path; the `new-section` path is exercised by the new test, not by this run.
+`draws issued: 0` is still printed while the same frame logs three draws — the named instrument defect from
+batch 67, unchanged, and still not quotable as a draw count. **Emulator-green is not hardware-pass**: no
+Old-3DS was involved and Old-3DS timing remains UNMEASURED (P6).
+
+### Prior-solution lookup
+
+**pi-knowledge** `mdk-sdl` searched first. The useful hits were the sibling campaigns' Mandarine statecap
+notes (`docs/validation/statecap-v5-lane-2026-10-29.md`, `n64-statecap-v4-2026-10-29.md`), which record a
+foreign `/tmp/.mount_mandary*` belonging to another campaign and being left alone — the same rule F4 needed,
+arrived at twice. **Obsidian MCP** is not exposed in this Pi session, so the vault was read read-only from
+`/mnt/nas/Vaults/port-docs`: `50-tooling/multi-tenant-emulator-harness-isolate-by-display.md` (unmount only
+what nobody is executing from; unreadable environ is "not ours") and the pinned-version note
+`50-tooling/mandarine-emulator-location-and-version-pinning.md`. **Cognee MCP** is not exposed in this
+harness, so it was **not** consulted. No absent source is claimed as consulted.
+
+### Next
+
+Owner-directive item 2 is untouched by this batch and is still next: `src/Mdk.Game/Flow/Game.cs` (689 lines)
+— level start, tick order, level end, death/restart. The two leads from batch 67 still stand (the 3DS picture
+is a red clear plus a sliver; `draws issued: 0` is a broken instrument). **Old-3DS timing remains
+UNMEASURED** and the Citro3D picture remains **UNVERIFIED** against the oracle (P6).
