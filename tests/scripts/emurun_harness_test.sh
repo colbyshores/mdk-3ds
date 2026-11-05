@@ -64,7 +64,10 @@ check "the lift declares the placement map it reports from" "1" \
       "$(printf '%s\n' "$CFG_FN" | grep -c 'declare -A CFG_PLACED' | head -1)"
 
 WORK=$(mktemp -d) || exit 1
-trap 'rm -rf "$WORK"' EXIT
+# The mount fixtures below chmod a directory to 000 on purpose (that is what
+# produces a real EACCES), so the cleanup has to undo that before it can remove
+# it. GNU rm will not recurse into a directory it cannot read.
+trap 'chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 EMU_CFG="$WORK/qt-config.ini"
 # shellcheck disable=SC2016
 printf '%s\n' "$CFG_FN" >"$WORK/fn.sh"
@@ -248,20 +251,29 @@ check "F4 emurun_mount_foreign exists and is scoped to one definition" "1" \
 check "F4 and it skips processes carrying this lane's token" "1" \
       "$(printf '%s\n' "$FOREIGN_FN" | grep -cF 'MDK_EMURUN_LANE=$LANE' | head -1)"
 
+# The candidate set the guard is allowed to ask about, lifted the same way.
+EMUPIDS_FN="$(awk '/^emurun_emulator_pids\(\)/ { f = 1 } f { print } /^}/ { if (f) exit }' "$EMU")"
+check "F5 emurun_emulator_pids exists and is scoped to one definition" "1" \
+      "$([ "$(printf '%s\n' "$EMUPIDS_FN" | wc -l)" -ge 8 ] && echo 1 || echo 0)"
+check "F5 it is what mount_foreign iterates, not a parallel copy" "1" \
+      "$([ "$(printf '%s\n' "$FOREIGN_FN" | grep -cF 'emurun_emulator_pids' | head -1)" -ge 1 ] && echo 1 || echo 0)"
+
 # The predicate, RUN. The mount itself cannot be conjured, but the ownership
-# question can: pgrep is stubbed to name processes that really exist, and their
-# /proc entries are the real thing. This is what catches review-3 F4, which a
-# source-shape grep could not: the old body swallowed a failed environ read with
-# `|| true`, so a process this uid cannot read at all fell through to a readlink
-# that also fails on it, and the guard answered "free" for a mount it could not
-# prove was free.
+# question can: pgrep is stubbed to name processes, and their /proc entries are
+# either the real thing (PROC=/proc) or a fixture directory shaped like one
+# (PROC=$FAKEPROC). This is what catches review-3 F4, which a source-shape grep
+# could not: the old body swallowed a failed environ read with `|| true`, so a
+# process this uid cannot read at all fell through to a readlink that also fails
+# on it, and the guard answered "free" for a mount it could not prove was free.
 MOUNT=/tmp/.mount_mandarZZTEST
-foreign_of() { # <pids...> -> exit 0 foreign / 1 not foreign
+foreign_of() { # <proc-root> <pids...> -> exit 0 foreign / 1 not foreign
     (
         LANE="$FAKE_LANE"
+        PROC="$1"; shift
         FAKE_PIDS="$*"
         pgrep() { printf '%s\n' $FAKE_PIDS; }   # the args are the real caller's pattern
         # shellcheck disable=SC2034
+        eval "$(printf 'emurun_emulator_pids() { %s\n' "$(printf '%s\n' "$EMUPIDS_FN" | tail -n +2)")"
         eval "$(printf 'emurun_mount_foreign() { %s\n' "$(printf '%s\n' "$FOREIGN_FN" | tail -n +2)")"
         emurun_mount_foreign "$MOUNT" >/dev/null 2>&1
     )
@@ -273,17 +285,89 @@ MDK_EMURUN_LANE="$FAKE_LANE" sleep 30 & OWN_PID=$!
 # but provably not in the mount either.
 sleep 30 & STRANGER_PID=$!
 check "F4 a process carrying the lane token is ours, not foreign" "1" \
-      "$(foreign_of "$OWN_PID"; printf '%s' "$?")"
+      "$(foreign_of /proc "$OWN_PID"; printf '%s' "$?")"
 check "F4 a tokenless process outside the mount is not foreign either" "1" \
-      "$(foreign_of "$STRANGER_PID"; printf '%s' "$?")"
-# The defect: a pid with no readable /proc entry. The old code read "not foreign"
-# — i.e. unmount it — out of two failed reads.
-check "F4 an UNREADABLE process is foreign, so the mount is left alone" "0" \
-      "$(foreign_of 999999; printf '%s' "$?")"
-check "F4 and the guard still answers for a mix of ours and unreadable" "0" \
-      "$(foreign_of "$OWN_PID" 999999; printf '%s' "$?")"
+      "$(foreign_of /proc "$STRANGER_PID"; printf '%s' "$?")"
+# (review-4 F5) A pid pgrep listed that has already exited is not an unreadable
+# process: /proc/PID is gone, so every read fails for a reason that has nothing
+# to do with ownership. This pin used to hand it 999999 and demand "foreign", so
+# it certified the defect — a co-tenant that exited during cleanup would have
+# held this lane's mount forever.
+check "F5 a VANISHED pid is not an unreadable process, so it is not foreign" "1" \
+      "$(foreign_of /proc 999999; printf '%s' "$?")"
+check "F5 and a mix of ours and vanished still does not hold the mount" "1" \
+      "$(foreign_of /proc "$OWN_PID" 999999; printf '%s' "$?")"
 kill $OWN_PID $STRANGER_PID 2>/dev/null
 wait 2>/dev/null
+
+# --- the EACCES fixtures: a /proc shaped like a cross-uid co-tenant ----------
+# The branch that has to REFUSE is the one a missing directory cannot reach, so
+# the fixture makes a real EACCES: a mode-000 process directory is unreadable
+# for its owner in exactly the way another uid's is.
+FAKEPROC="$WORK/fakeproc"; mkdir -p "$FAKEPROC"
+mkdir -p "$FAKEPROC/4101" "$FAKEPROC/4102" "$FAKEPROC/4103" \
+         "$FAKEPROC/4104" "$FAKEPROC/4105" || exit 1
+# 4101 — live, and nothing about it can be read: comm, environ and exe all EACCES.
+# The directory itself is mode 000, so every entry lookup inside it is refused.
+chmod 000 "$FAKEPROC/4101"
+# 4102 — review-4 F1, the case that leaked every lane: an emulator-shaped comm,
+# an UNREADABLE environ, and an exe provably OUTSIDE the mount under test. The
+# old order answered "foreign" on the environ read alone, before ever asking
+# where the process runs from.
+printf 'mandarine.AppIm\n' >"$FAKEPROC/4102/comm"
+ln -s /bin/sleep "$FAKEPROC/4102/exe"
+: >"$FAKEPROC/4102/environ"; chmod 000 "$FAKEPROC/4102/environ"
+# 4103 — a foreign emulator executing INSIDE the mount, no lane token.
+printf 'AppRun.wrapped\n' >"$FAKEPROC/4103/comm"
+ln -s "$MOUNT/usr/bin/mandarine" "$FAKEPROC/4103/exe"
+printf 'OTHER=1\0' >"$FAKEPROC/4103/environ"
+# 4104 — this lane's own emulator inside the mount, token present.
+printf 'AppRun.wrapped\n' >"$FAKEPROC/4104/comm"
+ln -s "$MOUNT/usr/bin/mandarine" "$FAKEPROC/4104/exe"
+printf 'MDK_EMURUN_LANE=%s\0' "$FAKE_LANE" >"$FAKEPROC/4104/environ"
+# 4105 — another agent's `timeout` wrapper whose argv quoted the AppImage path:
+# a pgrep -f hit that is not an emulator at all (measured live 2026-11-05).
+printf 'timeout\n' >"$FAKEPROC/4105/comm"
+ln -s /usr/bin/timeout "$FAKEPROC/4105/exe"
+: >"$FAKEPROC/4105/environ"; chmod 000 "$FAKEPROC/4105/environ"
+
+check "F4 a LIVE process this uid cannot read at all is foreign, so the mount is left alone" "0" \
+      "$(foreign_of "$FAKEPROC" 4101; printf '%s' "$?")"
+check "F1 an unreadable environ on a process OUTSIDE the mount is not foreign" "1" \
+      "$(foreign_of "$FAKEPROC" 4102; printf '%s' "$?")"
+check "F1 and the mount question is asked before the environ is allowed to decide" "0" \
+      "$(printf '%s\n' "$FOREIGN_FN" | awk '
+            /readlink/   && !r { r = NR }
+            /return 0/   && !f { f = NR }
+            END { print (r && f && f > r) ? 0 : 1 }')"
+check "F4 a foreign emulator executing inside the mount IS foreign" "0" \
+      "$(foreign_of "$FAKEPROC" 4103; printf '%s' "$?")"
+check "F4 this lane's own emulator inside the mount is ours" "1" \
+      "$(foreign_of "$FAKEPROC" 4104; printf '%s' "$?")"
+check "F5 a pgrep hit that is not an emulator is not even asked" "1" \
+      "$(foreign_of "$FAKEPROC" 4105; printf '%s' "$?")"
+check "F1 the mix that used to leak every lane now releases it" "1" \
+      "$(foreign_of "$FAKEPROC" 4105 4102 4104; printf '%s' "$?")"
+check "F4 but one real foreign emulator in the mix still holds it" "0" \
+      "$(foreign_of "$FAKEPROC" 4105 4103; printf '%s' "$?")"
+
+# The candidate set itself, RUN: a command-line mention is a candidate, not a
+# verdict.
+candidates_of() { # <pids...> -> the survivors, one per line
+    (
+        PROC="$FAKEPROC"
+        FAKE_PIDS="$*"
+        pgrep() { printf '%s\n' $FAKE_PIDS; }
+        eval "$(printf 'emurun_emulator_pids() { %s\n' "$(printf '%s\n' "$EMUPIDS_FN" | tail -n +2)")"
+        emurun_emulator_pids 2>/dev/null
+    )
+}
+check "F5 the timeout wrapper whose argv quoted the path is dropped" "" \
+      "$(candidates_of 4105)"
+check "F5 and both real emulators survive the filter" "4102
+4103" "$(candidates_of 4102 4103 4105)"
+check "F5 an unreadable comm is kept: not ruling out is not ruling in" "4101" \
+      "$(candidates_of 4101)"
 
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership)"

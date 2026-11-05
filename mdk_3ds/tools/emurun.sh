@@ -343,6 +343,46 @@ OUR_MOUNT=""
 # at the same second is exactly the case a name-based reaper destroys.
 PRE_MOUNTS=""
 
+# Where per-process state is read: /proc, unless a test points it at a fixture
+# directory shaped like one. The seam exists because review-4 F5 caught the
+# harness test pinning "an unreadable process" with pid 999999 — a pid that does
+# not exist, so every read answers ENOENT, which is a different condition from
+# the EACCES a cross-uid co-tenant produces and a different decision from the
+# one that had to fail safe. A fixture directory whose process dir is mode 000
+# yields a real EACCES, so the branch that must refuse is actually executed.
+PROC="${MDK_EMURUN_PROC:-/proc}"
+
+# (review-4 F5) `pgrep -f` matches COMMAND LINES, and on this box the AppImage
+# path appears in command lines that are nothing to do with an emulator. Measured
+# live 2026-11-05: `pgrep -f 'mandarine\.AppImage|AppRun\.wrapped'` named six
+# processes and only two were the emulator (comm `AppRun.wrapped`, exe inside
+# /tmp/.mount_mandare*); the other four were another agent's `timeout`/`sudo`
+# wrappers whose argv quoted the path (pids 1179774/1179777/1279067/1279070,
+# uid 1000/root, environ EACCES, exe unreadable). A command-line hit is a
+# CANDIDATE, never a verdict. The ownership guards below ask a narrow question
+# about a specific mount, and an unclaimable false positive used to answer
+# "foreign", which leaked this lane's own mount on every run.
+# A candidate is an emulator when the kernel's own comm says so — comm is world
+# readable and a quoted argv cannot forge it — or when its exe lives under a
+# `.mount_mandar*` FUSE root. An unreadable comm is KEPT: being unable to rule a
+# process out is not the same as ruling it out.
+emurun_emulator_pids() {
+  local p comm exe
+  for p in $(pgrep -f 'mandarine\.AppImage|AppRun\.wrapped' 2>/dev/null); do
+    comm=$(cat "$PROC/$p/comm" 2>/dev/null || true)
+    if [ -z "$comm" ]; then
+      echo "$p"                      # unreadable comm: cannot rule it out
+      continue
+    fi
+    case "$comm" in
+      *mandarine*|*AppRun*|*AppImage*) echo "$p"; continue ;;
+    esac
+    exe=$(readlink "$PROC/$p/exe" 2>/dev/null || true)
+    case "$exe" in */.mount_mandar*/*) echo "$p" ;; esac
+  done
+  return 0
+}
+
 # (3)(9) OWNERSHIP BY THE LANE, not by name and not by the PID tree alone.
 # A `pgrep -P` walk cannot see the whole emulator: the AppImage runtime forks
 # AppRun.wrapped and that child gets REPARENTED (measured 2026-11-05, PPID 1),
@@ -359,7 +399,7 @@ emurun_own_pids() {
   local p env
   [ -n "$OWN_ROOT" ] && echo "$OWN_ROOT"
   for p in $(pgrep -f 'mandarine\.AppImage|AppRun\.wrapped' 2>/dev/null); do
-    env=$( { tr '\0' '\n' < "/proc/$p/environ"; printf '\n'; } 2>/dev/null || true )
+    env=$( { tr '\0' '\n' < "$PROC/$p/environ"; printf '\n'; } 2>/dev/null || true )
     case "$env" in *$'\n'"MDK_EMURUN_LANE=$LANE"$'\n'*) echo "$p" ;; esac
   done
   return 0
@@ -398,8 +438,8 @@ emurun_alive() {
 # yanking a co-tenant's live mount destroys someone else's run.
 emurun_mount_in_use() {
   local m="$1" p exe
-  for p in $(pgrep -f 'mandarine\.AppImage|AppRun\.wrapped' 2>/dev/null); do
-    exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  for p in $(emurun_emulator_pids 2>/dev/null); do
+    exe=$(readlink -f "$PROC/$p/exe" 2>/dev/null || true)
     case "$exe" in "$m"/*) return 0 ;; esac
   done
   return 1
@@ -414,29 +454,39 @@ emurun_mount_in_use() {
 # the dead endpoints this question has to survive.
 emurun_mount_foreign() {
   local m="$1" p env exe
-  for p in $(pgrep -f 'mandarine\.AppImage|AppRun\.wrapped' 2>/dev/null); do
-    # Can THIS lane claim the process? The token is the only proof, and a failed
-    # environ read is the absence of proof rather than proof of absence: it must
-    # not fall through to the exe check (review-3 F4 — the comment above promised
-    # the safe direction and the code took the other one, so a process this uid
-    # cannot read at all was judged "not foreign" and the mount was detached under
-    # it). Same rule emurun_own_pids already applies to the kill path.
+  for p in $(emurun_emulator_pids 2>/dev/null); do
+    # A pid pgrep listed that has already exited says nothing about this mount.
+    # Every read below fails on it, and the old code read that as "unclaimable,
+    # therefore foreign", so an unrelated process that happened to exit during
+    # cleanup held this lane's mount forever (review-4 F5). ENOENT is the absence
+    # of a process; EACCES is the absence of proof about one that is live, and
+    # only the second is this guard's problem.
+    [ -d "$PROC/$p" ] || continue
+    # Can THIS lane claim it? The token is the only proof. A failed environ read
+    # is the absence of proof, NOT proof of foreignness: it falls through to the
+    # mount question below (review-4 F1 — the old order answered "foreign" here,
+    # before ever asking where the process runs from, so any unclaimable process
+    # on the box — and this box always has some, see emurun_emulator_pids — made
+    # every lane leak its own mount and print a NOTE the guard never established).
     # The `2>/dev/null` wraps the GROUP, not `tr`: a failed `<` redirect is
     # reported by the shell before tr runs, so a per-command redirect does not
     # catch it and the harness verdict used to be followed by a bare
     # "emurun.sh: line N: /proc/PID/environ: Permission denied" (measured live
     # 2026-11-05 with a cross-uid co-tenant present). The refusal must be silent
     # and still counted.
-    if env="$( { tr '\0' '\n' < "/proc/$p/environ"; } 2>/dev/null)"; then
+    if env="$( { tr '\0' '\n' < "$PROC/$p/environ"; } 2>/dev/null)"; then
       case $'\n'"$env"$'\n' in
         *$'\n'"MDK_EMURUN_LANE=$LANE"$'\n'*) continue ;;   # ours: not foreign
       esac
-    else
-      return 0
     fi
-    # Unclaimable by token. If its exe is unreadable too, we cannot say where it
-    # runs from, and "unknown" must never read as "free".
-    exe="$(readlink "/proc/$p/exe" 2>/dev/null)" || return 0
+    # Not ours. Now ask the question that actually decides it: does it execute out
+    # of THE MOUNT UNDER TEST? The raw symlink, not readlink -f — resolving it
+    # walks INTO the FUSE mount, which fails for exactly the dead endpoints this
+    # question has to survive.
+    exe="$(readlink "$PROC/$p/exe" 2>/dev/null)" || exe=""
+    # Unclaimable AND unlocatable: we cannot say it is outside the mount, and
+    # "unknown" must never read as "free". This is the only place a failed read
+    # still answers foreign, and it now needs BOTH reads to fail.
     [ -n "$exe" ] || return 0
     case "$exe" in "$m"/*) return 0 ;; esac
   done
@@ -463,6 +513,21 @@ emurun_cleanup() {
   for p in $(emurun_own_pids 2>/dev/null); do
     kill -9 "$p" 2>/dev/null || true
   done
+  # (review-5 F4) The verdict samples the frame counter at the deadline and then
+  # this trap runs, so the emulator keeps writing while it is reaped: a measured
+  # run printed "reached 1680 (33 frame lines)" while the retained log ended at
+  # frame 1740 with 34 lines. The quote was faithful to the tool and still
+  # re-checked wrong against the log it came from. Re-read AFTER the reap and print
+  # the number the log actually ends at, so the verdict's figure is visibly a
+  # lower bound taken at the deadline and not the run's length.
+  if [ -n "${LOG:-}" ] && [ -f "${LOG:-}" ]; then
+    local end_frame end_lines
+    end_frame=$(grep "$FRAME_RE" "$LOG" 2>/dev/null | tail -1 | awk '{print $2}')
+    end_lines=$(grep -c "$FRAME_RE" "$LOG" 2>/dev/null || true)
+    case "${end_frame:-}" in ''|*[!0-9]*) end_frame=0 ;; esac
+    case "${end_lines:-}" in ''|*[!0-9]*) end_lines=0 ;; esac
+    echo "emurun: after the reap the guest log ends at frame $end_frame ($end_lines frame lines logged)" >&2
+  fi
   # (9) unmount the FUSE root THIS run started, by path — but only what this
   # lane can PROVE is its own (review-2 F4: this was unconditional, and the
   # status was discarded). The AppImage runtime reuses an existing mount for the
@@ -676,7 +741,7 @@ echo "display   : $DISPLAY"
 echo "emulator  : $(basename "$APPIMAGE") md5 ${EMU_MD5:0:8}"
 echo "build     : $DSX"
 echo "guest log : $LOG"
-echo "frames    : reached $LAST_FRAME ($FRAMES frame lines logged, every 60th after #5)"
+echo "frames    : reached $LAST_FRAME by the deadline ($FRAMES frame lines logged, every 60th after #5); the post-reap line below is the log's real last frame"
 # (7)(8) The instrument, recorded rather than assumed (AGENTS P6: a capture
 # must record its clock/cache settings AND its stereoscopic mode).
 echo "gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)"

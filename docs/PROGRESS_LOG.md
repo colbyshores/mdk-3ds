@@ -13812,3 +13812,182 @@ Owner-directive item 2 is now done for the flow half of `Game.cs`. What it unblo
    Kurt's sprite → the HUD) and implements the tick order `game_flow.h` now documents. The flow's
    `Screen` enum is the seam it needs.
 4. **Item 5, ndsp audio**, then **item 6, Citro3D alpha blend**.
+
+---
+
+## Iteration 99 — batch 71: the emulator harness stops leaking its own mount, and an unreadable process is no longer a guess
+
+Owner-directive item 3. `mdk_3ds/tools/emurun.sh` is the only thing that turns a 3DS build into evidence
+(AGENTS P8), and until today **every lane leaked the FUSE mount it was supposed to release** while printing a
+NOTE that the guard had never actually established. No game code changed, no golden moved, no gate was touched.
+
+### What landed
+
+| File | Change |
+|---|---|
+| `mdk_3ds/tools/emurun.sh` | `emurun_emulator_pids` (a `pgrep -f` hit is a candidate, not a verdict), the reordered `emurun_mount_foreign`, a `PROC` seam for the fixtures, and a post-reap re-read of the guest log |
+| `tests/scripts/emurun_harness_test.sh` | the guard is now RUN against a real-EACCES fixture; the two rows that certified the defect are re-pinned; 57 checks → 68 |
+
+Nothing in `mdk_core/**` or `mdk_3ds/src/**` changed, so neither target's compiled output moved: `make -C
+mdk_3ds` re-links the same objects and prints `3DSX mdk.3dsx`, and `gates_core_parity` passes unchanged.
+
+### review-4 F1 — confirmed, fixed: the guard answered about a mount it had not located the process in
+
+The old body was, in order: read the environ; **if that read failed, `return 0` — foreign**; only then read the
+exe and ask whether the process was in the mount. On this box the environ read fails constantly for processes
+that are not emulators and not near the mount, so the answer arrived before the question.
+
+The live process set while this batch ran (measured, not reasoned):
+
+```
+pid=1179774 uid=1000 comm=timeout          exe=<EACCES>
+pid=1179777 uid=0    comm=sudo             exe=<EACCES>
+pid=1391766 uid=994  comm=AppRun.wrapped   exe=/tmp/.mount_mandar39MWxn/usr/bin/mandarine
+pid=1391777 uid=994  comm=mandarine.AppIm  exe=/mnt/nas/.../mandarine.AppImage
+pid=1392114 uid=994  comm=AppRun.wrapped   exe=/tmp/.mount_mandar9HB7OZ/usr/bin/mandarine
+pid=1392123 uid=994  comm=mandarine.AppIm  exe=/mnt/nas/.../mandarine.AppImage
+```
+
+The first two are another agent's `timeout`/`sudo` wrappers whose argv quotes the AppImage path; they are not
+emulators and they execute nowhere near any mandarine mount. Replaying both guards against that live set, for a
+mount nobody is using:
+
+```
+old (HEAD): foreign      # → "NOTE … has a process outside this lane executing from it; left mounted."
+new       : free         # → the lane releases its own mount
+```
+
+And the emulator run below is the same proof end to end: the lane identified
+`/tmp/.mount_mandar2feDmK`, released it, and printed **no NOTE at all** — the first such run in the record.
+`/proc/mounts` afterwards holds only the two perfect_dark lanes' mounts.
+
+The new order: a vanished pid is skipped; a readable environ carrying the lane token claims the process;
+otherwise the **mount question is asked first** — an exe provably outside the mount is not this mount's
+business, whoever owns it. Only a process that is *both* unclaimable and unlocatable still holds the mount,
+because "unknown" must never read as "free". The fail-safe direction is preserved: a genuinely cross-uid
+emulator whose exe cannot be read still stops the unmount.
+
+### review-4 F5 — confirmed, fixed twice: the candidate set, and the ENOENT the test called an unreadable process
+
+Two halves.
+
+**The candidate set.** `pgrep -f` matches command lines, and this box puts the AppImage path into command lines
+that have nothing to do with an emulator (the `timeout`/`sudo` pair above). `emurun_emulator_pids` now keeps a
+hit only when the kernel's own `comm` says `*mandarine*`/`*AppRun*`/`*AppImage*` — comm is world-readable and a
+quoted argv cannot forge it — or when its exe lives under a `.mount_mandar*` root. An unreadable comm is kept:
+not ruling a process out is not the same as ruling it in. `emurun_mount_in_use` iterates the same set.
+
+**The test.** It handed `emurun_mount_foreign` pid 999999 and demanded "foreign", labelling the row "an
+UNREADABLE process". 999999 does not exist: every read answers **ENOENT**, which is the absence of a process,
+not the absence of proof about one that is live. So the suite was pinning the defect — a co-tenant that
+happened to exit during cleanup would have held this lane's mount forever. Both rows are re-pinned to "not
+foreign", and the EACCES branch that actually has to refuse is now executed for real: the harness reads
+per-process state through `PROC` (`MDK_EMURUN_PROC`, default `/proc`), and the fixture makes a mode-000 process
+directory, which is a genuine EACCES for its own owner.
+
+Non-vacuity, measured: the new suite run against the pre-fix `emurun.sh` from HEAD fails **11** checks, among
+them "an unreadable environ on a process OUTSIDE the mount is not foreign", "a VANISHED pid is not an
+unreadable process", and "the timeout wrapper whose argv quoted the path is dropped".
+
+### review-5 F4 — confirmed, fixed: "reached N" was sampled before the reap
+
+The verdict sampled the frame counter at the deadline and then the trap killed the emulator, which kept writing
+during teardown — so a quoted "reached 1680 (33 frame lines)" could be re-checked against a log ending at 1740
+with 34 lines. The verdict now says "by the deadline" and the cleanup re-reads the log after the reap:
+
+```
+frames    : reached 1620 by the deadline (32 frame lines logged, every 60th after #5); the post-reap line
+            below is the log's real last frame
+emurun: after the reap the guest log ends at frame 1680 (33 frame lines logged)
+```
+
+`--min-frames` still tests the deadline sample, which understates: the conservative direction.
+
+### review-5 F3 — answered in the artifact itself
+
+The sidecar now carries a `provenance:` clause saying the picture is unchanged by construction, that the pair is
+an unchanged-picture re-capture, and that a shell harness and a host test are not linked into the binary at all
+— so the frame is explicitly *not* offered as link evidence, and `gates_core_parity`/`gates_frames` are named
+as what is.
+
+### review-5 F1 and F2 — confirmed, deferred with cause (not fixed here, not rebutted)
+
+Both are real. Neither is in this batch's subsystem, and the loop's rule is one slice per batch.
+
+* **F1 (Medium)** — `GameFlow::play()` never resets `level_`/`hasLevel_`, so a level that ends without a
+  `reportLevel` streams the *previous* level's stats and health, where the C# has already replaced `_viewer`
+  with a fresh `Viewer` in `Play()` (`Game.cs:488`). Deferred because it is core game logic and this batch is
+  the emulator harness. It is **first in batch 72's NEXT** with the fix spelled out, because item 5's frontend
+  is written against exactly this code.
+* **F2 (Low)** — `FlowOptions::setCounts(const int32_t*, int32_t)` stores `count` verbatim, so
+  `countCount()` can exceed the seven values retained. Zero callers today. Deferred with the same slice; the
+  fix is to clamp `countCount_` to what was kept when the next caller lands.
+
+### Emulator evidence (AGENTS P7/P8 — display recorded; emulator-green is not hardware-pass)
+
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --shot /tmp/kilo-pi/3ds-b71.png`, exit **0**:
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6          # r1.2.1, the pinned known-good
+build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+guest log : /tmp/mdk-emurun.1403841/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log
+frames    : reached 1620 by the deadline (32 frame lines logged, every 60th after #5); the post-reap line
+            below is the log's real last frame
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+          graphics_api=1 [default=true — …] (1=OpenGL 2=Vulkan; Mesa env binds OpenGL only)
+stereo    : render_3d=0 [default=true — …] factor_3d=0 [default=true — …] (0 = mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0 [default=false — …]
+lane      : /tmp/mdk-emurun.1403841 (mount /tmp/.mount_mandar2feDmK)
+session   : dbus-run-session; XDG_RUNTIME_DIR private
+backend: PICA200 Citro3D
+draws issued: 0
+frame 1500 elapsed=0.0167 / frame 1560 elapsed=0.0167 / frame 1620 elapsed=0.0167
+emurun: after the reap the guest log ends at frame 1680 (33 frame lines logged)
+```
+
+No NOTE line: the lane released its own mount (the F1 fix, end to end). `draws issued: 0` is the known
+instrument gap at `main_3ds.cpp:277-281`, unchanged by this batch and still named before it is quoted. The
+picture is still the red clear with a sliver of geometry — this batch touches no rendering. Emulator-green is
+not hardware-pass: Mandarine masks FCRAM/VRAM exhaustion, `GPU_CLAMP_TO_EDGE` leniency and FCRAM smear, and
+Old-3DS timing remains UNMEASURED.
+
+### Verification, verbatim
+
+| Gate | Result |
+|---|---|
+| `make -C tests/scripts` | `All cases match the oracle.` — 553 `PASS` lines, 0 `FAIL` |
+| `bash tools/check.sh` | `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`, `gates_frames every pinned frame is deterministic and unchanged`, `gates_batch_integrity project invariants intact` |
+| `make -C mdk_3ds` | `stage_romfs: staged 69 files, 79M` / `3DSX mdk.3dsx` (DEVKITPRO=/opt/devkitpro, DEVKITARM=/opt/devkitpro/devkitARM) |
+| `bash tests/scripts/emurun_harness_test.sh` | `PASS EmurunHarness (68 checks: config placement + mount ownership)` |
+| `bash tools/runner/test_review_state.sh` | `REVIEW STATE: ALL CASES PASS` |
+| `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30` | exit 0, verdict above |
+
+`bash -n` clean on both changed shell files. `test_review_state.sh` is still not wired into `tools/check.sh`
+(check.sh is owner-protected), so it was run by hand.
+
+### Inherited dirty tree
+
+`ralph-pi.sh` (mode-only, `100644` worktree vs `100755` index — owner task 18, this uid cannot `chmod`) and
+`ralph/builder.md` (operator-authored, PROTECTED, owner action from review-4 F3). Both are owner-owned and
+deliberately left dirty; the batch staged its own paths by name. No inherited builder work was pending.
+
+### Prior-solution lookup
+
+* **Obsidian** — MCP tools are absent from this session (a session configuration fault to report, AGENTS P9),
+  so the disk fallback was used, narrowly: `30-architecture/patterns/emulator-isolation-on-a-shared-multi-agent-machine.md`
+  already documents this exact failure class under "the co-tenant guard that LEAKS" (2026-09-08) — a guard that
+  refuses on any co-tenant leaks mounts, and 57 dead mounts accumulated behind one live instance — and
+  `50-tooling/emulator-harness-liveness-by-pid-not-by-name.md` the AppImage exec trap the lane token already
+  answers. The fix follows the pattern the vault already states; it is not new doctrine.
+* **Cognee** — unavailable in this session (no `cognee_*` tools); not consulted, and not claimed.
+* **pi-knowledge (`mdk-sdl`)** — searched for prior art on lane/mount ownership and the pgrep false positive
+  (hybrid and semantic); nothing relevant came back, so the repository's own review history (review-2 F4,
+  review-3 F4, review-4 F1/F5) and the vault notes above were used instead. An empty search is not evidence
+  that no prior solution exists.
+
+### Next
+
+Batch 72: review-5 F1 (the `play()` level-result reset, with the two-level row), then owner-directive item 4
+(3DS input from libctru HID). Owner actions still open and unchanged: restore `0755` on `ralph-pi.sh` and
+restart the service; commit or revert `ralph/builder.md`.

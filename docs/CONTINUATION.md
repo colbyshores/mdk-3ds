@@ -1,19 +1,18 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 70 lands a new subsystem with a new public interface and a state machine: `game_flow.h`
-owns the screen transitions (level start, level end, death, the stream chain) and `game_state.h` owns the
-state that survives them, so the shape of "what happens when a level ends" is now fixed here and item 4's
-frontend will be written against it. The tables are measured from the C# oracle; the transition table is a
-transliteration of the C# switch. No existing golden moved and no gate was touched.
+Risk: medium — the batch changes the emulator harness's mount-ownership decision (a lane now releases its own
+mount where it used to leak it) and re-pins two rows of `emurun_harness_test.sh` that had been certifying the
+defect; no game code, no core source, no golden, no gate and no PROTECTED path is touched. The re-pin is the
+part worth a reviewer's eye, and the new rows are proved non-vacuous against the pre-fix harness.
 
-Last updated: 2026-11-05 (**batch 70** — owner-directive item 2, the game-flow glue, is done: `LevelFlow.cs`,
-`GameState.cs` and the flow half of `Game.cs` are ported to `mdk_core/src/game/{level_flow,game_state,game_flow}`
-and pinned by `PASS GameFlowMatchesTheOracle`. review-4 had no Critical or High finding; of its five
-Medium/Low, F2 and F4 are fixed, F3 is an owner action (a PROTECTED file the builder must not stage), and
-F1+F5 are confirmed and deferred with a live reproduction. The record is `docs/PROGRESS_LOG.md`,
-"Iteration 98"; batch 69's (the staleness stamp) is "Iteration 97", batch 68's "Iteration 96", batch 67's
-"Iteration 95", batch 66's "Iteration 94", batch 65's "Iteration 93", batch 64's "Iteration 92", batch 63's
-"Iteration 91", batch 62's "Iteration 90"; earlier batches are indexed by number in that file.).
+Last updated: 2026-11-05 (**batch 71** — owner-directive item 3 is done: `mdk_3ds/tools/emurun.sh` no longer
+answers "foreign" about a mount it never asked the process about, a vanished pid is not an unreadable process,
+and a `pgrep -f` hit is a candidate rather than a verdict. review-4 F1 and F5 are fixed and pinned, review-5
+F4 is fixed, review-5 F3 is answered in the frame sidecar, and review-5 F1 and F2 are confirmed and deferred
+with a cause. The record is `docs/PROGRESS_LOG.md`, "Iteration 99"; batch 70's is "Iteration 98", batch 69's
+"Iteration 97", batch 68's "Iteration 96", batch 67's "Iteration 95", batch 66's "Iteration 94", batch 65's
+"Iteration 93", batch 64's "Iteration 92", batch 63's "Iteration 91"; earlier batches are indexed by number
+in that file.).
 
 **Owner action still open (blocks the loop's own fixes taking effect):** the worktree `ralph-pi.sh` is mode
 `664` while the index says `100755`, this uid cannot `chmod` it (owner task 18), and the systemd unit execs it
@@ -41,13 +40,15 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 2. **DONE (batch 70) — game-flow glue.** `GameFlow`/`GameState`/`LevelFlow` in `mdk_core/src/game/`. What is
    *not* there is listed as deferred-with-cause in `docs/PROGRESS_LOG.md` "Iteration 98": the `SaveGame`
    methods (the save subsystem is cut), the screens' construction (`Menu/` is cut), and the stream's RNG seed.
-3. **NEXT — the emulator harness's mount guard (review-4 F1 + F5).** `emurun_mount_foreign` answers *foreign*
-   on an unreadable environ before it asks whether the process is in the mount under test, so every lane
-   leaks its own mount and prints a NOTE the guard never established; and `pgrep -f 'mandarine\.AppImage|…'`
-   matches *command lines*, which on this box means other agents' prompts that quote the AppImage path.
-   Measured live in Iteration 98. Fix both, re-pin `emurun_harness_test.sh:278-284` (F5: it pins pid 999999,
-   an ENOENT, not a live EACCES), and carry emulator evidence.
-4. **3DS input.** Fill `mdk_core/src/game/input.h` from libctru HID. Adapt `../forsaken/input_3ds.c`; heed
+3. **DONE (batch 71) — the emulator harness's mount guard (review-4 F1 + F5).** `emurun_mount_foreign` asked
+   whether a process was *unreadable* before it asked whether that process executes out of the mount under
+   test, so every lane leaked its own mount and printed a NOTE the guard never established; and
+   `pgrep -f 'mandarine\.AppImage|…'` matches *command lines*, which on this box means other agents'
+   `timeout`/`sudo` wrappers quoting the AppImage path. Both fixed: the mount question now comes first, a
+   vanished pid is no longer mistaken for an unreadable live one, and a `pgrep -f` hit is a candidate that must
+   be confirmed as an emulator by comm or by an exe under `.mount_mandar*`. Re-pinned with a real-EACCES
+   fixture (`PASS EmurunHarness (68 checks)`), and the batch carries emulator evidence.
+4. **NEXT — 3DS input.** Fill `mdk_core/src/game/input.h` from libctru HID. Adapt `../forsaken/input_3ds.c`; heed
    the double-swap and axis-exists traps in `../forsaken/3DS_PORT_NOTES.md`.
 5. **Wire the frontend.** `main_3ds.cpp` drives the real game: input → player → the ported `FollowCamera`
    (not the framing camera) → Kurt's sprite → the HUD, through `GameFlow` — whose `handle(Event)` returns the
@@ -62,10 +63,20 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 into a level), rides/snowboard/stream-fall view/sniper/cutscene camera, the 27 deferred opcodes, the
 Old-3DS optimisation pass (take a first capture; do not optimise against a corpus that does not exist).
 
-## NEXT (batch 71)
+## NEXT (batch 72)
 
-Item 3 (the mount guard) is next if the batch touches `mdk_3ds/**`; otherwise item 4 (3DS input) is a clean
-core-only slice. Two measured facts carry forward, both unchanged by batch 70:
+**Take review-5 F1 first — it is a confirmed defect, three lines and a test row, and item 5's frontend will be
+written against the code it is wrong about.** `GameFlow::play()` never resets `level_`/`hasLevel_`, so a level
+that ends without calling `reportLevel` streams the *previous* level's stats and health; the C# replaces
+`_viewer` with a fresh `Viewer` inside `Play()` (`Game.cs:488`), so `_viewer != null` holds from `Play` onward
+and its stats are always the current level's. Fix: `level_ = LevelResult(); hasLevel_ = true;` in `play()`,
+correct the `_viewer != null` claim at `game_flow.h:181`, and add the two-level row (Play L7 → report → Play
+L6 → no report → LevelEnded) that `flow_tests.cpp` does not have.
+
+Then item 4 (3DS input) is a clean slice: `mdk_core/src/game/input.h` is a latched `Input` with 13 actions and
+a relative mouse, and libctru HID has to fill it.
+
+Two measured facts carry forward, both unchanged by batch 71:
 
 * **The 3DS picture is a red clear with a sliver of geometry.** The guest logs 3 draws/frame with real
   vertex data (`view: 154 batches, 1188 vertices, 399 triangles`) and the frame counter advances at 60 fps,
@@ -100,10 +111,15 @@ core-only slice. Two measured facts carry forward, both unchanged by batch 70:
   picture stays **UNVERIFIED** against the oracle (AGENTS P6/P8).
 * **A cross-uid co-tenant whose `/proc/<pid>/environ` answers EACCES is normal on this box**, and the
   processes that trip it are *not* emulators: `pgrep -f 'mandarine\.AppImage|AppRun\.wrapped'` matches
-  command lines, and other agents' prompts quote that path (measured 2026-11-05: pids 419661/419663/
-  1150373/1150376, owners coleshores/root, all EACCES, none an emulator). So an unreadable `/proc` entry is a
-  condition an emulator lane must survive — but do not "simplify" the guard back to a bare `readlink`, and do
-  not answer "foreign" without proving the process is in the mount you are about to lose (item 3).
+  command lines, and other agents' wrappers quote that path (re-measured 2026-11-05: a `timeout` at uid 1000
+  and a `sudo` at uid 0, both EACCES on environ AND on exe, neither an emulator). So an unreadable `/proc`
+  entry is a condition an emulator lane must survive — but since batch 71 the rule is precise: **a failed
+  environ read is the absence of proof, never proof of foreignness.** The guard asks whether the process
+  executes out of the mount under test, and only a process that is BOTH unclaimable and unlocatable holds the
+  mount. Do not "simplify" it back to a bare `readlink`, and do not answer "foreign" about a mount the process
+  was never asked about (review-4 F1; vault
+  `30-architecture/patterns/emulator-isolation-on-a-shared-multi-agent-machine.md`, "the co-tenant guard that
+  LEAKS").
 * **`test_review_state.sh` is not wired into `tools/check.sh`** (check.sh is owner-protected, so wiring it is
   an owner task). Run `bash tools/runner/test_review_state.sh` by hand with the gates.
 * **`/tmp/kilo` is `museagent`-owned and not writable by this uid**; captures go to `/tmp/kilo-pi` (P7's rule
