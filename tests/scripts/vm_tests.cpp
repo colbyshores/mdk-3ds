@@ -26,6 +26,7 @@
 #include "audio/sound_bank.h"
 #include "test_support.h"
 #include "archive_guard_tests.h"
+#include "flow_tests.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/dti.h"
@@ -6137,6 +6138,14 @@ int main() {
     failures += spriteFailures;
     if (spriteFailures == 0) {
         printf("PASS SpriteResidencyPolicy\n");
+    }
+
+    // The game-flow state machine: the order of play, what follows a level, and
+    // the step the frame runs on (flow_tests.h).
+    const int flowFailures = mdk::test::runFlowTests();
+    failures += flowFailures;
+    if (flowFailures == 0) {
+        printf("PASS GameFlowMatchesTheOracle\n");
     }
 
     if (failures == 0) {

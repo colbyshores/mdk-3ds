@@ -118,10 +118,13 @@ set(SOURCES
     ${CORE}/src/game/camera_roll.cpp
     ${CORE}/src/game/follow_camera.cpp
     ${CORE}/src/game/frame_blend.cpp
+    ${CORE}/src/game/game_flow.cpp
+    ${CORE}/src/game/game_state.cpp
     ${CORE}/src/game/hud_view.cpp
     ${CORE}/src/game/kurt.cpp
     ${CORE}/src/game/kurt_sprite.cpp
     ${CORE}/src/game/level_data.cpp
+    ${CORE}/src/game/level_flow.cpp
     ${CORE}/src/game/level_view.cpp
     ${CORE}/src/game/object_draw.cpp
     ${CORE}/src/game/object_view.cpp

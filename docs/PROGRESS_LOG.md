@@ -13257,14 +13257,16 @@ property each named is unchanged and still pinned.
 
 `emurun_cleanup` detached `$OUR_MOUNT` unconditionally, by path, discarding `fusermount`'s status. The
 AppImage runtime hands every launch of the same AppImage the same `/tmp/.mount_mandarXXXXXX`, so the first
-lane out detaches the RomFS a co-tenant is executing from
+lane out detaches the RomFS a co-tenant is executing from — the rc=4 "the game DIED" symptom review-1 F3 was
+written about.
 
 > **Corrected by iteration 97 (review-3 F5).** The mechanism is narrower than that sentence. Measured during
 > review-3: three concurrent launches of the pinned AppImage held three *distinct* mounts. The runtime mints a
 > fresh `/tmp/.mount_mandarXXXX` per launch and **reuses one it left behind**; sharing is the stale-mount case
 > review-2 actually observed, not the rule. The guard is still required — the shared case is reachable — but
-> both arms of the cleanup are live, not just the shared one. — the rc=4 "the game DIED" symptom review-1 F3 was
-written about. The vault says the same thing independently
+> both arms of the cleanup are live, not just the shared one.
+
+The vault says the same thing independently
 (`50-tooling/multi-tenant-emulator-harness-isolate-by-display.md`: "Only unmount a squashfs/FUSE mount nobody
 is executing from"), and the sibling campaigns' statecap notes record a foreign `.mount_mandary*` being
 encountered and left alone. The arm now refuses to release a mount on either of two proofs — it predates the
@@ -13584,3 +13586,229 @@ F4's `continue`. **Cognee MCP** is not exposed in this harness, so it was **not*
 
 Owner-directive item 2 is untouched by this batch and is still next: `src/Mdk.Game/Flow/Game.cs` (689 lines)
 — level start, tick order, level end, death/restart. Transliteration, not research.
+
+---
+
+## Iteration 98 — batch 70: the game-flow state machine lands — the order of play, what follows a level, death, and the step the frame runs on
+
+Owner-directive item 2 (`src/Mdk.Game/Flow/Game.cs`: level start, the tick order, level end,
+death/restart) is now ported, together with the two files it is built on (`GameState.cs`,
+`LevelFlow.cs`). No game code outside the flow changed, and no existing golden moved.
+
+### What landed
+
+| C# oracle | C++ | |
+|---|---|---|
+| `Flow/LevelFlow.cs` + `GameState.Order`/`IndexOf` | `mdk_core/src/game/level_flow.{h,cpp}` | the order of play, what follows a level, what comes next, the save prompt's number |
+| `Flow/GameState.cs` (minus its two `SaveGame` methods) | `mdk_core/src/game/game_state.{h,cpp}` | the bag that survives the screens: level, deaths, air strike, counts, splash, the fall's carry, the one-shot notes |
+| `Flow/Game.cs`'s `FirstEvent`/`Handle`/`Play`/`AfterLevel`/`ShowStream`/`AfterStream`/`Show`, and `Run`'s step choice | `mdk_core/src/game/game_flow.{h,cpp}` | the screen state machine and the tick's step |
+| — | `tests/scripts/flow_tests.{h,cpp}` | `PASS GameFlowMatchesTheOracle`, wired into `vm_tests` |
+
+The three core sources are on both targets: the 3DS Makefile globs them in (`CXX … game_flow.cpp`,
+`game_state.cpp`, `level_flow.cpp` in the build log, and `mdk_3ds/build/{game_flow,game_state,level_flow}.o`
+exist), and they were added to `mdk_linux/CMakeLists.txt` by name, where the list is explicit on purpose.
+`gates_core_parity` passes, so both targets link the same core.
+
+**The flow decides; the frontend builds.** The C# `Game` both picks the next screen and constructs it.
+Here `handle(Event)` returns a `Screen` enum and applies the state changes, and the frontend constructs
+what it was told to show. That is the same split the renderer seam already uses, and it is why there is no
+`std::function` and no `IScreen` interface in the port (§10 bans the former, and the build-time seam makes
+the latter unnecessary). `Show`'s other three obligations — dispose the old screen, stop every voice,
+release the renderer's scope — are named in the header as the frontend's, because the frontend owns those
+three objects.
+
+**The recursion is the oracle's.** `Handle(KurtDied)` calls `Handle(Menu)`, and `AfterLevel` and
+`AfterStream` call `Handle` too, so `_firstLevel` is still true inside those inner calls and the screen
+they build gets the command line's page. The port keeps the nested call rather than flattening it, and
+says why in the comment: a flattened loop that cleared the flag before dispatching is a different game.
+
+**`towns << 29` is the one arithmetic trap.** The C# shifts a `System.Int32`, which wraps; a signed left
+shift that overflows is undefined in C++. The port shifts in the unsigned domain and reinterprets back, so
+`--towns=7` gives `-536870912` in both. Pinned, with `--towns=3` (`1610612736`, the case that does not
+wrap) beside it so the pin cannot be satisfied by a clamp.
+
+**The other crossing pinned is `ApplyTestCounts`.** The C# destructures `(Shots, ShotHits, SniperShots,
+SniperHits)` then `(Kills, Enemies, HeadShots)` from `counts[0..6]`, and `GameStats`' fields are not in
+that order — `counts[4]` is kills and `counts[6]` is head shots. And fewer than seven counts still write
+all seven fields, because the C# pads with zeros before destructuring: three counts clear the last four
+rather than leaving them.
+
+### Deferred with cause — not stubs, and each names the subsystem it waits for
+
+* `GameState.Load(SaveGame)` / `GameState.Save(SaveKind)`, `FirstEvent`'s `--load` branch, and
+  `Handle(KurtDied)`'s LASTGAME write: all four take the C#'s `SaveGame` record, which belongs to
+  `Flow/SaveGames.cs` (JSON record, save folder, LASTGAME) — cut from the sprint by the owner directive of
+  2026-11-05 ("boot straight into a level"). Porting half a record would be the stub the contract forbids,
+  so the methods land whole with that subsystem. `KurtDied` still does its real work (the splash and the
+  menu), which is what the menu's "Continue" needs.
+* `Play`'s `LoadingScreen.Show` and every screen's construction: `Menu/` is cut.
+* `ShowStream`'s `WatcomRandom` seed (`Environment.TickCount` for a stream started from the command line):
+  the stream screen is cut, so there is no random to seed yet. `kStreamDefaultSeed` is the C#'s
+  `DefaultSeed`, ready for it.
+* `GameOptions`' window, renderer, mods, dev tools, soak keys, perf log and screenshot plumbing:
+  desktop-only, and each belongs to a frontend.
+* `GameState.newGame(index)` returns false and changes nothing for an index outside the order, where the C#
+  throws `IndexOutOfRange`. That is a deliberate difference, not a silent one: this build has no
+  exceptions, and the alternative is an out-of-bounds read on the 3DS. It is stated in the header and
+  pinned.
+
+### The oracle rows were measured, not read off the port
+
+The scratch probe at `/tmp/mdk-pi/obj3` gained a `flow` mode that calls the real `LevelFlow` and
+`GameState` and prints their answers. Before any of it ran, the scratch tree's flow sources were checked
+byte-identical to the repository's:
+
+```
+$ cmp /tmp/mdk-pi/obj3/src/Mdk.Game/Flow/{Game,GameState,LevelFlow,Screen}.cs \
+      /mnt/nas/Development/mdk-sdl/src/Mdk.Game/Flow/{...}
+IDENTICAL Game.cs   IDENTICAL GameState.cs   IDENTICAL LevelFlow.cs   IDENTICAL Screen.cs
+```
+
+and the probe was rebuilt with `/tmp/mdk-pi/build_probe.sh` (`shaders ok`, `build ok`), then:
+
+```
+DOTNET_ROOT=/tmp/kilo/dotnet10 MDK_DATA_DIR=/mnt/nas/Development/mdk-sdl/MDK \
+  /tmp/mdk-pi/obj3/Probe/bin/Debug/net10.0/mdkprobe 3 1 1 flow
+```
+
+which printed 95 rows (raw output kept at `/tmp/kilo-pi/flow-oracle.txt`). The rows that are now pins:
+
+```
+ORDER 7,6,3,4,8,5
+INDEX lvl=3 index=2   INDEX lvl=5 index=5   INDEX lvl=7 index=0   INDEX lvl=8 index=4   INDEX lvl=9 index=-1
+AFTER lvl=7 over=0 after=Statistics   AFTER lvl=8 over=0 after=LastLevel   AFTER lvl=5 over=0 after=Menu
+AFTER lvl=7 over=1 after=Menu         AFTER lvl=100 over=0 after=Menu
+NEXT lvl=3 next=4   NEXT lvl=5 next=5   NEXT lvl=8 next=5   NEXT lvl=9 next=7
+SAVENAME lvl=7 name=1   SAVENAME lvl=5 name=6   SAVENAME lvl=9 name=0
+NEWGAME index=0 lvl=7 deaths=0 strike=0 splash=1 debug=0 carry=-1
+LASTLEVEL lvl=8 new=5 carry=63 pickups=0 deaths=2 strike=1
+FULLHEALTH 100 LASTGAME LASTGAME
+```
+
+Three of those rows are the ones a hand-written table would get wrong: `NEXT lvl=5` is `5` (the last of the
+order stays), `AFTER lvl=5 over=0` is `Menu` (nothing follows the last level), and `SAVENAME lvl=9` is
+`0` (`IndexOf` is −1 and the C# adds one rather than refusing). The `LOAD`/`SAVE` rows the probe also
+printed are deliberately **not** pinned, because the methods that produce them are the deferred ones.
+
+The `Handle` transition table, `ApplyTestCounts` and the step choice are labelled **TRANSLITERATED** in
+`flow_tests.h`, not measured: `Game`'s constructor builds a window, a renderer and an audio device, so the
+C# cannot reach its own switch headlessly. Each pin cites the C# case it came from. That distinction is
+made in the test header on purpose — the two are not the same kind of evidence and should not read alike.
+
+### review-4 disposition — no Critical or High findings; five Medium/Low
+
+| Finding | Disposition | Evidence |
+|---|---|---|
+| **F1 (Medium)** — `emurun_mount_foreign` answers *foreign* on an unreadable environ before it ever asks whether the process is in the mount being tested | **CONFIRMED, deferred with cause** (see below) | reproduced live, measured this batch |
+| **F2 (Medium)** — batch 69's quoted emulator block cannot be one run: `lane … (mount …jxAIV0)` and `NOTE … HTeSXu` name two mounts | **CONFIRMED and fixed** — a fresh run is quoted verbatim below, mount and NOTE agreeing | `lane … (mount /tmp/.mount_mandareMiCGo)` / `NOTE /tmp/.mount_mandareMiCGo …` |
+| **F3 (Medium)** — an uncommitted edit to the PROTECTED `ralph/builder.md` with no approval record | **CONFIRMED as an owner action, not builder work.** The edit is operator-authored (its text is verbatim in this iteration's own prompt) and the reviewer's own recommendation is "owner commits it with `MDK_OWNER_APPROVED=1` … Nothing here is for the builder to fix in code". It was **not staged and not committed**: staging a protected path halts the loop at exit 6, and setting the owner-approval marker from a builder would forge the approval the marker records. Added to the owner-action list. | `git status --porcelain` still lists ` M ralph/builder.md`; `PROTECTED` contains it |
+| **F4 (Low)** — a correction blockquote spliced into the middle of batch 68's sentence, so the sentence no longer parses | **CONFIRMED and fixed.** The original sentence now closes with `… the rc=4 "the game DIED" symptom review-1 F3 was written about.` before the blockquote, and the blockquote ends its own sentence. | `docs/PROGRESS_LOG.md`, the batch-66 F4 section |
+| **F5 (Low)** — the harness test's "an UNREADABLE process is foreign" pin uses pid 999999 (ENOENT), not a live cross-uid pid (EACCES) | **CONFIRMED, deferred with F1** — the pin and the behaviour it pins are one change, and the correct pin depends on what F1's fix decides | `tests/scripts/emurun_harness_test.sh:278-284` |
+
+**Why F1 is deferred rather than folded in.** It is confirmed and it is not cosmetic: lifted out of the file
+and run against the live process table this batch, it calls *every* mount foreign, including one nothing is
+using —
+
+```
+matching pids: 419661 419663 1150373 1150376
+  pid 419661 owner=coleshores environ=EACCES exe=unreadable
+  pid 419663 owner=root     environ=EACCES exe=unreadable
+  pid 1150373 owner=coleshores environ=EACCES exe=unreadable
+  pid 1150376 owner=root     environ=EACCES exe=unreadable
+mount_foreign(our fresh mount eMiCGo) rc=0
+mount_foreign(a mount nothing uses) rc=0
+```
+
+— so every lane leaks its own mount and prints a NOTE asserting a fact the guard never established. The
+measurement also sharpens the cause beyond what the review said: the four pids are not emulator processes at
+all. They are other agents' `pi` invocations whose *command line* contains the string `mandarine.AppImage`
+because the harness prompt quotes it, and `pgrep -f 'mandarine\.AppImage|AppRun\.wrapped'` matches command
+lines. So the pattern is a second defect beside the ordering one, and a correct fix has to answer both:
+match processes by what they *are* (an exe inside a `.mount_mandar*`, or the lane token) rather than by
+text in their arguments, and on an unreadable environ test mount membership from a world-readable source
+(`cmdline`, `exe`) before answering — keeping the fail-closed answer but with wording that says "cannot
+show it is free" instead of "a process is executing from it".
+
+That is a change to `mdk_3ds/tools/emurun.sh` plus a re-pinned `emurun_harness_test.sh` (F5's pin asserts
+the current behaviour, so it moves with the fix). Both are a different subsystem from this batch's, the
+findings are Medium, and the builder contract says not to expand a batch to chase Medium findings. It is
+recorded as the first job of the next batch that touches `mdk_3ds/**`, and the emulator evidence below is
+the baseline it has to beat.
+
+### Emulator evidence (AGENTS P7/P8 — display recorded; emulator-green is not hardware-pass)
+
+This batch changes no `mdk_3ds/**` file, so no emulator run was required; one was run anyway, to close
+review-4 F2 with a verbatim block rather than an assertion. `DISPLAY=:99`, exit code **0** (not 3 = stale
+log, not 4 = emulator died, not 6 = wrong build), pinned Mandarine r1.2.1 md5 `0d2adab6`:
+
+```
+== emurun verdict ==
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6
+build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+guest log : /tmp/mdk-emurun.1160678/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log
+frames    : reached 1680 (33 frame lines logged, every 60th after #5)
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+stereo    : render_3d=0 factor_3d=0 (0 = mono)
+lane      : /tmp/mdk-emurun.1160678 (mount /tmp/.mount_mandareMiCGo)
+backend: PICA200 Citro3D
+draws issued: 0
+frame 1560 elapsed=0.0167
+frame 1620 elapsed=0.0167
+frame 1680 elapsed=0.0167
+emurun: NOTE /tmp/.mount_mandareMiCGo has a process outside this lane executing from it; left mounted.
+```
+
+The mount in the `lane` line and the mount in the `NOTE` line are the same string, which is what F2 asked
+for. The NOTE is F1 firing on this very run: the mount was minted for this lane seconds earlier, so nothing
+outside it could have been executing from it. Two carried-over measurements are unchanged and still open:
+the picture is still a red clear with a sliver of geometry (owner item 6), and `draws issued: 0` is still
+printed while the guest logs draws (`main_3ds.cpp:277-281`) — the instrument, not the game.
+
+### Verification, verbatim
+
+| Gate | Result |
+|---|---|
+| `make -C tests/scripts` | **exit 0** — `All VM unit tests match the oracle.` and `All cases match the oracle.`, **540 `PASS` lines** (539 in batch 69, +1 for the new `PASS GameFlowMatchesTheOracle`). No golden moved and no assertion was relaxed. |
+| `bash tools/check.sh` | **`CHECK: ALL GATES PASSED`** — `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`, `gates_frames every pinned frame is deterministic and unchanged`, `gates_batch_integrity project invariants intact` |
+| `make -C mdk_3ds` | **exit 0** — `3DSX mdk.3dsx`, with the three new core sources compiled into it |
+| `bash tools/runner/test_review_state.sh` (not wired into `check.sh`) | **exit 0** — `REVIEW STATE: ALL CASES PASS`, 213 `PASS` |
+| `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --shot …` | **exit 0**, quoted above |
+
+`audit_c_with_classes` at 0 violations is the §10 check on the new code: no virtual, no template, no
+`assert`, no `std::function`. `gates_vfp` at 0 blockers covers the one piece of arithmetic in the batch, and
+the flow has no hot path: `afterLevel`, `next` and `indexOf` run at level transitions, and the step
+selection once per frame at most, which is none of §2's three criteria.
+
+### Inherited dirty tree — deliberately left dirty, and why
+
+`git status --porcelain` still shows ` M ralph-pi.sh` (worktree mode `664`, index `100755`, owner task 18)
+and ` M ralph/builder.md` (review-4 F3). Neither is a timed-out iteration's unfinished work, so the "commit
+the dirty tree first" rule does not apply, and committing them would be an active harm: recording mode
+`644` would write the `203/EXEC` failure into the tree, and staging a PROTECTED path halts the loop at exit
+6. Everything this batch changed was staged **by name**, never with `git add -A`.
+
+### Prior-solution lookup
+
+**pi-knowledge** `mdk-sdl` was searched first (`Game.cs game flow level start tick order level end death
+restart`, and a second query on the level order and `LevelFlow`). The KB is present and searchable (4494
+chunks / 953 files) and returned the oracle sources themselves — `Flow/GameState.cs`, `Flow/Game.cs`,
+`Flow/LevelFlow.cs` — plus the owner directive, which is the useful answer: no prior port of this subsystem
+exists, and the indexed `GameStats` header confirmed that `GameState.Order` was the missing home for
+`GameStats.IndexOf`. **Obsidian MCP** is not exposed in this Pi session — a session configuration fault to
+report, not a licence to claim the lookup happened — so the vault was read read-only from
+`/mnt/nas/Vaults/port-docs`. **Cognee MCP** is not exposed in this harness, so it was **not** consulted;
+its graph search is therefore missing from this lookup, which is a degraded lookup and is recorded as one.
+
+### Next
+
+Owner-directive item 2 is now done for the flow half of `Game.cs`. What it unblocks, in order:
+
+1. **The emulator harness's mount guard (review-4 F1 + F5)** — first job of the next batch that touches
+   `mdk_3ds/**`, with the live reproduction above as its baseline.
+2. **Item 3, 3DS input** — fill `mdk_core/src/game/input.h` from libctru HID; adapt `../forsaken/input_3ds.c`
+   and heed the double-swap and axis-exists traps.
+3. **Item 4, wire the frontend** — `main_3ds.cpp` drives `GameFlow` (input → player → `FollowCamera` →
+   Kurt's sprite → the HUD) and implements the tick order `game_flow.h` now documents. The flow's
+   `Screen` enum is the seam it needs.
+4. **Item 5, ndsp audio**, then **item 6, Citro3D alpha blend**.

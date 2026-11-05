@@ -47,11 +47,14 @@ COMMON_SOURCES := \
 	$(CORE)/formats/bni.cpp \
 	$(CORE)/formats/fti.cpp \
 	$(CORE)/game/level_data.cpp \
+	$(CORE)/game/level_flow.cpp \
 	$(CORE)/game/arena_space.cpp \
 	$(CORE)/game/bsp.cpp \
 	$(CORE)/game/camera_roll.cpp \
 	$(CORE)/game/follow_camera.cpp \
 	$(CORE)/game/frame_blend.cpp \
+	$(CORE)/game/game_flow.cpp \
+	$(CORE)/game/game_state.cpp \
 	$(CORE)/game/kurt.cpp \
 	$(CORE)/game/object_view.cpp \
 	$(CORE)/game/player.cpp \
@@ -75,6 +78,7 @@ SOURCES := \
 SOURCES_VM := \
 	vm_tests.cpp \
 	archive_guard_tests.cpp \
+	flow_tests.cpp \
 	layer_tests.cpp \
 	sprite_tests.cpp \
 	system_numerics_tests.cpp \
