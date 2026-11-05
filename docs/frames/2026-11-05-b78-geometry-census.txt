@@ -1,0 +1,4 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-05T22:20:42Z at 4b6feb0
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+3DS census: DISPLAY=:99; Mandarine r1.2.1 md5 0d2adab6; mono; llvmpipe; 30 seconds, exit 0; census in progress log Iteration 106. This pinned level-3 Linux frame does not display the 3DS Citro3D geometry measurement.

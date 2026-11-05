@@ -198,6 +198,51 @@ struct C3dMesh {
     bool releasePending = false;
 };
 
+// The one frame whose geometry is censused (see `Census`). It has to be a frame
+// after the level-7 landing (the golden lands at step 43) so the census measures
+// the standing camera the golden pins, and it has to be well inside the 30 s the
+// emulator harness runs, which reaches frame ~1700.
+static constexpr int32_t kCensusFrame = 120;
+
+// A one-shot census of ONE frame's triangles, for the named level-7 picture
+// defect (docs/CONTINUATION.md "NEXT": "sample triangles near the spawn and
+// compare the vertices/MVP/clip values with host-derived geometry; inspect the
+// PICA winding and depth/cull behavior before modifying renderer state").
+//
+// Batch 77 traced the FIRST triangle of the first draw and that was not enough:
+// it is a far-distance triangle at y=438 and it says nothing about the room the
+// camera is standing in. This counts every triangle the frame queues, in the
+// frame's real per-draw matrix, and sorts it by where it landed: behind the
+// camera, outside the clip square, or on screen -- and for the on-screen ones,
+// which way they wind. The winding is what decides the cull enum, and the
+// on-screen count is what separates "the room is not queued" from "the room is
+// queued and the GPU is throwing it away".
+//
+// It is COLD by construction: `active` is true for exactly one frame of the
+// process, so the per-triangle loop runs once in a run and every other frame
+// pays one integer compare.
+struct Census {
+    bool active = false;
+    int32_t triangles = 0;   // queued triangles seen
+    int32_t behind = 0;      // a vertex with clip w <= 0
+    int32_t offscreen = 0;   // the whole bbox outside [-1,1]
+    int32_t onscreen = 0;    // the bbox touches the clip square
+    int32_t cw = 0;          // on-screen, negative signed area in NDC (y up)
+    int32_t ccw = 0;         // on-screen, positive
+    int32_t near60 = 0;      // on-screen AND within 60 units of the eye
+    float areaSum = 0.0f;    // sum of |ndc signed area| over the on-screen ones
+    float loX, hiX, loY, hiY;   // the ndc bbox of everything on screen
+    float nLoX, nHiX, nLoY, nHiY;  // the same, for the near60 ones only
+    float minW = 0.0f;       // nearest and farthest clip w seen
+    float maxW = 0.0f;
+    float bestW = -1.0f;     // the closest on-screen triangle's w, for the sample
+    int32_t bestDraw = -1;
+    int32_t bestFirst = -1;
+    float bestV[9] = {0};    // its three world positions
+    float bestArea = 0.0f;
+    float bestNdc[6] = {0};  // its first two vertices' ndc x,y
+};
+
 struct RendererC3D {
     C3D_RenderTarget* targetLeft = nullptr;
     C3D_RenderTarget* targetRight = nullptr;
@@ -312,6 +357,7 @@ struct RendererC3D {
     int frame = 0;
     int32_t drawCount = 0;
     int32_t triangleCount = 0;
+    Census census;
     bool diagnosticTriangle = true;
     bool ready = false;
     bool inFrame = false;
@@ -793,6 +839,24 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     r->inFrame = true;
     r->frame++;
     r->drawCount = 0;
+    r->triangleCount = 0;
+    // The one frame that gets censused (see `Census`). Everything else pays the
+    // compare and nothing more.
+    r->census.active = (r->frame == kCensusFrame);
+    r->census.triangles = 0;
+    r->census.behind = 0;
+    r->census.offscreen = 0;
+    r->census.onscreen = 0;
+    r->census.cw = 0;
+    r->census.ccw = 0;
+    r->census.near60 = 0;
+    r->census.areaSum = 0.0f;
+    r->census.loX = r->census.nLoX = 1e30f;
+    r->census.hiX = r->census.nHiX = -1e30f;
+    r->census.loY = r->census.nLoY = 1e30f;
+    r->census.hiY = r->census.nHiY = -1e30f;
+    r->census.bestW = -1.0f;
+    r->census.bestDraw = -1;
     // C3D_FrameBegin waited for the previous queue above. The old frame's
     // GPU reads are complete, so deferred releases and replacements can be
     // made now (AGENTS.md P3).
@@ -857,6 +921,33 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
                           mdk::pica::kDepthClearValue);
 }
 
+// Report one censused frame. Cold: called once per process, from the end of the
+// first eye's replay of frame `kCensusFrame`.
+static void logCensus(RendererC3D* r) {
+    const Census& c = r->census;
+    mdk::log3dsPrintf("census frame=%d draws=%d tris=%d behind=%d offscreen=%d onscreen=%d near60=%d cw=%d ccw=%d w=[%.1f,%.1f] areaset=%.4f",
+                      r->frame, (int)r->drawCount, c.triangles, c.behind,
+                      c.offscreen, c.onscreen, c.near60, c.cw, c.ccw, c.minW,
+                      c.maxW, c.areaSum);
+    if (c.bestDraw >= 0) {
+        mdk::log3dsPrintf("census nearest draw=%d first=%d w=%.1f area=%+.8f v0=(%.3f,%.3f,%.3f) v1=(%.3f,%.3f,%.3f) v2=(%.3f,%.3f,%.3f)",
+                          c.bestDraw, c.bestFirst, c.bestW, c.bestArea,
+                          c.bestV[0], c.bestV[1], c.bestV[2], c.bestV[3],
+                          c.bestV[4], c.bestV[5], c.bestV[6], c.bestV[7],
+                          c.bestV[8]);
+        mdk::log3dsPrintf("census nearest ndc v0=(%.5f,%.5f) v1=(%.5f,%.5f)",
+                          c.bestNdc[0], c.bestNdc[1], c.bestNdc[2], c.bestNdc[3]);
+    }
+    {
+        // The ndc bbox is the mapping probe: the panel's painted rectangle has to
+        // be this box, or the framebuffer is not showing what the matrix produced.
+        const Census& c = r->census;
+        mdk::log3dsPrintf("census ndc box=[%.3f,%.3f]x[%.3f,%.3f] near60 box=[%.3f,%.3f]x[%.3f,%.3f]",
+                          c.loX, c.hiX, c.loY, c.hiY, c.nLoX, c.nHiX,
+                          c.nLoY, c.nHiY);
+    }
+}
+
  void mdk_render_end_frame(MdkRenderer rr) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->inFrame) return;
@@ -881,6 +972,12 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     for (int eye = 0; eye < r->eyes.passes; eye++) {
         installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);
         replayQueue(r);
+        // The census is read after the FIRST eye's replay: the second eye draws
+        // the same records and would double every count.
+        if (r->census.active) {
+            logCensus(r);
+            r->census.active = false;
+        }
         drawDiagnostic(r);
     }
     r->queue.reset();
@@ -1608,10 +1705,17 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         // THE FIRST DRAWS, in full. A draw that never happens and a draw
         // that happens with the wrong data look the same on the screen, and
         // this is the difference between them.
-        const float* vertex = static_cast<const float*>(mesh.data);
-        mdk::log3dsPrintf("draw %d: mesh=%d first=%d count=%d tex=%d  v0=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f)",
+        // THE SAMPLE IS THE DRAW'S OWN FIRST VERTEX, not the mesh's. Printing
+        // `mesh.data[0..2]` made every draw of a mesh log the same vertex, and
+        // that is what sent batch 77 looking for a fan in a triangle its draw did
+        // not even contain.
+        const float* vertex = static_cast<const float*>(mesh.data) +
+                              (size_t)(draw->first_vertex >= 0
+                                           ? draw->first_vertex : 0) * 5u;
+        mdk::log3dsPrintf("draw %d: mesh=%d first=%d count=%d tex=%d pass=%d v0=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f)",
                           (int)r->drawCount, (int)draw->mesh, (int)draw->first_vertex,
                           (int)draw->vertex_count, (int)draw->material.texture,
+                          (int)draw->material.pass,
                           vertex[0], vertex[1], vertex[2], vertex[3], vertex[4]);
     }
     // THE DIAGNOSTIC TRIANGLE IS DRAWN LAST, AFTER THE REAL DRAW -- see below.
@@ -1710,52 +1814,130 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         installDepthState(r, wantedDepth);
     }
 
-    // One-shot geometry trace for the named level-7 picture defect. Log the
-    // exact first triangle after the CPU has selected its MVP and before the
-    // GPU consumes the same vertex buffer. This distinguishes bad source
-    // vertices, a bad matrix, and clip-space clipping without inferring from
-    // the rendered fan. The diagnostic is cold (once per renderer lifetime).
-    static bool loggedFirstTriangle = false;
-    if (!loggedFirstTriangle && count >= 3) {
-        loggedFirstTriangle = true;
-        const float* vertices = static_cast<const float*>(mesh.data);
-        float traceMvp[16];
+    // THE ONE-FRAME GEOMETRY CENSUS (see the `Census` struct). Cold by
+    // construction: `census.active` is true for exactly one frame of the
+    // process, so every other frame pays one integer compare and this loop runs
+    // once in a run.
+    //
+    // It measures, in the SAME matrix the GPU is about to receive, where each of
+    // this draw's triangles lands and which way it winds. Batch 77's single
+    // triangle could not separate "the room is not queued" from "the room is
+    // queued and the GPU discards it", and could not say what the room's winding
+    // is, which is what the cull enum turns on.
+    if (r->census.active && count >= 3) {
+        float cm[16];
         if (identityWorld) {
-            memcpy(traceMvp, r->eyeVp, sizeof(traceMvp));
+            memcpy(cm, r->eyeVp, sizeof(cm));
         } else {
-            mdk::pica::drawMatrix(draw->world, r->eyeVp, traceMvp);
+            mdk::pica::drawMatrix(draw->world, r->eyeVp, cm);
         }
-        mdk::log3dsPrintf("tri-trace draw=%d first=%d mvp row0=(%.5f,%.5f,%.5f,%.5f) row1=(%.5f,%.5f,%.5f,%.5f) row2=(%.5f,%.5f,%.5f,%.5f) row3=(%.5f,%.5f,%.5f,%.5f)",
-                          (int)r->drawCount, (int)first,
-                          traceMvp[0], traceMvp[1], traceMvp[2], traceMvp[3],
-                          traceMvp[4], traceMvp[5], traceMvp[6], traceMvp[7],
-                          traceMvp[8], traceMvp[9], traceMvp[10], traceMvp[11],
-                          traceMvp[12], traceMvp[13], traceMvp[14], traceMvp[15]);
-        float ndcX[3];
-        float ndcY[3];
-        for (int32_t v = 0; v < 3; v++) {
-            const int32_t at = (first + v) * 5;
-            const float x = vertices[at + 0];
-            const float y = vertices[at + 1];
-            const float z = vertices[at + 2];
-            const float clipX = x * traceMvp[0] + y * traceMvp[4] +
-                                z * traceMvp[8] + traceMvp[12];
-            const float clipY = x * traceMvp[1] + y * traceMvp[5] +
-                                z * traceMvp[9] + traceMvp[13];
-            const float clipZ = x * traceMvp[2] + y * traceMvp[6] +
-                                z * traceMvp[10] + traceMvp[14];
-            const float clipW = x * traceMvp[3] + y * traceMvp[7] +
-                                z * traceMvp[11] + traceMvp[15];
-            ndcX[v] = clipW != 0.0f ? clipX / clipW : 0.0f;
-            ndcY[v] = clipW != 0.0f ? clipY / clipW : 0.0f;
-            mdk::log3dsPrintf("tri-trace v%d world=(%.4f,%.4f,%.4f) clip=(%.5f,%.5f,%.5f,%.5f) ndc=(%.5f,%.5f,%.5f)",
-                              (int)v, x, y, z, clipX, clipY, clipZ, clipW,
-                              ndcX[v], ndcY[v], clipW != 0.0f ? clipZ / clipW : 0.0f);
+        const float* cv = static_cast<const float*>(mesh.data);
+        const int32_t tris = count / 3;
+        for (int32_t t = 0; t < tris; t++) {
+            float nx[3];
+            float ny[3];
+            float w[3];
+            bool behind = false;
+            for (int32_t v = 0; v < 3; v++) {
+                const int32_t at = (first + t * 3 + v) * 5;
+                const float x = cv[at];
+                const float y = cv[at + 1];
+                const float z = cv[at + 2];
+                const float cx = x * cm[0] + y * cm[4] + z * cm[8] + cm[12];
+                const float cy = x * cm[1] + y * cm[5] + z * cm[9] + cm[13];
+                const float cw = x * cm[3] + y * cm[7] + z * cm[11] + cm[15];
+                if (cw <= 0.0f) {
+                    behind = true;
+                }
+                w[v] = cw;
+                const float inv = cw != 0.0f ? 1.0f / cw : 0.0f;
+                nx[v] = cx * inv;
+                ny[v] = cy * inv;
+            }
+            Census& c = r->census;
+            c.triangles++;
+            float wmin = w[0];
+            float wmax = w[0];
+            float wsum = 0.0f;
+            for (int32_t v = 0; v < 3; v++) {
+                if (w[v] < wmin) {
+                    wmin = w[v];
+                }
+                if (w[v] > wmax) {
+                    wmax = w[v];
+                }
+                wsum += w[v];
+            }
+            if (c.triangles == 1 || wmin < c.minW) {
+                c.minW = wmin;
+            }
+            if (c.triangles == 1 || wmax > c.maxW) {
+                c.maxW = wmax;
+            }
+            if (behind) {
+                c.behind++;
+                continue;
+            }
+            float lox = nx[0];
+            float hix = nx[0];
+            float loy = ny[0];
+            float hiy = ny[0];
+            for (int32_t v = 1; v < 3; v++) {
+                if (nx[v] < lox) {
+                    lox = nx[v];
+                }
+                if (nx[v] > hix) {
+                    hix = nx[v];
+                }
+                if (ny[v] < loy) {
+                    loy = ny[v];
+                }
+                if (ny[v] > hiy) {
+                    hiy = ny[v];
+                }
+            }
+            if (hix < -1.0f || lox > 1.0f || hiy < -1.0f || loy > 1.0f) {
+                c.offscreen++;
+                continue;
+            }
+            const float area = (nx[1] - nx[0]) * (ny[2] - ny[0]) -
+                               (ny[1] - ny[0]) * (nx[2] - nx[0]);
+            c.onscreen++;
+            if (area < 0.0f) {
+                c.cw++;
+            } else {
+                c.ccw++;
+            }
+            c.areaSum += area < 0.0f ? -area : area;
+            if (lox < c.loX) { c.loX = lox; }
+            if (hix > c.hiX) { c.hiX = hix; }
+            if (loy < c.loY) { c.loY = loy; }
+            if (hiy > c.hiY) { c.hiY = hiy; }
+            const float wc = wsum / 3.0f;
+            if (wc < 60.0f) {
+                c.near60++;
+                if (lox < c.nLoX) { c.nLoX = lox; }
+                if (hix > c.nHiX) { c.nHiX = hix; }
+                if (loy < c.nLoY) { c.nLoY = loy; }
+                if (hiy > c.nHiY) { c.nHiY = hiy; }
+            }
+            if (c.bestW < 0.0f || wc < c.bestW) {
+                c.bestW = wc;
+                c.bestDraw = (int32_t)r->drawCount;
+                c.bestFirst = first + t * 3;
+                c.bestArea = area;
+                for (int32_t v = 0; v < 3; v++) {
+                    const int32_t at = (c.bestFirst + v) * 5;
+                    c.bestV[v * 3 + 0] = cv[at];
+                    c.bestV[v * 3 + 1] = cv[at + 1];
+                    c.bestV[v * 3 + 2] = cv[at + 2];
+                }
+                c.bestNdc[0] = nx[0];
+                c.bestNdc[1] = ny[0];
+                c.bestNdc[2] = nx[1];
+                c.bestNdc[3] = ny[1];
+            }
         }
-        const float area = (ndcX[1] - ndcX[0]) * (ndcY[2] - ndcY[0]) -
-                           (ndcY[1] - ndcY[0]) * (ndcX[2] - ndcX[0]);
-        mdk::log3dsPrintf("tri-trace screen-area=%+.8f cull-mode=%d (negative=clockwise in NDC)",
-                          area, (int)r->cullMode);
     }
 
     C3D_DrawArrays(GPU_TRIANGLES, first, count);
@@ -1810,14 +1992,32 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
 // triangle's 15 floats at the mesh's offsets -- invisible geometry, with the
 // diagnostic itself on screen to say the frame was fine (batch 28's defect).
 static void drawDiagnostic(RendererC3D* r) {
-    if (!r->diagnosticTriangle) {
+    if (!r->diagnosticTriangle || !r->scratch) {
         return;
     }
-    static float triangle[15] = {
-        -0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
-         0.8f, -0.8f, 0.0f, 0.0f, 0.0f,
-         0.0f,  0.8f, 0.0f, 0.0f, 0.0f,
-    };
+    // THE VERTICES MUST BE IN LINEAR MEMORY, AND THEY WERE NOT. They used to be
+    // a `static float triangle[15]`: a .bss address in the application heap.
+    // citro3d hands the BufInfo address to the GPU, and only the linear heap is
+    // the GPU's address space; nothing flushes the CPU cache for a static array
+    // either. The renderer's linear scratch is the right home: already
+    // `linearAlloc`'d, already GPU-addressable, and nothing else writes it.
+    //
+    // IT STILL DOES NOT APPEAR, AND THAT IS MEASURED, NOT ASSUMED. Batch 78
+    // replaced these vertices with a triangle covering the whole clip square,
+    // ran it with the cull mode set to GPU_CULL_NONE and the depth test off, and
+    // not one pixel of the panel changed: the panel is 50% white when the SCENE
+    // is drawn with the primary colour and 50% clear colour, and the extra
+    // 50% this triangle would have painted is still the clear colour. So the
+    // linear-memory fix is correct on its own terms -- a .bss pointer is not a
+    // GPU address -- but it is not the whole reason, and the remaining cause is
+    // open. What has been measured and ruled out for it: the cull mode (NONE
+    // changes the frame by 13 px of 96000), the depth test (off changes it by
+    // 58 px), and the winding (the culled set is the one that looks
+    // counter-clockwise on the panel, and the triangle was tried both ways).
+    float* triangle = static_cast<float*>(r->scratch);
+    triangle[0] = -0.8f; triangle[1] = -0.8f; triangle[2] = 0.0f; triangle[3] = 0.0f; triangle[4] = 0.0f;
+    triangle[5] = 0.8f;  triangle[6] = -0.8f; triangle[7] = 0.0f; triangle[8] = 0.0f; triangle[9] = 0.0f;
+    triangle[10] = 0.0f; triangle[11] = 0.8f;  triangle[12] = 0.0f; triangle[13] = 0.0f; triangle[14] = 0.0f;
     C3D_Mtx identity;
     for (int i = 0; i < 16; i++) {
         identity.m[i] = (i % 5 == 0) ? 1.0f : 0.0f;

@@ -14850,3 +14850,169 @@ braking — the right neighbourhood, and `Bottom`'s own doc comment ("Kurt's are
 is known a step after a teleport") is the hint that the pin is script-driven.
 **Obsidian MCP and Cognee MCP are absent from this session's tool list** (a
 session-configuration fault to report, per AGENTS P9, not a lookup that happened).
+
+## Iteration 106 — batch 78: the level-7 fan is not the cull, not the depth, and not the queue
+
+**What was implemented.** No behaviour changed, and the fan is not fixed. This
+batch answers the question `docs/CONTINUATION.md` handed it — "sample triangles
+near the spawn and compare the vertices/MVP/clip values with host-derived
+geometry; inspect the PICA winding and depth/cull behavior before modifying
+renderer state" — and it answers it by measurement, which retires four
+candidate causes at once and leaves one narrowed question.
+
+Three code changes shipped, all of them instruments or real defects, none of them
+a guess at the fan:
+
+1. **A one-frame geometry census** (`Census`, `kCensusFrame = 120`,
+   `renderer_c3d.cpp`). Batch 77 traced the first triangle of the first draw;
+   that triangle is 442 units away and says nothing about the room the camera is
+   standing in. The census walks every triangle the frame queues, in the same
+   per-draw matrix the GPU is about to receive, and sorts it: behind the camera,
+   outside the clip square, or on screen — and for the on-screen ones, which way
+   they wind, how much screen area they claim, and where their bounding box
+   reaches. It is cold by construction: `active` is true for exactly one frame of
+   the process, so every other frame pays one integer compare.
+2. **The per-draw log printed the wrong vertex.** `draw %d: ... v0=` read
+   `mesh.data[0..2]` for every draw of a mesh, so all three logged draws showed
+   `(11.0,438.0,25.0)` and batch 77 went looking for a fan in a triangle its draw
+   did not contain. It now reads the draw's own `first_vertex`, and logs the pass.
+3. **The diagnostic triangle's vertices were not in linear memory.** They were a
+   `static float triangle[15]`, i.e. a `.bss` address in the application heap;
+   citro3d hands that address to the GPU and nothing flushes the CPU cache for
+   it. They now live in the renderer's `linearAlloc`'d scratch. **This is correct
+   on its own terms and it is not sufficient** — see the measurement below.
+
+### The census, from the actual build on the pinned emulator
+
+```
+census frame=120 draws=136 tris=852 behind=14 offscreen=13 onscreen=825
+       near60=32 cw=544 ccw=281 w=[-13.0,1192.0] areaset=33.2835
+census nearest draw=132 first=6 w=6.0 area=-0.03045586
+       v0=(-0.312,2.000,1.500) v1=(0.936,2.000,1.500) v2=(0.936,2.000,0.741)
+census ndc box=[-0.870,2.133]x[-2.408,2.408]
+```
+
+`view: 135 batches, 2544 vertices, 870 triangles` is the level build; the frame
+queues 136 draws and 852 triangles and **825 of them land inside the clip
+square**. So "the room is not queued" is false. `areaset=33.28` against a clip
+square of area 4 is eight screens' worth of triangle area, so "the triangles are
+thin slivers" is false too. The panel, measured by histogram off the capture, is
+67.7% clear colour and 32% painted.
+
+### Four causes measured and ruled out
+
+* **The cull enum.** Forcing `GPU_CULL_NONE` on every pass changed the panel by
+  **13 px of 96000**. The 281 counter-clockwise triangles contribute nothing
+  either way, so the enum is not what is hiding the room. (This also settles the
+  direction of the PICA's winding for the record: `GPU_CULL_BACK_CCW` discards
+  the faces that look counter-clockwise on the panel, measured by drawing a
+  known-wound triangle both ways.)
+* **The depth test.** Forcing `test = false` on the Solid pass changed the panel
+  by **58 px of 96000**. The depth map/test/clear triple is not rejecting the
+  near geometry.
+* **A sheared display transfer.** The target is 240x400 and the top screen's
+  framebuffer is 400x240, so a `GX_TRANSFER_SCALE_NO` raw copy would shear. It
+  does not: un-shearing the capture back through `src(x,y) = panel((y*240+x)%400,
+  (y*240+x)/400)` produces a comb pattern, not a corridor, so the panel is not a
+  raw copy of a coherent portrait image.
+* **The portrait target itself.** Swapping to a 400x240 target and deleting the
+  90-degree rotation from `pica::eyeViewProjection` was tried and **made it
+  worse**: the panel went black apart from a 407x9 strip of clear colour, while
+  the portrait configuration at least fills the panel with the clear colour. The
+  rotation and the portrait target are the configuration that displays; a
+  landscape target needs more than swapping the two constants, and both edits
+  were reverted before this batch committed.
+
+### What is left, and it is narrower than a fan
+
+Replacing the scene's combiner source with `GPU_PRIMARY_COLOR` (so every
+fragment is white and no texture is consulted) paints **exactly half the panel**:
+47845 white px against 48155 clear px, split by a straight vertical edge at the
+panel's centre. So the geometry that reaches the rasterizer covers half the view
+and nothing covers the other half, and the split is a straight line through the
+middle rather than a silhouette. With the texture back in, coverage drops from
+50% to 32%, so the texture path discards a further ~18% of what the geometry
+does paint.
+
+Two questions follow, and they are different questions from "why a fan":
+
+1. Why does the geometry stop at a straight line through the centre of the view?
+   In the rotated portrait target that line is one NDC axis at 0, which is one
+   camera axis at the eye — so either the projection's rotated axes put half the
+   frustum outside the target, or the level's visible geometry really is one-sided
+   from this camera. The oracle says the latter is false: `--frames=…,30,6` on
+   the C# `mdk_sdl` at level 7, run after the landing (step 174), shows a
+   symmetric corridor — bright floor across the bottom third, walls converging to
+   a vanishing point at the centre, a dark ceiling band above it. The oracle's
+   frame is the reference the next batch should diff against; it is at
+   `/tmp/kilo-pi/orcframes/frame029.bmp` for this run and reproducible with the
+   driver written to `/tmp/kilo-pi/orc_frames.sh`.
+2. Why does the texture path discard ~18% of what is painted? That is the
+   index-0-transparent palette expansion meeting a PICA path with no
+   `C3D_AlphaTest` call of its own, and it is the same alpha source owner item 7
+   names as blocked.
+
+**The diagnostic triangle still does not appear, and that is measured too.** With
+its vertices in linear memory, its winding tried both ways, the cull mode
+`GPU_CULL_NONE`, the depth test off and vertices covering the whole clip square,
+the panel did not change by a single pixel — while the scene, drawn with the same
+program, the same attributes and the same viewport, paints half of it. The
+linear-memory change is kept because a `.bss` pointer is not a GPU address, not
+because it made the triangle appear. Whatever else is wrong with that draw is
+still open, and it is a diagnostic, not the game.
+
+**Review-4 findings.** All four are Medium and none is claimed fixed. F1 (the
+geometric solid-arena re-pin) and F2 (the placed-fall golden) stay deferred to a
+collision batch, unchanged from batch 77's disposition. F3 (the frame gate
+accepts a duplicate capture) and F4 (the worktree's routing versus the committed
+owner directive, and the two `100755 => 100644` mode changes) remain owner
+actions on owner-protected paths; nothing under `ralph/`, `ralph-pi.sh` or
+`tools/runner/test_review_state.sh` was staged here, and `MDK_OWNER_APPROVED` was
+not set. This batch's pinned pair is again the level-3 Linux frame, for the same
+reason F3 states: the level-3 host frame's path did not change. The 3DS evidence
+is the emulator verdict and the census above, and the sidecar says so.
+
+### Gates (actual results)
+
+- `timeout 1800 make -C tests/scripts` → exit 0, final line
+  `All cases match the oracle.`
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM timeout 1800 bash tools/check.sh`
+  → exit 0, `CHECK: ALL GATES PASSED`; `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same
+  core`, `SKIP gates_smdh no built .cia to read`, `gates_frames every pinned
+  frame is deterministic and unchanged`, `gates_batch_integrity project
+  invariants intact`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM timeout 900 make -C mdk_3ds`
+  → exit 0, `3DSX mdk.3dsx`.
+- `timeout 300 bash tools/runner/test_review_state.sh` → `REVIEW STATE: ALL CASES PASS`.
+- `timeout 300 sh tests/scripts/c3d_frame_test.sh` → `PASS C3dFrame (26 checks, 33 arms adjudicated red)`.
+- `timeout 300 bash tests/scripts/emurun_harness_test.sh` → `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+- `timeout 300 sh tests/scripts/main_3ds_flow_test.sh` → `PASS Main3dsFlow (5 checks, 5 arms adjudicated red)`.
+- `tools/publish_frame.sh b78-geometry-census` → wrote
+  `docs/frames/2026-11-05-b78-geometry-census.png` and `.txt`; pinned level-3
+  comparison `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, unchanged, and
+  the sidecar names the separate 3DS evidence.
+
+**Emulator evidence (AGENTS P7/P8).** Exact command
+`DISPLAY=:99 timeout 300 mdk_3ds/tools/emurun.sh --secs 30 --shot /tmp/kilo-pi/b78-final.png`
+→ **exit 0**. `display : :99`; `emulator mandarine.AppImage md5 0d2adab6` (the
+pinned r1.2.1, not the segfaulting r1.3.0); `frames: reached 1620 by the deadline
+… after the reap the guest log ends at frame 1680`; `stereo render_3d=0
+factor_3d=0 (mono)`; `gl forced llvmpipe`; lane `/tmp/mdk-emurun.844961`, mount
+`/tmp/.mount_mandarUmxt6Q`. Guest lines: `flow: screen=4 level=7`, the census
+block quoted above, and the standing pose `feet=(0.0,4.0,0.0) … eye=(0.0,-4.0,4.5)`.
+The capture is `/tmp/kilo-pi/b78-final.png`, read by pixel histogram, never by
+eye. **Emulator-green is not hardware-pass**, and Original-3DS behaviour remains
+unmeasured.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` searched (hybrid) for the
+Citro3D cull/winding and framebuffer-rotation question; the hits were
+`renderer_c3d.cpp`'s own header, `pica_matrix.h`'s conversion notes and the
+depth-map evidence block — discovery leads, all checked against the source and
+the measurements above rather than trusted. **Obsidian MCP and Cognee MCP are
+absent from this session's tool list** (an AGENTS P9 session-configuration fault
+to report, not a lookup that happened); the read-only vault fallback was used for
+`30-architecture/patterns/3ds-emulator-masks-real-hardware-bugs.md`, whose point
+this batch honours: the emulator is a measuring instrument, and every claim above
+is a pixel count or a log line off it, not an inference from the picture.
