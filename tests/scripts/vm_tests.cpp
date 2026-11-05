@@ -5857,6 +5857,82 @@ void testFloorProbeAnswersWhatTheTriggerAsks(LevelData* levelData) {
     CHECK(kept.x == low.x && kept.y == low.y && kept.z == low.z);
 }
 
+// The solid-arena pin is STICKY, and that is the whole reason the frontend has to
+// refresh it as Kurt moves (review-8 F1). While `_solid` is set, `move()` collides
+// with it and only it (arena_space.cpp:118) and `kurts()` returns it and only it
+// (:174-181), so the arenas around the feet are not consulted at all; `bottom()`
+// keeps the pinned arena even when the feet are in no arena (:160), which is what
+// lets a fall out of the world reach a bottom and die. Pinned here because the
+// frontend that got it wrong was invisible to every host gate: `main_3ds.cpp`
+// includes <3ds.h>, so the shape is pinned by main_3ds_flow_test.sh and the
+// SEMANTICS it depends on are pinned here.
+void testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(LevelData* levelData) {
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    const float* start = levelData->dti().startPosition();
+    // The frontend's own spawn: the start position raised by StartDrop.
+    const Vec at{start[0], start[1], start[2] + 3.0f};
+    const std::string* spawn = space.arenaAt(at);
+    CHECK(spawn != nullptr);
+    if (spawn == nullptr) {
+        return;
+    }
+
+    // Non-vacuity: with the pin on the arena that actually holds him, a downward
+    // move meets geometry. Level 7 spawns Kurt 12 units above DANT_1's floor at
+    // z=0, so the probe has to be longer than that; a 1-unit probe hits nothing
+    // and would make the comparison below prove nothing.
+    space.setSolid(*spawn);
+    const ArenaSpace::Result own = space.move(at, Vec{0.0f, 0.0f, -50.0f},
+                                              ArenaSpace::kMotionFall, 0.0f);
+    CHECK(own.hit());
+    if (!own.hit()) {
+        return;
+    }
+
+    // Pin a DIFFERENT arena and the same move at the same feet loses its floor:
+    // the pin replaces the by-bounds arenas, it does not add to them. This is the
+    // defect from the other side — a pin left at the spawn does to the arena Kurt
+    // walked into exactly what this does to the arena he is standing in.
+    const std::string* other = nullptr;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name()) && arena->name() != *spawn) {
+            other = &arena->name();
+            break;
+        }
+    }
+    CHECK(other != nullptr);
+    if (other == nullptr) {
+        return;
+    }
+    space.setSolid(*other);
+    const ArenaSpace::Result stale = space.move(at, Vec{0.0f, 0.0f, -50.0f},
+                                                ArenaSpace::kMotionFall, 0.0f);
+    CHECK(!stale.hit());
+
+    // And the pin is what a Kurt outside every arena still has. Below the world,
+    // no arena contains his feet, so with no pin bottom() answers false and the
+    // fall-out death never fires; pinned, it still answers with his arena's bottom.
+    const Vec below{at.x, at.y, -1000.0f};
+    float bottom = 0.0f;
+    space.setSolid(*spawn);
+    CHECK(space.bottom(below, &bottom));
+    const float pinned = bottom;
+    ArenaSpace unpinned;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            unpinned.add(arena);
+        }
+    }
+    float lost = 0.0f;
+    CHECK(!unpinned.bottom(below, &lost));
+    CHECK(pinned > -1000.0f);
+}
+
 } // namespace
 
 int main() {
@@ -6129,6 +6205,8 @@ int main() {
     printf("PASS AirborneKnockDownSlamsToTheFloorTheProbeReaches\n");
     testFloorProbeAnswersWhatTheTriggerAsks(&levelData);
     printf("PASS FloorProbeAnswersWhatTheTriggerAsks\n");
+    testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(&levelData);
+    printf("PASS TheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet\n");
     testPushKurtDispatchesDecodedListToPlayer(&levelData, &cmi, &bank);
     printf("PASS PushKurtDispatchesDecodedListToPlayer\n");
     testPushKurtModeZeroFrameAndLiftAreExact(&levelData, &cmi, &bank);

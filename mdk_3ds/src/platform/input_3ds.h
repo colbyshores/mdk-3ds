@@ -24,9 +24,11 @@
 //   X / Y        use item / next item
 //   R, ZR        fire
 //   L, ZL        previous item
-//   Start        escape (the C#'s pad Start is Escape; the bring-up frontend
-//                still treats it as quit until the flow is wired)
-//   Select       nothing yet — the bring-up exit chord with Start
+//   Start        escape -> flow::Event::Quit. The menu that Escape opens in the
+//                C# is cut, so the flow answers with Screen::None and the run
+//                ends (main_3ds.cpp); it is not a temporary stand-in.
+//   Select       nothing in the game — this frontend's second way out, paired
+//                with Start only because a build with no menu needs one
 //
 // The C# `GamepadMap` is the oracle for a controller, and it puts WALK on the
 // left stick and LOOK on the right one. The original 3DS has ONE analog stick,

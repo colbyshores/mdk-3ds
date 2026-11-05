@@ -330,8 +330,10 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Kurt at the level's spawn, dropped 3 units onto the floor (the C#
-    // Viewer StartDrop), facing the start angle. The follow camera owns its own
+    // Kurt at the level's spawn, RAISED 3 units above the DTI's start position
+    // (the C# Viewer's `StartPosition + (0,0,StartDrop)`, Viewer.cs:220 — the
+    // original lands Kurt by chute, so the pad is below him), facing the start
+    // angle. The follow camera owns its own
     // pitch smoothing, starting at the game's default (4 degrees). Used for the
     // first spawn and every respawn after a death: the C# reloads the level on
     // death, and with no scripts the geometry is static, so resetting Kurt and the

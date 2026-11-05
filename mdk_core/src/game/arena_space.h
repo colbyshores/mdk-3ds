@@ -61,9 +61,12 @@ public:
     // Pins Kurt's arena to the one with that name (C# ArenaSpace.SetSolid). While
     // set, the move, the sight/crosses probes and bottom() treat it as Kurt's
     // arena even when his feet leave its bounds -- the sticky arena the original
-    // keeps (arena+0x44e) and the scripts refresh on a crossing. Until the scripts
-    // land, the frontend pins it once to the start arena, so a fall out of that
-    // arena reaches bottom() and the death fires. Clears the pin if no arena has
+    // keeps (arena+0x44e) and the scripts refresh on a crossing. Because it is
+    // sticky, a frontend WITHOUT the scripts has to refresh it itself as Kurt moves
+    // (C# Viewer.cs:533 refreshes it every step; both frontends do the same with
+    // the geometric arena under his feet), and pin it at the spawn so a Kurt
+    // standing outside every arena still has one for bottom() to resolve --
+    // otherwise the fall-out death never fires. Clears the pin if no arena has
     // that name (then the arenas around the feet are used, as before).
     void setSolid(const std::string& name);
 

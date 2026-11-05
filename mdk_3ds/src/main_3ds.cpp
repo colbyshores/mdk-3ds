@@ -290,34 +290,50 @@ int main(int argc, char** argv) {
     // that camera is gone, and with it the level's start position used as a
     // camera position.
     //
-    // The spawn is the C# Viewer's: the DTI's start position dropped 3 units
-    // onto the floor (StartDrop), facing the start angle. A respawn after a
-    // death rebuilds the same fresh state, because the C# reloads the level.
+    // The spawn is the C# Viewer's: the DTI's start position RAISED by `StartDrop`
+    // (3 units) above the pad, facing the start angle -- the original lands Kurt by
+    // chute, so the start position is below him, not above (Viewer.cs:220, and the
+    // Linux frontend's `start[2] + 3.0f`). A respawn after a death rebuilds the
+    // same fresh state, because the C# reloads the level.
     // ---------------------------------------------------------------------
     mdk::Player player;
     mdk::FollowCamera follow;
     bool playerReady = false;
+    // THE ONE HEALTH, taken once. The C#'s fresh Viewer seeds Kurt from the fall's
+    // carry and CONSUMES it (Viewer.cs:246 -> CarryFromFall, :347-361, which does
+    // `_kurt.SetHealth(carry.Health)` and then `state.Carry = null`), so the carry
+    // belongs to the level that takes it and a second fresh level in the same
+    // session starts whole. `play()` has already consumed it into the flow's level
+    // result by the time this frontend has a Kurt to seed, which is why the value
+    // is read from `levelHealth()` and not from `state().carry` (review-8 F3).
+    const int32_t entryHealth = flow.levelHealth();
+    bool firstSpawn = true;
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
         player = mdk::Player();
         player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
         player.yaw = level.dti().startAngle();
+        if (firstSpawn) {
+            player.setHealth(entryHealth);
+            firstSpawn = false;
+        }
         player.setSpace(&space);
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
         }
         follow = mdk::FollowCamera();
-        // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
-        // scripts' current arena). Without the scripts it is set once here, so
-        // bottom() -- and so the fall-out death -- still resolves his arena
-        // instead of losing it and falling forever.
+        // Pin Kurt's arena to the one around the spawn, as the fresh level's start.
+        // The step loop refreshes it from here on (the C# refreshes it every step,
+        // Viewer.cs:533); what the spawn pin is FOR is the case the loop CANNOT
+        // supply, a Kurt standing outside every arena: with no pin at all, bottom()
+        // resolves nothing, the fall-out death never fires and he falls forever.
         const std::string* here = space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
         if (here) {
             space.setSolid(*here);
         }
-        mdk::log3dsPrintf("spawn: feet=(%.1f,%.1f,%.1f) yaw=%.1f arenas=%d",
+        mdk::log3dsPrintf("spawn: feet=(%.1f,%.1f,%.1f) yaw=%.1f health=%d arenas=%d",
                           player.feet.x, player.feet.y, player.feet.z, player.yaw,
-                          (int)level.arenas().size());
+                          player.health(), (int)level.arenas().size());
     };
     if (arena) {
         spawnPlayer();
@@ -432,6 +448,30 @@ int main(int argc, char** argv) {
                     target = level.arenaPitch(*here);
                 }
                 follow.update(&camera, &space, player, target, step, kAspect);
+                // The collision world follows him. The C# refreshes it EVERY STEP
+                // (`_space.SetSolid(_scripts.SolidArenas)`, Viewer.cs:533, after
+                // UpdateCamera), and the pin is sticky: while `_solid` is set,
+                // move(), floorCrossing(), crosses() and sight() use it and ignore
+                // the arenas around the feet (arena_space.cpp:118 and :174-181).
+                // So a pin left at the spawn would keep resolving Kurt against the
+                // arena he was born in after he walked into its neighbour: the walk
+                // probes would find no floor there, he would fall through it, and
+                // bottom() -- which DOES consider any arena holding his feet --
+                // would report that neighbour's bottom and fire the fall-out death.
+                // Without the scripts the geometric arena under his feet is the
+                // stand-in for `SolidArenas`, the same one the Linux frontend uses
+                // for the same reason (mdk_linux/src/main.cpp:524-531). It is
+                // deliberately NOT cleared when he is outside every arena: that is
+                // the fall-out case, and bottom() still has to resolve an arena for
+                // the death to fire at all. It is probed AGAIN rather than reusing
+                // the pitch's `here`, because the C# evaluates SetSolid after
+                // UpdateCamera and the camera's clearance can shove Kurt into a
+                // different arena than the one his step started in.
+                const std::string* solid =
+                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                if (solid) {
+                    space.setSolid(*solid);
+                }
                 pending -= step;
                 steps++;
             }

@@ -194,6 +194,16 @@ public:
     // a nested call, so the inner one still sees firstLevel() == true.
     Screen handle(Event next);
 
+    // The health the level shown was ENTERED with, which is what a frontend seeds
+    // its Kurt from. It is the fresh viewer's health: the fall's carry when the
+    // level was entered through a fall, full health otherwise (Viewer.cs:246 and
+    // :347-361). `play()` consumes the carry into it, so a frontend must read it
+    // HERE and not `state().carry`, which play() has already cleared (review-8
+    // F3). After reportLevel it is that report's health instead, so the only
+    // moment it is the entry health is when the level is shown -- which is also
+    // the only moment a frontend has a fresh Kurt to seed.
+    int32_t levelHealth() const { return level_.health; }
+
     // The level's live counts and health (C# _viewer.Stats and _viewer.Health).
     // Call it with the level's current values when the level ends, which is when
     // the C# reads them; it is what AfterLevel keeps for the statistics. It is

@@ -381,6 +381,15 @@ void testLevelEndPaths() {
            static_cast<long long>(flow::Screen::Stream));
     expect("and its health is full", blind.streamHealth(), 100);
     expect("and its counts are untouched", blind.state().stats.shots, 0);
+    // The no-carry arm of `levelHealth()`: a fresh Viewer that has taken no damage
+    // reports full, and that is what a frontend spawns with. Without this row the
+    // accessor is pinned only on the carry arm, and a default of 0 -- which would
+    // kill Kurt on the first step -- would read as a passing default.
+    flow::GameFlow whole(levelOptions(7));
+    whole.firstEvent();
+    whole.handle(flow::Event::Play);
+    expect("a level entered with no carry hands the frontend FULL health",
+           whole.levelHealth(), 100);
 
     // A level ENTERED THROUGH A FALL starts at the fall's health, not at 100, and
     // the fresh result the C#'s `new Viewer` stands in takes it (review-7 F1).
@@ -404,6 +413,15 @@ void testLevelEndPaths() {
            static_cast<long long>(flow::Screen::Level));
     expect("and the level CONSUMES it, as CarryFromFall nulls it",
            carried.state().hasCarry ? 1 : 0, 0);
+    // The frontend can only seed Kurt from the carry THROUGH the flow, because
+    // play() has already taken it (review-8 F3): `state().carry` is cleared by the
+    // time a frontend has a Kurt to seed, so a frontend that reads the carry there
+    // reads nothing. `levelHealth()` is the value CarryFromFall would have handed
+    // to Kurt.SetHealth, and it is what the 3DS frontend spawns with.
+    expect("and hands the carry's health to the level, where a frontend can read it",
+           carried.levelHealth(), 40);
+    expect("while the consumed carry itself reads as gone",
+           static_cast<long long>(carried.state().carry.health), 0);
     expect("LEVEL7 ends to the stream", static_cast<long long>(carried.handle(flow::Event::LevelEnded)),
            static_cast<long long>(flow::Screen::Stream));
     expect("and streams the CARRY's health, not full health", carried.streamHealth(), 40);

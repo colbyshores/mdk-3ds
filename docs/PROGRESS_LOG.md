@@ -14407,3 +14407,153 @@ replay emits it, and until then the HUD stays deferred with that cause.
 Owner actions still open and unchanged: restore `0755` on `ralph-pi.sh` and restart
 the service; commit or revert `ralph/builder.md`; append the review-identity block
 to the review prompt (review-7 F5).
+
+## Iteration 102 — batch 74: the collision world follows Kurt, and the level's entry health reaches him (review-8 remediation)
+
+### What was implemented
+
+A **remediation batch**: every Critical/High/Medium/Low finding of the newest external
+review (`logs/ralph-pi/run-20261105-142911/review-1.md`, DeepSeek V4.1 Flash TH, scope
+`20aa79e..b2533ba`) is fixed or rebutted. No new subsystem slice was opened.
+
+**F1 (High) — FIXED, and pinned twice.** `mdk_3ds/src/main_3ds.cpp` pinned Kurt's solid
+arena once, in `spawnPlayer`, and never again. The pin is *sticky*: while `_solid` is
+non-empty `move()` collides with it and only it (`arena_space.cpp:118`) and `kurts()`
+returns it and only it (`:174-181`), so the arenas around the feet are never consulted
+again. The C# refreshes it every step (`_space.SetSolid(_scripts.SolidArenas)`,
+`Viewer.cs:533`, after `UpdateCamera`) and the Linux frontend refreshes it every step too
+(`mdk_linux/src/main.cpp:530`); the 3DS frontend was the only one of the three that did
+not. The step loop now refreshes it after `follow.update(...)`, from the geometric arena
+under Kurt's feet — the same runtime-less stand-in the Linux frontend uses and the same one
+this loop already used for the camera pitch — probed again rather than reusing the pitch's
+lookup, because the C# evaluates `SetSolid` after the camera step and the camera's
+clearance can shove Kurt into another arena.
+
+Two pins, because the file cannot be compiled on a host:
+
+* `tests/scripts/main_3ds_flow_test.sh` (new, wired into `make -C tests/scripts`) pins
+  the **placement**: a `setSolid` inside the `while (pending >= step)` body, after
+  `follow.update`, with the spawn pin still present, and the in-loop refresh guarded on the
+  `arenaAt` lookup itself. Five mutation arms, all five adjudicated red — the defect
+  itself, the refresh moved before the camera, a refresh that clears the pin, the spawn pin
+  removed, and the guard replaced by an unrelated flag.
+* `testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet` in
+  `tests/scripts/vm_tests.cpp` pins the **semantics** on real level-7 geometry: pinned to
+  `DANT_1` a 50-unit drop from the spawn meets the floor at z≈0; pinned to any other
+  reachable arena the same move at the same feet falls free to −38. So the pin *replaces*
+  the arenas around the feet rather than adding to them, which is exactly why a stale one
+  is a defect and not a no-op.
+
+**F3 (Medium) — FIXED, but not as recommended, and the difference matters.** The reviewer's
+remedy was `if (flow.state().hasCarry) player.setHealth(...)` inside `spawnPlayer`. That is
+**dead code**: `flow.handle(firstEvent())` runs `play()`, which consumes the carry
+(`game_flow.cpp:135-140` nulls `state_.carry` and clears `hasCarry`) *before* this frontend
+has a Kurt to seed. Reading the carry in `spawnPlayer` would read the cleared copy and seed
+nothing. The value the C# hands Kurt lives in the flow's fresh level result, so
+`GameFlow` now exposes `levelHealth()` and the frontend seeds the **first** spawn from it;
+a death respawn stays whole, because the C#'s second fresh Viewer finds the carry already
+null (`Viewer.cs:347-361`). Pinned by two new rows in `flow_tests.cpp` — the carry arm
+(40) and the no-carry arm (100), the latter because a default of 0 would otherwise read as a
+passing default and kill Kurt on the first step.
+
+**F4 (Low) — FIXED (prose).** The spawn comment said the DTI start position was "dropped 3
+units onto the floor"; the code correctly *adds* 3 (`Viewer.cs:220`,
+`StartPosition + (0,0,StartDrop)`). Reworded in `main_3ds.cpp`, and the same inverted prose
+in `mdk_linux/src/main.cpp:333` was fixed in the same pass, since a reader who trusted it
+would "fix" the code to `− 3.0f` and spawn Kurt inside the floor.
+
+**F5 (Low) — FIXED (prose).** `mdk_3ds/src/platform/input_3ds.h` still described Start as
+quit "until the flow is wired". The flow is wired; the table now says Start →
+`flow::Event::Quit` → `Screen::None` ends the run because the menu Escape opens is cut, and
+that Select is this frontend's second way out for the same reason, not a pending item.
+
+**F2 (Medium) — ACCEPTED, docs.** `docs/CONTINUATION.md` priority-order item 5 is split
+into **5a DONE** (flow → Player → FollowCamera → Kurt's sprite) and **5b OPEN — the HUD**,
+blocked on the named cause (`mdk_render_canvas_quad` is a no-op on this backend, so a HUD
+call would draw nothing while reading as a ported HUD). Item 8 (the red clear) is now
+labelled builder-added and awaiting an owner line, since it is an addition to the owner's
+order rather than a line in it.
+
+### Rebutted, with evidence
+
+**F1's "sharp detail" is wrong, and the spawn pin stays.** The review asserted that the
+spawn pin's stated justification "does not hold — `bottom()` already includes any arena
+containing his feet (`arena_space.cpp:160`), [so] the pin's only live effect is to *remove*
+the by-bounds fallback from `move()`/`kurts()`". The first half is right and the
+conclusion is not. `bottom()` takes the minimum over `{pinned} ∪ {arenas containing the
+feet}`. When Kurt is below the world the second set is **empty**, so with no pin at all
+`bottom()` returns false, `player.cpp:716` never fires, and he falls forever instead of
+dying. Measured on level 7 in the new `vm_tests` case: pinned, `bottom(0,4,−1000)` answers
+true with −39; unpinned, the same query answers false. The pin is load-bearing for the
+fall-out death, so it is kept, and `arena_space.h` now says what it is actually for instead
+of the claim the reviewer correctly attacked.
+
+### Gate results (verbatim, as run)
+
+* `make -C tests/scripts` → `All cases match the oracle.` New rows:
+  `PASS TheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet`,
+  `PASS GameFlowMatchesTheOracle`. Also `PASS C3dFrame (25 checks, 32 arms adjudicated red)`,
+  `PASS Main3dsFlow (5 checks, 5 arms adjudicated red)`,
+  `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+* `bash tools/check.sh` → `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`,
+  `gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, `gates_batch_integrity PASS`.
+* `make -C mdk_3ds` → `LINK mdk.elf` / `3DSX mdk.3dsx`. **Note for the next batch:** bare
+  `make -C mdk_3ds` fails `Please set DEVKITARM` in a shell that has not exported it;
+  `ralph-pi.sh:150` exports `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM`,
+  so a manual run must do the same. Not a regression.
+
+### Emulator evidence (AGENTS P7/P8 — this batch changes `mdk_3ds/**`)
+
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 45 --min-frames 600` → **exit 0**.
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6   (r1.2.1, the pinned known good)
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+stereo    : render_3d=0 factor_3d=0 (mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0
+frames    : reached 2520 by the deadline; after the reap the log ends at frame 2580
+guest log : flow: screen=4 level=7 | arena: DANT_1 (19 arenas)
+            view: 135 batches, 2544 vertices, 870 triangles
+            spawn: feet=(0.0,4.0,12.0) yaw=90.0 health=100 arenas=19
+            input selftest: fwd=1 fire=1 lookbits=41A00000 pitchbits=00000000
+            game: player=1 sprite=1 arenas=19 step=0.016667
+            frame 2520 feet=(0.0,4.0,0.0) health=100 eye=(0.0,-4.0,4.5)
+```
+
+The `spawn:` line now carries `health=`, which is the F3 seed visible on target. **This run
+does not exercise F1's failure path**: with no input Kurt never leaves `DANT_1`, so the
+per-step refresh resolves to the same arena every step and the steady state is identical to
+batch 73's. The fix is pinned by the two host tests above, not by this run; the run's value
+here is that the changed frontend still boots, loads, steps and draws. Emulator-green is not
+hardware-pass, and the on-target picture is still the red clear (item 8).
+
+The frame pair `docs/frames/2026-11-05-review-8-solid-arena.png` is **byte-identical to the
+previous six** (`6769a137…`): this batch touches no Linux or render path, so it is not new
+visual evidence and must not be cited as such. Its sidecar still records the pinned gap
+(`bad_percent=1.240 max_delta=247 mean_delta=0.1819`).
+
+### Prior-solution lookup
+
+* **Pi knowledge (`mdk-sdl`)** — searched for the solid-arena pin. The top hit was
+  `arena_space.h`'s own comment, which asserted "the frontend pins it once to the start
+  arena": the KB surfaced the stale claim that made the defect read as intended. Verified
+  against the repository and the oracle, and the comment is corrected in this batch.
+* **Obsidian MCP** — `obsidian_*` tools are **absent from this session**, so the read-only
+  disk fallback was used (`/mnt/nas/Vaults/port-docs`). `10-projects/mdk-sdl/` holds only
+  `ralph-pi-mandarine-setup.md`, and no vault note mentions `SetSolid`, the solid arena or
+  the collision world: no prior finding on this defect. Per AGENTS P9 the missing MCP tools
+  are a session configuration fault, recorded here, not a lookup that happened.
+* **Cognee MCP** — `cognee_*` tools are **absent from this session**; the knowledge graph was
+  **not** consulted for this batch. Not to be read as "nothing in the graph".
+
+### Next, per `docs/CONTINUATION.md`
+
+Priority-order **item 8 (the red clear)** is the binding blocker on the owner directive's
+goal — "a CIA that plays a level end-to-end, verified in Mandarine" cannot be *verified*
+while the panel shows a red clear — and it is now the first unfinished thing that is not
+blocked on a cut subsystem. Item 6 (ndsp audio) is next after it. Item 5b (the HUD) stays
+blocked on the canvas seam. Old-3DS performance readiness remains **UNMEASURED**: no
+hardware capture has been taken.
