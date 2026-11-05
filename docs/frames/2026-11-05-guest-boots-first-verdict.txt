@@ -1,0 +1,17 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-05T07:50:22Z at e6d5e52
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+
+Why this picture did not move: nothing in this batch reaches the Linux renderer.
+The functional change is in mdk_3ds/src/render/renderer_c3d.cpp, which is
+compiled only by the devkitARM target, and it deletes a create-time
+shaderProgramConfigure call that made the 3DS guest stop before it could print
+its readiness token. The rest is loop harness (ralph-pi.sh, ralph/validator.md,
+tools/runner/test_review_state.sh) and the Mandarine runner
+(mdk_3ds/tools/emurun.sh). So the pinned frame is byte-identical to its parent
+(md5 6769a13731983d65cee9df02da6cff37) and the gap is unchanged at 1.240%.
+What DID move is off this frame by definition: the 3DS guest now boots in
+Mandarine and reaches frame 1080 at 60 fps, where the previous batch's run
+produced no readiness token at all. That evidence is the emurun verdict block in
+docs/PROGRESS_LOG.md, Iteration 95, and it is emulator evidence, not hardware
+evidence and not a picture of the level.

@@ -108,17 +108,32 @@ REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/deepseek-v4.1-flash}"
 # (qwen38-flash-next), or the "independent" review is fake. `swarm-worker` is
 # deliberately excluded: it is the SAME upstream as qwen.
 #
-# The operator's allowed set is exactly three IDs — qwen, deepseek-v4.1-flash and
-# deepseek-v4.1-flash-th — so exactly one cross-family fallback is left: the -th
-# route, which reviews a qwen build. When the builder has itself degraded onto
-# -th, that candidate is its own route and is refused, so the iteration is
-# BLOCKED rather than reviewed by the model that wrote it. That is the fail-closed
-# answer and it is intended: a three-model set has no spare reviewer.
+# The owner directive of 2026-11-05 names the reviewer chain:
 #
-# `deepseek-v4.1-flash-nvidia` was retired from the proxy on 2026-11-05 and must
-# not be re-added; grok, minimax and luna are retired by operator decision
-# (docs/OWNER_DIRECTIVE_2026-11-05.md) and must not return to any chain.
-REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/deepseek-v4.1-flash-th}"
+#   REVIEWER_FALLBACKS="litellm/deepseek-v4.1-flash-nvidia
+#                       litellm/minimax-m3.1-flash-nvidia litellm/luna"
+#
+# and states the behaviour the chain exists to produce: "when the builder falls
+# back to deepseek-v4.1-flash-th, the reviewer's own family rule skips both
+# DeepSeek variants, so review lands on minimax or luna". Two of the three are
+# shipped here; the third is not, with a reason, so nobody re-derives it:
+#
+#   * minimax-m3.1-flash-nvidia (family minimax) and luna (family luna) both
+#     resolve on the LIVE proxy (model_identity.py report --live, 2026-11-05)
+#     and both are a different family from every builder route in WORKER_MODELS.
+#   * deepseek-v4.1-flash-nvidia is NOT re-added. It folds to family `deepseek`,
+#     so the family rule refuses it in exactly the case a fallback is needed for
+#     (a -th builder), and it is absent from the live proxy table — the static
+#     map only — so it would burn a health probe to arrive at a refusal. The
+#     directive's line predates that retirement; what it asks for is a
+#     cross-family reviewer when the builder degrades, and that is what this
+#     line delivers.
+#
+# `swarm-worker` stays excluded: same upstream as qwen. grok stays retired by
+# operator decision and must not return to any chain. If BOTH routes below ever
+# go unhealthy the answer is BLOCKED and a stopped loop, not a same-family
+# review — see the note above reviewer_reject_reason.
+REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/minimax-m3.1-flash-nvidia litellm/luna}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-7200}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 REVIEW_FAIL_LIMIT="${REVIEW_FAIL_LIMIT:-2}"
@@ -224,32 +239,31 @@ model_family()   { python3 "$ROOT/tools/runner/model_identity.py" family   "$1" 
 # `reviewer_rejected x >/dev/null && continue` would have silently refused (or
 # accepted) every candidate. The name now says what it returns, and
 # tools/runner/test_review_state.sh pins the status on both arms.
-# Owner-directed independence exception (2026-11-05).
+# THERE IS NO INDEPENDENCE EXCEPTION HERE, AND ONE MUST NOT BE ADDED.
 #
-# The operator has accepted a same-family review for exactly one pair: a builder
-# on deepseek-v4.1-flash-th may be reviewed by deepseek-v4.1-flash, because the
-# 1017 checkpoint is materially stronger than the -th build even though
-# model_identity.py resolves both to family `deepseek`. Without this the reviewer
-# chain would have no eligible candidate whenever the builder falls back, and the
-# fail-closed design would stop the loop.
+# A batch put a literal `-th` -> `flash` allowlist at this spot on 2026-11-05 and
+# called it owner-directed. It was not, and both owner-authored texts in this
+# repository say the opposite:
 #
-# This is a literal builder:reviewer allowlist, NOT a general relaxation. A
-# candidate that is the builder's own route or own upstream is refused before
-# this is consulted, and every other same-family candidate is still refused —
-# including the reverse direction, a flash build reviewed by -th.
-# `deepseek-v4.1-flash-nvidia` was retired from the proxy on 2026-11-05, so it is
-# not in this list; the operator's allowed set is the three IDs named above.
-# Keep it empty unless the operator directs otherwise: a model reviewing its own
-# weights is the exact failure this function exists to prevent.
-INDEPENDENCE_EXCEPTIONS="${INDEPENDENCE_EXCEPTIONS:-litellm/deepseek-v4.1-flash-th:litellm/deepseek-v4.1-flash}"
-
-independence_exception() {
-    local want="$1:$2" e
-    for e in $INDEPENDENCE_EXCEPTIONS; do
-        [ "$e" = "$want" ] && return 0
-    done
-    return 1
-}
+#   * SPEC-COMPLETION.md, harness rule 4 (PROTECTED): the reviewer "must stay a
+#     different model family from the builder — identity is the resolved
+#     upstream, never the alias — and a reviewer that resolves to the builder's
+#     family is skipped rather than dispatched. If no eligible reviewer resolves,
+#     the loop records BLOCKED and stops; it never reviews with the builder's own
+#     model." Editing that sentence is an owner act on a protected file
+#     (gates_batch_integrity.py --owner-approved); a batch may not author its own
+#     exception, and this loop will not accept one that it did.
+#   * docs/OWNER_DIRECTIVE_2026-11-05.md, for this exact case: "the reviewer's
+#     own family rule skips both DeepSeek variants, so review lands on minimax
+#     or luna".
+#
+# The stated reason for the hole — no eligible candidate when the builder falls
+# back — was also measured false: the two routes in REVIEWER_FALLBACKS above
+# resolve live and are cross-family, which is what the owner directive intends
+# for that case. A same-family review is not an adversarial check; a green
+# artifact that claims one is worse than a stopped loop, because the next
+# iteration reads it as evidence. tools/runner/test_review_state.sh pins that
+# this mechanism stays absent and that the `-th`/`flash` pair is REFUSED.
 
 reviewer_reject_reason() {
     local cand="$1" cand_upstream cand_family
@@ -269,9 +283,6 @@ reviewer_reject_reason() {
         return 0
     fi
     if [ "$cand_family" = "$RUN_FAMILY" ]; then
-        if independence_exception "$RUN_MODEL" "$cand"; then
-            return 0
-        fi
         printf 'it is the builder family %s (%s and %s are one model on two hosts)\n' "$cand_family" "$cand" "$RUN_MODEL"
         return 0
     fi
@@ -808,7 +819,13 @@ POLICY_PRECEDENCE
             [ -n "$REVIEW_OWED_BASE" ] && REVIEW_BASE="$REVIEW_OWED_BASE"
             {
                 cat "$VALIDATOR_FILE"
-                printf '\n\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${REVIEW_BASE:0:8}" "${HEAD_AFTER:0:8}"
+                printf '\n\n--- REVIEW IDENTITY ---\n'
+                printf 'The builder of this batch was %s (upstream %s, family %s).\n' \
+                    "$RUN_MODEL" "${RUN_UPSTREAM:-UNRESOLVED}" "${RUN_FAMILY:-UNRESOLVED}"
+                printf 'You are dispatched as %s. Judge independence from the resolved upstream and family above, NOT from any model name written in the text you are reading: the reviewer prompt is a fixed file and the builder route changes when the worker falls back.\n' \
+                    "${REVIEW_MODEL:-nobody — this review was BLOCKED}"
+                printf 'If the two families above are the same, mark the review NOT INDEPENDENT whatever the prompt says about who wrote the code.\n'
+                printf '\n--- REVIEW SCOPE ---\nReview ONLY commits %s..%s plus uncommitted work. Do not edit files.\n' "${REVIEW_BASE:0:8}" "${HEAD_AFTER:0:8}"
                 if [ "$REVIEW_BASE" != "$HEAD_BEFORE" ]; then
                     printf 'This range is wider than this iteration because an earlier review could not be dispatched or died; %s..%s was never reviewed by anyone.\n' "${REVIEW_BASE:0:8}" "${HEAD_BEFORE:0:8}"
                 fi
@@ -844,18 +861,40 @@ POLICY_PRECEDENCE
             fi
             # Record who was actually on each side, by upstream and family, so a
             # later reader can check the independence claim instead of trusting
-            # the alias in the log line.
+            # the alias in the log line. The verdict line is COMPUTED, not
+            # asserted: an artifact that prints the rule and stays silent about
+            # whether it held is how a same-family dispatch reads as a pass
+            # (external review 2026-11-05, run-20261105-062743/review-1.md F2).
             {
                 echo "builder:  $RUN_MODEL upstream=${RUN_UPSTREAM:-UNRESOLVED} family=${RUN_FAMILY:-UNRESOLVED}"
                 if [ -n "$REVIEW_MODEL" ]; then
-                    echo "reviewer: $REVIEW_MODEL upstream=$(model_upstream "$REVIEW_MODEL") family=$(model_family "$REVIEW_MODEL")"
+                    REV_UPSTREAM="$(model_upstream "$REVIEW_MODEL")"
+                    REV_FAMILY="$(model_family "$REVIEW_MODEL")"
+                    echo "reviewer: $REVIEW_MODEL upstream=${REV_UPSTREAM:-UNRESOLVED} family=${REV_FAMILY:-UNRESOLVED}"
                 else
+                    REV_UPSTREAM=""
+                    REV_FAMILY=""
                     echo "reviewer: none dispatched"
+                fi
+                if [ -z "$REVIEW_MODEL" ]; then
+                    echo "independence: NONE — no reviewer was dispatched; this review is BLOCKED, not skipped"
+                elif [ -z "$REV_FAMILY" ] || [ -z "$RUN_FAMILY" ]; then
+                    echo "independence: UNPROVEN — a side resolves to no family, so difference cannot be shown"
+                elif [ "$REV_FAMILY" = "$RUN_FAMILY" ]; then
+                    echo "independence: SAME-FAMILY ($RUN_FAMILY) — NOT AN ADVERSARIAL CHECK; this dispatch is a contract violation"
+                else
+                    echo "independence: PROVED — builder family $RUN_FAMILY is not reviewer family $REV_FAMILY"
                 fi
                 echo "scope:    ${REVIEW_BASE:0:8}..${HEAD_AFTER:0:8}"
                 echo "rule:     independence is the resolved upstream and model family, never the alias string."
                 echo "source:   the proxy's /model/info when it answers, else the committed map in tools/runner/model_identity.py; an unresolved alias is refused."
             } >"$RUN_DIR/review-$ITER.identity.txt"
+            if [ -n "$REVIEW_MODEL" ] && [ "$(model_family "$REVIEW_MODEL")" = "$RUN_FAMILY" ]; then
+                # Unreachable through the chain above (reviewer_reject_reason
+                # refuses it), so this is a tripwire, not a branch: if it ever
+                # prints, something dispatches reviewers without asking the guard.
+                log "iter=$ITER BUG: dispatched $REVIEW_MODEL, which is the builder family ${RUN_FAMILY}"
+            fi
             if [ -n "$REVIEW_MODEL" ]; then
                 phase review
                 # The obligation is recorded BEFORE the reviewer exists, as ONE

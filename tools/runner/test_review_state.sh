@@ -198,30 +198,29 @@ check "and the next completed review still clears it" "" "$(review_owed done "$(
 REJECT_FN="$(lift_fn reviewer_reject_reason)"
 UPSTREAM_FN="$(lift_fn model_upstream)"
 FAMILY_FN="$(lift_fn model_family)"
-EXCEPTION_FN="$(lift_fn independence_exception)"
-eval "$REJECT_FN"; eval "$UPSTREAM_FN"; eval "$FAMILY_FN"; eval "$EXCEPTION_FN"
+eval "$REJECT_FN"; eval "$UPSTREAM_FN"; eval "$FAMILY_FN"
 guard_fragment "R6-2: the reviewer_reject_reason lift" "$REJECT_FN"
 guard_fragment "R6-2: the model_upstream lift"        "$UPSTREAM_FN"
 guard_fragment "R6-2: the model_family lift"         "$FAMILY_FN"
-guard_fragment "the independence_exception lift"     "$EXCEPTION_FN"
-# The owner-directed exception (2026-11-05) is INSIDE the guard: its same-family
-# arm calls independence_exception before it prints the refusal. Lifting the
-# guard without the helper left it undefined here, so every same-family probe
-# failed with "command not found" on stderr, fell through to REJECT, and the
-# allowlisted pair was pinned as refused — a PASS generator wearing the
-# exception's clothes, and the shipped allowlist was never exercised by the one
-# suite that claims to pin review independence.
-check "the independence helper exists before the guard can call it" "0" \
-      "$(declare -f independence_exception >/dev/null 2>&1; printf '%s' "$?")"
-# Take the allowlist from the shipped line rather than restating it here: a copy
-# in the test keeps passing after the shipped one is widened (the same reason
-# state_set stopped being retyped, review-3 F3).
-EXCEPTION_LINE="$(grep -E '^INDEPENDENCE_EXCEPTIONS=' "$LOOP_CODE" | head -1)"
-if [ -z "$EXCEPTION_LINE" ]; then
-    check "the shipped independence allowlist could be read from ralph-pi.sh" "read" "NOT FOUND"
-else
-    eval "$EXCEPTION_LINE"
-fi
+# Review-1 F1 of run-20261105-062743: a batch installed a same-family reviewer
+# allowlist in ralph-pi.sh, called it owner-directed, and it contradicted both
+# SPEC-COMPLETION.md harness rule 4 (owner-protected: "a reviewer that resolves
+# to the builder's family is skipped rather than dispatched … the loop records
+# BLOCKED and stops") and docs/OWNER_DIRECTIVE_2026-11-05.md ("the reviewer's
+# own family rule skips both DeepSeek variants, so review lands on minimax or
+# luna"). It is reverted, and the MECHANISM is pinned absent rather than pinned
+# empty: an env-overridable hole that happens to be empty today is still a hole,
+# and the next edit could open it without touching a guard. LOOP_CODE is
+# comment-stripped, so the prose that records this stays invisible here and only
+# real code can trip it.
+for banned in INDEPENDENCE_EXCEPTIONS independence_exception; do
+    if grep -qF "$banned" "$LOOP_CODE"; then
+        printf 'FAIL review-1 F1: %s is back in ralph-pi.sh — a same-family reviewer is a contract violation, not a config option\n' "$banned"
+        fails=$((fails + 1))
+    else
+        printf 'PASS review-1 F1: no %s mechanism exists in the loop\n' "$banned"
+    fi
+done
 if ! declare -f reviewer_reject_reason model_upstream model_family >/dev/null; then
     echo "FAIL reviewer_reject_reason could not be lifted out of ralph-pi.sh"
     fails=$((fails + 1))
@@ -254,26 +253,26 @@ else
     check "an alias nobody can resolve is refused"          "REJECT" "$(probe litellm/qwen litellm/not-a-model)"
     check "an unresolvable BUILDER refuses every reviewer"  "REJECT" "$(probe litellm/not-a-model litellm/deepseek-v4.1-flash)"
     check "qwen builder, minimax reviewer: accepted"        "ACCEPT" "$(probe litellm/qwen litellm/minimax-m3.1-flash-nvidia)"
-    # M1: when the WORKER falls back to the DeepSeek seat, that is the route that
-    # wrote the batch, and the primary reviewer is its own family. The operator has
-    # since (2026-11-05) accepted exactly that pair — the 1017 checkpoint is
-    # materially stronger than the -th build — so what this pin asserts moved: the
-    # DEFAULT is still refusal (the pair above, the reverse direction), and the
-    # ALLOWLISTED direction is what is accepted here. NOTE (F6): this case hands
-    # the guard a CORRECT identity, so it passes on the pre-fix loop too — it pins
-    # the guard's answer, not the loop's re-resolution. The pin for the
-    # re-resolution is the pair below plus the structural count further down.
-    check "M1: the allowlist lets a -th build be reviewed by flash" \
-          "ACCEPT" "$(probe litellm/deepseek-v4.1-flash-th litellm/deepseek-v4.1-flash)"
-    check "the allowlist cannot license a route to review its own builder" \
+    # M1 / review-1 F1: when the WORKER falls back to the DeepSeek seat, that is
+    # the route that wrote the batch and the primary reviewer is its own family.
+    # It MUST be refused — that refusal is what sends the iteration to the
+    # cross-family fallbacks the owner directive names (minimax, luna) instead of
+    # a same-family review. The two ACCEPT probes below are the other half: the
+    # fallbacks really are eligible for a -th builder, so refusing `flash` is a
+    # detour and not a dead end that quietly strands the loop.
+    check "review-1 F1: a -th builder is NOT reviewed by flash (one family)" \
+          "REJECT" "$(probe litellm/deepseek-v4.1-flash-th litellm/deepseek-v4.1-flash)"
+    check "no route reviews its own builder" \
           "REJECT" "$(probe litellm/deepseek-v4.1-flash-th litellm/deepseek-v4.1-flash-th)"
+    check "review-1 F1: a -th builder IS reviewed by minimax" \
+          "ACCEPT" "$(probe litellm/deepseek-v4.1-flash-th litellm/minimax-m3.1-flash-nvidia)"
+    check "review-1 F1: a -th builder IS reviewed by luna" \
+          "ACCEPT" "$(probe litellm/deepseek-v4.1-flash-th litellm/luna)"
     # F6: the behavioural half. Same builder route, same reviewer, judged twice.
     # With the ABANDONED route's family still in RUN_FAMILY the guard reads ACCEPT
     # — that is the self-review the fix exists to stop, and it is what the pre-fix
     # loop produced. Re-resolved, it refuses. If someone re-implements the fallback
-    # so that one identity field stays stale, this pair fails. The pair is the
-    # NON-allowlisted direction on purpose: the allowlisted one is accepted by
-    # design now, so it can no longer show the difference between the two.
+    # so that one identity field stays stale, this pair fails.
     check "F6: with the abandoned route's identity the same reviewer would be ACCEPTED" \
           "ACCEPT" "$(stale_probe litellm/qwen litellm/deepseek-v4.1-flash litellm/deepseek-v4.1-flash-th)"
     check "F6: re-resolved to the route that answered, it is REFUSED" \
@@ -902,21 +901,34 @@ guard_absent  "F2: no case-with-:-0 that tests the wrong value" 'case "${REVIEW_
 # F3: independence is resolved, not string-compared.
 guard_present "F3: the reviewer chain asks the reject-reason guard" 'REJECT="$(reviewer_reject_reason "$REVIEWER_MODEL")"'
 guard_present "F3: the fallback chain asks it too"             'REJECT="$(reviewer_reject_reason "$candidate")"'
-# The independence exception is a hole in the family rule, so its SIZE is pinned
-# at the source level as well as behaviourally: the behavioural probes above run
-# whatever the shipped line says, and this pins that the shipped line is the one
-# approved pair and nothing else. Widening it is an operator decision, and it has
-# to fail a test rather than only a reviewer's attention.
-guard_present "the shipped independence allowlist is exactly the approved pair" \
-  'INDEPENDENCE_EXCEPTIONS="${INDEPENDENCE_EXCEPTIONS:-litellm/deepseek-v4.1-flash-th:litellm/deepseek-v4.1-flash}"'
+# The reviewer chain is the loop's only defence against a self-review, so its
+# SHAPE is pinned at the source level as well as behaviourally (review-1 F4 of
+# run-20261105-062743). Two things, and the second is the one a presence test
+# cannot do: exactly ONE assignment, and the value the WHOLE block leaves in the
+# variable. A second `REVIEWER_FALLBACKS=` appended further down would widen the
+# live chain at runtime while a grep-for-a-literal guard stayed green — the same
+# class as the allowlist pin above, so it gets the same treatment.
+FB_LINES="$(grep -cE '^REVIEWER_FALLBACKS=' "$LOOP_CODE")"
+check "review-1 F4: exactly one REVIEWER_FALLBACKS assignment" "1" "$FB_LINES"
+eval "$(grep -E '^REVIEWER_FALLBACKS=' "$LOOP_CODE" | tail -1)"
+check "review-1 F4: the chain that takes effect is the owner's cross-family pair" \
+      "litellm/minimax-m3.1-flash-nvidia litellm/luna" "${REVIEWER_FALLBACKS:-}"
+unset REVIEWER_FALLBACKS
 # Retired routes must not come back through a chain edit. LOOP_CODE is
 # comment-stripped, so this fires on a route in CODE, not on the prose that
-# records the retirement.
-guard_absent  "the retired deepseek -nvidia mirror is in no chain" 'flash-nvidia'
-guard_absent  "retired minimax is in no chain"                     'minimax'
-guard_absent  "retired luna is in no chain"                        'litellm/luna'
+# records the retirement. NB the -nvidia pattern is the WHOLE deepseek alias:
+# `minimax-m3.1-flash-nvidia` also ends in `flash-nvidia`, so a suffix pattern
+# failed on a route docs/OWNER_DIRECTIVE_2026-11-05.md itself names.
+guard_absent  "the retired deepseek -nvidia mirror is in no chain" 'litellm/deepseek-v4.1-flash-nvidia'
 guard_absent  "retired grok is in no chain"                        'litellm/grok'
 guard_present "F3: the identity of both sides is recorded"     'review-$ITER.identity.txt'
+# Review-1 F2: the identity artifact must STATE whether independence held, and
+# the prompt must be told who actually wrote the batch instead of a hard-coded
+# name that goes stale the moment the worker falls back.
+guard_present "review-1 F2: the identity file states a proved independence" 'independence: PROVED'
+guard_present "review-1 F2: a same-family dispatch is named in the artifact" 'SAME-FAMILY ('
+guard_present "review-1 F2: an unresolvable side is UNPROVEN, not silent" 'independence: UNPROVEN'
+guard_present "review-1 F2: the builder route is templated into the prompt" 'The builder of this batch was'
 # H1: the obligation is written where it cannot be lost with the collector.
 guard_present "H1: the range is persisted at dispatch"          'state_write REVIEW_INFLIGHT_BASE="$REVIEW_INFLIGHT_BASE"'
 guard_present "H1: startup folds an uncollected review into owed" 'REVIEW_OWED_BASE="$(review_inflight_owed "$REVIEW_OWED_BASE" "$REVIEW_INFLIGHT_BASE")"'

@@ -12927,7 +12927,7 @@ recorded as owner task 1's sign-off line; a batch may not touch either file.
 
 **First real harness run, and what it measured.** `EMURUN_READY_TIMEOUT=240
 mdk_3ds/tools/emurun.sh --secs 40 --shot … --grep 'shader|dvlb|FAILED|vsh|cfg|romfs'`, `DISPLAY=:99`
-(Xvfb, already listening), emulator `mandarine.AppImage` md5 `0d2adab6ad078c78e6d03e72e86f2eb6`… =
+(Xvfb, already listening), emulator `mandarine.AppImage` md5 `0d2adab6ad078c78e6d03e72086f2eb6`… =
 `PINNED_MD5` (r1.2.1, not the banned r1.3.0). **Exit 4: "no readiness token ('backend:') within 240 s.
 Refusing to report."** That refusal is the harness doing its job — it did not print a verdict over a run
 that produced none. The guest log it refused to report on is the finding:
@@ -12989,3 +12989,195 @@ source is claimed as consulted.
 unrecognised option falls through the `case` and becomes `$DSX`, so a typo'd flag exits 2 with "no such
 build: 240". Loud, not silent, but the `*)` arm should reject a leading `-`. (b) The readiness window is
 `EMURUN_READY_TIMEOUT`, which the usage block does not document. Both are in the owner-authored harness.
+
+---
+
+## Iteration 95 — batch 67: the guest boots, and the reviewer-independence hole is closed
+
+Owner-directive item 1 (the Mandarine harness) is **done**: `emurun.sh` prints a real verdict line and the
+guest reaches its readiness token. The blocker was not the harness — it was in the shipped renderer.
+Review-1 (`logs/ralph-pi/run-20261105-062743/review-1.md`) is remediated: **F1 (Critical) and F2 (High)
+fixed, F3–F8 fixed**, nothing rebutted. No new 1-ULP work was opened (the directive forbids it while the
+sprint is open).
+
+### The slice: no `shaderProgramConfigure` at create time
+
+`mdk_3ds/src/render/renderer_c3d.cpp` called `shaderProgramConfigure(&r->program, true, false)` during
+renderer creation. That call was the last thing the guest ever did: `shaderProgramSetVsh ok` was the final
+line `mdk.log` ever wrote, and `main_3ds.cpp:124`'s `backend:` token never appeared. The fix deletes it.
+
+The reason is read out of the shipped devkitARM archives, not remembered (`objdump -dr` on
+`libctru.a`/`libcitro3d.a`, 2026-11-05):
+
+* `shaderProgramSetVsh` frees the old instance, `malloc`s a new one and tail-calls `shaderInstanceInit`.
+  It uploads nothing, so the create-time configure was not redundant-by-accident — it was the only upload.
+* citro3d `C3D_BindProgram` does **not** configure either. It marks the shader dirty in the context state:
+  `orr r3, r2, #0x1900` when no program was bound before, `0x900`/`0x1100` when the vertex/geometry DVLE
+  differs. `C3Di_UpdateContext` is the only citro3d caller of `shaderProgramConfigure`, and it calls it as
+  `(sp, state>>11 & 1, state>>12 & 1)` — i.e. it sends the code from **inside the frame**, driven by the
+  bind.
+* `shaderProgramConfigure` itself is `GPUCMD_Add` end to end (permutation/operand writes, then the
+  microcode-DEST sequence). Issuing that before the first `C3D_FrameBegin`, into whatever command buffer was
+  current at create time, is outside the library's contract, and it is the only call between the last log
+  line and the readiness token.
+
+So the bind in `drawFrame` already uploads the microcode exactly once, and the create-time call was a second
+send in the wrong place. This matches the sibling citro3d port's frame entry recorded in the vault
+(`10-projects/forsaken/findings/citro3d-renderer-architecture-and-vertex-pipeline.md`: `C3D_FrameBegin` →
+clears → `C3D_BindProgram`, no create-time configure anywhere) and AGENTS P2's frame contract. Verified by
+running it, not by inspection.
+
+### Emulator evidence (AGENTS P7/P8) — the first real verdict
+
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 20 --shot /tmp/kilo-pi/batch67-3ds-final.png`, **exit 0**:
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6      (= PINNED_MD5 0d2adab6ad078c78e6d03e72086f2eb6, r1.2.1)
+build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+guest log : /tmp/mdk-emurun.3947314/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log
+frames    : reached 1080 (23 frame lines logged, every 60th after #5)
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+          graphics_api=1 [default=true — the emulator counts this as its compiled default, so the stored
+          value matches what ran] (1=OpenGL 2=Vulkan; Mesa env binds OpenGL only)
+stereo    : render_3d=0 [default=true …] factor_3d=0 [default=true …] (0 = mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0 [default=false — an explicit
+          override the emulator kept]
+lane      : /tmp/mdk-emurun.3947314 (mount /tmp/.mount_mandarsnkY8S)
+session   : dbus-run-session; XDG_RUNTIME_DIR private
+backend: PICA200 Citro3D
+draws issued: 0
+frame 960 elapsed=0.0167
+frame 1020 elapsed=0.0167
+frame 1080 elapsed=0.0167
+```
+
+Guest log head: `main: FZ/DN ok (fpscr=0x03000010)` → `depth: map z*1.0+1.0 …` → `dvlb numDVLE=1` →
+`shaderProgramSetVsh ok result=0x00000000` → `uniforms: mvp=0 uvtransform=4` → `renderer created: …` →
+`backend: PICA200 Citro3D` → `data: romfs:/` → `arena: HMO_1 (17 arenas)` → `view: 154 batches, 1188
+vertices, 399 triangles` → three `draw N:` lines per frame with real vertex data → `frame 1 elapsed=…`.
+`elapsed=0.0167` at frame 1080 is 60 fps under llvmpipe. **Emulator-green is not hardware-pass** (P8): no
+FCRAM/VRAM exhaustion, no `GPU_CLAMP_TO_EDGE` leniency check, no Old-3DS timing here.
+
+**What the picture shows.** The capture is the emulator window (OPENGL, VOLUME: 0%, 60 FPS, Frame 3.09 ms)
+and its top screen is a **red clear with a thin sliver of geometry**, not a level. The frame path runs —
+draws are issued, vertices are real, the counter advances — so this is now a visible defect in the colour /
+GPU-state path (owner-directive item 6's neighbourhood, AGENTS P2's "all GPU state every frame") rather than
+an inference. It is the next thing to attack after item 2, and it is recorded as an open item, not as a pass.
+
+**`draws issued: 0` is a bad instrument.** `main_3ds.cpp:277-281` reads `mdk_render_stats(renderer, &draws,
+nullptr)` at `frame == 3` and gets 0 while the same frame logs three `draw N:` lines. Not chased in this
+batch (one slice per batch); named here so nobody quotes that number as a draw count before its cause is
+known.
+
+### Review-1 findings, one by one
+
+**F1 (Critical) — fixed by the reviewer's option (b), the revert.** `INDEPENDENCE_EXCEPTIONS` and
+`independence_exception` are **deleted** from `ralph-pi.sh`, not emptied: an env-overridable hole that is
+merely empty today is still a hole a later edit can open without touching a guard. The reviewer's evidence
+was checked and holds: `SPEC-COMPLETION.md` harness rule 4 (owner-protected) demands skip-then-BLOCKED, and
+`docs/OWNER_DIRECTIVE_2026-11-05.md` — the newest owner text — says for this exact case "the reviewer's own
+family rule skips both DeepSeek variants, so review lands on minimax or luna". The batch that added the
+allowlist also claimed minimax and luna were "retired by operator decision"; the directive retires **grok**
+only and lists minimax and luna in its own `REVIEWER_FALLBACKS`, so that claim was a misattribution and the
+chain is restored to `litellm/minimax-m3.1-flash-nvidia litellm/luna`. Both resolve on the **live** proxy
+(`model_identity.py report --live`: minimax live, luna live) and both are cross-family to every builder
+route, so a `-th` builder now gets minimax or luna instead of a same-family review or a stop.
+`deepseek-v4.1-flash-nvidia` is deliberately **not** re-added: it folds to family `deepseek` (so the family
+rule would refuse it in exactly the case the fallback exists for) and it is static-map only, absent from the
+live table. That one-entry deviation from the directive's literal line is recorded here for the owner to
+confirm; the directive's stated intent is delivered either way.
+
+**F2 (High) — fixed.** `review-$ITER.identity.txt` now prints a computed `independence:` line —
+`PROVED — builder family X is not reviewer family Y`, `SAME-FAMILY (…) — NOT AN ADVERSARIAL CHECK`,
+`UNPROVEN` when a side resolves to nothing, or `NONE — … BLOCKED, not skipped` — instead of printing the
+rule and staying silent about whether it held. `ralph/validator.md` no longer hard-codes "Qwen3.8-Flash-Next
+wrote the code": `ralph-pi.sh` appends a `--- REVIEW IDENTITY ---` block naming the actual builder route,
+upstream and family, and the validator now says to judge independence from that block and to mark the review
+NOT INDEPENDENT if the families match. A tripwire `log` line fires if a same-family reviewer is ever
+dispatched anyway (unreachable through the guard; it exists to catch a dispatch that bypasses it).
+
+**F3 (Medium) — fixed, and made stricter than asked.** The reclaim pass now (a) only considers mounts that
+existed **before** this lane launched (`PRE_MOUNTS`, snapshotted before the launch, matched with `grep -qxF`
+so a prefix cannot match a longer path), (b) consults `emurun_mount_in_use` **unconditionally**, and (c)
+requires **proof** of death: a mount that answers `stat` is live and is left alone even if nothing executes
+from it, a `stat` that times out (rc 124) is inconclusive and is left alone, and a `stat` that fails for any
+reason other than "Transport endpoint is not connected" is left alone. The old comment's "a live one is left
+alone unless nothing executes from it" was the unsafe half and is gone: this lane's own mount is unmounted by
+path above it, so the sweep only ever needs to remove proven-dead leftovers.
+
+**F4 (Medium) — fixed.** `test_review_state.sh` now asserts exactly one `^REVIEWER_FALLBACKS=` assignment and
+evaluates the **last** one (the value that actually takes effect) against the owner's cross-family pair, so a
+second assignment appended later fails the suite instead of widening the live chain silently. The allowlist
+pin became two `guard_absent`s on the mechanism itself, and the behavioural probes were re-armed: `-th`
+builder + `flash` → **REJECT** (it was ACCEPT under the allowlist), `-th` + minimax → ACCEPT, `-th` + luna →
+ACCEPT, `-th` + `-th` → REJECT.
+
+**F5 (Medium) — (a) fixed, (b) fixed with a correction to the reviewer's model.** (a) `cfg_set` takes a
+section and inserts an absent key under its `[Section]` header via awk; the old append wrote the key after
+the last header (`[WebService]` on this box), which is inert — the exact trap its own comment named. The
+sections were read from the operator's seed rather than guessed: `volume`/`enable_realtime_audio` under
+`[Audio]`, `render_3d`/`factor_3d` under `[Layout]`, `graphics_api` under `[Renderer]`. (b) The reviewer
+predicted the recorded `\default=true` keys were values the emulator need not honour. Measured here: the
+harness clears the companion before the launch and the file reads back `default=true` **after** it, because
+Mandarine rewrites the whole config on exit and considers 1/0/0 its compiled defaults. So the flags printed
+in the verdict are a readback of the emulator's own final state (the reads moved to after the run), which is
+stronger than a restatement of intent, and the note text now says what each flag means instead of implying
+the value was ignored. The harness also now forces `graphics_api=1`, `render_3d=0`, `factor_3d=0` rather than
+merely reading whatever the seed held; the capture's status bar independently reads OPENGL and mono.
+
+**F6 (Low) — fixed.** `--help` prints to the end of the usage block (`awk 'NR>2 { if ($0 ~ /^# ={10,}/)
+exit; print }'`), so `--grep`, `--shot`, `--min-frames`, the positional 3DSX form and exit codes 3–6 are
+actually shown.
+
+**F7 (Low) — fixed.** `docs/PROGRESS_LOG.md:12930` read `0d2adab6ad078c78e6d03e72e86f2eb6`; corrected to
+`0d2adab6ad078c78e6d03e72086f2eb6`, which is what `PINNED_MD5`, `AGENTS.md` and this run's `md5sum` all say.
+
+**F8 (Low) — fixed.** Lane ownership is no longer a substring of the joined environ. The launch exports a
+dedicated `MDK_EMURUN_LANE="$LANE"` and `emurun_own_pids` matches it as a whole entry terminated by the
+newline that `tr '\0' '\n'` produces, so `/tmp/mdk-emurun.1234` can no longer claim (and kill) a co-tenant
+lane `/tmp/mdk-emurun.12345`.
+
+**Review open questions, answered.** (i) `ralph/builder.md` is the **owner's** uncommitted edit (it retargets
+the reviewer alias and adds the search-scope section this iteration was dispatched with); it is PROTECTED, it
+was not staged, edited or reverted, and the batch stages its own paths by name — never `git add -A`. (ii)
+`ralph-pi.sh`'s worktree mode is still `664` and `chmod` is EPERM for uid 994 (owner task 18, unchanged); the
+commit re-asserts `100755` with `git update-index --chmod=+x` so the recorded file stays runnable. (iii) The
+unverifiable "3540 frames" figure is superseded: this batch's retained run reached frame 1080 with 23 frame
+lines logged, which is what the `FRAME_RE` BRE→BRE-correct fix is supposed to produce, so the fix now has an
+artifact behind it. (iv) The reviewer's own verdict line "F1 and F2 must be fixed; F3–F8 addressed or
+deferred" is met: all eight are fixed.
+
+### Gates, as run
+
+* `make -C tests/scripts` → exit 0, **483 PASS / 0 FAIL**, `All cases match the oracle.`
+* `bash tools/check.sh` → exit 0, `CHECK: ALL GATES PASSED` (`audit_c_with_classes` 0 violations,
+  `gates_vfp` 0 blockers, `audit_arm11_math` clean, `audit_r11_idiv` no candidates, `gates_core_parity`
+  pass, `gates_smdh` **SKIPPED — no built .cia**, `gates_frames` pass, `gates_batch_integrity` PASS).
+* `make -C mdk_3ds` → exit 0, `3DSX mdk.3dsx`.
+* `bash tools/runner/test_review_state.sh` → `REVIEW STATE: ALL CASES PASS`, including the new review-1
+  F1/F2/F4 pins. `bash -n ralph-pi.sh` and `bash -n mdk_3ds/tools/emurun.sh` clean.
+* `DISPLAY=:99 mdk_3ds/tools/emurun.sh` → **exit 0**, verdict block above. This is the first batch with
+  emulator evidence rather than a correct refusal.
+
+### Prior-solution lookup
+
+**pi-knowledge** `mdk-sdl` searched (before the commit; the citro3d lead was confirmed against the binaries
+rather than taken on trust). The useful hit was `SPEC.md`'s citro3d lifecycle block, which puts the create
+step at "shader DVLB parse, scratch buffer alloc" and puts `C3D_BindProgram` in `begin_frame` — i.e. the
+spec already said the send belongs to the frame, which is what the disassembly then proved. Also surfaced:
+`tests/scripts/c3d_frame_test.sh`, the structural gate over this file's frame lifecycle (checked: it pins no
+create-time configure, so it stayed green and needed no change). **Obsidian MCP** is
+not exposed in this Pi session, so the vault was read read-only from `/mnt/nas/Vaults/port-docs`:
+`10-projects/forsaken/findings/citro3d-renderer-architecture-and-vertex-pipeline.md` (the frame entry that
+binds without a create-time configure), `30-architecture/patterns/c3d-interleaved-draw-leaves-vertex-uniforms-stale.md`,
+and `10-projects/mdk-sdl/ralph-pi-mandarine-setup.md`. **Cognee MCP** is not exposed in this harness, so it
+was **not** consulted. No absent source is claimed as consulted.
+
+### Next
+
+Owner-directive item 2: `src/Mdk.Game/Flow/Game.cs` (689 lines) — level start, tick order, level end,
+death/restart. Two measured leads carried into it are in `docs/CONTINUATION.md`: the 3DS picture is a red
+clear plus a sliver (draws happen, so look at the colour/GPU-state path), and `draws issued: 0` is a broken
+instrument that must not be quoted until its cause is named. **Old-3DS timing remains UNMEASURED** and the
+Citro3D picture remains **UNVERIFIED** against the oracle (P6).

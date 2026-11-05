@@ -86,7 +86,7 @@ while [ $# -gt 0 ]; do
     --shot)       SHOT="$2";       shift 2 ;;
     --min-frames) MIN_FRAMES="$2"; shift 2 ;;
     --display)    DISPLAY_NUM="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help)    awk 'NR>2 { if ($0 ~ /^# ={10,}/) exit; print }' "$0"; exit 0 ;;
     *)            DSX="$1";        shift ;;
   esac
 done
@@ -138,51 +138,100 @@ EMU_CFG="$LANE/cfg/mandarine-emu/qt-config.ini"
 
 # Every override must clear its `\default=true` companion or Citra-lineage
 # ignores the value — the same trap as use_gdbstub.
-cfg_set() { # key value
+cfg_insert() { # section key value — writes `key=value` directly under [section]
+  awk -v sec="$1" -v k="$2" -v v="$3" '
+    { print }
+    $0 == "[" sec "]" { print k "=" v }
+  ' "$EMU_CFG" > "$EMU_CFG.tmp" && mv "$EMU_CFG.tmp" "$EMU_CFG"
+}
+cfg_set() { # key value [section]
+  local key="$1" val="$2" sec="${3:-}"
   mkdir -p "$(dirname "$EMU_CFG")" 2>/dev/null || true
   [ -f "$EMU_CFG" ] || : >"$EMU_CFG"
-  if grep -q "^$1=" "$EMU_CFG" 2>/dev/null; then
-    sed -i "s|^$1=.*|$1=$2|" "$EMU_CFG"
+  if grep -q "^$key=" "$EMU_CFG" 2>/dev/null; then
+    sed -i "s|^$key=.*|$key=$val|" "$EMU_CFG"
+  elif [ -n "$sec" ] && grep -q "^\[$sec\]$" "$EMU_CFG" 2>/dev/null; then
+    # AN ABSENT KEY CANNOT GO AT THE END OF THE FILE. An INI key belongs to the
+    # section whose header precedes it, so appending `volume=0` after the last
+    # header ([WebService] on this box) writes a key in the wrong section, where
+    # it is inert — review-1 F5(a): the append branch was the exact trap the
+    # comment above names. Insert under the header instead.
+    cfg_insert "$sec" "$key" "$val"
   else
-    printf '%s=%s\n' "$1" "$2" >>"$EMU_CFG"
+    printf '%s=%s\n' "$key" "$val" >>"$EMU_CFG"
   fi
-  if grep -q "^$1\\\\default=" "$EMU_CFG" 2>/dev/null; then
-    sed -i "s|^$1\\\\default=.*|$1\\\\default=false|" "$EMU_CFG"
+  if grep -q "^$key\\\\default=" "$EMU_CFG" 2>/dev/null; then
+    sed -i "s|^$key\\\\default=.*|$key\\\\default=false|" "$EMU_CFG"
+  elif [ -n "$sec" ] && grep -q "^\[$sec\]$" "$EMU_CFG" 2>/dev/null; then
+    cfg_insert "$sec" "$key\\default" false
+  else
+    printf '%s\\default=false\n' "$key" >>"$EMU_CFG"
   fi
 }
 cfg_get() { grep -m1 "^$1=" "$EMU_CFG" 2>/dev/null | head -1 | cut -d= -f2; }
+cfg_default_get() { grep -m1 "^$1\\\\default=" "$EMU_CFG" 2>/dev/null | head -1 | cut -d= -f2; }
+# (P6) A recorded value is only evidence if it is the value that GOVERNED. In
+# Citra-lineage every key has a `key\default=` companion, and the emulator WRITES
+# THE WHOLE FILE BACK on exit — measured 2026-11-05: the harness cleared
+# `graphics_api\default` before the launch and the file read back `true`
+# afterwards, because Mandarine re-saved it and considered 1 to be its compiled
+# default. So the flags printed here are a READBACK of the emulator's own final
+# state, not a restatement of what this script wrote, which is the stronger of the
+# two: `default=true` means the stored value equals the emulator's default (the
+# number is right, it just was not forced by us), `default=false` means the stored
+# value is an override the emulator accepted and kept (review-1 F5(b)).
+cfg_default_note() {
+  case "$(cfg_default_get "$1")" in
+    false) printf ' [default=false — an explicit override the emulator kept]' ;;
+    true)  printf ' [default=true — the emulator counts this as its compiled default, so the stored value matches what ran]' ;;
+    *)     printf ' [no default flag — unproven]' ;;
+  esac
+}
 # ALWAYS-MUTE, in the lane copy only: the env block below is the belt, this is
 # the braces, because a config alone does not help if the engine ignores it and
 # the operator has to hear it.
-cfg_set volume 0
-cfg_set enable_realtime_audio false
-
-# What the instrument actually is, read back from the lane config rather than
-# assumed. graphics_api is Citra's BackendAPI: 1 = OpenGL, 2 = Vulkan. Only the
-# OpenGL path is affected by LIBGL_ALWAYS_SOFTWARE, so saying which one answered
-# is the difference between a recorded instrument and a guessed one.
-GL_API="$(cfg_get graphics_api)"
-STEREO_3D="$(cfg_get render_3d)"
-STEREO_DEPTH="$(cfg_get factor_3d)"
+cfg_set volume 0 Audio
+cfg_set enable_realtime_audio false Audio
+# THE INSTRUMENT IS FORCED, NOT HOPED FOR. graphics_api is Citra's BackendAPI
+# (1 = OpenGL, 2 = Vulkan) and the Mesa software-GL env below binds ONLY the
+# OpenGL path; leaving the API to a seed the operator may have left on Vulkan
+# would make the forced instrument a fiction. Stereo is pinned mono for the same
+# reason: P6 requires a capture to record its stereoscopic mode, and a mode that
+# belongs to whatever the last lane wrote is not a recorded mode.
+# [Layout] and [Renderer] are the sections this build actually reads them from
+# (verified against the operator's seed on 2026-11-05: render_3d/factor_3d under
+# [Layout], graphics_api under [Renderer]); naming the section is what makes the
+# insert branch land where the emulator looks.
+cfg_set graphics_api 1 Renderer
+cfg_set render_3d 0 Layout
+cfg_set factor_3d 0 Layout
 
 OWN_ROOT=""
 OUR_MOUNT=""
+# The mandarine FUSE mounts that already existed when this lane started, taken
+# BEFORE the launch (review-1 F3). Anything that appears after this point belongs
+# to somebody else and this harness never touches it — a co-tenant that launches
+# at the same second is exactly the case a name-based reaper destroys.
+PRE_MOUNTS=""
 
 # (3)(9) OWNERSHIP BY THE LANE, not by name and not by the PID tree alone.
 # A `pgrep -P` walk cannot see the whole emulator: the AppImage runtime forks
 # AppRun.wrapped and that child gets REPARENTED (measured 2026-11-05, PPID 1),
 # so even a transitive walk leaves a live emulator running when the harness
-# gives up. Every process this run started carries this lane's own
-# XDG_DATA_HOME in its environment — unique per run, inherited by every
-# descendant, and impossible to match against a co-tenant's lane. That is the
-# exact claim. Unreadable environ (another user) means "not ours", which is the
-# fail-safe direction: this declines to kill anything it cannot positively own.
+# gives up. Every process this run starts therefore carries MDK_EMURUN_LANE, a
+# token unique to this lane and inherited by every descendant. It is matched as a
+# WHOLE environ entry, terminated by the newline that `tr '\0' '\n'` produces:
+# matching a bare prefix let lane `/tmp/mdk-emurun.1234` claim the co-tenant lane
+# `/tmp/mdk-emurun.12345` and kill its emulator (review-1 F8), and the only
+# consumer of this match is `kill`. Unreadable environ (another user) means "not
+# ours", which stays the fail-safe direction: this declines to kill what it cannot
+# positively own.
 emurun_own_pids() {
   local p env
   [ -n "$OWN_ROOT" ] && echo "$OWN_ROOT"
   for p in $(pgrep -f 'mandarine\.AppImage|AppRun\.wrapped' 2>/dev/null); do
-    env=$( { tr '\0' '\n' < "/proc/$p/environ"; } 2>/dev/null || true )
-    case "$env" in *"XDG_DATA_HOME=$XDG_DATA_HOME"*) echo "$p" ;; esac
+    env=$( { tr '\0' '\n' < "/proc/$p/environ"; printf '\n'; } 2>/dev/null || true )
+    case "$env" in *$'\n'"MDK_EMURUN_LANE=$LANE"$'\n'*) echo "$p" ;; esac
   done
   return 0
 }
@@ -226,6 +275,12 @@ emurun_mount_in_use() {
   done
   return 1
 }
+# Was this mount already here when the lane started? grep -xF is a whole-line
+# fixed match, so /tmp/.mount_mandarAAAA never matches a longer path that merely
+# starts with it.
+emurun_pre_existing_mount() {
+  printf '%s\n' "$PRE_MOUNTS" | grep -qxF "$1"
+}
 
 emurun_cleanup() {
   local p m
@@ -243,14 +298,36 @@ emurun_cleanup() {
   else
     echo "emurun: NOTE the AppImage FUSE mount was never identified; it may linger." >&2
   fi
-  # Reclaim dead endpoints only. A dead endpoint has no user by definition, so
-  # this is safe for a co-tenant's leftovers too; a live one is left alone
-  # unless nothing executes from it. Enumerate /proc/mounts, NOT a glob: a dead
-  # FUSE endpoint fails stat(), so `[ -d ]` skips exactly the mounts that need
-  # reclaiming.
+  # Reclaim DEAD endpoints left over from earlier runs of this harness. The old
+  # arm consulted the in-use test only when `stat` succeeded, so a merely SLOW
+  # mount — the likely state of a lane under llvmpipe load — was lazily detached
+  # by whoever exited first, and its owner's guest lost its RomFS and came back as
+  # rc=4 "the game DIED" (review-1 F3). Three changes, all in the safe direction:
+  #   * only mounts that existed BEFORE this lane launched are candidates;
+  #   * the in-use test is consulted unconditionally, before anything else;
+  #   * death must be PROVEN. A mount that answers `stat` is live and is left
+  #     alone even if nothing executes from it (this lane's own mount was already
+  #     unmounted above by path), and a `stat` that times out or fails for any
+  #     reason other than "Transport endpoint is not connected" is inconclusive,
+  #     which means leave it alone. An inconclusive probe is never evidence of
+  #     death — the same rule every other guard in this file follows.
+  # Enumerate /proc/mounts, NOT a glob: a dead FUSE endpoint fails stat(), so
+  # `[ -d ]` skips exactly the mounts that need reclaiming.
   for m in $(awk '$2 ~ /mount_mandar/ {print $2}' /proc/mounts 2>/dev/null); do
-    if timeout 3 stat "$m" >/dev/null 2>&1; then
-      emurun_mount_in_use "$m" && continue
+    [ "$m" = "${OUR_MOUNT:-}" ] && continue
+    emurun_pre_existing_mount "$m" || continue
+    emurun_mount_in_use "$m" && continue
+    stat_out=$(timeout 3 stat "$m" 2>&1)
+    stat_rc=$?
+    if [ "$stat_rc" -eq 0 ]; then
+      continue                      # it answers: it is live, and live is not ours to take
+    elif [ "$stat_rc" -eq 124 ]; then
+      continue                      # slow, not dead: inconclusive is never proof
+    else
+      case "$stat_out" in
+        *"Transport endpoint is not connected"*) : ;;   # proven dead
+        *) continue ;;                                  # unknown cause: leave it
+      esac
     fi
     fusermount -uz "$m" 2>/dev/null || true
     rmdir "$m" 2>/dev/null || true
@@ -298,6 +375,9 @@ if command -v dbus-run-session >/dev/null 2>&1; then
 else
   echo "emurun: NOTE no dbus-run-session; Mandarine may abort without a session bus" >&2
 fi
+# Snapshot the leftovers BEFORE anything of ours exists (review-1 F3): see
+# emurun_pre_existing_mount / the reclaim pass in emurun_cleanup.
+PRE_MOUNTS="$(awk '$2 ~ /mount_mandar/ {print $2}' /proc/mounts 2>/dev/null)"
 # (7) Force the instrument instead of inheriting one. This box has two real
 # GPUs; a bare launch can answer from hardware, and then the frame timings in
 # the verdict mean nothing and nothing in the evidence says so.
@@ -309,6 +389,7 @@ fi
 # (graphics_api=2) Mesa's env vars are inert and the verdict says so.
 nohup env \
   DISPLAY=":$DISPLAY_NUM" \
+  MDK_EMURUN_LANE="$LANE" \
   XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
   XDG_DATA_HOME="$XDG_DATA_HOME" \
   XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
@@ -383,6 +464,17 @@ case "$FRAMES" in ''|*[!0-9]*) FRAMES=0 ;; esac
 LAST_FRAME=$(grep "$FRAME_RE" "$LOG" 2>/dev/null | tail -1 | awk '{print $2}')
 case "${LAST_FRAME:-}" in ''|*[!0-9]*) LAST_FRAME=0 ;; esac
 
+# What the instrument actually IS, read back from the lane config AFTER the run,
+# so it is the emulator's own final state and not this script's intention: see
+# cfg_default_note for why the `\default` flag is the part that carries the
+# evidence. graphics_api is Citra's BackendAPI (1 = OpenGL, 2 = Vulkan); only the
+# OpenGL path is affected by LIBGL_ALWAYS_SOFTWARE, so saying which one answered
+# is the difference between a recorded instrument and a guessed one.
+GL_API="$(cfg_get graphics_api)"
+STEREO_3D="$(cfg_get render_3d)"
+STEREO_DEPTH="$(cfg_get factor_3d)"
+CFG_VOLUME="$(cfg_get volume)"
+
 echo "== emurun verdict =="
 echo "display   : $DISPLAY"
 echo "emulator  : $(basename "$APPIMAGE") md5 ${EMU_MD5:0:8}"
@@ -392,9 +484,9 @@ echo "frames    : reached $LAST_FRAME ($FRAMES frame lines logged, every 60th af
 # (7)(8) The instrument, recorded rather than assumed (AGENTS P6: a capture
 # must record its clock/cache settings AND its stereoscopic mode).
 echo "gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)"
-echo "          graphics_api=${GL_API:-unset} (1=OpenGL 2=Vulkan; Mesa env binds OpenGL only)"
-echo "stereo    : render_3d=${STEREO_3D:-unset} factor_3d=${STEREO_DEPTH:-unset} (0 = mono)"
-echo "audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0"
+echo "          graphics_api=${GL_API:-unset}$(cfg_default_note graphics_api) (1=OpenGL 2=Vulkan; Mesa env binds OpenGL only)"
+echo "stereo    : render_3d=${STEREO_3D:-unset}$(cfg_default_note render_3d) factor_3d=${STEREO_DEPTH:-unset}$(cfg_default_note factor_3d) (0 = mono)"
+echo "audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=${CFG_VOLUME:-unset}$(cfg_default_note volume)"
 echo "lane      : $LANE (mount ${OUR_MOUNT:-unidentified})"
 echo "session   : ${DBUS_WRAP[0]:-no dbus wrapper}; XDG_RUNTIME_DIR private"
 grep -iE 'renderer|opengl|vulkan|llvmpipe|GL:|Device' "$STDOUT_LOG" 2>/dev/null | head -5

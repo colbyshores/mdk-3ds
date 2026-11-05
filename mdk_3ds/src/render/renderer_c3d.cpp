@@ -460,18 +460,33 @@ inline GpuVertex expand(const mdk::Vertex& v) {
     // "hung in configure". Measured 2026-11-05: `dvlb numDVLE=1` is the last
     // line the guest ever writes, so the pair below is what localises it.
     mdk::log3dsPrintf("shaderProgramSetVsh ok result=0x%08lx", (unsigned long)spVsh);
-    const Result spCfg = shaderProgramConfigure(&r->program, true, false);
-    if (R_FAILED(spCfg)) {
-        mdk::log3dsPrintf("shaderProgramConfigure FAILED result=0x%08lx", (unsigned long)spCfg);
-        shaderProgramFree(&r->program);
-        DVLB_Free(r->dvlb);
-        C3D_RenderTargetDelete(r->targetLeft);
-        C3D_RenderTargetDelete(r->targetRight);
-        C3D_Fini();
-        delete r;
-        return nullptr;
-    }
-    mdk::log3dsPrintf("shaderProgramConfigure ok result=0x%08lx", (unsigned long)spCfg);
+
+    // THERE IS NO shaderProgramConfigure HERE, ON PURPOSE.
+    //
+    // What the shipped binaries say (both read out of the devkitARM archives on
+    // 2026-11-05 with objdump -dr, not remembered):
+    //   * libctru `shaderProgramSetVsh` frees the old instance, mallocs a new
+    //     one and tail-calls `shaderInstanceInit`. It uploads nothing.
+    //   * citro3d `C3D_BindProgram` does not configure either: it marks the
+    //     shader dirty in the context state — 0x1900 when no program was bound
+    //     before, 0x900 / 0x1100 when the vertex or geometry DVLE differs — and
+    //     `C3Di_UpdateContext` is what calls
+    //     `shaderProgramConfigure(sp, state>>11 & 1, state>>12 & 1)`, from
+    //     inside the frame.
+    // So the bind in `drawFrame` already uploads the microcode exactly once, and
+    // the create-time call that used to sit here was a SECOND send, issued
+    // outside any `C3D_FrameBegin`, into whatever GPUCMD command buffer happened
+    // to be current before the first frame existed. `shaderProgramConfigure` is
+    // GPUCMD_Add from end to end — permutation/operand writes plus the
+    // microcode-DEST sequence — so a send outside the frame contract is the
+    // suspect for the stop, and it is the only call between the last line the
+    // guest ever writes and the readiness token `backend:` that main prints.
+    //
+    // This is the library's own contract, not an invention: SPEC's create step is
+    // "parse the DVLB, build the shader program" and the sibling citro3d port's
+    // frame entry does `C3D_FrameBegin` then `C3D_BindProgram` with no configure
+    // anywhere at create time. Verified by running it, not by inspection
+    // (mdk_3ds/tools/emurun.sh, see docs/PROGRESS_LOG.md).
 
     // The uniform locations.
     r->mvpLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "mvp");
