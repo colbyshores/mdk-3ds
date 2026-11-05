@@ -5217,11 +5217,12 @@ void testFollowCameraBlendPlacesTheFrame() {
     };
 
     // Measured on this tree against every row above: the worst relative delta over
-    // the 8 steps x 5 alphas x 9 values is 6.15e-06 (on the place, whose magnitude
-    // is ~100, so a ULP of it is already 7.6e-09 and the delta is the trig path and
-    // the reciprocal normalize, not the blend). 2e-05 is that with room, and it is
-    // still four orders under what a wrong sign, a swapped sine and cosine, a
-    // missing term or a blended pivot that forgot the pivot would produce.
+    // the 8 steps x 5 alphas x 9 view values is 1.29377659e-05, and over the +X
+    // place rows it is 1.50669503e-05. The place is ~100 units, so this is the
+    // project's LUT trig and reciprocal normalize rather than the blend. The
+    // 2e-05 relative tolerance therefore has 1.55x headroom over the worst row,
+    // and remains far below what a wrong sign, a swapped sine and cosine, a
+    // missing term or a dropped pivot/roll interpolation would produce.
     const float kTolerance = 2e-5f;
     auto nearOracle = [&](float actual, uint32_t expectedBits) {
         uint32_t e = expectedBits;
@@ -5301,6 +5302,104 @@ void testFollowCameraBlendPlacesTheFrame() {
                     failures++;
                 }
             }
+        }
+    }
+}
+
+// The Aim triple's other two components have to move, or a blend that drops the
+// pivot or the roll still passes the test above. This is a second oracle probe
+// (`followblend2`, .NET 10): the first step has the default pivot 4.5 and no
+// bank, then the pivot moves to 7.25 and three CameraRoll.Walk calls bank the
+// view by 0.375 degrees. The second step records that Aim, and the blends below
+// interpolate all three components. A mutant that restores the default pivot or
+// a zero roll changes the place or the up vector by far more than the trig
+// tolerance below.
+void testFollowCameraBlendInterpolatesThePivotAndRoll() {
+    static const uint32_t kRows[5][9] = {
+        {0xC0689B08, 0xC0289B08, 0x4110EDC8, 0x3F349411, 0x3F349411, 0xBD8EDC7B,
+         0x3D4A094C, 0x3D4A094C, 0x3F7F605B},
+        {0xC0689B08, 0xC0289B08, 0x411BEDC8, 0x3F349411, 0x3F349411, 0xBD8EDC7B,
+         0x3D4EC66F, 0x3D454C07, 0x3F7F6045},
+        {0xC0689B08, 0xC0289B08, 0x4126EDC8, 0x3F349411, 0x3F349411, 0xBD8EDC7B,
+         0x3D53836C, 0x3D408E9E, 0x3F7F6001},
+        {0xC0689B08, 0xC0289B08, 0x4131EDC8, 0x3F349411, 0x3F349411, 0xBD8EDC7B,
+         0x3D584045, 0x3D3BD115, 0x3F7F5F91},
+        {0xC0689B08, 0xC0289B08, 0x413CEDC8, 0x3F349411, 0x3F349411, 0xBD8EDC7B,
+         0x3D5CFCF8, 0x3D37136A, 0x3F7F5EF5},
+    };
+    const float kAlphas[5] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+    const float kTolerance = 2e-5f;
+    const float kAspect = 4.0f / 3.0f;
+    const float kStep = 1.0f / 60.0f;
+
+    FollowCamera follow;
+    Player player;
+    Camera stepped;
+    Camera blended;
+    player.feet = Vec3{2.0f, 3.0f, 4.0f};
+    player.yaw = 45.0f;
+    player.onFloor = true;
+    follow.update(&stepped, nullptr, player, 4.0f, kStep, kAspect);
+
+    // The oracle drives CameraRoll.Walk directly. The port's one writer is
+    // Player::update, so three held walk steps make the same 0.375-degree bank.
+    Input input;
+    input.down[kKeyForward] = true;
+    input.down[kKeyTurnRight] = true;
+    for (int i = 0; i < 3; i++) {
+        player.update(input, kStep);
+    }
+    player.feet = Vec3{2.0f, 3.0f, 4.0f};
+    player.yaw = 45.0f;
+    player.verticalSpeed = 0.0f;
+    player.onFloor = true;
+    player.cameraPivot = 7.25f;
+    CHECK(floatBits(player.cameraRoll().roll()) == 0x3EC00000u);
+    follow.update(&stepped, nullptr, player, 4.0f, kStep, kAspect);
+
+    for (int i = 0; i < 5; i++) {
+        CHECK(follow.blend(&blended, player.feet, player.yaw, kAlphas[i], kAspect));
+        const float got[9] = {blended.position.x, blended.position.y, blended.position.z,
+                              blended.forward.x, blended.forward.y, blended.forward.z,
+                              blended.up.x,       blended.up.y,       blended.up.z};
+        for (int v = 0; v < 9; v++) {
+            uint32_t bits = kRows[i][v];
+            float want;
+            memcpy(&want, &bits, sizeof(want));
+            const float scale = fabsf(want) > 1.0f ? fabsf(want) : 1.0f;
+            if (fabsf(got[v] - want) > kTolerance * scale) {
+                printf("  FAIL: pivot/roll blend alpha %d value %d was %.9g, the oracle has %08X\n",
+                       i, v, got[v], kRows[i][v]);
+                failures++;
+                return;
+            }
+        }
+    }
+}
+
+// FollowCamera::update's arena-pitch ease is the other live float.Lerp site.
+// These are the oracle's own bits after the targets 12, -3, 40, 0 and 17.5
+// degrees (`followblend2` reads the C#'s private _arenaPitch by reflection).
+// The fused spelling and the old twice-rounded `target + (old-target)*ease`
+// differ on steps 3 and 5, so this pin fails if that exact defect returns;
+// the view-level tolerance above cannot see a one-ULP pitch shift.
+void testFollowCameraArenaPitchUsesTheOraclesFusedEase() {
+    static const uint32_t kExpected[5] = {
+        0x4093FACBu, 0x4080F02Au, 0x40DAC5FDu, 0x40C9B2F8u, 0x40E5A9B3u};
+    static const float kTargets[5] = {12.0f, -3.0f, 40.0f, 0.0f, 17.5f};
+
+    FollowCamera follow;
+    Player player;
+    Camera camera;
+    player.onFloor = true;
+    for (int i = 0; i < 5; i++) {
+        follow.update(&camera, nullptr, player, kTargets[i], 1.0f / 60.0f,
+                      4.0f / 3.0f);
+        if (floatBits(follow.arenaPitch()) != kExpected[i]) {
+            printf("  FAIL: arena pitch step %d was %08X, the oracle has %08X\n", i,
+                   floatBits(follow.arenaPitch()), kExpected[i]);
+            failures++;
+            return;
         }
     }
 }
@@ -5925,6 +6024,10 @@ int main() {
     testCameraRollBanksTheFollowCamera();
     testFollowCameraBlendPlacesTheFrame();
     printf("PASS CameraRollBanksTheFollowCamera\n");
+    testFollowCameraBlendInterpolatesThePivotAndRoll();
+    printf("PASS FollowCameraBlendInterpolatesThePivotAndRoll\n");
+    testFollowCameraArenaPitchUsesTheOraclesFusedEase();
+    printf("PASS FollowCameraArenaPitchUsesTheOraclesFusedEase\n");
     testCameraRollMatchesTheOraclesOwnUnitTest();
     printf("PASS CameraRollMatchesTheOraclesOwnUnitTest\n");
     testCameraRollNaNStaysNaNWhereTheOracleThrows();

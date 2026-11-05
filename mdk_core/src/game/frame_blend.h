@@ -47,7 +47,7 @@ constexpr float kMaxSpeed = 1500.0f;
 Vec3 lerp(Vec3 from, Vec3 to, float t);
 
 // FrameBlend.Lerp(float,float,float): from -> to by t, and EXACTLY `to` once
-// t reaches 1. This is System.MathF.Lerp's own arithmetic, which is
+// t reaches 1. This is float.Lerp (Single.Lerp)'s own arithmetic, which is
 // `fmaf(from, 1-t, to*t)` -- measured, see the .cpp -- not the twice-rounded form
 // the vector overload above ships, and not the shortest-way angle lerp below.
 float lerp(float from, float to, float t);

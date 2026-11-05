@@ -1,18 +1,17 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 62 ports one oracle method (`FollowCamera.Blend`) and changes the **rounding of a
-live camera path**: the inherited draft's scalar `frame_blend::lerp` was NOT the oracle's arithmetic
-(its own comment claimed "matches every row"; the probe says it differs on **87 of 200** random rows),
-so the scalar lerp and `FollowCamera::update`'s arena-pitch ease now ship the oracle's fused
-`fmaf(from, 1-t, to*t)` shape, pinned bit-for-bit on 256 oracle rows. Bounded (one subsystem, no
-interface, no data format, no concurrency, no golden moved: 480 PASS / 0 FAIL as batch 61), but it is
-numeric behaviour plus a target-specific codegen decision (`fmaf` is a tail `b fmaf` on VFPv2, measured
-on the shipped object), so it is not low. The inherited dirty tree was finished, not restarted; the
-five owner-gated dirty paths were again NOT staged.
+Risk: medium — batch 63 remediates review-4's camera coverage findings: it adds a read-only
+`FollowCamera::arenaPitch()` observation and pins the pivot/roll interpolation and the arena-pitch
+ease against new C# oracle rows. The change is bounded to the follow-camera subsystem and changes no
+shipped behaviour, data format or concurrency, but the new observation is an interface addition and
+the pins protect live camera arithmetic, so it is conservatively medium.
 
-Last updated: 2026-11-04 (**batch 62** — the follow camera's between-step blend lands, and its scalar
-`Lerp` turns out to have been the wrong shape). The record is `docs/PROGRESS_LOG.md`, "Iteration 90";
-batch 61's (the R6 pin moved to the site the gate reads, the tree green again) is "Iteration 89"; batch 60's (the record sweep, the false GNU-dialect
+Last updated: 2026-11-05 (**batch 63** — review-4's camera pins now make the pivot, roll and arena-pitch
+mutants fail; the published tolerance figure is corrected; `float.Lerp` and degrees-to-radians are
+named accurately). The record is `docs/PROGRESS_LOG.md`, "Iteration 91"; batch 62's (the follow
+camera's between-step blend lands, and its scalar `Lerp` turns out to have been the wrong shape) is
+"Iteration 90"; batch 61's (the R6 pin moved to the site the gate reads, the tree green again) is
+"Iteration 89"; batch 60's (the record sweep, the false GNU-dialect
 cause, the scoped identical-bits claim) is "Iteration 88"; batch 59's (the four codegen experiments,
 the shipped-grouping replay 0/72 vs 23/72, the M1/M2 re-runs, the `.text` pair) is "Iteration 87".
 Batch 58's record (the spin angle's two roundings, the 56 new spin rows, the 8-mutant table, the
@@ -238,9 +237,10 @@ rows.
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 62)
+## Verified on this tree (batch 63)
 
-Narrative: `docs/PROGRESS_LOG.md`, "Iteration 90". Batch 61's (the R6 pin at the site the gate reads,
+Narrative: `docs/PROGRESS_LOG.md`, "Iteration 91". Batch 62's (the follow camera's blend and the
+oracle's fused scalar `Lerp`) is "Iteration 90". Batch 61's (the R6 pin at the site the gate reads,
 the review-30 disposition table) is "Iteration 89". Batch 60's
 (the record sweep, the dialect re-measurement, the `-march` FMA measurement) is "Iteration 88";
 batch 59's (the four codegen experiments, the shipped-grouping replay, the M1/M2 re-runs and the
@@ -252,8 +252,8 @@ batch 57's (the velocity's association, the `NORM`/`SHATTER` rows) is "Iteration
 `CameraRoll` and the `math_lut.h` negative-angle measurement, the six clamp pins, the fly-arrival
 pin, one `accelerate()`) are "Iteration 78-83".
 `make -C tests/scripts` **exit 0** (`All VM unit tests match the oracle.` + `All
-cases match the oracle.`, **480 PASS / 0 FAIL** — identical to batch 61, and **no golden moved**, which
-is the point: the two arithmetic changes are pinned by new oracle rows, not by moving one); `bash
+cases match the oracle.`, **482 PASS / 0 FAIL** — two new review-4 pins, and **no golden moved**);
+`bash
 tools/check.sh` **exit 0** (`CHECK: ALL GATES
 PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
 `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity` both targets
@@ -266,7 +266,7 @@ DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` **exit 0** (`3DSX mdk.3dsx`)
 this batch).
 
 **The scalar `Lerp` was the oracle's output but not the oracle's arithmetic, and now it is both.**
-`System.MathF.Lerp` is `(from*(1-t)) + (to*t)` with the first product contracted into a fused
+`float.Lerp` (`Single.Lerp`) is `(from*(1-t)) + (to*t)` with the first product contracted into a fused
 multiply-add, so its bits are `fmaf(from, 1-t, to*t)`. Measured with the probe (`lerp1`, 200 random
 triples + 56 edge rows, raw bits): the twice-rounded `from + (to-from)*t` the inherited draft shipped
 differs on **87 of 200**, `from*(1-t)+to*t` twice rounded on **55 of 256**, and the fused shape on
@@ -280,8 +280,13 @@ overload is still three `vmla.f32` (unchanged, and it stays twice-rounded on pur
 object per frame, see its note) and `follow_camera.o` gained one `bl fmaf`. Three software FMAs a frame
 in a path that is not hot by AGENTS.md §2 is a different budget; if that ever changes it gets a
 measurement, not an edit. Pins: 256 bit-exact rows in `system_numerics_tests.cpp`, and the blend's own
-8 steps × 5 α × (pos, forward, up) in `vm_tests.cpp` at a measured worst relative delta of **6.15e-06**
-(tolerance 2e-05, and the LUT trig is what spends it) with α=1 and the first frame pinned bit-for-bit.
+8 steps × 5 α × (pos, forward, up) in `vm_tests.cpp` at measured worst relative deltas of
+**1.29377659e-05** for the view rows and **1.50669503e-05** for the +X place rows (tolerance 2e-05,
+so 1.55x headroom; the LUT trig is what spends it), with α=1 and the first frame pinned bit-for-bit.
+Batch 63 adds the missing discriminating pins: a second oracle scenario moves the pivot from 4.5 to
+7.25 and the bank from 0 to 0.375 degrees, and the arena pitch's own bits after five targets pin the
+fused ease exactly. Dropping the pivot, dropping the roll or restoring the twice-rounded ease each
+now fails `vm_tests`.
 
 **VFPv2's VMLA is UNFUSED, and that is the fact the record had backwards.** `mdk_3ds/Makefile`
 used to claim VMLA.F32 was a fused single-rounded MAC whose rounding was "UNMEASURED on Old-3DS
@@ -366,8 +371,9 @@ accept an explicit `visual delta: none, justification: …` field; both live in 
 tooling, so a batch can only keep writing the honest sidecar narrative (this one does). **No emulator run and no Old-3DS hardware run:
 Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED (P6);** the only
 windowed run was the frame capture, on `DISPLAY=:99` (P7). Frame
-`docs/frames/2026-11-04-follow-camera-blend.png` + `.txt` (md5 `6769a137…`, unchanged, and the sidecar
-says why: the blend has no caller yet and the two executed changes move the pitch by a ULP at most).
+`docs/frames/2026-11-05-review-4-caps.png` + `.txt` (md5 `6769a137…`, unchanged, and the sidecar
+says why: at frame 1 the arena pitch is already at its target, while the pivot/roll blend path has
+no shipped frontend caller yet).
 
 ## Standing open items
 
@@ -427,5 +433,5 @@ cmake --build build-linux --target mdk -j8             # the Linux frontend
 tests/frames/regenerate_reference.sh                   # intentional frame change only
 ```
 
-The suite prints **480 PASS / 0 FAIL** (`make -C tests/scripts`); `./build/vm_tests` alone prints **79**. Tests do not track header dependencies: run `make -C tests/scripts clean`
+The suite prints **482 PASS / 0 FAIL** (`make -C tests/scripts`); `./build/vm_tests` alone prints **81**. Tests do not track header dependencies: run `make -C tests/scripts clean`
 after header changes. Never weaken a gate or test.

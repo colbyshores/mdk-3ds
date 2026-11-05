@@ -12436,7 +12436,7 @@ pseudo-random `(from, to, t)` triples off a fixed LCG plus 56 edge rows, printin
 | `from*(1-t) + to*t`, twice rounded (what a host build of the vector overload emits) | 55 of 256 rows |
 | `fmaf(from, 1-t, to*t)` | **0 of 256** |
 
-`System.MathF.Lerp` is `(from * (1 - amount)) + (to * amount)` and the JIT contracts the first
+`float.Lerp` (`Single.Lerp`) is `(from * (1 - amount)) + (to * amount)` and the JIT contracts the first
 product into a fused multiply-add, so the oracle's bits are the **fused** shape. The edges are what
 makes it undeniable rather than merely 1-ULP: `Lerp(-0, +0, -1)` is `-0` and only the fused shape
 says so. The scalar `frame_blend::lerp` now ships `std::fmaf(from, 1.0f - t, to * t)`.
@@ -12478,7 +12478,9 @@ claim: that `powf` and `MathF.Pow` agree bit for bit — the shape is what this 
   of this slice), then the blend at α = 0, .25, .5, .75, 1 and again with the feet moved 1 along +X —
   the oracle's own test (`FrameBlendTests.TheCameraIsPlacedForKurtAsDrawn`) checks only the +X row and
   only to four decimals. Position, forward **and** up for every row, at a **relative** tolerance of
-  2e-05: measured on this tree the worst relative delta over all 8×5×9 values is **6.15e-06**, and it
+  2e-05: measured on this tree the worst relative delta is **1.29377659e-05** over the 8×5×9 view
+  values and **1.50669503e-05** over the +X place rows (corrected in batch 63; the 6.15e-06 figure
+  first published here did not reproduce), and it
   is the LUT trig and the reciprocal normalize, not the blend (same reason `L3_kurt_camroll.txt` pins
   degrees instead of bits). Three things are pinned **bit-for-bit** because they have to be: no blend
   before the first step and the camera left untouched; α = 1 reproducing that step's view exactly; and
@@ -12534,3 +12536,102 @@ exposed in this Pi session, so it was NOT consulted. **Cognee MCP**: not exposed
 emulator run and no hardware run this batch; the only windowed run was the frame capture on `:99`. The
 blend's caller waits on `FrameBlend`'s Kurt half (with Rides). Scratch: `/tmp/mdk-pi` (probe tree and
 logs; the probe is scratch and is not committed).
+
+## Iteration 91 — batch 63: review-4's camera mutants now fail, and the record names the oracle's real methods
+
+**What this batch is.** The newest external review is
+`logs/ralph-pi/run-20261104-205721/review-4.md`. It had **no Critical or High findings**, so there was
+no mandatory defect to repair, but its verdict was INCOMPLETE because three Medium findings were
+actionable and three Low findings were cheap. This batch addresses those in the one subsystem they
+name: the follow camera's between-step blend and arena-pitch ease. No oracle behaviour was changed;
+the batch adds discriminating oracle rows, corrects two record claims, and removes three copies of
+the degrees-to-radians spelling.
+
+**Review disposition.**
+
+* **F1 (Medium) — CONFIRMED and fixed.** The reviewer reproduced that replacing the blend's pivot
+  interpolation with `kDefaultPivot` and its roll interpolation with zero still gave 79 PASS in
+  `vm_tests`. That is correct: the existing scenario never moved `Player::cameraPivot` from 4.5 and
+  never banked the roll, so two thirds of the `Aim` triple were `from == to`. A second C# oracle
+  scenario now moves the pivot from 4.5 to **7.25** and drives `CameraRoll.Walk` three times for a
+  **0.375-degree** bank, records a second `Aim`, and prints the five blends. The C++ test drives the
+  same bank through the port's one live writer (`Player::update` with forward + turn-right) and pins
+  all five rows. Mutants were built in a scratch tree: dropping the pivot fails at the first
+  interpolated row (`alpha 1`, place Z `9.0580492` versus oracle `411BEDC8`); dropping only the roll
+  fails at the up vector (`alpha 1`, value 6 `0.0493252687` versus oracle `3D4EC66F`). Both mutants
+  exit 1; the unmutated tree is green.
+* **F2 (Medium) — CONFIRMED and fixed.** The reviewer also reproduced that restoring
+  `arenaPitchTarget + (old - target) * ease` left all 480 old assertions and `tick1` green. The
+  camera's eased arena pitch now has a read-only observation (`FollowCamera::arenaPitch()`), and a
+  new pin compares **exact bits** after the C# oracle targets 12, -3, 40, 0 and 17.5 degrees. The C#
+  probe reads its private `_arenaPitch` by reflection; the C++ values are
+  `4093FACB, 4080F02A, 40DAC5FD, 40C9B2F8, 40E5A9B3`. The twice-rounded mutant fails on the third
+  row (`40DAC5F8` versus `40DAC5FD`). This is the pin the view-level tolerance could not provide.
+* **F3 (Medium) — CONFIRMED and fixed.** The published `6.15e-06` figure did not reproduce. The
+  committed host build was instrumented in a scratch archive with separate accumulators for the view
+  and +X place rows: the measured worst relative deltas are **1.29377659e-05** and
+  **1.50669503e-05**, exactly the reviewer's values. The source comment and both state files now carry
+  those numbers and state the actual **1.55x** tolerance headroom. The tolerance itself was not
+  weakened or tightened; the inaccurate measurement was corrected.
+* **F4 (Low) — CONFIRMED and fixed.** .NET 10 has no `MathF.Lerp`; the oracle call sites are
+  `float.Lerp` (`Single.Lerp` / `IFloatingPoint<float>.Lerp`). The five source comments and both state
+  files now name `float.Lerp` (`Single.Lerp`) instead of the non-existent `System.MathF.Lerp`. The
+  arithmetic is unchanged and was already correct.
+* **F5 (Low) — CONFIRMED and fixed.** The camera and `Player::facing` now use one named
+  `follow_camera::degreesToRadians` implementation. The camera's roll, clamped view pitch and blend
+  pitch, and the Player's facing all route through it; the local copy and three hand-written
+  `degrees * pi / 180` spellings are gone. The helper keeps the oracle's left-associative **two
+  roundings** and documents that the pre-folded factor is a different float operation.
+* **F6 (Low) — DEFERRED to the owner, as the review itself says.** The fail-open `--each-commit`
+  without `--base`, the early-returning `--self-test`, and the unstated `MAX_ITER` 30→80 / recovery
+  intent live in the inherited owner-gated dirty `tools/runner/gates_batch_integrity.py` and
+  `ralph-pi.sh`. They were **not staged or edited**. The owner list in CONTINUATION already carries
+  the `--each-commit` and self-test asks; this batch records the `MAX_ITER`/recovery intent in this
+  narrative rather than making an owner-only policy change.
+
+**The new oracle rows and their provenance.** A scratch .NET 10 console project
+(`/tmp/mdk-pi/b63/followblend2`, not committed) referenced the read-only C# tree and drove the real
+`FollowCamera` and `Kurt`: first the default pivot/no bank, then pivot 7.25 and three
+`CameraRoll.Walk(1,1,1/60)` calls, then the second update and the five alpha blends. It also used
+reflection only to read the C#'s private `_arenaPitch` after the five target updates. The C++ pins
+are those printed raw bits, not values read back from the implementation. The pinned `Player` bank is
+also checked exactly as `3EC00000` before it reaches the camera.
+
+**Verification, verbatim.**
+
+* `make -C tests/scripts` → **exit 0**, `All VM unit tests match the oracle.`, `All cases match the
+  oracle.`, **482 PASS / 0 FAIL**; the two new named passes are
+  `PASS FollowCameraBlendInterpolatesThePivotAndRoll` and
+  `PASS FollowCameraArenaPitchUsesTheOraclesFusedEase`.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh SKIPPED no built .cia to read`,
+  `gates_frames every pinned frame is deterministic and unchanged`, `gates_batch_integrity project
+  invariants intact`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → **exit 0**,
+  `3DSX mdk.3dsx`; the changed camera, blend and Player sources rebuilt for the target.
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `[100%] Built target mdk`; it rebuilt
+  `follow_camera.cpp.o`, `frame_blend.cpp.o` and `player.cpp.o`. The frame was captured **after**
+  this rebuild, so it came from a Linux binary containing this batch.
+* Mutation evidence in `/tmp/mdk-pi/b63/mut`: pivot-drop rc **1**, roll-drop rc **1**, twice-rounded
+  ease rc **1**. These are scratch experiments, not committed gates.
+
+**Frame.** `DISPLAY=:99 tools/publish_frame.sh review-4-caps` →
+`docs/frames/2026-11-05-review-4-caps.png` + `.txt`, `1.240 / 247 / 0.1819`, md5 `6769a137…`.
+It is byte-identical to the parent because at the pinned frame the arena pitch is already at its
+target and the pivot/roll blend path has no shipped frontend caller; the sidecar says exactly that.
+No emulator or
+Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays UNVERIFIED
+(P6)**.
+
+**Prior-solution lookup.** **pi-knowledge `mdk-sdl`** was present and searched for the follow-camera
+blend, scalar lerp and arena-pitch prior findings; the useful hit was the C# oracle's own
+`FollowCamera.Blend`/`Aim` source and the port's `frame_blend.h` boundary. **Obsidian MCP** was not
+exposed, so the vault was read read-only; a search for follow-camera/frame-blend/arena-pitch notes
+found no project-specific solution beyond unrelated rendering patterns. **Cognee MCP** is not exposed
+in this Pi harness (owner task 12), so it was **not** consulted. No absent source is claimed as
+consulted.
+
+**Next.** CONTINUATION's priority order is unchanged: the next non-owner candidates are the follow
+camera's **sniper scope** and **top-down view**, then `FrameBlend`'s Kurt half with Rides. This batch
+has no exact blocker on those. The owner-gated inherited paths remain unstaged and unmodified.

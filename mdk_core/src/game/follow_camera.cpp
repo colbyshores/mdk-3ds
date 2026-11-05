@@ -44,15 +44,6 @@ float clampViewPitch(float degrees) {
     return degrees;
 }
 
-// C# float.DegreesToRadians: multiply by pi, then divide by 180 -- TWO roundings,
-// left-assoc. Measured on .NET 10 (probe mode `deg2rad`, 200 pseudo-random angles
-// plus 8 edges, raw bits): `degrees * kPi / 180.0f` differs from the oracle on 0
-// of 208, `degrees * (kPi / 180.0f)` on 84 and `degrees / 180.0f * kPi` on 77. The
-// two roundings are load-bearing, so do not "tidy" this into a precomputed constant.
-float degreesToRadians(float degrees) {
-    return degrees * kPi / 180.0f;
-}
-
 float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -105,7 +96,7 @@ Vec3 followCameraPoint(const Vec3& feet, const Vec3& facing, float pitch, float 
     float back = -distance * cosPitch;
     if (pitch > 0.0f) {
         back += follow_camera::kDownBack * (1.0f - cosPitch);
-    } else if (pitch < follow_camera::kCloseUpPitch * kPi / 180.0f) {
+    } else if (pitch < follow_camera::degreesToRadians(follow_camera::kCloseUpPitch)) {
         distance = follow_camera::kDistance *
                    (pitch * 180.0f / kPi + follow_camera::kCloseUpBias) / follow_camera::kCloseUpRange;
         back = -distance * cosPitch;
@@ -140,7 +131,7 @@ void followCameraRoll(const Vec3& forward, Vec3* up, float rollDegrees) {
     // truncates toward zero -- measured, and recorded in vm_tests' camera-roll pin).
     // That is why golden/L3_kurt_camroll.txt pins the DEGREES exactly and vm_tests pins
     // the rotated axis to 2e-5 rather than bit-for-bit.
-    const float radians = rollDegrees * kPi / 180.0f;
+    const float radians = follow_camera::degreesToRadians(rollDegrees);
     const float cosine = fastCos(radians);
     const float sine = fastSin(radians);
     // The C#'s Right, from Orient (FollowCamera.cs:151): Cross(Forward, UnitZ).
@@ -154,7 +145,7 @@ void followCameraRoll(const Vec3& forward, Vec3* up, float rollDegrees) {
 bool buildFollowCamera(Camera* camera, const Vec3& feet, const Vec3& facing,
                        float pitchDegrees, float pivot, float aspect,
                        float rollDegrees) {
-    const float pitch = clampViewPitch(pitchDegrees) * kPi / 180.0f;
+    const float pitch = follow_camera::degreesToRadians(clampViewPitch(pitchDegrees));
     const Vec3 position = followCameraPoint(feet, facing, pitch, pivot);
     Vec3 forward;
     Vec3 up;
@@ -214,7 +205,7 @@ Vec3 followCameraClear(ArenaSpace* space, Player& player, const Vec3& camera) {
 bool buildFollowCameraCleared(Camera* camera, ArenaSpace* space, Player& player,
                               float pitchDegrees, float pivot, float aspect,
                               float rollDegrees) {
-    const float pitch = clampViewPitch(pitchDegrees) * kPi / 180.0f;
+    const float pitch = follow_camera::degreesToRadians(clampViewPitch(pitchDegrees));
     const Vec3 facing = player.facing();
     Vec3 position = followCameraPoint(player.feet, facing, pitch, pivot);
     position = followCameraClear(space, player, position);
@@ -288,7 +279,7 @@ void FollowCamera::updateClimb(float feetZ, float delta) {
 void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, float arenaPitchTarget,
                           float delta, float aspect) {
     // Ease the arena pitch toward its target: C# `float.Lerp(target, old, Pow(ease,
-    // dt))`, and MathF.Lerp's arithmetic is the FUSED `from*(1-t) + to*t` -- see the
+    // dt))`, and Single.Lerp's arithmetic is the FUSED `from*(1-t) + to*t` -- see the
     // measurement on frame_blend::lerp, whose scalar twin this now matches. The
     // twice-rounded `target + (old-target)*t` this used sits 1 ULP off the oracle on
     // most frames (87 of the probe's 200 random triples). Whether powf and MathF.Pow
@@ -342,10 +333,10 @@ bool FollowCamera::blend(Camera* camera, const Vec3& feet, float yaw, float alph
         return false;
     }
 
-    const float yawRadians = degreesToRadians(yaw);
+    const float yawRadians = follow_camera::degreesToRadians(yaw);
     const Vec3 facing{fastCos(yawRadians), fastSin(yawRadians), 0.0f};
     const float pitchDegrees = frame_blend::lerp(_previousAim.pitch, _aim.pitch, alpha) + _lookOffset;
-    const float pitch = degreesToRadians(pitchDegrees);
+    const float pitch = follow_camera::degreesToRadians(pitchDegrees);
     const float pivot = frame_blend::lerp(_previousAim.pivot, _aim.pivot, alpha);
     const Vec3 position = followCameraPoint(feet, facing, pitch, pivot);
     Vec3 forward;

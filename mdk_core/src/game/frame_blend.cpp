@@ -55,7 +55,7 @@ Vec3 lerp(Vec3 from, Vec3 to, float t)
     return result;
 }
 
-// FrameBlend.Lerp(float,float,float) is System.MathF.Lerp, not the vector
+// FrameBlend.Lerp(float,float,float) is float.Lerp (Single.Lerp), not the vector
 // overload above and not the shortest-way angle lerp below. The `t >= 1` early
 // return is the oracle's own and keeps the last frame of a tick exactly on the
 // tick's value.
@@ -63,7 +63,7 @@ Vec3 lerp(Vec3 from, Vec3 to, float t)
 // WHY fmaf AND NOT THE TWICE-ROUNDED SPELLING THE VECTOR OVERLOAD USES. Measured
 // on .NET 10 against the oracle probe (`lerp1`: 200 pseudo-random (from, to, t)
 // triples plus 56 edge rows, raw bits), the oracle's arithmetic is
-// `fmaf(from, 1-t, to*t)` -- System.MathF.Lerp is `(from * (1 - t)) + (to * t)`
+// `fmaf(from, 1-t, to*t)` -- float.Lerp is `(from * (1 - t)) + (to * t)`
 // and the JIT contracts the first product into a fused multiply-add. It matches
 // 256/256. The two spellings this could have been left as match far less:
 // `from + (to-from)*t` on 169/256 and `from*(1-t) + to*t` (twice rounded, which

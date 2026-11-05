@@ -70,7 +70,7 @@ void testCancellationUsesTheDotnetsPairwiseReduction() {
 }
 
 // FrameBlend.Lerp(float,float,float) -- the SCALAR lerp the follow camera blends its
-// Aim triple with (game/frame_blend.h). The oracle is System.MathF.Lerp, and its
+// Aim triple with (game/frame_blend.h). The oracle is float.Lerp (Single.Lerp), and its
 // bits are NOT what the twice-rounded `from + (to - from) * t` produces: measured
 // on .NET 10 against this probe, that spelling differs on 87 of these 200 random
 // rows and `from*(1-t) + to*t` (also twice rounded) on 55 of the 256 rows here,

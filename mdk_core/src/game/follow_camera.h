@@ -65,6 +65,16 @@ constexpr float kClimbKeep = 0.97f;
 constexpr float kClimbReturn = 0.02f;
 constexpr float kClimbPitch = 40.0f;
 
+// C# float.DegreesToRadians (Single.DegreesToRadians): multiply by the float
+// pi, then divide by 180 -- TWO roundings, left-associative. This is the one
+// spelling for the follow camera and the Player's facing (the debris and script
+// trees keep their own separately pinned copies); the pre-folded
+// `degrees * (pi / 180)` form differs from the oracle by 1 ULP on many inputs.
+inline float degreesToRadians(float degrees) {
+    constexpr float kPi = 3.14159265358979323846f;
+    return degrees * kPi / 180.0f;
+}
+
 } // namespace follow_camera
 
 // The camera's place for the feet, the horizontal facing (unit) and the pitch
@@ -127,6 +137,11 @@ public:
     // false before the first step (there is no Aim to blend) or when the
     // look-at is degenerate; the camera is left alone in that case.
     bool blend(Camera* camera, const Vec3& feet, float yaw, float alpha, float aspect);
+
+    // The eased arena pitch, in degrees. This is the camera's own state, exposed
+    // read-only so the host harness can pin the oracle's exact rounding; no
+    // gameplay path needs to read it back.
+    float arenaPitch() const { return _arenaPitch; }
 
     // One step (C# FollowCamera.Update): ease the arena pitch toward its target,
     // update the air time and the climb, compute the pitch, then place the camera
