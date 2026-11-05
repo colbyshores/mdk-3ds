@@ -282,9 +282,13 @@ void FollowCamera::update(Camera* camera, ArenaSpace* space, Player& player, flo
     // dt))`, and Single.Lerp's arithmetic is the FUSED `from*(1-t) + to*t` -- see the
     // measurement on frame_blend::lerp, whose scalar twin this now matches. The
     // twice-rounded `target + (old-target)*t` this used sits 1 ULP off the oracle on
-    // most frames (87 of the probe's 200 random triples). Whether powf and MathF.Pow
-    // agree bit for bit is a separate question this does NOT answer; the SHAPE is what
-    // this fixes, and the blend pin below covers the result with the trig tolerance.
+    // most frames (87 of the probe's 200 random triples; re-measured 2026-11-05 against
+    // .NET 10 on 256 fresh triples: fused 0/256 wrong, twice-rounded 53/256). The LEAF is
+    // measured too: .NET 10 `MathF.Pow(0.85f, 0.5f)` is 0x3F6C0535 and host `powf` gives
+    // the same bits, and 0.5 is the only exponent the shipped fixed step can produce
+    // (delta 1/60 x kTicks 30, and mdk_linux/src/main.cpp:523 is the only shipped caller).
+    // What stays unmeasured is newlib's powf on the target -- the same libm-leaf gap as
+    // sinf/cosf, docs/OPEN_ITEMS.md -- and the blend pin below covers the result either way.
     const float ease = powf(follow_camera::kPitchEase, delta * follow_camera::kTicks);
     _arenaPitch = fmaf(arenaPitchTarget, 1.0f - ease, _arenaPitch * ease);
     // The per-step input.MouseY (C# line 108) is always zero: the mouse look is

@@ -82,6 +82,16 @@ measured or cited reason, and the batch that closes one should delete its entry.
   Not closable on this host: devkitARM ships no newlib sources, there is no
   `qemu-arm` here, and the only faithful measurement is an Old-3DS capture (P6) or
   a host build of newlib's `s_sinf.c`/`s_cosf.c` from upstream.
+- **`powf` joins that leaf list, measured on the host.** The follow camera's arena-pitch
+  ease is `powf(0.85f, delta * 30)`, and review-5 oq3 correctly noted the comparison to
+  `MathF.Pow` had never been made. Measured 2026-11-05: .NET 10 `MathF.Pow(0.85f, 0.5f)`
+  is `0x3F6C0535` and host `powf` gives the same bits, and **0.5 is the only exponent the
+  shipped path can produce** — `mdk_linux/src/main.cpp:523` is the only shipped caller and
+  it passes the fixed `1/60` step. The five pinned arena-pitch bits already reproduced from
+  `powf(0.85f, 0.5f)` alone, so this measurement confirms what the pin implied rather than
+  changing it. The same run re-confirmed the fused `Single.Lerp` shape on 256 fresh triples
+  (fused 0/256 wrong, twice-rounded 53/256), which is review-5 oq1. What is NOT measured is
+  newlib's `powf` on the target — same unclosable-here cause as the trig leaf above.
 - **`ObjectMotion.Bank` is ported (2026-10-31) and the object goldens went
   multi-tick.** `ScriptRuntime::motionBank` is `ObjectMotion.Bank` (`0x43b65c`),
   called between `Roll` and `PreviousPosition` exactly where the C# calls it, and

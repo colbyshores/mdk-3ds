@@ -12572,7 +12572,8 @@ the degrees-to-radians spelling.
   and +X place rows: the measured worst relative deltas are **1.29377659e-05** and
   **1.50669503e-05**, exactly the reviewer's values. The source comment and both state files now carry
   those numbers and state the actual **1.55x** tolerance headroom. The tolerance itself was not
-  weakened or tightened; the inaccurate measurement was corrected.
+  weakened or tightened; the inaccurate measurement was corrected. *(corrected in Iteration 92,
+  review-5 B1: 1.55x is the headroom over the view rows; over the worst +X place row it is 1.33x.)*
 * **F4 (Low) — CONFIRMED and fixed.** .NET 10 has no `MathF.Lerp`; the oracle call sites are
   `float.Lerp` (`Single.Lerp` / `IFloatingPoint<float>.Lerp`). The five source comments and both state
   files now name `float.Lerp` (`Single.Lerp`) instead of the non-existent `System.MathF.Lerp`. The
@@ -12635,3 +12636,112 @@ consulted.
 **Next.** CONTINUATION's priority order is unchanged: the next non-owner candidates are the follow
 camera's **sniper scope** and **top-down view**, then `FrameBlend`'s Kurt half with Rides. This batch
 has no exact blocker on those. The owner-gated inherited paths remain unstaged and unmodified.
+
+## Iteration 92 — batch 64: review-5's two claim errors corrected, and the arena-pitch leaf measured
+
+**What this batch is.** The newest external review is
+`logs/ralph-pi/run-20261104-205721/review-5.md`, scope `38ce0f03..79999cf0` plus the uncommitted tree.
+Its verdict was INCOMPLETE: two **High** findings (A1, A2) and one **Medium** (A3) — all three in the loop
+harness and the protected contract files, none in the ported game — and two **Low** findings (B1, B2) in
+the camera record. It also left three open questions it could not test. This batch fixes what a batch is
+permitted to fix, measures what it could not, and hands the rest to the owner with the evidence that it is
+owner-side. **No arithmetic, golden, tolerance or gate moved**: the only source edit in the tree is a
+comment in `FollowCamera::update`.
+
+**Review disposition.**
+
+* **A1 (High) — CONFIRMED, and NOT clearable by a batch.** The reviewer is right that the worktree lost
+  the bit: reproduced here as `ls -l ralph-pi.sh` → `-rw-rw-r--`, `git ls-files -s ralph-pi.sh` →
+  `100755`, `git diff -- ralph-pi.sh` → `old mode 100755 / new mode 100644`, and
+  `tools/install_ralph_pi_service.sh:71` → `ExecStart=$ROOT/ralph-pi.sh`. The repair is not available to
+  this agent: `chmod +x ralph-pi.sh` → `chmod: changing permissions of 'ralph-pi.sh': Operation not
+  permitted` (this is uid 994 `piagent`; the file belongs to `coleshores`; `sudo -n -l` answers "a
+  password is required"). So the finding is **left open** and recorded as owner-gated item **18**:
+  `chmod 755 ralph-pi.sh`, or `git update-index --chmod=+x ralph-pi.sh` at the moment of the owner
+  commit, because a later `git add -A` re-records the worktree mode. A batch must not set
+  `core.fileMode false` to hide it — that would mute every real mode change to buy a green.
+* **A2 (High) — CONFIRMED, and owner-side by construction.** `core.hooksPath=tools/hooks` and
+  `tools/hooks/pre-commit` runs `gates_batch_integrity.py --staged`, which fails on any staged
+  `PROTECTED` path; `AGENTS.md`, `ralph/builder.md` and `tools/runner/gates_batch_integrity.py` are all
+  in that set. The reviewer's failure scenario is real for a `git add -A` batch — and this loop has not
+  used one since batch 60: the standing rule (CONTINUATION, "Still owner-gated and still uncommitted in
+  the tree") is that a batch stages only its own paths, which is why batches 60-63 banked at all. The
+  inherited set is now **six** paths (`.kilo/agent/adversarial-reviewer.md` joined); none was staged,
+  edited or reverted here, and `MDK_OWNER_APPROVED` was **not** set, in this batch or any of its gates.
+  Only the owner can commit or revert them, and the reviewer's own evidence (uids and mtimes) says the
+  edits are owner-authored, which matches the record.
+* **A3 (Medium) — CONFIRMED, owner-gated (it lives in a protected gate).** Reproduced independently:
+  `python3 tools/runner/gates_batch_integrity.py --each-commit` → `BATCH INTEGRITY: PASS`, rc 0, having
+  examined no range and no staged set; `--self-test --base deadbeef` → `BATCH INTEGRITY SELF-TEST: PASS`,
+  rc 0, the range discarded. The range-FAIL → per-commit-recovery downgrade in `ralph-pi.sh` is likewise
+  a policy change, not a bug fix. Both belong to owner-gated items 1 and 13 (the unwired `--self-test`,
+  and the unsigned `--each-commit` marker that the same uncommitted diff adds to `required`). A batch may
+  not edit that file, so this line is the record, not a fix.
+* **B1 (Low) — CONFIRMED and fixed.** The derived headroom sentence was arithmetically wrong:
+  `2e-05 / 1.50669503e-05 = 1.3274` (the worst, +X place rows) while `2e-05 / 1.29377659e-05 = 1.5459`
+  (the view rows), so "1.55x over the worst row" overstated the margin by a fifth. The comment in
+  `tests/scripts/vm_tests.cpp` and the CONTINUATION claim now read **1.55x over the view rows and 1.33x
+  over the worst (+X place) row**. The tolerance itself is untouched at `2e-5f`. Iteration 91's historical
+  line carries a marked correction rather than a silent rewrite.
+* **B2 (Low) — CONFIRMED and fixed.** Reproduced in C at `-ffp-contract=off` from `DefaultPitch = 4.0f`
+  and `ease = powf(0.85f, 0.5f) = 0x3F6C0535`: the fused spelling gives
+  `4093FACB 4080F02A 40DAC5FD 40C9B2F8 40E5A9B3` (all five match the pin), the twice-rounded
+  `target + (old-target)*ease` gives `40DAC5F8 / 40C9B2F4 / 40E5A9B0` — so it differs on **steps 3, 4 and
+  5**, not "3 and 5" — and the plain non-fused sum `target*(1-ease) + old*ease` matches **all five**, so
+  these rows cannot separate fused from non-fused. The comment now says steps 3, 4 and 5, lists the bits,
+  and names the 256-row `lerp1` pin in `system_numerics_tests.cpp` as the one that carries
+  fused-versus-not.
+
+**The review's open questions, closed on the host.** Both needed `dotnet`, which is present at
+`/tmp/kilo/dotnet10` (10.0.402), so they were measured rather than argued.
+
+* **oq1 — is `Single.Lerp` the fused shape?** Yes, on a fresh and independent row set. A standalone .NET
+  10 program printed `float.Lerp(a, b, t)` for 256 LCG-seeded triples (`a`, `b` in [-180, 180] at 0.01,
+  `t` in [0, 1] at 0.01 — the camera's own domains); the C++ `fmaf(from, 1-t, to*t)` reproduced **256 of
+  256** and the twice-rounded `(from*(1-t)) + (to*t)` differed on **53**. That is batch 62's conclusion
+  re-derived on different triples, so the existing `lerp1` pin's provenance holds.
+* **oq3 — do `powf` and `MathF.Pow` agree?** At the only exponent the shipped path can produce, yes:
+  `MathF.Pow(0.85f, 0.5f)` is `0x3F6C0535` and host `powf(0.85f, 0.5f)` is `0x3F6C0535`. And 0.5 is the
+  only value reachable: `mdk_linux/src/main.cpp:523` is the only shipped caller of `FollowCamera::update`
+  and it passes the fixed `kStep = 1/60`, with `kTicks = 30`. The five pinned arena-pitch bits already
+  reproduced from `powf` alone, so this confirms what the pin implied instead of changing it. The
+  `follow_camera.cpp` comment that said this was untested now states the measurement, and
+  `docs/OPEN_ITEMS.md` carries the residual: **newlib's `powf` on the target is unmeasured**, the same
+  unclosable-here class as the `sinf`/`cosf` leaf (no newlib sources, no `qemu-arm`, P6 capture needed).
+* Scratch for all of it: `/tmp/mdk-pi/b64` (this agent's own path; `/tmp/kilo` is not writable by uid 994,
+  owner-gated item 11).
+
+**Gates, verbatim, as run.**
+
+* `make -C tests/scripts` → **exit 0**: `All VM unit tests match the oracle.` and
+  `All cases match the oracle.`, **482 PASS / 0 FAIL**. No golden moved and no assertion was relaxed —
+  the two test-file edits are comments only.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh SKIPPED no built .cia to read`,
+  `gates_frames PASS` (`L3_f1.bmp sha=58615fc85d02e009`, `reference.sha256` NOT regenerated),
+  `gates_batch_integrity BATCH INTEGRITY: PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → **exit 0**,
+  `3DSX mdk.3dsx`.
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `[100%] Built target mdk`, and it rebuilt
+  `follow_camera.cpp.o`, so the published frame came from a binary containing this batch.
+
+**Frame.** `DISPLAY=:99 tools/publish_frame.sh review-5-leaf` →
+`docs/frames/2026-11-05-review-5-leaf.png` + `.txt`, `1.240 / 247 / 0.1819`, md5 `6769a137…`.
+Byte-identical to the parent, and the sidecar says why: a comment-only change cannot move a pixel.
+No emulator and no Old-3DS hardware run: **Old-3DS timing stays UNMEASURED and the Citro3D picture stays
+UNVERIFIED (P6)**.
+
+**Prior-solution lookup.** **pi-knowledge `mdk-sdl`** was present and searched for the arena-pitch ease,
+`MathF.Pow` and the fused `Lerp`; the hits were the very comment this batch corrects, `follow_camera.h`'s
+`kPitchEase`/`kTicks`, and CONTINUATION's own `Lerp` record — leads, verified against the source rather
+than trusted. **Obsidian MCP** is not exposed, so the vault was read read-only from
+`/mnt/nas/Vaults/port-docs`; a search for `arenaPitch`/`MathF.Pow`/`Single.Lerp` found no project-specific
+prior (the only libm/bit-exact hits are perfect-dark and wave-race-64 notes). **Cognee MCP** is not
+exposed in this Pi harness (owner task 12), so it was **not** consulted. No absent source is claimed as
+consulted.
+
+**Next.** CONTINUATION's priority order is unchanged: the follow camera's **sniper scope** and
+**top-down view**, then `FrameBlend`'s Kurt half with `Rides`. No exact blocker on those. The owner owes
+item **18** (the `ralph-pi.sh` exec bit, which a unit restart would expose today) and the standing
+protected-path commit or revert; the inherited paths remain unstaged and unmodified.

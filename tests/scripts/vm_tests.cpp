@@ -5220,9 +5220,10 @@ void testFollowCameraBlendPlacesTheFrame() {
     // the 8 steps x 5 alphas x 9 view values is 1.29377659e-05, and over the +X
     // place rows it is 1.50669503e-05. The place is ~100 units, so this is the
     // project's LUT trig and reciprocal normalize rather than the blend. The
-    // 2e-05 relative tolerance therefore has 1.55x headroom over the worst row,
-    // and remains far below what a wrong sign, a swapped sine and cosine, a
-    // missing term or a dropped pivot/roll interpolation would produce.
+    // 2e-05 relative tolerance therefore has 1.55x headroom over the view rows and
+    // 1.33x over the worst (+X place) row, and remains far below what a wrong sign, a
+    // swapped sine and cosine, a missing term or a dropped pivot/roll interpolation
+    // would produce.
     const float kTolerance = 2e-5f;
     auto nearOracle = [&](float actual, uint32_t expectedBits) {
         uint32_t e = expectedBits;
@@ -5381,8 +5382,12 @@ void testFollowCameraBlendInterpolatesThePivotAndRoll() {
 // These are the oracle's own bits after the targets 12, -3, 40, 0 and 17.5
 // degrees (`followblend2` reads the C#'s private _arenaPitch by reflection).
 // The fused spelling and the old twice-rounded `target + (old-target)*ease`
-// differ on steps 3 and 5, so this pin fails if that exact defect returns;
-// the view-level tolerance above cannot see a one-ULP pitch shift.
+// differ on steps 3, 4 and 5 (re-measured 2026-11-05: 40DAC5F8/40C9B2F4/40E5A9B0
+// against the three rows below), so this pin fails if that exact defect returns;
+// the view-level tolerance above cannot see a one-ULP pitch shift. What these five
+// rows do NOT separate is the fused form from the twice-rounded product sum
+// `target*(1-ease) + old*ease`: both reproduce all five bits. Fused-versus-not is
+// carried by the 256-row `lerp1` pin in system_numerics_tests.cpp, not by this one.
 void testFollowCameraArenaPitchUsesTheOraclesFusedEase() {
     static const uint32_t kExpected[5] = {
         0x4093FACBu, 0x4080F02Au, 0x40DAC5FDu, 0x40C9B2F8u, 0x40E5A9B3u};

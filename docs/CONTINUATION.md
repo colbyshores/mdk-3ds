@@ -1,14 +1,19 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — batch 63 remediates review-4's camera coverage findings: it adds a read-only
-`FollowCamera::arenaPitch()` observation and pins the pivot/roll interpolation and the arena-pitch
-ease against new C# oracle rows. The change is bounded to the follow-camera subsystem and changes no
-shipped behaviour, data format or concurrency, but the new observation is an interface addition and
-the pins protect live camera arithmetic, so it is conservatively medium.
+Risk: low — batch 64 remediates review-5. It corrects two published claim-precision errors (the
+tolerance-headroom ratio B1 and the arena-pitch pin's discrimination list B2), measures the
+`powf`/`MathF.Pow` leaf the review left open, and dispositions A1/A2/A3 with evidence. No behaviour,
+interface, data-format or state change: the only source edits are comments, and no golden, tolerance or
+gate moved. A1 (the lost `ralph-pi.sh` exec bit) is confirmed but NOT fixable by this builder — the file
+belongs to another uid and `chmod` is refused — so it is an owner action item, not a cleared finding.
 
-Last updated: 2026-11-05 (**batch 63** — review-4's camera pins now make the pivot, roll and arena-pitch
-mutants fail; the published tolerance figure is corrected; `float.Lerp` and degrees-to-radians are
-named accurately). The record is `docs/PROGRESS_LOG.md`, "Iteration 91"; batch 62's (the follow
+Last updated: 2026-11-05 (**batch 64** — review-5 remediated: the tolerance-headroom and fused-ease-pin
+claims corrected, `MathF.Pow(0.85f,0.5f)` measured equal to host `powf` at the only exponent the shipped
+step produces, and A1/A2/A3 recorded as owner-side (A1's `chmod` is refused to this uid). A2/A3 stay
+owner-gated). The record is
+`docs/PROGRESS_LOG.md`, "Iteration 92"; batch 63's (review-4's camera pins now make the pivot, roll and
+arena-pitch mutants fail; the published tolerance figure corrected; `float.Lerp` and degrees-to-radians
+named accurately) is "Iteration 91"; batch 62's (the follow
 camera's between-step blend lands, and its scalar `Lerp` turns out to have been the wrong shape) is
 "Iteration 90"; batch 61's (the R6 pin moved to the site the gate reads, the tree green again) is
 "Iteration 89"; batch 60's (the record sweep, the false GNU-dialect
@@ -22,7 +27,7 @@ Batch 58's record (the spin angle's two roundings, the 56 new spin rows, the 8-m
 `script_runtime.cpp` clamps, the `nanclamp` probe mode and four pins) is "Iteration 82"; batch
 53's (`CameraRoll`, the key-window schedule, the `math_lut.h` negative-angle measurement) is
 "Iteration 81"; batch 52's (one `accelerate()`, the `accel` probe table) is "Iteration 80"; batch
-51's (the fly-arrival pin) is "Iteration 79"; batch 50's (the six clamp pins) is "Iteration 78".
+51's (the fly-arrival pin) is "Iteration 79".
 
 ## PRIORITY ORDER (owner directive 2026-10-25)
 
@@ -115,7 +120,19 @@ five are dirty right now (re-verified with `git status` in batch 60), the frame 
 to the current pinned frame (md5 `6769a137…`, same as `2026-11-04-vmla-unfused.png`), and committing
 any of them without `--owner-approved` makes the loop's own post-batch integrity call halt at exit 6
 — which is review-27 F1's failure scenario, and the reason a batch must not "helpfully" bank them
-(review-27 F4, F7).
+(review-27 F4, F7). Batch 64 re-verified the list and it is now **six** paths (`.kilo/agent/
+adversarial-reviewer.md` joined them); none was staged, edited or reverted. Review-5 **A1** is CONFIRMED
+and **not clearable by a batch**: `ralph-pi.sh` is mode `0644` in the worktree while the index holds
+`100755`, and `chmod +x ralph-pi.sh` fails here with `Operation not permitted` (this agent is uid 994
+`piagent`, the file belongs to `coleshores`, and `sudo -n -l` asks for a password). The owner fix is
+`chmod 755 ralph-pi.sh` — or `git update-index --chmod=+x ralph-pi.sh` at the moment of the owner commit,
+since a later `git add -A` re-records the worktree mode. Review-5 **A2** is confirmed as a fact —
+`tools/hooks/pre-commit` does reject a staged protected path, so a `git add -A` batch cannot land here —
+and its remediation is owner-only (it needs `MDK_OWNER_APPROVED=1`, which no batch may set); the
+mitigation that has actually kept the loop banking work since batch 60 is the stage-only-your-own-paths
+rule above, not a `git add -A`. Review-5 **A3** (`--each-commit` with no `--base` validates nothing; a
+range FAIL now recovers to PASS when the per-commit chain passes) lives in that same protected gate and
+is owner-gated item 1/13 below.
 
 **Owner-authorized tasks (cannot be done in a batch).** (1) Add `ralph-pi.sh`, `ralph.sh`,
 `docs/KILO_RALPH_LOOP_POLICY.md`, `.kilo/agent/*`, `ralph/validator.md` and `tests/hooks/pre-commit`
@@ -172,7 +189,12 @@ its code decides whether the exemption is live: batch 60 documented a pinned sit
 from 24/25 to **26** lines below the pin, and the gate went red on a comment-only diff
 (review-30 F-A Critical, F-D). The hardening is to accept a pin anywhere in the enclosing function or
 immediately above the site — a tightening of the gate's semantics, not a loosening, and it belongs in
-its own owner-reviewed change with the corpus untouched, not in a batch that is fixing one site.
+its own owner-reviewed change with the corpus untouched, not in a batch that is fixing one site. (18)
+**Restore the executable bit on `ralph-pi.sh`** (review-5 A1). The worktree is `0644`, the index is
+`100755`, and `ExecStart=$ROOT/ralph-pi.sh` (`tools/install_ralph_pi_service.sh:71`) needs the bit, so a
+unit restart right now fails `status=203/EXEC` and any `git add -A` would commit the loss. A batch cannot
+do it: `chmod +x` returns `Operation not permitted` for uid 994 on a `coleshores`-owned file. Owner fix:
+`chmod 755 ralph-pi.sh` (and consider the same for `ralph.sh` and `tools/ralph_pi_watchdog.sh`).
 
 ## Current tree state (VERIFIED)
 
@@ -237,7 +259,15 @@ rows.
   a planted FIFO. State machine: `tools/runner/review_state.sh`, **177 cases**; how that suite
   lifts `ralph-pi.sh` is in "Iteration 49" and **must not be re-loosened** (batches 20-21).
 
-## Verified on this tree (batch 63)
+## Verified on this tree (batch 64)
+
+Batch 64 moved no arithmetic — its only source edit is a comment in `FollowCamera::update` — and re-ran
+all three gates green on the tree it committed: `make -C tests/scripts` exit 0 (`All VM unit tests match
+the oracle.` + `All cases match the oracle.`, **482 PASS / 0 FAIL**, no golden moved), `bash
+tools/check.sh` exit 0 (`CHECK: ALL GATES PASSED`, `gates_frames` still `L3_f1.bmp sha=58615fc85d02e009`,
+`reference.sha256` NOT regenerated), `make -C mdk_3ds` exit 0 (`3DSX mdk.3dsx`), and the Linux `mdk`
+target rebuilt `follow_camera.cpp.o` before the frame was captured. The measurements below are batch 62
+and 63's and still stand.
 
 Narrative: `docs/PROGRESS_LOG.md`, "Iteration 91". Batch 62's (the follow camera's blend and the
 oracle's fused scalar `Lerp`) is "Iteration 90". Batch 61's (the R6 pin at the site the gate reads,
@@ -282,7 +312,8 @@ in a path that is not hot by AGENTS.md §2 is a different budget; if that ever c
 measurement, not an edit. Pins: 256 bit-exact rows in `system_numerics_tests.cpp`, and the blend's own
 8 steps × 5 α × (pos, forward, up) in `vm_tests.cpp` at measured worst relative deltas of
 **1.29377659e-05** for the view rows and **1.50669503e-05** for the +X place rows (tolerance 2e-05,
-so 1.55x headroom; the LUT trig is what spends it), with α=1 and the first frame pinned bit-for-bit.
+so 1.55x headroom over the view rows and 1.33x over the worst (+X place) row; the LUT trig is what
+spends it), with α=1 and the first frame pinned bit-for-bit.
 Batch 63 adds the missing discriminating pins: a second oracle scenario moves the pivot from 4.5 to
 7.25 and the bank from 0 to 0.375 degrees, and the arena pitch's own bits after five targets pin the
 fused ease exactly. Dropping the pivot, dropping the roll or restoring the twice-rounded ease each
