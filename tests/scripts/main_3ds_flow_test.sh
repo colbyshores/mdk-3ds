@@ -186,8 +186,12 @@ def adjudicate(text, quiet=False):
         r.check(label, ok, detail)
 
     # 1. the collision world is refreshed INSIDE the fixed-step loop.
+    #    Over CODE lines, not the raw block: this tree documents its own rules in
+    #    prose, and a comment inside the loop naming `setSolid(` must not satisfy a
+    #    check whose docstring says prose is not a call site (review-2 F5).
+    loop_code = "".join(line + "\n" for _, line in code_lines(loop)) if loop is not None else None
     say("the step loop refreshes Kurt's solid arena (review-8 F1)",
-        loop is not None and "setSolid(" in loop,
+        loop_code is not None and "setSolid(" in loop_code,
         "no setSolid call in the `while (pending >= step)` body, so the pin is set "
         "wherever else it is set and never follows Kurt")
 

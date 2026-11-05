@@ -63,11 +63,22 @@ public:
     // arena even when his feet leave its bounds -- the sticky arena the original
     // keeps (arena+0x44e) and the scripts refresh on a crossing. Because it is
     // sticky, a frontend WITHOUT the scripts has to refresh it itself as Kurt moves
-    // (C# Viewer.cs:533 refreshes it every step; both frontends do the same with
-    // the geometric arena under his feet), and pin it at the spawn so a Kurt
-    // standing outside every arena still has one for bottom() to resolve --
-    // otherwise the fall-out death never fires. Clears the pin if no arena has
-    // that name (then the arenas around the feet are used, as before).
+    // (C# Viewer.cs:533 refreshes it every step). WHAT it refreshes to is not the
+    // same on every frontend, and the difference is measured, not stylistic: the
+    // oracle's value is the SCRIPTS' drawn arenas (ScriptRuntime.cs:265), which
+    // move only when a move crosses a doorway connection (CrossedArena, :791) or a
+    // teleport puts him elsewhere -- they do NOT follow the geometric arena, and in
+    // particular they do not move while he falls out of the world (measured: the
+    // oracle's own pin rows, golden/L7_spawn_fall.txt's account). The 3DS frontend
+    // has no ScriptRuntime, so it uses the geometric arena under his feet as the
+    // stand-in; the Linux frontend uses the runtime's current arena when it has one
+    // and does not refresh at all when the scripts did not start. Connections are
+    // not ported, so neither stand-in is the oracle's rule; both are better than a
+    // pin left at the spawn. And every frontend must pin at the spawn, because a
+    // Kurt standing outside every arena otherwise leaves bottom() with nothing to
+    // resolve and the fall-out death never fires.
+    // Clears the pin if no arena has that name (then the arenas around the feet are
+    // used, as before).
     void setSolid(const std::string& name);
 
     // Moves Kurt's feet by delta, sliding along faces met obliquely enough

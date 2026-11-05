@@ -459,14 +459,25 @@ int main(int argc, char** argv) {
                 // bottom() -- which DOES consider any arena holding his feet --
                 // would report that neighbour's bottom and fire the fall-out death.
                 // Without the scripts the geometric arena under his feet is the
-                // stand-in for `SolidArenas`, the same one the Linux frontend uses
-                // for the same reason (mdk_linux/src/main.cpp:524-531). It is
-                // deliberately NOT cleared when he is outside every arena: that is
-                // the fall-out case, and bottom() still has to resolve an arena for
-                // the death to fire at all. It is probed AGAIN rather than reusing
-                // the pitch's `here`, because the C# evaluates SetSolid after
-                // UpdateCamera and the camera's clearance can shove Kurt into a
-                // different arena than the one his step started in.
+                // stand-in for `SolidArenas`. It is NOT what the Linux frontend
+                // does: that one refreshes from the runtime's current arena and
+                // only when a runtime exists (mdk_linux/src/main.cpp:531-533), and
+                // it pins once at the spawn otherwise (:366-369). The oracle's own
+                // rule is neither: the scripts' pin moves only on a doorway
+                // connection or a teleport (ScriptRuntime.cs:917-931, :791), so it
+                // does NOT follow him down a fall column. Connections are not
+                // ported and this frontend has no ScriptRuntime, so the geometric
+                // refresh stays the closest available stand-in for the walking case
+                // -- the one review-8 F1 measured -- at the cost of a fall-out that
+                // can re-pin on 4 of the 1681 columns the review probed. Narrowing
+                // it to the supported steps is a separate batch with its own walk-
+                // out-of-the-arena golden, not a one-liner inside this one. The
+                // pin is deliberately NOT cleared when he is outside every arena:
+                // that is the fall-out case, and bottom() still has to resolve an
+                // arena for the death to fire at all. It is probed AGAIN rather
+                // than reusing the pitch's `here`, because the C# evaluates SetSolid
+                // after UpdateCamera and the camera's clearance can shove Kurt into
+                // a different arena than the one his step started in.
                 const std::string* solid =
                     space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
                 if (solid) {

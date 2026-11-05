@@ -14674,3 +14674,147 @@ AGENTS P9, not a lookup that happened); the vault was read read-only instead at
 `citro3d-renderer-architecture-and-vertex-pipeline.md` was the relevant note,
 which documents Forsaken's depth map and vertex pipeline and does not cover the
 clear colour.
+
+## Iteration 104 — batch 76: the level-7 start lands on a floor, and the oracle lands him there too
+
+**What was implemented.** No behaviour changed. This batch answers the question
+`docs/CONTINUATION.md` handed it, with the oracle rather than with reasoning, and
+pins the answer so the next batch cannot re-ask it.
+
+Batch 75 read the Mandarine capture as "the follow camera films the level from
+outside it": the guest log ended with Kurt at `feet=(0.0,4.0,0.0)` while "the
+level's first vertex is `(11.0,438.0,25.0)`", and asked **why Kurt falls to z=0
+and stops there instead of landing on a floor**. He is on a floor. The first
+vertex of an arena's vertex list says nothing about where the start is. DANT_1
+spans `(-172,-17,-27)..(263,1188,279)`, the start is inside it, and a BSP ray
+down from the spawn hits a floor at **z = 0.01**. Measured with rays from
+`(0,4,1)` through the pinned DANT_1:
+
+```
+  -X hits at (-25.10,4.00,1.00)   +X hits at (25.10,4.00,1.00)
+  -Y hits at (0.00,-16.74,1.00)   +Y hits at (0.00,36.89,1.00)
+  +Z hits nothing within 4000     -Z hits at (0.00,4.00,0.01)
+  DANT_1 vertices=503, 24 within 50 of the spawn, 169 within 200
+```
+
+Kurt is standing in a room with walls at x = ±25.1, y = −16.74 and y = 36.89, a
+floor at z = 0 and no ceiling. The follow camera's eye is `(0,-4,4.5)`, which is
+*between* the two Y walls: the camera is inside the room, not outside the level.
+
+**The oracle agrees exactly.** A `fall` mode was added to the headless C# probe
+(`/tmp/mdk-pi/obj3/Probe`, scratch only): the level's own start dropped by
+`StartDrop` as `Viewer.cs:220` does, stepped at `Viewer.Step` with nothing held,
+in the C#'s own order (`kurt.Update`, `scripts.Update`, `space.SetSolid`). Its
+output is now `tests/scripts/golden/L7_spawn_fall.txt`, and `tick1`'s new
+`dump fall` is the C++ twin. The two are **byte-identical**, 61 lines:
+
+```
+level=7 start=0.0000,4.0000,9.0000 angle=90.0000 startArena=DANT_1
+s=1 feet=0.0000,4.0000,11.9822 state=Still floor=0 vert=-1.0666 bottom=-27.0000
+s=36 feet=0.0000,4.0000,0.1602 state=Fall floor=0 vert=-38.3995 bottom=-27.0000
+s=43 feet=0.0000,4.0000,0.0002 state=Land floor=0 vert=-2.1333 bottom=-27.0000
+s=60 feet=0.0000,4.0000,0.0002 state=Land floor=1 vert=0.0000 bottom=-27.0000
+END feet=0.0000,4.0000,0.0002 state=Still hp=100
+```
+
+The C++ twin pins the frontend's own pin rule (geometric at the spawn, refreshed
+after each step) while the oracle pins from its `ScriptRuntime`, and the printed
+columns are only the ones both can answer; the pin itself is not in the golden.
+`PASS L7_spawn_fall: the level-7 start drops, falls and lands on a floor exactly
+where the oracle does`.
+
+**Review-2 F2's open question is answered, by the oracle.** The reviewer asked
+"does the C#'s `_drawnArenas` change while Kurt falls out of the world?" and made
+that the precondition for moving the pin rule. It does not. A second probe mode
+printed the scripts' pin every step of the same fall:
+
+```
+s=1  cur= drawn= solid=            (the scripts have not ticked yet)
+s=2  cur=DANT_1 drawn=DANT_1 solid=DANT_1
+s=36 cur=DANT_1 drawn=DANT_1 solid=DANT_1     (the landing is at s=43)
+s=400 cur=DANT_1 drawn=DANT_1 solid=DANT_1
+```
+
+The rule is `ScriptRuntime.cs:917-931`: `CurrentArena` is found from
+`_space.ArenaAt(KurtPosition)` **only while it is empty**, and after that it moves
+only through `CrossedArena` — a doorway connection (0x41c550, :791) — or a
+teleport. A fall never moves it. So the reviewer's mechanism is real and the
+oracle's answer is that the pin must not follow the geometry down a fall column.
+
+**The pin rule was NOT changed in this batch, and the reason is named.** The
+faithful fix is the connection crossing, which needs DTI `Connection` records, the
+`(arena, id) → other` map, the `Doorway` enum and a `ScriptRuntime` in the 3DS
+frontend — none of which exist, and the frontend runs no runtime at all. The
+reviewer's narrower suggestion (skip the refresh while airborne) is closer to the
+oracle on the fall column but is a behaviour change on the gameplay path with no
+golden for the case batch 74 exists to fix — a walk out of `DANT_1`. It goes first
+in the next batch's queue with this measurement attached, not as a one-liner
+inside this batch.
+
+**Review-2 F1's false record claim is corrected (the record half; the code half is
+not this batch's).** The reviewer showed that "the Linux frontend refreshes it
+every step too" is false — the refresh is `if (runtime) space.setSolid(runtime
+->currentArena())` at `mdk_linux/src/main.cpp:531-533`, so a runtime-less install
+pins once at the spawn (`:366-369`) and never again, and the refresh is the
+*script's* arena, not the geometric one. Both statements are fixed where they
+were written: `mdk_core/src/game/arena_space.h`'s `setSolid` comment (it said
+"both frontends do the same with the geometric arena under his feet") and
+`main_3ds.cpp`'s citation of `:524-531`, which is the *pitch* stand-in. The
+comments now state each frontend's actual rule and the oracle's. Whether the
+runtime-less Linux install is a supported configuration is still an owner line,
+and `mdk_linux/**` is outside AGENTS §8, so the code is untouched.
+
+**Review-2 F5 is fixed.** `main_3ds_flow_test.sh` check 1 matched raw loop text,
+so a comment naming `setSolid(` satisfied it with the call deleted. It now runs
+over `code_lines(loop)`, like checks 2/4/5. Reproduced the reviewer's mutant: the
+in-loop block deleted and replaced by `// a comment naming space.setSolid( here`
+turned check 1 **red** (it was green before this fix), and the five shipped
+mutation arms still each turn their own check red — `PASS Main3dsFlow (5 checks,
+5 arms adjudicated red)`.
+
+**Review-2 F3, F4 and F6 are unchanged.** F3 (the frame gate accepts a duplicate
+capture) and F6 (the worktree's routing versus the committed directive) are owner
+actions on owner-protected files; F4 needs an input hook in `emurun.sh`. This
+batch's frame pair is again a byte-identical duplicate (`sha256 6646adf1…`) for
+the same reason batch 75's was: nothing in the level-3 host frame's path changed.
+Recorded rather than hidden, and the gate fix is owner-protected tooling.
+
+**The picture, and what is actually left.** The Mandarine capture of this build
+(`/tmp/kilo-pi/b76-3ds.png`, `DISPLAY=:99`) is the navy panel with a fan of
+magenta triangles converging below the screen's centre. The camera placement is
+**not** the cause — the eye is inside the room and Kurt is on its floor, both
+matching the oracle. What is left is that the room's triangles are drawn as a fan
+off one point, which is a vertex/projection question in the Citro3D backend, not a
+gameplay one. That is the next named blocker.
+
+**Gates, verbatim.**
+- `make -C tests/scripts` → `All cases match the oracle.` (and the new
+  `PASS L7_spawn_fall: the level-7 start drops, falls and lands on a floor exactly
+  where the oracle does`)
+- `bash tools/check.sh` → `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same
+  core`, `SKIP gates_smdh no built .cia to read`, `gates_frames every pinned frame
+  is deterministic and unchanged`, `gates_batch_integrity project invariants
+  intact`
+- `make -C mdk_3ds` → `3DSX mdk.3dsx`, `make: Leaving directory
+  '/mnt/nas/Development/mdk-sdl/mdk_3ds'`
+
+**Emulator evidence (AGENTS P8).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30
+--shot /tmp/kilo-pi/b76-3ds.png` → **exit 0**. `display : :99`, `emulator
+mandarine.AppImage md5 0d2adab6` (the pinned r1.2.1), `frames: reached 1680 by
+the deadline … after the reap the guest log ends at frame 1740`, `stereo
+render_3d=0 factor_3d=0 (mono)`, `gl forced llvmpipe`. Guest lines:
+`flow: screen=4 level=7` and
+`frame 1680 elapsed=0.0167 steps=1690 feet=(0.0,4.0,0.0) yaw=90.0 health=100
+eye=(0.0,-4.0,4.5)` — the standing pose the golden pins. The batch changes
+`mdk_3ds/**` only in a comment, so the binary is unchanged; the run is the
+confirmation, not the discovery. Emulator-green is not hardware-pass.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` searched (hybrid) for the
+fall-to-z-0 question: the top hits were `SoakTest.cs`'s `StandsAstray`,
+`ArenaSpace.Probes.cs`'s `Bottom`, `Kurt.cs`'s `Fall` and `player.cpp`'s chute
+braking — the right neighbourhood, and `Bottom`'s own doc comment ("Kurt's arena
+is known a step after a teleport") is the hint that the pin is script-driven.
+**Obsidian MCP and Cognee MCP are absent from this session's tool list** (a
+session-configuration fault to report, per AGENTS P9, not a lookup that happened).

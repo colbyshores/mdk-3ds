@@ -547,6 +547,105 @@ bool kurtStepsDump(int level, int steps, bool lethal, const MdkData& data, const
     return true;
 }
 
+// The level's OWN start, dropped and stepped with no input — the C++ twin of the
+// oracle probe's `fall` mode, and golden/L7_spawn_fall.txt is its output.
+//
+// WHY THIS EXISTS. Batch 75 read the Mandarine capture as "the camera films the
+// level from outside it", because the guest log ended with Kurt at feet=(0,4,0)
+// while the level's first vertex is (11,438,25), and asked why he "falls to z=0
+// and stops there instead of landing on a floor". He is on a floor. The first
+// vertex of an arena's vertex list says nothing about where the start is: DANT_1
+// spans (-172,-17,-27)..(263,1188,279), the start is inside it, and a BSP ray
+// down from the spawn hits a floor at z=0.01. The oracle, run the same way, lands
+// Kurt on the SAME step at the SAME 0.0002 with the SAME state sequence, so the
+// frontend's spawn and footing are faithful and the premise was wrong. This golden
+// is what stops the next batch from re-asking it.
+//
+// WHAT THE TWO SIDES DO AND DO NOT SHARE. Both build the world from the reachable
+// arenas, both drop the start by StartDrop (Viewer.cs:100, 3 units), and both step
+// Kurt at Viewer.Step with nothing held. The oracle then pins the collision world
+// from its ScriptRuntime (`space.SetSolid(scripts.SolidArenas)`, Viewer.cs:533);
+// this harness pins it the way mdk_3ds/src/main_3ds.cpp does, geometrically at the
+// spawn and again after each step, because the frontend has no ScriptRuntime. The
+// columns are the ones BOTH can answer — the pin itself is not printed here, and
+// the record carries the oracle's own pin rows separately.
+bool spawnFallDump(int level, int steps, const MdkData& data, const Bni* sprites,
+                   std::string* out, std::string* why) {
+    if (!sprites) {
+        *why = "no TRAVSPRT.BNI to take the frame counts from";
+        return false;
+    }
+    LevelData levelData;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    ArenaSpace space;
+    for (size_t i = 0; i < levelData.arenas().size(); i++) {
+        const Arena* arena = levelData.arenas()[i];
+        if (levelData.isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+
+    const float* start = levelData.dti().startPosition();
+    Player player;
+    player.feet = Vec3{start[0], start[1], start[2] + 3.0f};
+    player.yaw = levelData.dti().startAngle();
+    player.setSpace(&space);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+
+    char line[256];
+    const std::vector<Dti::ArenaEntry>& entries = levelData.dti().arenas();
+    const int32_t startArena = levelData.dti().startArena();
+    snprintf(line, sizeof(line), "level=%d start=%.4f,%.4f,%.4f angle=%.4f startArena=%s\n", level,
+             start[0], start[1], start[2], levelData.dti().startAngle(),
+             (startArena >= 0 && (size_t)startArena < entries.size())
+                 ? entries[(size_t)startArena].name.c_str()
+                 : "-");
+    *out += line;
+
+    const std::string* pinned =
+        space.arenaAt(Vec{player.feet.x, player.feet.y, player.feet.z});
+    if (pinned) {
+        space.setSolid(*pinned);
+    }
+
+    Input input;
+    for (int step = 1; step <= steps; step++) {
+        player.update(input, 1.0f / 60.0f);
+        // The frontend's per-step refresh (main_3ds.cpp, the C#'s own per-step
+        // SetSolid shape). It is what a fall-out could in principle move, which is
+        // why the golden runs a fall.
+        const std::string* now =
+            space.arenaAt(Vec{player.feet.x, player.feet.y, player.feet.z});
+        if (now) {
+            space.setSolid(*now);
+        }
+        float bottom = 0.0f;
+        const bool have =
+            space.bottom(Vec{player.feet.x, player.feet.y, player.feet.z}, &bottom);
+        if (step <= 12 || step % 20 == 0 || step == steps || !player.onFloor) {
+            char bottomText[32];
+            if (have) {
+                snprintf(bottomText, sizeof(bottomText), "%.4f", bottom);
+            } else {
+                snprintf(bottomText, sizeof(bottomText), "none");
+            }
+            snprintf(line, sizeof(line),
+                     "s=%d feet=%.4f,%.4f,%.4f state=%s floor=%d vert=%.4f bottom=%s\n", step,
+                     player.feet.x, player.feet.y, player.feet.z,
+                     kurtStateName(player.state()), player.onFloor ? 1 : 0,
+                     player.verticalSpeed, bottomText);
+            *out += line;
+        }
+    }
+    snprintf(line, sizeof(line), "END feet=%.4f,%.4f,%.4f state=%s hp=%d\n", player.feet.x,
+             player.feet.y, player.feet.z, kurtStateName(player.state()), player.health());
+    *out += line;
+    return true;
+}
+
 // One scripted hurt_kurt: the step it fires on and the damage it deals. The
 // schedule is printed in the dump's own header, so a golden can never be compared
 // against a different one (the oracle prints the same literal on its own side).
@@ -2220,6 +2319,16 @@ int main(int argc, char** argv) {
             printf("%s", got.c_str());
             return 0;
         }
+        if (what == "fall") {
+            std::string got;
+            std::string why;
+            if (!spawnFallDump(level, ticks, data, spritesArg, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
         if (what == "hurt" || what == "hurtland" || what == "knock" || what == "invuln" ||
             what == "knockdown" || what == "flashes" || what == "push" || what == "camroll") {
             std::string got;
@@ -2854,6 +2963,32 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // The level's own start, dropped by StartDrop and stepped with nothing held.
+    // This is the golden that says "the 3DS build's level-7 spawn lands on a real
+    // floor, where the oracle lands him, on the same step" — batch 75 read the same
+    // capture as a camera placed outside the level and asked why Kurt stopped at
+    // z=0. He stopped on a floor at z=0.01. See spawnFallDump for the account.
+    {
+        std::string expected;
+        if (!readText("golden/L7_spawn_fall.txt", &expected)) {
+            printf("FAIL L7_spawn_fall: no golden file golden/L7_spawn_fall.txt\n");
+            failures++;
+        } else {
+            std::string got;
+            std::string why;
+            if (!spawnFallDump(7, 400, data, spritesArg, &got, &why)) {
+                printf("FAIL L7_spawn_fall: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L7_spawn_fall: the level-7 start drops, falls and lands on a floor "
+                       "exactly where the oracle does\n");
+            } else {
+                printf("FAIL L7_spawn_fall: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
     // The lethal hard landing, as its own run (review-9 R9-5). The C#'s HardLanding
     // tests `Health == 0` before it enters K_CRASHL, so a Kurt who is already dead
     // when a -194 u/s landing arrives does not play the crash and does not have his
