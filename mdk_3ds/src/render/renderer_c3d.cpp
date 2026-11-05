@@ -1710,6 +1710,54 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         installDepthState(r, wantedDepth);
     }
 
+    // One-shot geometry trace for the named level-7 picture defect. Log the
+    // exact first triangle after the CPU has selected its MVP and before the
+    // GPU consumes the same vertex buffer. This distinguishes bad source
+    // vertices, a bad matrix, and clip-space clipping without inferring from
+    // the rendered fan. The diagnostic is cold (once per renderer lifetime).
+    static bool loggedFirstTriangle = false;
+    if (!loggedFirstTriangle && count >= 3) {
+        loggedFirstTriangle = true;
+        const float* vertices = static_cast<const float*>(mesh.data);
+        float traceMvp[16];
+        if (identityWorld) {
+            memcpy(traceMvp, r->eyeVp, sizeof(traceMvp));
+        } else {
+            mdk::pica::drawMatrix(draw->world, r->eyeVp, traceMvp);
+        }
+        mdk::log3dsPrintf("tri-trace draw=%d first=%d mvp row0=(%.5f,%.5f,%.5f,%.5f) row1=(%.5f,%.5f,%.5f,%.5f) row2=(%.5f,%.5f,%.5f,%.5f) row3=(%.5f,%.5f,%.5f,%.5f)",
+                          (int)r->drawCount, (int)first,
+                          traceMvp[0], traceMvp[1], traceMvp[2], traceMvp[3],
+                          traceMvp[4], traceMvp[5], traceMvp[6], traceMvp[7],
+                          traceMvp[8], traceMvp[9], traceMvp[10], traceMvp[11],
+                          traceMvp[12], traceMvp[13], traceMvp[14], traceMvp[15]);
+        float ndcX[3];
+        float ndcY[3];
+        for (int32_t v = 0; v < 3; v++) {
+            const int32_t at = (first + v) * 5;
+            const float x = vertices[at + 0];
+            const float y = vertices[at + 1];
+            const float z = vertices[at + 2];
+            const float clipX = x * traceMvp[0] + y * traceMvp[4] +
+                                z * traceMvp[8] + traceMvp[12];
+            const float clipY = x * traceMvp[1] + y * traceMvp[5] +
+                                z * traceMvp[9] + traceMvp[13];
+            const float clipZ = x * traceMvp[2] + y * traceMvp[6] +
+                                z * traceMvp[10] + traceMvp[14];
+            const float clipW = x * traceMvp[3] + y * traceMvp[7] +
+                                z * traceMvp[11] + traceMvp[15];
+            ndcX[v] = clipW != 0.0f ? clipX / clipW : 0.0f;
+            ndcY[v] = clipW != 0.0f ? clipY / clipW : 0.0f;
+            mdk::log3dsPrintf("tri-trace v%d world=(%.4f,%.4f,%.4f) clip=(%.5f,%.5f,%.5f,%.5f) ndc=(%.5f,%.5f,%.5f)",
+                              (int)v, x, y, z, clipX, clipY, clipZ, clipW,
+                              ndcX[v], ndcY[v], clipW != 0.0f ? clipZ / clipW : 0.0f);
+        }
+        const float area = (ndcX[1] - ndcX[0]) * (ndcY[2] - ndcY[0]) -
+                           (ndcY[1] - ndcY[0]) * (ndcX[2] - ndcX[0]);
+        mdk::log3dsPrintf("tri-trace screen-area=%+.8f cull-mode=%d (negative=clockwise in NDC)",
+                          area, (int)r->cullMode);
+    }
+
     C3D_DrawArrays(GPU_TRIANGLES, first, count);
     // Restore the frame's default for the next draw, so every draw starts
     // from the state begin_frame installed. The transition back is cached in

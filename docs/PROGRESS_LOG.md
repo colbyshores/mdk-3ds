@@ -14675,6 +14675,38 @@ AGENTS P9, not a lookup that happened); the vault was read read-only instead at
 which documents Forsaken's depth map and vertex pipeline and does not cover the
 clear colour.
 
+## Iteration 105 — batch 77: one DANT_1 triangle traced through the Citro3D matrix
+
+**Risk: medium** — one-shot diagnostic logging in the 3DS renderer; it does not change drawing, but captures target-specific clip-space evidence for the open geometry defect.
+
+### Review-4 findings
+
+The newest external review (`logs/ralph-pi/run-20261105-142911/review-4.md`) has no Critical or High findings. Medium F1/F2 are real collision-pin and test-scope gaps, but this batch's first priority is the level-7 Citro3D picture diagnosis; changing collision pin behavior belongs to its own batch, with a placed-fall oracle/C++ twin covering `(-153.2,1602.1)` and a walk-out golden. F3 is the owner-protected duplicate-frame gate issue; F4 concerns dirty operator-authored harness files. Neither may be staged by the builder. These are not presented as fixed.
+
+### What was implemented and observed
+
+Added a once-per-renderer trace in `mdk_3ds/src/render/renderer_c3d.cpp` immediately before the actual `C3D_DrawArrays` call. It logs the first drawn triangle's first index, the actual per-draw MVP (`world * eyeVp`, including the case where world is non-identity), each world vertex, clip coordinates, NDC coordinates, signed projected area and current cull mode. The trace has no effect on GPU submission. This is a diagnostic increment only; it does not claim to fix the fan or alter the port's behavior.
+
+Prior-solution lookup: pi-knowledge `mdk-sdl` searched adaptively for Citro3D fan/clip behavior and returned `renderer_c3d.cpp`, `pica_matrix.cpp`, and the renderer's documented PICA conversions; these are discovery leads checked against source. Obsidian MCP and Cognee MCP tools were absent from this session, a P9 session-configuration fault. The allowed read-only vault fallback was used: read `10-projects/mdk-sdl/ralph-pi-mandarine-setup.md`, `10-projects/forsaken/findings/citro3d-renderer-architecture-and-vertex-pipeline.md`, and `GX-to-PICA200/02-pica200-hardware-model.md` / `52-debugging-techniques.md`. The notes emphasize shader inputs, per-target GPU state and measuring before changing PICA behavior.
+
+Build: `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM timeout 900s make -C mdk_3ds` → exit 0, linked `mdk.3dsx`.
+
+Emulator evidence (AGENTS P7/P8): exact command `DISPLAY=:99 timeout 240s mdk_3ds/tools/emurun.sh --secs 30 --shot /tmp/kilo-pi/b77-trace2.png` → exit 0. Display `:99`; Mandarine r1.2.1 md5 `0d2adab6`; mono (`render_3d=0`, `factor_3d=0`); software llvmpipe; guest reached frame 1620 before deadline and post-reap log ended at frame 1740. Capture `/tmp/kilo-pi/b77-trace2.png` is a 1280x1024 PNG. It still shows the navy panel/fan; this is not a visual fix.
+
+The decisive measured first draw is: mesh 0, first 0, count 6; vertices `(11,438,25)`, `(0,438,36)`, `(14,438,32)`; clip coordinates respectively `(53.83041,-9.16799,-0.48899,440.33771)`, `(69.07315,-0.00002,-0.48901,439.57040)`, `(63.53034,-11.66835,-0.48900,439.84943)`; NDC approximately `(0.12225,-0.02082,-0.00111)`, `(0.15714,-0.00000,-0.00111)`, `(0.14444,-0.02653,-0.00111)`. Signed NDC area `-0.00066111`; `cull-mode=2`. These are far-distance vertices, so one trace is insufficient to conclude why the local room's triangles appear fanned. Do not infer a cull-enum fix from the sign: check the actual source winding and PICA semantics with a near-spawn sample first.
+
+### Gates (actual results)
+
+- `make -C tests/scripts` → exit 0, final line `All cases match the oracle.`
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM timeout 1800s bash tools/check.sh` → exit 0, `CHECK: ALL GATES PASSED`; SMDH explicitly `SKIPPED -- no built .cia to read`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM timeout 900s make -C mdk_3ds` → exit 0, `3DSX mdk.3dsx`.
+- `timeout 300s bash tools/runner/test_review_state.sh` → exit 0, `REVIEW STATE: ALL CASES PASS`.
+- `timeout 300s sh tests/scripts/c3d_frame_test.sh` → exit 0, `PASS C3dFrame (26 checks, 33 arms adjudicated red)`.
+- `timeout 300s bash tests/scripts/emurun_harness_test.sh` → exit 0, `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+- `tools/publish_frame.sh b77-clip-trace` → exit 0, wrote `docs/frames/2026-11-05-b77-clip-trace.png` and `.txt`; pinned level-3 Linux frame comparison: `bad_percent=1.240 max_delta=247 mean_delta=0.1819`. The sidecar identifies the separate 3DS evidence and explicitly notes the pinned frame does not show that renderer path.
+
+No review-4 finding is claimed fixed or rebutted. The next batch is to collect near-spawn geometry and compare it against PICA's clip/cull handling; after that the owner continuation queue's placed-fall collision golden remains pending. Hardware behavior remains unmeasured on an original 3DS; emulator-green is not hardware-pass.
+
 ## Iteration 104 — batch 76: the level-7 start lands on a floor, and the oracle lands him there too
 
 **What was implemented.** No behaviour changed. This batch answers the question

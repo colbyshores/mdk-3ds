@@ -1,35 +1,14 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — a new oracle-derived golden plus three comment corrections; no behaviour changed, but the
-batch retires a recorded premise about the level-7 spawn and rewrites what the pin rule is, so a reviewer should
-check the measurement rather than trust the narrative.
+Risk: medium — one-shot diagnostic logging in the 3DS renderer; no draw behavior or public interface changed, but the target-specific trace measures clip-space geometry on the path under investigation.
 
-**The level-7 start is faithful, and the "camera films the level from outside it" diagnosis was wrong.** Kurt
-lands on a real floor at `z = 0.01` in DANT_1 — walls at x = ±25.1, y = −16.74 and 36.89, no ceiling — and the
-C# oracle, run the same way, lands him on the same step at the same `0.0002` with the same state sequence.
-`golden/L7_spawn_fall.txt` (61 lines, byte-identical to the oracle's `fall` mode) and `tick1 dump fall 7 400`
-pin it. The follow camera's eye `(0,-4,4.5)` is *inside* that room. Record: `docs/PROGRESS_LOG.md`,
-"Iteration 104"; earlier batches are indexed by number in that file.
+**Level-7 start is faithful:** Kurt lands on a floor at z=0.01; oracle and C++ agree at z=0.0002 with the same states. `golden/L7_spawn_fall.txt` pins it; camera eye `(0,-4,4.5)` is inside DANT_1. Details: `docs/PROGRESS_LOG.md`, Iteration 104.
 
-Last updated: 2026-11-05 (**batch 76 — the spawn lands on a floor; the oracle says so too**).
+Last updated: 2026-11-05 (**batch 77 — first DANT_1 triangle traced through Citro3D**).
 
-**Owner action still open (blocks the loop's own fixes taking effect):** the worktree `ralph-pi.sh` is mode
-`664` while the index says `100755`, this uid cannot `chmod` it (owner task 18), and the systemd unit execs it
-directly — so a restart today fails `203/EXEC` and the loop keeps running a pre-fix copy. Restore `0755` and
-restart `ralph-pi-mdk.service`.
-**Owner action still open (review-4 F3, review-2 F6):** `ralph/builder.md` carries an uncommitted
-operator-authored edit and that path is in `gates_batch_integrity.py`'s `PROTECTED` set; the worktree's
-`ralph-pi.sh` / `ralph/LOOP_CONTEXT.md` / `tools/runner/test_review_state.sh` routing now contradicts the
-*committed* `OWNER_DIRECTIVE_2026-11-05.md` "Loop routing" block. Commit them with `MDK_OWNER_APPROVED=1` and a
-record entry, or revert them. A builder must not stage them (exit 6) and must not set the approval marker, so the
-worktree stays permanently dirty and **every batch stages by name, never `git add -A`**.
-
-**Owner action new (review-2 F3):** the "exactly one new frame PNG" rule is satisfiable by a byte-identical
-duplicate of an earlier capture — **batches 75 and 76 are each such a duplicate** (`sha256 6646adf1…`), because
-nothing in the level-3 host frame's path changed. The fix (reject a new frame whose sha256 already exists, and
-require the `emurun.sh` verdict in the sidecar) is an edit to owner-protected gate tooling, so it is recorded
-rather than fixed.
-
+**Owner action:** `ralph-pi.sh` worktree mode is 664 (index 100755); this uid cannot chmod it, so systemd restart fails `203/EXEC`. Owner task 18: restore 0755 and restart `ralph-pi-mdk.service`.
+**Owner action (review-4 F3 / review-2 F6):** uncommitted operator edits in `ralph/builder.md` (PROTECTED) plus routing changes in `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`, and `tools/runner/test_review_state.sh` conflict with the committed owner directive. Owner must approve/commit or revert; builder must not stage these or set `MDK_OWNER_APPROVED=1`. Stage batch paths by name only.
+**Owner action (review-2 F3):** batches 75/76 frame PNGs duplicate an older capture (`sha256 6646adf1…`). Rejecting duplicates and requiring emulator verdicts needs owner-protected gate tooling; recorded, not changed.
 
 ## PRIORITY ORDER (owner directive 2026-11-05, in force until withdrawn)
 
@@ -61,30 +40,18 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 8. **CLOSED (batch 75) — the red clear.** It was the clear colour's byte order, not the render path. See the
    header of this file.
 
-## NEXT (batch 77)
+## NEXT (batch 78)
 
-**The room's triangles draw as a fan off one point, and that is the named blocker — a Citro3D vertex/projection
-question, not a camera or gameplay one.** The Mandarine capture of this build (`DISPLAY=:99`, exit 0, frame 1740)
-is the navy panel with magenta triangles converging below the screen's centre, while the camera's eye `(0,-4,4.5)`
-is inside the room and Kurt stands on its floor at `z = 0.0002`, exactly where the oracle puts him. So the picture
-is wrong about geometry that IS in front of the camera, not about where the camera is. Batch 76 proved the spawn,
-the drop, the fall and the landing faithful with `golden/L7_spawn_fall.txt`, so **do not re-open them**. Two
-measured facts to start from: the room around the spawn is walls at x = ±25.1, y = −16.74 and 36.89 with a floor at
-z = 0, and a `+Z` ray from the spawn hits nothing within 4000, so do not blame the sky or the far plane first.
-Dump what the backend is actually given for one DANT_1 triangle (world vertex, the matrix it was multiplied by,
-the clip-space result) before changing a rule.
+**The first-triangle clip trace does not support a broken matrix or a camera outside the room, but it does not yet explain the fan.** From the actual DANT_1 draw on Mandarine (`DISPLAY=:99`, pinned r1.2.1): first triangle vertices `(11,438,25)`, `(0,438,36)`, `(14,438,32)` produce clip W ≈ 440 and NDC around `(0.12,-0.02,-0.001)`, `(0.16,0,-0.001)`, `(0.14,-0.027,-0.001)` under the logged MVP; projected signed area is `-0.00066111`. This is a far-distance triangle, and the signed winding should be checked against actual PICA cull semantics before changing the cull enum. The trace computes the actual per-draw world*MVP (not just the frame matrix) and logs once per process. Next sample triangles near the spawn and compare the vertices/MVP/clip values with host-derived geometry; inspect the PICA winding and depth/cull behavior before modifying renderer state. Do not declare the room's fan fixed from one triangle.
+
+Batch 76 proved the level-7 spawn, fall and landing faithful with `golden/L7_spawn_fall.txt`; **do not re-open them**. Standing geometry around the spawn is walls at x = ±25.1, y = −16.74 and 36.89 with a floor at z = 0, and a `+Z` ray from spawn hits nothing within 4000.
 
 **Then item 6 — the ndsp audio backend.** `mdk_core/src/audio/sound_device.h:13` is the sample-plane gap:
 nothing sets a `Player`'s mixer on either frontend. Adapt `../forsaken/sound_3ds.c` and
 `../t2k/t2k_3ds/src/audio/sfx_3ds.cpp` (AGENTS §12: adapt, do not re-derive), then set the mixer on both
 frontends.
 
-**Review-2's queue, after this batch.** F2 is first and its precondition is met: the oracle's pin does NOT follow
-Kurt down a fall column (`ScriptRuntime.cs:917-931` — `ArenaAt` only while `CurrentArena` is empty, then
-`CrossedArena` or a teleport), so the frontend's geometric per-step refresh should stop re-pinning while he is
-unsupported — with its own walk-out-of-`DANT_1` golden, because that is the case batch 74 exists for. F1's code
-half (the runtime-less `mdk_linux` path pins once at the spawn) needs an owner line and is outside AGENTS §8; its
-record half is fixed here. F4 needs an input hook in `emurun.sh`. F3 and F6 are owner actions, above; F5 is fixed.
+**Review-4 medium findings:** F1/F2 need a placed-fall C# oracle/C++ twin in full order and a walk-out golden before changing collision pin behavior; deferred to a collision batch. F3/F4 remain owner actions; no protected paths staged. Original-3DS behavior remains unmeasured.
 
 **Three things the next batches must not lose:**
 
