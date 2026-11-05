@@ -1,18 +1,20 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — the batch adds a new 3DS platform subsystem (the HID -> `Input` mapping, a new interface and
-a new state owner for the accumulated mouse), changes the 3DS frontend's frame loop so the poll is the only
-`hidScanInput`, and changes a `GameFlow` state transition (`play()` now installs a fresh level result, which
-is review-5 F1). No golden, no gate, no PROTECTED path and no `mdk_core` numeric path is touched, and every
-new number is hand-derived and re-derived twice; the two parts worth a reviewer's eye are the control scheme
-(it is this target's, not the C#'s) and the `play()` reset.
+Risk: high — the 3DS frontend stops being a level viewer and becomes a game driver: it now owns a `Player`,
+a `FollowCamera` and a `KurtSprite`, replaces its frame loop with the C#'s tick order (per-frame mouse drain,
+a fixed 1/60 step with a ten-step pending clamp, per-step camera placement), deletes the framing camera, and
+changes a `GameFlow` state transition (`play()` now seeds the fresh level result from the fall's carry and
+consumes it — review-7 F1). Target-specific, state-transition-bearing, and the on-target picture is unchanged
+for a reason this batch names rather than fixes. No gate, no golden and no PROTECTED path is touched; the one
+core change is pinned by rows that were checked to fail without the fix.
 
-Last updated: 2026-11-05 (**batch 72** — owner-directive item 4 is done: libctru HID fills `mdk::Input`
-(`mdk_3ds/src/platform/input_3ds.{h,cpp}` + `input_3ds_hid.cpp`), pinned by `PASS Input3dsMap` and proved
-on-target by the guest log's `input selftest: fwd=1 fire=1 look=20.0000`, which is the host golden's
-0x41A00000. review-5 F1 is fixed and pinned (the `play()` reset), F3 is answered in this batch's frame
-sidecar, F4 stays closed by batch 71, and F2 is rebutted in part and deferred in part. The record is
-`docs/PROGRESS_LOG.md`, "Iteration 100"; earlier batches are indexed by number in that file.).
+Last updated: 2026-11-05 (**batch 73** — owner-directive item 5 is done: `mdk_3ds/src/main_3ds.cpp` drives
+`GameFlow` → `Player` → the ported `FollowCamera` → Kurt's sprite, in the C#'s tick order, and the framing
+camera is gone. Proved on-target by a fresh Mandarine run (exit 0, frame 3480) whose guest log reads
+`flow: screen=4 level=7`, `spawn: feet=(0.0,4.0,12.0)`, `game: player=1 sprite=1` and
+`input selftest: ... lookbits=41A00000`. review-7 F1 is fixed and pinned, F2 and F3 are fixed, F4 and F5 are
+owner actions. **The on-target picture is still a red clear, recorded as the next blocker.** The record is
+`docs/PROGRESS_LOG.md`, "Iteration 101"; earlier batches are indexed by number in that file.)
 
 **Owner action still open (blocks the loop's own fixes taking effect):** the worktree `ralph-pi.sh` is mode
 `664` while the index says `100755`, this uid cannot `chmod` it (owner task 18), and the systemd unit execs it
@@ -53,47 +55,57 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    pinned rows and their derivations are in `tests/scripts/input_3ds_tests.cpp`, and the narrative is
    "Iteration 100". The C-Stick is deferred with a cause (its read is `irrstCstickRead`, a second service,
    on a New 3DS-only path).
-5. **NEXT — wire the frontend.** `main_3ds.cpp` drives the real game: input → player → the ported `FollowCamera`
-   (not the framing camera) → Kurt's sprite → the HUD, through `GameFlow` — whose `handle(Event)` returns the
-   `Screen` to build and whose header states the tick order. It now *polls* the controls but still reads only
-   START/SELECT as a quit chord and drives no game object.
-6. **ndsp audio backend.** The control plane in `mdk_core/src/audio/` is ported; the sample plane is not
+5. **DONE (batch 73) — wire the frontend.** `main_3ds.cpp` builds the level from `flow.state().level`, spawns
+   `Player` at the DTI start `+ StartDrop`, drains the mouse per frame, steps `Player` then `FollowCamera` in
+   fixed steps, respawns on `player.died()`, and draws Kurt after the level. The framing camera is deleted.
+   The HUD is **not** drawn, with its cause: `mdk_render_canvas_quad` is a no-op on this backend
+   (`renderer_c3d.cpp:1854`), so a HUD call would draw nothing while reading as a ported HUD. Narrative:
+   "Iteration 101".
+6. **NEXT — ndsp audio backend.** The control plane in `mdk_core/src/audio/` is ported; the sample plane is not
    (`sound_device.h:13`). Adapt `../forsaken/sound_3ds.c` and `../t2k/t2k_3ds/src/audio/sfx_3ds.cpp`, then
    set the mixer on both frontends.
 7. **Citro3D alpha blend.** No `C3D_AlphaBlend`, so `Pass::Blended` glass is opaque. Blocked on a named
    cause: the palette expansion forces alpha 255 and the vertex shader writes `outclr = ones`.
+8. **NEW, and it gates the directive's goal — the 3DS picture is still a red clear.** Batch 73 confirmed by
+   screenshot that the panel still shows the red clear with a sliver of magenta geometry even though the
+   simulation and the frame path both run (3 draws/frame, 60 fps, follow camera placed per step). So "a CIA
+   that plays a level end-to-end" is blocked on the render path, not on the game glue any more. Named
+   suspects: AGENTS P2's "all GPU state / all uniforms set every frame" list, and the depth map the guest log
+   prints (`map z*1.0+1.0 near=0.0000 far=1.0000`).
 
 **Cut from the sprint (deferred with cause):** menu/stats/save (`Menu/` ≈ 1,820 C# lines — boot straight
 into a level), rides/snowboard/stream-fall view/sniper/cutscene camera, the 27 deferred opcodes, the
 Old-3DS optimisation pass (take a first capture; do not optimise against a corpus that does not exist).
 
-## NEXT (batch 73)
+## NEXT (batch 74)
 
-**Item 5 — wire the frontend.** `main_3ds.cpp` drives the real game: `mdk::Input` from `input3dsPoll` →
-`Player` → the ported `FollowCamera` (not the framing camera at `main_3ds.cpp`'s `view.bounds()` block) →
-Kurt's sprite → the HUD, through `GameFlow`. What the frontend must get right and does not do today: call
-`handle(Event)` and show the `Screen` it returns, drain the mouse once per simulation step (the game takes
-it — `Player::mouseLook`, `FollowCamera::mouseLook` — so the frontend must not), and use
-`GameFlow::stepFor`/`elapsedFor` instead of its own clamped wall delta. `reportLevel` is now optional (batch
-72 made `play()` stand a fresh result in its place), but a frontend that skips it reports a level that fired
-nothing, so call it.
+**Item 6 — the ndsp audio backend.** `mdk_core/src/audio/sound_device.h:13` is the sample-plane gap: the
+control plane is ported and nothing sets a `Player`'s mixer on either frontend. Adapt `../forsaken/sound_3ds.c`
+and `../t2k/t2k_3ds/src/audio/sfx_3ds.cpp` (AGENTS §12: adapt, do not re-derive), then set the mixer on both
+frontends. R1 applies to the audio worker's entry (the FPSCR helper is already the shipped pattern) and §10's
+small-stack rule applies to it.
 
-**From review-5's open questions, for when the screens land:** `FlowOptions` must grow three things
-`handle()` cannot carry yet — `MenuPage Page` (`Game.cs:404`), `StatsScreen.Phase` (`Game.cs:408/412`) and
-the fall's `ViewerOptions(0, …)` vs `_options.Level` (`Game.cs:466`). `firstLevel()` already exists for the
-third; the header does not record that the first two will be needed. Also deferred from batch 72:
-`FlowOptions::setCounts(values, count)` keeps its raw pointer + count (review-5 F2) and the CLI that first
-calls it owns the length.
+**Two things the next batches must not lose:**
 
-Two measured facts carry forward, both unchanged by batch 72:
+* **The frontend does not call `reportLevel` yet.** It is optional (`play()` stands a fresh result in its
+  place, and batch 73 made that result honour the fall's carry), but a frontend that skips it reports a level
+  that fired nothing. It matters when the statistics screens exist, not before.
+* **`FlowOptions` must grow three things `handle()` cannot carry yet,** from review-5's open questions: `MenuPage
+  Page` (`Game.cs:404`), `StatsScreen.Phase` (`Game.cs:408/412`) and the fall's `ViewerOptions(0, …)` vs
+  `_options.Level` (`Game.cs:466`). `firstLevel()` already exists for the third. Also deferred from batch 72:
+  `FlowOptions::setCounts(values, count)` keeps its raw pointer + count (review-5 F2) and the CLI that first
+  calls it owns the length.
 
-* **The 3DS picture is a red clear with a sliver of geometry.** The guest logs 3 draws/frame with real
-  vertex data (`view: 154 batches, 1188 vertices, 399 triangles`) and the frame counter advances at 60 fps,
-  so the frame path runs; what reaches the screen is not a level. Item 7's neighbourhood, and AGENTS P2's
-  "all GPU state every frame" list.
-* **`draws issued: 0` is printed while draws happen.** `main_3ds.cpp:277-281` reads
-  `mdk_render_stats(renderer, &draws, nullptr)` at `frame == 3` and gets 0 while the same frame logs three
-  `draw N:` lines. The instrument, not the game: name the cause before quoting that number anywhere.
+Two measured facts carry forward:
+
+* **The 3DS picture is a red clear with a sliver of geometry — re-confirmed by screenshot in batch 73, with
+  the game running.** The guest logs 3 draws/frame with real vertex data (`view: 135 batches, 2544 vertices,
+  870 triangles`), the frame counter advances at 60 fps, and the follow camera now moves with Kurt, and the
+  panel still does not show a level. Priority-order item 8. AGENTS P2's "all GPU state / all uniforms every
+  frame" list is the first place to look.
+* **`emurun.sh --shot` silently produces nothing on this box** (no ImageMagick `import` in the lane; it warns
+  and continues). Grab the display with `DISPLAY=:99 ffmpeg -f x11grab -video_size 1280x1024 -i :99
+  -frames:v 1 <file>` while a lane is live, and say which tool produced a 3DS picture.
 
 ## Standing facts a batch must not re-derive
 
@@ -117,8 +129,10 @@ Two measured facts carry forward, both unchanged by batch 72:
   `git update-index --chmod=+x ralph-pi.sh` after staging, or the commit records `100644` and the systemd
   `ExecStart` fails `203/EXEC`.
 * **Review independence is the resolved upstream and family, never the alias** (SPEC-COMPLETION harness
-  rule 4, owner-protected). Builder `litellm/qwen`, reviewer `litellm/deepseek-v4.1-flash`, fallbacks
-  `litellm/minimax-m3.1-flash-nvidia litellm/luna`. A same-family reviewer is refused, and if no eligible
+  rule 4, owner-protected). Current chain (the operator's uncommitted `ralph-pi.sh` edit, and what this run
+  reports): builder `litellm/qwen` (family `qwen`) with `litellm/luna` fallback, reviewer
+  `litellm/deepseek-v4.1-flash-th` (family `deepseek`) with `litellm/deepseek-v4.1-flash` fallback — both
+  reviewer routes cross-family from both builder routes. A same-family reviewer is refused, and if no eligible
   reviewer resolves the loop records BLOCKED and stops. There is no allowlist and one must not be added:
   that is an owner edit to a PROTECTED file, not a batch decision (`test_review_state.sh` pins it).
 * **Emulator-green is not hardware-pass.** Mandarine masks FCRAM/VRAM exhaustion, `GPU_CLAMP_TO_EDGE`
@@ -156,3 +170,6 @@ python3 tools/runner/model_identity.py selftest --live
 DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --shot /tmp/kilo-pi/3ds.png
 tools/publish_frame.sh <label>               # the pinned 320x240 frame pair
 ```
+
+`make -C mdk_3ds` and `bash tools/check.sh` need `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM`; the loop exports them, a bare shell does not.

@@ -198,8 +198,10 @@ public:
     // Call it with the level's current values when the level ends, which is when
     // the C# reads them; it is what AfterLevel keeps for the statistics. It is
     // optional: play() already stands a fresh result in its place, exactly as the
-    // C#'s new Viewer does, so a frontend that forgets it degrades to a level that
-    // took no damage and fired nothing rather than to the previous level's numbers.
+    // C#'s new Viewer does — the fall's carry health when the level was entered
+    // through a fall, full health otherwise (Viewer.cs:246 and :347-361) — so a
+    // frontend that forgets it degrades to a level that took no damage and fired
+    // nothing rather than to the previous level's numbers.
     void reportLevel(const LevelResult& result);
 
     // The step Game.Run picks (C# Game.cs:246-249): the soak test's frames are

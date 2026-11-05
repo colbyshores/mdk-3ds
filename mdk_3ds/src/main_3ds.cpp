@@ -6,7 +6,30 @@
 // render.h seam. It never touches a C3D type itself: every GPU call goes
 // through the seam, in renderer_c3d.cpp.
 //
-// The lifecycle rules are AGENTS.md P1.
+// WHAT IT DRIVES. The flow (game/game_flow.h) decides which level plays and what
+// screen comes next; the level's geometry, Kurt, the follow camera and Kurt's
+// sprite are the level's own screen. The order is the C#'s (Game.Run's loop body
+// and Viewer.Frame, recorded in game_flow.h's "THE TICK ORDER"): poll the
+// controls once, hand the mouse to the game, run the fixed simulation steps, and
+// draw once — with the camera placed by the LAST step, not by the frame.
+//
+// WHAT IS NOT HERE, EACH WITH ITS CAUSE:
+//   * The screens the flow can ask for other than the level (menu, briefing,
+//     statistics, stream, fall, end movies). Menu/ is cut (owner directive
+//     2026-11-05: boot straight into a level), so the frontend starts with
+//     Start::Level and treats any other screen as the end of the run rather than
+//     pretending to show one.
+//   * The HUD. hud_view.cpp is ported and the frontend would call it in three
+//     lines, but mdk_render_canvas_quad is a NO-OP on this backend (see the
+//     comment by its definition in renderer_c3d.cpp and docs/OPEN_ITEMS.md): a
+//     canvas draw has to become a record in the frame's queue so the per-eye
+//     replay emits it, and until that lands a HUD call here would draw nothing at
+//     all and read as a ported HUD. Deferred with that cause, not stubbed.
+//   * The scripts and their objects (ScriptRuntime, ObjectView). Same reason as
+//     the Linux frontend's: they are a subsystem of their own.
+//   * Audio. The ndsp sink is the next item after this one.
+//
+// The lifecycle rules are AGENTS.md P1; the frame rules are P2.
 // ============================================================================
 
 #include <3ds.h>
@@ -15,12 +38,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <string>
+
+#include "formats/bni.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
+#include "game/arena_space.h"
+#include "game/follow_camera.h"
+#include "game/game_flow.h"
+#include "game/input.h"
+#include "game/kurt_sprite.h"
 #include "game/level_data.h"
 #include "game/level_view.h"
-#include "render/camera_builder.h"
+#include "game/player.h"
 #include "render/render.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
@@ -49,6 +80,14 @@ double nowSeconds() {
 // instead of one that has to be interrupted. 0 means "run until asked to
 // stop".
 uint32_t g_frameBudget = 0;
+
+// The picture's aspect. The top screen is 400x240 LANDSCAPE; the framebuffer is
+// 240x400 because the hardware rotates the picture 90 degrees on the way to the
+// panel, which is why this is width/height of the LANDSCAPE mode and not of the
+// framebuffer axes the renderer names (see mdk_render_canvas_width's note for the
+// same inversion). The projection built with the portrait ratio would squash the
+// level sideways.
+constexpr float kAspect = 400.0f / 240.0f;
 
 } // namespace
 
@@ -125,6 +164,32 @@ int main(int argc, char** argv) {
     mdk::log3dsPrintf("backend: %s", mdk_render_backend_name(renderer));
 
     // ---------------------------------------------------------------------
+    // The flow, BEFORE the level: the flow is what decides which level plays
+    // (C# Game owns _state.Level and hands it to the Viewer), so the frontend
+    // asks it rather than naming a level of its own.
+    //
+    // Start::Level is the cut the owner directive of 2026-11-05 made: Menu/ is
+    // not ported, so there is no menu to show and the run boots straight into a
+    // level. Everything else the flow can ask for is a screen this frontend does
+    // not have, and it says so and stops instead of showing the level again under
+    // a different name.
+    // ---------------------------------------------------------------------
+    mdk::flow::FlowOptions options;
+    options.start = mdk::flow::Start::Level;
+    mdk::flow::GameFlow flow(options);
+    mdk::flow::Screen screen = flow.handle(flow.firstEvent());
+    mdk::log3dsPrintf("flow: screen=%d level=%d", (int)screen, (int)flow.state().level);
+    if (screen != mdk::flow::Screen::Level) {
+        mdk::log3dsPrintf("flow asked for screen %d, which this frontend cannot show "
+                          "(the menu and its screens are cut); exiting", (int)screen);
+        mdk_render_destroy(renderer);
+        mdk::romfsFileSystemExit();
+        mdk::log3dsClose();
+        gfxExit();
+        return 0;
+    }
+
+    // ---------------------------------------------------------------------
     // The level.
     //
     // The data is found the way the game finds it, through the file-system
@@ -139,10 +204,16 @@ int main(int argc, char** argv) {
     // exactly this reason.
     mdk::SurfaceCache surfaces(renderer);
     mdk::LevelView view;
+    // Kurt's sprites. TRAVERSE/TRAVSPRT.BNI is the same archive the HUD and the
+    // scripts read (C# Viewer loads it once and passes it to all three), and the
+    // level's palette indexes it, exactly as there.
+    mdk::formats::Bni sprites;
+    mdk::KurtSprite kurtSprite;
+    bool kurtSpriteReady = false;
     const mdk::formats::Arena* arena = nullptr;
     if (data.found()) {
         mdk::log3dsPrintf("data: %s", data.dir().c_str());
-        if (mdk::LevelData::load(&level, &data, 3)) {
+        if (mdk::LevelData::load(&level, &data, flow.state().level)) {
             const int32_t start = level.dti().startArena();
             if (start >= 0 && start < (int32_t)level.dti().arenas().size()) {
                 arena = level.arenaNamed(level.dti().arenas()[start].name);
@@ -162,8 +233,21 @@ int main(int argc, char** argv) {
                     arena = nullptr;
                 }
             }
+            // Kurt's frames are loaded whether the arena view worked or not: the
+            // sprite is his, not the arena's, and a level with no arena geometry
+            // still has him.
+            std::vector<uint8_t> spriteBytes;
+            if (!data.read("TRAVERSE/TRAVSPRT.BNI", &spriteBytes) ||
+                !mdk::formats::Bni::parse(&sprites, std::move(spriteBytes))) {
+                mdk::log3dsPrintf("sprites: TRAVSPRT.BNI did not load -- Kurt is invisible");
+            } else if (kurtSprite.load(renderer, sprites, level.dti().palette())) {
+                kurtSpriteReady = true;
+                mdk::log3dsPrintf("sprites: Kurt's animations loaded");
+            } else {
+                mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
+            }
         } else {
-            mdk::log3dsPrintf("level 3: FAILED to load");
+            mdk::log3dsPrintf("level %d: FAILED to load", (int)flow.state().level);
         }
     } else {
         mdk::log3dsPrintf("data: NOT FOUND");
@@ -186,68 +270,183 @@ int main(int argc, char** argv) {
         }
     }
 
+    // The BSP world Kurt moves through: the arenas the level says are reachable
+    // (the C# Viewer adds only IsReachable ones -- a hidden arena whose bounds
+    // overlap the spawn column would otherwise steal the arena selection).
+    mdk::ArenaSpace space;
+    for (const mdk::formats::Arena* a : level.arenas()) {
+        if (level.isReachable(a->name())) {
+            space.add(a);
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Kurt, and the camera that follows him.
+    //
+    // THE CAMERA IS THE GAME'S, not a framing stand-in: FollowCamera owns the
+    // pitch smoothing, the clearance that shoves Kurt off a wall, the air tilt
+    // and the climb, and it is placed by the simulation step that just ran. The
+    // old frontend framed the arena's bounds because nothing else was ported;
+    // that camera is gone, and with it the level's start position used as a
+    // camera position.
+    //
+    // The spawn is the C# Viewer's: the DTI's start position dropped 3 units
+    // onto the floor (StartDrop), facing the start angle. A respawn after a
+    // death rebuilds the same fresh state, because the C# reloads the level.
+    // ---------------------------------------------------------------------
+    mdk::Player player;
+    mdk::FollowCamera follow;
+    bool playerReady = false;
+    auto spawnPlayer = [&]() {
+        const float* start = level.dti().startPosition();
+        player = mdk::Player();
+        player.feet = mdk::Vec3{start[0], start[1], start[2] + 3.0f};
+        player.yaw = level.dti().startAngle();
+        player.setSpace(&space);
+        if (kurtSpriteReady) {
+            player.setFrameCounts(kurtSprite.frameCounts());
+        }
+        follow = mdk::FollowCamera();
+        // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
+        // scripts' current arena). Without the scripts it is set once here, so
+        // bottom() -- and so the fall-out death -- still resolves his arena
+        // instead of losing it and falling forever.
+        const std::string* here = space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+        if (here) {
+            space.setSolid(*here);
+        }
+        mdk::log3dsPrintf("spawn: feet=(%.1f,%.1f,%.1f) yaw=%.1f arenas=%d",
+                          player.feet.x, player.feet.y, player.feet.z, player.yaw,
+                          (int)level.arenas().size());
+    };
+    if (arena) {
+        spawnPlayer();
+        playerReady = true;
+    }
+
+    // The camera is built once up front so the very first frame has a valid
+    // matrix even if no simulation step fits in it (a zero camera would collapse
+    // every vertex to the clip origin and draw nothing). The NON-clearing build:
+    // the C# places no camera before its first step, so seeding with the cleared
+    // one would shove Kurt mid-air at spawn before any physics has run, and the
+    // roll is 0 because this Player has not stepped yet (C# CameraRoll starts
+    // level).
+    mdk::Camera camera;
+    if (playerReady) {
+        mdk::buildFollowCamera(&camera, player.feet, player.facing(),
+                               mdk::follow_camera::kDefaultPitch,
+                               mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
+    }
+
     // ---------------------------------------------------------------------
     // The main loop.
     //
     // aptMainLoop() MUST be serviced regularly: libctru uses it to process
     // sleep and HOME behaviour and to notice the application being closed.
     // Blocking it indefinitely on a worker is a shutdown bug (P1).
+    //
+    // THE STEP IS THE SIMULATION's, not the frame rate: GameFlow::stepFor is the
+    // C#'s choice (the level's own 1/60 s here) and elapsedFor is the C#'s elapsed
+    // for a live run (the wall seconds since the last frame). Frames faster than
+    // the step run no step and redraw the last one's camera; a frame slower runs
+    // several, and the pending clamp is what stops a stall becoming an unbounded
+    // catch-up (AGENTS P1: a long stall -- a sleep, a load -- must not be handed to
+    // the simulation as one enormous step).
     // ---------------------------------------------------------------------
     double last = nowSeconds();
-    float elapsed = 0.0f;
+    const float step = mdk::flow::GameFlow::stepFor(false, false, 0.0f);
+    const float maxPending = step * 10.0f;  // the C#'s ten-step ceiling
+    float pending = 0.0f;
     uint32_t frame = 0;
+    uint32_t steps = 0;
     const char* exitReason = "aptMainLoop returned false";
 
     while (aptMainLoop()) {
         // The frame's clock FIRST: the look integrates over the time since the
-        // previous frame, so the input poll needs the same delta the renderer is
-        // about to get. Clamp it here — a long stall (a sleep, a load) must not
-        // be handed to the simulation as one enormous step (AGENTS P1); MDK's own
-        // frame policy is in the shared game code and this is the platform's floor.
+        // previous frame, so the input poll needs the same delta the simulation is
+        // about to get. Clamp it here -- the platform's floor under the game's own
+        // policy -- because a 40-second sleep is not 40 seconds of walking.
         const double now = nowSeconds();
         double delta = now - last;
         last = now;
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
-        elapsed = (float)delta;
+        const float elapsed = mdk::flow::GameFlow::elapsedFor(false, step, (float)delta);
 
         // The controls. ONE scan of HID for the whole frame, inside the poll:
         // libctru recomputes its edge bits on every hidScanInput(), so a second
         // scan anywhere in this loop would discard the first one's presses. The
         // held mask comes back from the poll for exactly that reason. The Input is
-        // the frame's own because the look accumulates into it and the game drains
-        // it — until the flow is wired (owner directive item 5) nothing consumes
-        // it, which is why the self-test below is what proves the mapping runs.
+        // the frame's own, and that is correct rather than careless: the poll ADDS
+        // the circle pad to its mouse and the game DRAINS it below with
+        // player.mouseLook / follow.mouseLook, which run every frame and not only
+        // on frames that fit a step -- so nothing accumulates across a frame that
+        // runs zero steps.
         mdk::Input input;
         const u32 held = mdk::input3dsPoll(&input, elapsed);
-        if (held & KEY_START) {
-            exitReason = "START pressed";
-            break;
+
+        // The flow's events. START is the C# pad's Escape, and Escape opens the
+        // menu, which is cut: the honest answer here is to stop, and the flow says
+        // so (Quit -> Screen::None) rather than the frontend deciding on its own.
+        // SELECT stays as the second quit chord because it is unbound in the game
+        // and it is the only other way out of a build that has no menu.
+        mdk::flow::Event next = mdk::flow::Event::None;
+        if (held & (KEY_START | KEY_SELECT)) {
+            next = mdk::flow::Event::Quit;
         }
-        if (held & KEY_SELECT) {
-            exitReason = "SELECT pressed";
-            break;
+        if (next != mdk::flow::Event::None) {
+            screen = flow.handle(next);
+            if (screen == mdk::flow::Screen::None) {
+                exitReason = (held & KEY_SELECT) ? "SELECT pressed" : "START pressed";
+                break;
+            }
+            mdk::log3dsPrintf("flow: screen=%d", (int)screen);
+            if (screen != mdk::flow::Screen::Level) {
+                exitReason = "the flow asked for a screen this frontend cannot show";
+                break;
+            }
         }
 
-        if (frame == 0u) {
-            mdk::log3dsPrintf("input: held=%08lX mx=%.4f my=%.4f", (unsigned long)held,
-                              (double)input.mouseX, (double)input.mouseY);
-            // A number the guest log and the host golden agree on. A stick hard
-            // right for one 60 Hz step is 3 degrees of look, and 3 degrees at 0.15
-            // degrees a count is EXACTLY 20 counts (180.0f * (1/60f) is
-            // 3.0000001, and that divided by 0.15f rounds back to 20.0), which is
-            // a pinned row of tests/scripts/input_3ds_tests.cpp. If the ARM11's
-            // VFP disagreed with the host about any of it, this line would not read
-            // 20.0000.
-            mdk::HidFrame probe;
-            probe.held = mdk::kHidDUp | mdk::kHidR;
-            probe.padX = 155;
-            probe.padY = 0;
-            mdk::Input selftest;
-            mdk::input3dsApply(probe, 1.0f / 60.0f, &selftest);
-            mdk::log3dsPrintf("input selftest: fwd=%d fire=%d look=%.4f",
-                              selftest.isDown(mdk::kKeyForward) ? 1 : 0,
-                              selftest.isDown(mdk::kKeyFire) ? 1 : 0, (double)selftest.mouseX);
+        if (playerReady) {
+            // The C# Viewer.Frame order: the mouse look is PER FRAME (Kurt's yaw
+            // and the camera's look offset), then the simulation runs in fixed
+            // steps, and EACH step updates Kurt and then the camera (UpdateKurt
+            // then UpdateCamera) -- so the pitch smoothing and the clearance run
+            // once per step, not once per frame.
+            player.mouseLook(input);
+            follow.mouseLook(input);
+
+            pending += elapsed;
+            if (pending > maxPending) pending = maxPending;
+            while (pending >= step) {
+                player.update(input, step);
+                // The pitch the camera eases to (Viewer.cs:746-747). The live
+                // camera_track request and the scripts' current arena are the
+                // oracle's sources and both need the script runtime, so this uses
+                // the geometric arena under Kurt, which is what the runtime-less
+                // Linux frontend uses for the same reason.
+                float target = mdk::follow_camera::kDefaultPitch;
+                const std::string* here =
+                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                if (here) {
+                    target = level.arenaPitch(*here);
+                }
+                follow.update(&camera, &space, player, target, step, kAspect);
+                pending -= step;
+                steps++;
+            }
+
+            // Death. The C#'s Kurt.Died writes LASTGAME and leaves for the menu
+            // (Game.cs:448-456); the save and the menu are cut, so the frontend
+            // respawns him on the same event, exactly as the Linux frontend does.
+            // The beat itself is the oracle's -- player.died() is the step the
+            // skull crosses SkullEnd, not a wall-clock timer of this frontend's.
+            if (player.died()) {
+                spawnPlayer();
+                mdk::buildFollowCamera(&camera, player.feet, player.facing(),
+                                       mdk::follow_camera::kDefaultPitch,
+                                       mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
+            }
         }
 
         MdkFrameParams params;
@@ -257,68 +456,74 @@ int main(int argc, char** argv) {
         params.present = true;
         params.screenshot_path = nullptr;
 
+        // P2: the camera is handed to the renderer every frame, whether or not a
+        // step ran, and every GPU state the frame needs is set inside
+        // begin/end_frame by the backend.
         mdk_render_begin_frame(renderer, &params);
+        mdk_render_set_camera(renderer, &camera);
 
         if (arena) {
-            // THE CAMERA. The level's start position is the game's
-            // KURT's start, not a camera: the game's camera follows Kurt,
-            // and the game logic is not ported yet. So the camera is placed
-            // to FRAME the arena's bounds, looking along the level's start
-            // heading.
-            //
-            // The aspect is the LANDSCAPE one (400x240 on the top screen):
-            // the projection is built for the landscape picture and the 90
-            // degree rotation turns it into the portrait framebuffer.
-            mdk::Vec3 min;
-            mdk::Vec3 max;
-            mdk::Camera camera;
-            if (view.bounds(&min, &max)) {
-                const mdk::Vec3 centre{(min.x + max.x) * 0.5f,
-                                       (min.y + max.y) * 0.5f,
-                                       (min.z + max.z) * 0.5f};
-                const float span = (max.x - min.x) + (max.y - min.y) + (max.z - min.z);
-                const float distance = span * 0.75f + 16.0f;
-                const float heading = level.dti().startAngle() * 3.14159265f / 180.0f;
-                const mdk::Vec3 eye{centre.x - mdk::fastCos(heading) * distance,
-                                    centre.y - mdk::fastSin(heading) * distance,
-                                    centre.z + distance * 0.45f};
-                mdk::buildLookAtCamera(&camera, eye, centre, mdk::Vec3{0.0f, 0.0f, 1.0f},
-                                       60.0f, 400.0f / 240.0f, 1.0f, distance * 8.0f);
-            } else {
-                const float* start = level.dti().startPosition();
-                mdk::buildHeadingCamera(&camera, mdk::Vec3{start[0], start[1], start[2]},
-                                        level.dti().startAngle(), 0.0f,
-                                        60.0f, 400.0f / 240.0f, 1.0f, 4000.0f);
-            }
-            if (frame < 3) {
-                mdk::log3dsPrintf("camera: eye=(%.1f,%.1f,%.1f) fwd=(%.2f,%.2f,%.2f)",
-                                  camera.position.x, camera.position.y, camera.position.z,
-                                  camera.forward.x, camera.forward.y, camera.forward.z);
-            }
-            mdk_render_set_camera(renderer, &camera);
             view.draw();
         }
-
+        if (kurtSpriteReady && playerReady) {
+            // C# Viewer.DrawScene draws Kurt after the level and before the HUD.
+            kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
+                            camera.up, mdk::follow_camera::kFieldOfView, &space);
+        }
+        // The HUD would be drawn here (hud_view.cpp is ported); see the header for
+        // why it is not called yet: the canvas seam on this backend discards every
+        // quad, so a call here would be a stub presented as a port.
         mdk_render_end_frame(renderer);
         frame++;
+
+        if (frame == 1u) {
+            mdk::log3dsPrintf("input: held=%08lX mx=%.4f my=%.4f", (unsigned long)held,
+                              (double)input.mouseX, (double)input.mouseY);
+            // A number the guest log and the host golden agree on. A stick hard
+            // right for one 60 Hz step is 3 degrees of look, and 3 degrees at 0.15
+            // degrees a count is EXACTLY 20 counts (180.0f * (1/60f) is
+            // 3.0000001, and that divided by 0.15f rounds back to 20.0), which is
+            // a pinned row of tests/scripts/input_3ds_tests.cpp -- pinned IN BITS,
+            // 0x41A00000, so the log prints the bits and not a rounded decimal:
+            // 20.000002f (0x41A00001) and 20.0f both print 20.0000, and a 1-ULP
+            // VFP-vs-SSE divergence would hide behind that (review-7 F2).
+            mdk::HidFrame probe;
+            probe.held = mdk::kHidDUp | mdk::kHidR;
+            probe.padX = 155;
+            probe.padY = 0;
+            mdk::Input selftest;
+            mdk::input3dsApply(probe, 1.0f / 60.0f, &selftest);
+            uint32_t lookBits = 0;
+            memcpy(&lookBits, &selftest.mouseX, sizeof(lookBits));
+            uint32_t pitchBits = 0;
+            memcpy(&pitchBits, &selftest.mouseY, sizeof(pitchBits));
+            mdk::log3dsPrintf("input selftest: fwd=%d fire=%d lookbits=%08X pitchbits=%08X",
+                              selftest.isDown(mdk::kKeyForward) ? 1 : 0,
+                              selftest.isDown(mdk::kKeyFire) ? 1 : 0,
+                              (unsigned)lookBits, (unsigned)pitchBits);
+            mdk::log3dsPrintf("game: player=%d sprite=%d arenas=%d step=%.6f",
+                              playerReady ? 1 : 0, kurtSpriteReady ? 1 : 0,
+                              (int)level.arenas().size(), (double)step);
+        }
+        if (frame <= 5u || (frame % 60u) == 0u) {
+            mdk::log3dsPrintf("frame %lu elapsed=%.4f steps=%u feet=(%.1f,%.1f,%.1f) "
+                              "yaw=%.1f health=%d eye=(%.1f,%.1f,%.1f)",
+                              (unsigned long)frame, elapsed, (unsigned)steps,
+                              player.feet.x, player.feet.y, player.feet.z, player.yaw,
+                              player.health(), camera.position.x, camera.position.y,
+                              camera.position.z);
+        }
 
         if (g_frameBudget != 0 && frame >= g_frameBudget) {
             exitReason = "frame budget reached";
             break;
         }
-        if (frame == 3u) {
-            int32_t draws = 0;
-            mdk_render_stats(renderer, &draws, nullptr);
-            mdk::log3dsPrintf("draws issued: %d", (int)draws);
-        }
-        if (frame <= 5u || (frame % 60u) == 0u) {
-            mdk::log3dsPrintf("frame %lu elapsed=%.4f", (unsigned long)frame, elapsed);
-        }
     }
 
     printf("[3ds] exiting after %lu frames\n", (unsigned long)frame);
 
-    mdk::log3dsPrintf("exiting after %lu frames: %s", (unsigned long)frame, exitReason);
+    mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
+                      (unsigned)steps, exitReason);
     mdk_render_destroy(renderer);
     mdk::romfsFileSystemExit();
     // The log is closed BEFORE gfxExit(): libctru's gfxExit() tears the SD

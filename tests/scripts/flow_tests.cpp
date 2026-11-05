@@ -382,6 +382,33 @@ void testLevelEndPaths() {
     expect("and its health is full", blind.streamHealth(), 100);
     expect("and its counts are untouched", blind.state().stats.shots, 0);
 
+    // A level ENTERED THROUGH A FALL starts at the fall's health, not at 100, and
+    // the fresh result the C#'s `new Viewer` stands in takes it (review-7 F1).
+    // Viewer.cs:246 calls CarryFromFall(state), which does
+    // `_kurt.SetHealth(carry.Health)` and then `state.Carry = null`, so the carry
+    // belongs to the level that consumes it. The Fall screen that writes it is cut
+    // (Menu/ is cut), so the row writes the carry the way that screen would; the
+    // shipped live case is LEVEL5 after the Gunter stream, pinned above by the
+    // `gunter` flow, and LEVEL5 ends at the menu rather than a stream, so the
+    // health is observed here through LEVEL7, whose end does open a stream. Without
+    // the carry the same path streams 100 (the `blind` flow above), which is what
+    // makes this row non-vacuous: pre-fix it read 100 here.
+    flow::GameFlow carried(levelOptions(7));
+    carried.firstEvent();
+    carried.state().hasCarry = true;
+    carried.state().carry = flow::FallCarry();
+    carried.state().carry.health = 40;
+    expect("a carry is there to be taken", carried.state().hasCarry ? 1 : 0, 1);
+    expect("the carry is shown as a level is played",
+           static_cast<long long>(carried.handle(flow::Event::Play)),
+           static_cast<long long>(flow::Screen::Level));
+    expect("and the level CONSUMES it, as CarryFromFall nulls it",
+           carried.state().hasCarry ? 1 : 0, 0);
+    expect("LEVEL7 ends to the stream", static_cast<long long>(carried.handle(flow::Event::LevelEnded)),
+           static_cast<long long>(flow::Screen::Stream));
+    expect("and streams the CARRY's health, not full health", carried.streamHealth(), 40);
+    expect("with a fresh level's counts", carried.state().stats.shots, 0);
+
     // A SECOND level does not inherit the first one's result. The C# replaces
     // `_viewer` with a NEW Viewer inside Play (Game.cs:488), so AfterLevel always
     // reads the CURRENT level's viewer: when LEVEL7 reported 11 shots at 40 health

@@ -117,10 +117,27 @@ Screen GameFlow::play() {
     // reads a FRESH viewer's counts and health: the previous level's result must
     // not outlive the level that produced it. Without this, a level that ends
     // before its frontend calls reportLevel would stream the LAST level's shots
-    // and health (review-5 F1). A fresh LevelResult is zero counts and
-    // kFullHealth, which is what a viewer that has taken no damage yet reports;
-    // when the Viewer is ported, its start health comes from the carry instead.
+    // and health (review-5 F1).
+    //
+    // A fresh viewer's health is NOT always full, and that is review-7 F1. The
+    // Viewer's constructor calls CarryFromFall(state) (Viewer.cs:246, :347-361),
+    // which does `_kurt.SetHealth(carry.Health)` and then `state.Carry = null`, so
+    // a level entered through the fall starts at the CARRY's health and the carry
+    // is consumed by the level that takes it. The live case is LEVEL5 after the
+    // Gunter stream (AfterStream -> EnterLastLevel, Game.cs:466 with
+    // GameState.cs:60-64 storing the stream's health); a level entered through the
+    // Fall screen would be the other. With no carry the fresh result stays at
+    // kFullHealth, which is what a viewer that has taken no damage reports.
+    //
+    // The carry's PICKUPS are not collected here: the inventory is cut with the
+    // rest of the pickup subsystem (game_state.h), so the health is the half of
+    // CarryFromFall this port can honour and the pickups are the half it cannot.
     level_ = LevelResult();
+    if (state_.hasCarry) {
+        level_.health = state_.carry.health;
+        state_.carry = FallCarry();
+        state_.hasCarry = false;
+    }
     hasLevel_ = true;
     return show(Screen::Level);
 }

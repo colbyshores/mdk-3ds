@@ -1,0 +1,13 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-05T15:13:03Z at 20aa79e
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+provenance: this batch changes one core source that the Linux binary compiles
+  (game/game_flow.cpp) and one it does not (mdk_3ds/src/main_3ds.cpp), and it
+  adds no rendering. The game_flow change is GameFlow::play() seeding a fresh
+  level result from the fall's carry, which the capture path never reaches:
+  capture_cpp.sh plays level 3 frame 1 without entering a fall, so the picture
+  is unchanged from the previous pair (bad_percent/max_delta/mean_delta are
+  identical, which is the check, not an assumption). What the batch DOES change
+  is proved elsewhere: `make -C mdk_3ds` (3DSX mdk.3dsx), `PASS
+  GameFlowMatchesTheOracle` (the carry rows are new and fail without the fix),
+  and the guest-log lines quoted in docs/PROGRESS_LOG.md.

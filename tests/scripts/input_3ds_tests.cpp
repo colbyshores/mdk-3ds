@@ -175,8 +175,11 @@ void testDigitalMap() {
 // The Y rows are the same chain at 120 deg/s: 120.0f * (1/60f) is
 // 2.00000010430812835693359375, which is 0.4375 ulp above 2 and rounds DOWN to
 // exactly 2.0 -- a different rounding than the X row's, because the rate
-// differs -- and 2.0 / 0.15f = 13.333332807028579, 0.2188 ulp above
-// 13.333333015441895 (ulp = 2^-20), which is what it rounds to.
+// differs -- and 2.0 / 0.15f is 67108864/5033165 = 13.33333280351429, which is
+// 0.2222 ulp BELOW 0x41555555 = 13.333333015441895 (ulp = 2^-20), so it rounds
+// UP to that same 0x41555555 (review-7 F3 corrected this paragraph: it said
+// 13.333332807028579 and called it above the pin, and the pin is what the
+// arithmetic actually reaches).
 // ---------------------------------------------------------------------------
 void testLookBits() {
     const Input right = applied(stick(155, 0), kStep);

@@ -14164,3 +14164,246 @@ staged its own paths by name. No inherited builder work was pending.
 Batch 73: owner-directive item 5 — wire the frontend (`main_3ds.cpp` drives input → `Player` → the ported
 `FollowCamera` → Kurt's sprite → the HUD, through `GameFlow`). Owner actions still open and unchanged:
 restore `0755` on `ralph-pi.sh` and restart the service; commit or revert `ralph/builder.md`.
+
+## Iteration 101 — batch 73: the 3DS frontend plays the game instead of framing the level, and review-7 F1's carried health is honoured
+
+### What was implemented
+
+Owner-directive 2026-11-05 item 5 (**wire the frontend**). `mdk_3ds/src/main_3ds.cpp`
+was a level *viewer*: it named level 3 itself, read only START/SELECT, parked a
+camera that framed the arena's bounds, and drew no Kurt. It now drives the game.
+
+* **The flow owns the level.** A `flow::GameFlow` is constructed with
+  `Start::Level` before the level loads, and `flow.state().level` is what
+  `LevelData::load` is given -- so the frontend no longer names a level of its
+  own. `firstEvent()` answers `Play` and the log records `flow: screen=4
+  level=7`; 4 is `Screen::Level` and 7 is `kOrder[0]`, the order of play, which is
+  NOT level 3 (game_state.h:13-15). Any other screen the flow can ask for is a
+  screen this frontend does not have, and it says so and stops rather than
+  showing the level again under a different name. `Event::Quit` goes through the
+  flow (`game_flow.cpp:54-56` answers `Screen::None`), so the exit is the flow's
+  answer and not the frontend's decision.
+* **The tick order is the C#'s.** `Viewer.Frame` calls `MouseLook(input)` at
+  :447 and only then `RunSteps(input, elapsed)` at :448, and `MouseLook`'s own
+  summary says the mouse turns Kurt "every frame, not with the steps". The
+  frontend matches that: `player.mouseLook` / `follow.mouseLook` run once per
+  frame, outside the step loop, and each `player.update` / `follow.update` pair
+  runs inside it. `stepFor(false,false,0)` is the level's own 1/60 s
+  (`Viewer.Step`, Viewer.cs:96) and `elapsedFor` is the wall delta (Game.cs:255);
+  the pending clamp is `step * 10` because `MaxSteps = 10` (Viewer.cs:98,
+  `MathF.Min(_pending + elapsed, Step * MaxSteps)` at :496).
+* **The camera is the game's.** The framing camera and `render/camera_builder.h`'s
+  `buildLookAtCamera`/`buildHeadingCamera` use are gone. `FollowCamera` places the
+  view, per step, with the arena pitch the level says (`level.arenaPitch`) eased by
+  the camera's own smoothing. The spawn is the C# Viewer's: the DTI start position
+  `+ (0,0,StartDrop)` with `StartDrop = 3f` (Viewer.cs:100, :220), facing
+  `startAngle`, and the reachable arenas only (`level.isReachable`) go into the
+  `ArenaSpace`, exactly as `mdk_linux/src/main.cpp:345-351` already does.
+* **Kurt is drawn.** `TRAVERSE/TRAVSPRT.BNI` is read through the case-insensitive
+  resolver and `KurtSprite::load` builds his animations from the level palette;
+  `kurtSprite.draw(...)` runs after the level and before where the HUD would go,
+  which is C# `DrawScene`'s order, and the call is the Linux frontend's (:612-613).
+* **Death respawns.** `player.died()` -- the skull crossing `SkullEnd`, the
+  oracle's beat, not a frontend timer -- rebuilds the fresh spawn, as the Linux
+  frontend does, because the C# reloads the level and the save and menu are cut.
+* **The HUD is NOT drawn, with its cause.** `hud_view.cpp` is ported and would be
+  three lines here, but `mdk_render_canvas_quad` on this backend is
+  `void mdk_render_canvas_quad(MdkRenderer r, const CanvasQuad* q) { (void)r;
+  (void)q; }` (renderer_c3d.cpp:1854): a canvas quad is discarded, so a HUD call
+  would draw nothing while reading as a ported HUD. That is a stub presented as an
+  implementation, so it is deferred with that cause named in the file header
+  instead. The same header names the scripts and audio as the other absences.
+
+Also in this batch, review-7 F1 (below) and the review-7 F2/F3 evidence fixes.
+
+### Review findings (newest review: `logs/ralph-pi/run-20261105-062743/review-7.md`, no Critical or High)
+
+* **F1 (Medium) — FIXED and pinned.** `play()` installed `level_ = LevelResult()`,
+  whose `health` is unconditionally `kFullHealth`, while the header claimed that
+  was "exactly as the C#'s new Viewer does". The reviewer is right and the oracle
+  is explicit: `GameState.EnterLastLevel` stores `Carry = new FallCarry(health, [])`
+  (GameState.cs:60-64), the `Viewer` constructor calls `CarryFromFall(state)`
+  (Viewer.cs:246), and that does `state.Carry = null` then
+  `_kurt.SetHealth(carry.Health)` (Viewer.cs:347-361). So a level entered through a
+  fall starts at the **carry's** health and the carry is consumed by the level that
+  takes it. `play()` now seeds `level_.health` from `state_.carry.health` and
+  clears the carry, and the header says so. The pickups half of `CarryFromFall` is
+  NOT honoured, because the inventory is cut with the pickup subsystem
+  (`game_state.h`), and the comment says which half this is.
+  **Non-vacuity was checked, not assumed:** with the fix reverted, the new rows
+  fail exactly as predicted -- `FAIL: and streams the CARRY's health, not full
+  health was 100, the oracle has 40` and `FAIL: and the level CONSUMES it, as
+  CarryFromFall nulls it was 1, the oracle has 0`.
+* **F2 (Low) — FIXED.** The on-target bit claim was quoted from a `look=%.4f`
+  print, which cannot separate `0x41A00000` from `0x41A00001`. The selftest now
+  `memcpy`s the float to a `uint32_t` and prints `%08X`, and this batch's fresh
+  guest log reads `input selftest: fwd=1 fire=1 lookbits=41A00000
+  pitchbits=00000000`. The prose and the evidence now say the same 24 bits.
+* **F3 (Low) — FIXED, and independently recomputed before accepting it.** The Y-row
+  derivation said `2.0 / 0.15f = 13.333332807028579` and called it *above* the pin.
+  Exact rational arithmetic agrees with the reviewer: with `0.15f = 5033165/33554432`,
+  `2 / 0.15f = 67108864/5033165 = 13.33333280351429`, which is
+  `-0.2222` ulp from `0x41555555` (ulp = 2^-20), i.e. **below** it, and it rounds UP
+  to that pin. The comment now states the corrected value, direction and pin; the
+  pinned bits themselves were already right and are untouched.
+* **F4 (Low) — NOT a builder defect, and not fixable by a builder.** The
+  `ralph/builder.md` search-scope edit contradicts `AGENTS.md` §12's
+  "adapt, do not re-derive" sibling table. `ralph/builder.md` is in
+  `gates_batch_integrity.py`'s `PROTECTED` set, so staging it exits 6 and setting
+  `MDK_OWNER_APPROVED` from a builder would forge the approval the marker attests.
+  It stays an open owner action, restated in `docs/CONTINUATION.md`.
+* **F5 (Low) — owner/harness action.** The `--- REVIEW IDENTITY ---` block is still
+  not concatenated onto the review prompt; that is `ralph-pi.sh`'s template, not
+  anything in this batch's diff. Recorded as open.
+* **Review-7 open question 1 (per-frame `Input` lifetime) — resolved by this batch.**
+  The frontend now drains the mouse every frame in `player.mouseLook` /
+  `follow.mouseLook`, which run outside the step loop, so a frame that fits zero
+  steps cannot strand accumulated look. That is the C#'s own arrangement
+  (Viewer.cs:447 before :448) and the `Input` can stay the frame's own.
+* **Review-7 open question 2 (item next/previous need a press EDGE) — still open.**
+  `Kurt.Combat.cs:258,273` act on `WasPressed`, and the ported `Input` has only
+  `down[]`. Nothing in this batch needs the edge (no item switching is wired); it is
+  recorded for the batch that wires pickups/hotbar.
+* **Review-7 open question 3 (guest log older than the binary) — resolved.** This
+  batch's run is fresh: the log below is from the `mdk.3dsx` this batch built.
+
+### Verification
+
+* `make -C tests/scripts` → `PASS GameFlowMatchesTheOracle`, `PASS Input3dsMap`,
+  `All cases match the oracle.` The carry rows are new in this batch.
+* The reverted-fix experiment above is the pin's proof, run against the real build.
+* `mdk_linux` (cmake) → `[100%] Linking CXX executable mdk` / `[100%] Built target
+  mdk`, so the one changed core source compiles on the host target too.
+* Self-review of the diff against the oracle: spawn drop sign and constant,
+  reachable-arena filter, per-frame vs per-step mouse drain, the ten-step pending
+  clamp, `Quit` → `Screen::None`, the draw order, and the camera being handed to
+  the renderer every frame whether or not a step ran (AGENTS P2).
+
+### Emulator evidence (AGENTS P7, P8)
+
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 60 --min-frames 120 --shot
+/tmp/kilo-pi/emurun-batch73.png`, **exit code 0** (not 3, so the log is this run's;
+not 4, so the emulator lived; not 6, so the build is the pinned one). No emulator
+window was opened on the operator's display (P7). The `--shot` produced no file:
+the harness reported `WARNING no screenshot tool (ImageMagick 'import')` and
+continued, so there is **no emulator screenshot in this batch's evidence** -- the
+guest log below is the on-target evidence, and the committed picture is the pinned
+Linux capture, not a 3DS one. Do not quote a 3DS screenshot for this batch.
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6      (r1.2.1, the pinned known-good)
+build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+stereo    : render_3d=0 factor_3d=0 (0 = mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null
+lane      : /tmp/mdk-emurun.2542220 (mount /tmp/.mount_mandarUifs7Y)
+frames    : reached 3360 by the deadline; after the reap the log ends at frame 3480
+```
+
+Guest log, verbatim:
+
+```
+main: FZ/DN ok (fpscr=0x03000010)
+backend: PICA200 Citro3D
+flow: screen=4 level=7
+data: romfs:/
+arena: DANT_1 (19 arenas)
+view: 135 batches, 2544 vertices, 870 triangles
+sprites: Kurt's animations loaded
+spawn: feet=(0.0,4.0,12.0) yaw=90.0 arenas=19
+input: held=00000000 mx=0.0000 my=0.0000
+input selftest: fwd=1 fire=1 lookbits=41A00000 pitchbits=00000000
+game: player=1 sprite=1 arenas=19 step=0.016667
+frame 1 elapsed=0.0000 steps=0 feet=(0.0,4.0,12.0) yaw=90.0 health=100 eye=(0.0,-4.0,17.1)
+frame 2 elapsed=0.1271 steps=7 feet=(0.0,4.0,11.5) yaw=90.0 health=100 eye=(0.0,-4.0,16.4)
+frame 5 elapsed=0.0154 steps=10 feet=(0.0,4.0,11.0) yaw=90.0 health=100 eye=(0.0,-4.0,15.9)
+frame 3480 elapsed=0.0167 steps=3495 feet=(0.0,4.0,0.0) yaw=90.0 health=100 eye=(0.0,-4.0,4.5)
+```
+
+What that shows, and what it does not. `flow: screen=4 level=7` is the flow, not a
+hardcoded 3. `spawn: feet=(0.0,4.0,12.0)` is the DTI start plus `StartDrop`, and
+`frame 1` still has him there with `steps=0`; by `frame 3480` he is at z=0.0, so
+**gravity ran and he landed**, and `eye` moved from 17.1 to 4.5 with him, so the
+follow camera is following rather than parked. `steps` (3495) exceeds `frame`
+(3480) because the first frame's 0.1271 s stall ran 7 steps -- the fixed step and
+the pending clamp working, not drifting. `player=1 sprite=1` says both subsystems
+loaded rather than silently degrading. `lookbits=41A00000` is the ARM11 reaching
+the host golden's bits exactly (review-7 F2's demand).
+**And the picture is still not a level -- recorded, not glossed.** `--shot` did not
+work (no ImageMagick `import` in the lane), so the display was grabbed separately
+with `DISPLAY=:99 ffmpeg -f x11grab -i :99 -frames:v 1` while a second lane was
+live, at `/tmp/kilo-pi/emurun-b73.png` (in /tmp, not committed; the committed
+picture is the pinned Linux capture). What it shows is the **red clear with a
+sliver of magenta geometry** that `docs/CONTINUATION.md` already records as a
+standing fact -- so wiring the follow camera did NOT make the level visible, and
+this batch does not claim it did. The simulation runs (the log proves it) and the
+frame path runs (3 draws/frame, 60 fps, `Game: 60 FPS` in the emulator's own
+status bar), but what reaches the panel is not a level. That is item 7's
+neighbourhood and AGENTS P2's "all GPU state every frame" list, it predates this
+batch, and it is now the thing standing between this frontend and "plays a level
+end-to-end". It is added to the priority order as the next blocker after audio.
+**Not shown, still:** no input was held (`held=00000000`), so walking, turning and
+Kurt's sprite *image* are unverified on-target -- the log shows the sprite loaded
+and was handed a live player, not that it draws correctly. And emulator-green is
+not hardware-pass (AGENTS P8).
+
+### Gates (all three, actual output)
+
+* `make -C tests/scripts` → **PASS** — `PASS GameFlowMatchesTheOracle`,
+  `PASS Input3dsMap`, `All cases match the oracle.`
+* `bash tools/check.sh` → **PASS** — `audit_c_with_classes VERDICT: CONTRACT CLEAN
+  -- 0 violations`, `gates_vfp PASS blockers=0 reviews=0`, `audit_arm11_math
+  VERDICT: CONTRACT CLEAN`, `audit_r11_idiv` no candidates, `gates_core_parity
+  VERDICT: CONTRACT CLEAN`, `gates_smdh` SKIPPED (no built .cia), `gates_frames
+  PASS L3_f1.bmp` / `VERDICT: CONTRACT CLEAN`, `BATCH INTEGRITY: PASS`,
+  `CHECK: ALL GATES PASSED`.
+* `make -C mdk_3ds` → **PASS** — `3DSX mdk.3dsx` (with `DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM`; the gate needs them and the loop exports
+  them, a bare shell does not).
+
+### Frame
+
+`docs/frames/2026-11-05-frontend-wired.png` (+ `.txt`): `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`, unchanged from the previous pair, with the
+provenance clause naming what does prove this batch (the 3DS build, the flow rows,
+the guest log) and why the picture cannot move.
+
+### Prior-solution lookup
+
+* **pi-knowledge (`mdk-sdl`)** — searched for the per-frame/per-step mouse and
+  camera-placement contract (hybrid). It surfaced `follow_camera.h`'s own note that
+  the per-step `input.MouseY` is always zero because `mouseLook` consumes the
+  accumulated mouse per frame, and the C# `Viewer.MouseLook` doc comment ("every
+  frame, not with the steps"), which is the contract this batch implements. Treated
+  as a lead and verified against `Viewer.cs:447-448` and `Kurt.cs:340-355`.
+* **Obsidian** — MCP tools are absent from this session (a session configuration
+  fault to report, AGENTS P9), so the disk fallback was used, narrowly:
+  `/mnt/nas/Vaults/port-docs/10-projects/mdk-sdl/` holds only
+  `ralph-pi-mandarine-setup.md` (the lane notes), which was already reflected in
+  `emurun.sh`. Nothing contradicted the plan.
+* **Cognee** — unavailable in this session (no `cognee_*` tools); not consulted and
+  not claimed.
+
+### Inherited dirty tree
+
+This batch IS the work a timed-out iteration left in the tree: the frontend wiring,
+the review-7 F1 fix and its rows, and the F2/F3 evidence fixes. It was verified and
+committed rather than restarted. Still dirty and still owner-owned, and deliberately
+NOT staged: `ralph-pi.sh` (mode `664` vs index `100755`, owner task 18, plus the
+operator's model-chain edits), `ralph/builder.md` (PROTECTED, review-4 F3 /
+review-7 F4), `ralph/LOOP_CONTEXT.md` and `tools/runner/test_review_state.sh` (the
+same operator model-chain change and the test that pins it). Everything this batch
+owns was staged by name.
+
+### Next
+
+Batch 74: owner-directive item 6 — the **ndsp audio backend** (`sound_device.h:13`
+is still the sample-plane gap), adapting `../forsaken/sound_3ds.c` and
+`../t2k/t2k_3ds/src/audio/sfx_3ds.cpp`, then setting the mixer on both frontends.
+After that, item 6's blocker for the HUD is `mdk_render_canvas_quad` on this
+backend: a canvas draw has to become a record in the frame's queue so the per-eye
+replay emits it, and until then the HUD stays deferred with that cause.
+Owner actions still open and unchanged: restore `0755` on `ralph-pi.sh` and restart
+the service; commit or revert `ralph/builder.md`; append the review-identity block
+to the review prompt (review-7 F5).
