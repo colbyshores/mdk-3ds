@@ -12868,3 +12868,124 @@ the queue: first the Mandarine emulator harness and a real verdict, then `Game.c
 `MathF.Min`/`Max` class (`game/player.cpp`, `game/kurt.cpp`, `game/bsp.cpp`) is explicitly deferred
 by that directive's “no new 1-ULP fidelity work” cut and is recorded in `docs/OPEN_ITEMS.md` rather
 than queued. The inherited owner paths remain unstaged and unmodified.
+
+## Iteration 94 — batch 66: the Mandarine harness gets a real instrument, and it names the guest's hang
+
+**What landed.** This batch finished and banked work inherited uncommitted from a timed-out
+iteration, and it is owner-directive item 1 (the emulator harness) rather than a game slice. The
+inherited diff plus this batch's completion of it:
+
+- `mdk_3ds/tools/emurun.sh` — four new guards, each one a silent-instrument failure the sibling
+  harness had already paid for: **(7)** the launch now forces `LIBGL_ALWAYS_SOFTWARE=1
+  GALLIUM_DRIVER=llvmpipe` and mutes the host audio device, and the verdict prints the instrument it
+  forced plus the `graphics_api` the config selected, because this box has two real GPUs and a bare
+  launch can answer from hardware while the timings claim otherwise; **(8)** a private
+  `XDG_CONFIG_HOME` seeded from the user's copy, so `render_3d`/`factor_3d` (which AGENTS P6 says a
+  capture must RECORD) cannot be changed by a co-tenant mid-run, and the stereo mode is printed;
+  a private `XDG_RUNTIME_DIR`; **(9)** the AppImage's FUSE root is unmounted by PATH, not by the
+  emulator PID, and dead endpoints are reclaimed from `/proc/mounts` rather than a glob that `stat()`
+  skips; liveness reads `/proc/PID/stat` state instead of `kill -0`, which succeeds on a zombie and so
+  can read a dead emulator as alive for its whole timeout; ownership is the lane's own
+  `XDG_DATA_HOME` in `/proc/PID/environ`, because the `AppRun.wrapped` child gets reparented to PID 1
+  and a `pgrep -P` walk cannot see it; and the launch runs under `dbus-run-session`, because without a
+  session bus Qt's GameMode probe segfaults `dbus-launch` and Mandarine aborts before the guest boots,
+  which under every other harness reads as "the game died". `FRAME_RE` is now a BRE
+  (`'^frame [0-9][0-9]* '`): the ERE `+` matched a literal plus and counted **zero** frames on a run
+  that reached frame 3540. The verdict reports the frame NUMBER it reached, not the line count, since
+  the guest logs every 60th frame after #5. Mode is now `100755`.
+- `tools/runner/model_identity.py` — `deepseek-v4.1-flash-th` added to `STATIC_UPSTREAMS`, and
+  `selftest` now asserts that every alias shipped in `ralph-pi.sh` resolves from the static map alone.
+- `ralph-pi.sh` — the owner-directed independence allowlist (`INDEPENDENCE_EXCEPTIONS`, exactly the one
+  approved `‑th` → `flash` pair) inside `reviewer_reject_reason`; the retired `-nvidia`/minimax/luna
+  routes removed from the chain; worker phase limit derived from `ITER_TIMEOUT`.
+- `tools/runner/test_review_state.sh` — lifts `independence_exception` alongside the guard (without it
+  the guard called an undefined function, every same-family probe failed on stderr and fell through to
+  REJECT, and the suite pinned the approved pair as refused — a PASS generator wearing the exception's
+  clothes); defaults the four `PI_KNOWLEDGE_EMBEDDING_*` names the dispatch arm expands, which had made
+  the suite red under `set -u` for an environment reason; new pins for the allowlist's size, its
+  direction, and the retired routes' absence from every chain.
+- `mdk_3ds/src/render/renderer_c3d.cpp` — two log lines on the SUCCESS path of the shader setup. A
+  log that records only failures cannot separate "hung in setVsh" from "hung in configure".
+
+**Review-7 disposition (no Critical/High; all five were Medium/Low).** **F1 confirmed and fixed** — the
+file's own comment claimed software GL while the launch line set none of it; the launch now forces it and
+the verdict names the instrument, and `XDG_CONFIG_HOME` is private and its stereo mode printed. **F2
+confirmed and fixed** — `fusermount -uz "$OWN_ROOT"` was handed a PID and failed silently every time;
+the mount is now found by walking a live process's `exe` ancestors and unmounted by path. **F3 confirmed
+and fixed** — reproduced exactly as the reviewer described it:
+`MDK_MODEL_INFO_URL=http://127.0.0.1:1/model/info python3 tools/runner/model_identity.py family
+deepseek-v4.1-flash-th` printed nothing and exited 1; the alias is now in the static map and the
+selftest fails if any shipped alias ever depends on the info endpoint again. **F4 confirmed but NOT
+fixable by a batch** — `chmod 755 ralph-pi.sh` returns `Operation not permitted` for uid 994 on a
+`coleshores`-owned file (owner task 18). The mitigation applied here is `git update-index --chmod=+x`
+at commit time so the commit keeps `100755`; the contradictory "repaired owner-side" sentence the
+reviewer caught is deleted from `docs/CONTINUATION.md`. **F5 confirmed and fixed** — `emurun.sh` is
+`piagent`-owned, so its `755` reaches the index normally and the commit carries `100755`. **F6 deferred
+with cause** — its remediations are in `tools/check.sh` and
+`tools/runner/gates_batch_integrity.py`, both owner-protected (`PROTECTED` set), and (d) is already
+recorded as owner task 1's sign-off line; a batch may not touch either file.
+
+**First real harness run, and what it measured.** `EMURUN_READY_TIMEOUT=240
+mdk_3ds/tools/emurun.sh --secs 40 --shot … --grep 'shader|dvlb|FAILED|vsh|cfg|romfs'`, `DISPLAY=:99`
+(Xvfb, already listening), emulator `mandarine.AppImage` md5 `0d2adab6ad078c78e6d03e72e86f2eb6`… =
+`PINNED_MD5` (r1.2.1, not the banned r1.3.0). **Exit 4: "no readiness token ('backend:') within 240 s.
+Refusing to report."** That refusal is the harness doing its job — it did not print a verdict over a run
+that produced none. The guest log it refused to report on is the finding:
+
+```
+--- mdk 3ds session ---
+main: FZ/DN ok (fpscr=0x03000010)
+depth: map z*1.0+1.0 near=0.0000 far=1.0000 clear=0xffffff test=LEQUAL
+dvlb numDVLE=1
+shaderProgramSetVsh ok result=0x00000000
+```
+
+`log3dsPrintf` `fflush`es after every line, so this is the guest's real last position and not a buffer
+artefact: the guest stops **inside `shaderProgramConfigure(&r->program, true, false)`**
+(`renderer_c3d.cpp:463`) and never reaches `backend:`, which `main_3ds.cpp` prints only after the
+renderer is created. Before this batch's two log lines the last line was `dvlb numDVLE=1`, which could
+not distinguish a hang in `shaderProgramSetVsh` from one in `shaderProgramConfigure`. The lead for the
+next batch is recorded in `docs/CONTINUATION.md`: that explicit create-time configure is not part of the
+citro3d frame contract (SPEC's create step is "parse the DVLB, build the shader program"; the send
+belongs to `C3D_BindProgram`, which is `:708`, inside the frame), so a GSP shader-code load issued
+outside any `C3D_FrameBegin` is the plausible hang. **No emulator verdict line exists yet, so no 3DS
+claim in this repository is evidence yet** — that is the directive's own test and it is still unmet.
+
+**Gates, verbatim, as run.**
+
+* `make -C tests/scripts` → **exit 0**: `All cases match the oracle.`, **483 PASS / 0 FAIL**. No golden
+  moved and no assertion was relaxed.
+* `bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh SKIPPED no built .cia to read`,
+  `gates_frames PASS` (`L3_f1.bmp sha=58615fc85d02e009`), `gates_batch_integrity BATCH INTEGRITY: PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → **exit 0**,
+  `3DSX mdk.3dsx` (`stage_romfs: staged 69 files, 79M`).
+* `cmake --build build-linux --target mdk -j8` → **exit 0**, `[100%] Built target mdk`.
+* Harness suites, run because this batch changed them: `python3 tools/runner/model_identity.py selftest`
+  → `MODEL IDENTITY: SELFTEST CLEAN`, exit 0, including the two new shipped-chain lines.
+  `bash tools/runner/test_review_state.sh` → `REVIEW STATE: ALL CASES PASS`, exit 0.
+
+**Frame.** `DISPLAY=:99 tools/publish_frame.sh emurun-harness` produced
+`docs/frames/2026-11-05-emurun-harness.png` + `.txt`, gap `1.240 / 247 / 0.1819`, md5 `6769a137…`.
+Byte-identical to the parent: this batch changes no game code that the pinned Linux frame can see (the
+two new lines are 3DS-only logging), and the sidecar says so rather than pretending to measure the
+harness. Display `:99` (Xvfb, lavapipe). **Old-3DS timing stays UNMEASURED and the Citro3D picture stays
+UNVERIFIED (P6).**
+
+**Prior-solution lookup.** **Pi knowledge `mdk-sdl`** was present and searched (Mandarine harness,
+`shaderProgramConfigure`/DVLB hang). It surfaced the sibling `ts_3ds/src/rendering/c3d/01_setup.inc`
+`load_shader` as the proven-correct shader-load pattern to compare against — a lead, not an answer, and
+reading that sibling checkout is outside this iteration's search scope, so it is recorded as the exact
+missing reference for the next batch. **Obsidian MCP** is not exposed in this Pi session, so the vault was
+read read-only from `/mnt/nas/Vaults/port-docs`; `50-tooling/` holds
+`mandarine-emulator-location-and-version-pinning.md`,
+`emulator-harness-liveness-by-pid-not-by-name.md` and
+`multi-tenant-emulator-harness-isolate-by-display.md`, which are the three notes this harness implements.
+**Cognee MCP** is not exposed in this Pi harness (owner task 12), so it was **not** consulted. No absent
+source is claimed as consulted.
+
+**New small items found while running the harness.** (a) `emurun.sh` has no `--ready-timeout` flag; an
+unrecognised option falls through the `case` and becomes `$DSX`, so a typo'd flag exits 2 with "no such
+build: 240". Loud, not silent, but the `*)` arm should reject a leading `-`. (b) The readiness window is
+`EMURUN_READY_TIMEOUT`, which the usage block does not document. Both are in the owner-authored harness.

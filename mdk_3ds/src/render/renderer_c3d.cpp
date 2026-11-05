@@ -454,6 +454,12 @@ inline GpuVertex expand(const mdk::Vertex& v) {
         delete r;
         return nullptr;
     }
+    // Logged on SUCCESS as well as failure, and that is the whole point of the
+    // line: under Mandarine the guest stops between this and the next line, and
+    // a log that only records failures cannot tell "hung in setVsh" apart from
+    // "hung in configure". Measured 2026-11-05: `dvlb numDVLE=1` is the last
+    // line the guest ever writes, so the pair below is what localises it.
+    mdk::log3dsPrintf("shaderProgramSetVsh ok result=0x%08lx", (unsigned long)spVsh);
     const Result spCfg = shaderProgramConfigure(&r->program, true, false);
     if (R_FAILED(spCfg)) {
         mdk::log3dsPrintf("shaderProgramConfigure FAILED result=0x%08lx", (unsigned long)spCfg);
@@ -465,6 +471,7 @@ inline GpuVertex expand(const mdk::Vertex& v) {
         delete r;
         return nullptr;
     }
+    mdk::log3dsPrintf("shaderProgramConfigure ok result=0x%08lx", (unsigned long)spCfg);
 
     // The uniform locations.
     r->mvpLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "mvp");

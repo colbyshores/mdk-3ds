@@ -29,14 +29,17 @@ correctness:
   in the worker chain; `litellm/deepseek-v4.1-flash-th` is the only fallback.
 - **Adversarial reviewer**: DeepSeek V4.1 Flash
   (`litellm/deepseek-v4.1-flash` → `deepseek/deepseek-flash` at api.deepseek.com), an
-  independent family. Fallbacks must stay off Qwen's upstream: the DeepSeek mirror
-  (`deepseek-v4.1-flash-nvidia`), then minimax, luna (`swarm-worker` is
-  excluded — same upstream as qwen). When the builder has itself fallen back to
-  `deepseek-v4.1-flash-th`, the reviewer chain skips both DeepSeek variants as
-  same-family and lands on minimax or luna. Read-only; structured
-  findings; verdict gates remediation. Protocol: `ralph/validator.md`.
-  **grok is retired by operator decision 2026-11-05** and must not be re-added to
-  any chain here or in the shared router.
+  independent family. The operator's allowed set is exactly three IDs — `qwen`,
+  `deepseek-v4.1-flash`, `deepseek-v4.1-flash-th` — so the only reviewer fallback
+  is `deepseek-v4.1-flash-th` (`swarm-worker` is excluded — same upstream as
+  qwen). When the builder has itself fallen back to `deepseek-v4.1-flash-th`, the
+  owner-directed independence exception lets `deepseek-v4.1-flash` review it
+  despite the shared family; if that route is unhealthy the review is BLOCKED and
+  the loop stops, because a three-model set has no spare reviewer. Read-only;
+  structured findings; verdict gates remediation. Protocol: `ralph/validator.md`.
+  **grok, minimax and luna are retired by operator decision 2026-11-05**, and so
+  is the `deepseek-v4.1-flash-nvidia` mirror; none may be re-added to any chain
+  here or in the shared router.
 - **Verification authority**: the harness gates — `make -C tests/scripts`,
   `bash tools/check.sh`, `make -C mdk_3ds`, plus the batch-integrity gate. Objective
   pass/fail, independent of any model's opinion.

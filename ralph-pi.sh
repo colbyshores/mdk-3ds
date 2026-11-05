@@ -42,8 +42,11 @@ phase_limit() {
     case "$1" in
         startup) printf 1800 ;;
         route-health|verify) printf 900 ;;
-        worker) printf 7800 ;;
-        worker-fallback) printf 7500 ;;
+        worker|worker-fallback)
+            local worker_limit=$((ITER_TIMEOUT - 300))
+            [ "$worker_limit" -gt 0 ] || worker_limit="$ITER_TIMEOUT"
+            printf '%s' "$worker_limit"
+            ;;
         gates) printf 14400 ;;
         review-collect) printf 5700 ;;
         route-backoff) printf 600 ;;
@@ -103,11 +106,19 @@ WORKER_MODELS="${WORKER_MODELS:-litellm/qwen litellm/deepseek-v4.1-flash-th}"
 REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/deepseek-v4.1-flash}"
 # Reviewer fallbacks MUST be a different upstream family than the builder
 # (qwen38-flash-next), or the "independent" review is fake. `swarm-worker` is
-# deliberately excluded: it is the SAME upstream as qwen. Order prefers the
-# DeepSeek mirror first, then cross-family: minimax=minimaxai/*,
-# luna=gpt-6-luna. grok is retired by operator decision 2026-11-05 and must
-# not be re-added to any chain.
-REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/deepseek-v4.1-flash-nvidia litellm/minimax-m3.1-flash-nvidia litellm/luna}"
+# deliberately excluded: it is the SAME upstream as qwen.
+#
+# The operator's allowed set is exactly three IDs — qwen, deepseek-v4.1-flash and
+# deepseek-v4.1-flash-th — so exactly one cross-family fallback is left: the -th
+# route, which reviews a qwen build. When the builder has itself degraded onto
+# -th, that candidate is its own route and is refused, so the iteration is
+# BLOCKED rather than reviewed by the model that wrote it. That is the fail-closed
+# answer and it is intended: a three-model set has no spare reviewer.
+#
+# `deepseek-v4.1-flash-nvidia` was retired from the proxy on 2026-11-05 and must
+# not be re-added; grok, minimax and luna are retired by operator decision
+# (docs/OWNER_DIRECTIVE_2026-11-05.md) and must not return to any chain.
+REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/deepseek-v4.1-flash-th}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-7200}"
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
 REVIEW_FAIL_LIMIT="${REVIEW_FAIL_LIMIT:-2}"
@@ -189,12 +200,12 @@ state_set() { state_write "$1=$2"; }
 # litellm proxy two aliases can be ONE upstream -- on this proxy today `qwen`
 # and `swarm-worker` are both openai/qwen38-flash-next, and `luna` and
 # `luna-compaction` are both openai/responses/gpt-6-luna -- and two hosts can
-# carry ONE model family (`deepseek-v4.1-flash` at api.deepseek.com and
-# `deepseek-v4.1-flash-nvidia` at integrate.api.nvidia.com are the same weights
-# twice, which is exactly the pair this script's own comment calls "the DeepSeek
-# mirror"). Comparing alias strings passes every one of those, which is what
-# external review 2026-11-01 finding F3 found. Resolution is the proxy's
-# /model/info when it answers, the committed map in tools/runner/
+# carry ONE model family (`deepseek-v4.1-flash` at api.deepseek.com and the now
+# retired `deepseek-v4.1-flash-nvidia` at integrate.api.nvidia.com were the same
+# weights twice, and `deepseek-v4.1-flash` and `deepseek-v4.1-flash-th` are still
+# one family on two routes). Comparing alias strings passes every one of those,
+# which is what external review 2026-11-01 finding F3 found. Resolution is the
+# proxy's /model/info when it answers, the committed map in tools/runner/
 # model_identity.py otherwise, and NOTHING if neither knows the alias -- and an
 # unresolved alias is refused, because "could not tell" must not reach the same
 # path as "proved different".
@@ -213,6 +224,33 @@ model_family()   { python3 "$ROOT/tools/runner/model_identity.py" family   "$1" 
 # `reviewer_rejected x >/dev/null && continue` would have silently refused (or
 # accepted) every candidate. The name now says what it returns, and
 # tools/runner/test_review_state.sh pins the status on both arms.
+# Owner-directed independence exception (2026-11-05).
+#
+# The operator has accepted a same-family review for exactly one pair: a builder
+# on deepseek-v4.1-flash-th may be reviewed by deepseek-v4.1-flash, because the
+# 1017 checkpoint is materially stronger than the -th build even though
+# model_identity.py resolves both to family `deepseek`. Without this the reviewer
+# chain would have no eligible candidate whenever the builder falls back, and the
+# fail-closed design would stop the loop.
+#
+# This is a literal builder:reviewer allowlist, NOT a general relaxation. A
+# candidate that is the builder's own route or own upstream is refused before
+# this is consulted, and every other same-family candidate is still refused —
+# including the reverse direction, a flash build reviewed by -th.
+# `deepseek-v4.1-flash-nvidia` was retired from the proxy on 2026-11-05, so it is
+# not in this list; the operator's allowed set is the three IDs named above.
+# Keep it empty unless the operator directs otherwise: a model reviewing its own
+# weights is the exact failure this function exists to prevent.
+INDEPENDENCE_EXCEPTIONS="${INDEPENDENCE_EXCEPTIONS:-litellm/deepseek-v4.1-flash-th:litellm/deepseek-v4.1-flash}"
+
+independence_exception() {
+    local want="$1:$2" e
+    for e in $INDEPENDENCE_EXCEPTIONS; do
+        [ "$e" = "$want" ] && return 0
+    done
+    return 1
+}
+
 reviewer_reject_reason() {
     local cand="$1" cand_upstream cand_family
     [ "$cand" = "$RUN_MODEL" ] && { printf 'it is the builder route itself\n'; return 0; }
@@ -231,6 +269,9 @@ reviewer_reject_reason() {
         return 0
     fi
     if [ "$cand_family" = "$RUN_FAMILY" ]; then
+        if independence_exception "$RUN_MODEL" "$cand"; then
+            return 0
+        fi
         printf 'it is the builder family %s (%s and %s are one model on two hosts)\n' "$cand_family" "$cand" "$RUN_MODEL"
         return 0
     fi
@@ -621,6 +662,12 @@ itself, not left to the reader:
    its own collector runs — and the next mandatory review covers the unreviewed
    commits instead of only the newest one. "Could not check" must not reach the
    same path as "all clear" (vault: a-gate-that-skips-on-missing-input-is-a-pass-generator).
+
+Search scope is strict: search only within this repository, scoped to the smallest
+relevant source paths and excluding generated/build/output trees. Never run
+recursive searches over /mnt/nas, /mnt/nas/Development, or sibling checkouts. If
+repository evidence is insufficient, stop and report the precise missing reference;
+do not broaden the search. Any recursive search must have a bounded timeout.
 
 POLICY_PRECEDENCE
         cat "$ROOT/docs/KILO_RALPH_LOOP_POLICY.md" 2>/dev/null || true

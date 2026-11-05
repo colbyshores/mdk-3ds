@@ -1,10 +1,17 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — batch 65 changes FollowCamera's NaN/signed-zero clamp behaviour and its public observation
-surface (the oracle-public `Climb` plus a read-only air tilt), and adds exact oracle pins; the slice is
-bounded to one camera subsystem, but the public-interface and behavioural edges make this high-risk.
+Risk: high — batch 66 rewrites the Mandarine measurement instrument (private lane config, forced
+software GL, FUSE-mount reaping, dbus session) and edits the review-independence guard to carry an
+owner-directed same-family allowlist. Both are the loop's evidence chain, not game behaviour: a wrong
+instrument or a widened allowlist silently produces a false PASS, so the diff is graded high even
+though no ported game logic changes.
 
-Last updated: 2026-11-05 (**batch 65** — review-6 F1/F2/F3 fixed: FollowCamera's five `MathF.Min`/`MathF.Max`
+Last updated: 2026-11-05 (**batch 66** — the inherited owner harness work landed: `emurun.sh` now
+isolates a private Mandarine config, forces llvmpipe, mutes host audio, reaps the FUSE mount by path and
+runs under a private dbus session; review-7 F1/F2/F3/F5 are fixed and F4 re-confirmed as owner-only.
+First real harness run: the guest stops inside `shaderProgramConfigure` and the harness correctly refuses
+to report — see Iteration 94 for the named blocker and the next lead). Batch 65's (review-6 F1/F2/F3
+fixed: FollowCamera's five `MathF.Min`/`MathF.Max`
 sites now use the shared NaN- and signed-zero-exact helper, the climb's `-0` and the air pitch's NaN are
 pinned in the oracle's bits, the arena-pitch test now carries its own fused-vs-product-sum discriminator,
 and the record's 87/200 and 53/256 figures name their different expressions. The owner-authored
@@ -37,6 +44,17 @@ sprint's six items are now the priority: (1) the Mandarine emulator harness and 
 (2) `Game.cs` game-flow glue, (3) 3DS input, (4) frontend wiring, (5) ndsp audio, and (6) Citro3D
 alpha blend. Batch 65 was already in review-6 remediation when the directive appeared and did not start
 a new fidelity slice. The old numbered list below is the historical checkpoint, not the next queue.
+
+**NEXT (batch 67): item 1's blocker is a guest hang, not the harness.** The harness now works and refuses
+correctly; the guest never reaches its `backend:` readiness token. Measured 2026-11-05, pinned r1.2.1,
+`DISPLAY=:99`, private lane: the last line `mdk.log` ever writes is `shaderProgramSetVsh ok
+result=0x00000000`, and `log3dsPrintf` `fflush`es every line, so the stop is inside
+`shaderProgramConfigure(&r->program, true, false)` (`renderer_c3d.cpp:463`), before `C3D_BindProgram`
+(`:708`) ever runs. The lead to test first: that explicit configure is not part of the citro3d frame
+contract — SPEC's own create step is "parse the DVLB, build the shader program" and the send belongs to
+the bind — so a GSP shader-code load issued outside any `C3D_FrameBegin` is the plausible hang, and the
+fix is to drop the create-time `shaderProgramConfigure` and let the bind send it. Verify in the emulator,
+not by inspection, and do not believe a verdict whose log is stale.
 
 1. **DONE — mixer call-sites** (`ObjectMotion.cs:133`, `ObjectBehaviors.cs:90-115`).
 2. **DONE — `Debris.Shatter` + opcodes 137/138/139.** BreakUp/Trail/Updraft await Effects.
@@ -129,9 +147,12 @@ owner-authored files that appeared in the dirty tree during this batch. None was
 reverted here. The self-heal frame pair is
 byte-identical to the current pinned frame (md5 `6769a137…`), and committing a protected path without
 `--owner-approved` makes the loop's own post-batch integrity call halt at exit 6 — review-27 F1's
-failure scenario and the reason a batch must not "helpfully" bank these paths. Review-5 **A1** is now
-repaired **owner-side**: `ralph-pi.sh` is mode `0755` in the worktree again and matches the index's
-`100755`; the rest of that file's owner changes remain uncommitted. Review-5 **A2** is confirmed as a
+failure scenario and the reason a batch must not "helpfully" bank these paths. Review-5 **A1** is NOT
+repaired: it is still open as owner task 18 below, and review-7 **F4** re-confirmed it (worktree `664`,
+index `100755`). An earlier sentence here claimed it was fixed owner-side; that claim was already false
+when it was committed and is deleted rather than repeated. Batch 66 works around it at commit time with
+`git update-index --chmod=+x ralph-pi.sh`, so the COMMIT keeps `100755` and the systemd `ExecStart` stays
+runnable, but the worktree file stays unexecutable for this uid. Review-5 **A2** is confirmed as a
 fact — `tools/hooks/pre-commit` rejects a staged protected path, so a `git add -A` batch cannot land
 here — and its remediation is owner-only (`MDK_OWNER_APPROVED=1`, which no batch may set); the
 mitigation that has kept the loop banking work since batch 60 is the stage-only-your-own-paths rule
@@ -197,8 +218,12 @@ its own owner-reviewed change with the corpus untouched, not in a batch that is 
 **Restore the executable bit on `ralph-pi.sh`** (review-5 A1). The worktree is `0644`, the index is
 `100755`, and `ExecStart=$ROOT/ralph-pi.sh` (`tools/install_ralph_pi_service.sh:71`) needs the bit, so a
 unit restart right now fails `status=203/EXEC` and any `git add -A` would commit the loss. A batch cannot
-do it: `chmod +x` returns `Operation not permitted` for uid 994 on a `coleshores`-owned file. Owner fix:
-`chmod 755 ralph-pi.sh` (and consider the same for `ralph.sh` and `tools/ralph_pi_watchdog.sh`).
+do it: `chmod +x` returns `Operation not permitted` for uid 994 on a `coleshores`-owned file (re-measured
+2026-11-05, batch 66). Owner fix: `chmod 755 ralph-pi.sh` (and consider the same for `ralph.sh` and
+`tools/ralph_pi_watchdog.sh`). Until then a batch MUST pass `ralph-pi.sh` through
+`git update-index --chmod=+x` after staging it, or the commit records the loss. Review-7 **F5** (the
+emulator harness committed mode `100644`) is FIXED by batch 66: `mdk_3ds/tools/emurun.sh` is
+`piagent`-owned, so its worktree `755` reaches the index normally and the commit carries `100755`.
 
 ## Current tree state (VERIFIED)
 

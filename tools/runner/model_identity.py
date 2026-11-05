@@ -53,6 +53,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat as stat_module
 import subprocess
@@ -70,6 +71,14 @@ STATIC_UPSTREAMS = {
     "qwen": "openai/qwen38-flash-next",
     "swarm-worker": "openai/qwen38-flash-next",
     "deepseek-v4.1-flash": "deepseek/deepseek-flash",
+    # The `-th` route is a SHIPPED WORKER FALLBACK (ralph-pi.sh WORKER_MODELS), so
+    # it must be listed here: the whole point of item 2 of the authority order is
+    # that the default configuration resolves with no network. Verified against
+    # the live proxy 2026-11-05. Note the family it implies — `deepseek`, the same
+    # family as the reviewer above — which is why the loop's reviewer guard refuses
+    # it as a reviewer of a `-th` build unless the operator's allowlist licenses
+    # exactly that pair.
+    "deepseek-v4.1-flash-th": "openai/deepseek-v4.1-flash:free",
     "deepseek-v4.1-flash-nvidia": "openai/deepseek-ai/deepseek-v4.1-flash",
     "minimax-m3.1-flash-nvidia": "openai/minimaxai/minimax-m3.1-flash",
     "minimax-m3.1-nvidia": "openai/minimaxai/minimax-m3.1-flash",
@@ -521,6 +530,30 @@ def main(argv: list[str]) -> int:
     return 2
 
 
+def shipped_chain_aliases(script: Path | None = None) -> list[str]:
+    """The aliases ralph-pi.sh actually ships with, in listed order, deduplicated.
+
+    Read from the script rather than restated here, for the same reason the shell
+    suite stopped retyping `state_set` (review-3 F3): a copy in this file keeps
+    passing after the shipped chain is edited, which is exactly how an alias
+    nobody can resolve reaches the reviewer chain.
+    """
+    path = script or Path(__file__).resolve().parents[2] / "ralph-pi.sh"
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return []
+    out: list[str] = []
+    for var in ("WORKER_MODELS", "REVIEWER_MODEL", "REVIEWER_FALLBACKS"):
+        match = re.search(rf'^{var}="\$\{{{var}:-([^}}]*)\}}"', text, re.MULTILINE)
+        if not match:
+            continue
+        for alias in match.group(1).split():
+            if alias and alias not in out:
+                out.append(alias)
+    return out
+
+
 def selftest(table: dict | None) -> int:
     """Assert what the guard needs to be true. Each line is a claim a reader
     can check against the proxy, not a tautology about this file."""
@@ -544,6 +577,18 @@ def selftest(table: dict | None) -> int:
          lambda: resolve("litellm/not-a-model") == ("", ""), True),
         ("the provider prefix does not change the answer",
          lambda: resolve("litellm/qwen") == resolve("qwen"), True),
+        # Every alias the loop ships with must resolve from the STATIC map alone.
+        # An alias that only the live /model/info endpoint knows is a hidden network
+        # dependency inside the independence guard: when the endpoint is down (a
+        # different permission from chat) RUN_FAMILY comes back empty, the guard
+        # refuses every candidate, and a mandatory review cannot be dispatched at
+        # all (external review 2026-11-04, finding F3). The value is the list of
+        # offenders, so a FAIL prints the alias to add.
+        ("every alias shipped in ralph-pi.sh resolves from the static map alone",
+         lambda: [a for a in shipped_chain_aliases()
+                  if bare(a) not in STATIC_UPSTREAMS], []),
+        ("the shipped chain is readable (three variables found, not an empty list)",
+         lambda: len(shipped_chain_aliases()) >= 3, True),
     ]
     if table:
         checks.append((
