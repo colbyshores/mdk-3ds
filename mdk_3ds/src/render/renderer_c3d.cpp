@@ -805,7 +805,13 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     settleDeferredMeshes(r);
     r->queue.reset();
 
-    const uint32_t clear = params ? params->clear_colour : 0xFF000000u;
+    // THE CLEAR COLOUR IS CONVERTED, NOT PASSED THROUGH. The seam carries
+    // 0xAARRGGBB (what the Vulkan backend unpacks, and what both frontends
+    // therefore write); the PICA's fill pattern is 0xRRGGBBAA. Handing the seam
+    // value to C3D_RenderTargetClear directly painted the panel with the alpha
+    // byte as red — measured, 0xFF102030 became #ff1020. See pica::clearColour.
+    const uint32_t clear =
+        mdk::pica::clearColour(params ? params->clear_colour : 0xFF000000u);
 
     // THE EYE PLAN, read once, here, and stored on the renderer.
     //

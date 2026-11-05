@@ -209,6 +209,38 @@ constexpr float kDepthMapScale = 1.0f;
 constexpr float kDepthMapOffset = 1.0f;
 constexpr uint32_t kDepthClearValue = 0x00FFFFFFu;
 
+// Convert the seam's clear colour to the word `C3D_RenderTargetClear` wants.
+//
+// THE TWO ENDS OF THIS SEAM PACK A COLOUR DIFFERENTLY, AND NOTHING IN THE
+// SIGNATURE SAYS SO. `MdkFrameParams::clear_colour` is 0xAARRGGBB — that is the
+// seam's documented convention, and the Vulkan backend unpacks it that way
+// (`mdk_linux/src/render/vk/vk_context.cpp`: R is `(clearColour >> 16) & 0xFF`).
+// The clear word `C3D_RenderTargetClear` consumes is **0xRRGGBBAA — red in the
+// TOP byte** — which is measured, not read off a header. Two runs of one build on
+// the pinned instrument (Mandarine r1.2.1, `DISPLAY=:99`) bracket the change:
+//
+//     word passed           panel pixel
+//     0xFF102030 (raw)   ->  #ff1020     the alpha byte became red
+//     0x102030FF (here)  ->  #102030     exactly what the frontend asked for
+//
+// So passing the seam value straight through paints the frame with the ALPHA
+// byte as red. That is the whole of "the 3DS picture is a red clear": the clear
+// was never the wrong *colour*, it was the wrong *byte order*, and everything
+// drawn on top of it was being read against a background nobody intended.
+//
+// ASSERT THIS AS BIT FIELDS, NOT AS MEMORY BYTES. On a little-endian machine the
+// byte at offset 0 is the LOW byte, which here is the alpha, so a byte-indexed
+// expectation encodes the opposite of what the hardware sees even when the
+// conversion is correct — the first draft of the host row did exactly that and
+// went red over a fix that the emulator had already confirmed good.
+//
+// This lives here rather than inline in the backend for the reason the whole file
+// exists: it is a conversion, it is host-testable, and a host test is the only
+// place a byte order can be pinned without a console.
+constexpr uint32_t clearColour(uint32_t argb) {
+    return ((argb & 0x00FFFFFFu) << 8) | ((argb >> 24) & 0xFFu);
+}
+
 // The depth the PICA stores for a converted NDC z — the model of what the two
 // constants above do, kept next to them so the two cannot drift apart. The GPU
 // does this arithmetic; the backend never calls this per fragment. It IS called

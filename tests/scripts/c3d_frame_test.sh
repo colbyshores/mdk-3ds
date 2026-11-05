@@ -484,6 +484,26 @@ def adjudicate(text, quiet=False):
               "earlier frame's records forever)"
               % (len(frame_resets), "yes" if frame_resets else "none"))
 
+    # THE CLEAR COLOUR IS CONVERTED BEFORE THE PICA SEES IT. The seam carries
+    # 0xAARRGGBB (what the Vulkan backend unpacks, so what both frontends write);
+    # C3D_RenderTargetClear's fill pattern for an RGBA8 buffer is 0xRRGGBBAA. A
+    # pass-through makes the ALPHA byte the red channel, which is measured, not
+    # theorised: 0xFF102030 filled the panel with #ff1020 on Mandarine r1.2.1.
+    # The conversion's own arithmetic is pinned on the host by
+    # pica_matrix_tests.cpp; what only a source check can pin is that the backend
+    # calls it on the way to the clear.
+    begin_body = body(text, "mdk_render_begin_frame") or ""
+    clear_calls = re.findall(r"C3D_RenderTargetClear\(", begin_body)
+    clear_conv = re.search(r"\bclear\s*=[^;]*pica::clearColour\s*\(", begin_body) is not None
+    clear_raw = bool(re.search(r"C3D_RenderTargetClear\([^)]*clear_colour", begin_body))
+    rep.check("clear-colour-is-converted-for-the-pica",
+              bool(clear_calls) and clear_conv and not clear_raw,
+              "%d clear call(s); the value is converted: %s; a raw seam field reaches the PICA: "
+              "%s (the seam is 0xAARRGGBB and the PICA's fill is 0xRRGGBBAA, so a pass-through "
+              "paints the frame with the alpha byte as red — the red clear this backend shipped "
+              "with for its whole history)"
+              % (len(clear_calls), "yes" if clear_conv else "no", "yes" if clear_raw else "no"))
+
     # The loop must RUN once per eye, not merely CONTAIN the calls (review-4 F3).
     # `if (eye == 0) break;` keeps every statement at depth 0 and every call count
     # at 1, and still draws one eye; `return` there is worse still, because it
@@ -1009,6 +1029,14 @@ ARMS = [
     ("program-bound-at-create-as-well",
      lambda s: s.replace(SHADER_OK_LINE,
                          "    C3D_BindProgram(&r->program);\n" + SHADER_OK_LINE, 1)),
+    # The red clear, restored. The single most plausible edit here is the tidy-up
+    # that deletes the conversion as a pointless local, and no other gate in the
+    # suite can see it, because renderer_c3d.cpp does not compile on a host.
+    ("clear-colour-passed-through-to-the-pica",
+     lambda s: s.replace(
+         "    const uint32_t clear =\n"
+         "        mdk::pica::clearColour(params ? params->clear_colour : 0xFF000000u);",
+         "    const uint32_t clear = params ? params->clear_colour : 0xFF000000u;", 1)),
 ]
 
 print("c3d_frame: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

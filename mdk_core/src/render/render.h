@@ -80,6 +80,11 @@ struct MdkRenderDesc {
 struct MdkFrameParams {
     float elapsed = 0.0f;         // the frame's delta time, in seconds
     uint32_t frame_index = 0;
+    // THE CLEAR COLOUR IS 0xAARRGGBB, AND EVERY BACKEND MUST UNPACK IT THAT WAY.
+    // The PICA's clear word is 0xRRGGBBAA, so the Citro3D backend converts on the
+    // way in (mdk::pica::clearColour); passing the seam value straight through
+    // paints the frame with the alpha byte as red, which is measured, not
+    // theoretical — see the declaration there for the before/after pixels.
     uint32_t clear_colour = 0xFF000000u;
     bool present = true;          // false for a frame the frontend does not show
     const char* screenshot_path = nullptr;   // Linux only; nullptr elsewhere

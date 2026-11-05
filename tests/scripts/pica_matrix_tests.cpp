@@ -501,6 +501,54 @@ void testTheEyePlanFollowsTheSlider() {
     PICA_CHECK(flat.offset[0] == 0.0f && flat.offset[1] == 0.0f);
 }
 
+void testTheClearColourByteOrder() {
+    // The seam is 0xAARRGGBB; the PICA's clear word is 0xRRGGBBAA — RED IN THE
+    // TOP BYTE. That is a MEASUREMENT, not a reading of a header, and it is the
+    // reason this row exists. Two independent readings of the same build on the
+    // pinned instrument (Mandarine r1.2.1, DISPLAY=:99):
+    //
+    //   word passed          panel pixel
+    //   0xFF102030 (raw)  ->  #ff1020     the alpha byte became red
+    //   0x102030FF (here) ->  #102030     exactly what the frontend asked for
+    //
+    // So the contract is about the WORD's bit fields, and it must be asserted as
+    // bit fields. Asserting it as memory bytes was the first draft of this row
+    // and it was wrong: on a little-endian machine the byte at offset 0 is the
+    // LOW byte, which is the alpha here, so a byte-indexed expectation encodes
+    // the opposite of what the hardware sees even when the conversion is right.
+    const uint32_t navy = mdk::pica::clearColour(0xFF102030u);   // the 3DS frontend's clear
+    PICA_CHECK((navy >> 24) == 0x10u);                       // R
+    PICA_CHECK(((navy >> 16) & 0xFFu) == 0x20u);             // G
+    PICA_CHECK(((navy >> 8) & 0xFFu) == 0x30u);              // B
+    PICA_CHECK((navy & 0xFFu) == 0xFFu);                     // A
+    // The defect, stated as the failure it caused: passing the seam value
+    // through untouched makes the alpha byte the red channel, which is how a
+    // dark navy filled the panel with #ff1020 for this backend's whole history.
+    PICA_CHECK(navy != 0xFF102030u);
+    PICA_CHECK((0xFF102030u >> 24) == 0xFFu);   // the byte that was painting the screen red
+
+    // The seam's own default, and a colour whose alpha is not 255, so the
+    // conversion cannot be a constant-255 shortcut that happens to pass above.
+    const uint32_t black = mdk::pica::clearColour(0xFF000000u);
+    PICA_CHECK(black == 0x000000FFu);
+    const uint32_t half = mdk::pica::clearColour(0x80FF7F00u);
+    PICA_CHECK(half == 0xFF7F0080u);
+
+    // The general property: whichever byte the seam means by R/G/B/A, that is
+    // the field the PICA must find it in. An identity, a swap of the wrong pair,
+    // or a rotate by 8 the other way each break one of these four.
+    bool channelsLand = true;
+    for (uint32_t v = 0; v < 256; v++) {
+        const uint32_t argb = (0x11u << 24) | (v << 16) | (v << 8) | 0x22u;
+        const uint32_t got = mdk::pica::clearColour(argb);
+        if ((got >> 24) != v || ((got >> 16) & 0xFFu) != v ||
+            ((got >> 8) & 0xFFu) != 0x22u || (got & 0xFFu) != 0x11u) {
+            channelsLand = false;
+        }
+    }
+    PICA_CHECK(channelsLand);
+}
+
 } // namespace
 
 namespace test {
@@ -520,6 +568,7 @@ int runPicaMatrixTests() {
     testNearerFragmentsWinAndFartherOnesLose();
     testTheRealMatrixPutsTheNearPlaneNearest();
     testTheEyePlanFollowsTheSlider();
+    testTheClearColourByteOrder();
     return failures;
 }
 

@@ -14557,3 +14557,120 @@ while the panel shows a red clear — and it is now the first unfinished thing t
 blocked on a cut subsystem. Item 6 (ndsp audio) is next after it. Item 5b (the HUD) stays
 blocked on the canvas seam. Old-3DS performance readiness remains **UNMEASURED**: no
 hardware capture has been taken.
+
+## Iteration 103 — batch 75: the red clear was a byte order, not a colour (owner item 8)
+
+**What was implemented.** The Citro3D backend passed the frame's clear colour
+straight to `C3D_RenderTargetClear`. The two ends of that seam pack a colour
+differently and nothing in the signature says so: `MdkFrameParams::clear_colour`
+is `0xAARRGGBB` — the seam's convention, which the Vulkan backend unpacks that
+way (`mdk_linux/src/render/vk/vk_context.cpp:755`: R is `(clearColour >> 16) &
+0xFF`) — while the PICA's clear word is `0xRRGGBBAA`, red in the TOP byte. The
+pass-through therefore painted every frame with the **alpha byte as red**.
+
+The conversion is `mdk::pica::clearColour()`, in `mdk_3ds/src/render/
+pica_matrix.{h,cpp}` — the host-testable module for exactly this class of PICA
+conversion, so the byte order is pinned by a host test and not only by a source
+shape. `renderer_c3d.cpp` now converts on the way to both eye clears, and
+`render.h` states the seam's byte order where a future backend will read it.
+
+**This is the whole of "the red clear", and it was never a render-path failure.**
+Owner item 8 was written as "blocked on the render path, named suspects: AGENTS
+P2's GPU-state list and the depth map". Neither is implicated: the state and the
+map are written every frame and the guest log still prints
+`map z*1.0+1.0 near=0.0000 far=1.0000 clear=0xffffff test=LEQUAL` unchanged. The
+clear was the wrong colour because it was the wrong order.
+
+**Evidence — measured on the pinned instrument, before and after one rebuild.**
+Mandarine r1.2.1 (`md5 0d2adab6`), `DISPLAY=:99`, capture by
+`ffmpeg -f x11grab` (P7: the display, never the operator's screen; P8: the
+pinned build). The panel's dominant colour, pixel counts over the full 1280x1024:
+
+| build | panel clear | px |
+|---|---|---|
+| before | `#ff1020` (saturated red) | 58547 |
+| after | `#102030` — exactly what `main_3ds.cpp:495` asked for | 58522 |
+
+The geometry colours moved with it (`#ff287f`→`#e12a81`, `#ff1634`→`#8f1e3b`),
+which is the framebuffer alpha being correct rather than 0x30; the triangles are
+now legible as separate faces instead of washed into the background. Final run:
+`emurun.sh` **exit 0**, guest log ends at **frame 3180**, `flow: screen=4
+level=7`, 60 fps, mono (`render_3d=0`), llvmpipe forced. Emulator-green is not
+hardware-pass (AGENTS P8).
+
+**A negative result that saves the next batch time.** The obvious suspect for the
+remaining geometry problem was the spawn, and it is innocent: the guest logs
+`spawn: feet=(0.0,4.0,12.0) yaw=90.0`, which looks like an uninitialised
+default, but reading `MDK/TRAVERSE/LEVEL7/LEVEL7.DTI` block 0 directly gives
+`pos=(0.0000,4.0000,9.0000) angle=90.0000` — the DTI really does say that, so
+`Dti::parse` and the `+ StartDrop` are faithful. Do not "fix" the spawn. What is
+still wrong is that Kurt falls to `feet=(0.0,4.0,0.0)` and stops while the level's
+first vertex is `(11.0,438.0,25.0)`, so the follow camera films the level from
+outside it and the frame is a fan of triangles off one point.
+
+**How the test got written, since it is the interesting part.** The first draft
+asserted the converted word as four *memory bytes* (`b[0]==0x10` …). It went red
+on a fix the emulator had already confirmed good: on a little-endian machine the
+byte at offset 0 is the LOW byte, which here is the alpha, so a byte-indexed
+expectation encodes the opposite of what the hardware sees. The row now asserts
+bit fields, and both the header and the test say why in words, because the same
+trap will be re-stepped on. A second draft error — B and A swapped in the
+sweeping 256-value loop — was caught the same way, by running it.
+
+**Gates, verbatim.**
+- `make -C tests/scripts` → `All cases match the oracle.` (after the two test
+  drafts above were corrected; it had failed `pica_matrix:511-514` and
+  `pica_matrix:549` first, and the implementation was right both times)
+- `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`audit_c_with_classes` 0,
+  `gates_vfp` 0 blockers, `audit_arm11_math` clean, `audit_r11_idiv` none,
+  `gates_core_parity` both targets link, `gates_smdh` SKIP no .cia,
+  `gates_frames` CONTRACT CLEAN, `gates_batch_integrity` PASS)
+- `make -C mdk_3ds` → `LINK mdk.elf` / `3DSX mdk.3dsx`
+- also by hand: `sh tests/scripts/c3d_frame_test.sh` → `PASS C3dFrame (26 checks,
+  33 arms adjudicated red)`; `bash tools/runner/test_review_state.sh` →
+  `REVIEW STATE: ALL CASES PASS`.
+
+**New pins.** `pica_matrix_tests.cpp::testTheClearColourByteOrder` (the measured
+before/after words, the seam default, a non-255 alpha, and a 256-value channel
+sweep), and `c3d_frame_test.sh::clear-colour-is-converted-for-the-pica` with the
+mutation arm `clear-colour-passed-through-to-the-pica`, which is the tidy-up a
+future builder is most likely to make — delete the "pointless" conversion — and
+which no other gate can see, because `renderer_c3d.cpp` does not compile here.
+
+**Review-2 disposition (no Critical/High; verdict was COMPLETE).**
+- **F1 (Medium) — deferred, and it is a real one.** The runtime-less `mdk_linux`
+  path really does pin the solid arena once at the spawn and never again, and
+  batch 74's record claimed otherwise. Out of scope here (this batch is the
+  Citro3D clear), and `mdk_linux/**` is outside AGENTS §8, so it needs its own
+  batch or an owner line on whether the degraded install is supported.
+- **F2 (Medium) — deferred.** The per-step pin can change mid-fall on 4 of 1681
+  probed columns. Needs the oracle's `_drawnArenas` behaviour during a fall-out
+  before the rule is changed; changing it blind risks the hit set.
+- **F3 (Medium) — deferred, needs owner authorisation.** The reviewer is right
+  that the batch-integrity frame rule is satisfiable by a duplicate capture, and
+  **this batch is itself such a duplicate** (`sha256 6646adf1…`, identical to four
+  earlier pairs, because nothing in the host frame's path changed). Fixing it
+  means editing `tools/runner/gates_batch_integrity.py`, which is gate tooling
+  and owner-protected; a builder must not tighten or touch a gate to clear a
+  finding. Recorded rather than hidden.
+- **F4 (Medium) — deferred.** `emurun.sh` has no input injection, so no on-target
+  run crosses an arena boundary. Closing it needs a test hook in the harness.
+- **F5 (Low) — deferred.** `main_3ds_flow_test.sh` check 1 matches raw loop text
+  including comments. One-line fix in a gate file, not this batch's subsystem.
+- **F6 (Medium) — owner, not builder.** The dirty `ralph-pi.sh` /
+  `LOOP_CONTEXT.md` / `test_review_state.sh` routing edit contradicts the
+  committed directive's routing block. It is not mine and I have not staged it
+  (CONTINUATION: a builder must not stage it). The directive's "Loop routing"
+  block and the worktree need to agree; that is an owner edit.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` searched (hybrid) for the
+red-clear/Citro3D-state question: top hits were the backend's own frame and
+depth-state code and AGENTS P2, which pointed at the GPU-state list the reviewer
+had already named and away from the byte order — the KB holds the code, not this
+finding, and it is now recorded here. **Obsidian MCP and Cognee MCP are absent
+from this session's tool list** (a session-configuration fault to report, per
+AGENTS P9, not a lookup that happened); the vault was read read-only instead at
+`/mnt/nas/Vaults/port-docs/10-projects/forsaken/findings/` and
+`citro3d-renderer-architecture-and-vertex-pipeline.md` was the relevant note,
+which documents Forsaken's depth map and vertex pipeline and does not cover the
+clear colour.
