@@ -56,13 +56,120 @@ def validate_png_pair(frame: str, sidecar: str) -> list[str]:
     return errors
 
 
+def validate_range(base: str, head: str, owner_approved: bool) -> list[str]:
+    errors: list[str] = []
+    changed = set(git("diff", "--name-only", f"{base}..{head}"))
+    if not changed:
+        errors.append(f"batch {base}..{head} contains no changed files")
+    if not owner_approved:
+        for path in sorted(changed & PROTECTED):
+            errors.append(f"protected contract changed without owner approval: {path}")
+    range_adds = set(git("diff", "--name-only", "--diff-filter=A", f"{base}..{head}"))
+    frames = {p for p in range_adds if p.startswith(FRAME_DIR) and p.endswith(".png")}
+    if len(frames) != 1:
+        errors.append(f"batch must add exactly one frame PNG in {FRAME_DIR}; found {len(frames)}")
+    touched_frames = {p for p in changed if p.startswith(FRAME_DIR)}
+    for frame in touched_frames:
+        if frame.endswith(".png") and frame not in range_adds:
+            errors.append(f"batch modifies/removes historical frame {frame}; history is immutable")
+        if frame.endswith(".txt") and frame not in range_adds:
+            errors.append(f"batch modifies/removes historical measurement {frame}; history is immutable")
+    if any(p.startswith("MDK/") or p.startswith("mdk_3ds/romfs/") for p in changed):
+        errors.append("batch touches protected/local game bytes or staged RomFS")
+    for frame in frames:
+        sidecar = str(Path(frame).with_suffix(".txt"))
+        if sidecar not in range_adds:
+            errors.append(f"frame {frame} has no measurement sidecar {sidecar}")
+        else:
+            errors.extend(validate_png_pair(frame, sidecar))
+    if not owner_approved and changed & {
+        "tools/check.sh", "tools/runner/gates_frames.py", "tests/frames/reference.sha256"
+    }:
+        errors.append("batch changes test/gate/fidelity ceiling; requires owner approval and explicit review")
+    return errors
+
+
+def validate_commit_chain(base: str, head: str, owner_approved: bool) -> list[str]:
+    errors: list[str] = []
+    commits = git("rev-list", "--first-parent", "--reverse", f"{base}..{head}")
+    cursor = base
+    for commit in commits:
+        fields = git("rev-list", "--parents", "-n", "1", commit)[0].split()
+        if len(fields) != 2:
+            errors.append(f"commit {commit[:12]} is a merge commit; per-commit validation refuses unexamined merge parents")
+            continue
+        parent = fields[1]
+        if parent != cursor:
+            errors.append(f"commit chain is discontinuous before {commit[:12]}: expected parent {cursor[:12]}, got {parent[:12]}")
+        errors.extend(validate_range(parent, commit, owner_approved))
+        cursor = commit
+    if not commits:
+        errors.append(f"commit range {base}..{head} contains no commits")
+    elif cursor != head:
+        errors.append(f"first-parent chain ended at {cursor[:12]}, not requested head {head[:12]}")
+    return errors
+
+
+def self_test() -> int:
+    from unittest.mock import patch
+
+    commits = ["commit-a", "commit-b"]
+    parents = {"commit-a": ["commit-a", "base"], "commit-b": ["commit-b", "commit-a"]}
+    changes = {
+        "base..commit-a": ["src/a.cpp", "docs/frames/a.png", "docs/frames/a.txt"],
+        "base..commit-b": ["src/a.cpp", "src/b.cpp", "docs/frames/a.png", "docs/frames/a.txt", "docs/frames/b.png", "docs/frames/b.txt"],
+        "commit-a..commit-a": ["src/a.cpp", "docs/frames/a.png", "docs/frames/a.txt"],
+        "commit-a..commit-b": ["src/b.cpp", "docs/frames/b.png", "docs/frames/b.txt"],
+    }
+    additions = {
+        "base..commit-a": ["docs/frames/a.png", "docs/frames/a.txt"],
+        "base..commit-b": ["docs/frames/a.png", "docs/frames/a.txt", "docs/frames/b.png", "docs/frames/b.txt"],
+        "commit-a..commit-a": ["docs/frames/a.png", "docs/frames/a.txt"],
+        "commit-a..commit-b": ["docs/frames/b.png", "docs/frames/b.txt"],
+    }
+
+    def fake_git(*args: str) -> list[str]:
+        if args[:2] == ("rev-list", "--first-parent"):
+            return commits
+        if args[:2] == ("rev-list", "--parents"):
+            return [" ".join(parents[args[-1]])]
+        if args[:3] == ("diff", "--name-only", "--diff-filter=A"):
+            return additions.get(args[-1], [])
+        if args[:2] == ("diff", "--name-only"):
+            return changes.get(args[-1], [])
+        raise AssertionError(f"unexpected git args: {args}")
+
+    with patch(__name__ + ".git", side_effect=fake_git), patch(__name__ + ".validate_png_pair", return_value=[]):
+        chain_errors = validate_commit_chain("base", "commit-b", False)
+        combined_errors = validate_range("base", "commit-b", False)
+        failed_chain = validate_commit_chain("base", "commit-c", False)
+    if chain_errors:
+        print(f"BATCH INTEGRITY SELF-TEST: FAIL: valid independent commits rejected: {chain_errors}")
+        return 1
+    if not any("found 2" in error for error in combined_errors):
+        print("BATCH INTEGRITY SELF-TEST: FAIL: combined multi-frame range was not rejected")
+        return 1
+    if not failed_chain:
+        print("BATCH INTEGRITY SELF-TEST: FAIL: malformed commit chain was accepted")
+        return 1
+    print("BATCH INTEGRITY SELF-TEST: PASS")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", help="base commit for this batch")
     parser.add_argument("--head", default="HEAD", help="batch commit to inspect")
     parser.add_argument("--staged", action="store_true", help="validate staged commit contents before git commit")
     parser.add_argument("--owner-approved", action="store_true", help="allow protected contract edits for an explicit owner-directed change")
+    parser.add_argument("--each-commit", action="store_true", help="validate each first-parent commit separately; preserves per-commit frame requirements")
+    parser.add_argument("--self-test", action="store_true", help="run isolated unit tests for integrity range accounting")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
+    if args.base:
+        args.base = git("rev-parse", args.base)[0]
+        args.head = git("rev-parse", args.head)[0]
     errors: list[str] = []
 
     # Static project invariants: do not let a low-tier worker silently rewrite
@@ -72,7 +179,7 @@ def main() -> int:
         "ralph/builder.md": ["READ-ONLY behavioural", "Never weaken a gate", "Phase 2", "EVERY COMMIT", "owner-protected"],
         "SPEC-COMPLETION.md": ["behavioural oracle", "post-process gap sweep", "frame-golden harness", "original `./MDK/MDKD3D.EXE`"],
         "docs/frames/README.md": ["visual history", "publish_frame.sh", "oracle is never published"],
-        "ralph-pi.sh": ["gates_batch_integrity.py", "publish_frame.sh", "--base", "REVIEWER FAILED", "--staged"],
+        "ralph-pi.sh": ["gates_batch_integrity.py", "publish_frame.sh", "--base", "REVIEWER FAILED", "--staged", "--each-commit"],
         "tools/hooks/pre-commit": ["gates_batch_integrity.py", "--staged", "MDK_OWNER_APPROVED"],
     }
     for rel, markers in required.items():
@@ -85,8 +192,8 @@ def main() -> int:
         errors.append(".gitignore: commercial game data /MDK/ is no longer excluded")
     if "mdk_3ds/romfs/*" not in gitignore:
         errors.append(".gitignore: staged RomFS is no longer excluded")
-    if (ROOT / "ralph.sh").is_file() and not (ROOT / "logs/ralph/disabled").exists():
-        errors.append("Muse loop is not parked; refuse mixed swarm/multiple writers")
+    if (ROOT / "tools/retired/ralph-muse.sh").is_file() and not (ROOT / "logs/ralph/disabled").exists():
+        errors.append("retired Muse loop is unparked; refuse mixed swarm/multiple writers")
 
     if args.staged:
         staged = set(git("diff", "--cached", "--name-only"))
@@ -110,34 +217,10 @@ def main() -> int:
             errors.append("staged batch modifies a historical frame or measurement")
 
     if args.base:
-        changed = set(git("diff", "--name-only", f"{args.base}..{args.head}"))
-        if not changed:
-            errors.append(f"batch {args.base}..{args.head} contains no changed files")
-        if not args.owner_approved:
-            for path in sorted(changed & PROTECTED):
-                errors.append(f"protected contract changed without owner approval: {path}")
-        range_adds = set(git("diff", "--name-only", "--diff-filter=A", f"{args.base}..{args.head}"))
-        frames = {p for p in range_adds if p.startswith(FRAME_DIR) and p.endswith(".png")}
-        if len(frames) != 1:
-            errors.append(f"batch must add exactly one frame PNG in {FRAME_DIR}; found {len(frames)}")
-        touched_frames = {p for p in changed if p.startswith(FRAME_DIR)}
-        for frame in touched_frames:
-            if frame.endswith(".png") and frame not in range_adds:
-                errors.append(f"batch modifies/removes historical frame {frame}; history is immutable")
-            if frame.endswith(".txt") and frame not in range_adds:
-                errors.append(f"batch modifies/removes historical measurement {frame}; history is immutable")
-        if any(p.startswith("MDK/") or p.startswith("mdk_3ds/romfs/") for p in changed):
-            errors.append("batch touches protected/local game bytes or staged RomFS")
-        for frame in frames:
-            sidecar = str(Path(frame).with_suffix(".txt"))
-            if sidecar not in range_adds:
-                errors.append(f"frame {frame} has no measurement sidecar {sidecar}")
-            else:
-                errors.extend(validate_png_pair(frame, sidecar))
-        if not args.owner_approved and changed & {
-            "tools/check.sh", "tools/runner/gates_frames.py", "tests/frames/reference.sha256"
-        }:
-            errors.append("batch changes test/gate/fidelity ceiling; requires owner approval and explicit review")
+        if args.each_commit:
+            errors.extend(validate_commit_chain(args.base, args.head, args.owner_approved))
+        else:
+            errors.extend(validate_range(args.base, args.head, args.owner_approved))
 
     if errors:
         print("BATCH INTEGRITY: FAIL")

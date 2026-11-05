@@ -1026,8 +1026,9 @@ current chains and their fallbacks.
 - `ralph/validator.md` defines the reviewer: its job is to **disprove** the
   code, not to praise it. It is given the spec, the diff, and the evidence,
   and it must produce a falsification attempt for each claim.
-- The reviewer is invoked by `ralph.sh` as a separate fresh
-  `muse exec --disable-write` run on `muse-wonder-1.0` at max effort.
+- The reviewer is invoked by `ralph-pi.sh` as a separate fresh,
+  write-disabled run on a model from a different family than the builder
+  (`litellm/deepseek-v4.1-flash` by default).
 - Review dimensions, in priority order:
   1. **Fidelity to the C# oracle** — does the C++ do what the C# does? Name
      the exact method and the exact divergence.

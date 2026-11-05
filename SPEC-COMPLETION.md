@@ -291,16 +291,15 @@ servers below are wired as MCP tools):
 
 ## 8. Agent swarm and adversarial validation (REQUIRED)
 
-The owner requires a swarm with adversarial checks, running entirely on
-the **Muse subscription** (no Kilo, no litellm routes). The pieces in this
-repo:
+The owner requires a swarm with adversarial checks, running on the Pi harness
+(`ralph-pi.sh`) against the local LiteLLM router. The pieces in this repo:
 
-- **Builder**: `ralph/builder.md` (model `muse-spark-1.3`, high effort,
-  edit+bash allowed, subagents denied) — the per-iteration implementer with
-  the banking discipline baked in. `ralph.sh` feeds it to a fresh
-  `muse exec` run each iteration.
-- **Adversarial validator**: `ralph/validator.md` (model
-  `muse-wonder-1.0`, max effort, **`--disable-write` by design**) —
+- **Builder**: `ralph/builder.md` (`litellm/qwen`, fallbacks defined only in
+  `ralph-pi.sh`) — the per-iteration implementer with
+  the banking discipline baked in. `ralph-pi.sh` feeds it to a fresh
+  `pi` run each iteration.
+- **Adversarial validator**: `ralph/validator.md` (default
+  `litellm/deepseek-v4.1-flash`, **write-disabled by design**) —
   falsifies instead of praising: fidelity to the C# oracle first (name the
   C# method and diff semantically), then the 3DS traps, the performance
   contract, the language contract, memory/lifetime, and both-target
@@ -308,8 +307,8 @@ repo:
   UNPROVEN.
 - **In-session validation**: when working interactively instead of through
   the loop, run the same `ralph/validator.md` instructions as a read-only
-  review over the current diff (a separate `muse exec --disable-write`
-  run, or a read-only subagent given that file). Never let the builder
+  review over the current diff (a separate write-disabled reviewer run,
+  or a read-only subagent given that file). Never let the builder
   grade its own batch.
 - **The ralph loop**: `./ralph.sh` (§9) runs the swarm mechanically:
   builder per iteration + an external stronger-model review of each batch +
@@ -328,33 +327,33 @@ Swarm rules (from the owner's standing directive):
    commit.** An `UNPROVEN` finding may be rebutted with evidence in
    `docs/CONTINUATION.md`.
 4. **Never substitute a reviewer silently.** Record the model used. The
-   swarm runs on the Muse subscription only: builder `muse-spark-1.3`
-   (high effort), reviewer `muse-wonder-1.0` (max effort, write-disabled).
-   The reviewer must stay a different, stronger model than the builder; if
-   either route fails its preflight, the loop records PREFLIGHT FAILED
-   instead of silently reviewing with the builder's model.
+   builder is `litellm/qwen` and the reviewer is `litellm/deepseek-v4.1-flash`;
+   `ralph-pi.sh` is the source of truth for both chains and their fallbacks.
+   The reviewer must stay a different model family from the builder — identity
+   is the resolved upstream, never the alias — and a reviewer that resolves to
+   the builder's family is skipped rather than dispatched. If no eligible
+   reviewer resolves, the loop records BLOCKED and stops; it never reviews with
+   the builder's own model.
 5. **Completion is never a worker's claim.** Gates + goldens re-run on the
    final tree by the harness itself, plus a full-tree adversarial review.
 
-**Current harness (owner directive 2026-10-26):** the Muse subscription is out
-of credits until 2026-11-01, so the loop runs as `./ralph-pi.sh` on the Pi
-harness (worker `litellm/glm-5.3-flash-nvidia`, fallback `litellm/luna`;
-adversarial reviewer `litellm/minimax-m3.1-flash-nvidia`; gates independent in
-the script). `ralph.sh` and all Muse config stay in place untouched;
-`logs/ralph/disabled` parks the Muse watchdog — delete it to resume Muse on
-Nov 1. Never run both loops at once (one writer).
+**Current harness (owner directive 2026-11-05):** the loop is
+`./ralph-pi.sh` on the Pi harness — builder `litellm/qwen` with
+`litellm/deepseek-v4.1-flash-th` as its only fallback, reviewer
+`litellm/deepseek-v4.1-flash`, gates run independently in the script.
+This is the only harness this project runs; the retired Muse loop lives at
+`tools/retired/ralph-muse.sh` and must not be restarted. `logs/ralph/disabled`
+stays in place as the guard that blocks it. Never run two loops on one tree.
 
-## 9. The ralph loop (existing machinery — use it or replace it deliberately)
+## 9. The ralph loop (the machinery — use it or replace it deliberately)
 
-`./ralph.sh` is a working autonomous loop (in-repo, committed, ~20 iterations
-proven under its previous Kilo driver; rewired to Muse on 2026-10-25).
-Per iteration: a FRESH builder context (`muse exec` on `muse-spark-1.3`,
-prompt = `ralph/builder.md` + `ralph/PROMPT.md` + a machine status block),
-then the loop itself independently runs the three gates, detects
-progress/stall, and runs the external reviewer (a separate fresh
-`muse exec --disable-write` on `muse-wonder-1.0` with `ralph/validator.md`).
-Run it from a normal operator shell: `muse exec` needs `~/.config/muse`
-(auth) outside any agent sandbox.
+`./ralph-pi.sh` is the autonomous loop. Per iteration: a FRESH builder context
+(`pi --model <worker>`, prompt = `ralph/builder.md` + `ralph/PROMPT.md` + a
+machine status block), then the loop itself independently runs the three gates,
+detects progress/stall, and dispatches the adversarial reviewer as a separate
+write-disabled `pi` run on a different model family, given
+`ralph/validator.md`. The loop runs as user `piagent`; the worker and reviewer
+resolve their models through the local LiteLLM router.
 
 ```sh
 ./ralph.sh start [--max N]   # detached, pid file logs/ralph/loop.pid
@@ -368,10 +367,9 @@ Run it from a normal operator shell: `muse exec` needs `~/.config/muse`
 - A cron watchdog restarts the loop after a silent death (it has died
   silently twice — cause never proven, likely memory pressure: this box also
   runs another project's loop; `free -h` before you schedule anything heavy).
-- **If the muse harness takes over the mission, STOP the ralph loop first**
-  (`./ralph.sh stop`) — two writers on one tree is corruption. Its watchdog
-  is a crontab entry (`crontab -l`); remove it or it will resurrect the loop
-  every 5 minutes (`logs/ralph/disabled` also blocks it).
+- **Never start a second writer on this tree.** `ralph-pi.sh` refuses to start
+  while another loop's pid file is alive, and `logs/ralph/disabled` keeps the
+  retired Muse watchdog from resurrecting the old loop.
 - Budgets: worker iteration 3600 s, reviewer 3600 s, 30 iterations per start,
   stall/failure stops are in the script header.
 
