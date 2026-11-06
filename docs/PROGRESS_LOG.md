@@ -17453,7 +17453,10 @@ between two rows if a mixer rate is wanted — never one row's division.
 ### What this batch did
 
 Closed review-11 (`logs/ralph-pi/run-20261106-062909/review-11.md`): five findings, no
-Critical, no High, **none rebutted on merit — all five fixed**, two of them in the gate and
+Critical, no High, **none rebutted on merit — all five fixed** **[Superseded in part by
+review-12 R11-1 / batch 93: four of the five closed as claimed; R10-2's guard class was
+closed for two of its three brace styles, and the braceless and Allman forms adjudicated
+PASS until batch 93.]**, two of them in the gate and
 three in the shipped record. No shipped byte moves: the in-tree build of this tree
 reproduces `mdk.elf` md5 `1237bfcc0c6eee21e73e8a9fe8794302`, byte-identical to batch 91's,
 because the only `mdk_3ds` edits are comment blocks. The functional change is one host-side
@@ -17486,7 +17489,8 @@ to the opener of the enclosing block so the **block** form of a guard is caught 
 which is a hole the reviewer's own mutant did not reach. The frame loop is whitelisted by
 name (`while (aptMainLoop())`) so the test cannot red legitimate code: moving the
 accumulate to the first statement of the frame loop still passes, verified as a mutant.
-Four new arms: device-guarded, mixer-guarded, accumulate-guarded, and the two block-guarded
+Six new arms (batch 92 wrote "Four" and then listed six of them; corrected by batch 93 per
+review-12 R11-4): the alias, three same-line guarded, and the two block-guarded
 forms. A ternary feed (`update(frame ? elapsed : 0.0f)`) and a reordered-but-equivalent
 file were probed by hand: the first is red, the second correctly stays green.
 
@@ -17595,3 +17599,160 @@ then the bank's missing eviction bound. Original-3DS behaviour remains unmeasure
 a hardware reader should now take off the ledger is `submitted` against `secs x 50` (the
 rate test) and a **slope** of `dspframes` between two rows if a mixer rate is wanted — never
 one row's division, and with ±0.02/s on the slope even in the emulator.
+
+## Iteration 121 — batch 93: review-12 remediation — the guard the gate could not see was the one with no brace, and a fourth run of one ELF split its error bar in two
+
+Closed review-12 (`logs/ralph-pi/run-20261106-062909/review-12.md`): five findings, no
+Critical, no High, **none rebutted on merit — four fixed and one owner-only**. One shipped
+gate is hardened (**18 checks, 23 arms → 18 checks, 29 arms**, every arm adjudicated red),
+three digits in the shipped record are replaced by digits that recompute, and a **fourth run
+of a byte-identical ELF** split the error bar batch 92 had attributed to one source into two.
+**No shipped byte moves**: every changed line under `mdk_3ds/` starts with `//`, and the
+in-tree rebuild reproduces `mdk.elf` md5 `1237bfcc0c6eee21e73e8a9fe8794302`, byte-identical
+to batch 91's and batch 92's, after a log showing both `CXX` lines and `LINK`.
+
+### Findings, and what happened to each
+
+**R11-1 (Medium, confirmed, fixed).** Batch 92 closed review-11 R10-2 for two of a guard's
+three brace styles. Reproduced before touching anything, with the reviewer's own mutants and
+two of my own, against batch 92's gate: braceless device feed **G**, braceless accumulate
+**H**, Allman accumulate **K**, plus a braceless mixer feed **M** and a wrapped-condition
+Allman guard **N7** — all five printed `PASS NdspSink (18 checks, 23 arms adjudicated red)`,
+rc=0. The mechanism is exactly as the reviewer diagnosed: `bare()` counts a statement that
+owns its line, and a braceless guard has no `{` for `enclosing_block` to walk back to, while
+an Allman guard's `{` sits alone so the keyword is one line higher than the text that file
+looked at.
+
+The fix reads the guard from **around** the statement instead of from its own line.
+`enclosing_block` became `enclosing_brace` and returns the **index** of the opener, because
+the opener's line is not where an Allman keyword lives; `guard_of` now tests four candidates
+in order — the statement's own line prefix, a walk up from the statement (the braceless
+form), the enclosing block's opener line (`if (c) {`), and, when that opener is a `{` alone,
+a walk up from the brace. The walk is `header_above`: up to `HEADER_WALK = 6` non-blank lines, stopping at
+`HEADER_STOP` (`;`, `}`, `:`) **before** it looks for a keyword — the order matters, and
+not swapping it is the difference between a guard test and a false positive, because
+`if (paused) return;` names a keyword and ends a statement, and a line that ends a
+construct is nobody's header. It walks more than one line because a condition can wrap —
+`if (a &&` / `frame < 10u)` / `call();` — and a one-line look reads that as unconditional,
+which is the same mistake one style further out; **N7 and N8 are red now** and the wrapped
+form is an arm.
+
+Two deliberate choices, both recorded because the reviewer asked (open question 1). First,
+the stop test is written as the **negative** of the suggested "must end in `{`, `}` or `;`":
+the positive form reds a statement after a `case`/`default`/`public:` label, and a gate that
+reds correct code is a gate somebody relaxes. Verified: a `default:` line directly above the
+accumulate stays **green**. Second, the suggested predicate as written would not have closed
+this finding: in Allman style the line directly above the statement *is* the `{`, which that
+predicate accepts — the guard lives on the line above the brace, which is why the fix is a
+walk from the brace and not a line test on the statement. Six new arms: device-braceless,
+mixer-braceless, accumulate-braceless, accumulate-Allman, device-Allman, accumulate-wrapped.
+
+The other side of a guard test is that it must not red correct code, so six correct-code
+probes were run against the new gate and all six stay green: the accumulate moved to the
+first statement of the frame loop; the frame loop itself written Allman-style (`while
+(aptMainLoop())` then `{` alone) so the whitelist has to follow the brace; the accumulate
+inside a plain Allman block with no keyword above the brace; the `default:` label above
+it; a complete one-line `if (frame == 0u) mixer.listenFromCamera(camera);` directly above
+it; and a `do { … } while (false);` above it. And a comment between a braceless guard and
+its body is still **red**, because `code()` blanks comments and a comment cannot hide a
+header.
+
+**R11-2 (Low, confirmed, fixed).** Recomputed rather than trusted: `32728.5/204.562 =
+159.9931`, so the `.cpp`'s `160.001` was arithmetically impossible next to the slope quoted
+in the same sentence. The paragraph now prints each quantum **as a division by the slope it
+came from** (`32728.5/204.544 = 160.007`, `32728.5/204.566 = 159.990`, `32728.5/204.562 =
+159.993`), which is what R10-5 asked for in the first place and makes a transcription of an
+unrounded value impossible to hide in.
+
+**R11-3 (Low, confirmed, fixed).** `1.26/0.021 = 59.5`, not 25; 25 is the multiplier against
+the ±0.05/s *sub-window* scatter. Both files now spell both referents — "60x the 0.021/s
+run-to-run spread, or 25x the ±0.05/s sub-window scatter" — because "the scatter" had two
+possible quantities in the same paragraph, in both directions of anaphora.
+
+**R11-4 (Low, confirmed, fixed by annotation).** Batch 92 wrote "Four new arms" and then
+listed six. Corrected in place with the correction attributed, per the standing convention
+that an append-only log is annotated and never rewritten (review-6 F3): the audit trail is
+what made the error findable. The same treatment went to that entry's "all five fixed",
+which review-12 R11-1 falsified for one of the five.
+
+**R11-5 (Low, confirmed, owner-only, NOT touched).** Both operator-authored inconsistencies
+are still present and both are outside what a batch may stage: the 2026-11-05 directive's
+"single operator-approved same-family exception" against `ralph-pi.sh:249`'s "THERE IS NO
+INDEPENDENCE EXCEPTION HERE" and `test_review_state.sh`'s pinned refusal, and the watchdog
+comment claiming every external limit sits above its in-process counterpart against `HEAD`'s
+7800/5700 and a `startup` of 1800 in-process against 900 out-of-process. Recorded so it is
+not re-derived as new; `ralph/builder.md` is `PROTECTED` and the rest is not this uid's.
+
+### The fourth run of one ELF, and what it split
+
+This batch touched `mdk_3ds/**`, so it carries emulator evidence, and the ELF is
+byte-identical to three earlier runs — which makes the run a fourth sample of the same
+bytes rather than a new measurement of a new build. It says something batch 92 did not
+expect: the new ledger's 48 rows carry the **same `dspframes` on all 48** as batch 91's
+second run (229 at frame 60 … 9870 at frame 2880) and agree on `secs` at 42 of 48, so its
+slope is `(9870-229)/(48.233-1.099) = 204.544/s`, the same number batch 91 printed. But
+batch 92 attributed the whole 0.021/s spread to "±1 count over 47.134 s", and two runs with
+an **identical counter trajectory** differ by 0.017/s of that spread purely because their
+measured windows differ by 4 ms at the print's 3 dp (`9641/47.130 = 204.562` against
+`9641/47.134 = 204.544`). The quantum therefore has two sources, a ±1 count and a few-millisecond
+window, and the shipped comments now name both and say which contributes how much. The
+band itself is unchanged — 204.544..204.566/s, inside which the header model 204.553 sits
+(−0.009..+0.013/s) and a power-of-two 204.800 does not (0.234–0.256/s outside) — and the
+four runs' other quoted ranges were re-verified rather than copied: header-model offset
++0.0139..+0.0281 s (still "+0.014..+0.028"), drift −0.0020..+0.0029 s (still
+"−0.002..+0.003"), power-of-two drift −0.0539..−0.0588 s (still "−0.054..−0.059"), and the
+power-of-two offset rises on 8, 9 and 9 of the 47 row-to-row steps of three runs and 32 of
+47 of a fourth, with no single rise above +0.006 s, so "three runs" became "four" with its
+counts recomputed, not inherited.
+
+### Gates, as run
+
+- `make -C tests/scripts` → **`All cases match the oracle.`**, zero `FAIL` lines, and the
+  hardened gate reports `PASS NdspSink (18 checks, 29 arms adjudicated red)`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM bash tools/check.sh` →
+  **`CHECK: ALL GATES PASSED`**: `audit_c_with_classes` 0 violations, `gates_vfp` 0
+  blockers, `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates,
+  `gates_core_parity` both targets link the same core, `gates_smdh` **SKIP** (no built
+  `.cia`), `gates_frames` `PASS L3_f1.bmp sha=58615fc85d02e009` / `VERDICT: CONTRACT CLEAN`,
+  `gates_batch_integrity` PASS.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → **rc=0**,
+  `mdk.elf` md5 `1237bfcc0c6eee21e73e8a9fe8794302`.
+
+### Emulator evidence (AGENTS P7/P8, because `mdk_3ds/**` was touched)
+
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 50 --min-frames 2000` exits **0** on pinned
+Mandarine r1.2.1 (md5 `0d2adab6…`, not the segfaulting r1.3.0): display `:99` (an existing
+shared `Xvfb`, not started or killed by this batch), forced llvmpipe, mono
+(`render_3d=0 factor_3d=0`), SDL audio dummy, `dspfirm.cdc` present, private lane
+`/tmp/mdk-emurun.444317`, one session banner, `main: FZ/DN ok (fpscr=0x03000010)`, backend
+PICA200 Citro3D, `flow: screen=4 level=7`, reached frame 2820 by the deadline and frame
+**2880** after the reap (53 frame lines). Last ledger row: `audio: frame=2880 secs=48.233
+submitted=2407 done=2404 dropped=5 requeued=1 inDsp=3 dspframes=9870 dspdropped=0`, so
+`submitted − done == inDsp == 3` and the rate test `submitted/(secs × 50) = 0.9981`. The
+frame pair is byte-identical to batch 92's (`sha256 6646adf1…`, `bad_percent=1.240`,
+`max_delta=247`, `mean_delta=0.1819`) because no shipped byte moved, and the sidecar says so
+rather than claiming progress from it. `/tmp/kilo` is another uid's and is not writable by
+this one, so captures are under `/tmp/rv13`.
+
+### Prior-solution lookup
+
+`pi-knowledge` `mdk-sdl` was searched first (ndsp ledger clock, guard/statement-shape checks,
+mutation arms). Its top hit was the sibling gate `tests/scripts/main_3ds_flow_test.sh`,
+whose `block_span`/`block_span_from`/`line_depths` helpers and `guard-replaced-by-an-unrelated-flag`
+arm are the in-repo precedent for reading statement scope structurally rather than by line
+count — which is the shape this fix takes. Neither `obsidian_*` nor `cognee_*` is exposed in
+this session, so the vault lookup was the degraded disk-only path (AGENTS P9) and Cognee's
+graph search was unavailable; the vault's
+`50-tooling/every-continue-in-a-gate-must-be-reachable-only-by-proven-present-data.md` is the
+same failure family (a validator that skips on missing input is a PASS generator) and is why
+the new walk returns a header or a stop, never a silent "unconditional".
+
+### Next
+
+Unchanged in priority: **the one-sided view** (geometry covers panel columns 200..399 of
+400), then audio order 6c (int16 sample store), 6d (no `ScriptRuntime` on the console),
+then the bank's missing eviction bound. Original-3DS behaviour remains unmeasured, and what
+a hardware reader should now take off the ledger is `submitted` against `secs x 50` (the
+rate test) and a **slope** of `dspframes` between two rows if a mixer rate is wanted — never
+one row's division, and with ±0.02/s on the slope even in the emulator, from two named
+sources rather than one.

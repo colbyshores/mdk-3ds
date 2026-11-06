@@ -125,23 +125,31 @@ bool audioIsOpen();
 //     is now MEASURED — but only by a SLOPE between two ledger rows, never by
 //     one row's dpf/secs: a single row carries a constant ~20 ms start offset
 //     (the counter starts with ndsp, `secs` starts with the first frame) that a
-//     slope cancels and a ratio does not. Measured slope, three runs of one build
-//     and its parent: 204.544, 204.562 and 204.566/s — a 0.021/s spread that IS the
-//     estimator's own quantum (+/-1 dspframe over a 47 s window). That band is
+//     slope cancels and a ratio does not. Measured slope, four runs of one ELF
+//     (md5 1237bfcc…, which batch 91's and batch 92's builds both are): 204.544/s
+//     TWICE, 204.562 and 204.566/s — a 0.021/s spread that IS the estimator's
+//     quantum, and it comes from a +/-1 dspframe AND a 4 ms movement of the measured
+//     window at the print's 3 dp (9641/47.130 against 9641/47.134 is 0.017/s of it),
+//     not from the counter alone as batch 92 said. That band is
 //     within 0.013/s (0.006 %) of 32728.5/160 = 204.553 and 0.234-0.256/s (0.12 %)
 //     from a power-of-two 204.800, so the header model survives and the power of
-//     two does not; implied quantum 160.00 +/- 0.01 samples. The nearest OTHER
+//     two does not; implied quantum 160.00 +/- 0.01 samples (32728.5 over each of
+//     the four slopes above: 160.007, 160.007, 159.993, 159.990). The nearest OTHER
 //     integer quantum is 161, i.e. 32728.5/161 = 203.283/s, 1.26/s below the
-//     measurement (25x the scatter); 0.63/s is the distance to the 160.5 halfway
+//     measurement — 60x the 0.021/s run-to-run spread, or 25x the +/-0.05/s
+//     sub-window scatter named below, and both are spelled because "the scatter"
+//     alone has two referents here (review-12 R11-3); 0.63/s is the distance to the
+//     160.5 halfway
 //     point where the implied quantum would tip, which an earlier draft called
 //     "the next integer" (review-11 R10-5). The scatter between 11 s sub-windows
 //     of one run is +/-0.05/s,
 //     and that — not the print's rounding — is the resolution of this
 //     instrument. The
 //     "0.078/s spread between two runs" that three batches used to call this
-//     unmeasurable was one trajectory read at two points, not a spread; three
-//     runs reproduce every ledger row to within ONE dspframe (23 of 48 exactly),
-//     so the instrument is reproducible to a frame and not, as batch 91 said,
+//     unmeasurable was one trajectory read at two points, not a spread; four
+//     runs reproduce every ledger row to within ONE dspframe, and three of the four
+//     agree on all 48 counts exactly (the fourth is one lower on 25 of them), so the
+//     instrument is reproducible to a frame and not, as batch 91 said,
 //     frame for frame (review-10 F1, corrected by review-11 R10-4's
 //     re-measurement). What the
 //     number describes is Mandarine's HLE model of the mixer, so the Old-3DS

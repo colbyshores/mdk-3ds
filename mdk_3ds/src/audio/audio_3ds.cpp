@@ -123,27 +123,40 @@ bool g_live = false;
 //     dpf/secs from a single row carries a START OFFSET, because the counter
 //     starts when ndsp starts and `secs` starts when the first frame is
 //     measured. Divide by the header model and subtract it: dpf/204.553 - secs
-//     stays inside +0.014..+0.028 s across three 47 s runs and drifts by
+//     stays inside +0.014..+0.028 s across four 47 s runs and drifts by
 //     -0.002..+0.003 s (about one 20 ms buffer; the runs bound the offset, they do
 //     not pin where it comes from), while under a power-of-two 204.80 the same
 //     subtraction drifts by -0.054..-0.059 s OVERALL — not monotonically: it rises
-//     on 9 of the 47 row-to-row steps of one run (largest rise +0.004 s) and on 32
-//     of 47 of another (largest +0.006 s), which is the same row-to-row jitter as
+//     on 8, 9 and 9 of the 47 row-to-row steps of three runs and on 32 of 47 of a
+//     fourth, with no single rise above +0.006 s, which is the same
+//     row-to-row jitter as
 //     the +/-0.05/s the sub-windows show, integrated over a 47 s baseline. The trend
 //     is the finding, not the strictness of the descent (review-11 R10-3). A
 //     constant offset cancels in a SLOPE
-//     between two rows, so the slope is the estimator and the ratio never was:
-//     (9870-229)/(48.233-1.099) = 204.544/s and (9870-228)/(48.233-1.099) =
-//     204.566/s on two runs of this build, 204.562/s on the parent ELF. That
-//     0.021/s spread IS the estimator's own quantum, +/-1 count over 47.134 s, and
-//     it is the honest error bar on every number in this paragraph. Against the
-//     header model's 204.553 the three read -0.009, +0.013 and +0.009/s (-0.004 %
-//     to +0.006 %) and against a power-of-two 204.800 they read -0.256, -0.234 and
-//     -0.238/s (-0.115 % to -0.125 %), so the model that survives is the header's
+//     between two rows, so the slope is the estimator and the ratio never was.
+//     Four runs of one ELF (md5 1237bfcc…, which batch 91's build and batch 92's
+//     both are): (9870-229)/(48.233-1.099) = 204.544/s TWICE — batch 91's second
+//     run and this batch's, whose 48 ledger rows carry the same count on every
+//     row — (9870-228)/(48.233-1.099) = 204.566/s, and (9870-229)/(48.230-1.100) =
+//     204.562/s. That 0.021/s spread IS the estimator's quantum, and it has TWO
+//     sources rather than the one batch 92 named: the counter moves by +/-1 count
+//     (229 vs 228 at frame 60; three of the four runs agree on all 48 rows), and
+//     the measured window moves by 4 ms at the print's 3 dp, which on its own is
+//     0.017/s of the spread (9641/47.130 against 9641/47.134). It is the honest
+//     error bar on every number in this paragraph. Against the
+//     header model's 204.553 the four read -0.009 (twice), +0.013 and +0.009/s
+//     (-0.004 % to +0.006 %) and against a power-of-two 204.800 they read -0.256
+//     (twice), -0.234 and -0.238/s (-0.115 % to -0.125 %), so the model that
+//     survives is the header's
 //     by an order of magnitude more than the spread. The implied quantum is
-//     160.007, 160.001 and 159.990 samples. The nearest OTHER integer
-//     quantum is 161, which would run at 32728.5/161 = 203.283/s, 1.26/s below the
-//     measurement — 25x the scatter — and the measurement sits 0.63/s from the
+//     32728.5/204.544 = 160.007, 32728.5/204.566 = 159.990 and 32728.5/204.562 =
+//     159.993 samples, each paired with the slope it comes from because an earlier
+//     draft listed a 160.001 no slope in this paragraph produces (review-12 R11-2).
+//     The nearest OTHER integer quantum is 161, which would run at
+//     32728.5/161 = 203.283/s, 1.26/s below the measurement — 60x the 0.021/s
+//     run-to-run spread named above, or 25x the +/-0.05/s sub-window scatter below,
+//     and the paragraph says which is which (review-12 R11-3) — and the measurement
+//     sits 0.63/s from the
 //     halfway point where the implied quantum would tip (160.5 => 203.916/s), so
 //     the quantum is 160 or it is nothing (review-11 R10-5: an earlier draft said
 //     "the next integer is 0.6/s away", which is that half-step tipping distance

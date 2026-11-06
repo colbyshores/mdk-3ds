@@ -131,10 +131,11 @@ def body(text, name):
     return None
 
 
-def enclosing_block(text, pos):
-    """The text preceding the `{` that opens the innermost block containing `pos`
-    ("" if none is found). Walks back with a brace balance, so the opener of a
-    sibling block is not mistaken for this one's."""
+def enclosing_brace(text, pos):
+    """The index of the `{` that opens the innermost block containing `pos`, or -1.
+    Walks back with a brace balance, so the opener of a sibling block is not
+    mistaken for this one's. Returns an INDEX and not the opener's line because an
+    Allman brace sits alone and its keyword is one line higher (review-12 R11-1)."""
     depth = 0
     i = pos
     while i >= 0:
@@ -143,10 +144,10 @@ def enclosing_block(text, pos):
             depth += 1
         elif c == "{":
             if depth == 0:
-                return text[text.rfind("\n", 0, i) + 1:i]
+                return i
             depth -= 1
         i -= 1
-    return ""
+    return -1
 
 
 # The loop these three statements live in. Naming it is what keeps the guard test
@@ -154,25 +155,91 @@ def enclosing_block(text, pos):
 # itself, and a gate that reds correct code is a gate somebody relaxes.
 FRAME_LOOP = r"\bwhile\s*\(\s*aptMainLoop\s*\(\s*\)\s*\)"
 
+# `else if` precedes `else` so the pair reads as one guard rather than as `else`.
+GUARD_KEYWORD = re.compile(r"\b(if|else if|else|switch|for|while|do)\b")
+
+# A line that ENDS a construct, so the walk below stops there and a statement after
+# an ordinary call, a closed block, or a `case`/`default`/`public:` label is never
+# read as somebody's body. Written as the negative of "must end in `{`, `}` or `;`"
+# on purpose: the positive form reds correct code after a label, and a gate that
+# reds correct code is a gate somebody relaxes.
+HEADER_STOP = re.compile(r"[;}:]\s*$")
+
+# A condition can wrap, so the walk is bounded rather than unbounded: six non-blank
+# lines covers a multi-line header with room to spare and cannot be talked into
+# reading across a statement boundary it did not stop at.
+HEADER_WALK = 6
+
+
+def header_above(text, pos):
+    """The control-header line whose body begins at or below the line containing
+    `pos`, or "" when nothing above it hands a body to the statement.
+
+    It walks more than one line because a condition can wrap:
+
+        if (frame > 0 &&
+            frame < 10u)
+            call();
+
+    where the line directly above the call is `frame < 10u)` and names no keyword,
+    so a one-line look reads that guard as unconditional — the same mistake
+    review-12 R11-1 is about, one style further. Comments and strings are already
+    blanked by code(), so neither can supply a keyword or hide a header, and blank
+    lines are skipped for the same reason."""
+    end = text.rfind("\n", 0, pos)
+    steps = 0
+    while end >= 0 and steps < HEADER_WALK:
+        start = text.rfind("\n", 0, end)
+        line = text[start + 1:end]
+        end = start
+        if not line.strip():
+            continue
+        steps += 1
+        # The stop test goes FIRST: `if (paused) return;` names a keyword and ends a
+        # statement, and a line that ends a construct is nobody's header.
+        if HEADER_STOP.search(line):
+            return ""
+        if GUARD_KEYWORD.search(line):
+            return line
+    return ""
+
 
 def guard_of(text, match):
     """The keyword that guards `match`, or "" for none.
 
-    Two forms of guard exist and a line test only sees the first: `if (c) call();`
-    shares a line with its condition, and
+    THREE forms of guard exist, and a whole-line test sees only the first:
 
-        if (c) {
-            call();
+        if (c) call();    // shares its line with its condition — `bare` rejects
+        if (c) {          // brace on the condition's line — seen by walking back
+            call();       // to the opener of the enclosing block
         }
+        if (c)            // braceless, and the same guard in Allman style with the
+            call();       // `{` alone above: NEITHER line test sees either
 
-    does not, so a whole-line test passes it. Walking back to the opener of the
-    enclosing block sees both, and the frame loop is whitelisted by name because
-    it is the loop the statements are supposed to be in."""
-    opener = enclosing_block(text, match.start())
-    if re.search(FRAME_LOOP, opener):
-        return ""
-    m = re.search(r"\b(if|switch|for|while)\b", opener)
-    return m.group(1) if m else ""
+    Review-12 R11-1 reproduced the third form — both its braceless and its Allman
+    spelling — as mutants that adjudicated PASS against batch 92, whose fix closed
+    only the first two. So the header is read from AROUND the statement rather than
+    from its own line: the line above it (braceless), the opener of the enclosing
+    block (`if (c) {`), and — when that opener is an Allman `{` sitting alone — the
+    header above the brace. Each of those is a walk, not a single line, so a wrapped
+    condition does not reopen the hole. The frame loop is whitelisted by name in
+    every form, because it is the loop these statements are supposed to be in."""
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    cands = [text[line_start:match.start()]]            # same-line guard
+    cands.append(header_above(text, match.start()))     # braceless guard
+    bi = enclosing_brace(text, match.start())
+    if bi >= 0:
+        opener = text[text.rfind("\n", 0, bi) + 1:bi]
+        cands.append(opener)                            # `if (c) {`
+        if not opener.strip():                          # Allman: `{` alone
+            cands.append(header_above(text, bi))
+    for c in cands:
+        if re.search(FRAME_LOOP, c):
+            return ""
+        m = GUARD_KEYWORD.search(c)
+        if m:
+            return m.group(1)
+    return ""
 
 
 def bare(text, pattern):
@@ -185,8 +252,10 @@ def bare(text, pattern):
     unconditional feed from a guarded one. Requiring the statement to own its line
     is the same depth-0 test c3d_frame_test.sh applies to the eye loop
     (`eye-loop-statements-unconditional`, review-3 F2 there, review-11 R10-2
-    here); `guard_of` is the half that file does not need, because a block guard
-    owns its line. Comments are already blanked by code(), so the only thing
+    here); `guard_of` is the half that file does not need, and it is needed here
+    because a guard owns its line too — in all three brace styles, not just the
+    block style c3d_frame_test.sh has to handle (review-12 R11-1). Comments are
+    already blanked by code(), so the only thing
     allowed between the statement's `;` and the end of its line is whitespace."""
     out = []
     for mm in re.finditer(pattern, text):
@@ -326,7 +395,11 @@ def adjudicate(src, main, quiet=False):
     # it runs (a feed inside `if (frame & 1u)` is one call site that is handed
     # nothing on half the frames, R10-2). Both mutants adjudicated PASS against
     # batch 91, and both are arms now. The fixes are that the clock may not be
-    # aliased, and that all three statements must own their line.
+    # aliased, and that all three statements must own their line. Review-12 R11-1
+    # then found that "owns its line" had three spellings and only two were closed:
+    # a braceless `if (c)` with the body below it, and the same guard in Allman
+    # style, each adjudicated PASS, so the guard is now read from the lines AROUND
+    # the statement rather than from the statement's own line alone.
     lits = [s for s in re.findall(r'"((?:[^"\\]|\\.)*)"', main) if "submitted=" in s]
     ledger = "".join(lits)
     check("frontend-logs-the-frame-with-the-ledger",
@@ -377,8 +450,10 @@ def adjudicate(src, main, quiet=False):
           "`secs` is only the audio time if it sums what the mixer and the device "
           "were actually handed: the one `audioClock += X;` and both "
           "`mixer.update(X)` / `mixer.device().update(X)` calls must each be the "
-          "whole of its own line — unconditional, not the body of an `if` or the "
-          "arm of a `?:` — and must name the same identifier. Found %d accumulate(s) "
+          "whole of its own line — unconditional, not the body of an `if` in any of "
+          "its three brace styles (same line, `{` on the condition's line, or "
+          "braceless/Allman) nor the arm of a `?:` — and must name the same "
+          "identifier. Found %d accumulate(s) "
           "`%s`, %d mixer feed(s) `%s`, %d device feed(s) `%s`. Two distinct errors "
           "live here: a feed handed a scaled or different value than the one "
           "accumulated (review-10 F4), and a feed that runs on SOME frames while the "
@@ -503,6 +578,42 @@ ARMS = [
          "mixer.device().update(elapsed);",
          "if (frame != 0u) {\n            mixer.device().update(elapsed);\n        }",
          1))),
+    # Review-12 R11-1: the same guard in the two styles batch 92 could not see.
+    # A braceless body and an Allman brace both own their line, and neither has a
+    # `{` on a keyword line for the block walk to land on, so all three of these
+    # adjudicated PASS against batch 92 and the first two are the reviewer's own
+    # mutants G and H. The plausible code is the same as above — "only feed the
+    # device while not paused" — written in the style the author prefers.
+    ("frontend-feeds-the-device-in-a-braceless-guard",
+     lambda s, m: (s, m.replace(
+         "mixer.device().update(elapsed);",
+         "if (frame & 1u)\n            mixer.device().update(elapsed);", 1))),
+    ("frontend-feeds-the-mixer-in-a-braceless-guard",
+     lambda s, m: (s, m.replace(
+         "mixer.update(elapsed);",
+         "if (frame & 1u)\n            mixer.update(elapsed);", 1))),
+    ("frontend-accumulates-the-clock-in-a-braceless-guard",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "if (frame & 1u)\n            audioClock += elapsed;", 1))),
+    ("frontend-accumulates-the-clock-in-an-allman-guard",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "if (frame & 1u)\n        {\n            audioClock += elapsed;\n        }",
+         1))),
+    ("frontend-feeds-the-device-in-an-allman-guard",
+     lambda s, m: (s, m.replace(
+         "mixer.device().update(elapsed);",
+         "if (frame & 1u)\n        {\n            mixer.device().update(elapsed);\n        }",
+         1))),
+    # The same guard with a condition that WRAPS, which is why the header is read by
+    # a walk and not by one line: the line directly above the statement is then
+    # `frame < 999999u)`, which names no keyword at all.
+    ("frontend-accumulates-the-clock-in-a-wrapped-guard",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "if (frame > 0u &&\n            frame < 999999u)\n            "
+         "audioClock += elapsed;", 1))),
 ]
 
 print("ndsp_sink: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
