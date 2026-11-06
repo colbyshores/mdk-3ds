@@ -907,13 +907,22 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // (3) `enhanced.hlsl:199-201`, the MODE_CANVAS and MODE_IMAGE branches,
     // return the texel's OWN alpha (`float4(..., texel.a) * colour`) with no
     // discard, so a canvas or image texel of alpha 0 is painted by the oracle
-    // and discarded by this frame-wide test -- and unlike (1) and (2) that alpha
-    // is not forced to 0/255 by the palette expansion, so a partially
-    // transparent canvas edge is at risk too, not just a fully transparent one.
-    // The canvas is the blocked HUD seam (CONTINUATION item 5b), so this corner
-    // is the one the canvas batch has to resolve: it must scope the alpha test
-    // per pass rather than leave it frame-wide, and it must not discover this
-    // from a missing HUD (review-4 F9).
+    // and discarded by this frame-wide test. RECORDED, NOT ESTABLISHED
+    // (review-5 F5 -- the earlier version of this note claimed a divergence and
+    // handed the canvas batch a work item, and neither holds). Every canvas call
+    // site is `Pass.Overlay` in the oracle (`Renderer.cs:320,325,329`, and
+    // `Renderer.Insets.cs:124-125` draws the whole canvas in that pass), and
+    // Overlay is blended SRC_ALPHA / ONE_MINUS_SRC_ALPHA (`Renderer.cs:565,
+    // 571-573`), where a fragment of alpha 0 leaves the target bit-for-bit as a
+    // discard does; `Blend::Add` (SRC_ALPHA / ONE) adds zero, the same. And a
+    // PARTIAL alpha is above the `> 0` reference, so it survives this test rather
+    // than being cut -- the palette expansion's fractional EDGE_CLEAR coverage is
+    // not at risk here. The corner only bites if a canvas or image draw is ever
+    // placed on a depth-writing, unblended pass, which nothing does today. The
+    // canvas batch (CONTINUATION item 5b) should re-read this when it picks the
+    // canvas's pass, and must NOT spend itself scoping the alpha test per pass
+    // before that choice is made (review-4 F9 for the claim, review-5 F5 for the
+    // correction).
     C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);
 
     // The frame's default blend state: the pass the queue starts with. Written

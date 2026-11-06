@@ -43,10 +43,16 @@
 namespace mdk {
 
 // The number of buckets, which is the number of values `Pass` has. Derived from
-// the enum's own sentinel rather than hand-counted: with a literal 6 here a
-// seventh pass would have been accepted by the enum, rejected by the bucket
-// bounds check, and its draws would have vanished with nothing to say so
-// (review-4 F1).
+// the enum's own sentinel rather than hand-counted. With a literal 6 here a
+// seventh pass would still have been accepted by the enum, and `add()` below
+// clamps an out-of-range bucket to 0 rather than dropping the draw -- so what
+// the literal would have done is fold the new pass's draws INTO the `Solid`
+// bucket: drawn in the wrong order, with the opaque blend and depth state, and
+// with no diagnostic anywhere. Deriving the count gives a new pass its own
+// bucket, and the `static_assert`s in `pica_matrix_tests.cpp` are what turn
+// "every pass is handled" into a build failure (review-4 F1; review-5 F3 for
+// this comment's earlier claim that the draw is rejected or voided, which
+// `add()` deliberately never does).
 const int32_t kDrawQueuePassCount = static_cast<int32_t>(Pass::Count);
 
 // The frame's queued draws, bucketed by pass.

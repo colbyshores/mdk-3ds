@@ -24,7 +24,10 @@ display: :99 -- Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7), the
 capture: /tmp/kilo-pi/b85/parent.png, 1280x1024, sha256
          45756746b73f435419c0673e0aaaffaf30322d57ee3919387ad5cc836bda51df.
          The committed crop is the same top-panel rectangle as the other half,
-         (440,253)-(839,492), 400x240, and it is byte-identical to it: sha256 of
+         (440,253)-(839,492), 400x240 -- AS COMMITTED IT IS 399x239 (95361 px),
+         which batch 86 measured and corrected (review-5 F4); re-cropping it with
+         `tools/panel_crop.py` gives the documented 400x240, and it is
+         byte-identical to the other half either way: sha256 of
          its pixels 784fad63a8a72999c8585720276a454b249a96ba1dab7c6adbc761816ff446a9.
 oracle:  none, for the reason given in the other sidecar. Build-to-build only.
 
@@ -35,7 +38,9 @@ what this half adds: review-4 F6 charged that `BlendState::enable` was never
        (`installBlendState` installs `mdk::pica::kBlendReplace` whenever
        `enable` is false). The claim being tested is that this is a
        representation fix and not a picture fix, and the pair says so: 0 px of
-       the 400x240 panel, with the whole-capture difference confined to the
+       the panel (stated 400x240, measured 399x239 -- see the capture block above
+       and the r2 pair, which re-measures 0 px of 96000), with the whole-capture
+       difference confined to the
        emulator's own overlay band (x 753..760, y 744..752; 63 px at
        x 760..767 for the earlier run of the same code).
        It also says what the pair CANNOT say: this scene is 154 all-Solid

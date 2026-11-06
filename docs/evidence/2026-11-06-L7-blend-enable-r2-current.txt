@@ -1,0 +1,82 @@
+evidence pair, REVISION 2 -- THIS HALF is the build this batch ships; the other
+half (2026-11-06-L7-blend-enable-r2-parent.png/.txt) is a clean build of its
+grandparent `4839cc1`. This pair supersedes
+2026-11-06-L7-blend-enable-{parent,current}.png/.txt, whose "current" half
+recorded an md5 no build of that commit reproduces (review-5 F1). Read the two
+sidecars together; the claim belongs to the pair. See docs/evidence/README.md.
+
+scene:   level 7, the start arena. Guest log ended at frame 2280 (43 frame lines
+         logged; the deadline reading was 2160), the camera is the static start
+         framing (eye (0.0,-4.0,4.5), feet (0.0,4.0,0.0), yaw 90). The parent's
+         run ended at 2220 and the panel is identical anyway: this scene does not
+         animate, so the two pictures are comparable without being the same tick.
+build:   this working tree -- `9a359c7a` plus this batch's edits, which are
+         comments and a test file -- copied out of the repository and built
+         CLEAN, so nothing of the in-tree build directory is in it:
+             git ls-files -z | xargs -0 -I{} cp --parents {} /tmp/b86/cur/
+             DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM \
+             MDK_DATA_DIR=/mnt/nas/Development/mdk-sdl/MDK make -C mdk_3ds
+         mdk.elf  md5 73bfe104300467bdabdd391e8b9d66fd  <- the code identity
+         mdk.3dsx md5 567a85a0da39925e6af3fa4a2eec025c <- the container
+         That .3dsx md5 is the one review-5 measured for a clean build of
+         `9a359c7a` itself, which is the measurement this batch set out to make:
+         a build of this batch's tree and a build of the commit it amends are the
+         same bytes, because everything this batch changed is a comment or a test.
+         It is also the md5 the superseded sidecar should have recorded instead
+         of `9dfed8e081cfb95e58cadc252d691444`.
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 40 \
+                    --shot /tmp/b86/out/current.png /tmp/b86/out/current.3dsx
+         (emurun exit 0; dspfirm present in the lane; guest log ended at 2280)
+display: :99 -- Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7). Same
+         pinned Mandarine r1.2.1 (md5 0d2adab6ad078c78e6d03e72086f2eb6), same
+         forced llvmpipe, same mono (render_3d=0 factor_3d=0), same private lane
+         and private config as the parent's run. Captures went under /tmp/b86
+         because /tmp/kilo belongs to another co-tenant on this box and is not
+         writable by this uid.
+capture: /tmp/b86/out/current.png, 1280x1024, sha256
+         c76aef82752929ddf24b108c325e2d61fc91290ca31a360413549fc7718121ac.
+         The committed crop is the top-panel rectangle (440,253)-(839,492)
+         INCLUSIVE, 400x240 = 96000 px, produced by
+         `python3 tools/panel_crop.py crop`, which refuses to write a crop that
+         is not exactly that size (review-5 F4: the superseded pair said 400x240
+         and committed 399x239). sha256 of its pixels
+         f9af51b635680739418648cd43d9f82361d61f82f65786e203ed9436a8e20d6a --
+         byte-identical to the parent's crop, and that equality IS the finding.
+oracle:  none, and that is stated rather than hidden. This is a RELATIVE A/B: it
+         measures what a change did, never whether either build is right (vault:
+         relative-vs-absolute-oracle-for-emulated-subsystems). The scene is 154
+         all-Solid batches, so it cannot exercise Pass::Blended or Pass::Overlay
+         at all; what holds those is `PASS PicaMatrix` and the frame gate.
+
+what this pair measures:
+
+    panel crop, parent vs this build:    0 px of 96000   (checked crop)
+    whole capture, parent vs this build: 180 px, all of them at
+                                         x 743..767, y 744..752
+
+Those 180 pixels are Mandarine drawing its own `Frame: N.NN ms` overlay on the
+BOTTOM screen, the documented noise floor for two runs of any two builds; the
+panel crop exists precisely so that overlay is not compared.
+
+WHY THE SUPERSEDED MD5 WAS NOT REPRODUCIBLE, measured, because the answer is a
+rule and not an apology. The superseded sidecar blamed "a whitespace-only
+realignment of one comment line". That is not merely unproven, it is impossible,
+and the probe is cheap: appending a comment line to `render_types.h` in the
+clean /tmp tree and rebuilding leaves BOTH md5s unchanged (`mdk.elf`
+73bfe104…, `mdk.3dsx` 567a85a0…), and the linked ELF has no debug sections.
+The real mechanism is the container. `mdk.3dsx` is ELF + SMDH + RomFS, and the
+RomFS is rebuilt by `3dsxtool` walking the staged directory in readdir order:
+
+    clean build in /tmp (ext4)  mdk.3dsx 567a85a0…   mdk.elf 73bfe104…
+    clean build in the repo     mdk.3dsx 34eff8e6…   mdk.elf 73bfe104…
+    (the repo tree is NFS: `ls -U build/romfs` md5 c70a72c1…, /tmp ext4:
+     b798c146…, while the SORTED listing is identical, f33a5018…)
+
+Same code, same staged files, different directory order, different .3dsx bytes.
+ext4's readdir order is a hash of the names, so a /tmp build reproduces across
+days and directories; an NFS one does not reproduce between staging runs at all.
+So: **the .3dsx md5 is a container hash and not a build identity, and every
+sidecar from now on records `mdk.elf` md5 as the code identity** (it is
+reproducible across both filesystems and insensitive to comments, both measured
+above). The superseded pair's `9dfed8e0` was an in-tree build, and on this tree
+that number was never going to come back.

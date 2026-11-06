@@ -403,6 +403,15 @@ void testTheOpaquePassesDoNotBlend() {
     // `blendStateForPass` and `depthStateForPass`. `Pass::Count` exists for
     // this, and `mdk::kDrawQueuePassCount` derives from the same sentinel, so
     // the draw queue's bucket count cannot drift from the enum either.
+    //
+    // The static_asserts hold the ARRAY's length; the loop has to hold the
+    // VERDICTS, and it must accumulate them. The first version of this loop
+    // assigned `coversAll` inside the body instead of accumulating it, so five
+    // of the six verdicts were thrown away and the one `PICA_CHECK` asserted
+    // only `Overlay` (review-5 F2). One check per pass now, so a failure also
+    // names which pass lost its verdict, and a `visited` bitmask that makes
+    // "the loop judged all six" a checked claim rather than a property of the
+    // loop condition nobody looks at.
     const mdk::Pass every[] = {mdk::Pass::Solid, mdk::Pass::DoubleSided,
                                mdk::Pass::Mirror, mdk::Pass::Blended,
                                mdk::Pass::OnTop, mdk::Pass::Overlay};
@@ -419,14 +428,22 @@ void testTheOpaquePassesDoNotBlend() {
                       static_cast<int>(mdk::Pass::Count) - 2,
                   "the unblended set is the oracle's NOT (Blended or Overlay), "
                   "so it is every pass but two");
-    bool coversAll = true;
+    unsigned visited = 0;
     for (size_t i = 0; i < sizeof(every) / sizeof(every[0]); i++) {
-        const bool blends = every[i] == mdk::Pass::Blended ||
-                            every[i] == mdk::Pass::Overlay;
-        coversAll = mdk::pica::blendStateForPass(every[i], mdk::Blend::Alpha).enable ==
-                    blends;
+        const mdk::Pass pass = every[i];
+        const int blends = pass == mdk::Pass::Blended || pass == mdk::Pass::Overlay;
+        const int installed =
+            mdk::pica::blendStateForPass(pass, mdk::Blend::Alpha).enable;
+        visited |= 1u << static_cast<unsigned>(pass);
+        if (installed != blends) {
+            printf("FAIL pica_matrix:%d: pass %u expects enable=%d, matrix says %d\n",
+                   __LINE__, static_cast<unsigned>(pass), blends, installed);
+            failures++;
+        }
     }
-    PICA_CHECK(coversAll);
+    // Every enumerator was judged, not just the last one the loop reached.
+    // `Pass::Count` is 6, so the full set is bits 0..5.
+    PICA_CHECK(visited == (1u << static_cast<unsigned>(mdk::Pass::Count)) - 1u);
 }
 
 void testTheBlendedPassUsesTheOraclesFactors() {

@@ -91,9 +91,18 @@ enum class Pass {
     // something a reader counts (review-4 F1: a hand-counted array of the six
     // members could not fail when a seventh arrived). `mdk::kDrawQueuePassCount`
     // is derived from it, so the draw queue's bucket count cannot drift from the
-    // enum either. Nothing may treat `Count` as a pass: the draw queue bounds
-    // check rejects it, and the two exhaustive switches over `Pass` name it only
-    // to stay exhaustive without a `default`.
+    // enum either. Nothing may treat `Count` as a pass: `DrawQueue::add` would
+    // fold such a draw into the `Solid` bucket -- it clamps an out-of-range
+    // bucket to 0 rather than dropping the draw, so the draw would appear in the
+    // opaque group instead of vanishing (review-5 F3) -- and the two exhaustive
+    // switches over `Pass` name it only to stay exhaustive without a `default`.
+    //
+    // IT MUST STAY THE LAST ENUMERATOR (review-5 F6). Every claim built on it
+    // counts from the top of the enum: `kDrawQueuePassCount` IS this value, and
+    // the coverage `static_assert`s in `pica_matrix_tests.cpp` compare an array's
+    // length with it. A member appended AFTER `Count` moves none of them, and
+    // neither build compiles with `-Werror`, so the only signal would be a
+    // `-Wswitch` warning nobody fails on. Append new passes BEFORE it.
     Count,
 };
 

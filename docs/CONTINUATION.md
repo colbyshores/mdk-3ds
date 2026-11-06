@@ -1,14 +1,14 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — one shipped line changes in the 3DS renderer (`installBlendState` now reads `BlendState::enable`), the core `Pass` enum gains a `Count` sentinel that `kDrawQueuePassCount` is derived from, and the rest is comments and docs. The A/B against a clean build of the parent is 0 px of the panel, so the code change is measured pixel-neutral; the enum change is compile-time only.
+Risk: medium — review-5 remediation: one host-test loop rewritten (it asserted only the last enum member), three shipped comments that stated a false mechanism corrected, one new checked-crop tool, and a re-measured evidence pair. No shipped code line moves: a clean build of this tree and a clean build of `9a359c7a` have the identical `mdk.elf` md5 `73bfe104300467bdabdd391e8b9d66fd`, and the emulator A/B is 0 px of the 400x240 panel.
 
-**Batch 83's headline measurement was taken against a build that is not its parent** — batch 84's retraction, and this batch's own A/B re-confirms the shape of it. A clean `f47d8fc` worktree build differs from batch 83's `before.png` by **33795 px** of the top panel and from its `after.png` by **0**, so the "the opaque passes were blending at six percent" story, the `(255,0,0)` landed at `(30,30,45)` example and the 33909/68001→58127 table are retracted: every visible fragment in the start arena has alpha 255. The blend state and the alpha test stay — they are the oracle's state (`Renderer.cs:565-576`) and AGENTS P2's "write every GPU state explicitly" — but the start arena is 154 all-`Solid` batches, so `Pass::Blended`, `Pass::Overlay` and `Blend::Add` are unreached by any capture and are held by `PASS PicaMatrix` and the frame gate. Evidence `docs/evidence/2026-11-06-L7-blend-ab-{parent,current}.{png,txt}`; narrative Iteration 112.
+**Review-5 remediation: all seven findings dispositioned, none rebutted.** **F1 (High)** was real and its cause turned out to be bigger than the reviewer thought: the `.3dsx` md5 is **not a build identity at all**. `mdk.3dsx` is ELF + SMDH + RomFS, and `3dsxtool` walks the staged RomFS in readdir order, so the container hash depends on the filesystem the staging happened on. Measured: a clean build in `/tmp` (ext4) and a clean build in this repository (NFS) of the same tree give `567a85a0…` and `34eff8e6…` with the **same** `mdk.elf` `73bfe104…`, and `ls -U build/romfs` hashes differently on the two while the sorted listing is identical. The vault's adjacent pattern (`a-comment-insertion-changes-shipping-text-because-assert-bakes-line-into-the-binary`) was checked and does **not** apply: MDK ships 0 `assert` and 0 `__LINE__`, and appending a comment line to `render_types.h` left both md5s unchanged. So the superseded sidecar's "comment realignment" story was impossible, and the rule now recorded in `docs/evidence/` is that a sidecar cites **`mdk.elf` md5** as the code identity. The A/B is re-measured as `docs/evidence/2026-11-06-L7-blend-enable-r2-{parent,current}.{png,txt}` (parent `4839cc1` clean → `mdk.elf f1594294…`; this tree clean → `73bfe104…`; **0 px of 96000**), and the two superseded sidecars are corrected in place rather than deleted. **F2 (Medium)** was the second real one and the same defect class as review-4 F1: batch 85's coverage loop assigned `coversAll` in the body instead of accumulating it, so five of six verdicts were thrown away and the check asserted only `Overlay`. It now makes one check per pass and adds a `visited` bitmask so "the loop judged all six" is itself checked; the mutation review-5 used (`blendStateForPass` blends only `Overlay`) is an A/B in the narrative — old loop 8 failures and none from the loop, new loop 9 including `pass 3 expects enable=1`. **F3 (Medium)**: `draw_queue.h`, `render_types.h` and last iteration's narrative all said a seventh pass would be "rejected" or would "vanish"; `DrawQueue::add` clamps an out-of-range bucket to 0 on purpose, so the draw is kept and folded into `Solid`. All three restated. **F4 (Medium)**: batch 85's crops were 399x239 while its sidecar said 400x240, because the inclusive far corner was applied as an exclusive one; `tools/panel_crop.py` is now the single checked definition (it refuses to write or compare a crop that is not exactly 400x240), the rectangle is independently corroborated by the sibling vault note `c3d-sky-coverage-2026-10-29.md` (`x=440..839, y=253..492`), and re-cropping batch 85's own captures with it still gives 0 px of 96000. **F5 (Low)**: corner (3) of the alpha-test comment is downgraded to recorded-not-established — every canvas call site is `Pass.Overlay`, where an alpha-0 fragment leaves the target exactly as a discard does, and a partial alpha is above the `> 0` reference so it survives. **F6 (Low)**: `render_types.h` now says `Count` must stay the last enumerator and why the compiler cannot catch a member appended after it. **F7 (Low)**: the review-4 F4 deferral is relabelled below as an operator decision that `PROTECTED` does not enforce. Narrative `docs/PROGRESS_LOG.md` Iteration 114.
 
-**Review-4 remediation: all nine findings dispositioned.** F1 was the one the builder owned outright, and it was real — the guard batch 84 added for review-3 F5 compared an array's own length with a literal 6, i.e. `6 == 6`, so the check written to catch a seventh `Pass` could not fail. `mdk::Pass` now carries a `Count` sentinel, `mdk::kDrawQueuePassCount` is derived from it instead of hand-counted (a seventh pass would otherwise have been accepted by the enum and silently dropped by the bucket bounds check), and `pica_matrix_tests.cpp` states the coverage as three `static_assert`s. Adding a seventh enumerator is now a build failure — demonstrated by adding one and reading the three failures — and the two exhaustive `switch`es over `Pass` name `Count` so `-Wswitch` stays the backstop instead of a `default` swallowing the new case. F6 was the only shipped-code change: `installBlendState` installs `mdk::pica::kBlendReplace` whenever `enable` is false, so a `BlendState` cannot claim "disabled" and mix anyway; measured **0 px** of the panel against a clean `4839cc1` worktree build (`docs/evidence/2026-11-06-L7-blend-enable-{parent,current}.{png,txt}`; md5 `238051c6…` vs `9dfed8e0…`, the whole-capture difference confined to 58 px of the emulator's own overlay band). F5/F7/F9 are comment corrections: the alpha-test predicate never had the coupling its comment claimed (the frame gate's `alpha-test-*` arms hold the call site's spelling, only the reference is shared); the 13/58 probe numbers are superseded by Iteration 108's 69/201; and `enhanced.hlsl:199-201` is a THIRD fragment program that passes sub-unit alpha through, which the canvas/HUD batch must scope per pass. F8 was this file's own wording, fixed in the paragraph below. **F2, F3 and F4 are not builder-actionable** — every file that would carry the fix is either PROTECTED (`tools/check.sh`, `tools/runner/gates_batch_integrity.py`) or one of the six operator-owned uncommitted files — and are recorded as owner actions with the reason and the suggested fix. Narrative `docs/PROGRESS_LOG.md` Iteration 113.
+**Batch 83's headline measurement was taken against a build that is not its parent** — batch 84's retraction stands, and with F1 above the pattern is now clear: three consecutive batches trusted a number whose provenance was asserted rather than reproduced. What is different this time is that the provenance is reproducible by anyone: both halves are `git archive`/`git ls-files` + `make` in a throwaway tree, and the identity field is the ELF.
 
 **The census was never inflated, so do not re-run it.** The exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one** — an identical count in both builds, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands", because the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, and the two numbers are not the same quantity). This file's previous "re-census first" instruction stays withdrawn. The one-sided view, stated in panel columns (review-3 F4 — "column 640 of the 400-wide panel" mixed capture pixels with panel columns): geometry covers panel columns **200..399** of 400, the right half of the top screen, and the census instrument is honest.
 
-Last updated: 2026-11-06 (**batch 85 — review-4 closed: the enum-coverage guard is compiler-owned, `BlendState::enable` is read and measured pixel-neutral, four stale comments corrected; F2/F3/F4 are owner-side**).
+Last updated: 2026-11-06 (**batch 86 — review-5 closed: the `.3dsx` md5 is a container hash and `mdk.elf` is the build identity, the enum-coverage loop accumulates and names the pass it fails on, three false "the queue rejects it" comments corrected, the panel crop is a checked tool and the A/B re-measures 0 px of 96000**).
 
 **Next small batch (review-2 F2–F5, all confirmed, all comment-only, all in `mdk_3ds/src/audio/audio_3ds.{h,cpp}`):** the `dspframes` unit is DSP sound frames at `SYSCLOCK_SOC/512 = 32728.5 Hz` ≈ 204.5/s (not 240-sample blocks at 48 kHz); the `frames × 735/882` denominator is exact only at 60 fps; `inDsp` pinned at 4 is also the signature of "nothing was ever submitted"; and `submitted - done == inDsp` holds for an **open** sink. Full text of each in `docs/PROGRESS_LOG.md`, Iteration 111.
 
@@ -19,7 +19,7 @@ Last updated: 2026-11-06 (**batch 85 — review-4 closed: the enum-coverage guar
 **Owner action (review-4 F3 / review-2 F6):** uncommitted operator edits in `ralph/builder.md` (PROTECTED) plus routing changes in `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`, and `tools/runner/test_review_state.sh` conflict with the committed owner directive. Owner must approve/commit or revert; builder must not stage these or set `MDK_OWNER_APPROVED=1`. Stage batch paths by name only. **Attribution, which review-4's open question 1 asked for: these six files are operator-authored, not builder work.** The content is harness policy no batch writes — reviewer/worker chains, `ITER_TIMEOUT`/`REVIEW_TIMEOUT`, `PI_CMD=/mnt/nas/Development/qwen-slot-pi.sh`, the watchdog's phase limits, and a "Search scope" section in the builder's own contract; batches 83, 84 and 85 each staged none of them, and batch 85 staged its paths by name and did not use the add-all commit path. So review-4 F2 is documentation hygiene plus a gate gap, not a protected-contract breach.
 **Owner action (review-4 of run-20261106-062909, F2):** `tools/check.sh:175` runs `gates_batch_integrity.py` with neither `--staged` nor `--base`, so a PROTECTED edit sitting in the worktree or the index is invisible to the loop's own gate and an add-all commit lands it first and fails the gate second. The two files that would carry the fix — `tools/check.sh` and `tools/runner/gates_batch_integrity.py` — are BOTH in `PROTECTED`, so this is an owner edit: run the gate with `--staged` when the index is non-empty (or `--base HEAD`). Also restore `tools/runner/test_review_state.sh`'s mode bit (100755→100644 in the same uncommitted set; this uid does not own the file and cannot chmod it).
 **Owner action (review-4 of run-20261106-062909, F3):** three texts and one sibling repository disagree on whether a same-family review exception exists, and only the owner can pick a winner. The uncommitted `docs/OWNER_DIRECTIVE_2026-11-05.md` says "the `-th` -> `flash` pair is the single operator-approved same-family exception"; `ralph-pi.sh` says "No independence exception appears anywhere in this file: none is needed, and one must not be added"; `tools/runner/test_review_state.sh` still pins `REJECT` for a same-family pair. The same edit also asserts `tetrisphere-godot` carries the same chains, which its own `tools/ralph-pi.sh:120` falsifies (`WORKER_MODELS="litellm/qwen litellm/luna"`). Either the directive loses that sentence or the exception becomes a code change in `reviewer_reject_reason` plus a rewritten test case — neither is a builder batch.
-**Owner action (review-4 of run-20261106-062909, F4):** the uncommitted `ralph-pi.sh` `guard()` replaced `FATAL: pi write probe failed on every route / exit 3` with an unbounded `while :; … sleep 300`, and it rewrites `phase route-health` before every round, so the watchdog's `route-health|startup|verify) limit=900` arm compares against a refreshed epoch and can never fire: a loop with no live route parks silently, with `logs/ralph/disabled` already touched. The wait is the operator's decision (the file says so); bounding it is not builder-owned. Suggested: after N failed rounds write a phase no watchdog arm covers (e.g. `route-dead`) and stop refreshing the epoch on a failed round.
+**Owner action (review-4 of run-20261106-062909, F4):** the uncommitted `ralph-pi.sh` `guard()` replaced `FATAL: pi write probe failed on every route / exit 3` with an unbounded `while :; … sleep 300`, and it rewrites `phase route-health` before every round, so the watchdog's `route-health|startup|verify) limit=900` arm compares against a refreshed epoch and can never fire: a loop with no live route parks silently, with `logs/ralph/disabled` already touched. The wait is the operator's decision (the file says so); bounding it is not builder-owned. Suggested: after N failed rounds write a phase no watchdog arm covers (e.g. `route-dead`) and stop refreshing the epoch on a failed round. **Relabelled per review-5 F7: this is an operator decision that `PROTECTED` does not enforce** — neither `ralph-pi.sh` nor `tools/ralph_pi_watchdog.sh` is in the `PROTECTED` set, so the boundary here is ownership, not a gate, and a reviewer should not re-derive it as a gate gap.
 **Owner action (review-2 F3 / review-4 F3):** batch frames duplicate an older capture (`sha256 6646adf1…`) whenever a batch moves no pixels — batch 79's, 80's, 81's and 82's do, and each sidecar says so and names the measurement. Rejecting duplicates and requiring emulator verdicts needs owner-protected gate tooling; recorded, not changed.
 **Owner action (review dispatch):** `logs/ralph-pi/run-20261105-142911/review-6.md` is **0 bytes** — the reviewer was dispatched and returned nothing, and no `.rc` was written. That is a failed dispatch, not an all-clear; the range stays owed.
 **Owner action (session config, AGENTS P9):** neither `obsidian_*` nor `cognee_*` tools are exposed in this session, so the vault lookup is the degraded disk-only path and Cognee's graph search was not available at all. Reported, not worked around silently.
@@ -81,25 +81,26 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 8. **CLOSED (batch 75) — the red clear.** It was the clear colour's byte order, not the render path. See the
    header of this file.
 
-## NEXT (batch 86)
+## NEXT (batch 87)
 **The one-sided view.** Geometry covers panel columns **200..399** of the 400-wide top
-screen — the right half — and nothing else has changed: the census's clear-colour count
-was **not** inflated by a transparency bug (the exact `(16,32,48)` count is **58464 in
-both** the parent build and this one, so the instrument was never reading through a
-blend bug), and the one-frame census does **not** need re-running first. Its probes were
-never read through a bug either: `GPU_CULL_NONE` moves 69 px, the depth test off 201 px, and
-the census's own mapping probe fails, so it cannot localise — `logCensus` says so on
-its own output. The live question is why coverage stops at a straight vertical line at
-the panel's middle. Do not re-derive what Iteration 106 retired (the cull, the depth
-triple, the queue, the MVP, a deleted rotation). The next useful capture is **census
-and `GPU_PRIMARY_COLOR` in the same run**, with the panel crop published, so the
-comparison is frame-identical. The audio-docs batch (F2–F5 above) is the cheap
-alternative if the view is the longer job.
+screen — the right half — and the live question is why coverage stops at a straight
+vertical line at the panel's middle. The census instrument is honest (header: 58464
+exact clear pixels in BOTH builds, `GPU_CULL_NONE` 69 px, depth-off 201 px, and its own
+mapping probe fails, so it cannot localise), so do not re-run it first and do not
+re-derive what Iteration 106 retired (the cull, the depth triple, the queue, the MVP, a
+deleted rotation). The next useful capture is **census and `GPU_PRIMARY_COLOR` in the
+same run**, cropped with `tools/panel_crop.py` so the comparison is frame-identical.
+The audio-docs batch (F2–F5 above) is the cheap alternative if the view is the longer job.
 Item 5b (the HUD) stays blocked on the same canvas seam (`mdk_render_canvas_quad`
-is a no-op on this backend) — and it now carries a second named constraint: the
-frame-wide alpha test discards a canvas texel of alpha 0 that the oracle paints
-(`enhanced.hlsl:199-201`, review-4 of run-20261106-062909 F9), so the canvas batch
-must scope the test per pass instead of leaving it frame-wide.
+is a no-op on this backend). The second constraint batch 85 wrote onto it is
+**downgraded, not carried** (review-5 F5): the frame-wide alpha test and the
+oracle's `Pass.Overlay` blending are equivalent for an alpha-0 texel — Overlay is
+`SRC_ALPHA / ONE_MINUS_SRC_ALPHA` (`Renderer.cs:565,571-573`), which leaves the
+target exactly as a discard does — and a partial alpha is above the `> 0`
+reference, so it survives the test. The canvas batch must NOT go scoping the
+alpha test per pass on the strength of the old note; it only has to re-read
+`renderer_c3d.cpp`'s corner (3) if it ever puts a canvas draw on a depth-writing
+pass.
 
 **Audio, in priority order after the renderer items.** (a) 6c — the int16 sample store, which halves the
 bank's footprint with no change to a sample value, pinned by a re-run of `golden/L3_audio_mix.txt`. (b) 6d —
@@ -162,13 +163,29 @@ Original-3DS behaviour remains unmeasured.
   correctness — say which kind a pair is). Noise floor while you do: Mandarine draws its own `Frame: N.NN ms`
   overlay on the bottom screen, so two runs of the SAME build differ by ~64-112 px at x 753..767,
   y 744..752 of the 1280x1024 window; compare the top-panel crop `(440,253)-(839,492)`, 400x240, and state it.
-* **`mdk::Pass`'s cardinality is compiler-owned (batch 85).** `Pass::Count` is a
-  sentinel and never a pass: the draw queue's bounds check rejects it,
+  **Use `python3 tools/panel_crop.py` for that crop** — it is the only place the
+  rectangle is written down, it refuses to write or compare a crop that is not
+  exactly 400x240, and it is the fix for two consecutive batches shipping a 399x239
+  crop under a sidecar that said 400x240 (review-5 F4).
+* **A build's identity is `mdk.elf`, not `mdk.3dsx` (batch 86, review-5 F1).** The
+  `.3dsx` is ELF + SMDH + RomFS and `3dsxtool` walks the staged RomFS in readdir
+  order, so the container hash follows the filesystem it was staged on: the same
+  tree gives `567a85a0…` from `/tmp` (ext4) and `34eff8e6…` from this NFS tree,
+  with the same `mdk.elf` `73bfe104…`. Cite the ELF md5 in a sidecar; treat a
+  `.3dsx` md5 as a container note, and never as proof that a capture came from a
+  given commit.
+* **`mdk::Pass`'s cardinality is compiler-owned (batch 85, corrected by 86).**
+  `Pass::Count` is a sentinel and never a pass: `DrawQueue::add` clamps an
+  out-of-range bucket to 0, so a `Count` passed as a pass would be *folded into
+  `Solid`*, not rejected (review-5 F3),
   `mdk::kDrawQueuePassCount` is derived from it rather than hand-counted, and
   `pica_matrix_tests.cpp` static_asserts the enum's size, the sampled array's size
-  and the opaque array's size. A seventh pass is a build failure, not a silently
-  inherited `Solid` state — demonstrated by adding one and reading the three
-  failures. The two exhaustive `switch`es over `Pass` (`pica_matrix.cpp`
+  and the opaque array's size. A seventh pass BEFORE the sentinel is a build
+  failure, not a silently inherited `Solid` state — demonstrated by adding one and
+  reading the three failures. It must stay the LAST enumerator: a member appended
+  after it moves none of those asserts and neither build uses `-Werror`, so only a
+  `-Wswitch` warning would notice (review-5 F6). The two exhaustive `switch`es over
+  `Pass` (`pica_matrix.cpp`
   `depthStateForPass`, `tick1.cpp passName`) name `Count` on purpose so `-Wswitch`
   stays the backstop; do not "tidy" them into a `default`.
 * **`BlendState::enable` is read by the renderer, and the disable is a named pair
