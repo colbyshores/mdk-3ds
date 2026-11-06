@@ -1,14 +1,15 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — the sink seam changes core audio behaviour (a second, optional queue query re-drives how many frames a mix makes), both targets gain a new backend file, the 3DS gains an ndsp wave-buffer queue in linear memory, and the console's sample-memory policy is decided here.
+Risk: high — this batch changes the 3DS audio data path at the hardware-service boundary: the ndsp wave-buffer `nsamples` unit (a DSP DMA length, so memory safety) and the queue `status` handed to `ndspChnWaveBufAdd`, plus a new source gate and new guest-log instrumentation. Both are target-specific and unmeasurable on a host.
 
-**The game is audible on both targets.** `mdk_linux/src/audio/audio_sdl.cpp` (SDL F32LE stream, the C#'s own calls) and `mdk_3ds/src/audio/audio_3ds.cpp` (one ndsp channel, stereo PCM16 at 44100, four 20 ms linear wave buffers, the float→PCM16 conversion at the sink) are written, both frontends call `mixer.update()` and `device().update()` per frame, and the 3DS build played the level-7 landing sound through ndsp in the emulator (`plays=1`). Details: `docs/PROGRESS_LOG.md`, Iteration 108.
+**The 3DS had never played a sound until this batch.** Batch 80's sink pre-set `wave.status = NDSP_WBUF_QUEUED`, and libctru's `ndspChnWaveBufAdd` refuses to link a buffer it believes is already queued (disassembly in `tests/scripts/ndsp_sink_test.sh`), so every submit was a no-op: measured `submitted=4 done=0 dropped=2579` at frame 2580 — four buffers in, none retired, 2579 fills thrown away. It also passed `nsamples` as interleaved halfwords, which the DSP reads as frames: measured, the DSP retired 1030 buffers against ~2050 produced, exactly half, i.e. 40 ms spent per 20 ms buffer and a 3528-byte DMA past a 3528-byte slot. Both fixed and re-measured: `submitted=2156 done=2153 dropped=12`, production and consumption now equal. `plays=1` — the number batch 80 offered as proof — counts launched mixer *voices* and says nothing about ndsp; that inference is what review F4 was about, and it was right. Details: `docs/PROGRESS_LOG.md`, Iteration 109.
 
-Last updated: 2026-11-06 (**batch 80 — the sinks and the mixer: the mix now reaches a speaker on both targets**).
+Last updated: 2026-11-06 (**batch 81 — the ndsp sink actually queues: `nsamples` is frames, `status` must be FREE**).
 
+**Owner action (review F3, new):** `SPEC.md:809` says the 3DS "voice pool shrinks to 24 and the queue to 40 ms to fit the 3DS's DSP budget". The port ships the oracle's 64 (`src/Mdk.Engine/Audio/AudioDevice.cs:73 MaxVoices = 64`, no platform branch) and an 80 ms queue, and `audio_3ds.h` reads §8's 24 as the software mixer's knob. That reading is a deviation from a protected document and the builder cannot resolve it: either amend SPEC.md §8 or authorise a per-target cap. Unmeasured either way — the hot-path corpus is empty, and nothing in the current build exceeds a handful of voices.
 **Owner action:** `ralph-pi.sh` worktree mode is 664 (index 100755); this uid cannot chmod it, so systemd restart fails `203/EXEC`. Owner task 18: restore 0755 and restart `ralph-pi-mdk.service`.
 **Owner action (review-4 F3 / review-2 F6):** uncommitted operator edits in `ralph/builder.md` (PROTECTED) plus routing changes in `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`, and `tools/runner/test_review_state.sh` conflict with the committed owner directive. Owner must approve/commit or revert; builder must not stage these or set `MDK_OWNER_APPROVED=1`. Stage batch paths by name only.
-**Owner action (review-2 F3 / review-4 F3):** batch frames duplicate an older capture (`sha256 6646adf1…`) whenever a batch moves no pixels — batch 79's does too, and its sidecar says so. Rejecting duplicates and requiring emulator verdicts needs owner-protected gate tooling; recorded, not changed.
+**Owner action (review-2 F3 / review-4 F3):** batch frames duplicate an older capture (`sha256 6646adf1…`) whenever a batch moves no pixels — batch 79's and batch 80's do too, and their sidecars say so. Rejecting duplicates and requiring emulator verdicts needs owner-protected gate tooling; recorded, not changed.
 **Owner action (review dispatch):** `logs/ralph-pi/run-20261105-142911/review-6.md` is **0 bytes** — the reviewer was dispatched and returned nothing, and no `.rc` was written. That is a failed dispatch, not an all-clear; the range stays owed.
 
 ## PRIORITY ORDER (owner directive 2026-11-05, in force until withdrawn)
@@ -36,7 +37,7 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    `sound_device.{h,cpp}`: PCM decode of both widths, interpolation, the DirectSound pan law, the music
    low-pass, the bus/master gains, the limiter, and a `Sink` seam (NULL = the oracle's `Output.Muted`).
    Pinned bit-for-bit by two new goldens. Narrative "Iteration 107".
-6b. **DONE (80) — the sinks and the mixer.** `audio_sdl.cpp` (SDL F32LE stream: the C#'s
+6b. **DONE (80, corrected by 81) — the sinks and the mixer.** `audio_sdl.cpp` (SDL F32LE stream: the C#'s
    `SDL_OpenAudioDeviceStream`/`PutAudioStreamData`/`GetAudioStreamQueued`) and `audio_3ds.cpp` (ndsp chn0,
    stereo PCM16 44100, 4 x 20 ms linear wave buffers, float→PCM16 at the sink, the drained-channel
    clear+reset the vault's Forsaken finding warns about). The seam grew the C#'s second branch: a sink that
@@ -46,7 +47,9 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    has nothing to bite on. **The memory question is answered: `preload()` is not called on the 3DS**; the bank
    decodes on first use (level 3 = 12.34 MB, level 4 = 15.03 MB, level 8 = 19.08 MB of float against 16 MB of
    FCRAM, so a full decode was never possible). What that does NOT do is bound the total — see NEXT.
-   Emulator evidence: `plays=1`, the level-7 `LAND` sound reached ndsp. Narrative "Iteration 108".
+   ~~Emulator evidence: `plays=1`, the level-7 `LAND` sound reached ndsp.~~ **That evidence was an
+   over-claim and is corrected by batch 81: `plays=1` counts launched mixer voices, and no wave buffer ever
+   reached the DSP.** Narrative "Iteration 108", correction "Iteration 109".
 6c. **OPEN — the sample store is still float, and the bank still has no bound.** The follow-up 6b names:
    an int16 sample store halves all three numbers with **no change to a single sample value** (both PCM scales
    are powers of two: `(byte-128)*256 * (1/32768)` is the same float as `(byte-128)*(1/128)`, and the 16-bit
@@ -56,15 +59,16 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    is standalone and carries Kurt's own set (footsteps, chute, guns, `LAND` — measured). Ambient and object
    sounds come from opcodes and need the runtime wired on the console, which is the same missing piece as the
    object pass and the camera's script inputs.
-7. **Citro3D alpha blend.** No `C3D_AlphaBlend`, so `Pass::Blended` glass is opaque. Blocked on a named
+7. **Citro3D alpha blend** (owner directive item **6** — this file's own numbering drifted, review F6). No
+   `C3D_AlphaBlend`, so `Pass::Blended` glass is opaque. Blocked on a named
    cause: the palette expansion forces alpha 255 (`renderer_c3d.cpp` `expandIndices`, `pixel[3] = 255`) and the
    vertex shader writes `outclr = ones`.
 8. **CLOSED (batch 75) — the red clear.** It was the clear colour's byte order, not the render path. See the
    header of this file.
 
-## NEXT (batch 81)
-
-**Owner item 7: Citro3D alpha blend**, the first unblocked renderer item. `C3D_AlphaBlend` is absent, so
+## NEXT (batch 82)
+**Owner directive item 6: Citro3D alpha blend** (this file lists it as 7; the directive's number is 6 —
+review F6), the first unblocked renderer item. `C3D_AlphaBlend` is absent, so
 `Pass::Blended` glass is opaque, and the named cause is upstream of the blend state: the palette expansion
 forces alpha 255 (`renderer_c3d.cpp` `expandIndices`, `pixel[3] = 255`) and the vertex shader writes
 `outclr = ones`. Fix the alpha source first, then the blend state, and take a Mandarine frame of a level with
@@ -72,16 +76,19 @@ blended glass in the same run so the two changes are separable. Item 5b (the HUD
 canvas seam (`mdk_render_canvas_quad` is a no-op on this backend), so if the canvas work is the cheaper way
 into that code, it is the same neighbourhood.
 
-**The level-7 view is still one-sided, and batch 80 corrected the numbers it was being planned with**
-(review-1 F1/F2, re-measured from `/tmp/kilo-pi/b78-*-panel.png`; Iteration 106's figures are superseded, not
-edited): the censused panel is **61.0 % clear** (58,522 of 96,000 px), not 67.7 % — the old figure counted a
-scene colour (`0xe12a81`, 6,463 px) as clear; `GPU_CULL_NONE` moves it **69** px and the depth test off **201**
-px (the record said 13 and 58); the "texture path discards a further ~18 %" is **withdrawn** (it compared two
-different runs: non-clear 47,845 px white vs 37,478 px textured, a 10.8-point gap inside a larger coverage
-change); and the census's own mapping probe, applied, **fails** — the ndc box maps outside the target on three
-sides, so it covers the panel while the panel is 61 % clear, which a union of bboxes with no per-pixel coverage
-and no depth test cannot localise. `logCensus` now prints the pixel box, its coverage verdict, and a `depthout`
-counter (this frame: `onscreen=825 depthout=0`, so nothing was lost past the depth range).
+**Audio, in priority order after the renderer items.** (a) 6c — the int16 sample store, which halves the
+bank's footprint with no change to a sample value, pinned by a re-run of `golden/L3_audio_mix.txt`. (b) 6d —
+the console has no `ScriptRuntime`, so ambient and object sounds cannot play; only Kurt's own set exists.
+(c) the bank still has no eviction bound (6b). (d) the ndsp sink's `nsamples` unit is now *measured* in the
+emulator's HLE DSP; the Old-3DS check stays open (AGENTS P6/P8), and `audioStats()`'s `submitted/done/dropped`
+line is what to read on hardware.
+
+**The level-7 view is still one-sided, and the numbers it was being planned with are corrected** (batch 80,
+re-measured; full figures in PROGRESS_LOG Iteration 108): the censused panel is **61.0 % clear**
+(58,522 of 96,000 px), not 67.7 %; `GPU_CULL_NONE` moves **69** px and the depth test off **201** px; the
+"texture path discards a further ~18 %" claim is **withdrawn** (it compared two different runs); and the
+census's own mapping probe **fails** (the ndc box maps outside the target on three sides), so it cannot
+localise anything — `logCensus` now says so on its own output.
 
 So the live question is unchanged and the instrument is honest now: **why does coverage stop at a straight
 vertical line at the panel's middle** (the `GPU_PRIMARY_COLOR` run: 0 white px for x<200, 97 at x=200, 240
@@ -89,10 +96,10 @@ from x=202). Do not re-derive what Iteration 106 retired (the cull, the depth tr
 deleted rotation). The next useful capture is **census and `GPU_PRIMARY_COLOR` in the same run**, with the
 panel crop published, so the comparison is frame-identical.
 
-**Review-4 medium findings:** F1/F2 (the geometric solid-arena pin is a stand-in for the unported DTI
+**Deferred review findings:** review-4 F1/F2 (the geometric solid-arena pin stands in for the unported DTI
 connection crossing; the fall probe hard-codes the start and omits the camera stage) need a placed-fall oracle
-in full order plus a walk-out golden, and are deferred to a collision batch. F3/F4 remain owner actions; no
-protected path was staged. Original-3DS behaviour remains unmeasured.
+in full order plus a walk-out golden, and are deferred to a collision batch. Original-3DS behaviour remains
+unmeasured.
 
 ## Standing facts a batch must not re-derive
 
@@ -105,6 +112,13 @@ protected path was staged. Original-3DS behaviour remains unmeasured.
   `3.14159265f` is the same float as `MathF.PI`. The mix loop is hot path by AGENTS 2's second criterion
   (735 iterations a frame, no capture needed) and carries its pins; do not integerise the position or solve
   its wrap without a capture and a fidelity verdict.
+* **ndsp's wave-buffer contract, both halves measured in batch 81:** `wave.status` MUST be
+  `NDSP_WBUF_FREE` at the `ndspChnWaveBufAdd` call — libctru will not link a buffer whose status is
+  QUEUED or PLAYING, it sets QUEUED itself — and `nsamples` is in **frames** for a stereo format, not
+  interleaved halfwords. `libctru/include/3ds/ndsp/ndsp.h:66` says "PCM16=halfwords" and
+  `examples/3ds/audio/ogg-vorbis-decoding` follows it; four other stereo examples and the hardware-proven
+  `../forsaken/sound_3ds.c` say frames, and the emulator's rate measurement settles it. Pinned by
+  `tests/scripts/ndsp_sink_test.sh`. Do not re-derive either from the header comment.
 * **The render seam's `clear_colour` is `0xAARRGGBB`; the PICA's clear word is `0xRRGGBBAA`, red in the TOP
   byte** (`mdk::pica::clearColour`). Assert colour contracts as **bit fields, not memory bytes**.
 * **Exactly one `input3dsPoll()` per frame, and it is the only `hidScanInput()`.** libctru recomputes its edge

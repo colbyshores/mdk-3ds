@@ -310,9 +310,9 @@ int main(int argc, char** argv) {
         mdk::log3dsPrintf("audio: the level's SNI archives did not load -- no sounds");
     }
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
-    // The sink gets no queue query (audio_3ds.h: libctru exposes no per-buffer
-    // play position), so the device keeps the frame's own accounting and the
-    // wave-buffer queue absorbs the jitter.
+    // The sink gets no queue query (audio_3ds.h: ndsp has no queued-frames
+    // query, only a position inside the buffer now playing), so the device keeps
+    // the frame's own accounting and the wave-buffer queue absorbs the jitter.
     const bool audioReady = mdk::audioOpen();
     if (audioReady) {
         mixer.device().setSink(mdk::audioSink, nullptr);
@@ -627,6 +627,18 @@ int main(int argc, char** argv) {
                               player.health(), camera.position.x, camera.position.y,
                               camera.position.z, (int)mixer.voices().size(),
                               (int)mixer.device().nextId() - 1);
+        }
+        if (audioReady && (frame % 60u) == 0u) {
+            // The sink's own ledger, on the same cadence as the frame line, so a
+            // run can be read as a consumption RATE: production is real time, so
+            // submitted x 20 ms is the audio the mix made and done is what the DSP
+            // gave back in the same window. See audio_3ds.h's AudioStats.
+            const mdk::AudioStats st = mdk::audioStats();
+            mdk::log3dsPrintf("audio: submitted=%u done=%u dropped=%u requeued=%u inDsp=%d "
+                              "dspframes=%u dspdropped=%u",
+                              (unsigned)st.submitted, (unsigned)st.done, (unsigned)st.dropped,
+                              (unsigned)st.requeued, st.inDsp, (unsigned)st.dspFrames,
+                              (unsigned)st.dspDropped);
         }
 
         if (g_frameBudget != 0 && frame >= g_frameBudget) {

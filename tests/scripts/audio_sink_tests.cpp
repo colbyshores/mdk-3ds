@@ -136,9 +136,12 @@ void testMutedAccounting() {
 
     audio::SoundDevice device;
     device.play(entry, 1.0f);
-    // 44100 * (1/60) is 735.00000000000007 in double, so the cast is 735 — the
-    // C#'s own comment on _owed says exactly this ("a frame's 1/60 s is 735 of
-    // them, not 734").
+    // The delta arrives as a float, so 1/60 is 0.01666666753590107 and the
+    // device's (double)44100 * (double)delta is 735.0000383332372 — the cast is
+    // 735 either way, which is the C#'s own point ("a frame's 1/60 s is 735 of
+    // them, not 734"). The digits here are the ones the code actually produces:
+    // 44100 * (1.0/60.0) in pure double is exactly 735.0 and is NOT what this
+    // branch computes (review F5 of run-20261106-035708).
     device.update(1.0f / 60.0f);
     expect("a muted frame mixes 735 frames", device.mixedFrames(), 735);
 

@@ -107,6 +107,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@$(BUILD)/vm_tests
 	@sh sprites_refusal_test.sh "$(CURDIR)/$(BUILD)/tick1"
 	@sh c3d_frame_test.sh
+	@sh ndsp_sink_test.sh
 	@sh main_3ds_flow_test.sh
 	@bash emurun_harness_test.sh
 	@$(BUILD)/tick1

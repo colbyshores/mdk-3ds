@@ -15352,3 +15352,187 @@ read-only vault fallback supplied the load-bearing prior solution:
 channel that will not wake, the dspfirm bootstrap and the CIA/.3dsx split, and the
 too-many-channels skip that is why this sink is one channel). Original-3DS
 behaviour remains unmeasured, as ever.
+
+---
+
+## Iteration 109 — batch 81: the ndsp sink never queued anything, and now it does
+
+**Review remediated:** `logs/ralph-pi/run-20261106-035708/review-1.md` (DeepSeek V4.1
+Flash TH, independent, on batch 80's commit). Verdict was INCOMPLETE on F1 (High)
+and F2/F3/F4 (Medium). Every finding is dispositioned below — and the investigation
+F1 asked for found a **Critical defect the review could not see**, which is the
+story of this batch.
+
+### The defect: `ndspChnWaveBufAdd` refuses a buffer it thinks is already queued
+
+Batch 80's `submit()` did `s.wave.status = NDSP_WBUF_QUEUED;` immediately before
+`ndspChnWaveBufAdd(kChannel, &s.wave)`. Disassembly of
+`/opt/devkitpro/libctru/lib/libctru.a:ndsp-channel.o` (r1 = the wavebuf, offset
+17 = `status`):
+
+```
+ldrb ip, [r1, #17] ; sub ip, ip, #1 ; cmp ip, #1 ; bls <assign sequence_id and return>
+mov  r3, #1 ; strb r3, [r1, #17] ; str r3, [r1, #20]   ; status = QUEUED, next = NULL
+... append to the channel's wave-buffer list ...
+```
+
+For `status` QUEUED(1) or PLAYING(2) it assigns a sequence id and **returns
+without linking the buffer**; it is libctru that sets QUEUED on the way in. So
+pre-setting QUEUED made every submit a silent no-op. The DSP was handed nothing,
+so nothing ever came back `DONE`, so `reap()` never freed a slot, so the queue
+filled after four buffers and `audioSink` dropped **every** mix after the first
+80 ms of the run.
+
+Batch 80 reported success because its evidence was `sink=1` and `plays=1`.
+`sink=1` means `ndspInit()` returned 0. `plays=1` counts launched mixer **voices**
+(`device().nextId() - 1`) and has nothing to do with ndsp. Review F4 said exactly
+that — "nothing in the log shows that one wave buffer was ever handed to ndsp" —
+and it was right in the strongest possible way.
+
+### F1 (High) — CONFIRMED, fixed, and settled by measurement, not by argument
+
+The reviewer's reading is correct: `nsamples` for a stereo format is in **frames**.
+The evidence is genuinely two-sided on paper — libctru's own header comment says
+"PCM16=halfwords" and `examples/3ds/audio/ogg-vorbis-decoding` follows it — so
+this was measured rather than argued. Four devkitPro examples that are
+unambiguously stereo pass frames (`audio/streaming` and `audio/filters` pass
+`SAMPLESPERBUF` against a 4-bytes-per-frame buffer, `audio/modplug-decoding`
+passes `(decoded/2)/sizeof(int16_t)`, `audio/opus-decoding` passes `totalSamples`
+counted in frames), and so does the hardware-proven `../forsaken/sound_3ds.c:467`
+that the owner directive told this port to adapt.
+
+The measurement is the sink's own counters (F4's instrument) against a production
+rate that is real time by construction: one 735-frame mix per 60 Hz frame is
+exactly 50 buffers of 882 frames a second. Three builds, same harness, same
+pinned emulator, same level:
+
+| build | submitted | done | dropped | inDsp | last frame |
+|---|---|---|---|---|---|
+| `status=QUEUED`, `nsamples=1764` (batch 80) | 4 | 0 | 2579 | 4 | 2580 |
+| `status=FREE`, `nsamples=1764` (halfwords) | 1030 | 1026 | 1435 | 4 | 2460 |
+| `status=FREE`, `nsamples=882` (**this batch**) | 2156 | 2153 | 12 | 3 | 2580 |
+
+Row 2 is the discriminator: the DSP retired 1030 buffers while the mix produced
+~2050 — **exactly half**, i.e. it spent 40 ms on a buffer holding 20 ms of stereo,
+which is what reading 1764 as 1764 frames does. Row 3 retires 2153 of 2156 with
+`inDsp=3`, i.e. production and consumption are equal and the 12 drops are all in
+the level-load stall. The halfwords reading was also a 3528-byte DSP read from a
+3528-byte slot — and past the end of the 14,112-byte `linearAlloc` for the last
+slot, as the review said.
+
+Fix: `s.wave.nsamples = (u32)kBufFrames;`. The `DSP_FlushDataCache` length stays
+`kBufHalfwords * sizeof(int16_t)` — it is a byte count and already correct.
+
+**Still open, stated plainly:** this is the emulator's HLE DSP. The Old-3DS
+firmware's behaviour is not measured (AGENTS P6/P8), and `libctru`'s header still
+says halfwords. The counters are the instrument to read on hardware.
+
+### F4 (Medium) — fixed: the sink is now observable
+
+`mdk_3ds/src/audio/audio_3ds.h` gained `AudioStats` + `audioStats()`:
+`submitted`, `done`, `dropped`, `requeued` (submits that had to re-configure a
+drained channel), plus ndsp's own `ndspGetFrameCount()`/`ndspGetDroppedFrames()`,
+and `main_3ds.cpp` logs the ledger every 60 frames. `submitted x 20 ms` is what
+the mix produced and `done` is what the DSP returned, so a rate bug is a number
+in the guest log instead of an inference. The final run reads
+`submitted=2156 done=2153 dropped=12 requeued=1 inDsp=3 dspframes=8844` —
+`submitted - done == inDsp`, so the ledger balances.
+
+### F2 (Medium) — confirmed: the comment claimed a measurement that does not exist
+
+`audio_3ds.h` said the 80 ms queue was "Measured against the level-3 load, not
+guessed". No such measurement exists. The comment now says the doubling was a
+design choice, names the only load number on disk (the emulator's 129.5 ms level-7
+load frame = 6.5 buffers), and states the consequence the review drew: a frame
+longer than the queue underruns it by construction, and no queue depth survives
+that. The 12 drops in the fixed run are that statement, measured.
+
+### F3 (Medium) — deferred to an owner decision, with the oracle's number recorded
+
+`SPEC.md:809` asks for a 24-voice pool and a 40 ms queue on the 3DS; the port
+ships 64 and 80. This is not the builder's to resolve: SPEC.md is owner-protected
+(it cannot be amended here), and the oracle has `MaxVoices = 64`
+(`src/Mdk.Engine/Audio/AudioDevice.cs:73`) with **no platform branch**, so
+implementing 24 would deviate from the oracle in the opposite direction. The
+conflict is recorded as an owner action in `docs/CONTINUATION.md` with both
+readings, and `audio_3ds.h` no longer asserts its own reading as fact. The cost
+argument stays unmeasured (the hot-path corpus is empty) and nothing in the current
+build exceeds a handful of voices.
+
+### F5 (Low) — fixed: the number in the comment is now the one the code produces
+
+`tests/scripts/audio_sink_tests.cpp` said "44100 * (1/60) is
+735.00000000000007 in double". Neither half was true: `44100 * (1.0/60.0)` is
+exactly `735.0`, and the code's `delta` is a float, so
+`(double)44100 * (double)delta` is `735.0000383332372`. The comment now carries
+the real value and says why the pure-double one is not what the branch computes.
+
+### F6 (Low) — fixed
+
+`docs/CONTINUATION.md` cited "Owner item 7" for Citro3D alpha blend; the owner
+directive numbers it 6. Both the priority-order row and the NEXT section now cite
+the directive's number and say the file's own numbering drifted.
+
+### The pin: `tests/scripts/ndsp_sink_test.sh`
+
+`renderer_c3d.cpp` already has a source-shape gate for the same reason — a 3DS
+backend that includes `<3ds.h>` cannot be compiled on a host, so nothing else in
+`make -C tests/scripts` can reach it. `ndsp_sink_test.sh` does the same job for
+the sink: 11 checks (status FREE before the add, QUEUED/PLAYING never pre-set,
+`nsamples` from `kBufFrames`, the flush still in bytes, the counters present, the
+frontend publishing the ledger) with 6 mutation arms, each of which must turn a
+named check red. `PASS NdspSink (11 checks, 6 arms adjudicated red)`, wired into
+`tests/scripts/Makefile` after `c3d_frame_test.sh`.
+
+### Gates, as run
+
+* `make -C tests/scripts` → **`All cases match the oracle.`** including
+  `PASS L3_audio_mix`, `PASS L3_audio_meta`, and the new
+  `PASS NdspSink (11 checks, 6 arms adjudicated red)` alongside
+  `PASS C3dFrame (26 checks, 33 arms)`, `PASS Main3dsFlow (5 checks, 5 arms)`,
+  `PASS EmurunHarness (68 checks)`.
+* `bash tools/check.sh` → **`CHECK: ALL GATES PASSED`**:
+  `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
+  `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`,
+  `SKIP gates_smdh (no built .cia)`, `PASS gates_frames L3_f1.bmp
+  sha=58615fc85d02e009`, `gates_batch_integrity project invariants intact`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  → **`3DSX mdk.3dsx`**.
+
+### Emulator evidence (AGENTS P7/P8) — `mdk_3ds/tools/emurun.sh --min-frames 120`, exit 0
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6   (r1.2.1, the pinned known good)
+gl        : forced llvmpipe, graphics_api=1
+stereo    : render_3d=0 factor_3d=0 (mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0
+dspfirm   : dspfirm.cdc (the lane's sdmc/3ds/dspfirm.cdc; ndsp needs it)
+captures  : /tmp/kilo-pi/emurun-b81.txt (the lane's own log dir is named in it)
+guest log : audio: FZ/DN 1 (fpscr=83000010)
+            audio: ndsp chn0 PCM16 stereo 44100 Hz, 4 x 20 ms queued
+            audio: sink=1 bank=1 voices=0 queue=2646
+            audio: submitted=2156 done=2153 dropped=12 requeued=1 inDsp=3 dspframes=8844
+            frame 2580 elapsed=0.0167 steps=2592 ... voices=0 plays=1
+```
+
+`submitted=2156 done=2153` is the line that matters, and it is the first evidence
+this project has ever produced that a wave buffer reached the DSP and came back.
+`dspframes` advancing 8844 times says the DSP was mixing the whole run.
+Emulator-green is not hardware-pass: the HLE DSP is not the firmware, the lane's
+dspfirm is the operator's dump, and nothing here proves what the speaker sounded
+like. The `submitted/done/dropped` line is what to read on a console.
+
+### Prior-solution lookup
+
+Pi-knowledge `mdk-sdl` was searched (ndsp wave-buffer `nsamples`/`status`; "audio
+buffer never reached the DSP"). It returned the sink and device sources and **no
+prior finding on either half of the ndsp contract** — this is new, and it is now
+pinned. **Obsidian MCP and Cognee MCP are absent from this session's tool list**
+(AGENTS P9: a session-configuration fault to report, not a lookup that happened).
+The read-only vault fallback was used for the one prior solution that mattered and
+is cited in the code: `../forsaken/sound_3ds.c`'s frames convention, reached
+through `10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md`. The
+devkitPro examples and libctru's archive are the explicitly-allowed devkitPro
+reads for a toolchain question. Original-3DS behaviour remains unmeasured.

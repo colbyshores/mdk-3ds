@@ -39,6 +39,19 @@ int g_write = 0;      // the slot being filled now
 int g_inDsp = 0;      // buffers ndsp still holds
 bool g_live = false;
 
+// The observability the batch that landed this did not have (review F4).
+// Production is real time by construction — the device mixes rate*delta frames
+// per frame — so `submitted` already says how many seconds of audio the mix made
+// (submitted x 20 ms) and `done` says how many the DSP gave back in that same
+// time. done ~= submitted means the DSP consumes at the rate the nameplate says;
+// done ~= submitted/2 with dropped ~= submitted/2 means it is taking twice as
+// long per buffer as the bytes are worth, which is exactly what a wrong nsamples
+// unit does. Without these, every one of those states looked like a working sink.
+uint32_t g_submitted = 0;
+uint32_t g_done = 0;
+uint32_t g_dropped = 0;
+uint32_t g_requeued = 0;
+
 // The channel's configuration, in one place because the underrun path has to
 // apply it again. ndsp does NOT resume a drained channel when a buffer is added
 // to it — the same trap Forsaken hit with its music queue
@@ -61,22 +74,61 @@ void reap() {
             s.inDsp = false;
             s.filled = 0;
             g_inDsp--;
+            g_done++;
         }
     }
 }
 
 void submit(Slot& s) {
     if (g_inDsp == 0) {
+        // The channel had drained. A sink that re-configures on every submit is
+        // consuming faster than it produces, which is the other wrong-nsamples
+        // signature (see the counters above).
+        g_requeued++;
         configureChannel();  // the channel drained: it will not wake on its own
     }
     DSP_FlushDataCache(s.linear, (u32)kBufHalfwords * sizeof(int16_t));
     s.wave.data_pcm16 = s.linear;
-    s.wave.nsamples = (u32)kBufHalfwords;  // PCM16: halfwords, per ndsp.h
+    // nsamples IS IN FRAMES, NOT HALFWORDS, for a stereo format — measured, not
+    // argued (review F1). libctru's header comment says "PCM16=halfwords" and
+    // one devkitPro example (ogg-vorbis-decoding) follows it, but four others
+    // that are unambiguously STEREO pass frames (audio/streaming and
+    // audio/filters: nsamples = SAMPLESPERBUF with a 4-bytes-per-frame buffer;
+    // audio/modplug-decoding: (decoded/2)/sizeof(int16_t); audio/opus-decoding:
+    // totalSamples counted in frames), and so does the hardware-proven
+    // ../forsaken/sound_3ds.c:467 that the owner directive told this port to
+    // adapt. The measurement settles it: with nsamples = kBufHalfwords the DSP
+    // retired 25 buffers per 60 guest frames while the mix produced 50 — exactly
+    // half, i.e. it spent 40 ms on a buffer holding 20 ms of stereo, which is
+    // what reading 1764 as 1764 FRAMES does. With the frames value the queue
+    // matches production (see the batch's verdict block). The halfwords reading
+    // was also a 3528-byte DSP read past a 3528-byte slot, and past the end of
+    // the linearAlloc for the last slot.
+    s.wave.nsamples = (u32)kBufFrames;
     s.wave.looping = false;
-    s.wave.status = NDSP_WBUF_QUEUED;
+    // STATUS MUST BE FREE, NOT QUEUED. ndspChnWaveBufAdd does not queue a buffer
+    // it believes is already queued: disassembly of libctru's ndsp-channel.o
+    // (r1 = the wavebuf, offset 17 = status) reads
+    //
+    //   ldrb ip, [r1, #17] ; sub ip, #1 ; cmp ip, #1 ; bls <just assign sequence_id>
+    //   mov r3, #1 ; strb r3, [r1, #17] ; str r3(zero), [r1, #20]  ; status=QUEUED, next=0
+    //   ...append to the channel's list...
+    //
+    // i.e. for status QUEUED(1) or PLAYING(2) it assigns a sequence id and
+    // returns WITHOUT linking the buffer, and it is libctru that sets QUEUED on
+    // the way in. Pre-setting QUEUED — which is what this line used to do — made
+    // every submit a no-op: the DSP was handed nothing, so nothing ever came
+    // back DONE, so the queue filled after four buffers and the sink dropped
+    // every mix after the first 80 ms. The counters caught it (submitted=4
+    // done=0 dropped=2579 at frame 2580 in the run before this comment was
+    // written) after the batch that shipped it had reported success, because
+    // `plays=1` counts launched mixer VOICES and says nothing about ndsp
+    // (review F4).
+    s.wave.status = NDSP_WBUF_FREE;
     ndspChnWaveBufAdd(kChannel, &s.wave);
     s.inDsp = true;
     g_inDsp++;
+    g_submitted++;
     s.filled = 0;
 }
 
@@ -173,6 +225,20 @@ void audioClose() {
 
 bool audioIsOpen() { return g_live; }
 
+AudioStats audioStats() {
+    AudioStats st = {};
+    st.submitted = g_submitted;
+    st.done = g_done;
+    st.dropped = g_dropped;
+    st.requeued = g_requeued;
+    st.inDsp = g_inDsp;
+    // ndsp's own counters, so "the DSP is running" is not inferred from our
+    // bookkeeping. Zero when ndsp never started.
+    st.dspFrames = g_live ? ndspGetFrameCount() : 0u;
+    st.dspDropped = g_live ? ndspGetDroppedFrames() : 0u;
+    return st;
+}
+
 // The sink: interleaved stereo float, full scale 1.0, into PCM16 wave buffers.
 //
 // THE CONVERSION IS THE SPEC's, not an invention: SPEC.md 8 puts it here ("the
@@ -201,14 +267,19 @@ void audioSink(void* /*context*/, const float* interleaved, int32_t frames) {
             if (slot.wave.status != NDSP_WBUF_DONE) {
                 const int next = freeSlot();
                 if (next < 0) {
+                    g_dropped++;
                     return;  // the queue is full: drop, never block the frame
                 }
                 g_write = next;
                 continue;
             }
+            // Retired between reap() and here. Counted, or the ledger would
+            // quietly under-report done and the rate it exists to show would be
+            // wrong by however often this path runs.
             slot.inDsp = false;
             slot.filled = 0;
             g_inDsp--;
+            g_done++;
         }
         const int32_t room = kBufHalfwords - slot.filled;
         const int32_t n = left < room ? left : room;
