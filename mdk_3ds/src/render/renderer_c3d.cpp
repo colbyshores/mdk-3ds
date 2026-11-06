@@ -359,6 +359,15 @@ struct RendererC3D {
     bool depthTest = true;
     bool depthWrite = true;
 
+    // The blend state last written to the citro3d CONTEXT, cached the same way.
+    //
+    // The pair it was derived from is cached rather than the factors, because
+    // `pica::blendStateForPass` is a pure function of exactly these two and
+    // two integer compares are cheaper than five. -1 is "nothing installed",
+    // so the first draw of a frame always writes.
+    int blendPass = -1;
+    int blendMode = -1;
+
     int frame = 0;
     int32_t drawCount = 0;
     int32_t triangleCount = 0;
@@ -739,6 +748,53 @@ static void installDepthState(RendererC3D* r, mdk::pica::DepthState state) {
     r->depthWrite = state.write;
 }
 
+// The host-readable factor to the GPU's. The switch is exhaustive over the
+// four the oracle's rule can name, and the default is unreachable: a new
+// factor in `pica_matrix.h` without a line here lands on ONE, which is the
+// replace, i.e. the draw paints what it was given -- the least surprising
+// failure for a factor this backend was never told about.
+static GPU_BLENDFACTOR gpuBlendFactor(mdk::pica::BlendFactor factor) {
+    switch (factor) {
+    case mdk::pica::kBlendZero: return GPU_ZERO;
+    case mdk::pica::kBlendOne: return GPU_ONE;
+    case mdk::pica::kBlendSrcAlpha: return GPU_SRC_ALPHA;
+    case mdk::pica::kBlendOneMinusSrcAlpha: return GPU_ONE_MINUS_SRC_ALPHA;
+    }
+    return GPU_ONE;
+}
+
+// Install one pass's blend state on the citro3d context and record what it was
+// derived from.
+//
+// WHY THIS IS WRITTEN AT ALL, WHEN THE PICTURE ALREADY LOOKS BLENDED. citro3d
+// does not leave this register alone: C3D_Init calls
+// `C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA,
+// GPU_ONE_MINUS_SRC_ALPHA, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA)` -- measured
+// from the linked libcitro3dd.a, not from a doc -- so blending has been ON for
+// every pass of every frame since the port's first build, with the oracle's
+// COLOUR pair and not its alpha pair. That coincidence is what made glass look
+// right, and it is a coincidence in three separate ways: the four opaque passes
+// blend when the oracle says they must not (so a texel of alpha 128 is
+// translucent here and opaque in the game), the alpha channel's source factor
+// is SRC_ALPHA where the oracle writes ONE, and `Blend::Add` has no
+// representation anywhere. AGENTS.md P2 is the rule that settles it: all GPU
+// state is set explicitly every frame, and a register whose value comes from a
+// library's initialiser is not set by this backend.
+//
+// THE DISABLE IS A PAIR, NOT A FLAG. The PICA has no "blend off"; the oracle's
+// `enable_blend = false` is (ONE, ZERO) on both channels. That is only safe
+// because of the alpha test installed next to it -- see
+// `pica::alphaTestPasses` -- since an index-0 texel that is BLENDED with alpha 0
+// still writes depth, and one that is DISCARDED does not.
+static void installBlendState(RendererC3D* r, mdk::Pass pass, mdk::Blend blend) {
+    const mdk::pica::BlendState s = mdk::pica::blendStateForPass(pass, blend);
+    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+                   gpuBlendFactor(s.srcColour), gpuBlendFactor(s.dstColour),
+                   gpuBlendFactor(s.srcAlpha), gpuBlendFactor(s.dstAlpha));
+    r->blendPass = static_cast<int>(pass);
+    r->blendMode = static_cast<int>(blend);
+}
+
 // Install ONE EYE: its target, its matrix, and every piece of fixed state the
 // draws need. Called from mdk_render_end_frame once per eye pass, immediately
 // before that eye's replay of the queue -- C3D_FrameDrawOn selects the target
@@ -809,6 +865,36 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // pica_matrix.h next to the constants; the ordering they imply is pinned
     // by `PASS PicaMatrix` because no picture on this host can show it.
     installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
+
+    // THE ALPHA TEST IS THE ORACLE'S DISCARD, and it is frame state: the
+    // shader discards index 0 on every pass, so the test is installed once per
+    // eye and no draw is allowed to turn it off. The reference is
+    // `pica::kAlphaTestReference` and the function is GPU_GREATER, so the
+    // predicate the hardware applies is the one `pica::alphaTestPasses` states
+    // and the host suite pins.
+    //
+    // citro3d's initialiser leaves this DISABLED
+    // (`C3D_AlphaTest(false, GPU_ALWAYS, 0)`, measured from the same object
+    // file as the blend call above), so before this line the port had no
+    // discard at all: index-0 texels were made invisible by blending with alpha
+    // 0 and went on writing depth, hiding the world behind every transparent
+    // texel of every arena texture.
+    //
+    // ONE CORNER IS NOT THE ORACLE'S, and it is recorded rather than hidden:
+    // the shader's discard is inside its textured branch, so a FLAT colour of
+    // alpha 0 on an unblended pass is painted by the oracle and discarded here.
+    // No shipped material does that -- the flat colours are glass (alpha from
+    // the DTI, on a blended pass) and the mirrors (alpha 1) -- and the
+    // alternative is a per-draw test keyed on "is this a palette texture", for
+    // a case the data does not contain.
+    C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);
+
+    // The frame's default blend state: the pass the queue starts with. Written
+    // every eye so the register is never left to citro3d's initialiser, and
+    // the cache is told what was written (the same discipline as the cull mode
+    // below -- the cache must describe the context, not intend to).
+    installBlendState(r, mdk::Pass::Solid, mdk::Blend::Alpha);
+
     // (B) THE CULL ENUM. The game wants back-face culling, and through the
     // oracle's right-handed camera the meshes wind CCW on screen. The
     // PICA200 has no CW-front mode, so "cull the back faces of CCW-front
@@ -1858,6 +1944,23 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         mdk::pica::depthStateForPass(draw->material.pass);
     if (r->depthTest != wantedDepth.test || r->depthWrite != wantedDepth.write) {
         installDepthState(r, wantedDepth);
+    }
+
+    // THE PASS'S BLEND STATE, PER DRAW -- same shape and same reason as the two
+    // above: `C3D_AlphaBlend` dirties the effect block on every call, so it is
+    // written on a pass transition and on nothing else. An all-Solid frame
+    // writes it once, at the eye's install, and the glass that follows costs one
+    // transition in and one back.
+    //
+    // `material.blend` is read here and not folded into the pass, because the
+    // oracle keeps them independent: the pass decides WHETHER the draw mixes and
+    // the blend decides HOW (Renderer.cs:565,572). A Blended pass with
+    // Blend::Add is a different register pair from a Blended pass with Alpha,
+    // and the queue's pass order cannot tell them apart.
+    const int wantedBlendPass = static_cast<int>(draw->material.pass);
+    const int wantedBlendMode = static_cast<int>(draw->material.blend);
+    if (r->blendPass != wantedBlendPass || r->blendMode != wantedBlendMode) {
+        installBlendState(r, draw->material.pass, draw->material.blend);
     }
 
     // THE ONE-FRAME GEOMETRY CENSUS (see the `Census` struct). Cold by

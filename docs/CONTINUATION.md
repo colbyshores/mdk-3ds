@@ -1,8 +1,13 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — this batch moves no data path. It corrects the documented READING of the ndsp sink's counters (comments in `audio_3ds.{h,cpp}`), adds the guest frame number to the sink's ledger log line (`main_3ds.cpp`), and strengthens `tests/scripts/ndsp_sink_test.sh` from 11 checks/6 arms to 15/10. It is not `low` because the thing it changes is the instrument a future Old-3DS reading depends on, and because it retracts a claim the last batch made.
+Risk: high — target-specific GPU state on every draw of the 3DS renderer: a new per-pass blend state and a frame-wide alpha test (`C3D_AlphaTest(true, GPU_GREATER, 0)`), which changes what the PICA writes for every surface, including its depth. Verified in the emulator only; no console is in hand.
 
-**Batch 81's instrument could not have caught batch 81's bug.** Its counters were documented as `done ~= submitted` = healthy, `done ~= submitted/2` = a wrong `nsamples` unit. But `g_submitted++` sits with `g_inDsp++` and `g_done++` sits with `g_inDsp--` at **both** retirement sites, so `submitted - done == inDsp <= 4` is an identity: `done` is always within four of `submitted`, and `done ~= submitted/2` is unreachable. Batch 81's own wrong-unit row measured `done/submitted = 1026/1030 = 0.996`, i.e. the documented rule would have certified the broken sink. The rate lives in **`submitted` against what the clock owes** (`frames x 735/882` buffers): the three measured builds give 0.002 / 0.502 / 1.003. The ledger line now prints `frame=` beside `submitted=` so that ratio is one division on one line, and this batch's run reads `frame=2580 submitted=2156 done=2153 dropped=8 requeued=1 inDsp=3 dspframes=8844` → 1.003, `submitted-done == inDsp`, `dspframes` 205.7 per 60 frames. Also corrected: the libctru disassembly's mechanism (the `bls` targets the epilogue at `+0xb8`; the sequence-id store at `+0xac` is on the linking path only), a `done=2151` transcription that broke the ledger, and the gate's blind spot for the second retirement site (the reviewer's mutation now returns `rc=1`). **And one overclaim is retracted:** "the 3DS had never played a sound until this batch" overstates it — the lane runs `SDL_AUDIODRIVER=dummy`, so the counters prove buffers reached and were retired by the *emulated* DSP, not that anything was audible. Details: `docs/PROGRESS_LOG.md`, Iteration 110.
+**citro3d had been blending every frame since the port began, and the port had no discard at all.** `C3D_Init` calls `C3D_AlphaBlend(ADD, ADD, SRC_ALPHA, ONE_MINUS_SRC_ALPHA, SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` (measured from the linked `libcitro3dd.a:base.o`), so the four passes the oracle marks `enable_blend = false` were mixing: an arena surface the palette says is `(255,0,0)` was landing at `(30,30,45)`, which is `src*(16/255) + clear*(1-16/255)` — drawn at six percent over the background. Batch 83 installs the oracle's blend state per pass (`pica::blendStateForPass`, `Renderer.cs:565-576`) and the shader's `if (index == 0) discard;` as the PICA's alpha test, which the expansion makes exact (`expandIndices` leaves index 0 at alpha 0, forces 255 elsewhere) and which a blend cannot do: a discarded fragment does not write depth. Emulator before/after on `:99`, pinned Mandarine `0d2adab6`, exit 0: 33909 px differ, **33844 brighter and 65 darker**, and the panel's near-clear pixels fall from 68001 (71.3%) to 58127 (61.0%). Two claims this file and `OPEN_ITEMS.md` carried are retracted: "glass draws opaque" (it blended, by accident) and "there is no alpha to blend with / the PICA has no discard" (the flat-colour path carries the material alpha; the alpha test is the discard). **Still open:** the one-sided view — geometry still stops at column 640 of the 400-wide panel — and a textured surface's partial material alpha, which the single combiner stage cannot deliver. Details: `docs/PROGRESS_LOG.md`, Iteration 111.
+
+Last updated: 2026-11-06 (**batch 83 — the opaque passes stop blending, and index 0 is discarded instead of painted**).
+
+**Next small batch (review-2 F2–F5, all confirmed, all comment-only, all in `mdk_3ds/src/audio/audio_3ds.{h,cpp}`):** the `dspframes` unit is DSP sound frames at `SYSCLOCK_SOC/512 = 32728.5 Hz` ≈ 204.5/s (not 240-sample blocks at 48 kHz); the `frames × 735/882` denominator is exact only at 60 fps; `inDsp` pinned at 4 is also the signature of "nothing was ever submitted"; and `submitted - done == inDsp` holds for an **open** sink. Full text of each in `docs/PROGRESS_LOG.md`, Iteration 111.
+
 
 Last updated: 2026-11-06 (**batch 82 — the sink's ledger reading is fixed, and the gate can now see both retirement sites**).
 
@@ -61,22 +66,24 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    is standalone and carries Kurt's own set (footsteps, chute, guns, `LAND` — measured). Ambient and object
    sounds come from opcodes and need the runtime wired on the console, which is the same missing piece as the
    object pass and the camera's script inputs.
-7. **Citro3D alpha blend** (owner directive item **6** — this file's own numbering drifted, review F6). No
-   `C3D_AlphaBlend`, so `Pass::Blended` glass is opaque. Blocked on a named
-   cause: the palette expansion forces alpha 255 (`renderer_c3d.cpp` `expandIndices`, `pixel[3] = 255`) and the
-   vertex shader writes `outclr = ones`.
+7. **DONE (83) — Citro3D alpha blend** (owner directive item **6** — this file's own numbering drifted, review F6).
+   The blend state is now installed per pass from the oracle, and the shader's index-0 discard is the PICA's
+   alpha test. The named cause below was wrong: citro3d's own initialiser had been blending every pass on
+   the oracle's colour pair, and the flat-colour path already carries the material's alpha.
 8. **CLOSED (batch 75) — the red clear.** It was the clear colour's byte order, not the render path. See the
    header of this file.
 
-## NEXT (batch 83)
-**Owner directive item 6: Citro3D alpha blend** (this file lists it as 7; the directive's number is 6 —
-review F6), the first unblocked renderer item. `C3D_AlphaBlend` is absent, so
-`Pass::Blended` glass is opaque, and the named cause is upstream of the blend state: the palette expansion
-forces alpha 255 (`renderer_c3d.cpp` `expandIndices`, `pixel[3] = 255`) and the vertex shader writes
-`outclr = ones`. Fix the alpha source first, then the blend state, and take a Mandarine frame of a level with
-blended glass in the same run so the two changes are separable. Item 5b (the HUD) stays blocked on the same
-canvas seam (`mdk_render_canvas_quad` is a no-op on this backend), so if the canvas work is the cheaper way
-into that code, it is the same neighbourhood.
+## NEXT (batch 84)
+**The one-sided view, re-censused first.** Geometry still covers only columns
+640..838 of the 400-wide top panel, but the census that concluded "61% of the
+panel is clear colour" was measured while this batch's bug was painting opaque
+surfaces at six percent alpha, so its near-clear count was inflated by 9874 px.
+Re-run the one-frame census (`Census` in `renderer_c3d.cpp`, `kCensusFrame`) on
+the current build before theorising: the depth-test-off and cull-none probes it
+used were all read through the transparency bug. The audio-docs batch (F2–F5
+above) is the cheap alternative if the census is the longer job.
+Item 5b (the HUD) stays blocked on the same canvas seam (`mdk_render_canvas_quad`
+is a no-op on this backend).
 
 **Audio, in priority order after the renderer items.** (a) 6c — the int16 sample store, which halves the
 bank's footprint with no change to a sample value, pinned by a re-run of `golden/L3_audio_mix.txt`. (b) 6d —

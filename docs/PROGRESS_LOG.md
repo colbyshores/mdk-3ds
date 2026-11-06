@@ -15711,6 +15711,14 @@ Read with F1's rule, from one line: `submitted/expected = 2156/2150 = 1.003`
 drain), `dspframes` 205.7 per 60 guest frames (the DSP is running on our
 buffers). `dropped=8`, all of it inside the level-load stall — the first ledger
 line at frame 60 already carries 3 of the 8, and nothing is added after.
+**RETRACTED in Iteration 111 (review-2 F1, confirmed):** that last sentence is
+falsified by the capture it describes. The drops accrue across the whole run —
+`frame=60 dropped=3`, `frame=300 dropped=5`, `frame=360 dropped=6`, `frame=420
+dropped=7`, `frame=1440 dropped=8`, stable after — so three of the eight are the
+level-load stall and **five arrive during intended play**. "Steady state is
+clean" is not established by this capture; whether five late rejects on an
+emulator's HLE DSP are jitter or a real underrun is open, and only an OG run can
+separate them.
 Emulator-green is not hardware-pass: the HLE DSP is not the firmware, and the
 dummy audio driver means nothing here proves audibility.
 
@@ -15724,3 +15732,169 @@ no tools in this session (`obsidian_*`/`cognee_*` absent) — a session-configur
 fault to report per AGENTS P9, not a lookup that happened; the read-only vault
 fallback was not needed because this batch's evidence is this repository plus
 libctru's own object. Original-3DS behaviour remains unmeasured.
+
+---
+
+## Iteration 111 — batch 83: the opaque passes were blending, and the discard the shader had was never ported
+
+**Owner directive item 6** ("Citro3D alpha blend"), and the last unimplemented
+half of the `Pass` state table. One subsystem: the alpha state of a pass — its
+blend factors and the discard that stands in for the shader's `discard`.
+
+### The named blocker was wrong in both directions, and the measurement is the batch
+
+`docs/OPEN_ITEMS.md` said the blend half could not land because "there is no
+alpha to blend with on this path" and "the PICA has no discard", and that glass
+therefore "draws opaque" because `C3D_AlphaBlend` is never called. Both halves
+came apart under measurement, and the direction they came apart in is the whole
+batch.
+
+**1. citro3d's own initialiser had been blending every frame since the port began.**
+Read out of the archive this project links, not out of a document —
+`arm-none-eabi-objdump -d` over `libcitro3dd.a:base.o`, `C3D_Init`:
+
+```
+ f8:  bl C3D_AlphaTest      ; r0=0 (false), r1=1 (GPU_ALWAYS), r2=0
+114:  bl C3D_AlphaBlend     ; r0=0 r1=0 (ADD,ADD) r2=6 (SRC_ALPHA)
+                            ; r3=7 (ONE_MINUS_SRC_ALPHA) [sp]=6 [sp+4]=7
+```
+
+So blending was **on** for every pass of every frame, with the oracle's *colour*
+pair and not its alpha pair. That is why glass looked plausible and why "glass is
+opaque" was never the symptom. What the port actually had was the opposite
+defect: the four passes the oracle marks `enable_blend = false` were mixing.
+
+**2. The oracle's alpha source is already on this path, and the PICA does have a
+discard.** `shaders/palette.hlsl` has two branches. Flat colour:
+`return colour * input.colour` — the material's alpha (the DTI's glass alpha)
+reaches the fragment, and this backend carries it: `flatColourId` packs the
+alpha into the 1x1 texture and `expandRgba` copies all four bytes. Textured:
+`float4(palette.rgb, 1.0) * colour * input.colour` preceded by
+`if (index == 0) discard;`. The PICA's equivalent of that discard is the alpha
+test, and the expansion this backend already does makes it exact: `expandIndices`
+leaves index 0 as RGBA(0,0,0,0) and forces alpha 255 on every other index, so
+`alpha > 0` selects precisely the texels the shader keeps.
+
+**3. And the discard is not cosmetic, which is the reason it was worth a batch.**
+A fragment blended with alpha 0 still **writes depth**; a discarded fragment does
+not. Until this batch every transparent texel of every arena texture painted a
+hole in the depth buffer that hid whatever was behind it — an invisible wall in
+the game's own colours.
+
+### What was implemented
+
+- `mdk_3ds/src/render/pica_matrix.{h,cpp}` — `BlendState` + `BlendFactor` and
+  `blendStateForPass(Pass, Blend)`, the oracle's block (`Renderer.cs:565-576`)
+  spelled out factor by factor, in host-readable ints because this file compiles
+  on the host. Plus `kAlphaTestReference` and `alphaTestPasses(int)`, the shader's
+  discard as a predicate a test can hold.
+- `mdk_3ds/src/render/renderer_c3d.cpp` — `gpuBlendFactor`, `installBlendState`,
+  a two-int cache beside the cull and depth caches, the per-draw install on a
+  pass/blend transition, and in `installEye` the frame's `C3D_AlphaTest(true,
+  GPU_GREATER, 0)` plus the default (Solid) blend state. AGENTS P2 is the rule
+  this satisfies: all GPU state is written explicitly every frame, and a register
+  whose value comes from a library's initialiser is not written by this backend.
+- `tests/scripts/pica_matrix_tests.cpp` — four new cases: the opaque passes
+  replace on **both** channels, the blended pass uses the oracle's factors and
+  its alpha pair differs from its colour pair, `Add` moves only the destination
+  colour, and the discard is `alpha > 0` (so a half-transparent glass alpha
+  survives it).
+
+Verified in the linked object, not assumed: `objdump` of `build/renderer_c3d.o`
+shows `mov r2,#0; mov r1,#6; mov r0,#1; bl C3D_AlphaTest` — `(true, GPU_GREATER,
+0)` — and one `C3D_AlphaBlend` call site in `installBlendState`.
+
+### Emulator evidence (AGENTS P7/P8)
+
+`DISPLAY=:99`, `mdk_3ds/tools/emurun.sh --secs 30 --shot ...`, pinned Mandarine
+`md5 0d2adab6` (r1.2.1, the known-good; r1.3.0 was not used), exit code **0**
+both runs, fresh lane per run, guest log read from the lane. Before: log ends at
+frame 2220. After: log ends at frame 1680. Both `backend: PICA200 Citro3D`,
+`flow: screen=4 level=7`, 60 FPS, mono, dummy audio. Display recorded: **:99**.
+Captures under `/tmp/mdk-b83/` (`/tmp/kilo` is not writable by this uid).
+
+The picture moved, and it moved in exactly the direction the oracle predicts:
+
+| measure (400x240 top panel, 95361 px) | before | after |
+|---|---|---|
+| pixels within tolerance 16 of the clear colour | 68001 (71.3%) | 58127 (61.0%) |
+| differing pixels, whole capture | — | 33909 of 1310720 (2.59%) |
+| of the changed pixels | — | 33844 brighter, **65 darker** |
+
+The change is confined to `x 640..839, y 253..752` — the drawn half of the panel.
+The top transitions are `(225,42,129)→(255,44,141)`, `(143,30,59)→(255,28,69)`,
+`(30,30,45)→(255,0,0)`. That last one is the arithmetic of the bug: a surface the
+palette says is pure red was landing at `(30,30,45)`, which is
+`src*(16/255) + clear*(1-16/255)` — an opaque arena surface drawn at six percent
+over the background. After the fix it is the palette's own colour.
+
+**What the capture does NOT show, stated plainly.** The near-clear count improved
+by 9874 px because geometry that was already being drawn stopped being drawn
+nearly transparent; no geometry appeared that had been depth-hidden, so the
+alpha test's depth-write consequence is not visible in this scene and the
+one-sided view — geometry still stops at column 640 of 839 — is **still open**.
+The two changes are one batch and the capture cannot attribute between them.
+Emulator-green is not hardware-pass: llvmpipe is not the PICA, and a register
+pair this emulator accepts may still differ on a console (AGENTS P8).
+
+### Gates, verbatim
+
+- `make -C tests/scripts` → `All cases match the oracle.` (and `PASS PicaMatrix`)
+- `bash tools/check.sh` → `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity` pass, `gates_smdh` SKIP
+  (no `.cia` built), `gates_frames CONTRACT CLEAN`, `gates_batch_integrity PASS`
+- `make -C mdk_3ds` → `3DSX mdk.3dsx`
+- `sh tests/scripts/c3d_frame_test.sh` → `PASS C3dFrame (26 checks, 33 arms adjudicated red)`
+
+### Review findings from `logs/ralph-pi/run-20261106-062909/review-2.md`
+
+No Critical and no High, so nothing was mandatory. Dispositions:
+
+- **F1 (Medium) — CONFIRMED, record corrected.** The reviewer is right that
+  Iteration 110's "nothing is added after frame 60" is falsified by its own
+  capture, and it is corrected in place there rather than left to propagate: the
+  drops run 3 → 5 → 6 → 7 → 8 across frames 60 → 1440. Whether the five late
+  rejects are HLE jitter or a real underrun stays open and needs an OG run.
+- **F2 (Medium) — CONFIRMED, deferred with cause.** `dspframes` is in DSP sound
+  frames at `NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32728.5 Hz`, ~204.5/s, not
+  "240-sample blocks at 48 kHz"; the comment in `audio_3ds.{h,cpp}` says the
+  wrong unit. Deferred because it is the audio subsystem and this batch's slice
+  is the renderer's alpha state; the corrected text is recorded here so the next
+  audio-docs batch is mechanical. Filed in `docs/CONTINUATION.md` as the next
+  small batch.
+- **F3 (Medium) — CONFIRMED, deferred with cause.** The `frames × 735/882`
+  denominator is exact only at 60 fps, because `elapsedFor(false, step, delta)`
+  returns the wall delta; at 30 fps a half-rate sink would read "matched". The
+  fix is to state the fps precondition beside the denominator (or make the test
+  wall-clock based). Same audio-docs batch.
+- **F4 (Medium) — CONFIRMED, deferred with cause.** `inDsp` pinned at 4 is also
+  the signature of "nothing was ever submitted", so the reading must be qualified
+  with `submitted > 0`. Same audio-docs batch.
+- **F5 (Low) — CONFIRMED, deferred with cause.** `submitted - done == inDsp`
+  holds for an **open** sink; `audioClose()` zeroes `g_inDsp` and not the other
+  two. One-word prose fix, same batch.
+- **F6 (Low) — OWNER ONLY, untouched.** Every file it names
+  (`docs/OWNER_DIRECTIVE_2026-11-05.md`, `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`,
+  `ralph/builder.md`, `tools/ralph_pi_watchdog.sh`,
+  `tools/runner/test_review_state.sh`) is operator-owned and dirty in the
+  worktree; the builder staged none of them.
+
+### Prior-solution lookup
+
+Pi-knowledge `mdk-sdl` (mode hybrid) on "Citro3D alpha blend state per pass,
+index 0 discard, alpha test PICA200" returned `docs/OPEN_ITEMS.md` as its top
+hit at 0.900 — i.e. the KB surfaced the project's own (incorrect) claim, which is
+what this batch corrects; `SPEC.md` on the palette-texture structural limit was
+the second useful hit. Obsidian MCP and Cognee MCP expose no tools in this
+session (`obsidian_*`/`cognee_*` absent), so the vault lookup is the degraded
+disk-only path and Cognee's graph search did not happen at all — a session
+configuration fault to report per AGENTS P9, not a lookup to claim.
+
+### Next, per the priority order
+
+Item 6's blend state is landed. The next items are the emulator-visible ones:
+the one-sided view (geometry stops at column 640 of the 400-wide panel; the
+census's "clear colour" figure was inflated by the transparency bug this batch
+fixed, so re-run the census before theorising about it again), and the small
+audio-docs batch carrying review F2-F5.

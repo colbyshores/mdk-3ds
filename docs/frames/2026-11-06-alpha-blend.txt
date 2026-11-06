@@ -1,0 +1,14 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-06T11:21:49Z at f47d8fc
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the pinned picture did not move: this batch changes only the 3DS backend,
+and the pinned frame is captured from the Linux build (tests/frames/capture_cpp.sh
+runs build-linux/mdk over Vulkan), so no mdk_3ds/** change can move it. The
+capture is byte-identical to 2026-11-06-b82-ndsp-ledger-rate.png (sha256
+6646adf1dae3a774d6215d57e5bcfba1), same bad_percent=1.240, same max_delta=247,
+same mean_delta=0.1819. The picture this batch DID move is the 3DS one, measured
+in Mandarine on :99 with the pinned emulator: 33909 pixels differ, 33844 of them
+brighter and 65 darker, and the top panel's near-clear pixels fall from 68001
+(71.3%) to 58127 (61.0%) because surfaces the palette calls opaque were being
+drawn at six percent alpha. Numbers and captures: docs/PROGRESS_LOG.md,
+Iteration 111.

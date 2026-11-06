@@ -160,6 +160,40 @@ DepthState depthStateForPass(Pass pass) {
     return {true, true};
 }
 
+BlendState blendStateForPass(Pass pass, Blend blend) {
+    // The oracle's one gate (Renderer.cs:565): `pass is Pass.Blended or
+    // Pass.Overlay`. Everything else in the block is reached with the same
+    // factors for every other pass, so the opaque case is one line and not
+    // four.
+    const bool blended = pass == Pass::Blended || pass == Pass::Overlay;
+    if (!blended) {
+        // enable_blend = false (Renderer.cs:570). SDL disables blending; the
+        // PICA has no disable, so the equivalent is the replace pair, written
+        // for the alpha channel too -- the oracle's alpha factors are only
+        // read when blending is on, and with them left at SRC_ALPHA a Solid
+        // draw would still mix the alpha channel with the target's.
+        return {false, kBlendOne, kBlendZero, kBlendOne, kBlendZero};
+    }
+
+    // Renderer.cs:571-576, factor by factor. The destination colour factor is
+    // the only thing `blend` changes: Add is the oracle's additive mode, and
+    // everything else -- which today is every live blended surface, the glass
+    // included -- is the ordinary over.
+    BlendState s;
+    s.enable = true;
+    s.srcColour = kBlendSrcAlpha;
+    s.dstColour = blend == Blend::Add ? kBlendOne : kBlendOneMinusSrcAlpha;
+    s.srcAlpha = kBlendOne;
+    s.dstAlpha = kBlendOneMinusSrcAlpha;
+    return s;
+}
+
+bool alphaTestPasses(int alphaByte) {
+    // GPU_GREATER against kAlphaTestReference, which is what the backend
+    // installs, so this predicate and the hardware's cannot drift apart silently.
+    return alphaByte > kAlphaTestReference;
+}
+
 float storedDepth(float zNdc) {
     // The fixed-function transform: `z*zScale + zOffset`, with the two constants
     // the backend hands to C3D_DepthMap. Plain float arithmetic, no promotion:

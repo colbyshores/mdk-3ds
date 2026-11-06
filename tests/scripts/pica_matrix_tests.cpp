@@ -356,6 +356,99 @@ void testTheDepthStateComesFromThePass() {
     PICA_CHECK(!overlay.write);
 }
 
+// ---------------------------------------------------------------------------
+// THE BLEND STATE, AND THE DISCARD THE ALPHA TEST STANDS IN FOR
+// ---------------------------------------------------------------------------
+//
+// Pinned for the same reason the depth table is: the citro3d initialiser leaves
+// blending ON with the oracle's colour pair, so a build that never calls
+// C3D_AlphaBlend looks correct on the glass and is wrong on every other pass.
+// A screenshot of the shipped level cannot tell those two apart; this can.
+
+void testTheOpaquePassesDoNotBlend() {
+    // Renderer.cs:565,570: `blended = pass is Blended or Overlay`, and
+    // `enable_blend = blended`. The three opaque passes therefore REPLACE.
+    const mdk::Pass opaque[] = {mdk::Pass::Solid, mdk::Pass::DoubleSided,
+                                mdk::Pass::Mirror};
+    for (int i = 0; i < 3; i++) {
+        const mdk::pica::BlendState s =
+            mdk::pica::blendStateForPass(opaque[i], mdk::Blend::Alpha);
+        PICA_CHECK(!s.enable);
+        // The PICA has no blend-disable, so "disabled" has to be spelled as the
+        // replace pair on BOTH channels. An alpha channel left at SRC_ALPHA is
+        // the mistake this line exists to catch.
+        PICA_CHECK(s.srcColour == mdk::pica::kBlendOne);
+        PICA_CHECK(s.dstColour == mdk::pica::kBlendZero);
+        PICA_CHECK(s.srcAlpha == mdk::pica::kBlendOne);
+        PICA_CHECK(s.dstAlpha == mdk::pica::kBlendZero);
+    }
+
+    // And the mode cannot turn an opaque pass back on: the oracle reads `blend`
+    // only inside the blended branch (Renderer.cs:572), so a Solid surface
+    // asked for Add is still a Solid surface.
+    const mdk::pica::BlendState solidAdd =
+        mdk::pica::blendStateForPass(mdk::Pass::Solid, mdk::Blend::Add);
+    PICA_CHECK(!solidAdd.enable);
+    PICA_CHECK(solidAdd.dstColour == mdk::pica::kBlendZero);
+}
+
+void testTheBlendedPassUsesTheOraclesFactors() {
+    // Renderer.cs:571-576, factor by factor, for the ordinary over.
+    const mdk::pica::BlendState s =
+        mdk::pica::blendStateForPass(mdk::Pass::Blended, mdk::Blend::Alpha);
+    PICA_CHECK(s.enable);
+    PICA_CHECK(s.srcColour == mdk::pica::kBlendSrcAlpha);
+    PICA_CHECK(s.dstColour == mdk::pica::kBlendOneMinusSrcAlpha);
+    PICA_CHECK(s.srcAlpha == mdk::pica::kBlendOne);
+    PICA_CHECK(s.dstAlpha == mdk::pica::kBlendOneMinusSrcAlpha);
+
+    // The alpha pair is NOT the colour pair, and that is the whole point of
+    // pinning them separately: src_alpha is ONE where src_colour is SRC_ALPHA.
+    // Copying the colour pair down is a one-character edit that no picture on
+    // this host can show, because the panel discards the alpha channel.
+    PICA_CHECK(s.srcAlpha != s.srcColour);
+
+    // Overlay is blended too (Renderer.cs:565 names both), which is what makes
+    // it a different state from its depth rule: Overlay is exempt from the
+    // depth test but still mixes.
+    const mdk::pica::BlendState overlay =
+        mdk::pica::blendStateForPass(mdk::Pass::Overlay, mdk::Blend::Alpha);
+    PICA_CHECK(overlay.enable);
+    PICA_CHECK(overlay.dstColour == mdk::pica::kBlendOneMinusSrcAlpha);
+}
+
+void testAddDiffersOnlyInTheDestinationColour() {
+    // Renderer.cs:572 is the only line `blend` reaches: ONE instead of
+    // ONE_MINUS_SRC_ALPHA, and nothing else moves.
+    const mdk::pica::BlendState alpha =
+        mdk::pica::blendStateForPass(mdk::Pass::Blended, mdk::Blend::Alpha);
+    const mdk::pica::BlendState add =
+        mdk::pica::blendStateForPass(mdk::Pass::Blended, mdk::Blend::Add);
+    PICA_CHECK(add.enable);
+    PICA_CHECK(add.srcColour == mdk::pica::kBlendSrcAlpha);
+    PICA_CHECK(add.dstColour == mdk::pica::kBlendOne);
+    PICA_CHECK(add.srcAlpha == alpha.srcAlpha);
+    PICA_CHECK(add.dstAlpha == alpha.dstAlpha);
+}
+
+void testTheDiscardIsAlphaAboveZero() {
+    // The oracle's `if (index == 0) discard;` (shaders/palette.hlsl), and the
+    // expansion this backend feeds the GPU encodes index 0 as alpha 0 and every
+    // other index as alpha 255 (renderer_c3d.cpp, expandIndices). So the two
+    // predicates select the same texels -- and the reference has to stay 0 for
+    // that to remain true.
+    PICA_CHECK(mdk::pica::kAlphaTestReference == 0);
+    PICA_CHECK(!mdk::pica::alphaTestPasses(0));
+    PICA_CHECK(mdk::pica::alphaTestPasses(1));
+    PICA_CHECK(mdk::pica::alphaTestPasses(255));
+
+    // The glass case: a flat colour carries the DTI's alpha, and a partially
+    // transparent surface must SURVIVE the test -- it is the blending that makes
+    // it translucent, not the discard. An alpha test written as GREATER than
+    // some opaque threshold would silently make every window opaque.
+    PICA_CHECK(mdk::pica::alphaTestPasses(128));
+}
+
 void testTheDepthMapIncreasesWithDistance() {
     // The converted NDC z runs [-1,0]: -1 at the near plane, 0 at the far. The
     // stored depth must INCREASE with distance, or the test function that keeps
@@ -563,6 +656,10 @@ int runPicaMatrixTests() {
     testTheRegistersAreColumns();
     testTheShaderReadsTheRegistersTheWayTheMatrixMeansThem();
     testTheDepthStateComesFromThePass();
+    testTheOpaquePassesDoNotBlend();
+    testTheBlendedPassUsesTheOraclesFactors();
+    testAddDiffersOnlyInTheDestinationColour();
+    testTheDiscardIsAlphaAboveZero();
     testTheDepthMapIncreasesWithDistance();
     testTheClearedBufferAcceptsTheWholeFrustum();
     testNearerFragmentsWinAndFartherOnesLose();

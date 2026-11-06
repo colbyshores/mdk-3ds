@@ -165,6 +165,85 @@ struct DepthState {
 // lines can be read against the oracle line it comes from.
 DepthState depthStateForPass(Pass pass);
 
+
+// ---------------------------------------------------------------------------
+// THE FRAME'S BLEND STATE
+// ---------------------------------------------------------------------------
+
+// The blend factors the oracle's rule can name, in host-readable form. The
+// backend maps these onto the GPU enums; this file must not name them.
+enum BlendFactor {
+    kBlendZero = 0,
+    kBlendOne = 1,
+    kBlendSrcAlpha = 2,
+    kBlendOneMinusSrcAlpha = 3,
+};
+
+// What one draw does with what is already in the target.
+struct BlendState {
+    // Does the draw mix with the target at all? False is the oracle's
+    // `enable_blend = false`, which on the PICA is not a switch but the
+    // replace pair (ONE, ZERO).
+    bool enable = true;
+    BlendFactor srcColour = kBlendSrcAlpha;
+    BlendFactor dstColour = kBlendOneMinusSrcAlpha;
+    // The oracle sets the ALPHA channel's factors separately from the
+    // colour's, and they are not the same pair.
+    BlendFactor srcAlpha = kBlendOne;
+    BlendFactor dstAlpha = kBlendOneMinusSrcAlpha;
+};
+
+// The oracle's rule, in one place so a host test can hold it to the C#.
+//
+// `Renderer.cs:565-577`, the same block every pipeline state is built from:
+//
+//     blended        = pass is Blended or Overlay
+//     enable_blend   = blended
+//     src_color      = SRC_ALPHA
+//     dst_color      = blend is Add ? ONE : ONE_MINUS_SRC_ALPHA
+//     color_op       = ADD
+//     src_alpha      = ONE
+//     dst_alpha      = ONE_MINUS_SRC_ALPHA
+//     alpha_op       = ADD
+//
+// Two things in that block are easy to get wrong and are the reason this is a
+// table and not a comment. The first is that `enable_blend` is FALSE for the
+// four opaque passes: a Solid surface does not mix, so a texture whose alpha
+// is neither 0 nor 255 is opaque here and translucent on a build that leaves
+// blending on. The second is that the alpha channel's source factor is ONE
+// while the colour's is SRC_ALPHA; copying the colour pair to the alpha
+// channel is a plausible-looking mistake a reader cannot see.
+//
+// `blend` is only read when the pass is blended, because the oracle only
+// reads it there: Blend::Add changes the destination colour factor and nothing
+// else, and an unblended pass never reaches that line.
+BlendState blendStateForPass(Pass pass, Blend blend);
+
+
+// ---------------------------------------------------------------------------
+// THE ORACLE'S DISCARD
+// ---------------------------------------------------------------------------
+
+// The reference value of the alpha test that stands in for the oracle's
+// discard. The backend installs `GPU_GREATER` against this, i.e. it keeps a
+// fragment whose alpha is strictly above it.
+const int kAlphaTestReference = 0;
+
+// The oracle's `if (index == 0) discard;` (shaders/palette.hlsl), as a
+// predicate on the fragment's 8-bit alpha so a host test can hold it.
+//
+// WHY AN ALPHA TEST IS THE RIGHT EQUIVALENT, AND WHY IT IS NOT COSMETIC. The
+// shader discards index 0, and this backend's palette expansion encodes index
+// 0 as alpha 0 and every other index as alpha 255, so `alpha > 0` selects
+// exactly the texels the shader keeps. That is the same predicate, but the
+// point of the test is not the colour: a DISCARDED FRAGMENT DOES NOT WRITE
+// DEPTH, while a fragment blended with alpha 0 does. Left as a blend, every
+// transparent texel of an arena texture paints a hole in the depth buffer that
+// hides whatever is behind it -- an invisible wall, drawn in the game's own
+// colours, so the picture looks plausible right up to the place where the
+// world stops. That is the failure this replaces.
+bool alphaTestPasses(int alphaByte);
+
 // The depth map the backend installs, as the three arguments of
 // `C3D_DepthMap(kDepthMapIsZBuffer, kDepthMapScale, kDepthMapOffset)`, and the
 // raw depth clear value for `C3D_RenderTargetClear`.

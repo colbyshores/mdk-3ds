@@ -263,21 +263,37 @@ measured or cited reason, and the batch that closes one should delete its entry.
   batch that touches depth, the far plane, or a CPU-projected quad pass (the
   diagnostic triangle is at clip `z = 0` through an identity matrix) should know
   the boundary is there.
-- The newest external review's MINOR, halved: the 3DS `Pass` implementation now
-  covers culling **and depth**, but not blend. The C# derives cull, blend and
-  depth-test/write from `Pass` (`Renderer.cs:565,596,606-607`); the depth half
-  landed in batch 29, and `renderer_c3d.cpp` still never calls `C3D_AlphaBlend`, so
-  `Pass::Blended` glass draws opaque. **Why it is not the same one-liner as the
-  depth half:** there is no alpha to blend with on this path. The palette expansion
-  forces alpha 255 on every non-index-0 texel (the C# gets its transparency from
-  the shader's index-0 discard, and the PICA has no discard), and
-  `mdk_c3d.v.pica` writes `outclr = ones`, so `C3D_AlphaBlend(SRC_ALPHA,
-  ONE_MINUS_SRC_ALPHA)` is arithmetic that changes nothing for glass. The alpha
-  source has to be decided first — the original's colour-key, or an alpha in the
-  expanded texture — and that is a batch of its own. The review measured non-`Solid`
-  batches in **10 of level 3's 17** arenas (HMO_2, HMO_3, HMO_5, HMO_7, HMO_8,
-  HMO_9, HMO_10, CHMO_4, CHMO_8, CHMO_9; `HMO_3`: 75 Blended; `HMO_9`: 25 Mirror +
-  49 Blended; `HMO_2`: 4 Blended). The seven pure-`Solid` arenas are HMO_1, HMO_4,
+- **RESOLVED (batch 83): the 3DS `Pass` implementation now covers blend as well as
+  culling and depth.** The C# derives cull, blend and depth-test/write from `Pass`
+  (`Renderer.cs:565,596,606-607`); the depth half landed in batch 29 and the blend
+  half is `pica::blendStateForPass`, installed per pass by `renderer_c3d.cpp`.
+  **Two premises this file carried were wrong, and both are measured now.** (a)
+  "`renderer_c3d.cpp` never calls `C3D_AlphaBlend`, so glass draws opaque" — the
+  conclusion is right that the state was never set, but the mechanism is the
+  opposite: `C3D_Init` calls
+  `C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA,
+  GPU_ONE_MINUS_SRC_ALPHA, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA)` (read out of
+  the linked `libcitro3dd.a`, `base.o`), so blending was ON for every pass of
+  every frame and glass looked right by accident while the four opaque passes
+  mixed when the oracle forbids it. The before/after capture of this batch is the
+  proof: 33844 of 33909 changed pixels got BRIGHTER, and the before value of a
+  surface the palette says is `(255,0,0)` was `(30,30,45)` — exactly
+  `src*(16/255) + clear*(1-16/255)`, i.e. an opaque arena surface drawn at 6%
+  over the background. (b) "there is no alpha to blend with on this path, and the
+  PICA has no discard" — the flat-colour path carries the material's alpha in the
+  1x1 texture, and the PICA's discard equivalent is the alpha test, which is what
+  `C3D_AlphaTest(true, GPU_GREATER, 0)` installs here: the expansion encodes index
+  0 as alpha 0 and every other index as 255, so `alpha > 0` is the shader's
+  `if (index == 0) discard;` and, unlike a blend, a discarded fragment does not
+  write depth. What is still open is NOT the mechanism: the alpha test changed no
+  coverage in the pinned scene, so the one-sided view is still unexplained, and a
+  textured surface whose material alpha is partial still cannot reach the fragment
+  (the combiner replaces alpha with the texture's, where the shader multiplies by
+  `colour * input.colour`) — that needs a second combiner stage, not a blend call.
+  The review's batch-counting detail stands and is useful: non-`Solid` batches live
+  in **10 of level 3's 17** arenas (HMO_2, HMO_3, HMO_5, HMO_7, HMO_8, HMO_9,
+  HMO_10, CHMO_4, CHMO_8, CHMO_9; `HMO_3`: 75 Blended; `HMO_9`: 25 Mirror + 49
+  Blended; `HMO_2`: 4 Blended). The seven pure-`Solid` arenas are HMO_1, HMO_4,
   HMO_6, CHMO_1, CHMO_2, CHMO_5 and CHMO_6. They are unreachable today only because
   the 3DS frontend draws the start arena, whose 154 batches are all `Solid`.
 - Kurt's sprite is drawn at `Player::feet`, not at the C#'s `FrameBlend.Feet`.
