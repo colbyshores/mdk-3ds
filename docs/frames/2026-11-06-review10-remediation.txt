@@ -1,0 +1,38 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-06T19:17:04Z at fbefcdf
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the pinned picture did not move: this batch's only non-comment source change is
+one printf format specifier on a debug ledger line in the 3DS frontend (secs=%.2f ->
+%.3f, main_3ds.cpp), which the host capture path does not execute. The rest of the
+diff is two comment blocks in mdk_3ds/src/audio/audio_3ds.{h,cpp} and one host-side
+gate. The in-tree build of this tree gives mdk.elf md5
+1237bfcc0c6eee21e73e8a9fe8794302, which differs from batch 88/89/90's
+75b1edb06d0d2c58aecafb6f7b008421 by exactly that format string, and rebuilding after
+the comment edits reproduced 1237bfcc... unchanged. The capture itself is
+byte-identical to 2026-11-06-review9-remediation.png (sha256 6646adf1dae3a774d6215d
+57e5bcfba1), same bad_percent=1.240, same max_delta=247, same mean_delta=0.1819. No
+.3dsx md5 is offered as an identity here: 3dsxtool re-walks the staged RomFS, so the
+container hash is not reproducible even from the tree that built it.
+what this batch measured, because a 3DS path was touched: TWO Mandarine r1.2.1 runs
+(md5 0d2adab6...) on DISPLAY=:99 through mdk_3ds/tools/emurun.sh --secs 50
+--min-frames 2000, both exit 0, level 7, mono, forced llvmpipe, dspfirm present, SDL
+audio dummy, private lanes /tmp/mdk-emurun.227723 and /tmp/mdk-emurun.238686, one
+session banner each, no duplicate frame numbers. Run A (the previous build, 2-dp) and
+run B (this build, 3-dp) reached frame 2880 and agree on dspframes at EVERY frame
+number, including the three rows three batches cited as two different runs: 3921 at
+19.149 s, 6178 at 30.180 s, 8844 at 43.216 s. That is review-10 F1 confirmed: the
+instrument is deterministic frame for frame, so the cited 0.078/s was one trajectory
+sampled twice and not a run-to-run spread. The estimator that cancels the constant
+~20 ms start offset is a slope between two rows: (9870-229)/(48.233-1.099) =
+204.544 dspframes/s, which is 0.009/s (0.004 %) from the header model 32728.5/160 =
+204.553 and 0.256/s (0.125 %) from a power-of-two 204.800, against a +/-0.05/s scatter
+between 11 s sub-windows of the same run. So the frame quantum is 160.007 and the
+power-of-two is excluded in the emulator; the console's mixer rate stays unmeasured,
+because this is an HLE DSP (AGENTS P6/P8). The last ledger row is `audio: frame=2880
+secs=48.233 submitted=2407 done=2404 dropped=5 requeued=1 inDsp=3 dspframes=9870
+dspdropped=0`, so the rate test submitted/(secs x 50) = 0.9981 and submitted - done
+== inDsp == 3. For the record, the inequality review-10 F2/F3 caught: batch 89's
+residual was +0.152/s, which is +0.074 %, so a 0.078/s figure is SMALLER than it, not
+larger -- the two sides of that sentence were not the same kind of quantity.
+Emulator-green is not hardware-pass: Old-3DS timing and the PICA's own behaviour
+remain unmeasured (AGENTS P6/P8).

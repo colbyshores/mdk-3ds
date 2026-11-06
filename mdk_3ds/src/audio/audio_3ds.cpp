@@ -104,36 +104,56 @@ bool g_live = false;
 //     precisely the reason this paragraph gives. The frame
 //     QUANTUM is not named by anything installed (it lives in the DSP firmware,
 //     and /opt/devkitpro/libctru ships headers and a library, no source), so
-//     160 samples is an assumption and 32728.5/160 = 204.55/s is a prediction,
-//     not a derived fact. The emulator reads 204.75/s at 19 s and 204.71/s at
-//     30 s, and `secs` is printed to 2 dp, so the 30 s figure is bounded to
-//     (204.67, 204.74] — a window that excludes both the header model's 204.55
-//     and a power-of-two 32768/160 = 204.80.
-//     THAT EXCLUSION IS CONDITIONAL AND THE CONDITION IS NOT MET (review-9
-//     F2). It holds only for a `secs` that is itself EXACT, and `secs` is the
-//     guest's own elapsed sum, not a reference clock. Batch 89's residual over
-//     the header model is 204.705 - 204.553 = 0.152/s, i.e. 0.074 %, and this
-//     paragraph's own candidate explanation — Mandarine's HLE audio pacing,
-//     device muted — is a clock error of exactly that order, which would move
-//     the window by exactly the distance it claims to exclude. That is now
-//     measured and not only argued: a SECOND run of a byte-identical ELF
-//     (batch 90, 8844 frames at secs=43.22) reads 204.628/s, a residual of
-//     +0.074/s, and the two runs of the same binary differ by 0.078/s. The
-//     residual is a property of the run, not of the DSP model, so it excludes
-//     nothing: the emulator cannot tell "the quantum is not 160" apart from
-//     "this run's guest clock ran a few hundredths of a percent slow".
-//     Likewise 32728.5/204.71 = 159.88 is not an integer, but that division
-//     inherits the same instability, so it refutes nothing either. What
-//     survives is the kind and nothing else: the counter counts mixer frames,
-//     its RATE IS UNMEASURED, the quantum stays unnamed by anything installed,
-//     and the Old-3DS mixer rate stays UNMEASURED (AGENTS P6/P8). Do not read
-//     the window as proof the counter is useless for a rate, and do not read
-//     it as proof the quantum is 160 — it settles neither.
+//     160 samples starts as an assumption and 32728.5/160 = 204.553/s is a
+//     prediction.
+//     THE PREDICTION NOW HAS A MEASUREMENT, AND WHAT WAS WRONG WAS THE RATIO,
+//     NOT THE MODEL (review-10 F1). Three batches divided one row's dpf by that
+//     row's `secs` and then explained the leftover as run noise. It is not
+//     noise. Two runs of this build reproduce EVERY row frame for frame — 229 at
+//     1.099 s, 3921 at 19.149 s, 6178 at 30.180 s, 8844 at 43.216 s, 9870 at
+//     48.233 s — so the instrument is deterministic to the frame, and batch 90's
+//     "two runs of one ELF differ by 0.078/s" was one trajectory sampled at two
+//     points, not a spread between runs.
+//     dpf/secs from a single row carries a START OFFSET, because the counter
+//     starts when ndsp starts and `secs` starts when the first frame is
+//     measured. Divide by the header model and subtract it: dpf/204.553 - secs
+//     stays inside +0.019..+0.026 s across a 47 s run and drifts by -0.002 s
+//     (about one 20 ms buffer; the run bounds the offset, it does not pin where
+//     it comes from), while under a power-of-two 204.80 the same subtraction
+//     drifts monotonically by -0.059 s. A constant offset cancels in a SLOPE
+//     between two rows, so the slope is the estimator and the ratio never was:
+//     (9870-229)/(48.233-1.099) = 204.544/s, which is -0.009/s (-0.004 %) off
+//     the header model's 204.553 and -0.256/s (-0.125 %) off a power-of-two
+//     204.800. The implied quantum is 160.007 samples and the next integer is
+//     0.6/s away, so the quantum is 160 or it is nothing.
+//     DO NOT READ THE ROUNDING BAND AS THE UNCERTAINTY. At 3 dp the arithmetic
+//     band on that slope is +/-0.004/s, which would put 204.553 OUTSIDE it — but
+//     four 11 s sub-windows of the SAME run read 204.533, 204.605, 204.515 and
+//     204.605, a real scatter of +/-0.05/s that has nothing to do with the
+//     print's decimals: `secs` is the guest's frame sum, dpf is the HLE mixer's
+//     own counter, and the two drift against each other at the hundredths of a
+//     percent level over tens of seconds. Against THAT scatter the header model
+//     fits (0.009/s, a fifth of it) and a power-of-two does not (0.256/s, five
+//     times it). That is the whole of what this instrument can settle, and
+//     quoting the rounding band instead would be the same mistake as the 2-dp
+//     exclusion batch 89 made, only pointing the other way.
+//     WHAT IS STILL NOT MEASURED IS THE CONSOLE. This is Mandarine's HLE DSP, so
+//     204.544/s is a property of the emulator's model of the mixer: strong
+//     evidence for a 160-sample frame at 32728.5 Hz, not a header for it, and
+//     the Old-3DS mixer rate stays UNMEASURED (AGENTS P6/P8). The quantum also
+//     stays unnamed by anything installed — the run confirms the emulator agrees
+//     with 160, it does not make 160 a documented constant. So on hardware the
+//     ledger line is still read as a liveness signal first, and only turned into
+//     a rate against a console-side clock. `secs` is printed to 3 dp because the
+//     2-dp print put +/-0.043/s on every slope, which is the size of the scatter
+//     itself: the instrument could not tell its own rounding error from the
+//     clock pair's, and that is how a fixed 20 ms offset came to be read as
+//     noise.
 //     An earlier revision of this comment called the unit "240-sample blocks at
 //     48 kHz", which is wrong twice over and was never checked (review F2), and
 //     it survived because 48000/240 = 200/s fits the same measurement. A unit
 //     that only has to be right in magnitude cannot be falsified by a magnitude
-//     — which is the lesson this paragraph is now proof of twice.
+//     — which is the lesson this paragraph is now proof of three times.
 //
 // `dropped` counts REJECTED FILLS, not buffers: one increment can throw away a
 // whole frame's worth of samples (up to 735 frames, 0.83 of a buffer), so it is

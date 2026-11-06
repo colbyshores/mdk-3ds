@@ -656,8 +656,18 @@ int main(int argc, char** argv) {
             // fps a half-rate sink scores 1.00 that way. `secs` is the sum of the
             // elapsed values the mixer actually received, so the rate test is
             // submitted/(secs x 50) and is frame-rate independent by construction.
+            //
+            // THREE DECIMAL PLACES, not two (review-10 F1). This line is also the
+            // instrument for the sink's own frame counter, and that test is a
+            // SLOPE between two rows: dpf is an integer, so the width of the
+            // result is set entirely by the rounding of `secs`. At 2 dp a 47 s
+            // window carries +/-0.005 s at each end, which is +/-0.043/s — wider
+            // than the residual the slope exists to resolve, and the reason three
+            // batches read a fixed 20 ms start offset as instrument noise. At 3 dp
+            // the same band is +/-0.004/s, which is finer than the clock pair's own
+            // scatter and so is no longer the limiting error.
             const mdk::AudioStats st = mdk::audioStats();
-            mdk::log3dsPrintf("audio: frame=%lu secs=%.2f submitted=%u done=%u dropped=%u "
+            mdk::log3dsPrintf("audio: frame=%lu secs=%.3f submitted=%u done=%u dropped=%u "
                               "requeued=%u inDsp=%d dspframes=%u dspdropped=%u",
                               (unsigned long)frame, audioClock, (unsigned)st.submitted,
                               (unsigned)st.done,

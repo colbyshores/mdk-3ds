@@ -16963,9 +16963,22 @@ review-9 F2 / batch 90, Iteration 118: the exclusion is conditional on `secs` be
 exact, and it is not — a second run of a byte-identical `mdk.elf` reads 204.628/s at
 43.22 s, so the run-to-run spread (0.078/s) exceeds the residual this paragraph used
 as a refutation. The paragraph's conclusion (rate unmeasured) stands; its argument
-does not.]** The quantum implied
+does not.]** **[Superseded again by review-10 F1 / batch 91, Iteration 119, and wrong
+in the opposite direction. The 0.078/s was never a spread between runs: a third run of
+the same byte-identical ELF reproduces 3921 at 19.15 s, 6178 at 30.18 s and 8844 at
+43.22 s out of ONE trajectory, so the instrument is deterministic frame for frame and
+the two "runs" were one trajectory sampled twice. The leftover is a constant ~20 ms
+start offset, not a clock error — dpf/204.553 − secs stays inside +0.016..+0.028 s
+across 47 s and does not grow, while under a power-of-two the same subtraction drifts
+from +0.024 to −0.038 s. Cancel the offset with a slope between two rows and the rate
+is 204.544/s — 0.009/s (0.004 %) from 204.553 and 0.256/s (0.125 %) from 204.800, against
+a window-to-window scatter of ±0.05/s in the same run: this
+paragraph's original exclusion named the right model and was weak only on its own
+`secs`, and "rate unmeasured" becomes "measured in Mandarine's HLE DSP, unmeasured on
+the console".]** The quantum implied
 by the header rate at the measured value is 159.88, so no integer frame size fits
-either model, and the likeliest explanation of the residual is Mandarine's own HLE
+either model **[and that division inherits the same single-row offset: the slope's
+implied quantum is 160.007 and the next integer is 0.6/s away, so 160 fits]**, and the likeliest explanation of the residual is Mandarine's own HLE
 pacing with the audio device muted — not the console. So the shipped comments now
 say three separate things instead of one confident one: the **kind** of the counter
 is derived (one increment per `ndspThreadMain` iteration after the
@@ -17140,6 +17153,19 @@ and not a rate is that **no installed header names the frame quantum** — not t
 `audio_3ds.h`'s summary line carries the same correction, and the two records that restated the stronger
 claim are annotated in place rather than rewritten.
 
+**[This whole section is falsified by review-10 F1 / batch 91, Iteration 119, and is annotated rather
+than rewritten for the usual reason.** A third run of the same byte-identical ELF reproduces **both rows
+above from one trajectory** — 3921 at 19.15 s, 6178 at 30.18 s, 8844 at 43.22 s, one session banner, no
+duplicate frame numbers — so there was never a run-to-run spread to compare, and "a property of the run
+and not of the DSP model" is the wrong diagnosis. The residual is a constant start offset (bounded
++0.019..+0.026 s over 47 s, drifting −0.002 s), a slope cancels it, and the slope settles the model at
+204.544/s — 0.009/s from 204.553 and 0.256/s from 204.800, where the resolution is the ±0.05/s scatter
+between 11 s sub-windows of the same run and not the print's rounding. Two further errors in this
+section, both named by the same review: "0.074 % residual is smaller than the 0.078/s spread" compares a
+percentage with a per-second rate (0.074 % of 204.553 is 0.152/s, which is **twice** 0.078/s), and "a
+spread larger than either run's residual" is false against this table's own +0.152/s. The emulator's
+rate is now measured; the console's is not.]**
+
 What the loop needs did not move and is not weakened: the kind is derived from the `ndsp.o` disassembly,
 the rate is unmeasured, and the Old-3DS mixer rate stays open (AGENTS P6/P8). What changed is that the
 reason given for "not a rate instrument" is now a reason that holds.
@@ -17240,3 +17266,159 @@ hardware reader should now take off the ledger is `submitted` against `secs x 50
 `dspframes` against **nothing**, because the mixer rate is not known and the emulator cannot supply it.
 The owner actions are unchanged plus review-9 F4/F5; none is builder-resolvable. This batch staged its
 paths by name and touched none of the six operator files.
+
+---
+
+## Iteration 119 — batch 91: review-10 remediation — the "run-to-run jitter" was one deterministic trajectory sampled twice, and the leftover was a 20 ms start offset
+
+**Scope.** Review-10 of `logs/ralph-pi/run-20261106-062909/` — eight findings, no
+Critical, one High, none rebutted on merit. Four fixed here (F1 High, F2, F3 in part,
+F4), four owner-only (F5–F8, all in the operator's uncommitted harness set). The
+reviewer's own verdict was INCOMPLETE with F1 blocking, and it was right: batch 90's
+correction of batch 89 was itself built on a measurement that did not mean what it
+said.
+
+### F1 (High, confirmed by an independent run before anything was changed)
+
+Batch 90's shipped comment asserted that "a SECOND run of a byte-identical ELF … reads
+204.628/s … and the two runs of the same binary differ by 0.078/s", and concluded that
+the residual "is a property of the run, not of the DSP model, so it excludes nothing"
+and that the counter's "RATE IS UNMEASURED". The reviewer said a third run reproduces
+both cited rows inside one trajectory. It does.
+
+`DISPLAY=:99 bash mdk_3ds/tools/emurun.sh --secs 50 --min-frames 2000`, exit 0,
+mandarine md5 `0d2adab6` (the pinned r1.2.1), lane `/tmp/mdk-emurun.227723`, one
+session banner, no duplicate frame numbers:
+
+```
+audio: frame=1140 secs=19.15 dspframes=3921     <- batch 89's "204.75/s" row
+audio: frame=1800 secs=30.18 dspframes=6178     <- batch 89's row, verbatim
+audio: frame=2580 secs=43.22 dspframes=8844     <- batch 90's row, verbatim
+```
+
+Three rows, three batches of argument, **one trajectory**. The instrument is
+deterministic to the frame, so there was never a spread between runs to compare, and
+"the residual is a property of the run" is the wrong diagnosis. A second run after the
+rebuild (lane `/tmp/mdk-emurun.238686`, this build, `secs` at 3 dp) reproduced the same
+`dspframes` at every frame number, which also rules out the softer version of the
+objection ("it was two runs, they just happened to agree").
+
+What the leftover actually is: a **constant start offset**. `dpf/204.553 − secs` stays
+inside **+0.019..+0.026 s** across a 47 s run and drifts by −0.002 s — about one 20 ms
+buffer, and the run bounds it without pinning where it comes from — while under a
+power-of-two 204.80 the same subtraction drifts monotonically by −0.059 s. A constant
+offset cancels in a **slope between two rows**, which is the estimator the reviewer
+named and the one three batches did not use:
+
+```
+(9870 - 229) / (48.233 - 1.099) = 204.544 dspframes/s
+  vs header model  32728.5/160 = 204.5531   residual -0.0086/s  (-0.004 %)
+  vs power-of-two  32768.0/160 = 204.8000   residual -0.2555/s  (-0.125 %)
+implied quantum 160.007 samples; the next integer is 0.6/s away
+```
+
+One deliberate refusal, because this is the fourth batch running on this number: the
+3-dp rounding band on that slope is ±0.004/s, which would put 204.553 **outside** it,
+and quoting it would be batch 89's mistake rotated 180°. Four 11 s sub-windows of the
+same run read 204.533, 204.605, 204.515 and 204.605 — a real ±0.05/s scatter between
+the guest's frame sum and the HLE mixer's own counter that has nothing to do with the
+print's decimals. Against that scatter the header model fits (a fifth of it) and a
+power-of-two does not (five times it). That is the whole of what this instrument can
+settle, and the shipped comment says so in those terms.
+
+So the shipped comments now say: the **kind** is derived from the `ndsp.o`
+disassembly; the **rate in the emulator** is 204.544/s, i.e. a 160-sample frame at
+32728.5 Hz, established by a slope and never by one row's ratio; the **console's rate
+is still unmeasured**, because this is Mandarine's HLE model of the mixer and no
+installed header names the quantum (AGENTS P6/P8). The instrument was also improved:
+`secs` prints at 3 dp now, because the 2-dp rounding put ±0.043/s on every slope — the
+same size as the scatter, which is exactly how a fixed offset came to look like noise.
+The two records that carried the false mechanism (`:16961` and `:17134`) are annotated
+in place, not rewritten.
+
+### F2 and F3 (Medium, confirmed, fixed as part of F1)
+
+`audio_3ds.h` claimed "its 0.074 % residual is smaller than the 0.078/s spread" — a
+percentage compared with a per-second rate. 0.074 % of 204.553 is 0.152/s, which is
+**twice** 0.078/s, so as quantities the sentence asserted the opposite of what it
+meant; the log's own table (`:17131`) is the evidence. The sidecar said the spread was
+"larger than either run's residual", which is false against that same +0.152/s, and the
+two files contradicted each other. Both comparisons are gone, replaced by the slope
+argument. **F3's second half cannot be landed:** the recommended fix edits
+`docs/frames/2026-11-06-review9-remediation.txt`, and `gates_batch_integrity.py:71-76`
+fails any batch that modifies a historical sidecar ("history is immutable") while the
+gate itself is `PROTECTED`. The false comparative in that file is permanent by design;
+the corrected inequality is in the shipped comments, here, and in every sidecar from
+here on. Same shape as review-9 F3, and recorded as an owner action.
+
+### F4 (Medium, confirmed, fixed — the fifth could-not-fail clause in a row)
+
+Batch 90's check counted occurrences of `audioClock` in `[declaration, printf
+argument]`. The reviewer produced two mutants of exactly the class review-9 F1 named
+that still adjudicated PASS: a decay placed **after** the ledger printf (outside the
+window, still once per frame, still wrong) and a device fed `elapsed * 0.5f` while the
+clock accumulated `elapsed` ("the same elapsed the device got" was prose). Both are now
+arms, and both are red:
+
+* the window is the **rest of the function** (this file closes a function with `}` in
+  column 0), a superset of the frame loop, so a write after the printf is inside it;
+* the count is of **writes** (`audioClock` plus an assignment operator), because the
+  printf's own argument is a read and must not be counted;
+* a new check, `frontend-feeds-the-clock-and-the-device-the-same-elapsed`, requires the
+  one `audioClock += X;` and both `mixer.update(X)` / `mixer.device().update(X)` calls
+  to name the same identifier.
+
+`ndsp_sink_test.sh` goes from 16 checks / 14 arms to **17 checks / 17 arms**, every arm
+adjudicated red against the check it names, and the check fails closed on a broken
+declaration or argument regex (empty region → zero writes → red).
+
+### F5–F8 (owner-only, all confirmed against the files, none builder-resolvable)
+
+F5: the reviewer spawn (`ralph-pi.sh:1081-1090`) is inside `timeout -k 30
+"$REVIEW_TIMEOUT"` (10800 s) around `"$PI_CMD"`, whose default (`:152`) is the qwen
+slot wrapper with a longer wait cap — so a remote review can be killed for queue time
+and the failure is attributed to the model. F6: the same uncommitted `guard()`
+(`:363-385`) waits out a busy route forever and now cannot distinguish it from a broken
+invocation (rc 126/127, non-executable `PI_CMD`), while rewriting `phase route-health`
+keeps the watchdog's 900 s arm from ever firing — a silent park with no BLOCKED record.
+F7: `tools/runner/test_review_state.sh` lost its exec bit and nothing runs it
+automatically. F8: the owner directive's body was rewritten in place and
+`ralph/builder.md` — `PROTECTED` — is modified in the worktree. All four sit in the six
+operator-authored uncommitted files this batch must not stage; each is recorded as an
+owner action with the file:line evidence. This batch staged its paths by name and
+touched none of them.
+
+### Gates, run in full
+
+```
+make -C tests/scripts   -> All cases match the oracle.            (exit 0)
+                        -> PASS NdspSink (17 checks, 17 arms adjudicated red)
+bash tools/check.sh     -> CHECK: ALL GATES PASSED                 (exit 0)
+                           7 PASS, 1 SKIP (gates_smdh: no built .cia)
+make -C mdk_3ds         -> exit 0, mdk.elf md5 1237bfcc0c6eee21e73e8a9fe8794302
+```
+
+The ELF md5 is the same before and after the final comment edits, which is the
+reproducibility claim the record makes about itself. The only non-comment source change
+in the whole batch is `secs=%.2f` → `secs=%.3f`.
+
+### Prior-solution lookup
+
+`pi-knowledge` `mdk-sdl` was searched (ndsp frame counter / rate / quantum); it returned
+the audio seam's own headers and the C# `AudioDevice.cs`, i.e. no prior finding on this
+question — consistent with this being the first time the estimator was questioned.
+Neither `obsidian_*` nor `cognee_*` is exposed in this session, so the vault lookup was
+the degraded disk-only path and Cognee's graph search was unavailable (AGENTS P9,
+reported rather than worked around silently).
+
+### Next
+
+Unchanged in priority: **the one-sided view** (geometry covers panel columns 200..399 of
+400 and nobody has localised the vertical cut) is still first, and this batch took a
+sanctioned alternative for the third time — review-10's High blocked it, and the
+reviewer's verdict was INCOMPLETE. Item 5b (the HUD) stays blocked on the canvas seam.
+Audio order after the renderer items is 6c (int16 sample store), 6d (no
+`ScriptRuntime` on the console), then the bank's missing eviction bound. Original-3DS
+behaviour remains unmeasured, and what a hardware reader should now take off the ledger
+is `submitted` against `secs x 50` (the rate test) and a **slope** of `dspframes`
+between two rows if a mixer rate is wanted — never one row's division.

@@ -121,16 +121,24 @@ bool audioIsOpen();
 //     frames: one increment per `ndspThreadMain` iteration, at the DSP's own
 //     NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32728.5 Hz (os.h:9, ndsp.h:9),
 //     which is not this channel's 44100. The frame quantum is NOT named by
-//     anything installed, so the ~204.55/s that follows from a 160-sample frame
-//     is a prediction and not a fact. The emulator's 204.71/s at 30 s sits
-//     outside both that and a power-of-two 32768/160 = 204.80 — but only for a
-//     `secs` that is itself exact, and its 0.074 % residual is smaller than the
-//     0.078/s spread between two runs of a byte-identical ELF (review-9 F2), so
-//     the emulator settles NEITHER model. The reason this is a liveness signal
-//     and not a rate is that the quantum is unnamed by anything installed, not
-//     that arithmetic. So
-//     this is the difference between "the DSP is running" and "our buffers are
-//     the ones it is running on", and nothing more. It is NOT "240-sample
+//     anything installed, so a 160-sample frame starts as a prediction, and it
+//     is now MEASURED — but only by a SLOPE between two ledger rows, never by
+//     one row's dpf/secs: a single row carries a constant ~20 ms start offset
+//     (the counter starts with ndsp, `secs` starts with the first frame) that a
+//     slope cancels and a ratio does not. Measured slope 204.544/s, which is
+//     0.009/s (0.004 %) off 32728.5/160 = 204.553 and 0.256/s (0.125 %) off a
+//     power-of-two 204.800; implied quantum 160.007, and the next integer is
+//     0.6/s away. The scatter between 11 s sub-windows of one run is +/-0.05/s,
+//     and that — not the print's rounding — is the resolution of this
+//     instrument. The
+//     "0.078/s spread between two runs" that three batches used to call this
+//     unmeasurable was one trajectory read at two points, not a spread — the
+//     instrument is deterministic frame for frame (review-10 F1). What the
+//     number describes is Mandarine's HLE model of the mixer, so the Old-3DS
+//     mixer rate stays UNMEASURED (AGENTS P6/P8) and the quantum stays unnamed
+//     by anything installed. On hardware this line is still the difference
+//     between "the DSP is running" and "our buffers are the ones it is running
+//     on", and nothing more. It is NOT "240-sample
 //     blocks at 48 kHz", which is what this line used to say (review F2).
 //
 // The full derivation, including the libctru disassembly the unit came from, is

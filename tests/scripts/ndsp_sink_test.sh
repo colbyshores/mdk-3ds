@@ -227,13 +227,20 @@ def adjudicate(src, main, quiet=False):
     # 0.5f;` satisfies and which a following `audioClock *= 0.999;` never even had
     # to hide. Both mutants printed a ledger rate that was wrong by a factor and
     # both adjudicated PASS, so the accumulation was pinned as a SHAPE and not as
-    # a value. It is now structural: locate the declaration and the printf's
-    # argument, and require that between them `audioClock` occurs EXACTLY ONCE and
-    # that the occurrence is the bare statement `audioClock += elapsed;`. A scaled
-    # add is not the bare statement; a second write — decay, re-scale, a second
-    # reader that adjusts it — makes the count 2. The printed number is then not
-    # provably the sum of what the device was given, which is the only property
-    # the rate test needs.
+    # a value. It was made structural, and review-10 F4 then showed the structure
+    # was still two clauses short — both holes reproduced as mutants that
+    # adjudicated PASS:
+    #   * the window STOPPED at the printf's argument, so a decay placed AFTER the
+    #     ledger printf — still once per frame, still wrong — sat outside the
+    #     region and was invisible to it;
+    #   * "the same elapsed the device got" was prose and nothing more. Handing
+    #     the device `elapsed * 0.5f` while accumulating `elapsed` printed a secs
+    #     at twice the audio time and the check could not see it.
+    # So: the region is now the REST OF THE FUNCTION (this file closes a function
+    # with `}` in column 0), a superset of the frame loop, so a write after the
+    # printf is inside it; the count is of WRITES, because the printf's own
+    # argument is a read and must not be counted; and the identifier the clock
+    # accumulates must be the identifier BOTH update calls are handed.
     lits = [s for s in re.findall(r'"((?:[^"\\]|\\.)*)"', main) if "submitted=" in s]
     ledger = "".join(lits)
     check("frontend-logs-the-frame-with-the-ledger",
@@ -241,24 +248,37 @@ def adjudicate(src, main, quiet=False):
           "the ledger line must carry the frame it was printed at, so it can be "
           "matched against the frame line the frontend prints on the same cadence")
     decl = re.search(r"double\s+audioClock\s*=\s*0\.0\s*;", m)
+    fend = re.search(r"\n\}", m[decl.end():]) if decl else None
+    region = m[decl.end():decl.end() + fend.start()] if decl and fend else ""
     arg = re.search(r"\(\s*unsigned long\s*\)\s*frame\s*,\s*audioClock\s*,", m)
-    region = m[decl.end():arg.start()] if decl and arg else ""
-    clock_writes = len(re.findall(r"audioClock", region))
+    writes = re.findall(r"audioClock\s*[-+*/%]?=|\baudioClock\s*(?:\+\+|--)", region)
+    add = re.search(r"audioClock\s*\+=\s*([A-Za-z_]\w*)\s*;", region)
+    fed_mixer = re.findall(r"\bmixer\.update\(\s*([A-Za-z_]\w*)\s*\)", m)
+    fed_dev = re.findall(r"\bmixer\.device\(\)\.update\(\s*([A-Za-z_]\w*)\s*\)", m)
     check("frontend-logs-the-clock-with-the-ledger",
           re.search(r"frame=%[0-9a-z.]+\s+secs=%[0-9a-z.]+\s+submitted=", ledger)
           is not None
           and arg is not None
-          and clock_writes == 1
+          and len(writes) == 1
           and re.search(r"audioClock\s*\+=\s*elapsed\s*;", region) is not None,
           "the rate test is submitted / (secs x 50): the line must carry frame, "
           "secs and submitted in that order, secs must be FILLED BY the "
-          "accumulated audioClock rather than any other expression, and between "
-          "its declaration and that printf audioClock must be written ONCE and "
-          "only as `audioClock += elapsed;` — the same elapsed the device got. A "
-          "scaled add, a decay, or any second write makes the printed secs a "
-          "different quantity from the audio time and the rate a number that "
-          "means nothing; if a second reader of the clock is genuinely needed, "
-          "give it its own accumulator rather than moving this one")
+          "accumulated audioClock rather than any other expression, and from its "
+          "declaration to the end of the function audioClock may be written ONCE "
+          "and only as `audioClock += elapsed;`. The window deliberately runs "
+          "past the printf: a decay or re-scale placed after it is still once per "
+          "frame and still makes the printed secs a different quantity from the "
+          "audio time. If a second reader of the clock is genuinely needed, give "
+          "it its own accumulator rather than moving this one")
+    check("frontend-feeds-the-clock-and-the-device-the-same-elapsed",
+          add is not None and len(fed_mixer) == 1 and len(fed_dev) == 1
+          and fed_mixer[0] == add.group(1) and fed_dev[0] == add.group(1),
+          "`secs` is only the audio time if it sums what the mixer and the device "
+          "were actually handed: the one `audioClock += X;` and both "
+          "`mixer.update(X)` / `mixer.device().update(X)` calls must name the "
+          "same identifier. A device fed a scaled or different value than the one "
+          "accumulated makes the rate test divide by a clock that is not the "
+          "audio's, which is the error this whole line exists to avoid")
 
     failed = [n for n, ok, _ in checks if not ok]
     return checks, failed
@@ -304,7 +324,7 @@ ARMS = [
     ("frontend-stops-logging-the-frame-with-the-ledger",
      lambda s, m: (s, m.replace("frame=%lu ", "", 1))),
     ("frontend-stops-logging-the-clock-with-the-ledger",
-     lambda s, m: (s, m.replace("secs=%.2f ", "", 1))),
+     lambda s, m: (s, m.replace("secs=%.3f ", "", 1))),
     # The substitution case the presence-only check could not see (review-8 F2):
     # the field stays on the line and the value printed is the frame's own wall
     # delta instead of the accumulated clock.
@@ -322,6 +342,20 @@ ARMS = [
     ("frontend-decays-the-clock-after-adding",
      lambda s, m: (s, m.replace("audioClock += elapsed;",
                                 "audioClock += elapsed; audioClock *= 0.999;", 1))),
+    # Review-10 F4: the two holes in the review-9 hardening, each reproduced as a
+    # mutant that adjudicated PASS. The first sits AFTER the ledger printf, which
+    # is where the old window stopped; the second leaves the clock alone and
+    # scales what the device is fed instead.
+    ("frontend-decays-the-clock-after-the-ledger",
+     lambda s, m: (s, m.replace(
+         "(unsigned)st.dspFrames, (unsigned)st.dspDropped);",
+         "(unsigned)st.dspFrames, (unsigned)st.dspDropped);\n            "
+         "audioClock *= 0.999;", 1))),
+    ("frontend-feeds-the-device-a-scaled-elapsed",
+     lambda s, m: (s, m.replace("mixer.device().update(elapsed);",
+                                "mixer.device().update(elapsed * 0.5f);", 1))),
+    ("frontend-feeds-the-mixer-a-different-clock",
+     lambda s, m: (s, m.replace("mixer.update(elapsed);", "mixer.update(delta);", 1))),
 ]
 
 print("ndsp_sink: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
