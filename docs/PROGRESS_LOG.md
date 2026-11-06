@@ -16084,6 +16084,17 @@ evidence its one shipped-code change needs (AGENTS P8).
   class as F1: with the literal, a seventh pass would have been accepted by the
   enum, rejected by `draw_queue.cpp:32,48`'s bounds check, and its draws would
   have vanished with nothing to say so.
+
+  **RETRACTED by batch 86 (review-5 F3); ANNOTATED IN PLACE by batch 87
+  (review-6 F1, confirmed).** The mechanism above is the one review-5 struck:
+  `DrawQueue::add` clamps an out-of-range bucket to 0 on purpose, so a seventh
+  pass's draws are *kept and folded into `Solid`* — drawn in the wrong order with
+  the opaque blend and depth state and no diagnostic — not rejected, and not
+  vanished. Batch 86 corrected `draw_queue.h`, `render_types.h` and
+  `CONTINUATION.md` and said in two places that this narrative had been restated
+  with them; it had not, because `PROGRESS_LOG.md` was appended to and nothing in
+  Iteration 113 was edited. This block is that correction, in the form the
+  superseded evidence sidecars already use.
 * **`mdk_3ds/src/render/pica_matrix.{h,cpp}`** — the replace pair is a named
   constant `kBlendReplace = {false, ONE, ZERO, ONE, ZERO}`; `blendStateForPass`
   returns it for the four opaque passes; `depthStateForPass` names `Pass::Count`
@@ -16139,6 +16150,28 @@ argued, with a clean worktree build of the parent:
     A third build of the same code, taken before a whitespace-only comment
     realignment (md5 8308388be3e7f63b33a1023fd8448a9b, frame 2280), gives the same
     panel again, so the pair does not rest on which of the two was captured.
+
+**RETRACTED by batch 86 (review-5 F1); ANNOTATED IN PLACE by batch 87 (review-6
+F1, confirmed).** Three statements in the block above are false and the surviving
+pair is `docs/evidence/2026-11-06-L7-blend-enable-r2-{parent,current}.{png,txt}`:
+
+* **`mdk.3dsx md5 9dfed8e0…` identifies nothing.** The `.3dsx` is ELF + SMDH +
+  RomFS and `3dsxtool` walks the staged RomFS in readdir order, so the container
+  hash follows the filesystem it was staged on: the same tree gives `567a85a0…`
+  from `/tmp` (ext4) and `34eff8e6…` from this NFS tree with one `mdk.elf`
+  `73bfe104…`. A build's identity is the ELF md5, and neither `.3dsx` md5 in the
+  block above is reproducible from its commit.
+* **"panel crop … 400x240" is wrong: those two PNGs are 399x239.** The inclusive
+  far corner was applied as an exclusive one, so "0 px differ" was measured over
+  95361 px, not 96000. `tools/panel_crop.py` is now the single checked definition
+  of the rectangle and refuses any crop that is not exactly 400x240; re-cropping
+  these same captures with it still gives 0 px of 96000.
+* **The "whitespace-only comment realignment" explanation is impossible, not just
+  unproven.** Batch 86 probed it: appending a comment line to `render_types.h`
+  leaves both md5s unchanged, MDK ships 0 `assert` and 0 `__LINE__`, and the
+  third build's difference is which filesystem staged the RomFS. The paragraph
+  above still offers the explanation because this file is append-only and batch 86
+  only deleted it from the sidecar; this is the other half of that remediation.
 
 Pair, commands, display and hashes: `docs/evidence/2026-11-06-L7-blend-enable-{parent,current}.{png,txt}`.
 What the pair cannot say is written in both sidecars: the scene is 154 all-`Solid`
@@ -16271,8 +16304,12 @@ set) are unchanged and not builder-resolvable.
 
 Review-5 (`logs/ralph-pi/run-20261106-062909/review-5.md`, DeepSeek V4.1 Flash TH,
 range `4839cc1d..9a359c7a`) returned **INCOMPLETE** with four must-fix findings
-(F1 High, F2/F3/F4 Medium) and three Low (F5/F6/F7). All seven are fixed; none is
-rebutted. Two of them — F1 and F2 — were the builder's own errors from batch 85,
+(F1 High, F2/F3/F4 Medium) and three Low (F5/F6/F7). None is rebutted. **As
+originally written this line said all seven were fixed; review-6 F1 confirmed that
+was overstated** — the code, comment, tool and evidence halves all landed, but the
+narrative halves of F1 and F3 did not, because this file was appended to and
+nothing in Iteration 113 was edited while two summaries claimed it had been. Batch
+87 lands those two halves and annotates the two blocks above in place. Two of them — F1 and F2 — were the builder's own errors from batch 85,
 and both are the same class the previous two reviews named: a check or a
 provenance claim that was written so it could not fail.
 
@@ -16379,10 +16416,12 @@ vanished". `DrawQueue::add` does the opposite, on purpose:
 if (bucket < 0 || bucket >= kDrawQueuePassCount) { bucket = 0; }
 ```
 
-The draw is kept and folded into `Solid`. All three statements are restated as
+The draw is kept and folded into `Solid`. **The two headers and the standing-facts
+entry in `CONTINUATION.md` that repeated the false mechanism are restated** as
 "folded into `Solid`, drawn in the wrong order with the opaque blend and depth
-state, and no diagnostic", and the standing-facts entry in `CONTINUATION.md` that
-repeated the false mechanism is corrected too.
+state, and no diagnostic". Iteration 113's narrative named above was **not**
+restated in this batch — `PROGRESS_LOG.md` was appended to and nothing earlier was
+edited, which is review-6 F1; batch 87 annotates that block in place.
 
 ### F4 (Medium, confirmed): the crop was 399x239 under a sidecar that said 400x240
 
@@ -16485,3 +16524,183 @@ actions in `docs/CONTINUATION.md` are unchanged — the six uncommitted operator
 files, the `tools/check.sh` `--staged` gap, the same-family review exception that
 three texts disagree about, and the unbounded route-health wait — and none is
 builder-resolvable. This batch staged its paths by name and did not touch them.
+
+---
+
+## Iteration 115 — batch 87: review-6 remediation — the record said Iteration 113 had been corrected; it had only been appended to
+
+Review-6 (`logs/ralph-pi/run-20261106-062909/review-6.md`, DeepSeek V4.1 Flash
+TH, range `9a359c7a..13d59e79`) returned **INCOMPLETE** with no Critical/High:
+F1 and F2 Medium, F3 and F4 Low. All four are confirmed against the repository —
+none is rebutted. Three are fixed here. **F2 is confirmed and deferred to the
+owner, because the file that carries it is the operator's uncommitted work**, and
+that distinction is written down rather than blurred.
+
+The batch's own subject is the loop's recurring defect class, one file over from
+where batch 86 fixed it: a claim about the record that the record does not
+support.
+
+### F1 (Medium, confirmed) — FIXED, in the form the reviewer asked for
+
+`docs/PROGRESS_LOG.md` is append-only, and batch 86 said otherwise in two places.
+`git diff -U0 9a359c7a..13d59e79 -- docs/PROGRESS_LOG.md` is one hunk with **0
+deleted lines**, so nothing in Iteration 113 was edited while
+`PROGRESS_LOG:16382` and `CONTINUATION.md:5` each claimed it had been. The
+reviewer's remediation was to annotate the two stale blocks in place, which is the
+form this file already uses (`**RETRACTED in Iteration 111 (review-2 F1,
+confirmed):**`), and that is what landed:
+
+* the `draw_queue.h` bullet in Iteration 113 now carries a retraction for its
+  "rejected by the bounds check … vanished" mechanism — `DrawQueue::add` clamps an
+  out-of-range bucket to 0, so a seventh pass's draws are folded into `Solid`;
+* the F6 evidence block now carries a retraction for the three statements review-5
+  F1 and F4 struck: `mdk.3dsx md5 9dfed8e0…` identifies no build (the `.3dsx` is a
+  container hash), "panel crop … 400x240" was 399x239, and the "whitespace-only
+  comment realignment" explanation is impossible, not merely unproven;
+* the two summary sentences that over-claimed are amended, in place, to name what
+  was actually restated (`draw_queue.h`, `render_types.h`, `CONTINUATION.md`) and
+  what was not (this file).
+
+Review-6's open question 1 — "was the Iteration 113 block deliberately left
+alone?" — answers itself from the diff: it was not touched at all, so it was
+missed, not chosen. Annotating is now the recorded convention for a stale
+narrative, because rewriting an append-only log destroys the audit trail that made
+the finding findable.
+
+### F2 (Medium, confirmed) — DEFERRED TO THE OWNER, with the patch
+
+Confirmed and measured, not argued. `ralph-pi.sh:152` (uncommitted) defaults
+`PI_CMD` to `/mnt/nas/Development/qwen-slot-pi.sh`, whose whole stated purpose is
+the **local** qwen endpoint ("Three Ralph loops … share a server with two 262k KV
+slots"), and which bypasses the gate only for prompts under `QWEN_SLOT_MIN_PROMPT`
+= 4000 chars. The reviewer spawn at `ralph-pi.sh:1081-1090` passes the review
+prompt through the same wrapper, and this run's review prompt is **10777 bytes**
+(`.review-prompt-6.md`), so a hosted DeepSeek call holds a qwen slot for its whole
+duration: `summary.log` shows iter=5 invoked 06:29:17 and collected 06:45:21,
+**16 min 04 s** of a builder-class slot, and `grep -n QWEN_SLOT ralph-pi.sh
+tools/*.sh` returns nothing, so nothing sets the bypass.
+
+The fix is one word — `QWEN_SLOT_BYPASS=1` in that spawn's `env` list — and it is
+not builder-writable. `ralph-pi.sh` is one of the six operator-owned uncommitted
+files, the `PI_CMD` default that creates the condition is itself inside the
+operator's uncommitted hunk (`-PI_CMD="${PI_CMD:-pi}"` →
+`+PI_CMD="${PI_CMD:-/mnt/nas/Development/qwen-slot-pi.sh}"`), and the spawn block
+moved in the same edit. Staging a patch there would stage operator work, which the
+standing owner action forbids. Recorded as an owner action with the exact one-line
+change; this is a deferral of a confirmed finding, not a rebuttal.
+
+### F3 (Low, confirmed) — FIXED in the shipped comment
+
+The alpha-test corner (3) closed with "the corner only bites if a canvas or image
+draw is ever placed on a **depth-writing, unblended** pass". That conjunction is
+narrower than the divergence. The two triggers are independent and each moves a
+different channel: **unblended moves colour** (blend off means the fragment
+replaces the target, so the oracle paints `palette[0].rgb` where the port's
+`GPU_GREATER 0` test writes nothing — true with depth test and write both off),
+and **depth-writing moves depth** (the oracle records the fragment's depth, the
+discard records none, so a later depth-tested draw can win or lose differently even
+when the colour works out). The comment now says both, names the channel each one
+moves, and keeps the reason nothing satisfies either today: Overlay is blended and
+exempt from depth test and write alike (`Renderer.cs:606-607`, read verbatim).
+This matters because `CONTINUATION.md` item 5b is a future canvas draw, and the
+note is the thing that batch will read.
+
+### F4 (Low, confirmed) — FIXED
+
+`renderer_c3d.cpp` cited `Renderer.Insets.cs:124-125` for "draws the whole canvas
+in that pass". Those two lines are the `RenderCanvas` signature and its brace; the
+draw is `DrawPass(commands, pass, _commands, Pass.Overlay, default);` at
+**`:127`** — the line review-5 had cited correctly. Verified with
+`sed -n '118,132p' src/Mdk.Engine/Render/Renderer.Insets.cs`. The citation now
+points at `:127`, which is where the load-bearing `Pass.Overlay` token lives.
+
+### What changed
+
+* `mdk_3ds/src/render/renderer_c3d.cpp` — the corner (3) note only: F3's two
+  independent triggers and F4's citation. **No code line moves.**
+* `docs/PROGRESS_LOG.md` — three in-place retraction annotations in Iteration 113
+  and two amended summary sentences in Iteration 114 (F1).
+* `docs/CONTINUATION.md` — state, the review-6 disposition, the new owner action,
+  the canvas note's constraint corrected back to two triggers, and the risk line.
+* `docs/frames/2026-11-06-review6-remediation.{png,txt}` — the pinned frame pair.
+
+### Proof that no code moved, and the emulator evidence (AGENTS P8)
+
+Both halves built clean out-of-tree, this tree from `git ls-files` and the parent
+from `git archive 13d59e79`:
+
+| build | `mdk.elf` md5 | `mdk.3dsx` md5 |
+|---|---|---|
+| `/tmp/b87/cur` (this tree) | `73bfe104300467bdabdd391e8b9d66fd` | `567a85a0da39925e6af3fa4a2eec025c` |
+| `/tmp/b87/par` (`13d59e79`) | `73bfe104300467bdabdd391e8b9d66fd` | `567a85a0da39925e6af3fa4a2eec025c` |
+
+`cmp` reports the ELFs identical, and both md5s equal the ones batch 86 recorded
+for a clean `/tmp` build of `9a359c7a` — so three commits and two batches apart,
+on different days, the code identity is one value. The in-tree build's `.3dsx` is
+`70a0020e92f646536068a3e3c4f67664`, a third value for the same bytes, which is
+exactly what batch 86's rule predicts for NFS staging and further corroboration of
+it rather than a new problem.
+
+Emulator run of the shipped in-tree build, through the pinned harness:
+
+```
+$ DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 40 --shot /tmp/b87/out/b87.png
+emurun exit 0
+display   : :99   (Xvfb :99 -screen 0 1280x1024x24, headless — AGENTS P7)
+emulator  : mandarine.AppImage md5 0d2adab6  (r1.2.1, the pinned known good)
+build     : mdk_3ds/mdk.3dsx   gl: forced llvmpipe   stereo: mono (render_3d=0)
+dspfirm   : present   lane: /tmp/mdk-emurun.3938064   session: dbus-run-session
+flow: screen=4 level=7
+frame 2220 elapsed=0.0167 steps=2231 feet=(0.0,4.0,0.0) yaw=90.0 health=100
+        eye=(0.0,-4.0,4.5) voices=0 plays=1
+after the reap the guest log ends at frame 2280 (43 frame lines logged)
+```
+
+`python3 tools/panel_crop.py crop` gives a checked 400x240 crop whose pixel sha256
+is `f9af51b635680739418648cd43d9f82361d61f82f65786e203ed9436a8e20d6a`, and
+`panel_crop.py diff` against the committed
+`docs/evidence/2026-11-06-L7-blend-enable-r2-current.png` is **0 px of 96000** —
+the same panel as the parent's build, from the same ELF, on a different day and a
+different staging filesystem. Emulator-green is not hardware-pass: Old-3DS timing
+and the PICA's own behaviour remain unmeasured (AGENTS P6/P8).
+
+### Gates, verbatim
+
+* `make -C tests/scripts` → exit 0, 561 `PASS` lines, final line
+  `All cases match the oracle.`
+* `bash tools/check.sh` → exit 0, final line `CHECK: ALL GATES PASSED`, with
+  `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
+  `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`,
+  `gates_smdh SKIP (no built .cia)`, `gates_frames every pinned frame is
+  deterministic and unchanged`, `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` → exit 0, `3DSX mdk.3dsx`, `mdk.elf`
+  `73bfe104300467bdabdd391e8b9d66fd`.
+
+### Prior-solution lookup
+
+`knowledge_search` on the `mdk-sdl` KB (hybrid) returned `ralph-pi.sh`'s
+review-range branch and `ralph/builder.md`'s remediation text — leads to the
+record's own rules, no prior solution for "how to correct an append-only log", so
+the convention came from inside the file itself (Iteration 111's `RETRACTED`
+block). The KB is present and searchable (4577 chunks / 973 files). **Obsidian MCP
+and Cognee MCP are not exposed in this session** (`obsidian_*` / `cognee_*`
+absent), so the vault lookup was the degraded disk-only path (AGENTS P9): one
+bounded grep over `30-architecture` and `50-tooling` surfaced
+`completion-claims-must-be-validated-against-artifacts-not-trusted.md`, whose rule
+— a completion claim must cite an artifact someone else can re-check — is exactly
+what F1 is an instance of. Cognee's graph search was not available at all, and
+that is reported rather than papered over.
+
+### Next
+
+Per `docs/CONTINUATION.md`: batch 88's first item is still **the one-sided view**
+(geometry covering panel columns 200..399 of 400 and stopping at a straight
+vertical line), with census + `GPU_PRIMARY_COLOR` in one run as the next useful
+capture; the review-2 F2–F5 audio-comment batch remains the cheap alternative.
+Item 5b (the HUD) is still blocked on the canvas seam, and its alpha-test
+constraint is now **two independent triggers**, not one conjunction — an unblended
+canvas pass is a divergence on its own. Original-3DS behaviour is still
+unmeasured. The owner actions are unchanged plus one new entry (review-6 F2, the
+reviewer holding a qwen slot), and none is builder-resolvable. This batch staged
+its paths by name and touched none of the six operator files.

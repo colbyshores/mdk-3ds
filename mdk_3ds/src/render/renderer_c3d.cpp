@@ -911,15 +911,24 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // (review-5 F5 -- the earlier version of this note claimed a divergence and
     // handed the canvas batch a work item, and neither holds). Every canvas call
     // site is `Pass.Overlay` in the oracle (`Renderer.cs:320,325,329`, and
-    // `Renderer.Insets.cs:124-125` draws the whole canvas in that pass), and
+    // `Renderer.Insets.cs:127` draws the whole canvas in that pass), and
     // Overlay is blended SRC_ALPHA / ONE_MINUS_SRC_ALPHA (`Renderer.cs:565,
     // 571-573`), where a fragment of alpha 0 leaves the target bit-for-bit as a
     // discard does; `Blend::Add` (SRC_ALPHA / ONE) adds zero, the same. And a
     // PARTIAL alpha is above the `> 0` reference, so it survives this test rather
     // than being cut -- the palette expansion's fractional EDGE_CLEAR coverage is
-    // not at risk here. The corner only bites if a canvas or image draw is ever
-    // placed on a depth-writing, unblended pass, which nothing does today. The
-    // canvas batch (CONTINUATION item 5b) should re-read this when it picks the
+    // not at risk here. The corner has TWO INDEPENDENT TRIGGERS and either one is
+    // enough (review-6 F3 -- an earlier draft of this line made them one
+    // conjunction, which is the narrower and wrong reading): an UNBLENDED pass
+    // moves COLOUR, because a fragment with blend off replaces the target, so the
+    // oracle paints palette[0].rgb exactly where this discard writes nothing, and
+    // that is true with depth test and write both off; a DEPTH-WRITING pass moves
+    // DEPTH, because the oracle records the fragment's depth and a discard records
+    // none, so a later depth-tested draw can win or lose differently even when the
+    // colour works out. Neither needs the other. Nothing satisfies either today:
+    // Overlay is blended and exempt from depth test and write alike
+    // (`Renderer.cs:606-607`).
+    // The canvas batch (CONTINUATION item 5b) should re-read this when it picks the
     // canvas's pass, and must NOT spend itself scoping the alpha test per pass
     // before that choice is made (review-4 F9 for the claim, review-5 F5 for the
     // correction).
