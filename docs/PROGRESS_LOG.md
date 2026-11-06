@@ -16958,7 +16958,12 @@ a rate instrument at all:
 | header model 32728.5/160 = 204.55 | +1.77% | +0.24% | +0.10% | **+0.07%** |
 | power-of-two 32768/160 = 204.80 | +1.65% | +0.12% | −0.02% | **−0.05%** |
 
-At 30 s the measurement window **excludes both candidates**. The quantum implied
+At 30 s the measurement window **excludes both candidates**. **[Superseded by
+review-9 F2 / batch 90, Iteration 118: the exclusion is conditional on `secs` being
+exact, and it is not — a second run of a byte-identical `mdk.elf` reads 204.628/s at
+43.22 s, so the run-to-run spread (0.078/s) exceeds the residual this paragraph used
+as a refutation. The paragraph's conclusion (rate unmeasured) stands; its argument
+does not.]** The quantum implied
 by the header rate at the measured value is 159.88, so no integer frame size fits
 either model, and the likeliest explanation of the residual is Mandarine's own HLE
 pacing with the audio device muted — not the console. So the shipped comments now
@@ -17075,3 +17080,163 @@ the ledger is `submitted` against `secs × 50` (the rate test) and `dspframes`
 against **nothing**, because the mixer rate is not known. The owner actions are
 unchanged and none is builder-resolvable; this batch staged its paths by name and
 touched none of the six operator files.
+
+
+## Iteration 118 — batch 90: review-9 remediation — the accumulator the gate could not fail, and a residual that turned out to be the instrument's own jitter
+
+Review-9 (`logs/ralph-pi/run-20261106-062909/review-9.md`, dispatched over batch 89) reported **no
+Critical and no High**: one Medium and four Low. The verdict still named the Medium as must-fix and it
+was right to, because it is the **fourth consecutive "could not fail" check** in this subsystem — the
+class batch 89 exists to close — and the gate that was supposed to close it was itself an instance of it.
+
+### F1 (Medium, confirmed, fixed): the accumulation clause was a prefix match
+
+`tests/scripts/ndsp_sink_test.sh`'s `frontend-logs-the-clock-with-the-ledger` pinned three things: the
+field order on the ledger line, the printf argument that fills `secs`, and the accumulation that makes
+`audioClock` the time the mixer was actually given. The third was
+`re.search(r"audioClock\s*\+=\s*elapsed", m)` — a **prefix**, so it accepted any statement beginning that
+way. Reproduced before touching anything, exactly as the reviewer described:
+
+```
+$ sh tests/scripts/ndsp_sink_test.sh mdk_3ds/src/audio/audio_3ds.cpp main_m1.cpp
+PASS NdspSink (16 checks, 12 arms adjudicated red)   # audioClock += elapsed * 0.5f;
+$ sh tests/scripts/ndsp_sink_test.sh mdk_3ds/src/audio/audio_3ds.cpp main_m2.cpp
+PASS NdspSink (16 checks, 12 arms adjudicated red)   # audioClock += elapsed; audioClock *= 0.999;
+```
+
+A ledger whose clock runs at half speed prints `submitted/(secs x 50)` at 0.5x, and the gate whose whole
+job is to make that rate trustworthy certified it. The clause is now structural in the same way its
+sibling clause was made structural in batch 89: it locates the declaration (`double audioClock = 0.0;`)
+and the printf's argument, and requires that **between them `audioClock` occurs exactly once, and that the
+occurrence is the bare statement `audioClock += elapsed;`**. A scaled add is not the bare statement; a
+second write — a decay, a re-scale, a reader that adjusts it — makes the count 2. Two arms now perform
+the reviewer's own substitutions (`frontend-scales-the-clock`,
+`frontend-decays-the-clock-after-adding`) and both adjudicate red against the check that names them: the
+file is **16 checks, 14 arms**, all arms red.
+
+The strictness is deliberate and the check's detail text says what to do instead of relaxing it: a second
+reader of the clock gets its own accumulator rather than moving this one. `main_3ds.cpp` itself is
+unchanged — the current source is correct, and the reviewer said so; the gate was the defect.
+
+### F2 (Low, confirmed, fixed — and the correction is now measured, not argued)
+
+`audio_3ds.cpp` said the 30 s window "EXCLUDES both the header model and a power-of-two 32768/160",
+concluded "the counter is not a rate instrument at all", and then attributed the residual to "Mandarine's
+own HLE pacing" — naming, in the same paragraph, the error source that voids the exclusion. The reviewer
+was right that the inference was over-stated, and a second run of this batch settles it empirically rather
+than logically:
+
+| run | dspframes | `secs` | rate | residual over 32728.5/160 = 204.5531 |
+|---|---|---|---|---|
+| batch 89 (frame 1800) | 6178 | 30.18 | 204.705/s | +0.152/s (+0.074 %) |
+| **batch 90 (frame 2580)** | **8844** | **43.22** | **204.628/s** | **+0.074/s (+0.036 %)** |
+
+Both runs are of a **byte-identical `mdk.elf`** and they differ from each other by **0.078/s**, which is
+more than batch 90's own residual. The residual is therefore a property of the run and not of the DSP
+model, so it excludes nothing, and neither candidate rate is refuted by either measurement. The shipped
+comment now says exactly that: the exclusion is conditional on a `secs` that is itself exact, the
+condition is not met, the emulator settles neither model, and the reason the counter is a liveness signal
+and not a rate is that **no installed header names the frame quantum** — not the arithmetic.
+`audio_3ds.h`'s summary line carries the same correction, and the two records that restated the stronger
+claim are annotated in place rather than rewritten.
+
+What the loop needs did not move and is not weakened: the kind is derived from the `ndsp.o` disassembly,
+the rate is unmeasured, and the Old-3DS mixer rate stays open (AGENTS P6/P8). What changed is that the
+reason given for "not a rate instrument" is now a reason that holds.
+
+### F3 (Low, confirmed, not remediable by a batch; the convention is carried forward)
+
+Batch 89's sidecar has no "why the pinned picture did not move" paragraph, which `docs/frames/README.md`
+requires when the frame cannot show the batch. The recommended remediation — add it — is not available to
+a batch: `gates_batch_integrity.py` rejects any change to a frame `.txt` the range did not add ("batch
+modifies/removes historical measurement … history is immutable"), and that file is in `PROTECTED`. So the
+gap in batch 89's record is permanent, and annotating it would be an owner edit to history, not a builder
+batch. The convention is honoured forward instead: this batch's sidecar carries the paragraph, and the
+immutability rule is now a standing fact in `docs/CONTINUATION.md` so the next batch writes it at capture
+time instead of discovering it afterwards.
+
+### F4, F5 (Low, confirmed against the files, owner-only)
+
+Both live in the six uncommitted operator files this batch must not stage (`docs/CONTINUATION.md` names
+them; `ralph/builder.md` forbids staging them). Verified against the files rather than accepted on the
+quote:
+
+* **F4** — the new watchdog comment claims every external limit sits above its in-process counterpart and
+  that "14100/11400 (the previous values)" were equal to them. `git show HEAD:tools/ralph_pi_watchdog.sh`
+  gives `worker) limit=7800` and `review-collect) limit=5700`, i.e. **tighter** than the in-process
+  14100/11400, not equal; and `startup` is 1800 in-process against 900 out-of-process, so the stated
+  invariant already fails for a phase in the same file. Confirmed.
+* **F5** — `guard()`'s comment computes its margin as "probe 300s + sleep 300s = 600s worst case", but the
+  probe is `for model in $WORKER_MODELS` with `PROBE_TIMEOUT=300` each, so the worst case is `300n + 300`,
+  and `WORKER_MODELS` is `${WORKER_MODELS:-litellm/qwen}` — env-overridable. At n ≥ 3 the round outlives
+  the 900 s `route-health` arm. Confirmed.
+
+Recorded as an owner action with both quotations and the arithmetic; neither is a builder edit.
+
+### Evidence, and what the diff actually is
+
+Comment-only under `mdk_3ds/**`, so the build identity is unchanged, and that is measured rather than
+asserted: `mdk.elf` md5 **`75b1edb06d0d2c58aecafb6f7b008421`**, identical to batch 88's and batch 89's.
+The `.3dsx` is now known not to be an identity for a stronger reason than the container argument already
+on file: **two consecutive in-tree builds of this tree produced `48931bcd…` and `23c5354f…` from that same
+byte-identical ELF**, so a `.3dsx` md5 cannot be reproduced even from the tree that made it. The mechanism
+is the documented one (`3dsxtool` walks the staged RomFS in readdir order; the romfs stage re-walks 69
+files every build) and was not chased further, because the ELF is the identity.
+
+Emulator evidence for the touched 3DS path (AGENTS P8): `DISPLAY=:99
+mdk_3ds/tools/emurun.sh --secs 45 --grep 'audio:'` exits **0** on pinned Mandarine r1.2.1 (md5
+`0d2adab6…`), display `:99` recorded, guest log ends at frame 2580, level 7, mono, forced llvmpipe,
+dspfirm present, SDL audio dummy. Its last ledger row:
+
+```
+audio: frame=2580 secs=43.22 submitted=2156 done=2153 dropped=5 requeued=1 inDsp=3 dspframes=8844 dspdropped=0
+```
+
+* the rate test `submitted / (secs x 50)` = 2156 / 2161.0 = **0.9977** (batch 89 read 0.9967 at frame
+  1800) — the sink is matched to the clock it is given, which is the only absolute in the record that is
+  not a guest self-check;
+* `submitted - done == inDsp` → 2156 − 2153 = 3 = `inDsp` ✓, the open-sink identity, and nothing is
+  retiring late;
+* `dropped=5`, `requeued=1` — one requeue at level load, which is the expected shape.
+
+Emulator-green is not hardware-pass: Old-3DS timing, the PICA's own behaviour and the console's mixer rate
+all remain unmeasured.
+
+### Gates, as run
+
+* `make -C tests/scripts` → exit **0**, "All cases match the oracle.", **561** `PASS` lines, no FAIL.
+* `bash tools/check.sh` → exit **0**, "CHECK: ALL GATES PASSED" — `audit_c_with_classes` 0 violations,
+  `gates_vfp` 0 blockers, `audit_arm11_math` contract clean, `audit_r11_idiv` no candidates,
+  `gates_core_parity` both targets link the same core, `gates_smdh` **SKIP** (no built .cia),
+  `gates_frames` every pinned frame deterministic and unchanged, `gates_batch_integrity` project
+  invariants intact.
+* `make -C mdk_3ds` → exit **0**, `3DSX mdk.3dsx`, `mdk.elf` md5 `75b1edb06d0d2c58aecafb6f7b008421`.
+* `sh tests/scripts/ndsp_sink_test.sh` → exit **0**, `PASS NdspSink (16 checks, 14 arms adjudicated red)`.
+
+### Prior-solution lookup
+
+Pi-knowledge `mdk-sdl` was searched three ways: `hybrid` on the frame-counter rate and the ledger
+denominator and `fast` on `ndsp_sink_test.sh audioClock secs ledger rate check` both returned **no
+results**, and `semantic` on "a gate check that cannot fail when a value is substituted" surfaced
+`docs/OPEN_ITEMS.md`, which already carries the standing rule this batch re-applies ("a multi-arm gate
+must state how many arms it adjudicated and compare that against the declared number"). So the KB is
+healthy and searchable and simply holds nothing about the counter's rate — consistent with the rate never
+having been settled. Obsidian MCP and Cognee MCP expose no tools in this session (`obsidian_*` /
+`cognee_*` absent from the tool list), so the vault lookup was the degraded disk-only path and Cognee's
+graph search did not happen at all (AGENTS P9). No sibling read was needed for this batch, and none was
+made.
+
+### Next, per the priority order
+
+**The one-sided view is still first for batch 91**, unchanged and unadvanced for a third batch: panel
+columns 200..399 of 400, a straight vertical cut at the panel middle, the census unable to localise, and
+Iteration 106 having retired the cull, the depth triple, the queue, the MVP and a deleted rotation. This
+batch adds no renderer hypothesis and takes no census; what it adds to that item is the habit review-9 F2
+punished — batch 89 read a 0.07 % residual as a refutation of a hardware model, and the same ELF a day
+later produced a residual of 0.04 %. Before any measurement is used to exclude a model, ask what the
+instrument's own repeatability is. Item 5b (the HUD) stays blocked on the canvas seam
+(`mdk_render_canvas_quad` is a no-op on this backend). Original-3DS behaviour stays unmeasured, and what a
+hardware reader should now take off the ledger is `submitted` against `secs x 50` (the rate test) and
+`dspframes` against **nothing**, because the mixer rate is not known and the emulator cannot supply it.
+The owner actions are unchanged plus review-9 F4/F5; none is builder-resolvable. This batch staged its
+paths by name and touched none of the six operator files.

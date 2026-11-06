@@ -221,24 +221,44 @@ def adjudicate(src, main, quiet=False):
     # adjacent), the ARGUMENT that fills `secs` (audioClock immediately after the
     # frame cast in the printf's argument list), and the ACCUMULATION that makes
     # audioClock the time the mixer was actually given.
+    #
+    # And the third clause had the same defect as the second (review-9 F1): it was
+    # `audioClock\s*\+=\s*elapsed` as a substring, which `audioClock += elapsed *
+    # 0.5f;` satisfies and which a following `audioClock *= 0.999;` never even had
+    # to hide. Both mutants printed a ledger rate that was wrong by a factor and
+    # both adjudicated PASS, so the accumulation was pinned as a SHAPE and not as
+    # a value. It is now structural: locate the declaration and the printf's
+    # argument, and require that between them `audioClock` occurs EXACTLY ONCE and
+    # that the occurrence is the bare statement `audioClock += elapsed;`. A scaled
+    # add is not the bare statement; a second write — decay, re-scale, a second
+    # reader that adjusts it — makes the count 2. The printed number is then not
+    # provably the sum of what the device was given, which is the only property
+    # the rate test needs.
     lits = [s for s in re.findall(r'"((?:[^"\\]|\\.)*)"', main) if "submitted=" in s]
     ledger = "".join(lits)
     check("frontend-logs-the-frame-with-the-ledger",
           re.search(r"frame=%[0-9a-z.]+", ledger) is not None,
           "the ledger line must carry the frame it was printed at, so it can be "
           "matched against the frame line the frontend prints on the same cadence")
+    decl = re.search(r"double\s+audioClock\s*=\s*0\.0\s*;", m)
+    arg = re.search(r"\(\s*unsigned long\s*\)\s*frame\s*,\s*audioClock\s*,", m)
+    region = m[decl.end():arg.start()] if decl and arg else ""
+    clock_writes = len(re.findall(r"audioClock", region))
     check("frontend-logs-the-clock-with-the-ledger",
           re.search(r"frame=%[0-9a-z.]+\s+secs=%[0-9a-z.]+\s+submitted=", ledger)
           is not None
-          and re.search(r"\(\s*unsigned long\s*\)\s*frame\s*,\s*audioClock\s*,", m)
-          is not None
-          and re.search(r"audioClock\s*\+=\s*elapsed", m) is not None,
+          and arg is not None
+          and clock_writes == 1
+          and re.search(r"audioClock\s*\+=\s*elapsed\s*;", region) is not None,
           "the rate test is submitted / (secs x 50): the line must carry frame, "
           "secs and submitted in that order, secs must be FILLED BY the "
-          "accumulated audioClock rather than any other expression, and that "
-          "accumulator must sum the same elapsed the device got, or a per-frame "
-          "delta stands in for the clock and the test is a number that means "
-          "nothing")
+          "accumulated audioClock rather than any other expression, and between "
+          "its declaration and that printf audioClock must be written ONCE and "
+          "only as `audioClock += elapsed;` — the same elapsed the device got. A "
+          "scaled add, a decay, or any second write makes the printed secs a "
+          "different quantity from the audio time and the rate a number that "
+          "means nothing; if a second reader of the clock is genuinely needed, "
+          "give it its own accumulator rather than moving this one")
 
     failed = [n for n, ok, _ in checks if not ok]
     return checks, failed
@@ -293,6 +313,15 @@ ARMS = [
                                 "(unsigned long)frame, (double)delta,", 1))),
     ("frontend-stops-logging-the-ledger",
      lambda s, m: (s, m.replace("submitted=%u", "x=%u", 1))),
+    # The accumulation substitutions review-9 F1 produced, both of which the
+    # substring clause scored as a PASS: the field stays, the argument stays, and
+    # the clock runs at half speed (or decays) behind them.
+    ("frontend-scales-the-clock",
+     lambda s, m: (s, m.replace("audioClock += elapsed;",
+                                "audioClock += elapsed * 0.5f;", 1))),
+    ("frontend-decays-the-clock-after-adding",
+     lambda s, m: (s, m.replace("audioClock += elapsed;",
+                                "audioClock += elapsed; audioClock *= 0.999;", 1))),
 ]
 
 print("ndsp_sink: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

@@ -1,0 +1,27 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-06T18:27:27Z at 63e2835
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the pinned picture did not move: this batch is the review-9 remediation and it
+changes no pixel by construction, and that is measured rather than asserted. The
+diff is two comment blocks in mdk_3ds/src/audio/audio_3ds.{h,cpp} plus one host-side
+gate (tests/scripts/ndsp_sink_test.sh); the in-tree build of this tree gives mdk.elf
+md5 75b1edb06d0d2c58aecafb6f7b008421, byte-identical to batch 88's and batch 89's,
+so this capture is byte-identical to 2026-11-06-audio-unit-corrected.png (sha256
+6646adf1dae3a774d6215d57e5bcfba1), same bad_percent=1.240, same max_delta=247, same
+mean_delta=0.1819. No .3dsx md5 is offered as an identity here, because two
+consecutive builds of THIS tree produced 48931bcd... and 23c5354f... from that one
+ELF: 3dsxtool re-walks the staged RomFS, so the container hash is not reproducible
+even from the tree that built it.
+what this batch measured anyway, because a 3DS path was touched: the shipped
+in-tree build ran in Mandarine r1.2.1 (md5 0d2adab6...) on DISPLAY=:99 through
+mdk_3ds/tools/emurun.sh --secs 45 --grep 'audio:', exit 0, guest log to frame 2580,
+level 7, mono, forced llvmpipe, dspfirm present, SDL audio dummy. Its last ledger
+row is `audio: frame=2580 secs=43.22 submitted=2156 done=2153 dropped=5 requeued=1
+inDsp=3 dspframes=8844 dspdropped=0`, so the rate test submitted/(secs x 50) =
+0.9977 and submitted - done == inDsp == 3. That row is also the measurement that
+closes review-9 F2: 8844/43.22 = 204.628 dspframes/s against batch 89's 204.705/s
+from a byte-identical ELF, a 0.078/s run-to-run spread larger than either run's
+residual over the header model's 204.553/s -- so the frame quantum is still not
+settled, the counter is a liveness signal and not a rate, and the console's mixer
+rate stays unmeasured. Emulator-green is not hardware-pass: Old-3DS timing and the
+PICA's own behaviour remain unmeasured (AGENTS P6/P8).

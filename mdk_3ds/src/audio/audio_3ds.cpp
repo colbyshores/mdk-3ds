@@ -104,14 +104,31 @@ bool g_live = false;
 //     precisely the reason this paragraph gives. The frame
 //     QUANTUM is not named by anything installed (it lives in the DSP firmware,
 //     and /opt/devkitpro/libctru ships headers and a library, no source), so
-//     160 samples is an assumption and 32728.5/160 = 204.6/s is a prediction,
+//     160 samples is an assumption and 32728.5/160 = 204.55/s is a prediction,
 //     not a derived fact. The emulator reads 204.75/s at 19 s and 204.71/s at
 //     30 s, and `secs` is printed to 2 dp, so the 30 s figure is bounded to
-//     (204.67, 204.74] — a window that EXCLUDES both the header model and a
-//     power-of-two 32768/160 = 204.80. So the counter is not a rate instrument
-//     at all: no integer quantum fits (32728.5/204.71 = 159.88), the residual is
-//     most likely Mandarine's own HLE pacing with the audio device muted, and the
-//     Old-3DS mixer rate stays UNMEASURED (AGENTS P6/P8).
+//     (204.67, 204.74] — a window that excludes both the header model's 204.55
+//     and a power-of-two 32768/160 = 204.80.
+//     THAT EXCLUSION IS CONDITIONAL AND THE CONDITION IS NOT MET (review-9
+//     F2). It holds only for a `secs` that is itself EXACT, and `secs` is the
+//     guest's own elapsed sum, not a reference clock. Batch 89's residual over
+//     the header model is 204.705 - 204.553 = 0.152/s, i.e. 0.074 %, and this
+//     paragraph's own candidate explanation — Mandarine's HLE audio pacing,
+//     device muted — is a clock error of exactly that order, which would move
+//     the window by exactly the distance it claims to exclude. That is now
+//     measured and not only argued: a SECOND run of a byte-identical ELF
+//     (batch 90, 8844 frames at secs=43.22) reads 204.628/s, a residual of
+//     +0.074/s, and the two runs of the same binary differ by 0.078/s. The
+//     residual is a property of the run, not of the DSP model, so it excludes
+//     nothing: the emulator cannot tell "the quantum is not 160" apart from
+//     "this run's guest clock ran a few hundredths of a percent slow".
+//     Likewise 32728.5/204.71 = 159.88 is not an integer, but that division
+//     inherits the same instability, so it refutes nothing either. What
+//     survives is the kind and nothing else: the counter counts mixer frames,
+//     its RATE IS UNMEASURED, the quantum stays unnamed by anything installed,
+//     and the Old-3DS mixer rate stays UNMEASURED (AGENTS P6/P8). Do not read
+//     the window as proof the counter is useless for a rate, and do not read
+//     it as proof the quantum is 160 — it settles neither.
 //     An earlier revision of this comment called the unit "240-sample blocks at
 //     48 kHz", which is wrong twice over and was never checked (review F2), and
 //     it survived because 48000/240 = 200/s fits the same measurement. A unit
