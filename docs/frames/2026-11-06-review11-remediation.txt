@@ -1,0 +1,34 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-06T20:09:29Z at 814ec90
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the pinned picture did not move: this batch moves no shipped code at all. The two
+mdk_3ds files it touches carry comment blocks only, and the in-tree build of this tree
+reproduces mdk.elf md5 1237bfcc0c6eee21e73e8a9fe8794302 -- byte-identical to batch 91's,
+which is the proof, not an assertion. The only non-comment change is a host-side gate,
+tests/scripts/ndsp_sink_test.sh, which the capture path does not execute. The capture is
+byte-identical to 2026-11-06-review10-remediation.png (sha256
+6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8), same bad_percent=1.240,
+same max_delta=247, same mean_delta=0.1819.
+what this batch measured, because a 3DS path was touched: ONE Mandarine r1.2.1 run (md5
+0d2adab6...) on DISPLAY=:99 through mdk_3ds/tools/emurun.sh --secs 50 --min-frames 2000,
+exit 0, level 7, mono (render_3d=0 factor_3d=0), forced llvmpipe, dspfirm.cdc present, SDL
+audio dummy, private lane /tmp/mdk-emurun.333419, one session banner, reached frame 2880
+(53 frame lines). Captures are under /tmp/mdk-b92, because /tmp/kilo is another uid's and
+this one cannot write it (AGENTS P7 names the directory, not the permission).
+That run is the third sample of a byte-identical ELF, and it is what falsified batch 91's
+strongest sentence. `secs` agrees to the millisecond at all 48 ledger rows -- it is a sum
+of frame deltas -- but `dspframes` reads ONE LOWER on 25 of the 48 (228 against 229 at
+frame 60, 6587 against 6588 at frame 1920, and all three runs back together at 9870 by
+frame 2880). So the counter is reproducible to a frame, not frame for frame, and review-11
+R10-4 -- which only asked who ran which ELF -- understated the problem in the same
+sentence. The slopes are (9870-228)/(48.233-1.099) = 204.566/s here, 204.544/s on batch 91
+and 204.562/s on the parent ELF: a 0.021/s run-to-run spread that is exactly +/-1 count
+over 47.134 s, i.e. the estimator's own quantum, and it is now the error bar on every rate
+in the shipped comments. The header model 32728.5/160 = 204.553 sits inside that band
+(+0.013/s here, -0.009/s on batch 91); a power-of-two 204.800 sits 0.234-0.256/s outside
+it, an order of magnitude clear of the spread. The quantum conclusion stands; the
+determinism claim did not. The last ledger row is `audio: frame=2880 secs=48.233
+submitted=2407 done=2404 dropped=11 requeued=1 inDsp=3 dspframes=9870 dspdropped=0`, so the
+rate test submitted/(secs x 50) = 0.9981 and submitted - done == inDsp == 3.
+Emulator-green is not hardware-pass: Old-3DS timing, the console's mixer rate, and the
+PICA's own behaviour remain unmeasured (AGENTS P6/P8).

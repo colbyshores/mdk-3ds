@@ -131,6 +131,83 @@ def body(text, name):
     return None
 
 
+def enclosing_block(text, pos):
+    """The text preceding the `{` that opens the innermost block containing `pos`
+    ("" if none is found). Walks back with a brace balance, so the opener of a
+    sibling block is not mistaken for this one's."""
+    depth = 0
+    i = pos
+    while i >= 0:
+        c = text[i]
+        if c == "}":
+            depth += 1
+        elif c == "{":
+            if depth == 0:
+                return text[text.rfind("\n", 0, i) + 1:i]
+            depth -= 1
+        i -= 1
+    return ""
+
+
+# The loop these three statements live in. Naming it is what keeps the guard test
+# from flagging legitimate code: "not inside a block" would reject the frame loop
+# itself, and a gate that reds correct code is a gate somebody relaxes.
+FRAME_LOOP = r"\bwhile\s*\(\s*aptMainLoop\s*\(\s*\)\s*\)"
+
+
+def guard_of(text, match):
+    """The keyword that guards `match`, or "" for none.
+
+    Two forms of guard exist and a line test only sees the first: `if (c) call();`
+    shares a line with its condition, and
+
+        if (c) {
+            call();
+        }
+
+    does not, so a whole-line test passes it. Walking back to the opener of the
+    enclosing block sees both, and the frame loop is whitelisted by name because
+    it is the loop the statements are supposed to be in."""
+    opener = enclosing_block(text, match.start())
+    if re.search(FRAME_LOOP, opener):
+        return ""
+    m = re.search(r"\b(if|switch|for|while)\b", opener)
+    return m.group(1) if m else ""
+
+
+def bare(text, pattern):
+    """(group(1), guard) for every match of `pattern` that is the WHOLE of its own
+    line, where guard is the keyword guarding it ("" when it is unconditional).
+
+    A call that is the body of an `if`, one arm of a `?:`, or the tail of a `&&`
+    chain is still exactly one call site in the file, but it is not handed the
+    value on the frames it does not run — so a count of call sites cannot tell an
+    unconditional feed from a guarded one. Requiring the statement to own its line
+    is the same depth-0 test c3d_frame_test.sh applies to the eye loop
+    (`eye-loop-statements-unconditional`, review-3 F2 there, review-11 R10-2
+    here); `guard_of` is the half that file does not need, because a block guard
+    owns its line. Comments are already blanked by code(), so the only thing
+    allowed between the statement's `;` and the end of its line is whitespace."""
+    out = []
+    for mm in re.finditer(pattern, text):
+        a = text.rfind("\n", 0, mm.start()) + 1
+        b = text.find("\n", mm.end())
+        b = len(text) if b < 0 else b
+        if text[a:mm.start()].strip() == "" and text[mm.end():b].strip() == "":
+            out.append((mm.group(1), guard_of(text, mm)))
+    return out
+
+
+def fed_ok(feeds):
+    """True when `feeds` is exactly one unconditional feed."""
+    return len(feeds) == 1 and feeds[0][1] == ""
+
+
+def fed_text(feeds):
+    return ", ".join("%s%s" % (n, "" if not g else " (guarded by `%s`)" % g)
+                     for n, g in feeds) or "-"
+
+
 def adjudicate(src, main, quiet=False):
     c = code(src)
     m = code(main)
@@ -241,6 +318,15 @@ def adjudicate(src, main, quiet=False):
     # printf is inside it; the count is of WRITES, because the printf's own
     # argument is a read and must not be counted; and the identifier the clock
     # accumulates must be the identifier BOTH update calls are handed.
+    #
+    # Review-11 found the sixth and seventh holes in the same line, both by
+    # counting something that a mutation can leave alone: a WRITE count only sees a
+    # write that spells `audioClock` (a reference bound to it decays it behind the
+    # check's back, R10-1), and a CALL count only sees that a feed exists, not that
+    # it runs (a feed inside `if (frame & 1u)` is one call site that is handed
+    # nothing on half the frames, R10-2). Both mutants adjudicated PASS against
+    # batch 91, and both are arms now. The fixes are that the clock may not be
+    # aliased, and that all three statements must own their line.
     lits = [s for s in re.findall(r'"((?:[^"\\]|\\.)*)"', main) if "submitted=" in s]
     ledger = "".join(lits)
     check("frontend-logs-the-frame-with-the-ledger",
@@ -252,9 +338,15 @@ def adjudicate(src, main, quiet=False):
     region = m[decl.end():decl.end() + fend.start()] if decl and fend else ""
     arg = re.search(r"\(\s*unsigned long\s*\)\s*frame\s*,\s*audioClock\s*,", m)
     writes = re.findall(r"audioClock\s*[-+*/%]?=|\baudioClock\s*(?:\+\+|--)", region)
-    add = re.search(r"audioClock\s*\+=\s*([A-Za-z_]\w*)\s*;", region)
-    fed_mixer = re.findall(r"\bmixer\.update\(\s*([A-Za-z_]\w*)\s*\)", m)
-    fed_dev = re.findall(r"\bmixer\.device\(\)\.update\(\s*([A-Za-z_]\w*)\s*\)", m)
+    # An alias is a write the line above cannot see (review-11 R10-1). Inside this
+    # function there are exactly two ways to write `audioClock` without spelling
+    # its name: take its address, or bind a reference to it. Both are forbidden
+    # below, which is what makes the single-write rule a bound on the VALUE and
+    # not merely on one spelling of it.
+    aliases = re.findall(r"&\s*audioClock\b|\w+\s*&\s*\w+\s*=\s*audioClock\b", region)
+    add = bare(region, r"audioClock\s*\+=\s*([A-Za-z_]\w*)\s*;")
+    fed_mixer = bare(m, r"\bmixer\.update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
+    fed_dev = bare(m, r"\bmixer\.device\(\)\.update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
     check("frontend-logs-the-clock-with-the-ledger",
           re.search(r"frame=%[0-9a-z.]+\s+secs=%[0-9a-z.]+\s+submitted=", ledger)
           is not None
@@ -270,15 +362,33 @@ def adjudicate(src, main, quiet=False):
           "frame and still makes the printed secs a different quantity from the "
           "audio time. If a second reader of the clock is genuinely needed, give "
           "it its own accumulator rather than moving this one")
+    check("frontend-never-aliases-the-clock", not aliases,
+          "audioClock is written once, textually, and never through another name: "
+          "%d alias(es) `%s`. Taking the clock's address or binding a reference to "
+          "it is how a per-frame decay hides from the single-write rule above — "
+          "`double& ac = audioClock; ac *= 0.999;` drops the ledger clock 0.1%% per "
+          "frame (0.84%% over a 47 s run) while every textual count stays at one, and "
+          "the printed secs stops being the audio's time. If a second reader of the "
+          "clock is genuinely needed, give it its own accumulator"
+          % (len(aliases), "`, `".join(aliases)))
     check("frontend-feeds-the-clock-and-the-device-the-same-elapsed",
-          add is not None and len(fed_mixer) == 1 and len(fed_dev) == 1
-          and fed_mixer[0] == add.group(1) and fed_dev[0] == add.group(1),
+          len(add) == 1 and add[0][1] == "" and fed_ok(fed_mixer) and fed_ok(fed_dev)
+          and fed_mixer[0][0] == add[0][0] and fed_dev[0][0] == add[0][0],
           "`secs` is only the audio time if it sums what the mixer and the device "
           "were actually handed: the one `audioClock += X;` and both "
-          "`mixer.update(X)` / `mixer.device().update(X)` calls must name the "
-          "same identifier. A device fed a scaled or different value than the one "
-          "accumulated makes the rate test divide by a clock that is not the "
-          "audio's, which is the error this whole line exists to avoid")
+          "`mixer.update(X)` / `mixer.device().update(X)` calls must each be the "
+          "whole of its own line — unconditional, not the body of an `if` or the "
+          "arm of a `?:` — and must name the same identifier. Found %d accumulate(s) "
+          "`%s`, %d mixer feed(s) `%s`, %d device feed(s) `%s`. Two distinct errors "
+          "live here: a feed handed a scaled or different value than the one "
+          "accumulated (review-10 F4), and a feed that runs on SOME frames while the "
+          "clock accumulates on all of them (review-11 R10-2 — "
+          "`if (frame & 1u) mixer.device().update(elapsed);` is still exactly one "
+          "call site and makes the rate test divide by a clock at twice the audio "
+          "time). Either way the rate this line exists to publish stops meaning "
+          "anything"
+          % (len(add), fed_text(add), len(fed_mixer), fed_text(fed_mixer),
+             len(fed_dev), fed_text(fed_dev)))
 
     failed = [n for n, ok, _ in checks if not ok]
     return checks, failed
@@ -323,6 +433,14 @@ ARMS = [
      lambda s, m: (s.replace("g_requeued++;", "", 1), m)),
     ("frontend-stops-logging-the-frame-with-the-ledger",
      lambda s, m: (s, m.replace("frame=%lu ", "", 1))),
+    # The `%.3f` is literal HERE on purpose (review-11 open question 1). This arm
+    # exists to prove the ledger's `secs` field is load-bearing, and the only
+    # honest way to delete the field is to delete the text that prints it. If the
+    # precision changes again, the arm mutates nothing and the run FAILS with "the
+    # mutation changed nothing" — fail-closed, and the fix is to change the arm in
+    # the same commit as the format string, having decided the new precision is
+    # right. Editing the arm to match a precision nobody thought about is the
+    # failure mode this comment is here to name.
     ("frontend-stops-logging-the-clock-with-the-ledger",
      lambda s, m: (s, m.replace("secs=%.3f ", "", 1))),
     # The substitution case the presence-only check could not see (review-8 F2):
@@ -356,6 +474,35 @@ ARMS = [
                                 "mixer.device().update(elapsed * 0.5f);", 1))),
     ("frontend-feeds-the-mixer-a-different-clock",
      lambda s, m: (s, m.replace("mixer.update(elapsed);", "mixer.update(delta);", 1))),
+    # Review-11 R10-1 and R10-2, each reproduced as a mutant that adjudicated PASS
+    # against the review-10 hardening. The first writes the clock through a
+    # reference, so no textual write count changes; the other three guard one of
+    # the three statements, so no call-site count changes and no identifier moves.
+    ("frontend-decays-the-clock-through-an-alias",
+     lambda s, m: (s, m.replace("audioClock += elapsed;",
+                                "audioClock += elapsed; "
+                                "{ double& ac = audioClock; ac *= 0.999; }", 1))),
+    ("frontend-feeds-the-device-only-some-frames",
+     lambda s, m: (s, m.replace("mixer.device().update(elapsed);",
+                                "if (frame & 1u) mixer.device().update(elapsed);", 1))),
+    ("frontend-feeds-the-mixer-only-some-frames",
+     lambda s, m: (s, m.replace("mixer.update(elapsed);",
+                                "if (frame & 1u) mixer.update(elapsed);", 1))),
+    ("frontend-accumulates-the-clock-only-some-frames",
+     lambda s, m: (s, m.replace("audioClock += elapsed;",
+                                "if (frame & 1u) audioClock += elapsed;", 1))),
+    # The same guard in its block form, which owns its line and so is invisible to
+    # a whole-line test on its own. The plausible version of it is "only advance
+    # the audio clock while the game is not paused", and that is a guard.
+    ("frontend-accumulates-the-clock-in-a-guarded-block",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "if (frame != 0u) {\n            audioClock += elapsed;\n        }", 1))),
+    ("frontend-feeds-the-device-in-a-guarded-block",
+     lambda s, m: (s, m.replace(
+         "mixer.device().update(elapsed);",
+         "if (frame != 0u) {\n            mixer.device().update(elapsed);\n        }",
+         1))),
 ]
 
 print("ndsp_sink: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

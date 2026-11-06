@@ -16978,7 +16978,11 @@ paragraph's original exclusion named the right model and was weak only on its ow
 the console".]** The quantum implied
 by the header rate at the measured value is 159.88, so no integer frame size fits
 either model **[and that division inherits the same single-row offset: the slope's
-implied quantum is 160.007 and the next integer is 0.6/s away, so 160 fits]**, and the likeliest explanation of the residual is Mandarine's own HLE
+implied quantum is 160.007 and the next integer is 0.6/s away, so 160 fits]** **[the
+"0.6/s" is the distance to the 160.5 halfway point (32728.5/160.5 = 203.916/s), not to
+the next integer: 161 would run at 203.283/s, 1.26/s below the measurement. Corrected
+by batch 92 / review-11 R10-5, which is what the shipped comments now say]**, and the
+likeliest explanation of the residual is Mandarine's own HLE
 pacing with the audio device muted — not the console. So the shipped comments now
 say three separate things instead of one confident one: the **kind** of the counter
 is derived (one increment per `ndspThreadMain` iteration after the
@@ -17303,10 +17307,29 @@ rebuild (lane `/tmp/mdk-emurun.238686`, this build, `secs` at 3 dp) reproduced t
 `dspframes` at every frame number, which also rules out the softer version of the
 objection ("it was two runs, they just happened to agree").
 
+**[Corrected by batch 92, from the re-measurement that checked review-11 R10-4: a THIRD
+run of a byte-identical ELF (lane `/tmp/mdk-emurun.333419`, `mdk.elf` `1237bfcc…` again)
+agrees on `secs` to the millisecond at all 48 rows but reads `dspframes` one lower on 25
+of them — 228 against 229 at frame 60, 6587 against 6588 at frame 1920, and all three
+back together at 9870 by frame 2880. So the instrument is reproducible to a frame, not
+frame for frame, and "deterministic to the frame" above was generalised from two samples
+that happened to agree. What survives is both stronger and weaker than what was written:
+the three slopes are 204.544 / 204.562 / 204.566/s, a 0.021/s spread that is exactly ±1
+count over 47.134 s — the estimator's own quantum — and the header model sits inside it
+(−0.009..+0.013/s, −0.004 %..+0.006 %) while a power-of-two sits outside it by an order
+of magnitude (−0.234..−0.256/s). The quantum conclusion stands; the determinism sentence
+did not, and the shipped comments now carry the three-run band instead.]**
+
 What the leftover actually is: a **constant start offset**. `dpf/204.553 − secs` stays
 inside **+0.019..+0.026 s** across a 47 s run and drifts by −0.002 s — about one 20 ms
 buffer, and the run bounds it without pinning where it comes from — while under a
-power-of-two 204.80 the same subtraction drifts monotonically by −0.059 s. A constant
+power-of-two 204.80 the same subtraction drifts monotonically by −0.059 s. **[Not
+monotonically — batch 92 / review-11 R10-3 counted the steps: the pow2 offset rises on 9
+of run B's 47 row-to-row steps (largest rise +0.0039 s) and on 32 of run A's (largest
++0.0059 s). The −0.0588 s drift stands and the trend is real; the strictness of the
+descent was the overstatement, and it is the same row-to-row jitter as the ±0.05/s the
+sub-windows show. The shipped comment now says "drifts by −0.059 s overall, not
+monotonically".]** A constant
 offset cancels in a **slope between two rows**, which is the estimator the reviewer
 named and the one three batches did not use:
 
@@ -17314,7 +17337,9 @@ named and the one three batches did not use:
 (9870 - 229) / (48.233 - 1.099) = 204.544 dspframes/s
   vs header model  32728.5/160 = 204.5531   residual -0.0086/s  (-0.004 %)
   vs power-of-two  32768.0/160 = 204.8000   residual -0.2555/s  (-0.125 %)
-implied quantum 160.007 samples; the next integer is 0.6/s away
+implied quantum 160.007 samples; the next integer is 0.6/s away **[again the half-step
+tipping distance, not a distance to an integer — 161 is 1.26/s away; corrected by
+batch 92 / review-11 R10-5]**
 ```
 
 One deliberate refusal, because this is the fourth batch running on this number: the
@@ -17422,3 +17447,151 @@ Audio order after the renderer items is 6c (int16 sample store), 6d (no
 behaviour remains unmeasured, and what a hardware reader should now take off the ledger
 is `submitted` against `secs x 50` (the rate test) and a **slope** of `dspframes`
 between two rows if a mixer rate is wanted — never one row's division.
+
+## Iteration 120 — batch 92: review-11 remediation — the ledger-clock gate could not see a clock written through an alias or a feed that runs on half the frames, and a third run of one ELF turned batch 91's "deterministic frame for frame" into a two-sample generalisation
+
+### What this batch did
+
+Closed review-11 (`logs/ralph-pi/run-20261106-062909/review-11.md`): five findings, no
+Critical, no High, **none rebutted on merit — all five fixed**, two of them in the gate and
+three in the shipped record. No shipped byte moves: the in-tree build of this tree
+reproduces `mdk.elf` md5 `1237bfcc0c6eee21e73e8a9fe8794302`, byte-identical to batch 91's,
+because the only `mdk_3ds` edits are comment blocks. The functional change is one host-side
+gate, `tests/scripts/ndsp_sink_test.sh`, which went from **17 checks / 17 arms to 18 checks /
+23 arms**, every arm adjudicated red.
+
+### Findings, and what happened to each
+
+**R10-1 (Medium, confirmed, fixed).** The review-10 clock check counts *textual* writes to
+`audioClock`, so a write through a reference was invisible. Reproduced before touching
+anything: `{ double& ac = audioClock; ac *= 0.999; }` inserted after the accumulate gave
+`PASS NdspSink (17 checks, 17 arms adjudicated red)`, rc=0 — a ledger clock decaying 0.1 %
+per frame behind a green gate. The fix forbids the alias rather than trying to track it:
+inside `main` the only ways to write `audioClock` without spelling its name are to take its
+address or bind a reference to it, and a new check `frontend-never-aliases-the-clock`
+rejects both (`&audioClock` and `T& x = audioClock`). That is what makes the existing
+single-write rule a bound on the **value** and not merely on one spelling of it. Pinned by
+the arm `frontend-decays-the-clock-through-an-alias`, and separately probed with a pointer
+form (`double *acp = &audioClock; *acp *= 0.999;`), which also turns it red.
+
+**R10-2 (Medium, confirmed, fixed).** The same-elapsed check pinned identifier *equality*
+between `audioClock += X`, `mixer.update(X)` and `mixer.device().update(X)`, but a call
+count cannot tell an unconditional feed from a guarded one. Reproduced:
+`if (frame & 1u) mixer.device().update(elapsed);` → PASS, rc=0, while the reviewer's
+contrast mutant `mixer.device().update(elapsed * 0.5f)` was caught — so the hole was
+specific to guarding, not to mis-feeding. The fix is a `bare()` statement-scoped matcher:
+each of the three statements must be the whole of its own line, and `guard_of()` walks back
+to the opener of the enclosing block so the **block** form of a guard is caught too —
+`if (c) {\n    audioClock += elapsed;\n}` owns its line and a line test alone passes it,
+which is a hole the reviewer's own mutant did not reach. The frame loop is whitelisted by
+name (`while (aptMainLoop())`) so the test cannot red legitimate code: moving the
+accumulate to the first statement of the frame loop still passes, verified as a mutant.
+Four new arms: device-guarded, mixer-guarded, accumulate-guarded, and the two block-guarded
+forms. A ternary feed (`update(frame ? elapsed : 0.0f)`) and a reordered-but-equivalent
+file were probed by hand: the first is red, the second correctly stays green.
+
+**R10-3 (Low, confirmed, fixed).** "under a power-of-two 204.80 the same subtraction drifts
+**monotonically** by −0.059 s". Recomputed from the raw logs rather than taken on trust:
+run B's pow2 offset rises on **9 of 47** row-to-row steps (largest +0.0039 s) and run A's on
+**32 of 47** (largest +0.0059 s); the drift itself reproduces (−0.0588 s, −0.0548 s). The
+comment now says "drifts by −0.054..−0.059 s OVERALL — not monotonically", names the step
+counts, and points at the ±0.05/s sub-window scatter as the same jitter integrated. The
+header-model half of the same sentence was checked too and holds: drift −0.002 s on one run,
+**+0.002 s** on another, opposite signs, so "does not grow" is solid.
+
+**R10-4 (Low, confirmed, fixed — and it was worse than reported).** The shipped comment said
+"Two runs of **this build** reproduce EVERY row frame for frame" while the batch's own
+sidecar recorded run A as the previous build at 2 dp. Confirmed from the logs: `mdk-a.log`
+prints `secs=1.10`, `mdk-b.log` prints `secs=1.099`. But the re-measurement needed to check
+that attribution produced a third run of the byte-identical ELF, and it falsified the
+stronger claim in the same sentence: `secs` agrees to the millisecond at all 48 rows, while
+`dspframes` reads **one lower on 25 of 48** (228 vs 229 at frame 60, 6587 vs 6588 at frame
+1920, all three together at 9870 by frame 2880). The instrument is reproducible **to** a
+frame, not frame for frame. Both shipped comments and the log now carry the three-run band
+instead of the determinism claim; see the item below.
+
+**R10-5 (Low, confirmed, fixed).** "the implied quantum is 160.007 and the next integer is
+0.6/s away". The nearest other integer quantum is 161 → 32728.5/161 = **203.283/s**, which
+is **1.26/s** below the measurement, not 0.6/s; 0.6/s is the distance to the 160.5 halfway
+point where the implied quantum would tip. Recomputed here rather than copied: that
+halfway point is 32728.5/160.5 = **203.916/s**, i.e. **0.63/s**, where the review's own
+note said 203.88 and 0.66 — the finding is right and its arithmetic was slightly off, so
+the shipped text carries the recomputed figures. Both places (`audio_3ds.cpp`,
+`audio_3ds.h`) now name which quantity is which, and the two historical PROGRESS_LOG lines
+are annotated in place, not rewritten.
+
+**Open question 1 (the literal `%.3f` in an arm) — answered in the file.** The coupling is
+intended and is now commented where it lives: the arm deletes the text that prints the
+field, so a future precision change makes the arm mutate nothing and the run fails closed
+with "the mutation changed nothing". The comment names the failure mode it is guarding
+against — editing the arm to match a precision nobody re-derived.
+
+### A finding this batch made against its own parent
+
+Batch 91's headline was that the ndsp counter is "deterministic to the frame". A third run of
+a byte-identical ELF (`/tmp/mdk-emurun.333419`, `mdk.elf` `1237bfcc…` again) shows it is not:
+25 of 48 rows differ by exactly one count. What replaces the claim is both weaker and
+stronger. Weaker: the reproducibility is ±1 dspframe. Stronger: that ±1 is *quantifiable*
+and it is the estimator's own quantum — ±1 count over 47.134 s is **0.021/s**, which is
+exactly the spread between the three slopes (204.544, 204.562, 204.566/s). The header model
+204.553 sits inside that band (−0.009 to +0.013/s, −0.004 % to +0.006 %) and a power-of-two
+204.800 sits 0.234–0.256/s outside it, so the quantum conclusion is now supported by three
+independent slopes instead of one and an argument, and the error bar is named instead of
+assumed. The console's mixer rate is still unmeasured: this is an HLE DSP (AGENTS P6/P8).
+
+### Gates, verbatim
+
+```
+$ make -C tests/scripts          rc=0
+PASS L3_audio_mix: both PCM widths decode, the voices interpolate and pan, the music bus
+PASS L3_audio_meta: the eight sounds' decoded length, rate, loop flag and sample values ...
+All cases match the oracle.
+
+$ sh tests/scripts/ndsp_sink_test.sh   rc=0
+ndsp_sink: .../audio_3ds.cpp — 18 checks, 23 mutation arms
+PASS NdspSink (18 checks, 23 arms adjudicated red)
+
+$ bash tools/check.sh            rc=0
+  PASS   audit_c_with_classes     0 violations
+  PASS   gates_vfp                0 blockers
+  PASS   audit_arm11_math         contract clean
+  PASS   audit_r11_idiv           no candidates
+  PASS   gates_core_parity        both targets link the same core
+  SKIP   gates_smdh               no built .cia to read
+  PASS   gates_frames             every pinned frame is deterministic and unchanged
+  PASS   gates_batch_integrity    project invariants intact
+CHECK: ALL GATES PASSED
+
+$ make -C mdk_3ds                rc=0     (DEVKITPRO=/opt/devkitpro DEVKITARM=…/devkitARM)
+LINK mdk.elf / 3DSX mdk.3dsx ; md5 mdk.elf = 1237bfcc0c6eee21e73e8a9fe8794302
+```
+
+Emulator evidence (AGENTS P8, because `mdk_3ds/**` was touched): `mdk_3ds/tools/emurun.sh
+--secs 50 --min-frames 2000 --display 99`, **exit 0**, display `:99`, Mandarine r1.2.1 md5
+`0d2adab6…` (the pinned build, not the banned r1.3.0), level 7, mono, forced llvmpipe,
+`dspfirm.cdc` present, SDL audio dummy, private lane `/tmp/mdk-emurun.333419`, one session
+banner, reached frame 2880. Full verdict block and the third-run analysis are in
+`docs/frames/2026-11-06-review11-remediation.txt`. `/tmp/kilo` is another uid's and is not
+writable by this one, so captures are under `/tmp/mdk-b92`.
+
+### Prior-solution lookup
+
+`pi-knowledge` `mdk-sdl` was searched first (ndsp counter rate / ledger clock / mutation
+arms). It returned the audio headers, the C# `AudioDevice.cs`, and — usefully — the sibling
+gate `tests/scripts/c3d_frame_test.sh`, whose `eye-loop-statements-unconditional` check and
+`statement_at()` depth test are the in-repo precedent for "a call site is not an
+unconditional statement". That is what `bare()` adapts; the block-guard half is the part the
+renderer gate does not need and this one does. Neither `obsidian_*` nor `cognee_*` is
+exposed in this session, so the vault lookup was the degraded disk-only path (AGENTS P9) and
+Cognee's graph search was unavailable; the vault's
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md` is the
+same failure family as these could-not-fail arms and was read for framing.
+
+### Next
+
+Unchanged in priority: **the one-sided view** (geometry covers panel columns 200..399 of
+400), then audio order 6c (int16 sample store), 6d (no `ScriptRuntime` on the console),
+then the bank's missing eviction bound. Original-3DS behaviour remains unmeasured, and what
+a hardware reader should now take off the ledger is `submitted` against `secs x 50` (the
+rate test) and a **slope** of `dspframes` between two rows if a mixer rate is wanted — never
+one row's division, and with ±0.02/s on the slope even in the emulator.

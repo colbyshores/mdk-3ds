@@ -109,23 +109,45 @@ bool g_live = false;
 //     THE PREDICTION NOW HAS A MEASUREMENT, AND WHAT WAS WRONG WAS THE RATIO,
 //     NOT THE MODEL (review-10 F1). Three batches divided one row's dpf by that
 //     row's `secs` and then explained the leftover as run noise. It is not
-//     noise. Two runs of this build reproduce EVERY row frame for frame — 229 at
-//     1.099 s, 3921 at 19.149 s, 6178 at 30.180 s, 8844 at 43.216 s, 9870 at
-//     48.233 s — so the instrument is deterministic to the frame, and batch 90's
-//     "two runs of one ELF differ by 0.078/s" was one trajectory sampled at two
-//     points, not a spread between runs.
+//     noise — and it is NOT as reproducible as batch 91 claimed either. THREE runs
+//     (one on the parent ELF with `secs` at 2 dp, two on this build at 3 dp) agree
+//     on `secs` to the millisecond at every frame number, because `secs` is a sum
+//     of frame deltas, and agree on `dspframes` only to within ONE count: 23 of 48
+//     rows match exactly and 25 read one lower (228 against 229 at frame 60, 6587
+//     against 6588 at frame 1920, and all three back together at 9870 by frame
+//     2880). So the instrument is reproducible to a frame, not frame for frame
+//     (review-11 R10-4 asked for an attribution fix on "two runs of this build";
+//     the re-measurement that checked it found a bigger error in the same
+//     sentence), and batch 90's "0.078/s run-to-run spread" was one trajectory
+//     sampled twice plus a one-count phase jitter, never a rate difference.
 //     dpf/secs from a single row carries a START OFFSET, because the counter
 //     starts when ndsp starts and `secs` starts when the first frame is
 //     measured. Divide by the header model and subtract it: dpf/204.553 - secs
-//     stays inside +0.019..+0.026 s across a 47 s run and drifts by -0.002 s
-//     (about one 20 ms buffer; the run bounds the offset, it does not pin where
-//     it comes from), while under a power-of-two 204.80 the same subtraction
-//     drifts monotonically by -0.059 s. A constant offset cancels in a SLOPE
+//     stays inside +0.014..+0.028 s across three 47 s runs and drifts by
+//     -0.002..+0.003 s (about one 20 ms buffer; the runs bound the offset, they do
+//     not pin where it comes from), while under a power-of-two 204.80 the same
+//     subtraction drifts by -0.054..-0.059 s OVERALL — not monotonically: it rises
+//     on 9 of the 47 row-to-row steps of one run (largest rise +0.004 s) and on 32
+//     of 47 of another (largest +0.006 s), which is the same row-to-row jitter as
+//     the +/-0.05/s the sub-windows show, integrated over a 47 s baseline. The trend
+//     is the finding, not the strictness of the descent (review-11 R10-3). A
+//     constant offset cancels in a SLOPE
 //     between two rows, so the slope is the estimator and the ratio never was:
-//     (9870-229)/(48.233-1.099) = 204.544/s, which is -0.009/s (-0.004 %) off
-//     the header model's 204.553 and -0.256/s (-0.125 %) off a power-of-two
-//     204.800. The implied quantum is 160.007 samples and the next integer is
-//     0.6/s away, so the quantum is 160 or it is nothing.
+//     (9870-229)/(48.233-1.099) = 204.544/s and (9870-228)/(48.233-1.099) =
+//     204.566/s on two runs of this build, 204.562/s on the parent ELF. That
+//     0.021/s spread IS the estimator's own quantum, +/-1 count over 47.134 s, and
+//     it is the honest error bar on every number in this paragraph. Against the
+//     header model's 204.553 the three read -0.009, +0.013 and +0.009/s (-0.004 %
+//     to +0.006 %) and against a power-of-two 204.800 they read -0.256, -0.234 and
+//     -0.238/s (-0.115 % to -0.125 %), so the model that survives is the header's
+//     by an order of magnitude more than the spread. The implied quantum is
+//     160.007, 160.001 and 159.990 samples. The nearest OTHER integer
+//     quantum is 161, which would run at 32728.5/161 = 203.283/s, 1.26/s below the
+//     measurement — 25x the scatter — and the measurement sits 0.63/s from the
+//     halfway point where the implied quantum would tip (160.5 => 203.916/s), so
+//     the quantum is 160 or it is nothing (review-11 R10-5: an earlier draft said
+//     "the next integer is 0.6/s away", which is that half-step tipping distance
+//     mislabelled as a distance to an integer).
 //     DO NOT READ THE ROUNDING BAND AS THE UNCERTAINTY. At 3 dp the arithmetic
 //     band on that slope is +/-0.004/s, which would put 204.553 OUTSIDE it — but
 //     four 11 s sub-windows of the SAME run read 204.533, 204.605, 204.515 and
