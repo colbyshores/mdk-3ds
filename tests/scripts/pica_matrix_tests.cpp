@@ -367,10 +367,13 @@ void testTheDepthStateComesFromThePass() {
 
 void testTheOpaquePassesDoNotBlend() {
     // Renderer.cs:565,570: `blended = pass is Blended or Overlay`, and
-    // `enable_blend = blended`. The three opaque passes therefore REPLACE.
+    // `enable_blend = blended`. FOUR of the enum's six passes are unblended and
+    // this array is all four of them: `OnTop` is not part of `Blended or
+    // Overlay`, so it replaces too (review-3 F5 — the array named three, so a
+    // pass added to the enum inherited Solid's state with nothing noticing).
     const mdk::Pass opaque[] = {mdk::Pass::Solid, mdk::Pass::DoubleSided,
-                                mdk::Pass::Mirror};
-    for (int i = 0; i < 3; i++) {
+                                mdk::Pass::Mirror, mdk::Pass::OnTop};
+    for (int i = 0; i < 4; i++) {
         const mdk::pica::BlendState s =
             mdk::pica::blendStateForPass(opaque[i], mdk::Blend::Alpha);
         PICA_CHECK(!s.enable);
@@ -390,6 +393,22 @@ void testTheOpaquePassesDoNotBlend() {
         mdk::pica::blendStateForPass(mdk::Pass::Solid, mdk::Blend::Add);
     PICA_CHECK(!solidAdd.enable);
     PICA_CHECK(solidAdd.dstColour == mdk::pica::kBlendZero);
+
+    // AND THE ENUM IS COVERED, not sampled (review-3 F5). The two arrays above
+    // and below are the whole of `mdk::Pass`; this states the rule the way the
+    // oracle states it, so a seventh pass fails here instead of quietly taking
+    // whichever branch its numeric value happens to land in.
+    const mdk::Pass every[] = {mdk::Pass::Solid, mdk::Pass::DoubleSided,
+                               mdk::Pass::Mirror, mdk::Pass::Blended,
+                               mdk::Pass::OnTop, mdk::Pass::Overlay};
+    bool coversAll = sizeof(every) / sizeof(every[0]) == 6;
+    for (int i = 0; i < 6 && coversAll; i++) {
+        const bool blends = every[i] == mdk::Pass::Blended ||
+                            every[i] == mdk::Pass::Overlay;
+        coversAll = mdk::pica::blendStateForPass(every[i], mdk::Blend::Alpha).enable ==
+                    blends;
+    }
+    PICA_CHECK(coversAll);
 }
 
 void testTheBlendedPassUsesTheOraclesFactors() {

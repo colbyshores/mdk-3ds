@@ -1,0 +1,50 @@
+evidence pair -- the OTHER HALF of 2026-11-06-L7-blend-ab-current.png: the same
+scene drawn by the build batch 83 was made on top of, rebuilt clean. Read the two
+sidecars together; the claim belongs to the pair and neither picture carries it
+alone. See docs/evidence/README.md.
+
+scene:   level 7, the start arena, guest frame 1680 -- the same scene, the same
+         camera, the same pinned emulator.
+build:   f47d8fc (batch 82, the parent of a9127fc), built CLEAN in a throwaway
+         worktree so nothing of batch 83's tree was in it:
+             git worktree add /mnt/nas/Development/mdk-b84-parent f47d8fc
+             DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM \
+             MDK_DATA_DIR=/mnt/nas/Development/mdk-sdl/MDK make -C mdk_3ds -j4
+         mdk.3dsx md5 09ab51e167b86d595a78df1236cf128f. The game data is staged
+         from the gitignored ./MDK tree and is not part of the repository or of
+         this commit; the build depends on it the way every 3DS build here does.
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --min-frames 600 \
+                                        --shot /tmp/mdk-b84/parent.png
+         (emurun exit 0; guest log ended at frame 1680, 33 frame lines)
+display: :99 -- Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7). Same
+         pinned Mandarine r1.2.1 (md5 0d2adab6ad078c78e6d03e72086f2eb6), same
+         llvmpipe, same mono, same private lane, as the current build's run.
+capture: /tmp/mdk-b84/parent.png, 1280x1024, sha256
+         a81787e05e15c1b8d4541dbf0b42568757f22ed2317d11ca73dc73dc97b722d0.
+         The committed crop is the same top-panel rectangle as the other half,
+         (440,253)-(839,492), 400x240, and it is byte-identical to it: sha256
+         c5314960657a682e3bf32d4f890468e06deee8b0816afacd660470685503a1ca.
+oracle:  none, for the reason given in the other sidecar. Build-to-build only.
+
+what this half adds, and it is the half review-3 F1 asked for: a clean build of
+       the parent answers the "was the before artifact stale?" question, which
+       was one of the reviewer's two candidates and the one no reading of the
+       source could settle.
+         parent vs batch 83's before.png (d6b89982...):  33795 px of this panel
+         parent vs batch 83's after.png  (0c101114...):      0 px of this panel
+         parent vs this batch's capture  (25a56e59...):      0 px of this panel
+       So batch 83's `after` is genuine and its `before` is not the parent: the
+       table ("33909 px differ, 33844 brighter", "near-clear 68001 -> 58127", "a
+       surface the palette says is (255,0,0) landed at (30,30,45)") compared the
+       batch against some build that is not f47d8fc, and every one of those
+       numbers is retracted. The reviewer's own solve was right -- 32128 of the
+       33909 changed pixels do fit `before = a*after + (1-a)*clear` with a
+       constant per surface, re-derived here independently -- which is what made
+       the contradiction real and its cause unanswerable from the source alone.
+       The cause was the artifact.
+
+and one number the census needs: the exact clear-colour pixels (16,32,48) of this
+       400x240 panel are 58464 in the parent and 58464 in this batch's build, so
+       the 61 % figure the census recorded was NOT inflated by a transparency bug
+       and does not need re-measuring. CONTINUATION's "re-census first" premise
+       is withdrawn with this pair.

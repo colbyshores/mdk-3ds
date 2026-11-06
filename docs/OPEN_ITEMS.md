@@ -275,11 +275,16 @@ measured or cited reason, and the batch that closes one should delete its entry.
   GPU_ONE_MINUS_SRC_ALPHA, GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA)` (read out of
   the linked `libcitro3dd.a`, `base.o`), so blending was ON for every pass of
   every frame and glass looked right by accident while the four opaque passes
-  mixed when the oracle forbids it. The before/after capture of this batch is the
-  proof: 33844 of 33909 changed pixels got BRIGHTER, and the before value of a
-  surface the palette says is `(255,0,0)` was `(30,30,45)` — exactly
-  `src*(16/255) + clear*(1-16/255)`, i.e. an opaque arena surface drawn at 6%
-  over the background. (b) "there is no alpha to blend with on this path, and the
+  mixed when the oracle forbids it. **What batch 84 corrects is the proof this entry
+  offered, not the mechanism.** The before/after capture was not the parent build: a
+  clean `f47d8fc` worktree build differs from that `before.png` by 33795 px of the top
+  panel and from the `after` by **0**, so the "`(255,0,0)` was landing at
+  `(30,30,45)`, i.e. an opaque arena surface drawn at 6%" example is retracted. The
+  register state was wrong and is now the oracle's; the visible effect in the start
+  arena is nil, because every fragment there has alpha 255 — which is what a
+  `SRC_ALPHA` blend and a replace pair drawing byte-identical 400x240 panels means
+  (`docs/evidence/2026-11-06-L7-blend-ab-{parent,current}.txt`). (b) "there is no
+  alpha to blend with on this path, and the
   PICA has no discard" — the flat-colour path carries the material's alpha in the
   1x1 texture, and the PICA's discard equivalent is the alpha test, which is what
   `C3D_AlphaTest(true, GPU_GREATER, 0)` installs here: the expansion encodes index

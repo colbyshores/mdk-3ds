@@ -15898,3 +15898,170 @@ the one-sided view (geometry stops at column 640 of the 400-wide panel; the
 census's "clear colour" figure was inflated by the transparency bug this batch
 fixed, so re-run the census before theorising about it again), and the small
 audio-docs batch carrying review F2-F5.
+
+## Iteration 112 — batch 84: batch 83's "before" was not the parent build, and the blend change moves zero pixels
+
+Review remediation, not a feature slice. External review
+`logs/ralph-pi/run-20261106-062909/review-3.md` (on `f47d8fc..a9127fc`) carried no
+Critical and no High, so nothing was mandatory — but its verdict said F1 had to be
+closed before the next renderer batch, and F2–F5 were cheap and in scope. All five
+are closed, and F1 closed against the project's own record.
+
+### F1 (Medium, escalates to High if the second reading held) — CONFIRMED, and the cause is the reviewer's candidate (a): the artifact was not the parent build
+
+The reviewer re-derived batch 83's arithmetic and found it could not come from
+`f47d8fc`'s code, because every fragment-alpha source on this backend is 255 for an
+unblended pass; the solved per-surface alphas (7, 8, 12, 16, 97, 113, 133, 135, 137,
+157, 163, 168, 188, 223 / 255) demanded an alpha source the reading did not show. Two
+candidates were offered: a stale `before` artifact, or a live sub-255 alpha. Neither
+is answerable from the source, which is what made it a measurement.
+
+**The measurement.** Built the parent clean in a throwaway worktree and ran it through
+the same pinned harness:
+
+```
+git worktree add /mnt/nas/Development/mdk-b84-parent f47d8fc
+DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM \
+  MDK_DATA_DIR=/mnt/nas/Development/mdk-sdl/MDK make -C mdk_3ds -j4   # md5 09ab51e1…
+DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --min-frames 600 --shot /tmp/mdk-b84/parent.png
+```
+
+`emurun` exit 0, Mandarine md5 `0d2adab6`, display `:99`, guest ended at frame 1680 —
+the same frame the batch-83 run ended at, and the guest's own line is identical at
+frame 1500 and 1680 (`feet=(0.0,4.0,0.0) yaw=90.0 eye=(0.0,-4.0,4.5)`), so the scene
+is static and the wall-clock screenshot is a fair comparison. Against the 400x240
+top-panel crop `(440,253)-(839,492)`:
+
+| pair | pixels that differ, in the panel |
+|---|---|
+| clean `f47d8fc` build vs batch 83's `before.png` (`d6b89982…`) | **33795** |
+| clean `f47d8fc` build vs batch 83's `after.png` (`0c101114…`) | **0** |
+| clean `f47d8fc` build vs this batch's build (`25a56e59…`) | **0** |
+
+Over the whole 1280x1024 capture the two builds differ by **64 pixels, all of them at
+x 760..767, y 744..752** — the emulator's own `Frame: N.NN ms` overlay on the bottom
+screen, which is the harness's noise floor, not the game's.
+
+So batch 83's `after` is genuine and its `before` is not the parent. **Retracted**: the
+whole before/after table — "33909 px differ, 33844 brighter and 65 darker", "the top
+panel's near-clear pixels fall 68001 (71.3 %) → 58127 (61.0 %)", and the headline "a
+surface the palette says is (255,0,0) was landing at (30,30,45) = src*(16/255) +
+clear*(1-16/255)". Those numbers compare the batch-83 build with some build that is
+not `f47d8fc`. The reviewer's solve was right — 32128 of the 33909 changed pixels do
+fit `before = a·after + (1−a)·clear` with a constant `a` per surface, re-derived here
+independently before any capture was taken — which is exactly why the contradiction
+was real and why only an artifact check could settle it.
+
+**And the alpha question is closed by measurement, not by reading.** The parent blends
+with `SRC_ALPHA / ONE_MINUS_SRC_ALPHA` and this build replaces; two different register
+states agreeing across 96000 pixels means every visible fragment has alpha 255. There
+is no sub-255 fragment alpha in this scene, so candidate (b) — a sub-255 source still
+live on `Pass::Blended` — does not survive. The code reading agrees: the expansion
+forces 255 on every non-zero index (`renderer_c3d.cpp:1267`), and the flat-colour path
+carries the material alpha, which is 1.0 for a palette colour (`material_resolver.cpp:93-96`)
+and the DTI glass alpha only on a `Blended` pass, where the oracle multiplies it in
+(`shaders/palette.hlsl` returns `float4(palette…rgb, 1.0) * colour * input.colour`).
+
+**What batch 83 still stands on.** The citro3d register state (its `C3D_Init` calls
+`C3D_AlphaBlend(ADD, ADD, SRC_ALPHA, ONE_MINUS_SRC_ALPHA, SRC_ALPHA,
+ONE_MINUS_SRC_ALPHA)` and `C3D_AlphaTest(false, ALWAYS, 0)`, measured from the linked
+`libcitro3dd.a` by builder and reviewer independently) and the oracle's blend rule
+(`Renderer.cs:565-576`) are both verified. The change stays because it is the oracle's
+state and AGENTS P2's rule — every GPU state written explicitly every frame — not
+because a picture showed it. What it does not have is runtime evidence in either
+direction: the start arena is 154 all-`Solid` batches, so `Pass::Blended`,
+`Pass::Overlay` and `Blend::Add` are unreached by any capture, which is now the frame
+gate's and the host matrix's job (F3 below).
+
+**What it unblocks.** CONTINUATION's NEXT told the next batch to re-run the one-frame
+census first because "the census was inflated by the transparency bug". The census was
+never inflated: the exact clear-colour pixels (16,32,48) of the 400x240 panel are
+**58464 in the parent and 58464 in this build**. The 61 % figure stands, the one-sided
+view is unchanged, and the census does not need re-measuring. That premise is withdrawn.
+
+### F2 (Medium) — CONFIRMED, fixed: the captures are in the repository now
+
+`docs/evidence/2026-11-06-L7-blend-ab-parent.{png,txt}` and
+`docs/evidence/2026-11-06-L7-blend-ab-current.{png,txt}`: the two panel crops and two
+sidecars carrying the exact `emurun.sh` invocation, the display, the Mandarine md5,
+the `.3dsx` md5 and the revision each was built from, the full-capture sha256s, and
+the measurement. The two crops are **byte-identical** (`c5314960657a…`) and both
+sidecars say so — that equality is the finding. The README's "the capture that DOES
+show the path goes in `docs/evidence/`" is satisfied for the first time; batch 83 left
+its only evidence in `/tmp/mdk-b83/`, one sweep from gone. The sidecars also state
+plainly that there is **no oracle comparison** for a Citro3D capture (AGENTS P6/P8:
+the Citro3D picture is UNVERIFIED against the oracle) — the A/B is build-to-build.
+
+### F3 (Medium) — CONFIRMED, fixed: the new state now has the depth check's shape
+
+`tests/scripts/c3d_frame_test.sh` gains three checks and four mutation arms:
+`alpha-blend-single-writer` (one `C3D_AlphaBlend`, because a second writes behind
+`r->blendPass/r->blendMode`), `alpha-test-single-writer-in-install-eye` (one
+`C3D_AlphaTest`, and inside `installEye`, so both eyes get it), and
+`alpha-test-is-the-oracles-discard` (the call spelled
+`(true, GPU_GREATER, mdk::pica::kAlphaTestReference)`). Arms: a second blend writer,
+an alpha test moved into the per-draw path, the reference moved to 5, and the test
+disabled. `PASS C3dFrame (29 checks, 37 arms adjudicated red)` — was 26/33.
+
+### F4 (Low) — CONFIRMED, fixed: the crop and the coordinate space
+
+The reviewer reproduced the table on a **399x239** crop, not the labelled 400x240
+(400x240 gives 68371/58464, not 68001/58127), and "geometry stops at column 640 of
+the 400-wide panel" mixed capture pixels with panel columns — 640..839 in the capture
+is panel columns **200..399**. Both numbers are retracted with the table above, and
+this batch's evidence states its crop as `(440,253)-(839,492), 400x240` and the
+geometry claim in panel columns. The one-sided view is: geometry covers panel columns
+200..399 of 400, i.e. the right half of the top screen.
+
+### F5 (Low) — CONFIRMED, fixed: the pin enumerates the enum, and the corner list grew
+
+`tests/scripts/pica_matrix_tests.cpp`: the opaque array is `Solid, DoubleSided,
+Mirror, OnTop` — four, not three, because `OnTop` is not part of the oracle's
+`Blended or Overlay` (`Renderer.cs:565`) — plus a loop over all six `Pass` values
+asserting `enable == (pass is Blended or Overlay)`, so a seventh pass fails instead
+of inheriting whichever branch its value lands in. The rationale at
+`renderer_c3d.cpp:869` no longer claims "the shader discards index 0 on every pass":
+the discard is `palette.hlsl`'s, and `mirror.hlsl:36` and `sky.hlsl:63,67` return
+`float4(…, 1.0)` with no discard, so a mirror or sky repaint of index 0 would be
+discarded here and painted by the oracle. Unreachable on this backend (no mirror
+panorama, no sky pass) and already divergent in colour, so recorded as a second corner
+rather than fixed.
+
+### Gates, as run
+
+* `make -C tests/scripts` → `All cases match the oracle.`, exit 0;
+  `PASS PicaMatrix`, `PASS C3dFrame (29 checks, 37 arms adjudicated red)`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM bash tools/check.sh` →
+  `CHECK: ALL GATES PASSED`, exit 0: `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `gates_core_parity both targets link the same core`,
+  `gates_smdh SKIP (no built .cia)`, `gates_frames every pinned frame is deterministic
+  and unchanged`, `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` → `3DSX mdk.3dsx`, exit 0, md5 `cbd2cbf606cebec903839d29c7e632f9`.
+* Emulator evidence for this batch (it changes no pixels, but it touches
+  `mdk_3ds/**`'s comments and is a 3DS-adjacent batch): the pair above, `emurun` exit
+  0 on both sides, display `:99`, Mandarine `0d2adab6`, guest frame 1680.
+
+### Prior-solution lookup
+
+Pi-knowledge `mdk-sdl` (hybrid) on stale-capture/A-B-evidence returned **AGENTS.md P6**
+at 0.770 — the rule that an emulator run must record "the revision it was built from",
+which is precisely what batch 83's `before-verdict.txt` did not do. Obsidian MCP and
+Cognee MCP expose no tools in this session (AGENTS P9: reported, not claimed), so the
+vault went through the disk fallback, narrowly: **`30-architecture/patterns/date-your-evidence-against-your-tree.md`**
+is this exact failure — "a measurement is a statement about the TREE THAT PRODUCED IT,
+not about your current code", from a Perfect Dark campaign that nearly published a
+defect fixed four days earlier — and
+**`30-architecture/patterns/relative-vs-absolute-oracle-for-emulated-subsystems.md`**
+is the reason this batch says "build-to-build, not build-to-oracle" instead of claiming
+fidelity. Cognee's graph search did not happen at all.
+
+### Next, per the priority order
+
+Item 5b (the HUD) stays blocked on the canvas seam (`mdk_render_canvas_quad` is a
+no-op on this backend). The renderer's open item is the **one-sided view**: geometry
+covers panel columns 200..399 of 400 and the census instrument is honest and does not
+need re-running. The small audio-docs batch (review-2 F2–F5, comment-only,
+`mdk_3ds/src/audio/audio_3ds.{h,cpp}`) is still owed and was not folded in here,
+because this batch is one subsystem. Audio items 6c (int16 sample store) and 6d (no
+`ScriptRuntime` on the console) are unchanged.

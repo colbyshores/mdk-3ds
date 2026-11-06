@@ -1,15 +1,15 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — target-specific GPU state on every draw of the 3DS renderer: a new per-pass blend state and a frame-wide alpha test (`C3D_AlphaTest(true, GPU_GREATER, 0)`), which changes what the PICA writes for every surface, including its depth. Verified in the emulator only; no console is in hand.
+Risk: medium — this batch changes no behaviour and no pixel: it retracts a measurement with a clean-build A/B, archives the evidence pair, and adds gate checks (3 checks + 4 arms in `c3d_frame_test.sh`, one matrix case) plus comment corrections. The emulator A/B is 0 px on the panel; the only diff is the emulator's own overlay text.
 
-**citro3d had been blending every frame since the port began, and the port had no discard at all.** `C3D_Init` calls `C3D_AlphaBlend(ADD, ADD, SRC_ALPHA, ONE_MINUS_SRC_ALPHA, SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` (measured from the linked `libcitro3dd.a:base.o`), so the four passes the oracle marks `enable_blend = false` were mixing: an arena surface the palette says is `(255,0,0)` was landing at `(30,30,45)`, which is `src*(16/255) + clear*(1-16/255)` — drawn at six percent over the background. Batch 83 installs the oracle's blend state per pass (`pica::blendStateForPass`, `Renderer.cs:565-576`) and the shader's `if (index == 0) discard;` as the PICA's alpha test, which the expansion makes exact (`expandIndices` leaves index 0 at alpha 0, forces 255 elsewhere) and which a blend cannot do: a discarded fragment does not write depth. Emulator before/after on `:99`, pinned Mandarine `0d2adab6`, exit 0: 33909 px differ, **33844 brighter and 65 darker**, and the panel's near-clear pixels fall from 68001 (71.3%) to 58127 (61.0%). Two claims this file and `OPEN_ITEMS.md` carried are retracted: "glass draws opaque" (it blended, by accident) and "there is no alpha to blend with / the PICA has no discard" (the flat-colour path carries the material alpha; the alpha test is the discard). **Still open:** the one-sided view — geometry still stops at column 640 of the 400-wide panel — and a textured surface's partial material alpha, which the single combiner stage cannot deliver. Details: `docs/PROGRESS_LOG.md`, Iteration 111.
+**Batch 83's headline measurement was taken against a build that is not its parent.** A clean `f47d8fc` worktree build, run through the same pinned harness (`DISPLAY=:99`, Mandarine `0d2adab6`, exit 0, guest frame 1680 — the same frame and the same static camera), differs from batch 83's `before.png` by **33795 px** of the top panel and from its `after.png` by **0**. So the "the opaque passes were blending at six percent" story is retracted, and with it the "`(255,0,0)` landed at `(30,30,45)`" example and the 33909/68001→58127 table: every visible fragment in the start arena has alpha 255, which is what a replace pair and a `SRC_ALPHA` pair agreeing pixel for pixel across 96000 pixels means. The blend state and the alpha test stay — they are the oracle's state (`Renderer.cs:565-576`) and AGENTS P2's "write every GPU state explicitly" — but they carry **no runtime evidence in either direction**: the start arena is 154 all-`Solid` batches, so `Pass::Blended`, `Pass::Overlay` and `Blend::Add` are unreached by any capture, and the frame gate plus `PASS PicaMatrix` are what hold them now. Evidence, with commands and hashes: `docs/evidence/2026-11-06-L7-blend-ab-{parent,current}.{png,txt}` — the two crops are byte-identical, and that equality is the finding. Review-3 F1–F5 all closed; narrative `docs/PROGRESS_LOG.md` Iteration 112.
 
-Last updated: 2026-11-06 (**batch 83 — the opaque passes stop blending, and index 0 is discarded instead of painted**).
+**The census was never inflated, so do not re-run it.** The exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent and 58464 in this build**, so the 61 % figure stands and this file's previous "re-census first" instruction is withdrawn. The one-sided view, stated in panel columns (review-3 F4 — "column 640 of the 400-wide panel" mixed capture pixels with panel columns): geometry covers panel columns **200..399** of 400, the right half of the top screen, and the census instrument is honest.
+
+Last updated: 2026-11-06 (**batch 84 — review-3 F1–F5 closed; batch 83's before/after table retracted, the census premise with it**).
 
 **Next small batch (review-2 F2–F5, all confirmed, all comment-only, all in `mdk_3ds/src/audio/audio_3ds.{h,cpp}`):** the `dspframes` unit is DSP sound frames at `SYSCLOCK_SOC/512 = 32728.5 Hz` ≈ 204.5/s (not 240-sample blocks at 48 kHz); the `frames × 735/882` denominator is exact only at 60 fps; `inDsp` pinned at 4 is also the signature of "nothing was ever submitted"; and `submitted - done == inDsp` holds for an **open** sink. Full text of each in `docs/PROGRESS_LOG.md`, Iteration 111.
 
-
-Last updated: 2026-11-06 (**batch 82 — the sink's ledger reading is fixed, and the gate can now see both retirement sites**).
 
 **Owner action (review F2, new):** `ralph/builder.md`'s "Search scope and bounded commands" block forbids sibling reads, while `AGENTS.md` §12 requires them ("**Proven 3DS platform code in sibling ports — adapt, do not re-derive**", naming `../forsaken/sound_3ds.c`, `../t2k`'s ndsp audio, `../perfect_dark/tools/emurun.sh`) and the 2026-11-05 directive names `../forsaken/sound_3ds.c` for this subsystem — it is where the `nsamples` convention came from. One of the two must be amended by the owner; the builder may not edit either. Combined with the item below about the same uncommitted file.
 **Owner action (review F3, from run-20261106-035708):** `SPEC.md:809` says the 3DS "voice pool shrinks to 24 and the queue to 40 ms to fit the 3DS's DSP budget". The port ships the oracle's 64 (`src/Mdk.Engine/Audio/AudioDevice.cs:73 MaxVoices = 64`, no platform branch) and an 80 ms queue, and `audio_3ds.h` reads §8's 24 as the software mixer's knob. That reading is a deviation from a protected document and the builder cannot resolve it: either amend SPEC.md §8 or authorise a per-target cap. Unmeasured either way — the hot-path corpus is empty, and nothing in the current build exceeds a handful of voices.
@@ -66,22 +66,30 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    is standalone and carries Kurt's own set (footsteps, chute, guns, `LAND` — measured). Ambient and object
    sounds come from opcodes and need the runtime wired on the console, which is the same missing piece as the
    object pass and the camera's script inputs.
-7. **DONE (83) — Citro3D alpha blend** (owner directive item **6** — this file's own numbering drifted, review F6).
-   The blend state is now installed per pass from the oracle, and the shader's index-0 discard is the PICA's
-   alpha test. The named cause below was wrong: citro3d's own initialiser had been blending every pass on
-   the oracle's colour pair, and the flat-colour path already carries the material's alpha.
+7. **DONE (83, measurement corrected by 84) — Citro3D alpha blend** (owner directive item **6** — this file's
+   own numbering drifted, review F6). The blend state is installed per pass from the oracle, and the shader's
+   index-0 discard is the PICA's alpha test. The named cause was wrong: citro3d's own initialiser had been
+   blending every pass on the oracle's colour pair, and the flat-colour path already carries the material's
+   alpha. What batch 84 corrected is the *evidence*: its before/after table was measured against a build that
+   is not its parent, so the change is verified as the oracle's state and as AGENTS P2 compliance, and is
+   **not** verified as a visible fix — it moves 0 px of the panel, because every fragment there has alpha 255.
 8. **CLOSED (batch 75) — the red clear.** It was the clear colour's byte order, not the render path. See the
    header of this file.
 
-## NEXT (batch 84)
-**The one-sided view, re-censused first.** Geometry still covers only columns
-640..838 of the 400-wide top panel, but the census that concluded "61% of the
-panel is clear colour" was measured while this batch's bug was painting opaque
-surfaces at six percent alpha, so its near-clear count was inflated by 9874 px.
-Re-run the one-frame census (`Census` in `renderer_c3d.cpp`, `kCensusFrame`) on
-the current build before theorising: the depth-test-off and cull-none probes it
-used were all read through the transparency bug. The audio-docs batch (F2–F5
-above) is the cheap alternative if the census is the longer job.
+## NEXT (batch 85)
+**The one-sided view.** Geometry covers panel columns **200..399** of the 400-wide top
+screen — the right half — and nothing else has changed: the census's "61 % of the panel
+is clear colour" was **not** inflated by a transparency bug (batch 84 measured 58464
+exact clear-colour pixels in both the parent build and this one), so the one-frame
+census does **not** need re-running first. Its instrument is honest and its probes were
+never read through a bug: `GPU_CULL_NONE` moves 69 px, the depth test off 201 px, and
+the census's own mapping probe fails, so it cannot localise — `logCensus` says so on
+its own output. The live question is why coverage stops at a straight vertical line at
+the panel's middle. Do not re-derive what Iteration 106 retired (the cull, the depth
+triple, the queue, the MVP, a deleted rotation). The next useful capture is **census
+and `GPU_PRIMARY_COLOR` in the same run**, with the panel crop published, so the
+comparison is frame-identical. The audio-docs batch (F2–F5 above) is the cheap
+alternative if the view is the longer job.
 Item 5b (the HUD) stays blocked on the same canvas seam (`mdk_render_canvas_quad`
 is a no-op on this backend).
 
@@ -92,17 +100,6 @@ the console has no `ScriptRuntime`, so ambient and object sounds cannot play; on
 emulator's HLE DSP; the Old-3DS check stays open (AGENTS P6/P8). What to read on hardware
 is the ledger line's `submitted` against `frame x 735/882` — **not** `done` against
 `submitted`, which is an identity and proves nothing (batch 82, review F1).
-
-**The level-7 view is still one-sided, and the instrument used to plan it was corrected** (batch 80,
-re-measured; full figures in PROGRESS_LOG Iteration 108): the censused panel is **61.0 % clear**, not
-67.7 %; `GPU_CULL_NONE` moves **69** px, the depth test off **201** px; the "texture path discards a
-further ~18 %" claim is **withdrawn** (it compared two different runs); and the census's own mapping
-probe **fails**, so it cannot localise anything — `logCensus` now says so on its own output. The live
-question is unchanged and the instrument is honest now: **why does coverage stop at a straight vertical
-line at the panel's middle** (the `GPU_PRIMARY_COLOR` run: 0 white px for x<200, 97 at x=200, 240 from
-x=202). Do not re-derive what Iteration 106 retired (the cull, the depth triple, the queue, the MVP, a
-deleted rotation). The next useful capture is **census and `GPU_PRIMARY_COLOR` in the same run**, with the
-panel crop published, so the comparison is frame-identical.
 
 **Deferred review findings:** review-4 F1/F2 (the geometric solid-arena pin stands in for the unported
 DTI connection crossing; the fall probe hard-codes the start and omits the camera stage) need a
@@ -147,6 +144,21 @@ Original-3DS behaviour remains unmeasured.
   `litellm/qwen`, reviewer `litellm/deepseek-v4.1-flash-th` — cross-family; a same-family reviewer is refused.
   A cross-uid co-tenant whose `/proc/<pid>/environ` answers EACCES is normal here: a failed environ read is
   the absence of proof, never proof of foreignness (review-4 F1).
+* **An A/B capture must name the revision it was built from, or it is not evidence (batch 84).** Batch 83's
+  `before.png` was a real capture of a real build — the wrong one: a clean `f47d8fc` worktree differs from it
+  by 33795 px of the panel and from batch 83's `after` by 0. AGENTS P6 requires the revision in an emulator
+  record and `emurun.sh` names only the `.3dsx` path, so an A/B pair records each `.3dsx` md5 and its commit
+  and archives both in `docs/evidence/`. Vault: `date-your-evidence-against-your-tree.md` ("a measurement is
+  a statement about the TREE THAT PRODUCED IT") and
+  `relative-vs-absolute-oracle-for-emulated-subsystems.md` (a relative A/B proves an effect, never
+  correctness — say which kind a pair is). Noise floor while you do: Mandarine draws its own `Frame: N.NN ms`
+  overlay on the bottom screen, so two runs of the SAME build differ by ~64-112 px at x 753..767,
+  y 744..752 of the 1280x1024 window; compare the top-panel crop `(440,253)-(839,492)`, 400x240, and state it.
+* **Every visible fragment of the level-7 start arena has alpha 255 — measured, not read.** The parent
+  (citro3d's `SRC_ALPHA` blend) and batch 83 onward (the oracle's replace pair) draw byte-identical 400x240
+  panels. Do not re-open "the opaque passes were blending" as a visible defect; the register state was wrong
+  and is now the oracle's, and the pixel effect is nil until a scene with a real material alpha on an
+  unblended pass exists. `docs/evidence/2026-11-06-L7-blend-ab-{parent,current}.txt`.
 * **Emulator-green is not hardware-pass.** Mandarine masks FCRAM/VRAM exhaustion, `GPU_CLAMP_TO_EDGE`
   leniency and FCRAM smear across soft relaunches. Old-3DS timing stays **UNMEASURED** and the Citro3D
   picture stays **UNVERIFIED** against the oracle (AGENTS P6/P8).

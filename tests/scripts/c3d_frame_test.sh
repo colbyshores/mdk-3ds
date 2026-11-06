@@ -654,6 +654,48 @@ def adjudicate(text, quiet=False):
               "%d C3D_DepthTest call site(s); the cache is the only writer, so a second one "
               "writes behind its back" % len(depth))
 
+    # THE BLEND AND ALPHA-TEST STATE, SAME HAZARD, SAME SHAPE (review-3 F3).
+    # Batch 83 put a per-pass blend cache and a frame-wide alpha test beside the
+    # depth cache, and the depth cache already had this check for exactly the
+    # reason they now have it: a second call site writes behind the cache's
+    # back, so `r->blendPass/r->blendMode` stops describing the register and the
+    # opaque and blended passes start alternating wrongly. Nothing else can see
+    # it either — the start arena is 154 all-Solid batches, and batch 84
+    # measured that the whole blend change moves 0 pixels of the 400x240 panel
+    # (docs/evidence/2026-11-06-L7-blend-ab.txt), so no runtime capture covers
+    # these two calls at all.
+    blend = calls(text, r"C3D_AlphaBlend\(")
+    rep.check("alpha-blend-single-writer", len(blend) == 1,
+              "%d C3D_AlphaBlend call site(s); installBlendState and its cache are the "
+              "only writer, so a second one writes behind its back: %s"
+              % (len(blend), "none" if not blend else "; ".join(loc for _, loc in blend)))
+
+    # The alpha test is pinned three ways: ONE writer, INSIDE installEye (so
+    # both eyes get it — the same placement rule that made batch 30's black
+    # screen a checked property), and spelled with the oracle's own predicate.
+    # A reference moved to 5, or GPU_ALWAYS, or a `false`, is invisible in every
+    # scene this frontend can draw today, so the spelling is the pin.
+    atest = calls(text, r"C3D_AlphaTest\(")
+    eye_install = line_range(text, body_span(text, "installEye"))
+    atest_stray = [loc for ln, loc in atest
+                   if not (eye_install and eye_install[0] <= ln <= eye_install[1])]
+    rep.check("alpha-test-single-writer-in-install-eye",
+              len(atest) == 1 and eye_install and not atest_stray,
+              "%d C3D_AlphaTest call(s), %d outside installEye: %s (frame state one eye "
+              "does not get is a hole in that eye)"
+              % (len(atest), len(atest_stray),
+                 "none" if not atest_stray else "; ".join(atest_stray)))
+
+    discard = [loc.strip() for _, loc in code_lines(text)
+               if re.search(r"C3D_AlphaTest\(\s*true\s*,\s*GPU_GREATER\s*,\s*"
+                            r"mdk::pica::kAlphaTestReference\s*\)", loc)]
+    rep.check("alpha-test-is-the-oracles-discard", len(discard) == 1,
+              "%d C3D_AlphaTest written as (true, GPU_GREATER, kAlphaTestReference): %s "
+              "(GPU_GREATER against 0 IS `if (index == 0) discard;`, because the palette "
+              "expansion encodes index 0 as alpha 0 and every other index as 255; any "
+              "other spelling is a different predicate and a discarded fragment does not "
+              "write depth)" % (len(discard), discard or ["none"]))
+
     # THE MICROCODE IS UPLOADED FROM INSIDE THE FRAME (review-6 F6, external review
     # 2026-11-05). Batch 66 hung the guest between `shaderProgramSetVsh ok` and the
     # `backend:` token; batch 67 found the cause by DELETING the create-time
@@ -1037,6 +1079,24 @@ ARMS = [
          "    const uint32_t clear =\n"
          "        mdk::pica::clearColour(params ? params->clear_colour : 0xFF000000u);",
          "    const uint32_t clear = params ? params->clear_colour : 0xFF000000u;", 1)),
+    # review-3 F3's three mutants, each a plausible edit that no runtime capture
+    # in this frontend can show, because the start arena has no blended pass.
+    ("second-alpha-blend-writer",
+     lambda s: s.replace("    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);",
+                         "    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE,\n"
+                         "                       GPU_ZERO, GPU_ONE, GPU_ZERO);\n"
+                         "    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);", 1)),
+    ("alpha-test-in-the-per-draw-path",
+     lambda s: s.replace("    C3D_DrawArrays(GPU_TRIANGLES, first, count);",
+                         "    C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);\n"
+                         "    C3D_DrawArrays(GPU_TRIANGLES, first, count);", 1)),
+    ("alpha-test-reference-moved",
+     lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);",
+                         "C3D_AlphaTest(true, GPU_GREATER, 5);", 1)),
+    ("alpha-test-disabled",
+     lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);",
+                         "C3D_AlphaTest(false, GPU_ALWAYS, mdk::pica::kAlphaTestReference);",
+                         1)),
 ]
 
 print("c3d_frame: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

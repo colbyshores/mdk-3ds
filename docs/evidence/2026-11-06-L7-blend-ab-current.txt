@@ -1,0 +1,76 @@
+evidence pair -- NOT the pinned regression frame, and not compared against the
+oracle. This is the A/B that decides whether batch 83's per-pass blend state and
+frame-wide alpha test move a pixel at all, and it is the record external review
+run-20261106-062909 F1+F2 asked for: the captures live in the repository, with the
+commands and the hashes that re-derive every number quoted from them. See
+docs/evidence/README.md, and the sidecar beside
+2026-11-06-L7-blend-ab-parent.png, which is the other half of the pair.
+
+scene:   level 7 (the guest's own line is `flow: screen=4 level=7`), the start
+         arena, guest frame 1680 at the screenshot. The scene is static, which is
+         what makes a wall-clock screenshot usable as a comparison: the guest's
+         frame line reads feet=(0.0,4.0,0.0) yaw=90.0 eye=(0.0,-4.0,4.5) at frame
+         1500 and again at frame 1680, and both runs of this A/B ended at 1680.
+build:   THIS tree -- batch 84, i.e. a9127fc plus a comment-only change in
+         installEye and test additions. mdk_3ds/mdk.3dsx md5
+         cbd2cbf606cebec903839d29c7e632f9, built with
+         DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM.
+         Note on that md5: it identifies the ARTIFACT that produced this capture.
+         Relinking the identical tree produced a different md5 (8fc1095c6470d99300870d0d2099d9fd,
+         measured minutes later, no source change), so a `.3dsx` md5 is not a build
+         identity -- the revision above is. Recorded because the difference would
+         otherwise read as a different tree.
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --min-frames 600 \
+                                        --shot /tmp/mdk-b84/current.png
+         (emurun exit 0; guest log ended at frame 1680, 33 frame lines)
+display: :99 -- Xvfb :99 -screen 0 1280x1024x24, headless. AGENTS.md P7: never
+         the operator's desktop. Emulator is the pinned Mandarine r1.2.1, md5
+         0d2adab6ad078c78e6d03e72086f2eb6, llvmpipe forced, stereo off (mono),
+         private lane and private config, dspfirm seeded.
+capture: /tmp/mdk-b84/current.png, 1280x1024, sha256
+         25a56e599fde93cb3eb3efbcad69f5b3084678501606fef3100aa08584957484.
+         The PNG committed beside this sidecar is the top-panel crop
+         (440,253)-(839,492), 400x240, sha256 c5314960657a682e3bf32d4f890468e0
+         6deee8b0816afacd660470685503a1ca.
+oracle:  none, and that is stated rather than skipped. The Citro3D picture stays
+         UNVERIFIED against the oracle (AGENTS.md P6/P8): the oracle comparison
+         the README asks for exists only for the pinned 320x240 level-3 frame,
+         which is captured through the Linux/Vulkan path. This A/B is
+         build-to-build, not build-to-oracle, and it is offered as evidence of
+         "nothing changed between these two builds", never of fidelity.
+
+what this picture is evidence of, in one line: the blend state and the alpha test
+       batch 83 installed change NOTHING in the only scene the 3DS frontend can
+       draw today. This crop and the parent's are BYTE-IDENTICAL (same sha256 --
+       that equality is the finding, not a mistake), and over the whole capture
+       the two builds differ by 64 pixels, all of them inside x 760..767,
+       y 744..752, which is the emulator's own "Frame: N.NN ms" overlay on the
+       bottom screen. That 64 px is the harness's noise floor and not the game's;
+       the panel crop differs by 0 px.
+
+why an A/B that moves nothing is still the measurement. The parent left citro3d's
+       initialiser blend in place -- C3D_AlphaBlend(ADD, ADD, SRC_ALPHA,
+       ONE_MINUS_SRC_ALPHA, SRC_ALPHA, ONE_MINUS_SRC_ALPHA), measured from the
+       linked libcitro3dd.a by the builder and independently by the reviewer --
+       and this build writes the oracle's replace pair for an unblended pass.
+       Two different register states agree pixel for pixel across 96000 pixels
+       only if every visible fragment has alpha 255. So the pair MEASURES what
+       the code reading had only claimed: the palette expansion forces 255 on
+       every non-zero index (renderer_c3d.cpp:1267), and the flat-colour path
+       carries the material alpha, which is 1.0 for a palette colour and the DTI
+       glass alpha only on a Blended pass -- where the oracle multiplies it in
+       (shaders/palette.hlsl returns `float4(palette...rgb, 1.0) * colour *
+       input.colour`). That closes review-3 F1's live worry: there is no sub-255
+       fragment alpha hiding in this scene, on this pass or on `Pass::Blended`.
+
+what it costs. Batch 83's before/after table is retracted: its `before.png`
+       (sha256 d6b8998257f291fb329d816852382f579f1bbc7fc925496db4f5e60dbeb89651)
+       differs from a clean build of the parent by 33795 px of this same panel,
+       so it was not the parent build, and the "opaque surfaces were blending at
+       six percent" story describes some other build. The change stays because it
+       is the oracle's state and AGENTS P2's rule -- every GPU state written
+       explicitly -- not because a picture showed it. What it does NOT have is
+       runtime evidence in either direction here: the start arena is 154
+       all-Solid batches, so `Pass::Blended`, `Pass::Overlay` and `Blend::Add`
+       are still unreached by any capture, which is what
+       `PASS C3dFrame`'s new alpha arms and `PASS PicaMatrix` are holding instead.

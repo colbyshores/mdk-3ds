@@ -867,11 +867,11 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     installDepthState(r, mdk::pica::depthStateForPass(mdk::Pass::Solid));
 
     // THE ALPHA TEST IS THE ORACLE'S DISCARD, and it is frame state: the
-    // shader discards index 0 on every pass, so the test is installed once per
-    // eye and no draw is allowed to turn it off. The reference is
-    // `pica::kAlphaTestReference` and the function is GPU_GREATER, so the
-    // predicate the hardware applies is the one `pica::alphaTestPasses` states
-    // and the host suite pins.
+    // palette shader discards index 0 on every surface it draws, so the test is
+    // installed once per eye and no draw is allowed to turn it off. The
+    // reference is `pica::kAlphaTestReference` and the function is GPU_GREATER,
+    // so the predicate the hardware applies is the one `pica::alphaTestPasses`
+    // states and the host suite pins.
     //
     // citro3d's initialiser leaves this DISABLED
     // (`C3D_AlphaTest(false, GPU_ALWAYS, 0)`, measured from the same object
@@ -880,13 +880,21 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // 0 and went on writing depth, hiding the world behind every transparent
     // texel of every arena texture.
     //
-    // ONE CORNER IS NOT THE ORACLE'S, and it is recorded rather than hidden:
-    // the shader's discard is inside its textured branch, so a FLAT colour of
-    // alpha 0 on an unblended pass is painted by the oracle and discarded here.
-    // No shipped material does that -- the flat colours are glass (alpha from
-    // the DTI, on a blended pass) and the mirrors (alpha 1) -- and the
-    // alternative is a per-draw test keyed on "is this a palette texture", for
-    // a case the data does not contain.
+    // TWO CORNERS ARE NOT THE ORACLE'S, and they are recorded rather than
+    // hidden. (1) The discard is `palette.hlsl`'s and it sits inside its
+    // TEXTURED branch, so a FLAT colour of alpha 0 on an unblended pass is
+    // painted by the oracle and discarded here. No shipped material does that
+    // -- the flat colours are glass (alpha from the DTI, on a blended pass) and
+    // the mirrors (alpha 1) -- and the alternative is a per-draw test keyed on
+    // "is this a palette texture", for a case the data does not contain.
+    // (2) The oracle's OTHER fragment programs do not discard at all: both
+    // `mirror.hlsl:36` and `sky.hlsl:63,67` return `float4(..., 1.0)` with no
+    // `discard`, so a mirror or sky repaint of palette index 0 paints
+    // palette[0].rgb in the oracle and is discarded by this frame-wide test.
+    // Neither pass is reachable on this backend yet -- there is no mirror
+    // panorama and no sky pass -- and both already diverge in colour for other
+    // reasons, so the frame-wide test stays and the corner is written down
+    // where the next mirror batch will find it (review-3 F5).
     C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);
 
     // The frame's default blend state: the pass the queue starts with. Written
