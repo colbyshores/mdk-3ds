@@ -16728,12 +16728,13 @@ The view is untouched and still first for batch 89.
 
 The comment said `ndspGetFrameCount()` counts "240-sample blocks at 48 kHz".
 Nothing in ndsp is 48 kHz: this channel is 44100, and the DSP's own rate is
-`NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32768 Hz` (`ndsp.h:9`). The unit was read
+`NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32768 Hz` (`ndsp.h:9`) — **[sic: 32728.5
+Hz; retracted below]**. The unit was read
 off the library instead of guessed this time, by the same instrument batch 86
 used for `ndspChnWaveBufAdd` — a disassembly of the linked `libctru.a`:
 
 ```
-ndspInitialize.part.0  +0x134 ldr r2, [pc, #340]  ; .bss.frameCount
+ndspInitialize.part.0  +0x134 ldr r2, [pc, #340]  ; .bss.frameCount   [sic: #260 — see the correction below]
                        +0x13c str r1, [r2]        ; r1 = 0  -> zeroed at init
 ndspThreadMain         +0x1a4 bl  svcSignalEvent  ; hand the frame to the DSP
                        +0x1a8 ldr r2, [pc, #340]  ; .bss.frameCount
@@ -16751,11 +16752,37 @@ fitted the same measurement at 48000/240 = 200/s, which is the whole lesson: a
 unit that only has to be right in magnitude cannot be falsified by a magnitude,
 and that is why it survived three batches.
 
+  **RETRACTED IN PLACE by batch 89 (review-8 F1 and F6, both confirmed).** Two
+  defects in the correction above, and F1 is the same failure the paragraph
+  exists to describe. **The rate is not 32768 Hz.** `ndsp.h:9` is
+  `#define NDSP_SAMPLE_RATE (SYSCLOCK_SOC / 512.0)` and `os.h:9` is `#define
+  SYSCLOCK_SOC (16756991u)`, so the DSP rate is **32728.5 Hz** — which is what
+  Iteration 111 said before this batch "corrected" it to a power of two that
+  appears nowhere in the tree. The prediction is therefore 32728.5/160 =
+  **204.6/s**, and the emulator's 204.75/s is **0.1% fast**, not 0.02% off; with
+  `secs` printed to 2 dp the measurement is 204.75 ± 0.05, so the gap is real.
+  No integer quantum fits the header rate at the measured value (32728.5/204.75
+  = 159.85), and 204.75 is exactly 32768/160 — so what the emulator confirmed is
+  Mandarine's HLE rounding the SoC clock, not the console's rate, which stays
+  **unmeasured** (AGENTS P6/P8). And the 160-sample quantum is an assumption:
+  nothing installed names it (libctru ships headers and a library, no source),
+  which review-2's own open question 2 already said and this batch turned into a
+  printed constant. What the disassembly proves is the **kind** of the counter,
+  one increment per `ndspThreadMain` iteration after the `svcSignalEvent`, and
+  that part stands. **F6:** the `+0x134` immediate above is transcribed wrong —
+  `arm-none-eabi-objdump -dr ndsp.o` gives `e59f2104 ldr r2, [pc, #260]` with
+  the `.bss.frameCount` literal at `0x240`; `#340` is the `ndspThreadMain +0x1a8`
+  immediate (`e59f2154`), copied into the wrong line. Re-verified in this batch,
+  and it also confirms there is no third writer: the only three references to
+  `.bss.frameCount` in `ndsp.o` are the init zero, the per-iteration add, and
+  `ndspGetFrameCount`'s load.
+
 ### F3 (Medium) — CONFIRMED, and fixed as a code line rather than as prose
 
 The reviewer's point was that `submitted / (frames x 735/882)` is exact only at
 60 fps, because `GameFlow::elapsedFor(false, step, delta)` returns the **wall**
-delta (`game_flow.cpp:214`, called at `main_3ds.cpp:439`), so at 30 fps a
+delta (`game_flow.cpp:214`, called at `main_3ds.cpp:439` — **now :449**, the
+batch inserted ten lines above it; review-8 F5), so at 30 fps a
 half-rate sink scores 1.00. Its suggested fix was "state the fps precondition
 beside the denominator (or make the test wall-clock based)". Prose was the weaker
 of the two, so the second one was done: the frontend now accumulates the same
@@ -16777,6 +16804,16 @@ run rather than an assumption about it. The first line is the argument for the
 change on its own: at frame 60 the frame-count form reads exactly 1.0000 while
 the clock form says 0.909, because a frame count cannot see that the run had not
 reached steady state.
+
+  **CORRECTED IN PLACE by batch 89 (review-8 F3, confirmed).** The old-form row
+  above is the reciprocal of the formula it names in two of its three columns:
+  501/(600 x 735/882) = 501/500 = **1.0020** and 953/(1140 x 735/882) = 953/950
+  = **1.0032**, not 0.9980 and 0.9969. So the two forms agree to **~1%** (1.2%
+  at frame 600, 0.8% at frame 1140), not 0.3%, and the frame form **over**-reads
+  below 60 fps rather than under-reading: a frame count that under-measures
+  elapsed also under-measures the buffers owed, and a smaller denominator is a
+  larger ratio. The thesis of the paragraph survives and is better served by the
+  correct direction — the frame form is the one that flatters a slow sink.
 
 ### F4 (Medium) — CONFIRMED, corrected
 
@@ -16880,3 +16917,161 @@ F2's unit survived because a magnitude was treated as a mechanism, and the view'
 stays blocked on the canvas seam. Original-3DS behaviour stays unmeasured. The
 owner actions are unchanged and none is builder-resolvable; this batch staged its
 paths by name and touched none of the six operator files.
+
+---
+
+## Iteration 117 — batch 89: review-8 remediation — the unit batch had to correct its own unit, and the gate written to catch that class of error could not tell a clock from a delta
+
+Review-8 (`logs/ralph-pi/run-20261106-062909/review-8.md`, DeepSeek V4.1 Flash TH,
+range `a0b0dd17..e7b3692a`) returned **INCOMPLETE**: one High, three Medium, two
+Low, all six marked Confirmed. **All six are confirmed against the repository and
+all six are fixed**, except that F1 could not land in one of the five files it
+names, for a gate reason recorded below rather than a rebuttal.
+
+The shape of F1 is what makes this batch worth having: batch 88 exists because a
+wrong unit survived three batches on the strength of a matching magnitude, and its
+correction made the same mistake in miniature — it rounded `SYSCLOCK_SOC/512` to
+the power of two that made the measurement fit.
+
+### F1 (High) — CONFIRMED, fixed in four of the five cited files
+
+`SYSCLOCK_SOC` is `16756991u` (`/opt/devkitpro/libctru/include/3ds/os.h:9`) and
+`NDSP_SAMPLE_RATE` is `(SYSCLOCK_SOC / 512.0)` (`.../3ds/ndsp/ndsp.h:9`), so the
+DSP rate is **32728.498 Hz**, not the 32768 Hz batch 88 printed in five places —
+and, as the reviewer pointed out, not a value anyone derived: Iteration 111 already
+had `32728.5 Hz` right, four thousand lines earlier in this same file.
+
+Re-verified here rather than copied: the vault's `60-references/3ds-platform/arm11/
+01-arm11-on-the-3ds.md:37` carries the same `16756991u`, and the disassembly was
+re-run (`arm-none-eabi-objdump -dr ndsp.o` from the installed `libctru.a`).
+
+The correction is stronger than a constant swap, because the reviewer's open
+question 1 was right that the "confirmation" was suspect. This batch re-ran the
+emulator with a **longer** ledger window (frame 1800 instead of 1140, same build)
+specifically to tighten the 2-dp `secs`, and the answer is that the counter is not
+a rate instrument at all:
+
+| row | frame 60 | frame 600 | frame 1140 | **frame 1800 (new)** |
+|---|---|---|---|---|
+| dspframes/s | 208.18 | 205.04 | 204.75 | **204.71** |
+| window from 2-dp `secs` | 207.24–209.13 | 204.94–205.14 | 204.70–204.81 | **204.67–204.74** |
+| header model 32728.5/160 = 204.55 | +1.77% | +0.24% | +0.10% | **+0.07%** |
+| power-of-two 32768/160 = 204.80 | +1.65% | +0.12% | −0.02% | **−0.05%** |
+
+At 30 s the measurement window **excludes both candidates**. The quantum implied
+by the header rate at the measured value is 159.88, so no integer frame size fits
+either model, and the likeliest explanation of the residual is Mandarine's own HLE
+pacing with the audio device muted — not the console. So the shipped comments now
+say three separate things instead of one confident one: the **kind** of the counter
+is derived (one increment per `ndspThreadMain` iteration after the
+`svcSignalEvent`, `ndspGetFrameCount` its only reader — re-checked: `ndsp.o` has
+exactly three references to `.bss.frameCount`, the init zero, the per-iteration add,
+and that load); the **rate** is 32728.5 Hz from the headers; and the **160-sample
+quantum is an assumption** nothing installed names, so ~204.6/s is a prediction and
+the Old-3DS mixer rate stays unmeasured (AGENTS P6/P8).
+
+**Where it could NOT land.** The reviewer's remediation named five files. Four are
+fixed (`audio_3ds.cpp`, `audio_3ds.h`, `CONTINUATION.md`, `PROGRESS_LOG.md`, plus
+the evidence sidecar). The fifth is `docs/frames/2026-11-06-audio-ledger-secs.txt`,
+and `tools/runner/gates_batch_integrity.py` refuses it: a batch that modifies a
+historical measurement gets `"batch modifies/removes historical measurement
+{frame}; history is immutable"`, and that gate is in `PROTECTED`, so it cannot be
+relaxed in a normal batch. The correction therefore lives in this batch's own
+sidecar and in the standing fact, and the historical pair keeps what it said when
+it was written. That is the immutability rule doing its job, not a finding dodged.
+
+### F2 (Medium) — CONFIRMED, fixed as a structural check plus a new arm
+
+`frontend-logs-the-clock-with-the-ledger` pinned that the string `secs=` appeared
+somewhere in the ledger literal and that `audioClock += elapsed` appeared somewhere
+in the file. The reviewer's substitution — print `(double)delta`, the frame's own
+~0.017 s wall delta, where the clock belongs — passes all 16 checks with every arm
+red, which is a could-not-fail check of exactly the kind review-5 F2 and review-6
+F2 before it. It is now three clauses: the **field order** on the line
+(`frame=… secs=… submitted=`, so the rate's two operands are adjacent), the
+**argument** that fills `secs` (`(unsigned long)frame, audioClock,` in the printf's
+argument list), and the **accumulation** (`audioClock += elapsed`). A new arm
+performs the reviewer's exact substitution and adjudicates red against this check.
+The gate is now **16 checks / 12 arms**, every arm red against the check it names.
+
+### F3 (Medium) — CONFIRMED, fixed in place in both records
+
+The comparison table's old-form row was the reciprocal of its own label in two of
+three columns: `501/(600 × 735/882) = 501/500 = 1.0020` and `953/(1140 × 735/882) =
+953/950 = 1.0032`, not `0.9980` and `0.9969`. So the two rate forms agree to ~1%
+(1.2% and 0.8%), not 0.3%, and the frame form **over**-reads below 60 fps — a frame
+count that under-measures elapsed also under-measures the buffers owed, and a
+smaller denominator is a bigger ratio. The direction was the argument, so the
+inversion inverted it. Corrected in place with a marker in
+`docs/evidence/2026-11-06-L7-audio-ledger-current.txt` and in Iteration 116's F3
+block, and the new capture's table carries the correct direction from the start.
+
+### F4 (Medium) — CONFIRMED, fixed
+
+`ndsp_sink_test.sh`'s own header still asserted the superseded rule — "the RATE is
+`submitted` against the frame the same line carries" — in the file whose job is to
+pin the rate test. It now states `submitted / (secs x 50)` and names the frame
+count as the thing that is NOT the denominator, with the review that closed it.
+
+### F5 (Low) / F6 (Low) — CONFIRMED, fixed
+
+`main_3ds.cpp:439` is `while (aptMainLoop()) {`; the `elapsedFor` call the citation
+means is at `:449` (batch 88 inserted ten lines above it). Fixed in
+`audio_3ds.cpp:67` and annotated in Iteration 116. And the disassembly excerpt
+transcribed `+0x134 ldr r2, [pc, #340]` where the object says `e59f2104 ldr r2,
+[pc, #260]` (literal at `0x240`); `#340` is the `ndspThreadMain +0x1a8` immediate
+copied into the wrong line. The quoted line now carries `[sic: #260]` and the
+correction below it names both relocations.
+
+### Evidence, and what the diff actually is
+
+The batch moves **no code byte**, and that is measured rather than asserted: the
+clean out-of-tree build of this tree gives `mdk.elf` md5
+`75b1edb06d0d2c58aecafb6f7b008421`, identical to batch 88's, and the in-tree build
+gives the same elf with a different `.3dsx` (`fec45804…` in-tree, `7508a44e…` in
+`/tmp`), which is the container rule again. Comments, prose, and one shell gate.
+
+Emulator evidence for the touched 3DS path (AGENTS P8): `DISPLAY=:99
+mdk_3ds/tools/emurun.sh --secs 45 --min-frames 600` exits **0** on pinned Mandarine
+r1.2.1 (md5 `0d2adab6…`), guest log to frame 2580, level 7, mono, forced llvmpipe,
+dspfirm present, display `:99` recorded. Its checked 400x240 panel crop is
+`f9af51b6…`, **0 px of 96000** against the committed pair. The first three ledger
+rows reproduce batch 88's numbers exactly, which is what licenses using the fourth
+as a tighter measurement. Emulator-green is not hardware-pass.
+
+### Gates, as run
+
+* `make -C tests/scripts` → exit 0, **"All cases match the oracle."**, 561 `PASS`
+  lines, no FAIL.
+* `bash tools/check.sh` → exit 0, **"CHECK: ALL GATES PASSED"** —
+  `audit_c_with_classes` CONTRACT CLEAN 0 violations, `gates_vfp` PASS blockers=0,
+  `audit_arm11_math` CONTRACT CLEAN, `audit_r11_idiv` no candidates,
+  `gates_core_parity` both targets link the same core, `gates_smdh` SKIP (no built
+  .cia), `gates_frames` every pinned frame deterministic and unchanged,
+  `gates_batch_integrity` project invariants intact.
+* `make -C mdk_3ds` → exit 0, `3DSX mdk.3dsx`.
+* `bash tests/scripts/ndsp_sink_test.sh` → exit 0, **PASS NdspSink (16 checks, 12
+  arms adjudicated red)**.
+
+### Prior-solution lookup
+
+Pi-knowledge `mdk-sdl` (hybrid) on the ndsp mixer-frame unit and DSP sample rate
+returned `sound_device.h`, `sound_mixer.cpp` and `sound.h` — the mixer side, and
+nothing documenting the counter's rate, consistent with the rate never having been
+looked up in the header. Obsidian MCP and Cognee MCP expose no tools in this session
+(`obsidian_*`/`cognee_*` absent), so the vault lookup was the degraded disk-only
+path (AGENTS P9) and Cognee's graph search did not happen at all; the disk path did
+supply the independent `SYSCLOCK_SOC` confirmation quoted above.
+
+### Next, per the priority order
+
+**The one-sided view is still first for batch 90**, unchanged and unadvanced: panel
+columns 200..399 of 400, a straight vertical cut at the panel middle, the census
+unable to localise, and Iteration 106 having retired the cull, the depth triple,
+the queue, the MVP and a deleted rotation. Item 5b (the HUD) stays blocked on the
+canvas seam. Original-3DS behaviour stays unmeasured — and this batch narrows that
+gap's description rather than closing it: what a hardware reader should now read off
+the ledger is `submitted` against `secs × 50` (the rate test) and `dspframes`
+against **nothing**, because the mixer rate is not known. The owner actions are
+unchanged and none is builder-resolvable; this batch staged its paths by name and
+touched none of the six operator files.

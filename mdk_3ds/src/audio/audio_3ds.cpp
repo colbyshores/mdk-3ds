@@ -64,7 +64,7 @@ bool g_live = false;
 //   submitted against what the CLOCK owes, not what the frame count owes.
 //     Production is real time by construction: the device mixes rate*delta per
 //     frame and `GameFlow::elapsedFor(false, step, delta)` hands it the WALL
-//     delta (main_3ds.cpp:439), so over T seconds the device owes
+//     delta (main_3ds.cpp:449), so over T seconds the device owes
 //     T x 44100/882 = T x 50 buffers whatever the frame rate did. The
 //     N x 735/882 form of this test is the SAME number only at exactly 60 fps,
 //     because 735 is one 1/60 s frame at 44100 Hz (review F3). At 30 fps the
@@ -92,15 +92,31 @@ bool g_live = false;
 //     is zeroed by `ndspInitialize` (`str r1, [r2]` at +0x13c with r1 = 0) and
 //     incremented by exactly one `add r3, r3, #1` per iteration of
 //     `ndspThreadMain` (+0x1a8..+0x1b4), immediately after the `svcSignalEvent`
-//     that hands the frame to the DSP. So it counts ndsp MIXER frames — not
-//     samples, not our wave buffers, and not this channel's 44100 Hz, which is
-//     resampled into the DSP's own NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 =
-//     32768 Hz (ndsp.h:9). 205.7/s is therefore one mixer frame per ~159 DSP
-//     samples. An earlier revision of this comment called the unit "240-sample
-//     blocks at 48 kHz", which is wrong twice over and was never checked
-//     (review F2) — and it survived precisely because 48000/240 = 200/s fits the
-//     same measurement, which is what a plausible-looking unit does to a
-//     measurement that only checks the magnitude.
+//     that hands the frame to the DSP, and `ndspGetFrameCount` is its only
+//     reader. So it counts ndsp MIXER frames — not samples, not our wave
+//     buffers, and not this channel's 44100 Hz, which is resampled into the
+//     DSP's own rate.
+//     WHAT THE DISASSEMBLY PROVES IS THE KIND, NOT THE RATE, and the rate is
+//     the half a reader wants (review-8 F1). `ndsp.h:9` is
+//     `#define NDSP_SAMPLE_RATE (SYSCLOCK_SOC / 512.0)` and `os.h:9` is
+//     `#define SYSCLOCK_SOC (16756991u)`, so the DSP rate is 16756991/512 =
+//     32728.5 Hz — NOT a power of two, and batch 88 rounded it to 32768 for
+//     precisely the reason this paragraph gives. The frame
+//     QUANTUM is not named by anything installed (it lives in the DSP firmware,
+//     and /opt/devkitpro/libctru ships headers and a library, no source), so
+//     160 samples is an assumption and 32728.5/160 = 204.6/s is a prediction,
+//     not a derived fact. The emulator reads 204.75/s at 19 s and 204.71/s at
+//     30 s, and `secs` is printed to 2 dp, so the 30 s figure is bounded to
+//     (204.67, 204.74] — a window that EXCLUDES both the header model and a
+//     power-of-two 32768/160 = 204.80. So the counter is not a rate instrument
+//     at all: no integer quantum fits (32728.5/204.71 = 159.88), the residual is
+//     most likely Mandarine's own HLE pacing with the audio device muted, and the
+//     Old-3DS mixer rate stays UNMEASURED (AGENTS P6/P8).
+//     An earlier revision of this comment called the unit "240-sample blocks at
+//     48 kHz", which is wrong twice over and was never checked (review F2), and
+//     it survived because 48000/240 = 200/s fits the same measurement. A unit
+//     that only has to be right in magnitude cannot be falsified by a magnitude
+//     — which is the lesson this paragraph is now proof of twice.
 //
 // `dropped` counts REJECTED FILLS, not buffers: one increment can throw away a
 // whole frame's worth of samples (up to 735 frames, 0.83 of a buffer), so it is

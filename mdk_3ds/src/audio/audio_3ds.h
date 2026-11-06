@@ -119,9 +119,14 @@ bool audioIsOpen();
 //     normal.
 //   dspFrames ~ 205 per 60 guest frames — ndsp's own counter, in ndsp MIXER
 //     frames: one increment per `ndspThreadMain` iteration, at the DSP's own
-//     NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32768 Hz, which is not this
-//     channel's 44100. So this is the difference between "the DSP is running"
-//     and "our buffers are the ones it is running on". It is NOT "240-sample
+//     NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32728.5 Hz (os.h:9, ndsp.h:9),
+//     which is not this channel's 44100. The frame quantum is NOT named by
+//     anything installed, so the ~204.6/s that follows from a 160-sample frame
+//     is a prediction and not a fact — and the emulator's 204.71/s at 30 s fits
+//     neither that nor a power-of-two 32768/160, so this is a liveness signal and
+//     not a rate (review-8 F1). So
+//     this is the difference between "the DSP is running" and "our buffers are
+//     the ones it is running on", and nothing more. It is NOT "240-sample
 //     blocks at 48 kHz", which is what this line used to say (review F2).
 //
 // The full derivation, including the libctru disassembly the unit came from, is

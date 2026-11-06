@@ -50,8 +50,11 @@
 #      slot it picked up between the two — and both are pinned, because losing
 #      either one under-reports `done` and the ledger stops being a proof
 #      (review F5). What the ledger proves is `submitted - done == inDsp`; the
-#      RATE is `submitted` against the frame the same line carries, NOT `done`
-#      against `submitted` (review F1).
+#      RATE is `submitted` against the SECONDS the same line carries,
+#      `submitted / (secs x 50)`, and NOT `done` against `submitted` (review F1)
+#      and NOT the frame count in place of the clock, which is the same number
+#      only at exactly 60 fps (review-2 F3 of run-20261106-062909, closing the
+#      header this file used to carry, review-8 F4).
 #
 # WHAT THIS DOES NOT COVER, stated plainly: it reads the source, so it pins the
 # SHAPE of the calls and not the DSP's behaviour. The unit of nsamples is a
@@ -201,13 +204,23 @@ def adjudicate(src, main, quiet=False):
           re.search(r"audioStats\s*\(\s*\)", m) is not None
           and re.search(r"submitted=%[0-9a-z]+", raw) is not None,
           "the frontend must publish the sink's ledger in the guest log")
-    # The rate test needs its DENOMINATOR on the same line as `submitted`, or the
-    # reader has to pair two log lines that are printed for different reasons (F1).
-    # The denominator is the CLOCK and not the frame count: `frame x 735/882` is
-    # the same number only at exactly 60 fps, so a half-rate sink at 30 fps scores
-    # 1.00 against it (review F3 of run-20261106-062909). Both are pinned, and
-    # each is read out of the ledger's own format STRING rather than out of the
-    # file, so deleting one field cannot satisfy the other check by accident.
+    # The DENOMINATOR must be on the same line as `submitted`, or the reader has
+    # to pair two log lines printed for different reasons (F1). And it must be
+    # the CLOCK and not the frame count: `frame x 735/882` is the same number
+    # only at exactly 60 fps, so a half-rate sink at 30 fps scores 1.00 against
+    # it (review F3 of run-20261106-062909). Both are pinned, and each is read
+    # out of the ledger's own format STRING rather than out of the file, so
+    # deleting one field cannot satisfy the other check by accident.
+    #
+    # The VALUE, not just the field (review-8 F2). A check that only looks for
+    # `secs=` in the format string passes with ANY variable printed there: the
+    # frame's own wall delta (~0.017 s) could stand in for the clock, be wrong by
+    # three orders of magnitude, and every arm would still adjudicate red. So
+    # three clauses, all read out of the shipped text: the field ORDER on the
+    # line (frame, then secs, then submitted, so the rate's two operands are
+    # adjacent), the ARGUMENT that fills `secs` (audioClock immediately after the
+    # frame cast in the printf's argument list), and the ACCUMULATION that makes
+    # audioClock the time the mixer was actually given.
     lits = [s for s in re.findall(r'"((?:[^"\\]|\\.)*)"', main) if "submitted=" in s]
     ledger = "".join(lits)
     check("frontend-logs-the-frame-with-the-ledger",
@@ -215,12 +228,17 @@ def adjudicate(src, main, quiet=False):
           "the ledger line must carry the frame it was printed at, so it can be "
           "matched against the frame line the frontend prints on the same cadence")
     check("frontend-logs-the-clock-with-the-ledger",
-          re.search(r"secs=%[0-9a-z.]+", ledger) is not None
+          re.search(r"frame=%[0-9a-z.]+\s+secs=%[0-9a-z.]+\s+submitted=", ledger)
+          is not None
+          and re.search(r"\(\s*unsigned long\s*\)\s*frame\s*,\s*audioClock\s*,", m)
+          is not None
           and re.search(r"audioClock\s*\+=\s*elapsed", m) is not None,
-          "the rate test is submitted / (secs x 50): the seconds the mixer was "
-          "actually given must be on the ledger line and must be accumulated from "
-          "the same elapsed the device got, or the frame count stands in for the "
-          "clock and the test is only valid at one frame rate")
+          "the rate test is submitted / (secs x 50): the line must carry frame, "
+          "secs and submitted in that order, secs must be FILLED BY the "
+          "accumulated audioClock rather than any other expression, and that "
+          "accumulator must sum the same elapsed the device got, or a per-frame "
+          "delta stands in for the clock and the test is a number that means "
+          "nothing")
 
     failed = [n for n, ok, _ in checks if not ok]
     return checks, failed
@@ -267,6 +285,12 @@ ARMS = [
      lambda s, m: (s, m.replace("frame=%lu ", "", 1))),
     ("frontend-stops-logging-the-clock-with-the-ledger",
      lambda s, m: (s, m.replace("secs=%.2f ", "", 1))),
+    # The substitution case the presence-only check could not see (review-8 F2):
+    # the field stays on the line and the value printed is the frame's own wall
+    # delta instead of the accumulated clock.
+    ("frontend-logs-a-stand-in-for-the-clock",
+     lambda s, m: (s, m.replace("(unsigned long)frame, audioClock,",
+                                "(unsigned long)frame, (double)delta,", 1))),
     ("frontend-stops-logging-the-ledger",
      lambda s, m: (s, m.replace("submitted=%u", "x=%u", 1))),
 ]

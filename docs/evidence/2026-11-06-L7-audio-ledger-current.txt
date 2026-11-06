@@ -65,27 +65,52 @@ what this capture measures:
       frame=1140 secs=19.15 submitted=953 done=950 dropped=5 requeued=1 inDsp=3 dspframes=3921
 
     submitted / (secs x 50)      0.9091 / 0.9901 / 0.9953   <- the rate test
-    submitted / (frame x 735/882) 1.0000 / 0.9980 / 0.9969   <- the old form
+    submitted / (frame x 735/882) 1.0000 / 1.0020 / 1.0032   <- the old form
     guest fps                       54.55 / 59.29 / 59.53
     dspframes / sec                208.18 / 205.04 / 204.75
 
+      [CORRECTED IN PLACE by batch 89, review-8 F3, confirmed. The old-form row
+       read 1.0000 / 0.9980 / 0.9969, which is the RECIPROCAL of the formula it
+       is labelled with in two of its three columns: 501 / (600 x 735/882) =
+       501/500 = 1.0020 and 953 / (1140 x 735/882) = 953/950 = 1.0032, not
+       500/501 and 950/953. The direction is the argument, so getting it
+       backwards inverted it: the frame form OVER-reads below 60 fps, because a
+       frame count that under-measures elapsed time also under-measures the
+       buffers owed, and a smaller denominator is a bigger ratio.]
+
     Two things come out of those numbers.
 
-    1. The two rate forms agree to 0.3% because THIS run really is at ~60 fps
+    1. The two rate forms agree to within ~1% at the steady-state rows (1.2% at
+       frame 600, 0.8% at frame 1140) because THIS run really is at ~60 fps
        (59.53 at frame 1140). That is the fps precondition of review F3 being
        MEASURED instead of assumed -- which is the entire point of putting `secs`
-       on the line. The first line also shows why the seconds form is the honest
+       on the line. (CORRECTED IN PLACE by batch 89, review-8 F3: this said
+       "agree to 0.3%", a figure that only came out of the inverted row above.)
+       The first line also shows why the seconds form is the honest
        one: at frame 60 the frame-count form reads exactly 1.0000 while the
        clock form reads 0.909, because the run had not yet reached steady state
        and the frame count cannot know that.
 
-    2. dspframes converges on 204.75/s against the 32768/160 = 204.8/s the
-       corrected comment predicts -- 0.02% off. That is what pins the unit
-       review F2 said was wrong. The old claim ("240-sample blocks at 48 kHz")
-       fitted the same measurement at 200/s, which is exactly why it survived
-       three batches: a unit that only has to be right in magnitude cannot be
-       falsified by a magnitude. The disassembly is the proof and the rate is
-       the confirmation; see the counters in mdk_3ds/src/audio/audio_3ds.cpp.
+    2. dspframes converges on 204.75/s. CORRECTED IN PLACE by batch 89,
+       review-8 F1, confirmed: this row claimed the corrected comment predicted
+       32768/160 = 204.8/s and that the measurement was 0.02% off, and the
+       prediction was wrong. ndsp.h:9 is `NDSP_SAMPLE_RATE (SYSCLOCK_SOC /
+       512.0)` and os.h:9 is `SYSCLOCK_SOC (16756991u)`, so the DSP rate is
+       32728.5 Hz and the prediction for a 160-sample frame is 204.6/s -- the
+       measurement is 0.1% FAST for it, and secs is printed to 2 dp, so the
+       measurement is 204.75 +/- 0.05 and the gap is real, not rounding. No
+       integer quantum fits: 32728.5/204.75 = 159.85. What the number does
+       match exactly is 32768/160, i.e. Mandarine's HLE DSP rounding the SoC
+       clock to a power of two, so this line measures the emulator's rounding
+       and NOT the console; the Old-3DS mixer rate is unmeasured and the frame
+       quantum is an assumption no installed header names.
+       What the disassembly does pin is the KIND of the counter -- one increment
+       per ndspThreadMain iteration, after the svcSignalEvent that kicks the
+       DSP -- and the old claim ("240-sample blocks at 48 kHz") fitted the same
+       measurement at 200/s, which is why it survived three batches: a unit that
+       only has to be right in magnitude cannot be falsified by a magnitude, and
+       the first correction to it made the same mistake in the other direction.
+       See the counters in mdk_3ds/src/audio/audio_3ds.cpp.
 
     Emulator-green is not hardware-pass (AGENTS P6/P8). The DSP here is
     Mandarine's HLE, the Old-3DS ndsp timing is unmeasured, and the guest frame
