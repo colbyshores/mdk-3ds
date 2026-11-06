@@ -15,17 +15,23 @@
 #      buffer it believes is already queued. Disassembly of libctru's
 #      ndsp-channel.o (r1 = the wavebuf, offset 17 = status):
 #
-#          ldrb ip, [r1, #17] ; sub ip, ip, #1 ; cmp ip, #1 ; bls <assign sequence_id only>
-#          mov r3, #1 ; strb r3, [r1, #17] ; str r3, [r1, #20]   ; status = QUEUED, next = 0
+#          +0x48: ldrb ip, [r1, #17] ; sub ip, ip, #1 ; cmp ip, #1 ; bls +0xb8
+#          +0x60: mov r3, #1 ; strb r3, [r1, #17] ; str r3, [r1, #20]  ; QUEUED, next = 0
 #          ...append to the channel's wave-buffer list...
+#          +0xac: strh r3, [r1, #18]     ; sequence_id — LINKING path only
+#          +0xb8: add sp, sp, #20 ; pop {lr} ; b LightLock_Unlock  ; the epilogue
 #
-#      For status QUEUED(1) or PLAYING(2) it assigns a sequence id and RETURNS
-#      WITHOUT LINKING, and it is libctru that sets QUEUED on the way in. The
-#      shipped sink pre-set `status = NDSP_WBUF_QUEUED`, so every submit was a
-#      no-op: the DSP was handed nothing, nothing ever came back DONE, the queue
-#      filled after four buffers and the sink dropped every mix after the first
-#      80 ms of the run. Measured, before the fix: submitted=4 done=0
-#      dropped=2579 at frame 2580. After it: submitted=2156 done=2151 dropped=12.
+#      For status QUEUED(1) or PLAYING(2) the branch at +0x54 goes straight to the
+#      epilogue at +0xb8: it links NOTHING and assigns no sequence id, because the
+#      strh at +0xac is reachable only by falling through from +0x58. It is libctru
+#      that sets QUEUED on the way in. The shipped sink pre-set
+#      `status = NDSP_WBUF_QUEUED`, so every submit was a no-op: the DSP was handed
+#      nothing, nothing ever came back DONE, the queue filled after four buffers and
+#      the sink dropped every mix after the first 80 ms of the run. Measured,
+#      before the fix: submitted=4 done=0 dropped=2579 inDsp=4 at frame 2580. After
+#      it: submitted=2156 done=2153 dropped=12 requeued=1 inDsp=3 at frame 2580
+#      (submitted - done == inDsp, and the ledger line in the guest log carries the
+#      frame for exactly that check).
 #
 #   2. nsamples IS IN FRAMES FOR A STEREO FORMAT. libctru's header comment says
 #      "PCM16=halfwords" and one devkitPro example follows it, but four stereo
@@ -39,7 +45,13 @@
 #      that the evidence was `sink=1` and `plays=1`, which count ndsp starting
 #      and mixer voices launched and say nothing about wave buffers. The counters
 #      and the log line are the instrument; a sink that silently stops retiring
-#      has to be visible in the guest log, not inferred from silence.
+#      has to be visible in the guest log, not inferred from silence. There are
+#      TWO retirement sites — reap()'s poll, and audioSink()'s re-check of the
+#      slot it picked up between the two — and both are pinned, because losing
+#      either one under-reports `done` and the ledger stops being a proof
+#      (review F5). What the ledger proves is `submitted - done == inDsp`; the
+#      RATE is `submitted` against the frame the same line carries, NOT `done`
+#      against `submitted` (review F1).
 #
 # WHAT THIS DOES NOT COVER, stated plainly: it reads the source, so it pins the
 # SHAPE of the calls and not the DSP's behaviour. The unit of nsamples is a
@@ -158,6 +170,28 @@ def adjudicate(src, main, quiet=False):
           "a submit that is not counted cannot be compared with what the DSP returns")
     check("counts-done", re.search(r"g_done\+\+", body(c, r"void\s+reap\s*\(") or "") is not None,
           "retired buffers must be counted, or a queue that never drains is invisible")
+    # The second retirement site, and the only one that can be lost without any
+    # other check noticing (review F5): audioSink re-checks the slot it chose and
+    # retires it there when it finished after reap()'s poll. Delete that g_done++
+    # and every rate read out of the log is wrong by how often the path runs.
+    sink_body = body(c, r"void\s+audioSink\s*\(") or ""
+    reap_body = body(c, r"void\s+reap\s*\(") or ""
+    check("counts-done-at-the-sink-recheck",
+          re.search(r"g_done\+\+", sink_body) is not None,
+          "audioSink retires a slot that finished after reap()'s poll; if that site "
+          "stops counting, done under-reports and submitted - done != inDsp")
+    # The invariant the ledger's whole credibility rests on: every g_done++ is
+    # paired with a g_inDsp-- at the same site, and g_inDsp++ is with g_submitted++.
+    check("ledger-balances",
+          re.search(r"g_inDsp\+\+", sub) is not None
+          and len(re.findall(r"g_inDsp--", reap_body)) == 1
+          and len(re.findall(r"g_inDsp--", sink_body)) == 1,
+          "submitted - done == inDsp only holds while each retirement decrements "
+          "inDsp at the same site it counts done")
+    check("counts-requeued", re.search(r"g_requeued\+\+", sub) is not None,
+          "a submit that had to re-configure a drained channel is the "
+          "over-consumption signature; uncounted, a channel that drains every "
+          "frame reads as a matched one")
     check("counts-dropped",
           re.search(r"g_dropped\+\+", c) is not None,
           "a dropped fill must be counted, or a saturated queue reads as a working sink")
@@ -167,6 +201,12 @@ def adjudicate(src, main, quiet=False):
           re.search(r"audioStats\s*\(\s*\)", m) is not None
           and re.search(r"submitted=%[0-9a-z]+", raw) is not None,
           "the frontend must publish the sink's ledger in the guest log")
+    # The rate test needs the frame on the same line as submitted, or the reader
+    # has to pair two log lines that are printed for different reasons (F1).
+    check("frontend-logs-the-frame-with-the-ledger",
+          re.search(r"frame=%[0-9a-z]+\s+submitted=", raw) is not None,
+          "the only discriminating rate is submitted against frame x 735/882, so "
+          "the ledger line must carry the frame it was printed at")
 
     failed = [n for n, ok, _ in checks if not ok]
     return checks, failed
@@ -197,6 +237,20 @@ ARMS = [
      lambda s, m: (s.replace("g_dropped++;", "", 1), m)),
     ("done-stops-being-counted",
      lambda s, m: (s.replace("g_done++;", "", 1), m)),
+    # The second retirement site, targeted by its own text so the arm cannot
+    # collide with reap()'s identical statement.
+    ("done-not-counted-at-the-sink-recheck",
+     lambda s, m: (s.replace(
+         "slot.inDsp = false;\n            slot.filled = 0;\n            g_inDsp--;\n            g_done++;",
+         "slot.inDsp = false;\n            slot.filled = 0;\n            g_inDsp--;", 1), m)),
+    ("inDsp-not-decremented-at-the-sink-recheck",
+     lambda s, m: (s.replace(
+         "slot.inDsp = false;\n            slot.filled = 0;\n            g_inDsp--;\n            g_done++;",
+         "slot.inDsp = false;\n            slot.filled = 0;\n            g_done++;", 1), m)),
+    ("requeued-stops-being-counted",
+     lambda s, m: (s.replace("g_requeued++;", "", 1), m)),
+    ("frontend-stops-logging-the-frame-with-the-ledger",
+     lambda s, m: (s, m.replace("frame=%lu submitted=", "submitted=", 1))),
     ("frontend-stops-logging-the-ledger",
      lambda s, m: (s, m.replace("submitted=%u", "x=%u", 1))),
 ]

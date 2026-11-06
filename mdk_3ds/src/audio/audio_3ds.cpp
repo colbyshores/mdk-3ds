@@ -40,13 +40,38 @@ int g_inDsp = 0;      // buffers ndsp still holds
 bool g_live = false;
 
 // The observability the batch that landed this did not have (review F4).
-// Production is real time by construction — the device mixes rate*delta frames
-// per frame — so `submitted` already says how many seconds of audio the mix made
-// (submitted x 20 ms) and `done` says how many the DSP gave back in that same
-// time. done ~= submitted means the DSP consumes at the rate the nameplate says;
-// done ~= submitted/2 with dropped ~= submitted/2 means it is taking twice as
-// long per buffer as the bytes are worth, which is exactly what a wrong nsamples
-// unit does. Without these, every one of those states looked like a working sink.
+//
+// HOW TO READ THESE, AND THE ONE THING THEY CANNOT SHOW (review F1 of
+// run-20261106-062909). `g_submitted++` and `g_inDsp++` happen together in
+// submit(), and `g_done++` and `g_inDsp--` happen together at BOTH retirement
+// sites, so `submitted - done == inDsp` is an identity and `inDsp <= kNumBufs`.
+// So `done` is always within four of `submitted`: `done ~= submitted` is true of
+// a completely broken sink, and `done ~= submitted/2` cannot happen at all. An
+// earlier revision of this comment offered exactly that false reading, and the
+// measured wrong-nsamples run falsified it — submitted=1030 done=1026, i.e.
+// ~1.0, with dropped=1435. Do not read a rate out of `done / submitted`.
+//
+// The four readings that DO discriminate, each with the measured value from the
+// run that produced it (all ~43 s of guest time, level 7):
+//
+//   submitted against what the clock owes. Production is real time by
+//     construction (the device mixes rate*delta per frame), so N guest frames
+//     owe N*735/882 buffers and 2580 frames owe ~2150. Correct build: 2156 at
+//     2580 (ratio 1.00). Wrong nsamples: 1030 at 2460 (0.50) — the DSP held each
+//     buffer twice as long as its bytes are worth, so half the fills found a
+//     full queue and were never submitted. Nothing ever queued at all: 4 (0.00).
+//     THIS is the rate test, and it is why the ledger line carries the frame.
+//   inDsp pinned at kNumBufs while dropped climbs: the queue is jammed, i.e.
+//     consumption is slower than production. Both broken runs read inDsp=4.
+//   requeued ~= submitted: the channel drained on every submit, i.e. consumption
+//     is FASTER than production. One requeue at level load is normal (measured
+//     requeued=1).
+//   dspframes advancing ~205 per 60 guest frames (ndsp's own counter, in
+//     240-sample blocks at 48 kHz): the DSP is running on OUR buffers.
+//
+// `dropped` counts REJECTED FILLS, not buffers: one increment can throw away a
+// whole frame's worth of samples (up to 735 frames, 0.83 of a buffer), so it is
+// not comparable with submitted/2 and it is not a buffer count.
 uint32_t g_submitted = 0;
 uint32_t g_done = 0;
 uint32_t g_dropped = 0;
@@ -110,13 +135,16 @@ void submit(Slot& s) {
     // it believes is already queued: disassembly of libctru's ndsp-channel.o
     // (r1 = the wavebuf, offset 17 = status) reads
     //
-    //   ldrb ip, [r1, #17] ; sub ip, #1 ; cmp ip, #1 ; bls <just assign sequence_id>
-    //   mov r3, #1 ; strb r3, [r1, #17] ; str r3(zero), [r1, #20]  ; status=QUEUED, next=0
+    //   +0x48: ldrb ip, [r1, #17] ; sub ip, #1 ; cmp ip, #1 ; bls +0xb8
+    //   +0x60: mov r3, #1 ; strb r3, [r1, #17] ; str r3(zero), [r1, #20]
     //   ...append to the channel's list...
+    //   +0xac: strh r3, [r1, #18]        ; sequence_id
+    //   +0xb8: add sp, sp, #20 ; pop {lr} ; b LightLock_Unlock   ; the epilogue
     //
-    // i.e. for status QUEUED(1) or PLAYING(2) it assigns a sequence id and
-    // returns WITHOUT linking the buffer, and it is libctru that sets QUEUED on
-    // the way in. Pre-setting QUEUED — which is what this line used to do — made
+    // i.e. for status QUEUED(1) or PLAYING(2) the branch at +0x54 goes straight
+    // to the epilogue at +0xb8: it links NOTHING and assigns no sequence id, the
+    // strh at +0xac being reachable only by falling through from +0x58 on the
+    // linking path. It is libctru that sets QUEUED on the way in. Pre-setting QUEUED — which is what this line used to do — made
     // every submit a no-op: the DSP was handed nothing, so nothing ever came
     // back DONE, so the queue filled after four buffers and the sink dropped
     // every mix after the first 80 ms. The counters caught it (submitted=4

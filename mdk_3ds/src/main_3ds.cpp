@@ -629,16 +629,19 @@ int main(int argc, char** argv) {
                               (int)mixer.device().nextId() - 1);
         }
         if (audioReady && (frame % 60u) == 0u) {
-            // The sink's own ledger, on the same cadence as the frame line, so a
-            // run can be read as a consumption RATE: production is real time, so
-            // submitted x 20 ms is the audio the mix made and done is what the DSP
-            // gave back in the same window. See audio_3ds.h's AudioStats.
+            // The sink's own ledger, on the same cadence as the frame line. The
+            // frame number is repeated HERE on purpose (review F1 of
+            // run-20261106-062909): the only reading that discriminates a healthy
+            // sink from a wrong-nsamples one is `submitted` against what the clock
+            // owes, which is frame x 735/882 buffers, so the two numbers have to
+            // be on the same line to be divided. `done` cannot carry that test:
+            // submitted - done == inDsp <= 4 by construction. See audio_3ds.h.
             const mdk::AudioStats st = mdk::audioStats();
-            mdk::log3dsPrintf("audio: submitted=%u done=%u dropped=%u requeued=%u inDsp=%d "
-                              "dspframes=%u dspdropped=%u",
-                              (unsigned)st.submitted, (unsigned)st.done, (unsigned)st.dropped,
-                              (unsigned)st.requeued, st.inDsp, (unsigned)st.dspFrames,
-                              (unsigned)st.dspDropped);
+            mdk::log3dsPrintf("audio: frame=%lu submitted=%u done=%u dropped=%u requeued=%u "
+                              "inDsp=%d dspframes=%u dspdropped=%u",
+                              (unsigned long)frame, (unsigned)st.submitted, (unsigned)st.done,
+                              (unsigned)st.dropped, (unsigned)st.requeued, st.inDsp,
+                              (unsigned)st.dspFrames, (unsigned)st.dspDropped);
         }
 
         if (g_frameBudget != 0 && frame >= g_frameBudget) {

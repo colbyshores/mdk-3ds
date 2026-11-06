@@ -89,16 +89,31 @@ bool audioIsOpen();
 // started and a voice was launched and says NOTHING about whether a wave buffer
 // ever reached the DSP, was retired by it, or was dropped — so a wrong nsamples
 // unit, a stalled channel or a queue that never drains all read as a working
-// sink. These counters make the DSP's consumption rate observable next to the
-// production rate: `submitted` is what the mix handed over, `done` is what the
-// DSP gave back, `dropped` is what was thrown away because every buffer was
-// busy, and `requeued` counts the submits that had to re-configure a drained
-// channel. A matched sink sits near dropped=0, requeued=0 with done tracking
-// submitted; a queue that backs up shows dropped growing with done well behind
-// submitted, and a channel that consumes faster than the mix produces shows
-// requeued ~= submitted. dspFrames/dspDropped are ndsp's own counters, which is
-// the difference between "the DSP is running" and "our buffers are the ones it
-// is running on".
+// sink.
+//
+// HOW TO READ THEM (corrected by review F1 of run-20261106-062909, which caught
+// this block promising a reading the counters cannot give). `submitted - done`
+// equals `inDsp` by construction and `inDsp <= 4`, so `done` is ALWAYS within
+// four of `submitted` — `done tracking submitted` proves nothing, and "done well
+// behind submitted" is not a state this sink can reach. The rate lives in
+// `submitted` against the clock, not in `done`:
+//
+//   submitted / (guest frames x 735/882) — the rate test. The device mixes
+//     rate*delta per frame, so N frames owe N x 735/882 buffers. ~1.0 is
+//     matched; 0.50 is a buffer the DSP holds twice as long as its bytes are
+//     worth (the wrong nsamples unit, measured 1030 at 2460 frames); ~0.00 is a
+//     queue nothing ever entered (measured 4 at 2580).
+//   inDsp == 4 with dropped climbing — the queue is jammed.
+//   requeued ~= submitted — the channel drains between every submit, i.e. the
+//     DSP consumes faster than the mix produces. One requeue at level load is
+//     normal.
+//   dspFrames ~ 205 per 60 guest frames — ndsp's own counter in 240-sample
+//     blocks at 48 kHz, so this is the difference between "the DSP is running"
+//     and "our buffers are the ones it is running on".
+//
+// `dropped` counts REJECTED FILLS, not buffers: one increment discards a whole
+// frame's worth of samples (up to 735 frames, 0.83 of a buffer), so it is not a
+// buffer count and not comparable with submitted/2.
 struct AudioStats {
     uint32_t submitted;
     uint32_t done;

@@ -15371,13 +15371,20 @@ Batch 80's `submit()` did `s.wave.status = NDSP_WBUF_QUEUED;` immediately before
 17 = `status`):
 
 ```
-ldrb ip, [r1, #17] ; sub ip, ip, #1 ; cmp ip, #1 ; bls <assign sequence_id and return>
+ldrb ip, [r1, #17] ; sub ip, ip, #1 ; cmp ip, #1 ; bls <the epilogue at +0xb8>
 mov  r3, #1 ; strb r3, [r1, #17] ; str r3, [r1, #20]   ; status = QUEUED, next = NULL
 ... append to the channel's wave-buffer list ...
 ```
 
-For `status` QUEUED(1) or PLAYING(2) it assigns a sequence id and **returns
-without linking the buffer**; it is libctru that sets QUEUED on the way in. So
+> Corrected by Iteration 110 (review F4 of run-20261106-062909, re-verified here
+> with a fresh `arm-none-eabi-objdump`): the branch at +0x54 targets +0xb8, which
+> is `add sp, sp, #20 ; pop {lr} ; b LightLock_Unlock`. The sequence-id store
+> (`strh r3, [r1, #18]`) is at +0xac, on the LINKING path only, so a QUEUED or
+> PLAYING buffer gets no sequence id either. The conclusion and the fix are
+> unchanged; the mechanism described below was wrong.
+
+For `status` QUEUED(1) or PLAYING(2) it **returns without linking the buffer**;
+it is libctru that sets QUEUED on the way in. So
 pre-setting QUEUED made every submit a silent no-op. The DSP was handed nothing,
 so nothing ever came back `DONE`, so `reap()` never freed a slot, so the queue
 filled after four buffers and `audioSink` dropped **every** mix after the first
@@ -15437,6 +15444,11 @@ the mix produced and `done` is what the DSP returned, so a rate bug is a number
 in the guest log instead of an inference. The final run reads
 `submitted=2156 done=2153 dropped=12 requeued=1 inDsp=3 dspframes=8844` —
 `submitted - done == inDsp`, so the ledger balances.
+
+> Corrected by Iteration 110 (review F1): `done` cannot carry a rate test, because
+> `submitted - done == inDsp <= 4` by construction. The sentence above is the
+> reading this iteration had wrong; the rate lives in `submitted` against the
+> frame, and the ledger line now prints the frame so it can be divided.
 
 ### F2 (Medium) — confirmed: the comment claimed a measurement that does not exist
 
@@ -15536,3 +15548,179 @@ is cited in the code: `../forsaken/sound_3ds.c`'s frames convention, reached
 through `10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md`. The
 devkitPro examples and libctru's archive are the explicitly-allowed devkitPro
 reads for a toolchain question. Original-3DS behaviour remains unmeasured.
+
+---
+
+## Iteration 110 — batch 82: the sink's instrument could not detect the bug it was built for
+
+**Review remediated:** `logs/ralph-pi/run-20261106-062909/review-1.md` (DeepSeek
+V4.1 Flash TH, independent, on batch 81's commit `458f8d3`). Verdict INCOMPLETE
+with **no Critical and no High**; the actionable residue was F1 (Medium), F2
+(Medium, owner-only) and F3–F6 (Low). Every one was investigated against primary
+evidence before anything was changed, and **all five code/test findings were
+confirmed** — none is rebutted. F2 is an owner reconciliation, recorded not fixed.
+
+### F1 (Medium) — CONFIRMED: the documented reading of the counters was impossible
+
+The counters' comment said `done ~= submitted` means the DSP consumes at the
+nameplate rate and `done ~= submitted/2` with `dropped ~= submitted/2` is what a
+wrong `nsamples` unit looks like. The reviewer is right that that reading cannot
+occur, and the arithmetic is short: `g_submitted++` and `g_inDsp++` execute
+together in `submit()`, and `g_done++` and `g_inDsp--` execute together at **both**
+retirement sites, so `submitted - done == inDsp` is an identity and `inDsp <=
+kNumBufs == 4`. Therefore `done` is always within four of `submitted`. Checked
+against batch 81's own three-row table:
+
+| build | frames | submitted | expected (frames x 735/882) | ratio | done | done/submitted | dropped | inDsp |
+|---|---|---|---|---|---|---|---|---|
+| `status=QUEUED` (batch 80) | 2580 | 4 | 2150 | **0.002** | 0 | — | 2579 | 4 |
+| `nsamples=1764` (halfwords) | 2460 | 1030 | 2050 | **0.502** | 1026 | 0.996 | 1435 | 4 |
+| `nsamples=882` (correct) | 2580 | 2156 | 2150 | **1.003** | 2153 | 0.999 | 12 | 3 |
+
+`done/submitted` is ~1.0 in **every** row, including the two broken ones, so the
+documented rule would have certified batch 80's broken sink as healthy — the exact
+false pass the counters exist to prevent. The discriminator is `submitted` against
+what the clock owes (the **ratio** column: 0.002 / 0.502 / 1.003), plus `inDsp`
+pinned at 4 while `dropped` climbs (both broken rows), plus `requeued ~= submitted`
+for the opposite failure, plus `dspframes` ~205 per 60 guest frames. `dropped`
+counts **rejected fills**, not buffers — one increment discards up to a whole
+frame's 735 samples, 0.83 of a buffer, which is why row 2 shows 1435 drops for
+~1020 buffers' worth discarded.
+
+Fixed in `audio_3ds.cpp`, `audio_3ds.h` and the gate's header: the four real
+readings are stated with the measured value for each, and the impossible one is
+named as impossible so nobody re-derives it. **The instrument was also made
+self-reading**: the ledger line now prints `frame=` next to `submitted=`, because
+the only discriminating ratio needs both numbers and they were on two different
+log lines printed for two different reasons. Measured on this batch's run:
+`audio: frame=2580 submitted=2156 done=2153 dropped=8 requeued=1 inDsp=3
+dspframes=8844 dspdropped=0` → 2156/2150 = 1.003, `submitted - done == inDsp`,
+`dspframes` 205.7 per 60 frames. All three discriminators now read off one line.
+
+### F2 (Medium) — CONFIRMED as a contract conflict, and NOT the builder's to fix
+
+`ralph/builder.md`'s new "Search scope and bounded commands" block forbids sibling
+reads; `AGENTS.md` §12 requires them ("**Proven 3DS platform code in sibling ports
+— adapt, do not re-derive**", naming `../forsaken/sound_3ds.c`, `../t2k`'s ndsp
+audio and `../perfect_dark/tools/emurun.sh`), and the 2026-11-05 owner directive
+names `../forsaken/sound_3ds.c` for this very subsystem — it is where batch 81's
+`nsamples` convention came from. The file is PROTECTED and carries uncommitted
+operator edits already recorded as an owner action, so nothing was staged or
+reverted here; the conflict is re-filed in `docs/CONTINUATION.md` for owner
+reconciliation. This batch performed **no** sibling read: the evidence it used was
+this repository, libctru's own object, and the vault note.
+
+### F3 (Low) — CONFIRMED, fixed: the pin quoted a number no run produced
+
+`ndsp_sink_test.sh` said `submitted=2156 done=2151`; the guest log, the progress
+log and CONTINUATION all say `done=2153`, and 2156-2151=5 would break the batch's
+own `submitted - done == inDsp` invariant (`inDsp=3`). The transcription now reads
+`submitted=2156 done=2153 dropped=12 requeued=1 inDsp=3 at frame 2580` and states
+the invariant next to the numbers it satisfies.
+
+### F4 (Low) — CONFIRMED from a fresh disassembly, fixed in all three copies
+
+Re-derived here rather than trusted: `arm-none-eabi-objdump -d` of
+`/opt/devkitpro/libctru/lib/libctru.a:ndsp-channel.o` gives `+0x54: bls +0xb8`,
+and `+0xb8` is `add sp, sp, #20 ; pop {lr} ; b LightLock_Unlock` — the epilogue.
+The sequence-id store `strh r3, [r1, #18]` is at `+0xac`, reachable only by falling
+through from `+0x58` on the **linking** path. So a QUEUED/PLAYING buffer is not
+merely unlinked, it gets no sequence id either. The prose in `audio_3ds.cpp`,
+`ndsp_sink_test.sh` and Iteration 109 said "assigns a sequence id and returns";
+all three now carry the addresses and the correct mechanism, and Iteration 109
+carries a marked correction rather than a silent rewrite. The `status = FREE` fix
+itself is unaffected — the reviewer attacked it and could not break it either.
+
+### F5 (Low) — CONFIRMED by reproducing the mutation, fixed with four checks and four arms
+
+The reviewer deleted the **second** `g_done++` (the one in `audioSink`'s re-check,
+whose own comment says it exists so the ledger does not under-report) and the gate
+still passed. Reproduced here: `rc=0`, `PASS NdspSink (11 checks, 6 arms)`. The
+gate only looked inside `reap()`'s body. `ndsp_sink_test.sh` now has **15 checks
+and 10 arms**, adding `counts-done-at-the-sink-recheck`, `ledger-balances` (each
+retirement site pairs `g_done++` with `g_inDsp--`, and `g_inDsp++` sits with
+`g_submitted++` — that pairing is what makes the ledger a proof), `counts-requeued`
+and `frontend-logs-the-frame-with-the-ledger`. Re-running the reviewer's exact
+mutation now gives `rc=1` with
+`FAIL ndsp_sink counts-done-at-the-sink-recheck`. All 10 arms adjudicate red, and
+each new arm targets the second site by its own text (`slot.` vs `s.`) so it cannot
+collide with `reap()`'s identical statement.
+
+### F6 (Low) — fixed: the verdict block now names the build and the scene
+
+The emulator block below carries `build` (the built `.3dsx` hash and the revision
+its tree came from) and `scene`, which AGENTS P6 asks for and batch 81's block
+omitted.
+
+### The overclaim this batch retracts
+
+`docs/CONTINUATION.md` said "The 3DS had never played a sound until this batch",
+which batch 81 offered as its headline. The reviewer's open question is correct:
+the lane runs `SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null`, so what the
+counters prove is that wave buffers **reached and were retired by the emulated
+DSP**, not that anything was audible. That is one inference short, of exactly the
+class batch 81 retracted `plays=1` for, and CONTINUATION now says so. Audibility
+needs a console, or an emulator lane with a real audio sink.
+
+### Gates, as run
+
+* `make -C tests/scripts` → **`All cases match the oracle.`**, including
+  `PASS NdspSink (15 checks, 10 arms adjudicated red)` (was 11/6),
+  `PASS AudioSinkSeam`, `PASS C3dFrame (26 checks, 33 arms adjudicated red)`,
+  `PASS Main3dsFlow (5 checks, 5 arms adjudicated red)`,
+  `PASS EmurunHarness (68 checks: config placement + mount ownership)`,
+  `PASS L3_audio_mix`, `PASS L3_audio_meta`.
+* `bash tools/check.sh` → **`CHECK: ALL GATES PASSED`**:
+  `PASS audit_c_with_classes 0 violations`, `PASS gates_vfp 0 blockers`,
+  `PASS audit_arm11_math contract clean`, `PASS audit_r11_idiv no candidates`,
+  `PASS gates_core_parity both targets link the same core`,
+  `SKIP gates_smdh no built .cia to read`,
+  `PASS gates_frames every pinned frame is deterministic and unchanged`
+  (`PASS L3_f1.bmp sha=58615fc85d02e009`),
+  `PASS gates_batch_integrity project invariants intact`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  → **`3DSX mdk.3dsx`**.
+* `sh tests/scripts/ndsp_sink_test.sh` on the reviewer's mutation copy →
+  **`rc=1`**, `FAIL ndsp_sink counts-done-at-the-sink-recheck` (F5's pin works).
+
+### Emulator evidence (AGENTS P7/P8) — `mdk_3ds/tools/emurun.sh --min-frames 240`, exit 0
+
+```
+display   : :99 (Xvfb :99 -screen 0 1280x1024x24, already listening; captures under
+            /tmp/kilo-pi — /tmp/kilo is another uid's and is not writable here)
+build     : mdk_3ds/mdk.3dsx sha256 ae16a8b555db49fb…, from the tree at 458f8d3 plus
+            this batch's changes (the batch commit is the first commit of that tree)
+scene     : level 7 (flow: screen=4 level=7), guest log ends at frame 2580
+emulator  : mandarine.AppImage md5 0d2adab6  (r1.2.1, the pinned known good)
+gl        : forced llvmpipe, graphics_api=1
+stereo    : render_3d=0 factor_3d=0 (mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0
+dspfirm   : dspfirm.cdc (the lane's sdmc/3ds/dspfirm.cdc; ndsp needs it)
+captures  : /tmp/kilo-pi/emurun-b82.txt
+guest log : audio: FZ/DN 1 (fpscr=83000010)
+            audio: ndsp chn0 PCM16 stereo 44100 Hz, 4 x 20 ms queued
+            audio: sink=1 bank=1 voices=0 queue=2646
+            audio: frame=60 submitted=50 done=47 dropped=3 requeued=1 inDsp=3 dspframes=229 dspdropped=0
+            audio: frame=2580 submitted=2156 done=2153 dropped=8 requeued=1 inDsp=3 dspframes=8844 dspdropped=0
+            frame 2580 elapsed=0.0167 steps=2592 ... voices=0 plays=1
+```
+
+Read with F1's rule, from one line: `submitted/expected = 2156/2150 = 1.003`
+(matched), `submitted - done = 3 = inDsp` (the ledger balances), `inDsp=3 < 4`
+(the queue is not jammed), `requeued=1` (the level-load drain, not a per-frame
+drain), `dspframes` 205.7 per 60 guest frames (the DSP is running on our
+buffers). `dropped=8`, all of it inside the level-load stall — the first ledger
+line at frame 60 already carries 3 of the 8, and nothing is added after.
+Emulator-green is not hardware-pass: the HLE DSP is not the firmware, and the
+dummy audio driver means nothing here proves audibility.
+
+### Prior-solution lookup
+
+Pi-knowledge `mdk-sdl` was searched for the ndsp ledger's interpretation and the
+`nsamples`/`status` contract. It returned **off-topic chunks** (`c3d_frame_test.sh`
+renderer-gate source) and nothing about the audio counters, so it contributed no
+lead and no prior solution was claimed from it. Obsidian MCP and Cognee MCP expose
+no tools in this session (`obsidian_*`/`cognee_*` absent) — a session-configuration
+fault to report per AGENTS P9, not a lookup that happened; the read-only vault
+fallback was not needed because this batch's evidence is this repository plus
+libctru's own object. Original-3DS behaviour remains unmeasured.
