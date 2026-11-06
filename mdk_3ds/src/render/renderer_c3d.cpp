@@ -788,9 +788,18 @@ static GPU_BLENDFACTOR gpuBlendFactor(mdk::pica::BlendFactor factor) {
 // still writes depth, and one that is DISCARDED does not.
 static void installBlendState(RendererC3D* r, mdk::Pass pass, mdk::Blend blend) {
     const mdk::pica::BlendState s = mdk::pica::blendStateForPass(pass, blend);
+    // `enable` is read here, not only asserted by the host suite: a state the
+    // oracle calls disabled installs as the replace pair whatever factors it
+    // carries, so the struct cannot claim "off" and mix anyway (review-4 F6).
+    // This changes no pixel -- the four opaque states already carry that pair
+    // (pica::kBlendReplace) -- it removes a way of being wrong that nothing
+    // downstream could check. One call site, because the frame gate counts them
+    // (`alpha-blend-single-writer`) and a second writer would write behind the
+    // blend cache's back.
+    const mdk::pica::BlendState eff = s.enable ? s : mdk::pica::kBlendReplace;
     C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
-                   gpuBlendFactor(s.srcColour), gpuBlendFactor(s.dstColour),
-                   gpuBlendFactor(s.srcAlpha), gpuBlendFactor(s.dstAlpha));
+                   gpuBlendFactor(eff.srcColour), gpuBlendFactor(eff.dstColour),
+                   gpuBlendFactor(eff.srcAlpha), gpuBlendFactor(eff.dstAlpha));
     r->blendPass = static_cast<int>(pass);
     r->blendMode = static_cast<int>(blend);
 }
@@ -880,7 +889,7 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // 0 and went on writing depth, hiding the world behind every transparent
     // texel of every arena texture.
     //
-    // TWO CORNERS ARE NOT THE ORACLE'S, and they are recorded rather than
+    // THREE CORNERS ARE NOT THE ORACLE'S, and they are recorded rather than
     // hidden. (1) The discard is `palette.hlsl`'s and it sits inside its
     // TEXTURED branch, so a FLAT colour of alpha 0 on an unblended pass is
     // painted by the oracle and discarded here. No shipped material does that
@@ -895,6 +904,16 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // panorama and no sky pass -- and both already diverge in colour for other
     // reasons, so the frame-wide test stays and the corner is written down
     // where the next mirror batch will find it (review-3 F5).
+    // (3) `enhanced.hlsl:199-201`, the MODE_CANVAS and MODE_IMAGE branches,
+    // return the texel's OWN alpha (`float4(..., texel.a) * colour`) with no
+    // discard, so a canvas or image texel of alpha 0 is painted by the oracle
+    // and discarded by this frame-wide test -- and unlike (1) and (2) that alpha
+    // is not forced to 0/255 by the palette expansion, so a partially
+    // transparent canvas edge is at risk too, not just a fully transparent one.
+    // The canvas is the blocked HUD seam (CONTINUATION item 5b), so this corner
+    // is the one the canvas batch has to resolve: it must scope the alpha test
+    // per pass rather than leave it frame-wide, and it must not discover this
+    // from a missing HUD (review-4 F9).
     C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);
 
     // The frame's default blend state: the pass the queue starts with. Written
@@ -2190,9 +2209,12 @@ static void drawDiagnostic(RendererC3D* r) {
     // linear-memory fix is correct on its own terms -- a .bss pointer is not a
     // GPU address -- but it is not the whole reason, and the remaining cause is
     // open. What has been measured and ruled out for it: the cull mode (NONE
-    // changes the frame by 13 px of 96000), the depth test (off changes it by
-    // 58 px), and the winding (the culled set is the one that looks
+    // changes the frame by 69 px of 96000), the depth test (off changes it by
+    // 201 px), and the winding (the culled set is the one that looks
     // counter-clockwise on the panel, and the triangle was tried both ways).
+    // The 13/58 this comment used to carry were batch 78's first reading and are
+    // superseded by the re-measurement recorded in PROGRESS_LOG Iteration 108
+    // (review-4 F7); the probes are MORE informative than the old numbers said.
     float* triangle = static_cast<float*>(r->scratch);
     triangle[0] = -0.8f; triangle[1] = -0.8f; triangle[2] = 0.0f; triangle[3] = 0.0f; triangle[4] = 0.0f;
     triangle[5] = 0.8f;  triangle[6] = -0.8f; triangle[7] = 0.0f; triangle[8] = 0.0f; triangle[9] = 0.0f;

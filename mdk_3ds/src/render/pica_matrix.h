@@ -183,7 +183,10 @@ enum BlendFactor {
 struct BlendState {
     // Does the draw mix with the target at all? False is the oracle's
     // `enable_blend = false`, which on the PICA is not a switch but the
-    // replace pair (ONE, ZERO).
+    // replace pair (ONE, ZERO). The backend READS this rather than trusting the
+    // four factors beside it: a state with `enable == false` is installed as
+    // `kBlendReplace` whatever factors it carries, so the type cannot say "off"
+    // and have the hardware mix anyway (review-4 F6).
     bool enable = true;
     BlendFactor srcColour = kBlendSrcAlpha;
     BlendFactor dstColour = kBlendOneMinusSrcAlpha;
@@ -192,6 +195,14 @@ struct BlendState {
     BlendFactor srcAlpha = kBlendOne;
     BlendFactor dstAlpha = kBlendOneMinusSrcAlpha;
 };
+
+// The oracle's `enable_blend = false`, spelled the only way the PICA can spell
+// it: replace on both channels. `blendStateForPass` returns this for the four
+// opaque passes, and it is what the backend installs for any state whose
+// `enable` is false. It is a named constant rather than four literals inside
+// `blendStateForPass` so the host suite and the renderer agree on one pair.
+const BlendState kBlendReplace = {false, kBlendOne, kBlendZero, kBlendOne,
+                                  kBlendZero};
 
 // The oracle's rule, in one place so a host test can hold it to the C#.
 //

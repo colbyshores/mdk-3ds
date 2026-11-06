@@ -1497,6 +1497,7 @@ const char* passName(Pass pass) {
         case Pass::Blended: return "Blended";
         case Pass::OnTop: return "OnTop";
         case Pass::Overlay: return "Overlay";
+        case Pass::Count: break;  // the cardinality sentinel, never a name
     }
     return "?";
 }

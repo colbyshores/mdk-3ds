@@ -156,6 +156,14 @@ DepthState depthStateForPass(Pass pass) {
     case Pass::DoubleSided:
     case Pass::Mirror:
         break;
+    case Pass::Count:
+        // The cardinality sentinel, never a real pass. It is named here so this
+        // switch stays exhaustive WITHOUT a `default`, which is what makes
+        // `-Wall`'s `-Wswitch` fire in both builds when a seventh pass is added
+        // and not given its own line above (review-4 F1: the guard that was
+        // supposed to catch that compared an array's length with a literal 6,
+        // so it could not fail).
+        break;
     }
     return {true, true};
 }
@@ -172,7 +180,7 @@ BlendState blendStateForPass(Pass pass, Blend blend) {
         // for the alpha channel too -- the oracle's alpha factors are only
         // read when blending is on, and with them left at SRC_ALPHA a Solid
         // draw would still mix the alpha channel with the target's.
-        return {false, kBlendOne, kBlendZero, kBlendOne, kBlendZero};
+        return kBlendReplace;
     }
 
     // Renderer.cs:571-576, factor by factor. The destination colour factor is
@@ -189,8 +197,17 @@ BlendState blendStateForPass(Pass pass, Blend blend) {
 }
 
 bool alphaTestPasses(int alphaByte) {
-    // GPU_GREATER against kAlphaTestReference, which is what the backend
-    // installs, so this predicate and the hardware's cannot drift apart silently.
+    // The predicate the hardware is INSTALLED with, not the predicate the
+    // hardware holds: the backend writes a literal
+    // `C3D_AlphaTest(true, GPU_GREATER, kAlphaTestReference)` and never calls
+    // this (review-4 F5). Only the reference is shared. What holds the SPELLING
+    // at the call site is the frame gate -- `tests/scripts/c3d_frame_test.sh`'s
+    // `alpha-test-is-the-oracles-discard`, `alpha-test-reference-moved` and
+    // `alpha-test-disabled` arms each go red if it drifts -- and what holds this
+    // predicate is `PASS PicaMatrix`. The two agree because both are pinned to
+    // the same oracle line, not because one calls the other; a build that made
+    // the renderer consume this function would make the claim true instead of
+    // documented, and would have to keep the frame gate's literal in step.
     return alphaByte > kAlphaTestReference;
 }
 

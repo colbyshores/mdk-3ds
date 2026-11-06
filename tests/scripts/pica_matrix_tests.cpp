@@ -394,15 +394,33 @@ void testTheOpaquePassesDoNotBlend() {
     PICA_CHECK(!solidAdd.enable);
     PICA_CHECK(solidAdd.dstColour == mdk::pica::kBlendZero);
 
-    // AND THE ENUM IS COVERED, not sampled (review-3 F5). The two arrays above
-    // and below are the whole of `mdk::Pass`; this states the rule the way the
-    // oracle states it, so a seventh pass fails here instead of quietly taking
-    // whichever branch its numeric value happens to land in.
+    // AND THE ENUM IS COVERED, not sampled (review-3 F5; review-4 F1 for the
+    // version of this that could not fail, which compared the array's own length
+    // with a literal 6 -- `6 == 6`, whatever the enum held). The array below is
+    // every value `mdk::Pass` has, and the static_asserts are what make that a
+    // CHECKED claim instead of a counted one: a seventh enumerator stops the
+    // build until someone names it here and gives it its own line in
+    // `blendStateForPass` and `depthStateForPass`. `Pass::Count` exists for
+    // this, and `mdk::kDrawQueuePassCount` derives from the same sentinel, so
+    // the draw queue's bucket count cannot drift from the enum either.
     const mdk::Pass every[] = {mdk::Pass::Solid, mdk::Pass::DoubleSided,
                                mdk::Pass::Mirror, mdk::Pass::Blended,
                                mdk::Pass::OnTop, mdk::Pass::Overlay};
-    bool coversAll = sizeof(every) / sizeof(every[0]) == 6;
-    for (int i = 0; i < 6 && coversAll; i++) {
+    static_assert(static_cast<int>(mdk::Pass::Count) == 6,
+                  "mdk::Pass no longer has the six members the oracle's enum has "
+                  "(src/Mdk.Engine/Render/Renderer.cs:34-48). Add the pass to "
+                  "this array, to blendStateForPass and depthStateForPass, and "
+                  "to the draw queue, then change this number deliberately.");
+    static_assert(sizeof(every) / sizeof(every[0]) ==
+                      static_cast<int>(mdk::Pass::Count),
+                  "this array must name every mdk::Pass member: that is the "
+                  "whole of the coverage claim, so the compiler has to hold it");
+    static_assert(sizeof(opaque) / sizeof(opaque[0]) ==
+                      static_cast<int>(mdk::Pass::Count) - 2,
+                  "the unblended set is the oracle's NOT (Blended or Overlay), "
+                  "so it is every pass but two");
+    bool coversAll = true;
+    for (size_t i = 0; i < sizeof(every) / sizeof(every[0]); i++) {
         const bool blends = every[i] == mdk::Pass::Blended ||
                             every[i] == mdk::Pass::Overlay;
         coversAll = mdk::pica::blendStateForPass(every[i], mdk::Blend::Alpha).enable ==

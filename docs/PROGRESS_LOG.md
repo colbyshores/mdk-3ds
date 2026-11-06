@@ -16065,3 +16065,202 @@ need re-running. The small audio-docs batch (review-2 F2–F5, comment-only,
 `mdk_3ds/src/audio/audio_3ds.{h,cpp}`) is still owed and was not folded in here,
 because this batch is one subsystem. Audio items 6c (int16 sample store) and 6d (no
 `ScriptRuntime` on the console) are unchanged.
+
+## Iteration 113 — batch 85: review-4 remediation — the enum guard could not fail, and now the compiler owns it
+
+**Review remediated:** `logs/ralph-pi/run-20261106-062909/review-4.md` (DeepSeek
+V4.1 Flash TH, proved cross-family). No Critical and no High; nine findings, F1–F9,
+all dispositioned below. The batch is the remediation itself plus the emulator
+evidence its one shipped-code change needs (AGENTS P8).
+
+### What changed, and the reference it satisfies
+
+* **`mdk_core/src/render/render_types.h`** — `mdk::Pass` gains a `Count` sentinel.
+  The oracle's enum is six members (`src/Mdk.Engine/Render/Renderer.cs:34-48`), and
+  the sentinel does not change any existing member's ordinal, so no golden, no
+  parity gate and no wire value moves.
+* **`mdk_core/src/render/draw_queue.h`** — `kDrawQueuePassCount` is now
+  `static_cast<int32_t>(Pass::Count)` instead of a hand-counted `6`. Same defect
+  class as F1: with the literal, a seventh pass would have been accepted by the
+  enum, rejected by `draw_queue.cpp:32,48`'s bounds check, and its draws would
+  have vanished with nothing to say so.
+* **`mdk_3ds/src/render/pica_matrix.{h,cpp}`** — the replace pair is a named
+  constant `kBlendReplace = {false, ONE, ZERO, ONE, ZERO}`; `blendStateForPass`
+  returns it for the four opaque passes; `depthStateForPass` names `Pass::Count`
+  so its switch stays exhaustive without a `default` and `-Wswitch` remains the
+  backstop; `alphaTestPasses`'s comment now says which instrument holds what.
+* **`mdk_3ds/src/render/renderer_c3d.cpp`** — `installBlendState` reads
+  `BlendState::enable` (one call site kept, because the frame gate counts them);
+  the diagnostic-triangle comment's 13/58 probe numbers become Iteration 108's
+  69/201; the alpha-test comment's "TWO CORNERS" becomes THREE with the
+  `enhanced.hlsl` canvas/image branch.
+* **`tests/scripts/pica_matrix_tests.cpp`** — three `static_assert`s replace the
+  tautology; `tests/scripts/tick1.cpp` — `passName` names `Count`.
+* **`docs/CONTINUATION.md`** — the F8 wording, this batch's state, three new owner
+  actions, two new standing facts.
+
+### Findings: fixed, with the evidence
+
+**F1 (Medium, confirmed) — FIXED.** The reviewer was right and the check it
+condemned was this loop's own: `bool coversAll = sizeof(every)/sizeof(every[0]) == 6;`
+is `6 == 6` whatever the enum holds, and the loop then sampled exactly the six
+members it was handed. The fix is the reviewer's first option — the compiler owns
+the claim now — and it was demonstrated rather than asserted: inserting
+`Fancy,` before `Count` and recompiling `pica_matrix_tests.cpp` fails three times,
+
+    pica_matrix_tests.cpp:409:54: error: static assertion failed: mdk::Pass no longer
+      has the six members the oracle's enum has (src/Mdk.Engine/Render/Renderer.cs:34-48)...
+    pica_matrix_tests.cpp:414:52: error: static assertion failed: this array must name
+      every mdk::Pass member: that is the whole of the coverage claim, so the compiler
+      has to hold it
+    pica_matrix_tests.cpp:418:54: error: static assertion failed: the unblended set is
+      the oracle's NOT (Blended or Overlay), so it is every pass but two
+
+and the enumerator was then removed (the file is byte-identical to the shipped
+version; `git diff` for that header is the sentinel and its comment, nothing else).
+The second option — an exhaustive `switch` under `-Werror=switch` — was not taken
+because neither build uses `-Werror`, so it would have been a warning, and a
+warning is what the batch is replacing.
+
+**F6 (Low, confirmed) — FIXED in code, and measured.** `installBlendState`
+installs `mdk::pica::kBlendReplace` whenever `enable` is false, so the struct
+cannot claim "disabled" and mix anyway. The claim "this removes a way of being
+wrong and changes no register value any pass installs today" was tested rather than
+argued, with a clean worktree build of the parent:
+
+    parent  4839cc1, /tmp/mdk-b85-parent, mdk.3dsx md5 238051c6f5d856e3e8888bc5c77360ab
+            guest frame 2280, capture sha256 45756746b73f4354…
+    current batch 85 as shipped, mdk.3dsx md5 9dfed8e081cfb95e58cadc252d691444
+            guest frame 2220, capture sha256 defc81451ea88801…
+    panel crop (440,253)-(839,492), 400x240:  0 px differ
+      both panels' pixels hash to 784fad63a8a72999c8585720276a454b249a96ba1dab7c6adbc761816ff446a9
+    whole capture: 58 px, all of them x 753..760, y 744..752 — Mandarine's own
+      `Frame: N.NN ms` overlay on the BOTTOM screen, the documented noise floor
+    A third build of the same code, taken before a whitespace-only comment
+    realignment (md5 8308388be3e7f63b33a1023fd8448a9b, frame 2280), gives the same
+    panel again, so the pair does not rest on which of the two was captured.
+
+Pair, commands, display and hashes: `docs/evidence/2026-11-06-L7-blend-enable-{parent,current}.{png,txt}`.
+What the pair cannot say is written in both sidecars: the scene is 154 all-`Solid`
+batches, so no blended pass is exercised by either half.
+
+**F5, F7, F9 (Low, confirmed) — FIXED as comments, which is what they are.** F5:
+the predicate's comment claimed a coupling that does not exist — the backend writes
+a literal `C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference)` and
+never calls `alphaTestPasses`; only the reference is shared. Making the claim true
+by routing the renderer through the predicate would break the frame gate's
+`alpha-test-is-the-oracles-discard` arm, which exists precisely because the
+spelling is the only pin, so the comment now names the instrument that holds the
+spelling (`c3d_frame_test.sh`'s `alpha-test-reference-moved` and
+`alpha-test-disabled` arms, both demonstrated red by the arm runner). F7: the
+renderer comment's "cull NONE changes the frame by 13 px, depth off by 58" is
+Iteration 108's 69/201 now, cited at the site. F9: `shaders/enhanced.hlsl:199-201`
+returns `float4(..., texel.a) * colour` for `MODE_CANVAS`/`MODE_IMAGE`, so a canvas
+texel of alpha 0 is painted by the oracle and discarded by this frame-wide test —
+and unlike the other two corners its alpha is not forced to 0/255 by the palette
+expansion. Recorded as the third corner and repeated in NEXT under item 5b, since
+the canvas is the blocked HUD seam.
+
+**F8 (Low, confirmed) — FIXED in `docs/CONTINUATION.md`.** The claim was load-bearing
+and the comparison was not: 58464 exact clear pixels of 96000 is not the same
+quantity as the census's 58522 near-clear of a 95361-px panel at another frame with
+another tolerance. The wording is now the equality that carries the argument — the
+count is 58464 in both builds — and the "61 % stands" cross-comparison is gone.
+
+### Findings: not builder-actionable, recorded with the reason
+
+**F2 (Medium).** Both facts are confirmed: `tools/check.sh:175` runs
+`gates_batch_integrity.py` with neither `--staged` nor `--base`, so a PROTECTED
+worktree edit is invisible to the loop's own gate; and `ralph/builder.md` is in the
+`PROTECTED` set at `gates_batch_integrity.py:12-26`. The reviewer's open question —
+who owns the six dirty files — is answerable from the tree, and the answer is the
+operator, so this is a gate gap and not a contract breach: the diffs are harness
+policy no batch writes (reviewer/worker chains, `ITER_TIMEOUT`/`REVIEW_TIMEOUT`,
+`PI_CMD=/mnt/nas/Development/qwen-slot-pi.sh`, the watchdog's phase limits, a
+"Search scope" section in the builder's own contract), batches 83/84/85 each staged
+none of them, and this batch staged its paths by name and did not use the add-all
+commit path. The fix is not available to a builder: the two files that would carry
+it, `tools/check.sh` and `tools/runner/gates_batch_integrity.py`, are both
+`PROTECTED`. Owner action recorded with the suggested change (`--staged` when the
+index is non-empty) and with the `test_review_state.sh` mode bit (100755→100644,
+and this uid does not own the file so it cannot chmod it either).
+
+**F3 (Medium).** Confirmed contradiction, owner decision required, and all three
+files are operator-owned and uncommitted: the edited directive asserts "the `-th` ->
+`flash` pair is the single operator-approved same-family exception", `ralph-pi.sh`
+asserts "No independence exception appears anywhere in this file: none is needed, and
+one must not be added", and `test_review_state.sh` still pins the refusal (it passes
+right now, which is the proof that the code and the test are the pair that agree and
+the directive is the outlier). The sibling-repository claim was checked and the
+reviewer is right that it needs correcting. A builder must not resolve a
+protected-directive contradiction, and `AGENTS.md`'s review-independence rule is the
+one thing in this loop that must not be relaxed by the party it constrains.
+
+**F4 (Medium).** Confirmed: `guard()`'s `exit 3` became an unbounded
+`while :; … sleep 300`, and `phase route-health` is rewritten before every round, so
+the watchdog's `route-health|startup|verify) limit=900` arm compares against a
+refreshed epoch and can never fire; `logs/ralph/disabled` is already touched, so the
+loop would be parked and silent. The wait is a deliberate operator decision — the
+file's own comment says a single builder route must be waited out, not exited on —
+and both files are operator-owned and uncommitted, so the builder's contribution is
+the bound the reviewer suggested (a `route-dead` phase no watchdog arm covers, or
+stop refreshing the epoch on a failed round), recorded as an owner action. Note also
+the standing fact: editing `ralph-pi.sh` does not change the running loop.
+
+### Gates, as run
+
+    make -C tests/scripts        -> "PASS PicaMatrix" … "All cases match the oracle."   (exit 0)
+    bash tools/check.sh          -> "CHECK: ALL GATES PASSED"                             (exit 0)
+        PASS audit_c_with_classes 0 violations | PASS gates_vfp 0 blockers
+        PASS audit_arm11_math contract clean | PASS audit_r11_idiv no candidates
+        PASS gates_core_parity both targets link the same core | SKIP gates_smdh (no .cia)
+        PASS gates_frames every pinned frame is deterministic and unchanged
+        PASS gates_batch_integrity project invariants intact
+    make -C mdk_3ds              -> "3DSX mdk.3dsx"                                       (exit 0)
+    sh tests/scripts/c3d_frame_test.sh       -> "PASS C3dFrame (29 checks, 37 arms adjudicated red)"
+    bash tools/runner/test_review_state.sh   -> "REVIEW STATE: ALL CASES PASS"            (exit 0)
+
+The 3DS build's only warnings are the pre-existing `-Wreorder` pair in
+`mdk_core/src/audio/sound_mixer.{h,cpp}`; nothing new came from this diff, and no
+`-Wswitch` fired, which is the point of naming `Count` in both switches.
+
+### Emulator evidence (AGENTS P8 — this batch changes `mdk_3ds/**`)
+
+Both halves through `mdk_3ds/tools/emurun.sh`, `DISPLAY=:99` (Xvfb
+`:99 -screen 0 1280x1024x24`, already listening), Mandarine pinned
+`/mnt/nas/Development/mandarine.AppImage` md5 `0d2adab6ad078c78e6d03e72086f2eb6`
+— the known-good r1.2.1, not the r1.3.0 that segfaults on level load. Exit code
+**0** for every run, so the logs were fresh (3 would have meant stale and 4 a dead
+emulator host) and `dspfirm : dspfirm.cdc` appears in every verdict, so ndsp had
+its firmware. Forced llvmpipe, mono (`render_3d=0 factor_3d=0`), private lane and
+private config. `flow: screen=4 level=7`, `voices=0 plays=1`, feet `(0.0,4.0,0.0)`
+eye `(0.0,-4.0,4.5)` in all of them — the same static start framing; the guest log
+ends at 2280 for the parent and 2220 for this build, and the panels match anyway,
+which is what says the scene does not animate. Captures were
+written under `/tmp/kilo-pi/b85/`, not `/tmp/kilo/`, because `/tmp/kilo` belongs to
+another co-tenant on this box and is not writable by this uid; recorded rather than
+worked around. Emulator-green is not hardware-pass: Old-3DS timing and the PICA's
+own behaviour remain unmeasured (AGENTS P6/P8).
+
+### Prior-solution lookup
+
+`knowledge_search` on the `mdk-sdl` KB (hybrid) returned the current
+`pica_matrix_tests.cpp` / `pica_matrix.h` chunks and the oracle's `Pass` enum —
+leads to the exact sites, no prior solution to reuse; the KB is present and
+searchable (4577 chunks / 973 files). **Obsidian MCP and Cognee MCP are not
+exposed in this session** (`obsidian_*` / `cognee_*` absent), so the vault lookup
+was the degraded disk-only path — one narrow read confirming
+`30-architecture/patterns/model-identity-is-the-upstream-string-not-the-alias.md`
+exists, which is the note F3 turns on. Cognee's graph search was not available at
+all, and that is reported rather than papered over (AGENTS P9).
+
+### Next
+
+Per `docs/CONTINUATION.md`: the one-sided view (coverage stopping at panel column
+200 of 400) is batch 86's first item, with the census + `GPU_PRIMARY_COLOR`
+same-run capture as the next useful measurement; the review-2 F2–F5 audio-comment
+batch is the cheap alternative. Item 5b (the HUD) is still blocked on the canvas
+seam and now carries a second constraint from F9. Original-3DS behaviour is still
+unmeasured, and the four owner actions in `docs/CONTINUATION.md` (the two
+`SPEC.md`/`builder.md` scope conflicts, the file mode, and the review-4 F2/F3/F4
+set) are unchanged and not builder-resolvable.

@@ -1,12 +1,14 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — this batch changes no behaviour and no pixel: it retracts a measurement with a clean-build A/B, archives the evidence pair, and adds gate checks (3 checks + 4 arms in `c3d_frame_test.sh`, one matrix case) plus comment corrections. The emulator A/B is 0 px on the panel; the only diff is the emulator's own overlay text.
+Risk: medium — one shipped line changes in the 3DS renderer (`installBlendState` now reads `BlendState::enable`), the core `Pass` enum gains a `Count` sentinel that `kDrawQueuePassCount` is derived from, and the rest is comments and docs. The A/B against a clean build of the parent is 0 px of the panel, so the code change is measured pixel-neutral; the enum change is compile-time only.
 
-**Batch 83's headline measurement was taken against a build that is not its parent.** A clean `f47d8fc` worktree build, run through the same pinned harness (`DISPLAY=:99`, Mandarine `0d2adab6`, exit 0, guest frame 1680 — the same frame and the same static camera), differs from batch 83's `before.png` by **33795 px** of the top panel and from its `after.png` by **0**. So the "the opaque passes were blending at six percent" story is retracted, and with it the "`(255,0,0)` landed at `(30,30,45)`" example and the 33909/68001→58127 table: every visible fragment in the start arena has alpha 255, which is what a replace pair and a `SRC_ALPHA` pair agreeing pixel for pixel across 96000 pixels means. The blend state and the alpha test stay — they are the oracle's state (`Renderer.cs:565-576`) and AGENTS P2's "write every GPU state explicitly" — but they carry **no runtime evidence in either direction**: the start arena is 154 all-`Solid` batches, so `Pass::Blended`, `Pass::Overlay` and `Blend::Add` are unreached by any capture, and the frame gate plus `PASS PicaMatrix` are what hold them now. Evidence, with commands and hashes: `docs/evidence/2026-11-06-L7-blend-ab-{parent,current}.{png,txt}` — the two crops are byte-identical, and that equality is the finding. Review-3 F1–F5 all closed; narrative `docs/PROGRESS_LOG.md` Iteration 112.
+**Batch 83's headline measurement was taken against a build that is not its parent** — batch 84's retraction, and this batch's own A/B re-confirms the shape of it. A clean `f47d8fc` worktree build differs from batch 83's `before.png` by **33795 px** of the top panel and from its `after.png` by **0**, so the "the opaque passes were blending at six percent" story, the `(255,0,0)` landed at `(30,30,45)` example and the 33909/68001→58127 table are retracted: every visible fragment in the start arena has alpha 255. The blend state and the alpha test stay — they are the oracle's state (`Renderer.cs:565-576`) and AGENTS P2's "write every GPU state explicitly" — but the start arena is 154 all-`Solid` batches, so `Pass::Blended`, `Pass::Overlay` and `Blend::Add` are unreached by any capture and are held by `PASS PicaMatrix` and the frame gate. Evidence `docs/evidence/2026-11-06-L7-blend-ab-{parent,current}.{png,txt}`; narrative Iteration 112.
 
-**The census was never inflated, so do not re-run it.** The exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent and 58464 in this build**, so the 61 % figure stands and this file's previous "re-census first" instruction is withdrawn. The one-sided view, stated in panel columns (review-3 F4 — "column 640 of the 400-wide panel" mixed capture pixels with panel columns): geometry covers panel columns **200..399** of 400, the right half of the top screen, and the census instrument is honest.
+**Review-4 remediation: all nine findings dispositioned.** F1 was the one the builder owned outright, and it was real — the guard batch 84 added for review-3 F5 compared an array's own length with a literal 6, i.e. `6 == 6`, so the check written to catch a seventh `Pass` could not fail. `mdk::Pass` now carries a `Count` sentinel, `mdk::kDrawQueuePassCount` is derived from it instead of hand-counted (a seventh pass would otherwise have been accepted by the enum and silently dropped by the bucket bounds check), and `pica_matrix_tests.cpp` states the coverage as three `static_assert`s. Adding a seventh enumerator is now a build failure — demonstrated by adding one and reading the three failures — and the two exhaustive `switch`es over `Pass` name `Count` so `-Wswitch` stays the backstop instead of a `default` swallowing the new case. F6 was the only shipped-code change: `installBlendState` installs `mdk::pica::kBlendReplace` whenever `enable` is false, so a `BlendState` cannot claim "disabled" and mix anyway; measured **0 px** of the panel against a clean `4839cc1` worktree build (`docs/evidence/2026-11-06-L7-blend-enable-{parent,current}.{png,txt}`; md5 `238051c6…` vs `9dfed8e0…`, the whole-capture difference confined to 58 px of the emulator's own overlay band). F5/F7/F9 are comment corrections: the alpha-test predicate never had the coupling its comment claimed (the frame gate's `alpha-test-*` arms hold the call site's spelling, only the reference is shared); the 13/58 probe numbers are superseded by Iteration 108's 69/201; and `enhanced.hlsl:199-201` is a THIRD fragment program that passes sub-unit alpha through, which the canvas/HUD batch must scope per pass. F8 was this file's own wording, fixed in the paragraph below. **F2, F3 and F4 are not builder-actionable** — every file that would carry the fix is either PROTECTED (`tools/check.sh`, `tools/runner/gates_batch_integrity.py`) or one of the six operator-owned uncommitted files — and are recorded as owner actions with the reason and the suggested fix. Narrative `docs/PROGRESS_LOG.md` Iteration 113.
 
-Last updated: 2026-11-06 (**batch 84 — review-3 F1–F5 closed; batch 83's before/after table retracted, the census premise with it**).
+**The census was never inflated, so do not re-run it.** The exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one** — an identical count in both builds, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands", because the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, and the two numbers are not the same quantity). This file's previous "re-census first" instruction stays withdrawn. The one-sided view, stated in panel columns (review-3 F4 — "column 640 of the 400-wide panel" mixed capture pixels with panel columns): geometry covers panel columns **200..399** of 400, the right half of the top screen, and the census instrument is honest.
+
+Last updated: 2026-11-06 (**batch 85 — review-4 closed: the enum-coverage guard is compiler-owned, `BlendState::enable` is read and measured pixel-neutral, four stale comments corrected; F2/F3/F4 are owner-side**).
 
 **Next small batch (review-2 F2–F5, all confirmed, all comment-only, all in `mdk_3ds/src/audio/audio_3ds.{h,cpp}`):** the `dspframes` unit is DSP sound frames at `SYSCLOCK_SOC/512 = 32728.5 Hz` ≈ 204.5/s (not 240-sample blocks at 48 kHz); the `frames × 735/882` denominator is exact only at 60 fps; `inDsp` pinned at 4 is also the signature of "nothing was ever submitted"; and `submitted - done == inDsp` holds for an **open** sink. Full text of each in `docs/PROGRESS_LOG.md`, Iteration 111.
 
@@ -14,7 +16,10 @@ Last updated: 2026-11-06 (**batch 84 — review-3 F1–F5 closed; batch 83's bef
 **Owner action (review F2, new):** `ralph/builder.md`'s "Search scope and bounded commands" block forbids sibling reads, while `AGENTS.md` §12 requires them ("**Proven 3DS platform code in sibling ports — adapt, do not re-derive**", naming `../forsaken/sound_3ds.c`, `../t2k`'s ndsp audio, `../perfect_dark/tools/emurun.sh`) and the 2026-11-05 directive names `../forsaken/sound_3ds.c` for this subsystem — it is where the `nsamples` convention came from. One of the two must be amended by the owner; the builder may not edit either. Combined with the item below about the same uncommitted file.
 **Owner action (review F3, from run-20261106-035708):** `SPEC.md:809` says the 3DS "voice pool shrinks to 24 and the queue to 40 ms to fit the 3DS's DSP budget". The port ships the oracle's 64 (`src/Mdk.Engine/Audio/AudioDevice.cs:73 MaxVoices = 64`, no platform branch) and an 80 ms queue, and `audio_3ds.h` reads §8's 24 as the software mixer's knob. That reading is a deviation from a protected document and the builder cannot resolve it: either amend SPEC.md §8 or authorise a per-target cap. Unmeasured either way — the hot-path corpus is empty, and nothing in the current build exceeds a handful of voices.
 **Owner action:** `ralph-pi.sh` worktree mode is 664 (index 100755); this uid cannot chmod it, so systemd restart fails `203/EXEC`. Owner task 18: restore 0755 and restart `ralph-pi-mdk.service`.
-**Owner action (review-4 F3 / review-2 F6):** uncommitted operator edits in `ralph/builder.md` (PROTECTED) plus routing changes in `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`, and `tools/runner/test_review_state.sh` conflict with the committed owner directive. Owner must approve/commit or revert; builder must not stage these or set `MDK_OWNER_APPROVED=1`. Stage batch paths by name only.
+**Owner action (review-4 F3 / review-2 F6):** uncommitted operator edits in `ralph/builder.md` (PROTECTED) plus routing changes in `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`, and `tools/runner/test_review_state.sh` conflict with the committed owner directive. Owner must approve/commit or revert; builder must not stage these or set `MDK_OWNER_APPROVED=1`. Stage batch paths by name only. **Attribution, which review-4's open question 1 asked for: these six files are operator-authored, not builder work.** The content is harness policy no batch writes — reviewer/worker chains, `ITER_TIMEOUT`/`REVIEW_TIMEOUT`, `PI_CMD=/mnt/nas/Development/qwen-slot-pi.sh`, the watchdog's phase limits, and a "Search scope" section in the builder's own contract; batches 83, 84 and 85 each staged none of them, and batch 85 staged its paths by name and did not use the add-all commit path. So review-4 F2 is documentation hygiene plus a gate gap, not a protected-contract breach.
+**Owner action (review-4 of run-20261106-062909, F2):** `tools/check.sh:175` runs `gates_batch_integrity.py` with neither `--staged` nor `--base`, so a PROTECTED edit sitting in the worktree or the index is invisible to the loop's own gate and an add-all commit lands it first and fails the gate second. The two files that would carry the fix — `tools/check.sh` and `tools/runner/gates_batch_integrity.py` — are BOTH in `PROTECTED`, so this is an owner edit: run the gate with `--staged` when the index is non-empty (or `--base HEAD`). Also restore `tools/runner/test_review_state.sh`'s mode bit (100755→100644 in the same uncommitted set; this uid does not own the file and cannot chmod it).
+**Owner action (review-4 of run-20261106-062909, F3):** three texts and one sibling repository disagree on whether a same-family review exception exists, and only the owner can pick a winner. The uncommitted `docs/OWNER_DIRECTIVE_2026-11-05.md` says "the `-th` -> `flash` pair is the single operator-approved same-family exception"; `ralph-pi.sh` says "No independence exception appears anywhere in this file: none is needed, and one must not be added"; `tools/runner/test_review_state.sh` still pins `REJECT` for a same-family pair. The same edit also asserts `tetrisphere-godot` carries the same chains, which its own `tools/ralph-pi.sh:120` falsifies (`WORKER_MODELS="litellm/qwen litellm/luna"`). Either the directive loses that sentence or the exception becomes a code change in `reviewer_reject_reason` plus a rewritten test case — neither is a builder batch.
+**Owner action (review-4 of run-20261106-062909, F4):** the uncommitted `ralph-pi.sh` `guard()` replaced `FATAL: pi write probe failed on every route / exit 3` with an unbounded `while :; … sleep 300`, and it rewrites `phase route-health` before every round, so the watchdog's `route-health|startup|verify) limit=900` arm compares against a refreshed epoch and can never fire: a loop with no live route parks silently, with `logs/ralph/disabled` already touched. The wait is the operator's decision (the file says so); bounding it is not builder-owned. Suggested: after N failed rounds write a phase no watchdog arm covers (e.g. `route-dead`) and stop refreshing the epoch on a failed round.
 **Owner action (review-2 F3 / review-4 F3):** batch frames duplicate an older capture (`sha256 6646adf1…`) whenever a batch moves no pixels — batch 79's, 80's, 81's and 82's do, and each sidecar says so and names the measurement. Rejecting duplicates and requiring emulator verdicts needs owner-protected gate tooling; recorded, not changed.
 **Owner action (review dispatch):** `logs/ralph-pi/run-20261105-142911/review-6.md` is **0 bytes** — the reviewer was dispatched and returned nothing, and no `.rc` was written. That is a failed dispatch, not an all-clear; the range stays owed.
 **Owner action (session config, AGENTS P9):** neither `obsidian_*` nor `cognee_*` tools are exposed in this session, so the vault lookup is the degraded disk-only path and Cognee's graph search was not available at all. Reported, not worked around silently.
@@ -76,13 +81,13 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 8. **CLOSED (batch 75) — the red clear.** It was the clear colour's byte order, not the render path. See the
    header of this file.
 
-## NEXT (batch 85)
+## NEXT (batch 86)
 **The one-sided view.** Geometry covers panel columns **200..399** of the 400-wide top
-screen — the right half — and nothing else has changed: the census's "61 % of the panel
-is clear colour" was **not** inflated by a transparency bug (batch 84 measured 58464
-exact clear-colour pixels in both the parent build and this one), so the one-frame
-census does **not** need re-running first. Its instrument is honest and its probes were
-never read through a bug: `GPU_CULL_NONE` moves 69 px, the depth test off 201 px, and
+screen — the right half — and nothing else has changed: the census's clear-colour count
+was **not** inflated by a transparency bug (the exact `(16,32,48)` count is **58464 in
+both** the parent build and this one, so the instrument was never reading through a
+blend bug), and the one-frame census does **not** need re-running first. Its probes were
+never read through a bug either: `GPU_CULL_NONE` moves 69 px, the depth test off 201 px, and
 the census's own mapping probe fails, so it cannot localise — `logCensus` says so on
 its own output. The live question is why coverage stops at a straight vertical line at
 the panel's middle. Do not re-derive what Iteration 106 retired (the cull, the depth
@@ -91,7 +96,10 @@ and `GPU_PRIMARY_COLOR` in the same run**, with the panel crop published, so the
 comparison is frame-identical. The audio-docs batch (F2–F5 above) is the cheap
 alternative if the view is the longer job.
 Item 5b (the HUD) stays blocked on the same canvas seam (`mdk_render_canvas_quad`
-is a no-op on this backend).
+is a no-op on this backend) — and it now carries a second named constraint: the
+frame-wide alpha test discards a canvas texel of alpha 0 that the oracle paints
+(`enhanced.hlsl:199-201`, review-4 of run-20261106-062909 F9), so the canvas batch
+must scope the test per pass instead of leaving it frame-wide.
 
 **Audio, in priority order after the renderer items.** (a) 6c — the int16 sample store, which halves the
 bank's footprint with no change to a sample value, pinned by a re-run of `golden/L3_audio_mix.txt`. (b) 6d —
@@ -101,7 +109,7 @@ emulator's HLE DSP; the Old-3DS check stays open (AGENTS P6/P8). What to read on
 is the ledger line's `submitted` against `frame x 735/882` — **not** `done` against
 `submitted`, which is an identity and proves nothing (batch 82, review F1).
 
-**Deferred review findings:** review-4 F1/F2 (the geometric solid-arena pin stands in for the unported
+**Deferred review findings:** review-4 of run-20261105-142911 F1/F2 (the geometric solid-arena pin stands in for the unported
 DTI connection crossing; the fall probe hard-codes the start and omits the camera stage) need a
 placed-fall oracle in full order plus a walk-out golden, and are deferred to a collision batch.
 Original-3DS behaviour remains unmeasured.
@@ -154,6 +162,23 @@ Original-3DS behaviour remains unmeasured.
   correctness — say which kind a pair is). Noise floor while you do: Mandarine draws its own `Frame: N.NN ms`
   overlay on the bottom screen, so two runs of the SAME build differ by ~64-112 px at x 753..767,
   y 744..752 of the 1280x1024 window; compare the top-panel crop `(440,253)-(839,492)`, 400x240, and state it.
+* **`mdk::Pass`'s cardinality is compiler-owned (batch 85).** `Pass::Count` is a
+  sentinel and never a pass: the draw queue's bounds check rejects it,
+  `mdk::kDrawQueuePassCount` is derived from it rather than hand-counted, and
+  `pica_matrix_tests.cpp` static_asserts the enum's size, the sampled array's size
+  and the opaque array's size. A seventh pass is a build failure, not a silently
+  inherited `Solid` state — demonstrated by adding one and reading the three
+  failures. The two exhaustive `switch`es over `Pass` (`pica_matrix.cpp`
+  `depthStateForPass`, `tick1.cpp passName`) name `Count` on purpose so `-Wswitch`
+  stays the backstop; do not "tidy" them into a `default`.
+* **`BlendState::enable` is read by the renderer, and the disable is a named pair
+  (batch 85, review-4 F6).** `installBlendState` installs
+  `mdk::pica::kBlendReplace` — `(ONE, ZERO)` on both channels — for any state whose
+  `enable` is false, whatever factors it carries, so the type cannot say "disabled"
+  and mix anyway. It changes no register value any pass installs today, and the A/B
+  says so: 0 px of the panel against a clean build of the parent
+  (`docs/evidence/2026-11-06-L7-blend-enable-{parent,current}.txt`). Do not read
+  that pair as evidence about `Pass::Blended`: the scene has none.
 * **Every visible fragment of the level-7 start arena has alpha 255 — measured, not read.** The parent
   (citro3d's `SRC_ALPHA` blend) and batch 83 onward (the oracle's replace pair) draw byte-identical 400x240
   panels. Do not re-open "the opaque passes were blending" as a visible defect; the register state was wrong

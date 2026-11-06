@@ -42,8 +42,12 @@
 
 namespace mdk {
 
-// The number of buckets, which is the number of values `Pass` has.
-const int32_t kDrawQueuePassCount = 6;
+// The number of buckets, which is the number of values `Pass` has. Derived from
+// the enum's own sentinel rather than hand-counted: with a literal 6 here a
+// seventh pass would have been accepted by the enum, rejected by the bucket
+// bounds check, and its draws would have vanished with nothing to say so
+// (review-4 F1).
+const int32_t kDrawQueuePassCount = static_cast<int32_t>(Pass::Count);
 
 // The frame's queued draws, bucketed by pass.
 //

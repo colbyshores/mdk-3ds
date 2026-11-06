@@ -85,6 +85,16 @@ enum class Pass {
     Blended,      // alpha-blended, sorted back to front
     OnTop,        // drawn over everything, no depth test
     Overlay,      // the 2D canvas
+
+    // Not a pass. The cardinality sentinel, and the reason "every pass is
+    // handled" can be stated as something the compiler checks instead of
+    // something a reader counts (review-4 F1: a hand-counted array of the six
+    // members could not fail when a seventh arrived). `mdk::kDrawQueuePassCount`
+    // is derived from it, so the draw queue's bucket count cannot drift from the
+    // enum either. Nothing may treat `Count` as a pass: the draw queue bounds
+    // check rejects it, and the two exhaustive switches over `Pass` name it only
+    // to stay exhaustive without a `default`.
+    Count,
 };
 
 enum class Blend {

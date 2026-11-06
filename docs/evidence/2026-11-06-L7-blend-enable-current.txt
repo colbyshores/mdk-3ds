@@ -1,0 +1,63 @@
+evidence pair -- THIS HALF is the batch 85 build; the other half
+(2026-11-06-L7-blend-enable-parent.png/.txt) is a clean build of its parent.
+Read the two sidecars together: the claim belongs to the pair and neither
+picture carries it alone. See docs/evidence/README.md, and the standing rule
+that an A/B must name the revision each half was built from (batch 84 learned
+that the hard way).
+
+scene:   level 7, the start arena. The guest log's last frame is 2220 (42 frame
+         lines; the deadline reading was 2160), the camera is the static start
+         framing (eye (0.0,-4.0,4.5), feet (0.0,4.0,0.0), yaw 90). The parent's
+         run ended at 2280 and the panel is identical anyway, which is its own
+         finding: this scene does not animate, so the two pictures are
+         comparable without being the same tick.
+build:   batch 85, this tree, built in place:
+             DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM \
+             make -C mdk_3ds
+         mdk.3dsx md5 9dfed8e081cfb95e58cadc252d691444 -- the md5 of the tree
+         this commit ships, captured after the last edit to it. An earlier run of
+         the same code, before a whitespace-only realignment of one comment line
+         in `pica_matrix.h` (md5 8308388be3e7f63b33a1023fd8448a9b, capture
+         0c101114da8a763356e09d097537e4ccd0ecb6ecec0e5d844f5fd6ecb772d905, guest
+         frame 2280), produced the byte-identical panel, so the pair does not
+         depend on which of the two builds it is read against. The game data is
+         staged from the gitignored ./MDK tree and is not part of the repository
+         or of this commit; the build depends on it the way every 3DS build here
+         does.
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 40 \
+                                        --shot /tmp/kilo-pi/b85/current2.png
+         (emurun exit 0; dspfirm present in the lane; guest log ended at 2220)
+display: :99 -- Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7). Same
+         pinned Mandarine r1.2.1 (md5 0d2adab6ad078c78e6d03e72086f2eb6), same
+         forced llvmpipe, same mono (render_3d=0 factor_3d=0), same private lane
+         and private config as the parent's run. Captures were written under
+         /tmp/kilo-pi because /tmp/kilo belongs to another co-tenant on this box
+         and is not writable by this uid.
+capture: /tmp/kilo-pi/b85/current2.png, 1280x1024, sha256
+         defc81451ea88801c2f8a945b2242b478520408110a8890dbb50860b2c01693b.
+         The committed crop is the top-panel rectangle (440,253)-(839,492),
+         400x240, sha256 of its pixels
+         784fad63a8a72999c8585720276a454b249a96ba1dab7c6adbc761816ff446a9 --
+         byte-identical to the parent's crop, and that equality IS the finding.
+oracle:  none, and that is stated rather than hidden. This is a RELATIVE A/B: it
+         measures what a change did, never whether either build is right (vault:
+         relative-vs-absolute-oracle-for-emulated-subsystems). The scene is 154
+         all-Solid batches, so it cannot exercise Pass::Blended or Pass::Overlay
+         at all; what holds those is `PASS PicaMatrix` and the frame gate.
+
+what this pair holds, and it is review-4 F6: `installBlendState` now READS
+`BlendState::enable` instead of only the four factors, so a state the oracle
+calls disabled installs as the replace pair whatever factors it carries. The
+claim is that this removes a way of being wrong and changes no register value
+that any pass installs today -- and the pair measures it:
+
+    panel crop, parent vs this build:   0 px of 96000
+    whole capture, parent vs this build: 58 px, all of them at
+                       x 753..760, y 744..752 (the earlier run: 63 px at
+                       x 760..767, y 744..752)
+
+Those 63 pixels are Mandarine drawing its own `Frame: N.NN ms` overlay on the
+BOTTOM screen, the documented noise floor for two runs of any two builds (64-112
+px in that band); the panel crop exists precisely so that overlay is not
+compared. Neither half was cropped to make the diff small: the crop is the top
+screen, the diff is the bottom one, and both numbers are recorded.
