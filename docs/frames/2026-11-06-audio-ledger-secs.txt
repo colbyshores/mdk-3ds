@@ -1,0 +1,28 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-06T16:18:17Z at a0b0dd1
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the pinned picture did not move: this batch is the audio sink's ledger and it
+cannot reach the picture. The one code line that moved is a log statement
+(`audioClock += elapsed` and a `secs=%.2f` field in the guest log's audio ledger
+line, `mdk_3ds/src/main_3ds.cpp`); everything else is a comment in
+`mdk_3ds/src/audio/audio_3ds.{h,cpp}` and a stronger pin in
+`tests/scripts/ndsp_sink_test.sh` (15 checks / 10 arms became 16 / 11). The
+capture is therefore byte-identical to 2026-11-06-review6-remediation.png
+(sha256 6646adf1dae3a774d6215d57e5bcfba1), same bad_percent=1.240, same
+max_delta=247, same mean_delta=0.1819. Unlike batch 87 this batch does NOT ship a
+byte-identical `mdk.elf` and it would be dishonest to imply one: the shipped ELF
+is 75b1edb06d0d2c58aecafb6f7b008421 against the parent's
+73bfe104300467bdabdd391e8b9d66fd, because a code line really did move.
+what this batch measured instead, in the guest log and not in the picture: the
+ndsp sink's rate against the clock the mixer was actually given. Mandarine r1.2.1
+on DISPLAY=:99 through `mdk_3ds/tools/emurun.sh` (exit 0, guest log ends at frame
+2280, level 7, mono, forced llvmpipe, dspfirm present), clean out-of-tree build:
+`frame=1140 secs=19.15 submitted=953 done=950 dropped=5 requeued=1 inDsp=3
+dspframes=3921` gives submitted/(secs x 50) = 0.9953 with the guest at 59.53 fps,
+and dspframes/sec = 204.75 against the 32768/160 = 204.8/s the corrected comment
+predicts. The emulator's top-panel crop (`python3 tools/panel_crop.py crop`) is
+f9af51b635680739418648cd43d9f82361d61f82f65786e203ed9436a8e20d6a, 0 px of 96000
+against docs/evidence/2026-11-06-L7-blend-enable-r2-current.png, and is committed
+as docs/evidence/2026-11-06-L7-audio-ledger-current.png. Emulator-green is not
+hardware-pass: the DSP is Mandarine's HLE and Old-3DS ndsp timing is unmeasured
+(AGENTS P6/P8).

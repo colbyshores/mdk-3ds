@@ -1,0 +1,92 @@
+single capture, not an A/B pair. This batch's code change is one log field, so
+there is nothing to A/B on the panel and the honest record says so: the crop is
+committed to show that the change moves NO pixel, and the measurement the batch
+actually made is in the guest log, not in the picture. Read it together with
+2026-11-06-L7-blend-enable-r2-{parent,current}.txt, which is the pair this crop
+is identical to. See docs/evidence/README.md.
+
+scene:   level 7, the start arena. Guest log ended at frame 2280 (43 frame lines
+         logged; the deadline reading was 2220), the camera is the static start
+         framing (eye (0.0,-4.0,4.5), feet (0.0,4.0,0.0), yaw 90). Same scene as
+         the blend-enable pair, and it does not animate, so the pictures are
+         comparable without being the same tick.
+build:   a CLEAN out-of-tree build of this working tree (`a0b0dd1` plus this
+         batch's edits), copied out of the repository so nothing of the in-tree
+         build directory is in it:
+             git ls-files -z | xargs -0 -I{} cp --parents {} /tmp/b88/cur/
+             DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM \
+             MDK_DATA_DIR=/mnt/nas/Development/mdk-sdl/MDK make -C mdk_3ds
+         mdk.elf  md5 75b1edb06d0d2c58aecafb6f7b008421  <- the code identity
+         mdk.3dsx md5 7508a44e2560597ce18dae7c8777329a <- the container, /tmp ext4
+         The in-tree build of the same tree gives the SAME elf md5
+         (75b1edb0…) and a different .3dsx (a3ed8d77…), which is the container
+         rule from the pair above, re-observed: the elf is the identity and the
+         .3dsx follows the staging filesystem.
+         The elf differs from the parent's 73bfe104300467bdabdd391e8b9d66fd, and
+         it must: unlike batches 85-87 this batch ships a code line
+         (`audioClock += elapsed` and the `secs=` field in the ledger printf).
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 40 --min-frames 600 \
+                    --grep 'audio: frame=(60|600|1140) ' \
+                    --shot /tmp/b88-clean.png /tmp/b88/cur/mdk_3ds/mdk.3dsx
+         (emurun exit 0; dspfirm present in the lane; guest log ended at 2280)
+display: :99 -- Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7). Same
+         pinned Mandarine r1.2.1 (md5 0d2adab6ad078c78e6d03e72086f2eb6), same
+         forced llvmpipe, same mono (render_3d=0 factor_3d=0), same private lane
+         and private config. Captures went under /tmp because /tmp/kilo belongs
+         to another co-tenant on this box and is not writable by this uid --
+         which is worth recording because the FIRST run's --shot silently
+         produced no file for exactly that reason, and emurun's own warning
+         about a missing screenshot tool is the only thing that would have said
+         so. The run above is the one that has its capture.
+capture: /tmp/b88-clean.png, 1280x1024, sha256
+         89cfbc2eeeb4445b3942371bff70ed88ed6a4f860cdec3693de8a08ff37f8ec7.
+         The committed crop is the top-panel rectangle (440,253)-(839,492)
+         INCLUSIVE, 400x240 = 96000 px, produced by
+         `python3 tools/panel_crop.py crop`, which refuses to write a crop that
+         is not exactly that size. sha256 of its pixels
+         f9af51b635680739418648cd43d9f82361d61f82f65786e203ed9436a8e20d6a --
+         byte-identical to the blend-enable pair's crop, and `panel_crop.py
+         diff` against it is 0 px of 96000. That equality is the claim about the
+         picture; it is NOT the claim about the batch.
+oracle:  none for the picture, and that is stated rather than hidden. The audio
+         ledger's oracle is the C#'s own accounting (rate*delta owed per frame),
+         which is pinned bit-for-bit by golden/L3_audio_mix.txt and is not what
+         this capture measures. What the capture measures is the ndsp SINK's
+         rate, and the only absolute it can be checked against is real time.
+
+what this capture measures:
+
+    panel crop vs the committed pair:    0 px of 96000   (checked crop)
+
+    The ledger line, from the guest log of THIS run:
+
+      frame=  60 secs= 1.10 submitted= 50 done= 47 dropped=3 requeued=1 inDsp=3 dspframes= 229
+      frame= 600 secs=10.12 submitted=501 done=499 dropped=4 requeued=1 inDsp=2 dspframes=2075
+      frame=1140 secs=19.15 submitted=953 done=950 dropped=5 requeued=1 inDsp=3 dspframes=3921
+
+    submitted / (secs x 50)      0.9091 / 0.9901 / 0.9953   <- the rate test
+    submitted / (frame x 735/882) 1.0000 / 0.9980 / 0.9969   <- the old form
+    guest fps                       54.55 / 59.29 / 59.53
+    dspframes / sec                208.18 / 205.04 / 204.75
+
+    Two things come out of those numbers.
+
+    1. The two rate forms agree to 0.3% because THIS run really is at ~60 fps
+       (59.53 at frame 1140). That is the fps precondition of review F3 being
+       MEASURED instead of assumed -- which is the entire point of putting `secs`
+       on the line. The first line also shows why the seconds form is the honest
+       one: at frame 60 the frame-count form reads exactly 1.0000 while the
+       clock form reads 0.909, because the run had not yet reached steady state
+       and the frame count cannot know that.
+
+    2. dspframes converges on 204.75/s against the 32768/160 = 204.8/s the
+       corrected comment predicts -- 0.02% off. That is what pins the unit
+       review F2 said was wrong. The old claim ("240-sample blocks at 48 kHz")
+       fitted the same measurement at 200/s, which is exactly why it survived
+       three batches: a unit that only has to be right in magnitude cannot be
+       falsified by a magnitude. The disassembly is the proof and the rate is
+       the confirmation; see the counters in mdk_3ds/src/audio/audio_3ds.cpp.
+
+    Emulator-green is not hardware-pass (AGENTS P6/P8). The DSP here is
+    Mandarine's HLE, the Old-3DS ndsp timing is unmeasured, and the guest frame
+    rate in the emulator is not a console's.

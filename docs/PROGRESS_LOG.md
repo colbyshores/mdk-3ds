@@ -16704,3 +16704,179 @@ canvas pass is a divergence on its own. Original-3DS behaviour is still
 unmeasured. The owner actions are unchanged plus one new entry (review-6 F2, the
 reviewer holding a qwen slot), and none is builder-resolvable. This batch staged
 its paths by name and touched none of the six operator files.
+
+---
+
+## Iteration 116 — batch 88: the ndsp frame counter's unit was wrong twice over, and the rate test's denominator was a frame count pretending to be a clock
+
+The cheap alternative `docs/CONTINUATION.md` named, taken as its own batch:
+review-2's **F2–F5**, all four confirmed in Iteration 111 and deferred with
+cause as "the next audio-docs batch is mechanical". They were not quite
+mechanical — F2 needed a disassembly and F3 turned into a code change — but all
+four are now closed in the file they describe rather than only in this log.
+
+**Why this slice and not the one-sided view.** The view is still the first item,
+and it is still the item the loop cannot localise: batches 77, 78, 84, 85 and 86
+all measured it, the census's own mapping probe fails on three of four sides so
+it cannot say where the geometry is, and Iteration 106 retired the cull, the
+depth triple, the queue, the MVP and a deleted rotation. A sixth measurement
+with the same instrument and no new hypothesis is not an increment with a checked
+exit criterion, so the alternative the file explicitly offers was taken instead.
+The view is untouched and still first for batch 89.
+
+### F2 (Medium) — CONFIRMED, corrected, and the correction is now derived
+
+The comment said `ndspGetFrameCount()` counts "240-sample blocks at 48 kHz".
+Nothing in ndsp is 48 kHz: this channel is 44100, and the DSP's own rate is
+`NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32768 Hz` (`ndsp.h:9`). The unit was read
+off the library instead of guessed this time, by the same instrument batch 86
+used for `ndspChnWaveBufAdd` — a disassembly of the linked `libctru.a`:
+
+```
+ndspInitialize.part.0  +0x134 ldr r2, [pc, #340]  ; .bss.frameCount
+                       +0x13c str r1, [r2]        ; r1 = 0  -> zeroed at init
+ndspThreadMain         +0x1a4 bl  svcSignalEvent  ; hand the frame to the DSP
+                       +0x1a8 ldr r2, [pc, #340]  ; .bss.frameCount
+                       +0x1ac ldr r3, [r2]
+                       +0x1b0 add r3, r3, #1
+                       +0x1b4 str r3, [r2]        ; one add per loop iteration
+```
+
+So it counts **ndsp mixer frames** — one per `ndspThreadMain` iteration, after
+the `svcSignalEvent` that kicks the DSP — not samples, not wave buffers, and not
+anything at 48 kHz. At 32768 Hz that is one mixer frame per ~159 DSP samples,
+i.e. ~204.8/s if the DSP frame is 160 samples, and the emulator measures
+**204.75/s** at frame 1140 (3921 dspframes / 19.15 s), 0.02% off. The old claim
+fitted the same measurement at 48000/240 = 200/s, which is the whole lesson: a
+unit that only has to be right in magnitude cannot be falsified by a magnitude,
+and that is why it survived three batches.
+
+### F3 (Medium) — CONFIRMED, and fixed as a code line rather than as prose
+
+The reviewer's point was that `submitted / (frames x 735/882)` is exact only at
+60 fps, because `GameFlow::elapsedFor(false, step, delta)` returns the **wall**
+delta (`game_flow.cpp:214`, called at `main_3ds.cpp:439`), so at 30 fps a
+half-rate sink scores 1.00. Its suggested fix was "state the fps precondition
+beside the denominator (or make the test wall-clock based)". Prose was the weaker
+of the two, so the second one was done: the frontend now accumulates the same
+`elapsed` the mixer receives (`audioClock += elapsed`, placed after
+`mixer.device().update(elapsed)` so it is what the device was *given* and not
+what the frame happened to measure — a 40 s sleep clamped to 0.25 s owes 0.25 s
+of audio) and the ledger line prints it:
+
+```
+audio: frame=1140 secs=19.15 submitted=953 done=950 dropped=5 requeued=1 inDsp=3 dspframes=3921
+```
+
+The rate test is now `submitted / (secs x 50)` and is frame-rate independent by
+construction. Measured on this build: 0.9091 / 0.9901 / 0.9953 at frames
+60 / 600 / 1140, against 1.0000 / 0.9980 / 0.9969 for the old frame-count form,
+with the guest at 54.55 / 59.29 / 59.53 fps. The two forms agree to 0.3%
+*because this run really is at ~60 fps* — which is now a measured fact about the
+run rather than an assumption about it. The first line is the argument for the
+change on its own: at frame 60 the frame-count form reads exactly 1.0000 while
+the clock form says 0.909, because a frame count cannot see that the run had not
+reached steady state.
+
+### F4 (Medium) — CONFIRMED, corrected
+
+`inDsp == 4 with dropped climbing` was documented as "the queue is jammed". It is
+not: it means **nothing has retired**, which is a weaker statement, and the
+pre-`status = FREE` run is the counterexample sitting in the same comment — that
+run read `submitted=4 done=0 dropped=2579 inDsp=4` with ndsp having accepted
+nothing at all, and a merely slow DSP reads the same way. The text now says what
+separates them is `done` and `dspframes` advancing, not `inDsp`.
+
+### F5 (Low) — CONFIRMED, corrected
+
+`submitted - done == inDsp` is an **open-sink** identity: `audioClose()` zeroes
+`g_inDsp` and leaves `g_submitted` and `g_done` alone, so after a close the
+balance is whatever was in flight against an `inDsp` of 0. Both files now say to
+read the ledger behind `audioIsOpen()`.
+
+### The gate caught the log-format change, and the pin got stronger
+
+`make -C tests/scripts` went red on the first run, twice, and both failures were
+correct:
+
+```
+  FAIL ndsp_sink frontend-logs-the-frame-with-the-ledger: ... the ledger line must carry the frame it was printed at
+  FAIL ndsp_sink arm frontend-stops-logging-the-frame-with-the-ledger: the mutation changed nothing, so the arm tested the file it was handed instead of the invariant
+```
+
+The check pinned the literal `frame=%… submitted=` adjacency, and the arm's
+mutation was the same literal — so inserting `secs=` broke the check and, worse,
+made the arm unable to fire. That is the could-not-fail pattern this loop has now
+hit four times, and it fired on its own rather than being noticed after the fact.
+`tests/scripts/ndsp_sink_test.sh` is not in `PROTECTED`, and the fix strengthens
+it rather than relaxing it: the two denominators are now read out of the ledger's
+own format **string** (so deleting one field cannot satisfy the other check by
+accident), the frame pin stays, a new `frontend-logs-the-clock-with-the-ledger`
+check requires `secs=` in that string *and* `audioClock += elapsed` in the code,
+and each has its own mutation arm. 15 checks / 10 arms became **16 checks / 11
+arms**, every arm adjudicated red against the check it names:
+
+```
+ndsp_sink: mdk_3ds/src/audio/audio_3ds.cpp — 16 checks, 11 mutation arms
+  ok   arm frontend-stops-logging-the-frame-with-the-ledger: turned `frontend-logs-the-frame-with-the-ledger` red as required
+  ok   arm frontend-stops-logging-the-clock-with-the-ledger: turned `frontend-logs-the-clock-with-the-ledger` red as required
+PASS NdspSink (16 checks, 11 arms adjudicated red)
+```
+
+### Files
+
+`mdk_3ds/src/audio/audio_3ds.h`, `mdk_3ds/src/audio/audio_3ds.cpp` (the four
+corrections, with the disassembly inline), `mdk_3ds/src/main_3ds.cpp` (the audio
+clock and the `secs=` field), `tests/scripts/ndsp_sink_test.sh` (the strengthened
+pin), `docs/evidence/2026-11-06-L7-audio-ledger-current.{png,txt}`.
+
+### Gates, verbatim
+
+- `make -C tests/scripts` → `All cases match the oracle.` (and
+  `PASS NdspSink (16 checks, 11 arms adjudicated red)`,
+  `PASS C3dFrame (29 checks, 37 arms adjudicated red)`, `PASS L3_audio_mix`,
+  `PASS L3_audio_meta`)
+- `bash tools/check.sh` → `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity` pass, `gates_smdh` SKIP
+  (no `.cia` built), `gates_frames CONTRACT CLEAN`, `gates_batch_integrity PASS`
+- `make -C mdk_3ds` → `3DSX mdk.3dsx` (and a clean out-of-tree build of the same
+  tree reproduces `mdk.elf` md5 `75b1edb06d0d2c58aecafb6f7b008421`; the in-tree
+  `.3dsx` differs from the /tmp one, `a3ed8d77` vs `7508a44e`, which is the
+  container rule re-observed, not a discrepancy)
+
+### Emulator evidence (AGENTS P8)
+
+`mdk_3ds/tools/emurun.sh --secs 40 --min-frames 600 --shot /tmp/b88-clean.png
+/tmp/b88/cur/mdk_3ds/mdk.3dsx` on `DISPLAY=:99`, **exit 0**: Mandarine r1.2.1
+(md5 `0d2adab6…`), forced llvmpipe, mono (`render_3d=0 factor_3d=0`), dspfirm
+present, guest log ends at frame 2280. Top-panel crop via `tools/panel_crop.py`
+is `f9af51b6…`, **0 px of 96000** against
+`docs/evidence/2026-11-06-L7-blend-enable-r2-current.png` — the log field moves
+no pixel, which is the only picture claim this batch makes. One process note:
+the first run's `--shot` produced no file because `/tmp/kilo` is another
+co-tenant's and is not writable by this uid; the run recorded here is the one
+that has its capture. Emulator-green is not hardware-pass: the DSP is Mandarine's
+HLE and Old-3DS ndsp timing is unmeasured (AGENTS P6/P8).
+
+### Prior-solution lookup
+
+Pi-knowledge `mdk-sdl` (mode hybrid) on "ndsp frame counter dspFrames unit DSP
+sample rate 32768 audio sink ledger" returned `sound_device.h`, `SPEC.md` §8 and
+`sound.h` — i.e. the mixer side, and **nothing** documenting the counter's unit,
+which is consistent with the unit having been an unexamined claim. Obsidian MCP
+and Cognee MCP expose no tools in this session (`obsidian_*`/`cognee_*` absent),
+so the vault lookup is the degraded disk-only path and Cognee's graph search did
+not happen at all — a session configuration fault to report per AGENTS P9, not a
+lookup to claim.
+
+### Next, per the priority order
+
+**The one-sided view is still first for batch 89**, unchanged and unadvanced:
+panel columns 200..399 of 400, a straight vertical cut at the panel middle, the
+census unable to localise. What this batch adds to it, indirectly, is a habit:
+F2's unit survived because a magnitude was treated as a mechanism, and the view's
+"the census box covers the panel" is the same shape of claim. Item 5b (the HUD)
+stays blocked on the canvas seam. Original-3DS behaviour stays unmeasured. The
+owner actions are unchanged and none is builder-resolvable; this batch staged its
+paths by name and touched none of the six operator files.

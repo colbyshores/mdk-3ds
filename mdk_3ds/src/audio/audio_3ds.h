@@ -96,20 +96,36 @@ bool audioIsOpen();
 // equals `inDsp` by construction and `inDsp <= 4`, so `done` is ALWAYS within
 // four of `submitted` — `done tracking submitted` proves nothing, and "done well
 // behind submitted" is not a state this sink can reach. The rate lives in
-// `submitted` against the clock, not in `done`:
+// `submitted` against the clock, not in `done`. The identity holds for an OPEN
+// sink: `audioClose()` zeroes `inDsp` and not the other two, so read these
+// behind `audioIsOpen()` (review F5).
 //
-//   submitted / (guest frames x 735/882) — the rate test. The device mixes
-//     rate*delta per frame, so N frames owe N x 735/882 buffers. ~1.0 is
-//     matched; 0.50 is a buffer the DSP holds twice as long as its bytes are
-//     worth (the wrong nsamples unit, measured 1030 at 2460 frames); ~0.00 is a
-//     queue nothing ever entered (measured 4 at 2580).
-//   inDsp == 4 with dropped climbing — the queue is jammed.
+//   submitted / (seconds x 50) — the rate test, and SECONDS is the unit. The
+//     device mixes rate*delta per frame off the wall delta, so T seconds owe
+//     T x 44100/882 = T x 50 buffers at any frame rate. The form this block
+//     used, submitted / (guest frames x 735/882), is the same number only at
+//     exactly 60 fps — 735 is one 1/60 s frame — so at 30 fps a half-rate sink
+//     scores 1.00 (review F3). ~1.0 is matched; 0.50 is a buffer the DSP holds
+//     twice as long as its bytes are worth (the wrong nsamples unit, measured
+//     1030 at 2460 frames at 60 fps); ~0.00 is a queue nothing ever entered
+//     (measured 4 at 2580).
+//   inDsp == 4 with dropped climbing — nothing has retired, which is NOT the
+//     same statement as "the queue is jammed" (review F4). The run where ndsp
+//     accepted nothing read inDsp=4 dropped=2579 submitted=4 done=0, and a
+//     merely slow DSP reads the same. `done` and dspFrames are what tell them
+//     apart.
 //   requeued ~= submitted — the channel drains between every submit, i.e. the
 //     DSP consumes faster than the mix produces. One requeue at level load is
 //     normal.
-//   dspFrames ~ 205 per 60 guest frames — ndsp's own counter in 240-sample
-//     blocks at 48 kHz, so this is the difference between "the DSP is running"
-//     and "our buffers are the ones it is running on".
+//   dspFrames ~ 205 per 60 guest frames — ndsp's own counter, in ndsp MIXER
+//     frames: one increment per `ndspThreadMain` iteration, at the DSP's own
+//     NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32768 Hz, which is not this
+//     channel's 44100. So this is the difference between "the DSP is running"
+//     and "our buffers are the ones it is running on". It is NOT "240-sample
+//     blocks at 48 kHz", which is what this line used to say (review F2).
+//
+// The full derivation, including the libctru disassembly the unit came from, is
+// at the counters in audio_3ds.cpp.
 //
 // `dropped` counts REJECTED FILLS, not buffers: one increment discards a whole
 // frame's worth of samples (up to 735 frames, 0.83 of a buffer), so it is not a

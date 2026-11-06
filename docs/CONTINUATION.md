@@ -1,18 +1,18 @@
 # Phase 2 continuation checkpoint
 
-Risk: low — review-6 remediation, comments and record only: two corrections to a shipped comment in `renderer_c3d.cpp` (the alpha-test corner's trigger condition, one oracle line citation) plus in-place retraction annotations in the progress record. No code line moves and this is measured, not asserted: a clean build of this tree and a clean build of its parent `13d59e79` are byte-identical on BOTH artifacts (`mdk.elf` 73bfe104300467bdabdd391e8b9d66fd, `mdk.3dsx` 567a85a0da39925e6af3fa4a2eec025c), and the emulator panel crop is 0 px of 96000 against the committed pair.
+Risk: medium — the ndsp sink's ledger gains a field (`secs=` in the guest log, plus the `audioClock` accumulator that feeds it) and `tests/scripts/ndsp_sink_test.sh` gains a check and a mutation arm; the rest is four comment corrections. It is behaviour-adjacent but bounded: the emulator's top-panel crop is byte-identical (`f9af51b6…`, 0 px of 96000 against the committed pair), so nothing visible moves, and the one code line that does move is a log statement. It is not `low` because a shipped log format changed and a gate was edited in the same batch — the gate got stronger (15 checks/10 arms → 16/11, every arm adjudicated red against the check it names) and that claim is the reviewer's to check.
 
-**Review-5 (run-20261106-062909) closed: seven findings, none rebutted.** Its two durable rules are standing facts below — **a build's identity is `mdk.elf`, never `mdk.3dsx`** (the container is ELF + SMDH + RomFS and `3dsxtool` walks the RomFS in readdir order, so its hash follows the staging filesystem, not the code), and **the panel crop is `tools/panel_crop.py`**, the only place the `(440,253)-(839,492)` rectangle is written, refusing any crop that is not exactly 400x240. Its F2 was the second could-not-fail check in a row (batch 85's enum-coverage loop assigned its verdict inside the body and asserted only `Overlay`; it now checks each pass and carries a `visited` bitmask), and its F3 struck a false mechanism: `DrawQueue::add` clamps an out-of-range bucket to 0, so a seventh pass's draws are folded into `Solid`, never rejected or voided. Narrative Iteration 114; re-measured A/B `docs/evidence/2026-11-06-L7-blend-enable-r2-{parent,current}.{png,txt}`, 0 px of 96000.
+**Review-5 (run-20261106-062909) closed: seven findings, none rebutted.** Its two durable rules are standing facts below — **a build's identity is `mdk.elf`, never `mdk.3dsx`**, and **the panel crop is `tools/panel_crop.py`**. Its F2 was the second could-not-fail check in a row and its F3 struck a false mechanism (`DrawQueue::add` clamps an out-of-range bucket to 0, so a seventh pass folds into `Solid`). Narrative Iteration 114.
 
-**Review-6 (same run, `9a359c7a..13d59e79`) closed: four findings, none rebutted, three fixed, one deferred to the owner because the file that carries it is operator work.** **F1 (Medium)** was the loop's own record lying about itself: batch 86 said Iteration 113's narrative had been restated with the two headers, and `PROGRESS_LOG.md` was appended to with **0 deleted lines**, so it had not — and the block still carried the "rejected/vanished" mechanism, the `9dfed8e0` md5 no build reproduces, the 400x240 claim over a 399x239 crop, and the comment-realignment story review-5 had ruled impossible. Batch 87 annotates those blocks **in place** (the form Iteration 111 already used): an append-only log is corrected by annotation, never by rewriting, because the audit trail is what made the error findable. **F2 (Medium)** is confirmed and NOT builder-writable: the reviewer is spawned through the local qwen slot gate, so a hosted DeepSeek call holds a builder-class slot for its whole 16 minutes; the fix is `QWEN_SLOT_BYPASS=1` on that spawn in `ralph-pi.sh`, a file whose `PI_CMD` default is itself inside the operator's uncommitted hunk. **F3 (Low)**: the alpha-test corner has **two independent triggers, not a conjunction** — an unblended pass moves COLOUR (blend off means the fragment replaces the target) and a depth-writing pass moves DEPTH (the oracle records the fragment, the discard records nothing); either alone is enough, and Overlay today satisfies neither (`Renderer.cs:606-607`). **F4 (Low)**: the canvas citation now points at `Renderer.Insets.cs:127`, the `DrawPass(..., Pass.Overlay, ...)` line, not the signature two lines above. Proof no code moved: this tree and `13d59e79` build byte-identical on both artifacts, and the emulator's panel crop is `f9af51b6…`, 0 px of 96000 against the committed pair. Narrative Iteration 115.
+**Review-6 (same run) closed: four findings, none rebutted, three fixed, one owner-only.** Its F1 was the loop's own record lying about itself (batch 86 claimed a correction it had only appended to), and batch 87 annotates those blocks **in place**: an append-only log is corrected by annotation, never by rewriting, because the audit trail is what made the error findable. Its F3 is a standing fact below (the alpha-test corner's **two independent triggers**). F2 is owner-only (the reviewer holds a qwen slot). Narrative Iteration 115.
 
-**Batch 83's headline measurement was taken against a build that is not its parent** — batch 84's retraction stands, and with review-5 F1 the pattern is clear: three consecutive batches trusted a number whose provenance was asserted rather than reproduced. What is different now is that the provenance is reproducible by anyone: both halves are `git archive`/`git ls-files` + `make` in a throwaway tree, and the identity field is the ELF.
+**Review-2 (same run) F2–F5 closed by batch 88** — the four audio-sink corrections Iteration 111 deferred as "mechanical". Two were not: **F2**'s `dspframes` unit was wrong twice over ("240-sample blocks at 48 kHz"; ndsp is neither) and the corrected unit is now **derived** from a disassembly of `libctru.a` (`ndspThreadMain` adds 1 to `.bss.frameCount` once per iteration, after the `svcSignalEvent` that kicks the DSP → ndsp mixer frames at `NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32768 Hz`) and **confirmed** by the emulator at 204.75/s against the predicted 32768/160 = 204.8. **F3**'s denominator was a frame count standing in for a clock, exact only at 60 fps, so the frontend now accumulates the `elapsed` the mixer was actually given and prints `secs=` on the ledger line: the test is `submitted/(secs x 50)`, measured 0.9953 at frame 1140 with the guest at 59.53 fps. **F4**: `inDsp == 4` with `dropped` climbing means *nothing retired*, not *the queue is jammed* — the pre-`status = FREE` run read `submitted=4 done=0 dropped=2579 inDsp=4` with ndsp having taken nothing. **F5**: `submitted - done == inDsp` is an **open-sink** identity (`audioClose()` zeroes `inDsp` and not the other two). Narrative Iteration 116.
 
-**The census was never inflated, so do not re-run it.** The exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one**, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands" — the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, a different quantity). The old "re-census first" instruction stays withdrawn. Coverage is stated in panel columns (review-3 F4): geometry covers panel columns **200..399** of 400, the right half of the top screen.
+**Two historical corrections that stay load-bearing.** Batch 83's headline measurement was taken against a build that is not its parent (batch 84's retraction stands), and with review-5 F1 the pattern was three consecutive batches trusting a number whose provenance was asserted rather than reproduced — what is different now is that anyone can reproduce both halves with `git archive`/`git ls-files` + `make` in a throwaway tree, and the identity field is the ELF. And **the census was never inflated, so do not re-run it**: the exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one**, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands" — the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, a different quantity). The old "re-census first" instruction stays withdrawn. Coverage is stated in panel columns (review-3 F4): geometry covers panel columns **200..399** of 400, the right half of the top screen.
 
-Last updated: 2026-11-06 (**batch 87 — review-6 closed: the progress record's own over-claim about Iteration 113 is annotated in place, the alpha-test corner's two triggers are independent rather than a conjunction, the canvas citation points at the line that draws, and a comments-only batch proves it by shipping a byte-identical `mdk.elf` and `mdk.3dsx`**).
+Last updated: 2026-11-06 (**batch 88 — review-2 F2–F5 closed: the ndsp frame counter's unit is derived from `libctru.a` and confirmed at 204.75/s, the sink's rate test divides by seconds the mixer was actually given instead of by a frame count, `inDsp == 4` no longer claims more than "nothing retired", and the ledger pin in `ndsp_sink_test.sh` gained a check and an arm instead of losing one**).
 
-**Next small batch (review-2 F2–F5, all confirmed, all comment-only, all in `mdk_3ds/src/audio/audio_3ds.{h,cpp}`):** the `dspframes` unit is DSP sound frames at `SYSCLOCK_SOC/512 = 32728.5 Hz` ≈ 204.5/s (not 240-sample blocks at 48 kHz); the `frames × 735/882` denominator is exact only at 60 fps; `inDsp` pinned at 4 is also the signature of "nothing was ever submitted"; and `submitted - done == inDsp` holds for an **open** sink. Full text of each in `docs/PROGRESS_LOG.md`, Iteration 111.
+**The audio-docs batch is DONE (88).** Its four corrections are in `mdk_3ds/src/audio/audio_3ds.{h,cpp}` and `mdk_3ds/src/main_3ds.cpp`; the text of each is `docs/PROGRESS_LOG.md` Iteration 116 (and, for the two Iteration 111 deferred, that iteration). One durable fact came out of it and is in the standing list below: **the ndsp frame counter is a mixer-frame counter at 32768 Hz, not a sample counter.**
 
 
 **Owner action (review F2, new):** `ralph/builder.md`'s "Search scope and bounded commands" block forbids sibling reads, while `AGENTS.md` §12 requires them ("**Proven 3DS platform code in sibling ports — adapt, do not re-derive**", naming `../forsaken/sound_3ds.c`, `../t2k`'s ndsp audio, `../perfect_dark/tools/emurun.sh`) and the 2026-11-05 directive names `../forsaken/sound_3ds.c` for this subsystem — it is where the `nsamples` convention came from. One of the two must be amended by the owner; the builder may not edit either. Combined with the item below about the same uncommitted file.
@@ -84,8 +84,8 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 8. **CLOSED (batch 75) — the red clear.** It was the clear colour's byte order, not the render path. See the
    header of this file.
 
-## NEXT (batch 88)
-**The one-sided view.** Geometry covers panel columns **200..399** of the 400-wide top
+## NEXT (batch 89)
+**The one-sided view, still first and still unadvanced.** Geometry covers panel columns **200..399** of the 400-wide top
 screen — the right half — and the live question is why coverage stops at a straight
 vertical line at the panel's middle. The census instrument is honest (header: 58464
 exact clear pixels in BOTH builds, `GPU_CULL_NONE` 69 px, depth-off 201 px, and its own
@@ -93,7 +93,12 @@ mapping probe fails, so it cannot localise), so do not re-run it first and do no
 re-derive what Iteration 106 retired (the cull, the depth triple, the queue, the MVP, a
 deleted rotation). The next useful capture is **census and `GPU_PRIMARY_COLOR` in the
 same run**, cropped with `tools/panel_crop.py` so the comparison is frame-identical.
-The audio-docs batch (F2–F5 above) is the cheap alternative if the view is the longer job.
+Batch 88 took the sanctioned alternative instead of this, so there is no second
+cheap item queued behind it: if the view cannot be localised with a new hypothesis,
+say so in the batch rather than shipping a sixth measurement with the same
+instrument. What batch 88 does bring to it is a habit, not a datum — review-2 F2
+survived three batches because a magnitude was accepted as a mechanism, and "the
+census box covers the panel" is the same shape of claim.
 Item 5b (the HUD) stays blocked on the same canvas seam (`mdk_render_canvas_quad`
 is a no-op on this backend). The second constraint batch 85 wrote onto it is
 **downgraded, not carried** (review-5 F5): the frame-wide alpha test and the
@@ -110,9 +115,12 @@ conjunction, and an unblended canvas pass diverges on colour alone.
 bank's footprint with no change to a sample value, pinned by a re-run of `golden/L3_audio_mix.txt`. (b) 6d —
 the console has no `ScriptRuntime`, so ambient and object sounds cannot play; only Kurt's own set exists.
 (c) the bank still has no eviction bound (6b). (d) the ndsp sink's `nsamples` unit is now *measured* in the
-emulator's HLE DSP; the Old-3DS check stays open (AGENTS P6/P8). What to read on hardware
-is the ledger line's `submitted` against `frame x 735/882` — **not** `done` against
-`submitted`, which is an identity and proves nothing (batch 82, review F1).
+emulator's HLE DSP and the frame counter's unit is now *derived*; the Old-3DS check stays open
+(AGENTS P6/P8). What to read on hardware is the ledger line's `submitted` against
+`secs x 50` — the seconds the mixer was actually given, printed on the line since
+batch 88 — and **not** `done` against `submitted`, which is an identity and proves
+nothing (batch 82, review F1). The older `frame x 735/882` form of that division is
+the same number only at exactly 60 fps (review-2 F3).
 
 **Deferred review findings:** review-4 of run-20261105-142911 F1/F2 (the geometric solid-arena pin stands in for the unported
 DTI connection crossing; the fall probe hard-codes the start and omits the camera stage) need a
@@ -138,12 +146,26 @@ Original-3DS behaviour remains unmeasured.
   `../forsaken/sound_3ds.c` say frames, and the emulator's rate measurement settles it. Pinned by
   `tests/scripts/ndsp_sink_test.sh`. Do not re-derive either from the header comment.
 * **The sink's ledger is a balance, not a rate (batch 82, review F1):** `submitted - done
-  == inDsp <= 4` holds by construction in every state, healthy or broken, so no reading of
-  `done / submitted` means anything — batch 81's broken build measured 0.996. The rate is
-  `submitted / (frame x 735/882)`, which is why the ledger line prints the frame; the three
-  measured builds give 0.002 (nothing queued), 0.502 (the wrong `nsamples`) and 1.003
-  (correct). `dropped` counts rejected FILLS, not buffers. Pinned by `ndsp_sink_test.sh`'s
-  `ledger-balances` and `counts-done-at-the-sink-recheck`.
+  == inDsp <= 4` holds by construction in every state, healthy or broken — and only while
+  the sink is OPEN (review-2 F5: `audioClose()` zeroes `inDsp` and not the other two), so
+  read it behind `audioIsOpen()`. No reading of `done / submitted` means anything — batch
+  81's broken build measured 0.996. The rate is `submitted / (secs x 50)`, the seconds the
+  mixer was actually given, which the ledger line prints as `secs=` since batch 88; the
+  older `frame x 735/882` form is the same number only at exactly 60 fps (review-2 F3), and
+  a half-rate sink at 30 fps scores 1.00 against it. The three measured builds give 0.002
+  (nothing queued), 0.502 (the wrong `nsamples`) and 1.003 (correct). `dropped` counts
+  rejected FILLS, not buffers, and `inDsp == 4` with `dropped` climbing means only that
+  NOTHING RETIRED — the run where ndsp accepted nothing read `submitted=4 done=0
+  dropped=2579 inDsp=4` (review-2 F4). Pinned by `ndsp_sink_test.sh`'s `ledger-balances`,
+  `counts-done-at-the-sink-recheck`, `frontend-logs-the-clock-with-the-ledger`.
+* **`ndspGetFrameCount()` counts ndsp MIXER frames, not samples (batch 88, review-2 F2).**
+  Derived from the linked `libctru.a`: `.bss.frameCount` is zeroed by `ndspInitialize`
+  and gets exactly one `add` per `ndspThreadMain` iteration, after the `svcSignalEvent`
+  that kicks the DSP. The DSP's own rate is `NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 = 32768
+  Hz` (`ndsp.h:9`) and has nothing to do with this channel's 44100, so the counter advances
+  ~204.8/s — measured 204.75/s at frame 1140. It is a liveness signal, not a sample count.
+  The claim it replaces ("240-sample blocks at 48 kHz") fitted the same measurement at
+  200/s, which is why a magnitude must never be accepted as a mechanism.
 * **The render seam's `clear_colour` is `0xAARRGGBB`; the PICA's clear word is `0xRRGGBBAA`, red in the TOP
   byte** (`mdk::pica::clearColour`). Assert colour contracts as **bit fields, not memory bytes**.
 * **Exactly one `input3dsPoll()` per frame, and it is the only `hidScanInput()`.** libctru recomputes its edge

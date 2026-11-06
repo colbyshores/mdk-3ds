@@ -419,6 +419,16 @@ int main(int argc, char** argv) {
     // the simulation as one enormous step).
     // ---------------------------------------------------------------------
     double last = nowSeconds();
+    // What the AUDIO has been handed, in seconds, and not the wall clock: the
+    // device's `owed` grows by rate*elapsed and `elapsed` is the CLAMPED delta,
+    // so a 40 s sleep the loop clamped to 0.25 s owes 0.25 s of audio and this
+    // clock says so. It is the denominator the sink's rate test needs, because
+    // that test is a rate against the time the mixer was given and not against
+    // a frame count (review F3 of run-20261106-062909: frame x 735/882 is the
+    // same number only at exactly 60 fps). Accumulated in double for the same
+    // reason `last` and `delta` are: this is a running time sum, not a hot-path
+    // accumulator, and it is read once every 60 frames.
+    double audioClock = 0.0;
     const float step = mdk::flow::GameFlow::stepFor(false, false, 0.0f);
     const float maxPending = step * 10.0f;  // the C#'s ten-step ceiling
     float pending = 0.0f;
@@ -559,6 +569,9 @@ int main(int argc, char** argv) {
         mixer.listenFromCamera(camera);
         mixer.update(elapsed);
         mixer.device().update(elapsed);
+        // AFTER the device, so the clock is exactly the sum of what the device
+        // was given and not of what the frame happened to measure.
+        audioClock += elapsed;
 
         MdkFrameParams params;
         params.elapsed = elapsed;
@@ -633,13 +646,21 @@ int main(int argc, char** argv) {
             // frame number is repeated HERE on purpose (review F1 of
             // run-20261106-062909): the only reading that discriminates a healthy
             // sink from a wrong-nsamples one is `submitted` against what the clock
-            // owes, which is frame x 735/882 buffers, so the two numbers have to
-            // be on the same line to be divided. `done` cannot carry that test:
-            // submitted - done == inDsp <= 4 by construction. See audio_3ds.h.
+            // owes, so the two numbers have to be on the same line to be divided.
+            // `done` cannot carry that test: submitted - done == inDsp <= 4 by
+            // construction. See audio_3ds.h.
+            //
+            // AND THE CLOCK IS ON THE LINE TOO, as seconds (review F3). Dividing
+            // `submitted` by frame x 735/882 was the frame count standing in for
+            // the clock, and it is only the same number at exactly 60 fps; at 30
+            // fps a half-rate sink scores 1.00 that way. `secs` is the sum of the
+            // elapsed values the mixer actually received, so the rate test is
+            // submitted/(secs x 50) and is frame-rate independent by construction.
             const mdk::AudioStats st = mdk::audioStats();
-            mdk::log3dsPrintf("audio: frame=%lu submitted=%u done=%u dropped=%u requeued=%u "
-                              "inDsp=%d dspframes=%u dspdropped=%u",
-                              (unsigned long)frame, (unsigned)st.submitted, (unsigned)st.done,
+            mdk::log3dsPrintf("audio: frame=%lu secs=%.2f submitted=%u done=%u dropped=%u "
+                              "requeued=%u inDsp=%d dspframes=%u dspdropped=%u",
+                              (unsigned long)frame, audioClock, (unsigned)st.submitted,
+                              (unsigned)st.done,
                               (unsigned)st.dropped, (unsigned)st.requeued, st.inDsp,
                               (unsigned)st.dspFrames, (unsigned)st.dspDropped);
         }

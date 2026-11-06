@@ -201,12 +201,26 @@ def adjudicate(src, main, quiet=False):
           re.search(r"audioStats\s*\(\s*\)", m) is not None
           and re.search(r"submitted=%[0-9a-z]+", raw) is not None,
           "the frontend must publish the sink's ledger in the guest log")
-    # The rate test needs the frame on the same line as submitted, or the reader
-    # has to pair two log lines that are printed for different reasons (F1).
+    # The rate test needs its DENOMINATOR on the same line as `submitted`, or the
+    # reader has to pair two log lines that are printed for different reasons (F1).
+    # The denominator is the CLOCK and not the frame count: `frame x 735/882` is
+    # the same number only at exactly 60 fps, so a half-rate sink at 30 fps scores
+    # 1.00 against it (review F3 of run-20261106-062909). Both are pinned, and
+    # each is read out of the ledger's own format STRING rather than out of the
+    # file, so deleting one field cannot satisfy the other check by accident.
+    lits = [s for s in re.findall(r'"((?:[^"\\]|\\.)*)"', main) if "submitted=" in s]
+    ledger = "".join(lits)
     check("frontend-logs-the-frame-with-the-ledger",
-          re.search(r"frame=%[0-9a-z]+\s+submitted=", raw) is not None,
-          "the only discriminating rate is submitted against frame x 735/882, so "
-          "the ledger line must carry the frame it was printed at")
+          re.search(r"frame=%[0-9a-z.]+", ledger) is not None,
+          "the ledger line must carry the frame it was printed at, so it can be "
+          "matched against the frame line the frontend prints on the same cadence")
+    check("frontend-logs-the-clock-with-the-ledger",
+          re.search(r"secs=%[0-9a-z.]+", ledger) is not None
+          and re.search(r"audioClock\s*\+=\s*elapsed", m) is not None,
+          "the rate test is submitted / (secs x 50): the seconds the mixer was "
+          "actually given must be on the ledger line and must be accumulated from "
+          "the same elapsed the device got, or the frame count stands in for the "
+          "clock and the test is only valid at one frame rate")
 
     failed = [n for n, ok, _ in checks if not ok]
     return checks, failed
@@ -250,7 +264,9 @@ ARMS = [
     ("requeued-stops-being-counted",
      lambda s, m: (s.replace("g_requeued++;", "", 1), m)),
     ("frontend-stops-logging-the-frame-with-the-ledger",
-     lambda s, m: (s, m.replace("frame=%lu submitted=", "submitted=", 1))),
+     lambda s, m: (s, m.replace("frame=%lu ", "", 1))),
+    ("frontend-stops-logging-the-clock-with-the-ledger",
+     lambda s, m: (s, m.replace("secs=%.2f ", "", 1))),
     ("frontend-stops-logging-the-ledger",
      lambda s, m: (s, m.replace("submitted=%u", "x=%u", 1))),
 ]

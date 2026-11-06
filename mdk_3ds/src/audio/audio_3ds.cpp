@@ -51,23 +51,56 @@ bool g_live = false;
 // measured wrong-nsamples run falsified it — submitted=1030 done=1026, i.e.
 // ~1.0, with dropped=1435. Do not read a rate out of `done / submitted`.
 //
+// THE IDENTITY IS AN OPEN-SINK IDENTITY (review F5 of run-20261106-062909).
+// `audioClose()` zeroes `g_inDsp` and leaves `g_submitted` and `g_done` alone,
+// so after a close the balance is whatever was still in flight (up to
+// kNumBufs) against an `inDsp` of 0. Read the ledger only while
+// `audioIsOpen()` is true; a closed sink's numbers are a transcript, not a
+// state.
+//
 // The four readings that DO discriminate, each with the measured value from the
 // run that produced it (all ~43 s of guest time, level 7):
 //
-//   submitted against what the clock owes. Production is real time by
-//     construction (the device mixes rate*delta per frame), so N guest frames
-//     owe N*735/882 buffers and 2580 frames owe ~2150. Correct build: 2156 at
-//     2580 (ratio 1.00). Wrong nsamples: 1030 at 2460 (0.50) — the DSP held each
+//   submitted against what the CLOCK owes, not what the frame count owes.
+//     Production is real time by construction: the device mixes rate*delta per
+//     frame and `GameFlow::elapsedFor(false, step, delta)` hands it the WALL
+//     delta (main_3ds.cpp:439), so over T seconds the device owes
+//     T x 44100/882 = T x 50 buffers whatever the frame rate did. The
+//     N x 735/882 form of this test is the SAME number only at exactly 60 fps,
+//     because 735 is one 1/60 s frame at 44100 Hz (review F3). At 30 fps the
+//     same wall-clock period owes twice as many buffers, so a sink producing
+//     half the right rate scores 1.00 against a frame-count denominator: the
+//     fps precondition is part of the test, not a footnote to it. Measured at
+//     60 fps, where 2580 frames are 43 s and owe ~2150: correct build 2156
+//     (ratio 1.00). Wrong nsamples: 1030 at 2460 (0.50) — the DSP held each
 //     buffer twice as long as its bytes are worth, so half the fills found a
 //     full queue and were never submitted. Nothing ever queued at all: 4 (0.00).
 //     THIS is the rate test, and it is why the ledger line carries the frame.
-//   inDsp pinned at kNumBufs while dropped climbs: the queue is jammed, i.e.
-//     consumption is slower than production. Both broken runs read inDsp=4.
+//   inDsp pinned at kNumBufs while dropped climbs: NOTHING HAS RETIRED, which
+//     does not by itself say why (review F4). The pre-`status = FREE` run read
+//     inDsp=4 dropped=2579 with submitted=4 done=0 — ndsp had accepted nothing,
+//     so the four buffers sat there forever — and a merely slow DSP drains the
+//     same four buffers late and reads the same way. What separates "the queue
+//     is jammed" from "ndsp never took a buffer" is `done` and dspframes
+//     advancing, not inDsp. Both broken runs read inDsp=4.
 //   requeued ~= submitted: the channel drained on every submit, i.e. consumption
 //     is FASTER than production. One requeue at level load is normal (measured
 //     requeued=1).
-//   dspframes advancing ~205 per 60 guest frames (ndsp's own counter, in
-//     240-sample blocks at 48 kHz): the DSP is running on OUR buffers.
+//   dspframes advancing ~205 per 60 guest frames: the DSP is running.
+//     THE UNIT, read off the disassembly of libctru.a's ndsp.o (the same
+//     instrument as the `ndspChnWaveBufAdd` reading below): `.bss.frameCount`
+//     is zeroed by `ndspInitialize` (`str r1, [r2]` at +0x13c with r1 = 0) and
+//     incremented by exactly one `add r3, r3, #1` per iteration of
+//     `ndspThreadMain` (+0x1a8..+0x1b4), immediately after the `svcSignalEvent`
+//     that hands the frame to the DSP. So it counts ndsp MIXER frames — not
+//     samples, not our wave buffers, and not this channel's 44100 Hz, which is
+//     resampled into the DSP's own NDSP_SAMPLE_RATE = SYSCLOCK_SOC/512 =
+//     32768 Hz (ndsp.h:9). 205.7/s is therefore one mixer frame per ~159 DSP
+//     samples. An earlier revision of this comment called the unit "240-sample
+//     blocks at 48 kHz", which is wrong twice over and was never checked
+//     (review F2) — and it survived precisely because 48000/240 = 200/s fits the
+//     same measurement, which is what a plausible-looking unit does to a
+//     measurement that only checks the magnitude.
 //
 // `dropped` counts REJECTED FILLS, not buffers: one increment can throw away a
 // whole frame's worth of samples (up to 735 frames, 0.83 of a buffer), so it is
