@@ -68,6 +68,7 @@ find_package(ZLIB REQUIRED)
 set(SOURCES
     # ---- platform layer (this tree) ----
     src/main.cpp
+    src/audio/audio_sdl.cpp
     src/platform/window_sdl.cpp
     src/platform/filesystem_posix.cpp
 

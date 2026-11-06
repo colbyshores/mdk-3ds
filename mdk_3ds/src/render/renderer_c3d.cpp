@@ -225,8 +225,13 @@ struct Census {
     bool active = false;
     int32_t triangles = 0;   // queued triangles seen
     int32_t behind = 0;      // a vertex with clip w <= 0
-    int32_t offscreen = 0;   // the whole bbox outside [-1,1]
-    int32_t onscreen = 0;    // the bbox touches the clip square
+    int32_t offscreen = 0;   // the whole bbox outside [-1,1] IN X/Y
+    int32_t onscreen = 0;    // the bbox touches the clip square IN X/Y — see
+                             // depthOut for the depth half, which this does NOT
+                             // test: "inside the clip square" is an x/y statement
+                             // and reading it as "the GPU will show it" over-reads
+                             // it (review-1 F5).
+    int32_t depthOut = 0;    // of those, the ones wholly outside [-1,1] in ndc z
     int32_t cw = 0;          // on-screen, negative signed area in NDC (y up)
     int32_t ccw = 0;         // on-screen, positive
     int32_t near60 = 0;      // on-screen AND within 60 units of the eye
@@ -847,6 +852,7 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     r->census.behind = 0;
     r->census.offscreen = 0;
     r->census.onscreen = 0;
+    r->census.depthOut = 0;
     r->census.cw = 0;
     r->census.ccw = 0;
     r->census.near60 = 0;
@@ -925,9 +931,9 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
 // first eye's replay of frame `kCensusFrame`.
 static void logCensus(RendererC3D* r) {
     const Census& c = r->census;
-    mdk::log3dsPrintf("census frame=%d draws=%d tris=%d behind=%d offscreen=%d onscreen=%d near60=%d cw=%d ccw=%d w=[%.1f,%.1f] areaset=%.4f",
+    mdk::log3dsPrintf("census frame=%d draws=%d tris=%d behind=%d offscreen=%d onscreen=%d depthout=%d near60=%d cw=%d ccw=%d w=[%.1f,%.1f] areaset=%.4f",
                       r->frame, (int)r->drawCount, c.triangles, c.behind,
-                      c.offscreen, c.onscreen, c.near60, c.cw, c.ccw, c.minW,
+                      c.offscreen, c.onscreen, c.depthOut, c.near60, c.cw, c.ccw, c.minW,
                       c.maxW, c.areaSum);
     if (c.bestDraw >= 0) {
         mdk::log3dsPrintf("census nearest draw=%d first=%d w=%.1f area=%+.8f v0=(%.3f,%.3f,%.3f) v1=(%.3f,%.3f,%.3f) v2=(%.3f,%.3f,%.3f)",
@@ -941,10 +947,38 @@ static void logCensus(RendererC3D* r) {
     {
         // The ndc bbox is the mapping probe: the panel's painted rectangle has to
         // be this box, or the framebuffer is not showing what the matrix produced.
+        //
+        // IT PRINTS THE PIXEL BOX NOW, BECAUSE THE TEST WAS NEVER APPLIED (review-1
+        // F2). Batch 78 logged the ndc box, said "or the framebuffer is not
+        // showing what the matrix produced", and then moved on without applying it.
+        // Applied, it FAILS: the box maps outside the target on three sides, so it
+        // covers the whole panel, while the panel was 61% clear colour. That is not
+        // a contradiction — the box is the UNION of every triangle's bbox with no
+        // per-pixel coverage and no depth test in it, so "the union covers the
+        // panel" and "the panel is mostly clear" are both true and neither says
+        // where the geometry is. The probe is kept because a box that landed wholly
+        // INSIDE the panel while the panel stayed clear would be a real finding; a
+        // box that overflows it proves only that the union is large.
+        //
+        // THE SPACE IS STATED, because a number without one is how batch 78 ended
+        // up reporting a "407x9 strip" in a 400-pixel-wide panel (review-1 F6).
+        // The target is 240x400 PORTRAIT; the capture's 400x240 panel is that
+        // transposed, so a pixel box here is not directly a pixel box there.
         const Census& c = r->census;
+        const float pxLo = (c.loX + 1.0f) * 0.5f * (float)kScreenWidth;
+        const float pxHi = (c.hiX + 1.0f) * 0.5f * (float)kScreenWidth;
+        const float pyLo = (1.0f - c.hiY) * 0.5f * (float)kScreenHeight;
+        const float pyHi = (1.0f - c.loY) * 0.5f * (float)kScreenHeight;
         mdk::log3dsPrintf("census ndc box=[%.3f,%.3f]x[%.3f,%.3f] near60 box=[%.3f,%.3f]x[%.3f,%.3f]",
                           c.loX, c.hiX, c.loY, c.hiY, c.nLoX, c.nHiX,
                           c.nLoY, c.nHiY);
+        mdk::log3dsPrintf("census mapping: target px x=[%.1f,%.1f] y=[%.1f,%.1f] of %dx%d portrait"
+                          " (panel capture is this transposed); covers=%s",
+                          pxLo, pxHi, pyLo, pyHi, kScreenWidth, kScreenHeight,
+                          (pxLo < 0.0f && pxHi > (float)kScreenWidth &&
+                           pyLo < 0.0f && pyHi > (float)kScreenHeight)
+                              ? "whole target"
+                              : "part of the target");
     }
 }
 
@@ -1709,14 +1743,26 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         // `mesh.data[0..2]` made every draw of a mesh log the same vertex, and
         // that is what sent batch 77 looking for a fan in a triangle its draw did
         // not even contain.
-        const float* vertex = static_cast<const float*>(mesh.data) +
-                              (size_t)(draw->first_vertex >= 0
-                                           ? draw->first_vertex : 0) * 5u;
-        mdk::log3dsPrintf("draw %d: mesh=%d first=%d count=%d tex=%d pass=%d v0=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f)",
+        //
+        // AND IT IS BOUNDED BY THE MESH (review-1 F5). A draw whose first_vertex
+        // sits at or past the mesh's own vertex count — an empty tail draw is
+        // enough, and a mesh updated with fewer vertices than its capacity is
+        // another — would otherwise read 20 bytes past the end of the mesh's
+        // linear buffer and print them as a vertex, which is the wrong-vertex
+        // attribution this sample was rewritten to stop. A diagnostic must not
+        // read outside the resource it is inspecting.
+        const int32_t first = draw->first_vertex >= 0 ? draw->first_vertex : 0;
+        const bool sampleable = mesh.count > 0 && first + 1 <= mesh.count;
+        float v[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        if (sampleable) {
+            memcpy(v, static_cast<const float*>(mesh.data) + (size_t)first * 5u, sizeof(v));
+        }
+        mdk::log3dsPrintf("draw %d: mesh=%d first=%d count=%d tex=%d pass=%d v0=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f)%s",
                           (int)r->drawCount, (int)draw->mesh, (int)draw->first_vertex,
                           (int)draw->vertex_count, (int)draw->material.texture,
                           (int)draw->material.pass,
-                          vertex[0], vertex[1], vertex[2], vertex[3], vertex[4]);
+                          v[0], v[1], v[2], v[3], v[4],
+                          sampleable ? "" : " [first is past the mesh's end]");
     }
     // THE DIAGNOSTIC TRIANGLE IS DRAWN LAST, AFTER THE REAL DRAW -- see below.
 
@@ -1836,6 +1882,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         for (int32_t t = 0; t < tris; t++) {
             float nx[3];
             float ny[3];
+            float nz[3];
             float w[3];
             bool behind = false;
             for (int32_t v = 0; v < 3; v++) {
@@ -1845,6 +1892,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                 const float z = cv[at + 2];
                 const float cx = x * cm[0] + y * cm[4] + z * cm[8] + cm[12];
                 const float cy = x * cm[1] + y * cm[5] + z * cm[9] + cm[13];
+                const float cz = x * cm[2] + y * cm[6] + z * cm[10] + cm[14];
                 const float cw = x * cm[3] + y * cm[7] + z * cm[11] + cm[15];
                 if (cw <= 0.0f) {
                     behind = true;
@@ -1853,6 +1901,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
                 const float inv = cw != 0.0f ? 1.0f / cw : 0.0f;
                 nx[v] = cx * inv;
                 ny[v] = cy * inv;
+                nz[v] = cz * inv;
             }
             Census& c = r->census;
             c.triangles++;
@@ -1899,6 +1948,25 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
             if (hix < -1.0f || lox > 1.0f || hiy < -1.0f || loy > 1.0f) {
                 c.offscreen++;
                 continue;
+            }
+            // The depth half, counted separately rather than folded into onscreen:
+            // a triangle inside the clip SQUARE in x/y but entirely past the far
+            // plane (or in front of the near one) is not something the GPU will
+            // show, and the census's on-screen count was read that way (review-1
+            // F5). The PICA's depth map decides which side of [-1,1] is "in", so
+            // this is reported as a range and not as a verdict.
+            float loz = nz[0];
+            float hiz = nz[0];
+            for (int32_t v = 1; v < 3; v++) {
+                if (nz[v] < loz) {
+                    loz = nz[v];
+                }
+                if (nz[v] > hiz) {
+                    hiz = nz[v];
+                }
+            }
+            if (hiz < -1.0f || loz > 1.0f) {
+                c.depthOut++;
             }
             const float area = (nx[1] - nx[0]) * (ny[2] - ny[0]) -
                                (ny[1] - ny[0]) * (nx[2] - nx[0]);

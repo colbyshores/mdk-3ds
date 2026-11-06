@@ -24,10 +24,34 @@
 // output cannot be heard or captured from this session.
 //
 // WHAT THE BACKENDS OWN is one thing: what happens to the finished buffer. The
-// sink seam below is that seam — a plain function pointer and a context, because
+// sink seam below is that seam — plain function pointers and a context, because
 // AGENTS.md 10 refuses std::function. SDL on Linux queues it to an audio stream;
 // ndsp on 3DS copies it into a wave buffer. Neither of them changes a sample, and
 // that is the point of the seam.
+//
+// HOW MANY FRAMES TO MIX is the one thing the seam cannot keep one-way, and the
+// C# says so: `Update` mixes `2646 - SDL_GetAudioStreamQueued(stream)/8` frames
+// when it has a stream and `(int)_owed` when it has none (AudioDevice.cs:217-221).
+// So the seam has a SECOND, optional half: a `queued` query that answers how many
+// output frames the backend still holds. A sink that has one (SDL) gets the C#'s
+// top-up accounting; a sink that does not (ndsp, which exposes no per-buffer play
+// position in libctru) keeps the device's own `owed += rate*delta` accounting —
+// the one `golden/L3_audio_mix.txt` pins — and lets its buffer queue absorb the
+// frame jitter. Both branches are the oracle's; neither is invented here.
+//
+// WHERE THE ENUMERATION ORDER COMES FROM, AND ITS LIMIT. The C# sums its voices in
+// the enumeration order of a `Dictionary<int, Voice>` it mutates while enumerating,
+// and .NET documents that order as unspecified; a removed slot is reused by the next
+// `Play`, while this vector erases and appends. Float addition is not associative,
+// so a schedule in which a voice ENDS before a later `Play` mixes the same voices in
+// a different order and the samples differ — measured by the batch-79 review at 52
+// of 120 updates differing on the golden's own schedule with a stop, a peak delta of
+// 1.79e-07 against a 0.944 peak (-134 dBFS) and up to 6698 ULP on a single sample.
+// That is inaudible and it is not fixable without pinning .NET's slot layout, which
+// is not the oracle's behaviour either; see the note at the golden in
+// tests/scripts/tick1.cpp. A voice that is explicitly `stop()`ed has always been in
+// the golden's schedule and is unaffected: the difference is only in the order the
+// SURVIVING voices are summed in.
 //
 // The headless oracle never calls this update (its driver ticks the scripts
 // only), so every voice it starts stays live until it is stopped — which the
@@ -83,10 +107,23 @@ public:
     // it longer copies it. NULL is the muted device: the mix is computed and
     // dropped, exactly as the C# does when it has no SDL stream.
     typedef void (*Sink)(void* context, const float* interleaved, int32_t frames);
-    void setSink(Sink sink, void* context) {
+    // How many output frames the sink still holds and has not played. NULL (the
+    // muted device and the ndsp sink) means "no queue to ask": the device then
+    // mixes the delta it was given, which is the golden's accounting.
+    typedef int32_t (*Queued)(void* context);
+    void setSink(Sink sink, void* context, Queued queued = nullptr) {
         sink_ = sink;
         sinkContext_ = context;
+        queued_ = queued;
     }
+
+    // The C#'s QueueSeconds: how much output the C# keeps queued ahead of the
+    // play head, 60 ms, and the frame count it derives from it (44100 * 0.06f =
+    // 2646). Only a sink that can answer the queue question uses it; the 3DS's
+    // 40 ms from SPEC.md 8 is realised as its wave-buffer queue instead (see
+    // mdk_3ds/src/audio/audio_3ds.h), so there is no per-target knob here.
+    static constexpr float kQueueSeconds = 0.06f;
+    int32_t queueFrames() const { return queueFrames_; }
 
     // Start a voice: its id, or 0 when all voices are busy.
     int32_t play(const SoundBank::Entry& sound, float gain, float pitch = 1.0f, float pan = 0.0f,
@@ -167,6 +204,8 @@ private:
 
     Sink sink_ = nullptr;
     void* sinkContext_ = nullptr;
+    Queued queued_ = nullptr;
+    int32_t queueFrames_ = 2646;  // (int)(44100 * kQueueSeconds), computed in the ctor
 };
 
 } // namespace audio

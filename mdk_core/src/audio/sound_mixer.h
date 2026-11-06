@@ -102,6 +102,22 @@ public:
 
     // Decibels to a linear gain, for a volume (0-0x7FFF): linear over 25 dB.
     static float gain(float volume);
+
+    // THE LISTENER, from the frame's camera. The C# sets it in DrawScene from the
+    // follow camera's own eye basis (Viewer.cs:686-693): position = camera
+    // .Position, right = eye.Right. The port's Camera carries position, forward
+    // and up, and the C#'s FollowCamera.Right is Cross(Forward, Up)
+    // (FollowCamera.cs:201) -- which is the same right the view matrix is built
+    // from (camera_builder.cpp's xaxis), so deriving it here is a restatement of
+    // the oracle's basis, not a new convention. Both frontends call this rather
+    // than each writing the cross product.
+    //
+    // What is NOT here is the scope half: the C# also sets ScopeZoom and feeds
+    // ListenerForward/Up from Kurt's SniperForward (Kurt.Sniper.cs:39), and the
+    // scope's listening (scopeGain) only runs while ScopeZoom > 0. Kurt's sniper
+    // is not ported, so the zoom stays 0 and forward/up keep the camera's own --
+    // unused on that path. Deferred with the sniper, not silently dropped.
+    void listenFromCamera(const Camera& camera);
     // The gain of a sound through the scope (0x403750), from its place seen from
     // the listener (`local`: right, up, depth).
     static float scopeGain(const Vec3& local, float zoom);
@@ -109,6 +125,11 @@ public:
     const std::vector<Voice>& voices() const { return voices_; }
     int32_t nextVoiceId() const { return device_.nextId(); }
     const SoundDevice& device() const { return device_; }
+    // The frontend sets the sink on it and calls its update once a frame: in the
+    // C# the device belongs to the game (Game.cs:206) and `Update` runs after the
+    // screen's frame (Game.cs:336), while the mixer's own Update runs inside the
+    // viewer's DrawScene (Viewer.cs:696). Two calls, two places, one device.
+    SoundDevice& device() { return device_; }
 
     // The listener: position and right (MDK coordinates), line of sight and up
     // for the scope, and the scope's zoom (1 to 0.25) while Kurt snipes, else 0.

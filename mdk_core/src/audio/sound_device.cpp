@@ -31,6 +31,9 @@ SoundDevice::SoundDevice()
      * as the C# does; the value is the same float (checked bit-for-bit against
      * MathF.Exp, 0x3F131C9A). measured n/a. Verified 2026-11-05. */
     musicAlpha_ = 1.0f - expf(-2.0f * kPi * kMusicCutoff / (float)kOutputRate);
+    // AudioDevice.Update's `(int)(OutputRate * QueueSeconds)`, once instead of
+    // per Update: 44100 * 0.06f rounds to 2646.0f, so the frame count is 2646.
+    queueFrames_ = (int32_t)((float)kOutputRate * kQueueSeconds);
 }
 
 void SoundDevice::setBusGain(int32_t bus, float gain) {
@@ -122,6 +125,12 @@ bool SoundDevice::mixVoice(Voice& voice, float* out, int32_t frames) {
         // scripts are waiting on would never end: this is what the headless
         // oracle's goldens rely on.
         const float step = voice.pitch * (float)voice.sampleRate / (float)kOutputRate;
+        /* @vfp-exempt R3,R4 — the same arithmetic as the pinned loop below, on the
+         * branch with nothing to play: the double position (R4) and the float
+         * compare that decides the wrap (R3). It is not cold — a voice with no
+         * samples still runs its lifecycle for every frame it is alive — and the
+         * oracle's own loop is the same shape, so the two branches have to agree.
+         * measured n/a (corpus empty). Verified 2026-11-06. */
         for (int32_t f = 0; f < frames; f++) {
             if (voice.position >= (double)voice.frames) {
                 if (!voice.looping) {
@@ -193,14 +202,27 @@ void SoundDevice::addMusic(int32_t frames) {
     }
 }
 
-// The muted device's frame count — `owed += 44100 * delta`, and the whole
-// accumulated seconds are mixed, because there is no stream queue to top up.
-// That is exactly AudioDevice.Update with `_stream == null`, which is also the
-// shape of the 3DS sink until the ndsp batch gives it a queue of its own.
+// The frame count to mix. AudioDevice.Update has two answers and picks by whether
+// it has a stream:
+//
+//   frames = _stream == null ? (int)_owed
+//                            : (int)(OutputRate * QueueSeconds) - SDL_GetAudioStreamQueued(_stream) / bytesPerFrame;
+//   _owed -= _stream == null ? frames : _owed;
+//
+// The port picks by whether the sink can ANSWER the queue question: SDL can (it is
+// the same SDL call), and the muted device and the ndsp sink cannot, so they keep
+// the `owed` accounting the golden pins. Both branches are the oracle's, line for
+// line; the only thing that moved is which sink is allowed to take which.
 void SoundDevice::update(float delta) {
     owed_ += (double)kOutputRate * (double)delta;
-    const int32_t frames = (int32_t)owed_;
-    owed_ -= (double)frames;
+    int32_t frames;
+    if (sink_ != nullptr && queued_ != nullptr) {
+        frames = queueFrames_ - queued_(sinkContext_);
+        owed_ = 0.0;
+    } else {
+        frames = (int32_t)owed_;
+        owed_ -= (double)frames;
+    }
     if (frames <= 0) {
         return;
     }

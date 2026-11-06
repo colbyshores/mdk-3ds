@@ -15172,3 +15172,183 @@ golden's own `max`. For the next (ndsp) batch the vault names
 `10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md` and
 `30-architecture/patterns/3ds-teardown-every-thread-and-service-on-every-exit.md`.
 Original-3DS behaviour remains unmeasured, as ever.
+
+## Iteration 108 — batch 80: the game is audible on both targets, and the ndsp path is measured
+
+**What landed.** The mix was ported and pinned in batch 79 and nothing could hear
+it: no shipped frontend called `SoundDevice::update()`, and neither target had a
+sink. This batch is the plumbing, and it is the last audio item on the owner's
+priority order before the console can be said to *play* rather than simulate.
+
+1. **The sink seam grew its second half** (`mdk_core/src/audio/sound_device.{h,cpp}`).
+   The C#'s `Update` has two answers for how many frames to mix and picks by
+   whether it has a stream (`AudioDevice.cs:217-221`):
+
+   ```csharp
+   var frames = _stream == null ? (int)_owed
+       : (int)(OutputRate * QueueSeconds) - SDL_GetAudioStreamQueued(_stream) / bytesPerFrame;
+   _owed -= _stream == null ? frames : _owed;
+   ```
+
+   A one-way push seam cannot express that, so `setSink` now takes an optional
+   `queued` query alongside the `write` hook. A sink that can answer it (SDL — it
+   is the same SDL call the C# makes) gets the top-up branch; a sink that cannot
+   keeps the `owed += rate*delta` accounting, which is the muted device's and the
+   one `golden/L3_audio_mix.txt` pins. Both branches are the oracle's line for
+   line; what moved is which sink is allowed to take which.
+2. **`mdk_linux/src/audio/audio_sdl.{h,cpp}`** — the output half of
+   `AudioDevice.cs`: `SDL_InitSubSystem(AUDIO)`, `SDL_OpenAudioDeviceStream` with
+   `SDL_AUDIO_F32LE` stereo 44100 (SPEC.md §8's "1:1 with the C#"),
+   `SDL_ResumeAudioStreamDevice`, `SDL_PutAudioStreamData`,
+   `SDL_GetAudioStreamQueued`, `SDL_DestroyAudioStream`. No device is not an
+   error: the C# falls back to muted and so does this, which is why the capture
+   path is untouched.
+3. **`mdk_3ds/src/audio/audio_3ds.{h,cpp}`** — the ndsp sink. ONE channel (0),
+   `NDSP_FORMAT_STEREO_PCM16` at 44100, four 20 ms wave buffers in one
+   `linearAlloc` (14,112 bytes), float→PCM16 converted here (SPEC.md §8 puts the
+   conversion at the sink so the mix stays the shared float one), `DSP_FlushDataCache`
+   before each `ndspChnWaveBufAdd`, a DONE-poll reap of our own (ndsp exposes no
+   play position), a drop-not-block policy when every buffer is still in the DSP's
+   hands, and a **clear + reset + re-configure before the first buffer after a
+   drain** — the drained channel does not wake on a new buffer, the same trap the
+   vault's Forsaken audio finding records for its music queue
+   (`10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md` §A).
+   **There is deliberately no audio worker thread**: the sink has nothing to read,
+   so there is no blocking work to hide from the frame, and a worker would have
+   carried R1's second FPSCR state and §10's small-stack rule for nothing. R1's
+   audio row is satisfied by `vfpThreadFzDn()` at the audio subsystem's entry with
+   its read-back logged, and the call is documented as defensive (the frame's
+   thread is main, which set FZ|DN before `gfxInitDefault`).
+4. **Both frontends hear the game.** Linux: `audioOpen()`, `player.setMixer(&runtime->mixer())`,
+   and per frame `listenFromCamera` → `mixer.update(elapsed)` → `device().update(elapsed)`,
+   in the C#'s two places (Viewer.cs:686-696 then Game.cs:334-337). 3DS: the
+   level's SNI archives load, a standalone `SoundMixer` (this frontend has no
+   `ScriptRuntime` yet) gets the Player, the ndsp sink is set, and the same three
+   calls run per frame. `SoundMixer::listenFromCamera` derives the eye's right as
+   `Cross(Forward, Up)` — FollowCamera.cs:201's own expression and the same vector
+   `camera_builder.cpp` builds the view matrix from, so it is the oracle's basis
+   restated rather than a second convention; the scope-listening half stays
+   deferred with Kurt's sniper, and `scopeZoom` therefore stays 0.
+5. **The 3DS memory question, answered and named.** `bank.preload()` is NOT called
+   on the console. Level 3 decodes to 12.34 MB of float, level 4 to 15.03 MB and
+   level 8 to 19.08 MB (the batch-79 review counted all three) against 16 MB of
+   FCRAM, so decoding the whole bank is impossible and was never attempted:
+   `SoundBank::get` decodes on first use, so the console pays for what a level
+   actually plays. That does not BOUND the total, and the follow-up is named in
+   CONTINUATION rather than left implicit: an int16 sample store would halve all
+   three numbers with no change to a single sample value (both PCM scales are
+   powers of two, so `(byte-128)*256 * (1/32768)` is the same float as
+   `(byte-128)*(1/128)`), and a budget-and-evict is the alternative.
+
+**New checks.** `tests/scripts/audio_sink_tests.{h,cpp}` — `PASS AudioSinkSeam`,
+TRANSLITERATED (cited to the lines above; the queue branch cannot be *measured*
+here because the scratch probe that produced the audio golden ran the muted
+device and this host has no sound device). It pins 2646 as
+`(int)(44100 * 0.06f)`, the top-up at 0/1000/2646/5000 queued frames, the
+`frames <= 0` early return before the sink, the muted branch's 735 and its
+carried fraction, that a sink with no queue query keeps the muted branch (the
+ndsp case, as a property of the seam and not of the target), that the queue
+branch resets `_owed`, and the listener basis.
+
+**Review findings (run-20261106-023858, no Critical/High).**
+
+- **F1 (Medium) — CONFIRMED and corrected.** I re-measured the archived artifacts
+  myself rather than trusting the reviewer: `b78-calib-panel.png` (400×240) is
+  58,522 px of `0x102030` = **61.0 %** clear, not the recorded 67.7 %; the
+  recorded 67.7 % is exactly `(58522 + 6463)/96000`, and 6463 is `0xe12a81`, a
+  *scene* colour spread over the painted half. `b78-calib` vs `b78-cullnone`
+  differ in **69** px (record: 13) and vs `b78-nodepth` in **201** (record: 58).
+  The "~18 % discarded by the texture path" compared two different runs
+  (white run non-clear 47,845 px; textured run 37,478 px — an 10.8-point gap
+  against a coverage change larger than the effect), so it is withdrawn, not
+  restated. Batch 78's numbers are superseded here; the artifact set is
+  `/tmp/kilo-pi/b78-*-panel.png` and it is not archived in the repository, which
+  is the underlying defect.
+- **F2 (Medium) — CONFIRMED, and the probe now applies itself.** The logged box
+  `[-0.870,2.133]x[-2.408,2.408]` maps outside the target on three sides, so it
+  covers the panel while the panel is 61 % clear: the union-bbox test, applied,
+  fails. `logCensus` now prints the pixel box and its coverage verdict
+  (`census mapping: target px x=[15.6,376.0] y=[-281.5,681.5] of 240x400 portrait
+  (panel capture is this transposed); covers=part of the target`) and the comment
+  states why the probe is weak: a union of bboxes with no per-pixel coverage and
+  no depth test says nothing about where the geometry is.
+- **F3 (Medium) — CONFIRMED.** The "1-2 ULP" sizing in `tests/scripts/tick1.cpp`
+  was wrong; the comment now carries the measured bound (52 of 120 updates,
+  1.788e-07 against a 0.944 peak, up to 6698 ULP on one sample) and the trigger
+  (a voice that ENDS before a later `Play`), and `sound_device.h` says the same
+  at the seam. No golden was added to pin .NET's slot layout.
+- **F4 (Low) — FIXED.** The "nothing to play" lifecycle loop in `mixVoice` now
+  carries its own `@vfp-exempt R3,R4` pin with the reason (it is not cold, and the
+  two branches must agree).
+- **F5 (Low) — FIXED both halves.** The per-draw log sample is bounded by
+  `mesh.count` and prints `[first is past the mesh's end]` instead of reading 20
+  bytes past the mesh's linear buffer. The census gained a `depthout` counter
+  (triangles inside the clip square in x/y but wholly outside `[-1,1]` in ndc z)
+  and the struct comment now says the on-screen count is an x/y statement. This
+  run: `onscreen=825 depthout=0`, so on the censused frame the depth half does not
+  bite — which is a fact the record did not have before.
+- **F6 (Low) — CONFIRMED.** `b78-noscene2-panel.png` is 96,000 px of one colour,
+  so the "407×9 strip" is unreproducible and is superseded here; the census now
+  names the coordinate space of every pixel number it prints.
+
+**Gates (all three, real output).**
+
+- `make -C tests/scripts` → `PASS AudioSinkSeam`, `PASS L3_audio_mix`,
+  `PASS L3_audio_meta`, … → **`All cases match the oracle.`**
+- `bash tools/check.sh` → `PASS audit_c_with_classes`, `PASS gates_vfp`
+  (`PASS blockers=0 reviews=0`), `PASS audit_arm11_math`, `PASS audit_r11_idiv`,
+  `PASS gates_core_parity`, `SKIP gates_smdh` (no built .cia),
+  `PASS gates_frames`, `PASS gates_batch_integrity` → **`CHECK: ALL GATES PASSED`**.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  → **`3DSX mdk.3dsx`**.
+
+**Emulator evidence (AGENTS P7/P8) — `mdk_3ds/tools/emurun.sh --min-frames 120`,
+exit 0.**
+
+```
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6   (r1.2.1, the pinned known good)
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe), graphics_api=1
+stereo    : render_3d=0 factor_3d=0 (mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0
+dspfirm   : dspfirm.cdc (the lane's sdmc/3ds/dspfirm.cdc; ndsp needs it)
+frames    : the guest log ends at frame 2580 (48 frame lines logged)
+guest log : main: FZ/DN ok (fpscr=0x03000010)
+            audio: bank ready, 3 archives, decoded on demand
+            audio: FZ/DN 1 (fpscr=83000010)
+            audio: ndsp chn0 PCM16 stereo 44100 Hz, 4 x 20 ms queued
+            audio: sink=1 bank=1 voices=0 queue=2646
+            frame 1   ... voices=0 plays=0
+            frame 60  ... voices=0 plays=1     <- the level-7 landing sound played
+            frame 2580 ... voices=0 plays=1
+```
+
+`plays=1` is the point: the level-7 spawn drops Kurt, `Player` plays `LAND`, the
+bank decodes it from the romfs SNI archives, the device mixes it, the sink
+converts it to PCM16 and hands it to ndsp, and the voice ends and is reaped — all
+on the console build, in the emulator, with the DSP running. Emulator-green is
+not hardware-pass: Mandarine's HLE DSP does not exercise the real firmware's
+timing, the lane's dspfirm is the operator's dump rather than the shipped
+device's, and nothing here proves what the console's speaker actually sounded
+like.
+
+**Harness change that made that evidence possible.** A private `XDG_DATA_HOME`
+lane has no `sysdata/dspfirm.cdc`, and Mandarine's auto-populate copies from the
+sysdata it no longer looks at — so the isolation that stops two lanes reading
+each other's log also silently removed the DSP firmware, and the game's own
+dspfirm check muted the audio path with one log line as the only trace.
+`emurun.sh` now seeds the lane's `sdmc/3ds/dspfirm.cdc` from the operator's dump
+(read-only, overridable with `EMURUN_DSPFIRM`, `/dev/null forces the missing path)
+and prints a `dspfirm :` line in the verdict. Without it this batch would have
+been "the ndsp sink compiles".
+
+**Prior-solution lookup.** Pi-knowledge `mdk-sdl` was searched (SPEC.md §8's
+per-target sink table, `sound_device.h`, `AudioDevice.cs`); the index was stale
+for the files this batch rewrote and was not refreshed inside the batch.
+**Obsidian MCP and Cognee MCP are absent from this session's tool list** — an
+AGENTS P9 session-configuration fault to report, not a lookup that happened. The
+read-only vault fallback supplied the load-bearing prior solution:
+`10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md` (the drained
+channel that will not wake, the dspfirm bootstrap and the CIA/.3dsx split, and the
+too-many-channels skip that is why this sink is one channel). Original-3DS
+behaviour remains unmeasured, as ever.

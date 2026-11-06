@@ -2290,13 +2290,22 @@ bool audioMixDump(int level, int updates, const MdkData& data, std::string* out,
     // convenience. The C# sums voices in the enumeration order of a
     // `Dictionary<int, Voice>` it mutates while enumerating, and .NET documents that
     // order as unspecified: removing a voice frees a slot and the next `Play` is
-    // inserted there, so the ADDITION ORDER of the remaining voices changes. Float
-    // addition is not associative, so the samples differ by 1-2 ULP afterwards —
-    // measured, and it is the whole of the difference. Pinning that would pin .NET's
-    // internal slot layout, not the oracle's behaviour, so the schedule keeps every
-    // voice alive (the non-looping ones at a pitch low enough to outlast the run) and
-    // the order pinned is the one the oracle actually specifies: the order `Play` was
-    // called.
+    // inserted there ([1,2,3] -> stop 2 -> play 4 gives [1,4,3]), while this port's
+    // vector erases and appends ([1,3,4]). Float addition is not associative, so the
+    // samples differ afterwards.
+    //
+    // THE SIZE OF THE DIFFERENCE, measured (review-1 F3, with an independent twin
+    // written from the C# text; the earlier claim here of "1-2 ULP" was wrong and is
+    // replaced by the measurement): on this schedule with FOOT1 at pitch 4 ending at
+    // update 4 and replaying at 10 and 40, 52 of the 120 updates differ, by at most
+    // 1.788e-07 against a 0.944 peak (-134 dBFS) and by up to 6698 ULP on a single
+    // sample. Inaudible, and not closeable without pinning .NET's internal slot
+    // layout, which is not the oracle's behaviour either. Pinning the schedule that
+    // triggers it would pin the container, so the schedule keeps every voice alive
+    // (the non-looping ones at a pitch low enough to outlast the run) and the order
+    // pinned is the one the oracle actually specifies: the order `Play` was called.
+    // An explicit stop() has always been in this schedule and is unaffected: the
+    // difference is only in the order the SURVIVING voices are summed in.
     const Play plays[] = {
         {"FOOT1", 1.0f, 0.25f, 0.00f, audio::SoundDevice::Effects, 0},
         {"APPLE", 0.5f, 0.50f, -0.75f, audio::SoundDevice::Effects, 0},

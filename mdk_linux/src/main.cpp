@@ -22,6 +22,7 @@
 #include <random>
 #include <string>
 
+#include "audio/audio_sdl.h"
 #include "audio/sound_bank.h"
 #include "formats/cmi.h"
 #include "render/render.h"
@@ -192,6 +193,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::printf("[main] backend: %s\n", mdk_render_backend_name(renderer));
+
+    // The output stream (the C#'s AudioDevice(Output.Speakers)). No audio device
+    // is not an error: the device then mixes and drops, which is the headless
+    // oracle's own shape, and the capture path runs exactly as it did before.
+    mdk::audioOpen();
 
     // ---------------------------------------------------------------------
     // The level. The same sequence the 3DS frontend runs.
@@ -387,6 +393,12 @@ int main(int argc, char** argv) {
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player,
                                                           &sprites));
             runtime->option = 0;
+            // Kurt's own sounds (footsteps, the chute, the guns) go through his
+            // mixer, which is the runtime's: C# Kurt gets the SoundMixer as a
+            // constructor argument (Kurt.cs, the `SoundMixer` field) and the
+            // viewer builds both over one bank. Without this the Player's play
+            // calls all go to a null mixer and are dropped.
+            player.setMixer(&runtime->mixer());
             std::printf("[main] scripts: runtime ready (seed %d)\n", runtimeSeed);
         } else if (scriptAssetsReady) {
             std::printf("[main] scripts: NOT started — TRAVERSE/TRAVSPRT.BNI did not load, and a "
@@ -569,6 +581,18 @@ int main(int argc, char** argv) {
             mdk_render_set_camera(renderer, &camera);
         }
 
+        // THE MIX, once per frame, after the steps that moved the listener. The C#
+        // does it in two places that are one frame apart: the mixer's own Update
+        // runs in DrawScene right after the listener is taken from the camera
+        // (Viewer.cs:686-696), and the device's Update runs after the screen's
+        // frame (Game.cs:334-337). Both get the frame's elapsed, not the step's.
+        if (runtime) {
+            mdk::audio::SoundMixer& mixer = runtime->mixer();
+            mixer.listenFromCamera(camera);
+            mixer.update(elapsed);
+            mixer.device().update(elapsed);
+        }
+
         mdk_render_begin_frame(renderer, &params);
         if (arena) {
             view.draw();
@@ -652,6 +676,7 @@ int main(int argc, char** argv) {
     std::printf("[main] exiting after %u frames (last frame: %d draws, %d triangles)\n",
                 frame, draws, tris);
     mdk_render_destroy(renderer);
+    mdk::audioClose();
     mdk::windowDestroy(&window);
     return 0;
 }

@@ -143,6 +143,35 @@ fi
 export XDG_CONFIG_HOME="$LANE/cfg"
 EMU_CFG="$LANE/cfg/mandarine-emu/qt-config.ini"
 
+# (11) THE DSP FIRMWARE, SEEDED FROM THE OPERATOR'S. A private XDG_DATA_HOME has no
+# sysdata/dspfirm.cdc, and Mandarine's auto-populate copies from the sysdata it no
+# longer looks at once the data home is isolated — so the same isolation that stops
+# two lanes reading each other's log also silently removes the DSP firmware, and a
+# game that checks for it (ndspInit returns 0xD880A7FA without it, on hardware)
+# goes mute and its audio path is never exercised at all. Silence in the guest log
+# is exactly what this harness exists to make loud.
+#
+# So the operator's own dump is copied to the lane's sdmc, which is what
+# Mandarine would have put in the shared one. It is read, never written, never
+# committed and never shipped: a CIA must not carry the firmware blob (the same
+# split Forsaken ships). EMURUN_DSPFIRM=/dev/null forces the missing-firmware path
+# on purpose; EMURUN_DSPFIRM=<path> names a dump.
+DSPFIRM_SRC="${EMURUN_DSPFIRM-}"
+if [ -z "$DSPFIRM_SRC" ]; then
+  for candidate in "$HOME/.local/share/mandarine-emu/sysdata/dspfirm.cdc" \
+                   "$HOME/.local/share/citra-emu/sysdata/dspfirm.cdc" \
+                   /home/*/.local/share/mandarine-emu/sysdata/dspfirm.cdc; do
+    if [ -r "$candidate" ]; then DSPFIRM_SRC="$candidate"; break; fi
+  done
+fi
+if [ -n "$DSPFIRM_SRC" ] && [ -r "$DSPFIRM_SRC" ] && [ -s "$DSPFIRM_SRC" ]; then
+  mkdir -p "$LANE/xdg/mandarine-emu/sdmc/3ds" && cp "$DSPFIRM_SRC" \
+    "$LANE/xdg/mandarine-emu/sdmc/3ds/dspfirm.cdc" 2>/dev/null || true
+  EMURUN_DSPFIRM_SEEDED="$(basename "$DSPFIRM_SRC")"
+else
+  EMURUN_DSPFIRM_SEEDED="none (the guest will report audio muted)"
+fi
+
 # Every override must clear its `\default=true` companion or Citra-lineage
 # ignores the value — the same trap as use_gdbstub.
 cfg_insert() { # section key value — writes `key=value` directly under [section]
@@ -748,6 +777,7 @@ echo "gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpi
 echo "          graphics_api=${GL_API:-unset}$(cfg_default_note graphics_api) (1=OpenGL 2=Vulkan; Mesa env binds OpenGL only)"
 echo "stereo    : render_3d=${STEREO_3D:-unset}$(cfg_default_note render_3d) factor_3d=${STEREO_DEPTH:-unset}$(cfg_default_note factor_3d) (0 = mono)"
 echo "audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=${CFG_VOLUME:-unset}$(cfg_default_note volume)"
+echo "dspfirm   : ${EMURUN_DSPFIRM_SEEDED:-none} (the lane's sdmc/3ds/dspfirm.cdc; ndsp needs it)"
 echo "lane      : $LANE (mount ${OUR_MOUNT:-unidentified})"
 echo "session   : ${DBUS_WRAP[0]:-no dbus wrapper}; XDG_RUNTIME_DIR private"
 grep -iE 'renderer|opengl|vulkan|llvmpipe|GL:|Device' "$STDOUT_LOG" 2>/dev/null | head -5

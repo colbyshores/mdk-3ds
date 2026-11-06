@@ -26,6 +26,7 @@
 #include "audio/sound_bank.h"
 #include "test_support.h"
 #include "archive_guard_tests.h"
+#include "audio_sink_tests.h"
 #include "flow_tests.h"
 #include "input_3ds_tests.h"
 #include "formats/case_insensitive_path.h"
@@ -6235,6 +6236,15 @@ int main() {
     failures += flowFailures;
     if (flowFailures == 0) {
         printf("PASS GameFlowMatchesTheOracle\n");
+    }
+
+    // The audio sink seam: how much a frame mixes and where it goes
+    // (audio_sink_tests.h). TRANSLITERATED from AudioDevice.Update, not measured:
+    // the queue branch needs a sound device, and this host has none.
+    const int sinkFailures = mdk::test::runAudioSinkTests();
+    failures += sinkFailures;
+    if (sinkFailures == 0) {
+        printf("PASS AudioSinkSeam\n");
     }
 
     if (failures == 0) {

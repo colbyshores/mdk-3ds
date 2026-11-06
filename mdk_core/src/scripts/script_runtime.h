@@ -277,6 +277,10 @@ public:
     bool isSoundPlaying(const std::string& name) const;
     // if_own_sound (opcode 249) reads the mixer's voice table.
     const audio::SoundMixer& mixer() const { return mixer_; }
+    // The frontend owns the listener and the frame's mix: the C# sets
+    // ListenerPosition/Right/Forward/Up/ScopeZoom and calls _mixer.Update from
+    // DrawScene (Viewer.cs:688-696), so the mixer has to be reachable to be told.
+    audio::SoundMixer& mixer() { return mixer_; }
     const Vec3& targetPosition() const { return targetPosition_; }
     float targetYaw() const { return targetYaw_; }
     void selectTarget(MdkObject* obj);

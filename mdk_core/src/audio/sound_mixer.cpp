@@ -160,6 +160,25 @@ void SoundMixer::update(float delta) {
     }
 }
 
+// The listener from the frame's camera (see the header). The C# reads the eye
+// basis off the follow camera; the port's Camera carries position, forward and
+// up, and the eye's right is Cross(Forward, Up) — the same right the view matrix
+// is built from, so this is the oracle's basis restated, not a second one.
+void SoundMixer::listenFromCamera(const Camera& camera) {
+    listenerPosition = camera.position;
+    listenerForward = camera.forward;
+    listenerUp = camera.up;
+    const float rx = camera.forward.y * camera.up.z - camera.forward.z * camera.up.y;
+    const float ry = camera.forward.z * camera.up.x - camera.forward.x * camera.up.z;
+    const float rz = camera.forward.x * camera.up.y - camera.forward.y * camera.up.x;
+    const float rl = sqrtf(rx * rx + ry * ry + rz * rz);
+    if (rl > 0.0f) {
+        listenerRight.x = rx / rl;
+        listenerRight.y = ry / rl;
+        listenerRight.z = rz / rl;
+    }
+}
+
 float SoundMixer::gain(float volume) {
     const float db =
         kFloorDb * (1.0f - mathClamp(volume, 0.0f, (float)kFullVolume) / (float)kFullVolume);

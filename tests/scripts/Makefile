@@ -80,6 +80,7 @@ SOURCES := \
 
 SOURCES_VM := \
 	vm_tests.cpp \
+	audio_sink_tests.cpp \
 	archive_guard_tests.cpp \
 	flow_tests.cpp \
 	layer_tests.cpp \

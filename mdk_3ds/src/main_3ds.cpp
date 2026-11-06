@@ -40,6 +40,9 @@
 
 #include <string>
 
+#include "audio/audio_3ds.h"
+#include "audio/sound_bank.h"
+#include "audio/sound_mixer.h"
 #include "formats/bni.h"
 #include "formats/case_insensitive_path.h"
 #include "formats/file_system.h"
@@ -270,6 +273,51 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---------------------------------------------------------------------
+    // The sounds: the level's SNI archives, the mixer, and the ndsp sink.
+    //
+    // THE BANK IS NOT PRELOADED, AND THAT IS THE MEMORY ANSWER. Measured, not
+    // estimated: level 3's three archives are 4,390,060 bytes on disk and decode
+    // to 3,234,976 float samples = 12.34 MB; level 4 is 15.03 MB and level 8 is
+    // 19.08 MB (the batch-79 review counted all three independently and got the
+    // same numbers), against a 3DS with 16 MB of FCRAM that the level's geometry
+    // and textures already live in. So the Linux frontend's `bank.preload()` is
+    // NOT called here: SoundBank::get decodes a sound the first time something
+    // asks for it, so the console pays for the sounds the level actually plays
+    // and nothing else. What that does NOT do is bound the total: a level whose
+    // scripts eventually play everything still walks into the ceiling, so a
+    // budget-and-evict (or an int16 sample store, which would halve all three
+    // numbers with no change to a single sample value) stays open, named, in
+    // docs/CONTINUATION.md. It is not solved by this batch; it is no longer
+    // hidden either, because the game is now audible without it.
+    //
+    // THE MIXER IS STANDALONE HERE, and that is the C#'s shape too: Game.cs:206
+    // builds the AudioDevice, Viewer.cs:194 builds the SoundMixer over the bank,
+    // and Kurt gets the mixer. This frontend has no ScriptRuntime (the scripts are
+    // not wired on the console yet), so the mixer lives here instead of inside one,
+    // and what it can play is Kurt's own set — footsteps, the chute, the guns,
+    // landing — not the scripts' ambient and object sounds. Those arrive with the
+    // runtime, not before it.
+    // ---------------------------------------------------------------------
+    mdk::audio::SoundBank bank;
+    bool bankReady = false;
+    if (data.found() &&
+        mdk::audio::SoundBank::forLevel(&bank, data, flow.state().level)) {
+        bankReady = true;
+        mdk::log3dsPrintf("audio: bank ready, %d archives, decoded on demand",
+                          (int)bank.archiveCount());
+    } else {
+        mdk::log3dsPrintf("audio: the level's SNI archives did not load -- no sounds");
+    }
+    mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
+    // The sink gets no queue query (audio_3ds.h: libctru exposes no per-buffer
+    // play position), so the device keeps the frame's own accounting and the
+    // wave-buffer queue absorbs the jitter.
+    const bool audioReady = mdk::audioOpen();
+    if (audioReady) {
+        mixer.device().setSink(mdk::audioSink, nullptr);
+    }
+
     // The BSP world Kurt moves through: the arenas the level says are reachable
     // (the C# Viewer adds only IsReachable ones -- a hidden arena whose bounds
     // overlap the spawn column would otherwise steal the arena selection).
@@ -318,6 +366,7 @@ int main(int argc, char** argv) {
             firstSpawn = false;
         }
         player.setSpace(&space);
+        player.setMixer(&mixer);  // a fresh Player has a null mixer (C# Kurt's ctor arg)
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
         }
@@ -500,6 +549,17 @@ int main(int argc, char** argv) {
             }
         }
 
+        // THE MIX, once per frame, after the steps that moved the listener. The C#
+        // splits this across two files: the mixer's Update runs in DrawScene right
+        // after the listener is taken from the camera (Viewer.cs:686-696) and the
+        // device's Update runs after the screen's frame (Game.cs:334-337). Both
+        // take the frame's elapsed, not the step's. It runs with no sink too, as
+        // the muted C# does: the voice lifecycle has to advance or a one-shot would
+        // play forever to a silent console.
+        mixer.listenFromCamera(camera);
+        mixer.update(elapsed);
+        mixer.device().update(elapsed);
+
         MdkFrameParams params;
         params.elapsed = elapsed;
         params.frame_index = frame;
@@ -555,14 +615,18 @@ int main(int argc, char** argv) {
             mdk::log3dsPrintf("game: player=%d sprite=%d arenas=%d step=%.6f",
                               playerReady ? 1 : 0, kurtSpriteReady ? 1 : 0,
                               (int)level.arenas().size(), (double)step);
+            mdk::log3dsPrintf("audio: sink=%d bank=%d voices=%d queue=%d",
+                              audioReady ? 1 : 0, bankReady ? 1 : 0,
+                              (int)mixer.voices().size(), (int)mixer.device().queueFrames());
         }
         if (frame <= 5u || (frame % 60u) == 0u) {
             mdk::log3dsPrintf("frame %lu elapsed=%.4f steps=%u feet=(%.1f,%.1f,%.1f) "
-                              "yaw=%.1f health=%d eye=(%.1f,%.1f,%.1f)",
+                              "yaw=%.1f health=%d eye=(%.1f,%.1f,%.1f) voices=%d plays=%d",
                               (unsigned long)frame, elapsed, (unsigned)steps,
                               player.feet.x, player.feet.y, player.feet.z, player.yaw,
                               player.health(), camera.position.x, camera.position.y,
-                              camera.position.z);
+                              camera.position.z, (int)mixer.voices().size(),
+                              (int)mixer.device().nextId() - 1);
         }
 
         if (g_frameBudget != 0 && frame >= g_frameBudget) {
@@ -576,6 +640,7 @@ int main(int argc, char** argv) {
     mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
                       (unsigned)steps, exitReason);
     mdk_render_destroy(renderer);
+    mdk::audioClose();
     mdk::romfsFileSystemExit();
     // The log is closed BEFORE gfxExit(): libctru's gfxExit() tears the SD
     // card's filesystem down, and a FILE* opened on it cannot be flushed
