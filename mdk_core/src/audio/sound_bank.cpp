@@ -39,6 +39,7 @@ bool SoundBank::forLevel(SoundBank* out, const formats::MdkData& data, int32_t l
 bool SoundBank::withArchives(SoundBank* out, std::vector<formats::Sni>&& archives) {
     out->archives_ = std::move(archives);
     out->cache_.clear();
+    out->sounds_.clear();
     out->missing_.clear();
     return true;
 }
@@ -133,6 +134,13 @@ bool SoundBank::load(const std::string& name, Entry* out) {
     out->channels = wav.channels();
     out->sampleRate = wav.sampleRate();
     out->frames = wav.frames();
+
+    // Sound.FromPcm, into the bank's own copy so every Entry of this name points
+    // at one decode. The C# does the same by handing out the same reference.
+    Sound& sound = sounds_[name];
+    soundFromPcm(wav.data(), wav.dataSize(), wav.channels(), wav.sampleRate(),
+                 wav.bitsPerSample(), out->looping, &sound);
+    out->sound = &sound;
     return true;
 }
 

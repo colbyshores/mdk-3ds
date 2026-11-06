@@ -2241,6 +2241,212 @@ std::string dumpDti(int level, const Dti& dti) {
 
 } // namespace
 
+// The bit pattern of a float / double, for digests that must be exact. A decimal
+// float would round away the only thing being pinned.
+static uint32_t bitsOf(float v) {
+    uint32_t bits = 0;
+    memcpy(&bits, &v, sizeof(bits));
+    return bits;
+}
+
+static uint64_t bitsOfD(double v) {
+    uint64_t bits = 0;
+    memcpy(&bits, &v, sizeof(bits));
+    return bits;
+}
+
+// The audio SAMPLE PLANE, digested one update per line; golden/L3_audio_mix.txt is
+// what this prints. The oracle twin is the C# AudioDevice's own mix (the scratch
+// driver /tmp/mdk-pi/obj3/MixProbe, which calls the real AudioDevice and reads its
+// private _owed and _mix by reflection rather than recomputing anything), and what
+// the lines pin is the arithmetic nothing else can see: Sound::fromPcm's two PCM
+// widths, MixVoice's interpolation and pan law, AddMusic's one-pole low-pass, the
+// bus and master gains, and the limiter.
+//
+// The plays are driven through SoundDevice directly rather than through SoundMixer on
+// purpose: the mixer's 3D listener math is pinned by the Kurt goldens, and routing
+// these through it would mix the same samples under the gain the SNI table happens to
+// carry instead of under gains chosen to cover the cases. Every number below is
+// chosen, not sampled.
+bool audioMixDump(int level, int updates, const MdkData& data, std::string* out,
+                  std::string* why) {
+    audio::SoundBank bank;
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the level has no sound archives";
+        return false;
+    }
+
+    struct Play {
+        const char* name;
+        float gain, pitch, pan;
+        int32_t bus, at;
+    };
+    // Chosen to cover both PCM widths (FOOT1 16-bit / EXPLODE 8-bit), both buses, both
+    // loop states (CHUTEON loops, FOOT1 does not), a voice stopped mid-run, pans at
+    // each extreme and past it, pitches away from 1, and enough level to push the mix
+    // over the limiter's ceiling.
+    //
+    // NO VOICE IS ALLOWED TO END MID-RUN, and that is a fidelity decision, not a
+    // convenience. The C# sums voices in the enumeration order of a
+    // `Dictionary<int, Voice>` it mutates while enumerating, and .NET documents that
+    // order as unspecified: removing a voice frees a slot and the next `Play` is
+    // inserted there, so the ADDITION ORDER of the remaining voices changes. Float
+    // addition is not associative, so the samples differ by 1-2 ULP afterwards —
+    // measured, and it is the whole of the difference. Pinning that would pin .NET's
+    // internal slot layout, not the oracle's behaviour, so the schedule keeps every
+    // voice alive (the non-looping ones at a pitch low enough to outlast the run) and
+    // the order pinned is the one the oracle actually specifies: the order `Play` was
+    // called.
+    const Play plays[] = {
+        {"FOOT1", 1.0f, 0.25f, 0.00f, audio::SoundDevice::Effects, 0},
+        {"APPLE", 0.5f, 0.50f, -0.75f, audio::SoundDevice::Effects, 0},
+        {"CHUTEON", 0.8f, 1.50f, 0.60f, audio::SoundDevice::Effects, 1},
+        {"H10", 0.7f, 1.00f, 0.00f, audio::SoundDevice::Music, 2},
+        {"EXPLODE", 1.4f, 0.50f, 0.00f, audio::SoundDevice::Effects, 3},
+        {"SIREN", 0.6f, 2.00f, -1.00f, audio::SoundDevice::Music, 5},
+        {"GATTFIRE", 0.9f, 1.25f, 1.00f, audio::SoundDevice::Effects, 8},
+        {"COW", 2.0f, 0.25f, 0.00f, audio::SoundDevice::Effects, 12},
+    };
+
+    char line[512];
+    std::string o;
+    snprintf(line, sizeof(line), "mix level=%d updates=%d delta=1/60 rate=44100 plays=", level,
+             updates);
+    o += line;
+    for (size_t i = 0; i < sizeof(plays) / sizeof(plays[0]); i++) {
+        snprintf(line, sizeof(line), "%s%s:%.2f,%.2f,%.2f,%c@%d", i ? ";" : "", plays[i].name,
+                 (double)plays[i].gain, (double)plays[i].pitch, (double)plays[i].pan,
+                 plays[i].bus == audio::SoundDevice::Music ? 'M' : 'E', (int)plays[i].at);
+        o += line;
+    }
+    o += " set=6:0.30,2.00,0.40 busmusic=15:0.50 master=30:0.80 stop=34 stopall=35\n";
+
+    audio::SoundDevice device;
+    std::vector<int32_t> ids;
+    for (int step = 0; step < updates; step++) {
+        for (const Play& p : plays) {
+            if (p.at != step) {
+                continue;
+            }
+            audio::SoundBank::Entry entry;
+            if (!bank.get(p.name, &entry)) {
+                snprintf(line, sizeof(line), "MISSING %s\n", p.name);
+                o += line;
+                continue;
+            }
+            ids.push_back(device.play(entry, p.gain, p.pitch, p.pan, p.bus));
+        }
+        // Set on a live voice, the music bus's gain, the master gain, and a Stop — of
+        // the LAST-added voice, which is last in call order, so removing it cannot
+        // reorder the others either.
+        if (step == 6 && !ids.empty()) {
+            device.set(ids[0], 0.3f, 2.0f, 0.4f);
+        }
+        if (step == 15) {
+            device.setBusGain(audio::SoundDevice::Music, 0.5f);
+        }
+        if (step == 30) {
+            device.setMasterGain(0.8f);
+        }
+        if (step == 34 && !ids.empty()) {
+            device.stop(ids.back());
+        }
+        if (step == 35) {
+            device.stopAll();
+        }
+        device.update(1.0f / 60.0f);
+
+        const int32_t frames = device.mixedFrames();
+        const float* mix = device.mix();
+        // Exactly the C#'s digest: a double accumulator over the update's samples, and
+        // a min/max that start at +Inf/-Inf and compare as FLOATS (so a NaN would leave
+        // them at the infinities in both languages, which is why they are not compared
+        // as bits). Printed as bit patterns, because a decimal float would round away
+        // the only thing being pinned.
+        double sum = 0.0;
+        float mn = INFINITY, mx = -INFINITY;
+        for (int32_t i = 0; i < frames * 2; i++) {
+            const float v = mix[i];
+            sum += v;
+            if (v < mn) {
+                mn = v;
+            }
+            if (v > mx) {
+                mx = v;
+            }
+        }
+        int live = 0;
+        for (int32_t id : ids) {
+            if (device.isPlaying(id)) {
+                live++;
+            }
+        }
+        snprintf(line, sizeof(line), "u=%d frames=%d live=%d sum=%016llX min=%08X max=%08X head=",
+                 step, frames, live, (unsigned long long)bitsOfD(sum), bitsOf(mn), bitsOf(mx));
+        o += line;
+        for (int i = 0; i < 4 && i < frames * 2; i++) {
+            snprintf(line, sizeof(line), "%s%08X", i ? "," : "", bitsOf(mix[i]));
+            o += line;
+        }
+        o += " tail=";
+        for (int i = frames * 2 - 4; i < frames * 2; i++) {
+            snprintf(line, sizeof(line), "%s%08X", i == frames * 2 - 4 ? "" : ",", bitsOf(mix[i]));
+            o += line;
+        }
+        o += "\n";
+    }
+    *out = o;
+    return true;
+}
+
+// `tick1 mixmeta <level>` — the decoded sample plane per sound, so a mix divergence
+// can be localised to the decode or to the mixer. Oracle twin is the same digest out
+// of the C# SoundBank (Sound.FromPcm over the same WAV bytes).
+bool audioMetaDump(int level, const MdkData& data, std::string* out, std::string* why) {
+    audio::SoundBank bank;
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the level has no sound archives";
+        return false;
+    }
+    const char* names[] = {"FOOT1", "APPLE", "CHUTEON", "H10", "EXPLODE",
+                           "SIREN", "GATTFIRE", "COW"};
+    char line[512];
+    std::string o;
+    snprintf(line, sizeof(line), "mixmeta level=%d sounds=", level);
+    o += line;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        snprintf(line, sizeof(line), "%s%s", i ? "," : "", names[i]);
+        o += line;
+    }
+    o += "\n";
+
+    for (const char* name : names) {
+        audio::SoundBank::Entry entry;
+        if (!bank.get(name, &entry) || !entry.sound) {
+            snprintf(line, sizeof(line), "MISSING %s\n", name);
+            o += line;
+            continue;
+        }
+        const audio::Sound& s = *entry.sound;
+        double sum = 0.0;
+        for (float v : s.samples) {
+            sum += v;
+        }
+        const size_t n = s.samples.size();
+        snprintf(line, sizeof(line),
+                 "sound=%s loop=%d ch=%d rate=%d frames=%d len=%zu sum=%016llX s0=%08X s1=%08X "
+                 "mid=%08X last=%08X\n",
+                 name, entry.looping ? 1 : 0, s.channels, s.sampleRate,
+                 (int)(n / (size_t)(s.channels ? s.channels : 1)), n,
+                 (unsigned long long)bitsOfD(sum), bitsOf(s.samples[0]),
+                 bitsOf(s.samples[n > 1 ? 1 : 0]), bitsOf(s.samples[n / 2]),
+                 bitsOf(s.samples[n - 1]));
+        o += line;
+    }
+    *out = o;
+    return true;
+}
+
 int main(int argc, char** argv) {
     // The shared camera/geometry trig path must be initialized before any
     // runtime can call fastAtan2 (opcode 203's camera-track calculation).
@@ -2281,6 +2487,28 @@ int main(int argc, char** argv) {
                    "oracle's\n");
             return 1;
         }
+    }
+
+    // `tick1 mix <level> <updates>` / `tick1 mixmeta <level>` — the audio sample
+    // plane, digested. See audioMixDump / audioMetaDump above for what is pinned.
+    if (argc > 1 && std::string(argv[1]) == "mix") {
+        std::string got, why;
+        if (!audioMixDump(argc > 2 ? atoi(argv[2]) : 3, argc > 3 ? atoi(argv[3]) : 40, data,
+                          &got, &why)) {
+            printf("FAIL: %s\n", why.c_str());
+            return 1;
+        }
+        fputs(got.c_str(), stdout);
+        return 0;
+    }
+    if (argc > 1 && std::string(argv[1]) == "mixmeta") {
+        std::string got, why;
+        if (!audioMetaDump(argc > 2 ? atoi(argv[2]) : 3, data, &got, &why)) {
+            printf("FAIL: %s\n", why.c_str());
+            return 1;
+        }
+        fputs(got.c_str(), stdout);
+        return 0;
     }
 
     // Golden dumps (`tick1 dump <pose|transform|blend|layout|draw|bound|rolling> [level] [ticks]`):
@@ -3692,6 +3920,57 @@ int main(int argc, char** argv) {
             printf("FAIL scene dynamic: did not exercise hide/retexture (hide=%d retexture=%d)\n",
                    (int)testedHide, (int)testedRetexture);
             failures++;
+        }
+    }
+
+    // The audio SAMPLE PLANE: both PCM widths of Sound::fromPcm, MixVoice's linear
+    // interpolation and DirectSound pan law, AddMusic's one-pole music low-pass, the
+    // bus and master gains, and the master limiter, digested as bit patterns one line
+    // per update. This is the only audio evidence this host can produce at all — there
+    // is no sound device here, and the emulator's output cannot be heard or captured —
+    // and the golden is the C# AudioDevice's own mix digested, not the port's output.
+    {
+        std::string expected;
+        if (!readText("golden/L3_audio_mix.txt", &expected)) {
+            printf("FAIL L3_audio_mix: no golden file golden/L3_audio_mix.txt\n");
+            failures++;
+        } else {
+            std::string got, why;
+            if (!audioMixDump(3, 40, data, &got, &why)) {
+                printf("FAIL L3_audio_mix: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_audio_mix: both PCM widths decode, the voices interpolate and "
+                       "pan, the music bus low-passes, the bus and master gains scale, the "
+                       "limiter holds the mix at its ceiling, and Stop/StopAll take voices out "
+                       "of the mix on the update the C# takes them out\n");
+            } else {
+                printf("FAIL L3_audio_mix: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
+        }
+    }
+
+    // The same sounds decoded: what the mix above is made of. A mix divergence that
+    // this still passes is the mixer's, and one it fails is the decode's.
+    {
+        std::string expected;
+        if (!readText("golden/L3_audio_meta.txt", &expected)) {
+            printf("FAIL L3_audio_meta: no golden file golden/L3_audio_meta.txt\n");
+            failures++;
+        } else {
+            std::string got, why;
+            if (!audioMetaDump(3, data, &got, &why)) {
+                printf("FAIL L3_audio_meta: %s\n", why.c_str());
+                failures++;
+            } else if (got == expected) {
+                printf("PASS L3_audio_meta: the eight sounds' decoded length, rate, loop flag "
+                       "and sample values are the oracle's, so a mix divergence below is the "
+                       "mixer's and not the decode's\n");
+            } else {
+                printf("FAIL L3_audio_meta: %s\n", firstDifference(got, expected).c_str());
+                failures++;
+            }
         }
     }
 

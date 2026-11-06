@@ -78,6 +78,8 @@ set(SOURCES
     third_party/volk/volk.c
 
     # ---- mdk_core: the shared game, compiled into BOTH targets ----
+    ${CORE}/src/audio/limiter.cpp
+    ${CORE}/src/audio/sound.cpp
     ${CORE}/src/audio/sound_bank.cpp
     ${CORE}/src/audio/sound_device.cpp
     ${CORE}/src/audio/sound_mixer.cpp

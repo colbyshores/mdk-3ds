@@ -19,6 +19,8 @@ CXXFLAGS := -std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter \
 LDFLAGS :=
 
 COMMON_SOURCES := \
+	$(CORE)/audio/limiter.cpp \
+	$(CORE)/audio/sound.cpp \
 	$(CORE)/audio/sound_bank.cpp \
 	$(CORE)/audio/sound_device.cpp \
 	$(CORE)/audio/sound_mixer.cpp \

@@ -15016,3 +15016,159 @@ to report, not a lookup that happened); the read-only vault fallback was used fo
 `30-architecture/patterns/3ds-emulator-masks-real-hardware-bugs.md`, whose point
 this batch honours: the emulator is a measuring instrument, and every claim above
 is a pixel count or a log line off it, not an inference from the picture.
+
+## Iteration 107 — batch 79: the audio sample plane is ported, and it is bit-for-bit the C# mixer
+
+**What this batch is.** Owner-directive item 6's first half: `sound_device.h:13`
+used to say the sample plane "belongs to the platform backends and is not ported
+yet". It is now ported, and it is ported **in `mdk_core`**, not in a backend, for
+the reason the whole port runs on: the C# mixes in software, the C# is the oracle,
+and a mix that lives behind a platform seam cannot be pinned against it. The
+backends keep exactly one decision — what happens to the finished buffer — through
+a `Sink` function pointer plus a context (AGENTS.md 10 refuses `std::function`),
+and a NULL sink is the oracle's own `Output.Muted`: mixed and dropped.
+
+| New / changed | Oracle | What landed |
+|---|---|---|
+| `mdk_core/src/audio/sound.{h,cpp}` | `AudioDevice.cs`'s `Sound` + `Sound.FromPcm` | both PCM widths, the two scale constants, the `data.Length & ~1` odd-byte drop, `Frames` |
+| `mdk_core/src/audio/limiter.{h,cpp}` | `Limiter.cs` | one gain for both channels, the ceiling/release constants cached in the constructor, the stateful `_gain` decay across frames |
+| `mdk_core/src/audio/sound_device.{h,cpp}` | `AudioDevice.Update/AddMusic/MixVoice/Sample`, `MasterGain`, `SetBusGain`, `MusicFilter` | the mix and music buffers, the interpolation, the DirectSound pan law, the one-pole music low-pass, the bus/master volumes, the limiter, the sink seam |
+| `mdk_core/src/audio/sound_bank.{h,cpp}` | `SoundBank.Load` → `Sound.FromPcm` | the bank now decodes and owns the samples; `Entry.sound` points at the bank's one decode per name (the sharing the C# gets from `Sound` being a reference type); copy/move deleted |
+| `tests/scripts/tick1.cpp` | — | `mix` / `mixmeta` drivers moved into `audioMixDump` / `audioMetaDump` and wired to two new goldens |
+
+**The goldens are the oracle's output, not the port's.** The scratch driver
+`/tmp/mdk-pi/obj3/MixProbe` (new, scratch-only, never committed) calls the **real**
+`SoundBank` and the **real** `AudioDevice`; the frames owed and the mix buffer come
+out of the device's own private `_owed` / `_mix` by reflection, so the harness adds
+no arithmetic of its own. Before believing it, the scratch tree was checked against
+the read-only repository oracle: `AudioDevice.cs`, `Limiter.cs`, `SoundBank.cs`,
+`SoundMixer.cs`, `Wav.cs`, `Sni.cs` all `cmp`-identical.
+
+- `golden/L3_audio_mix.txt` (41 lines, sha256 `2ded2f07…`) — 40 updates of an
+  eight-voice schedule chosen to cover both PCM widths (FOOT1 16-bit, EXPLODE
+  8-bit), both buses, both loop states, a `Set` on a live voice, a `Stop`, a
+  `StopAll`, pans at each extreme and past it, pitches away from 1, and enough
+  level to drive the limiter. Each line is `sum` (double accumulator), `min`/`max`
+  and the first/last four samples, all as **bit patterns**.
+  `cmp /tmp/mdk-pi/b79_oracle_mix.txt tests/scripts/golden/L3_audio_mix.txt` →
+  **identical**, and the C++ `tick1 mix 3 40` is identical to both.
+- `golden/L3_audio_meta.txt` (9 lines, sha256 `5247a4cb…`) — the same eight sounds
+  decoded: length, rate, loop flag and four sample bit patterns each. Also
+  **identical** on both sides, which is what makes a future mix divergence
+  localisable to the mixer rather than the decode.
+- The limiter is not a bystander in this golden: `max=3F71ADF9` appears on the
+  updates where the mix is hot, which is the ceiling itself, so the clamp is live
+  and equal on both sides.
+
+**Constants measured, not asserted.** The port caches four constants the C#
+computes with `MathF`; a comment claiming a bit pattern is only worth its
+verification. `mdkmix 3 1 bits` (the oracle's own `MathF.Pow`/`MathF.Exp`) against
+a host C program: `far(pan 0.5)=3B4F3E37`, `ceiling=3F71ADF9`, `release=396DC000`,
+`music alpha=3F131C9A` — **all four identical**, and `3.14159265f` is the same
+float as `MathF.PI`.
+
+**One estimate was wrong and is now a measurement.** The draft comments said
+decoding a level "doubles" its WAV to "~9 MB". Counted through the oracle: level
+3's three archives are 4,390,060 bytes and hold **72 sounds = 3,234,976 samples =
+12.34 MB of float**, because MDK's sounds are mostly 8-bit and a float is four
+bytes. Against a 16 MB FCRAM that is not a rounding error, so `sound.h` and
+`sound_bank.h` now carry the measured number and the consequence: the ndsp batch
+cannot preload the bank on the console. Nothing calls `preload()` on the 3DS today
+(`main_3ds.cpp` builds no bank); `mdk_linux/src/main.cpp:239` does, which is what
+the C# `Viewer` does too.
+
+**Hot path, and said plainly.** A voice's mix loop runs 735 iterations a frame, and
+AGENTS.md 2's **second** criterion makes anything at 256+ a frame hot path with no
+capture at all — the empty corpus waives the staleness clocks, not the
+classification. The draft header claimed "no pin is due" while the files carried
+pins, which is both wrong and the kind of thing §5 exists to prevent. The header
+now argues the classification, and `mixVoice`'s frame loop carries an
+`@vfp-exempt R2,R3,R4` pin for the double position, the wrap compare and the
+`(int)` index together, because those three choose which two samples every output
+frame interpolates between, i.e. the samples the golden pins. `measured n/a`
+because there is no OG capture to measure against. `gates_vfp` still reports
+`PASS blockers=0`.
+
+**What is NOT done, stated as not done.** No shipped frontend calls
+`SoundDevice::update()` yet, so no sample reaches a speaker on either target from
+this batch: the SDL sink (Linux) and the ndsp sink (3DS) are the second half of
+item 6. The mix is real and pinned; the plumbing that would hear it is not written.
+Streamed voices (`PlayStream`/`Push`) stay unported — nothing in the scripts uses
+them. `Record` (the C#'s WAV capture) is not ported: the probe digests the buffer
+directly, so the golden does not need it.
+
+### Review disposition
+
+The newest external review, `logs/ralph-pi/run-20261105-142911/review-6.md`, is
+**0 bytes**: the reviewer was dispatched (`review-6.err` carries only the litellm
+`Model "deepseek-v4.1-flash-th" not found for provider "litellm". Using custom
+model id.` warning) and returned nothing, and no `review-6.rc` was written. There
+is therefore no Critical/High finding in it to fix or rebut; the empty review is
+recorded as a failed dispatch, not as an all-clear, and the range it covered stays
+owed to the next review that does produce output. The newest review with content
+is `review-4.md` from the same run; all four of its findings are **Medium**, and
+each is dispositioned here rather than left implicit:
+
+- **F1 (Medium, the 3DS solid-arena pin follows geometry, not the oracle's
+  crossing) — deferred, out of this batch's subsystem.** It is a `main_3ds.cpp`
+  + DTI-connection-crossing change with its own placed-fall golden; porting arena
+  crossing is not an audio slice. Cause: different subsystem, needs its own
+  oracle probe for the divergent column `(-153.2,1602.1)`.
+- **F2 (Medium, the fall probe hard-codes the level start and omits the camera
+  stage) — deferred with the same cause as F1**, since the placed-fall probe is
+  F1's instrument. Recorded so it is not lost.
+- **F3 (Medium, batch frames are byte-identical copies of an older capture) —
+  confirmed again by this batch, and it cannot be fixed here.** This batch's frame
+  is a fresh capture whose bytes equal the standing level-3 frame, because an
+  audio batch moves no pixels; the sidecar says so in its own text and names the
+  two goldens that are the batch's real evidence, which is the remedy
+  `docs/frames/README.md` prescribes for "when the pinned frame cannot show the
+  batch". Rejecting duplicate hashes needs `tools/runner/gates_frames.py` and
+  `reference.sha256`, both owner-protected. Owner action, unchanged.
+- **F4 (Medium, the dirty harness tree disagrees with the committed owner
+  directive) — owner action, untouched.** `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`,
+  `ralph/builder.md` and `tools/runner/test_review_state.sh` are left dirty and
+  unstaged, exactly as CONTINUATION instructs; the builder must not stage them.
+
+### Gates, as run
+
+- `timeout 1800 make -C tests/scripts` → **exit 0**, 559 `PASS` lines, ends
+  `All cases match the oracle.`, including the two new
+  `PASS L3_audio_mix: …` and `PASS L3_audio_meta: …`. It also runs
+  `PASS SpritesRefusal (2 arms adjudicated)`, `PASS C3dFrame (26 checks, 33 arms
+  adjudicated red)`, `PASS Main3dsFlow (5 checks, 5 arms adjudicated red)` and
+  `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+- `timeout 3000 bash tools/check.sh` → **exit 0**, `CHECK: ALL GATES PASSED`:
+  `audit_c_with_classes 0 violations`, `gates_vfp PASS blockers=0`,
+  `audit_arm11_math VERDICT: CONTRACT CLEAN`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core` (65 core sources / 72 Linux
+  `SOURCES` entries, so `limiter.cpp` and `sound.cpp` reach both targets),
+  `SKIP gates_smdh no built .cia to read`, `gates_frames every pinned frame is
+  deterministic and unchanged`, `gates_batch_integrity project invariants intact`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM timeout 2400 make -C mdk_3ds`
+  → **exit 0**, `3DSX mdk.3dsx`. The two new files compile for ARM11 through the
+  3DS Makefile's `$(CORESRC)/*/*.cpp` glob.
+- **No emulator run, deliberately.** AGENTS P8 requires emulator evidence for a
+  batch that changes `mdk_3ds/**`; this batch changes `mdk_core/**` and
+  `mdk_linux/CMakeLists.txt` only, and no frontend drives the new code, so an
+  emulator verdict would re-measure the same frame the pinned capture already
+  shows. The 3DS build is the gate that matters here, and it is above.
+- `tools/publish_frame.sh b79-audio-mix` → wrote
+  `docs/frames/2026-11-06-b79-audio-mix.png` + `.txt`; pinned comparison
+  `bad_percent=1.240 max_delta=247 mean_delta=0.1819`, unchanged, and the sidecar
+  says why and names the two goldens instead.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` searched (hybrid) for the
+sample plane, the limiter and the pan law; the hits were the port's own headers and
+the oracle's `AudioDevice.cs` — no prior solution existed to reuse, and the index
+was stale for the files this batch rewrote. **Obsidian MCP and Cognee MCP are
+absent from this session's tool list** (an AGENTS P9 session-configuration fault to
+report, not a lookup that happened). The read-only vault fallback found
+`30-architecture/patterns/measurement-harness-can-be-the-bug.md`, whose discipline
+this batch follows directly: the oracle driver only *reads* the device's own state,
+and the harness was calibrated against things it cannot have influenced — the
+`mixmeta` decode, the four `MathF` constants, and the ceiling value appearing as the
+golden's own `max`. For the next (ndsp) batch the vault names
+`10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md` and
+`30-architecture/patterns/3ds-teardown-every-thread-and-service-on-every-exit.md`.
+Original-3DS behaviour remains unmeasured, as ever.
