@@ -277,19 +277,25 @@ int main(int argc, char** argv) {
     // The sounds: the level's SNI archives, the mixer, and the ndsp sink.
     //
     // THE BANK IS NOT PRELOADED, AND THAT IS THE MEMORY ANSWER. Measured, not
-    // estimated: level 3's three archives are 4,390,060 bytes on disk and decode
-    // to 3,234,976 float samples = 12.34 MB; level 4 is 15.03 MB and level 8 is
-    // 19.08 MB (the batch-79 review counted all three independently and got the
-    // same numbers), against a 3DS with 16 MB of FCRAM that the level's geometry
-    // and textures already live in. So the Linux frontend's `bank.preload()` is
-    // NOT called here: SoundBank::get decodes a sound the first time something
-    // asks for it, so the console pays for the sounds the level actually plays
-    // and nothing else. What that does NOT do is bound the total: a level whose
-    // scripts eventually play everything still walks into the ceiling, so a
-    // budget-and-evict (or an int16 sample store, which would halve all three
-    // numbers with no change to a single sample value) stays open, named, in
-    // docs/CONTINUATION.md. It is not solved by this batch; it is no longer
-    // hidden either, because the game is now audible without it.
+    // estimated, with `tick1 mixsize <level>`, which reads the element size out of
+    // the store rather than restating a comment: level 3's three archives are
+    // 4,390,060 bytes on disk and decode to 3,234,976 samples = 6,469,952 bytes in
+    // the int16 store (12,939,904 when the store was float); level 4 is 7,878,536
+    // and level 8 is 10,002,084, against a 3DS with 16 MB of FCRAM that the level's
+    // geometry and textures already live in. So the Linux frontend's
+    // `bank.preload()` is NOT called here: SoundBank::get decodes a sound the first
+    // time something asks for it, so the console pays for the sounds the level
+    // actually plays and nothing else. What that does NOT do is bound the total: a
+    // level whose scripts eventually play everything still walks into the ceiling,
+    // and halving the store did not remove it, because the SNI archives stay
+    // resident too (4.39 / 5.90 / 5.82 MB for these same three levels), so a fully
+    // decoded level 3 is 10.86 MB and level 8 is 15.83 MB before a single triangle.
+    // Budget-and-evict stays open, named, in docs/CONTINUATION.md, and the two
+    // halves of that decision are linked: freeing an archive's bytes is only
+    // possible once every sound in it has decoded, which means preloading, which is
+    // the opposite of the lazy policy that keeps the peak low today. It is not
+    // solved by this batch; it is no longer hidden either, because the game is now
+    // audible without it.
     //
     // THE MIXER IS STANDALONE HERE, and that is the C#'s shape too: Game.cs:206
     // builds the AudioDevice, Viewer.cs:194 builds the SoundMixer over the bank,

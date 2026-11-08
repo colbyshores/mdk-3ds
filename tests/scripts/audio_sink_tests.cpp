@@ -22,6 +22,19 @@ void expect(const char* what, long long got, long long want) {
     }
 }
 
+// Compare two floats as bit patterns. A decimal comparison would round away the
+// only thing being pinned: the store change is exact or it is nothing, and "it
+// matches to 6 digits" is not the claim.
+void expectBits(const char* what, float got, float want) {
+    uint32_t g = 0, w = 0;
+    memcpy(&g, &got, sizeof(g));
+    memcpy(&w, &want, sizeof(w));
+    if (g != w) {
+        printf("  FAIL: %s was %08X, the oracle has %08X\n", what, g, w);
+        failures++;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // A sink that records what it was handed, and answers the queue question from a
 // field the test sets. This is the SDL stream's stand-in: SDL_GetAudioStreamQueued
@@ -51,7 +64,10 @@ int32_t probeQueued(void* context) { return ((Probe*)context)->queued; }
 // can name exactly without a bank.
 audio::Sound toneSound() {
     audio::Sound s;
-    s.samples.push_back(0.5f);
+    // 0.5 in the int16 store: 16384 * (1/32768) is exactly 0.5f, so the mix this
+    // tone produces is the same number it was when the store held a float (the
+    // checks below name it). sound.h for why every value is exact.
+    s.samples.push_back(16384);
     s.channels = 1;
     s.sampleRate = 44100;
     s.looping = true;
@@ -234,6 +250,80 @@ void testListenerBasis() {
            mixer.listenerRight.y < -0.9999f ? 1 : 0, 1);
 }
 
+// ---------------------------------------------------------------------------
+// 5. The int16 sample store is the oracle's float, bit for bit.
+//
+// The store holds the file's int16 and the scale is applied at the read
+// (mdk_core/src/audio/sound.h). What makes that a store change and not a
+// fidelity change is one arithmetic fact: BOTH of the oracle's scales are
+// powers of two, so every value on both paths is exact. Every expected float
+// below is written the ORACLE's way — `(byte - 128) * (1f/128f)` and
+// `short * (1f/32768f)`, the ByteScale/ShortScale multiplies of
+// AudioDevice.cs — and compared as bits, never read back from the port. A store
+// that shifted by 7 instead of 8, a read that divided instead of multiplying, or
+// a bias applied after the shift is red here, at the value, rather than as an
+// unexplained 1-ULP drift in a golden digest.
+//
+// The extremes are the ones that would break a non-exact scheme: byte 0 and
+// short -32768 are the two values that reach -1.0 exactly, and byte 255 /
+// short 32767 are the two that do NOT reach +1.0.
+// ---------------------------------------------------------------------------
+void testSampleStoreExact() {
+    // The store's width is the batch's claim: level 3's 3,234,976 decoded samples
+    // are 6,469,952 bytes here and were 12,939,904 as float, against 16 MB of
+    // FCRAM. Pinned so widening it is a red test and not a quiet regression; the
+    // same fact is a static_assert in sound.h.
+    expect("the sample store is two bytes per sample",
+           (long long)sizeof(audio::Sound::Samples::value_type), 2);
+
+    // --- 8-bit unsigned, biased at 128 ---
+    const uint8_t bytes8[] = {0, 127, 128, 129, 200, 255};
+    audio::Sound eight;
+    audio::soundFromPcm(bytes8, 6, 1, 11025, 8, false, &eight);
+    expect("every 8-bit byte decoded", (long long)eight.samples.size(), 6);
+    const float kByteScale = 1.0f / 128.0f;  // AudioDevice.cs ByteScale
+    for (int i = 0; i < 6; i++) {
+        const float want = (float)((int32_t)bytes8[i] - 128) * kByteScale;
+        expectBits("the 8-bit decode is the oracle's (byte-128)*(1/128)", eight.sampleAt(i), want);
+    }
+    expectBits("byte 0 is exactly -1.0", eight.sampleAt(0), -1.0f);
+    expectBits("byte 128 is exactly 0", eight.sampleAt(2), 0.0f);
+    expectBits("byte 255 is 127/128 and not 1.0", eight.sampleAt(5), 0.9921875f);
+
+    // --- 16-bit signed little-endian ---
+    const int16_t shorts[] = {0, 1, -1, 16384, 32767, -32768};
+    uint8_t bytes16[sizeof(shorts)];
+    for (int i = 0; i < 6; i++) {
+        bytes16[(size_t)i * 2] = (uint8_t)((uint16_t)shorts[i] & 0xFF);
+        bytes16[(size_t)i * 2 + 1] = (uint8_t)((uint16_t)shorts[i] >> 8);
+    }
+    audio::Sound sixteen;
+    audio::soundFromPcm(bytes16, (int32_t)sizeof(bytes16), 1, 22050, 16, false, &sixteen);
+    expect("every 16-bit short decoded", (long long)sixteen.samples.size(), 6);
+    const float kShortScale = 1.0f / 32768.0f;  // AudioDevice.cs ShortScale
+    for (int i = 0; i < 6; i++) {
+        const float want = (float)shorts[i] * kShortScale;
+        expectBits("the 16-bit decode is the oracle's short*(1/32768)", sixteen.sampleAt(i), want);
+    }
+    expectBits("short -32768 is exactly -1.0", sixteen.sampleAt(5), -1.0f);
+    expectBits("short 16384 is exactly 0.5", sixteen.sampleAt(3), 0.5f);
+    expectBits("short 32767 is 32767/32768 and not 1.0", sixteen.sampleAt(4), 0.99996948f);
+
+    // The 16-bit path drops a trailing odd byte, as `data.Length & ~1` does, and
+    // frames() divides the samples by the channel count as Sound.Frames does.
+    audio::Sound odd;
+    audio::soundFromPcm(bytes16, (int32_t)sizeof(bytes16) - 1, 2, 22050, 16, false, &odd);
+    expect("an odd trailing byte is dropped", (long long)odd.samples.size(), 5);
+    expect("and frames() divides the samples by the channels", odd.frames(), 2);
+
+    // A bank that has decoded nothing reports no memory, which is what makes
+    // decodedBytes() a measurement and not a constant.
+    audio::SoundBank empty;
+    expect("an undecoded bank holds no samples", (long long)empty.decodedSamples(), 0);
+    expect("and no bytes", (long long)empty.decodedBytes(), 0);
+    expect("and no archives", (long long)empty.archiveBytes(), 0);
+}
+
 } // namespace
 
 namespace mdk {
@@ -245,6 +335,7 @@ int runAudioSinkTests() {
     testMutedAccounting();
     testQueueResetsOwed();
     testListenerBasis();
+    testSampleStoreExact();
     return failures;
 }
 

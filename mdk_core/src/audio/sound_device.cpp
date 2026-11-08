@@ -100,13 +100,13 @@ void SoundDevice::set(int32_t id, float gain, float pitch, float pan) {
 
 void SoundDevice::sample(const Sound& sound, int32_t frame, float* left, float* right) {
     if (sound.channels == 1) {
-        const float s = sound.samples[(size_t)frame];
+        const float s = sound.sampleAt(frame);
         *left = s;
         *right = s;
         return;
     }
-    *left = sound.samples[(size_t)frame * 2u];
-    *right = sound.samples[(size_t)frame * 2u + 1u];
+    *left = sound.sampleAt(frame * 2);
+    *right = sound.sampleAt(frame * 2 + 1);
 }
 
 // AudioDevice.MixVoice, line for line: linear interpolation between the two

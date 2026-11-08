@@ -2438,9 +2438,11 @@ bool audioMetaDump(int level, const MdkData& data, std::string* out, std::string
             continue;
         }
         const audio::Sound& s = *entry.sound;
+        // Read through sampleAt(), the same conversion the mix uses, so this
+        // pins what a voice actually hears and not the store's raw ints.
         double sum = 0.0;
-        for (float v : s.samples) {
-            sum += v;
+        for (size_t i = 0; i < s.samples.size(); i++) {
+            sum += s.sampleAt((int32_t)i);
         }
         const size_t n = s.samples.size();
         snprintf(line, sizeof(line),
@@ -2448,11 +2450,36 @@ bool audioMetaDump(int level, const MdkData& data, std::string* out, std::string
                  "mid=%08X last=%08X\n",
                  name, entry.looping ? 1 : 0, s.channels, s.sampleRate,
                  (int)(n / (size_t)(s.channels ? s.channels : 1)), n,
-                 (unsigned long long)bitsOfD(sum), bitsOf(s.samples[0]),
-                 bitsOf(s.samples[n > 1 ? 1 : 0]), bitsOf(s.samples[n / 2]),
-                 bitsOf(s.samples[n - 1]));
+                 (unsigned long long)bitsOfD(sum), bitsOf(s.sampleAt(0)),
+                 bitsOf(s.sampleAt((int32_t)(n > 1 ? 1 : 0))),
+                 bitsOf(s.sampleAt((int32_t)(n / 2))), bitsOf(s.sampleAt((int32_t)(n - 1))));
         o += line;
     }
+    *out = o;
+    return true;
+}
+
+// `tick1 mixsize <level>` — what a fully decoded bank costs, measured on the build
+// that prints it. The element size is read out of the store itself, so `elem=` and
+// `bytes=` are the store's width and its payload rather than a restatement of a
+// comment, and two builds with different stores print different lines from the same
+// data. `archive=` is the raw SNI blobs, which stay resident after the decode: the
+// console has to fit BOTH, plus the level's geometry and textures, into FCRAM.
+bool audioSizeDump(int level, const MdkData& data, std::string* out, std::string* why) {
+    audio::SoundBank bank;
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the level has no sound archives";
+        return false;
+    }
+    bank.preload();
+    char line[256];
+    std::string o;
+    snprintf(line, sizeof(line),
+             "mixsize level=%d sounds=%d samples=%zu elem=%zu decoded=%zu archive=%zu total=%zu\n",
+             level, (int)bank.soundsDecoded(), bank.decodedSamples(),
+             sizeof(audio::Sound::Samples::value_type), bank.decodedBytes(),
+             bank.archiveBytes(), bank.decodedBytes() + bank.archiveBytes());
+    o += line;
     *out = o;
     return true;
 }
@@ -2514,6 +2541,16 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "mixmeta") {
         std::string got, why;
         if (!audioMetaDump(argc > 2 ? atoi(argv[2]) : 3, data, &got, &why)) {
+            printf("FAIL: %s\n", why.c_str());
+            return 1;
+        }
+        fputs(got.c_str(), stdout);
+        return 0;
+    }
+
+    if (argc > 1 && std::string(argv[1]) == "mixsize") {
+        std::string got, why;
+        if (!audioSizeDump(argc > 2 ? atoi(argv[2]) : 3, data, &got, &why)) {
             printf("FAIL: %s\n", why.c_str());
             return 1;
         }

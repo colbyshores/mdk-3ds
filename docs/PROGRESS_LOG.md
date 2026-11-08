@@ -17756,3 +17756,246 @@ a hardware reader should now take off the ledger is `submitted` against `secs x 
 rate test) and a **slope** of `dspframes` between two rows if a mixer rate is wanted — never
 one row's division, and with ±0.02/s on the slope even in the emulator, from two named
 sources rather than one.
+
+## Iteration 122 — batch 94: 6c — the sample store is the file's int16, and the mix reads it through one exact conversion, so level 3's bank is 6.47 MB instead of 12.94 MB and not one sample value moved
+
+### What this batch is
+
+`docs/CONTINUATION.md` priority order, audio item **(a) = item 6c**: "the int16
+sample store, which halves the bank's footprint with no change to a sample value,
+pinned by a re-run of `golden/L3_audio_mix.txt`". The oracle/spec reference is
+`src/Mdk.Engine/Audio/AudioDevice.cs`'s `Sound.FromPcm` (`ByteScale` /
+`ShortScale`) and its `MixVoice`, which reads the decoded samples per output
+frame; the store is the one thing this port deliberately does not share with the
+oracle, and the batch's whole job was to make that difference cost memory only.
+
+The one-sided renderer view stayed first in the priority order and was not
+advanced. It needs a new hypothesis and the batch had none that the existing
+instruments could test; shipping a sixth census with the instrument Iteration 106
+already retired would have been the failure that paragraph warns about, so the
+alternative named first in the audio order was taken instead, in full.
+
+### The change
+
+* `mdk_core/src/audio/sound.h` — `Sound::samples` is `std::vector<int16_t>`
+  (typedef'd `Sound::Samples`), and the scale is applied at the read by
+  `Sound::sampleAt()`, which is now the only place in the tree that converts a
+  stored sample. `kShortScale = 1.0f/32768.0f` moved here from sound.cpp. A
+  `static_assert` pins the element width at 2 so widening the store is a build
+  failure and not a quiet doubling.
+* `mdk_core/src/audio/sound.cpp` — the decode no longer touches a float at all:
+  8-bit is `(byte - 128) << 8`, 16-bit is the file's short. `ByteScale` is gone;
+  one scale now serves both widths, because `((byte-128) << 8) * 2^-15` **is**
+  `(byte-128) * 2^-7`.
+* `mdk_core/src/audio/sound_device.cpp` — `SoundDevice::sample()` calls
+  `sampleAt()`. Nothing else in the mix moved: the double position, the `(int)`
+  truncation, the wrap predicate, the pan law and the interpolation are untouched
+  and their pins are untouched.
+* `mdk_core/src/audio/sound_bank.{h,cpp}` — three accessors that make the bank
+  report its own footprint: `decodedSamples()`, `decodedBytes()` (count × the
+  store's element size, read from the store, so it follows the width instead of
+  restating it) and `archiveBytes()` (the SNI blobs, which stay resident after a
+  decode). `soundsDecoded()` counts names actually decoded.
+* `tests/scripts/tick1.cpp` — a `mixsize <level>` mode that prints them, and
+  `mixmeta` now reads through `sampleAt()` so it pins what a voice hears.
+* `tests/scripts/audio_sink_tests.cpp` — `testSampleStoreExact()`, below.
+* `mdk_3ds/src/main_3ds.cpp` — the "why the bank is not preloaded" comment
+  restated with the measured numbers (it previously named the int16 store as an
+  option still open).
+
+### Why it is bit-identical, and how that is pinned rather than argued
+
+Both of the oracle's scales are powers of two and every intermediate is an
+integer: the 16-bit path stores the file's short and multiplies it by the
+oracle's own `1f/32768f` at the read, and the 8-bit path stores
+`(byte-128) << 8`, which spans `[-32768, 32512]` and so fits int16 exactly, so
+the read computes `(byte-128) * 2^-7` — the oracle's `(byte-128) * (1/128)`.
+Dyadic arithmetic on a four-bit numerator: no rounding on either side.
+
+Three independent pins, and the first two were **not regenerated**:
+
+1. `golden/L3_audio_mix.txt` — the C# device's own mix buffer, 40 updates, both
+   PCM widths, both buses, both loop states, the limiter, a mid-run `set`, a
+   `stop` and a `stopAll`. **PASS unchanged.**
+2. `golden/L3_audio_meta.txt` — per-sound decoded length, a double sum over
+   *every* sample of eight sounds, and four named sample bit patterns. **PASS
+   unchanged**, and `tick1 mixmeta 3` on this build is byte-identical to the same
+   binary built before the store change (`diff` of the two dumps: no output).
+3. `testSampleStoreExact()` — new, and its expected floats are written the
+   oracle's way (`(byte-128)*(1f/128f)`, `short*(1f/32768f)`) and compared as
+   **bits**, never read back from the port: both widths over their full domain
+   including the four extremes (byte 0 and short −32768 reach −1.0 exactly; byte
+   255 and short 32767 do **not** reach +1.0), the odd trailing byte, `frames()`
+   over a channel count, the store width, and an undecoded bank reporting 0.
+   **Mutation-checked:** setting `kByteShift` to 7 instead of 8 fails 7 of its
+   checks and the suite exits 2 (`was BF000000, the oracle has BF800000`), so the
+   pin bites; the mutant was reverted and the suite re-run green.
+
+### The memory, measured on both builds
+
+`tick1 mixsize <level>` was run on the parent build (float store) and on this one
+(int16) from the same tree, so both lines are measurements and neither is a
+halving done in prose:
+
+| level | sounds | samples | elem | decoded (float build) | decoded (int16 build) | archive | total now |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 3 | 72 | 3,234,976 | 4 → 2 | 12,939,904 | **6,469,952** | 4,390,060 | 10,860,012 |
+| 4 | 75 | 3,939,268 | 4 → 2 | 15,757,072 | **7,878,536** | 5,904,992 | 13,783,528 |
+| 8 | 70 | 5,001,042 | 4 → 2 | 20,004,168 | **10,002,084** | 5,821,432 | 15,823,516 |
+
+The sample counts are identical across the two builds, which is the decode being
+untouched; the byte totals are exactly half. The float column also confirms the
+figures batches 79-93 had been citing (12.34 / 15.03 / 19.08 MB) from an
+instrument in the tree rather than from the oracle probe.
+
+**What halving does not buy, and this is the new fact:** the SNI archives stay
+resident after a decode, 4.39 / 5.90 / 5.82 MB for the same three levels, so a
+fully decoded level 3 is still 10.86 MB and level 8 is 15.83 MB against 16 MB of
+FCRAM — before a single triangle, texture or the mixer's own buffers. The bank
+still has no bound and `preload()` is still not called on the console. The two
+halves of that decision are coupled and neither is cheap: freeing an archive's
+bytes is only possible once every sound in it has decoded, which means
+preloading, which is the opposite of the lazy decode that keeps today's peak to
+the sounds a level actually plays. Item 6c is closed; the eviction item is not.
+
+### The cost, and where it is pinned
+
+The mix loop is hot path by AGENTS §2's second criterion (735 output frames a
+frame). Each output frame reads two samples, so the store adds one `vcvt.f32.s32`
+plus one `vmul` per read — four extra float ops per output frame per voice
+against an interpolation of four. That is a trade made for memory, and it is
+pinned at `Sound::sampleAt()` as `@vfp-exempt R8` (fixed-point domain promoted
+back to float mid-loop, exact, `measured n/a`, Verified 2026-11-06) rather than
+left in prose. The pin is grammar-checked against `EXEMPT_RE` and fits the gate's
+400-char window (365 chars) — see the deferred finding below for why that matters.
+`gates_vfp` still reports `PASS blockers=0 reviews=0` and `audit_r11_idiv` still
+finds no candidates.
+
+### Review findings
+
+**review-13 (logs/ralph-pi/run-20261106-062909/review-13.md) is a failed
+dispatch, not an all-clear.** Its entire content is
+`REVIEWER FAILED model=litellm/deepseek-v4.1-flash-th rc=124` and its `.rc` is
+`124` — the reviewer was dispatched against scope `96cfe849..953369da` (batch
+93), timed out, and produced no findings. There is nothing to remediate and
+nothing to rebut; per the loop's own fail-closed rule the range **stays owed** and
+the next mandatory review must cover it. The likely mechanism is the one
+review-6 F2 and review-10 F5 already named and both are owner-only: the reviewer
+spawn goes through `PI_CMD`, whose committed default is the qwen slot wrapper, so
+a hosted DeepSeek review queues behind builder turns for local slots it does not
+need and can sit out its own `REVIEW_TIMEOUT`. This iteration adds nothing to
+that fix (both lines are inside the operator's uncommitted hunk) and does not
+claim it.
+
+No older review had an unremediated Critical/High: reviews 2, 5, 6, 8, 9, 10, 11
+and 12 are closed in `docs/CONTINUATION.md`, and their owner-only items are
+listed there unchanged.
+
+### Gates, verbatim
+
+* `make -C tests/scripts` → **`All cases match the oracle.`** (exit 0; 561
+  `PASS` lines, 0 `FAIL`, the same count as the parent build). The two audio
+  lines: `PASS L3_audio_mix: both PCM widths decode, the voices interpolate and
+  pan, …` and `PASS L3_audio_meta: the eight sounds' decoded length, rate, loop
+  flag and sample values are the oracle's, …`; also `PASS AudioSinkSeam` and
+  `ndsp_sink: …/audio_3ds.cpp — 18 checks, 29 mutation arms`.
+* `bash tools/check.sh` → **`CHECK: ALL GATES PASSED`** (exit 0):
+  `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
+  `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built
+  .cia)`, `gates_frames every pinned frame is deterministic and unchanged`,
+  `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` → exit 0, `3DSX mdk.3dsx`. **`mdk.elf` md5
+  `5437e57cf0017fc7e8239cb44b947c3d`** (the parent's was
+  `1237bfcc0c6eee21e73e8a9fe8794302`; the ELF moved because the mix code moved,
+  which is the expected direction for a batch that changes shipped bytes).
+  Identity is the ELF, not the `.3dsx` (batch 86 / review-5 F1).
+
+### Emulator evidence (AGENTS P7/P8 — this batch changes mdk_3ds/** and the console's audio path)
+
+```
+== emurun verdict ==
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6      (r1.2.1 20250128-418c25c, the pinned build)
+build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+frames    : reached 1560 by the deadline (31 frame lines logged); post-reap the guest log
+            ends at frame 1620 (32 frame lines logged)
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+stereo    : render_3d=0 factor_3d=0 (0 = mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0
+dspfirm   : dspfirm.cdc (the lane's sdmc/3ds/dspfirm.cdc; ndsp needs it)
+backend: PICA200 Citro3D
+flow: screen=4 level=7
+frame 1560 elapsed=0.0167 steps=1570 feet=(0.0,4.0,0.0) yaw=90.0 health=100 eye=(0.0,-4.0,4.5) voices=0 plays=1
+```
+
+`emurun.sh` exit code **0** (not 3 stale log, not 4 emulator died, not 6 wrong
+build). The audio ledger from that run's guest log:
+
+```
+audio: ndsp chn0 PCM16 stereo 44100 Hz, 4 x 20 ms queued
+audio: sink=1 bank=1 voices=0 queue=2646
+audio: frame=60   secs=1.099  submitted=50   done=47   dropped=3 inDsp=3 dspframes=229
+audio: frame=1620 secs=27.171 submitted=1354 done=1351 dropped=5 inDsp=3 dspframes=5562
+```
+
+* `submitted / (secs x 50)` = **0.9967** — the ledger balance the correct
+  `nsamples` gives (batch 88's number, unchanged by this batch).
+* The `dspframes` **slope** between the first and last row is **204.549/s** over
+  26.072 s. That is a fifth sample of the estimator and the first from a
+  **different ELF**, and it lands inside the band the last three batches measured
+  (204.544 / 204.562 / 204.566/s) and within 0.004/s of the header model
+  `32728.5/160 = 204.553`. Changing the mix's sample fetch did not move it, which
+  is what you would expect from a counter that counts ndsp's own frames — and it
+  is a rate only in the emulator's HLE DSP. The console's mixer rate is still
+  unmeasured (AGENTS P6/P8).
+* `voices=0 plays=1` at the sampled frames, as in the parent's runs: the console
+  still has no `ScriptRuntime`, so only Kurt's own set exists (item 6d).
+
+Emulator-green is not hardware-pass: Mandarine masks FCRAM/VRAM exhaustion,
+`GPU_CLAMP_TO_EDGE` leniency and heap wear across soft relaunches. The store
+change is precisely the kind of change a bigger emulated heap hides — 6.47 MB of
+decoded bank is comfortable in the emulator and is a decision the console still
+has to make lazily.
+
+### Frame
+
+`docs/frames/2026-11-08-b94-int16-store.png` (+ `.txt`). The PNG is byte-identical
+to batch 93's (`6646adf1…`) and the gap line is unchanged
+(`bad_percent=1.240 max_delta=247 mean_delta=0.1819`); the sidecar says so and
+names the measurement, per the convention review-9 F3 established.
+
+### Prior-solution lookup
+
+`pi-knowledge` `mdk-sdl` was searched first (int16 sample store / bank memory
+footprint). Its top hits were `mdk_core/src/audio/sound.h`, `sound_bank.h` and
+`sound_bank.cpp` — i.e. the KB pointed straight at the three files the change is
+in, and at the `CONTINUATION.md` line that named 6c — retrieved content treated
+as a lead and verified against the tree. Neither `obsidian_*` nor `cognee_*` is
+exposed in this session, so the vault lookup was the degraded disk-only path
+(AGENTS P9) and Cognee's graph search was unavailable; reported rather than
+claimed. The vault note that most nearly applies, `date-your-evidence-against-your-tree.md`,
+is why both `mixsize` numbers were taken from two builds of this tree rather than
+one build and a halving.
+
+### Deferred / open
+
+* **The one-sided view** (panel columns 200..399 of 400) is unadvanced by this
+  batch, as it was by 88-93. It needs a new hypothesis, not a sixth census.
+* **The bank still has no bound** (6b's follow-on). The measured numbers are
+  above; the archive-bytes coupling is the reason a budget is not a one-liner.
+* **6d** — no `ScriptRuntime` on the console, so ambient and object sounds cannot
+  play. `voices=0 plays=1` in the ledger above is that gap, visible.
+* **Three malformed pins in `mdk_core/src/audio/sound_device.cpp`** (lines 128,
+  147, 155 as of this batch): they do not parse against `EXEMPT_RE` — two exceed
+  the gate's 400-char window and one writes `measured n/a (corpus empty).` where
+  the grammar wants a single token — so `gate_exemptions` would report
+  `invalid @vfp-exempt grammar` and `MUST exemption missing measured cost` for
+  them. They are invisible today only because that file is not in the (empty)
+  hot-path corpus and carries no `@hotpath` marker, so `scan_tree` never opens
+  it: the moment a capture puts the mix loop in the corpus, three MUST findings
+  fire on code that is correct and pinned. Fixing them means rewording the
+  R2/R3/R4 gameplay-fidelity pins, which §5 says needs a capture and a fidelity
+  verdict, so it is recorded rather than touched here. The pin this batch added
+  was written to parse (365 chars, `measured n/a.`) for exactly that reason.
+* Original-3DS behaviour remains unmeasured.

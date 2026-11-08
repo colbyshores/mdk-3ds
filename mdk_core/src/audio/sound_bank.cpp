@@ -80,6 +80,35 @@ void SoundBank::preload() {
     }
 }
 
+size_t SoundBank::decodedSamples() const {
+    size_t n = 0;
+    for (std::map<std::string, Sound>::const_iterator it = sounds_.begin(); it != sounds_.end();
+         ++it) {
+        n += it->second.samples.size();
+    }
+    return n;
+}
+
+size_t SoundBank::decodedBytes() const {
+    // The element size is read from the store itself, so this number is the
+    // store's width and not a comment about it: a store that changed width
+    // changes this without anything having to remember to update it.
+    size_t n = 0;
+    for (std::map<std::string, Sound>::const_iterator it = sounds_.begin(); it != sounds_.end();
+         ++it) {
+        n += it->second.samples.size() * sizeof(Sound::Samples::value_type);
+    }
+    return n;
+}
+
+size_t SoundBank::archiveBytes() const {
+    size_t n = 0;
+    for (size_t i = 0; i < archives_.size(); i++) {
+        n += archives_[i].bytes().size();
+    }
+    return n;
+}
+
 bool SoundBank::animation(const std::string& name, formats::SpriteAnimation* out) {
     if (!out) {
         return false;

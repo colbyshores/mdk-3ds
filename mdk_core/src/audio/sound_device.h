@@ -72,7 +72,11 @@
 // the samples the golden pins. Each site carries its pin for that reason, with
 // `measured n/a` because there is no OG capture to measure against; a fixed-point
 // redesign is a proposal for after the first capture and a fidelity verdict, not a
-// cleanup. Nothing calls update() from a shipped frontend yet — the ndsp batch
+// cleanup. One more op arrives with the int16 sample store (sound.h): each of the
+// two sample reads per output frame is now a `vcvt.f32.s32` and a `vmul` on top of
+// the load, pinned at `Sound::sampleAt()` under R8 because it is a fixed-point
+// domain promoted back to float mid-loop and it is exact, not approximate. Nothing
+// calls update() from a shipped frontend yet — the ndsp batch
 // wires it — so none of this is a measured cost today; it is the site list,
 // written down before the code that would need it is optimised.
 // ============================================================================

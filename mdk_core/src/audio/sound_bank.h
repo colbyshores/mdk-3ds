@@ -27,13 +27,15 @@
 // A name whose WAV will not parse is NOT found, as in the C# (`Wav.Parse`
 // returns null and Get caches null).
 //
-// THE MEMORY, HONESTLY, AND MEASURED. Decoding level 3's three archives to float is
-// 3,234,976 samples = 12.34 MB from 4,390,060 bytes on disk (72 sounds; counted by
-// the oracle probe, not estimated) — against a 3DS with 16 MB of FCRAM. Nothing
-// calls preload() on the 3DS today, and the ndsp batch has to decide whether to keep
-// the file's 8/16-bit bytes and convert on read, decode on demand with a budget, or
-// stream; that is recorded as an open item, not solved by pretending the numbers are
-// smaller.
+// THE MEMORY, HONESTLY, AND MEASURED. `decodedSamples()`, `decodedBytes()` and
+// `archiveBytes()` are the instrument, and `tick1 mixsize <level>` prints them from
+// the store itself: level 3's three archives are 4,390,060 bytes on disk and decode
+// to 3,234,976 samples (72 sounds) = 6,469,952 bytes in the int16 store, level 4 is
+// 7,878,536 and level 8 is 10,002,084 — against a 3DS with 16 MB of FCRAM, with the
+// archive blobs resident on top of that. Nothing calls preload() on the 3DS today,
+// and the console still has to choose between decode-on-demand with a budget and
+// streaming; the store half of that choice is made (sound.h) and the budget half is
+// recorded as an open item, not solved by pretending the numbers are smaller.
 // ============================================================================
 
 #include <stdint.h>
@@ -96,6 +98,26 @@ public:
     void preload();
 
     int32_t archiveCount() const { return (int32_t)archives_.size(); }
+
+    // How many names have actually decoded (a bank that has only had one lookup
+    // answers 1, not the archives' entry count).
+    int32_t soundsDecoded() const { return (int32_t)sounds_.size(); }
+
+    // The decoded sample payload: the samples this bank holds and the bytes they
+    // occupy (count x the store's element size, so it follows the store's width
+    // instead of restating it). The bank is what owns this memory, so it is what
+    // can say how big it is — the number a preload budget or an eviction policy
+    // has to compare against FCRAM. Payload only: not the vector or map nodes,
+    // and not the archive bytes the Sni still holds. Zero for a bank that has
+    // decoded nothing, because nothing has been decoded.
+    size_t decodedSamples() const;
+    size_t decodedBytes() const;
+
+    // The archive blobs themselves, which stay resident after a decode (an Sni
+    // owns its bytes and the bank owns its Snis). This is the other half of what
+    // a preload has to fit: halving the decoded store buys nothing if the raw
+    // archives plus the level's geometry do not leave room for it.
+    size_t archiveBytes() const;
 
 private:
     // Look the name up in the archives, newest first.
