@@ -15,12 +15,29 @@ namespace audio {
 
 namespace {
 
-// The C#'s ByteMiddle, and the shift that puts a byte into the same int16
+// The C#'s ByteMiddle, and the scale that puts a byte into the same int16
 // domain as a short. ByteScale itself is gone: `(byte-128) * (1/128)` and
-// `((byte-128) << 8) * (1/32768)` are the same dyadic value, so one scale now
+// `((byte-128) * 256) * (1/32768)` are the same dyadic value, so one scale now
 // serves both widths (sound.h).
+//
+// IT IS A MULTIPLY AND NOT A SHIFT, AND THAT IS A DEFINITION ARGUMENT AND NOT A
+// STYLE ONE. `(data[i] - 128)` is negative for every byte below 128, and
+// left-shifting a negative signed value is undefined in C++17 ([expr.shift]/2:
+// "if E1 has a signed type and a negative value, that behavior is undefined").
+// Both builds are C++17 (`mdk_3ds/Makefile`, `tests/scripts/Makefile`), so the
+// shift form was UB on half of the byte domain — every quiet half of every
+// 8-bit sound in the game — and UBSan says so:
+//
+//     g++ -std=c++17 -O1 -fsanitize=undefined  ->  runtime error: left shift of
+//     negative value -128
+//
+// The multiply is fully defined: the product spans [-32768, 32512], inside
+// int32 (no overflow) and inside int16 (so the narrowing cast is in range and
+// not implementation-defined either), and GCC lowers `* 256` to the same `lsl
+// #8` the shift spelled. Same instruction, no undefined behaviour. The same
+// idiom is spelled out the same way in formats/mve.cpp's 8-bit decode.
 const int32_t kByteMiddle = 128;
-const int32_t kByteShift = 8;
+const int32_t kByteScale = 256;
 
 } // namespace
 
@@ -40,12 +57,13 @@ void soundFromPcm(const uint8_t* data, int32_t byteCount, int32_t channels, int3
     if (bitsPerSample == 8) {
         out->samples.resize((size_t)byteCount);
         for (int32_t i = 0; i < byteCount; i++) {
-            // (data[i] - 128) << 8: the byte is unsigned, so the bias is an int
+            // (data[i] - 128) * 256: the byte is unsigned, so the bias is an int
             // subtract and the result spans [-32768, 32512] — inside int16 for
             // every byte, which is what lets the read share one scale with the
-            // 16-bit path. No float appears in this loop.
+            // 16-bit path. No float appears in this loop, and the scale is a
+            // multiply for the reason at its definition above.
             out->samples[(size_t)i] =
-                (int16_t)(((int32_t)data[(size_t)i] - kByteMiddle) << kByteShift);
+                (int16_t)(((int32_t)data[(size_t)i] - kByteMiddle) * kByteScale);
         }
         return;
     }

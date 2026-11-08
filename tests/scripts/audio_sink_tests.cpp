@@ -324,6 +324,51 @@ void testSampleStoreExact() {
     expect("and no archives", (long long)empty.archiveBytes(), 0);
 }
 
+// ---------------------------------------------------------------------------
+// 6. The stereo interleave, executed.
+//
+// Every sound in MDK's own archives is mono (sound.h), so the `channels != 1`
+// branch of SoundDevice::sample() was reached by no game data and by no test —
+// which is exactly how a signed `frame * 2` got written into it and nobody
+// noticed (review-1 F4 of run-20261108-195620). The pair is now formed in
+// size_t, where the multiply cannot overflow, and this is the case that runs the
+// branch at all: a one-frame looping STEREO tone whose two channels are named
+// and opposite, so a swapped interleave, a pair built from the wrong index, or a
+// stereo sound read as mono each move a bit rather than hiding in a branch no
+// test reaches.
+// ---------------------------------------------------------------------------
+void testStereoInterleave() {
+    audio::Sound stereo;
+    stereo.samples.push_back(16384);   // left  = +(16384/32768) = +0.5 exactly
+    stereo.samples.push_back(-16384);  // right = -0.5 exactly
+    stereo.channels = 2;
+    stereo.sampleRate = audio::SoundDevice::kOutputRate;
+    stereo.looping = true;
+
+    audio::SoundBank::Entry entry;
+    entry.volume = 0x7FFF;
+    entry.looping = true;
+    entry.channels = stereo.channels;
+    entry.sampleRate = stereo.sampleRate;
+    entry.frames = stereo.frames();
+    entry.sound = &stereo;
+
+    expect("a one-frame stereo sound has one frame", stereo.frames(), 1);
+    expect("and its frames() divided the samples by the channels", (long long)stereo.samples.size(),
+           2);
+
+    audio::SoundDevice device;
+    device.play(entry, 1.0f);
+    device.update(1.0f / 60.0f);
+    expect("the muted device mixes a frame's worth of stereo", device.mixedFrames(), 735);
+    const float* mix = device.mix();
+    expect("and the mix is there", mix != nullptr ? 1 : 0, 1);
+    // The interleave is even = left, odd = right, which is what the ndsp sink's
+    // PCM16 stereo slot and the SDL sink's F32LE buffer both require.
+    expectBits("the LEFT output is the even sample", mix[0], 0.5f);
+    expectBits("and the RIGHT output is the odd one, with its own sign", mix[1], -0.5f);
+}
+
 } // namespace
 
 namespace mdk {
@@ -336,6 +381,7 @@ int runAudioSinkTests() {
     testQueueResetsOwed();
     testListenerBasis();
     testSampleStoreExact();
+    testStereoInterleave();
     return failures;
 }
 

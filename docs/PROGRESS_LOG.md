@@ -17999,3 +17999,232 @@ one build and a halving.
   verdict, so it is recorded rather than touched here. The pin this batch added
   was written to parse (365 chars, `measured n/a.`) for exactly that reason.
 * Original-3DS behaviour remains unmeasured.
+
+## Iteration 123 — batch 95: review-1 of run-20261108-195620 closed 8/8 — the 8-bit decode was shifting a negative number, the stereo branch had never run, and this project's "16 MB of FCRAM" was a number nobody sourced
+
+**Review:** `logs/ralph-pi/run-20261108-195620/review-1.md`, scope `96cfe849..5bf0c61c` +
+uncommitted work, independence PROVED (builder `qwen` / reviewer `deepseek`). **No Critical, no
+High.** Eight findings, all Medium/Low. **All eight fixed, none rebutted.** The reviewer also
+covered `96cfe849..953369da` (batch 93), so the range `review-13.md`'s `rc=124` dispatch owed is
+now covered and is no longer owed — that gap in the record is closed by coverage and not by
+rewriting it.
+
+### F2 (Medium, undefined behaviour) — the decode shifted a negative signed value
+
+The 8-bit PCM path was `((int32_t)bytes_[p] - 128) << 8`. For `byte < 128` the left operand is
+negative, and C++17 [expr.shift]/2 makes that **undefined**. This is not a theoretical complaint
+about a compiler doing what it always does: it is a statement that the value the mix receives for
+every quiet byte of every 8-bit track is not supplied by the language. Reproduced before touching
+anything, with the shipped function compiled `-O1 -fsanitize=undefined` in isolation (the parent's
+`sound.cpp` taken from `5bf0c61`, a harness that decodes all 256 byte values):
+
+```
+oldinc/audio/sound.cpp:48:68: runtime error: left shift of negative value -128
+    #0 0x5972442ad06e in mdk::audio::soundFromPcm(unsigned char const*, int, int, int, int, bool, mdk::audio::Sound*) oldinc/audio/sound.cpp:48
+    #1 0x5972442ac464 in main /tmp/mdkub/ubold.cpp:7
+```
+
+One report, because UBSan deduplicates by source location: the single expression is UB for 128 of
+the 256 byte values and the sanitizer names the site, not each input.
+
+Fixed by spelling the scale instead of shifting it: `* kByteScale` with `kByteScale = 256`, next to
+the `kByteMiddle = 128` it pairs with, and the same class in `formats/mve.cpp:311` (the 8-bit
+cutscene track decode) fixed the same way. They are **not** factored into one helper: one constant
+does not justify a `formats → audio` dependency, and a helper would move the reason off the two
+places that need it. Post-fix, the same UBSan harness runs clean over all 256 byte values and prints
+the oracle's extremes — `first=-1.00000000 last=0.99218750`.
+
+The target's codegen for the decode does not move: `objdump` of the new `mdk.elf` still shows
+`orr r3, r3, r1, lsl #8` for the 16-bit assembly, and a multiply by a power of two is the same
+instruction as the shift. So this is a correctness fix that costs nothing on the ARM11, which is
+the only kind of UB fix that is ever uncontroversial.
+
+### F4 (Medium, test coverage) — the stereo branch had never been executed
+
+Every sound in MDK's own archives is mono, so `SoundDevice::sample`'s `channels != 1` branch was
+reached by no game data **and by no test**, which is precisely how a signed `frame * 2` lived in it.
+A branch no test reaches is not covered code, it is untested code with a green suite above it. Two
+changes: the pair is now formed in `size_t` (`Sound::sampleAt` takes `size_t`, the store's own index
+type, so the multiply cannot overflow by construction), and `testStereoInterleave()` drives a
+one-frame looping **stereo** tone with named, opposite channels through the public
+`play()/update()/mix()` path and asserts `mix[0] = +0.5` and `mix[1] = -0.5` bit for bit.
+
+Mutation-checked, because a coverage test that cannot fail is the seventh could-not-fail clause this
+loop has catalogued: swapping the two `sampleAt` calls in the shipped source fails **exactly** those
+two checks and nothing else —
+
+```
+  FAIL: the LEFT output is the even sample was BF000000, the oracle has 3F000000
+  FAIL: and the RIGHT output is the odd one, with its own sign was 3F000000, the oracle has BF000000
+```
+
+and the source was restored and rebuilt before anything was believed.
+
+**The codegen consequence, disclosed rather than slipped past.** Changing `sampleAt`'s parameter to
+`size_t` removed a conversion from the read path, GCC then decided to inline `SoundDevice::sample`
+into `mixVoice`, and the standalone symbol is gone from the ELF: `.text` `0x57b70` → `0x57ba0`,
+**+48 bytes**. The parent build's out-of-line mono read was
+`lsl`/`ldrsh`/`vldr`/`vmov`/`vcvt`/`vmul`/`vstr` behind a call and a `push {lr}`; the shipped one is
+`lsl`/`ldrsh`/`vmov`/`vcvt`/`vmul` with the value staying in a VFP register and going straight into
+the `vmla`. That is fewer ops and no call per read, and it is **not** claimed as a win: there is no
+profile, and AGENTS §1 item 4 is about code footprint in a 16 KB L1I with L2 off, which is exactly
+the argument an unmeasured inlining decision does not get to make. It is recorded as a change to a
+hot loop that this batch caused, with the numbers, and the addresses in the two cost comments are
+this build's and say so.
+
+### F1 (Medium, test coverage) — the eighth could-not-see clause, and it struck the previous batch's own fix
+
+Batch 93's guard walk was capped at `HEADER_WALK = 6` non-blank lines. The reviewer's mutant — a
+braceless `if` whose condition wraps over **seven** lines — adjudicated PASS against batch 93,
+reproduced here before the fix. A cap on a walk is a budget on how much a condition may be worth,
+and it reopens the hole one wrapped line further out every time somebody formats a guard the long
+way; this is the third consecutive batch in which a guard class closed for two of its spellings and
+stayed open for a third.
+
+The cap is **deleted, not raised**. The bound is structural and it was already computed: a braceless
+guard lives **inside** the block that owns its statement, so the walk's floor is the `{` of that
+block, which `guard_of` already has. Anything above that opener is somebody else's construct, and a
+walk that passed it could read an unrelated keyword as a guard and red correct code. With that floor
+the walk needs no step count and a condition of any length is seen. The reviewer's own mutant now
+fails as required:
+
+```
+  FAIL ndsp_sink frontend-feeds-the-clock-and-the-device-the-same-elapsed: `secs` is only the audio time if it sums what
+```
+
+and the arm list grew to **30**, all adjudicated red.
+
+Batch 93 also ran its four correct-code probes by hand and lost them with the terminal, so the
+green half of a guard test was itself unrecorded. **Seven probes are committed now** and the runner
+exits 1 if any of them reddens or mutates nothing: accumulate first in the frame loop, the frame loop
+in Allman style, a plain Allman block, a label above the statement, a complete one-line `if` above
+it, a `do { } while (false);` above it, and F5's wrapped condition.
+
+```
+PASS NdspSink (18 checks, 30 arms adjudicated red, 7 probes green)
+```
+
+### F5 (Low) — the gate redded correct code
+
+The alias detector's gap was `\s*`, which matches a newline, so a perfectly legal wrapped condition
+whose continuation line began with the clock —
+
+```
+if (frame > 0u &&
+    audioClock < 3600.0f)
+```
+
+— read as an address-taken `&audioClock` alias and failed the gate. Reproduced against batch 93. The
+gap is now `[ \t]*`, and the spelling is a committed probe. This is the failure mode this file has
+named more than any other: a gate that reds correct code is not a strict gate, it is a gate somebody
+relaxes.
+
+### F3 (Medium) — a false premise this file had been repeating, and F6/F7/F8
+
+**There is no 16 MB of FCRAM in this project.** Batch 94's memory argument — and four places in
+`CONTINUATION.md`, and two source comments — asserted a 16 MB ceiling against which a fully decoded
+bank did not fit. Nothing sourced it. What is actually there: the built ELF's crt0 header carries
+`__heap_size = 0x01800000` (**24 MiB**) and `__linear_heap_size = 0x02000000` (32 MiB); libctru
+`os.h:49` gives `OS_OLD_FCRAM_SIZE = 0x8000000` (**128 MiB**) and `os.h:72` `OS_FCRAM_SIZE =
+0x10000000` (256 MiB);
+`SPEC.md:755` says 64 MB RAM / 32 MB system heap. A fully decoded level 8 is 15,823,516 B, which
+**fits** the 24 MiB request with 9.34 MB to spare (L3 14.31 MB, L4 11.38 MB left). So the eviction
+item survives — unbounded growth is still unbounded, and a level with more audio would outgrow any
+fixed request — but it survives as a real open item and not as a rescue for a ceiling that never
+existed. All four `CONTINUATION.md` sites and both source comments are corrected, and the honest gap
+is named: `osGetMemRegionSize(MEMREGION_APPLICATION)` is the only figure that settles what an
+untouched OG hands an app, and nothing in this tree calls it.
+
+**F6**: the R8 pin read `Verified 2026-11-06` on code first committed 2026-11-08 — a back-dated pin,
+invisible only because the pin-age clock is waived under `PROJECT_FROZEN_AT`, which is precisely the
+kind of date that clock exists to catch. Now `2026-11-08`. **F7**: both cost comments said
+"`vcvt` + `vmul` per read" and omitted the `vmov` — an ARM→VFP transfer, which is a boundary crossing
+by this contract's own §1 definition and carries 1/4-cycle throughput/latency. Both comments now
+quote the shipped sequence including the `vmov`. **F8**: `15.83` in two source comments where
+`6,469,952 + 5,821,432 = 15,823,516` is `15.82`; the reviewer recomputed it and was right, and this
+is the second batch running that this file has struck this class.
+
+### Gates, verbatim
+
+```
+PASS NdspSink (18 checks, 30 arms adjudicated red, 7 probes green)
+```
+
+```
+PASS L3_audio_mix: both PCM widths decode, the voices interpolate and pan, the music bus low-passes, the bus and master gains scale, the limiter holds the mix at its ceiling, and Stop/StopAll take voices out of the mix on the update the C# takes them out
+PASS L3_audio_meta: the eight sounds' decoded length, rate, loop flag and sample values are the oracle's, so a mix divergence below is the mixer's and not the decode's
+
+All cases match the oracle.
+```
+
+Both audio goldens **pass unregenerated**, which is the fidelity claim for a change to shipped
+arithmetic. `make -C tests/scripts` is 6m05s and ends `All cases match the oracle.`; `vm_tests`
+reports `PASS AudioSinkSeam` / `All VM unit tests match the oracle.`
+
+```
+  PASS   audit_c_with_classes     0 violations
+  PASS   gates_vfp                0 blockers
+  PASS   audit_arm11_math         contract clean
+  PASS   audit_r11_idiv           no candidates
+  PASS   gates_core_parity        both targets link the same game
+  SKIP   gates_smdh               no built .cia to read
+  PASS   gates_frames             every pinned frame is deterministic and unchanged
+  PASS   gates_batch_integrity    project invariants intact
+
+CHECK: ALL GATES PASSED
+```
+
+`gates_vfp` prints its own standing note that the corpus is empty and the staleness clocks are
+waived at `2026-10-21`; `PASS` here means clean under the freeze, not freshly measured.
+
+### Emulator (AGENTS P7/P8)
+
+`bash mdk_3ds/tools/emurun.sh --secs 60 --display 99 --grep audio`, **display `:99`** (recorded, as
+P7 requires), Mandarine `/mnt/nas/Development/mandarine.AppImage` md5
+`0d2adab6ad078c78e6d03e72086f2eb6` = the pinned r1.2.1, guest log fresh per lane, **exit 0**.
+Forced instrument: `llvmpipe` (`LIBGL_ALWAYS_SOFTWARE=1`), OpenGL (`graphics_api=1`), **mono**
+(`render_3d=0 factor_3d=0`), host audio muted (`SDL_AUDIODRIVER=dummy`).
+
+```
+frames    : reached 3360 by the deadline (61 frame lines logged); after the reap the guest log ends at frame 3420
+backend: PICA200 Citro3D
+audio: bank ready, 3 archives, decoded on demand
+audio: FZ/DN 1 (fpscr=83000010)
+audio: ndsp chn0 PCM16 stereo 44100 Hz, 4 x 20 ms queued
+audio: sink=1 bank=1 voices=0 queue=2646
+audio: frame=960 secs=16.140 submitted=802 done=800 dropped=5 requeued=1 inDsp=2 dspframes=3306 dspdropped=0
+```
+
+The ledger is the evidence this batch's arithmetic claim needs: at frame 960 the clock reads
+`secs=16.140` against a guest at 960/16.140 = **59.48 fps**, `submitted/(secs×50) = 802/807.0 =
+0.994`, `dspdropped=0`, and `dropped` moved 3→5 across 900 frames, i.e. the queue retires and the
+clock tracks the frames it was fed. `voices=0 plays=1` is unchanged and is still item 6d, not a
+regression. **Emulator-green is not hardware-pass**: Mandarine hides FCRAM exhaustion, clamps
+leniently, and does not clear FCRAM between relaunches, so original-3DS timing and memory behaviour
+remain **UNMEASURED**.
+
+### Fixed / rebutted
+
+Fixed: **F1, F2, F3, F4, F5, F6, F7, F8 — all eight.** Rebutted: **none.** Nothing in this review was
+a strawman; F1 and F3 in particular struck things this loop wrote about its own work and asserted they
+were closed. Deferred: nothing. Owner-only: nothing new.
+
+### Still open after this batch
+
+* **`osGetMemRegionSize(MEMREGION_APPLICATION)` on an untouched OG** — the only number that finishes
+  F3's honest version. Hardware-only, and nothing in the tree calls it.
+* **Bank eviction with a real budget** (item 6c's second half). Reframed by F3: the problem is
+  unbounded growth, not a 16 MB ceiling, and the coupling is unchanged — freeing an archive's bytes
+  requires every sound in it decoded, which is a preload, and that is the opposite of today's lazy
+  decode.
+* **Item 6d** — no `ScriptRuntime` on the 3DS frontend, so script/ambient/object sounds cannot play
+  (`voices=0 plays=1`).
+* **The mix loop's pins are hot-only R-rule pins on code with no capture.** The moment a capture puts
+  it in the corpus, R2/R3/R4 fire on code that is correct and pinned; rewording those pins needs a
+  capture and a fidelity verdict (§5), so it stays recorded and untouched.
+* **`gates_smdh` is SKIPPED, not passed**, until a `.cia` is built.
+* **Original-3DS performance and memory behaviour remain UNMEASURED.**
+* **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools were present in this
+  session, so the prior-solution lookup ran on `pi-knowledge` (`mdk-sdl` KB) and the repository only.
+  A Cognee graph lookup did **not** happen and is not claimed to have happened; the missing MCP servers
+  are a session configuration fault to report, not a licence to skip the lookup silently.

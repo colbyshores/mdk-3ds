@@ -49,6 +49,14 @@ const int32_t kVideoHeader = 14;
 const int32_t kBlock = 8;
 const float kSampleScale = 1.0f / 32768.0f;
 const int32_t kByteMiddle = 128;
+// The 8-bit pre-scale is a MULTIPLY and not a shift: `(byte - 128)` is negative
+// for half the byte domain and C++17 makes a signed left shift UB there, so the
+// shift form this used to carry was undefined for every quiet byte of every
+// 8-bit cutscene track. Same reason, same spelled-out conversion as the audio
+// decode (mdk_core/src/audio/sound.cpp); the two are deliberately not factored
+// into one helper, because one constant does not justify a formats -> audio
+// dependency, and a helper would hide the reason from the place that needs it.
+const int32_t kByteScale = 256;
 
 // Interplay DPCM: each byte indexes this table of steps.
 const int16_t kDeltas[256] = {
@@ -308,7 +316,7 @@ bool Mve::decodePcm(int32_t at, int32_t end) {
         }
 
         samples.push_back(step == 2 ? (int32_t)binS16(bytes_.data(), p)
-                                    : ((int32_t)bytes_[(size_t)p] - kByteMiddle) << 8);
+                                    : ((int32_t)bytes_[(size_t)p] - kByteMiddle) * kByteScale);
     }
 
     pushSamples(samples.data(), (int32_t)samples.size());

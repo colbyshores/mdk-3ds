@@ -100,13 +100,21 @@ void SoundDevice::set(int32_t id, float gain, float pitch, float pan) {
 
 void SoundDevice::sample(const Sound& sound, int32_t frame, float* left, float* right) {
     if (sound.channels == 1) {
-        const float s = sound.sampleAt(frame);
+        const float s = sound.sampleAt((size_t)frame);
         *left = s;
         *right = s;
         return;
     }
-    *left = sound.sampleAt(frame * 2);
-    *right = sound.sampleAt(frame * 2 + 1);
+    // THE PAIR IS FORMED IN size_t, NOT IN int32_t. `frame * 2` in int32 is a
+    // signed multiply that can overflow, and a signed overflow is UB; the store
+    // is indexed by size_t, so the pair is formed there and stays there (the
+    // parent expression did this before the store changed width). Every sound in
+    // MDK's own archives is mono, so this branch is reached by a test and not by
+    // the game — which is exactly why the overflow was easy to write, and why
+    // `testStereoInterleave()` now walks it.
+    const size_t pair = (size_t)frame * 2u;
+    *left = sound.sampleAt(pair);
+    *right = sound.sampleAt(pair + 1u);
 }
 
 // AudioDevice.MixVoice, line for line: linear interpolation between the two

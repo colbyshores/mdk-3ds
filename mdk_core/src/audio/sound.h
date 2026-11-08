@@ -27,10 +27,12 @@
 //           `(float)short * (1/32768)` — the oracle's own expression, with the
 //           oracle's own constant, moved from the decode to the read.
 //   8-bit   unsigned, biased at 128, stored pre-scaled by 256 as
-//           `(byte - 128) << 8`. For byte in [0,255] that spans [-32768,
+//           `(byte - 128) * 256`. For byte in [0,255] that spans [-32768,
 //           32512], so it fits int16 exactly; reading it back gives
 //           `(byte-128) * 2^8 * 2^-15` = `(byte-128) * 2^-7` = the oracle's
-//           `(byte - 128) * (1/128)`.
+//           `(byte - 128) * (1/128)`. A multiply and not a shift, because the
+//           biased value is negative for half the byte domain and C++17 makes a
+//           signed left shift UB there (sound.cpp).
 //
 // Both paths are dyadic arithmetic on a numerator that needs four bits, so no
 // rounding happens on either side and the two are the SAME float, not a near
@@ -59,25 +61,75 @@
 // of the store, so the line is the store's width and not a comment about it):
 // level 3's three archives are 4,390,060 bytes on disk and hold 72 sounds =
 // 3,234,976 samples, which is 12,939,904 bytes as float and 6,469,952 as int16.
-// Level 4 is 15,757,072 -> 7,878,536 and level 8 is 20,004,168 -> 10,002,084,
-// against a 3DS with 16 MB of FCRAM most of which the level's geometry and
-// textures already hold. So the store change halves the largest single audio
-// allocation the port makes — and it does NOT make `preload()` safe: the SNI
-// archives stay resident too (4.39 / 5.90 / 5.82 MB for the same three levels),
-// so a fully decoded level 3 still costs 10.86 MB and level 8 15.83 MB before a
-// single triangle. Budget-and-evict, or dropping the archive bytes once a sound
-// has decoded, or streaming, stay open; what changed is that the decoded store is
-// no longer the term that alone exceeds FCRAM on every level.
+// Level 4 is 15,757,072 -> 7,878,536 and level 8 is 20,004,168 -> 10,002,084.
+// The SNI archives stay resident after a decode too (4,390,060 / 5,904,992 /
+// 5,821,432 for the same three levels), so a FULLY decoded bank is 10,860,012 /
+// 13,783,528 / 15,823,516 bytes — 10.86 / 13.78 / 15.82 MB, decimal — before a
+// single triangle. Halving the store halves the largest single audio allocation
+// the port makes; it does not bound it, and `preload()` is still not called on
+// the console (main_3ds.cpp).
+//
+// WHAT IT HAS TO FIT IN, AND THE NUMBER THIS FILE USED TO GET WRONG. This header
+// used to say "against a 3DS with 16 MB of FCRAM". That figure is not a fact
+// about this console and it is gone; review-1 F3 of run-20261108-195620 found
+// it, and it had been quietly driving the priority order. The three numbers that
+// ARE sourced, in the order of how much they actually bound the port:
+//
+//   1. What THIS BUILD ASKS FOR, and this one is measured out of the shipped
+//      artifact rather than asserted: the crt0 header at vaddr 0x100010 holds
+//      `__heap_size = 0x01800000` (24 MiB) and `__linear_heap_size =
+//      0x02000000` (32 MiB). Those are devkitARM's `3dsx_crt0.o` defaults;
+//      `mdk_3ds/Makefile` overrides neither, so the C++ heap that `new` and
+//      every `std::vector` in the port — the sample bank included — grows
+//      inside is 24 MiB. Reproduce:
+//      `arm-none-eabi-objdump -s --start-address=0x100010 --stop-address=0x100018 mdk_3ds/mdk.elf`.
+//   2. What the CONSOLE HAS: libctru documents 128 MiB of linear FCRAM mapping
+//      on an Old 3DS (`OS_OLD_FCRAM_SIZE 0x8000000`, `3ds/os.h:49`) and 256 MiB
+//      on a New 3DS (`OS_FCRAM_SIZE`, `3ds/os.h:72`). SPEC.md 7.7, which is
+//      owner text, states the project's own budget as "6 MB of VRAM and 64 MB of
+//      RAM (32 MB of system heap on OG)". Neither is 16 MB.
+//   3. What the KERNEL ACTUALLY GRANTS, which is the only one of the three that
+//      is a ceiling and is STILL UNMEASURED: `osGetMemRegionSize(MEMREGION_APPLICATION)`
+//      reads `OS_KernelConfig->memregion_sz[0]` (`3ds/os.h:219`), a runtime
+//      value, not a constant. Nothing in this repository has ever printed it, on
+//      hardware or in the emulator, and a .3dsx request is not a grant.
+//
+// So the honest reading is the opposite of the one this header carried: on the
+// numbers that ARE sourced, a fully decoded level 8 (15.82 MB) fits inside the
+// 24 MiB the build asks for with 9.34 MB left for the level's geometry, textures,
+// sprites and BSP — it was never over a ceiling. Budget-and-evict, or freeing the
+// archive bytes once a sound has decoded, or streaming, stay open for the reasons
+// that survive the correction: nothing bounds the bank's growth, the same heap
+// holds the level itself, and the granted region has never been read. Do not
+// re-derive a fit-or-no-fit verdict from a memory figure that is not one of these
+// three.
 //
 // THE COST, AND IT IS A HOT-PATH COST. A voice's mix loop is hot path by
 // AGENTS.md 2's second criterion (735 output frames a frame, no capture needed),
-// and it reads two samples per output frame, so the store moves one `vcvt.f32.s32`
-// and one `vmul` per read into that loop — four extra float ops per output frame
-// per voice, where the interpolation itself is four. That is a trade made for
-// memory and not for speed, and it is pinned at `sampleAt()` under R8 rather than
-// hidden in a comment. Nothing calls update() from a shipped frontend on the
-// console yet, so it is an unmeasured cost by a profile today, exactly as the
-// loop it sits in is.
+// and it reads two samples per output frame, so the store moves the whole
+// conversion into that loop. The shipped sequence for the mono path MDK actually
+// uses — `objdump -d mdk.elf`, inside `SoundDevice::mixVoice` at 0x103864, where
+// `SoundDevice::sample` is inlined in this build — is FIVE ops per read and not
+// two:
+//
+//     lsl   r3, r3, #1         frame -> byte offset
+//     ldrsh r3, [r5, r3]       the int16 load
+//     vmov  s13, r3            ARM -> VFP register transfer
+//     vcvt.f32.s32 s13, s13    int -> float
+//     vmul.f32 s13, s13, s9    by 2^-15
+//
+// The `vmov` is not a detail: an ARM -> VFP transfer is its own boundary crossing
+// in AGENTS.md §1's table (1 cycle throughput, 4 cycles latency), and the
+// conversion is another (8 cycles latency), so a read is an address shift, a
+// load, a core crossing, a conversion and a multiply. Two reads per output frame
+// per voice is ten of those where the interpolation itself is four. That is a
+// trade made for memory and not for speed, and it is pinned at `sampleAt()` under
+// R8 rather than hidden in a comment. The addresses and the exact shape are this
+// build's, not a permanent property: `sample()` is inlined here and was a separate
+// function in the build that introduced the store, and the text section moved
+// 0x57b70 -> 0x57ba0 (+48 B) across the change that inlined it. Nothing calls
+// update() from a shipped frontend on the console yet, so none of it is a measured
+// cost by a profile today, exactly as the loop it sits in is.
 // ============================================================================
 
 #include <stdint.h>
@@ -100,7 +152,7 @@ struct Sound {
     typedef std::vector<int16_t> Samples;
 
     // The samples, in the file's own int16 domain: the 16-bit path is the file's
-    // short unchanged, the 8-bit path is `(byte - 128) << 8`. Read them with
+    // short unchanged, the 8-bit path is `(byte - 128) * 256`. Read them with
     // sampleAt(); nothing else in the tree should scale them.
     Samples samples;
     int32_t channels = 0;
@@ -109,12 +161,14 @@ struct Sound {
 
     // One sample as the oracle's float. The conversion is the oracle's own
     // multiply by 1/32768 and it is exact for both PCM widths — see the header.
-    float sampleAt(int32_t index) const {
+    // The index is the store's own type: a stereo pair is formed in it, so the
+    // pair's arithmetic cannot overflow (sound_device.cpp, review-1 F4).
+    float sampleAt(size_t index) const {
         /* @vfp-exempt R8 — the store is the file's int16 and the mix is the
          * oracle's float, so every read promotes fixed point back to float.
          * That promotion is the store's purpose (it halves the bank) and it is
          * exact for both widths: both scales are powers of two, so no sample
-         * value moves. measured n/a. Verified 2026-11-06. */
+         * value moves. measured n/a. Verified 2026-11-08. */
         return (float)samples[(size_t)index] * kShortScale;
     }
 
@@ -124,11 +178,12 @@ struct Sound {
 };
 
 // The store's width is the reason the store exists: level 3's 3,234,976 decoded
-// samples are 6,469,952 bytes here and were 12,939,904 as float, against 16 MB of
-// FCRAM (measured by `tick1 mixsize 3`, and see this header's memory section for
-// what halving it does and does not buy). Widening the store is allowed only with a
-// new measurement of that trade, so it fails the build rather than passing tests and
-// quietly doubling the bank.
+// samples are 6,469,952 bytes here and were 12,939,904 as float (measured by
+// `tick1 mixsize 3`, and see this header's memory section for what halving it does
+// and does not buy, and for which memory budget is sourced and which is not). The
+// claim this assert pins is the halving, not a fit against a ceiling: widening the
+// store is allowed only with a new measurement of that trade, so it fails the
+// build rather than passing tests and quietly doubling the bank.
 static_assert(sizeof(Sound::Samples::value_type) == 2,
               "the sample store is int16 on purpose: it halves the bank against "
               "FCRAM and the conversion at the read is exact for both PCM widths "

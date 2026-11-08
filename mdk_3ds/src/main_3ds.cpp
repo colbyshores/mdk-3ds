@@ -281,15 +281,27 @@ int main(int argc, char** argv) {
     // the store rather than restating a comment: level 3's three archives are
     // 4,390,060 bytes on disk and decode to 3,234,976 samples = 6,469,952 bytes in
     // the int16 store (12,939,904 when the store was float); level 4 is 7,878,536
-    // and level 8 is 10,002,084, against a 3DS with 16 MB of FCRAM that the level's
-    // geometry and textures already live in. So the Linux frontend's
+    // and level 8 is 10,002,084. So the Linux frontend's
     // `bank.preload()` is NOT called here: SoundBank::get decodes a sound the first
     // time something asks for it, so the console pays for the sounds the level
     // actually plays and nothing else. What that does NOT do is bound the total: a
-    // level whose scripts eventually play everything still walks into the ceiling,
-    // and halving the store did not remove it, because the SNI archives stay
+    // level whose scripts eventually play everything still grows without limit, and
+    // halving the store did not change that, because the SNI archives stay
     // resident too (4.39 / 5.90 / 5.82 MB for these same three levels), so a fully
-    // decoded level 3 is 10.86 MB and level 8 is 15.83 MB before a single triangle.
+    // decoded level 3 is 10.86 MB and level 8 is 15.82 MB before a single triangle.
+    //
+    // THE CEILING THIS COMMENT USED TO INVENT, AND WHAT REPLACED IT. It said "16 MB
+    // of FCRAM", which is not a number this console has (review-1 F3). The sourced
+    // figures are in mdk_core/src/audio/sound.h's memory section and are not
+    // restated at length here: the build asks for a 24 MiB C++ heap
+    // (`__heap_size = 0x01800000`, read out of mdk.elf's crt0 header, a devkitARM
+    // default this Makefile does not override), the console maps 128 MiB of FCRAM on
+    // an Old 3DS (`OS_OLD_FCRAM_SIZE`, `3ds/os.h:49`), and the region the kernel
+    // actually grants — the only one of the three that is a real ceiling, from
+    // `osGetMemRegionSize(MEMREGION_APPLICATION)` — has never been printed by this
+    // port on hardware or in the emulator. That last gap is the honest reason the
+    // policy below is conservative, not a fit that was ever computed.
+    //
     // Budget-and-evict stays open, named, in docs/CONTINUATION.md, and the two
     // halves of that decision are linked: freeing an archive's bytes is only
     // possible once every sound in it has decoded, which means preloading, which is

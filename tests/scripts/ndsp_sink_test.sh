@@ -165,13 +165,19 @@ GUARD_KEYWORD = re.compile(r"\b(if|else if|else|switch|for|while|do)\b")
 # reds correct code is a gate somebody relaxes.
 HEADER_STOP = re.compile(r"[;}:]\s*$")
 
-# A condition can wrap, so the walk is bounded rather than unbounded: six non-blank
-# lines covers a multi-line header with room to spare and cannot be talked into
-# reading across a statement boundary it did not stop at.
-HEADER_WALK = 6
+# A condition can wrap, so the header is read by a WALK and not by one line. The
+# walk is bounded, but not by a line count: review-1 F1 of run-20261108-195620
+# reproduced a braceless `if` whose condition wrapped over seven lines as a PASS
+# against batch 93, because batch 93 capped the walk at six non-blank lines and
+# the seventh line is where the `if` lived. A cap is the wrong bound for this
+# walk: it is a bound on how much a condition may be worth, and it reopens the
+# hole one wrapped line further out every time somebody formats a guard the long
+# way. The bound is STRUCTURAL instead — see `header_above`'s `floor`, which is
+# the index of the enclosing block's opener, already computed by `guard_of`.
+HEADER_STOP = re.compile(r"[;}:]\s*$")
 
 
-def header_above(text, pos):
+def header_above(text, pos, floor=0):
     """The control-header line whose body begins at or below the line containing
     `pos`, or "" when nothing above it hands a body to the statement.
 
@@ -183,18 +189,23 @@ def header_above(text, pos):
 
     where the line directly above the call is `frame < 10u)` and names no keyword,
     so a one-line look reads that guard as unconditional — the same mistake
-    review-12 R11-1 is about, one style further. Comments and strings are already
-    blanked by code(), so neither can supply a keyword or hide a header, and blank
-    lines are skipped for the same reason."""
+    review-12 R11-1 is about, one style further.
+
+    `floor` is the index the walk may not rise above, and it is always the `{` of
+    the block that owns the statement: a braceless guard lives INSIDE its block,
+    so anything above that opener is somebody else's construct, and a walk that
+    passed it could read an unrelated keyword as a guard and red correct code.
+    With that bound the walk needs no step count at all, and a condition of any
+    length is seen. Comments and strings are already blanked by code(), so neither
+    can supply a keyword or hide a header, and blank lines are skipped for the
+    same reason."""
     end = text.rfind("\n", 0, pos)
-    steps = 0
-    while end >= 0 and steps < HEADER_WALK:
+    while end > floor:
         start = text.rfind("\n", 0, end)
         line = text[start + 1:end]
         end = start
         if not line.strip():
             continue
-        steps += 1
         # The stop test goes FIRST: `if (paused) return;` names a keyword and ends a
         # statement, and a line that ends a construct is nobody's header.
         if HEADER_STOP.search(line):
@@ -221,18 +232,23 @@ def guard_of(text, match):
     only the first two. So the header is read from AROUND the statement rather than
     from its own line: the line above it (braceless), the opener of the enclosing
     block (`if (c) {`), and — when that opener is an Allman `{` sitting alone — the
-    header above the brace. Each of those is a walk, not a single line, so a wrapped
-    condition does not reopen the hole. The frame loop is whitelisted by name in
-    every form, because it is the loop these statements are supposed to be in."""
+    header above the brace. Each of those is a walk, not a single line, and each
+    walk is bounded by the opener of the block that owns the statement, so a
+    condition of any length is seen without the walk escaping the block (review-1
+    F1). The frame loop is whitelisted by name in every form, because it is the
+    loop these statements are supposed to be in."""
     line_start = text.rfind("\n", 0, match.start()) + 1
-    cands = [text[line_start:match.start()]]            # same-line guard
-    cands.append(header_above(text, match.start()))     # braceless guard
     bi = enclosing_brace(text, match.start())
+    cands = [text[line_start:match.start()]]            # same-line guard
+    # The braceless walk stops at the enclosing block's opener: a guard of this
+    # statement cannot live outside the block this statement is in.
+    cands.append(header_above(text, match.start(), bi if bi >= 0 else 0))
     if bi >= 0:
         opener = text[text.rfind("\n", 0, bi) + 1:bi]
         cands.append(opener)                            # `if (c) {`
         if not opener.strip():                          # Allman: `{` alone
-            cands.append(header_above(text, bi))
+            outer = enclosing_brace(text, bi - 1) if bi > 0 else -1
+            cands.append(header_above(text, bi, outer if outer >= 0 else 0))
     for c in cands:
         if re.search(FRAME_LOOP, c):
             return ""
@@ -416,7 +432,19 @@ def adjudicate(src, main, quiet=False):
     # its name: take its address, or bind a reference to it. Both are forbidden
     # below, which is what makes the single-write rule a bound on the VALUE and
     # not merely on one spelling of it.
-    aliases = re.findall(r"&\s*audioClock\b|\w+\s*&\s*\w+\s*=\s*audioClock\b", region)
+    #
+    # The gap between the `&` and the name is [ \t] and NOT \s (review-1 F5):
+    # `\s` matches a newline, so a perfectly correct wrapped condition whose
+    # continuation line happened to begin with the clock —
+    #
+    #     if (frame > 0u &&
+    #         audioClock < 3600.0f)
+    #
+    # — read as an address-taken alias and reds correct code, which is the one
+    # failure mode this file keeps naming: a gate that reds correct code is a gate
+    # somebody relaxes. The probe `wrapped-condition-naming-the-clock` pins it.
+    aliases = re.findall(r"&[ \t]*audioClock\b|\w+[ \t]*&[ \t]*\w+[ \t]*=[ \t]*audioClock\b",
+                         region)
     add = bare(region, r"audioClock\s*\+=\s*([A-Za-z_]\w*)\s*;")
     fed_mixer = bare(m, r"\bmixer\.update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
     fed_dev = bare(m, r"\bmixer\.device\(\)\.update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
@@ -614,9 +642,61 @@ ARMS = [
          "audioClock += elapsed;",
          "if (frame > 0u &&\n            frame < 999999u)\n            "
          "audioClock += elapsed;", 1))),
+    # The same class one format further out (review-1 F1): a condition long enough
+    # to need SEVEN lines. Batch 93 bounded the walk at six non-blank lines, so
+    # this mutant — the reviewer's own, reproduced — adjudicated PASS: the `if` was
+    # on the seventh line and the walk stopped before it. The bound is now the
+    # enclosing block's opener, so length is no longer a way past the check.
+    ("frontend-accumulates-the-clock-in-a-long-wrapped-guard",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "if (frame > 0u && elapsed > 0.0f && player.feet.z >= 0.0f &&\n"
+         "            camera.position.z > 0.0f && camera.forward.z < 1.0f &&\n"
+         "            camera.up.z > -1.0f && player.facing() < 6.0f)\n"
+         "            audioClock += elapsed;", 1))),
 ]
 
-print("ndsp_sink: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
+# The other side of a guard test: it must not red CORRECT code, and a mutation
+# list alone cannot show that. Each probe below is a legal, plausible spelling of
+# the same three statements that must adjudicate GREEN; batch 93 ran its probes by
+# hand and lost them with the terminal, so they are committed here (review-1 F1's
+# fix is a walk whose bound is structural, and the only proof that a structural
+# bound does not over-read is correct code that stays green through it).
+PROBES = [
+    ("accumulate-first-in-the-frame-loop",
+     lambda s, m: (s, m.replace("        audioClock += elapsed;\n", "", 1).replace(
+         "while (aptMainLoop()) {",
+         "while (aptMainLoop()) {\n        audioClock += elapsed;", 1))),
+    ("frame-loop-written-allman",
+     lambda s, m: (s, m.replace("while (aptMainLoop()) {",
+                                "while (aptMainLoop())\n    {", 1))),
+    ("accumulate-in-a-plain-allman-block",
+     lambda s, m: (s, m.replace("audioClock += elapsed;",
+                                "{\n            audioClock += elapsed;\n        }", 1))),
+    ("label-above-the-accumulate",
+     lambda s, m: (s, m.replace("audioClock += elapsed;",
+                                "after_mix:\n            audioClock += elapsed;", 1))),
+    ("one-line-if-above-the-accumulate",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "if (frame == 0u) mixer.listenFromCamera(camera);\n        audioClock += elapsed;", 1))),
+    ("do-while-false-above-the-accumulate",
+     lambda s, m: (s, m.replace("audioClock += elapsed;",
+                                "do { } while (false);\n        audioClock += elapsed;", 1))),
+    # Review-1 F5: a wrapped condition whose continuation line BEGINS with the
+    # clock. The `&&` is on the line above, so an alias detector whose gap matches
+    # a newline reads this as `&audioClock` and reds a file with nothing wrong
+    # with it. The gap is [ \t] for exactly this reason.
+    ("wrapped-condition-naming-the-clock",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "audioClock += elapsed;\n        if (frame > 0u &&\n"
+         "            audioClock < 3600.0f)\n            mixer.listenFromCamera(camera);",
+         1))),
+]
+
+print("ndsp_sink: %s — %d checks, %d mutation arms, %d correct-code probes"
+      % (PATH, real.checks, len(ARMS), len(PROBES)))
 for name, ok, detail in real_checks:
     if not ok:
         print("  FAIL ndsp_sink %s: %s" % (name, detail))
@@ -642,6 +722,31 @@ if arms_red != len(ARMS):
     print("  FAIL ndsp_sink: only %d of %d arms adjudicated red; a PASS here would be a "
           "reading of nothing" % (arms_red, len(ARMS)))
     sys.exit(1)
-print("PASS NdspSink (%d checks, %d arms adjudicated red)" % (real.checks, arms_red))
+
+# And the green half: a probe that turns the checks red is the gate rejecting code
+# that is allowed, which is the failure this file has named over and over — a gate
+# that reds correct code is a gate somebody relaxes. A probe that mutates nothing
+# is a red too, for the same reason the arms have that test.
+probes_green = 0
+for label, mutate in PROBES:
+    ms, mm = mutate(SRC, MAIN)
+    if ms == SRC and mm == MAIN:
+        print("  FAIL ndsp_sink probe %s: the probe changed nothing, so it tested the "
+              "file it was handed and not the spelling it claims to" % label)
+        continue
+    _, failed = adjudicate(ms, mm)
+    if failed:
+        print("  FAIL ndsp_sink probe %s: correct code was rejected as `%s`, so the gate "
+              "is now a thing that has to be worked around" % (label, failed[0]))
+    else:
+        probes_green += 1
+        print("  ok   probe %s: stayed green, as correct code must" % label)
+
+if probes_green != len(PROBES):
+    print("  FAIL ndsp_sink: only %d of %d correct-code probes stayed green" %
+          (probes_green, len(PROBES)))
+    sys.exit(1)
+print("PASS NdspSink (%d checks, %d arms adjudicated red, %d probes green)"
+      % (real.checks, arms_red, probes_green))
 PY
 exit $?

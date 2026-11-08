@@ -31,11 +31,18 @@
 // `archiveBytes()` are the instrument, and `tick1 mixsize <level>` prints them from
 // the store itself: level 3's three archives are 4,390,060 bytes on disk and decode
 // to 3,234,976 samples (72 sounds) = 6,469,952 bytes in the int16 store, level 4 is
-// 7,878,536 and level 8 is 10,002,084 — against a 3DS with 16 MB of FCRAM, with the
-// archive blobs resident on top of that. Nothing calls preload() on the 3DS today,
-// and the console still has to choose between decode-on-demand with a budget and
-// streaming; the store half of that choice is made (sound.h) and the budget half is
-// recorded as an open item, not solved by pretending the numbers are smaller.
+// 7,878,536 and level 8 is 10,002,084, with the archive blobs resident on top of
+// that (10.86 / 13.78 / 15.82 MB fully decoded). What they are NOT is a verdict
+// against a ceiling: the budget this bank has to live inside is the C++ heap the
+// build asks for, `__heap_size = 0x01800000` = 24 MiB, read out of the shipped
+// ELF's crt0 header, and the region the kernel actually grants
+// (`osGetMemRegionSize(MEMREGION_APPLICATION)`) has never been read by anything in
+// this repository. sound.h's memory section carries all three figures and says
+// which is measured, which is documented and which is missing; do not restate a
+// fourth. Nothing calls preload() on the 3DS today, and the console still has to
+// choose between decode-on-demand with a budget and streaming; the store half of
+// that choice is made (sound.h) and the budget half is recorded as an open item,
+// not solved by pretending the numbers are smaller.
 // ============================================================================
 
 #include <stdint.h>
