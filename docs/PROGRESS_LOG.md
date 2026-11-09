@@ -20963,3 +20963,124 @@ guesswork, and its absence is the loss P9 names.
 working tree at dispatch (owner `coleshores`, mtime 2026-11-05, older than HEAD, never staged).
 It is in `PROTECTED` (`tools/runner/gates_batch_integrity.py:12-24`) and review-18 independently
 confirmed leaving it uncommitted is the correct call. It is left uncommitted and unmodified.
+
+---
+
+## Batch 113 (iteration 20) — review-19 closed 4/4: F1 (Critical), F2/F3 (Medium), F4 (Low)
+
+**Scope.** Two gate files only: `tests/scripts/main_3ds_flow_test.sh` and
+`tests/scripts/c3d_frame_test.sh`. No `mdk_3ds/**` and no `mdk_core/**` path changed, so no
+instruction changed, no P8 emulator evidence is owed, and `mdk_3ds/mdk.elf` is still
+`b1997a5dca83639acf603d518abe8e62` (unchanged since batch 107). The frame pair is therefore a
+byte-identical re-capture — `6769a13731983d65cee9df02da6cff37`, the same md5 as every pinned frame
+back to review-14 — stated here rather than left for a reader to notice.
+
+**Every finding was reproduced on the shipped gate before it was changed**, from the reviewer's own
+mutant shape, and every fix was re-measured red after. That is the order the remediation protocol
+requires and the order four previous batches have been caught skipping.
+
+**F1 (Critical) — confirmed, fixed.** Check 17's capacity rule had been narrowed by batch 112 from
+"the refused capacity is an argument of the line" to "the capacity is an argument **or** an atom
+inside a byte figure". The second half is satisfied by every honest KB figure, so it swallowed the
+requirement and the `%d corners` slot was adjudicated against nothing at all. The reviewer's
+mutant — the committed file with `attempted,` → `objectCorners,` in the argument list and the byte
+figure left honest — printed `480 corners = 80 KB`, i.e. review-11 F1's refusal of a request that
+was never made, and the shipped gate answered `ok   the refused-mesh log line prints the capacity
+the backend was refused` / `PASS Main3dsFlow (20 checks, 42 arms adjudicated red, 17 probes
+green)`. Reproduced here first, then fixed in two parts, because the reviewer's two remediations
+cover two different properties and both are real:
+
+1. the **whole-argument** requirement is restored (`any(cap_name(v) in cap_names …)`, the
+   atom-inside-a-byte-figure alternative deleted). The reviewer warned this alone would redden the
+   committed file because `cap_name` stripped spaces only, so a multi-line argument never matched
+   `cap_names`; that half is fixed properly (`re.sub(r"\s+", "", v)`) rather than worked around by
+   keeping the escape hatch.
+2. a slot whose **own text** names a corner quantity must print the refused capacity
+   (`CORNER_UNIT`). This is the half the byte rule already had and the corner half never did, and it
+   is what catches the shape where the capacity *is* an argument and the corner slot still prints
+   something else.
+
+The corner rule can only read the text a format writes **after** its conversion, and that is a
+limit with a reason, not an oversight: in `%d corners = %d KB` the KB slot's leading text also says
+`corners`, so a corner rule reading the wide window would demand the refused capacity for the byte
+figure and the byte figure for the corner slot at the same time. The byte rule keeps the wide
+window it has always used. New arm: `arm_failure_corner_slot_names_the_frame_count` — the
+reviewer's mutant, and the first arm in the family that changes only the corner slot, because every
+existing arm that changes the corner figure also changes the byte figure and so reds through the
+byte half instead of proving the corner half exists.
+
+**F2 (Medium) — confirmed both directions, fixed.** A conversion does not consume one argument:
+`%*d` reads a width and then the value. The shipped `len(convs) > len(vals)` test and the
+`slots[i] ↔ vals[i]` mapping were therefore off by the number of star fields, and they were wrong
+in both directions at once, which is why one of them was a false negative and the other a false
+positive:
+
+- `mdk::log3dsPrintf("objects: refused %*d bytes", (int)((int64_t)attempted * 5 * sizeof(float)))`
+  asks for two arguments and passes one, so the line prints stack garbage; `log3dsPrintf` carries
+  no `format(printf)` attribute so the compiler cannot see it either. Shipped gate: green. Now red
+  (`arm_failure_star_width_names_no_argument`).
+- `"objects: stream mesh of %*d corners = %d KB …", 24, attempted, bytes` is legal C and was
+  **red**, because `24` was handed to the first conversion and adjudicated as a byte figure. That
+  is review-10 F6's failure — a gate that rejects a shape the port may write gets routed around,
+  and the route-around is worse than the defect. Now green (`probe_failure_star_width_supplies_its_width`).
+
+`conv_arity()` counts the stars and a slot's value is the LAST argument its conversion consumes,
+which is the C order: star fields first, then the value. The reviewer's alternative remediation —
+refuse `*` widths outright — was not taken: it trades a false negative for a false positive on a
+conversion the F4 comment in this same file already claims to support, and `%n$d` positionals are
+already refused by the digit rule (`%1$d` leaves a `1` in the format text), so the open question
+"support or refuse" now has one answer per spelling, stated in the code.
+
+**F3 (Medium) — confirmed, fixed.** The c3d latch whitelist's write alternative
+`x->meshAllocFailureLogged = true|false;` names no position, so a per-frame **pre-arm** —
+`r->meshAllocFailureLogged = true;` as a statement of `mdk_render_begin_frame`, the natural "make
+sure the latch cannot carry over" refactor — was a pinned write as far as the name scan was
+concerned. The guard is then never true again, so a refused `linearAlloc` reports nothing at all
+and the run reads as a successful frame with no objects: review-11 F7's one-shot-log defect
+mirrored rather than repeated. `ok   mesh-refusal-latch-cleared-nowhere-else` and `PASS C3dFrame
+(31 checks, 48 arms adjudicated red, 2 probes green)` over it, reproduced here. The frontend
+catches the same mutant because its write net has position-checked `= true` since review-14 F1, so
+this was the same property enforced one way per gate — the exact asymmetry reviews 16 and 17 have
+each caught once on each side. This side now position-checks the arming too: every `= true` write
+anywhere in the file must be a depth-1 statement of a latch-guarded block, with an arm pinning the
+frame-start pre-arm. The hole predates batch 112 (the reviewer verified it green on the parent
+gate too); what batch 112 changed is that its new failure text asserted the hole was closed.
+
+**F4 (Low) — confirmed, fixed in the tool and in the record.** The batch-112 record stated two
+things about the literal rule and the tool contradicted both: it called
+`"… at frame %lu", attempted, 81920` a legal reading, and that mutant is **red** (a bare literal is
+adjudicated in a unit-less slot, deterministically, twice here); and it said a literal is
+adjudicated "wherever it sits", which was true of `81920` only — `81920u`, `0x14000` and
+`(int64_t)81920` walked through `fullmatch(r"\s*\d+\s*")`, so the stale figure review-17 R2 pinned
+came back one spelling away. Rather than only restate the limit, the rule was widened to match the
+claim: `bare_literal()` strips casts (two-word casts need `MULTI_CAST_RE`, because `CAST_RE` matches
+one word) and refuses decimal, hex and suffixed spellings wherever they sit, and the STATED LIMIT
+now says exactly what is not adjudicated — a non-literal in a slot naming no unit, and an argument
+past the last conversion, which the format cannot ask for and so prints nothing. New arm:
+`arm_failure_suffixed_literal_names_no_source`.
+
+**Measured, verbatim.** `sh tests/scripts/main_3ds_flow_test.sh mdk_3ds/src/main_3ds.cpp` →
+`PASS Main3dsFlow (20 checks, 45 arms adjudicated red, 18 probes green)`. `sh
+tests/scripts/c3d_frame_test.sh mdk_3ds/src/render/renderer_c3d.cpp` → `PASS C3dFrame (31 checks,
+49 arms adjudicated red, 2 probes green)`. `sh tests/scripts/arm_compile_check.sh` → `PASS
+ArmCompile (116 mutant(s), 0 diagnostics, /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`.
+`make -C tests/scripts` → `All cases match the oracle.` `bash tools/check.sh` → `CHECK: ALL GATES
+PASSED` with `SKIP gates_smdh  no built .cia to read`. `make -C mdk_3ds` → builds (`exit=0`,
+`3DSX mdk.3dsx`; DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM). Frame published as
+`docs/frames/2026-11-09-batch113-gate-figure-rules.png` (+ `.txt`, `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`).
+
+**Prior-solution lookup (AGENTS §0, P9).** `pi-knowledge` `mdk-sdl` searched for prior work on the
+figure/argument-accounting question (`check 17 refusal line prints the refused capacity byte figure
+adjudication format string`): the top hits were the gates' own comments and `tick1.cpp`'s stream
+capacity note, i.e. no prior finding predating this one, and the retrieved text was treated as a
+lead and checked against the contract. No `obsidian_*` or `cognee_*` tools are exposed in this
+session, so per P9 that is recorded as a session configuration gap and NOT as a lookup that
+happened; Cognee's graph search is the loss P9 names, since it is the one that would have reached
+the alias/property notes by relation. The disk vault was not needed for this batch's decision
+because the repository itself is the record of the last eight rounds.
+
+**Protected file.** `ralph/builder.md` was dirty at dispatch (owner `coleshores`, mtime
+2026-11-05, older than HEAD, never staged), is in `PROTECTED`
+(`tools/runner/gates_batch_integrity.py`), and review-19 independently confirmed leaving it
+uncommitted is the correct call. Left uncommitted and unmodified.

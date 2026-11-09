@@ -961,9 +961,27 @@ def adjudicate(text, quiet=False):
             return (s is not None
                     and brace_depth(seg, sp[0], sp[0] + s.start()) == 1)
 
-        armed = bool(refusals) and all(
+        # Review-19 F3: the whitelist's write alternative is POSITION-FREE, so
+        # `r->meshAllocFailureLogged = true;` written as the first statement of
+        # `mdk_render_begin_frame` -- the natural "make sure the latch cannot carry
+        # over" refactor -- is a PINNED write as far as the name scan is concerned,
+        # and it is review-11 F7's defect MIRRORED: the guard is never true again, so
+        # a refused `linearAlloc` reports NOTHING at all and the run reads as a
+        # successful frame with no objects. This side position-checked only the CLEAR;
+        # the frontend has position-checked its arming since review-14 F1, which is
+        # why the same mutant was red there and green here. So every write that ARMS
+        # the latch, anywhere in the file, must be the arming: a direct statement
+        # (depth 1) of a latch-guarded block.
+        armed_only = True
+        for w in re.finditer(_LATCH_ANY + r"\s*=[ \t]*true[ \t]*;", blank_comments(text)):
+            pos = w.start() - mesh_body[0]
+            armed_only = any(sp[0] <= pos < sp[1]
+                             and brace_depth(seg, sp[0], pos) == 1 for sp in guards)
+            if not armed_only:
+                break
+        armed = (bool(refusals) and armed_only and all(
             any(sp[0] <= at < sp[1] and arms_latch(sp) for sp in guards)
-            for at in refusals)
+            for at in refusals))
         # The clear must be a direct statement of the FUNCTION, which is what puts it
         # on the success path: inside `if (!mesh.data)` it would be depth 2 and would
         # clear on the very frame it refused.
@@ -1030,7 +1048,9 @@ def adjudicate(text, quiet=False):
               "%s, cleared on the success path: %s (an unguarded or never-armed line "
               "prints on every frame of one refusal -- this is the line that printed "
               "1710 times; a latch that never clears silences the second, larger "
-              "refusal)"
+              "refusal, and a latch ARMED on every frame silences it forever: the "
+              "arming is only allowed inside the guard that prints, never as a "
+              "per-frame reset in the frame path -- review-19 F3)"
               % (len(refusals), "yes" if armed else "no",
                  "yes" if cleared else "no"))
     rep.check("mesh-refusal-latch-cleared-nowhere-else", sole_clear,
@@ -1488,6 +1508,17 @@ ARMS = [
                          "    r->meshAllocFailureLogged = false;\n"
                          "    r->frame++;", 1),
      "mesh-refusal-latch-cleared-nowhere-else"),
+    # Review-19 F3: the mirror image, and the shape the batch-112 whitelist still
+    # accepted because its write alternative names no position. A per-frame PRE-arm
+    # is not a spam defect and not a clear: the guard is never true again, so the
+    # refusal this latch exists to report is never reported at all.
+    ("the refused-mesh latch is ARMED once per frame from mdk_render_begin_frame, so "
+     "the guard is never true and a refusal is never logged (review-19 F3)",
+     lambda s: s.replace("    r->inFrame = true;\n    r->frame++;",
+                         "    r->inFrame = true;\n"
+                         "    r->meshAllocFailureLogged = true;\n"
+                         "    r->frame++;", 1),
+     "mesh-refusal-line-is-edge-triggered"),
     # Review-16 open question 2's pin: the same per-frame reset written through an
     # alias, which a scan for the field NAME cannot see. It reddens the sole-clear check
     # because the check refuses to certify a write set it cannot enumerate.

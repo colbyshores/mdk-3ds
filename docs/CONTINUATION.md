@@ -1,24 +1,52 @@
 # Phase 2 continuation checkpoint
-Risk: high — **two gates certified a write set they could not enumerate, and the figure net that
-review-17 widened was simultaneously too narrow and too wide; the fix changes what both gates
-accept and what they reject.** No game code changed: `mdk_3ds/mdk.elf` is bit-identical to batch
-107's (`b1997a5dca83639acf603d518abe8e62`), so the picture is unchanged and the frame pair is a
-byte-identical re-capture, stated not hidden. Review-18 found no Critical and no High; all six
-findings are fixed, none rebutted. F1 (Medium): both latch nets matched two *spellings* of
-aliasing while the property they state is that the net enumerates every write --
-`bool& latchAlias(streamFailureLogged);`, or a helper taking the latch by reference, printed a
-sustained refusal ~60x/s with `PASS Main3dsFlow` and `PASS C3dFrame`; both are now WHITELISTS
-(the latch's name may appear only in its declaration, its two reads and its pinned writes),
-which cannot be spelled around the way a blacklist can. F2 (Medium): review-17's legalisation of
-a figure-less refusal line also legalised a figure baked into the format string with no
-conversion -- `"objects: refused 81920 bytes"` -- so a byte figure with no source shipped green;
-a digit left in the format after conversions are stripped is now red. F3 (Medium): the same
-batch's "adjudicate every argument" reddened an honest line that also named the frame it refused
-on, which is review-10 F6's failure reintroduced by the fix for R2; the format's own unit words
-now decide which slots are byte figures. Found here, not by the reviewer: `FIGURE_FMT` matched
-only `%` + one flag + one letter, so the comment's claim that a conversion with no argument is
-red was false for `%8d`, `%08x`, `%.1f` and `%*d`. Eighth consecutive round changing what a
-builder's own gate accepts, on the same three checks.
+Risk: high — **a Critical: one of this loop's own acceptance criteria had been silently narrowed,
+so a gate printed PASS over the defect it was written to refuse.** The fix changes what two gates
+accept and what they reject; no shipped instruction changed, so `mdk_3ds/mdk.elf` is bit-identical
+to batch 107's (`b1997a5dca83639acf603d518abe8e62`) and the frame pair is a byte-identical
+re-capture, stated not hidden. Review-19 found 1 Critical, 2 Medium and 1 Low; all four are fixed,
+none rebutted. **F1 (Critical)**: batch 112 let the refused capacity satisfy check 17 by appearing
+as an atom *inside* a byte figure, which every honest KB figure does, so the `%d corners` slot was
+adjudicated against nothing and `objectCorners` there printed `480 corners = 80 KB` -- review-11
+F1's refusal of a request that was never made -- with `PASS Main3dsFlow (20 checks, 42 arms)`. The
+whole-argument requirement is restored AND a slot whose own text names a corner quantity must now
+print the refused capacity. **F2 (Medium)**: a conversion does not consume one argument -- `%*d`
+reads a width then the value -- so both the `conversions <= arguments` test and the slot-to-
+argument mapping were off by the number of stars: `("%*d bytes", bytes)` read unpassed varargs and
+shipped green while an honest `("%*d corners", 24, attempted, bytes)` was reddened. **F3
+(Medium)**: the c3d latch whitelist's write alternative names no position, so
+`r->meshAllocFailureLogged = true;` as a per-frame PRE-arm made the guard never true again and a
+refused `linearAlloc` reported NOTHING, 31/31 green; the frontend caught it because it
+position-checks its arming, so the same property was enforced one way per gate. **F4 (Low)**: the
+batch-112 record's stated limit contradicted the tool in both directions at once, and the literal
+rule behind it caught one spelling of a stale figure out of four. Ninth consecutive round on the
+same three checks; F1 is NOT a ninth spelling of the alias question batch 112 retired -- it is a
+different property (WHICH slot of a line is adjudicated), which is why the family got a patch and
+not a retirement argument.
+
+**Batch 113 (Iteration 20) -- review-19 closed 4/4 (1 Critical, 2 Medium, 1 Low): F1-F4 all fixed,
+none rebutted.** Check 17's figure rules are re-derived from the format a third time, this time
+from two things batch 112 stated as limits and was wrong about. (a) *Which argument*: a conversion
+consumes `1 + (number of star fields)` arguments and prints the LAST of them, so a star width is
+neither counted as a missing argument nor adjudicated as a byte figure (`conv_arity()`); the UB
+call `("%*d bytes", bytes)` is red and the legal `("%*d corners", 24, attempted, bytes)` is green,
+one arm and one probe each. (b) *Which slot*: the byte rule keeps its wide window and the new
+corner rule can only read the text a format writes AFTER its conversion, because in
+`%d corners = %d KB` the KB slot's leading text also says `corners` -- a corner rule reading the
+wide window would demand the capacity for the byte figure and the byte figure for the corner slot
+at once. (c) *Which literal*: `bare_literal()` refuses `81920`, `81920u`, `0x14000`,
+`(int64_t)81920` and `(unsigned long)81920` (a two-word cast needed its own pattern, since
+`CAST_RE` matches one word), where the old test caught the first only. On the backend side the
+arming is now position-checked like the frontend's has been since review-14 F1: every
+`= true` write to the latch must be a depth-1 statement of a latch-guarded block, so the
+per-frame pre-arm that silences the refusal entirely is red with an arm pinning it. Three new arms
+and one probe in the frontend gate, one arm in the backend gate. Measured: `PASS Main3dsFlow (20
+checks, 45 arms adjudicated red, 18 probes green)`, `PASS C3dFrame (31 checks, 49 arms adjudicated
+red, 2 probes green)`, `PASS ArmCompile (116 mutant(s), 0 diagnostics,
+/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`, `make -C tests/scripts` -> `All cases match the
+oracle.`, `bash tools/check.sh` -> `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`),
+`make -C mdk_3ds` builds. No `mdk_3ds/**` or `mdk_core/**` path changed, so no P8 emulator
+evidence is owed and none is claimed. `ralph/builder.md` was dirty at dispatch, is `PROTECTED`,
+and is left uncommitted on purpose.
 
 **Batch 112 (Iteration 19) — review-18 closed 6/6 (no Critical, no High): F1-F6 all fixed.**
 The two latch nets are whitelists now (`LATCH_SHAPE` + `unpinned_uses()` in both gates): any
@@ -562,7 +590,20 @@ and not narrowed. The family's one remaining known weakness is stated in the cod
 check 17 reads a *format string* to decide whether a line belongs to the refusal family, so a
 refusal line whose format is a variable is outside the net.
 
-**Batch 113 is expected to be a game batch, and a batch that changes `mdk_3ds/**` owes emulator
+**What is actually next, restated by batch 113.** Batch 112 said it was the batch that argued the
+gate family was finished rather than the eighth patch. Review-19 answered that in the only way
+that settles it: it found a Critical in the same check 17, in a different property -- not another
+alias spelling but WHICH slot of a line is adjudicated, and how many arguments a conversion
+consumes. So the honest statement is now the one batch 110 gave and batch 112 restated: this family
+has been patched nine rounds by the agent whose work it grades, and the next time a review finds a
+thing in it that a reader with a profile could have found, the family is retired to a review
+against a real capture, not patched a tenth time. Two weaknesses are stated in the code rather
+than argued away: check 17 reads a *format string* to decide family membership, so a refusal line
+whose format is a variable is outside the net; and a slot whose own text names no unit is not
+adjudicated against the backend unless its argument is a literal, because the gate cannot know what
+an unlabelled number claims to be.
+
+**Batch 114 is expected to be a game batch, and a batch that changes `mdk_3ds/**` owes emulator
 evidence under P8.** Two named items, both blocked on a named cause rather than on effort: (1)
 **the canvas seam** -- `mdk_render_canvas_quad` is a no-op on this backend
 (`renderer_c3d.cpp:2345`), which is what priority item 5b (the HUD) and the MVE movie presenter
