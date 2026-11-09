@@ -20084,9 +20084,14 @@ owner policy was changed.
 
 **R4 (Low, fixed) — batch 105 left an unmatched bold opener in the owner-action block.** It
 replaced `**Deferred review findings:**` with `**Review-4 of run-20261105-142911 F1/F2` and
-dropped the closing marker, so the file's marker count went 636 (even) → 651 (odd) and every
+dropped the closing marker, so the file's marker count went from even to odd and every
 emphasis pair after it in the block the file says "a batch must not lose" was shifted. Closed
-after `F1/F2`; the count is 652 and even.
+after `F1/F2`, and the count is even again. Review-13 D5: this entry then claimed "the count is
+652", which was an intermediate state — the committed file holds 672, because batch 106's own
+summary paragraph adds 20 more. The number is not the invariant and it moves with every batch
+that writes a summary; the invariant is parity, and it is reproducible with
+`grep -o '\*\*' docs/CONTINUATION.md | wc -l`. Stated that way so the next reader who re-counts
+does not find a wrong number in the record.
 
 **R5 (Low, fixed) — `object_draw.h` described a state that cannot occur.** The
 `attemptedCapacity()` rationale said a refused `ensure` leaves `capacity()` "either 0 or the OLD
@@ -20145,3 +20150,130 @@ condition added in front of a diagnostic that then gates the wrong branch), and
 `50-tooling/a-probe-must-be-able-to-fail.md` supplies the test applied to both checks — *state what
 the instrument would print if the hypothesis were false*; for check 18 the honest answer was "the
 same thing it prints now", which is the definition of a pass generator.
+
+## Iteration 134 — batch 107: review-13 closed 6/6 (no Critical, no High) — the refused-mesh gates
+## read ONE call where the property was about ALL of them, an identifier where the property was an
+## arithmetic, and the whole file where the property was a position
+
+Review-13 (`logs/ralph-pi/run-20261108-195620/review-13.md`) had no Critical and no High. Its
+verdict was INCOMPLETE on four Medium test-coverage findings and two Low record findings, and it
+was right about the reason: batch 106's "closed 5/5" rested on checks 17, 18 and 19, and all four
+of review-13's mutants stayed green through them. All six closed; nothing rebutted on merit.
+
+The shape is now on its third consecutive round, and it is worth naming: a check that reads **one**
+thing where the property is about **all** of them (D1), that reads a **name** where the property is
+an **arithmetic** (D4) or a **position** (D2), or that reads a **substring** where the property is
+the **whole condition** (D3). Batch 106 fixed exactly this class in checks 17 and 18 and left the
+same class in place one level up.
+
+**D1 (Medium, confirmed and fixed) — a second refusal line in the same branch was read by no
+check.** Check 17 resolved the FIRST `log3dsPrintf(` after the test and check 19 required only
+that SOME branch containing a printf had a latch-negating condition, so a second line added inside
+`if (objectDraw.allocationFailed()) {` — outside the guard, built from `objectCorners` — passed
+`19 checks, 22 arms and 6 probes`. That line prints review-11 F1's 9 KB-for-an-80-KB disagreement
+on every frame of the refusal, which is also review-12 R1's spam. Reproduced first: the reviewer's
+own shape, inserted after the guarded block, printed `PASS Main3dsFlow (19 checks, 22 arms
+adjudicated red, 6 probes green)`. Both checks now iterate over **every** printf in the refusing
+branch: 17 requires each to name the refused capacity, 19 requires each to sit inside a block whose
+condition is the negative latch test. Two new arms isolate the two halves — one second line with
+correct figures but no guard (reddens 19 alone), one guarded second line built from `objectCorners`
+(reddens 17 alone) — and a probe pins the legitimate shape: a second guarded line that also names
+the refused capacity stays green, because the property is "every line is edge-triggered", not "there
+is exactly one line".
+
+**D4 (Medium, confirmed and fixed) — the byte figure's FACTORS were unchecked.** Batch 106's rule
+was `value_names(v) <= {src}`: an identifier test. `(int64_t)attempted * 4 * sizeof(float) / 1024`
+satisfied it and printed 64 KB for an 80 KB refusal, because the variables were right and the
+stride was wrong — review-11 F1's symptom with the variable substitution already fixed. Reproduced
+(`* 5` → `* 4` → no check-level failure at all). The check now reduces a derived argument to its
+multiplicative **factor set** — casts and parentheses dropped, `sizeof(T)` one atom, the capacity
+name folded — and requires it to equal the factor set parsed out of `renderer_c3d.cpp:1698`'s own
+`linearAlloc((size_t)cap * 5 * sizeof(float))`, with one `/1024` allowed exactly when the format
+string names KB (a line that says `%d KB` while printing raw bytes is 1024x wrong, which is the same
+one-refusal-two-numbers defect one unit further out). The reviewer's preferred form — compare to one
+source of truth rather than to a rule about operands — is what is implemented, and it was verified
+in the direction that matters: changing the renderer's stride to 6 and leaving the frontend
+untouched reddens check 17, so the two committed numbers cannot drift apart silently. If that
+`linearAlloc` call cannot be read the check is RED, not skipped
+(`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator`).
+
+**D2 (Medium, confirmed and fixed) — check 18's accepted assignment form was matched file-wide.**
+The equivalent form `streamFailureLogged = objectDraw.allocationFailed();` was accepted wherever it
+appeared, including as the first statement INSIDE the refusing branch, where it sets the latch and
+can never clear it — review-11 F7 exactly, satisfied from inside the very branch the clear has to
+live outside of. Reproduced (else-clear deleted, assignment moved into the branch): no check-level
+failure. The form is now anchored to the block that contains the test and must sit BEFORE the test,
+because it is only the same state machine when it runs on every frame. The existing probe (the form
+written immediately above the `if`) stays green; a new arm writes it inside the branch and reddens
+check 18 alone.
+
+**D3 (Medium, confirmed and fixed) — the guard could MENTION the latch instead of testing it.**
+Check 19 decided "the condition tests the latch negatively" with `re.search` over the condition, so
+`if (!streamFailureLogged || true) {` was green while printing on every frame of a sustained
+refusal — and today that mutant was caught only incidentally, by an arm whose exact-text `re.subn`
+could not build its mutant, which is the arm brittleness batch 106 correctly called a defect.
+Reproduced: no check-level failure, only `the mutation changed nothing`. The condition must now
+`fullmatch` one of the two accepted negative spellings. This is the failure the vault already names
+for the conjunct case (`30-architecture/patterns/an-ifdef-gated-conjunct-widens-a-guard`): a
+disjunct added to a refuse-branch guard widens it, and a gate that reads the guard as a substring
+cannot see the widening.
+
+**D5 (Low, fixed) — the record's marker count was an intermediate number.** Batch 106 wrote "the
+count is 652 and even" for a committed file holding 672 (651 at `ffe69c6d`, +1 closed by the fix,
++20 in batch 106's own summary paragraph). Parity is the invariant; the number moves with every
+batch that writes a summary, so the sentence now says that and gives the recount command.
+
+**D6 (Low, fixed) — the directive's sibling citation was a simplification presented as a line.**
+`docs/OWNER_DIRECTIVE_2026-11-05.md` quoted `tetrisphere-godot/tools/ralph-pi.sh:120` as
+`WORKER_MODELS="litellm/qwen litellm/luna"`; the line is
+`WORKER_MODELS="${RALPH_PI_WORKER_MODELS:-litellm/qwen litellm/luna}"`. Re-read with one bounded
+`sed -n '120p'` before editing. The substance was right — that loop still builds on `luna` — and the
+verbatim default form makes the point harder, since the route is overridable rather than fixed.
+
+**Every arm is real code.** All nine refused-mesh arm mutants were written out and compiled with the
+Makefile's own flags (`-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mfpu=vfp -D__3DS__
+-DRENDERER_C3D -std=gnu++17 -fno-exceptions -fno-rtti -fsyntax-only`): all nine compile with no
+diagnostics. An arm that does not compile is a mutant of nothing, and the reviewer had to check this
+by hand for its own mutants; it is now part of the batch.
+
+**Gates, as run.**
+
+* `make -C tests/scripts` → `All cases match the oracle.` (567 `PASS` lines). The gate lines that
+  matter here: `PASS Main3dsFlow (19 checks, 27 arms adjudicated red, 9 probes green)` (was
+  19/22+6 — the check count is deliberately unchanged: review-13 asked for no new check, only for
+  the three existing ones to read every call, every factor and the right position),
+  `PASS C3dFrame (29 checks, 37 arms adjudicated red)`,
+  `PASS FrontendSolidPin (10 checks, 10 arms adjudicated red)`,
+  `PASS PanelGeom (10 checks, 7 arms adjudicated red, 2 probes green)`,
+  `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+* `bash tools/check.sh` → `CHECK: ALL GATES PASSED`, with `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math VERDICT: CONTRACT CLEAN`, `audit_r11_idiv no
+  candidates`, `gates_core_parity CONTRACT CLEAN`, `gates_smdh SKIP` (no built .cia),
+  `gates_frames VERDICT: CONTRACT CLEAN`, `gates_batch_integrity PASS`.
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` → `3DSX mdk.3dsx`,
+  no warnings, and `mdk.elf` reproduces `b1997a5dca83639acf603d518abe8e62` with
+  `build/mdk_c3d.shbin` `d46abb60de20b2aa0659043aeb97b9c9` — byte-for-byte the identity batch 105
+  and batch 106 recorded, which is the proof this batch moved no game code.
+
+**Emulator evidence.** No `mdk_3ds/**` source changed and the 3DS binary is bit-identical to the
+one batch 105 measured in Mandarine (identities above), so an emulator run would re-measure the same
+bytes rather than produce evidence; the identity is recorded in its place, as in batch 106.
+Emulator-green is not hardware-pass and Old-3DS stays open regardless.
+
+**Frame.** The pinned pair is `docs/frames/2026-11-09-b107-gates-read-every-line.{png,txt}`,
+`bad_percent=1.240 max_delta=247 mean_delta=0.1819` — unchanged from batch 105 and 106, for the same
+standing reason: the pin is the **Linux** capture of level 3 frame 1 and nothing in a gate-script
+batch can move it.
+
+**Prior-solution lookup.** pi-knowledge `mdk-sdl` live; searches for the pass-generator/arm-
+isolation discipline and for "a gate that reads only the first match" returned the repo's own
+precedents, including `frontend_solid_pin_test.sh`'s `arm_unguarded`, which adds a second site
+rather than replacing one for exactly the reason review-13 D1 is about, and check 4's comment
+"EVERY call site is tested, not the first" — the same rule, already written down in this file, that
+check 17 had not followed. Obsidian MCP and Cognee MCP are **absent from this session's tool list**
+— a session configuration fault, not a completed lookup (AGENTS P9) — so the vault was read
+read-only and narrowly, two files:
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md` (why the
+renderer-stride parse fails closed) and
+`30-architecture/patterns/an-ifdef-gated-conjunct-widens-a-guard.md` (why a disjunct on a
+refuse-branch guard is a known, named failure and not a hypothetical).

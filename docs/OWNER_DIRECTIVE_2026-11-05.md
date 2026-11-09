@@ -96,8 +96,8 @@ BLOCKED review and a stopped loop, not an exception.
 > files on 2026-11-09 — one `sed` window each, no search of the sibling trees:
 >
 > * `tetrisphere-godot/tools/ralph-pi.sh:120` is
->   `WORKER_MODELS="litellm/qwen litellm/luna"`. That loop still builds on `luna`,
->   which this directive retires from the builder chain two paragraphs above.
+>   `WORKER_MODELS="${RALPH_PI_WORKER_MODELS:-litellm/qwen litellm/luna}"`. That loop still
+>   builds on `luna`, which this directive retires from the builder chain two paragraphs above.
 > * `perfect_dark/tools/ralph-pi.sh:167` is `MODEL_PRIORITY=…-flash-th`, and
 >   `MODEL_VERIFY` / `MODEL_REVIEW` / `MODEL_REVIEW_GRADED` all derive from it, so
 >   its builder and its reviewer are the **same** DeepSeek family — the arrangement

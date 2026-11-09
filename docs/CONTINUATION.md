@@ -1,13 +1,42 @@
 # Phase 2 continuation checkpoint
+Risk: high — **the predicates of three gated checks were rewritten again, and an owner
+ directive's quoted evidence was corrected.** No game code changed: the only non-test, non-doc
+ edit is a quotation in `docs/OWNER_DIRECTIVE_2026-11-05.md`. What makes this review-worthy is
+ that a builder again changed what its own gate accepts — check 17 now reads *every* refused-mesh
+ printf and compares its byte figure's factor set to the factor set parsed out of
+ `renderer_c3d.cpp`, check 18's accepted assignment form is now anchored to a position, and
+ check 19 now `fullmatch`es the guard condition instead of substring-hunting it. All four changes
+ are strengthenings the external reviewer asked for and each was reproduced on a compiling mutant
+ first, but a batch that widens what a gate rejects is exactly the thing an independent model
+ should look at, and this is the third consecutive round on these same three checks.
 
-Risk: high — **two gated checks' predicates were rewritten, and an owner directive was annotated.**
-The code change is a comment. What makes this review-worthy is that a batch edited the shape of
-its own gate: check 17 now parses the refused-mesh printf's arguments instead of substring-hunting
-its tail, and check 18 now brace-scans the `allocationFailed()` branch instead of matching one
-line — both are strengthenings the external reviewer asked for, and a builder changing what a gate
-accepts is exactly the thing an independent model should look at. The directive edit adds a
-correction blockquote with file:line evidence and strikes no owner policy; if the owner disagrees
-with the annotation, that block is the thing to revert.
+**Batch 107 (Iteration 134) — review-13 closed 6/6 (no Critical, no High): D1–D4 fixed in the
+ gate, D5/D6 fixed in the record; nothing rebutted on merit.** Review-13 found that batch 106's
+ "closed 5/5" rested on gates that still could not fail at the thing they named. All four Medium
+ findings reproduced here before any edit, on the reviewer's own mutant shapes, and all four
+ mutants compile clean for the 3DS target with the Makefile's flags — so each is now a named arm.
+ **D1**: check 17 resolved only the *first* `log3dsPrintf(` after the test and check 19 required
+ only that *some* guarded block contained *a* printf, so a second, unguarded refusal line built
+ from `objectCorners` passed all 19 checks, 22 arms and 6 probes — review-11 F1's 9 KB-for-an-80 KB
+ disagreement plus the ~60/s spam, back on the console. Both checks now iterate over **every**
+ printf in the refusing branch: 17 requires each to name the refused capacity, 19 requires each to
+ sit inside a latch-guarded block. **D4**: check 17 compared the derived argument's *identifier
+ set*, so `* 4` for the corner stride stayed green while the printed byte count disagreed with the
+ backend's — the variable substitution was only one spelling of F1. It now reduces the argument to
+ a factor set and requires it to equal the set parsed out of `renderer_c3d.cpp:1698`'s own
+ `linearAlloc((size_t)cap * 5 * sizeof(float))`, with `/1024` required exactly when the line names
+ KB; changing the renderer's stride to 6 reddens the check against an unmodified frontend, which is
+ the drift coupling the reviewer asked for. **D2**: check 18's equivalent assignment form was
+ searched for over the whole file, so the assignment placed *inside* the refusing branch — sets the
+ latch, can never clear, F7 exactly — satisfied it; the form must now sit in the block containing the
+ test, before the test. **D3**: check 19 substring-tested the condition, so
+ `if (!streamFailureLogged || true)` stayed green while printing every frame; the condition must now
+ `fullmatch` one of the two accepted negative spellings. `PASS Main3dsFlow (19 checks, 27 arms
+ adjudicated red, 9 probes green)`. **D5**: the record's bold-marker count was an intermediate 652
+ where the committed file holds 672; the sentence now states parity as the invariant with the
+ recount command, because the number moves with every batch's own summary. **D6**: the directive
+ quoted `tetrisphere-godot/tools/ralph-pi.sh:120` in a simplified form under a heading that says the
+ file was read directly; it is quoted verbatim now, which strengthens the point it was making.
 
 **Batch 106 (Iteration 133) — review-12 closed 5/5 (no Critical, no High): R1 and R2 fixed in the
 gate, R3 annotated in the directive, R4/R5 fixed; nothing rebutted on merit.** Review-12's two
@@ -393,7 +422,7 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 107)
+## NEXT (batch 108)
 *(Batch 104 did not advance the renderer head either; it closed the instrument review-10 proved could not
 fail and added a measured colour fact to the head. The item below is restated against the committed panel,
 because review-9 F1 is right that batch 102 erased the picture this item was written against: the head item
