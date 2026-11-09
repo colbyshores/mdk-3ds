@@ -1,23 +1,55 @@
 # Phase 2 continuation checkpoint
-Risk: high — **a gated predicate's scope was widened, one gate gained a probe mechanism it never
- had, 45 arms gained a binding they never had, and a compile-check prerequisite was re-stated.**
- No game code changed: `mdk_3ds/mdk.elf` is bit-identical to batch 108's
- (`b1997a5dca83639acf603d518abe8e62`), so the picture is unchanged and the frame pair is a
- byte-identical re-capture, stated not hidden. What makes this review-worthy is that this is the
- sixth consecutive round changing what a builder's own gate accepts, on the same three checks.
- The change that matters is a scope widening, not an addition: check 20's write-set scan stopped
- at the object pass, so a per-frame latch clear written in the frame body that *contains* the pass
- compiled clean and restored review-12 R1's ~60x/s spam with everything green — the reviewer's
- Medium, reproduced from its own file before being fixed. Alongside it: the backend's `LATCH_NEG`
- accepted a guard spelling it could never match, so a legal `== false` guard reddened the gate
- (and the frontend's write scan had the mirror-image bug, reading a legal `== false` guard as a
- write — found here, not by the reviewer); the c3d gate gained a probe mechanism, because a gate
- that can only prove mutations are caught can never report that it rejects legal code; all 45 of
- its arms gained a binding to the check each claims, generated from the measured run; and
- `arm_compile_check.sh` now names the generated header the c3d half needs instead of an include
- directory, and exits 1 rather than PASSing over a skipped gate. One finding is rebutted in part:
- review-16 R4 asked for `-I mdk_3ds/build` to be dropped, and `renderer_c3d.cpp:60` includes the
- header generated into it. All 98 mutants of both gates compile for the 3DS target.
+Risk: high — **two gates had a blind spot in the exact property they existed for, and both were
+ green; the fix widens what two gates reject.** No game code changed: `mdk_3ds/mdk.elf` is
+ bit-identical to batch 107's (`b1997a5dca83639acf603d518abe8e62`), so the picture is unchanged
+ and the frame pair is a byte-identical re-capture, stated not hidden. Review-17 found no
+ Critical and no High; all seven findings are fixed, none rebutted. R1 (Medium): check 20's
+ alias guard scanned the frame body while the property it states is that the latch's address is
+ never taken anywhere, so `bool& latchAlias = streamFailureLogged;` declared beside the latch
+ and written as the frame's first statement printed a sustained refusal ~60x/s with every check,
+ arm and probe green -- reproduced from the reviewer's description before being fixed. R2
+ (Medium): check 17 compared only arguments that spell an operator inline, so a byte figure
+ hoisted into a local, or a stale literal, was compared against nothing and review-12 R2's
+ frame-count byte figure returned one refactor away. Found here while fixing R1, not by the
+ reviewer: the c3d alias scan had the mirror-image gap (address-of yes, reference-declaration
+ no), and `arm_compile_check.sh`'s review-16 remediation was unreachable on a fresh clone
+ because it required a gitignored directory before it could name the missing generated file.
+ Seventh consecutive round changing what a builder's own gate accepts, on the same three checks.
+
+**Batch 111 (Iteration 18) — review-17 closed 7/7 (no Critical, no High): R1-R7 all fixed.**
+Check 20's alias scan now reads the whole comment-blanked file, matching the c3d twin, and one
+arm pins the scope itself (an alias declared outside the frame body) rather than only the
+pattern; the c3d scan gained the reference-declaration spelling plus an arm. Check 17's figure
+list is now every argument after the capacity, resolved through one level of local initialiser
+(`local_inits`/`fold_locals`, beside the `const_ints`/`fold_consts` pair), so a hoisted byte
+figure is compared as the arithmetic it hides; two arms, one per shape (hoisted local, stale
+literal). A refusal line that names no figure at all is legal (review-10 F6's failure: a gate
+that rejects a shape the port may write gets routed around) and the figure rules are conditional
+on the format naming a figure. Record accuracy: two transcribed counts deleted rather than
+corrected, one dangling arm name repointed at what actually pins the property, and the two
+sentences describing `arm_compile_check.sh`'s prerequisites corrected in place. Open question 1
+closed: the script now mirrors the Makefile's `ifeq ($(DEBUG),1)` for `DEFINES +=` instead of
+dropping it, and names which flags are read versus restated. Measured: `PASS Main3dsFlow (20
+checks, 38 arms adjudicated red, 15 probes green)`, `PASS C3dFrame (31 checks, 46 arms
+adjudicated red, 2 probes green)`, `PASS ArmCompile (102 mutants, 0 diagnostics)`, `make -C
+tests/scripts` all cases match, `bash tools/check.sh` ALL GATES PASSED, `make -C mdk_3ds` builds.
+`ralph/builder.md` was dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose.
+
+**Batch 110 (Iteration 137) — review-16 closed 6/6 (no Critical, no High).** The change that
+mattered was a scope widening, not an addition: check 20's write-set scan stopped at the object
+pass, so a per-frame latch clear written in the frame body that *contains* the pass compiled
+clean and restored review-12 R1's ~60x/s spam with everything green — the reviewer's Medium,
+reproduced from its own file before being fixed. Alongside it: the backend's `LATCH_NEG`
+accepted a guard spelling it could never match, so a legal `== false` guard reddened the gate
+(and the frontend's write scan had the mirror-image bug, reading a legal `== false` guard as a
+write — found here, not by the reviewer); the c3d gate gained a probe mechanism, because a gate
+that can only prove mutations are caught can never report that it rejects legal code; every arm
+of that gate gained a binding to the check each claims, generated from the measured run; and
+`arm_compile_check.sh` now names the generated header the c3d half needs instead of an include
+directory, and exits 1 rather than PASSing over a skipped gate. One finding was rebutted in
+part: review-16 R4 asked for `-I mdk_3ds/build` to be dropped, and `renderer_c3d.cpp:60`
+includes the header generated into it — the include stayed, the *directory requirement* is what
+batch 111 dropped. All of that gate's mutants compiled for the 3DS target.
 
 **Batch 109 (Iteration 136) — review-15 closed 5/5 (no Critical, no High): F1–F5 all fixed, none
  rebutted on merit.** **F1**: checks 18 and 19 read the clear and the guard but not the *write set*,
@@ -494,23 +526,30 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 111)
-**What is actually next, restated by batch 110.** Six consecutive batches have now closed
-external reviews on the refused-mesh gate family without moving a line of game code. Batch 110
-differs from 108 and 109 in one way worth naming: the reviewer found no Critical and no High, and
-the Medium it did find was a *scope* hole in a net that had already been widened twice — the same
-shape of miss, one level up, for the third time. That is the argument for stopping, not for
-another pass: a net that has been wrong about its own scope three running has to be reviewed
-against a profile or a rewrite, not patched a fourth time. **Batch 111 is expected to be a game
-batch, and a batch that changes `mdk_3ds/**` owes emulator evidence under P8.** Two named items,
-both blocked on a named cause rather than on effort: (1) **the canvas seam** —
-`mdk_render_canvas_quad` is a no-op on this backend (`renderer_c3d.cpp:2345`), which is what
-priority item 5b (the HUD) and the MVE movie presenter both wait on; (2) **the collision batch**
-— `FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn arena and
-lets `ArenaSpace::setSolid` take the oracle's current + active second, and which needs a
-doorway-crossing oracle rather than a hand-written expectation. Neither is a gate batch. The
-one-sided-view investigation below stays open and is the sharper of the two picture questions,
-and the R = 255 candidate set is now two, not five (below).
+## NEXT (batch 112)
+**What is actually next, restated by batch 111.** Batch 110 said batch 111 should be a game
+batch. It was not: review-17 arrived with two Mediums open and reachable today, and leaving a
+confirmed green-on-a-defect net unremediated to prefer a more interesting batch is the trade this
+loop must not make. That is now seven rounds on the same three checks, and the honest reading is
+the one batch 110 already gave: a net that has been wrong about its own scope three running needs
+review against a profile or a rewrite, not a fourth patch. Batch 111 narrowed that debt rather
+than adding to it -- both blind spots were in the *property*, not in a new spelling -- and every
+finding is closed with an arm or a probe, so the family is now reviewable as a unit.
+
+**Batch 112 is expected to be a game batch, and a batch that changes `mdk_3ds/**` owes emulator
+evidence under P8.** Two named items, both blocked on a named cause rather than on effort: (1)
+**the canvas seam** -- `mdk_render_canvas_quad` is a no-op on this backend
+(`renderer_c3d.cpp:2345`), which is what priority item 5b (the HUD) and the MVE movie presenter
+both wait on; (2) **the collision batch** -- `FindConnections` + `CrossedArena`, which unfreezes
+`currentArena_` from the spawn arena and lets `ArenaSpace::setSolid` take the oracle's current +
+active second, and which needs a doorway-crossing oracle rather than a hand-written expectation.
+Neither is a gate batch. The one-sided-view investigation below stays open and is the sharper of
+the two picture questions, and the R = 255 candidate set is now two, not five (below).
+
+**If a review-18 arrives instead, the standing offer stands:** the gate family's remaining
+weakness is known and named, not hidden -- check 17 reads a *format string* to decide whether a
+line belongs to the refusal family, so a refusal line whose format is a variable is outside the
+net, and that is stated in the code as a limit rather than discovered by a reviewer.
 
 **What batch 110 changed, in one paragraph, so the next gate reader does not re-derive it.**
 Check 20's write scan is scoped to `frame_body_span(code)` and not to `object_pass()`, is
@@ -520,12 +559,15 @@ pinned on both sides). `LATCH_NEG`'s optional `name->` prefix is its own group, 
 spellings work through the struct pointer, and both gates now have probes pinning the
 `== false` spelling. Check 17's rule is "no refusal line may disagree", stated as: first figure
 is the refused capacity, a line naming `%d KB` must carry a derived figure, a capacity-only line
-is legal. `c3d_frame_test.sh` has a `PROBES` list and every one of its 45 arms names the check
-it pins. `arm_compile_check.sh` requires `mdk_core/src` and `mdk_3ds/src` as a wrong-directory
-error and `mdk_3ds/build/mdk_c3d_shbin.h` as a named c3d prerequisite (`make -C mdk_3ds`), and a
-run that skips a gate exits 1 as INCOMPLETE. Measured: `PASS Main3dsFlow (20 checks, 35 arms, 14
-probes)`, `PASS C3dFrame (31 checks, 45 arms, 2 probes)`, `PASS ArmCompile (98 mutants, 0
-diagnostics)`, `make -C tests/scripts` all cases match, `bash tools/check.sh` ALL GATES PASSED.
+is legal. `c3d_frame_test.sh` has a `PROBES` list and every arm names the check it pins (batch
+110 said "its 45 arms" here; review-17 R4 deleted the count, and batch 111's number is below).
+`arm_compile_check.sh` requires `mdk_core/src` and `mdk_3ds/src` as a wrong-directory error and
+`mdk_3ds/build/mdk_c3d_shbin.h` as a named c3d prerequisite (`make -C mdk_3ds`), and a run that
+skips a gate exits 1 as INCOMPLETE. (Batch 110 wrote that it required those two directories;
+it required three, including the gitignored `mdk_3ds/build`, which is review-17 R6 and is fixed
+below.) Measured at batch 110: `PASS Main3dsFlow (20 checks, 35 arms, 14 probes)`, `PASS
+C3dFrame (31 checks, 45 arms, 2 probes)`, `PASS ArmCompile (98 mutants, 0 diagnostics)`,
+`make -C tests/scripts` all cases match, `bash tools/check.sh` ALL GATES PASSED.
 
 **Batch 109 re-measured the R = 255 lead while scoping, and the candidate set is now two, not five.**
 `docs/evidence/2026-11-09-L7-shader-w-current.png` again: 96000 of 96000 pixels have R = 255, 131

@@ -529,6 +529,12 @@ LATCH_NEG = re.compile(r"![ \t]*streamFailureLogged"
 # which is stated as a limit rather than hidden.
 REFUSAL_FMT = re.compile(r"FAILED|refus", re.IGNORECASE)
 
+# A format NAMES a figure when it carries a printf conversion (review-17 R3). `%%`
+# is a literal percent, not a figure, so it is excluded. This is what separates "a
+# refusal line that states no number" -- which cannot disagree with anything -- from
+# "a refusal line whose format asks for a number and passes none".
+FIGURE_FMT = re.compile(r"%(?![ %])[a-zA-Z]")
+
 # One level of local integer constant, so a named stride folds to the backend's
 # literal (review-14 F6). Only a plain decimal initialiser counts.
 CONST_INT_RE = re.compile(r"\b(?:const|constexpr)[ 	]+(?:u?int\d*_t|size_t|int|long"
@@ -539,6 +545,36 @@ CONST_INT_RE = re.compile(r"\b(?:const|constexpr)[ 	]+(?:u?int\d*_t|size_t|int|l
 def const_ints(window):
     """{name: digits} for the local integer constants declared in `window`."""
     return {m.group(1): m.group(2) for m in CONST_INT_RE.finditer(window)}
+
+
+# One level of local initialiser, ARBITRARY right-hand side (review-17 R2). The
+# byte figure a refusal line prints is often hoisted into a named local first:
+# `const int32_t refusedBytes = (int32_t)((int64_t)cap * 5 * sizeof(float));`
+# and then printed by name. A scan that only recognises a figure when the argument
+# itself spells an operator (`"*" in v or "/" in v`) does not see such an argument
+# at all, so it compares it against NOTHING -- which is how review-12 R2's
+# byte-figure-from-the-corner-count came back one refactor away, green.
+LOCAL_INIT_RE = re.compile(r"\b(?:const|constexpr)[ \t]+(?:u?int\d*_t|size_t|int|long"
+                           r"|short|unsigned)[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*"
+                           r"([^;]+);")
+
+
+def local_inits(window):
+    """{name: initialiser text} for the local constants declared in `window`,
+    including ones whose initialiser is an expression rather than a literal."""
+    return {m.group(1): m.group(2).strip() for m in LOCAL_INIT_RE.finditer(window)}
+
+
+def fold_locals(expr, inits):
+    """`expr` with every named local constant replaced by its initialiser, ONCE.
+    `re.sub` makes a single pass over the ORIGINAL text, so a local initialised
+    from another local is not chased: one level is the claim, and one level is
+    what a reader of the source can follow without a symbol table."""
+    if not inits:
+        return expr
+    return re.sub(r"[A-Za-z_][A-Za-z0-9_]*",
+                  lambda m: "(" + inits[m.group(0)] + ")"
+                  if m.group(0) in inits else m.group(0), expr)
 
 
 def fold_consts(expr, consts):
@@ -1068,20 +1104,24 @@ def adjudicate(text, quiet=False):
     fail_ok = bool(prints) and backend is not None
     for p, args in (prints if backend is not None else []):
         vals = args[1:]
-        derived = [v for v in vals[1:] if "*" in v or "/" in v]
-        # Review-16 open question 3, answered by re-shaping the rule rather than by
-        # loosening it. The rule was "every refusal line states capacity AND a derived
-        # byte figure", which reddened a line that names the refused capacity and
-        # prints no byte figure -- a line that disagrees with NOTHING, so reddening it
-        # was a gate rejecting a shape the port may write (review-10 F6's failure).
-        # The rule is now "no refusal line may DISAGREE with the backend", stated as:
-        #   * the first figure IS the refused capacity (checked below, and the half
-        #     that catches review-15 F3's `%d corners this frame` with `objectCorners`
-        #     and no derived figure at all -- so this relaxation does not reopen F3);
-        #   * every figure AFTER it that is computed must equal the backend's own
-        #     byte figure (checked below against the renderer's expression);
-        #   * and a line that NAMES a byte unit ("%d KB") must carry one, or the unit
-        #     labels the corner count -- the 1024x cousin of review-11 F1.
+        # Review-17 R3: a refusal line that states NO figure at all -- the natural
+        # companion to the backend's own `linearAlloc(%u) FAILED`, e.g. "objects:
+        # linearAlloc FAILED for the stream mesh" -- disagrees with nothing, so it
+        # cannot fail a rule about disagreement. Reddening it was the gate refusing a
+        # shape the port may write (review-10 F6), and the failure text even described
+        # a defect the line did not have. The rule is therefore conditional on the
+        # format NAMING a figure: a `%` converter with no argument after the capacity
+        # is still a figure the check must be able to name.
+        if not vals and not FIGURE_FMT.search(args[0]):
+            continue
+        # Review-17 R2: the figures after the capacity are EVERY argument, not just
+        # the ones that spell an operator inline. Batch 110's `[v for v in vals[1:] if
+        # "*" in v or "/" in v]` was recorded as a re-scoping of the rule but was a
+        # NARROWING of it: a byte figure hoisted into a local, or a stale literal, is
+        # an argument the loop never looked at, so review-12 R2's frame-count byte
+        # figure passed with the arithmetic one line away from the printf. Locals are
+        # resolved one level below.
+        derived = [v for v in vals[1:] if not v.lstrip().startswith('"')]
         if not vals or ("KB" in args[0] and not derived):
             fail_ok = False
             break
@@ -1100,13 +1140,18 @@ def adjudicate(text, quiet=False):
         # it would be review-10 F6's failure again -- a gate that rejects a shape the
         # port may legitimately write is a gate the next batch routes around.
         consts = const_ints(scope[:p.start()])
+        # One level of local initialiser, so `refusedBytes` printed by name is
+        # compared as the arithmetic it hides (review-17 R2). Folded AFTER the
+        # integer constants, because the initialiser may itself name a stride.
+        inits = local_inits(scope[:p.start()])
         first = vals[0].replace(" ", "").replace("objectDraw.", "")
         first = first[:-2] if first.endswith("()") else first
         if first not in cap_names:
             fail_ok = False
             break
         for v in derived:
-            if arith_atoms(fold_consts(v, consts), cap_names) != want:
+            expr = fold_consts(fold_locals(v, inits), consts)
+            if arith_atoms(expr, cap_names) != want:
                 fail_ok = False
                 break
         if not fail_ok:
@@ -1219,10 +1264,21 @@ def adjudicate(text, quiet=False):
     # spellings count: taking the address, and declaring a reference/pointer initialised
     # from the latch (the reviewer's mutant is the second, where the `&` sits on the
     # alias's name and never touches the field's).
+    #
+    # Review-17 R1: the SCOPE of this search is the whole file, not the frame body. The
+    # alias was searched in `wscope`, which is the frame body, while the property this
+    # half states is that the latch's address is never taken ANYWHERE -- and an alias is
+    # normally declared where the field is, one line above the frame loop, and written
+    # inside it. Batch 110's scan therefore missed the shape it existed for: an alias
+    # declared at `main_3ds.cpp:666` and written as the frame's first statement printed
+    # one sustained refusal ~60x/s with every check, arm and probe in this file green.
+    # The c3d twin already scanned the whole file; the two nets now agree. (No count is
+    # quoted here on purpose -- review-16 R3 and review-17 R4 are both about transcribed
+    # counts going stale in the file that names them.)
     aliased = bool(re.search(
         r"&[ \t]*streamFailureLogged"
         r"|[&*][ \t]*(?:const[ \t]*)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*streamFailureLogged",
-        wscope))
+        code))
     guarded_abs = [(off + s, off + e) for (s, e) in guarded]
     writes_ok = True
     for w in re.finditer(r"\bstreamFailureLogged\s*=(?!=)\s*([^;]+);", wscope):
@@ -1828,6 +1884,79 @@ def arm_failure_clear_wrapped_across_lines(text):
             + text[end:])
 
 
+def arm_failure_alias_declared_outside_the_frame(text):
+    """Declare the reference alias BESIDE the latch and write through it inside the
+    frame (review-17 R1). Batch 110's alias guard scanned the frame body, so the
+    shape it existed for -- an alias, which is normally declared where the field is,
+    one line above the frame loop -- was invisible to it: `bool& latchAlias =
+    streamFailureLogged;` at the declaration plus `latchAlias = false;` as the
+    frame's first statement printed one sustained refusal ~60x/s with every check,
+    arm and probe in this file green. This is that mutant, and it is the arm that
+    keeps the scan's SCOPE honest: an alias declared inside the loop body (the arm
+    batch 109 added) tests the pattern, not the scope.
+    """
+    decl = "    bool streamFailureLogged = false;\n"
+    if decl not in text:
+        return text
+    out = text.replace(decl, decl + "    bool& latchAlias = streamFailureLogged;\n", 1)
+    loop = "    while (aptMainLoop()) {\n"
+    if loop not in out:
+        return text
+    return out.replace(loop, loop + "        latchAlias = false;\n", 1)
+
+
+def arm_failure_byte_figure_hoisted_from_the_frame_count(text):
+    """Put the byte figure's arithmetic in a local and print it BY NAME, with the
+    count taken from the frame's corners (review-17 R2). Review-12 R2 is the defect:
+    one refusal, two committed numbers that disagree by up to 8x. Batch 110's check
+    read only arguments that spell an operator inline (`"*" in v or "/" in v`), so an
+    argument that is a bare local name was compared against NOTHING and the defect
+    passed one refactor away from the printf. The arithmetic is identical to
+    `arm_failure_kb_names_the_frame_count`'s; only its POSITION moved, which is the
+    whole point of the arm.
+    """
+    anchor = "                                            1024));\n"
+    if anchor not in text:
+        return text
+    return text.replace(anchor, anchor +
+                        '                const int32_t refusedBytes =\n'
+                        '                    (int32_t)((int64_t)objectCorners * 5 * sizeof(float));\n'
+                        '                mdk::log3dsPrintf("objects: refused %d corners = %d bytes",\n'
+                        '                                  objectDraw.attemptedCapacity(),\n'
+                        '                                  refusedBytes);\n', 1)
+
+
+def arm_failure_byte_figure_is_a_stale_literal(text):
+    """Print a byte figure that is a literal nobody recomputes (review-17 R2, the
+    other half). `81920` is what 4096 corners cost TODAY; the day the stride or the
+    rounding changes it is a number the backend was never asked for, and it carries no
+    operator for a `"*" in v` filter to find. A figure with no source is a figure with
+    no guarantee.
+    """
+    anchor = "                                            1024));\n"
+    if anchor not in text:
+        return text
+    return text.replace(anchor, anchor +
+                        '                mdk::log3dsPrintf("objects: refused %d corners = %d bytes",\n'
+                        '                                  objectDraw.attemptedCapacity(), 81920);\n',
+                        1)
+
+
+def probe_failure_line_names_no_figure_at_all(text):
+    """Add a refusal line that states NO number (review-17 R3): the natural companion
+    to the backend's own `linearAlloc(%u) FAILED`. It disagrees with nothing, so a
+    rule about disagreement has nothing to say about it -- and reddening it is the
+    review-10 F6 failure, a gate that rejects a shape the port may write and so gets
+    routed around.
+    """
+    anchor = "                    streamFailureLogged = true;\n"
+    if anchor not in text:
+        return text
+    return text.replace(anchor, anchor +
+                        '                    mdk::log3dsPrintf("objects: linearAlloc FAILED for "\n'
+                        '                                      "the stream mesh");\n', 1)
+
+
 def arm_respawn_keeps_the_caches(text):
     """Keep the layout and pose caches across a runtime rebuild. This is the defect
     the object pass would have shipped: the rebuilt runtime frees the models both
@@ -1943,6 +2072,26 @@ ARMS = [
      "next line (review-16 R1)",
      arm_failure_clear_wrapped_across_lines,
      CHK["failure-latch-writes-are-the-pinned-three"]),
+    # Review-17 R1: the alias arm above declares the reference INSIDE the loop body,
+    # so it tests the alias PATTERN while the scan could still be scoped to the body.
+    # This one declares it where a reference is normally declared -- beside the field,
+    # outside the frame -- which is the shape the property is about and the shape
+    # batch 110 shipped green.
+    ("the refused-mesh latch is written through an alias declared OUTSIDE the frame "
+     "body (review-17 R1)",
+     arm_failure_alias_declared_outside_the_frame,
+     CHK["failure-latch-writes-are-the-pinned-three"]),
+    # Review-17 R2: the two shapes batch 110's `"*" in v or "/" in v` filter could not
+    # see. Both are review-12 R2's disagreement between the frontend's byte figure and
+    # renderer_c3d's own `linearAlloc(N) FAILED`, with the arithmetic moved out of the
+    # argument list.
+    ("the refused-mesh byte figure is hoisted into a local built from the frame's "
+     "corner count (review-17 R2)",
+     arm_failure_byte_figure_hoisted_from_the_frame_count,
+     CHK["failure-line-names-the-refused-capacity"]),
+    ("the refused-mesh byte figure is a stale literal (review-17 R2)",
+     arm_failure_byte_figure_is_a_stale_literal,
+     CHK["failure-line-names-the-refused-capacity"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -2021,7 +2170,9 @@ PROBES = [
     # the refused capacity and prints NO byte figure disagrees with nothing, so the
     # re-shaped check 17 must accept it. Reddening it was the gate refusing a shape the
     # port may write; review-10 F6 again. The half that stays red is a line naming a
-    # unit it cannot derive (see `oq3_kb`: "%d KB" printed from the corner count).
+    # unit it cannot derive -- see `arm_failure_kb_names_the_frame_count`, which prints
+    # "%d KB" built from the frame's corner count. (Review-17 R7: this comment used to
+    # point at a name, `oq3_kb`, that exists nowhere in the repository.)
     ("a second line in the refusing branch names the refused capacity and no byte "
      "figure (review-16 open question 3)",
      lambda s: s.replace("""                                      (int)((int64_t)attempted * 5 * sizeof(float) /
@@ -2073,6 +2224,12 @@ PROBES = [
                 }""", """                                            1024));
                     streamFailureLogged = true;
                 }""", 1)),
+    # Review-17 R3: the half of "no refusal line may disagree" that batch 110 left red
+    # by accident. A line stating no number cannot disagree with anything, so the
+    # figure rules are conditional on the format NAMING a figure. This is the honest
+    # companion line to the backend's own `linearAlloc(%u) FAILED`.
+    ("a refusal line states no figure at all (review-17 R3)",
+     probe_failure_line_names_no_figure_at_all),
 ]
 # --- mutant dump (review-15 F5) ------------------------------------------------
 # `arm_compile_check.sh` needs the mutants as FILES so it can hand them to the

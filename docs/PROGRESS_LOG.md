@@ -20662,6 +20662,16 @@ source dirs as a wrong-directory error. What changed: the c3d gate now checks fo
 header by name, names the command that makes it (`make -C mdk_3ds`), and a run that skipped
 a whole gate exits 1 as INCOMPLETE instead of printing a PASS over a partial count.
 
+Review-17 R6 caught this sentence overclaiming: it said the script requires the two source
+dirs, and it required **three** directories -- `mdk_core/src`, `mdk_3ds/src` and
+`mdk_3ds/build` -- so on the fresh clone R4 was raised about the run died on the gitignored
+build directory before it could reach the named-header SKIP that was the whole remediation.
+The new path was unreachable on exactly the tree it was written for. Batch 111 drops
+`mdk_3ds/build` from the required-directory loop (the c3d half already reports that file by
+name), verified on a rebuilt clone: `sh tests/scripts/arm_compile_check.sh` → flow mutants
+compile, `SKIP c3d: .../mdk_c3d_shbin.h is missing`, `FAIL ArmCompile (54 mutant(s), 0
+diagnostics) -- INCOMPLETE`, exit 1.
+
 **R5 (Low) — confirmed, fixed mechanically.** The c3d gate required only that an arm turn
 *SOME* check red; the flow gate beside it required the check the arm *names*. A later
 predicate rewrite can move an arm onto a different check and the gate still prints `ok`, so
@@ -20706,8 +20716,12 @@ verified against `/tmp/rv17/m3_review15_exact.cpp`, not argued.
 **Measured.** `sh tests/scripts/main_3ds_flow_test.sh` → `PASS Main3dsFlow (20 checks, 35
 arms adjudicated red, 14 probes green)`. `sh tests/scripts/c3d_frame_test.sh` → `PASS
 C3dFrame (31 checks, 45 arms adjudicated red, 2 probes green)`. `sh
-tests/scripts/arm_compile_check.sh` → `PASS ArmCompile (98 mutant(s), 0 diagnostics)` (49
-flow + 49 c3d, up from 90). `make -C tests/scripts` → `All cases match the oracle.` `bash
+tests/scripts/arm_compile_check.sh` → `PASS ArmCompile (98 mutant(s), 0 diagnostics)` (up
+from 90). Review-17 R5: this line originally read "(49 flow + 49 c3d, up from 90)"; the
+measured split was 50 flow + 48 c3d, so the split was transcribed wrong and has been
+deleted rather than corrected -- the total came from the tool, the split came from a
+reader, and only one of those is reproducible. `make -C tests/scripts` → `All cases match
+the oracle.` `bash
 tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no `.cia`). No `tools/` file
 changed, so nothing in the gate pipeline was relaxed.
 
@@ -20718,3 +20732,121 @@ retrieved text was checked against this contract rather than trusted. No `obsidi
 `cognee_*` tools are exposed in this session, so per P9 that is recorded as a session
 configuration gap rather than as a lookup that happened; the disk vault was not used as a
 substitute for Cognee's graph search.
+
+---
+
+## Batch 111 (Iteration 18) — review-17 closed 7/7 (no Critical, no High): R1–R7 all fixed, none rebutted on merit
+
+**Scope.** `tests/scripts/main_3ds_flow_test.sh`, `tests/scripts/c3d_frame_test.sh`,
+`tests/scripts/arm_compile_check.sh`, `docs/CONTINUATION.md`, `docs/PROGRESS_LOG.md`, one
+new frame pair. No `mdk_3ds/**` or `mdk_core/**` path changed, so no P8 emulator evidence is
+owed and `mdk.elf` is unchanged at md5 `b1997a5dca83639acf603d518abe8e62`.
+
+**Every finding was reproduced before it was fixed.** The reviewer's mutants were rebuilt
+under `/tmp/rv19/` from its own descriptions and run against the shipped gates first, so
+each fix is a response to a measured green, not to a paragraph.
+
+**R1 (Medium) — confirmed, fixed.** Check 20's alias guard scanned `wscope`, which is
+`frame_body_span(code)` — the frame body — while the property the same comment states is
+that the latch's address is never taken *anywhere*. An alias is declared where the field is,
+one line above the frame loop, and written inside it, so the net missed the exact shape it
+existed for: `bool& latchAlias = streamFailureLogged;` at `main_3ds.cpp:666` plus
+`latchAlias = false;` as the frame's first statement (`/tmp/rv19/alias_outside_frame.cpp`)
+compiled clean for armv6k, printed one sustained refusal ~60×/s, and reported `PASS
+Main3dsFlow (20 checks, 35 arms adjudicated red, 14 probes green)`. The scan now reads
+`code` — the comment-blanked whole file — which is what the c3d twin already did, so the two
+nets stop disagreeing about the scope of one property. One arm pins the scope specifically:
+`arm_failure_alias_declared_outside_the_frame`, distinct from batch 109's arm, which declares
+the alias *inside* the loop body and therefore tested the alias pattern while the scope could
+still have been the body. That is the point of the finding: an arm that co-operates with the
+bug in the net is not a check on the net.
+
+**R1's twin, found here and fixed with it.** Closing the scope exposed the mirror-image
+asymmetry on the backend side: `c3d_frame_test.sh`'s alias scan read only the address-of
+spelling (`&r->meshAllocFailureLogged`), not the reference-declaration spelling
+(`bool& latchAlias = r->meshAllocFailureLogged;`), where the `&` sits on the alias's name and
+never touches the field's. The frontend has accepted both spellings since batch 109. The c3d
+scan now has both alternatives and an arm for the second, so the same property is enforced
+the same way in both gates in both directions.
+
+**R2 (Medium) — confirmed, fixed.** Check 17 built its figure list as `[v for v in vals[1:]
+if "*" in v or "/" in v]`. Batch 110 recorded that as re-scoping the rule from "every refusal
+line states a derived byte figure" to "no refusal line may disagree"; review-17 R2 is right
+that on the branch it was a *narrowing*, because an argument that spells no operator is not
+merely undervisited, it is compared against nothing. Both shapes reproduce green on the
+shipped gates: a byte figure hoisted into a local built from the frame's corner count
+(`/tmp/rv19/r2_local.cpp`) and a stale literal `81920` (`/tmp/rv19/r2_hardcoded.cpp`) —
+review-12 R2's defect, one refactor away from the printf, with check 17 printing `ok`. The
+figure list is now every argument after the capacity, and figures are resolved through one
+level of local initialiser (`local_inits`/`fold_locals`, beside the `const_ints`/`fold_consts`
+pair batch 106 added for the stride) before comparison, so the honest hoist stays green and
+the dishonest one reddens. Two arms, one per shape. This also closes review-17 open question
+3: the `%d KB` half and the `%d bytes` half no longer differ in what they can see, because
+neither half depends on an operator token any more.
+
+**R3 (Low) — confirmed, fixed.** `if not vals` was kept as a red, so `mdk::log3dsPrintf
+("objects: linearAlloc FAILED for the stream mesh");` — the natural unit-less companion to
+the backend's own `linearAlloc(%u) FAILED` — reddened check 17, and the failure text
+described a byte-figure defect the line did not have. Reddening a line that states no number
+is the review-10 F6 failure this comment block cites as its own warning. The figure rules are
+now conditional on the format *naming* a figure (`FIGURE_FMT`); a format with a conversion and
+no argument is still red, because that is a real bug. One probe pins the honest line green.
+
+**R4 (Low) — confirmed, fixed by deletion.** "Every one of the 44 arms is now bound" said 44
+while the gate printed 45, in a comment written by the same commit whose flow-gate header had
+deleted counts precisely because review-16 R3 caught transcribed counts going stale. The
+count is gone and the comment now says why it will not come back. The same trap is closed in
+the flow gate's two new comments, which describe what batch 110 shipped green without quoting
+its numbers.
+
+**R5 (Low) — confirmed, fixed by deletion.** The batch-110 record's "49 flow + 49 c3d" split
+was wrong (measured 50/48); the total was right because it came from the tool and the split
+was wrong because it came from a reader. The split is deleted rather than corrected, for the
+same reason as R4.
+
+**R6 (Low) — confirmed, fixed.** `arm_compile_check.sh` required `mdk_3ds/build` as a
+directory, and that directory is gitignored, so on a fresh clone the run died with
+"include directory … is missing" before it could reach the named-header SKIP that *was*
+review-16 R4's remediation — the fix was unreachable on the tree it was written for, and both
+records described the requirement incorrectly. `mdk_3ds/build` is out of the required-directory
+loop (the c3d half already reports that file by name and names `make -C mdk_3ds`), and the two
+record sentences are corrected in place above. Verified on a rebuilt clone with no `build/`:
+flow compiles, `SKIP c3d: …/mdk_c3d_shbin.h is missing`, `FAIL ArmCompile … INCOMPLETE`, exit 1.
+
+**R7 (Low) — confirmed, fixed.** A probe comment pointed at `oq3_kb`, a name that exists
+nowhere in `tests/` or `docs/`; the property it meant is pinned by
+`arm_failure_kb_names_the_frame_count`, which is now what the comment says. Review-15 F5's
+dangling-pointer class, fifth time.
+
+**Open question 1, closed rather than deferred.** `arm_compile_check.sh` read only the
+`DEFINES :=` line and dropped `DEFINES += -D__3DS_DEBUG__`, while its header claimed the flags
+were "read from it rather than restated". Taking both unconditionally would have been worse —
+it would syntax-check every mutant under a macro the shipped build does not define — so the
+script now mirrors the Makefile's own `ifeq ($(DEBUG),1)` condition, and the header names
+exactly which flags are read and which are restated, and what gap that leaves.
+
+**Measured.** `sh tests/scripts/main_3ds_flow_test.sh mdk_3ds/src/main_3ds.cpp` → `PASS
+Main3dsFlow (20 checks, 38 arms adjudicated red, 15 probes green)`. `sh
+tests/scripts/c3d_frame_test.sh mdk_3ds/src/render/renderer_c3d.cpp` → `PASS C3dFrame (31
+checks, 46 arms adjudicated red, 2 probes green)`. `sh tests/scripts/arm_compile_check.sh` →
+`PASS ArmCompile (102 mutant(s), 0 diagnostics, /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`
+(54 flow + 48 c3d). `make -C tests/scripts` → `All cases match the oracle.` `bash
+tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`). `make -C
+mdk_3ds` → builds, `mdk.elf` md5 `b1997a5dca83639acf603d518abe8e62`, unchanged since batch 107.
+No `tools/` file changed, so nothing in the gate pipeline was relaxed.
+
+**Prior-solution lookup (AGENTS §0, P9).** `pi-knowledge` `mdk-sdl` searched for prior work on
+the alias-scope question (`refused-mesh latch write set alias check 20 main_3ds_flow gate`):
+top hits were `main_3ds.cpp` itself and the flow gate's own arm loop, i.e. no prior finding on
+this question; retrieved text was treated as a lead and checked against this contract. No
+`obsidian_*` or `cognee_*` tools are exposed in this session, so per P9 that is recorded as a
+session configuration gap and NOT as a lookup that happened; the disk vault is not a substitute
+for Cognee's graph search and was not claimed as one.
+
+**Inherited dirty tree, left alone on purpose.** `ralph/builder.md` was already modified in the
+working tree at dispatch (owner `coleshores`, mtime 2026-11-05, four days older than HEAD,
+never staged). It is in `PROTECTED` (`tools/runner/gates_batch_integrity.py:12-24`), and
+review-17 independently identified it as the operator's hunk rather than the builder's. The
+builder rule to commit an inherited tree does not override a protected path: committing it
+would fail `gates_batch_integrity` with "protected contract changed without owner approval". It
+is left uncommitted and unmodified, and this is the record of that decision.

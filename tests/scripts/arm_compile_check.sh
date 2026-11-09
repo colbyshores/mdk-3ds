@@ -19,6 +19,13 @@
 # passes because its input was absent is a pass generator, which is the defect this
 # project has now been reviewed for eleven times.
 #
+# WHAT IT NEEDS FROM THE TREE (review-17 R6). `mdk_core/src` and `mdk_3ds/src` (both
+# source trees; a wrong-directory error if either is absent) and, for the c3d half only,
+# the generated `mdk_3ds/build/mdk_c3d_shbin.h` that `renderer_c3d.cpp` includes. A tree
+# that has not run `make -C mdk_3ds` therefore compiles the flow mutants and then
+# reports INCOMPLETE with the missing file and the command that makes it named -- it does
+# NOT pass, and it no longer dies on a gitignored directory before it can say so.
+#
 # WHAT IT PROVES AND WHAT IT DOES NOT. It proves the mutant text is valid C++ for
 # armv6k/VFPv2 with the Makefile's flags, so every arm is a program a later batch
 # could actually commit. It does NOT prove the arm reddens a check — that is the
@@ -43,17 +50,45 @@ if [ ! -x "$CXX" ]; then
     echo  "  refuses to report a pass it did not measure (AGENTS.md P6)." >&2
     exit 1
 fi
-for f in "$ROOT/mdk_core/src" "$ROOT/mdk_3ds/src" "$ROOT/mdk_3ds/build"; do
+for f in "$ROOT/mdk_core/src" "$ROOT/mdk_3ds/src"; do
     if [ ! -d "$f" ]; then
         echo "FAIL arm_compile_check: include directory $f is missing" >&2
         exit 1
     fi
 done
+# Review-17 R6: `mdk_3ds/build` is NOT required here. It is a build artefact and is
+# gitignored, so on the tree shape review-16 R4 named -- a fresh clone -- requiring it
+# as a directory made the new named-header SKIP unreachable: the run died with
+# "include directory .../mdk_3ds/build is missing" before it could say which generated
+# file was absent and what command makes it. The c3d half below already reports that
+# file BY NAME, so the directory check was both the wrong error and the one that
+# hid the right one. A missing `-I` on a directory that does not exist is not an
+# error to the compiler, and the c3d gate is skipped in exactly that case anyway.
+if [ ! -d "$ROOT/mdk_3ds/build" ]; then
+    echo "  note: $ROOT/mdk_3ds/build does not exist; the c3d mutants need the" >&2
+    echo "        generated shader header the shader step writes there." >&2
+fi
 
 ARCH=$(sed -n 's/^ARCH *: *= *//p' "$MK" | head -1)
+# Review-17 open question 1: the Makefile sets DEFINES in two places -- the `:=` line,
+# and a `DEFINES += -D__3DS_DEBUG__` inside `ifeq ($(DEBUG),1)`. Taking only the first
+# made this script's "the Makefile's own flags" claim only half true. Taking BOTH
+# unconditionally would be worse: it would syntax-check every mutant under a macro the
+# shipped build does not define, which is a different divergence and a quieter one. So
+# the script mirrors the Makefile's own condition -- DEBUG=1 here adds the same macro
+# the Makefile adds under DEBUG=1 -- and says so.
 DEFINES=$(sed -n 's/^DEFINES *: *= *//p' "$MK" | head -1)
+if [ "${DEBUG:-0}" = 1 ]; then
+    DEFINES="$DEFINES $(sed -n 's/^DEFINES *+= *//p' "$MK" | tr '\n' ' ')"
+fi
 # -fsyntax-only, not -c: the mutants are never linked, and the shader DVLB and the
 # libraries a link would need are build artefacts this script must not require.
+# ARCH and DEFINES are READ from the Makefile. -O2, -std=gnu++17, -fno-exceptions,
+# -fno-rtti, -fno-math-errno and -fno-strict-aliasing are RESTATED here, because the
+# Makefile reaches them through $(COMMONFLAGS)/$(CXXFLAGS) expansion and a sed cannot
+# expand a variable. That is the whole of the gap: a mutant that fails only under some
+# other flag the Makefile adds through another variable would compile here. Stated
+# rather than hidden (review-17 open question 1).
 FLAGS="$ARCH -O2 -ffunction-sections -fdata-sections -fno-math-errno \
        -fno-strict-aliasing $DEFINES -std=gnu++17 -fno-exceptions -fno-rtti \
        -fsyntax-only"

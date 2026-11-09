@@ -967,7 +967,18 @@ def adjudicate(text, quiet=False):
         # address of a latch is a normal refactor for a field written in two places.
         # So: if the address of the latch is ever taken, the name scan no longer
         # describes the write set and this check says so instead of passing.
+        #
+        # TWO spellings, not one (review-17 R1's asymmetry). The address-of form is
+        # `bool* const l = &renderer->meshAllocFailureLogged;`. The reference form is
+        # `bool& latchAlias = renderer->meshAllocFailureLogged;` -- where the `&` sits
+        # on the ALIAS's name and never touches the field's, so an `&`-before-the-field
+        # scan cannot see it. The frontend's check 20 has accepted both spellings since
+        # batch 109; this side only had the first, which is the same property stated two
+        # ways in two gates and enforced one way.
         aliased = bool(re.search(r"&[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*->[ \t]*)?"
+                                 r"meshAllocFailureLogged"
+                                 r"|[&*][ \t]*(?:const[ \t]*)?[A-Za-z_][A-Za-z0-9_]*"
+                                 r"[ \t]*=[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*->)?"
                                  r"meshAllocFailureLogged", blank_comments(text)))
         sole_clear = sole_clear and not aliased
         # STATED LIMIT, not a hidden one: the net is "exactly one clear in the file",
@@ -1457,6 +1468,18 @@ ARMS = [
                          "    bool* const latchAlias = &r->meshAllocFailureLogged;\n"
                          "    *latchAlias = false;", 1),
      "mesh-refusal-latch-cleared-nowhere-else"),
+    # Review-17 R1's asymmetry, closed on this side. The arm above takes the ADDRESS of
+    # the latch, which is the spelling an `&field` scan sees. The reference-declaration
+    # spelling puts the `&` on the alias's own name and never touches the field's, so it
+    # needs the second alternative in the scan -- and a scan that gained it without an
+    # arm would be a scan nobody could show still works.
+    ("the refused-mesh latch is cleared every frame through a REFERENCE alias declared "
+     "with `&` on the alias name (review-17 R1)",
+     lambda s: s.replace("    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry",
+                         "    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry\n"
+                         "    bool& latchAlias = r->meshAllocFailureLogged;\n"
+                         "    latchAlias = false;", 1),
+     "mesh-refusal-latch-cleared-nowhere-else"),
     # Review-15 F3's lesson, applied to the backend's copy of the same net: a line in
     # the failing branch whose format never spells the refusal is invisible to a
     # format filter, and this arm is what isolates the branch half here.
@@ -1531,9 +1554,13 @@ for label, mutate, expect in ARMS:
     # not cosmetic: a later predicate rewrite can move an arm from the check it was cut
     # for onto a different one, and the gate still prints `ok`, so the arm no longer
     # isolates anything and nothing says so. Review-14 F3's "half-pinned" class, in the
-    # one place in this family that still had it. Every one of the 44 arms is now bound,
-    # and the binding was generated from the measured run rather than typed, so it is
-    # the current truth and not an intention.
+    # one place in this family that still had it. Every arm is now bound, and the
+    # binding was generated from the measured run rather than typed, so it is the
+    # current truth and not an intention. The count is deliberately NOT written here:
+    # review-16 R3 caught transcribed counts going stale in the same file that named
+    # the command, review-17 R4 caught it again in this very comment (it said 44 while
+    # the run printed 45), and the only fix that cannot rot is not transcribing one.
+    # The line this loop prints immediately above is the count, measured.
     if after.failed and after.broke == expect:
         arms_red += 1
         print("  ok   arm %s: turned `%s` red as required" % (label, after.broke))
