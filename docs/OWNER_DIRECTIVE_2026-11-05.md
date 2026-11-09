@@ -70,21 +70,27 @@ playability; the missing glue does.
 `ralph-pi.sh` now reads:
 
 ```bash
-WORKER_MODELS="litellm/qwen litellm/deepseek-v4.1-flash-th"
-REVIEWER_FALLBACKS="litellm/deepseek-v4.1-flash-nvidia litellm/minimax-m3.1-flash-nvidia litellm/luna"
+WORKER_MODELS="litellm/qwen"
+REVIEWER_MODEL="litellm/deepseek-v4.1-flash-th"
+REVIEWER_FALLBACKS="litellm/deepseek-v4.1-flash"
 ```
 
-Both model IDs were verified live on the proxy before being written. **grok is
-retired by operator decision** and must not be re-added to any chain.
+Every model ID was verified live on the proxy before being written. **grok is
+retired by operator decision** and must not be re-added to any chain; the same
+applies to `minimax*` and `deepseek-v4.1-flash-nvidia`. **luna is also retired
+from the builder chain** (operator decision 2026-11-05): qwen is the only
+builder route, and an unavailable qwen is waited out rather than replaced.
 
-Two consequences recorded so nobody rediscovers them the hard way:
+The builder and reviewer chains are cross-family by construction: the builder
+route is Qwen-family and both reviewer routes are DeepSeek-family, so review
+always has an eligible route and the `-th` -> `flash` pair is the single
+operator-approved same-family exception. `tetrisphere-godot` and `perfect_dark`
+carry the same chains; the three loops differ only in their project-specific
+prompts, gates and state files.
 
-- When the builder falls back to `deepseek-v4.1-flash-th`, the reviewer's own
-  family rule skips both DeepSeek variants, so review lands on minimax or luna.
-- Still outstanding, and **not** done here: the shared router
-  `/opt/pi/extensions/litellm-router.ts` (root-owned) still carries grok in
-  `FALLBACK` and `TS_REVIEW_CHAIN`, and `perfect_dark` and `tetrisphere-godot`
-  still reference `litellm/grok` in their own chains. Removing the `grok` model
-  from `~/.config/kilo/kilo.jsonc` before those are fixed would make their
-  reviews fail to resolve, and this loop's design blocks rather than skips an
-  unresolvable mandatory reviewer. Fix the other two projects first.
+Still outstanding, and **not** done here: the shared router
+`/opt/pi/extensions/litellm-router.ts` (root-owned) still carries grok in
+`FALLBACK` and `TS_REVIEW_CHAIN`. Removing the `grok` model from
+`~/.config/kilo/kilo.jsonc` before the router is fixed would make the sibling
+campaigns' reviews fail to resolve, and this loop's design blocks rather than
+skips an unresolvable mandatory reviewer. Fix the router first.

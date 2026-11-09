@@ -25,21 +25,17 @@ This document provides context for the Pi harness to understand the current stat
 ## Agent Architecture (owner directive 2026-10-31, updated 2026-11-01)
 Three separated roles — the implementer is never the sole authority on its own
 correctness:
-- **Implementer / remediator**: Qwen (`litellm/qwen` → `qwen38-flash-next`). First
-  in the worker chain; `litellm/deepseek-v4.1-flash-th` is the only fallback.
-- **Adversarial reviewer**: DeepSeek V4.1 Flash
-  (`litellm/deepseek-v4.1-flash` → `deepseek/deepseek-flash` at api.deepseek.com), an
-  independent family. The operator's allowed set is exactly three IDs — `qwen`,
-  `deepseek-v4.1-flash`, `deepseek-v4.1-flash-th` — so the only reviewer fallback
-  is `deepseek-v4.1-flash-th` (`swarm-worker` is excluded — same upstream as
-  qwen). When the builder has itself fallen back to `deepseek-v4.1-flash-th`, the
-  owner-directed independence exception lets `deepseek-v4.1-flash` review it
-  despite the shared family; if that route is unhealthy the review is BLOCKED and
-  the loop stops, because a three-model set has no spare reviewer. Read-only;
-  structured findings; verdict gates remediation. Protocol: `ralph/validator.md`.
-  **grok, minimax and luna are retired by operator decision 2026-11-05**, and so
-  is the `deepseek-v4.1-flash-nvidia` mirror; none may be re-added to any chain
-  here or in the shared router.
+- **Implementer / remediator**: Qwen (`litellm/qwen` → `openai/qwen38-flash-next`, family
+  `qwen`). No fallback builder route (operator decision 2026-11-05): when qwen is
+  unavailable the loop waits/backs off rather than switching models. Read-only
+  review is performed by a different family.
+- **Adversarial reviewer**: DeepSeek V4.1 Flash TH
+  (`litellm/deepseek-v4.1-flash-th` → `openai/deepseek-v4.1-flash:free`, family
+  `deepseek`), with `litellm/deepseek-v4.1-flash` (`deepseek/deepseek-flash` at
+  api.deepseek.com, family `deepseek`) as fallback. Both reviewer routes are
+  cross-family from the builder route (`qwen`), so no independence
+  exception is needed. Read-only; structured findings; verdict gates remediation.
+  Protocol: `ralph/validator.md`.
 - **Verification authority**: the harness gates — `make -C tests/scripts`,
   `bash tools/check.sh`, `make -C mdk_3ds`, plus the batch-integrity gate. Objective
   pass/fail, independent of any model's opinion.

@@ -911,8 +911,8 @@ guard_present "F3: the fallback chain asks it too"             'REJECT="$(review
 FB_LINES="$(grep -cE '^REVIEWER_FALLBACKS=' "$LOOP_CODE")"
 check "review-1 F4: exactly one REVIEWER_FALLBACKS assignment" "1" "$FB_LINES"
 eval "$(grep -E '^REVIEWER_FALLBACKS=' "$LOOP_CODE" | tail -1)"
-check "review-1 F4: the chain that takes effect is the owner's cross-family pair" \
-      "litellm/minimax-m3.1-flash-nvidia litellm/luna" "${REVIEWER_FALLBACKS:-}"
+check "review-1 F4: the chain that takes effect is the owner's single cross-family fallback" \
+      "litellm/deepseek-v4.1-flash" "${REVIEWER_FALLBACKS:-}"
 unset REVIEWER_FALLBACKS
 # Retired routes must not come back through a chain edit. LOOP_CODE is
 # comment-stripped, so this fires on a route in CODE, not on the prose that

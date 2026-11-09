@@ -19517,9 +19517,20 @@ Consequences, all recorded in `docs/evidence/2026-11-09-panel-noise-{a,b}.txt`:
   produce byte-identical panels" **does not reproduce**; a control that prints 0 px
   was comparing a capture with itself. This reaches back through the sidecars that
   quoted a full-RGB diff as their picture claim, batch 102's 58520 px included.
+  **[RETRACTED BY BATCH 104, review-10 F2 — the second clause is false and the first
+  is a scene change, not a failure to reproduce. Batch 102's control was two
+  independent runs in two lanes (`2026-11-09-L7-object-pass-parent.txt:29` names the
+  second capture) and its crops were byte-identical. The floor is valid for the
+  scene it was measured on: 0 px on the static arena-only panel, 53515 px on the
+  animated arena+objects panel. Batch 103's error was quoting one scene's floor at
+  the other scene's A/B.]**
 * what does reproduce is the **painted-versus-clear map** (0 px across runs), which
   is the same quantity the census has always quoted — which is why the census's
   58464 reproduced across batches while the colour diffs never did.
+  **[Amended by batch 104, review-10 F1: on this build the map is a constant
+  (96000/96000 painted on both sides), so 0 px here could not have been anything
+  else. The map is a control only where the panel has both painted and clear
+  pixels.]**
 * `tools/panel_geom.py` is now the canonical console comparison: `geom` prints the
   map diff and the census, and prints the full-RGB number next to it labelled as
   not a control. A colour claim needs two runs per side, and the honest blocker for
@@ -19620,3 +19631,171 @@ objects paint the entire left half to the pixel), with the closed candidates nam
 and the instrument rule binding: `panel_geom.py geom`, two runs per side, and no
 sixth census. Behind it, (b) the bank's eviction bound and (c) the ndsp sink's
 console rate. The sink's script-sound row is still unmeasured.
+
+## Iteration 131 — batch 104: review-10 closed 6/6 (F1 Critical, F2 High) — the console picture instrument could not fail, and the sentence batch 103 wrote about batch 102's control was false; forcing the object pass's allocation to fail turned the panel byte-identical to the arena-only build
+
+**Prior-solution lookup, as the contract requires.** Pi-knowledge (`mdk-sdl`, live):
+`knowledge_search` on the painted/clear map and the noise floor returned the
+`panel_crop.py` census convention and `pica_matrix.h`'s clear-colour byte order;
+a second query on the mesh allocation failure returned `object_draw.{h,cpp}` and
+`renderer_c3d.cpp`'s `probeTextureMemory` comment — "an allocation that fails says
+nothing at all, and that silence is how a whole arena's textures once refused to
+allocate one after another while the screen showed only the clear colour", i.e. the
+KB already recorded the exact failure class review-10 F3 found, in the texture path,
+and nobody had applied it to the mesh. **Obsidian MCP and Cognee MCP are not present
+in this session's tool list** (AGENTS P9: a session configuration fault to report,
+not a lookup that happened), so the vault was read directly, read-only and narrowly:
+`50-tooling/a-probe-must-be-able-to-fail.md` ("**the predicate cannot fail** — it
+compares a value against itself, counts a subset, or is itself a hypothesis") is this
+batch's F1 in the abstract, and `50-tooling/a-diagnostic-flag-that-quietly-does-nothing.md`
+is its F3. Both notes predate this project's finding, which is the point of the vault.
+
+**What was inherited first.** The tree arrived dirty with nine files from timed-out
+iterations: the operator's harness set (`docs/OWNER_DIRECTIVE_2026-11-05.md`,
+`ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`, `ralph/builder.md`,
+`tools/ralph_pi_watchdog.sh`, `tools/runner/test_review_state.sh`) plus the untracked
+`tools/reclaim_qwen_slots.sh`. The builder rule says finish and commit an inherited
+tree before starting anything new, and review-10's own open question 2 said the
+divergence between the running loop and the committed contract was a standing problem.
+So the set was verified and committed here rather than left unstaged a fifth time:
+`bash tools/runner/test_review_state.sh` → `REVIEW STATE: ALL CASES PASS`, and
+`bash -n` is clean on all four scripts. **One file could not be committed:
+`ralph/builder.md` is in `gates_batch_integrity.py`'s `PROTECTED` set, and staging it
+fails the pre-commit hook without `MDK_OWNER_APPROVED`.** It stays unstaged, and that
+is a recorded owner-action item, not an oversight. `tools/runner/test_review_state.sh`
+also arrived with its exec bit dropped (755 → 644) by an editor outside this uid; `piagent`
+cannot `chmod` a `coleshores`-owned file, so the mode change is committed with the content.
+Nothing in the repository executes it by path — it is run as `bash …` — so the mode is
+cosmetic, and review-10's "the harness test should be reachable from a gate" is left as
+an owner call rather than wired into `tools/check.sh`, which is owner-protected.
+
+**F1 (Critical) — confirmed, fixed, pinned.** The reviewer's reproduction is exact and
+was reproduced here before any change:
+
+    $ python3 tools/panel_geom.py geom docs/evidence/2026-11-09-panel-noise-a.png \
+                                    docs/evidence/2026-11-09-panel-noise-b.png
+    geom: 0 px of 96000 differ in the painted/clear map  (painted 96000 -> 96000)
+
+`mask()` is 0 only for a pixel exactly equal to `(16,32,48)`; the object pass now paints
+all 96000 pixels, so both sides are a constant map and the diff is structurally zero —
+on a batch 103 that had just bound "quote `panel_geom.py geom`" onto every future console
+A/B. A comparison that cannot fail is the same defect AGENTS §2 refuses in a permanently
+red gate. `geom` now prints the clear fraction first and **refuses** a side whose map is
+degenerate (0 clear or 0 painted), exiting 3, distinct from the shape error's 1. Pinned
+by a new gate that runs the tool as a subprocess and mutates it:
+`PASS PanelGeom (10 checks, 7 arms adjudicated red, 2 green probes)`, wired into
+`make -C tests/scripts`. Its arms are the guard deleted, the guard checking only one
+side, the refusal returning 0, the fraction line dropped, `mask()` constant-1, the
+rectangle re-spelled, and the shape check removed; its two green probes are the guard
+written as `clear in (0, total)` and a tuple comparison, so the gate pins the property
+and not one spelling of it. And the refusal is already load-bearing: the batch's own
+final panel A/B now exits 3 instead of printing a 0 px that would have been read as a
+pass.
+
+**F2 (High) — confirmed, and it is a retraction rather than a code fix.** The reviewer is
+right and batch 103 was wrong. Batch 102's control was two independent runs:
+`docs/evidence/2026-11-09-L7-object-pass-parent.txt:29` names the second capture
+(`/tmp/kilo-b102/parent2.png`), in its own lane, and the two crops' pixel sha is the same
+`f9af51b6…`. So "a control that reports 0 px was comparing a capture with itself" is
+false, and it also displaced the real lesson, which is that **a noise floor is only valid
+for the scene it was measured on**: 0 px on the static arena-only panel, 53515 px on the
+animated arena+objects panel. Corrected in `tools/panel_geom.py`'s docstring (the
+canonical statement), in `docs/evidence/2026-11-09-panel-noise-a.txt` (annotated in
+place, with the original quoted rather than erased), in the batch-103 narrative here, and
+in `docs/CONTINUATION.md`. The same edit corrected a figure in that sidecar that nobody
+had flagged: it printed "G/B channels alone: 53515 px", and re-measuring per channel gives
+**G 41462 px (max delta 128) and B 53512 px (max delta 255)** with R identical — the union
+was hiding that R does not move at all, which turned out to matter for F4's successor.
+
+**F3 (Medium) — confirmed, fixed, and proved to fire.** `ObjectDraw::ensure` now records
+the refusal (`allocationFailed()`), `renderer_c3d.cpp` logs its own `linearAlloc` failure
+like every other allocation it refuses, and `main_3ds.cpp` prints the pass-level line once.
+The line is not dead code — it was forced, on the emulator, by a one-line scratch edit
+(`kInitialStreamCapacity = 1 << 22`, not committed):
+
+    mdk.log:29  objects: stream mesh for 480 corners = 9 KB linear — linearAlloc FAILED,
+                no objects drawn        (printed ONCE in 1620 frames)
+
+and the run produced a second finding the reviewer's remediation did not anticipate: the
+backend's own line printed **1710 times in 27 s of guest time**, once per frame at ~63/s.
+A log that prints 60 times a second is the same failure as a log that never prints, so the
+backend's line is edge-triggered too (`RendererC3D::meshAllocFailureLogged`, cleared by
+the next success). Evidence:
+`docs/evidence/2026-11-09-L7-mesh-alloc-failure.{png,txt}` and
+`docs/evidence/2026-11-09-L7-mesh-log-final.{png,txt}`.
+
+**The forced failure answered a NEXT question by accident.** The mutant's panel crop is
+**byte-identical to batch 102's arena-only crop** — pixel sha `f9af51b6…`, md5
+`e0bcc576…`, `panel_geom.py geom` prints `0 px` in the map and `0 px` in full colour and
+does **not** refuse, because the arena-only panel has 58464 clear pixels. Two things
+follow. (1) `painted-left = 48000` is the objects: take their memory away and the panel is
+the arena-only panel to the byte, so the open question is what seven doors/BEAMS/statics
+draw that covers a half-panel, not whether they draw. (2) The arena-only scene is
+reproducible byte for byte across three runs in three lanes, so the 53515 px of run-to-run
+noise belongs to the **object pass's output** — not to `emurun.sh`, not to the capture
+deadline, not to the arena. That is a much better-localised version of review-10's open
+question 1, and it is now in `NEXT`.
+
+**F4 (Low) — confirmed and fixed.** `48000 − 37536 = 10464`, not the `10520` that was
+written and that no committed crop produces.
+
+**F5 (Low) — confirmed and fixed.** `panel_geom.py` imports `PANEL_SIZE` from
+`panel_crop.py`; the private `PANEL_W, PANEL_H = 400, 240` is gone, and the import is one
+of PanelGeom's checks with an arm that re-spells the literal.
+
+**F6 (Low) — first half fixed, second half deferred with cause.** Check 16 counted
+`objectDraw.draw(` in the raw file, so a comment naming the call was a second call site.
+The count now runs over a string-aware, offset-preserving comment blanker, and three green
+probes hold it: a comment line naming the call, a trailing comment naming it, and a
+`sdmc://` string literal on the call's own line. Verified the way a probe must be
+verified — with the blanker reverted to the raw text the two comment probes print
+`only 1 of 3 probes stayed green`, so they bite. The deferred half is the reviewer's
+"accept a call site in a helper that is itself invoked once from the frame": checks 12, 13
+and 16 all resolve the pass by its position inside the frame's `if (runtime)` gate, so
+accepting a helper means re-cutting all three at once for a shape this port does not have.
+Recorded in the check's own comment rather than left silent.
+
+**Gates, as run.**
+- `make -C tests/scripts` → `PASS C3dFrame (29 checks, 37 arms adjudicated red)`,
+  `PASS Main3dsFlow (16 checks, 18 arms adjudicated red, 3 probes green)`,
+  `PASS FrontendSolidPin (10 checks, 10 arms adjudicated red)`,
+  **`PASS PanelGeom (10 checks, 7 arms adjudicated red, 2 green probes)`**,
+  `PASS EmurunHarness (68 checks: config placement + mount ownership)`, … →
+  **`All cases match the oracle.`** exit 0.
+- `bash tools/check.sh` → `PASS audit_c_with_classes` 0 violations, `PASS gates_vfp`
+  0 blockers, `PASS audit_arm11_math` contract clean, `PASS audit_r11_idiv` no
+  candidates, `PASS gates_core_parity`, `SKIP gates_smdh` (no built .cia),
+  `PASS gates_frames` (`L3_f1.bmp sha=58615fc85d02e009`),
+  `PASS gates_batch_integrity` → **`CHECK: ALL GATES PASSED`** exit 0.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  `CXX object_draw.cpp`, `CXX main_3ds.cpp`, `CXX renderer_c3d.cpp`, `LINK mdk.elf`,
+  `3DSX mdk.3dsx`, exit 0. `mdk.elf` `9714104e…` → **`618e4692…`**, `mdk.3dsx`
+  **`cba93b79…`**, `mdk_c3d.shbin` `d46abb60…` **unchanged** — no shader was touched.
+- `bash tools/runner/test_review_state.sh` → **`REVIEW STATE: ALL CASES PASS`**.
+
+**Emulator evidence (AGENTS P7/P8) — owed, because `mdk_3ds/**` changed.**
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 50 --min-frames 600`, **exit 0**, on
+`Xvfb :99 -screen 0 1280x1024x24`, Mandarine r1.2.1 md5 `0d2adab6` (the harness refuses
+r1.3.0 with exit 6), forced llvmpipe, mono (`render_3d=0 factor_3d=0`), private lane
+`/tmp/kilo-b104` captures (`/tmp/kilo` is another co-tenant's), dspfirm present. Guest
+reached frame 2820 at the deadline and 2880 after the reap, `health=100` on every row,
+`objects=7 obj=570c/13d peak=570c/13d`, no FAIL/WARN, one `stream mesh 4096 corners =
+80 KB linear` line and no failure line. Its panel crop is 52056 px from batch 103's
+current crop in full colour — inside the 53515 px same-scene floor — and `geom` refuses
+it, which is the honest answer for a fully painted panel. A third run (the forced
+failure) is the `--secs 30` mutant above. Emulator-green is not hardware-pass; no
+Old-3DS measurement was taken and that stays open.
+
+**Frame.** The pinned pair is `docs/frames/2026-11-09-b104-instrument-refuses.{png,txt}`,
+`bad_percent=1.240 max_delta=247 mean_delta=0.1819` — unchanged, and the cause is the
+standing one: the pin is the **Linux** capture of level 3 frame 1 and nothing in this
+batch can move it. The console picture evidence is in `docs/evidence/`.
+
+**Next**, per the priority order: `NEXT` now carries three measured questions rather than
+one — the arena still never reaching the left half, what the objects draw that covers a
+half-panel (localised by the forced-failure run), and **R = 255 on every painted pixel of
+the console panel** (96000/96000, against 9758/76800 in the Linux frame of the same
+core), which is a colour-path defect with a precedent at the other end of the frame in
+`pica_matrix.h:302-319`. Behind them: the frame-locked capture path that would make a
+colour claim possible at all, item 5b's canvas seam, the bank's eviction bound, and the
+ndsp sink's console rate. The sink's script-sound row is still unmeasured.

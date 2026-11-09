@@ -58,7 +58,8 @@ public:
     //
     // Does nothing when the frame has no corners. A frame whose mesh could not
     // be made draws no objects and does not fail: a missing object pass is a
-    // missing picture, not a crash.
+    // missing picture, not a crash. It is NOT silent — `allocationFailed()` says
+    // so, and the frontend that owns a log prints it (main_3ds.cpp does).
     //
     // HOT PATH (AGENTS.md 2): once per drawn batch per frame. It is one memcpy
     // of the stream and a Material per draw -- no float->int conversion (R2), no
@@ -69,12 +70,26 @@ public:
     // The stream mesh's capacity in vertices, for the diagnostics.
     int32_t capacity() const { return capacity_; }
 
+    // True when the LAST attempt to make the mesh failed. The pass cannot report
+    // the failure itself — `mdk_core` has no log to write to, and inventing one
+    // here would put a frontend's stderr inside the shared game code — so it
+    // records it and the frontend that owns the log prints it (review-10 F3).
+    // Without this the only line that ever reported an allocation failure was
+    // deleted by review-9 F6, and a level whose mesh genuinely fails to allocate
+    // reads as nothing at all: no mesh line, no failure line, no objects.
+    //
+    // It describes the LAST attempt, not the whole run: `ensure` runs again on
+    // every frame that has corners and no mesh, so a transient linear-pressure
+    // failure clears by itself when a later frame succeeds.
+    bool allocationFailed() const { return failed_; }
+
 private:
     // Makes the mesh big enough for `need` vertices, replacing it when it is not.
     bool ensure(MdkRenderer renderer, int32_t need);
 
     MdkMeshId mesh_ = -1;
     int32_t capacity_ = 0;
+    bool failed_ = false;
 };
 
 } // namespace mdk

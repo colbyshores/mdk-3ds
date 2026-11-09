@@ -42,9 +42,16 @@ bool ObjectDraw::ensure(MdkRenderer renderer, int32_t need) {
     }
     mesh_ = mdk_render_create_dynamic_mesh(renderer, capacity);
     if (mesh_ < 0) {
+        // Recorded, not printed: see allocationFailed(). The backend that refused
+        // the allocation prints the memory half of this (renderer_c3d.cpp logs its
+        // own linearAlloc failure); this half says that the refusal reached the
+        // object pass, which is the difference between "a mesh failed" and "the
+        // frame drew no objects, and here is why".
+        failed_ = true;
         return false;
     }
     capacity_ = capacity;
+    failed_ = false;
     return true;
 }
 

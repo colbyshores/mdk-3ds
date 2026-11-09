@@ -1,0 +1,74 @@
+evidence pair — the object pass's allocation failure, made visible (batch 104, review-10 F3).
+
+WHAT THIS PAIR IS. Review-10 F3 confirmed that after review-9 F6 removed the
+`stream mesh 0 corners` line, a stream-mesh allocation that FAILS produces no
+output at all: `ObjectDraw::ensure` returns false, `capacity()` stays 0, the pass
+draws nothing, and the guest log says nothing. The fix has two halves — the pass
+records the refusal (`object_draw.h allocationFailed`) and the two frontends that
+own a log print it. This file proves the second half is not a line that can never
+print, by forcing the failure and reading it back off the console.
+
+    build:   the committed tree with ONE line changed, in a scratch edit that is
+             NOT committed and whose ELF md5 was not captured before the tree was
+             restored (the mutant is not a shipped artefact; the mutation is
+             quoted verbatim so it can be reproduced):
+                 const int32_t kInitialStreamCapacity = 1 << 22;   // was 4096
+             so the first mesh asks for 4194304 corners = 83886080 B of linear
+             and the allocation cannot succeed.
+    command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --min-frames 300
+                       --shot /tmp/kilo-b104/mutant.png mdk_3ds/mdk.3dsx
+             emurun exit 0.
+    display: :99 — Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7).
+             Mandarine r1.2.1, md5 0d2adab6ad078c78e6d03e72086f2eb6 (the pin; exit
+             6 is the refusal to run r1.3.0). Forced llvmpipe, mono
+             (render_3d=0 factor_3d=0), private lane /tmp/mdk-emurun.137770,
+             dspfirm present.
+    guest:   reached frame 1620 by the deadline, 32 frame lines logged. The guest
+             kept running: a refused mesh is a missing picture, not a fault.
+
+THE TWO LINES THAT NOW PRINT, and how often.
+
+    mdk.log:29   objects: stream mesh for 480 corners = 9 KB linear — linearAlloc
+                 FAILED, no objects drawn
+                 — printed ONCE in 1620 frames (edge-triggered in main_3ds.cpp).
+    mdk.log:4067 linearAlloc(83886080) FAILED for a dynamic mesh of 4194304 corners
+                 — printed 1710 times in the run BEFORE this batch fixed it, i.e.
+                 once per frame at ~63/s. That spam is why the backend's line is
+                 edge-triggered too (renderer_c3d.cpp meshAllocFailureLogged): a
+                 log that prints 60 times a second is the same failure as a log
+                 that prints never, because both end up unread.
+
+WHAT THE PICTURE SAYS, and it is the more useful half of this evidence.
+
+    census: docs/evidence/2026-11-09-L7-mesh-alloc-failure.png
+            clear=58464 of 96000  painted=37536  painted-left=0 painted-right=37536
+
+    That is the ARENA-ONLY panel, exactly: pixel sha
+    f9af51b635680739418648cd43d9f82361d61f82f65786e203ed9436a8e20d6a and md5
+    e0bcc57642b871f829cca8d66e35d39d, byte-identical to
+    `2026-11-09-L7-object-pass-parent.png` (batch 102's arena-only build) and to
+    both halves of batch 102's control pair. `panel_geom.py geom` on that pair
+    prints `0 px of 96000` in the map AND `0 px` in full colour, and it does NOT
+    refuse, because the arena-only panel has 58464 clear pixels: this is what a
+    real 0 px control looks like.
+
+    Three consequences, all measured:
+
+    1. The object pass is what paints the entire left half. Remove it by removing
+       its memory, and the panel is the arena-only panel to the byte. So NEXT's
+       question 2 has its answer already: `painted-left = 48000` is the objects,
+       and the question is what the objects are drawing, not whether they draw.
+    2. The arena-only scene is reproducible byte for byte across THREE runs in
+       three lanes (batch 102 parent, batch 102 parent2, this run). The 53515 px
+       of run-to-run noise therefore belongs to the OBJECT pass's output and not
+       to the capture and not to the arena — which is a sharper statement of
+       review-10's open question 1 than "the capture is not frame-locked", and it
+       is a statement about the renderer, not about the harness.
+    3. The census equality batch 103 quoted (58464 clear in both builds) is
+       reproduced here by a third build in a third lane.
+
+what this pair CANNOT say: it does not say level 7 has ever failed to allocate on
+real hardware — the failure was forced by a one-line edit, and the shipped build's
+mesh allocates (see `2026-11-09-L7-mesh-log-final.txt`). It does not identify WHY
+the object pass's pixels move between runs; it only localises the movement to the
+object pass, which is a strictly better place to start than the capture.

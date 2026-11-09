@@ -121,6 +121,44 @@ def code_lines(text):
     return out
 
 
+def blank_comments(text):
+    """`text` with every C++ comment replaced by spaces, byte offsets preserved.
+
+    `code_lines` above drops whole comment LINES, which is not enough: review-10 F6
+    reproduced check 16 turning red because a prose line ABOVE the call named it
+    (`// the only objectDraw.draw( call site; see Viewer.cs:704`). The scan is
+    string-aware, because this frontend contains `romfs:/` and `sdmc:/` literals and
+    blanking from a `//` inside one would delete real code. Offsets are preserved so
+    a position found in the blanked text still compares against a span resolved in
+    the original."""
+    out = list(text)
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in ('"', "'"):
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                out[i] = " "
+                i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
+                if text[i] != "\n":
+                    out[i] = " "
+                i += 1
+            out[i] = " "
+            if i + 1 < n:
+                out[i + 1] = " "
+            i += 2
+        else:
+            i += 1
+    return "".join(out)
+
+
 def block_span_from(text, pos):
     """(start, end) offsets of the brace-matched block whose '{' is at or after
     `pos`; `end` is one past the matching '}'."""
@@ -518,7 +556,15 @@ def adjudicate(text, quiet=False):
     #     depth and blend transitions are taken twice — and C# Viewer.DrawScene calls
     #     DrawObjects once (Viewer.cs:704). Counting the call sites is the whole check;
     #     the position of the one allowed site is check 12's job, not this one's.
-    calls = [m.start() for m in re.finditer(r"objectDraw\.draw\(", text)]
+    #     The count runs over a comment-blanked copy (review-10 F6): prose about the
+    #     call site is not a call site, and the reviewer's one-line comment naming it
+    #     reddened this check when it counted the raw file. The check pins the call
+    #     INSIDE the frame, which is the shape the oracle's single DrawObjects has;
+    #     moving the pass into a helper would move checks 12, 13 and 16 together, and
+    #     that refactor is not this port's — review-10 F6's second half is deferred
+    #     with that cause rather than silently unhandled.
+    code = blank_comments(text)
+    calls = [m.start() for m in re.finditer(r"objectDraw\.draw\(", code)]
     say(CHK["objects-drawn-exactly-once"],
         len(calls) == 1 and op is not None and frame is not None
         and frame[0] <= calls[0] < frame[1],
@@ -856,7 +902,28 @@ ARMS = [
      arm_objects_drawn_twice, CHK["objects-drawn-exactly-once"]),
 ]
 
-print("main_3ds_flow: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
+# Correct code each check must accept. A gate that reddens a legitimate edit is a
+# gate the next batch learns to route around, and review-10 F6 is exactly that
+# failure: a comment naming the call site was counted as a second call site.
+PROBES = [
+    ("a comment line names the object-pass call site (review-10 F6)",
+     lambda s: s.replace("            objectDraw.draw(renderer, &surfaces, objectStream);",
+                         "            // the only objectDraw.draw( call site; see "
+                         "Viewer.cs:704\n"
+                         "            objectDraw.draw(renderer, &surfaces, objectStream);",
+                         1)),
+    ("the call line carries a trailing comment naming it (review-10 F6)",
+     lambda s: s.replace("            objectDraw.draw(renderer, &surfaces, objectStream);",
+                         "            objectDraw.draw(renderer, &surfaces, objectStream);  "
+                         "// objectDraw.draw( is DrawObjects, Viewer.cs:704", 1)),
+    ("a string literal holding a // path sits before the call on its line",
+     lambda s: s.replace("            objectDraw.draw(renderer, &surfaces, objectStream);",
+                         '            (void)"sdmc://not-a-comment"; objectDraw.draw('
+                         "renderer, &surfaces, objectStream);", 1)),
+]
+
+print("main_3ds_flow: %s — %d checks, %d mutation arms, %d green probes"
+      % (PATH, real.checks, len(ARMS), len(PROBES)))
 arms_red = 0
 for label, mutate, expected in ARMS:
     mutated = mutate(SRC)
@@ -883,6 +950,24 @@ if arms_red != len(ARMS):
     print("  FAIL main_3ds_flow: only %d of %d arms adjudicated red; a PASS here would be a "
           "reading of nothing" % (arms_red, len(ARMS)))
     sys.exit(1)
-print("PASS Main3dsFlow (%d checks, %d arms adjudicated red)" % (real.checks, arms_red))
+probes_green = 0
+for label, mutate in PROBES:
+    mutated = mutate(SRC)
+    if mutated == SRC:
+        print("  FAIL main_3ds_flow probe %s: the mutation changed nothing" % label)
+        continue
+    after = adjudicate(mutated, quiet=True)
+    if after.failed:
+        print("  FAIL main_3ds_flow probe %s: correct code turned `%s` red, so the check "
+              "rejects a shape the port may legitimately write" % (label, after.broke))
+        continue
+    probes_green += 1
+    print("  ok   probe %s stayed green" % label)
+if probes_green != len(PROBES):
+    print("  FAIL main_3ds_flow: only %d of %d probes stayed green" % (probes_green,
+                                                                       len(PROBES)))
+    sys.exit(1)
+print("PASS Main3dsFlow (%d checks, %d arms adjudicated red, %d probes green)"
+      % (real.checks, arms_red, probes_green))
 PY
 exit $?

@@ -327,6 +327,13 @@ struct RendererC3D {
     uint32_t frameStartUse = 0;
     std::vector<C3dMesh> meshes;
 
+    // Edge-trigger for the dynamic-mesh allocation failure below. A frame that
+    // cannot make its mesh calls this again on EVERY frame — measured 1710 lines
+    // in 27 s of guest time on the forced-failure run — and a log that prints 60
+    // times a second is a log nobody reads, which is the opposite of the
+    // visibility review-10 F3 asked for. Cleared by the next success.
+    bool meshAllocFailureLogged = false;
+
     // The frame's queued draws, submitted in the oracle's pass order. The C#
     // collects every command of the frame and renders it one pass at a time
     // (Renderer.cs:1000-1004); recording draws as they arrive instead puts a
@@ -1690,8 +1697,19 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r, int32_t cap) {
     mesh.capacity = cap;
     mesh.data = linearAlloc((size_t)cap * 5 * sizeof(float));
     if (!mesh.data) {
+        // Printed, like every other allocation this backend refuses (the scratch
+        // buffer, the textures). A mesh that is not there is a draw that is simply
+        // not made — no fault, no warning, no picture — and the emulator's bigger
+        // heap cannot show it, so the guest log is the only place it can be seen
+        // (AGENTS P3/P6, review-10 F3).
+        if (!renderer->meshAllocFailureLogged) {
+            renderer->meshAllocFailureLogged = true;
+            mdk::log3dsPrintf("linearAlloc(%u) FAILED for a dynamic mesh of %d corners",
+                              (unsigned)((size_t)cap * 5 * sizeof(float)), (int)cap);
+        }
         return -1;
     }
+    renderer->meshAllocFailureLogged = false;
     mesh.valid = true;
     renderer->meshes.push_back(mesh);
     return (MdkMeshId)(renderer->meshes.size() - 1);

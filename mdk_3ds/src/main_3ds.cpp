@@ -657,6 +657,11 @@ int main(int argc, char** argv) {
     // The stream mesh's capacity the frame log last reported, so a growth is said
     // once instead of every frame. Zero until the first frame with corners.
     int32_t streamCapacityLogged = -1;
+    // Printed once, the first frame the mesh cannot be made. Like the capacity
+    // line above it, it is edge-triggered: a level under linear pressure would
+    // otherwise repeat the same line 60 times a second, and a log that repeats is
+    // a log nobody reads (review-10 F3).
+    bool streamFailureLogged = false;
     // This frame's object-pass cost, and the peak over the run. The peak is the
     // number that says what a level costs the stream mesh: the capacity is rounded
     // up to a power of two, so the capacity alone cannot tell a 480-corner level
@@ -918,6 +923,23 @@ int main(int argc, char** argv) {
             // whose mesh genuinely fails to allocate would read exactly like this
             // benign first frame. A capacity of 0 means "no mesh yet", and there is
             // nothing to report until the pass makes one.
+            //
+            // BUT A REFUSED ALLOCATION IS NOT A BENEFIT OF THE DOUBT (review-10 F3).
+            // Suppressing the 0 line also suppressed the only line that could ever
+            // have reported a failure, because a failed `ensure` leaves the capacity
+            // at 0 too: the objects would vanish from the frame and the guest log
+            // would say nothing at all. "Capacity 0" therefore cannot tell the two
+            // cases apart, so the pass RECORDS the refusal (object_draw.h
+            // allocationFailed) and the refusal is what is printed here, not an
+            // inference from a size.
+            if (objectDraw.allocationFailed() && !streamFailureLogged) {
+                streamFailureLogged = true;
+                mdk::log3dsPrintf("objects: stream mesh for %d corners = %d KB linear — "
+                                  "linearAlloc FAILED, no objects drawn",
+                                  objectCorners,
+                                  (int)((int64_t)objectCorners * 5 * sizeof(float) /
+                                        1024));
+            }
             if (objectDraw.capacity() > 0 && objectDraw.capacity() != streamCapacityLogged) {
                 streamCapacityLogged = objectDraw.capacity();
                 mdk::log3dsPrintf("objects: stream mesh %d corners = %d KB linear "

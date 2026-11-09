@@ -48,7 +48,7 @@ phase_limit() {
             printf '%s' "$worker_limit"
             ;;
         gates) printf 14400 ;;
-        review-collect) printf 5700 ;;
+        review-collect) printf 11400 ;;
         route-backoff) printf 600 ;;
         idle) printf 1800 ;;
         *) printf 1800 ;;
@@ -94,55 +94,62 @@ trap 'exit 130' INT
 # INDEPENDENT model reviews adversarially; the harness (gates) is the objective
 # verification authority. The implementation agent is never the sole authority on
 # its own correctness.
-# Builder: LOCAL qwen (litellm/qwen -> openai/qwen38-flash-next). First in the
-# chain so the builder is the free local seat; hosted routes are fallbacks.
-WORKER_MODELS="${WORKER_MODELS:-litellm/qwen litellm/deepseek-v4.1-flash-th}"
-# Reviewer: DeepSeek V4.1 Flash. Verified 2026-10-31 against the live proxy:
-# alias `deepseek-v4.1-flash` resolves to upstream `deepseek/deepseek-flash`
-# at api.deepseek.com (official DeepSeek API — a genuinely different family
-# from the qwen builder) and answers a live PING through the piagent+pi harness
-# path. Model identity is the upstream string, never the alias
+# Builder: LOCAL qwen (litellm/qwen -> openai/qwen38-flash-next, family qwen).
+# Operator decision 2026-11-05: luna is NOT a fallback. The chain is qwen and
+# only qwen, so an unavailable qwen is WAITED OUT -- guard() re-probes instead of
+# exiting, and route-health backs off 300s -- never answered by a second model.
+# The builder route is cross-family from every reviewer route below, so no
+# independence exception is needed.
+WORKER_MODELS="${WORKER_MODELS:-litellm/qwen}"
+# Reviewer: DeepSeek V4.1 Flash TH (litellm/deepseek-v4.1-flash-th), whose
+# upstream resolves to family `deepseek` -- a genuinely different family from
+# the builder route. `litellm/deepseek-v4.1-flash` (deepseek/deepseek-flash
+# at api.deepseek.com) is the one fallback. Model identity is the upstream
+# string, never the alias
 # (vault: model-identity-is-the-upstream-string-not-the-alias).
-REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/deepseek-v4.1-flash}"
-# Reviewer fallbacks MUST be a different upstream family than the builder
-# (qwen38-flash-next), or the "independent" review is fake. `swarm-worker` is
-# deliberately excluded: it is the SAME upstream as qwen.
+REVIEWER_MODEL="${REVIEWER_MODEL:-litellm/deepseek-v4.1-flash-th}"
+# Reviewer fallbacks MUST be a different upstream family than the builder, or
+# the "independent" review is fake. The chain shipped by operator decision on
+# 2026-11-05 is -th -> flash. BOTH reviewer routes resolve to family `deepseek`,
+# which is cross-family from the qwen builder route, so the
+# family rule is satisfied without an exception. No independence exception
+# appears anywhere in this file: none is needed, and one must not be added (it
+# would let a same-family reviewer certify the builder).
 #
-# The owner directive of 2026-11-05 names the reviewer chain:
-#
-#   REVIEWER_FALLBACKS="litellm/deepseek-v4.1-flash-nvidia
-#                       litellm/minimax-m3.1-flash-nvidia litellm/luna"
-#
-# and states the behaviour the chain exists to produce: "when the builder falls
-# back to deepseek-v4.1-flash-th, the reviewer's own family rule skips both
-# DeepSeek variants, so review lands on minimax or luna". Two of the three are
-# shipped here; the third is not, with a reason, so nobody re-derives it:
-#
-#   * minimax-m3.1-flash-nvidia (family minimax) and luna (family luna) both
-#     resolve on the LIVE proxy (model_identity.py report --live, 2026-11-05)
-#     and both are a different family from every builder route in WORKER_MODELS.
+#   * minimax-m3.1-flash-nvidia is in NO chain. It is not a builder route and is
+#     not a reviewer fallback; re-adding it widens the chain without an operator
+#     decision.
+#   * a model added as a BUILDER fallback must never also be a reviewer route:
+#     it would be same-family with that builder and the family rule refuses it.
+#     (luna held that role until the operator removed it from the chain, 2026-11-05.)
 #   * deepseek-v4.1-flash-nvidia is NOT re-added. It folds to family `deepseek`,
-#     so the family rule refuses it in exactly the case a fallback is needed for
-#     (a -th builder), and it is absent from the live proxy table — the static
-#     map only — so it would burn a health probe to arrive at a refusal. The
-#     directive's line predates that retirement; what it asks for is a
-#     cross-family reviewer when the builder degrades, and that is what this
-#     line delivers.
+#     so it buys no independence over the two DeepSeek routes already here, and
+#     it is absent from the live proxy table -- the static map only -- so it
+#     would burn a health probe to arrive at a refusal.
 #
 # `swarm-worker` stays excluded: same upstream as qwen. grok stays retired by
 # operator decision and must not return to any chain. If BOTH routes below ever
 # go unhealthy the answer is BLOCKED and a stopped loop, not a same-family
-# review — see the note above reviewer_reject_reason.
-REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/minimax-m3.1-flash-nvidia litellm/luna}"
-ITER_TIMEOUT="${ITER_TIMEOUT:-7200}"
-REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-5400}"
+# review -- see the note above reviewer_reject_reason.
+REVIEWER_FALLBACKS="${REVIEWER_FALLBACKS:-litellm/deepseek-v4.1-flash}"
+# 2026-11-05: 4h wall (was 2h). Two KV caches are shared across three projects,
+# so a worker legitimately spends wall-clock time queued. phase_limit derives the
+# `worker` stall limit from ITER_TIMEOUT, so raise this first and the derived limit
+# follows; raising only one of them just moves the kill earlier.
+ITER_TIMEOUT="${ITER_TIMEOUT:-14400}"
+# 3h (was 90m) for the same contention: review-collect's stall limit is
+# REVIEW_TIMEOUT + 10m, so the collector is never killed before its reviewer returns.
+REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-10800}"
 REVIEW_FAIL_LIMIT="${REVIEW_FAIL_LIMIT:-2}"
 MAX_ITER="${MAX_ITER:-80}"
 STALL_LIMIT="${STALL_LIMIT:-3}"
 FAIL_LIMIT="${FAIL_LIMIT:-3}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-300}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
-PI_CMD="${PI_CMD:-pi}"
+# Shared 2-slot admission gate for the local qwen endpoint (tetrisphere,
+# perfect_dark and mdk all run against two 262k KV slots). Short probes bypass
+# it by prompt length inside the wrapper; agent turns queue for a slot.
+PI_CMD="${PI_CMD:-/mnt/nas/Development/qwen-slot-pi.sh}"
 BUILDER_FILE="$ROOT/ralph/builder.md"
 PROMPT_FILE="$ROOT/ralph/PROMPT.md"
 VALIDATOR_FILE="$ROOT/ralph/validator.md"
@@ -289,6 +296,11 @@ reviewer_reject_reason() {
     return 0
 }
 
+# 2026-11-08: qwen-slot-pi.sh now waits QWEN_SLOT_WAIT for an admission slot and
+# then proceeds ungated. Keep it well under ITER_TIMEOUT: the old 4h gate cap
+# equalled the wall, so the watchdog killed every attempt 5 minutes before the
+# ungated fallback could fire. 15m of waiting is enough to ride out a busy peer;
+# after that the server's own queue is the limiter and the turn still finishes.
 pi_run() {
     ( cd "$ROOT" && timeout -k 30 "$ITER_TIMEOUT" sudo -n -H -u piagent env \
         NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
@@ -296,6 +308,7 @@ pi_run() {
         PI_KNOWLEDGE_EMBEDDING_BASE_URL="$PI_KNOWLEDGE_EMBEDDING_BASE_URL" \
         PI_KNOWLEDGE_EMBEDDING_PREFIXES="$PI_KNOWLEDGE_EMBEDDING_PREFIXES" \
         PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="$PI_KNOWLEDGE_EMBEDDING_MAX_CHARS" \
+        QWEN_SLOT_WAIT="${QWEN_SLOT_WAIT:-900}" \
         "$PI_CMD" --model "$1" -p "$(cat "$2")" --no-session ) >"$3" 2>"$4"
 }
 
@@ -343,27 +356,39 @@ guard() {
     fi
     touch "$ROOT/logs/ralph/disabled"
     echo "$$" >"$PIDFILE"
+    # With a single builder route (operator decision 2026-11-05) a failed probe
+    # must NOT stop the loop: stopping would park the service until an operator
+    # restarts it when qwen returns, which is the opposite of waiting for it.
+    # Re-probe every 300s instead. `phase route-health` is rewritten before each
+    # probe so the watchdog's epoch stays younger than its 900s limit (probe 300s
+    # + sleep 300s = 600s worst case). It is NOT `phase startup`: that name is
+    # reserved for the post-hash phase below, and tools/runner/test_review_state.sh
+    # pins SELF_SHA_START ahead of it so a harness edit during startup is still
+    # caught as stale.
     local probe_ok=0 model
-    for model in $WORKER_MODELS; do
-        if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent env \
-            NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
-            PI_KNOWLEDGE_EMBEDDING="$PI_KNOWLEDGE_EMBEDDING" \
-            PI_KNOWLEDGE_EMBEDDING_BASE_URL="$PI_KNOWLEDGE_EMBEDDING_BASE_URL" \
-            PI_KNOWLEDGE_EMBEDDING_PREFIXES="$PI_KNOWLEDGE_EMBEDDING_PREFIXES" \
-            PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="$PI_KNOWLEDGE_EMBEDDING_MAX_CHARS" \
-            "$PI_CMD" --model "$model" \
-            -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%U:%G %a %n' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
-            --no-session 2>&1 | grep -q WTEST_OK; then
-            probe_ok=1
-            log "write probe passed on $model"
-            break
-        fi
-        log "write probe failed on $model"
+    while :; do
+        phase route-health
+        probe_ok=0
+        for model in $WORKER_MODELS; do
+            if timeout "$PROBE_TIMEOUT" sudo -n -H -u piagent env \
+                NODE_EXTRA_CA_CERTS=/home/piagent/.pi/agent/ca-bundle.crt \
+                PI_KNOWLEDGE_EMBEDDING="$PI_KNOWLEDGE_EMBEDDING" \
+                PI_KNOWLEDGE_EMBEDDING_BASE_URL="$PI_KNOWLEDGE_EMBEDDING_BASE_URL" \
+                PI_KNOWLEDGE_EMBEDDING_PREFIXES="$PI_KNOWLEDGE_EMBEDDING_PREFIXES" \
+                PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="$PI_KNOWLEDGE_EMBEDDING_MAX_CHARS" \
+                "$PI_CMD" --model "$model" \
+                -p "Using your bash tool, run exactly: touch '$ROOT/.ralph-pi-wtest' && stat -c '%U:%G %a %n' '$ROOT/.ralph-pi-wtest' && rm '$ROOT/.ralph-pi-wtest' && echo WTEST_OK. Reply with exactly WTEST_OK, or WTEST_FAIL plus the error." \
+                --no-session 2>&1 | grep -q WTEST_OK; then
+                probe_ok=1
+                log "write probe passed on $model"
+                break
+            fi
+            log "write probe failed on $model"
+        done
+        [ "$probe_ok" -eq 1 ] && break
+        log "no worker route answered the write probe — waiting 300s for [$WORKER_MODELS]"
+        sleep 300
     done
-    if [ "$probe_ok" -ne 1 ]; then
-        log "FATAL: pi write probe failed on every route"
-        exit 3
-    fi
 }
 
 status() {
@@ -1065,6 +1090,7 @@ POLICY_PRECEDENCE
                     PI_KNOWLEDGE_EMBEDDING_BASE_URL="$PI_KNOWLEDGE_EMBEDDING_BASE_URL" \
                     PI_KNOWLEDGE_EMBEDDING_PREFIXES="$PI_KNOWLEDGE_EMBEDDING_PREFIXES" \
                     PI_KNOWLEDGE_EMBEDDING_MAX_CHARS="$PI_KNOWLEDGE_EMBEDDING_MAX_CHARS" \
+                    QWEN_SLOT_WAIT="${QWEN_SLOT_WAIT:-900}" \
                     "$PI_CMD" \
                     --model "$REVIEW_MODEL" -p "$(cat "$RP")" --no-session \
                     >"$RUN_DIR/review-$ITER.md" 2>"$RUN_DIR/review-$ITER.err"

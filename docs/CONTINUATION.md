@@ -1,19 +1,28 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — **target-specific rendering, and a correction to the instrument every console claim rests on.**
-This batch tested the strongest standing candidate for the one-sided view — the vertex shader never forced
-the position attribute's `w`, and every devkitARM citro3d example says to — and **measured it to change
-nothing**: the fixed build's panel crop is byte-identical to the parent's (pixel sha `75b22ac5…`), so the
-attribute loader already supplies `w = 1` and the MVP's translation column was never dropped. The batch
-then measured the instrument itself: **two runs of one ELF differ by 53515 px of 96000 in full colour and
-0 px in the painted/clear map**, so the "noise floor is exactly 0 px" that recent sidecars quote does not
-reproduce, and a full-RGB panel diff is not a control. `tools/panel_geom.py` is now the canonical console
-comparison. The one-sided view is still open, with one candidate closed and the instrument's limits named.
-Also here: review-9 F2's missing gate (a duplicated object-pass draw stayed green on all 15 checks; now 16
-checks / 18 arms), and three cheap record fixes (F4/F5/F6). The Linux binary's picture is unchanged.
+Risk: high — **the picture instrument changed, and so did the console frame's failure reporting.**
+Review-10's Critical was that the instrument this loop quotes for every console claim **cannot fail**:
+`panel_geom.py geom` compares a painted/clear map, the object pass now paints all 96000 panel pixels, so
+both sides of every current comparison are a constant map and `geom: 0 px` was arithmetic. It now refuses
+a degenerate side with exit 3 and prints the clear fraction, and `tests/scripts/panel_geom_test.sh`
+gates the refusal (10 checks, 7 arms, 2 probes). Review-10's High was a false sentence in the record —
+batch 103 wrote that a 0 px control "was comparing a capture with itself", and batch 102's control was
+two independent runs of one build whose panels really were identical; the true lesson is that **a noise
+floor is only valid for the scene it was measured on**, and the record now says that instead. Also here:
+an allocation failure in the object pass is printed instead of vanishing (review-10 F3), the panel
+rectangle is imported and not re-spelled (F5), check 16 no longer counts a comment as a call site (F6),
+and the `10520 px` that no crop produces is corrected to `10464` (F4). The one-sided view is still open,
+and `NEXT` now carries a measured fact no theory covers: **every painted pixel of the console's panel has
+R = 255.** The Linux binary's picture is unchanged.
+
+**Batch 104 (Iteration 131) — review-10 closed 6/6 (F1 Critical and F2 High fixed, F3 fixed, F4/F5/F6
+fixed; no rebuttal on merit, one half of F6 deferred with cause).** See "Iteration 131" in
+`docs/PROGRESS_LOG.md` for the narrative and the verbatim gate output.
 
 **Batch 103 (Iteration 130) — review-9 closed 7/7 (no Critical, no High; F1-F6 fixed, F3/F7 deferred with
 cause).** See "Iteration 130" in `docs/PROGRESS_LOG.md` for the narrative and the verbatim gate output.
+Its instrument claim is corrected by batch 104 above: the 53515 px are real, the mechanism was not
+established, and the `geom` comparison it canonised cannot discriminate a fully painted panel.
 
 **Batch 101 (Iteration 129) — review-7 closed 5/5, none rebutted.** **F1 (High)**: batch 100
 wrote "BOTH frontends here use the geometric arena under his feet" into `arena_space.h` and only
@@ -171,7 +180,29 @@ would stop the loop at exit 6 rather than warn.
 
 **Two historical corrections that stay load-bearing.** Batch 83's headline measurement was taken against a build that is not its parent (batch 84's retraction stands), and with review-5 F1 the pattern was three consecutive batches trusting a number whose provenance was asserted rather than reproduced — what is different now is that anyone can reproduce both halves with `git archive`/`git ls-files` + `make` in a throwaway tree, and the identity field is the ELF — and a `.3dsx` md5 is not even reproducible from the tree that built it (batch 90: two consecutive in-tree builds gave `48931bcd…` then `23c5354f…` from one byte-identical `mdk.elf`). And **the census was never inflated, so do not re-run it**: the exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one**, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands" — the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, a different quantity). The old "re-census first" instruction stays withdrawn. Coverage is stated in panel columns (review-3 F4): geometry covers panel columns **200..399** of 400, the right half of the top screen.
 
-Last updated: 2026-11-09 (**batch 103 — the strongest standing candidate for the one-sided view is closed by measurement, and the panel instrument's real noise floor is measured. The vertex shader computed the MVP with `mov r0, inpos` on a THREE-component position attribute, while every devkitARM citro3d example forces `w` to 1.0; had that component been 0 the MVP's whole translation column would have been multiplied by zero. It is not: forcing it makes the console's panel crop BYTE-IDENTICAL (pixel sha `75b22ac5…`, `docs/evidence/2026-11-09-L7-shader-w-{parent,current}.txt`), so the attribute loader already supplies `w = 1` and the shader keeps the line as an explicit statement rather than a dependency. The same run measured the instrument: two runs of ONE ELF differ by **53515 px of 96000 in full colour and 0 px in the painted/clear map** (`docs/evidence/2026-11-09-panel-noise-{a,b}.txt`), so the "0 px noise floor" recent sidecars quote does not reproduce and a full-RGB panel diff is not a control — `tools/panel_geom.py` is the canonical comparison from here. Review-9 (no Critical, no High) closed: F2's duplicated-draw mutant stayed green on all 15 checks and now reddens check 16 with its own arm (16 checks / 18 arms); F4's `11.4%` was a KB figure written as a percentage (570/4096 = **13.9%**, and 570×5×4 B = 11400 B = 11.4 **KB** of the 80 KB mesh); F5's three oracle citations are corrected to `Viewer.cs:705-707` / `702-708`; F6's `stream mesh 0 corners = 0 KB` line no longer prints before there is a mesh. F1 is the NEXT section's restatement. F3 (no `Preload` caller, unbounded object-texture residency) and F7 (mono-only evidence) are deferred with cause. `mdk.elf` `4d27d6f8…` → `9714104e…`. Emulator on `:99` (r1.2.1 `0d2adab6`, exit 0) reaches frame 2880 with `health=100` and `objects=7 obj=570c/13d`. Superseded tail of the batch-102 line: batch 102 — priority item (a) landed: the console draws the scripts' objects. `main_3ds.cpp` gains the C#'s `DrawObjects` between `view.draw()` and `kurtSprite.draw()` (Viewer.cs:702-709), at `runtime->tick_blend(pending)`, skipping the invisible and the removed, over an `objectLook` cache keyed by arena name — and the console's steady-state stream is `570 corners / 13 draws`, which is `L7_t1000_draw.txt`'s `STREAM vertices=570` and 13 queued draws exactly. The linear answer CONTINUATION asked for: the stream mesh is made ONCE at 4096 corners = 80 KB linear and NEVER grows (level 7 uses 570 of 4096), against the C#'s 5.2 MiB `Renderer.StreamVertices` and the ~1 MB linear headroom. It also fixed a defect the pass would have shipped: `ScriptRuntime` owns `modelCache_` BY VALUE (script_runtime.h:580), so `runtime.reset()` on a respawn frees every `Model*` that `ObjectView::layouts_` and the pose caches key on, and a recycled address inherits the previous model's geometry — both frontends now call `forget_poses()` + `objectView.clear()` in `spawnPlayer`, which is why the object-pass declarations sit ABOVE it. `mdk.elf` `4232fd94…` → `4d27d6f8…`, `nm | grep -ci` ObjectView/ObjectDraw 0 → 2 each. Emulator on `:99` (r1.2.1, exit 0) reaches frame 2880, `health=100` on all 53 rows, and the panel crop moves 58520 px of 96000 against a 0 px noise floor — see `docs/evidence/2026-11-09-L7-object-pass-{parent,current}.txt`. What it did NOT produce: the predicted script sound. `plays` stays at Kurt's own 1 and `voices=0`, because level 7's seven objects never fire one in 2880 frames; that measurement is still open. Superseded tail of the batch-99 line: batch 99 — priority item 6d, the 3DS frontend runs the scripts (one `ScriptRuntime` per level, built in `spawnPlayer`, ticked between Kurt and the camera, the frame mixing the mixer the runtime owns), its objects simulated and NOT drawn until this batch** `mdk.elf` `c8295e96…` → `4232fd94…`, `nm | grep -ci ScriptRuntime` 0 → 107; the emulator on `:99` (r1.2.1, exit 0) reaches frame 3480 with `objects=7` and `health=100` on all 63 rows, and no script sound fired. Superseded tail of the batch-97 line: batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
+Last updated: 2026-11-09 (**batch 104 — review-10 closed 6/6, and the two findings that mattered were both
+about the measuring instrument rather than the game. **F1 (Critical)**: `panel_geom.py geom` was bound as
+the picture claim for every console A/B on a scene where it cannot move — the object pass paints all 96000
+panel pixels, so the painted/clear map is a constant and `geom: 0 px` was arithmetic; it now refuses a
+degenerate side with exit 3, prints the clear fraction, and `tests/scripts/panel_geom_test.sh` gates it
+(10 checks, 7 arms adjudicated red, 2 green probes). **F2 (High)**: batch 103's "a control that reports 0 px
+was comparing a capture with itself" is retracted — batch 102's control was two independent runs in two
+lanes (`docs/evidence/2026-11-09-L7-object-pass-parent.txt:29` names the second capture) and its panels
+really were identical; what the pair of numbers actually says is that a noise floor is only valid for the
+scene it was measured on, and batch 103 quoted the arena-only floor at an arena+objects A/B. **F3**:
+`ObjectDraw` now records a refused `linearAlloc` and `main_3ds.cpp` prints it once, so a level whose stream
+mesh cannot be allocated says so instead of drawing nothing silently, and `renderer_c3d.cpp` logs its own
+refusal like every other allocation it fails. **F4**: `10520 px` became `10464`, which is what the two
+crops subtract to. **F5**: `panel_geom.py` imports `PANEL_SIZE` from `panel_crop.py` instead of re-spelling
+it. **F6**: check 16 counts call sites in a comment-blanked copy of the source, with three green probes that
+redden if the blanking is dropped or made string-blind (16 checks, 18 arms, 3 probes). Also in this batch:
+the operator's harness set is committed (single qwen builder route, waited out instead of failed over,
+timeouts raised for shared-KV contention, the watchdog taught to heal a failed unit, and
+`tools/reclaim_qwen_slots.sh` for a leaked admission slot) — except `ralph/builder.md`, which the integrity
+gate forbids without owner approval and which therefore stays unstaged with that reason recorded. New
+measured fact for NEXT: **every painted pixel of the console panel has R = 255**, against 9758/76800 in the
+Linux frame of the same core. Superseded tail of the batch-103 line, whose instrument claim batch 104
+corrects above: batch 103 — the strongest standing candidate for the one-sided view is closed by measurement, and the panel instrument's real noise floor is measured. The vertex shader computed the MVP with `mov r0, inpos` on a THREE-component position attribute, while every devkitARM citro3d example forces `w` to 1.0; had that component been 0 the MVP's whole translation column would have been multiplied by zero. It is not: forcing it makes the console's panel crop BYTE-IDENTICAL (pixel sha `75b22ac5…`, `docs/evidence/2026-11-09-L7-shader-w-{parent,current}.txt`), so the attribute loader already supplies `w = 1` and the shader keeps the line as an explicit statement rather than a dependency. The same run measured the instrument: two runs of ONE ELF differ by **53515 px of 96000 in full colour and 0 px in the painted/clear map** (`docs/evidence/2026-11-09-panel-noise-{a,b}.txt`), so the "0 px noise floor" recent sidecars quote does not reproduce and a full-RGB panel diff is not a control — `tools/panel_geom.py` is the canonical comparison from here. Review-9 (no Critical, no High) closed: F2's duplicated-draw mutant stayed green on all 15 checks and now reddens check 16 with its own arm (16 checks / 18 arms); F4's `11.4%` was a KB figure written as a percentage (570/4096 = **13.9%**, and 570×5×4 B = 11400 B = 11.4 **KB** of the 80 KB mesh); F5's three oracle citations are corrected to `Viewer.cs:705-707` / `702-708`; F6's `stream mesh 0 corners = 0 KB` line no longer prints before there is a mesh. F1 is the NEXT section's restatement. F3 (no `Preload` caller, unbounded object-texture residency) and F7 (mono-only evidence) are deferred with cause. `mdk.elf` `4d27d6f8…` → `9714104e…`. Emulator on `:99` (r1.2.1 `0d2adab6`, exit 0) reaches frame 2880 with `health=100` and `objects=7 obj=570c/13d`. Superseded tail of the batch-102 line: batch 102 — priority item (a) landed: the console draws the scripts' objects. `main_3ds.cpp` gains the C#'s `DrawObjects` between `view.draw()` and `kurtSprite.draw()` (Viewer.cs:702-709), at `runtime->tick_blend(pending)`, skipping the invisible and the removed, over an `objectLook` cache keyed by arena name — and the console's steady-state stream is `570 corners / 13 draws`, which is `L7_t1000_draw.txt`'s `STREAM vertices=570` and 13 queued draws exactly. The linear answer CONTINUATION asked for: the stream mesh is made ONCE at 4096 corners = 80 KB linear and NEVER grows (level 7 uses 570 of 4096), against the C#'s 5.2 MiB `Renderer.StreamVertices` and the ~1 MB linear headroom. It also fixed a defect the pass would have shipped: `ScriptRuntime` owns `modelCache_` BY VALUE (script_runtime.h:580), so `runtime.reset()` on a respawn frees every `Model*` that `ObjectView::layouts_` and the pose caches key on, and a recycled address inherits the previous model's geometry — both frontends now call `forget_poses()` + `objectView.clear()` in `spawnPlayer`, which is why the object-pass declarations sit ABOVE it. `mdk.elf` `4232fd94…` → `4d27d6f8…`, `nm | grep -ci` ObjectView/ObjectDraw 0 → 2 each. Emulator on `:99` (r1.2.1, exit 0) reaches frame 2880, `health=100` on all 53 rows, and the panel crop moves 58520 px of 96000 against a 0 px noise floor — see `docs/evidence/2026-11-09-L7-object-pass-{parent,current}.txt`. What it did NOT produce: the predicted script sound. `plays` stays at Kurt's own 1 and `voices=0`, because level 7's seven objects never fire one in 2880 frames; that measurement is still open. Superseded tail of the batch-99 line: batch 99 — priority item 6d, the 3DS frontend runs the scripts (one `ScriptRuntime` per level, built in `spawnPlayer`, ticked between Kurt and the camera, the frame mixing the mixer the runtime owns), its objects simulated and NOT drawn until this batch** `mdk.elf` `c8295e96…` → `4232fd94…`, `nm | grep -ci ScriptRuntime` 0 → 107; the emulator on `:99` (r1.2.1, exit 0) reaches frame 3480 with `objects=7` and `health=100` on all 63 rows, and no script sound fired. Superseded tail of the batch-97 line: batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
 owner-only: covering the compressed MVE audio path for the first time found a
 **heap-buffer-overflow** in `Mve::decodeAudio` — the predictor-seed loop filled `channels_` slots
 before any loop condition consulted `count = size / 2`, so a frame declaring less than
@@ -234,6 +265,18 @@ parenthetical dropped. The patch is in `docs/PROGRESS_LOG.md` Iteration 124: gat
 **Housekeeping (builder, deferred from batch 94):** three `@vfp-exempt` pins in `mdk_core/src/audio/sound_device.cpp` (lines 128, 147, 155) **do not parse** against `gates_vfp.EXEMPT_RE`: two are longer than the gate's 400-character window and one writes `measured n/a (corpus empty).` where the grammar wants a single token. `gate_exemptions` would call them `invalid @vfp-exempt grammar` and `MUST exemption missing measured cost` — but `scan_tree` never opens that file, because it is not in the (empty) hot-path corpus and carries no `@hotpath` marker, so today they are invisible. The moment a capture puts the mix loop in the corpus, three MUST findings fire on code that is correct and deliberately pinned. Fixing them is a reword of the R2/R3/R4 gameplay-fidelity pins, which AGENTS §5 says needs a capture and a fidelity verdict, so it is recorded rather than touched. Batch 94's own pin was written to parse (365 chars, `measured n/a.`) for exactly that reason, and `sound.h` is now grammar-clean if it is ever swept.
 
 **Housekeeping (builder, deferred from batch 92):** `docs/CONTINUATION.md` is ~315 lines against `ralph/builder.md`'s "under ~150 lines: current state + priority order only". The overage is the per-review closure paragraphs (reviews 2, 5, 6, 8, 9, 10, 11, 12), each of which is already narrated in `docs/PROGRESS_LOG.md` Iterations 114–121. Deleting them is a history edit a reviewer should approve rather than one batch's cleanup, so it is recorded here with the proposal: replace those eight paragraphs with a table of the durable facts they carry (each already duplicated in the standing list below) and keep the owner-action block verbatim. Batches 88–93 each added one paragraph, so the file grows ~1 per review until someone consolidates it.
+
+**Owner action the loop cannot take (batch 104).** The operator's harness set has been
+committed at last (single qwen builder route that waits its route out instead of failing
+over, raised timeouts for shared-KV contention, a watchdog that heals a failed unit,
+`tools/reclaim_qwen_slots.sh`), because four batches of leaving it unstaged left the running
+loop and the committed contract diverging — review-10 open question 2. Two things remain
+owner-only. (1) `ralph/builder.md` is in `gates_batch_integrity.py`'s `PROTECTED` set, so the
+working-tree edit to it **cannot** be committed without `MDK_OWNER_APPROVED`; it is still
+unstaged, and the loop will keep reporting a dirty tree until an owner either commits it or
+reverts it. (2) `tools/runner/test_review_state.sh` is reachable from no gate — wiring it into
+`tools/check.sh` is the fix and `tools/check.sh` is owner-protected too. Its exec bit also
+arrived dropped (755 → 644) from outside this uid and cannot be restored by `piagent`.
 
 ## PRIORITY ORDER (owner directive 2026-11-05, in force until withdrawn)
 
@@ -308,11 +351,11 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 104)
-*(Batch 103 did not advance the renderer head either; it closed one candidate on it and corrected the
-instrument every claim about it rests on. The item below is restated against the committed panel, because
-review-9 F1 is right that batch 102 erased the picture this item was written against: the head item used
-to say "geometry covers panel columns 200..399 and coverage stops at a straight vertical line at the
+## NEXT (batch 105)
+*(Batch 104 did not advance the renderer head either; it closed the instrument review-10 proved could not
+fail and added a measured colour fact to the head. The item below is restated against the committed panel,
+because review-9 F1 is right that batch 102 erased the picture this item was written against: the head item
+used to say "geometry covers panel columns 200..399 and coverage stops at a straight vertical line at the
 panel's middle", and the census equality "58464 exact clear pixels in BOTH builds" is the batch that
 invalidated it. That sentence is now false for the current build and is struck.)*
 **The one-sided view, restated against the post-object-pass panel.** What the committed crops measure
@@ -326,10 +369,37 @@ So there are now TWO questions, not one, and the second is the sharper one.
 1. **The arena still never reaches the left half.** 0 painted pixels of 48000 in the arena-only build, and
    the boundary is a straight vertical line at the panel's middle, not a silhouette. That is unchanged by
    batch 102 and is the original defect.
-2. **Seven objects now paint the entire left half and 10520 px of the right.** A door, three BEAMS and
-   three statics do not tile a panel exactly; `painted-left = 48000` to the pixel is a fill, not a
-   placement. Review-9's open question 1 is the right question and the panel cannot answer it: the crop
-cannot distinguish "the door and beams are drawn in their places" from "a surface occludes the frame".
+2. **Seven objects paint the entire left half and 10464 px more of the right — and that is now PROVEN,
+   not inferred.** Forcing the stream mesh's `linearAlloc` to fail (one line, `kInitialStreamCapacity =
+   1 << 22`, run in the emulator) removes the object pass, and the panel becomes **byte-identical** to
+   batch 102's arena-only crop (pixel sha `f9af51b6…`, `docs/evidence/2026-11-09-L7-mesh-alloc-failure.png`;
+   `panel_geom.py geom` on that pair prints `0 px` in the map and `0 px` in colour and does NOT refuse,
+   because the arena-only panel has 58464 clear pixels — this is what a real 0 px control looks like).
+   So `painted-left = 48000` is the objects, and the open question is what seven doors/BEAMS/statics are
+   drawing that covers a whole half-panel to the pixel, not whether they draw. Review-9's open question 1
+   stands: the crop cannot distinguish "placed correctly" from "a surface occludes the frame".
+
+3. **NEW, and it is measured, not suspected: every painted pixel of the console's panel has R = 255.**
+
+       python3 - <<'EOF'
+       from PIL import Image; from collections import Counter
+       px = list(Image.open("docs/evidence/2026-11-09-L7-shader-w-current.png").convert("RGB").getdata())
+       print(Counter(p[0] for p in px)[255], "of", len(px))   # -> 96000 of 96000
+       EOF
+
+   The same count on the Linux frame of the same core (`docs/frames/2026-11-09-b103-*.png`, level 3) is
+   9758 of 76800, so this is the 3DS colour path and not MDK's art. Every committed console crop has it,
+   including the arena-only ones, so it predates the object pass and is a THIRD defect, not a symptom of
+   the two above: the panel is painted, and what it is painted with has its red channel pinned to 1.0. The
+   shape of the numbers points at the byte order of a colour reaching the fragment stage — the differing
+   pixels of the noise pair are `(255,0,0) <-> (255,44,141)`-style pairs with R identical and B swinging
+   the full 0..255, which is what an alpha landing in red looks like — and this project has already been
+   bitten by exactly that class of bug at the other end of the frame: `pica_matrix.h:302-319` records that
+   the PICA's clear word is `0xRRGGBBAA` (red in the TOP byte) while the seam passes `0xAARRGGBB`, and
+   passing it straight through painted the alpha byte as red. `AGENTS.md` §12 names a second colour-order
+   trap in `../forsaken/3DS_PORT_NOTES.md`. This is the cheapest open lead in the file: it is
+   one upload format and one shader read, it is measurable without a geometry theory, and if it is the
+   texture format then the one-sided view may be a colour bug wearing a geometry costume.
 
 What is CLOSED for it, so it is not re-derived: the cull enum, the depth map/test/clear triple, the queue,
 the MVP construction, a deleted rotation (Iteration 106), the sheared display transfer, and now the
@@ -338,12 +408,25 @@ upload path, and the fact that the identity-MVP diagnostic triangle still paints
 forced — that one is unexplained and it is the only measured GPU behaviour in the tree that no theory
 currently covers.
 
-**The instrument rule that comes out of batch 103, and it binds every future console A/B.** Quote
-`tools/panel_geom.py geom`, not a full-RGB diff: two runs of ONE ELF differ by 53515 px of 96000 in full
-colour and 0 px in the painted/clear map, because `emurun.sh --shot` grabs the window at a wall-clock
-deadline and the guest's 60-frame log spacing hides which frame it caught while the textures animate. A
-colour claim needs a frame-locked capture, and the named blocker for that is that the 3DS backend
-implements no screenshot path at all (`render.h`: `screenshot_path` is "Linux only") — landing one is a
+**The instrument rule, restated by review-10 F1, and it binds every future console A/B.**
+`tools/panel_geom.py geom` is the picture claim **only where it does not refuse**, and on the current panel
+it refuses: the object pass paints all 96000 pixels, so the painted/clear map is a constant, a constant
+cannot differ, and a `geom: 0 px` there was arithmetic (batch 103 bound the loop to exactly that). It now
+exits 3 and says so, and `tests/scripts/panel_geom_test.sh` gates the refusal. The honest state is worse
+than batch 103 wrote and narrower in one place: two runs of ONE ELF differ by 53515 px of 96000 in full
+colour on the arena+objects panel, while batch 102's two independent runs of the arena-only panel were
+byte-identical — **a noise floor is only valid for the scene it was measured on**, and batch 103 quoted a
+floor from the wrong scene at its own A/B (review-10 F2). The mechanism of the 53515 px is NOT established:
+R is identical in every differing pixel while G moves on 41462 and B on 53512 with a full 0..255 swing, and
+batch 102's `current` (deadline frame 2520) and batch 103's `final2` (deadline frame 2820) produced
+byte-identical panels, which is hard to reconcile with an arbitrary phase in a ~60-frame window. **Batch
+104 localised it further: the arena-only scene is byte-identical across three runs in three lanes**
+(batch 102's two controls and the forced-allocation-failure run, all `f9af51b6…`), so the 53515 px belongs
+to the **object pass's output**, not to the capture and not to the arena. Five runs of one ELF, clustered,
+is still what would settle the mechanism, but the search is now inside `ObjectDraw`/`ObjectView` and not
+inside `emurun.sh`. A colour claim still needs a frame-locked capture, and the
+named blocker for that is that the 3DS backend implements no screenshot path at all (`render.h`:
+`screenshot_path` is "Linux only") — landing one is a
 batch of its own, and it is what would let the next level-7 capture be diffed against the oracle's frame
 instead of against itself. Do not ship a sixth census with the old instrument.
 
