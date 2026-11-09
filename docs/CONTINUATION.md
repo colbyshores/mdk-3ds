@@ -1,12 +1,40 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — **the 3DS frontend's simulation and audio wiring change.** One shipped file moves,
-`mdk_3ds/src/main_3ds.cpp`, but it is the frontend's frame loop: the console now owns a
-`ScriptRuntime`, rebuilt on every respawn (a state transition with an allocation behind it), the
-frame mixes the runtime's mixer instead of its own (the sink is re-attached per respawn), the camera's
-rest pitch and the collision world's solid-arena pin now come from the scripts, and `mdk.elf` grows
-by ~250 KB of text because gc-sections no longer discards the runtime. It is target-specific,
-it changes behaviour rather than formatting it, and the emulator can only show so much of it.
+Risk: high — **the 3DS frontend's collision world changes, and a shipped default changes.**
+`mdk_3ds/src/main_3ds.cpp`'s step loop stops pinning Kurt's collision arena to the script
+runtime's `currentArena()` (which the unported DTI connection crossing leaves at the spawn arena
+forever) and pins the arena under his feet again; `ScriptRuntime::option` goes 0 → 1 on both
+frontends and in every golden harness, which is a behaviour default, not a comment — the golden
+suite is green either way, which is the evidence that nothing exercises it, not a proof that it
+does not matter. Both are target-specific and behaviour-changing; both are review-6 remediation.
+
+**Batch 100 (Iteration 128) — review-6 closed 6/6, none rebutted.** **F1 (High)** was that the
+collision pin batch 99 moved to `runtime->currentArena()` is written exactly once, on the runtime's
+first tick, because `CrossedArena` (the DTI type-6 doorway crossing, `ScriptRuntime.cs:791-803`) is
+not ported — so the pin was the **spawn arena for the whole level**, `move()` uses only the pinned
+arena, and walking through an open door dropped Kurt through the room it opened into into a
+fall-out respawn loop. Reverted to the geometric refresh and **deleted the claim that the runtime's
+pin "is the oracle's own"**, which was false in this tree. The real fix is the crossing plus a
+two-name `setSolid` (the oracle passes current + active second; one name cannot express it), named
+below as the collision batch. The same frozen input also pins the camera's rest pitch, which the
+review did not name; that half is left as the oracle's formula on a frozen input rather than
+swapped for an unmeasured stand-in, and is named in the shipped comment. **F2 (Medium)**: `Option`
+was 0 under a comment calling it "the oracle's Option"; the oracle's field initialises to 1
+(`ScriptRuntime.cs:214`) from a gore setting that also defaults on. Now 1 everywhere, and the
+golden suite is green with it — the evidence that no golden distinguishes the two. Pinned by a new
+opcode-232 test (equality, not truthiness, both ways). **F3 (Medium)**: nothing executes a respawn,
+so the sink re-attach was pinned only by a source read; the invariant it stands on is now executed
+on the host — a rebuilt runtime's mixer device is silent until the sink is re-attached. **F4/F5**:
+the two headers that described the opposite of the tree are corrected, and the mixer-ownership
+comment now says the port owns the runtime's mixer and the C# shares the Viewer's. **F6**: the
+runtime constructor's `applyDisabledTriangles()` now runs on the console for the first time, so
+level 8's `GUNT_2` invisible wall became passable — recorded, not measured. Gates: `All cases match
+the oracle`, `CHECK: ALL GATES PASSED`, `make -C mdk_3ds` links (`mdk.elf` **`b0878389…`** — the
+identity field, per review-5; the `.3dsx` is not reproducible). Emulator (P8, `:99`, Mandarine
+r1.2.1 `0d2adab6`, exit 0, frame 2580): `scripts: runtime ready (seed 1601142235, option 1)`,
+`objects=7`, `health=100` on all 48 rows, ledger `frame=2580 secs=43.213 submitted=2156`. Still
+unobserved on the console: a script sound and a respawn. The frame is byte-identical to batch 99's
+and the sidecar says why. Narrative "Iteration 128".
 
 **Batch 99 (Iteration 127) — priority item 6d landed: the console runs the scripts.** The C#'s shape
 is now the console's: one `ScriptRuntime` per level over the CMI, the sprites archive and the bank,
@@ -319,6 +347,12 @@ slope against a clock the console itself owns, not one row's division.
 **Deferred review findings:** review-4 of run-20261105-142911 F1/F2 (the geometric solid-arena pin stands in for the unported
 DTI connection crossing; the fall probe hard-codes the start and omits the camera stage) need a
 placed-fall oracle in full order plus a walk-out golden, and are deferred to a collision batch.
+**Review-6 F1 is that same gap, and it is now the front end's whole collision story**: `currentArena_`
+is frozen at the spawn arena until `FindConnections` + `CrossedArena` are ported, and
+`ArenaSpace::setSolid` takes one name where the oracle passes current + active second. That port is
+the collision batch, and it unblocks three things at once — the door-walk golden review-8 F1 wants,
+the camera's rest pitch, and the per-object crossing (`ScriptRuntime.cs:776-787`). It is not a cheap
+follow-on and it needs a doorway-crossing oracle, not a hand-written expectation.
 **New from batch 97: the MVE movie decoder has no player.** `formats/mve.{h,cpp}` is ported and
 now covered (PCM both widths, DPCM, silence, the broken-size shapes) but nothing calls it, so it
 is gc-sectioned out of the shipped ELF and `MISC/FLIC/MDKBZK.MVE` never plays. Wiring it needs a
@@ -326,6 +360,16 @@ video presenter (palette + indices → a canvas or a texture), which is the same
 is blocked on, so it is not a cheap follow-on. Original-3DS behaviour remains unmeasured.
 
 ## Standing facts a batch must not re-derive
+
+* **`ScriptRuntime::option` is 1, not 0, and it is the oracle's default rather than a port choice
+  (batch 100, review-6 F2).** `ScriptRuntime.cs:214` initialises the field to 1 and the Viewer
+  overwrites it from `Settings.Gore`, which also defaults to true (`Settings.cs:75`, `Viewer.cs:234`,
+  `:874`). Two ported behaviours read it: opcode 232 `if_option` compares for **equality** (an Option
+  of 2 must not take the `if_option 1` branch) and opcode 129 `blow_off_parts` mode 2 is skipped while
+  it is 0. The gore **debris** half (`ScriptRuntime.cs:1754-1764`, 32×4 RNG draws) is NOT ported, so
+  the value does not move the random stream today — which is also why **no golden distinguishes 0 from
+  1**: the suite is green either way, so the suite cannot be used as evidence for either value and a
+  future batch must not "fix" this back on the strength of a green run.
 
 * **`ScriptRuntime` OWNS its `SoundMixer`, so a frontend that has a runtime has exactly one mixer to
   mix and it is the runtime's (batch 99).** Every script sound is written into that mixer

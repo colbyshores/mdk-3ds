@@ -1142,7 +1142,7 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     // the runtime would fall back to its unbound combat state and hp= and vmhp=
     // would part on the first hurt.
     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
-    runtime.option = 0;
+    runtime.option = 1;
     // The schedules, driven on the same world: the one that pins the health bridge,
     // the one that pins the state guard, the one that pins the recent-damage counter,
     // and the one that pins the invulnerability timer. All literals are the oracle's own
@@ -2665,7 +2665,7 @@ int main(int argc, char** argv) {
             kurtArg = &kurt;
         }
         scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, kurtArg, spritesArg);
-        runtime.option = 0;
+        runtime.option = 1;
         // dumpRunner ticks the world itself, one tick per printed line; ticking it
         // here too would print the state 2*ticks ticks in, not `ticks`.
         if (what != "runner") {
@@ -2721,7 +2721,7 @@ int main(int argc, char** argv) {
             }
             bank.preload();
             scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
-            runtime.option = 0;
+            runtime.option = 1;
             for (int t = 0; t < probeTicks; t++) {
                 runtime.update(1.0f / 30.0f);
             }
@@ -2856,7 +2856,7 @@ int main(int argc, char** argv) {
         bank.preload();
 
         scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
-        runtime.option = 0;  // the oracle's Option
+        runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
         }
@@ -2910,7 +2910,7 @@ int main(int argc, char** argv) {
         }
         bank.preload();
         scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
-        runtime.option = 0;
+        runtime.option = 1;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
         }
@@ -3009,7 +3009,7 @@ int main(int argc, char** argv) {
         }
         bank.preload();
         scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
-        runtime.option = 0;
+        runtime.option = 1;
         for (int t = 0; t < ticks; t++) {
             runtime.update(1.0f / 30.0f);
         }
@@ -3194,7 +3194,7 @@ int main(int argc, char** argv) {
             player.feet = at;
             player.yaw = levelData.dti().startAngle();
             scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, spritesArg);
-            runtime.option = 0;
+            runtime.option = 1;
             std::string got = dumpRunner(rc.level, rc.ticks, at, runtime);
             if (got == expected) {
                 printf("PASS L%d_t%d_runner_%s: the hamster's run from tick to tick matches the "
@@ -3613,7 +3613,7 @@ int main(int argc, char** argv) {
                         bank.preload();
                     }
                     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
-                    runtime.option = 0;
+                    runtime.option = 1;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);
                     }
@@ -3671,7 +3671,7 @@ int main(int argc, char** argv) {
                         bank.preload();
                     }
                     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
-                    runtime.option = 0;
+                    runtime.option = 1;
                     for (int t = 0; t < 2; t++) {
                         runtime.update(1.0f / 30.0f);
                     }
@@ -3749,7 +3749,7 @@ int main(int argc, char** argv) {
                         bank.preload();
                     }
                     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, spritesArg);
-                    runtime.option = 0;
+                    runtime.option = 1;
                     for (int t = 0; t < 3; t++) {
                         runtime.update(1.0f / 30.0f);
                     }

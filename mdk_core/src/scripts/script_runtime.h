@@ -363,7 +363,12 @@ public:
 
     int32_t globalFlags = 0;
     std::array<float, 4> globalVariables{{0.0f, 0.0f, 0.0f, 0.0f}};
-    int32_t option = 0;  // the driver sets 0 (the oracle's Option)
+    // Gore (C# ScriptRuntime.Option, if_option, 0x5742dc): 1 on, 0 off. The C#
+    // initialises this field to 1 (ScriptRuntime.cs:214) and the Viewer overwrites
+    // it from the gore setting, which also defaults to on (Settings.cs:75,
+    // Viewer.cs:234), so 1 is the oracle's default and the port's. A driver that
+    // wants the gore-off build sets 0; leaving the field alone is the default run.
+    int32_t option = 1;
     // C# ScriptRuntime.KurtVelocity (ScriptRuntime.cs:204): the observed feet
     // delta from the previous tick, multiplied by 30. place_x_near_player (220)
     // uses its X to aim 2.67 s ahead (Lead = 2.67333f); if_gun_aim (219) uses
@@ -385,8 +390,11 @@ public:
     int32_t skyMode = 0;
     // camera_track (C# ScriptRuntime.CameraTrackPitch/CameraTrackTicks,
     // opcode 203): the requested follow-camera pitch and how many more ticks
-    // it remains active. The renderer-side follow-camera consumer and the
-    // save/load snapshot consumer are deferred with their subsystems.
+    // it remains active. BOTH frontends consume the pitch now: the 3DS frontend's
+    // step loop eases the follow camera to it ahead of the arena's rest pitch
+    // (mdk_3ds/src/main_3ds.cpp, the `PitchGoal` of Viewer.cs:746-747), and the
+    // Linux frontend reads it the same way. What is still deferred is the save/load
+    // snapshot consumer, which waits for the snapshot slice.
     float cameraTrackPitch = 0.0f;
     int32_t cameraTrackTicks = 0;
     // The strongest screen shake requested during this tick (opcode 135). It
@@ -575,6 +583,21 @@ private:
     ArenaSpace space_;
     std::map<std::string, std::unique_ptr<Bsp>> bsps_;  // per-arena BSP (C# _bsps), stable addresses
     std::map<std::string, float> floors_;               // per-arena floor Z (C# _floors)
+    // C# ScriptRuntime.CurrentArena (ScriptRuntime.cs:200): the arena the scripts
+    // think Kurt is in, and the source of the camera's rest pitch.
+    //
+    // IT IS WRITTEN EXACTLY ONCE, on the runtime's first tick, and a frontend that
+    // collides against it must know that. The oracle moves it in only two ways -- a
+    // move that crosses a doorway CONNECTION (CrossedArena, ScriptRuntime.cs:791-803
+    // over the DTI type-6 records paired by FindConnections, :855-881) or a teleport
+    // -- and NEITHER is ported, so this field is the spawn arena for the whole level
+    // and never the arena Kurt walked into. That is not a cosmetic gap: pinning the
+    // collision world to it freezes Kurt's floor at the arena he was born in, and
+    // review-6 F1 is the walk through an open door that fell through the room it led
+    // to. The frontends therefore refresh from the geometric arena under his feet
+    // instead (arena_space.h's setSolid note). Porting FindConnections +
+    // CrossedArena is what makes this field the oracle's, and it also gates the
+    // per-object crossing (ScriptRuntime.cs:776-787).
     std::string currentArena_;
     std::string secondArena_;
     bool secondActive_ = false;

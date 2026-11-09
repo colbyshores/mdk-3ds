@@ -35,9 +35,11 @@
 # WHAT BATCH 99 ADDED (the ScriptRuntime on the console, priority item 6d). The
 # frontend now owns a script runtime, which means four more things became load-
 # bearing that no compiler can see:
-#   6. the runtime's pin is guarded on a NON-EMPTY current arena — before its first
-#      completed tick `currentArena()` is empty, and pinning the empty name clears
-#      the pin, so this is check 3's failure from a third side;
+#   6. the step loop's ONE pin reads the arena under Kurt and never the runtime's
+#      current arena — which the unported connection crossing leaves at the spawn
+#      arena for the whole level (review-6 F1: batch 99 pinned to it and a door walk
+#      fell through the room it opened into). This is the check that keeps the
+#      reverted stand-in reverted until CrossedArena lands.
 #   7. the scripts tick inside the fixed-step loop between Kurt and the camera
 #      (Viewer.cs:505-535), because the runtime's own 1/30 s clock assumes it is
 #      called once per 1/60 s step;
@@ -239,9 +241,8 @@ def adjudicate(text, quiet=False):
     # 4. the in-loop refresh is guarded, so being outside every arena keeps the
     #    last pin instead of clearing it. Depth is the load-bearing half: a call
     #    at depth 0 is unconditional whatever its argument looks like. EVERY call
-    #    site is tested, not the first: the loop now has two (the runtime's arena
-    #    and the geometric one) and a check that stopped at the first would let an
-    #    unguarded second site clear the pin while the gate printed PASS.
+    #    site is tested, not the first: a second site has been added before and an
+    #    unguarded one would clear the pin while the gate printed PASS.
     depths = line_depths(loop) if loop is not None else []
     sites = [(i, line) for i, line in code_lines(loop)
              if re.search(r"setSolid\s*\(", line)] if loop is not None else []
@@ -267,18 +268,23 @@ def adjudicate(text, quiet=False):
     say("the guard is the arenaAt lookup itself", shape, 
         "a guarded setSolid whose guard is not the lookup can still clear the pin")
 
-    # 6. the runtime's pin is guarded on its own emptiness. `currentArena()` is
-    #    empty until the runtime's first completed tick (script_runtime.cpp:371-379
-    #    sets it inside the arena-change branch), and setSolid("") CLEARS the pin,
-    #    so an unguarded call would drop the spawn pin for the step or two before
-    #    the first tick — check 3's failure again, from a third side.
-    rt_pin = bool(re.search(
-        r"if[ \t]*\([ \t]*![ \t]*runtime->currentArena\([ \t]*\)\.empty\([ \t]*\)[ \t]*\)"
-        r"[ \t]*\{[ \t]*\n[ \t]*space\.setSolid\([ \t]*runtime->currentArena\([ \t]*\)[ \t]*\)",
-        loop or ""))
-    say("the runtime's pin is guarded on a non-empty current arena", rt_pin,
-        "before its first tick the runtime has no current arena, and pinning the empty "
-        "name clears the spawn pin exactly as an empty arenaAt would")
+    # 6. the step loop's pin NEVER reads the runtime's current arena. Review-6 F1
+    #    (High): `currentArena_` is written exactly once, on the runtime's first
+    #    tick (script_runtime.cpp:362-378), because the DTI connection crossing that
+    #    moves the oracle's `CurrentArena` (CrossedArena, ScriptRuntime.cs:791-803)
+    #    is not ported. Pinning to it therefore freezes the collision world at the
+    #    SPAWN arena for the whole level: walk through an open door and move() --
+    #    which uses ONLY the pinned arena, arena_space.cpp:118 -- finds no floor in
+    #    the room Kurt entered, he drops through it, and bottom() fires the fall-out
+    #    death into a respawn loop. Batch 99 shipped exactly that; this check is the
+    #    pin that stops it coming back, and it is the reason the claim "with a
+    #    runtime the pin is the oracle's own" was deleted rather than kept quiet.
+    frozen = bool(re.search(r"setSolid\([ \t]*runtime->currentArena\(", loop or ""))
+    say("the step loop pins from the arena under Kurt, never from the runtime's frozen current arena",
+        not frozen and loop_code is not None and loop_code.count("setSolid(") == 1,
+        "currentArena() does not move until CrossedArena is ported, so a pin that "
+        "reads it is the spawn arena forever; the loop must have exactly one refresh "
+        "and it must be the geometric one")
 
     # 7. the scripts tick INSIDE the fixed-step loop, between Kurt and the camera.
     #    The C#'s Viewer order is UpdateKurt, _scripts.Update, UpdateCamera
@@ -516,14 +522,19 @@ def arm_no_asset_gate(text):
     return mutated if n else text
 
 
-def arm_runtime_pin_unguarded(text):
-    """The runtime's pin kept but no longer guarded on emptiness: before the first
-    completed tick it pins the empty name and so clears the spawn pin."""
+def arm_pin_from_the_runtime(text):
+    """Batch 99's frozen pin, put back: the step loop reads the runtime's current
+    arena instead of the arena under Kurt. `currentArena_` is written once, on the
+    first tick, so this is the spawn arena for the whole level and a door walk falls
+    through the room it opened into (review-6 F1)."""
     mutated, n = re.subn(
-        r"(?m)^[ \t]*if[ \t]*\([ \t]*![ \t]*runtime->currentArena\([ \t]*\)"
-        r"\.empty\([ \t]*\)[ \t]*\)[ \t]*\{[ \t]*\n"
-        r"[ \t]*space\.setSolid\([ \t]*runtime->currentArena\([ \t]*\)[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
-        "                space.setSolid(runtime->currentArena());\n", text)
+        r"(?m)^[ \t]*const[ \t]+std::string\*[ \t]+solid[ \t]*=[ \t]*\n"
+        r"[ \t]*space\.arenaAt\([^;]*;[ \t]*\n"
+        r"[ \t]*if[ \t]*\([ \t]*solid[ \t]*\)[ \t]*\{[ \t]*\n"
+        r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
+        "                if (!runtime->currentArena().empty()) {\n"
+        "                    space.setSolid(runtime->currentArena());\n"
+        "                }\n", text)
     return mutated if n else text
 
 
@@ -554,7 +565,7 @@ ARMS = [
     ("frame-mixes-the-standalone-mixer", arm_mixes_standalone),
     ("respawn-does-not-re-attach-the-sink", arm_sink_not_reattached),
     ("runtime-built-without-the-asset-gate", arm_no_asset_gate),
-    ("runtime-pin-unguarded-on-an-empty-current-arena", arm_runtime_pin_unguarded),
+    ("pin-taken-from-the-runtime's-frozen-current-arena (review-6 F1)", arm_pin_from_the_runtime),
     ("pitch-ignores-the-runtime", arm_pitch_ignores_runtime),
 ]
 

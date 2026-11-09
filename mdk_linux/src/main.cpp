@@ -392,7 +392,12 @@ int main(int argc, char** argv) {
             const int32_t runtimeSeed = scriptSeedSet ? scriptSeed : freshScriptSeed();
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player,
                                                           &sprites));
-            runtime->option = 0;
+            // The gore setting, and therefore the oracle's DEFAULT (ScriptRuntime.cs:214
+            // initialises Option to 1 and Settings.Gore defaults to true, Settings.cs:75).
+            // This frontend has no settings UI, so it ships the default; the 3DS frontend
+            // uses the same value. Review-6 F2: this used to be 0 under a comment calling
+            // that "the oracle's Option", which is the opposite of the oracle's default.
+            runtime->option = 1;
             // Kurt's own sounds (footsteps, the chute, the guns) go through his
             // mixer, which is the runtime's: C# Kurt gets the SoundMixer as a
             // constructor argument (Kurt.cs, the `SoundMixer` field) and the

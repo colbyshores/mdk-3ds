@@ -69,14 +69,21 @@ public:
     // move only when a move crosses a doorway connection (CrossedArena, :791) or a
     // teleport puts him elsewhere -- they do NOT follow the geometric arena, and in
     // particular they do not move while he falls out of the world (measured: the
-    // oracle's own pin rows, golden/L7_spawn_fall.txt's account). The 3DS frontend
-    // has no ScriptRuntime, so it uses the geometric arena under his feet as the
-    // stand-in; the Linux frontend uses the runtime's current arena when it has one
-    // and does not refresh at all when the scripts did not start. Connections are
-    // not ported, so neither stand-in is the oracle's rule; both are better than a
-    // pin left at the spawn. And every frontend must pin at the spawn, because a
+    // oracle's own pin rows, golden/L7_spawn_fall.txt's account). BOTH frontends
+    // here use the geometric arena under his feet as the stand-in, and they can do
+    // nothing else while the connections are unported: ScriptRuntime::currentArena_
+    // is written once, on the first tick, so a frontend that pinned the runtime's
+    // current arena would freeze the collision world at the spawn arena for the
+    // whole level (review-6 F1, which is exactly what the 3DS frontend did and what
+    // it no longer does). The Linux frontend pins from the runtime when it has one
+    // (mdk_linux/src/main.cpp) and once at the spawn otherwise. Connections are not
+    // ported, so neither stand-in is the oracle's rule; both are better than a pin
+    // left at the spawn. And every frontend must pin at the spawn, because a
     // Kurt standing outside every arena otherwise leaves bottom() with nothing to
     // resolve and the fall-out death never fires.
+    // The oracle passes a LIST (the current arena plus the active second) and this
+    // takes one name, so the drawn list is not even expressible here until a
+    // two-name form lands; `_solid` is already a vector and kurt() reads element 0.
     // Clears the pin if no arena has that name (then the arenas around the feet are
     // used, as before).
     void setSolid(const std::string& name);

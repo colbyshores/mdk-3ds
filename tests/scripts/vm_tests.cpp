@@ -20,10 +20,12 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "audio/sound_bank.h"
+#include "audio/sound_mixer.h"
 #include "test_support.h"
 #include "archive_guard_tests.h"
 #include "audio_sink_tests.h"
@@ -63,6 +65,7 @@ const int32_t kIfCheatKey = 13;
 const int32_t kSetPartsMask = 31;
 const int32_t kClearPartsMask = 32;
 const int32_t kBlowOffParts = 129;
+const int32_t kIfOption = 232;
 const int32_t kJumpTo = 226;
 const int32_t kSet2d0Block = 242;
 const int32_t kSpawnAtPoint = 156;
@@ -510,7 +513,52 @@ void testBlowOffPartsLocksAndHides(scripts::ScriptRuntime& runtime) {
     CHECK(wild.hidden_parts == 0);
     CHECK(!sawUnimplemented(kBlowOffParts));
 
+    runtime.option = 1;
+}
+
+// Opcode 232 (if_option): `I(o[0]) == runtime.Option`, ScriptVm.cs:939-940, with
+// the operand decoded as a U8 (script_opcodes.cpp:382). Review-6 F2 asked for a
+// test that pins Option THROUGH this opcode, because until that finding the whole
+// port ran with Option == 0 under a comment claiming that was the oracle's value,
+// and the oracle's field initialises to 1 (ScriptRuntime.cs:214) from a gore
+// setting that also defaults to on (Settings.cs:75, Viewer.cs:234). Nothing else
+// in the suite could see the difference: no golden exercises 232 or a mode-2
+// break-up, which is why the wrong default survived into both frontends.
+void testIfOptionBranchesOnTheRuntimeOption(scripts::ScriptRuntime& runtime) {
+    // The default, pinned at the object itself rather than at a driver: a runtime
+    // nobody configured is the oracle's default run, which is gore ON.
+    CHECK(runtime.option == 1);
+
+    // One program, both arms: 1 jumps when Option is 1, 0 jumps when it is 0.
+    Code code;
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(0.0f);
+    code.u8(kIfOption).u8(1).u8(kActionGoto).target("gore");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("gore");
+    code.u8(kAddVar).u8(kOwn).u8(0).f32(2.0f);
+    code.end();
+
+    runtime.option = 1;
+    scripts::MdkObject on;
+    runProgram(runtime, code, &on);
+    CHECK(!sawUnimplemented(kIfOption));
+    CHECK(on.variables[0] == 2.0f);  // branched: only the target adds 2
+
     runtime.option = 0;
+    scripts::MdkObject off;
+    runProgram(runtime, code, &off);
+    CHECK(!sawUnimplemented(kIfOption));
+    CHECK(off.variables[0] == 1.0f);  // fell through: 0 + 1, the target never ran
+
+    // And the comparison is equality, not "non-zero": an Option of 2 must not take
+    // the `if_option 1` branch, which a truthiness test would.
+    runtime.option = 2;
+    scripts::MdkObject other;
+    runProgram(runtime, code, &other);
+    CHECK(other.variables[0] == 1.0f);
+
+    runtime.option = 1;
 }
 
 void testBlownOffPartsStayHiddenThroughClear(scripts::ScriptRuntime& runtime) {
@@ -531,7 +579,7 @@ void testBlownOffPartsStayHiddenThroughClear(scripts::ScriptRuntime& runtime) {
     CHECK(obj.locked_parts == 0x1);
     CHECK(obj.hidden_parts == 0x1);
     CHECK(!sawUnimplemented(kClearPartsMask));
-    runtime.option = 0;
+    runtime.option = 1;
 }
 
 // The rope-swing pair has no C# ScriptVmTests counterpart either, so these
@@ -5935,6 +5983,64 @@ void testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(LevelData* le
     CHECK(pinned > -1000.0f);
 }
 
+// A rebuilt ScriptRuntime owns a NEW SoundMixer, and that mixer owns a NEW
+// SoundDevice, so the sink the frontend attached to the old device does NOT
+// follow the rebuild. Review-6 F3: on the console the respawn path is not
+// reachable by the emulator's idle scene, so nothing executed it there and the
+// frontend's own gate is a source read. What CAN be executed here is the
+// invariant that gate stands on, and it is the one that fails silently: a level
+// after the first death that mixes, keeps a healthy ledger, and plays nothing.
+namespace {
+int g_sinkCalls = 0;
+int g_sinkFrames = 0;
+void countingSink(void*, const float*, int32_t frames) {
+    g_sinkCalls++;
+    g_sinkFrames += frames;
+}
+}  // namespace
+
+void testARebuiltRuntimeNeedsItsSinkReattached(LevelData* levelData, Cmi* cmi,
+                                               audio::SoundBank* bank) {
+    std::unique_ptr<scripts::ScriptRuntime> first(
+        new scripts::ScriptRuntime(levelData, cmi, 1, bank, nullptr, nullptr));
+    audio::SoundMixer* mix = &first->mixer();
+    mix->device().setSink(countingSink, nullptr);
+    g_sinkCalls = 0;
+    g_sinkFrames = 0;
+    // The device feeds its sink on any update that produced frames, voices or
+    // not, so this does not need a sound to play to be a real observation.
+    mix->device().update(1.0f / 60.0f);
+    CHECK(g_sinkCalls == 1);
+    CHECK(g_sinkFrames > 0);
+
+    // The respawn: destroyed and rebuilt, because that is what the C# does (a
+    // fresh Viewer, a fresh ScriptRuntime) and the runtime has no reset.
+    first.reset();
+    std::unique_ptr<scripts::ScriptRuntime> second(
+        new scripts::ScriptRuntime(levelData, cmi, 1, bank, nullptr, nullptr));
+    mix = &second->mixer();
+    // A rebuilt runtime is a different mixer object, which is WHY the sink has to
+    // be re-attached: the C# cannot have this failure, because its Viewer owns
+    // the mixer and hands the same one to the runtime (Viewer.cs:194, :207).
+    // The mixer ADDRESSES are not compared: the first is freed before the second
+    // is allocated, so the allocator hands back the same block and pointer
+    // inequality would be an assertion about malloc, not about the runtime. The
+    // sink going quiet two lines below is the real proof that this is a new device.
+
+    // WITHOUT the re-attach the new device is muted: the mix runs, the frame
+    // counter advances, and the sink never hears about it. This is the silent
+    // level after the first death.
+    g_sinkCalls = 0;
+    mix->device().update(1.0f / 60.0f);
+    CHECK(g_sinkCalls == 0);
+
+    // WITH it, the sink is on the device the frame mixes.
+    mix->device().setSink(countingSink, nullptr);
+    g_sinkCalls = 0;
+    mix->device().update(1.0f / 60.0f);
+    CHECK(g_sinkCalls == 1);
+}
+
 } // namespace
 
 int main() {
@@ -6058,7 +6164,10 @@ int main() {
     // mixer around an unloaded bank too.
 
     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, nullptr);
-    runtime.option = 0;
+    runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
+
+    testARebuiltRuntimeNeedsItsSinkReattached(&levelData, &cmi, &bank);
+    printf("PASS ARebuiltRuntimeNeedsItsSinkReattached\n");
 
     scripts::ScriptRuntime attachRuntime(&levelData, &cmi, 1, &bank, nullptr, nullptr);
     testAttachToSelectsNamedArenaObject(attachRuntime);
@@ -6082,6 +6191,8 @@ int main() {
     printf("PASS ClearPartsMaskShowsPartsAgain\n");
     testBlowOffPartsLocksAndHides(runtime);
     printf("PASS BlowOffPartsLocksAndHides\n");
+    testIfOptionBranchesOnTheRuntimeOption(runtime);
+    printf("PASS IfOptionBranchesOnTheRuntimeOption\n");
     testBlownOffPartsStayHiddenThroughClear(runtime);
     printf("PASS BlownOffPartsStayHiddenThroughClear\n");
     testJumpToStartsSwingBelowThePivot(runtime);

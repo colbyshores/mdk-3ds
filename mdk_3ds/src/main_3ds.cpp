@@ -344,10 +344,16 @@ int main(int argc, char** argv) {
     // solved by this batch; it is no longer hidden either, because the game is now
     // audible without it.
     //
-    // THE MIXER LIVES IN THE RUNTIME WHEN THERE IS ONE, and that is the C#'s shape
-    // too: Game.cs:206 builds the AudioDevice, Viewer.cs:194 builds the SoundMixer
-    // over the bank, and BOTH Kurt and the ScriptRuntime get that one (Kurt.cs
-    // takes the SoundMixer as a constructor argument). So the mixer the frame mixes
+    // THE MIXER LIVES IN THE RUNTIME WHEN THERE IS ONE -- which is the PORT's shape,
+    // not the C#'s. The oracle shares ONE mixer: Game.cs:206 builds the AudioDevice,
+    // Viewer.cs:194 builds the SoundMixer over the bank, and the SAME object goes to
+    // Kurt (Kurt.cs takes it as a constructor argument) and to the ScriptRuntime
+    // (ScriptRuntime.cs:323 takes `SoundMixer mixer`, it does not own one). The port
+    // gives the runtime its own mixer BY VALUE, so a rebuilt runtime is a new device
+    // and the sink has to be re-attached; the C# cannot have that failure because its
+    // mixer outlives the runtime. What is the same on both is the ONE-mixer property
+    // that matters: the frame mixes the mixer the scripts write into, never a second
+    // one. So the mixer the frame mixes
     // and the sink is attached to is `mix` below: the runtime's when the scripts
     // run, and the standalone one built here when they cannot (no CMI, no bank or
     // no sprites archive). What the standalone one can play is Kurt's own set —
@@ -420,6 +426,19 @@ int main(int argc, char** argv) {
     // It is a pointer because it is rebuilt, and it is gated on its three assets
     // rather than constructed with a hole in one of them (scriptAssetsReady).
     std::unique_ptr<mdk::scripts::ScriptRuntime> runtime;
+    // THE SCRIPT OPTION (C# ScriptRuntime.Option). It is a USER SETTING, not a
+    // constant: `Option = ui.Settings.Gore ? 1 : 0` (Viewer.cs:234, and :874 on
+    // resume) and `Settings.Gore` DEFAULTS TO true (Flow/Settings.cs:75), so a
+    // default oracle run has Option == 1 and this port ships the same default.
+    // The port has no settings UI, so the value is fixed here rather than read.
+    // Two ported behaviours read it: opcode 232 `if_option` branches on equality,
+    // and opcode 129 `blow_off_parts` mode 2 is skipped while it is 0
+    // (script_vm.cpp:858-867). What is NOT ported is the gore DEBRIS -- the slime
+    // drops of ScriptRuntime.cs:1754-1764 -- so setting 1 here does NOT add the
+    // 32x4 RNG draws that half consumes, and the random stream is unchanged either
+    // way. Review-6 F2: the port used to write 0 and call it "the oracle's Option",
+    // which is the opposite of the oracle's default.
+    static const int32_t kScriptOption = 1;  // 1 = gore on, the Settings.Gore default
     // THE ONE MIXER, and which one it is depends on the runtime: the C# gives the
     // runtime and Kurt the same SoundMixer, and ScriptRuntime OWNS its mixer, so
     // when there is a runtime the frontend mixes that one and the sink is attached
@@ -463,7 +482,7 @@ int main(int argc, char** argv) {
             const int32_t seed = (int32_t)(uint32_t)svcGetSystemTick();
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, seed, &bank, &player,
                                                           &sprites));
-            runtime->option = 0;  // the oracle's Option; the gore setting is not ported
+            runtime->option = kScriptOption;
             // Kurt's sounds go through the runtime's mixer, because in the C# they
             // are the same mixer.
             player.setMixer(&runtime->mixer());
@@ -473,7 +492,8 @@ int main(int argc, char** argv) {
                 // to it: a respawn without this would be a silent level.
                 mix->device().setSink(mdk::audioSink, nullptr);
             }
-            mdk::log3dsPrintf("scripts: runtime ready (seed %d, option 0)", (int)seed);
+            mdk::log3dsPrintf("scripts: runtime ready (seed %d, option %d)", (int)seed,
+                              (int)kScriptOption);
         }
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
@@ -622,9 +642,20 @@ int main(int argc, char** argv) {
                 }
                 // The pitch the camera eases to (Viewer.cs:746-747). The oracle's
                 // sources are a live camera_track request first and the scripts'
-                // current arena's rest pitch after it, and the runtime answers both.
-                // With no runtime neither exists, so the geometric arena under Kurt
-                // is the stand-in (what the runtime-less Linux frontend uses too).
+                // current arena's rest pitch after it.
+                //
+                // The two halves are NOT equally ported, and saying so is the point.
+                // camera_track is real script output: opcode 203 writes it and it
+                // decays per tick, so the runtime is the only possible source and
+                // this is the oracle's own rule. The ARENA half is not: it reads
+                // `currentArena()`, which the unported DTI connection crossing never
+                // moves off the spawn arena (see the pin below this loop), so the
+                // rest pitch is the SPAWN arena's for the whole level. The geometric
+                // arena under Kurt would follow him and is what the runtime-less
+                // branch uses, but substituting it here would be a deliberate
+                // deviation from `ArenaPitch(CurrentArena)` on a picture path with
+                // no measurement behind it, so it is left as the oracle's formula on
+                // a frozen input and named here. The crossing fixes both.
                 float target = mdk::follow_camera::kDefaultPitch;
                 if (runtime) {
                     target = runtime->cameraTrackTicks > 0
@@ -649,42 +680,40 @@ int main(int argc, char** argv) {
                 // bottom() -- which DOES consider any arena holding his feet --
                 // would report that neighbour's bottom and fire the fall-out death.
                 //
-                // WITH A RUNTIME THE PIN IS THE ORACLE'S OWN: `SolidArenas` starts
-                // from the scripts' current arena, and that pin moves only when the
-                // arena under Kurt changes at a script tick (script_runtime.cpp:371
-                // -379, the C#'s ScriptRuntime.cs:917-931) — which is NOT the same
-                // as following his feet every 1/60 s step, and is why the runtime is
-                // preferred wherever it exists. It is skipped while empty, which is
-                // only ever before the first completed tick: setSolid("") CLEARS the
-                // pin (arena_space.cpp:61-70), and clearing it for the step or two
-                // before the runtime has started an arena would drop the spawn pin
-                // for no reason. The pin is deliberately NOT cleared when he is
+                // WHAT IT FOLLOWS IS THE GEOMETRIC ARENA UNDER KURT'S FEET, with a
+                // runtime and without one, and that is a STAND-IN, not the oracle's
+                // rule. The oracle's `SolidArenas` is the scripts' DRAWN list -- the
+                // current arena plus the active second (ScriptRuntime.cs:265-278) --
+                // and `CurrentArena` moves only when a move crosses a doorway
+                // CONNECTION (CrossedArena, :791-803, over the DTI type-6 records)
+                // or a teleport puts him elsewhere. Neither is ported, so
+                // `currentArena_` is written exactly once, on the runtime's first
+                // tick (script_runtime.cpp:362-378), and pinning to it freezes the
+                // collision world at the SPAWN arena for the whole level. That was
+                // batch 99, and review-6 F1 is the finding: walking through an open
+                // door dropped Kurt through the room he walked into. The claim that
+                // followed it -- "with a runtime the pin is the oracle's own" -- was
+                // false in this tree and is gone.
+                //
+                // The geometric pin is wrong in the other direction and by less: it
+                // can re-pin during a fall-out, which is review-8 F1's 4 columns of
+                // 1681, because the oracle's pin does NOT move while he falls out of
+                // the world. The fix is the crossing, not a cleverer stand-in: port
+                // the DTI type-6 connection pairs and `CrossedArena`, then pin the
+                // runtime's drawn list -- which also needs `ArenaSpace::setSolid` to
+                // take TWO names, because the C# passes a list and this one keeps
+                // `_solid[0]` as Kurt's arena. Named in docs/CONTINUATION.md.
+                //
+                // It is probed AGAIN rather than reusing the pitch's `here`, because
+                // the C# evaluates SetSolid after UpdateCamera and the camera's
+                // clearance can shove Kurt into a different arena than the one his
+                // step started in. The pin is deliberately NOT cleared when he is
                 // outside every arena: that is the fall-out case, and bottom() still
                 // has to resolve an arena for the death to fire at all.
-                //
-                // WITHOUT A RUNTIME the geometric arena under his feet is the
-                // stand-in for `SolidArenas`. It is NOT what the Linux frontend
-                // does: that one refreshes from the runtime's current arena and only
-                // when a runtime exists (mdk_linux/src/main.cpp:531-533), and it
-                // pins once at the spawn otherwise (:366-369). The geometric refresh
-                // is the closest available stand-in for the walking case -- the one
-                // review-8 F1 measured -- at the cost of a fall-out that can re-pin
-                // on 4 of the 1681 columns the review probed; narrowing it is a
-                // separate batch with its own walk-out-of-the-arena golden. It is
-                // probed AGAIN rather than reusing the pitch's `here`, because the C#
-                // evaluates SetSolid after UpdateCamera and the camera's clearance
-                // can shove Kurt into a different arena than the one his step
-                // started in.
-                if (runtime) {
-                    if (!runtime->currentArena().empty()) {
-                        space.setSolid(runtime->currentArena());
-                    }
-                } else {
-                    const std::string* solid =
-                        space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
-                    if (solid) {
-                        space.setSolid(*solid);
-                    }
+                const std::string* solid =
+                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                if (solid) {
+                    space.setSolid(*solid);
                 }
                 pending -= step;
                 steps++;

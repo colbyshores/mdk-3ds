@@ -18935,3 +18935,183 @@ mattered was in the repository: the Linux frontend's wiring, read before writing
   `ralph/builder.md` is `PROTECTED`: committing it without `--owner-approved` stops the loop at exit
   6. This batch staged its paths **by name**.
 * **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools in this session.
+
+## Iteration 128 — batch 100: review-6 of run-20261108-195620 — the console's collision pin was frozen at the spawn arena because the thing that is supposed to move it was never ported, and the port's `Option` was the opposite of the oracle's default
+
+**Prior-solution lookup.** `knowledge_search` on the `mdk-sdl` KB returned the
+current `arena_space.h` pin note, the C# `ArenaSpace.SetSolid`/`Add`, the C#
+`CrossedArena`/`Doorway` block and the *pre-batch-99* `main_3ds.cpp` comment —
+i.e. the KB confirmed the gap was known and that batch 99 had replaced the
+geometric stand-in. It is a lead, not an instruction; everything below was
+re-derived against `src/Mdk.Game/**`. `obsidian_*` and `cognee_*` are not exposed
+in this session (AGENTS P9: a session-configuration fault, reported not hidden),
+so the vault lookup was the degraded disk-only path over
+`/mnt/nas/Vaults/port-docs/10-projects/mdk-sdl/`, which has no note on the arena
+pin or the connection crossing. Cognee's graph search was not available at all.
+
+**Review-6 verdict was `INCOMPLETE` on F1.** Six findings: one High, two Medium,
+three Low. All six were confirmed against the oracle before anything changed.
+None is rebutted on merit.
+
+### F1 (High) — confirmed, fixed by reverting the pin and deleting the claim
+
+The C# refreshes Kurt's collision world every step with
+`_space.SetSolid(_scripts.SolidArenas)` (`Viewer.cs:533`), and `SolidArenas` is
+the scripts' **drawn list** — the current arena plus the active second
+(`ScriptRuntime.cs:265-278`). `CurrentArena` moves in exactly two ways: a move
+that crosses a doorway **connection** (`CrossedArena`, `:791-803`, over the DTI
+type-6 records that `FindConnections` (`:855-881`) pairs by id) or a teleport.
+
+Neither is ported. `grep -rn CrossedArena mdk_core/src` is one comment and no
+code, and `currentArena_ = arena` appears only inside the first-tick branch
+(`script_runtime.cpp:362-378`). So batch 99's `space.setSolid(runtime->currentArena())`
+was **the spawn arena for the whole life of the level**, and because `move()`
+uses only the pinned arena (`arena_space.cpp:118`) while `bottom()` also counts
+any arena containing the feet (`:155-166`), walking through an open door resolved
+the neighbour's floor against the room Kurt left: no floor, a drop through it, and
+the fall-out death into a respawn. The reviewer's scenario is real and mechanical.
+`ArenaSpace::setSolid` takes **one** name, so the drawn list is not even
+expressible today.
+
+Fixed by restoring the geometric refresh for both branches and deleting the
+sentence that claimed the runtime's pin "is the oracle's own" — false in this
+tree, and the reason the finding existed at all. The geometric pin is a stand-in
+that is wrong in the other direction and by less (review-8 F1's re-pin on 4 of
+1681 fall columns, because the oracle's pin does *not* move while Kurt falls out
+of the world). **The fix is the crossing, not a cleverer stand-in**, and it needs
+a two-name `setSolid` so the frontend can pass the list the C# passes.
+
+The same root cause also freezes the camera's rest pitch, which review-6 did not
+name: `PitchGoal` is `cameraTrackTicks > 0 ? cameraTrackPitch : arenaPitch(currentArena())`
+(`Viewer.cs:746-747`), so the arena half is the spawn arena's pitch forever. It is
+left as the oracle's formula on a frozen input rather than swapped for a geometric
+one, because that substitution would be an unmeasured deviation on a picture path;
+`camera_track` itself is genuine script output and stays. Named in the shipped
+comment and here, and it is fixed by the same crossing.
+
+**Pinned** by a new check and a new mutation arm in `main_3ds_flow_test.sh`: the
+step loop must have exactly one `setSolid` and it must not read
+`runtime->currentArena()`. The arm puts batch 99's pin back and turns checks 5 and
+6 both red (verified directly, not just via the first-failure report).
+`PASS Main3dsFlow (11 checks, 12 arms adjudicated red)`.
+
+### F2 (Medium) — confirmed, fixed: the oracle's `Option` is 1, not 0
+
+`public int Option = 1;` (`ScriptRuntime.cs:214`), overwritten by
+`Option = ui.Settings.Gore ? 1 : 0` (`Viewer.cs:234`, and `:874` on resume) from
+`Settings.Gore = true` (`Flow/Settings.cs:75`). A default oracle run is gore ON.
+The port wrote `option = 0` in both frontends and in ten places in the `tick1`
+harness, under a comment calling that "the oracle's Option" — the opposite of the
+oracle's default, inherited from the header's `option = 0` field default.
+
+Now 1 in `script_runtime.h`, `main_3ds.cpp`, `mdk_linux/src/main.cpp` and every
+`tick1` harness. **The evidence the reviewer asked for, obtained:** with `option`
+set to 1 in the harness, `make -C tests/scripts` still prints
+`All cases match the oracle.` — so no golden distinguishes the two values, which
+independently confirms the reviewer's "no golden covers `if_option`" and means the
+default could be corrected at zero fidelity cost. The gore **debris** half
+(`ScriptRuntime.cs:1754-1764`, the 32×4 RNG draws) is not ported, so the random
+stream is unchanged either way; the two ported consumers are opcode 232
+`if_option` and opcode 129 `blow_off_parts` mode 2.
+
+**Pinned** by `testIfOptionBranchesOnTheRuntimeOption`: the fresh-runtime default
+is 1; `if_option 1` branches at Option 1 and falls through at 0; and an Option of
+2 must **not** take the `if_option 1` branch, which pins equality rather than
+truthiness. Opcode 129's mode-2 gate was already pinned both ways.
+
+### F3 (Medium) — confirmed, fixed with the executable invariant, not a stronger regex
+
+Nothing executes a respawn: the emulator's idle level-7 scene has one `spawn:`
+line and `health=100` on every row, and check 9 is a source read that cannot tell
+which device the sink landed on. A host harness cannot reach `main_3ds.cpp`
+(it includes `<3ds.h>`), so the frontend's own sequence is not executable here.
+What **is** executable is the invariant that sequence stands on, and it is now
+`testARebuiltRuntimeNeedsItsSinkReattached`: a `ScriptRuntime` is built, its
+mixer's device is given a counting sink and feeds it; the runtime is destroyed and
+rebuilt; the new mixer's device is **silent** until the sink is re-attached, and
+feeds it afterwards. That is the silent-level-after-the-first-death, reproduced on
+the host. The mixer **addresses** are deliberately not compared — the first
+runtime is freed before the second is allocated, so malloc hands back the same
+block and pointer inequality would have been an assertion about the allocator.
+(That check was written, ran, and failed on its first run; the behavioural
+assertion replaces it.)
+
+### F4, F5, F6 (Low) — confirmed, fixed / recorded
+
+`arena_space.h` no longer says "the 3DS frontend has no `ScriptRuntime`", and
+`script_runtime.h` no longer says the camera-track consumers are deferred — both
+were the opposite of the tree, and `currentArena_` now carries the frozen-until-
+`CrossedArena` warning at its declaration, which is where the next frontend batch
+will read it. The mixer-ownership comment says what is true: the **port** gives the
+runtime its own mixer by value, the **C#** shares the Viewer's one
+(`Viewer.cs:194`, `:207`; `ScriptRuntime.cs:323` takes a `SoundMixer`, it does not
+own one), and what is common to both is the one-mixer property that matters. Per
+F5b the evidence below leads with the **ELF** md5, because the `.3dsx` is not
+reproducible from a byte-identical ELF (review-5's lesson, repeated).
+
+F6 is a record, not a code change: `applyDisabledTriangles()` is called only from
+the `ScriptRuntime` constructor, so wiring the runtime onto the console made the
+group-flag `0x2` triangles not-solid there for the first time — the `LEVEL8 GUNT_2`
+invisible wall becomes passable, matching the C#. `Bsp` reads the flags live
+(`bsp.cpp:302`), so both the frontend's BSPs and the runtime's move together. No
+before/after collision measurement exists for level 8; it belongs to the level-8
+milestone.
+
+### Gates, verbatim
+
+* `make -C tests/scripts` → `All cases match the oracle.` (with `option = 1` in
+  every harness — the F2 evidence above)
+* `bash tools/check.sh` → `CHECK: ALL GATES PASSED`; per gate:
+  `PASS audit_c_with_classes 0 violations`, `PASS gates_vfp 0 blockers`,
+  `PASS audit_arm11_math contract clean`, `PASS audit_r11_idiv no candidates`,
+  `PASS gates_core_parity both targets link the same core`,
+  `SKIP gates_smdh no built .cia to read`,
+  `PASS gates_frames every pinned frame is deterministic and unchanged`,
+  `PASS gates_batch_integrity project invariants intact`
+* `DEVKITPRO=/opt/devkitpro make -C mdk_3ds` → links; `mdk.elf` md5
+  **`b0878389fd928948644bb204669d8bb6`** (the identity field; the `.3dsx` is
+  `6c9bb5dc7ebf731278ac133b568496c8` for this build and is not reproducible)
+* `tests/scripts/main_3ds_flow_test.sh` → `PASS Main3dsFlow (11 checks, 12 arms adjudicated red)`
+
+### Emulator evidence (AGENTS P8) — `mdk_3ds/**` changed
+
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 45 --grep 'spawn:|scripts:|ledger|health='`,
+**exit 0**. Display `:99` (dedicated Xvfb, already listening; nothing opened on
+the operator's screen). Emulator `mandarine.AppImage` md5 **`0d2adab6`** = the
+pinned r1.2.1. Software GL forced (`llvmpipe`), mono (`render_3d=0 factor_3d=0`),
+host audio muted. Lane `/tmp/mdk-emurun.3667515`.
+
+* `scripts: runtime ready (seed 1601142235, option 1)` — the console now reports
+  the oracle's default Option.
+* `spawn: feet=(0.0,4.0,12.0) yaw=90.0 health=100 arenas=19`, `scripts: runtime=1
+  objects=0 arena=- mix=runtime`, then `objects=7` from frame 2 on.
+* `frame 2520 ... health=100 ... plays=1 objects=7`; after the reap the log ends
+  at **frame 2580** (48 frame lines).
+* ledger `audio: frame=2580 secs=43.213 submitted=2156 done=2153 dropped=9
+  requeued=1 inDsp=3 dspframes=8844 dspdropped=0`.
+* **Still not observed:** a script sound (`plays=1` is Kurt's own landing) and a
+  respawn (one `spawn:` line, `health=100` on all 48 rows). The respawn half rests
+  on the new host test, not on this run. Emulator-green is not hardware-pass: no
+  Old-3DS measurement exists (P6/P8 stay open).
+
+### Frame
+
+`docs/frames/2026-11-09-b100-pin-follows-kurt.png` (+ `.txt`), level 3 / 320x240 /
+seed 1 / frame 1, `bad_percent=1.240 max_delta=247 mean_delta=0.1819`. The PNG is
+**byte-identical to batch 99's** and the sidecar says so and says why: a collision
+pin that only differs after a door crossing, and an `Option` no golden exercises,
+cannot move a frame the capture takes no input for.
+
+### Inherited dirty tree — not staged, deliberately
+
+The working tree arrived with `ralph-pi.sh`, `ralph/builder.md` (both `PROTECTED`),
+`ralph/LOOP_CONTEXT.md`, `docs/OWNER_DIRECTIVE_2026-11-05.md`,
+`tools/runner/test_review_state.sh`, `tools/ralph_pi_watchdog.sh` and an untracked
+`tools/reclaim_qwen_slots.sh` modified. `CONTINUATION.md`'s owner-action block
+already attributes that set to the operator and says in terms: *"builder must not
+stage these or set `MDK_OWNER_APPROVED=1`. Stage batch paths by name only."* So
+this batch staged its seven paths by name and left the operator's set in the
+worktree, where it still is. The builder rule "commit the inherited dirty tree
+first" does not override a standing owner action on protected files; the standing
+action wins, and the gate would have refused it anyway (`ralph/builder.md` and
+`ralph-pi.sh` are both in `PROTECTED`).
