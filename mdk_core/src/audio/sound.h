@@ -87,7 +87,7 @@
 //      on an Old 3DS (`OS_OLD_FCRAM_SIZE 0x8000000`, `3ds/os.h:49`) and 256 MiB
 //      on a New 3DS (`OS_FCRAM_SIZE`, `3ds/os.h:72`). SPEC.md 7.7, which is
 //      owner text, states the project's own budget as "6 MB of VRAM and 64 MB of
-//      RAM (32 MB of system heap on OG)". Neither is 16 MB.
+//      RAM (32 MB of "system" heap on OG)". Neither is 16 MB.
 //   3. What the KERNEL ACTUALLY GRANTS, which is the only one of the three that
 //      is a ceiling and is STILL UNMEASURED: `osGetMemRegionSize(MEMREGION_APPLICATION)`
 //      reads `OS_KernelConfig->memregion_sz[0]` (`3ds/os.h:219`), a runtime
@@ -95,14 +95,18 @@
 //      hardware or in the emulator, and a .3dsx request is not a grant.
 //
 // So the honest reading is the opposite of the one this header carried: on the
-// numbers that ARE sourced, a fully decoded level 8 (15.82 MB) fits inside the
-// 24 MiB the build asks for with 9.34 MB left for the level's geometry, textures,
-// sprites and BSP — it was never over a ceiling. Budget-and-evict, or freeing the
-// archive bytes once a sound has decoded, or streaming, stay open for the reasons
-// that survive the correction: nothing bounds the bank's growth, the same heap
-// holds the level itself, and the granted region has never been read. Do not
-// re-derive a fit-or-no-fit verdict from a memory figure that is not one of these
-// three.
+// numbers that ARE sourced, level 8's fully decoded BANK (15.82 MB) fits inside
+// the 24 MiB the build asks for, and 9.34 MB of that request is left over. The
+// second term of that sentence is the one that is NOT measured: nothing in this
+// repository measures what a level's own geometry, textures, sprites and BSP
+// need, so 9.34 MB is what is LEFT FOR them and not evidence they fit in it
+// (review-2 F3 of run-20261108-195620). The sentence this replaces said "level 8
+// fits", which is a verdict about a level drawn from a measurement about a bank.
+// Budget-and-evict, or freeing the archive bytes once a sound has decoded, or
+// streaming, stay open for the reasons that survive the correction: nothing
+// bounds the bank's growth, the same heap holds the level itself, and the granted
+// region has never been read. Do not re-derive a fit-or-no-fit verdict from a
+// memory figure that is not one of these three.
 //
 // THE COST, AND IT IS A HOT-PATH COST. A voice's mix loop is hot path by
 // AGENTS.md 2's second criterion (735 output frames a frame, no capture needed),

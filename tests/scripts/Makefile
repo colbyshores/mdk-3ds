@@ -44,6 +44,7 @@ COMMON_SOURCES := \
 	$(CORE)/formats/case_insensitive_path.cpp \
 	$(CORE)/formats/local_paths.cpp \
 	$(CORE)/formats/mdk_data.cpp \
+	$(CORE)/formats/mve.cpp \
 	$(CORE)/formats/sni.cpp \
 	$(CORE)/formats/wav.cpp \
 	$(CORE)/formats/sprite_animation.cpp \
@@ -84,6 +85,7 @@ SOURCES_VM := \
 	archive_guard_tests.cpp \
 	flow_tests.cpp \
 	layer_tests.cpp \
+	mve_audio_tests.cpp \
 	sprite_tests.cpp \
 	system_numerics_tests.cpp \
 	pica_matrix_tests.cpp \
@@ -108,6 +110,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh sprites_refusal_test.sh "$(CURDIR)/$(BUILD)/tick1"
 	@sh c3d_frame_test.sh
 	@sh ndsp_sink_test.sh
+	@sh ubsan_decode_test.sh
 	@sh main_3ds_flow_test.sh
 	@bash emurun_harness_test.sh
 	@$(BUILD)/tick1

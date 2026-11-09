@@ -163,6 +163,24 @@ GUARD_KEYWORD = re.compile(r"\b(if|else if|else|switch|for|while|do)\b")
 # read as somebody's body. Written as the negative of "must end in `{`, `}` or `;`"
 # on purpose: the positive form reds correct code after a label, and a gate that
 # reds correct code is a gate somebody relaxes.
+#
+# BUT A `;` IS ONLY A TERMINATOR OUTSIDE A PARAMETER LIST, and review-2 F2 of
+# run-20261108-195620 is the hole that made this predicate the ninth could-not-see
+# clause in a row: a `for` header wraps over three lines,
+#
+#     for (int32_t extra = 0;
+#          extra < 3; extra++)
+#         audioClock += elapsed;
+#
+# and the walk's last step landed on `for (int32_t extra = 0;`, which ENDS IN A `;`
+# — the clause separator inside the header's own parens. Read as a terminator it
+# returned "" (unconditional) one line short of the keyword, so a clock accumulated
+# THREE TIMES PER FRAME adjudicated PASS, while the identical statement with the
+# header on one line was red. The wrap alone moved it from red to green.
+# So a terminator only terminates when it sits at paren depth 0; see `paren_depth`
+# and the stop clause in `header_above`. `:` gets the same treatment for the same
+# reason (a wrapped `?:`), and `}` cannot appear inside a paren group this file
+# cares about.
 HEADER_STOP = re.compile(r"[;}:]\s*$")
 
 # A condition can wrap, so the header is read by a WALK and not by one line. The
@@ -174,7 +192,18 @@ HEADER_STOP = re.compile(r"[;}:]\s*$")
 # hole one wrapped line further out every time somebody formats a guard the long
 # way. The bound is STRUCTURAL instead — see `header_above`'s `floor`, which is
 # the index of the enclosing block's opener, already computed by `guard_of`.
-HEADER_STOP = re.compile(r"[;}:]\s*$")
+
+
+def paren_depth(text, lo, hi):
+    """How many `(` opened in text[lo:hi] and were not closed inside it.
+
+    Used as "at what nesting does this line's last character sit?", with `lo` the
+    `{` of the block that owns the statement. A block body at statement level has
+    no unclosed paren anywhere in it — every statement closes what it opens — so a
+    positive depth at a line's end means that `;` belongs to a header still open
+    above it, and not to a statement that finished. Comments and string literals
+    are already blanked by code(), so neither can contribute a paren."""
+    return text.count("(", lo, hi) - text.count(")", lo, hi)
 
 
 def header_above(text, pos, floor=0):
@@ -203,12 +232,21 @@ def header_above(text, pos, floor=0):
     while end > floor:
         start = text.rfind("\n", 0, end)
         line = text[start + 1:end]
+        line_end = end          # index just past this line's last character
         end = start
         if not line.strip():
             continue
         # The stop test goes FIRST: `if (paused) return;` names a keyword and ends a
-        # statement, and a line that ends a construct is nobody's header.
-        if HEADER_STOP.search(line):
+        # statement, and a line that ends a construct is nobody's header — UNLESS the
+        # character that ends it is a `;` or `:` inside a paren group that opened on
+        # this line and closes below it, which is a `for` header's clause separator
+        # and not a terminator (review-2 F2, and the header comment on HEADER_STOP).
+        # Note the direction this can only move: a stop that fires is a "no guard"
+        # answer, so making stops rarer can turn a PASS into a FAIL and never the
+        # other way round. The green-side risk is a stop that stops firing on code
+        # that really did finish, and `wrapped-for-body-above-the-accumulate` is the
+        # probe that would notice a depth measured from the wrong place.
+        if HEADER_STOP.search(line) and paren_depth(text, floor, line_end) <= 0:
             return ""
         if GUARD_KEYWORD.search(line):
             return line
@@ -654,6 +692,29 @@ ARMS = [
          "            camera.position.z > 0.0f && camera.forward.z < 1.0f &&\n"
          "            camera.up.z > -1.0f && player.facing() < 6.0f)\n"
          "            audioClock += elapsed;", 1))),
+    # Review-2 F2: the guard whose header WRAPS, which is a different hole from a
+    # condition that wraps because a `for` header puts a `;` on a continuation line
+    # and the stop test read that as the end of a statement. These are the
+    # reviewer's own mutants, reproduced as PASSes against batch 95: the clock
+    # triple-counted per frame, and the device fed on some frames and not others,
+    # both behind a three-line `for` header. The one-line spelling of the same two
+    # constructs was already red, which is what made it a formatting escape and not
+    # a missing rule.
+    ("frontend-accumulates-the-clock-in-a-wrapped-for-guard",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
+         "            audioClock += elapsed;", 1))),
+    ("frontend-feeds-the-device-in-a-wrapped-for-guard",
+     lambda s, m: (s, m.replace(
+         "mixer.device().update(elapsed);",
+         "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
+         "            mixer.device().update(elapsed);", 1))),
+    ("frontend-feeds-the-mixer-in-a-wrapped-for-guard",
+     lambda s, m: (s, m.replace(
+         "mixer.update(elapsed);",
+         "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
+         "            mixer.update(elapsed);", 1))),
 ]
 
 # The other side of a guard test: it must not red CORRECT code, and a mutation
@@ -693,6 +754,27 @@ PROBES = [
          "audioClock += elapsed;\n        if (frame > 0u &&\n"
          "            audioClock < 3600.0f)\n            mixer.listenFromCamera(camera);",
          1))),
+    # The green half of review-2 F2's fix. A wrapped `for` sits directly above the
+    # accumulate and its BODY is a one-line statement, so the accumulate is not in
+    # the loop at all. The walk meets the body's `;` first, and that one really is
+    # at paren depth 0 — the header closed two lines up — so it must still stop.
+    # If the depth were measured from the wrong place (the statement instead of the
+    # block opener, say) the header's `(` would still be counted here, the stop
+    # would not fire, the walk would reach `for`, and correct code would go red.
+    ("wrapped-for-body-above-the-accumulate",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
+         "            mixer.listenFromCamera(camera);\n        audioClock += elapsed;",
+         1))),
+    # And the same construct with the header on one line, which was never the hole
+    # but is the case a naive "does this line contain `for (`" fix would break: the
+    # whole header and its body sit on one line ending in `;` at depth 0.
+    ("one-line-for-body-above-the-accumulate",
+     lambda s, m: (s, m.replace(
+         "audioClock += elapsed;",
+         "for (int32_t extra = 0; extra < 3; extra++) mixer.listenFromCamera(camera);\n"
+         "        audioClock += elapsed;", 1))),
 ]
 
 print("ndsp_sink: %s — %d checks, %d mutation arms, %d correct-code probes"

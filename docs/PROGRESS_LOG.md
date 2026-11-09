@@ -18228,3 +18228,219 @@ were closed. Deferred: nothing. Owner-only: nothing new.
   session, so the prior-solution lookup ran on `pi-knowledge` (`mdk-sdl` KB) and the repository only.
   A Cognee graph lookup did **not** happen and is not claimed to have happened; the missing MCP servers
   are a session configuration fault to report, not a licence to skip the lookup silently.
+
+---
+
+## Iteration 124 — batch 96: review-2 of run-20261108-195620 — the guard's stop test read a `for` header's `;` as a statement terminator, and the MVE half of batch 95's UB fix had no test at all
+
+**Review-2 of `logs/ralph-pi/run-20261108-195620`, scope `5bf0c61c..e3600325` + the uncommitted
+operator set. Nine findings: no Critical, one High. Eight are dispositioned by this batch; F1 is
+confirmed on the merits and escalated as owner-only, with new evidence about why a batch cannot land
+it and why a repo-only fix would not take effect anyway.**
+
+### Prior-solution lookup
+
+* **`pi-knowledge` (`mdk-sdl` KB, 4577 chunks / 973 files)** — searched for the guard-walk class and
+  for the watchdog/`RestartPreventExitStatus` contract. The second search returned `ralph-pi.sh`'s own
+  text on the prevent list, which is the contract F1 is about. The first returned nothing on the
+  wrapped-`for` class, which is consistent with it being new in this batch.
+* **Obsidian** — no `obsidian_*` tools in this session (session-config fault, AGENTS P9), so the
+  fallback disk read was used, narrowly: `grep -rl "RestartPreventExitStatus|reset-failed"` over
+  `/mnt/nas/Vaults/port-docs`, then two targeted reads of
+  `50-tooling/ralph-pi-supervision-and-wedge-prevention.md`. **That note already carries the rule F1
+  asks for** — its install recipe, line 237, says the watchdog must "heal `failed` (**skip the unit's
+  fail-closed codes**; skip `ExecMainStatus=0`)". The uncommitted block implements that sentence with
+  the parenthetical dropped. Recorded, not re-derived.
+* **Cognee** — no `cognee_*` tools in this session. A graph lookup did **not** happen and is not
+  claimed.
+
+### F1 (High) — confirmed, not rebutted, and not landable by a batch
+
+The uncommitted `tools/ralph_pi_watchdog.sh` heals any unit whose `ActiveState` is `failed`:
+`systemctl reset-failed` then `systemctl start`, every 5 minutes. The shipped unit says
+`RestartPreventExitStatus=2 6 7` (`tools/install_ralph_pi_service.sh:75`), and this loop documents
+that list as authoritative (`ralph-pi.sh:186-190`: "a reviewer that keeps dying (7) is prevented and
+is not restarted"). Those three exits are the loop's deliberate fail-closed stops: **2** = another
+loop is alive (`ralph-pi.sh:355`, `:479`), **6** = `:805`, `:855`, **7** = reviews lost without a
+verdict (`:621`, `:688`, `:695`, `:1247`). `reset-failed` also clears the start-rate counters, so
+`StartLimitBurst=3`/`StartLimitIntervalSec=30min` never trips and the stop becomes an unbounded
+5-minute restart. **The reviewer is right on the mechanism.**
+
+Three facts this batch established, none of which the review had:
+
+1. **No commit contains it.** `git show HEAD:tools/ralph_pi_watchdog.sh` is the shipped
+   `systemctl is-active --quiet "$SERVICE" || exit 0` with no heal block. The block exists only in the
+   worktree, inside the operator's uncommitted hunk.
+2. **It is nevertheless live.** `md5sum` gives `241add59fd53178a6ee1136ed80a9736` for BOTH
+   `/usr/local/libexec/ralph-pi-mdk-watchdog` and the worktree file, so the installer has already
+   been re-run and the heal is executing on the timer now (`systemctl list-timers` shows
+   `ralph-pi-mdk-watchdog.timer`, `OnUnitActiveSec=5min`). This is not a latent repo defect; it is
+   running.
+3. **A repo-only fix cannot take effect.** The installer does
+   `install -D -o root -g root -m 0755 "$ROOT/tools/ralph_pi_watchdog.sh" "$WATCHDOG_BIN"`, so what
+   systemd executes is a root-owned copy. Editing the repository file changes nothing until a root
+   re-install.
+
+And a batch may not stage the file regardless: the heal lines are **new lines inside the operator's
+uncommitted hunk**, so any edit to them is inseparable from committing that hunk — the exact laundering
+that review-4 F2 and review-10 F8 forbid, and that batches 83-85 and 88-95 each declined. The
+disposition is therefore: **confirmed, escalated, patch supplied for the owner**, who is the only
+party that can both edit the file and re-install it. The patch, following the vault's own recipe:
+
+```sh
+if ! systemctl is-active --quiet "$SERVICE"; then
+    state="$(systemctl show -p ActiveState --value "$SERVICE" 2>/dev/null || true)"
+    if [ "$state" = "failed" ]; then
+        code="$(systemctl show -p ExecMainStatus --value "$SERVICE" 2>/dev/null || true)"
+        case " 2 6 7 " in
+            *" $code "*)
+                logger -t ralph-pi-watchdog "service failed with prevent-status $code; NOT healing (RestartPreventExitStatus)"
+                ;;
+            *)
+                logger -t ralph-pi-watchdog "service is failed (status ${code:-?}); reset-failed + start"
+                systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
+                systemctl start "$SERVICE" >/dev/null 2>&1 || true
+                ;;
+        esac
+    fi
+    exit 0
+fi
+```
+
+(`ExecMainStatus` is 0 for a signal-killed main process, so a `0` here means a clean exit and should
+also be left alone; the owner may prefer `Result` — `core-dump`/`signal`/`timeout` — as the heal
+condition, which is what the review suggested.)
+
+### F2 (Medium) — the ninth could-not-see clause, in the guard walk's stop test
+
+Reproduced before touching anything, exactly as the reviewer described: with the clock accumulated
+inside a three-line `for` header,
+
+```c
+for (int32_t extra = 0;
+     extra < 3; extra++)
+    audioClock += elapsed;
+```
+
+`ndsp_sink_test.sh` adjudicates **PASS**; the identical statement with the header on one line is
+**red**. The cause is `HEADER_STOP = r"[;}:]\s*$"` meeting `for (int32_t extra = 0;`, whose `;` is a
+clause separator inside the header's own parentheses and not the end of a statement — so the walk
+returned "no guard" one line short of the keyword. Batch 95's fix removed a *line-count* bound and
+replaced it with a structural one, and was right to; this was the second bound hiding in the same
+function, and it was a bound on how a header may be formatted.
+
+The fix is that **a terminator only terminates at paren depth 0**. `paren_depth(text, floor, hi)`
+counts `(` minus `)` from the enclosing block's `{` (the walk's existing `floor`) to the line's end; a
+block body at statement level has no unclosed paren anywhere in it, so a positive depth at a line's
+last character means that `;` belongs to a header still open above. `:` gets the same treatment for
+the same reason (a wrapped `?:`). The direction is worth stating because it bounds the risk: a stop
+that fires answers "no guard", so making stops rarer can only turn a PASS into a FAIL and never the
+reverse; the risk is a stop that stops firing on code that really did finish, and that is what the new
+green probes are for.
+
+**Mutation-checked, both ways.** Three new arms (the reviewer's wrapped-`for` mutant on the clock, and
+two more on the mixer and device feeds) were run against a copy of the gate with the pre-fix stop
+clause restored: `only 30 of 33 arms adjudicated red`, and the three named failures are exactly the
+new arms. Against the fixed gate: `PASS NdspSink (18 checks, 33 arms adjudicated red, 9 probes
+green)`. Two new probes keep the gate from reds-correct-code: a wrapped `for` whose body is a one-line
+statement directly above the accumulate (the walk must still stop at the body's `;`, which is at depth
+0 — a depth measured from the wrong origin would fail this), and the same with the header on one line.
+
+### F4 (Low) — the MVE half of batch 95's fix had no test, and now has two
+
+`grep -ril mve tests/` returned only C# build output: nothing in the C++ suite could reach
+`Mve::decodePcm`, so the second of batch 95's two UB fixes was inspection-only. The C# twin
+(`tests/Mdk.Formats.Tests/MediaTests.cs:30`) loads the real `MISC/FLIC/MDKBZK.MVE` from the gitignored
+game tree, which the oracle boundary forbids a batch depending on — and a check that needs the data
+tree skips on a machine without it, which makes it a pass generator (the `archive_guard_tests.h`
+argument). So `tests/scripts/mve_audio_tests.cpp` builds its own one-chunk movie and asserts the
+oracle's arithmetic:
+
+* **mono over the whole byte domain** — all 256 values, each left and right compared as a bit pattern
+  against `(b - 128) * 256 * (1/32768)`, the C#'s `(bytes[p] - ByteMiddle) << 8` + `SampleScale`
+  (`Mve.cs:246`, `:258`, `:46-47`) written in the defined form;
+* **stereo pair order** — every shipped game sound is mono, which is exactly how batch 95's stereo bug
+  survived in the other sink, so the MVE pair is reached on purpose;
+* **the 16-bit branch** — the branch that was *not* the fix, so a repair aimed at the wrong `step`
+  cannot pass for free.
+
+The test earned its keep on its first run: it caught that `run()` reads the init-audio flags as
+`binU16(at+2)`, which is the **upper half of the same u32** it reads at `at` for the frame time
+(`Mve.cs` does the same overlap), so a body laid out as four separate u16 fields silently decodes as
+"flags 0". It also caught me asserting `channels()`/`sampleRate()` before `nextFrame()`, which parses
+the opcodes — a default compared against a default.
+
+### And the pin that a value test cannot be: `ubsan_decode_test.sh`
+
+The multiply and the shift emit the same `lsl #8` on both targets, so **no value test can pin this
+class**: putting the shift back changes no sample, no golden and no frame. Batch 95 knew this and ran
+UBSan in `/tmp`, committed nothing, and recorded a claim nobody can reproduce — the exact
+asserted-provenance shape this loop keeps being told about. Now committed and wired into
+`make -C tests/scripts`: `tests/scripts/ubsan_decode_test.sh` recompiles
+`ubsan_decode_probe.cpp` + `mve_audio_tests.cpp` + `sound.cpp` + `mve.cpp` + `bin_reader.cpp` with
+`-fsanitize=undefined -fno-sanitize-recover=all` on every run (no incremental build to go stale),
+fails on a missing compiler rather than skipping, and greps the run log it just wrote for
+`runtime error`. Both reversions were measured against it:
+
+```
+mve.cpp    `* kByteScale` -> `<< 8`  ->  mve.cpp:319:82: runtime error: left shift of negative value -128
+sound.cpp  `* kByteScale` -> `<< 8`  ->  sound.cpp:67:68: runtime error: left shift of negative value -128
+```
+
+### F3, F5, F6, F7, F8, F9 (Low) — the record, corrected
+
+* **F3** — `sound.h` said "a fully decoded level 8 (15.82 MB) fits … with 9.34 MB left for the level's
+  geometry, textures, sprites and BSP". The first clause is measured (`tick1 mixsize`), the second is
+  not: nothing in this repository measures a level's own heap need. It now says the **bank** fits and
+  that 9.34 MB is what is *left for* the level and not evidence it fits in it.
+* **F5** — `sound.cpp`'s own header said "the 8-bit pre-scale is an int shift" fifteen lines above the
+  block arguing that it is a multiply. Now "an int multiply (and not a shift — see `kByteScale`)".
+* **F6** — `audio_sink_tests.cpp` still carried the struck "16 MB of FCRAM". Now the 24 MiB
+  `__heap_size` the crt0 header asks for.
+* **F9** — the SPEC.md 7.7 quotation in `sound.h` dropped the inner quotes around `"system"`. Restored;
+  a quotation is not a paraphrase.
+* **F8** — `HEADER_STOP` was assigned twice, identically, from batch 95's edit. One deleted.
+* **F7** — batch 95's sidecar is immutable by `gates_batch_integrity`, so the convention is carried
+  forward instead: this batch's sidecar carries the "why the picture did not move" paragraph, the
+  emulator-evidence statement, and the ELF identity, and states that the PNG is byte-identical to
+  batches 93's and 95's (`6646adf1…`) as a measurement.
+
+### Gates, as run
+
+```
+make -C tests/scripts   -> All cases match the oracle.            (PASS; includes the new
+                                                                     PASS MveAudioDecode and
+                                                                     PASS UbsanDecode)
+bash tools/check.sh     -> CHECK: ALL GATES PASSED                (PASS; gates_vfp blockers=0 under
+                                                                     the freeze, audit_arm11_math
+                                                                     CONTRACT CLEAN, audit_r11_idiv
+                                                                     no candidates, core_parity both
+                                                                     targets, gates_frames CONTRACT
+                                                                     CLEAN, gates_smdh SKIPPED — no
+                                                                     .cia, batch integrity PASS,
+                                                                     audit_c_with_classes 0)
+make -C mdk_3ds         -> 3DSX mdk.3dsx                          (PASS, DEVKITPRO=/opt/devkitpro
+                                                                     DEVKITARM=/opt/devkitpro/devkitARM)
+```
+
+`mdk.elf` md5 `c8295e96663ca33be481df2e77613e46`, `.text` `0x057ba0` — **both identical to batch 95's
+recorded values**, which is the measured form of "this batch changed no shipped instruction": the only
+core changes are comments. No `mdk_3ds/**` file is in the diff, so AGENTS P8 emulator evidence is not
+owed; the sidecar says so and names the build the batch-95 emulator run measured.
+
+### Still open after this batch
+
+* **F1, the watchdog heal, is LIVE and unfixed** — owner-only, patch above. Until it is applied, a
+  deliberate exit 2/6/7 is restarted every five minutes with the burst counter cleared.
+* **`osGetMemRegionSize(MEMREGION_APPLICATION)` on real hardware** — the only number that finishes
+  F3's honest version, and now also the level-cost term F3 names. Hardware-only; nothing in the tree
+  calls it.
+* **Bank eviction with a real budget** (item 6c's second half): unbounded growth, not a ceiling.
+* **Item 6d** — no `ScriptRuntime` on the 3DS frontend, so script/ambient/object sounds cannot play.
+* **The mix loop's pins are hot-only R-rule pins on code with no capture**, and three `@vfp-exempt`
+  pins in `sound_device.cpp` still do not parse against `gates_vfp.EXEMPT_RE` (batch 95's
+  housekeeping item, unchanged).
+* **`gates_smdh` is SKIPPED, not passed**, until a `.cia` is built.
+* **Original-3DS performance and memory behaviour remain UNMEASURED.**
+* **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools in this session; the vault
+  lookup was the disk-only fallback and the Cognee graph lookup did not happen.

@@ -3,7 +3,8 @@
 //
 // The decode writes the file's int16 domain, not the oracle's float, and does
 // not touch a float at all: the bias is an int subtract, the 8-bit pre-scale is
-// an int shift, and the 16-bit path is a byte pair. The scale that makes the
+// an int multiply (and not a shift — see kByteScale), and the 16-bit path is a
+// byte pair. The scale that makes the
 // oracle's value is applied at the read, in Sound::sampleAt(), once per tree.
 // See sound.h for why the two are the same float bit for bit.
 // ============================================================================

@@ -43,6 +43,7 @@
 #include "game/player.h"
 #include "util/math_minmax.h"
 #include "layer_tests.h"
+#include "mve_audio_tests.h"
 #include "pica_matrix_tests.h"
 #include "scripts/debris.h"
 #include "scripts/script_runtime.h"
@@ -6245,6 +6246,15 @@ int main() {
     failures += sinkFailures;
     if (sinkFailures == 0) {
         printf("PASS AudioSinkSeam\n");
+    }
+
+    // The MVE audio decode: the 8-bit PCM path over the whole byte domain, the
+    // stereo pair order, and the 16-bit branch, against the C#'s own expression
+    // on a movie built in the test (mve_audio_tests.h).
+    const int mveFailures = mdk::test::runMveAudioTests();
+    failures += mveFailures;
+    if (mveFailures == 0) {
+        printf("PASS MveAudioDecode\n");
     }
 
     if (failures == 0) {

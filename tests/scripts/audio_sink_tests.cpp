@@ -270,9 +270,12 @@ void testListenerBasis() {
 // ---------------------------------------------------------------------------
 void testSampleStoreExact() {
     // The store's width is the batch's claim: level 3's 3,234,976 decoded samples
-    // are 6,469,952 bytes here and were 12,939,904 as float, against 16 MB of
-    // FCRAM. Pinned so widening it is a red test and not a quiet regression; the
-    // same fact is a static_assert in sound.h.
+    // are 6,469,952 bytes here and were 12,939,904 as float. What it is measured
+    // AGAINST is the 24 MiB the build's crt0 header asks for (`__heap_size =
+    // 0x01800000`); the "16 MB of FCRAM" this comment used to cite is a figure
+    // neither this console nor this build has, and sound.h carries the three
+    // numbers that are sourced. Pinned so widening the store is a red test and not
+    // a quiet regression; the same fact is a static_assert in sound.h.
     expect("the sample store is two bytes per sample",
            (long long)sizeof(audio::Sound::Samples::value_type), 2);
 
