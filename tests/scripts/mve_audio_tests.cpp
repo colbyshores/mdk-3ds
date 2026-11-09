@@ -4,13 +4,21 @@
 // WHAT IT COVERS. Both halves of the MVE audio decode: the uncompressed PCM path
 // (both widths, mono and stereo) and the INTERPLAY DPCM path — the delta table,
 // the clamp, the per-channel predictors, the stereo alternation, the per-chunk
-// re-seed — plus the silence opcode and the two broken-size shapes. Batch 96
-// added the PCM half and left the compressed half untested, which review-3 of
-// run-20261108-195620 named as its open question 2: "the MVE compressed (DPCM)
-// path and SilenceFrame are still unreached by any test ... 'the MVE audio
-// decode' now reads as covered when half of it is not." That gap is closed here,
-// and it paid for itself the first time it was run: the size guard in
-// decodeAudio is a heap-buffer-overflow pin, below.
+// re-seed — plus the silence opcode and EVERY bounds failure either decode can be
+// asked to refuse: a declared size below one predictor per channel (batch 97), a
+// frame whose declared data runs past the end of the file, a frame that
+// over-declares its size while more opcodes follow it, and a file cut mid-value in
+// either codec. Batch 96 added the PCM half and left the compressed half untested,
+// which review-3 of run-20261108-195620 named as its open question 2: "the MVE
+// compressed (DPCM) path and SilenceFrame are still unreached by any test ... 'the
+// MVE audio decode' now reads as covered when half of it is not." That gap is
+// closed here, and it paid for itself the first time it was run: the size guard in
+// decodeAudio is a heap-buffer-overflow pin, below. Review-4 of the same run then
+// found that two of those bounds — the delta loop's file bound and the oracle's
+// `p < end` — were still unreachable by any case, and the battery that checked
+// them found two more (the seed loop's file bound and decodePcm's); all four are
+// pinned below and each is proven to fire by the mutation run in this batch's
+// PROGRESS_LOG entry.
 //
 // WHY THIS FILE EXISTS AT ALL. Batch 95 removed a signed left shift from TWO
 // 8-bit PCM decodes — audio/sound.cpp and formats/mve.cpp — and pinned only the
@@ -207,6 +215,20 @@ std::vector<uint8_t> buildAudioMovie(int32_t audioFlags, uint8_t initVersion,
     put16(bytes, (uint16_t)payload.size());
     put16(bytes, 0);                      // chunk type
     bytes.insert(bytes.end(), payload.begin(), payload.end());
+    return bytes;
+}
+
+// A truncated file: `drop` bytes are removed from the END of an otherwise honest
+// movie, while the chunk and opcode headers still declare the ORIGINAL lengths.
+// That is what makes an opcode promise more data than the file contains, and it
+// is the only way to reach the file bounds inside the audio decodes: with an
+// honest tail the loop's own `p < end` bound stops it on the last real byte, so
+// the file bound is unreachable — and an unreachable bound is an unpinned bound,
+// and an unpinned bound is a bound that comes back. (review-4 F1 of
+// run-20261108-195620.)
+std::vector<uint8_t> truncateTail(const std::vector<uint8_t>& movie, int32_t drop) {
+    std::vector<uint8_t> bytes = movie;
+    bytes.resize(bytes.size() - (size_t)drop);
     return bytes;
 }
 
@@ -724,6 +746,202 @@ void testDpcmSizeBelowThePredictorsIsBroken() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// THE SECOND OOB PIN: A FRAME WHOSE DECLARED DATA RUNS PAST THE END OF THE FILE.
+// The guard below the seed loop is a DIFFERENT bound from the one above it. The
+// seed guard tests the file; this one tests the file against an `end` that comes
+// from the opcode's declared length, which a truncated file leaves past EOF.
+// The C# reads `_bytes[p]` with no bound at all (Mve.cs:230), so at p ==
+// _bytes.Length it raises IndexOutOfRange, and mve.h documents that this port
+// answers that throw with FrameStatus::Broken — the same argument batch 97 made
+// for the seed guard, against a guard that guard could not reach.
+//
+// Why the shapes below are the shapes that reach it. `end` is the opcode's
+// declared data end, so with an honest tail `p < end` stops the loop on the last
+// real byte and the guard can never fire; the file has to be cut. And the frame
+// has to over-declare `size` (count 50 here) so that `written < count` cannot be
+// what stops it either — with both other bounds removed, only the file bound is
+// left, which is exactly the read the guard exists to refuse.
+//
+// Measured both ways (mutation run recorded in docs/PROGRESS_LOG.md for this
+// batch): shipped code gives Broken with zero samples on all three shapes; with
+// `if (p >= fileSize) return false;` deleted, the plain suite FAILS on the status
+// (End where the oracle says Broken) and the ASan build reports
+// `heap-buffer-overflow ... READ of size 1` at the delta read.
+// ---------------------------------------------------------------------------
+void testDpcmDataRunningPastTheEndOfFileIsBroken() {
+    struct Case {
+        const char* label;
+        int32_t flags;
+        int32_t seeds;    // seed SHORTS, one per channel
+        int32_t deltas;   // delta bytes the payload carries
+        int32_t drop;     // bytes removed from the end of the file
+    };
+    const Case cases[] = {
+        // The file ends ON the seed: the seed loop still succeeds (its own bound
+        // is `p + 2 > fileSize`, which is false when the seed is the last thing
+        // in the file) and the very first delta read is the one out of bounds.
+        {"mono frame truncated on its seed", 0, 1, 2, 2},
+        // One delta byte IS present and is consumed; the second is not. This is
+        // the reviewer's shape: a frame that declares past EOF with a delta byte
+        // still readable, so the loop is genuinely mid-decode when it runs off.
+        {"mono frame truncated one delta short", 0, 1, 3, 2},
+        // Both seeds land, so the seed guard cannot be credited with this one.
+        {"stereo frame truncated on its seeds", kFlagStereo, 2, 2, 2},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        std::vector<int16_t> seeds((size_t)cases[i].seeds, 1000);
+        std::vector<uint8_t> deltas((size_t)cases[i].deltas, 1);
+
+        AudioChunk chunk;
+        chunk.declaredSize = 100;                 // count 50: never the binding bound
+        chunk.payload = dpcmBody(seeds, deltas);
+        std::vector<AudioChunk> chunks;
+        chunks.push_back(chunk);
+
+        const std::vector<uint8_t> movie = truncateTail(
+            buildAudioMovie(cases[i].flags | kFlagCompressed, kVersion1, chunks),
+            cases[i].drop);
+
+        formats::Mve mve;
+        if (!decodeAll(movie, &mve, cases[i].label, true)) {
+            return;
+        }
+        expect("a frame that runs off the file decodes no audio", (long long)mve.audio().size(),
+               0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// THE `p < end` HALF OF THE LOOP CONDITION, PINNED. Mve.cs:228 is
+// `while (count < samples.Length && p < end)` — STRICTLY less than, and `end` is
+// the opcode's declared data end, NOT the end of the file. That bound is what
+// makes the decoder stop on the right byte when a frame over-declares `size` and
+// there are more bytes after it: the next opcode's bytes belong to the next
+// opcode.
+//
+// No earlier case reaches it. Every other DPCM case here either stops on
+// `written < count` (testDpcmMonoAccumulatesInOneChannel declares exactly the
+// samples it carries) or on a file bound, so `p <= end` — which reads one byte
+// too many and hands the mix a sample built from the NEXT opcode's length field —
+// passed the whole suite unnoticed (review-4 F2 of run-20261108-195620).
+//
+// The shape that pins it: frame one declares count 50 but carries a seed and one
+// delta, and frame two follows in the same chunk, so the byte at `end` is a real
+// byte (the next opcode's declared length, 7) and a mutation reads it instead of
+// stopping. The oracle stops: 2 samples from frame one, 2 from frame two.
+// ---------------------------------------------------------------------------
+void testDpcmStopsAtTheFrameEndAndNotPastIt() {
+    std::vector<AudioChunk> chunks;
+
+    AudioChunk over;
+    over.declaredSize = 100;                      // count 50, payload supplies 2
+    std::vector<int16_t> seedA;
+    seedA.push_back(1000);
+    std::vector<uint8_t> deltaA;
+    deltaA.push_back(1);                          // kDeltas[1] == +1
+    over.payload = dpcmBody(seedA, deltaA);
+    chunks.push_back(over);
+
+    AudioChunk next;
+    next.declaredSize = 4;                        // count 2, exactly what it carries
+    std::vector<int16_t> seedB;
+    seedB.push_back(7);
+    std::vector<uint8_t> deltaB;
+    deltaB.push_back(1);
+    next.payload = dpcmBody(seedB, deltaB);
+    chunks.push_back(next);
+
+    const std::vector<uint8_t> movie = buildAudioMovie(kFlagCompressed, kVersion1, chunks);
+    formats::Mve mve;
+    if (!decodeAll(movie, &mve, "over-declaring dpcm movie", false)) {
+        return;
+    }
+    expect("the frame that over-declares stops at its own end",
+           (long long)mve.audio().size(), 4);
+    if (mve.audio().size() != 4) {
+        return;
+    }
+
+    // 1008 is what a decoder that reads bytes_[end] gets for sample 2: the next
+    // opcode's declared length is 7, and kDeltas[7] is +7, so the wrong byte does
+    // not merely add a sample, it changes one. Both are asserted.
+    const int32_t want[4] = {1000, 1001, 7, 8};
+    for (int i = 0; i < 4; i++) {
+        char label[80];
+        snprintf(label, sizeof(label), "frame-end sample %d", i);
+        expectBits(label, mve.audio()[i].left, (float)want[i] * kSampleScale);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// THE FILE BOUNDS IN THE SEED LOOP AND IN THE UNCOMPRESSED DECODE, PINNED. The
+// mutation battery that closed review-4 F1 found two more bounds of exactly this
+// class that nothing reached, and they are the same defect one loop over: a read
+// whose only bound is a declared length that a truncated file leaves past EOF.
+//
+//   seed loop  `if (p + 2 > fileSize) return false;`  — deleting it was silent
+//              under UBSan AND under AddressSanitizer (arm M3 below: NOT CAUGHT,
+//              exit 0), because the bytes it reads are still inside the movie
+//              vector's own allocation, so only a VALUE assertion can see it and
+//              no earlier case made one.
+//   decodePcm  `if (p + step > fileSize) return false;` — same, and the C# has no
+//              bound here either (Mve.cs:246 reads Bin.S16(_bytes, p) / _bytes[p]
+//              with no test), so IndexOutOfRange is again the oracle's answer and
+//              Broken is again this port's.
+//
+// Every shape is the same two lies: a frame that declares more samples than the
+// file holds, and a file that stops mid-value. The 16-bit case is the one that
+// proves `step` is honoured: a file ending one byte into a pair must refuse the
+// whole pair rather than read half of it and shift the rest of the stream.
+// ---------------------------------------------------------------------------
+void testAudioDataRunningPastTheEndOfFileIsBrokenInBothDecodes() {
+    struct Case {
+        const char* label;
+        int32_t flags;          // codec flags; kFlagCompressed selects the DPCM path
+        int32_t declaredSize;   // the frame's own u16 sample-byte count
+        int32_t bodyBytes;      // sample bytes actually present
+        int32_t drop;           // bytes removed from the end of the file
+    };
+    const Case cases[] = {
+        // Compressed mono: the seed short is cut in half, so the seed loop's own
+        // bound is the one that has to refuse it.
+        {"dpcm seed truncated mid-short", kFlagCompressed, 100, 2, 1},
+        // Stereo: the FIRST seed is whole and the SECOND runs off the end, so the
+        // loop is genuinely mid-seed rather than failing on its first read.
+        {"dpcm second stereo seed truncated", kFlagCompressed | kFlagStereo, 100, 5, 3},
+        // Uncompressed 8-bit: 100 bytes declared, 3 present, one removed, so the
+        // fourth byte is the read out of bounds.
+        {"pcm 8-bit truncated", 0, 100, 3, 1},
+        // Uncompressed 16-bit: step is 2, so a file that ends one byte into a
+        // pair must refuse the pair rather than read half of it. Three bytes are
+        // present and six declared: the first pair lands, the second straddles
+        // EOF. A drop that left a whole number of pairs would exit the loop on
+        // `p + step <= end` instead and never reach the bound.
+        {"pcm 16-bit truncated mid-short", kFlag16Bit, 100, 6, 3},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        std::vector<uint8_t> body((size_t)cases[i].bodyBytes, 0x40);
+        AudioChunk chunk;
+        chunk.declaredSize = cases[i].declaredSize;
+        chunk.payload = body;
+        std::vector<AudioChunk> chunks;
+        chunks.push_back(chunk);
+
+        const std::vector<uint8_t> movie =
+            truncateTail(buildAudioMovie(cases[i].flags, kVersion1, chunks), cases[i].drop);
+
+        formats::Mve mve;
+        if (!decodeAll(movie, &mve, cases[i].label, true)) {
+            return;
+        }
+        expect("a frame that runs off the file decodes no audio",
+               (long long)mve.audio().size(), 0);
+    }
+}
+
 }  // namespace
 
 namespace mdk {
@@ -742,6 +960,9 @@ int runMveAudioTests() {
     testVersionZeroClearsCompression();
     testSilenceFrameCountIsBytesOverFrameSize();
     testDpcmSizeBelowThePredictorsIsBroken();
+    testDpcmDataRunningPastTheEndOfFileIsBroken();
+    testDpcmStopsAtTheFrameEndAndNotPastIt();
+    testAudioDataRunningPastTheEndOfFileIsBrokenInBothDecodes();
     return failures;
 }
 

@@ -1,0 +1,30 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-09T03:38:25Z at 9bc48ec
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the picture did not move: this batch changed NO shipped source at all. Every file in the
+diff is under tests/ (two new MVE audio bounds tests in mve_audio_tests.cpp and a stale PASS
+line in ubsan_decode_probe.cpp) plus these docs, so the 3DS ELF is byte-identical to batch 97's,
+96's and 95's: md5 c8295e96663ca33be481df2e77613e46, .text 0x057ba0, re-measured after the build
+this frame was captured from. Batch 97's sidecar had to argue that an identical ELF was a link
+fact rather than a no-op (no Mve symbol survives gc-sections); this batch does not even have that
+claim to make — there is no changed instruction to account for. What the batch DOES change is
+what the test suite can see, and that is measured rather than asserted: a mutation battery of
+eight arms, each deleting or widening exactly one bound in the two audio decodes, is recorded in
+docs/PROGRESS_LOG.md for this batch, and every arm is now caught. Two of them (the seed loop's
+file bound and decodePcm's) were NOT caught before this batch and are the reason it exists: the
+review asked for one unpinned guard and the battery that checked it found three more of the same
+class. The frame is a graphics capture, so the expected result is a byte-identical picture, and
+that is measured: this PNG's sha256 is
+6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8, identical to
+docs/frames/2026-11-09-b97-mve-dpcm-guard.png (batch 97),
+docs/frames/2026-11-09-b96-mve-ubsan-pinned.png (batch 96),
+docs/frames/2026-11-08-b95-ub-audio-clock.png (batch 95) and
+docs/frames/2026-11-06-review9-remediation.png (batch 93), and the gap line above is unchanged at
+bad_percent=1.240, max_delta=247, mean_delta=0.1819. The capture ran against a build-linux/mdk
+rebuilt from this tree, not against a stale binary.
+emulator evidence: not owed for this batch. AGENTS P8 requires it of a batch that changes
+mdk_3ds/**, and no file under mdk_3ds/ is in this diff; the ELF above is the same bytes the
+batch-95 emulator run measured (submitted/(secs x 50) = 0.9967, ndsp slope 204.549/s), so
+re-running the harness would re-measure a build that has not changed. What did move is the test
+suite, and it is pinned by make -C tests/scripts (All cases match the oracle, PASS MveAudioDecode,
+PASS UbsanDecode) and by bash tools/check.sh (ALL GATES PASSED).

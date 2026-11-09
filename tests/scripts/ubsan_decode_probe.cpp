@@ -101,7 +101,17 @@ int main() {
     sweepSoundFromPcm16();
     failures += mdk::test::runMveAudioTests();
     if (failures == 0) {
-        printf("probe ran both 8-bit decodes and both 16-bit paths\n");
+        // The script prints this line as the gate's PASS line, so it is the only
+        // place that says what was actually measured, and it used to name only the
+        // two sweeps below while main() has also run the whole MVE audio suite
+        // since batch 97 — a reader auditing sanitizer coverage would have
+        // concluded DPCM was covered only by value tests. review-4 F4 of
+        // run-20261108-195620. It names the instruments too, because the script
+        // compiles BOTH and only one of them sees the stereo shape of the
+        // predictor overflow.
+        printf("probe ran soundFromPcm 8-bit and 16-bit sweeps + the MVE PCM and DPCM "
+               "decodes (delta table, clamp, stereo, silence, truncated-frame bounds) under "
+               "UBSan+ASan\n");
         return 0;
     }
     printf("%d probe check(s) FAILED\n", failures);

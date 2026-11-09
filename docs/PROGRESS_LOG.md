@@ -18629,3 +18629,159 @@ is a session-configuration fault to report (AGENTS P9), not a lookup that succee
 * **Original-3DS performance and memory behaviour remain UNMEASURED.**
 * **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools in this session; the
   vault lookup was the disk-only fallback and the Cognee graph lookup did not happen.
+
+## Iteration 126 — batch 98: review-4 of run-20261108-195620 — the review asked for one unpinned guard; the mutation battery that checked it found three more, two of which no sanitizer could see
+
+**Scope: test-only.** No shipped source changed. `tests/scripts/mve_audio_tests.cpp` gains three
+tests and a fixture, `tests/scripts/ubsan_decode_probe.cpp` gains an honest PASS line, and the
+shipped ELF is measured identical. What the batch buys is the ability of the suite to *see* four
+bounds in the two MVE audio decodes that it previously could not reach, and the evidence that it can
+now see them is a mutation battery, recorded below rather than asserted.
+
+### The four findings, and what each one actually was
+
+* **F1 (Medium) — confirmed, fixed.** The delta loop's `if (p >= fileSize) return false;`
+  (`mdk_core/src/formats/mve.cpp`) had no case that could reach it, and *why* it could not be
+  reached is the useful half: `end` is the opcode's **declared** data end, so with an honest tail
+  the loop's own `p < end` bound stops the decode on the last real byte and the file bound is never
+  consulted. A pin therefore has to do two things at once — **cut the file** while the chunk and
+  opcode headers keep declaring the original lengths, and **over-declare `size`** so that
+  `written < count` cannot be what stops it either. `truncateTail()` is the fixture that expresses
+  the first, `declaredSize = 100` (count 50) the second. Three shapes are pinned: mono cut on its
+  seed, mono cut one delta short (the reviewer's own scenario — a delta byte is still readable, so
+  the loop is genuinely mid-decode when it runs off), and stereo cut on its seeds so the seed loop
+  cannot be credited with the refusal. All three assert `FrameStatus::Broken` and zero samples.
+  The oracle answer, not a hardening: `Mve.cs:230` reads `Deltas[_bytes[p]]` with no bound, so at
+  `p == _bytes.Length` it raises `IndexOutOfRange`, and `mve.h` documents that this port answers
+  that throw with `Broken`.
+* **F2 (Low) — confirmed, fixed.** `Mve.cs:228` is `while (count < samples.Length && p < end)`,
+  strictly less-than, and `end` is the frame's own end, not the file's. Widening it to `p <= end`
+  made the decoder read the **next opcode's declared-length byte** as a delta and the whole suite
+  stayed green, because every other DPCM case stops on `written < count` first (batch 96's own
+  `testDpcmMonoAccumulatesInOneChannel` declares exactly the samples it carries). The pin is a
+  frame that declares count 50 and carries a seed plus one delta, followed in the same chunk by a
+  second frame: the oracle stops at 2 + 2 samples, and the wrong byte does not merely add a sample,
+  it changes one (the following opcode's length is 7 and `kDeltas[7]` is +7, so sample 2 would read
+  1008 where the oracle has 7).
+* **F4 (Low) — confirmed, fixed.** The sanitizer gate's PASS line still read *"probe ran both 8-bit
+  decodes and both 16-bit paths"* while `main()` had also run the entire MVE suite since batch 97.
+  That line is the only place the gate says what it measured, so a reader auditing sanitizer
+  coverage would have concluded DPCM was covered only by value tests — the exact misconception
+  `ubsan_decode_test.sh`'s own header exists to prevent. It now names the sweeps, the MVE decodes
+  and both instruments.
+* **F3 (Low) — confirmed, and NOT fixable by a batch.** The batch-97 sidecar cites
+  `2026-11-09-b95-ub-audio-clock.png`; the file is `2026-11-08-b95-ub-audio-clock.png`. The
+  reviewer's recommended remediation ("correct the date in the txt") is blocked by the loop's own
+  contract: `tools/runner/gates_batch_integrity.py` fails any batch that modifies a historical
+  frame `.txt` (`"batch modifies/removes historical measurement {frame}; history is immutable"`),
+  and that file is itself in `PROTECTED`, so a batch cannot relax it. This is the same class as
+  batch 89's sidecar gap (review-9 F3, iteration 118): the typo is permanent by construction. What
+  a batch *can* do is refuse to propagate it — this batch's sidecar names the correct path, and the
+  hash identity claim there resolves against four files that all exist.
+
+### The finding the review did not make, found by this batch's own battery
+
+Review-4 asked for a pin on one guard. The honest way to check whether the new pins work is to break
+the code and watch the suite redden, so an eight-arm battery was run (each arm one edit to a copy of
+`mve.cpp`, the committed suite, both sanitizers and a plain build). Two arms came back **NOT
+CAUGHT**, and they are the same defect one loop over — a read whose only bound is a declared length
+that a truncated file leaves past EOF:
+
+* deleting the **seed loop's** `if (p + 2 > fileSize) return false;` — silent under UBSan **and**
+  under AddressSanitizer, because the two bytes it reads are still inside the movie vector's own
+  allocation, so only a value assertion can see it;
+* deleting **`decodePcm`'s** `if (p + step > fileSize) return false;` — same, and the C# has no
+  bound there either (`Mve.cs:246`), so `IndexOutOfRange` is again the oracle's answer.
+
+Both are pinned now (`testAudioDataRunningPastTheEndOfFileIsBrokenInBothDecodes`: a file cut
+mid-seed in mono, cut before its second stereo seed, cut after three 8-bit bytes, and cut one byte
+into a 16-bit pair — the last one is what proves `step` is honoured, since a file ending mid-pair
+must refuse the whole pair rather than read half of it and shift the rest of the stream).
+
+**The battery, verbatim.** `M0` is the control: it *must* print NOT CAUGHT, because it is the
+shipped code.
+
+```
+M0  shipped code (must be green)                          : *** NOT CAUGHT *** (green, exit 0)
+M1  delta-loop file bound deleted (sanitizers)            : CAUGHT (exit 1)
+      ERROR: AddressSanitizer: heap-buffer-overflow
+M1b delta-loop file bound deleted (plain)                 : CAUGHT (exit 1)
+      FAIL: mono frame truncated on its seed was 1, the oracle has 2
+      FAIL: a frame that runs off the file decodes no audio was 3, the oracle has 0
+M2  delta-loop bound widened to `p <= end`                : CAUGHT (exit 1)
+      FAIL: the frame that over-declares stops at its own end was 5, the oracle has 4
+M3  seed-loop file bound deleted (sanitizers)             : CAUGHT (exit 1)
+      ERROR: AddressSanitizer: heap-buffer-overflow
+M3b seed-loop file bound deleted (plain)                  : CAUGHT (exit 1)
+      FAIL: dpcm seed truncated mid-short was 1, the oracle has 2
+M4  predictor-count guard deleted (batch 97's pin)        : CAUGHT (exit 1)
+      stl_vector.h:1129: runtime error: reference binding to null pointer of type 'value_type'
+M5  decodePcm file bound deleted (sanitizers)             : CAUGHT (exit 1)
+      ERROR: AddressSanitizer: heap-buffer-overflow
+M5b decodePcm file bound deleted (plain)                  : CAUGHT (exit 1)
+      FAIL: pcm 8-bit truncated was 1, the oracle has 2
+      FAIL: pcm 16-bit truncated mid-short was 1, the oracle has 2
+```
+
+Before this batch, M3 and M5 were the two NOT CAUGHT arms; M1 and M2 were the reviewer's own two
+uncought mutations. All eight are caught now, and each names the shape it was written for rather
+than reporting by crash alone — which is the difference between a pin and a sanitizer that happens
+to be installed.
+
+### Gate results, verbatim, as run
+
+* `make -C tests/scripts` → `All cases match the oracle.`, including `PASS MveAudioDecode` and
+  `PASS UbsanDecode (probe ran soundFromPcm 8-bit and 16-bit sweeps + the MVE PCM and DPCM decodes
+  (delta table, clamp, stereo, silence, truncated-frame bounds) under UBSan+ASan)`.
+* `bash tools/check.sh` → `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh` **SKIPPED** (no built `.cia`),
+  `gates_frames every pinned frame is deterministic and unchanged`,
+  `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` → `3DSX mdk.3dsx`, exit 0, with `DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM` exported.
+* `mdk.elf` md5 `c8295e96663ca33be481df2e77613e46` — unchanged, and this time for the trivial
+  reason: no shipped file is in the diff.
+* No `mdk_3ds/**` file is in the diff, so AGENTS P8 emulator evidence is not owed; the sidecar says
+  so and names the build the batch-95 emulator run measured.
+* The frame pair is `docs/frames/2026-11-09-b98-mve-bounds-pinned.{png,txt}`; the PNG's sha256 is
+  `6646adf1…`, identical to batches 93/95/96/97, and the capture ran against a `build-linux/mdk`
+  rebuilt from this tree.
+
+### Prior-solution lookup
+
+`pi-knowledge` `mdk-sdl` was searched (`knowledge_search`, hybrid) for the compressed-path bounds;
+it returned `mve.cpp`'s `decodeAudio`/`decodePcm`, this test file's own header, and the oracle's
+`Mve.cs` DPCM block, and no prior finding on the unreachable-guard class — the index predates this
+batch's edit, so it still shows the suite without the new cases. Obsidian MCP tools are **absent**
+from this session, so the vault lookup was the read-only disk fallback under
+`/mnt/nas/Vaults/port-docs/`; it holds no MVE or MVE-DPCM note (the only adjacent file is
+`10-projects/forsaken/findings/dsp-adpcm-music-and-sfx-audio.md`, which is Forsaken's ADPCM, a
+different codec, and was not used as evidence). Cognee MCP is **absent** too, so the graph lookup
+did not happen at all; that is a session-configuration fault to report under AGENTS P9, not a
+lookup that succeeded quietly.
+
+### Still open after this batch
+
+* **`FrameStatus::Broken` still has no consumer.** Review-4's open question stands: no movie player
+  is wired on either target, so the refused frame is observed only by tests. Wiring it needs the
+  same canvas seam item 5b is blocked on.
+* **F3's typo in the batch-97 sidecar is permanent** — `gates_batch_integrity.py` forbids editing a
+  historical frame `.txt` and is itself `PROTECTED`. Owner-only, if the record is ever to be
+  corrected in place.
+* **The mutation battery is not a committed gate.** It ran in `/tmp` from a copy of `mve.cpp` and is
+  recorded here, which is the shape this loop has been told is weak (asserted provenance). The
+  committed *consequence* is the three tests; the battery is the reason they are the shapes they
+  are. Committing the battery as a gate is a larger change than a test-only batch should carry.
+* **`osGetMemRegionSize(MEMREGION_APPLICATION)` on real hardware** — unchanged.
+* **Bank eviction with a real budget** (item 6c's second half): unbounded growth, not a ceiling.
+* **Item 6d** — no `ScriptRuntime` on the 3DS frontend, so script/ambient/object sounds cannot play.
+* **Three `@vfp-exempt` pins in `sound_device.cpp` still do not parse** against `gates_vfp.EXEMPT_RE`.
+* **`gates_smdh` is SKIPPED, not passed**, until a `.cia` is built.
+* **Original-3DS performance and memory behaviour remain UNMEASURED.**
+* **The operator's uncommitted harness set stays unstaged** (`ralph-pi.sh`, `ralph/builder.md`,
+  `ralph/LOOP_CONTEXT.md`, `tools/ralph_pi_watchdog.sh`, `tools/runner/test_review_state.sh`,
+  `docs/OWNER_DIRECTIVE_2026-11-05.md`, `tools/reclaim_qwen_slots.sh`). It is operator-authored, and
+  `ralph/builder.md` is `PROTECTED`: committing it without `--owner-approved` stops the loop at
+  exit 6. This batch staged its paths **by name**.
+* **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools in this session.

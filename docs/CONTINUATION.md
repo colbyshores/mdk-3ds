@@ -1,16 +1,42 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — **memory safety.** `Mve::decodeAudio` wrote a predictor past the end of its own
-sample array when a compressed audio frame declared less than `2 * channels_` bytes, and this
-batch adds the bounds guard that makes it `FrameStatus::Broken` (the C#'s `IndexOutOfRange`
-answer, per `mve.h`). It also widens a sanitizer gate: `tests/scripts/ubsan_decode_test.sh` now
-compiles `-fsanitize=undefined,address`, because the two shapes of this one bug need two
-instruments and UBSan alone walks over the stereo one. Both halves were proven to fire, each on
-the shape only it can see. Eight new tests cover the compressed path for the first time. The
-shipped binary is nevertheless byte-identical — `mdk.elf` md5 `c8295e96663ca33be481df2e77613e46`,
-`.text 0x057ba0`, unchanged from batches 95/96 — because **no `Mve` symbol is linked into the ELF
-at all** (`nm | grep -ci Mve` → 0; `mdk.map` shows `build/mve.o (__aeabi_idiv)`), so the defect
-is real, pinned, and not reachable in today's build.
+Risk: low — **test-only diff.** No shipped source is touched: the two changed code files are
+`tests/scripts/mve_audio_tests.cpp` (three new tests) and `tests/scripts/ubsan_decode_probe.cpp`
+(one stale PASS line), and `mdk.elf` is measured byte-identical to batch 97's (md5
+`c8295e96663ca33be481df2e77613e46`, `.text 0x057ba0`), so there is no interface, data-format,
+concurrency, behaviour or target-specific change to review. What replaces the risk is evidence: an
+**eight-arm mutation battery**, each arm deleting or widening exactly one bound in the two audio
+decodes, every arm caught, and two arms (M3, M5) that were **NOT caught before this batch existed**
+— the review asked for one unpinned guard and the battery that checked it found three more of the
+same class, all silent under UBSan *and* AddressSanitizer, visible only to a value assertion.
+
+**Review-4 (run-20261108-195620) closed by batch 98: four findings, no Critical, no High — three
+fixed, one confirmed and gate-blocked, none rebutted on merit** (Iteration 126). **F1 (Medium)** was
+that the delta loop's `if (p >= fileSize) return false;` — the only thing between a frame whose
+opcode declares data past EOF and an out-of-bounds read — had no case that could reach it, and the
+reason it could not be reached is the finding: `end` is the opcode's *declared* data end, so with an
+honest tail the loop's own `p < end` stops it on the last real byte and the file bound is
+unreachable. The pin therefore has to **truncate the file** while the headers keep declaring the
+original lengths, and has to over-declare `size` so `written < count` cannot be what stops it
+either; three shapes (mono cut on the seed, mono cut one delta short, stereo cut on its seeds) now
+assert `Broken` and zero samples. **F2 (Low)** was the `p < end` half: `Mve.cs:228` is strictly
+less-than, and widening it to `p <= end` consumed the **next opcode's length byte** as a delta and
+passed the whole suite, because every other case stops on `written < count` instead. **F4 (Low)**
+was the sanitizer gate's own PASS line still reading "probe ran both 8-bit decodes and both 16-bit
+paths" while `main()` had also run the entire MVE suite since batch 97 — the one line that says
+what was measured under-described it, which is the exact misconception that script's header exists
+to prevent; it now names the sweeps, the MVE decodes and both instruments. **F3 (Low) is confirmed
+and cannot be fixed by a batch**: the batch-97 sidecar cites
+`2026-11-09-b95-ub-audio-clock.png` where the file is `2026-11-08-b95-ub-audio-clock.png`, and
+`gates_batch_integrity.py` — itself `PROTECTED` — fails any batch that modifies a historical frame
+`.txt` ("history is immutable"), so the typo is permanent by construction, exactly like batch 89's
+sidecar gap (review-9 F3); the correct path is named in this batch's sidecar and the convention is
+carried forward. **And the finding the review did not make, found by this batch's own battery:**
+deleting the **seed loop's** `p + 2 > fileSize` or `decodePcm`'s `p + step > fileSize` was **NOT
+CAUGHT** — no case reached either, and neither sanitizer sees them because the bytes are still
+inside the movie vector's allocation. Both are pinned now (a file cut mid-seed in either codec and
+a file cut mid-16-bit-pair), which is why the battery is recorded in the progress log rather than
+asserted.
 
 **Review-3 (run-20261108-195620) closed by batch 97: five findings, no Critical, one High — two
 fixed, three owner-only, none rebutted on merit** (Iteration 125). Its open question 2 was the
@@ -199,6 +225,10 @@ so deliberately: the owner-action block and the standing-facts list are the part
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
 ## NEXT (batch 95)
+*(Batch 98 did not advance this item and did not pretend to: it was a review-remediation batch, and
+review-4's findings were all in the MVE audio test coverage, which is not this file's priority-order
+head. The one-sided view is still first, still unadvanced, and still needs the same new hypothesis,
+not a sixth census run with the same instrument.)*
 **The one-sided view, still first and still unadvanced.** Geometry covers panel columns **200..399** of the 400-wide top
 screen — the right half — and the live question is why coverage stops at a straight
 vertical line at the panel's middle. The census instrument is honest (header: 58464
@@ -283,6 +313,17 @@ is blocked on, so it is not a cheap follow-on. Original-3DS behaviour remains un
   shapes, verify **two instruments** see it: batch 97's mono shape is a UBSan null reference and
   its stereo shape is invisible to UBSan and only AddressSanitizer catches it, which is why
   `ubsan_decode_test.sh` now runs both and why each half was proven to fire on its own shape.
+
+* **A guard is only pinned if a case can REACH it, and a sanitizer being quiet is not evidence that
+  one fired.** `Mve`'s four file/length bounds each need a different fixture, and three of them
+  need a file that is **cut**: `end` comes from the opcode's declared length, so an honest tail
+  makes `p < end` stop the loop before any file bound is consulted, and the guard is unreachable.
+  `truncateTail()` in `mve_audio_tests.cpp` is the fixture that expresses it. Deleting
+  `p + 2 > fileSize` (the seed loop) or `p + step > fileSize` (`decodePcm`) was **silent under both
+  sanitizers** — the bytes are still inside the movie vector's own allocation — so only a value
+  assertion can see those two, and before batch 98 nothing made one. The reusable habit: run the
+  mutation battery, do not trust "the suite is green" as "the guards are covered". (review-4
+  F1/F2 / batch 98.)
 
 * **Level 7's start is inside DANT_1 on a floor at z = 0 and the oracle drops him there too** — DTI start
   `(0,4,9)` at angle 90, `+ StartDrop` lifts it to 12, a BSP ray down hits `z = 0.01`, follow-camera eye
