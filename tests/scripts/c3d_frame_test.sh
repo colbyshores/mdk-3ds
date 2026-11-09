@@ -151,6 +151,103 @@ def block_span(text, pattern):
     return block_span_from(text, m.end())
 
 
+def blank_comments(text):
+    """`text` with every C++ comment replaced by spaces, byte offsets preserved.
+    The latch checks below scan brace depth, and an apostrophe in prose -- "the
+    emulator's bigger heap" is a real comment in this file -- would otherwise open a
+    string literal and swallow the braces that follow it. Same helper, same rule as
+    main_3ds_flow_test.sh: prose is not code, and offsets must survive so a position
+    found in the blanked copy still compares against the original."""
+    out = list(text)
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in ('"', "'"):
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                out[i] = " "
+                i += 1
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
+                if text[i] != "\n":
+                    out[i] = " "
+                i += 1
+            out[i] = " "
+            if i + 1 < n:
+                out[i + 1] = " "
+            i += 2
+        else:
+            i += 1
+    return "".join(out)
+
+
+def brace_depth(text, a, b):
+    """Brace depth at `b` counting from `a`, string-aware. A statement written
+    DIRECTLY in the block whose '{' is at `a` sits at depth 1; one nested inside an
+    inner condition of that block sits deeper. This is what turns "the flag is
+    assigned somewhere" into "the flag is assigned whenever this path runs"
+    (main_3ds_flow_test.sh review-14 F1/F2, applied to the backend's copy)."""
+    d = 0
+    i = a
+    n = min(b, len(text))
+    while i < n:
+        c = text[i]
+        if c in '"\'':
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+        elif c == "{":
+            d += 1
+        elif c == "}":
+            d -= 1
+        i += 1
+    return d
+
+
+def printf_format(text, paren):
+    """The format expression of the printf whose '(' sits at `paren`: everything to
+    the first top-level comma, string-aware, so a format split across concatenated
+    literals is read whole. `call_args` here takes a line and a function NAME, which
+    is the wrong shape for a position found by scanning."""
+    depth = 0
+    i = paren
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in '"\'':
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return text[paren + 1:i]
+        elif c == "," and depth == 1:
+            return text[paren + 1:i]
+        i += 1
+    return ""
+
+
+def fn_body_span(text, name):
+    """(start, end) of a function whose return type is anything, through its closing
+    brace. `body_span` requires `void`, and the mesh factory returns MdkMeshId."""
+    m = re.search(r"(?m)^[ \t]*[A-Za-z_][A-Za-z0-9_:* \t]*[ \t]+" + re.escape(name) +
+                  r"[ \t]*\([^;{]*\)[ \t]*\{", text)
+    if not m:
+        return None
+    sp = block_span_from(text, m.end() - 1)
+    return (m.start(), sp[1]) if sp else None
+
+
 def body_span(text, name):
     """Absolute (start, end) of one function, from its signature through its
     closing brace, or None.
@@ -745,6 +842,55 @@ def adjudicate(text, quiet=False):
               "bind outside the eye install runs outside the frame contract)"
               % (len(bind), len(bind_stray),
                  "none" if not bind_stray else "; ".join(bind_stray)))
+
+    # THE BACKEND'S OWN REFUSED-MESH LINE IS AN EDGE TRIGGER TOO. Review-14's related
+    # observation: the frontend's copy of this latch is pinned three times over and
+    # its counterpart here was pinned zero times, and THIS is the line that actually
+    # printed 1710 times in one run (review-10 F3). The frontend line answers this
+    # one, so pinning only the answering line leaves the louder of the pair free to
+    # spam: a reader sees one honest refusal in the log and the file fills with the
+    # other. Three properties, the same three the frontend is held to -- the guard IS
+    # the negative latch test, the block that prints also ARMS the latch as a direct
+    # statement of itself, and the latch CLEARS on the success path as a direct
+    # statement of the function, not from inside the failing branch.
+    mesh_body = fn_body_span(text, "mdk_render_create_dynamic_mesh")
+    refusal = None
+    latch_guard = None
+    armed = False
+    cleared = False
+    if mesh_body is not None:
+        seg = blank_comments(text[mesh_body[0]:mesh_body[1]])
+        open_brace = seg.index("{")
+        refusal = next((p for p in re.finditer(r"log3dsPrintf[ \t]*\(", seg)
+                        if "FAILED" in printf_format(seg, p.end() - 1)), None)
+        if refusal is not None:
+            latch_guard = next(
+                (sp for g in re.finditer(r"\bif[ \t]*\(([^{}();]*)\)[ \t]*\{", seg)
+                 if re.fullmatch(r"![ \t]*renderer->meshAllocFailureLogged"
+                                 r"|renderer->meshAllocFailureLogged"
+                                 r"[ \t]*==[ \t]*false", g.group(1).strip())
+                 for sp in [block_span_from(seg, g.end() - 1)]
+                 if sp is not None and sp[0] <= refusal.start() < sp[1]),
+                None)
+        if latch_guard is not None:
+            s = re.search(r"renderer->meshAllocFailureLogged[ \t]*=[ \t]*true[ \t]*;",
+                          seg[latch_guard[0]:latch_guard[1]])
+            armed = (s is not None and brace_depth(seg, latch_guard[0],
+                                                   latch_guard[0] + s.start()) == 1)
+        # The clear must be a direct statement of the FUNCTION, which is what puts it
+        # on the success path: inside `if (!mesh.data)` it would be depth 2 and would
+        # clear on the very frame it refused.
+        c = re.search(r"renderer->meshAllocFailureLogged[ \t]*=[ \t]*false[ \t]*;", seg)
+        cleared = (c is not None
+                   and brace_depth(seg, open_brace, c.start()) == 1)
+    rep.check("mesh-refusal-line-is-edge-triggered",
+              refusal is not None and armed and cleared,
+              "refusal printf: %s, armed inside its own guard: %s, cleared on the "
+              "success path: %s (an unguarded or never-armed line prints on every "
+              "frame of one refusal -- this is the line that printed 1710 times; a "
+              "latch that never clears silences the second, larger refusal)"
+              % ("yes" if refusal else "no", "yes" if armed else "no",
+                 "yes" if cleared else "no"))
     return rep
 
 
@@ -1097,6 +1243,25 @@ ARMS = [
      lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);",
                          "C3D_AlphaTest(false, GPU_ALWAYS, mdk::pica::kAlphaTestReference);",
                          1)),
+    # The backend's own refused-mesh latch (review-14's related observation). This is
+    # the line that printed 1710 times in one run; the frontend's copy of the same
+    # edge trigger is pinned three times and this one was pinned not at all.
+    ("mesh-refusal latch never clears (the second, larger refusal is silent)",
+     lambda s: re.sub(r"[ \t]*renderer->meshAllocFailureLogged[ \t]*=[ \t]*false;[ \t]*\n",
+                      "", s, count=1)),
+    ("mesh-refusal latch never arms (the guard is always true, so the line prints on "
+     "every frame of one refusal)",
+     lambda s: re.sub(r"[ \t]*renderer->meshAllocFailureLogged[ \t]*=[ \t]*true;[ \t]*\n",
+                      "", s, count=1)),
+    ("mesh-refusal guard widened to nothing (the line prints on every frame)",
+     lambda s: s.replace("if (!renderer->meshAllocFailureLogged) {",
+                         "if (true) {", 1)),
+    ("mesh-refusal latch cleared from inside the failing branch (it clears on the very "
+     "frame it refused, so the line prints every frame anyway)",
+     lambda s: s.replace(
+         "        if (!renderer->meshAllocFailureLogged) {",
+         "        renderer->meshAllocFailureLogged = false;\n"
+         "        if (!renderer->meshAllocFailureLogged) {", 1)),
 ]
 
 print("c3d_frame: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

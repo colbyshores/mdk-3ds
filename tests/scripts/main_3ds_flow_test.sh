@@ -142,9 +142,62 @@
 #     verbose)` passed while printing on every frame of the refusal. The condition must
 #     now BE the negative latch test (`fullmatch`), and EVERY refusal line must sit
 #     inside such a block -- the half of D1 that check 17 could not see.
-# Each of the four was reproduced on a mutant before it was fixed, each mutant is now a
-# named arm, and every arm compiles for the 3DS target with the Makefile's own flags:
-# an arm that cannot compile is a mutant of nothing.
+# Each of the four was reproduced on a mutant before it was fixed, and each mutant is
+# now a named arm.
+#
+# WHAT BATCH 108 ADDED (review-14: the same family a fourth round. The recurring shape
+# this time was a check that pins HALF a state machine, or that reads a POSITION where
+# the property is REACHABILITY):
+#  F1: checks 17/18/19 pinned the guard and the clear and NOTHING ELSE -- the arming
+#     statement `streamFailureLogged = true;` was named by no check, no arm and no
+#     probe in the repository, so deleting it left the guard always true, printed the
+#     refusal on every frame of one sustained refusal (~60/s, the class review-10 F3
+#     and review-12 R1 were raised for) and the suite still printed `PASS Main3dsFlow
+#     (19 checks, 27 arms, 9 probes)`. Check 19 now requires the guarded block to ARM
+#     the latch as a direct statement of itself. Its ORDER inside the block is
+#     deliberately not pinned: arm-then-print and print-then-arm both print once, and
+#     requiring one would redden a shape the port may write (review-10 F6), so there
+#     is a probe for the other order.
+#  F2: check 18's accepted assignment form was anchored to a POSITION ("in the
+#     enclosing block, before the test") where the property is that it RUNS ON EVERY
+#     FRAME. A copy nested in an inner condition (`if (objectCorners == 0) { ... }`,
+#     `if (capacity != last) { ... }`) satisfied the window search, never cleared on a
+#     frame that did not refuse, and silenced the second, larger refusal after a
+#     recovery -- review-11 F7 with checks 18 AND 19 green and only arm bookkeeping
+#     reddening, which reads as arm maintenance rather than as a defect. Both accepted
+#     forms are now depth-tested: brace depth 1 from the block's own '{' is what
+#     "direct statement" means and it is decidable in text.
+#  F6: check 17 compared factor sets literally, so naming the stride -- the refactor
+#     that makes drift IMPOSSIBLE, which is what D4 was for -- reddened it and four
+#     arms. One level of local `const`/`constexpr` integer definitions now folds on
+#     BOTH sides before the comparison, with a probe for the named-stride shape.
+#  F7: D1's "every refusal line" was scoped to the body of the FIRST
+#     `if (objectDraw.allocationFailed())`. A refusal line in a SIBLING condition
+#     outside that body was read by neither check 17 nor check 19. The scope is now the
+#     object pass, and family membership is decided by the line's own format string
+#     (it names the refusal), which is also what keeps the capacity-change line -- a
+#     SUCCESS report -- out of the family. A refusal line whose format is a variable is
+#     outside the net; that is stated, not hidden.
+#  F3: three arms did not compile, which this file's own standard calls a mutant of
+#     nothing, and the header claimed they all did. `arm_objects_ungated` spliced one
+#     character early and re-emitted the block's own `{` (`if (true) {{` -- unbalanced);
+#     `arm_objects_before_arena` anchored on `text.find("if (arena) {")`, which is the
+#     FIRST of three such blocks and sits above the declaration of `runtime`, so the
+#     mutant named identifiers that do not exist there; `arm_before_camera` moved the
+#     refresh above the declaration of its own guard. All three now build real mutants,
+#     so the claim below is true rather than scoped away.
+#  Every arm and every probe compiles for the 3DS target with the Makefile's own flags
+#  (`arm-none-eabi-g++ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+#  -mfpu=vfp -D__3DS__ -DRENDERER_C3D -std=gnu++17 -fno-exceptions -fno-rtti
+#  -fsyntax-only`, plus the Makefile's -I list): an arm that cannot compile is a
+#  mutant of nothing. Verified for all 30 arms and 11 probes on 2026-11-09; the
+#  generator is in docs/PROGRESS_LOG.md, because the host suite cannot run the cross
+#  compiler and a claim nobody can re-run is a claim that will rot.
+#
+# The backend's copy of the same edge trigger (`meshAllocFailureLogged`, the line that
+# actually printed 1710 times) is pinned in c3d_frame_test.sh, which is the file whose
+# arms can mutate renderer_c3d.cpp; review-14's related observation asked which file
+# owned it. This file reads renderer_c3d.cpp only for the stride coupling.
 #
 # Every check is paired with a mutation arm that must turn it red; a gate that
 # prints PASS over a mutant that never ran is a pass generator.
@@ -433,6 +486,59 @@ def kb_form(atoms):
 LATCH_NEG = re.compile(r"![ \t]*streamFailureLogged"
                        r"|streamFailureLogged[ \t]*==[ \t]*false")
 
+# A line is a REFUSAL line when its own format string says so: it names the refusal
+# the backend names (review-14 F7). The capacity-change line reports a SUCCESS and
+# stays out of the refusal family; a line whose format is a variable is out too,
+# which is stated as a limit rather than hidden.
+REFUSAL_FMT = re.compile(r"FAILED|refus", re.IGNORECASE)
+
+# One level of local integer constant, so a named stride folds to the backend's
+# literal (review-14 F6). Only a plain decimal initialiser counts.
+CONST_INT_RE = re.compile(r"\b(?:const|constexpr)[ 	]+(?:u?int\d*_t|size_t|int|long"
+                          r"|short|unsigned)[ 	]+([A-Za-z_][A-Za-z0-9_]*)[ 	]*=[ 	]*"
+                          r"(\d+)[ 	]*;")
+
+
+def const_ints(window):
+    """{name: digits} for the local integer constants declared in `window`."""
+    return {m.group(1): m.group(2) for m in CONST_INT_RE.finditer(window)}
+
+
+def fold_consts(expr, consts):
+    """`expr` with every named constant replaced by its literal, so the frontend's
+    `attempted * kMeshStride * sizeof(float)` and the renderer's `cap * 5 *
+    sizeof(float)` compare as the same arithmetic. A gate that reddens a named
+    constant is a gate the next batch learns to route around (review-10 F6)."""
+    if not consts:
+        return expr
+    return re.sub(r"[A-Za-z_][A-Za-z0-9_]*",
+                  lambda m: consts.get(m.group(0), m.group(0)), expr)
+
+
+def brace_depth(text, a, b):
+    """Brace depth at `b` counting from `a`, string-aware (comments are already
+    blanked by the caller). A statement written DIRECTLY in the block whose '{' is
+    at `a` sits at depth 1; one nested inside an inner condition of that block sits
+    deeper. This is what turns "placed before the test" into "runs on every frame"
+    (review-14 F2), and "inside the guard" into "runs whenever the print does"
+    (review-14 F1)."""
+    d = 0
+    i = a
+    n = min(b, len(text))
+    while i < n:
+        c = text[i]
+        if c in '"\'':
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+        elif c == "{":
+            d += 1
+        elif c == "}":
+            d -= 1
+        i += 1
+    return d
+
 
 def backend_mesh_atoms():
     """The atoms of the size the renderer actually asks `linearAlloc` for a dynamic
@@ -466,9 +572,13 @@ def _read_backend_mesh_atoms():
     args = call_args(text[sp[0]:sp[1]], call.end() - 1)
     if not args:
         return None
-    bare = {n for _, n in arith_atoms(args[0], set())
+    # Review-14 F6, the same folding on the other side: a renderer that names its
+    # stride is the drift-proof shape the gate is supposed to encourage, and without
+    # this it would return None and make check 17 red against an unmodified frontend.
+    expr = fold_consts(args[0], const_ints(text[sp[0]:sp[1]]))
+    bare = {n for _, n in arith_atoms(expr, set())
             if not n.startswith("sizeof_") and not n.isdigit()}
-    return arith_atoms(args[0], bare) if len(bare) == 1 else None
+    return arith_atoms(expr, bare) if len(bare) == 1 else None
 
 
 def enclosing_block(text, pos):
@@ -852,60 +962,120 @@ def adjudicate(text, quiet=False):
                      code)
     at = test.start() if test else -1
     branch_sp = block_span_from(code, test.end()) if test else None
-    if branch_sp is not None:
-        branch = code[branch_sp[0]:branch_sp[1]]
-        prints = list(re.finditer(r"log3dsPrintf[ \t]*\(", branch))
-        backend = backend_mesh_atoms()
-        fail_ok = bool(prints) and backend is not None
-        for p in prints:
-            args = call_args(branch, p.end() - 1)
-            vals = args[1:] if args and args[0].lstrip().startswith('"') else None
-            derived = [v for v in (vals or [])[1:] if "*" in v or "/" in v]
-            if not vals or not derived:
+    # Review-14 F7: the property is about EVERY refusal line, so the scope cannot be
+    # the body of the first `if (allocationFailed())`. A second refusal line in a
+    # SIBLING condition -- a first-pass diagnostic, a "log it again while the capacity
+    # is still zero" -- sat outside that body and was read by neither check 17 nor
+    # check 19, which is review-11 F1's two-numbers-on-one-refusal back on the console
+    # with the gate green. The scope is now the object pass, and a line belongs to the
+    # family when its OWN FORMAT NAMES the refusal (REFUSAL_FMT); that is also what
+    # keeps the capacity-change line, which reports a SUCCESS, out of the family.
+    # A refusal line whose format is a variable, or that never says so, is outside
+    # this net: stated as a limit, not hidden.
+    op_sp = object_pass(code)
+    scope = code[op_sp["start"]:op_sp["end"]] if op_sp else ""
+    backend = backend_mesh_atoms()
+    prints = []
+    for p in re.finditer(r"log3dsPrintf[ \t]*\(", scope):
+        args = call_args(scope, p.end() - 1)
+        if not args or not args[0].lstrip().startswith('"'):
+            continue
+        if not REFUSAL_FMT.search(args[0]):
+            continue
+        prints.append((p, args))
+    fail_ok = bool(prints) and backend is not None
+    for p, args in prints:
+        vals = args[1:]
+        derived = [v for v in vals[1:] if "*" in v or "/" in v]
+        if not vals or not derived:
+            fail_ok = False
+            break
+        # The unit the line NAMES decides whether the /1024 is required: a line that
+        # says "%d KB" while printing the raw byte count is 1024x wrong, which is
+        # the same one-refusal-two-numbers defect one unit further out.
+        want = kb_form(backend) if "KB" in args[0] else backend
+        # Every name in `cap_names` IS the refused capacity: the call itself, or a
+        # local whose initialiser is the call. The window is the pass up to THIS
+        # printf, so a same-named local declared after it cannot lend it a source.
+        cap_names = set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*objectDraw"
+                                   r"\.attemptedCapacity\(\)", scope[:p.start()]))
+        cap_names.add("attemptedCapacity")
+        # Review-14 F6: a named stride is the same arithmetic written differently, so
+        # one level of local integer constants folds before the comparison. Reddening
+        # it would be review-10 F6's failure again -- a gate that rejects a shape the
+        # port may legitimately write is a gate the next batch routes around.
+        consts = const_ints(scope[:p.start()])
+        first = vals[0].replace(" ", "").replace("objectDraw.", "")
+        first = first[:-2] if first.endswith("()") else first
+        if first not in cap_names:
+            fail_ok = False
+            break
+        for v in derived:
+            if arith_atoms(fold_consts(v, consts), cap_names) != want:
                 fail_ok = False
                 break
-            # The unit the line NAMES decides whether the /1024 is required: a line that
-            # says "%d KB" while printing the raw byte count is 1024x wrong, which is
-            # the same one-refusal-two-numbers defect one unit further out.
-            want = kb_form(backend) if "KB" in args[0] else backend
-            # Every name in `cap_names` IS the refused capacity: the call itself, or a
-            # local whose initialiser is the call. The window is the branch up to THIS
-            # printf, so a same-named local declared after it cannot lend it a source.
-            cap_names = set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*objectDraw"
-                                       r"\.attemptedCapacity\(\)", branch[:p.start()]))
-            cap_names.add("attemptedCapacity")
-            first = vals[0].replace(" ", "").replace("objectDraw.", "")
-            first = first[:-2] if first.endswith("()") else first
-            if first not in cap_names:
-                fail_ok = False
-                break
-            for v in derived:
-                if arith_atoms(v, cap_names) != want:
-                    fail_ok = False
-                    break
-            if not fail_ok:
-                break
+        if not fail_ok:
+            break
 
+    if branch_sp is not None:
         after = code[branch_sp[1]:]
         rest = re.match(r"[ \t\r\n]*else[ \t]*\{", after)
         if rest is not None:
             esp = block_span_from(after, rest.end() - 1)
             if esp is not None:
-                latch_ok = re.search(r"streamFailureLogged[ \t]*=[ \t]*false[ \t]*;",
-                                     after[esp[0]:esp[1]]) is not None
+                cl = re.search(r"streamFailureLogged[ \t]*=[ \t]*false[ \t]*;",
+                               after[esp[0]:esp[1]])
+                # The clear must be a DIRECT statement of the `else` block. One
+                # wrapped in an inner condition does not run on every non-refusing
+                # frame, which is review-14 F2's hazard on this half of the check.
+                latch_ok = (cl is not None
+                            and brace_depth(after, esp[0], esp[0] + cl.start()) == 1)
         if not latch_ok:
             enc = enclosing_block(code, at)
             if enc is not None:
-                latch_ok = re.search(
+                m = re.search(
                     r"streamFailureLogged[ \t]*=[ \t]*objectDraw\.allocationFailed\("
-                    r"[ \t]*\)[ \t]*;", code[enc[0]:at]) is not None
+                    r"[ \t]*\)[ \t]*;", code[enc[0]:at])
+                # Review-14 F2: POSITION is not REACHABILITY. The accepted assignment
+                # form is the same state machine only when it runs on EVERY frame, and
+                # "somewhere in the enclosing block, before the test" does not say
+                # that: a copy nested inside an inner condition (`if (objectCorners ==
+                # 0) { ... }`, `if (capacity != last) { ... }`) satisfies a window
+                # search, never clears on a frame that did not refuse, and silences
+                # the second, larger refusal after a recovery -- review-11 F7 again,
+                # with checks 18 and 19 both green. Depth 1 from the block's own '{'
+                # is decidable in text and is what "runs on every frame" means here.
+                latch_ok = (m is not None
+                            and brace_depth(code, enc[0], enc[0] + m.start()) == 1)
 
-        guarded = [block_span_from(branch, g.end() - 1)
-                   for g in re.finditer(r"\bif[ \t]*\(([^{}();]*)\)[ \t]*\{", branch)
-                   if LATCH_NEG.fullmatch(g.group(1).strip())]
-        guarded = [sp for sp in guarded if sp is not None]
-        once_ok = bool(prints) and all(
-            any(sp[0] <= p.start() < sp[1] for sp in guarded) for p in prints)
+    guarded = [block_span_from(scope, g.end() - 1)
+               for g in re.finditer(r"\bif[ \t]*\(([^{}();]*)\)[ \t]*\{", scope)
+               if LATCH_NEG.fullmatch(g.group(1).strip())]
+    guarded = [sp for sp in guarded if sp is not None]
+    once_ok = bool(prints) and all(
+        any(sp[0] <= p.start() < sp[1] for sp in guarded) for p, _ in prints)
+    # Review-14 F1: the guard is only HALF an edge trigger. Delete the arming
+    # statement and the guard is ALWAYS true, so the line prints on every frame of a
+    # sustained refusal -- the ~60/s spam review-10 F3 and review-12 R1 were raised
+    # for -- while check 17 reads honest numbers and check 18 reads an untouched
+    # clear. Nothing in the repository pinned the SET; the guard and the clear were
+    # gated and the arming was not. So the block that guards a refusal line must also
+    # ARM the latch, as a direct statement of that block. Its ORDER inside the block
+    # is deliberately NOT pinned: print-then-arm and arm-then-print both print once,
+    # and requiring one of them would redden a shape the port may write (review-10 F6).
+    if once_ok:
+        for p, _ in prints:
+            armed = False
+            for sp in guarded:
+                if sp[0] <= p.start() < sp[1]:
+                    s = re.search(r"streamFailureLogged[ \t]*=[ \t]*true[ \t]*;",
+                                  scope[sp[0]:sp[1]])
+                    armed = (s is not None and brace_depth(scope, sp[0],
+                                                           sp[0] + s.start()) == 1)
+                    break
+            if not armed:
+                once_ok = False
+                break
     say(CHK["failure-line-names-the-refused-capacity"], fail_ok,
         "the pass rounds up to a power of two and refuses THAT size; a line naming "
         "anything else, or a byte figure that is not the backend's own capacity x "
@@ -968,14 +1138,26 @@ def arm_no_refresh(text):
 
 
 def arm_before_camera(text):
-    """Refresh moved above follow.update: the arena the step STARTED in."""
+    """Refresh moved above follow.update: the arena the step STARTED in.
+
+    Review-14 F3: the arm used to move only the `if (solid) { ... }` block, which
+    leaves it above the `const std::string* solid = space.arenaAt(...)` that declares
+    its own guard -- `'solid' was not declared in this scope`, a mutant that cannot
+    compile and so proves nothing. The LOOKUP moves with the refresh, because that is
+    the real regression: probing the arena before the camera's clearance instead of
+    after it. The mutant now compiles and still places the pin before `follow.update`.
+    It also has to move the block's leading comment, or the comment ends up describing
+    a call that is no longer there."""
     sp = STEP_LOOP
     if sp is None:
         return text
     a, b = sp
     loop = text[a:b]
-    m = re.search(r"(?m)^[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
-                  r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", loop)
+    m = re.search(r"(?m)^[ \t]*const[ \t]+std::string\*[ \t]+solid[ \t]*=[ \t]*\n"
+                  r"[ \t]*space\.arenaAt\([^;]*;[ \t]*\n"
+                  r"[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
+                  r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
+                  loop)
     if not m:
         return text
     block = m.group(0)
@@ -1144,26 +1326,45 @@ def arm_pitch_ignores_runtime(text):
 def arm_objects_before_arena(text):
     """Move the whole object pass above the arena draw. The pass still runs and
     still skips what it should, so only the ORDER check can catch it -- which is
-    the point: the C#'s order is the picture, not an implementation detail."""
+    the point: the C#'s order is the picture, not an implementation detail.
+
+    Review-14 F3: this arm used `text.find("if (arena) {")`, which is the FIRST of the
+    three `if (arena)` blocks in the file -- the one at :265, above the declaration of
+    `runtime` -- so the mutant moved the pass into a scope where its own identifiers
+    do not exist and did not compile. It now anchors on the arena block INSIDE the
+    frame, and moves the pass's header with its body: the old splice left `if
+    (runtime)` glued to whatever followed the pass, which is not a program either."""
     op = object_pass(text)
     if op is None:
         return text
-    block = text[op["start"]:op["end"]]
-    at = text.find("if (arena) {")
-    if at < 0 or at > op["start"]:
+    frame = frame_body_span(text)
+    if frame is None or not (frame[0] <= op["start"] < frame[1]):
         return text
-    return text[:at] + block + "\n        " + text[at:op["start"]] + text[op["end"]:]
+    hdr_at = op["start"] + 1 - len(op["header"])
+    block = text[hdr_at:op["end"]]
+    arena_at = text.rfind("if (arena) {", frame[0], hdr_at)
+    if arena_at < 0:
+        return text
+    rest = text[:hdr_at] + text[op["end"]:]
+    return rest[:arena_at] + block + "\n\n        " + rest[arena_at:]
 
 
 def arm_objects_ungated(text):
     """Ungate the pass. `if (true)` keeps the block, its skips and its order, so
     only the gate check can see it -- and a level whose scripts never started
-    (check 10's asset gate) is exactly the shipped case where runtime is null."""
+    (check 10's asset gate) is exactly the shipped case where runtime is null.
+
+    Review-14 F3: the splice used to cut one character too early and re-emit the
+    block's own `{`, so the mutant was `if (true) {{` -- unbalanced braces, an
+    `expected '}' at end of input`, and a mutant of nothing by this file's own
+    standard. The header now spans [start - len(header) + 1, start], because `start`
+    IS the `{` the header ends with."""
     op = object_pass(text)
     if op is None or not re.fullmatch(r"if[ \t]*\([ \t]*runtime[ \t]*\)[ \t]*\{",
                                       op["header"]):
         return text
-    return text[:op["start"] - len(op["header"])] + "if (true) {" + text[op["start"]:]
+    hdr = op["start"] + 1 - len(op["header"])
+    return text[:hdr] + "if (true) {" + text[op["start"] + 1:]
 
 
 def arm_objects_draws_removed(text):
@@ -1312,6 +1513,61 @@ def arm_failure_latch_never_rearms(text):
     return mutated if n else text
 
 
+def arm_failure_latch_never_arms(text):
+    """Delete the arming statement (review-14 F1). The guard `if
+    (!streamFailureLogged)` is then ALWAYS true, so one sustained refusal prints on
+    every frame -- the ~60/s spam review-10 F3 was raised about -- while the printed
+    numbers stay honest (check 17 green) and the clear stays exactly where it is
+    (check 18 green). Only a check that reads the SET can see this, and until
+    review-14 nothing in the repository did."""
+    mutated, n = re.subn(r"[ \t]*streamFailureLogged[ \t]*=[ \t]*true;[ \t]*\n", "", text)
+    return mutated if n else text
+
+
+def arm_failure_latch_clear_unreachable(text):
+    """Re-arm the latch from inside an inner condition (review-14 F2). The accepted
+    assignment form is placed before the test, so a window search over the enclosing
+    block accepts it -- but it is nested in `if (objectCorners == 0)`, and
+    `objectCorners` is nonzero on every frame that draws objects, so the latch
+    NEVER clears and the second, larger refusal after a recovery is silent: review-11
+    F7 exactly. Position is not reachability; only a depth test separates this from
+    the probe that writes the same statement as a direct member of the block."""
+    mutated, n = re.subn(r"\}[ \t]*else[ \t]*\{[ \t]*\n[ \t]*streamFailureLogged"
+                         r"[ \t]*=[ \t]*false;[ \t]*(?://[^\n]*)?\n[ \t]*\}[ \t]*\n", "}\n",
+                         text)
+    if not n:
+        return text
+    mutated, n2 = re.subn(r"(if \(objectDraw\.allocationFailed\(\)\) \{\n)",
+                          r"\1                if (objectCorners == 0) {\n"
+                          r"                    streamFailureLogged = "
+                          r"objectDraw.allocationFailed();\n                }\n", mutated)
+    return mutated if n2 else text
+
+
+def arm_failure_second_line_sibling_branch(text):
+    """Add a refusal line in a SIBLING condition outside the refusing branch
+    (review-14 F7). Its numbers are honest -- the refused capacity, the backend's own
+    factors, KB named -- so check 17 passes it, and the committed guarded line is
+    untouched, so only a check that reads EVERY refusal line in the pass can see that
+    this one sits outside the edge trigger and prints every frame of a refusal. It
+    compiles: it re-reads the accessor because `attempted` is scoped to the guarded
+    block."""
+    marker = ("            } else {\n                streamFailureLogged = false;\n"
+              "            }\n")
+    at = text.find(marker)
+    if at < 0:
+        return text
+    end = at + len(marker)
+    copy = ('            if (objectDraw.allocationFailed() && streamCapacityLogged == 0) {\n'
+            '                mdk::log3dsPrintf("objects: first refusal of %d corners "\n'
+            '                                  "= %d KB linear — linearAlloc FAILED",\n'
+            '                                  objectDraw.attemptedCapacity(),\n'
+            '                                  (int)((int64_t)objectDraw.attemptedCapacity()\n'
+            '                                        * 5 * sizeof(float) / 1024));\n'
+            '            }\n')
+    return text[:end] + copy + text[end:]
+
+
 def arm_respawn_keeps_the_caches(text):
     """Keep the layout and pose caches across a runtime rebuild. This is the defect
     the object pass would have shipped: the rebuilt runtime frees the models both
@@ -1393,6 +1649,14 @@ ARMS = [
     ("refused-mesh latch is re-armed from inside the refusing branch (review-13 D2)",
      arm_failure_latch_set_inside_branch,
      CHK["failure-latch-re-arms-on-success"]),
+    ("refused-mesh latch is never armed, so the guard is always true (review-14 F1)",
+     arm_failure_latch_never_arms, CHK["failure-line-prints-once-per-refusal"]),
+    ("refused-mesh latch is re-armed only inside an inner condition (review-14 F2)",
+     arm_failure_latch_clear_unreachable, CHK["failure-latch-re-arms-on-success"]),
+    ("a refusal line in a sibling branch of the object pass sits outside the edge "
+     "trigger (review-14 F7)",
+     arm_failure_second_line_sibling_branch,
+     CHK["failure-line-prints-once-per-refusal"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -1458,8 +1722,31 @@ PROBES = [
                                       "(%d bytes)", attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float)));
 """, 1)),
+    # Check 17 compares FACTOR SETS after folding one level of local integer
+    # constants (review-14 F6), because naming the stride is the drift-proof refactor a
+    # later batch should write, not a defect: a gate that reddens it is a gate that
+    # gets routed around.
+    ("the refused-mesh KB figure names the corner stride instead of writing 5 "
+     "(review-14 F6)",
+     lambda s: s.replace(
+         "                    const int32_t attempted = objectDraw.attemptedCapacity();",
+         "                    const int32_t kMeshStride = 5;\n"
+         "                    const int32_t attempted = objectDraw.attemptedCapacity();",
+         1).replace("(int)((int64_t)attempted * 5 * sizeof(float) /",
+                    "(int)((int64_t)attempted * kMeshStride * sizeof(float) /", 1)),
+    # Check 19 now requires the guarded block to ARM the latch, so moving the arming
+    # after the print -- which is the same state machine, since the guard is tested
+    # once per frame -- must stay green.
+    ("the refused-mesh latch is armed after the line it suppresses (review-14 F1 asks "
+    "the guard to arm the latch, not for a particular order)",
+     lambda s: s.replace("""                if (!streamFailureLogged) {
+                    streamFailureLogged = true;
+""", """                if (!streamFailureLogged) {
+""", 1).replace("""                                            1024));
+                }""", """                                            1024));
+                    streamFailureLogged = true;
+                }""", 1)),
 ]
-
 print("main_3ds_flow: %s — %d checks, %d mutation arms, %d green probes"
       % (PATH, real.checks, len(ARMS), len(PROBES)))
 arms_red = 0

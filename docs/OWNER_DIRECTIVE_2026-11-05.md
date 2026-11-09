@@ -89,7 +89,8 @@ rule compares the reviewer with the *builder*, so both routes satisfy it as
 written. If a DeepSeek route ever returns to the builder chain the answer is a
 BLOCKED review and a stopped loop, not an exception.
 
-> **[CORRECTED BY BATCH 106, review-12 R3.]** The paragraph above used to end with
+> **[CORRECTED BY BATCH 106, review-12 R3; THE `tetrisphere` QUOTE BELOW WAS MADE
+> VERBATIM BY BATCH 107, review-13 D6.]** The paragraph above used to end with
 > "`tetrisphere-godot` and `perfect_dark` carry the same chains; the three loops
 > differ only in their project-specific prompts, gates and state files." Both
 > siblings contradict it. Read narrowly and non-recursively from the two named

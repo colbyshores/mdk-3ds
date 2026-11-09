@@ -1,14 +1,44 @@
 # Phase 2 continuation checkpoint
-Risk: high — **the predicates of three gated checks were rewritten again, and an owner
- directive's quoted evidence was corrected.** No game code changed: the only non-test, non-doc
- edit is a quotation in `docs/OWNER_DIRECTIVE_2026-11-05.md`. What makes this review-worthy is
- that a builder again changed what its own gate accepts — check 17 now reads *every* refused-mesh
- printf and compares its byte figure's factor set to the factor set parsed out of
- `renderer_c3d.cpp`, check 18's accepted assignment form is now anchored to a position, and
- check 19 now `fullmatch`es the guard condition instead of substring-hunting it. All four changes
- are strengthenings the external reviewer asked for and each was reproduced on a compiling mutant
- first, but a batch that widens what a gate rejects is exactly the thing an independent model
- should look at, and this is the third consecutive round on these same three checks.
+Risk: high — **four gated predicates were rewritten, a new check was added to a second gate, and
+ three mutation arms that could not compile were replaced.** No game code changed: `mdk_3ds/mdk.elf`
+ is bit-identical to batch 107's (`b1997a5dca83639acf603d518abe8e62`, shbin `d46abb60…`), so the
+ picture is unchanged and the frame pair is a byte-identical re-capture, stated not hidden. What
+ makes this review-worthy is that a builder again changed what its own gate accepts: check 19 now
+ requires the guarded block to *arm* the latch, both accepted forms of check 18's clear are
+ brace-depth-tested instead of position-searched, check 17's refusal-line scope widened from one
+ branch to the whole object pass and now folds one level of local integer constants, and
+ `c3d_frame_test.sh` gained a check (30 checks, 41 arms) pinning the backend's own refused-mesh
+ latch. Every change was reproduced on a compiling mutant first, and every arm and probe now
+ compiles for the 3DS target — but a batch that widens what a gate rejects, on the fourth
+ consecutive round on the same three checks, is exactly what an independent model should look at.
+
+**Batch 108 (Iteration 135) — review-14 closed 7/7 (no Critical, no High): F1–F7 all fixed, none
+ rebutted on merit.** F1/F2 (Medium) and F3–F7 (Low) each reproduced on the reviewer's own mutant
+ shape before any edit. **F1**: nothing in the repository pinned `streamFailureLogged = true;` —
+ deleting it left the guard always true, printing the refusal ~60x/s, with `PASS Main3dsFlow (19
+ checks, 27 arms, 9 probes)`. Check 19 now requires the guarded block to arm the latch as a direct
+ statement of itself; the order inside the block is deliberately NOT pinned (print-then-arm prints
+ once too), and there is a probe for the other order. **F2**: check 18's accepted assignment form
+ was anchored to a *position* where the property is *reachability*; a copy nested in
+ `if (objectCorners == 0) { … }` satisfied it, never cleared, and silenced the second, larger
+ refusal — F7 with checks 18 and 19 both green. Both accepted forms are now brace-depth-tested
+ (depth 1 from the block's own `{`), which answers the reviewer's open question 1: "runs on every
+ frame" IS decidable in text. **F3**: the header claimed every arm compiles; three did not, and two
+ were worse than the claim — `arm_objects_ungated` spliced one character early and re-emitted the
+ block's `{` (`if (true) {{`, unbalanced), and `arm_objects_before_arena` anchored on
+ `text.find("if (arena) {")`, the first of three such blocks, which sits above the declaration of
+ `runtime`. All three now build real mutants; all 30 arms and 11 probes compile with the Makefile's
+ flags. **F6**: naming the corner stride — the refactor that makes drift impossible, which is what
+ D4 was *for* — reddened check 17 and four arms; one level of local `const`/`constexpr` integer
+ definitions now folds on both sides. **F7**: a refusal line in a sibling condition outside the
+ first refusing branch was read by neither check; the scope is now the object pass with family
+ membership decided by the line's own format string. **F4/F5**: the marker count is gone from both
+ records and the directive's corrected quote is attributed to the batch that wrote it. **Open
+ question 2 answered by pinning, not by deciding**: the backend's `meshAllocFailureLogged` — the
+ line that actually printed 1710 times, pinned zero times while its frontend copy was pinned three
+ — now has a check and four arms in `c3d_frame_test.sh`, the file whose arms can mutate
+ `renderer_c3d.cpp`. `PASS Main3dsFlow (19 checks, 30 arms, 11 probes)`, `PASS C3dFrame (30
+ checks, 41 arms)`.
 
 **Batch 107 (Iteration 134) — review-13 closed 6/6 (no Critical, no High): D1–D4 fixed in the
  gate, D5/D6 fixed in the record; nothing rebutted on merit.** Review-13 found that batch 106's
@@ -32,11 +62,12 @@ Risk: high — **the predicates of three gated checks were rewritten again, and 
  test, before the test. **D3**: check 19 substring-tested the condition, so
  `if (!streamFailureLogged || true)` stayed green while printing every frame; the condition must now
  `fullmatch` one of the two accepted negative spellings. `PASS Main3dsFlow (19 checks, 27 arms
- adjudicated red, 9 probes green)`. **D5**: the record's bold-marker count was an intermediate 652
- where the committed file holds 672; the sentence now states parity as the invariant with the
- recount command, because the number moves with every batch's own summary. **D6**: the directive
- quoted `tetrisphere-godot/tools/ralph-pi.sh:120` in a simplified form under a heading that says the
- file was read directly; it is quoted verbatim now, which strengthens the point it was making.
+ adjudicated red, 9 probes green)`. **D5**: the record's bold-marker count was an intermediate 652;
+ the number is dropped entirely now and parity is stated as the invariant with the recount
+ command, because any count published in a summary is falsified by that same summary. **D6**: the
+ directive quoted `tetrisphere-godot/tools/ralph-pi.sh:120` in a simplified form under a heading
+ that says the file was read directly; it is quoted verbatim now, which strengthens the point it
+ was making.
 
 **Batch 106 (Iteration 133) — review-12 closed 5/5 (no Critical, no High): R1 and R2 fixed in the
 gate, R3 annotated in the directive, R4/R5 fixed; nothing rebutted on merit.** Review-12's two
@@ -422,7 +453,19 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 108)
+## NEXT (batch 109)
+**What is actually next, restated by batch 108.** Four consecutive batches have now closed external
+reviews on the refused-mesh gate family without moving a line of game code, and each round has found a
+real hole the previous round's "closed" rested on. That is a signal about the queue, not about the
+gate: the gate is now reading the state machine, and the remaining value is in the game code the gate
+batches have been deferring. Two named items, both blocked on a named cause rather than on effort:
+(1) **the canvas seam** — `mdk_render_canvas_quad` is a no-op on this backend (`renderer_c3d.cpp:1854`),
+which is what priority item 5b (the HUD) and the MVE movie presenter both wait on; (2) **the collision
+batch** — `FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn arena and
+lets `ArenaSpace::setSolid` take the oracle's current + active second, and which needs a
+doorway-crossing oracle rather than a hand-written expectation. Neither is a gate batch. The
+one-sided-view investigation below stays open and is the sharper of the two picture questions.
+
 *(Batch 104 did not advance the renderer head either; it closed the instrument review-10 proved could not
 fail and added a measured colour fact to the head. The item below is restated against the committed panel,
 because review-9 F1 is right that batch 102 erased the picture this item was written against: the head item

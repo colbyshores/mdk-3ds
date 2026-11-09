@@ -20087,8 +20087,11 @@ replaced `**Deferred review findings:**` with `**Review-4 of run-20261105-142911
 dropped the closing marker, so the file's marker count went from even to odd and every
 emphasis pair after it in the block the file says "a batch must not lose" was shifted. Closed
 after `F1/F2`, and the count is even again. Review-13 D5: this entry then claimed "the count is
-652", which was an intermediate state — the committed file holds 672, because batch 106's own
-summary paragraph adds 20 more. The number is not the invariant and it moves with every batch
+652", which was an intermediate state — the committed file holds more, because batch 106's own
+summary paragraph adds 20 more. [CORRECTED BY BATCH 108, review-14 F4: batch 107's fix replaced
+one wrong number with another — it published 672 where `3491a1ed` holds 688, for exactly the
+reason the sentence names two lines below. No count is published here any more.] The number is
+not the invariant and it moves with every batch
 that writes a summary; the invariant is parity, and it is reproducible with
 `grep -o '\*\*' docs/CONTINUATION.md | wc -l`. Stated that way so the next reader who re-counts
 does not find a wrong number in the record.
@@ -20222,6 +20225,9 @@ cannot see the widening.
 count is 652 and even" for a committed file holding 672 (651 at `ffe69c6d`, +1 closed by the fix,
 +20 in batch 106's own summary paragraph). Parity is the invariant; the number moves with every
 batch that writes a summary, so the sentence now says that and gives the recount command.
+[Review-14 F4: batch 107's fix re-committed D5 — it published 672 where `3491a1ed` holds 688,
+because batch 107's own summary paragraph moved it again. Batch 108 removed the number from both
+records; parity and the recount command are all that remains.]
 
 **D6 (Low, fixed) — the directive's sibling citation was a simplification presented as a line.**
 `docs/OWNER_DIRECTIVE_2026-11-05.md` quoted `tetrisphere-godot/tools/ralph-pi.sh:120` as
@@ -20277,3 +20283,157 @@ read-only and narrowly, two files:
 renderer-stride parse fails closed) and
 `30-architecture/patterns/an-ifdef-gated-conjunct-widens-a-guard.md` (why a disjunct on a
 refuse-branch guard is a known, named failure and not a hypothetical).
+
+## Iteration 135 — batch 108: review-14 closed 7/7 (no Critical, no High) — the refused-mesh
+edge trigger was half-pinned: the guard and the clear were gated and the statement that ARMS it
+was named by no check, no arm and no probe in the repository, and check 18's clear was anchored to
+a position where the property is reachability
+
+**Prior-solution lookup.** `knowledge_search` on the `mdk-sdl` KB (mode hybrid) for the refused-mesh
+edge trigger and the latch returned two hits, `mdk_3ds/src/platform/log_3ds.cpp` (the log writer the
+refusal line goes through) and `docs/OPEN_ITEMS.md` — i.e. leads into this repository's own code, no
+prior finding elsewhere; the KB is source-backed and does not yet contain a note on this defect
+family. Obsidian MCP and Cognee MCP are **not exposed as tools in this Pi session** (no `obsidian_*`
+/ `cognee_*` in the tool list), so the vault fallback was used read-only and narrowly, two files:
+`30-architecture/patterns/an-ifdef-gated-conjunct-widens-a-guard.md` (a guard widened by one term
+prints the refuse branch for strictly more inputs than it should — the class review-13 D3's
+`|| true` and review-14 F1's deleted arming both land in, and it names the same
+refuse-branch-asymmetry) and
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md` (why the new
+backend parse fails closed and returns a red rather than skipping when `renderer_c3d.cpp` cannot be
+read). Per AGENTS.md P9 this is a **degraded** lookup — Cognee's graph search is unavailable — and
+it is recorded as such rather than claimed as a consult.
+
+**Every finding reproduced before any edit, on the reviewer's own mutant shapes.** Four mutants
+were written to `/tmp/kilo-mdk-b108/` and run against the committed gate; all four behaved exactly
+as review-14 described, which is what makes F1 and F2 fixable rather than arguable:
+
+| mutant | committed gate's verdict | after batch 108 |
+|---|---|---|
+| `streamFailureLogged = true;` deleted | `PASS Main3dsFlow (19 checks, 27 arms, 9 probes)` | check 19 red |
+| clear removed, latch update nested in `if (objectCorners == 0)` | no check-level failure at all (arm bookkeeping only) | check 18 red |
+| same nested under `if (objectDraw.capacity() != streamCapacityLogged)` | likewise check-green | check 18 red |
+| refusal line added in a sibling `if (allocationFailed() && capacity == 0)` | `PASS Main3dsFlow (19 checks, 27 arms, 9 probes)` | checks 17 and 19 red |
+| named stride `const int32_t kMeshStride = 5;` | check 17 red (a legitimate shape rejected) | green, with a probe |
+
+**F1 (Medium, fixed in the gate) — the arming statement was pinned by nothing.**
+`grep -rn streamFailureLogged tests/ tools/` found `= false` and the two guard spellings and no
+`= true` anywhere. The edge trigger is three statements and two of them were gated: with the set
+deleted the guard `if (!streamFailureLogged)` is *always* true, so one sustained refusal prints on
+every frame — the ~60/s class review-10 F3 and review-12 R1 were each raised for — while check 17
+reads honest numbers and check 18 reads an untouched clear. Check 19 now requires the guarded block
+that contains a refusal line to also arm the latch, as a **direct statement of that block** (brace
+depth 1 from its own `{`), so an arming nested in an inner condition does not count. What is
+deliberately NOT pinned is the arming's ORDER inside the block: `print(); arm();` and `arm();
+print();` both print once, and requiring one of them would redden a shape the port may write, which
+is review-10 F6's failure re-imported. There is a probe for the other order to keep that decision
+from being quietly reversed by a later batch. New arm: `refused-mesh latch is never armed`.
+
+**F2 (Medium, fixed in the gate) — position is not reachability.** Batch 107's D2 fix anchored the
+accepted assignment form to `code[enc[0]:at]` — "in the enclosing block, before the test" — and the
+comment above it states the property as "it is only the same state machine when it runs on every
+frame". A window search cannot see the difference. A copy placed inside `if (objectCorners == 0) {
+… }` before the test satisfied the window, and because `objectCorners` is nonzero on every frame
+that draws objects, the latch never cleared: the second, larger refusal after a recovery went
+silent, review-11 F7 exactly, with checks 18 AND 19 green and only arm bookkeeping reddening —
+which reads as arm maintenance, not as a defect, and this batch itself argued in D3 that
+incidental arm redness is not a check. Both accepted forms now go through `brace_depth`: the clear
+must be depth 1 inside the `else` sibling, and the assignment form depth 1 inside the block that
+contains the test. That answers review-14's open question 1 affirmatively — "runs on every frame"
+IS decidable in text, and the decidable form is brace depth from the block's own header, not
+distance from a line. New arm: `refused-mesh latch is re-armed only inside an inner condition`.
+
+**F7 (Low, fixed in the gate) — D1's scope was one branch, not every refusal line.** The property
+is about every line that reports a refusal; the implementation read every printf inside the body of
+the first `if (objectDraw.allocationFailed())`. A refusal line in a sibling condition outside that
+body — a first-pass diagnostic, a "log it again while the capacity is still zero" — was read by
+neither check 17 nor check 19, so review-11 F1's symptom could return with the gate green. The
+scope is now the object pass (`object_pass(code)`), and family membership is decided by the line's
+own format string (`REFUSAL_FMT`: it names the refusal), which is also what keeps the
+capacity-change line out of the family — that line reports a *success* and is legitimately unguarded
+and legitimately not the refused capacity. Stated limit, not hidden: a refusal line whose format is
+a variable, or that never says so, is outside this net. New arm: `a refusal line in a sibling branch
+of the object pass sits outside the edge trigger`.
+
+**F6 (Low, fixed in the gate) — the drift-proof refactor was the rejected shape.** Review-13 D4
+replaced an identifier test with a factor-set comparison specifically so a stride could not drift
+between `renderer_c3d.cpp` and the log line. Comparing factor sets literally meant that the refactor
+which makes drift *impossible* — extracting the stride into a named constant both sides use —
+reddened check 17 and four arms, and the natural remedy for a later batch would be to edit the gate.
+One level of local `const`/`constexpr` integer definitions now folds before the comparison, on the
+frontend side and on the backend side (without the latter, a named stride in the renderer would make
+`backend_mesh_atoms()` return None and redden the check against an untouched frontend). Probe:
+`the refused-mesh KB figure names the corner stride instead of writing 5`.
+
+**F3 (Low, fixed in the code, not in the sentence) — three arms could not compile, and two of them
+were not mutants of anything.** The header claimed "every arm compiles for the 3DS target"; the
+reviewer generated all 27 and found three that did not. Reproduced, then found the causes were
+worse than a stale comment: `arm_objects_ungated` computed `op["start"] - len(op["header"])` where
+`op["start"]` *is* the `{` the header ends with, so it cut one character early and re-emitted that
+brace — `if (true) {{`, `expected '}' at end of input`. `arm_objects_before_arena` anchored on
+`text.find("if (arena) {")`, which is the FIRST of three `if (arena)` blocks in the file and sits
+above the declaration of `runtime`, so the mutant referenced identifiers that do not exist there;
+its splice also left `if (runtime)` glued to whatever followed the pass. `arm_before_camera` moved
+the refresh above the declaration of its own guard (`'solid' was not declared`). All three now
+produce real, compiling mutants — the arena-order arm anchors inside the frame body and moves the
+pass's header with its body, and the camera arm moves the `arenaAt` lookup with the refresh, which
+is the actual regression (probe the arena before the camera's clearance instead of after). The
+header's claim is now true rather than narrowed, and it names the command, because the host suite
+cannot run the cross compiler and a claim nobody can re-run is a claim that will rot. All 30 arms
+and 11 probes compile with `-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -mfpu=vfp
+-D__3DS__ -DRENDERER_C3D -std=gnu++17 -fno-exceptions -fno-rtti -fsyntax-only` plus the Makefile's
+`-I` list: 41 files, 0 diagnostics.
+
+**Open question 2 (the backend's own latch) — answered by pinning it, in the file that can arm it.**
+`renderer_c3d.cpp:1705-1712`'s `meshAllocFailureLogged` is the line that actually printed 1710
+times in one run; the frontend's copy of the same edge trigger was pinned three times over and this
+one zero. It was not raised as a finding, and `main_3ds_flow_test.sh` cannot arm it — its arms mutate
+`main_3ds.cpp`. So it went into `c3d_frame_test.sh`, whose `SRC` *is* `renderer_c3d.cpp`: one check
+(`mesh-refusal-line-is-edge-triggered`) holding the same three properties as the frontend's — the
+guard IS the negative latch test, the guarding block arms the latch as a direct statement of
+itself, and the clear is a direct statement of the function, which is what puts it on the success
+path rather than inside `if (!mesh.data)` where it would clear on the frame that refused — plus four
+arms (never clears / never arms / guard widened to `if (true)` / cleared from inside the failing
+branch), all four isolating it. Two implementation notes: `body_span` requires `void` and the mesh
+factory returns `MdkMeshId`, so a second resolver was added rather than widening the first and
+quietly changing what 29 other checks resolve; and the brace scan needs comments blanked, because
+"the emulator's bigger heap" is real prose in that function and an apostrophe would otherwise open a
+string literal and swallow the braces after it. `PASS C3dFrame (30 checks, 41 arms adjudicated red)`.
+
+**F4 / F5 (Low, fixed in the record).** The marker count batch 107 published as 672 is 688 at
+`3491a1ed` — the same error D5 charged batch 106 with, because a count published in a summary
+paragraph is falsified by that summary paragraph. The number is gone from both records; parity plus
+the recount command is all that remains. And the directive's correction block, labelled
+`[CORRECTED BY BATCH 106, review-12 R3]`, had been edited by batch 107 without saying so; the label
+now names the batch that wrote the quote.
+
+**Gates, verbatim.** `make -C tests/scripts` → `All cases match the oracle.` (567 PASS lines).
+`bash tools/check.sh` → `CHECK: ALL GATES PASSED`, with `audit_c_with_classes 0 violations`,
+`gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+`gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`,
+`gates_frames every pinned frame is deterministic and unchanged`, `gates_batch_integrity project
+invariants intact`. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+`3DSX mdk.3dsx`, and `mdk.elf` is `b1997a5dca83639acf603d518abe8e62` with `build/mdk_c3d.shbin`
+`d46abb60de20b2aa0659043aeb97b9c9` — byte-identical to what review-14 recorded for batch 107, which
+is the evidence that no game code moved. `sh tests/scripts/main_3ds_flow_test.sh` → `PASS
+Main3dsFlow (19 checks, 30 arms adjudicated red, 11 probes green)`; `sh
+tests/scripts/c3d_frame_test.sh` → `PASS C3dFrame (30 checks, 41 arms adjudicated red)`.
+
+**No emulator run, and the reason.** This batch changes no `mdk_3ds` source file (AGENTS.md P8 attaches
+emulator evidence to batches that do). The bit-identical ELF and shbin are the substitute and are
+stated as that, not as a pass: an unmeasured 3DS path stays unmeasured, and the refused-mesh line
+still has never been observed on a console, because no build has ever exhausted linear memory.
+
+**The frame pair.** `docs/frames/2026-11-09-review14-latch-pinned.png` + `.txt`. The PNG is
+byte-identical to batch 107's (sha256 `6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8`)
+because no pixel-producing code changed; the sidecar's gap is the same `bad_percent=1.240
+max_delta=247 mean_delta=0.1819`. That is stated, not presented as progress.
+
+**What is still open after this batch.** The three checks have now been rewritten four times and
+each round has found a real hole the previous round's "closed" claim rested on; the family is not
+converging on a proof, it is converging on "the check reads the state machine". What the checks
+still cannot do, stated plainly: they read text, so they pin structure and not pixels, and the
+refused-mesh line has never once been printed by a real run. The named next items are unchanged and
+in `docs/CONTINUATION.md`'s priority order — the DTI connection crossing and `CrossedArena` (which
+is what would make the collision pin the oracle's rule instead of a stand-in), the second arena in
+`setSolid`, and the game-code work the gate batches have been deferring.
