@@ -18998,7 +18998,10 @@ step loop must have exactly one `setSolid` and it must not read
 ### F2 (Medium) — confirmed, fixed: the oracle's `Option` is 1, not 0
 
 `public int Option = 1;` (`ScriptRuntime.cs:214`), overwritten by
-`Option = ui.Settings.Gore ? 1 : 0` (`Viewer.cs:234`, and `:874` on resume) from
+`Option = ui.Settings.Gore ? 1 : 0` (`Viewer.cs:234`, and `:874` on resume
+**[Superseded by review-7 F4 / batch 101: `:874` is the `TOOSCARYFORME` gore CHEAT
+(`Viewer.cs:859-876`), whose own doc comment says "not saved"; the resume writer is
+`ScriptRuntime.Snapshot.cs:142`, `Option = data["option"]`.]**), from
 `Settings.Gore = true` (`Flow/Settings.cs:75`). A default oracle run is gore ON.
 The port wrote `option = 0` in both frontends and in ten places in the `tick1`
 harness, under a comment calling that "the oracle's Option" — the opposite of the
@@ -19030,7 +19033,10 @@ What **is** executable is the invariant that sequence stands on, and it is now
 mixer's device is given a counting sink and feeds it; the runtime is destroyed and
 rebuilt; the new mixer's device is **silent** until the sink is re-attached, and
 feeds it afterwards. That is the silent-level-after-the-first-death, reproduced on
-the host. The mixer **addresses** are deliberately not compared — the first
+the host **[Superseded by review-7 F5 / batch 101: overstated. What is reproduced is
+the INVARIANT that source read stands on — a rebuilt device is silent until the sink
+is re-attached. The frontend's own sequence is still executed only on the console and
+still pinned only by `main_3ds_flow_test.sh` check 9.]**. The mixer **addresses** are deliberately not compared — the first
 runtime is freed before the second is allocated, so malloc hands back the same
 block and pointer inequality would have been an assertion about the allocator.
 (That check was written, ran, and failed on its first run; the behavioural
@@ -19115,3 +19121,164 @@ worktree, where it still is. The builder rule "commit the inherited dirty tree
 first" does not override a standing owner action on protected files; the standing
 action wins, and the gate would have refused it anyway (`ralph/builder.md` and
 `ralph-pi.sh` are both in `PROTECTED`).
+
+---
+
+## Iteration 129 — batch 101: review-7 closed 5/5, none rebutted — the header said
+## "BOTH frontends", and one of them did not
+
+Review-7 (`logs/ralph-pi/run-20261108-195620/review-7.md`, scope `e7c48b16..ff8e946a`,
+reviewer family `deepseek`, builder family `qwen`): one High, two Medium, two Low.
+All five confirmed against the C# oracle; all five fixed; none rebutted.
+
+### F1 (High) — confirmed, fixed: the Linux frontend still pinned the SPAWN arena
+
+`arena_space.h` shipped the sentence *"BOTH frontends here use the geometric arena
+under his feet as the stand-in"*. It was false for `mdk_linux`, in **both** of its
+branches:
+
+* with a runtime, the step loop did `space.setSolid(runtime->currentArena())`
+  (`mdk_linux/src/main.cpp:548-550`), and `currentArena_` is written exactly once, on
+  the runtime's first tick (`script_runtime.cpp:360-378`), because the DTI type-6
+  doorway crossing that moves the oracle's `CurrentArena` (`CrossedArena`,
+  `ScriptRuntime.cs:791-803`) is not ported — so the pin was the spawn arena for the
+  whole level;
+* without a runtime the loop performed **no** refresh at all, leaving the
+  `spawnPlayer` value (`:371-375`) forever.
+
+`ArenaSpace::move` uses only the pinned arena while it is non-empty
+(`arena_space.cpp:111-124`), so walking Kurt out through an open doorway left that
+BSP's geometry behind, `bottom()` resolved the neighbour holding his feet, and the
+fall-out death fired into a respawn loop. That is review-6 F1's defect, in the
+frontend that takes the pinned frame, and the review found it by reading the code the
+batch had just written.
+
+**Oracle:** `Viewer.cs:533` — `_space.SetSolid(_scripts.SolidArenas);`, every step,
+after `UpdateCamera`. **Fix:** the Linux loop now re-probes `space.arenaAt(feet)`
+after `follow.update` and pins it when the lookup answers, with a runtime and
+without one — the same shape the 3DS frontend got in batch 100, so the header's
+sentence is now true of both. The spawn pin stays (a Kurt outside every arena gets a
+null lookup and `bottom()` must still resolve something), and the pin is still not
+cleared when he is outside every arena.
+
+**Pinned** by a new gate, `tests/scripts/frontend_solid_pin_test.sh`, wired into
+`make -C tests/scripts`: the shared claim gets one gate that reads **both**
+frontends — refresh present in the fixed-step loop, fed by `arenaAt`, guarded on its
+own lookup, never reading the runtime's frozen `currentArena()`, and the spawn pin
+surviving. **10 checks, 10 mutation arms, each arm naming the one check it must
+redden.** Its own arm discipline caught one of this batch's arms on the first run:
+the "unguarded refresh" arm replaced the geometric block, so the geometric check
+caught it first and the guarded check had no isolating mutation — the exact
+pass-generator shape review-7 F2 forbids. It now adds an unguarded second site
+instead. Overlap with three of `main_3ds_flow_test.sh`'s checks is deliberate and
+says so in the file header: a claim spanning two files is only as gated as its
+weakest frontend.
+
+### F2 (Medium) — confirmed, fixed: an arm that could be satisfied by a different check
+
+`main_3ds_flow_test.sh`'s arms accepted *any* red verdict and printed whichever check
+broke first. The arm written for check 6 ("the step loop pins from the arena under
+Kurt, never from the runtime's frozen current arena") restored batch 99's pin by
+**replacing** the geometric block, which destroys the guarded-`arenaAt` shape check 5
+reads — so check 5 reddened first and **check 6 had no mutation that isolated it**.
+The reviewer's probe (stub check 6's condition to `True`, suite still prints PASS)
+reproduced.
+
+**Fix:** every check now has ONE label in a `CHK` table used by both the check and the
+arm table, each arm declares the check it must turn red, and the comparison is **exact
+equality** — an arm that an earlier check catches first is a FAIL. A second arm,
+`frozen-runtime-pin-added-alongside-the-geometric-one`, puts the frozen pin back
+*after* the geometric refresh (so it is the last writer and the real defect) while
+leaving check 5's shape intact: only check 6 can catch it. The replacement arm keeps
+its honest attribution (check 5, documented in the table). **11 checks, 13 arms.**
+Measured with the reviewer's own probe: with check 6 stubbed to `True` the suite now
+prints `FAIL main_3ds_flow arm frozen-runtime-pin-added-alongside-the-geometric-one:
+the mutation was accepted` and `only 12 of 13 arms adjudicated red`.
+
+### F3 (Medium) — confirmed, fixed: the default was observed at the driver, not the field
+
+`testIfOptionBranchesOnTheRuntimeOption` took `main()`'s runtime by reference and
+asserted `option == 1` — but `main()` assigns `runtime.option = 1` two lines before
+it calls the test, so the CHECK observed the driver. Reverting `script_runtime.h`'s
+`int32_t option = 1;` to `= 0` changed nothing anywhere. The test now **constructs its
+own** `ScriptRuntime` (the shape `testARebuiltRuntimeNeedsItsSinkReattached` already
+used) and reads the default before anyone touches it.
+
+Measured by reverting the header to `= 0` on a clean rebuild:
+`FAIL line 538: runtime.option == 1` / `1 check(s) FAILED`, exit 2. **The first probe
+of this was invalid and is recorded as such:** it reported PASS because the object
+files were not rebuilt, which is a trap worth naming — a mutation probe that does not
+force a rebuild proves nothing. The header is back to `= 1` and `git diff` on it is
+empty.
+
+### F4, F5 (Low) — confirmed, fixed
+
+`Viewer.cs:874` was cited as "on resume" in `main_3ds.cpp` and here. It is the
+`TOOSCARYFORME` gore **cheat** (`Viewer.cs:859-876`, doc comment "(not saved)"); the
+actual resume writer is `ScriptRuntime.Snapshot.cs:142`, `Option = data["option"]`.
+Both citations corrected (the code comment rewritten, this log annotated in place per
+the append-only convention). And the batch-100 claim that the sink re-attach test had
+"reproduced the silent level after the first death on the host" is scoped: what is
+reproduced is the **invariant** the source read stands on; the frontend's own sequence
+is still executed only on the console and pinned only by check 9.
+
+### Gates, verbatim
+
+* `make -C tests/scripts` → `All cases match the oracle.`, with
+  `PASS Main3dsFlow (11 checks, 13 arms adjudicated red)` and
+  `PASS FrontendSolidPin (10 checks, 10 arms adjudicated red)` and
+  `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+* `bash tools/check.sh` → `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0
+  violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`,
+  `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`,
+  `gates_smdh SKIP (no built .cia)`, `gates_frames every pinned frame is deterministic
+  and unchanged`, `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` → links, `3DSX mdk.3dsx`. **`mdk.elf`
+  `b0878389fd928948644bb204669d8bb6` — byte-identical to batch 100's**, which is the
+  proof the console change was comment-only (identity field per review-5 F7).
+* `cmake --build build-linux` → `Built target mdk`, the frontend that carries F1.
+
+### Emulator evidence (AGENTS P8 — this batch touches `mdk_3ds/**`)
+
+`mdk_3ds/tools/emurun.sh` on **`DISPLAY=:99`**, Mandarine r1.2.1
+(`$MANDARINE`, md5 `0d2adab6`), verdict printed, exit 0, frame **2580** (48 frame
+lines, `health=100` on all 48, one `spawn:` line, `objects=7`):
+`scripts: runtime ready (seed -1336855983, option 1)` and the ledger
+`audio: frame=2580 secs=43.214 submitted=2156 done=2153 dropped=10 requeued=1
+inDsp=3 dspframes=8844 dspdropped=0`. Still not observed on the console: a script
+sound (`plays=1` is Kurt's own landing) and a respawn. Emulator-green is not
+hardware-pass; no Old-3DS measurement exists (P6/P8 stay open).
+
+### Frame
+
+`docs/frames/2026-11-09-b101-linux-pin-follows-too.png` (+ `.txt`), level 3 /
+320x240 / seed 1 / frame 1, `bad_percent=1.240 max_delta=247 mean_delta=0.1819`.
+Byte-identical to batch 100's (`sha256 6646adf1…`) and the sidecar says why: a pin
+that only differs after a door crossing cannot move a frame the capture takes no
+input for, and the console binary did not change at all.
+
+### Prior-solution lookup
+
+* **pi-knowledge `mdk-sdl`** — searched ("frontend refreshes the solid arena pin every
+  step"). It returned the *pre-batch-100* text of `arena_space.h` and `main_3ds.cpp`,
+  i.e. the index is stale for exactly the two files batch 100 rewrote; the older
+  `main_3ds.cpp` comment it surfaced is where review-8 F1's fall-out re-pin cost is
+  recorded, which is what the new comment preserves. Treated as a lead and verified
+  against the tree.
+* **Obsidian MCP** — `obsidian_*` tools are absent from this session, so the lookup was
+  the degraded disk-only read of `/mnt/nas/Vaults/port-docs` (AGENTS P9). A bounded
+  grep of `10-projects/mdk-sdl`, `30-architecture`, `40-incidents` for
+  `SetSolid|solid arena|ArenaSpace` found **no** prior note on this subsystem.
+* **Cognee MCP** — `cognee_*` tools are absent from this session; the graph was **not**
+  consulted. Reported, not silently skipped.
+
+### Inherited dirty tree — not staged, deliberately
+
+The tree arrived with `ralph-pi.sh`, `ralph/builder.md` (both `PROTECTED`),
+`ralph/LOOP_CONTEXT.md`, `docs/OWNER_DIRECTIVE_2026-11-05.md`,
+`tools/runner/test_review_state.sh`, `tools/ralph_pi_watchdog.sh` and an untracked
+`tools/reclaim_qwen_slots.sh` modified — the same operator-authored set batch 100
+declined, for the same reason: `CONTINUATION.md`'s owner-action block attributes it
+to the operator and says *"builder must not stage these or set `MDK_OWNER_APPROVED=1`.
+Stage batch paths by name only."* This batch staged its own paths by name. Review-7's
+open question 3 (the `test_review_state.sh` mode bit) is part of that same set.

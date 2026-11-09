@@ -427,8 +427,12 @@ int main(int argc, char** argv) {
     // rather than constructed with a hole in one of them (scriptAssetsReady).
     std::unique_ptr<mdk::scripts::ScriptRuntime> runtime;
     // THE SCRIPT OPTION (C# ScriptRuntime.Option). It is a USER SETTING, not a
-    // constant: `Option = ui.Settings.Gore ? 1 : 0` (Viewer.cs:234, and :874 on
-    // resume) and `Settings.Gore` DEFAULTS TO true (Flow/Settings.cs:75), so a
+    // constant: `Option = ui.Settings.Gore ? 1 : 0` when the runtime is built
+    // (Viewer.cs:234) and `Option = data["option"]` when a save is loaded
+    // (ScriptRuntime.Snapshot.cs:142) — NOT Viewer.cs:874, which review-7 F4 named:
+    // that line is the `TOOSCARYFORME` gore CHEAT (Viewer.cs:859-876, whose own doc
+    // comment says "not saved"). `Settings.Gore` DEFAULTS TO true
+    // (Flow/Settings.cs:75), so a
     // default oracle run has Option == 1 and this port ships the same default.
     // The port has no settings UI, so the value is fixed here rather than read.
     // Two ported behaviours read it: opcode 232 `if_option` branches on equality,

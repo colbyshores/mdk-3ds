@@ -1,0 +1,18 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-09T06:25:22Z at ff8e946
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+same-pixels: this PNG is byte-identical to 2026-11-09-b100-pin-follows-kurt.png
+  (sha256 6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8), and
+  that is the expected result, not a stale capture. This batch moves no pixels by
+  design. What it changes is WHERE the Linux frontend reads Kurt's solid-arena pin
+  from, and that pin is read by move()/bottom(), not by the renderer; it only
+  differs from the frozen pin once Kurt crosses into a neighbouring arena, which the
+  pinned scene never does because the capture takes no input at frame 1. The 3DS
+  half of the batch is a comment correction, and the built console binary proves it:
+  mdk.elf is byte-identical to batch 100's (md5 b0878389fd928948644bb204669d8bb6).
+what the batch's real evidence is: the two gates that could not fail before it --
+  tests/scripts/frontend_solid_pin_test.sh (10 checks, 10 arms, both frontends) and
+  the review-7 F2 arm attribution in main_3ds_flow_test.sh (13 arms, each naming the
+  one check it must redden) -- plus the emulator verdict for the rebuilt ELF
+  (DISPLAY=:99, Mandarine r1.2.1 md5 0d2adab6, frame 2580, health=100 on all 48
+  rows, `scripts: runtime ready (seed -1336855983, option 1)`).

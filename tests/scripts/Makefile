@@ -112,6 +112,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh ndsp_sink_test.sh
 	@sh ubsan_decode_test.sh
 	@sh main_3ds_flow_test.sh
+	@sh frontend_solid_pin_test.sh
 	@bash emurun_harness_test.sh
 	@$(BUILD)/tick1
 

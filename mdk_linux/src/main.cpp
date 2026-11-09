@@ -365,9 +365,10 @@ int main(int argc, char** argv) {
         }
         follow = mdk::FollowCamera();
         // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
-        // scripts' current arena). Until the scripts land it is set once here, so
-        // bottom() -- and so the fall-out death -- still resolves his arena when he
-        // drops below its bounds instead of losing it and falling forever.
+        // scripts' current arena). The step loop refreshes it from the arena under
+        // his feet from here on; this first pin is what covers a Kurt standing
+        // outside every arena, where the loop's lookup finds nothing and bottom()
+        // -- and so the fall-out death -- would otherwise resolve nothing at all.
         const std::string* here =
             space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
         if (here) {
@@ -540,13 +541,40 @@ int main(int argc, char** argv) {
                     }
                 }
                 follow.update(&camera, &space, player, target, kStep, kAspect);
-                // The C# refreshes the collision world's solid arenas after
-                // the camera step (Viewer.cs:533). This frontend currently
-                // pins only the scripts' current arena; the oracle's
-                // SolidArenas list also includes the active second arena,
-                // whose crossing state is deferred.
-                if (runtime) {
-                    space.setSolid(runtime->currentArena());
+                // The collision world follows him EVERY step, at the point the C#
+                // does it (`_space.SetSolid(_scripts.SolidArenas)`, after
+                // UpdateCamera, Viewer.cs:533). The pin is sticky: while `_solid` is
+                // non-empty `move()` uses only it (arena_space.cpp:111-124) and
+                // `kurts()` returns only it, so a pin left behind is Kurt colliding
+                // with a room he has already left.
+                //
+                // WHAT IT FOLLOWS is the geometric arena under his feet, WITH A
+                // RUNTIME AND WITHOUT ONE, and that is a stand-in, not the oracle's
+                // rule: the oracle's `SolidArenas` is the scripts' DRAWN list and
+                // `CurrentArena` moves only when a move crosses a doorway connection
+                // (`CrossedArena`, ScriptRuntime.cs:791-803) or a teleport puts him
+                // elsewhere. Neither is ported, so `currentArena_` is written exactly
+                // once, on the runtime's first tick (script_runtime.cpp:360-378).
+                // This branch used to pin `runtime->currentArena()` — the SPAWN arena
+                // for the whole level — so walking Kurt out through an open doorway
+                // left that BSP's geometry behind, `bottom()` resolved the neighbour
+                // holding his feet, and the fall-out death fired into a respawn loop.
+                // That is review-6 F1's defect in the frontend that takes the pinned
+                // frame, and review-7 F1 named it here. The 3DS frontend now does what
+                // this does; `arena_space.h` carries the account of both stand-ins and
+                // why neither is the oracle's rule, and
+                // `tests/scripts/frontend_solid_pin_test.sh` gates both for it.
+                //
+                // It is probed AGAIN rather than reusing the pitch's `here`, because
+                // the C# evaluates SetSolid after UpdateCamera and the camera's
+                // clearance can move Kurt into another arena. The pin is deliberately
+                // NOT cleared when he is outside every arena: that is the fall-out
+                // case, and `bottom()` still has to resolve an arena for the death to
+                // fire at all.
+                const std::string* solid =
+                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                if (solid) {
+                    space.setSolid(*solid);
                 }
                 // The C# advances the HUD blink once per 30 Hz boundary
                 // (Viewer.cs:535-538), not once per 60 Hz frame.

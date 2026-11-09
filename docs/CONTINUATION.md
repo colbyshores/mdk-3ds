@@ -1,12 +1,40 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — **the 3DS frontend's collision world changes, and a shipped default changes.**
-`mdk_3ds/src/main_3ds.cpp`'s step loop stops pinning Kurt's collision arena to the script
-runtime's `currentArena()` (which the unported DTI connection crossing leaves at the spawn arena
-forever) and pins the arena under his feet again; `ScriptRuntime::option` goes 0 → 1 on both
-frontends and in every golden harness, which is a behaviour default, not a comment — the golden
-suite is green either way, which is the evidence that nothing exercises it, not a proof that it
-does not matter. Both are target-specific and behaviour-changing; both are review-6 remediation.
+Risk: high — **both frontends' collision world changes, and two gates' power to see changes.**
+The Linux step loop stops pinning Kurt's collision arena to the script runtime's frozen
+`currentArena()` and pins the arena under his feet in **both** of its branches — the same
+behaviour change batch 100 made on the 3DS, in the frontend that takes the pinned frame, and it
+moves the fall-out death across a doorway. It also adds a gate (`frontend_solid_pin_test.sh`,
+both frontends) and replaces "any red verdict" with exact arm→check attribution in
+`main_3ds_flow_test.sh`, which changes what those gates can fail to see. All of it is review-7
+remediation; the 3DS binary is byte-identical (`mdk.elf` `b0878389…`).
+
+**Batch 101 (Iteration 129) — review-7 closed 5/5, none rebutted.** **F1 (High)**: batch 100
+wrote "BOTH frontends here use the geometric arena under his feet" into `arena_space.h` and only
+one of them did. `mdk_linux` pinned `runtime->currentArena()` when it had a runtime — a value the
+unported crossing leaves at the spawn arena forever — and did **nothing** when it had none, so the
+pin was the spawn arena in both branches and a door walk dropped Kurt through the room he entered,
+in the frontend that produces the pinned frame. Now the same geometric re-probe the 3DS got, and the
+header says what is true. Pinned by a new gate that reads **both** frontends for the shared claim:
+`PASS FrontendSolidPin (10 checks, 10 arms adjudicated red)` — and its own arm discipline caught one
+of this batch's arms on the first run (the unguarded-refresh arm destroyed the geometric shape, so a
+different check caught it first), which is the proof the rule works. **F2 (Medium)**: the arm written
+for check 6 was satisfied by check 5, so check 6 had no isolating mutation and could be stubbed to a
+pass generator; every check now has one label in a `CHK` table, every arm names the check it must
+redden, the comparison is exact equality, and a second arm (frozen pin added *after* the geometric
+one) isolates check 6 — `PASS Main3dsFlow (11 checks, 13 arms adjudicated red)`, and the reviewer's
+stub-to-`True` probe now prints `only 12 of 13 arms adjudicated red`. **F3 (Medium)**: the `option`
+default was asserted on `main()`'s runtime, which `main()` had just assigned, so reverting the header
+to `= 0` reddened nothing; the test now builds its own runtime, and the revert now prints
+`FAIL line 538: runtime.option == 1` (the first probe of that was invalid — no rebuild — and is
+recorded as such). **F4/F5 (Low)**: `Viewer.cs:874` is the `TOOSCARYFORME` gore cheat, not the resume
+path (`ScriptRuntime.Snapshot.cs:142`), and the sink test's claim is scoped to the invariant it
+executes rather than the frontend sequence it cannot reach. Gates: `All cases match the oracle`,
+`CHECK: ALL GATES PASSED`, `make -C mdk_3ds` links with `mdk.elf` **`b0878389…`** — byte-identical to
+batch 100's, which is the proof the console half was comments only. Emulator (P8, `:99`, Mandarine
+r1.2.1 `0d2adab6`, frame 2580, `health=100` on all 48 rows): `scripts: runtime ready (seed
+-1336855983, option 1)`, ledger `frame=2580 secs=43.214 submitted=2156`. The frame is byte-identical
+to batch 100's and the sidecar says why. Narrative "Iteration 129".
 
 **Batch 100 (Iteration 128) — review-6 closed 6/6, none rebutted.** **F1 (High)** was that the
 collision pin batch 99 moved to `runtime->currentArena()` is written exactly once, on the runtime's
@@ -274,7 +302,7 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 100)
+## NEXT (batch 101)
 *(Batch 99 did not advance the renderer head either, and did not pretend to: it took the audio priority
 order's first open item, 6d. The one-sided view is still first, still unadvanced, and still needs the
 same new hypothesis, not a sixth census run with the same instrument. Behind it, the object pass the
@@ -352,7 +380,12 @@ is frozen at the spawn arena until `FindConnections` + `CrossedArena` are ported
 `ArenaSpace::setSolid` takes one name where the oracle passes current + active second. That port is
 the collision batch, and it unblocks three things at once — the door-walk golden review-8 F1 wants,
 the camera's rest pitch, and the per-object crossing (`ScriptRuntime.cs:776-787`). It is not a cheap
-follow-on and it needs a doorway-crossing oracle, not a hand-written expectation.
+follow-on and it needs a doorway-crossing oracle, not a hand-written expectation. **Batch 101 widened
+the gap rather than narrowing it: BOTH frontends now stand the geometric arena under the feet up for
+the scripts' drawn list** (`Viewer.cs:533` passes `SolidArenas`), so the collision batch has two
+frontends to land on and one shared gate (`frontend_solid_pin_test.sh`) that will have to change when
+it does. Review-7's open question 1 (is `mdk_linux` in behavioural scope?) was answered by fixing it
+rather than by documenting a divergence: the Linux frontend takes the pinned frame, so it is in scope.
 **New from batch 97: the MVE movie decoder has no player.** `formats/mve.{h,cpp}` is ported and
 now covered (PCM both widths, DPCM, silence, the broken-size shapes) but nothing calls it, so it
 is gc-sectioned out of the shipped ELF and `MISC/FLIC/MDKBZK.MVE` never plays. Wiring it needs a
@@ -363,8 +396,9 @@ is blocked on, so it is not a cheap follow-on. Original-3DS behaviour remains un
 
 * **`ScriptRuntime::option` is 1, not 0, and it is the oracle's default rather than a port choice
   (batch 100, review-6 F2).** `ScriptRuntime.cs:214` initialises the field to 1 and the Viewer
-  overwrites it from `Settings.Gore`, which also defaults to true (`Settings.cs:75`, `Viewer.cs:234`,
-  `:874`). Two ported behaviours read it: opcode 232 `if_option` compares for **equality** (an Option
+  overwrites it from `Settings.Gore`, which also defaults to true (`Settings.cs:75`, `Viewer.cs:234`;
+  `:874` is the `TOOSCARYFORME` gore **cheat**, not the resume path — the resume writer is
+  `ScriptRuntime.Snapshot.cs:142`, review-7 F4). Two ported behaviours read it: opcode 232 `if_option` compares for **equality** (an Option
   of 2 must not take the `if_option 1` branch) and opcode 129 `blow_off_parts` mode 2 is skipped while
   it is 0. The gore **debris** half (`ScriptRuntime.cs:1754-1764`, 32×4 RNG draws) is NOT ported, so
   the value does not move the random stream today — which is also why **no golden distinguishes 0 from

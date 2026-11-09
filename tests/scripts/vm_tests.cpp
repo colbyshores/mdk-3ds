@@ -524,9 +524,17 @@ void testBlowOffPartsLocksAndHides(scripts::ScriptRuntime& runtime) {
 // setting that also defaults to on (Settings.cs:75, Viewer.cs:234). Nothing else
 // in the suite could see the difference: no golden exercises 232 or a mode-2
 // break-up, which is why the wrong default survived into both frontends.
-void testIfOptionBranchesOnTheRuntimeOption(scripts::ScriptRuntime& runtime) {
+void testIfOptionBranchesOnTheRuntimeOption(LevelData* levelData, Cmi* cmi,
+                                            audio::SoundBank* bank) {
     // The default, pinned at the object itself rather than at a driver: a runtime
-    // nobody configured is the oracle's default run, which is gore ON.
+    // nobody configured is the oracle's default run, which is gore ON. Review-7 F3:
+    // this used to take `main()`'s runtime by reference, and that driver assigns
+    // `runtime.option = 1` two lines before it calls this test, so the CHECK below
+    // observed the DRIVER and not the field default -- reverting script_runtime.h's
+    // `int32_t option = 1;` to `= 0` left vm_tests, tick1, both builds and every
+    // gate green. A default is only observable on a freshly constructed object, so
+    // this test owns one.
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     CHECK(runtime.option == 1);
 
     // One program, both arms: 1 jumps when Option is 1, 0 jumps when it is 0.
@@ -557,8 +565,6 @@ void testIfOptionBranchesOnTheRuntimeOption(scripts::ScriptRuntime& runtime) {
     scripts::MdkObject other;
     runProgram(runtime, code, &other);
     CHECK(other.variables[0] == 1.0f);
-
-    runtime.option = 1;
 }
 
 void testBlownOffPartsStayHiddenThroughClear(scripts::ScriptRuntime& runtime) {
@@ -6191,7 +6197,7 @@ int main() {
     printf("PASS ClearPartsMaskShowsPartsAgain\n");
     testBlowOffPartsLocksAndHides(runtime);
     printf("PASS BlowOffPartsLocksAndHides\n");
-    testIfOptionBranchesOnTheRuntimeOption(runtime);
+    testIfOptionBranchesOnTheRuntimeOption(&levelData, &cmi, &bank);
     printf("PASS IfOptionBranchesOnTheRuntimeOption\n");
     testBlownOffPartsStayHiddenThroughClear(runtime);
     printf("PASS BlownOffPartsStayHiddenThroughClear\n");

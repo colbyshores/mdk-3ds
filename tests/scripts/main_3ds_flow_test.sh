@@ -195,6 +195,35 @@ class Result:
             print("  FAIL %s%s" % (label, (" — " + detail) if detail else ""))
 
 
+# Every check has ONE label, defined here and used by both the check and the arm
+# table below. Review-7 F2: the arms used to accept "any red verdict" as success and
+# printed whichever check broke first, so an arm written for one check could be
+# satisfied by an earlier one and the check it claimed to pin had no mutation that
+# isolated it -- check 6 was exactly that, and stubbing its condition to True kept
+# the whole suite printing PASS. An arm now names the check it must break, and the
+# comparison is exact equality against these strings.
+CHK = {
+    "refresh-in-loop": "the step loop refreshes Kurt's solid arena (review-8 F1)",
+    "refresh-after-camera":
+        "the refresh runs after follow.update, the C#'s order (Viewer.cs:517 then :533)",
+    "spawn-pin": "the spawn pin is still there for a Kurt outside every arena",
+    "refresh-guarded":
+        "every in-loop refresh is guarded, so an empty lookup does not clear the pin",
+    "guard-is-the-lookup": "the guard is the arenaAt lookup itself",
+    "pin-not-the-runtime":
+        "the step loop pins from the arena under Kurt, never from the runtime's frozen "
+        "current arena",
+    "scripts-tick-order":
+        "the scripts tick in the step loop, after Kurt and before the camera",
+    "mixes-runtime-mixer":
+        "the frame mixes the pointer that follows the runtime, not the standalone mixer",
+    "respawn-reattaches":
+        "a respawn re-points the mixer, rebinds Kurt, and re-attaches the sink",
+    "asset-gate": "the runtime is constructed under the asset gate",
+    "pitch-from-runtime": "the pitch target is camera_track, then the scripts' arena",
+}
+
+
 def adjudicate(text, quiet=False):
     """Run every check over `text`. Returns the tally so the arms can reuse it."""
     r = Result()
@@ -217,7 +246,7 @@ def adjudicate(text, quiet=False):
     #    prose, and a comment inside the loop naming `setSolid(` must not satisfy a
     #    check whose docstring says prose is not a call site (review-2 F5).
     loop_code = "".join(line + "\n" for _, line in code_lines(loop)) if loop is not None else None
-    say("the step loop refreshes Kurt's solid arena (review-8 F1)",
+    say(CHK["refresh-in-loop"],
         loop_code is not None and "setSolid(" in loop_code,
         "no setSolid call in the `while (pending >= step)` body, so the pin is set "
         "wherever else it is set and never follows Kurt")
@@ -228,13 +257,13 @@ def adjudicate(text, quiet=False):
         cam = call_line(loop, "follow.update")
         sol = call_line(loop, "space.setSolid")
         ok_order = cam is not None and sol is not None and sol > cam
-    say("the refresh runs after follow.update, the C#'s order (Viewer.cs:517 then :533)",
+    say(CHK["refresh-after-camera"],
         ok_order, "the camera's clearance can move Kurt, so a refresh placed before it "
                   "pins the arena he left rather than the one he is in")
 
     # 3. the spawn pin survives: the loop cannot supply it for a Kurt outside
     #    every arena, and without it bottom() resolves nothing.
-    say("the spawn pin is still there for a Kurt outside every arena",
+    say(CHK["spawn-pin"],
         spawn_body is not None and "setSolid(" in spawn_body,
         "with no pin at all bottom() answers false and the fall-out death never fires")
 
@@ -248,7 +277,7 @@ def adjudicate(text, quiet=False):
              if re.search(r"setSolid\s*\(", line)] if loop is not None else []
     guarded = bool(sites) and all(
         (depths[i] if i < len(depths) else 0) >= 1 for i, _ in sites)
-    say("every in-loop refresh is guarded, so an empty lookup does not clear the pin",
+    say(CHK["refresh-guarded"],
         guarded, "an unconditional setSolid with an empty name clears the pin, which is "
                  "check 3's failure reached from the other side")
 
@@ -265,7 +294,7 @@ def adjudicate(text, quiet=False):
                 loop) is not None or bool(re.search(
                 r"std::string\*[ \t]+" + re.escape(m.group(1)) + r"[ \t]*=[ \t]*\n?[ \t]*space\.arenaAt",
                 loop))
-    say("the guard is the arenaAt lookup itself", shape, 
+    say(CHK["guard-is-the-lookup"], shape, 
         "a guarded setSolid whose guard is not the lookup can still clear the pin")
 
     # 6. the step loop's pin NEVER reads the runtime's current arena. Review-6 F1
@@ -280,7 +309,7 @@ def adjudicate(text, quiet=False):
     #    pin that stops it coming back, and it is the reason the claim "with a
     #    runtime the pin is the oracle's own" was deleted rather than kept quiet.
     frozen = bool(re.search(r"setSolid\([ \t]*runtime->currentArena\(", loop or ""))
-    say("the step loop pins from the arena under Kurt, never from the runtime's frozen current arena",
+    say(CHK["pin-not-the-runtime"],
         not frozen and loop_code is not None and loop_code.count("setSolid(") == 1,
         "currentArena() does not move until CrossedArena is ported, so a pin that "
         "reads it is the spawn arena forever; the loop must have exactly one refresh "
@@ -298,7 +327,7 @@ def adjudicate(text, quiet=False):
         cam = call_line(loop, "follow.update")
         ok_scripts = kurt is not None and scr is not None and cam is not None \
             and kurt < scr < cam
-    say("the scripts tick in the step loop, after Kurt and before the camera", ok_scripts,
+    say(CHK["scripts-tick-order"], ok_scripts,
         "Viewer.cs:505-535 is Kurt, scripts, camera; outside the loop the runtime's 1/30 s "
         "clock is driven by frames, not by steps")
 
@@ -315,7 +344,7 @@ def adjudicate(text, quiet=False):
         r"mix->listenFromCamera\(camera\);", r"mix->update\(elapsed\);",
         r"mix->device\(\)\.update\(elapsed\);")) and not re.search(
         r"(?m)^[ \t]*mixer\.(listenFromCamera|update|device\(\)\.update)[ \t]*\(", text)
-    say("the frame mixes the pointer that follows the runtime, not the standalone mixer",
+    say(CHK["mixes-runtime-mixer"],
         mix_ok, "the scripts write to the runtime's mixer; mixing another one is a silent "
                 "level that still drains its audio queue")
 
@@ -327,7 +356,7 @@ def adjudicate(text, quiet=False):
                  and re.search(r"mix[ \t]*=[ \t]*&runtime->mixer\(\)[ \t]*;", spawn_body) is not None
                  and re.search(r"player\.setMixer\(&runtime->mixer\(\)\)", spawn_body) is not None
                  and re.search(r"mix->device\(\)[ \t]*\.setSink\(", spawn_body) is not None)
-    say("a respawn re-points the mixer, rebinds Kurt, and re-attaches the sink", spawn_mix,
+    say(CHK["respawn-reattaches"], spawn_mix,
         "the rebuilt runtime owns a new SoundDevice; the old sink is a device nothing reads")
 
     # 10. the runtime is built only when its three assets are present. A runtime
@@ -339,7 +368,7 @@ def adjudicate(text, quiet=False):
                is not None
                and re.search(r"runtime\.reset\([ \t]*new[ \t]+mdk::scripts::ScriptRuntime",
                              spawn_body) is not None)
-    say("the runtime is constructed under the asset gate", gate_ok,
+    say(CHK["asset-gate"], gate_ok,
         "a runtime without its CMI, bank or sprites archive plays a different game")
 
     # 11. the camera's rest pitch comes from the runtime when there is one: a live
@@ -350,7 +379,7 @@ def adjudicate(text, quiet=False):
                 and "runtime->cameraTrackTicks" in loop
                 and "runtime->cameraTrackPitch" in loop
                 and "level.arenaPitch(runtime->currentArena())" in loop)
-    say("the pitch target is camera_track, then the scripts' arena", pitch_ok,
+    say(CHK["pitch-from-runtime"], pitch_ok,
         "Viewer.cs:746-747 asks the scripts first; the geometric arena is only the "
         "stand-in for a frontend with no runtime")
     return r
@@ -538,6 +567,29 @@ def arm_pin_from_the_runtime(text):
     return mutated if n else text
 
 
+def arm_frozen_pin_added(text):
+    """Batch 99's frozen pin put back ALONGSIDE the geometric refresh, and placed
+    AFTER it, so it is the last writer and the pin ends up the spawn arena whatever
+    the geometric probe found. Review-7 F2: the arm above, which REPLACES the
+    geometric block, trips check 5 first (the guarded `arenaAt` shape is simply
+    gone), so check 6 had no mutation that isolated it and could be stubbed to a
+    pass generator without the suite noticing. This mutant leaves check 5's shape
+    intact, so only check 6 can catch it."""
+    sp = STEP_LOOP
+    if sp is None:
+        return text
+    a, b = sp
+    loop = text[a:b]
+    m = re.search(r"(?m)^[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
+                  r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", loop)
+    if not m:
+        return text
+    return text[:a] + loop[:m.end()] + \
+        "                if (!runtime->currentArena().empty()) {\n" \
+        "                    space.setSolid(runtime->currentArena());\n" \
+        "                }\n" + loop[m.end():] + text[b:]
+
+
 def arm_pitch_ignores_runtime(text):
     """The pitch target back to the geometric arena even when a runtime exists: the
     scripts' camera_track request and their arena both ignored."""
@@ -555,35 +607,54 @@ def arm_pitch_ignores_runtime(text):
 
 
 ARMS = [
-    ("in-loop-refresh-deleted (review-8 F1 itself)", arm_no_refresh),
-    ("refresh-moved-before-the-camera-step", arm_before_camera),
-    ("refresh-clears-the-pin-when-outside-every-arena", arm_clears_the_pin),
-    ("spawn-pin-removed", arm_drops_the_spawn_pin),
-    ("guard-replaced-by-an-unrelated-flag", arm_guard_on_something_else),
-    ("scripts-tick-deleted", arm_scripts_tick_deleted),
-    ("scripts-tick-moved-after-the-camera", arm_scripts_tick_after_camera),
-    ("frame-mixes-the-standalone-mixer", arm_mixes_standalone),
-    ("respawn-does-not-re-attach-the-sink", arm_sink_not_reattached),
-    ("runtime-built-without-the-asset-gate", arm_no_asset_gate),
-    ("pin-taken-from-the-runtime's-frozen-current-arena (review-6 F1)", arm_pin_from_the_runtime),
-    ("pitch-ignores-the-runtime", arm_pitch_ignores_runtime),
+    # Each arm names the ONE check it must turn red (review-7 F2). The attribution is
+    # exact equality, so an arm that an earlier check happens to catch first is a
+    # FAIL until either the arm or the check is fixed -- which is what keeps a check
+    # from being certified by a mutation that never reached it.
+    ("in-loop-refresh-deleted (review-8 F1 itself)", arm_no_refresh,
+     CHK["refresh-in-loop"]),
+    ("refresh-moved-before-the-camera-step", arm_before_camera, CHK["refresh-after-camera"]),
+    ("refresh-clears-the-pin-when-outside-every-arena", arm_clears_the_pin,
+     CHK["refresh-guarded"]),
+    ("spawn-pin-removed", arm_drops_the_spawn_pin, CHK["spawn-pin"]),
+    ("guard-replaced-by-an-unrelated-flag", arm_guard_on_something_else,
+     CHK["guard-is-the-lookup"]),
+    ("scripts-tick-deleted", arm_scripts_tick_deleted, CHK["scripts-tick-order"]),
+    ("scripts-tick-moved-after-the-camera", arm_scripts_tick_after_camera,
+     CHK["scripts-tick-order"]),
+    ("frame-mixes-the-standalone-mixer", arm_mixes_standalone, CHK["mixes-runtime-mixer"]),
+    ("respawn-does-not-re-attach-the-sink", arm_sink_not_reattached, CHK["respawn-reattaches"]),
+    ("runtime-built-without-the-asset-gate", arm_no_asset_gate, CHK["asset-gate"]),
+    # The replacement form trips check 5 first: with the geometric block gone there
+    # is no guarded arenaAt lookup left to check. arm_frozen_pin_added is the arm
+    # that isolates check 6.
+    ("pin-taken-from-the-runtime's-frozen-current-arena (review-6 F1)",
+     arm_pin_from_the_runtime, CHK["guard-is-the-lookup"]),
+    ("frozen-runtime-pin-added-alongside-the-geometric-one (review-7 F2)",
+     arm_frozen_pin_added, CHK["pin-not-the-runtime"]),
+    ("pitch-ignores-the-runtime", arm_pitch_ignores_runtime, CHK["pitch-from-runtime"]),
 ]
 
 print("main_3ds_flow: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
 arms_red = 0
-for label, mutate in ARMS:
+for label, mutate, expected in ARMS:
     mutated = mutate(SRC)
     if mutated == SRC:
         print("  FAIL main_3ds_flow arm %s: the mutation changed nothing, so the arm tested "
               "the file it was handed instead of the invariant" % label)
         continue
     after = adjudicate(mutated, quiet=True)
-    if after.failed:
-        arms_red += 1
-        print("  ok   arm %s: turned `%s` red as required" % (label, after.broke))
-    else:
+    if not after.failed:
         print("  FAIL main_3ds_flow arm %s: the mutation was accepted, so the check does not "
               "pin what it claims to pin" % label)
+        continue
+    if after.broke != expected:
+        print("  FAIL main_3ds_flow arm %s: it turned `%s` red, but the check it claims to "
+              "pin is `%s` — so that check has no mutation that isolates it and the "
+              "PASS would be a reading of a different check" % (label, after.broke, expected))
+        continue
+    arms_red += 1
+    print("  ok   arm %s: turned `%s` red as required" % (label, after.broke))
 
 if real.failed:
     sys.exit(1)
