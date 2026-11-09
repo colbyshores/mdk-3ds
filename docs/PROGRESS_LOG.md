@@ -19997,3 +19997,151 @@ abstract (a probe that reports a different request than the consumer's is not a
 measurement of the consumer's), and
 `30-architecture/patterns/model-identity-is-the-upstream-string-not-the-alias.md`
 is the rule F3's sentence would have let a batch route around.
+
+## Iteration 133 — batch 106: review-12 closed 5/5 (no Critical, no High) — two of batch 105's new
+## gates could not fail at the thing they claimed to pin: one read a line where it had to read a
+## guard, the other read a substring where it had to read an argument
+
+Review-12 (`logs/ralph-pi/run-20261108-195620/review-12.md`) had no Critical and no High. Its
+verdict was INCOMPLETE on two Medium test-coverage findings, one Medium record finding and two
+Low, and it was right about the reason: batch 105's "closed 8/8" claim rested on checks 17 and
+18, and both of them stayed green over the mutants review-12 built. All five closed; nothing
+rebutted on merit.
+
+**R2 (Medium, confirmed and fixed) — the refused-mesh line's BYTE figure could still name a size
+that was never requested.** Check 17 asked whether the refused capacity appeared anywhere in the
+printf's tail:
+
+```python
+names = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", tail))
+fail_ok = "attemptedCapacity()" in tail or any(n in names for n in sourced)
+```
+
+Keeping `attempted` as the corner figure and building the KB figure from `objectCorners` therefore
+passed — the corners honest, the bytes 8x wrong, and the exact disagreement review-11 F1 was
+raised about (two committed numbers for one refusal) still on the console. Reproduced first,
+against the committed tree: a copy with `(int64_t)attempted * 5` → `(int64_t)objectCorners * 5`
+printed `PASS Main3dsFlow (18 checks, 20 arms adjudicated red, 4 probes green)`.
+
+The check now parses the call instead of hunting it. `call_args()` splits the printf's top-level
+arguments string-aware and paren-aware — the format string contains a comma (`"... FAILED, no
+objects drawn"`) and the KB argument contains casts and a `sizeof(float)`, so a comma split cut
+the format string in half and a first-`)` scan stopped inside the cast. Then: the first value
+argument must BE the refused capacity (the call itself, or a local initialised from it, so a
+rename stays legal — review-10 F6's lesson, and it has a probe), and every later argument that
+does arithmetic may compute with that quantity and nothing else. A plain extra argument is still
+allowed: a line that ALSO says what the frame wanted is informative, not wrong; a derived byte
+figure that disagrees with the corner figure is the defect. New arm
+`arm_failure_kb_names_the_frame_count` isolates it.
+
+**R1 (Medium, confirmed and fixed) — check 18 pinned a LINE and not the GUARD.** It was
+
+```python
+rearms = any(line.strip() == "streamFailureLogged = false;" for line in code.splitlines())
+```
+
+which is satisfied by an assignment that guards nothing. Widening `if (!streamFailureLogged)` to
+`if (true)` leaves that line untouched and puts the refusal back to printing on every frame of a
+sustained refusal — the ~60/s spam the edge trigger exists to stop, and the reason review-10 F3's
+backend line was made edge-triggered at all. Reproduced: the reviewer's mutant printed PASS. The
+same check was brittle the other way too: a trailing comment on the clear line made
+`arm_failure_latch_never_rearms`'s exact-text `re.subn` match nothing, so the suite failed with
+"the mutation changed nothing" over legitimate code.
+
+Both halves are now branch-shaped, per the vault pattern *gate the failing branch, not the
+enclosing block*:
+
+* **check 18** brace-scans the `if (objectDraw.allocationFailed())` block and requires the clear
+  to sit in its `else` **sibling** — the branch every non-refusing frame takes — so "it clears"
+  means "it clears when the pass succeeded". The equivalent assignment form
+  (`streamFailureLogged = objectDraw.allocationFailed();` above the test) is accepted and has a
+  probe, because a gate that reddens the same state machine written a different way is the
+  review-10 F6 failure again. The arm now tolerates a trailing comment on the clear.
+* **check 19** is new and owns the other property: the printf must sit inside a branch whose
+  CONDITION tests the latch negatively (`!streamFailureLogged` or `streamFailureLogged == false`),
+  found by containment. `arm_failure_line_prints_every_frame` widens that guard to `if (true)` and
+  reddens check 19 and nothing earlier, so each property has its own isolating mutation.
+
+Verified against the reviewer's own three mutants and a fourth of this batch's (`/tmp/b106/`):
+the widened guard reddens check 19, the KB substitution reddens check 17, and moving the clear
+into the refusing branch — right text, wrong branch — reddens check 18.
+
+**R3 (Medium, confirmed and annotated) — the directive still claimed the three loops carry the
+same chains.** Batch 105 struck the false same-family exception sentence from
+`docs/OWNER_DIRECTIVE_2026-11-05.md` and left the sentence next to it standing: "`tetrisphere-godot`
+and `perfect_dark` carry the same chains; the three loops differ only in their project-specific
+prompts, gates and state files." Both siblings contradict it. Read narrowly and non-recursively
+from the two named files (one `sed` window each, no search of the sibling trees):
+`tetrisphere-godot/tools/ralph-pi.sh:120` is `WORKER_MODELS="litellm/qwen litellm/luna"` — that
+loop still builds on `luna`, which this directive retires from the builder chain — and
+`perfect_dark/tools/ralph-pi.sh:167` is `MODEL_PRIORITY=…-flash-th` with `MODEL_VERIFY` /
+`MODEL_REVIEW` / `MODEL_REVIEW_GRADED` all deriving from it, so its builder and its reviewer are
+the same DeepSeek family, which is the arrangement this same file calls a BLOCKED review. The
+tetrisphere half was already recorded in this repository's owner-action block (review-4 F3 of
+run-20261106-062909); the perfect_dark half was not, and is now. Annotated in place with the
+citations, in the file's existing `> **[CORRECTED BY BATCH n, review-x Fy.]**` convention; no
+owner policy was changed.
+
+**R4 (Low, fixed) — batch 105 left an unmatched bold opener in the owner-action block.** It
+replaced `**Deferred review findings:**` with `**Review-4 of run-20261105-142911 F1/F2` and
+dropped the closing marker, so the file's marker count went 636 (even) → 651 (odd) and every
+emphasis pair after it in the block the file says "a batch must not lose" was shifted. Closed
+after `F1/F2`; the count is 652 and even.
+
+**R5 (Low, fixed) — `object_draw.h` described a state that cannot occur.** The
+`attemptedCapacity()` rationale said a refused `ensure` leaves `capacity()` "either 0 or the OLD
+mesh's size". `ensure` releases the old mesh and sets `capacity_ = 0` *before* the request that
+can be refused (`object_draw.cpp:33-37`), and the first-ever attempt starts at 0, so after a
+refusal it is exactly 0 — which is the "no mesh yet" shape review-9 F6 took out of the log
+precisely because it is indistinguishable from a frame that never asked. The comment now says
+that, and says why the alternative it used to offer is unreachable.
+
+**Review-12 open question 1 is deferred with cause** (alternating corner counts under pressure can
+make the re-arm print once per cycle). No shipped level alternates its corner need — level 3 sits
+at 480 and level 8 at 5616, both measured printing once — and the fix (keying the trigger on
+`attemptedCapacity()` instead of a boolean) changes what the console log means, so it needs the
+capture before it needs a gate. Recorded in `docs/CONTINUATION.md`'s deferred block. Open
+questions 2 and 3 are the owner's (ratifying batch 105's directive strike) and the project's
+standing evidence convention (console logs live under `/tmp`, only the ELF identity is
+reproducible), unchanged here.
+
+**Gates, as run.**
+
+* `make -C tests/scripts` → `All cases match the oracle.` The gate lines that matter here:
+  `PASS Main3dsFlow (19 checks, 22 arms adjudicated red, 6 probes green)` (was 18/20+4),
+  `PASS C3dFrame (29 checks, 37 arms adjudicated red)`,
+  `PASS FrontendSolidPin (10 checks, 10 arms adjudicated red)`,
+  `PASS PanelGeom (10 checks, 7 arms adjudicated red, 2 probes green)`,
+  `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+* `bash tools/check.sh` → `CHECK: ALL GATES PASSED`, with `gates_vfp PASS blockers=0`,
+  `audit_arm11_math VERDICT: CONTRACT CLEAN`, `audit_r11_idiv` no candidates,
+  `gates_core_parity CONTRACT CLEAN`, `gates_smdh SKIP` (no built .cia),
+  `gates_frames VERDICT: CONTRACT CLEAN` (`L3_f1.bmp sha=58615fc85d02e009`),
+  `gates_batch_integrity PASS`, `audit_c_with_classes 0 violations`.
+* `DEVKITPRO=/opt/devkitpro make -C mdk_3ds` → recompiled `object_draw.cpp` and `main_3ds.cpp`
+  (the header is included by both), linked, **no warnings**, and `mdk.elf` reproduces
+  `b1997a5dca83639acf603d518abe8e62` — byte-for-byte the committed-tree identity batch 105
+  recorded — with `build/mdk_c3d.shbin` `d46abb60de20b2aa0659043aeb97b9c9` unchanged.
+
+**Emulator evidence.** This batch touches no `mdk_3ds/**` source, and the 3DS binary it produces is
+bit-identical to the one batch 105 measured in Mandarine (`mdk.elf` md5 `b1997a5d…`, `shbin`
+`d46abb60…`), so the emulator's verdict would be a re-run of the same bytes rather than new
+evidence; the identity is recorded above in its place. Emulator-green is not hardware-pass and
+Old-3DS stays open regardless.
+
+**Frame.** The pinned pair is `docs/frames/2026-11-09-b106-gates-pin-guards.{png,txt}`,
+`bad_percent=1.240 max_delta=247 mean_delta=0.1819` — byte-identical to batch 105's pair
+(`sha256 6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8`, the same value the
+owner-action block records for the duplicate-frame line), and the cause is the standing
+one: the pin is the **Linux** capture of level 3 frame 1 and nothing in this batch can move it.
+Two of the three code paths this batch touches are in a gate script and a comment.
+
+**Prior-solution lookup.** pi-knowledge `mdk-sdl` live (searched for the pass-generator/arm-
+isolation discipline and for the refused-mesh diagnostic). Obsidian MCP and Cognee MCP are
+**absent from this session's tool list** — a session configuration fault, not a completed lookup
+(AGENTS P9) — so the vault was read read-only and narrowly:
+`30-architecture/patterns/gate-the-failing-branch-not-the-enclosing-block.md` is R1 exactly (a
+condition added in front of a diagnostic that then gates the wrong branch), and
+`50-tooling/a-probe-must-be-able-to-fail.md` supplies the test applied to both checks — *state what
+the instrument would print if the hypothesis were false*; for check 18 the honest answer was "the
+same thing it prints now", which is the definition of a pass generator.

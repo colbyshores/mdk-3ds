@@ -87,9 +87,28 @@ always has an eligible route. **There is no same-family exception and none is
 needed**: `-th` -> `flash` is a reviewer-to-reviewer fallback, and the family
 rule compares the reviewer with the *builder*, so both routes satisfy it as
 written. If a DeepSeek route ever returns to the builder chain the answer is a
-BLOCKED review and a stopped loop, not an exception. `tetrisphere-godot` and
-`perfect_dark` carry the same chains; the three loops differ only in their
-project-specific prompts, gates and state files.
+BLOCKED review and a stopped loop, not an exception.
+
+> **[CORRECTED BY BATCH 106, review-12 R3.]** The paragraph above used to end with
+> "`tetrisphere-godot` and `perfect_dark` carry the same chains; the three loops
+> differ only in their project-specific prompts, gates and state files." Both
+> siblings contradict it. Read narrowly and non-recursively from the two named
+> files on 2026-11-09 — one `sed` window each, no search of the sibling trees:
+>
+> * `tetrisphere-godot/tools/ralph-pi.sh:120` is
+>   `WORKER_MODELS="litellm/qwen litellm/luna"`. That loop still builds on `luna`,
+>   which this directive retires from the builder chain two paragraphs above.
+> * `perfect_dark/tools/ralph-pi.sh:167` is `MODEL_PRIORITY=…-flash-th`, and
+>   `MODEL_VERIFY` / `MODEL_REVIEW` / `MODEL_REVIEW_GRADED` all derive from it, so
+>   its builder and its reviewer are the **same** DeepSeek family — the arrangement
+>   this file calls a BLOCKED review, not a fallback.
+>
+> So the three loops do **not** carry the same chains, and no batch may infer MDK's
+> independence rules from a sibling's harness or the reverse. What the sentence was
+> reaching for is true of the script and false of the routes it configures: the
+> three share a harness shape, not a model policy. This is the same falsification
+> `docs/CONTINUATION.md`'s review-4 F3 owner-action block already records for
+> tetrisphere; batch 105 struck the sentence above it and left this one standing.
 
 > **[CORRECTED BY BATCH 105, review-11 F3.]** Until this commit the paragraph
 > above read "the `-th` -> `flash` pair is the single operator-approved

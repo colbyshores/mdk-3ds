@@ -98,6 +98,25 @@
 #      latches prints the FIRST refusal of the run and is silent about a bigger one
 #      after a recovery, which is the same invisibility review-10 F3 was raised for.
 #
+# WHAT BATCH 106 ADDED (review-12 R1 and R2, both about these two checks being
+# weaker than the properties they name):
+#  17 was on "does the refused capacity appear ANYWHERE in the printf's tail", so
+#     substituting the frame's corner count for the KB multiplicand kept the first
+#     figure honest and the byte figure 8x wrong and stayed green. The check now
+#     parses the call's arguments and requires every derived figure to come from the
+#     same source as the first one -- which is the defect: two committed numbers for
+#     one refusal that disagree.
+#  18 was on "does some line equal `streamFailureLogged = false;`", which pins a
+#     LINE and not the GUARD: widening `if (!streamFailureLogged)` to `if (true)`
+#     leaves the assignment in place and the refusal prints 60 times a second, and
+#     the gate printed PASS (review-12 R1). It is now a brace-scan of the branch --
+#     the clear must sit in the `else` sibling of the `allocationFailed()` test, so
+#     it runs on every frame that did not refuse -- and the guard gets its own check
+#     19 with its own isolating arm, because "clears when it recovers" and "prints
+#     once per refusal" are two properties and one line cannot pin both.
+#     (vault: 30-architecture/patterns/gate-the-failing-branch-not-the-enclosing-block
+#     and 50-tooling/a-probe-must-be-able-to-fail.)
+#
 # Every check is paired with a mutation arm that must turn it red; a gate that
 # prints PASS over a mutant that never ran is a pass generator.
 #
@@ -291,6 +310,66 @@ def line_depths(block):
     return depths
 
 
+def call_args(text, open_paren):
+    """The top-level argument strings of the call whose '(' sits at `open_paren`,
+    format string first, or None if the call is not closed.
+
+    String-aware and paren-aware, because the refused-mesh printf's format string
+    contains a comma ("... FAILED, no objects drawn") and its KB argument contains
+    casts and a `sizeof(float)`. Splitting on commas cut the format string in half;
+    stopping at the first ')' stopped inside the cast. Review-12 R2: a check that
+    reads a call's arguments has to actually parse them."""
+    depth = 0
+    args = []
+    cur = []
+    i = open_paren
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in '"\'':
+            quote = c
+            start = i
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            if depth >= 1:
+                cur.append(text[start:i])
+            continue
+        if c == "(":
+            depth += 1
+            if depth > 1:
+                cur.append(c)
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                args.append("".join(cur).strip())
+                return args
+            cur.append(c)
+        elif c == "," and depth == 1:
+            args.append("".join(cur).strip())
+            cur = []
+        elif depth >= 1:
+            cur.append(c)
+        i += 1
+    return None
+
+
+# Casts, keywords and the unit the log line names. `value_names` removes these so an
+# arithmetic argument reduces to the quantities it actually multiplies.
+NON_VALUE = {"int", "long", "short", "char", "unsigned", "signed", "bool", "float",
+             "double", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t",
+             "uint16_t", "uint32_t", "uint64_t", "size_t", "ptrdiff_t", "sizeof",
+             "static_cast", "const", "KB"}
+
+
+def value_names(expr):
+    """The identifiers an expression computes with, casts and `sizeof` removed."""
+    return {m.group(0) for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*",
+                                            expr.replace("objectDraw.", ""))
+            if m.group(0) not in NON_VALUE}
+
+
 class Result:
     def __init__(self):
         self.checks = 0
@@ -351,6 +430,9 @@ CHK = {
     "failure-latch-re-arms-on-success":
         "the refused-mesh latch clears when a later attempt succeeds, so a second "
         "refusal after a recovery still prints (review-11 F7)",
+    "failure-line-prints-once-per-refusal":
+        "the refused-mesh line is edge-triggered, so one sustained refusal prints once "
+        "and not on every frame of it (review-12 R1)",
 }
 
 
@@ -601,38 +683,103 @@ def adjudicate(text, quiet=False):
     #     -- two committed lines, one refusal, 51 KB apart. The check is on the
     #     argument of the printf inside the `allocationFailed()` branch, so it
     #     cannot be satisfied by prose and does not care how the line is worded.
+    #
+    #     WHAT THE ARGUMENTS MUST AGREE ON (review-12 R2). The first version asked
+    #     only whether the refused capacity appeared ANYWHERE in the call's tail, so
+    #     `attempted` corners with a KB figure built from `objectCorners` passed --
+    #     the corner count honest, the byte count 8x wrong, the gate green, and the
+    #     exact disagreement F1 was raised about still on the console. The check now
+    #     parses the call's arguments: the first must BE the refused capacity (the
+    #     call itself, or a local initialised from it -- a bare rename stays legal,
+    #     review-10 F6's lesson), and every later argument that does arithmetic must
+    #     compute with that same quantity and nothing else. A plain extra argument is
+    #     still allowed: a line that ALSO says what the frame wanted is informative,
+    #     not wrong; a derived byte figure that disagrees with the corner figure is.
     fail_ok = False
     at = code.find("objectDraw.allocationFailed()")
-    call = code.find("log3dsPrintf(", at) if at >= 0 else -1
-    end = code.find(");", call) if call >= 0 else -1
-    if call >= 0 and end > call:
-        branch = code[at:end]
-        tail = code[call:end]
-        tail = tail[tail.rfind('",') + 2:]        # the arguments, after the format string
-        # Either the call itself, or a local whose initialiser is the call. The
-        # second form is what the file writes, and a check that demanded the first
-        # would redden a legitimate rename (review-10 F6's lesson about gates that
-        # reject a shape the port may write).
-        sourced = re.findall(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*objectDraw"
-                             r"\.attemptedCapacity\(\)", branch)
-        names = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", tail))
-        fail_ok = "attemptedCapacity()" in tail or any(n in names for n in sourced)
+    call = re.search(r"log3dsPrintf[ \t]*\(", code[at:]) if at >= 0 else None
+    if call is not None:
+        head = at + call.start()
+        args = call_args(code, at + call.end() - 1)
+        vals = args[1:] if args and args[0].lstrip().startswith('"') else None
+        if vals:
+            # Either the call itself, or a local whose initialiser is the call. The
+            # second form is what the file writes, and a check that demanded the first
+            # would redden a legitimate rename (review-10 F6's lesson about gates that
+            # reject a shape the port may write). The window is the test's own header
+            # up to its printf, so a same-named local in another branch cannot lend it
+            # a source.
+            sourced = set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*objectDraw"
+                                     r"\.attemptedCapacity\(\)", code[at:head]))
+            first = vals[0].replace(" ", "")
+            src = "attemptedCapacity" if first == "attemptedCapacity()" else (
+                first if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", first) and first in sourced
+                else None)
+            # The byte figure: at least one derived argument must exist (that is the
+            # half that has to reconcile with the backend's own `linearAlloc(N)`),
+            # and each one may only compute with the refused capacity.
+            derived = [v for v in vals[1:] if "*" in v or "/" in v]
+            fail_ok = (src is not None and bool(derived)
+                       and all(value_names(v) <= {src} for v in derived))
     say(CHK["failure-line-names-the-refused-capacity"], fail_ok,
         "the pass rounds up to a power of two and refuses THAT size; a line naming "
         "anything else reports an allocation that was never attempted")
 
-    # 18. THE LATCH RE-ARMS (review-11 F7). `streamFailureLogged` is the edge
-    #     trigger that keeps a level under linear pressure from printing the same
-    #     line 60 times a second. Latched once for the whole run it also hides
-    #     every refusal after the first: a grow to 8192 corners that fails after a
-    #     success at 4096 would print nothing, and the log would end on the smaller
-    #     request. So the flag must be cleared by an assignment and not only by its
-    #     initialiser -- the declaration line does not count.
-    rearms = any(line.strip() == "streamFailureLogged = false;"
-                 for line in code.splitlines())
-    say(CHK["failure-latch-re-arms-on-success"], rearms,
+    # 18. THE LATCH CLEARS ON A FRAME THAT DID NOT REFUSE (review-11 F7, re-pinned by
+    #     review-12 R1). `streamFailureLogged` is the edge trigger that keeps a level
+    #     under linear pressure from printing the same line 60 times a second, and it
+    #     must clear when a later attempt succeeds or a grow to 8192 corners that
+    #     fails after a success at 4096 prints nothing and the log ends on the smaller
+    #     request. The first version of this check asked whether ANY LINE EQUALLED
+    #     `streamFailureLogged = false;` -- which pins a line, not the guard: it was
+    #     satisfied by an assignment that no longer guarded anything, and it reddened
+    #     on a trailing comment. Both directions were wrong. It is now a brace-scan:
+    #     the clear must sit in the `else` SIBLING of the `allocationFailed()` test,
+    #     which is the branch every non-refusing frame takes, so "it clears" means
+    #     "it clears when the pass succeeded" and not "the text is in the file".
+    #     The equivalent assignment form (`streamFailureLogged =
+    #     objectDraw.allocationFailed();` above the test) is accepted too: it is the
+    #     same state machine, and a gate that reddens it is a gate the next batch
+    #     learns to route around. There is a probe for it below.
+    latch_ok = False
+    once_ok = False
+    at = code.find("objectDraw.allocationFailed()")
+    if at >= 0:
+        sp = block_span_from(code, code.find("{", at))
+        if sp is not None:
+            branch = code[sp[0]:sp[1]]
+            after = code[sp[1]:]
+            rest = re.match(r"[ \t\r\n]*else[ \t]*\{", after)
+            if rest is not None:
+                esp = block_span_from(after, rest.end() - 1)
+                if esp is not None:
+                    latch_ok = re.search(r"streamFailureLogged[ \t]*=[ \t]*false[ \t]*;",
+                                         after[esp[0]:esp[1]]) is not None
+            if latch_ok is False and re.search(
+                    r"streamFailureLogged[ \t]*=[ \t]*objectDraw\.allocationFailed\("
+                    r"[ \t]*\)[ \t]*;", code) is not None:
+                latch_ok = True
+            # 19. AND THE LINE PRINTS ONCE PER REFUSAL, not once per frame. The clear
+            #     being reachable is only half of an edge trigger: with the guard
+            #     widened the line still prints on every frame of a sustained refusal
+            #     -- which is why it was edge-triggered at all, since the backend line
+            #     it answers once printed 1710 times in a run (review-10 F3). So the
+            #     printf must sit inside a branch whose CONDITION tests the latch
+            #     negatively, found by containment and not by a line match.
+            for g in re.finditer(r"\bif[ \t]*\(([^{}();]*)\)[ \t]*\{", branch):
+                gsp = block_span_from(branch, g.end() - 1)
+                if gsp is None or "log3dsPrintf(" not in branch[gsp[0]:gsp[1]]:
+                    continue
+                cond = g.group(1)
+                if re.search(r"![ \t]*streamFailureLogged|streamFailureLogged"
+                             r"[ \t]*==[ \t]*false", cond):
+                    once_ok = True
+    say(CHK["failure-latch-re-arms-on-success"], latch_ok,
         "a latch that can never clear is a one-shot log: the second, larger refusal "
         "is silent and the run reads as the first one")
+    say(CHK["failure-line-prints-once-per-refusal"], once_ok,
+        "an unguarded refusal line prints on every frame of one refusal, which is the "
+        "log spam the edge trigger exists to stop")
     return r
 
 
@@ -918,12 +1065,40 @@ def arm_failure_line_names_the_frame_count(text):
     return text.replace("objectDraw.attemptedCapacity()", "objectCorners")
 
 
+def arm_failure_kb_names_the_frame_count(text):
+    """Keep the corner figure honest and build the BYTE figure from the frame's corner
+    count (review-12 R2). The first version of check 17 stayed green on exactly this:
+    the refused capacity still appeared in the line, so the check read it and passed
+    while the KB disagreed with renderer_c3d's own byte count by 8x -- one refusal,
+    two committed numbers, and a gate that could not see the disagreement."""
+    mutated, n = re.subn(r"\(int64_t\)[ \t]*attempted[ \t]*\*[ \t]*5",
+                         "(int64_t)objectCorners * 5", text)
+    return mutated if n else text
+
+
+def arm_failure_line_prints_every_frame(text):
+    """Widen the edge trigger to nothing (review-12 R1). The clear assignment stays
+    exactly where it is, so a check that only looks for the assignment -- which is
+    what check 18 used to be -- stays green while the refusal line prints on every
+    frame of a sustained refusal, which is the ~60/s log spam the trigger exists to
+    stop. Only a check on the GUARD can see this, so it has its own."""
+    mutated, n = re.subn(r"\bif[ \t]*\([ \t]*![ \t]*streamFailureLogged[ \t]*\)[ \t]*\{",
+                         "if (true) {", text)
+    return mutated if n else text
+
+
 def arm_failure_latch_never_rearms(text):
     """Latch the refused-mesh line for the whole run (review-11 F7). The first
     refusal still prints exactly once, so nothing about the first failure changes;
-    what disappears is every refusal after a recovery."""
+    what disappears is every refusal after a recovery.
+
+    The clear is matched with its optional trailing comment, because the arm that
+    cannot build its mutant is a FAIL and a comment on that line is legitimate code
+    (review-12 R1's other half: the exact-text version reddened the suite for a
+    comment, which is a gate rejecting a shape the port may write)."""
     mutated, n = re.subn(r"\}[ \t]*else[ \t]*\{[ \t]*\n[ \t]*streamFailureLogged"
-                         r"[ \t]*=[ \t]*false;[ \t]*\n[ \t]*\}[ \t]*\n", "}\n", text)
+                         r"[ \t]*=[ \t]*false;[ \t]*(?://[^\n]*)?\n[ \t]*\}[ \t]*\n", "}\n",
+                         text)
     return mutated if n else text
 
 
@@ -983,8 +1158,14 @@ ARMS = [
     ("refused-mesh line prints the frame's corner count (review-11 F1)",
      arm_failure_line_names_the_frame_count,
      CHK["failure-line-names-the-refused-capacity"]),
+    ("refused-mesh line's KB figure comes from the frame's corner count (review-12 R2)",
+     arm_failure_kb_names_the_frame_count,
+     CHK["failure-line-names-the-refused-capacity"]),
     ("refused-mesh latch never re-arms after a recovery (review-11 F7)",
      arm_failure_latch_never_rearms, CHK["failure-latch-re-arms-on-success"]),
+    ("refused-mesh line prints on every frame of one refusal (review-12 R1)",
+     arm_failure_line_prints_every_frame,
+     CHK["failure-line-prints-once-per-refusal"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -1009,6 +1190,23 @@ PROBES = [
     # that carries the refused capacity is a legitimate edit it must accept.
     ("the refused-capacity local is renamed (check 17 reads the source, not a name)",
      lambda s: re.sub(r"\battempted\b", "refused", s)),
+    # Check 18 pins the clear to the `else` sibling because that is where the port
+    # writes it, but the assignment form below is the same state machine: the latch
+    # holds exactly while the pass is refusing and clears the frame after it stops.
+    # A check that reddened it would be the review-10 F6 failure again.
+    ("the latch is re-armed by an assignment from the flag instead of an else",
+     lambda s: s.replace(
+         "            } else {\n                streamFailureLogged = false;\n            }\n",
+         "            }\n", 1).replace(
+         "            if (objectDraw.allocationFailed()) {",
+         "            streamFailureLogged = objectDraw.allocationFailed();\n"
+         "            if (objectDraw.allocationFailed()) {", 1)),
+    # The other half of review-12 R1's brittleness: the clear line carrying a comment
+    # is ordinary code, and the exact-text check used to answer "no such line".
+    ("the re-arm line carries a trailing comment (check 18 reads the branch, not a line)",
+     lambda s: s.replace("                streamFailureLogged = false;",
+                         "                streamFailureLogged = false;  // re-arm the "
+                         "edge trigger (review-11 F7)", 1)),
 ]
 
 print("main_3ds_flow: %s — %d checks, %d mutation arms, %d green probes"

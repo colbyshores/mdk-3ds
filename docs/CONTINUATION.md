@@ -1,12 +1,37 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — **a diagnostics-only code change, plus a sentence struck from an owner directive.**
-The code half is small and gated (below). The reason for the level is that this batch edits
-`docs/OWNER_DIRECTIVE_2026-11-05.md`, and a batch editing a directive is exactly the thing an
-independent reviewer should look at: it strikes a sentence batch 104 wrote there claiming a
-"single operator-approved same-family" reviewer exception, which no approval record supports and
-which `ralph-pi.sh` contradicts. If the owner did approve such an exception, this edit is wrong and
-has to be reverted with the loop's chain comment changed alongside it.
+Risk: high — **two gated checks' predicates were rewritten, and an owner directive was annotated.**
+The code change is a comment. What makes this review-worthy is that a batch edited the shape of
+its own gate: check 17 now parses the refused-mesh printf's arguments instead of substring-hunting
+its tail, and check 18 now brace-scans the `allocationFailed()` branch instead of matching one
+line — both are strengthenings the external reviewer asked for, and a builder changing what a gate
+accepts is exactly the thing an independent model should look at. The directive edit adds a
+correction blockquote with file:line evidence and strikes no owner policy; if the owner disagrees
+with the annotation, that block is the thing to revert.
+
+**Batch 106 (Iteration 133) — review-12 closed 5/5 (no Critical, no High): R1 and R2 fixed in the
+gate, R3 annotated in the directive, R4/R5 fixed; nothing rebutted on merit.** Review-12's two
+Medium test findings said batch 105's "closed 8/8" rested on two gates that could not fail. Both
+were right, and both were reproduced before being fixed. **R2**: check 17 asked whether the refused
+capacity appeared *anywhere* in the refused-mesh printf's tail, so keeping `attempted` corners and
+building the **KB** figure from `objectCorners` passed — the corner count honest, the byte count 8x
+wrong, the exact disagreement review-11 F1 was raised about still on the console. It now parses the
+call's arguments (string- and paren-aware: the format string contains a comma and the KB argument a
+`sizeof`) and requires every derived figure to compute with the same quantity as the first. **R1**:
+check 18 asked whether *some line equalled* `streamFailureLogged = false;`, which pins a line and
+not the guard — widening `if (!streamFailureLogged)` to `if (true)` left the assignment in place and
+the refusal printing 60×/s, and the gate printed PASS; a trailing comment on that line reddened the
+suite from the other side. It is now a brace-scan (the clear must sit in the `else` **sibling** of
+the `allocationFailed()` test, i.e. the branch every non-refusing frame takes) and the guard has its
+own check 19 with its own isolating arm: `PASS Main3dsFlow (19 checks, 22 arms adjudicated red, 6
+probes green)`. **R3**: the directive still claimed `tetrisphere-godot` and `perfect_dark` "carry the
+same chains"; both siblings contradict it (`tetrisphere …/tools/ralph-pi.sh:120` builds on `luna`,
+which this directive retires; `perfect_dark/tools/ralph-pi.sh:167,176-178` makes its builder and
+reviewer the **same** DeepSeek family, the arrangement the file calls BLOCKED), so it is annotated
+in place with those citations. **R4**: batch 105 left an unmatched bold opener in the owner-action block
+(651 markers, odd → 652, even). **R5**: `object_draw.h` offered "either 0 or the OLD mesh's size" as what
+`capacity()` holds after a refusal; the old mesh is released and `capacity_` zeroed *before* the
+request that can be refused, so only 0 is reachable.
 
 **Batch 105 (Iteration 132) — review-11 closed 8/8 (no Critical, no High): F1 and F7 fixed and
 re-measured on the console, F2/F4/F6/F8 corrected in the record, F3 struck from the directive,
@@ -368,7 +393,7 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 106)
+## NEXT (batch 107)
 *(Batch 104 did not advance the renderer head either; it closed the instrument review-10 proved could not
 fail and added a measured colour fact to the head. The item below is restated against the committed panel,
 because review-9 F1 is right that batch 102 erased the picture this item was written against: the head item
@@ -530,7 +555,18 @@ so a mid-run edit is caught as stale; it is also outside `AGENTS.md` §8. Relate
 able to put a reviewer-independence exception into a directive with no gate noticing (review-11 F3),
 and `tools/reclaim_qwen_slots.sh --kill-live` reaches holders shared with two sibling campaigns
 (review-11 open questions 4).
-**Review-4 of run-20261105-142911 F1/F2 (the geometric solid-arena pin stands in for the unported
+**Review-12 open question 1 is deferred with cause, and it is a measurement gap, not a code gap.**
+The re-arm review-11 F7 asked for can in principle spam: if frame N needs more than `capacity_` and
+the grow fails, the working mesh has already been released, so frame N+1 with a small count succeeds
+and clears the latch, and frame N+2 needs the big count and refuses again — one line per cycle. No
+shipped scene shows it (level 8's need is steady at 5616 corners, level 3's at 480, and both are
+measured printing once), and the only way to close it is a capture of a scene whose
+`objectStream.vertices.size()` alternates under real linear pressure, which no level in the corpus is.
+If it ever becomes real, the fix is to key the edge trigger on `attemptedCapacity()` instead of a
+boolean, so each distinct refusal prints once whatever the frame did in between — and that changes
+what the console log means, so it needs the capture first, not a gate that can already pass both
+ways.
+**Review-4 of run-20261105-142911 F1/F2** (the geometric solid-arena pin stands in for the unported
 DTI connection crossing; the fall probe hard-codes the start and omits the camera stage) need a
 placed-fall oracle in full order plus a walk-out golden, and are deferred to a collision batch.
 **Review-6 F1 is that same gap, and it is now the front end's whole collision story**: `currentArena_`

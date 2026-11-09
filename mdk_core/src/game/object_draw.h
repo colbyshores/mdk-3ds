@@ -91,13 +91,17 @@ public:
     bool allocationFailed() const { return failed_; }
 
     // The capacity the LAST refused request asked the backend for, in vertices,
-    // and 0 when nothing has been refused. `capacity()` cannot answer this: a
-    // refused `ensure` never assigns it, so after a failure it is either 0 or
-    // the OLD mesh's size, while the backend refused the ROUNDED-UP power of two
-    // (`480` corners in a frame asks for `4096`). A log line that printed
-    // `capacity()` or the frame's corner count would report an allocation that
-    // was never attempted and disagree with the backend's own byte count
-    // (review-11 F1).
+    // and 0 when nothing has been refused. `capacity()` cannot answer this, and not
+    // because it might still hold the previous mesh: `ensure` releases that mesh and
+    // zeroes `capacity_` BEFORE the request that may be refused (object_draw.cpp),
+    // so after a refusal it is exactly 0 — the "no mesh yet" shape review-9 F6 took
+    // out of the log because it is indistinguishable from a frame that never asked.
+    // What the backend refused is the ROUNDED-UP power of two (`480` corners in a
+    // frame asks for `4096`), and only this accessor carries it. A log line that
+    // printed `capacity()` or the frame's corner count would report an allocation
+    // that was never attempted and disagree with the backend's own byte count
+    // (review-11 F1; the "or the OLD mesh's size" alternative this comment used to
+    // offer is a state that cannot occur — review-12 R5).
     int32_t attemptedCapacity() const { return attemptedCapacity_; }
 
 private:
