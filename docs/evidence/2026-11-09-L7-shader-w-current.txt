@@ -33,6 +33,17 @@ THE MEASUREMENT (`python3 tools/panel_geom.py geom parent current`):
     geom: 0 px of 96000 differ in the painted/clear map
     rgb:  0 px of 96000 differ in full colour
 
+    [ANNOTATED BY BATCH 105, review-11 F6.] That first line is what batch 103
+    measured, and the instrument has since been changed for exactly this panel:
+    `panel_geom.py geom parent current` now exits 3 with `REFUSED — the first
+    panel … is entirely painted`, because the object pass paints all 96000 pixels
+    of BOTH sides, so the painted/clear map is a constant and a `0 px` there is
+    arithmetic and cannot discriminate anything (review-10 F1, and
+    `tests/scripts/panel_geom_test.sh` gates the refusal). What still stands here
+    is the second line and the stronger form of it: the two crops are
+    BYTE-IDENTICAL (pixel sha `75b22ac5…`, named above), which is a colour claim
+    that does not need `geom` at all. Reproducing the first line as written now
+    means reproducing a refusal, not a broken tool.
 Forcing the position attribute's w to 1.0 changes NOTHING the console draws. The
 attribute loader already fills it, so the shader's old `mov r0, inpos` was not
 dropping the MVP's translation column, and the missing-translation theory for the

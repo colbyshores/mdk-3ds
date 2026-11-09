@@ -19,6 +19,13 @@ const int32_t kInitialStreamCapacity = 4096;
 
 bool ObjectDraw::ensure(MdkRenderer renderer, int32_t need) {
     if (mesh_ >= 0 && need <= capacity_) {
+        // A mesh exists and fits, so the pass is not in a refused state. Defensive
+        // rather than load-bearing: a refusal leaves `mesh_` at -1, so the frames
+        // after one always take the full path below and clear the flag there. It
+        // is written because "failed_ describes the last attempt" is a promise the
+        // early return would otherwise be free to break (review-11 F7).
+        failed_ = false;
+        attemptedCapacity_ = 0;
         return true;
     }
     if (mesh_ >= 0) {
@@ -40,6 +47,11 @@ bool ObjectDraw::ensure(MdkRenderer renderer, int32_t need) {
     while (capacity < need) {
         capacity *= 2;
     }
+    // The request the backend is about to be given, recorded BEFORE the call:
+    // a refusal returns before `capacity_` is assigned, so without this the
+    // attempted size is not reachable by the caller at all and the frontend's
+    // log line can only guess (review-11 F1).
+    attemptedCapacity_ = capacity;
     mesh_ = mdk_render_create_dynamic_mesh(renderer, capacity);
     if (mesh_ < 0) {
         // Recorded, not printed: see allocationFailed(). The backend that refused
@@ -51,6 +63,7 @@ bool ObjectDraw::ensure(MdkRenderer renderer, int32_t need) {
         return false;
     }
     capacity_ = capacity;
+    attemptedCapacity_ = 0;
     failed_ = false;
     return true;
 }

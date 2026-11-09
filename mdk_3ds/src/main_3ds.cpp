@@ -657,10 +657,12 @@ int main(int argc, char** argv) {
     // The stream mesh's capacity the frame log last reported, so a growth is said
     // once instead of every frame. Zero until the first frame with corners.
     int32_t streamCapacityLogged = -1;
-    // Printed once, the first frame the mesh cannot be made. Like the capacity
-    // line above it, it is edge-triggered: a level under linear pressure would
-    // otherwise repeat the same line 60 times a second, and a log that repeats is
-    // a log nobody reads (review-10 F3).
+    // Printed on the first refused attempt after a success, and re-armed by a
+    // success (see the print site). Like the capacity line above it it is
+    // edge-triggered: a level under linear pressure would otherwise repeat the
+    // same line 60 times a second, and a log that repeats is a log nobody reads
+    // (review-10 F3). A latch that could never re-arm would instead hide every
+    // refusal after the first (review-11 F7).
     bool streamFailureLogged = false;
     // This frame's object-pass cost, and the peak over the run. The peak is the
     // number that says what a level costs the stream mesh: the capacity is rounded
@@ -932,13 +934,30 @@ int main(int argc, char** argv) {
             // cases apart, so the pass RECORDS the refusal (object_draw.h
             // allocationFailed) and the refusal is what is printed here, not an
             // inference from a size.
-            if (objectDraw.allocationFailed() && !streamFailureLogged) {
-                streamFailureLogged = true;
-                mdk::log3dsPrintf("objects: stream mesh for %d corners = %d KB linear — "
-                                  "linearAlloc FAILED, no objects drawn",
-                                  objectCorners,
-                                  (int)((int64_t)objectCorners * 5 * sizeof(float) /
-                                        1024));
+            if (objectDraw.allocationFailed()) {
+                // Edge-triggered, but RE-ARMED: the flag clears when a later
+                // attempt succeeds, so a second refusal after a recovery — a grow
+                // to 8192 corners after a first success at 4096 — still prints
+                // (review-11 F7). A one-shot latch for the whole run would print
+                // the first, smaller refusal and be silent about the bigger one.
+                if (!streamFailureLogged) {
+                    streamFailureLogged = true;
+                    // THE CAPACITY THAT WAS REFUSED, not the frame's corner count.
+                    // `ensure` rounds up to a power of two and it is that rounded
+                    // capacity the backend was asked for, so printing the frame's
+                    // 480 corners here reported a 9 KB refusal for an 80 KB one and
+                    // disagreed with renderer_c3d's own `linearAlloc(N) FAILED`
+                    // line by up to 8x (review-11 F1). This number and that byte
+                    // count are now the same request.
+                    const int32_t attempted = objectDraw.attemptedCapacity();
+                    mdk::log3dsPrintf("objects: stream mesh of %d corners = %d KB "
+                                      "linear — linearAlloc FAILED, no objects drawn",
+                                      attempted,
+                                      (int)((int64_t)attempted * 5 * sizeof(float) /
+                                            1024));
+                }
+            } else {
+                streamFailureLogged = false;
             }
             if (objectDraw.capacity() > 0 && objectDraw.capacity() != streamCapacityLogged) {
                 streamCapacityLogged = objectDraw.capacity();

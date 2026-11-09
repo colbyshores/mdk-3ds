@@ -1,23 +1,39 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — **the picture instrument changed, and so did the console frame's failure reporting.**
-Review-10's Critical was that the instrument this loop quotes for every console claim **cannot fail**:
-`panel_geom.py geom` compares a painted/clear map, the object pass now paints all 96000 panel pixels, so
-both sides of every current comparison are a constant map and `geom: 0 px` was arithmetic. It now refuses
-a degenerate side with exit 3 and prints the clear fraction, and `tests/scripts/panel_geom_test.sh`
-gates the refusal (10 checks, 7 arms, 2 probes). Review-10's High was a false sentence in the record —
-batch 103 wrote that a 0 px control "was comparing a capture with itself", and batch 102's control was
-two independent runs of one build whose panels really were identical; the true lesson is that **a noise
-floor is only valid for the scene it was measured on**, and the record now says that instead. Also here:
-an allocation failure in the object pass is printed instead of vanishing (review-10 F3), the panel
-rectangle is imported and not re-spelled (F5), check 16 no longer counts a comment as a call site (F6),
-and the `10520 px` that no crop produces is corrected to `10464` (F4). The one-sided view is still open,
-and `NEXT` now carries a measured fact no theory covers: **every painted pixel of the console's panel has
-R = 255.** The Linux binary's picture is unchanged.
+Risk: high — **a diagnostics-only code change, plus a sentence struck from an owner directive.**
+The code half is small and gated (below). The reason for the level is that this batch edits
+`docs/OWNER_DIRECTIVE_2026-11-05.md`, and a batch editing a directive is exactly the thing an
+independent reviewer should look at: it strikes a sentence batch 104 wrote there claiming a
+"single operator-approved same-family" reviewer exception, which no approval record supports and
+which `ralph-pi.sh` contradicts. If the owner did approve such an exception, this edit is wrong and
+has to be reverted with the loop's chain comment changed alongside it.
+
+**Batch 105 (Iteration 132) — review-11 closed 8/8 (no Critical, no High): F1 and F7 fixed and
+re-measured on the console, F2/F4/F6/F8 corrected in the record, F3 struck from the directive,
+F5 deferred with cause; nothing rebutted on merit.** Review-11 F1 was that the refused-mesh log
+line review-10 asked for printed **the frame's corner count** as the size of the allocation that
+failed, while `ObjectDraw::ensure` rounds up to a power of two and hands THAT to the backend — so
+level 3 refusing would have read `480 corners = 9 KB` against `renderer_c3d.cpp`'s own
+`linearAlloc(83886080) FAILED`, one refusal and two committed numbers 8x apart, and the attempted
+capacity was not even reachable by the caller. `ObjectDraw` now records the capacity before the
+request that may be refused and the frontend prints it; re-running the same one-line mutant on the
+console gives `linearAlloc(83886080) FAILED for a dynamic mesh of 4194304 corners` and
+`objects: stream mesh of 4194304 corners = 81920 KB linear — linearAlloc FAILED` — the same request
+in two units, each printed exactly once. F7: both edge triggers were latches that could never
+re-arm, so a second, larger refusal after a recovery was silent; both clear now. Two new gated
+checks (`PASS Main3dsFlow (18 checks, 20 arms adjudicated red, 4 probes green)`). **And the mutant
+handed back a better version of batch 104's colour fact: its panel's clear colour is `(16,32,48)`,
+so it is a control — 37536 painted pixels with R = 255, 58464 clear with none.** It is not "the
+panel is red": every fragment the renderer paints arrives with R = 1.0 while G and B take 117–130
+distinct values, and the clear path delivers R = 16 correctly. That localises the open colour
+question to the fragment/vertex colour upload and away from the clear word. The one-sided view is
+still open; the Linux binary's picture is unchanged.
 
 **Batch 104 (Iteration 131) — review-10 closed 6/6 (F1 Critical and F2 High fixed, F3 fixed, F4/F5/F6
 fixed; no rebuttal on merit, one half of F6 deferred with cause).** See "Iteration 131" in
-`docs/PROGRESS_LOG.md` for the narrative and the verbatim gate output.
+`docs/PROGRESS_LOG.md` for the narrative and the verbatim gate output. Its F3 line — "the two
+frontends that own a log print it" — was false and is corrected by batch 105: only the 3DS frontend
+reads `allocationFailed()`.
 
 **Batch 103 (Iteration 130) — review-9 closed 7/7 (no Critical, no High; F1-F6 fixed, F3/F7 deferred with
 cause).** See "Iteration 130" in `docs/PROGRESS_LOG.md` for the narrative and the verbatim gate output.
@@ -247,6 +263,7 @@ parenthetical dropped. The patch is in `docs/PROGRESS_LOG.md` Iteration 124: gat
 **Owner action (review-4 F3 / review-2 F6):** uncommitted operator edits in `ralph/builder.md` (PROTECTED) plus routing changes in `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`, and `tools/runner/test_review_state.sh` conflict with the committed owner directive. Owner must approve/commit or revert; builder must not stage these or set `MDK_OWNER_APPROVED=1`. Stage batch paths by name only. **Attribution, which review-4's open question 1 asked for: these six files are operator-authored, not builder work.** The content is harness policy no batch writes — reviewer/worker chains, `ITER_TIMEOUT`/`REVIEW_TIMEOUT`, `PI_CMD=/mnt/nas/Development/qwen-slot-pi.sh`, the watchdog's phase limits, and a "Search scope" section in the builder's own contract; batches 83, 84 and 85 each staged none of them, and batch 85 staged its paths by name and did not use the add-all commit path. So review-4 F2 is documentation hygiene plus a gate gap, not a protected-contract breach.
 **Owner action (review-4 of run-20261106-062909, F2):** `tools/check.sh:175` runs `gates_batch_integrity.py` with neither `--staged` nor `--base`, so a PROTECTED edit sitting in the worktree or the index is invisible to the loop's own gate and an add-all commit lands it first and fails the gate second. The two files that would carry the fix — `tools/check.sh` and `tools/runner/gates_batch_integrity.py` — are BOTH in `PROTECTED`, so this is an owner edit: run the gate with `--staged` when the index is non-empty (or `--base HEAD`). Also restore `tools/runner/test_review_state.sh`'s mode bit (100755→100644 in the same uncommitted set; this uid does not own the file and cannot chmod it).
 **Owner action (review-4 of run-20261106-062909, F3):** three texts and one sibling repository disagree on whether a same-family review exception exists, and only the owner can pick a winner. The uncommitted `docs/OWNER_DIRECTIVE_2026-11-05.md` says "the `-th` -> `flash` pair is the single operator-approved same-family exception"; `ralph-pi.sh` says "No independence exception appears anywhere in this file: none is needed, and one must not be added"; `tools/runner/test_review_state.sh` still pins `REJECT` for a same-family pair. The same edit also asserts `tetrisphere-godot` carries the same chains, which its own `tools/ralph-pi.sh:120` falsifies (`WORKER_MODELS="litellm/qwen litellm/luna"`). Either the directive loses that sentence or the exception becomes a code change in `reviewer_reject_reason` plus a rewritten test case — neither is a builder batch.
+**Owner action (review-4 of run-20261106-062909, F3) — STATUS AFTER BATCH 105:** batch 105 struck the exception sentence from `docs/OWNER_DIRECTIVE_2026-11-05.md`, because it contradicts `SPEC-COMPLETION.md` harness rule 4 (PROTECTED) and `ralph-pi.sh`'s own "THERE IS NO INDEPENDENCE EXCEPTION HERE", both of which the harness already enforces and `test_review_state.sh` already pins. **If the owner does intend a same-family exception, batch 105's edit is the thing to revert**, and `ralph-pi.sh`, `ralph/validator.md` and `tools/runner/test_review_state.sh` must change with it. Adding `docs/OWNER_DIRECTIVE_*.md` to `gates_batch_integrity.PROTECTED` is also an owner call (review-11 F3): a directive is currently editable by a batch with no gate noticing.
 **Owner action (review-4 of run-20261106-062909, F4):** the uncommitted `ralph-pi.sh` `guard()` replaced `FATAL: pi write probe failed on every route / exit 3` with an unbounded `while :; … sleep 300`, and it rewrites `phase route-health` before every round, so the watchdog's `route-health|startup|verify) limit=900` arm compares against a refreshed epoch and can never fire: a loop with no live route parks silently, with `logs/ralph/disabled` already touched. The wait is the operator's decision (the file says so); bounding it is not builder-owned. Suggested: after N failed rounds write a phase no watchdog arm covers (e.g. `route-dead`) and stop refreshing the epoch on a failed round. **Relabelled per review-5 F7: this is an operator decision that `PROTECTED` does not enforce** — neither `ralph-pi.sh` nor `tools/ralph_pi_watchdog.sh` is in the `PROTECTED` set, so the boundary here is ownership, not a gate, and a reviewer should not re-derive it as a gate gap.
 **Owner action (review-2 F3 / review-4 F3):** batch frames duplicate an older capture (`sha256 6646adf1…`) whenever a batch moves no pixels — batch 79's, 80's, 81's and 82's do, and each sidecar says so and names the measurement. Rejecting duplicates and requiring emulator verdicts needs owner-protected gate tooling; recorded, not changed.
 **Owner action (review dispatch, second instance):** `logs/ralph-pi/run-20261106-062909/review-13.md` is a **failed dispatch** — its content is `REVIEWER FAILED model=litellm/deepseek-v4.1-flash-th rc=124`, its `.rc` is `124`, and it covers scope `96cfe849..953369da` (batch 93). A dispatched review that died is not an all-clear: that range stays OWED and the next mandatory review must be given the unreviewed range, not just the newest commit. Same root as the two items below (the reviewer spawn holds a qwen slot through `PI_CMD` until `REVIEW_TIMEOUT`), and the same reason it is owner-only: the lines are inside the uncommitted operator hunk. If the loop's own persistence already re-queued it, no action — but nothing in batch 94's tree can show that.
@@ -351,7 +368,7 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 105)
+## NEXT (batch 106)
 *(Batch 104 did not advance the renderer head either; it closed the instrument review-10 proved could not
 fail and added a measured colour fact to the head. The item below is restated against the committed panel,
 because review-9 F1 is right that batch 102 erased the picture this item was written against: the head item
@@ -386,6 +403,26 @@ So there are now TWO questions, not one, and the second is the sharper one.
        px = list(Image.open("docs/evidence/2026-11-09-L7-shader-w-current.png").convert("RGB").getdata())
        print(Counter(p[0] for p in px)[255], "of", len(px))   # -> 96000 of 96000
        EOF
+
+   **[MEASURED AGAINST A CONTROL BY BATCH 105, and it is now a sharper statement.]** The sentence
+   above had no control — a fully painted panel cannot show what it excludes. Batch 105 re-ran the
+   forced-allocation-failure mutant, whose panel is the arena-only panel with **clear colour
+   `(16, 32, 48)`**, and the separation is exact:
+
+       arena-only mutant: 37536 painted pixels, 37536 with R = 255; 58464 clear, 0 with R = 255
+       arena-only mutant: 117 distinct painted colours, R = 255 on every one of them
+       shipped build:     96000 painted, 96000 with R = 255; 130 distinct colours
+                          top (255,0,0) 21287x, (255,44,141) 11262x, (255,0,28) 7753x
+
+   So the claim is not "the panel is red". **Every fragment the renderer paints arrives with its R
+   channel at 1.0 while G and B take 117–130 distinct values, and the only other colour path into
+   the frame — the clear word — delivers R = 16 correctly.** That excludes the clear word (the
+   precedent batch 104 pointed at, `pica_matrix.h:302-319`) and points at the fragment/vertex colour
+   upload: a texture format whose bytes land R-last, or a vertex colour written in the wrong order,
+   or a `C3D_TexEnv`/colour-source selection putting alpha where red belongs. It also means the
+   noise pair's "R identical, B swinging 0..255" is not a phase: R never varies because R is not
+   carrying colour. Review-11's open question 1 asked exactly this and got an answer the same batch
+   did not have to spend a run on.
 
    The same count on the Linux frame of the same core (`docs/frames/2026-11-09-b103-*.png`, level 3) is
    9758 of 76800, so this is the 3DS colour path and not MDK's art. Every committed console crop has it,
@@ -480,7 +517,20 @@ fps, not under (review-8 F3). Reading `dspframes` off a hardware run is a livene
 check first: no installed header names the frame quantum, so a console rate needs a
 slope against a clock the console itself owns, not one row's division.
 
-**Deferred review findings:** review-4 of run-20261105-142911 F1/F2 (the geometric solid-arena pin stands in for the unported
+**Deferred review findings:** **review-11 F5 (Medium) is deferred with cause, and it is an
+operator action, not a batch one.** `ralph-pi.sh`'s `guard()` now waits forever (`while : … sleep
+300`) both when qwen is down — the operator's 2026-11-05 decision — and when `$PI_CMD` does not
+exist at all, so a fresh box or a second machine parks at `phase route-health` silently, and because
+the epoch is rewritten every 600 s the 900 s watchdog never fires. The fix is one fail-fast before
+the wait: `[ -x "$PI_CMD" ] || { log "worker wrapper $PI_CMD is missing or not executable — BLOCKED, "
+"not a route outage"; exit 7; }`. It is not applied here because `ralph-pi.sh` **is the process
+executing this batch**, bash reads a running script incrementally, and the harness pins its own hash
+so a mid-run edit is caught as stale; it is also outside `AGENTS.md` §8. Related, same owner queue:
+`docs/OWNER_DIRECTIVE_*.md` is not in `gates_batch_integrity.PROTECTED`, which is how batch 104 was
+able to put a reviewer-independence exception into a directive with no gate noticing (review-11 F3),
+and `tools/reclaim_qwen_slots.sh --kill-live` reaches holders shared with two sibling campaigns
+(review-11 open questions 4).
+**Review-4 of run-20261105-142911 F1/F2 (the geometric solid-arena pin stands in for the unported
 DTI connection crossing; the fall probe hard-codes the start and omits the camera stage) need a
 placed-fall oracle in full order plus a walk-out golden, and are deferred to a collision batch.
 **Review-6 F1 is that same gap, and it is now the front end's whole collision story**: `currentArena_`

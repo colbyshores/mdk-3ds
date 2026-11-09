@@ -59,7 +59,12 @@ public:
     // Does nothing when the frame has no corners. A frame whose mesh could not
     // be made draws no objects and does not fail: a missing object pass is a
     // missing picture, not a crash. It is NOT silent — `allocationFailed()` says
-    // so, and the frontend that owns a log prints it (main_3ds.cpp does).
+    // so, and the frontend that reads it prints it. Only the 3DS frontend does
+    // today (`main_3ds.cpp`); `mdk_linux/src/main.cpp` calls `draw` without
+    // consulting the flag and the Vulkan backend's mesh refusal prints nothing
+    // either, so a refused mesh on Linux is still a silent missing picture.
+    // That half is recorded and NOT fixed: `mdk_linux/**` is outside `AGENTS.md`
+    // §8's scope (review-11 F4).
     //
     // HOT PATH (AGENTS.md 2): once per drawn batch per frame. It is one memcpy
     // of the stream and a Material per draw -- no float->int conversion (R2), no
@@ -80,8 +85,20 @@ public:
     //
     // It describes the LAST attempt, not the whole run: `ensure` runs again on
     // every frame that has corners and no mesh, so a transient linear-pressure
-    // failure clears by itself when a later frame succeeds.
+    // failure clears by itself when a later frame succeeds — and `failed_` is
+    // cleared on that success, including on the early return, or a recovered
+    // pass would report a refusal forever.
     bool allocationFailed() const { return failed_; }
+
+    // The capacity the LAST refused request asked the backend for, in vertices,
+    // and 0 when nothing has been refused. `capacity()` cannot answer this: a
+    // refused `ensure` never assigns it, so after a failure it is either 0 or
+    // the OLD mesh's size, while the backend refused the ROUNDED-UP power of two
+    // (`480` corners in a frame asks for `4096`). A log line that printed
+    // `capacity()` or the frame's corner count would report an allocation that
+    // was never attempted and disagree with the backend's own byte count
+    // (review-11 F1).
+    int32_t attemptedCapacity() const { return attemptedCapacity_; }
 
 private:
     // Makes the mesh big enough for `need` vertices, replacing it when it is not.
@@ -89,6 +106,7 @@ private:
 
     MdkMeshId mesh_ = -1;
     int32_t capacity_ = 0;
+    int32_t attemptedCapacity_ = 0;
     bool failed_ = false;
 };
 

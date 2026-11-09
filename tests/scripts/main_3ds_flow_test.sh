@@ -84,6 +84,20 @@
 #     them down beside the draw is a one-line edit that would silently undo the fix,
 #     and it is the kind of "tidy" move a later batch makes by reflex.
 #
+# WHAT BATCH 105 ADDED (review-11 F1 and F7, the refused-mesh log line). The line
+# that review-10 F3 added to make a refused `linearAlloc` visible could itself
+# have been wrong in the same direction:
+#  17. it must name the capacity the backend was REFUSED. `ObjectDraw::ensure`
+#      rounds the frame's corner count up to a power of two, and it is that rounded
+#      capacity `mdk_render_create_dynamic_mesh` was handed, so printing the frame's
+#      480 corners reported a 9 KB refusal for an 80 KB one and disagreed with
+#      renderer_c3d.cpp's own `linearAlloc(N) FAILED` line by up to 8x. A reader
+#      budgeting linear memory from the guest log got a number for an allocation
+#      that was never attempted.
+#  18. its edge trigger must clear when a later attempt succeeds. A latch that only
+#      latches prints the FIRST refusal of the run and is silent about a bigger one
+#      after a recovery, which is the same invisibility review-10 F3 was raised for.
+#
 # Every check is paired with a mutation arm that must turn it red; a gate that
 # prints PASS over a mutant that never ran is a pass generator.
 #
@@ -331,6 +345,12 @@ CHK = {
     "respawn-drops-the-model-caches":
         "a respawn drops the two caches keyed by a Model address, because rebuilding "
         "the runtime frees the models they are keyed by",
+    "failure-line-names-the-refused-capacity":
+        "the refused-mesh log line prints the capacity the backend was refused, not "
+        "the frame's corner count (review-11 F1)",
+    "failure-latch-re-arms-on-success":
+        "the refused-mesh latch clears when a later attempt succeeds, so a second "
+        "refusal after a recovery still prints (review-11 F7)",
 }
 
 
@@ -570,6 +590,49 @@ def adjudicate(text, quiet=False):
         and frame[0] <= calls[0] < frame[1],
         "one DrawObjects per frame is the oracle's; a second call site replays the "
         "stream over whatever the first one already painted")
+
+    # 17. THE REFUSED-MESH LINE NAMES THE REFUSED CAPACITY (review-11 F1). The line
+    #     exists because review-10 F3 found a refused `linearAlloc` was invisible;
+    #     it fails the same way if it prints a size that was never requested.
+    #     `ObjectDraw::ensure` rounds the frame's corner count up to a power of two
+    #     and it is that rounded capacity the backend was handed, so a line built
+    #     from `objectCorners` printed a 9 KB refusal for an 80 KB one and
+    #     disagreed with renderer_c3d.cpp's own `linearAlloc(N) FAILED` by up to 8x
+    #     -- two committed lines, one refusal, 51 KB apart. The check is on the
+    #     argument of the printf inside the `allocationFailed()` branch, so it
+    #     cannot be satisfied by prose and does not care how the line is worded.
+    fail_ok = False
+    at = code.find("objectDraw.allocationFailed()")
+    call = code.find("log3dsPrintf(", at) if at >= 0 else -1
+    end = code.find(");", call) if call >= 0 else -1
+    if call >= 0 and end > call:
+        branch = code[at:end]
+        tail = code[call:end]
+        tail = tail[tail.rfind('",') + 2:]        # the arguments, after the format string
+        # Either the call itself, or a local whose initialiser is the call. The
+        # second form is what the file writes, and a check that demanded the first
+        # would redden a legitimate rename (review-10 F6's lesson about gates that
+        # reject a shape the port may write).
+        sourced = re.findall(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*objectDraw"
+                             r"\.attemptedCapacity\(\)", branch)
+        names = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", tail))
+        fail_ok = "attemptedCapacity()" in tail or any(n in names for n in sourced)
+    say(CHK["failure-line-names-the-refused-capacity"], fail_ok,
+        "the pass rounds up to a power of two and refuses THAT size; a line naming "
+        "anything else reports an allocation that was never attempted")
+
+    # 18. THE LATCH RE-ARMS (review-11 F7). `streamFailureLogged` is the edge
+    #     trigger that keeps a level under linear pressure from printing the same
+    #     line 60 times a second. Latched once for the whole run it also hides
+    #     every refusal after the first: a grow to 8192 corners that fails after a
+    #     success at 4096 would print nothing, and the log would end on the smaller
+    #     request. So the flag must be cleared by an assignment and not only by its
+    #     initialiser -- the declaration line does not count.
+    rearms = any(line.strip() == "streamFailureLogged = false;"
+                 for line in code.splitlines())
+    say(CHK["failure-latch-re-arms-on-success"], rearms,
+        "a latch that can never clear is a one-shot log: the second, larger refusal "
+        "is silent and the run reads as the first one")
     return r
 
 
@@ -847,6 +910,23 @@ def arm_objects_drawn_twice(text):
     return text[:at] + copy + text[at:]
 
 
+def arm_failure_line_names_the_frame_count(text):
+    """Print the frame's corner count on the refused-mesh line (review-11 F1). The
+    line still prints, still says FAILED, and still names KB -- it just names the
+    480 corners the frame held instead of the 4096 the backend was handed, which is
+    the defect: an allocation that was never attempted."""
+    return text.replace("objectDraw.attemptedCapacity()", "objectCorners")
+
+
+def arm_failure_latch_never_rearms(text):
+    """Latch the refused-mesh line for the whole run (review-11 F7). The first
+    refusal still prints exactly once, so nothing about the first failure changes;
+    what disappears is every refusal after a recovery."""
+    mutated, n = re.subn(r"\}[ \t]*else[ \t]*\{[ \t]*\n[ \t]*streamFailureLogged"
+                         r"[ \t]*=[ \t]*false;[ \t]*\n[ \t]*\}[ \t]*\n", "}\n", text)
+    return mutated if n else text
+
+
 def arm_respawn_keeps_the_caches(text):
     """Keep the layout and pose caches across a runtime rebuild. This is the defect
     the object pass would have shipped: the rebuilt runtime frees the models both
@@ -900,6 +980,11 @@ ARMS = [
      CHK["respawn-drops-the-model-caches"]),
     ("object pass drawn a second time after Kurt (review-9 F2)",
      arm_objects_drawn_twice, CHK["objects-drawn-exactly-once"]),
+    ("refused-mesh line prints the frame's corner count (review-11 F1)",
+     arm_failure_line_names_the_frame_count,
+     CHK["failure-line-names-the-refused-capacity"]),
+    ("refused-mesh latch never re-arms after a recovery (review-11 F7)",
+     arm_failure_latch_never_rearms, CHK["failure-latch-re-arms-on-success"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -920,6 +1005,10 @@ PROBES = [
      lambda s: s.replace("            objectDraw.draw(renderer, &surfaces, objectStream);",
                          '            (void)"sdmc://not-a-comment"; objectDraw.draw('
                          "renderer, &surfaces, objectStream);", 1)),
+    # Check 17 reads the argument of the refused-mesh printf, so renaming the local
+    # that carries the refused capacity is a legitimate edit it must accept.
+    ("the refused-capacity local is renamed (check 17 reads the source, not a name)",
+     lambda s: re.sub(r"\battempted\b", "refused", s)),
 ]
 
 print("main_3ds_flow: %s — %d checks, %d mutation arms, %d green probes"

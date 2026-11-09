@@ -24,8 +24,29 @@ THE MEASUREMENT (`python3 tools/panel_geom.py geom` and `panel_crop.py diff`):
     R channel alone:                    0 px — the geometry did not move
     G/B channels:                   53515 px — the animation phase did
 
+    [CORRECTED BY BATCH 104 (review-10 F2) AND ANNOTATED BY BATCH 105
+     (review-11 F2), WHICH RAISED THIS FILE BY NAME FOR STILL PRINTING BOTH.]
+    "G/B channels: 53515 px" is the UNION of the two channels and hides that they
+    move differently. Re-measured per channel: G 41462 px (max delta 128), B
+    53512 px (max delta 255), R 0 px. And "the animation phase did" is a
+    HYPOTHESIS, not a measurement — `tools/panel_geom.py`'s header now says the
+    mechanism is NOT established and refuses to write it as fact. Batch 104
+    localised the movement to the OBJECT pass (force its linearAlloc to fail and
+    the panel is byte-identical across runs), and a two-state flip of 423-438
+    distinct differing colour pairs across the whole panel is a poor fit for a
+    texture phase and a better fit for coverage/ordering nondeterminism with a
+    saturated red channel (every painted pixel of this panel has R = 255).
+
+    [ALSO, FOR THE FIRST LINE: `panel_geom.py geom` on this pair now exits 3 with
+     REFUSED. The object pass paints all 96000 pixels of both sides, so the
+     painted/clear map is a constant and `0 px` there is arithmetic. The 53515 px
+     full-RGB figure is the real measurement of this pair; `geom` is a claim only
+     where it does not refuse.]
+
 Two runs of one ELF, one emulator, one display, one lane kind, identical guest
 numbers, and half the panel's colour disagrees. The guest log's 60-frame line
 spacing hides which frame the screenshot caught, and the textures animate inside
-that window. So: quote `geom` in a sidecar, never a bare full-RGB diff, and take
+that window **[batch 105: the first clause is measured, the second is the
+hypothesis above — see the correction block, and do not quote it as the
+mechanism]**. So: quote `geom` in a sidecar, never a bare full-RGB diff, and take
 two runs per side if a colour claim is being made.

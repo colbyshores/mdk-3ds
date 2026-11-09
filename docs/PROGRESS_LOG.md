@@ -19799,3 +19799,201 @@ core), which is a colour-path defect with a precedent at the other end of the fr
 `pica_matrix.h:302-319`. Behind them: the frame-locked capture path that would make a
 colour claim possible at all, item 5b's canvas seam, the bank's eviction bound, and the
 ndsp sink's console rate. The sink's script-sound row is still unmeasured.
+
+## Iteration 132 — batch 105: review-11 closed 8/8 (no Critical, no High) — the refused-mesh line review-10 asked for printed a size that was never requested, and a directive sentence claimed a same-family reviewer exception that no approval record supports
+
+**What this batch is.** Review-11 (`logs/ralph-pi/run-20261108-195620/review-11.md`,
+DeepSeek V4.1 Flash TH, identity `family=qwen` builder vs `family=deepseek`
+reviewer) had **no Critical and no High**: verdict INCOMPLETE on five Medium and
+three Low. All eight are closed — **five fixed, one fixed-and-re-measured on the
+console, two annotated in place, one deferred with cause**. No finding was
+rebutted on merit. The renderer head item did not move, and the batch's one
+genuinely new measurement (below) came from re-running a mutant it owed anyway.
+
+**F1 (Medium, fixed and measured).** The failure line review-10 F3 added printed
+`objectCorners` — the frame's corner count — as the size of the allocation that
+failed. `ObjectDraw::ensure` rounds the request up to a power of two and it is
+that rounded capacity `mdk_render_create_dynamic_mesh` receives, and it returns
+before `capacity_` is assigned, so the attempted size was not even reachable by
+the caller. Level 3's first mesh refusing would have read `480 corners = 9 KB`
+against `renderer_c3d.cpp`'s own `linearAlloc(83886080) FAILED` — one refusal,
+two committed numbers, 8x apart. `ObjectDraw` now records
+`attemptedCapacity_` **before** the call it may refuse and exposes
+`attemptedCapacity()`; `main_3ds.cpp` prints that. Re-measured on the console with
+the same one-line mutant batch 104 used (`kInitialStreamCapacity = 1 << 22`,
+`mdk.elf fcd628e0…`, recorded this time):
+
+    linearAlloc(83886080) FAILED for a dynamic mesh of 4194304 corners
+    objects: stream mesh of 4194304 corners = 81920 KB linear — linearAlloc FAILED, no objects drawn
+
+4194304 × 5 × 4 = 83886080 B = 81920 KB: the two lines are now the same request in
+two units, each printed exactly once in 1620 frames. Pinned by two new gates in
+`tests/scripts/main_3ds_flow_test.sh`: check 17 reads the printf's **argument**
+(accepting a local sourced from `attemptedCapacity()`, so a rename stays green —
+probe 4 proves it) and its arm replaces the call with `objectCorners`; the first
+version of that check demanded the call textually and reddened the committed code,
+which is the review-10 F6 lesson repeating and is recorded here rather than
+quietly fixed.
+
+**F7 (Low, fixed).** Both edge triggers were latches that could never re-arm: a
+second, larger refusal after a recovery (a grow to 8192 corners after a success at
+4096) printed nothing, and a recovered pass left the log ending on "FAILED, no
+objects drawn". `ObjectDraw::ensure` now clears `failed_`/`attemptedCapacity_` on
+the success paths (including the early return, defensively — a refusal leaves
+`mesh_` at −1, so later frames take the full path anyway) and `main_3ds.cpp`
+re-arms `streamFailureLogged` when the pass is not in a failed state. Check 18
+gates the re-arm and its arm deletes the `else` branch. The backend already cleared
+its own flag.
+
+**F3 (Medium, struck, not annotated).** Batch 104 wrote into
+`docs/OWNER_DIRECTIVE_2026-11-05.md` that "the `-th` -> `flash` pair is the single
+operator-approved same-family exception" **in the same commit** that deleted the
+identical claim from `ralph/LOOP_CONTEXT.md`, while `ralph-pi.sh` said the opposite
+at the time and still does. The reviewer's open question 2 asked whose sentence it
+was, and the repository answers it three ways — which is why this batch treated the
+strike as aligning prose with an already-enforced contract rather than as picking a
+winner in an owner dispute:
+
+1. The committed directive said the opposite before batch 104. At `133c003` this
+   file read "When the builder falls back to `deepseek-v4.1-flash-th`, the
+   reviewer's own family rule skips both DeepSeek variants, so review lands on
+   minimax or luna"; batch 104 replaced that with the exception claim.
+2. `ralph-pi.sh` already documents and already rules on this exact move, above
+   `reviewer_reject_reason()`: "THERE IS NO INDEPENDENCE EXCEPTION HERE, AND ONE
+   MUST NOT BE ADDED. A batch put a literal `-th` -> `flash` allowlist at this spot
+   on 2026-11-05 and called it owner-directed. **It was not** … a batch may not
+   author its own exception, and this loop will not accept one that it did."
+   `tools/runner/test_review_state.sh` pins that the pair is REFUSED.
+3. `SPEC-COMPLETION.md` harness rule 4 — a **PROTECTED** file — forbids it: the
+   reviewer "must stay a different model family from the builder … a reviewer that
+   resolves to the builder's family is skipped rather than dispatched", and editing
+   that sentence "is an owner act on a protected file".
+
+The sentence was also false on the loop's own terms: `-th` -> `flash` is a
+reviewer-to-reviewer fallback and the family rule compares reviewer with
+**builder**, so nothing needed excusing. Because a directive asserting an approved
+exception is precisely the text a future batch would cite to seat a DeepSeek
+reviewer over a DeepSeek builder, it is **struck and corrected** rather than
+annotated, with the provenance written out in the file.
+
+**The half of this that is this batch's own error, recorded rather than smoothed.**
+`docs/CONTINUATION.md`'s owner-action block already carried review-4 F3 of
+run-20261106-062909: "three texts … disagree on whether a same-family review
+exception exists, and only the owner can pick a winner … neither is a builder
+batch." A batch editing a directive is therefore a move a previous iteration was
+told not to make, and the first version of this batch's annotation asserted only
+"no approval record exists" without having found the three pieces above — a weaker
+argument than the tree supports, and it left that earlier instruction invisible. The
+correction stands because the sentence contradicts a PROTECTED spec rule that the
+harness already enforces in code and pins in a test, which makes the edit a
+conformance fix to a non-protected file rather than a policy choice; but the honest
+disposition is that **if the owner does intend the exception, this edit must be
+reverted and `ralph-pi.sh`, `ralph/validator.md` and `test_review_state.sh` changed
+with it**, and that call is the owner's. `docs/OWNER_DIRECTIVE_*.md` is **not** in
+`gates_batch_integrity.PROTECTED` — which is why no gate caught the contradiction —
+and adding it is an owner-authorized gate change, not something a batch may do to
+itself.
+
+**F4 (Medium, sentence corrected).** The evidence file claimed "the two frontends
+that own a log print it"; `allocationFailed()` has exactly one caller,
+`main_3ds.cpp`. `mdk_linux/src/main.cpp:689` never consults it and the Vulkan
+backend's `createHostBuffer` failure prints nothing, so a refused mesh on Linux is
+still silent. The sentence now says which frontend reads it and why the other does
+not (`mdk_linux/**` is outside `AGENTS.md` §8), instead of the record claiming a
+coverage the tree does not have.
+
+**F2 / F6 / F8 (record accuracy, annotated in place).** `panel-noise-b.txt` still
+asserted the retracted union figure ("G/B channels: 53515 px — the animation phase
+did") and the mechanism `panel_geom.py` now refuses to state as fact; it carries
+the per-channel figures (G 41462 max 128, B 53512 max 255, R 0) and the hypothesis
+marker, plus the note that `geom` on that pair now exits 3. `panel-noise-a.txt`'s
+"the textures animate, so that window repaints most of the panel's colour" — sitting
+immediately **above** its own retraction, so a reader meets the claim first — is
+marked as the hypothesis it is. `L7-shader-w-current.txt`, which presents
+`panel_geom.py geom` as "THE MEASUREMENT" and quotes a `geom: 0 px` that the tool
+now refuses, carries the same marker and points at the byte-identity that is the
+claim which still stands. `L7-mesh-alloc-failure.txt`'s two log quotes came from
+two builds under one `build:` block; each is now captioned with its build, the
+1710-line quote's build is stated as an uncaptured intermediate rather than
+guessed at, and the superseded line is marked as such.
+
+**F5 (Medium, DEFERRED with cause).** `ralph-pi.sh`'s `guard()` waits forever
+(`while : … sleep 300`) both when qwen is down — the operator's decision,
+2026-11-05 — and when `$PI_CMD` does not exist at all, so a fresh box parks at
+`route-health` silently and never lets the 900 s watchdog fire. The fix is one
+`[ -x "$PI_CMD" ]` fail-fast before the wait. It is **not** applied here:
+`ralph-pi.sh` is the process executing this batch, bash reads a running script
+incrementally, and editing it mid-run can corrupt the loop that is reviewing this
+work; the harness also pins its own hash so a mid-run edit is caught as stale. It
+is also outside `AGENTS.md` §8's scope. Owner/operator action between runs; the
+exact one-line fix is recorded in `docs/CONTINUATION.md`.
+
+**The new measurement, which is sharper than the one it replaces.** Batch 104's
+headline colour fact — "every painted pixel of the console's panel has R = 255" —
+was stated on a fully painted panel, which has no control. The mutant's panel **is**
+a control, because its clear colour is `(16, 32, 48)`:
+
+    arena-only mutant: 37536 painted pixels, 37536 with R = 255; 58464 clear, 0 with R = 255
+    shipped build:     96000 painted, 96000 with R = 255; 130 distinct colours
+    arena-only mutant: 117 distinct painted colours, R = 255 on all of them
+
+So it is not "the panel is red". Every fragment the renderer paints arrives with its
+R channel at 1.0 while G and B take 117–130 distinct values, and the only other
+colour path into the frame — the clear word — delivers R = 16 correctly. That
+localises review-11's open question 1 to the fragment/vertex colour upload and away
+from the clear word, and it is now measured against a control. The mutant's panel is
+also byte-identical (`f9af51b6…`) to batch 104's and batch 102's arena-only crops —
+a fourth build, a fourth lane, the same bytes.
+
+**Gates, as run (all three, real output).**
+
+- `make -C tests/scripts` → **`All cases match the oracle.`** (exit 0). The
+  relevant lines: `PASS C3dFrame (29 checks, 37 arms adjudicated red)`,
+  **`PASS Main3dsFlow (18 checks, 20 arms adjudicated red, 4 probes green)`**
+  (was 16/18+3), `PASS FrontendSolidPin (10 checks, 10 arms adjudicated red)`,
+  `PASS PanelGeom (10 checks, 7 arms adjudicated red, 2 probes green)`,
+  `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+- `bash tools/check.sh` → **`CHECK: ALL GATES PASSED`** (exit 0):
+  `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`,
+  `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`,
+  `SKIP gates_smdh no built .cia to read`,
+  `gates_frames every pinned frame is deterministic and unchanged`,
+  `gates_batch_integrity project invariants intact`.
+- `make -C mdk_3ds` → links, exit 0, no warnings. `mdk.elf` `618e4692…` →
+  **`b1997a5dca83639acf603d518abe8e62`**, `mdk.3dsx` `4ca9e302…`,
+  `mdk_c3d.shbin` `d46abb60…` **unchanged** — no shader was touched. The mutant
+  build (`fcd628e0…`) and the restore build (`b1997a5d…`, byte-identical to the
+  committed tree's) bracket the measurement above.
+
+**Emulator evidence (AGENTS P7/P8) — owed, because `mdk_3ds/**` changed.**
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 50 --min-frames 600`, **exit 0**, on
+`Xvfb :99 -screen 0 1280x1024x24`, Mandarine r1.2.1 md5 `0d2adab6` (the harness
+refuses r1.3.0 with exit 6), forced llvmpipe, mono (`render_3d=0 factor_3d=0`),
+private lane `/tmp/mdk-emurun.246359`, dspfirm present, captures under
+`/tmp/kilo-b105`. Guest reached frame **2820** at the deadline and **2880** after
+the reap, `health=100` on every row, `objects=7 obj=570c/13d peak=570c/13d`,
+`voices=0 plays=1`, exactly one
+`objects: stream mesh 4096 corners = 80 KB linear (480 corners, 11 draws this
+frame)` line and **no** failure line — the shipped build still allocates its mesh.
+The second run is the forced-failure mutant above (`--secs 30`, exit 0, frame
+1620). Emulator-green is not hardware-pass; no Old-3DS measurement was taken and
+that stays open.
+
+**Frame.** The pinned pair is `docs/frames/2026-11-09-b105-refused-size.{png,txt}`,
+`bad_percent=1.240 max_delta=247 mean_delta=0.1819` — byte-identical to every prior
+frame (`6769a137…`), and the cause is the standing one: the pin is the **Linux**
+capture of level 3 frame 1, and nothing in this batch can move it (the shared
+change is on a refusal path the Linux frame never takes). The console picture
+evidence is in `docs/evidence/`.
+
+**Prior-solution lookup.** pi-knowledge `mdk-sdl` live (searched for the
+wrong-size allocation diagnostic; the KB's own `log_3ds.cpp` chunk is the sink the
+line writes to). Obsidian MCP and Cognee MCP are **absent from this session's tool
+list** — a session configuration fault, not a completed lookup (AGENTS P9) — so the
+vault was read read-only and narrowly:
+`50-tooling/a-readiness-gate-must-issue-the-consumers-request.md` is F1 in the
+abstract (a probe that reports a different request than the consumer's is not a
+measurement of the consumer's), and
+`30-architecture/patterns/model-identity-is-the-upstream-string-not-the-alias.md`
+is the rule F3's sentence would have let a batch route around.

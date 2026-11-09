@@ -40,6 +40,16 @@ WHAT THAT MEANS, and it is not a small thing for this project's evidence.
    window. The level-7 camera and object list are static but the textures animate,
    so that window repaints most of the panel's colour.
 
+   **[ANNOTATED BY BATCH 105, review-11 F2.]** The last sentence states a
+   mechanism the same batch declared unestablished, and it sits immediately above
+   the retraction below so a reader meets it as fact first. What is measured here
+   is the WINDOW (the capture is not frame-locked) and the SIZE (53515 px). That
+   the window repaints "most of the panel's colour" because "the textures
+   animate" is a hypothesis: batch 104 localised the movement to the object pass,
+   and the differing pixels are 423-438 distinct colour pairs one step apart with
+   R identical at 255, which is not what an animation phase predicts. The
+   mechanism is an open item in `docs/CONTINUATION.md`, not a fact of this file.
+
    **[RETRACTED BY BATCH 104, review-10 F2.]** This paragraph went on to say that
    batch 102's "the noise floor is EXACTLY zero" **does not reproduce** and that
    "a control that prints 0 px was comparing a capture with itself". The second
