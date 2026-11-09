@@ -1,52 +1,53 @@
 # Phase 2 continuation checkpoint
-Risk: high — **a Critical: one of this loop's own acceptance criteria had been silently narrowed,
-so a gate printed PASS over the defect it was written to refuse.** The fix changes what two gates
-accept and what they reject; no shipped instruction changed, so `mdk_3ds/mdk.elf` is bit-identical
-to batch 107's (`b1997a5dca83639acf603d518abe8e62`) and the frame pair is a byte-identical
-re-capture, stated not hidden. Review-19 found 1 Critical, 2 Medium and 1 Low; all four are fixed,
-none rebutted. **F1 (Critical)**: batch 112 let the refused capacity satisfy check 17 by appearing
-as an atom *inside* a byte figure, which every honest KB figure does, so the `%d corners` slot was
-adjudicated against nothing and `objectCorners` there printed `480 corners = 80 KB` -- review-11
-F1's refusal of a request that was never made -- with `PASS Main3dsFlow (20 checks, 42 arms)`. The
-whole-argument requirement is restored AND a slot whose own text names a corner quantity must now
-print the refused capacity. **F2 (Medium)**: a conversion does not consume one argument -- `%*d`
-reads a width then the value -- so both the `conversions <= arguments` test and the slot-to-
-argument mapping were off by the number of stars: `("%*d bytes", bytes)` read unpassed varargs and
-shipped green while an honest `("%*d corners", 24, attempted, bytes)` was reddened. **F3
-(Medium)**: the c3d latch whitelist's write alternative names no position, so
-`r->meshAllocFailureLogged = true;` as a per-frame PRE-arm made the guard never true again and a
-refused `linearAlloc` reported NOTHING, 31/31 green; the frontend caught it because it
-position-checks its arming, so the same property was enforced one way per gate. **F4 (Low)**: the
-batch-112 record's stated limit contradicted the tool in both directions at once, and the literal
-rule behind it caught one spelling of a stale figure out of four. Ninth consecutive round on the
-same three checks; F1 is NOT a ninth spelling of the alias question batch 112 retired -- it is a
-different property (WHICH slot of a line is adjudicated), which is why the family got a patch and
-not a retirement argument.
+Risk: medium — test-only diff, one file (`tests/scripts/main_3ds_flow_test.sh`): check 17's figure
+rules change shape (one line-level rule deleted, one slot-attribution rule widened, one literal test
+widened) and five arms plus two probes are added. No shipped instruction changed, so `mdk.elf` is
+bit-identical to batch 107's (`b1997a5dca83639acf603d518abe8e62`, re-measured after the edit) and
+the frame pair is a byte-identical re-capture, stated not hidden. Review-20 found no Critical and no
+High, so the mandatory-remediation gate was not triggered; the three Mediums and one Low were closed
+anyway because two of them were a gate that could not fail and a gate that refused legal code.
+
+**Batch 114 (Iteration 21) — review-20 closed 4/4: F1, F2 and F4 fixed, F3 rebutted with evidence.**
+**F1 (Medium, confirmed)**: neither half of batch 113's F1 fix was pinned -- deleting the whole
+`CORNER_UNIT` loop, and separately deleting the restored whole-argument rule, each left
+`PASS Main3dsFlow (20 checks, 45 arms, 18 probes)` byte-identical to shipped, both reproduced here.
+Three arms now isolate the corner rule and one probe isolates what replaced the other clause, and
+the four gate mutants that were invisible each lose exactly the arms that name them (47/50, 49/50,
+47/50, 19/20 probes). **F2 (Medium, confirmed)**: the whole-argument rule batch 113 restored reddened
+an honest refusal line that prints ONLY the byte figure the capacity explains -- the shape
+`renderer_c3d.cpp`'s own refusal writes -- and it is deleted rather than narrowed, because the
+per-slot rules already require every byte figure to BE the backend's capacity arithmetic and every
+corner figure to BE the capacity, so the line-level rule could only refuse a line that disagreed
+with nothing while the cheap way past it was to invent a corner figure, which is review-11 F1 bought
+with the gate's own PASS. That answers review-20's open question 1: the rule is "the capacity
+explains every figure the line claims", not "the capacity is an argument". **F4 (Low, confirmed)**: a
+unit word now belongs to the conversion NEAREST it, so `corners %d` is a corner slot like `%d corners`
+is (the before-spelling was green while `say()` claimed it), the limit's inverted parenthetical is
+gone, and one fixpoint `unwrap()` plus one pattern refuses the eleven spellings of a stale figure
+(`(81920)`, `((int64_t)81920)`, `(int64_t)(81920)`, `-81920`, `81920.0f` were green). **F3 (Medium,
+REBUTTED)**: the quoted `PASS C3dFrame (31 checks, 48 arms adjudicated red, 2 probes green)` over the
+batch-112 gate IS reachable and was reproduced verbatim with the natural pre-arm placement; the
+reviewer's placement between `r->inFrame = true;` and `r->frame++;` broke an unrelated arm's anchor,
+and the suite's 47/48 refusal to score a mutant it cannot build is fail-closed, not a false green.
+Measured: `PASS Main3dsFlow (20 checks, 50 arms adjudicated red, 20 probes green)`, `PASS C3dFrame
+(31 checks, 49 arms adjudicated red, 2 probes green)`, `PASS ArmCompile (123 mutant(s), 0
+diagnostics)`, `make -C tests/scripts` -> `All cases match the oracle.`, `bash tools/check.sh` ->
+`CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`), `make -C mdk_3ds` builds. No
+`mdk_3ds/**` or `mdk_core/**` path changed, so no P8 emulator evidence is owed and none is claimed.
+`ralph/builder.md` was dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose.
 
 **Batch 113 (Iteration 20) -- review-19 closed 4/4 (1 Critical, 2 Medium, 1 Low): F1-F4 all fixed,
-none rebutted.** Check 17's figure rules are re-derived from the format a third time, this time
-from two things batch 112 stated as limits and was wrong about. (a) *Which argument*: a conversion
-consumes `1 + (number of star fields)` arguments and prints the LAST of them, so a star width is
-neither counted as a missing argument nor adjudicated as a byte figure (`conv_arity()`); the UB
-call `("%*d bytes", bytes)` is red and the legal `("%*d corners", 24, attempted, bytes)` is green,
-one arm and one probe each. (b) *Which slot*: the byte rule keeps its wide window and the new
-corner rule can only read the text a format writes AFTER its conversion, because in
-`%d corners = %d KB` the KB slot's leading text also says `corners` -- a corner rule reading the
-wide window would demand the capacity for the byte figure and the byte figure for the corner slot
-at once. (c) *Which literal*: `bare_literal()` refuses `81920`, `81920u`, `0x14000`,
-`(int64_t)81920` and `(unsigned long)81920` (a two-word cast needed its own pattern, since
-`CAST_RE` matches one word), where the old test caught the first only. On the backend side the
-arming is now position-checked like the frontend's has been since review-14 F1: every
-`= true` write to the latch must be a depth-1 statement of a latch-guarded block, so the
-per-frame pre-arm that silences the refusal entirely is red with an arm pinning it. Three new arms
-and one probe in the frontend gate, one arm in the backend gate. Measured: `PASS Main3dsFlow (20
-checks, 45 arms adjudicated red, 18 probes green)`, `PASS C3dFrame (31 checks, 49 arms adjudicated
-red, 2 probes green)`, `PASS ArmCompile (116 mutant(s), 0 diagnostics,
-/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`, `make -C tests/scripts` -> `All cases match the
-oracle.`, `bash tools/check.sh` -> `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`),
-`make -C mdk_3ds` builds. No `mdk_3ds/**` or `mdk_core/**` path changed, so no P8 emulator
-evidence is owed and none is claimed. `ralph/builder.md` was dirty at dispatch, is `PROTECTED`,
-and is left uncommitted on purpose.
+none rebutted.** Check 17's figure rules were re-derived from the format a third time, from two
+things batch 112 stated as limits and was wrong about. (a) *Which argument*: a conversion consumes
+`1 + (number of star fields)` arguments and prints the LAST of them, so a star width is neither
+counted as a missing argument nor adjudicated as a byte figure (`conv_arity()`). (b) *Which slot*:
+the byte rule kept its wide window and the corner rule could only read the text a format writes
+AFTER its conversion -- a limit review-20 F4a later showed was wrong, and batch 114 replaced it.
+(c) *Which literal*: `bare_literal()` refused `81920`, `81920u`, `0x14000`, `(int64_t)81920` and
+`(unsigned long)81920`, where the old test caught the first only. On the backend side the arming is
+position-checked like the frontend's has been since review-14 F1: every `= true` write to the latch
+must be a depth-1 statement of a latch-guarded block. Three arms and one probe in the frontend gate,
+one arm in the backend gate.
 
 **Batch 112 (Iteration 19) — review-18 closed 6/6 (no Critical, no High): F1-F6 all fixed.**
 The two latch nets are whitelists now (`LATCH_SHAPE` + `unpinned_uses()` in both gates): any
@@ -576,7 +577,32 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 113)
+## NEXT (batch 114)
+**What is actually next, restated by batch 114.** This was the tenth round on the same three checks,
+and batch 113 said the family should be retired rather than patched a tenth time if a review found
+another thing in it. Review-20 found no Critical and no High, and every one of its four findings was
+settleable by text against the shipped source rather than by a profile -- which is the distinction
+batch 113's retirement clause actually turned on. The family was therefore closed out, and closed out
+by *removing* a rule rather than adding one: check 17 now has one attribution rule (a unit word
+belongs to the conversion nearest it), one literal test (one unwrap, one pattern), and no line-level
+rule that a legal line can trip. Two weaknesses stay stated in the code rather than argued away: check
+17 reads a *format string* to decide family membership, so a refusal line whose format is a variable
+is outside the net; and a slot the unit words assign no unit is not adjudicated against the backend
+unless its argument is a literal, because the gate cannot know what an unlabelled number claims to
+be. If a review finds a third thing in check 17 that a reader with a profile could have found, the
+retirement argument is due and this file should say so rather than host an eleventh patch.
+
+**Batch 115 is expected to be a game batch, and a batch that changes `mdk_3ds/**` owes emulator
+evidence under P8.** The two named items are unchanged from batch 113 and both are blocked on a named
+cause rather than on effort: (1) **the canvas seam** -- `mdk_render_canvas_quad` is a no-op on this
+backend (`renderer_c3d.cpp:2345`), which is what priority item 5b (the HUD) and the MVE movie
+presenter both wait on; (2) **the collision batch** -- `FindConnections` + `CrossedArena`, which
+unfreezes `currentArena_` from the spawn arena and lets `ArenaSpace::setSolid` take the oracle's
+current + active second, and which needs a doorway-crossing oracle rather than a hand-written
+expectation. Neither is a gate batch. The one-sided-view investigation below stays open and is the
+sharper of the two picture questions, and the R = 255 candidate set is still two, not five (below).
+
+*(What batch 113 said, kept for the record.)*
 **What is actually next, restated by batch 112.** Batch 111 said batch 112 should be a game
 batch. It was not: review-18 arrived with three Mediums open and reachable today, and leaving a
 confirmed green-on-a-defect net unremediated to prefer a more interesting batch is the trade this
