@@ -20850,3 +20850,116 @@ review-17 independently identified it as the operator's hunk rather than the bui
 builder rule to commit an inherited tree does not override a protected path: committing it
 would fail `gates_batch_integrity` with "protected contract changed without owner approval". It
 is left uncommitted and unmodified, and this is the record of that decision.
+
+## Batch 112 (Iteration 19) — review-18 closed 6/6 (no Critical, no High): F1–F6 all fixed,
+## none rebutted on merit — two write nets were still blacklists of spellings, and the figure
+## net that review-17 widened was both too narrow in one direction and too wide in the other
+
+**Scope.** `tests/scripts/main_3ds_flow_test.sh`, `tests/scripts/c3d_frame_test.sh`,
+`docs/CONTINUATION.md`, `docs/PROGRESS_LOG.md`, one new frame pair. No `mdk_3ds/**` or
+`mdk_core/**` path changed, so no P8 emulator evidence is owed and `mdk.elf` is unchanged at
+md5 `b1997a5dca83639acf603d518abe8e62`.
+
+**Every finding was reproduced before it was fixed.** The reviewer's mutants were rebuilt from
+its own descriptions and run against the shipped gates first, so each fix answers a measured
+green, not a paragraph. Two of the six were the reviewer's *own remediation* taken further,
+which is said below where it happened.
+
+**F1 (Medium) — confirmed, fixed as a whitelist, not a third blacklist.** Both latch nets
+matched two *spellings* of aliasing (`&latch`, and `T& a = latch`), and the property they state
+is that the net enumerates every write to the latch. Rebuilt and measured green before the fix:
+`bool& latchAlias(streamFailureLogged);` written at the frame top (`PASS Main3dsFlow`,
+`PASS C3dFrame`), and `static void clearRefusalLatch(bool& latch){latch=false;}` called with
+the latch — the second names no alias at all, so no scan for alias spellings can see the write
+under any name. The remediation the reviewer recommended as the "cheapest robust version" is
+the one shipped: `LATCH_SHAPE` + `unpinned_uses()` in both gates refuse **any** occurrence of
+the latch's name outside its own declaration, the two reads the guard accepts and the pinned
+writes. That is not a list of defects, so it cannot be spelled around: measured on the
+committed file plus each mutant, the direct-init reference, the brace-init reference, the
+copy-init reference, a `const bool&` view, a `const bool*`, a by-reference helper call and
+`std::addressof` all return a non-empty unpinned list, and the committed source returns none.
+Four new arms (two per gate: direct-initialised reference, by-reference helper) pin it, and the
+two gates now enforce the same rule the same way in both directions, which is what batch 111's
+record claimed and F1 showed it had not done.
+
+**F2 (Medium) — confirmed, fixed.** Review-17 R3's `if not vals and not FIGURE_FMT.search(...):
+continue` keyed on the absence of *arguments*, so `mdk::log3dsPrintf("objects: refused 81920
+bytes");` — review-12 R2's stale byte figure with the conversion removed, which is what a fix
+for "that number is wrong" looks like when nobody asks where the number comes from — was
+skipped by every figure rule. The rule is now stated where R2 stated it: **a figure with no
+argument behind it has no source to disagree with.** Conversions are stripped from the format
+and any digit left in the format text reddens the line. That is slightly stronger than the
+reviewer's remediation ("no integer literal in the format text" only when the line has no
+arguments): a stale byte figure baked into a format that *also* carries honest arguments is the
+same defect, so it is refused too. STATED LIMIT: a format writing a digit that is not a figure
+(`"100%% done"`) reads as one. One arm pins it.
+
+**F3 (Medium) — confirmed, fixed.** R2's widening to "every argument after the capacity" made
+the gate reject honest code, in the exact class the same comment block cites as its own warning.
+Rebuilt and measured red before the fix: `"objects: refused %d corners at frame %lu", attempted,
+(unsigned long)frame` and `"objects: refused on %s: %d corners", name, attempted`. The figure
+list is now driven off the format's own conversions, and **the unit words in the line's own
+text decide which slots are byte figures** — the port already writes `%d corners = %d KB`, and
+a slot whose text names no byte unit is not a byte figure and is not adjudicated against the
+backend's byte count. The capacity no longer has to be the *first* argument either: the property
+is that the line names the refused request, which a name-first line does. Two probes pin the
+legal shapes green. Two halves of the old strictness are deliberately kept: a bare integer
+literal is adjudicated wherever it sits (a literal has no source whatever unit is named — that
+is R2, unchanged), and a line that names a byte unit must print one. STATED LIMIT: a figure in
+a slot naming no unit is not adjudicated, so `"... at frame %lu", attempted, 81920` reads as a
+frame number; the gate cannot know what an unlabelled number claims to be, and pretending
+otherwise is what made this check reject legal code.
+
+**F4 (Low) — confirmed, fixed.** `FIGURE_FMT` was `%` + one flag + one letter, so `%8d`,
+`%08x`, `%-5d`, `%.1f`, `%5.1f` and `%*d` did not match, and the comment's claim that "a format
+with a conversion and no argument is still red" was true only of the spellings that pattern
+matched — with no `format(printf)` attribute on `log3dsPrintf`, neither the gate nor the
+compiler saw the dropped argument. The pattern is now the conversion grammar (flags, width,
+precision, length modifier, letter) and the check enforces `conversions <= arguments`. STATED
+LIMIT: the space flag is not in the flag class, because that is what made the old pattern
+exclude `% `. One arm pins it with `%8d`.
+
+**F5 (Low) — confirmed, fixed by re-running the tool.** The batch-111 record's "102 mutants
+(54 flow + 48 c3d)" was one short and its split unproducible, in the commit that deleted
+transcribed counts for exactly that reason. This record quotes only the tool's own line, below,
+and no split. The reviewer's inference about *why* it was short (the count predating the c3d
+reference arm that same batch landed) is plausible and is not argued here.
+
+**F6 (Low) — confirmed, kept as a rejection, now with the reason.** A read-only `const bool&`
+view of the latch reddens check 20 although no write through it is possible. The reviewer's
+judgement — keep the rejection, say why — is the right one and is what shipped: both gates'
+failure text now states that a pointer or reference to the latch is refused ON PURPOSE,
+including a read-only one, because a name scan cannot see a write through it and must not be
+trusted while it exists. A gate that silently refuses a legal shape gets routed around; one that
+says it is refusing to certify what it cannot enumerate is a decision the next batch can argue
+with.
+
+**Measured.** `sh tests/scripts/main_3ds_flow_test.sh mdk_3ds/src/main_3ds.cpp` → `PASS
+Main3dsFlow (20 checks, 42 arms adjudicated red, 17 probes green)`. `sh
+tests/scripts/c3d_frame_test.sh mdk_3ds/src/render/renderer_c3d.cpp` → `PASS C3dFrame (31
+checks, 48 arms adjudicated red, 2 probes green)`. `sh tests/scripts/arm_compile_check.sh` →
+`PASS ArmCompile (111 mutant(s), 0 diagnostics,
+/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`. `make -C tests/scripts` → `All cases match
+the oracle.` `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built
+`.cia`). `make -C mdk_3ds` → builds, `mdk.elf` md5 `b1997a5dca83639acf603d518abe8e62`,
+unchanged since batch 107. No shipped instruction changed and no gate was relaxed: every change
+in this batch makes two gates *stricter* (F1, F2, F4) or removes a rejection of legal code
+(F3), and the four new arms are mutants of the shipped files, not of the gate.
+
+**Prior-solution lookup (AGENTS §0, P9).** `pi-knowledge` `mdk-sdl` searched for prior work on
+the write-net question (`latch write set alias whitelist gate property spelling`): the top hits
+were the two gates' own comments and `main_3ds.cpp`, i.e. no prior finding predating this one;
+retrieved text was treated as a lead and checked against this contract. No `obsidian_*` or
+`cognee_*` tools are exposed in this session, so per P9 that is recorded as a session
+configuration gap and NOT as a lookup that happened. The disk vault was read read-only as the
+degraded path and did hold the same failure in another form:
+`30-architecture/patterns/grep-the-hypothesis-not-the-define-token.md` — a true negative on the
+wrong string is visually identical to a true negative on the right one — which is F1's defect
+stated as a research method rather than as a gate: both match a token and then trust the
+inference. Cognee's graph search would have reached that note by relation instead of by path
+guesswork, and its absence is the loss P9 names.
+
+**Inherited dirty tree, left alone on purpose.** `ralph/builder.md` was already modified in the
+working tree at dispatch (owner `coleshores`, mtime 2026-11-05, older than HEAD, never staged).
+It is in `PROTECTED` (`tools/runner/gates_batch_integrity.py:12-24`) and review-18 independently
+confirmed leaving it uncommitted is the correct call. It is left uncommitted and unmodified.

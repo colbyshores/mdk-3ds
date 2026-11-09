@@ -297,6 +297,33 @@ LATCH_NEG = re.compile(r"![ \t]*" + _LATCH_PREFIX + r"meshAllocFailureLogged"
                        r"|" + _LATCH_PREFIX + r"meshAllocFailureLogged"
                        r"[ \t]*==[ \t]*false")
 
+# The ONLY shapes in which the latch's name may appear (review-18 F1, the same rule the
+# frontend's check 20 states). This used to be a BLACKLIST of two alias spellings, and
+# each review has found a third: `bool& a(r->meshAllocFailureLogged);` binds the same
+# reference by direct initialisation, and `clearMeshRefusal(r->meshAllocFailureLogged);`
+# writes the field from a helper that takes a reference without ever naming an alias, so
+# there is no spelling left for a scan to look for. A name scan that cannot enumerate the
+# writes must not certify them, so the whitelist refuses the name wherever it is not one
+# of these shapes -- whatever it spells, including a read-only `const bool&` view.
+# Shapes, in order: the declaration; the negative read; the `== false` read; the two
+# pinned writes. (Written without trailing comments because the alternatives are joined
+# with `+`, and a `#` ends an implicit string concatenation.)
+_LATCH_ANY = r"(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*(?:->|\.)[ \t]*)?meshAllocFailureLogged"
+LATCH_SHAPE = re.compile(
+    r"bool[ \t]+meshAllocFailureLogged[ \t]*=[ \t]*false[ \t]*;"
+    "|![ \\t]*" + _LATCH_ANY +
+    "|" + _LATCH_ANY + r"[ \t]*==[ \t]*false" +
+    "|" + _LATCH_ANY + r"\s*=[ \t]*(?:true|false)[ \t]*;"
+)
+
+
+def unpinned_uses(text, name, shapes):
+    """Offsets of every occurrence of `name` in `text` that is NOT inside one of
+    `shapes`. Empty list means the name scan describes every use it can find."""
+    spans = [m.span() for m in shapes.finditer(text)]
+    return [m.start() for m in re.finditer(r"\b" + name + r"\b", text)
+            if not any(a <= m.start() and m.end() <= b for a, b in spans)]
+
 
 def eye_loop_span(text):
     """Absolute (start, end) of the per-eye loop of mdk_render_end_frame, or
@@ -975,11 +1002,12 @@ def adjudicate(text, quiet=False):
         # scan cannot see it. The frontend's check 20 has accepted both spellings since
         # batch 109; this side only had the first, which is the same property stated two
         # ways in two gates and enforced one way.
-        aliased = bool(re.search(r"&[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*->[ \t]*)?"
-                                 r"meshAllocFailureLogged"
-                                 r"|[&*][ \t]*(?:const[ \t]*)?[A-Za-z_][A-Za-z0-9_]*"
-                                 r"[ \t]*=[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*->)?"
-                                 r"meshAllocFailureLogged", blank_comments(text)))
+        #
+        # Review-18 F1: both of those were spellings of ONE idea, and the blacklist kept
+        # losing to new spellings of it, so this is now the whitelist above -- the name
+        # is refused outside its declaration, its two reads and its two writes.
+        aliased = unpinned_uses(blank_comments(text), "meshAllocFailureLogged",
+                                LATCH_SHAPE)
         sole_clear = sole_clear and not aliased
         # STATED LIMIT, not a hidden one: the net is "exactly one clear in the file",
         # which is the property the spam needs. A future teardown reset would be a
@@ -1010,9 +1038,11 @@ def adjudicate(text, quiet=False):
               "factory's success path (review-15 F2); a second clear anywhere else "
               "runs on some other schedule, and one that runs every frame re-arms the "
               "latch under a sustained refusal -- the spam this latch exists to stop. "
-              "A write through an alias (`&renderer->meshAllocFailureLogged`) also "
-              "reddens this check: a name scan cannot see it, so it must not be trusted "
-              "while it exists (review-16 open question 2)")
+              "Any OTHER use of the latch's name also reddens this check ON PURPOSE -- "
+              "a pointer or reference to the field, even a read-only `const bool&` that "
+              "writes nothing today, and a helper called with it by reference -- because "
+              "a name scan cannot see a write through one, so it must not be trusted "
+              "while it exists (review-16 open question 2, review-18 F1/F6)")
     return rep
 
 
@@ -1479,6 +1509,29 @@ ARMS = [
                          "    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry\n"
                          "    bool& latchAlias = r->meshAllocFailureLogged;\n"
                          "    latchAlias = false;", 1),
+     "mesh-refusal-latch-cleared-nowhere-else"),
+    # Review-18 F1: the two spellings this side's blacklist could not see, and the reason
+    # it is now the LATCH_SHAPE whitelist. Neither contains an `&` beside the field or an
+    # `=` after the alias's name; the second names no alias at all, so the write exists
+    # only under a parameter's name and no scan for alias spellings can find it.
+    ("the refused-mesh latch is cleared every frame through a reference bound by DIRECT "
+     "initialisation (review-18 F1)",
+     lambda s: s.replace("    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry",
+                         "    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry\n"
+                         "    bool& latchAlias(r->meshAllocFailureLogged);\n"
+                         "    latchAlias = false;", 1),
+     "mesh-refusal-latch-cleared-nowhere-else"),
+    ("the refused-mesh latch is cleared every frame by a helper that takes it by "
+     "reference (review-18 F1)",
+     lambda s: s.replace(
+         " void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {",
+         "// review-18 F1 mutant: the reset moved into a helper.\n"
+         "static void clearMeshRefusal(bool& latch) { latch = false; }\n\n"
+         " void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {",
+         1).replace(
+         "    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry",
+         "    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry\n"
+         "    clearMeshRefusal(r->meshAllocFailureLogged);", 1),
      "mesh-refusal-latch-cleared-nowhere-else"),
     # Review-15 F3's lesson, applied to the backend's copy of the same net: a line in
     # the failing branch whose format never spells the refusal is invisible to a

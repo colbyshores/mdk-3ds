@@ -533,7 +533,59 @@ REFUSAL_FMT = re.compile(r"FAILED|refus", re.IGNORECASE)
 # is a literal percent, not a figure, so it is excluded. This is what separates "a
 # refusal line that states no number" -- which cannot disagree with anything -- from
 # "a refusal line whose format asks for a number and passes none".
-FIGURE_FMT = re.compile(r"%(?![ %])[a-zA-Z]")
+#
+# Review-18 F4: the old pattern was `%` + one optional flag + one letter, so `%8d`,
+# `%08x`, `%-5d`, `%.1f`, `%5.1f` and `%*d` did not match at all, and the comment's
+# claim that "a format with a conversion and no argument is still red" was false for
+# every one of them -- a dropped argument in those spellings was skipped, and
+# `log3dsPrintf` carries no printf format attribute so the compiler could not see it
+# either. The pattern is now the conversion grammar: flags, width, precision, length
+# modifier, conversion letter. STATED LIMIT: the space flag is not in the flag class
+# (it is what made the old pattern exclude `% `), so a format writing `"% d"` reads
+# as a literal percent, not a conversion.
+FIGURE_FMT = re.compile(r"%(?!%)[-+#0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[hlLqjzt]*[a-zA-Z]")
+
+# The unit a refusal line's own format text names for the figure beside it
+# (review-18 F3). This is the only textual signal that separates "the number of bytes
+# the backend was refused" from "the frame number", and it is the one the port already
+# writes: the committed line says `%d corners = %d KB`. A figure in a slot whose text
+# names no byte unit is not a byte figure and is not adjudicated against the backend's
+# byte count -- adjudicating every argument instead was what reddened an honest line
+# that also named the frame it refused on.
+BYTE_UNIT = re.compile(r"\b(?:KB|kB|KiB|kb|bytes|byte)\b")
+KB_UNIT = re.compile(r"\b(?:KB|kB|KiB|kb)\b")
+
+# The ONLY shapes in which the latch's name may appear (review-18 F1). The write net
+# enumerates writes by the latch's NAME, so any indirection -- address-of, a reference
+# or pointer bound to it in any of the `=`, `(...)` or `{...}` forms, or a call passing
+# it to a helper that takes a reference -- is a write the net cannot see, and the
+# sustained ~60x/s refusal review-12 R1 was raised about comes back with the gate
+# green. A blacklist of spellings was tried twice and each review found a third
+# spelling, so this is a WHITELIST: an occurrence of the name outside these shapes is
+# refused whatever it spells, and a new spelling cannot be invented to slip past it.
+LATCH_SHAPE = re.compile(
+    r"bool[ \t]+streamFailureLogged\s*=\s*false\s*;"          # the declaration
+    r"|![ \t]*streamFailureLogged"                            # the negative read
+    r"|streamFailureLogged\s*==\s*false"                      # the other read
+    r"|streamFailureLogged\s*=\s*(?:true|false"               # the arming, the clear,
+    r"|objectDraw\.allocationFailed\(\s*\))\s*;")            # the anchored form
+
+
+def unpinned_uses(text, name, shapes):
+    """Offsets of every occurrence of `name` in `text` that is NOT inside one of
+    `shapes`. Empty list means the name scan describes every use it can find."""
+    spans = [m.span() for m in shapes.finditer(text)]
+    return [m.start() for m in re.finditer(r"\b" + name + r"\b", text)
+            if not any(a <= m.start() and m.end() <= b for a, b in spans)]
+
+
+def cap_name(v):
+    """The bare name an argument expression carries (review-18 F3):
+    `objectDraw.attemptedCapacity()` and `attempted` both name the refused capacity,
+    and the net must see that they are the same quantity wherever they sit in the
+    argument list."""
+    t = v.replace(" ", "").replace("objectDraw.", "")
+    return t[:-2] if t.endswith("()") else t
 
 # One level of local integer constant, so a named stride folds to the backend's
 # literal (review-14 F6). Only a plain decimal initialiser counts.
@@ -1103,32 +1155,35 @@ def adjudicate(text, quiet=False):
     # should have been. The claim was true only of the FIRST use of `backend`.
     fail_ok = bool(prints) and backend is not None
     for p, args in (prints if backend is not None else []):
-        vals = args[1:]
+        fmt, vals = args[0], args[1:]
+        convs = list(FIGURE_FMT.finditer(fmt))
+        # Review-18 F2: a figure BAKED INTO THE FORMAT TEXT has no source at all.
+        # Batch 115 skipped a line with no arguments and no conversion, so
+        # `log3dsPrintf("objects: refused 81920 bytes")` -- review-12 R2's stale byte
+        # figure with the conversion taken out, which is what a fix for "that number is
+        # wrong" looks like when nobody asks where the number comes from -- was skipped
+        # by every figure rule while still printing a byte count nobody recomputes.
+        # Conversions are stripped first, so a `%8d` width is not read as a figure.
+        if re.search(r"\d", FIGURE_FMT.sub(" ", fmt)):
+            fail_ok = False
+            break
         # Review-17 R3: a refusal line that states NO figure at all -- the natural
         # companion to the backend's own `linearAlloc(%u) FAILED`, e.g. "objects:
         # linearAlloc FAILED for the stream mesh" -- disagrees with nothing, so it
         # cannot fail a rule about disagreement. Reddening it was the gate refusing a
         # shape the port may write (review-10 F6), and the failure text even described
         # a defect the line did not have. The rule is therefore conditional on the
-        # format NAMING a figure: a `%` converter with no argument after the capacity
-        # is still a figure the check must be able to name.
-        if not vals and not FIGURE_FMT.search(args[0]):
+        # format NAMING a figure.
+        if not vals and not convs:
             continue
-        # Review-17 R2: the figures after the capacity are EVERY argument, not just
-        # the ones that spell an operator inline. Batch 110's `[v for v in vals[1:] if
-        # "*" in v or "/" in v]` was recorded as a re-scoping of the rule but was a
-        # NARROWING of it: a byte figure hoisted into a local, or a stale literal, is
-        # an argument the loop never looked at, so review-12 R2's frame-count byte
-        # figure passed with the arithmetic one line away from the printf. Locals are
-        # resolved one level below.
-        derived = [v for v in vals[1:] if not v.lstrip().startswith('"')]
-        if not vals or ("KB" in args[0] and not derived):
+        # Review-18 F4: a conversion with no argument is undefined behaviour, and this
+        # comment always claimed it was red; with the old one-letter FIGURE_FMT it was
+        # red only for the spellings that pattern matched. Now the claim is true of the
+        # whole conversion grammar, which matters because `log3dsPrintf` carries no
+        # printf format attribute and the compiler never saw the dropped argument.
+        if len(convs) > len(vals):
             fail_ok = False
             break
-        # The unit the line NAMES decides whether the /1024 is required: a line that
-        # says "%d KB" while printing the raw byte count is 1024x wrong, which is
-        # the same one-refusal-two-numbers defect one unit further out.
-        want = kb_form(backend) if "KB" in args[0] else backend
         # Every name in `cap_names` IS the refused capacity: the call itself, or a
         # local whose initialiser is the call. The window is the pass up to THIS
         # printf, so a same-named local declared after it cannot lend it a source.
@@ -1144,14 +1199,43 @@ def adjudicate(text, quiet=False):
         # compared as the arithmetic it hides (review-17 R2). Folded AFTER the
         # integer constants, because the initialiser may itself name a stride.
         inits = local_inits(scope[:p.start()])
-        first = vals[0].replace(" ", "").replace("objectDraw.", "")
-        first = first[:-2] if first.endswith("()") else first
-        if first not in cap_names:
+        # Review-18 F3: WHICH arguments are byte figures is decided by the format's
+        # own unit words, not by "is not the first argument". Adjudicating every
+        # argument reddened an honest line that also named a non-byte quantity --
+        # "objects: refused %d corners at frame %lu", attempted, (unsigned long)frame
+        # -- which is review-10 F6's failure mode again: a gate that rejects legal
+        # code gets routed around, and the route-around is worse than the defect. The
+        # slot of a conversion is the format text around it up to its neighbouring
+        # conversions, which is where the port already writes `corners` and `KB`.
+        # STATED LIMIT: a figure in a slot naming no unit is not adjudicated, so
+        # `"... at frame %lu", attempted, 81920` reads as a frame number. A LITERAL is
+        # adjudicated wherever it sits, because a literal figure has no source whatever
+        # unit is named -- that is review-17 R2's rule, kept.
+        slots = []
+        for i in range(len(convs)):
+            lo = convs[i - 1].end() if i else 0
+            hi = convs[i + 1].start() if i + 1 < len(convs) else len(fmt)
+            slots.append((fmt[lo:hi], vals[i]))
+        figs = []
+        for ctx, v in slots:
+            if v.lstrip().startswith('"'):
+                continue                       # a string is not a quantity
+            if BYTE_UNIT.search(ctx) or re.fullmatch(r"\s*\d+\s*", v):
+                figs.append((ctx, arith_atoms(fold_consts(fold_locals(v, inits),
+                                                          consts), cap_names)))
+        # The line must be ABOUT the refused request: the capacity appears either as an
+        # argument of its own or as the atom inside a byte figure. It need not be the
+        # FIRST one -- `"objects: refused on %s: %d corners", name, attempted` is the
+        # same honest line with a name in front of it (review-18 F3).
+        if not any(cap_name(v) in cap_names for _, v in slots) and \
+                not any(a == "CAP" for _, atoms in figs for _, a in atoms):
             fail_ok = False
-            break
-        for v in derived:
-            expr = fold_consts(fold_locals(v, inits), consts)
-            if arith_atoms(expr, cap_names) != want:
+        # A line that NAMES a byte unit must print one: saying KB while printing the
+        # raw byte count is 1024x wrong, the same two-numbers defect one unit out.
+        if BYTE_UNIT.search(fmt) and not figs:
+            fail_ok = False
+        for ctx, atoms in figs:
+            if atoms != (kb_form(backend) if KB_UNIT.search(ctx) else backend):
                 fail_ok = False
                 break
         if not fail_ok:
@@ -1267,18 +1351,26 @@ def adjudicate(text, quiet=False):
     #
     # Review-17 R1: the SCOPE of this search is the whole file, not the frame body. The
     # alias was searched in `wscope`, which is the frame body, while the property this
-    # half states is that the latch's address is never taken ANYWHERE -- and an alias is
-    # normally declared where the field is, one line above the frame loop, and written
-    # inside it. Batch 110's scan therefore missed the shape it existed for: an alias
-    # declared at `main_3ds.cpp:666` and written as the frame's first statement printed
-    # one sustained refusal ~60x/s with every check, arm and probe in this file green.
+    # half states is about the latch's name ANYWHERE -- and an alias is normally
+    # declared where the field is, one line above the frame loop, and written inside it.
+    # Batch 110's scan therefore missed the shape it existed for: an alias declared at
+    # `main_3ds.cpp:666` and written as the frame's first statement printed one
+    # sustained refusal ~60x/s with every check, arm and probe in this file green.
     # The c3d twin already scanned the whole file; the two nets now agree. (No count is
     # quoted here on purpose -- review-16 R3 and review-17 R4 are both about transcribed
     # counts going stale in the file that names them.)
-    aliased = bool(re.search(
-        r"&[ \t]*streamFailureLogged"
-        r"|[&*][ \t]*(?:const[ \t]*)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*streamFailureLogged",
-        code))
+    #
+    # Review-18 F1: this was a BLACKLIST of two spellings -- `&latch` and `T& a = latch`
+    # -- and each review has found a third: `bool& a(latch);` binds the same reference by
+    # direct initialisation, and `clearRefusalLatch(streamFailureLogged);` writes it from
+    # a helper without ever naming an alias at all, so no scan for alias SPELLINGS can
+    # see that write. It is now a WHITELIST (LATCH_SHAPE): the latch's name may appear
+    # only in its own declaration, the two reads the guard accepts, and the three pinned
+    # writes, and any other occurrence reddens whatever it spells. That is deliberately
+    # stricter than the defect -- a read-only `const bool&` view of the latch is refused
+    # too, and the failure text says so, because the net cannot enumerate a write set
+    # through a name it does not track.
+    unenumerated = unpinned_uses(code, "streamFailureLogged", LATCH_SHAPE)
     guarded_abs = [(off + s, off + e) for (s, e) in guarded]
     writes_ok = True
     for w in re.finditer(r"\bstreamFailureLogged\s*=(?!=)\s*([^;]+);", wscope):
@@ -1298,15 +1390,17 @@ def adjudicate(text, quiet=False):
         if not ok:
             writes_ok = False
             break
-    if aliased:
+    if unenumerated:
         writes_ok = False
     if not writes_ok or not prints:
         writes_ok = False
     say(CHK["failure-line-names-the-refused-capacity"], fail_ok,
         "the pass rounds up to a power of two and refuses THAT size; a refusal line "
-        "naming anything else, or a byte figure that is not the backend's own capacity "
-        "x stride x sizeof(float), or a line that says KB without a figure derived "
-        "from the capacity, reports an allocation that was never attempted")
+        "must name that capacity, must print the backend's own capacity x stride x "
+        "sizeof(float) in every slot its own format calls a byte figure (a KB slot "
+        "divides by 1024), and must not bake a figure into the format text at all, "
+        "because a figure with no argument behind it has no source to disagree with "
+        "(review-18 F2/F3)")
     say(CHK["failure-latch-re-arms-on-success"], latch_ok,
         "a latch that can never clear is a one-shot log: the second, larger refusal "
         "is silent and the run reads as the first one")
@@ -1316,7 +1410,11 @@ def adjudicate(text, quiet=False):
     say(CHK["failure-latch-writes-are-the-pinned-three"], writes_ok,
         "a write to the latch beyond the arming, the `else` clear and the anchored "
         "assignment form clears the edge trigger on a frame that refused, and the "
-        "refusal prints on every frame of it (review-15 F1)")
+        "refusal prints on every frame of it (review-15 F1). The net enumerates writes "
+        "by the latch's NAME, so the name is refused outside those shapes ON PURPOSE: a "
+        "reference or pointer to the latch -- even a read-only `const bool&` view that "
+        "writes nothing today -- is a write this gate cannot see, and a per-frame reset "
+        "through one prints the refusal ~60x/s (review-18 F1/F6)")
     return r
 
 
@@ -1942,6 +2040,81 @@ def arm_failure_byte_figure_is_a_stale_literal(text):
                         1)
 
 
+def arm_failure_clear_through_a_direct_initialised_reference(text):
+    """Bind the alias by DIRECT initialisation instead of `=` (review-18 F1):
+    `bool& latchAlias(streamFailureLogged);` beside the latch, written as the frame's
+    first statement. Batch 111's net matched two spellings of aliasing -- the address-of
+    and `T& a = latch --` and this is the third, which contains neither a `&` beside the
+    field nor an `=` after the alias's name. It is the same per-frame reset and prints
+    the same sustained refusal ~60x/s. A blacklist of spellings is a race the next
+    reviewer keeps winning; the whitelist refuses the name wherever it is not one of the
+    pinned shapes.
+    """
+    decl = "    bool streamFailureLogged = false;\n"
+    if decl not in text:
+        return text
+    out = text.replace(decl, decl + "    bool& latchAlias(streamFailureLogged);\n", 1)
+    loop = "    while (aptMainLoop()) {\n"
+    if loop not in out:
+        return text
+    return out.replace(loop, loop + "        latchAlias = false;\n", 1)
+
+
+def arm_failure_clear_through_a_by_reference_helper(text):
+    """Move the per-frame reset into a helper that takes the latch by reference
+    (review-18 F1): `clearRefusalLatch(streamFailureLogged);` as the frame's first
+    statement, with the write inside the helper. No alias is ever declared and no `&`
+    ever touches the latch's name, so there is no SPELLING left for a scan to look for
+    -- the write exists only under the parameter's name. The only net that can catch it
+    is one that refuses a use of the latch's name it cannot enumerate, which is what
+    LATCH_SHAPE now does.
+    """
+    anchor = "int main(int argc, char** argv) {"
+    if anchor not in text:
+        return text
+    out = text.replace(anchor,
+                       "// review-18 F1 mutant: the reset moved out of the frame.\n"
+                       "static void clearRefusalLatch(bool& latch) { latch = false; }\n\n"
+                       + anchor, 1)
+    loop = "    while (aptMainLoop()) {\n"
+    if loop not in out:
+        return text
+    return out.replace(loop, loop + "        clearRefusalLatch(streamFailureLogged);\n", 1)
+
+
+def arm_failure_byte_figure_baked_into_the_format(text):
+    """State the byte figure IN THE FORMAT STRING, with no conversion and no argument
+    (review-18 F2): `log3dsPrintf("objects: refused 81920 bytes")`. Batch 115 skipped a
+    line with no arguments and no conversion, so every figure rule walked past this one
+    while it printed a byte count nobody recomputes -- and it is exactly the shape a
+    developer reaches for after a review says the printed number is wrong: stop
+    computing it, write the right one in. `81920` is what 4096 corners cost today; a
+    figure with no argument behind it has no source to disagree with.
+    """
+    anchor = "                                            1024));\n"
+    if anchor not in text:
+        return text
+    return text.replace(anchor, anchor +
+                        '                mdk::log3dsPrintf("objects: refused 81920 bytes");\n',
+                        1)
+
+
+def arm_failure_conversion_names_a_figure_with_no_argument(text):
+    """A conversion the call never supplies an argument for, in a spelling batch 115's
+    one-letter pattern did not match (review-18 F4): `%8d`. Reading an argument that was
+    never passed is undefined behaviour and the line prints the stack, and
+    `log3dsPrintf` carries no `format(printf)` attribute, so the compiler does not see
+    it either. The comment here has always claimed "a format with a conversion and no
+    argument is still red"; with `%` + one flag + one letter that was true only of `%d`.
+    """
+    anchor = "                                            1024));\n"
+    if anchor not in text:
+        return text
+    return text.replace(anchor, anchor +
+                        '                mdk::log3dsPrintf("objects: refused %8d corners");\n',
+                        1)
+
+
 def probe_failure_line_names_no_figure_at_all(text):
     """Add a refusal line that states NO number (review-17 R3): the natural companion
     to the backend's own `linearAlloc(%u) FAILED`. It disagrees with nothing, so a
@@ -2092,6 +2265,27 @@ ARMS = [
     ("the refused-mesh byte figure is a stale literal (review-17 R2)",
      arm_failure_byte_figure_is_a_stale_literal,
      CHK["failure-line-names-the-refused-capacity"]),
+    # Review-18 F1: the two alias spellings batch 111's blacklist could not see, because
+    # neither contains an `&` beside the field or an `=` after the alias's name. The
+    # second does not declare an alias at all.
+    ("the refused-mesh latch is cleared every frame through a reference bound by "
+     "direct initialisation (review-18 F1)",
+     arm_failure_clear_through_a_direct_initialised_reference,
+     CHK["failure-latch-writes-are-the-pinned-three"]),
+    ("the refused-mesh latch is cleared every frame by a helper that takes it by "
+     "reference (review-18 F1)",
+     arm_failure_clear_through_a_by_reference_helper,
+     CHK["failure-latch-writes-are-the-pinned-three"]),
+    # Review-18 F2/F4: the two ways a refusal line can state a figure the check never
+    # looked at -- one baked into the format text, one asked for by a conversion the
+    # call does not supply.
+    ("the refused-mesh byte figure is baked into the format string with no conversion "
+     "(review-18 F2)",
+     arm_failure_byte_figure_baked_into_the_format,
+     CHK["failure-line-names-the-refused-capacity"]),
+    ("a refusal line's %8d conversion has no argument (review-18 F4)",
+     arm_failure_conversion_names_a_figure_with_no_argument,
+     CHK["failure-line-names-the-refused-capacity"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -2230,6 +2424,24 @@ PROBES = [
     # companion line to the backend's own `linearAlloc(%u) FAILED`.
     ("a refusal line states no figure at all (review-17 R3)",
      probe_failure_line_names_no_figure_at_all),
+    # Review-18 F3: the other half of batch 115's over-reach. A refusal line may name a
+    # quantity that is NOT a byte figure -- the frame it refused on, or a name -- and
+    # adjudicating EVERY argument against the backend's byte count reddened both, which
+    # is review-10 F6's failure again: legal code gets routed around. The unit words in
+    # the line's own format are what say which slots are byte figures.
+    ("a refusal line names the refused capacity AND the frame it happened on "
+     "(review-18 F3)",
+     lambda s: s.replace("""                                            1024));
+                }""", """                                            1024));
+                    mdk::log3dsPrintf("objects: refused %d corners at frame %lu",
+                                      attempted, (unsigned long)frame);
+                }""", 1)),
+    ("a refusal line puts a name in front of the refused capacity (review-18 F3)",
+     lambda s: s.replace("""                                            1024));
+                }""", """                                            1024));
+                    mdk::log3dsPrintf("objects: refused on %s: %d corners",
+                                      "stream", attempted);
+                }""", 1)),
 ]
 # --- mutant dump (review-15 F5) ------------------------------------------------
 # `arm_compile_check.sh` needs the mutants as FILES so it can hand them to the

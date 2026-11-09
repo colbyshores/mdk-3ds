@@ -1,20 +1,42 @@
 # Phase 2 continuation checkpoint
-Risk: high — **two gates had a blind spot in the exact property they existed for, and both were
- green; the fix widens what two gates reject.** No game code changed: `mdk_3ds/mdk.elf` is
- bit-identical to batch 107's (`b1997a5dca83639acf603d518abe8e62`), so the picture is unchanged
- and the frame pair is a byte-identical re-capture, stated not hidden. Review-17 found no
- Critical and no High; all seven findings are fixed, none rebutted. R1 (Medium): check 20's
- alias guard scanned the frame body while the property it states is that the latch's address is
- never taken anywhere, so `bool& latchAlias = streamFailureLogged;` declared beside the latch
- and written as the frame's first statement printed a sustained refusal ~60x/s with every check,
- arm and probe green -- reproduced from the reviewer's description before being fixed. R2
- (Medium): check 17 compared only arguments that spell an operator inline, so a byte figure
- hoisted into a local, or a stale literal, was compared against nothing and review-12 R2's
- frame-count byte figure returned one refactor away. Found here while fixing R1, not by the
- reviewer: the c3d alias scan had the mirror-image gap (address-of yes, reference-declaration
- no), and `arm_compile_check.sh`'s review-16 remediation was unreachable on a fresh clone
- because it required a gitignored directory before it could name the missing generated file.
- Seventh consecutive round changing what a builder's own gate accepts, on the same three checks.
+Risk: high — **two gates certified a write set they could not enumerate, and the figure net that
+review-17 widened was simultaneously too narrow and too wide; the fix changes what both gates
+accept and what they reject.** No game code changed: `mdk_3ds/mdk.elf` is bit-identical to batch
+107's (`b1997a5dca83639acf603d518abe8e62`), so the picture is unchanged and the frame pair is a
+byte-identical re-capture, stated not hidden. Review-18 found no Critical and no High; all six
+findings are fixed, none rebutted. F1 (Medium): both latch nets matched two *spellings* of
+aliasing while the property they state is that the net enumerates every write --
+`bool& latchAlias(streamFailureLogged);`, or a helper taking the latch by reference, printed a
+sustained refusal ~60x/s with `PASS Main3dsFlow` and `PASS C3dFrame`; both are now WHITELISTS
+(the latch's name may appear only in its declaration, its two reads and its pinned writes),
+which cannot be spelled around the way a blacklist can. F2 (Medium): review-17's legalisation of
+a figure-less refusal line also legalised a figure baked into the format string with no
+conversion -- `"objects: refused 81920 bytes"` -- so a byte figure with no source shipped green;
+a digit left in the format after conversions are stripped is now red. F3 (Medium): the same
+batch's "adjudicate every argument" reddened an honest line that also named the frame it refused
+on, which is review-10 F6's failure reintroduced by the fix for R2; the format's own unit words
+now decide which slots are byte figures. Found here, not by the reviewer: `FIGURE_FMT` matched
+only `%` + one flag + one letter, so the comment's claim that a conversion with no argument is
+red was false for `%8d`, `%08x`, `%.1f` and `%*d`. Eighth consecutive round changing what a
+builder's own gate accepts, on the same three checks.
+
+**Batch 112 (Iteration 19) — review-18 closed 6/6 (no Critical, no High): F1-F6 all fixed.**
+The two latch nets are whitelists now (`LATCH_SHAPE` + `unpinned_uses()` in both gates): any
+occurrence of the latch's name outside its declaration, the two reads the guard accepts and the
+pinned writes reddens, so a direct-initialised reference, a brace-initialised one, a
+by-reference helper call, `std::addressof` and a read-only `const bool&` are all refused -- the
+last one on purpose, and both gates' failure text now says why (F6), because a name scan cannot
+see a write through an alias and must not be trusted while one exists. Four new arms, two per
+gate. Check 17's figure rules are re-derived from the format: conversions are matched by the
+full conversion grammar (F4), a digit left in the format text after they are stripped is a
+figure with no source (F2), and only a slot whose own text names a byte unit is adjudicated
+against the backend's byte count, so `%d corners at frame %lu` is legal again (F3) while a stale
+literal is still red wherever it sits. Record accuracy: the mutant count is quoted from the tool
+and no split is quoted (F5). Measured: `PASS Main3dsFlow (20 checks, 42 arms adjudicated red, 17
+probes green)`, `PASS C3dFrame (31 checks, 48 arms adjudicated red, 2 probes green)`, `PASS
+ArmCompile (111 mutants, 0 diagnostics)`, `make -C tests/scripts` all cases match, `bash
+tools/check.sh` ALL GATES PASSED, `make -C mdk_3ds` builds. `ralph/builder.md` was dirty at
+dispatch, is `PROTECTED`, and is left uncommitted on purpose.
 
 **Batch 111 (Iteration 18) — review-17 closed 7/7 (no Critical, no High): R1-R7 all fixed.**
 Check 20's alias scan now reads the whole comment-blanked file, matching the c3d twin, and one
@@ -526,48 +548,44 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 112)
-**What is actually next, restated by batch 111.** Batch 110 said batch 111 should be a game
-batch. It was not: review-17 arrived with two Mediums open and reachable today, and leaving a
+## NEXT (batch 113)
+**What is actually next, restated by batch 112.** Batch 111 said batch 112 should be a game
+batch. It was not: review-18 arrived with three Mediums open and reachable today, and leaving a
 confirmed green-on-a-defect net unremediated to prefer a more interesting batch is the trade this
-loop must not make. That is now seven rounds on the same three checks, and the honest reading is
-the one batch 110 already gave: a net that has been wrong about its own scope three running needs
-review against a profile or a rewrite, not a fourth patch. Batch 111 narrowed that debt rather
-than adding to it -- both blind spots were in the *property*, not in a new spelling -- and every
-finding is closed with an arm or a probe, so the family is now reviewable as a unit.
+loop must not make. That is now eight rounds on the same three checks, and the honest reading is
+the one batch 110 already gave: a net that keeps being wrong about its own scope needs review
+against a profile or a rewrite, not another patch. Batch 112 is the batch that argues the family
+is finished rather than the eighth patch: F1's fix replaced the family's third blacklist with a
+whitelist, and a whitelist is the shape that cannot be spelled around, so the alias question that
+took four rounds (review-15 F1, review-16 oq2, review-17 R1, review-18 F1) is closed as a class
+and not narrowed. The family's one remaining known weakness is stated in the code, not hidden:
+check 17 reads a *format string* to decide whether a line belongs to the refusal family, so a
+refusal line whose format is a variable is outside the net.
 
-**Batch 112 is expected to be a game batch, and a batch that changes `mdk_3ds/**` owes emulator
+**Batch 113 is expected to be a game batch, and a batch that changes `mdk_3ds/**` owes emulator
 evidence under P8.** Two named items, both blocked on a named cause rather than on effort: (1)
 **the canvas seam** -- `mdk_render_canvas_quad` is a no-op on this backend
 (`renderer_c3d.cpp:2345`), which is what priority item 5b (the HUD) and the MVE movie presenter
 both wait on; (2) **the collision batch** -- `FindConnections` + `CrossedArena`, which unfreezes
 `currentArena_` from the spawn arena and lets `ArenaSpace::setSolid` take the oracle's current +
 active second, and which needs a doorway-crossing oracle rather than a hand-written expectation.
-Neither is a gate batch. The one-sided-view investigation below stays open and is the sharper of
-the two picture questions, and the R = 255 candidate set is now two, not five (below).
+Neither is a gate batch. If a review-19 arrives instead, the standing offer stands: the gate
+family's remaining weakness is the one named above, and a finding that turns out to be a ninth
+spelling of the alias question is an argument for retiring the family, not for a ninth patch.
+The one-sided-view investigation below stays open and is the sharper of the two picture
+questions, and the R = 255 candidate set is now two, not five (below).
 
-**If a review-18 arrives instead, the standing offer stands:** the gate family's remaining
-weakness is known and named, not hidden -- check 17 reads a *format string* to decide whether a
-line belongs to the refusal family, so a refusal line whose format is a variable is outside the
-net, and that is stated in the code as a limit rather than discovered by a reviewer.
-
-**What batch 110 changed, in one paragraph, so the next gate reader does not re-derive it.**
-Check 20's write scan is scoped to `frame_body_span(code)` and not to `object_pass()`, is
-tolerance-tolerant around `=`, and reddens if the latch's address or a reference to it is ever
-taken (a write set that cannot be enumerated is not certifiable — review-16 open question 2,
-pinned on both sides). `LATCH_NEG`'s optional `name->` prefix is its own group, so both guard
-spellings work through the struct pointer, and both gates now have probes pinning the
-`== false` spelling. Check 17's rule is "no refusal line may disagree", stated as: first figure
-is the refused capacity, a line naming `%d KB` must carry a derived figure, a capacity-only line
-is legal. `c3d_frame_test.sh` has a `PROBES` list and every arm names the check it pins (batch
-110 said "its 45 arms" here; review-17 R4 deleted the count, and batch 111's number is below).
-`arm_compile_check.sh` requires `mdk_core/src` and `mdk_3ds/src` as a wrong-directory error and
-`mdk_3ds/build/mdk_c3d_shbin.h` as a named c3d prerequisite (`make -C mdk_3ds`), and a run that
-skips a gate exits 1 as INCOMPLETE. (Batch 110 wrote that it required those two directories;
-it required three, including the gitignored `mdk_3ds/build`, which is review-17 R6 and is fixed
-below.) Measured at batch 110: `PASS Main3dsFlow (20 checks, 35 arms, 14 probes)`, `PASS
-C3dFrame (31 checks, 45 arms, 2 probes)`, `PASS ArmCompile (98 mutants, 0 diagnostics)`,
-`make -C tests/scripts` all cases match, `bash tools/check.sh` ALL GATES PASSED.
+**What batch 112 changed, in one paragraph, so the next gate reader does not re-derive it.**
+Both latch nets are `LATCH_SHAPE` + `unpinned_uses()`: the latch's name is refused outside its
+declaration, the two reads the guard accepts and the pinned writes, in both gates, and the
+failure text says a pointer or reference to the latch is refused on purpose. Check 17's rule is
+"no refusal line may disagree", stated as: every figure comes from an argument (a digit left in
+the format after the conversions are stripped is a figure with no source), the format's own unit
+words decide which arguments are byte figures, the refused capacity must appear somewhere, and
+conversions are matched by the full conversion grammar with `conversions <= arguments`.
+Measured at batch 112: `PASS Main3dsFlow (20 checks, 42 arms, 17 probes)`, `PASS C3dFrame (31
+checks, 48 arms, 2 probes)`, `PASS ArmCompile (111 mutants, 0 diagnostics)`, `make -C
+tests/scripts` all cases match, `bash tools/check.sh` ALL GATES PASSED.
 
 **Batch 109 re-measured the R = 255 lead while scoping, and the candidate set is now two, not five.**
 `docs/evidence/2026-11-09-L7-shader-w-current.png` again: 96000 of 96000 pixels have R = 255, 131
