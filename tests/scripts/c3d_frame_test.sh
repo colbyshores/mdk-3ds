@@ -84,6 +84,7 @@ SRC=${1:-$ROOT/mdk_3ds/src/render/renderer_c3d.cpp}
 [ -f "$SRC" ] || { printf '  FAIL c3d_frame: cannot read %s\n' "$SRC"; exit 1; }
 
 python3 - "$SRC" <<'PY'
+import os
 import re
 import sys
 
@@ -267,6 +268,23 @@ def body(text, name):
     """One function's source text, or None."""
     sp = body_span(text, name)
     return text[sp[0]:sp[1]] if sp else None
+
+
+# A log line is a REFUSAL line when its own format says so. The frontend gate
+# (main_3ds_flow_test.sh) uses the same test for the same reason: the property is
+# about EVERY refusal line, and a first-pass diagnostic that reports the failed
+# allocation without spelling "FAILED" is still a refusal line and still spams.
+REFUSAL_FMT = re.compile(r"FAILED|refus", re.IGNORECASE)
+
+# The two spellings of "print only while the latch is down", matched with
+# `fullmatch` so a condition that merely MENTIONS the negation is not a guard. The
+# optional `name->` is there because the backend reaches the field through the
+# renderer pointer and the local's name is not part of the invariant -- pinning
+# `renderer->` would redden a rename of the local, which is review-10 F6's failure
+# (a gate that rejects a shape the port may write gets routed around).
+LATCH_NEG = re.compile(r"![ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*->[ \t]*)?"
+                       r"meshAllocFailureLogged"
+                       r"|meshAllocFailureLogged[ \t]*==[ \t]*false")
 
 
 def eye_loop_span(text):
@@ -853,44 +871,100 @@ def adjudicate(text, quiet=False):
     # the negative latch test, the block that prints also ARMS the latch as a direct
     # statement of itself, and the latch CLEARS on the success path as a direct
     # statement of the function, not from inside the failing branch.
+    #
+    # Review-15 F2: the first version resolved ONE printf and ONE clear, which is the
+    # exact shape review-14 F7 told this project to stop writing. A second
+    # `log3dsPrintf("... FAILED again this frame", cap)` placed after the guarded
+    # block inside `if (!mesh.data)` printed on every refusing frame with the check
+    # green, and `r->meshAllocFailureLogged = false;` added to
+    # `mdk_render_begin_frame` -- once per frame, under a sustained refusal -- re-armed
+    # the latch every frame and put the 1710-line spam back, also green. So the
+    # refusal net now reads EVERY refusal-format printf in the function, and the
+    # clear is checked twice: in place in THIS function, and as the ONLY clear of the
+    # latch anywhere in the file.
     mesh_body = fn_body_span(text, "mdk_render_create_dynamic_mesh")
-    refusal = None
-    latch_guard = None
+    refusals = []
+    guards = []
     armed = False
     cleared = False
+    sole_clear = False
     if mesh_body is not None:
         seg = blank_comments(text[mesh_body[0]:mesh_body[1]])
         open_brace = seg.index("{")
-        refusal = next((p for p in re.finditer(r"log3dsPrintf[ \t]*\(", seg)
-                        if "FAILED" in printf_format(seg, p.end() - 1)), None)
-        if refusal is not None:
-            latch_guard = next(
-                (sp for g in re.finditer(r"\bif[ \t]*\(([^{}();]*)\)[ \t]*\{", seg)
-                 if re.fullmatch(r"![ \t]*renderer->meshAllocFailureLogged"
-                                 r"|renderer->meshAllocFailureLogged"
-                                 r"[ \t]*==[ \t]*false", g.group(1).strip())
-                 for sp in [block_span_from(seg, g.end() - 1)]
-                 if sp is not None and sp[0] <= refusal.start() < sp[1]),
-                None)
-        if latch_guard is not None:
-            s = re.search(r"renderer->meshAllocFailureLogged[ \t]*=[ \t]*true[ \t]*;",
-                          seg[latch_guard[0]:latch_guard[1]])
-            armed = (s is not None and brace_depth(seg, latch_guard[0],
-                                                   latch_guard[0] + s.start()) == 1)
+        # `refusals` is a list of POSITIONS, not match objects: the union below mixes
+        # two finditer results and only the offset is ever used.
+        refusals = sorted(set(
+            [p.start() for p in re.finditer(r"log3dsPrintf[ \t]*\(", seg)
+             if REFUSAL_FMT.search(printf_format(seg, p.end() - 1))]))
+        # Review-15 F3's lesson applies on this side too, so the net is the same UNION
+        # the frontend now runs: a line belongs to the refusal family when its format
+        # names the refusal WHEREVER it sits in the function, or when it sits inside
+        # the failing branch whatever it says. A `log3dsPrintf("dynamic mesh: %d
+        # corners requested", cap)` after the guard would print on every refusing
+        # frame, would name no FAILED, and a format filter alone reads straight past
+        # it -- which is review-15 F3 on the frontend, one file over.
+        failing = next((block_span_from(seg, m.end() - 1)
+                        for m in re.finditer(r"\bif[ \t]*\([ \t]*![ \t]*mesh\.data"
+                                             r"[ \t]*\)[ \t]*\{", seg)), None)
+        if failing is not None:
+            refusals = sorted(set(
+                refusals
+                + [p.start() for p in re.finditer(r"log3dsPrintf[ \t]*\(", seg)
+                   if failing[0] <= p.start() < failing[1]]))
+        guards = [block_span_from(seg, g.end() - 1)
+                  for g in re.finditer(r"\bif[ \t]*\(([^{}();]*)\)[ \t]*\{", seg)
+                  if LATCH_NEG.fullmatch(g.group(1).strip())]
+        guards = [sp for sp in guards if sp is not None]
+
+        def arms_latch(sp):
+            """Does the block `sp` arm the latch as a direct statement of itself?"""
+            s = re.search(r"(?:->|\.)[ \t]*meshAllocFailureLogged[ \t]*=[ \t]*true[ \t]*;",
+                          seg[sp[0]:sp[1]])
+            return (s is not None
+                    and brace_depth(seg, sp[0], sp[0] + s.start()) == 1)
+
+        armed = bool(refusals) and all(
+            any(sp[0] <= at < sp[1] and arms_latch(sp) for sp in guards)
+            for at in refusals)
         # The clear must be a direct statement of the FUNCTION, which is what puts it
         # on the success path: inside `if (!mesh.data)` it would be depth 2 and would
         # clear on the very frame it refused.
-        c = re.search(r"renderer->meshAllocFailureLogged[ \t]*=[ \t]*false[ \t]*;", seg)
+        #
+        # Every write scan requires the `->` (or `.`) because the field's DECLARATION
+        # in the renderer struct -- `bool meshAllocFailureLogged = false;` -- is an
+        # initializer, not a write, and a scan that counted it would count two clears
+        # in an unmutated file and red correct code (review-10 F6 again: a gate that
+        # rejects a shape the port may write is a gate that gets routed around).
+        c = re.search(r"(?:->|\.)[ \t]*meshAllocFailureLogged[ \t]*=[ \t]*false[ \t]*;", seg)
         cleared = (c is not None
                    and brace_depth(seg, open_brace, c.start()) == 1)
+        # And it must be the ONLY clear of the latch in the file. A reset written in
+        # some per-frame function instead runs once per frame, which is exactly the
+        # condition the latch exists to suppress, and no per-function scan can see it.
+        clears = list(re.finditer(
+            r"(?:->|\.)[ \t]*meshAllocFailureLogged[ \t]*=[ \t]*false[ \t]*;",
+            blank_comments(text)))
+        sole_clear = (len(clears) == 1
+                      and mesh_body[0] <= clears[0].start() < mesh_body[1])
+        # STATED LIMIT, not a hidden one: the net is "exactly one clear in the file",
+        # which is the property the spam needs. A future teardown reset would be a
+        # second clear and would have to be argued into this check on purpose, which
+        # is the point -- a per-frame reset is the defect (review-15 F2), and anything
+        # else has to be a decision rather than an oversight.
     rep.check("mesh-refusal-line-is-edge-triggered",
-              refusal is not None and armed and cleared,
-              "refusal printf: %s, armed inside its own guard: %s, cleared on the "
-              "success path: %s (an unguarded or never-armed line prints on every "
-              "frame of one refusal -- this is the line that printed 1710 times; a "
-              "latch that never clears silences the second, larger refusal)"
-              % ("yes" if refusal else "no", "yes" if armed else "no",
+              bool(refusals) and armed and cleared,
+              "%d refusal printf(s), all inside a latch-guarded block that arms it: "
+              "%s, cleared on the success path: %s (an unguarded or never-armed line "
+              "prints on every frame of one refusal -- this is the line that printed "
+              "1710 times; a latch that never clears silences the second, larger "
+              "refusal)"
+              % (len(refusals), "yes" if armed else "no",
                  "yes" if cleared else "no"))
+    rep.check("mesh-refusal-latch-cleared-nowhere-else", sole_clear,
+              "the latch must be cleared exactly once in the file, on the mesh "
+              "factory's success path (review-15 F2); a second clear anywhere else "
+              "runs on some other schedule, and one that runs every frame re-arms the "
+              "latch under a sustained refusal -- the spam this latch exists to stop")
     return rep
 
 
@@ -1159,8 +1233,12 @@ ARMS = [
     ("diagnostic-after-the-eye-loop", lambda s: arm_move_diagnostic(s, "after-loop")),
     ("diagnostic-before-its-replay", lambda s: arm_move_diagnostic(s, "before-replay")),
     ("canvas-flush-restored",
+     # Review-15 F5's own harvest: this arm spliced `flushDraws(asC3d(r));`, a name
+     # that exists only in a comment in this file -- the emitter is `replayQueue`. The
+     # mutant never compiled, so it was a mutant of nothing (review-14 F3's class), and
+     # the check it claimed to isolate was being certified by text no compiler accepts.
      lambda s: re.sub(r"(void mdk_render_canvas_begin\(MdkRenderer r\) \{)",
-                      r"\1\n    flushDraws(asC3d(r));", s, count=1)),
+                      r"\1\n    replayQueue(asC3d(r));", s, count=1)),
     ("inset-replay-restored",
      lambda s: re.sub(r"(void mdk_render_begin_inset\(MdkRenderer r, const mdk::Inset\* i\) \{)",
                       r"\1\n    replayQueue(asC3d(r));", s, count=1)),
@@ -1209,8 +1287,14 @@ ARMS = [
     # review-6 F6's mutants: the batch-66 hang, restored three ways. Each is a
     # plausible edit and none of them is visible to any other gate.
     ("create-time-shader-configure-restored",
+     # Review-15 F5's second harvest: `shaderProgramConfigure(&r->program, false)` is
+     # two arguments where libctru declares three (`sp, sendVshCode, sendGshCode`), so
+     # this mutant never compiled either. The third argument is the GSH half, which is
+     # what the frame params' `state>>12 & 1` would supply.
      lambda s: s.replace(SHADER_OK_LINE,
-                         SHADER_OK_LINE + "\n    shaderProgramConfigure(&r->program, false);", 1)),
+                         SHADER_OK_LINE
+                         + "\n    shaderProgramConfigure(&r->program, false, false);",
+                         1)),
     ("shader-upload-removed-from-create",
      lambda s: s.replace("        ? shaderProgramSetVsh(&r->program, &r->dvlb->DVLE[0])",
                          "        ? (Result)0", 1)),
@@ -1262,7 +1346,59 @@ ARMS = [
          "        if (!renderer->meshAllocFailureLogged) {",
          "        renderer->meshAllocFailureLogged = false;\n"
          "        if (!renderer->meshAllocFailureLogged) {", 1)),
+    # Review-15 F2: the two mutants the one-printf, one-function reading let through.
+    ("a second refused-mesh line sits after the guard and prints on every refusing "
+     "frame (review-15 F2)",
+     lambda s: s.replace(
+         "            mdk::log3dsPrintf(\"linearAlloc(%u) FAILED for a dynamic mesh of "
+         "%d corners\",\n"
+         "                              (unsigned)((size_t)cap * 5 * sizeof(float)), "
+         "(int)cap);\n        }\n",
+         "            mdk::log3dsPrintf(\"linearAlloc(%u) FAILED for a dynamic mesh of "
+         "%d corners\",\n"
+         "                              (unsigned)((size_t)cap * 5 * sizeof(float)), "
+         "(int)cap);\n        }\n"
+         "        mdk::log3dsPrintf(\"linearAlloc(%u) FAILED again this frame\",\n"
+         "                          (unsigned)((size_t)cap * 5 * sizeof(float)));\n",
+         1)),
+    ("the refused-mesh latch is cleared once per frame from mdk_render_begin_frame "
+     "(review-15 F2)",
+     lambda s: s.replace("    r->inFrame = true;\n    r->frame++;",
+                         "    r->inFrame = true;\n"
+                         "    r->meshAllocFailureLogged = false;\n"
+                         "    r->frame++;", 1)),
+    # Review-15 F3's lesson, applied to the backend's copy of the same net: a line in
+    # the failing branch whose format never spells the refusal is invisible to a
+    # format filter, and this arm is what isolates the branch half here.
+    ("a line in the refused-mesh failing branch names a size without the word FAILED "
+     "and prints on every refusing frame (review-15 F3)",
+     lambda s: s.replace(
+         "            mdk::log3dsPrintf(\"linearAlloc(%u) FAILED for a dynamic mesh of "
+         "%d corners\",\n"
+         "                              (unsigned)((size_t)cap * 5 * sizeof(float)), "
+         "(int)cap);\n        }\n",
+         "            mdk::log3dsPrintf(\"linearAlloc(%u) FAILED for a dynamic mesh of "
+         "%d corners\",\n"
+         "                              (unsigned)((size_t)cap * 5 * sizeof(float)), "
+         "(int)cap);\n        }\n"
+         "        mdk::log3dsPrintf(\"dynamic mesh: %d corners requested\", (int)cap);\n",
+         1)),
 ]
+
+# --- mutant dump (review-15 F5) ------------------------------------------------
+# Same switch as main_3ds_flow_test.sh: the mutants are written beside the list the
+# gate adjudicates so the cross-compile check cannot drift from the arms it checks.
+DUMP = os.environ.get("MDK_MUTANT_DUMP")
+if DUMP:
+    import os as _os
+    _os.makedirs(DUMP, exist_ok=True)
+    with open(_os.path.join(DUMP, "00_parent.cpp"), "w") as fh:
+        fh.write(SRC)
+    for _i, _e in enumerate(ARMS):
+        with open(_os.path.join(DUMP, "arm%02d.cpp" % _i), "w") as fh:
+            fh.write(_e[1](SRC))
+    print("dumped %d arms to %s" % (len(ARMS), DUMP))
+    sys.exit(0)
 
 print("c3d_frame: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
 arms_red = 0

@@ -1,16 +1,52 @@
 # Phase 2 continuation checkpoint
-Risk: high — **four gated predicates were rewritten, a new check was added to a second gate, and
- three mutation arms that could not compile were replaced.** No game code changed: `mdk_3ds/mdk.elf`
- is bit-identical to batch 107's (`b1997a5dca83639acf603d518abe8e62`, shbin `d46abb60…`), so the
+Risk: high — **four gated predicates were rewritten, two checks were added across two gates, and the
+ batch's own new tool found two arms that had never compiled.** No game code changed: `mdk_3ds/mdk.elf`
+ is bit-identical to batch 108's (`b1997a5dca83639acf603d518abe8e62`, shbin `d46abb60…`), so the
  picture is unchanged and the frame pair is a byte-identical re-capture, stated not hidden. What
- makes this review-worthy is that a builder again changed what its own gate accepts: check 19 now
- requires the guarded block to *arm* the latch, both accepted forms of check 18's clear are
- brace-depth-tested instead of position-searched, check 17's refusal-line scope widened from one
- branch to the whole object pass and now folds one level of local integer constants, and
- `c3d_frame_test.sh` gained a check (30 checks, 41 arms) pinning the backend's own refused-mesh
- latch. Every change was reproduced on a compiling mutant first, and every arm and probe now
- compiles for the 3DS target — but a batch that widens what a gate rejects, on the fourth
- consecutive round on the same three checks, is exactly what an independent model should look at.
+ makes this review-worthy is that a builder again changed what its own gate accepts, on the fifth
+ consecutive round on the same three checks: check 20 now reads the whole write set of the
+ refused-mesh latch, the backend's refusal net went from one printf to every one in the function
+ plus every one in its failing branch, the latch's clear is now pinned as the only clear in the
+ file, batch 107's format-agnostic branch scan is restored as a union with batch 108's format
+ family, and `tests/scripts/arm_compile_check.sh` is a new gate-shaped tool that reads the flags
+ out of `mdk_3ds/Makefile`. Every finding was reproduced on the reviewer's own compiling mutant
+ first, and all 90 mutants of both gates now compile for the 3DS target — but a batch that widens
+ what a gate rejects, and that found two pre-existing arms that could not compile at all, is exactly
+ what an independent model should look at.
+
+**Batch 109 (Iteration 136) — review-15 closed 5/5 (no Critical, no High): F1–F5 all fixed, none
+ rebutted on merit.** **F1**: checks 18 and 19 read the clear and the guard but not the *write set*,
+ so a second `streamFailureLogged = false;` at the end of the refusing branch — or one written once
+ per frame after the `if/else` — cleared the latch on the frame that refused and printed the refusal
+ ~60×/s with `PASS Main3dsFlow (19 checks, 30 arms, 11 probes)`. Check 20 now requires every write
+ to the latch inside the pass to be the arming inside a latch guard, the clear in the `else`, or the
+ anchored assignment form, each at brace depth 1 of the block that makes it run when it should; two
+ arms, one per mutant. Review-15's open question 1 is answered **yes, pinned**: a defensive
+ per-frame reset is the defect, not a shape the port writes on purpose. **F2**: the backend check
+ batch 108 added resolved ONE refusal printf and ONE clear in ONE function — review-14 F7's lesson
+ applied in the frontend and not here — so a second refusal line after the guard printed every
+ refusing frame and a per-frame clear in `mdk_render_begin_frame` re-armed the latch under a
+ sustained refusal, both green on `PASS C3dFrame (30 checks, 41 arms)`. The net is now every
+ refusal line in the function plus every line in its failing branch, and the clear is pinned twice:
+ in place, and as the only clear of the latch in the file (new check
+ `mesh-refusal-latch-cleared-nowhere-else`, three new arms). **F3**: batch 108 replaced batch 107's
+ format-agnostic scan of the refusing branch with a format filter over the pass and recorded it as
+ a *widening*; the filter is narrower on the branch, so a line inside the refusing branch that never
+ spells FAILED — review-11 F1's wrong number on every refusing frame — was read by neither check.
+ The net is now the **union** of both, `arm_failure_second_line_names_the_frame_count` was re-cut
+ with a format that deliberately does not name the refusal so it tests the branch half instead of
+ co-operating with the filter, and a probe keeps an honest non-FAILED line green. Open question 2:
+ the narrowing was a defect, and the record no longer calls that change a widening. **F4**:
+ `backend_mesh_atoms()` returning None was documented to redden check 17 and instead raised
+ `TypeError`, killing the script before checks 18–20 and every arm; it now reports red, verified on
+ the reviewer's skeleton tree. **F5**: the compile claim now has a committed generator,
+ `tests/scripts/arm_compile_check.sh`, which dumps mutants from the gates' own lists and compiles
+ them with flags read out of `mdk_3ds/Makefile` — and running it found **two backend arms that had
+ never compiled** (`flushDraws`, a name that exists only in a comment, and a two-argument
+ `shaderProgramConfigure` where libctru declares three), review-14 F3's class found by a machine
+ instead of by a reviewer. `PASS Main3dsFlow (20 checks, 32 arms adjudicated red, 12 probes green)`,
+ `PASS C3dFrame (31 checks, 44 arms adjudicated red)`, `PASS ArmCompile (90 mutant(s), 0
+ diagnostics)`.
 
 **Batch 108 (Iteration 135) — review-14 closed 7/7 (no Critical, no High): F1–F7 all fixed, none
  rebutted on merit.** F1/F2 (Medium) and F3–F7 (Low) each reproduced on the reviewer's own mutant
@@ -453,18 +489,47 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 109)
-**What is actually next, restated by batch 108.** Four consecutive batches have now closed external
-reviews on the refused-mesh gate family without moving a line of game code, and each round has found a
-real hole the previous round's "closed" rested on. That is a signal about the queue, not about the
-gate: the gate is now reading the state machine, and the remaining value is in the game code the gate
-batches have been deferring. Two named items, both blocked on a named cause rather than on effort:
-(1) **the canvas seam** — `mdk_render_canvas_quad` is a no-op on this backend (`renderer_c3d.cpp:1854`),
-which is what priority item 5b (the HUD) and the MVE movie presenter both wait on; (2) **the collision
-batch** — `FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn arena and
-lets `ArenaSpace::setSolid` take the oracle's current + active second, and which needs a
-doorway-crossing oracle rather than a hand-written expectation. Neither is a gate batch. The
+## NEXT (batch 110)
+**What is actually next, restated by batch 109.** Five consecutive batches have now closed
+external reviews on the refused-mesh gate family without moving a line of game code, and each
+round has found a real hole the previous round's "closed" rested on. Batch 109's own new tool
+found two more defects in the same file the reviewer had already read four times — two mutation
+arms that had never compiled — which is the strongest argument in this log for stopping: the
+gate family is now reading the state machine, and the marginal return on a sixth pass over it
+is below the marginal return on the game code the gate batches have been deferring. Two named
+items, both blocked on a named cause rather than on effort: (1) **the canvas seam** —
+`mdk_render_canvas_quad` is a no-op on this backend (`renderer_c3d.cpp:1854`), which is what
+priority item 5b (the HUD) and the MVE movie presenter both wait on; (2) **the collision
+batch** — `FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn
+arena and lets `ArenaSpace::setSolid` take the oracle's current + active second, and which needs
+a doorway-crossing oracle rather than a hand-written expectation. Neither is a gate batch. The
 one-sided-view investigation below stays open and is the sharper of the two picture questions.
+
+**Batch 109 re-measured the R = 255 lead while scoping, and the candidate set is now two, not five.**
+`docs/evidence/2026-11-09-L7-shader-w-current.png` again: 96000 of 96000 pixels have R = 255, 131
+distinct colours, G takes 65 distinct values and B takes 91. Two things were then excluded by
+reading, not guessing. (1) **The vertex colour path is excluded.** `mdk_3ds/shaders/mdk_c3d.v.pica`
+writes `mov outclr, ones` — the vertex colour is literally white and the packed RGBA8 colour is
+never uploaded (the shader's own header says so) — and the draw path's Tev is
+`C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, …)` with `GPU_REPLACE`, so the fragment colour IS the
+texture sample and no vertex colour reaches it. (2) **The palette and the expansion's byte order are
+excluded as a pair.** `expandIndices` writes `pixel[0..2] = paletteRgba[0..2]`, `pixel[3] = 255`, and
+the Vulkan backend uploads the SAME `palette.rgba()` bytes as `VK_FORMAT_R8G8B8A8_UNORM` and renders
+correct colours, so the source bytes are R-first and correct. What is left is the one constant 255 in
+the pipeline — the FORCED ALPHA — and the two ways it can arrive at the fragment's red channel.
+**(a)** the texel byte order: something between the four bytes `expandIndices` writes and the four the
+PICA reads is rotated by one, so alpha lands in red and blue lands in alpha. This is a HYPOTHESIS, not
+a fact, and the note says why it is not obvious: this project already knows the PICA's CLEAR WORD is
+`0xRRGGBBAA` while the seam passes `0xAARRGGBB` (`mdk_3ds/src/render/pica_matrix.h:302-319`, which
+painted alpha as red once), but a texture format and a clear register are different conventions and
+this file has NOT verified `GSP_RGBA8_OES`'s byte order against GBATEK — `gspgpu.h:29` only says
+"RGBA8. (4 bytes)". **(b)** the second Tev stage: nothing in this file configures it — `grep -n
+"GetTexEnv(1)" mdk_3ds/src/render/renderer_c3d.cpp` is empty — so stage 1 is whatever `C3D_Init` left
+while stage 0 is set explicitly every draw, and AGENTS P2's rule is that GPU state left unset is not a
+state but the previous frame's or garbage. Each half is ONE build and one `panel_geom.py` run: (a) by
+writing the expansion's four bytes rotated, (b) by setting stage 1 to `previous * primary`. Neither
+needs a geometry theory, and if (a) is right the one-sided view may be a colour bug wearing a geometry
+costume. Do NOT re-derive the two exclusions above.
 
 *(Batch 104 did not advance the renderer head either; it closed the instrument review-10 proved could not
 fail and added a measured colour fact to the head. The item below is restated against the committed panel,

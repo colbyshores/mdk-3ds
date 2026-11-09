@@ -186,13 +186,48 @@
 #     mutant named identifiers that do not exist there; `arm_before_camera` moved the
 #     refresh above the declaration of its own guard. All three now build real mutants,
 #     so the claim below is true rather than scoped away.
-#  Every arm and every probe compiles for the 3DS target with the Makefile's own flags
-#  (`arm-none-eabi-g++ -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
-#  -mfpu=vfp -D__3DS__ -DRENDERER_C3D -std=gnu++17 -fno-exceptions -fno-rtti
-#  -fsyntax-only`, plus the Makefile's -I list): an arm that cannot compile is a
-#  mutant of nothing. Verified for all 30 arms and 11 probes on 2026-11-09; the
-#  generator is in docs/PROGRESS_LOG.md, because the host suite cannot run the cross
-#  compiler and a claim nobody can re-run is a claim that will rot.
+#
+# WHAT REVIEW-15 (run-20261108-195620) FOUND AND THIS BATCH FIXED, each reproduced on
+# the reviewer's own mutant before any edit:
+#  F1: checks 18 and 19 read the clear and the guard, and neither read the INVERSE, so
+#     a second `streamFailureLogged = false;` -- at the end of the refusing branch, or
+#     as a plain statement after the if/else -- cleared the latch on the frame that
+#     refused and the line printed ~60x/s with 17, 18 and 19 all green. Check 20 now
+#     reads the whole write set: every write to the latch inside the pass must be the
+#     arming inside a latch guard, the clear in the `else`, or the anchored assignment
+#     form. Review-15's open question 1 ("should the family pin the absence of a clear
+#     on the refusing path?") is answered YES and pinned, because check 19's failure
+#     text already promised it and a defensive per-frame clear is the defect, not a
+#     shape the port writes on purpose.
+#  F3: batch 108 replaced batch 107's format-agnostic scan of the refusing branch with
+#     a format filter over the pass and recorded it as a widening. It was both, and the
+#     narrowing was the half that mattered: a line inside the refusing branch whose
+#     format never spells FAILED was read by neither check. The two nets are now a
+#     UNION (in the branch, whatever it says; or names the refusal, wherever it sits),
+#     `arm_failure_second_line_names_the_frame_count` was re-cut with a format that
+#     does NOT name the refusal so it tests the branch half instead of co-operating
+#     with the filter, and a probe keeps an honest non-FAILED line inside the branch
+#     green. Review-15's open question 2 is answered: the narrowing was a defect, not
+#     an intent, and the record no longer calls the change a pure widening.
+#  F4: `backend_mesh_atoms()` returning None was documented to make check 17 RED and
+#     instead raised TypeError, killing the script before checks 18-20, every arm and
+#     every probe. The absence is now reported as a red check. Verified with the
+#     reviewer's skeleton tree (the script copied into a tree with no renderer_c3d.cpp
+#     and the real `main_3ds.cpp` handed to it): check 17 prints its own FAIL line and
+#     the arms run.
+#  F5: the compile claim below had no generator behind it. It has one now --
+#     `tests/scripts/arm_compile_check.sh`, which dumps the mutants from THESE lists
+#     and compiles them with the flags read out of `mdk_3ds/Makefile`. Running it is
+#     how the two backend arms review-15 F5's harvest found (`flushDraws`, a name that
+#     exists only in a comment, and a two-argument `shaderProgramConfigure` where
+#     libctru declares three) were caught and fixed.
+#  Every arm and every probe compiles for the 3DS target with the Makefile's own flags.
+#  The claim is re-runnable, not transcribed: `sh tests/scripts/arm_compile_check.sh`
+#  dumps all 32 arms and 12 probes of this file (and all 43 of `c3d_frame_test.sh`) and
+#  syntax-checks each with `arm-none-eabi-g++` and the flags read out of
+#  `mdk_3ds/Makefile`. Measured 2026-11-09: `PASS ArmCompile (89 mutant(s), 0
+#  diagnostics)`. An arm that cannot compile is a mutant of nothing, and a claim nobody
+#  can re-run is a claim that will rot.
 #
 # The backend's copy of the same edge trigger (`meshAllocFailureLogged`, the line that
 # actually printed 1710 times) is pinned in c3d_frame_test.sh, which is the file whose
@@ -660,6 +695,10 @@ CHK = {
     "failure-line-prints-once-per-refusal":
         "the refused-mesh line is edge-triggered, so one sustained refusal prints once "
         "and not on every frame of it (review-12 R1)",
+    "failure-latch-writes-are-the-pinned-three":
+        "the only writes to the refused-mesh latch are the arming inside its guard, "
+        "the clear in the `else`, and the anchored assignment form -- a fourth write "
+        "clears the latch on a refusing frame (review-15 F1)",
 }
 
 
@@ -909,9 +948,9 @@ def adjudicate(text, quiet=False):
     #     disagreed with renderer_c3d.cpp's own `linearAlloc(N) FAILED` by up to 8x
     #     -- two committed lines, one refusal, 51 KB apart.
     #
-    #     WHAT THE ARGUMENTS MUST AGREE ON (review-12 R2, review-13 D1 and D4). Three
-    #     weakenings were found in this check, each one a gate that could not fail at
-    #     the thing it claimed to pin:
+    #     WHAT THE ARGUMENTS MUST AGREE ON (review-12 R2, review-13 D1 and D4, and
+    #     review-15 F3). Four weakenings were found in this check, each one a gate that
+    #     could not fail at the thing it claimed to pin:
     #       * it read only the FIRST printf in the branch, so a second, unguarded
     #         line built from `objectCorners` was read by neither check 17 nor
     #         check 19 (D1). It now reads EVERY `log3dsPrintf(` in the branch.
@@ -927,6 +966,11 @@ def adjudicate(text, quiet=False):
     #         that reddens a shape the port may write is a gate that gets routed
     #         around). A plain extra argument is still allowed; what is not allowed is
     #         a derived byte figure that disagrees with the corner figure.
+    #       * review-14 F7 widened the scope from the first refusing branch to the
+    #         whole object pass but decided family membership by FORMAT, which read
+    #         fewer lines inside the branch than review-13 D1 did (review-15 F3). The
+    #         net is now the union of both, and it is the union that both findings
+    #         asked for: see the comment on the loop below.
     # 18. THE LATCH CLEARS ON A FRAME THAT DID NOT REFUSE (review-11 F7, re-pinned by
     #     review-12 R1 and review-13 D2). `streamFailureLogged` is the edge trigger
     #     that keeps a level under linear pressure from printing the same line 60
@@ -952,9 +996,24 @@ def adjudicate(text, quiet=False):
     #     negative latch test -- `fullmatch`, not `search`, because a condition that
     #     merely MENTIONS `!streamFailureLogged` (`!streamFailureLogged || verbose`)
     #     prints on every frame of the refusal and was green (D3).
+    # 20. AND NOTHING ELSE MAY WRITE THE LATCH (review-15 F1). Checks 18 and 19 pin
+    #     the clear and the guard, and both stayed green while a SECOND
+    #     `streamFailureLogged = false;` was added at the end of the refusing branch,
+    #     or as a plain statement after the if/else: either one clears the latch on
+    #     the frame that refused, so the guard is true again next frame and the line
+    #     prints ~60x/s -- review-12 R1's spam, one line away, with every other check
+    #     honest. A clear that is reachable is only half of an edge trigger; the other
+    #     half is that NO FRAME WHICH REFUSED CLEARS IT. So the net is the whole write
+    #     set of the latch inside the pass, and every write must be one of exactly
+    #     three shapes: `= true` as a direct statement of a latch-guarded block (the
+    #     arming), `= false` as a direct statement of the `else` sibling (the clear),
+    #     or `= objectDraw.allocationFailed()` as a direct statement of the block
+    #     enclosing the test (the equivalent form check 18 accepts). A fourth write is
+    #     a write that runs on a refusing frame, and that is the defect.
     fail_ok = False
     latch_ok = False
     once_ok = False
+    writes_ok = False
     # Anchored on the IF HEADER, not on the first textual `allocationFailed()`: the
     # accepted assignment form writes the call twice, and a plain `code.find` landed on
     # the assignment and made its own window empty.
@@ -974,17 +1033,38 @@ def adjudicate(text, quiet=False):
     # this net: stated as a limit, not hidden.
     op_sp = object_pass(code)
     scope = code[op_sp["start"]:op_sp["end"]] if op_sp else ""
+    off = op_sp["start"] if op_sp else 0
     backend = backend_mesh_atoms()
     prints = []
     for p in re.finditer(r"log3dsPrintf[ \t]*\(", scope):
         args = call_args(scope, p.end() - 1)
         if not args or not args[0].lstrip().startswith('"'):
             continue
-        if not REFUSAL_FMT.search(args[0]):
+        # Review-15 F3: TWO nets, not one. Batch 108 replaced batch 107's
+        # format-agnostic scan of the refusing branch with a format filter over the
+        # pass, and wrote "widened" in the record; the format filter is NARROWER on
+        # the branch, so `log3dsPrintf("objects: %d corners this frame",
+        # objectCorners)` inside `if (allocationFailed())` -- review-11 F1's wrong
+        # number, printed on every refusing frame -- was read by neither check and
+        # went green. A line belongs to the refusal family when it sits IN THE
+        # REFUSING BRANCH (whatever it says: inside that branch every line the pass
+        # prints is a line about the refusal) OR when its own format names the
+        # refusal (review-14 F7's sibling-condition line, which is outside the
+        # branch). The union is what both D1 and F7 asked for; neither half alone
+        # closes the other's mutant.
+        in_branch = (branch_sp is not None
+                     and branch_sp[0] <= off + p.start() < branch_sp[1])
+        if not (in_branch or REFUSAL_FMT.search(args[0])):
             continue
         prints.append((p, args))
+    # Review-15 F4: `backend is None` must make this check RED, not raise. The
+    # docstring of backend_mesh_atoms() promises exactly that, and the loop below
+    # called kb_form(None) unconditionally, so a rewritten `linearAlloc` expression
+    # killed the script with a TypeError after 16 lines: no check 18, no check 19,
+    # no arm and no probe run, and an unattributed traceback where a named failure
+    # should have been. The claim was true only of the FIRST use of `backend`.
     fail_ok = bool(prints) and backend is not None
-    for p, args in prints:
+    for p, args in (prints if backend is not None else []):
         vals = args[1:]
         derived = [v for v in vals[1:] if "*" in v or "/" in v]
         if not vals or not derived:
@@ -1017,12 +1097,17 @@ def adjudicate(text, quiet=False):
         if not fail_ok:
             break
 
+    else_sp = None
+    enc = None
     if branch_sp is not None:
         after = code[branch_sp[1]:]
         rest = re.match(r"[ \t\r\n]*else[ \t]*\{", after)
         if rest is not None:
             esp = block_span_from(after, rest.end() - 1)
             if esp is not None:
+                # Absolute, so check 20 can compare it against writes found anywhere
+                # in the pass and not only inside this `else`.
+                else_sp = (branch_sp[1] + esp[0], branch_sp[1] + esp[1])
                 cl = re.search(r"streamFailureLogged[ \t]*=[ \t]*false[ \t]*;",
                                after[esp[0]:esp[1]])
                 # The clear must be a DIRECT statement of the `else` block. One
@@ -1030,23 +1115,22 @@ def adjudicate(text, quiet=False):
                 # frame, which is review-14 F2's hazard on this half of the check.
                 latch_ok = (cl is not None
                             and brace_depth(after, esp[0], esp[0] + cl.start()) == 1)
-        if not latch_ok:
-            enc = enclosing_block(code, at)
-            if enc is not None:
-                m = re.search(
-                    r"streamFailureLogged[ \t]*=[ \t]*objectDraw\.allocationFailed\("
-                    r"[ \t]*\)[ \t]*;", code[enc[0]:at])
-                # Review-14 F2: POSITION is not REACHABILITY. The accepted assignment
-                # form is the same state machine only when it runs on EVERY frame, and
-                # "somewhere in the enclosing block, before the test" does not say
-                # that: a copy nested inside an inner condition (`if (objectCorners ==
-                # 0) { ... }`, `if (capacity != last) { ... }`) satisfies a window
-                # search, never clears on a frame that did not refuse, and silences
-                # the second, larger refusal after a recovery -- review-11 F7 again,
-                # with checks 18 and 19 both green. Depth 1 from the block's own '{'
-                # is decidable in text and is what "runs on every frame" means here.
-                latch_ok = (m is not None
-                            and brace_depth(code, enc[0], enc[0] + m.start()) == 1)
+        enc = enclosing_block(code, at)
+        if not latch_ok and enc is not None:
+            m = re.search(
+                r"streamFailureLogged[ \t]*=[ \t]*objectDraw\.allocationFailed\("
+                r"[ \t]*\)[ \t]*;", code[enc[0]:at])
+            # Review-14 F2: POSITION is not REACHABILITY. The accepted assignment
+            # form is the same state machine only when it runs on EVERY frame, and
+            # "somewhere in the enclosing block, before the test" does not say
+            # that: a copy nested inside an inner condition (`if (objectCorners ==
+            # 0) { ... }`, `if (capacity != last) { ... }`) satisfies a window
+            # search, never clears on a frame that did not refuse, and silences
+            # the second, larger refusal after a recovery -- review-11 F7 again,
+            # with checks 18 and 19 both green. Depth 1 from the block's own '{'
+            # is decidable in text and is what "runs on every frame" means here.
+            latch_ok = (m is not None
+                        and brace_depth(code, enc[0], enc[0] + m.start()) == 1)
 
     guarded = [block_span_from(scope, g.end() - 1)
                for g in re.finditer(r"\bif[ \t]*\(([^{}();]*)\)[ \t]*\{", scope)
@@ -1076,6 +1160,41 @@ def adjudicate(text, quiet=False):
             if not armed:
                 once_ok = False
                 break
+    # Review-15 F1: the write SET. Checks 18 and 19 read the clear and the guard;
+    # neither reads a THIRD write, so a second `streamFailureLogged = false;` --
+    # one at the end of the refusing branch, one as a plain statement after the
+    # if/else -- clears the latch on the frame that refused, the guard is true
+    # again next frame, and the refusal prints ~60x/s with 17, 18 and 19 all
+    # green. Every write to the latch inside the pass must therefore be one of
+    # exactly the three shapes the state machine needs, each a DIRECT statement
+    # (depth 1) of the block that makes it run when it should:
+    #   `= true`   in a latch-guarded block          -- the arming (check 19)
+    #   `= false`  in the `else` sibling of the test -- the clear  (check 18)
+    #   `= allocationFailed()` in the block enclosing the test, before it
+    #                                              -- check 18's accepted form
+    # A fourth write runs on a refusing frame by construction, and that is the
+    # defect. Writes OUTSIDE the pass (a respawn resetting the latch, say) are not
+    # in this net: they are not on the every-frame path this latch guards.
+    writes_ok = True
+    for w in re.finditer(r"\bstreamFailureLogged[ \t]*=[ \t]*([^;]+);", scope):
+        rhs = re.sub(r"\s+", "", w.group(1))
+        pos = off + w.start()
+        if rhs == "true":
+            ok = any(sp[0] <= w.start() < sp[1]
+                     and brace_depth(scope, sp[0], w.start()) == 1 for sp in guarded)
+        elif rhs == "false":
+            ok = (else_sp is not None and else_sp[0] <= pos < else_sp[1]
+                  and brace_depth(code, else_sp[0], pos) == 1)
+        elif rhs == "objectDraw.allocationFailed()":
+            ok = (enc is not None and enc[0] <= pos < at
+                  and brace_depth(code, enc[0], pos) == 1)
+        else:
+            ok = False
+        if not ok:
+            writes_ok = False
+            break
+    if not writes_ok or not prints:
+        writes_ok = False
     say(CHK["failure-line-names-the-refused-capacity"], fail_ok,
         "the pass rounds up to a power of two and refuses THAT size; a line naming "
         "anything else, or a byte figure that is not the backend's own capacity x "
@@ -1086,6 +1205,10 @@ def adjudicate(text, quiet=False):
     say(CHK["failure-line-prints-once-per-refusal"], once_ok,
         "an unguarded refusal line prints on every frame of one refusal, which is the "
         "log spam the edge trigger exists to stop")
+    say(CHK["failure-latch-writes-are-the-pinned-three"], writes_ok,
+        "a write to the latch beyond the arming, the `else` clear and the anchored "
+        "assignment form clears the edge trigger on a frame that refused, and the "
+        "refusal prints on every frame of it (review-15 F1)")
     return r
 
 
@@ -1439,13 +1562,20 @@ def arm_failure_second_line_names_the_frame_count(text):
     """Add a SECOND refusal line to the branch, built from the frame's corner count
     (review-13 D1). The guarded line stays exactly as committed, so a check that reads
     only the first `log3dsPrintf(` after the test reads that one and passes while this
-    line puts review-11 F1's 9-KB-for-an-80-KB disagreement back on the console."""
+    line puts review-11 F1's 9-KB-for-an-80-KB disagreement back on the console.
+
+    Review-15 F3: the format deliberately does NOT spell FAILED or "refus". Batch
+    108 scoped the family by format string, so a copy of this arm whose format named
+    the refusal was caught by the family filter and proved nothing about the
+    branch-level rule it claimed to test; this one is only visible to a check that
+    reads every printf inside the refusing branch, whatever it says.
+    """
     at = text.find("if (objectDraw.allocationFailed()) {")
     if at < 0:
         return text
     sp = block_span_from(text, text.index("{", at))
     copy = ('                mdk::log3dsPrintf("objects: stream mesh of %d corners "\n'
-            '                                  "linear — linearAlloc FAILED",\n'
+            '                                  "= %d KB linear",\n'
             '                                  objectCorners,\n'
             '                                  (int)((int64_t)objectCorners * 5\n'
             '                                        * sizeof(float) / 1024));\n')
@@ -1551,7 +1681,14 @@ def arm_failure_second_line_sibling_branch(text):
     untouched, so only a check that reads EVERY refusal line in the pass can see that
     this one sits outside the edge trigger and prints every frame of a refusal. It
     compiles: it re-reads the accessor because `attempted` is scoped to the guarded
-    block."""
+    block.
+
+    Review-15 F3: this arm is the ISOLATING mutation for the format half of the
+    family -- it sits outside the refusing branch, so only a line whose own format
+    names the refusal reaches it. The branch half is isolated by
+    `arm_failure_second_line_names_the_frame_count`, whose format deliberately does
+    NOT name the refusal.
+    """
     marker = ("            } else {\n                streamFailureLogged = false;\n"
               "            }\n")
     at = text.find(marker)
@@ -1566,6 +1703,42 @@ def arm_failure_second_line_sibling_branch(text):
             '                                        * 5 * sizeof(float) / 1024));\n'
             '            }\n')
     return text[:end] + copy + text[end:]
+
+
+def arm_failure_clear_at_the_end_of_the_refusing_branch(text):
+    """Clear the latch on the frame that refused, at the end of the refusing branch
+    (review-15 F1 mutant a). The committed guard, the committed arming and the
+    committed `else` clear are all untouched, so checks 17, 18 and 19 are each
+    satisfied by the code they read -- and the line prints on every frame of one
+    refusal, because the frame that printed also cleared the flag that was supposed
+    to stop the next one. Only a check that reads the whole write set of the latch
+    can see this, and until review-15 nothing in the repository did.
+    """
+    at = text.find("if (objectDraw.allocationFailed()) {")
+    if at < 0:
+        return text
+    sp = block_span_from(text, text.index("{", at))
+    return (text[:sp[1] - 1]
+            + "                streamFailureLogged = false;\n"
+            + text[sp[1] - 1:])
+
+
+def arm_failure_clear_once_per_frame(text):
+    """Clear the latch as a plain statement after the if/else, i.e. once on EVERY
+    frame including the refusing ones (review-15 F1 mutant b). The obvious defensive
+    line -- "reset the diagnostic latch each frame so it cannot carry over" -- is the
+    defect: the guard is true again next frame and one sustained refusal prints ~60x/s
+    with checks 17, 18 and 19 all green. It is a direct statement of the block that
+    encloses the test, so a window search that accepts the anchored assignment form
+    without testing WHERE it sits accepts this too.
+    """
+    marker = ("            } else {\n                streamFailureLogged = false;\n"
+              "            }\n")
+    at = text.find(marker)
+    if at < 0:
+        return text
+    end = at + len(marker)
+    return text[:end] + "            streamFailureLogged = false;\n" + text[end:]
 
 
 def arm_respawn_keeps_the_caches(text):
@@ -1657,6 +1830,14 @@ ARMS = [
      "trigger (review-14 F7)",
      arm_failure_second_line_sibling_branch,
      CHK["failure-line-prints-once-per-refusal"]),
+    ("the refusing branch clears the refused-mesh latch on the frame that refused "
+     "(review-15 F1)",
+     arm_failure_clear_at_the_end_of_the_refusing_branch,
+     CHK["failure-latch-writes-are-the-pinned-three"]),
+    ("the refused-mesh latch is cleared once per frame after the if/else "
+     "(review-15 F1)",
+     arm_failure_clear_once_per_frame,
+     CHK["failure-latch-writes-are-the-pinned-three"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -1722,6 +1903,23 @@ PROBES = [
                                       "(%d bytes)", attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float)));
 """, 1)),
+    # Review-15 F3 restored the rule that EVERY printf inside the refusing branch is a
+    # refusal line whatever its wording. A net that reads every line must also ACCEPT
+    # every honest one: this line never spells FAILED or "refus", names the refused
+    # capacity, and sits inside the edge trigger, so reddening it would be review-10
+    # F6's failure again -- a gate that rejects a shape the port may write is a gate
+    # the next batch routes around.
+    ("a second line in the refusing branch names the refused capacity without the "
+     "word FAILED (review-15 F3: the branch net must accept an honest line)",
+     lambda s: s.replace("""                                      (int)((int64_t)attempted * 5 * sizeof(float) /
+                                            1024));
+""",
+                         """                                      (int)((int64_t)attempted * 5 * sizeof(float) /
+                                            1024));
+                    mdk::log3dsPrintf("objects: the request was %d corners "
+                                      "(%d bytes)", attempted,
+                                      (int)((int64_t)attempted * 5 * sizeof(float)));
+""", 1)),
     # Check 17 compares FACTOR SETS after folding one level of local integer
     # constants (review-14 F6), because naming the stride is the drift-proof refactor a
     # later batch should write, not a defect: a gate that reddens it is a gate that
@@ -1747,6 +1945,27 @@ PROBES = [
                     streamFailureLogged = true;
                 }""", 1)),
 ]
+# --- mutant dump (review-15 F5) ------------------------------------------------
+# `arm_compile_check.sh` needs the mutants as FILES so it can hand them to the
+# cross compiler. They are written HERE, beside the lists the gate adjudicates, so
+# what gets compiled is exactly what gets adjudicated -- a second extractor would
+# be a second implementation, and the one that rots. Unset by default, so the
+# suite's behaviour is unchanged.
+DUMP = os.environ.get("MDK_MUTANT_DUMP")
+if DUMP:
+    import os as _os
+    _os.makedirs(DUMP, exist_ok=True)
+    with open(_os.path.join(DUMP, "00_parent.cpp"), "w") as fh:
+        fh.write(SRC)
+    for _i, _e in enumerate(ARMS):
+        with open(_os.path.join(DUMP, "arm%02d.cpp" % _i), "w") as fh:
+            fh.write(_e[1](SRC))
+    for _i, _e in enumerate(PROBES):
+        with open(_os.path.join(DUMP, "probe%02d.cpp" % _i), "w") as fh:
+            fh.write(_e[1](SRC))
+    print("dumped %d arms and %d probes to %s" % (len(ARMS), len(PROBES), DUMP))
+    sys.exit(0)
+
 print("main_3ds_flow: %s — %d checks, %d mutation arms, %d green probes"
       % (PATH, real.checks, len(ARMS), len(PROBES)))
 arms_red = 0
