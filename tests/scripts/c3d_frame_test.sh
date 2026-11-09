@@ -282,9 +282,20 @@ REFUSAL_FMT = re.compile(r"FAILED|refus", re.IGNORECASE)
 # renderer pointer and the local's name is not part of the invariant -- pinning
 # `renderer->` would redden a rename of the local, which is review-10 F6's failure
 # (a gate that rejects a shape the port may write gets routed around).
-LATCH_NEG = re.compile(r"![ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*->[ \t]*)?"
-                       r"meshAllocFailureLogged"
-                       r"|meshAllocFailureLogged[ \t]*==[ \t]*false")
+#
+# Review-16 R2: the prefix used to sit INSIDE the first alternative only, so the
+# `== false` spelling this comment promised was accepted could only match a bare
+# local -- a shape this backend never writes, since the field is reached through the
+# struct pointer. `if (renderer->meshAllocFailureLogged == false) {`, which is the
+# SAME state machine, therefore failed `fullmatch`, the guard stopped counting as a
+# latch guard, and the gate printed `FAIL ... 1 refusal printf(s), all inside a
+# latch-guarded block that arms it: no` over correct code. The prefix is now a
+# separate optional group so it applies to both spellings, and a probe pins the
+# `== false` form so the fix cannot rot back.
+_LATCH_PREFIX = r"(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*->[ \t]*)?"
+LATCH_NEG = re.compile(r"![ \t]*" + _LATCH_PREFIX + r"meshAllocFailureLogged"
+                       r"|" + _LATCH_PREFIX + r"meshAllocFailureLogged"
+                       r"[ \t]*==[ \t]*false")
 
 
 def eye_loop_span(text):
@@ -946,11 +957,34 @@ def adjudicate(text, quiet=False):
             blank_comments(text)))
         sole_clear = (len(clears) == 1
                       and mesh_body[0] <= clears[0].start() < mesh_body[1])
+        # Review-16 open question 2, closed with a pin rather than a comment. The net
+        # counts WRITES spelled `x->meshAllocFailureLogged = false;`. A write through
+        # an alias -- `bool* const l = &renderer->meshAllocFailureLogged; *l = false;`
+        # in `mdk_render_begin_frame` -- is the same per-frame reset and is invisible
+        # to a name scan. The reviewer judged an alias implausible in this file, and
+        # probably right; the counterargument is that every other write net in this
+        # family (the frontend's check 20) had to learn the same lesson, and taking the
+        # address of a latch is a normal refactor for a field written in two places.
+        # So: if the address of the latch is ever taken, the name scan no longer
+        # describes the write set and this check says so instead of passing.
+        aliased = bool(re.search(r"&[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t]*->[ \t]*)?"
+                                 r"meshAllocFailureLogged", blank_comments(text)))
+        sole_clear = sole_clear and not aliased
         # STATED LIMIT, not a hidden one: the net is "exactly one clear in the file",
         # which is the property the spam needs. A future teardown reset would be a
         # second clear and would have to be argued into this check on purpose, which
         # is the point -- a per-frame reset is the defect (review-15 F2), and anything
         # else has to be a decision rather than an oversight.
+        #
+        # Review-16 open question 1, stated rather than fixed: the guard and refusal
+        # scan is scoped to the mesh factory's body, because that is where the latch
+        # lives. A refusal printf for a mesh moved into a helper called from here would
+        # sit outside that span and this net would not see it. That is the same scope
+        # assumption review-16 R1 caught on the frontend one level up, and it is here
+        # on purpose: the frontend's frame body is a single function that owns its
+        # whole frame, whereas a mesh factory legitimately delegates. If mesh creation
+        # ever does move, this check moves with it; it is not a defect today, but it is
+        # not coverage either.
     rep.check("mesh-refusal-line-is-edge-triggered",
               bool(refusals) and armed and cleared,
               "%d refusal printf(s), all inside a latch-guarded block that arms it: "
@@ -964,7 +998,10 @@ def adjudicate(text, quiet=False):
               "the latch must be cleared exactly once in the file, on the mesh "
               "factory's success path (review-15 F2); a second clear anywhere else "
               "runs on some other schedule, and one that runs every frame re-arms the "
-              "latch under a sustained refusal -- the spam this latch exists to stop")
+              "latch under a sustained refusal -- the spam this latch exists to stop. "
+              "A write through an alias (`&renderer->meshAllocFailureLogged`) also "
+              "reddens this check: a name scan cannot see it, so it must not be trusted "
+              "while it exists (review-16 open question 2)")
     return rep
 
 
@@ -1228,62 +1265,91 @@ ARMS = [
                          "    C3D_DrawArrays(GPU_TRIANGLES, first, count);\n"
                          "    if (r->diagnosticTriangle) {\n"
                          "        C3D_DrawArrays(GPU_TRIANGLES, 0, 3);\n"
-                         "    }", 1)),
-    ("diagnostic-dropped-from-the-eye-loop", arm_drop_diagnostic),
-    ("diagnostic-after-the-eye-loop", lambda s: arm_move_diagnostic(s, "after-loop")),
-    ("diagnostic-before-its-replay", lambda s: arm_move_diagnostic(s, "before-replay")),
+                         "    }", 1),
+     "diagnostic-drawn-once"),
+    ("diagnostic-dropped-from-the-eye-loop", arm_drop_diagnostic,
+     "diagnostic-called-in-the-eye-loop"),
+    ("diagnostic-after-the-eye-loop", lambda s: arm_move_diagnostic(s, "after-loop"),
+     "diagnostic-called-in-the-eye-loop"),
+    ("diagnostic-before-its-replay", lambda s: arm_move_diagnostic(s, "before-replay"),
+     "diagnostic-drawn-after-its-replay"),
     ("canvas-flush-restored",
      # Review-15 F5's own harvest: this arm spliced `flushDraws(asC3d(r));`, a name
      # that exists only in a comment in this file -- the emitter is `replayQueue`. The
      # mutant never compiled, so it was a mutant of nothing (review-14 F3's class), and
      # the check it claimed to isolate was being certified by text no compiler accepts.
      lambda s: re.sub(r"(void mdk_render_canvas_begin\(MdkRenderer r\) \{)",
-                      r"\1\n    replayQueue(asC3d(r));", s, count=1)),
+                      r"\1\n    replayQueue(asC3d(r));", s, count=1),
+     "replay-only-at-frame-end"),
     ("inset-replay-restored",
      lambda s: re.sub(r"(void mdk_render_begin_inset\(MdkRenderer r, const mdk::Inset\* i\) \{)",
-                      r"\1\n    replayQueue(asC3d(r));", s, count=1)),
+                      r"\1\n    replayQueue(asC3d(r));", s, count=1),
+     "replay-only-at-frame-end"),
     ("present-replay-restored",
-     lambda s: arm_seam_replay(s, "mdk_render_present", "asC3d(rr)")),
+     lambda s: arm_seam_replay(s, "mdk_render_present", "asC3d(rr)"),
+     "replay-only-at-frame-end"),
     ("second-depth-writer",
      lambda s: s.replace("    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);",
                          "    C3D_DepthTest(true, GPU_LEQUAL, GPU_WRITE_ALL);\n"
-                         "    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);", 1)),
+                         "    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);", 1),
+     "depth-state-single-writer"),
     # review-3's five mutants, reproduced as arms so the checks that close those
     # findings cannot be satisfied by a reading of the file.
     ("canvas-quad-draws-immediately",
-     lambda s: arm_canvas_quad_emits(s, "C3D_DrawArrays(GPU_TRIANGLE_STRIP, 0, 4);")),
+     lambda s: arm_canvas_quad_emits(s, "C3D_DrawArrays(GPU_TRIANGLE_STRIP, 0, 4);"),
+     "no-mid-frame-flush"),
     ("canvas-quad-draws-a-record-directly",
-     lambda s: arm_canvas_quad_emits(s, "mdk::MeshDraw rec;\n    drawRecorded(asC3d(r), &rec);")),
+     lambda s: arm_canvas_quad_emits(s, "mdk::MeshDraw rec;\n    drawRecorded(asC3d(r), &rec);"),
+     "no-mid-frame-flush"),
     ("diagnostic-guarded-to-one-eye",
-     lambda s: arm_guard_loop_statement(s, "drawDiagnostic")),
+     lambda s: arm_guard_loop_statement(s, "drawDiagnostic"),
+     "eye-loop-statements-unconditional"),
     ("replay-guarded-to-one-eye",
-     lambda s: arm_guard_loop_statement(s, "replayQueue")),
-    ("queue-reset-inside-the-eye-loop", arm_reset_in_loop),
-    ("install-hoisted-above-the-eye-loop", arm_install_hoisted),
-    ("install-after-its-replay", arm_install_after_replay),
+     lambda s: arm_guard_loop_statement(s, "replayQueue"),
+     "eye-loop-statements-unconditional"),
+    ("queue-reset-inside-the-eye-loop", arm_reset_in_loop,
+     "no-queue-reset-in-the-eye-loop"),
+    ("install-hoisted-above-the-eye-loop", arm_install_hoisted,
+     "eye-loop-statements-unconditional"),
+    ("install-after-its-replay", arm_install_after_replay,
+     "install-eye-first-in-loop"),
     ("install-fixed-target-for-both-eyes",
      lambda s: s.replace("installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);",
-                         "installEye(r, r->targetLeft, 0.0f);", 1)),
+                         "installEye(r, r->targetLeft, 0.0f);", 1),
+     "install-eye-per-eye-target"),
     # review-4's five mutants, each one a placement or a spelling that left every
     # review-3 check green. Written as arms so the checks that close those findings
     # cannot be satisfied by a reading of the file.
     ("eye-loop-breaks-after-the-first-eye",
-     lambda s: arm_loop_early_exit(s, "if (eye == 0) break;")),
+     lambda s: arm_loop_early_exit(s, "if (eye == 0) break;"),
+     "eye-loop-runs-every-pass"),
     ("eye-loop-returns-after-the-first-eye",
-     lambda s: arm_loop_early_exit(s, "if (eye == 0) return;")),
-    ("queue-reset-before-the-eye-loop", arm_reset_before_loop),
-    ("queue-reset-at-the-end-of-the-replay", arm_reset_in_replay),
-    ("queue-reset-in-install-eye", arm_reset_in_install_eye),
-    ("queue-reset-removed-from-both-frame-boundaries", arm_reset_removed_from_the_frame),
+     lambda s: arm_loop_early_exit(s, "if (eye == 0) return;"),
+     "eye-loop-runs-every-pass"),
+    ("queue-reset-before-the-eye-loop", arm_reset_before_loop,
+     "frame-end-reset-after-the-eye-loop"),
+    ("queue-reset-at-the-end-of-the-replay", arm_reset_in_replay,
+     "per-eye-functions-do-not-empty-the-queue"),
+    ("queue-reset-in-install-eye", arm_reset_in_install_eye,
+     "per-eye-functions-do-not-empty-the-queue"),
+    ("queue-reset-removed-from-both-frame-boundaries", arm_reset_removed_from_the_frame,
+     "queue-reset-happens-in-the-frame"),
     ("eye-loop-bound-hardcoded-to-one",
-     lambda s: arm_loop_bound(s, "eye < r->eyes.passes", "eye < 1")),
-    ("eye-plan-pass-count-clamped-before-loop", arm_clamp_eye_pass_count),
-    ("eye-loop-increment-skips-pass", arm_loop_increment_skips_eye),
-    ("eye-loop-exits-with-goto", arm_loop_early_goto),
+     lambda s: arm_loop_bound(s, "eye < r->eyes.passes", "eye < 1"),
+     "eye-loop-bound-is-the-eye-plan"),
+    ("eye-plan-pass-count-clamped-before-loop", arm_clamp_eye_pass_count,
+     "eye-plan-count-not-written-in-end-frame"),
+    ("eye-loop-increment-skips-pass", arm_loop_increment_skips_eye,
+     "eye-loop-uses-the-unchanged-plan-count"),
+    ("eye-loop-exits-with-goto", arm_loop_early_goto,
+     "eye-loop-runs-every-pass"),
     ("eye-loop-starts-at-the-second-eye",
-     lambda s: arm_loop_bound(s, "int eye = 0", "int eye = 1")),
-    ("install-targets-swapped-between-eyes", arm_install_targets_swapped),
-    ("install-offset-negated", arm_install_offset_negated),
+     lambda s: arm_loop_bound(s, "int eye = 0", "int eye = 1"),
+     "eye-loop-uses-the-unchanged-plan-count"),
+    ("install-targets-swapped-between-eyes", arm_install_targets_swapped,
+     "install-eye-target-order"),
+    ("install-offset-negated", arm_install_offset_negated,
+     "install-eye-offset-sign"),
     # review-6 F6's mutants: the batch-66 hang, restored three ways. Each is a
     # plausible edit and none of them is visible to any other gate.
     ("create-time-shader-configure-restored",
@@ -1294,13 +1360,16 @@ ARMS = [
      lambda s: s.replace(SHADER_OK_LINE,
                          SHADER_OK_LINE
                          + "\n    shaderProgramConfigure(&r->program, false, false);",
-                         1)),
+                         1),
+     "shader-configure-never-sent-by-hand"),
     ("shader-upload-removed-from-create",
      lambda s: s.replace("        ? shaderProgramSetVsh(&r->program, &r->dvlb->DVLE[0])",
-                         "        ? (Result)0", 1)),
+                         "        ? (Result)0", 1),
+     "shader-uploaded-exactly-once-at-create"),
     ("program-bound-at-create-as-well",
      lambda s: s.replace(SHADER_OK_LINE,
-                         "    C3D_BindProgram(&r->program);\n" + SHADER_OK_LINE, 1)),
+                         "    C3D_BindProgram(&r->program);\n" + SHADER_OK_LINE, 1),
+     "program-bound-only-where-an-eye-is-installed"),
     # The red clear, restored. The single most plausible edit here is the tidy-up
     # that deletes the conversion as a pointless local, and no other gate in the
     # suite can see it, because renderer_c3d.cpp does not compile on a host.
@@ -1308,44 +1377,53 @@ ARMS = [
      lambda s: s.replace(
          "    const uint32_t clear =\n"
          "        mdk::pica::clearColour(params ? params->clear_colour : 0xFF000000u);",
-         "    const uint32_t clear = params ? params->clear_colour : 0xFF000000u;", 1)),
+         "    const uint32_t clear = params ? params->clear_colour : 0xFF000000u;", 1),
+     "clear-colour-is-converted-for-the-pica"),
     # review-3 F3's three mutants, each a plausible edit that no runtime capture
     # in this frontend can show, because the start arena has no blended pass.
     ("second-alpha-blend-writer",
      lambda s: s.replace("    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);",
                          "    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE,\n"
                          "                       GPU_ZERO, GPU_ONE, GPU_ZERO);\n"
-                         "    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);", 1)),
+                         "    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);", 1),
+     "alpha-blend-single-writer"),
     ("alpha-test-in-the-per-draw-path",
      lambda s: s.replace("    C3D_DrawArrays(GPU_TRIANGLES, first, count);",
                          "    C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);\n"
-                         "    C3D_DrawArrays(GPU_TRIANGLES, first, count);", 1)),
+                         "    C3D_DrawArrays(GPU_TRIANGLES, first, count);", 1),
+     "alpha-test-single-writer-in-install-eye"),
     ("alpha-test-reference-moved",
      lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);",
-                         "C3D_AlphaTest(true, GPU_GREATER, 5);", 1)),
+                         "C3D_AlphaTest(true, GPU_GREATER, 5);", 1),
+     "alpha-test-is-the-oracles-discard"),
     ("alpha-test-disabled",
      lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);",
                          "C3D_AlphaTest(false, GPU_ALWAYS, mdk::pica::kAlphaTestReference);",
-                         1)),
+                         1),
+     "alpha-test-is-the-oracles-discard"),
     # The backend's own refused-mesh latch (review-14's related observation). This is
     # the line that printed 1710 times in one run; the frontend's copy of the same
     # edge trigger is pinned three times and this one was pinned not at all.
     ("mesh-refusal latch never clears (the second, larger refusal is silent)",
      lambda s: re.sub(r"[ \t]*renderer->meshAllocFailureLogged[ \t]*=[ \t]*false;[ \t]*\n",
-                      "", s, count=1)),
+                      "", s, count=1),
+     "mesh-refusal-line-is-edge-triggered"),
     ("mesh-refusal latch never arms (the guard is always true, so the line prints on "
      "every frame of one refusal)",
      lambda s: re.sub(r"[ \t]*renderer->meshAllocFailureLogged[ \t]*=[ \t]*true;[ \t]*\n",
-                      "", s, count=1)),
+                      "", s, count=1),
+     "mesh-refusal-line-is-edge-triggered"),
     ("mesh-refusal guard widened to nothing (the line prints on every frame)",
      lambda s: s.replace("if (!renderer->meshAllocFailureLogged) {",
-                         "if (true) {", 1)),
+                         "if (true) {", 1),
+     "mesh-refusal-line-is-edge-triggered"),
     ("mesh-refusal latch cleared from inside the failing branch (it clears on the very "
      "frame it refused, so the line prints every frame anyway)",
      lambda s: s.replace(
          "        if (!renderer->meshAllocFailureLogged) {",
          "        renderer->meshAllocFailureLogged = false;\n"
-         "        if (!renderer->meshAllocFailureLogged) {", 1)),
+         "        if (!renderer->meshAllocFailureLogged) {", 1),
+     "mesh-refusal-line-is-edge-triggered"),
     # Review-15 F2: the two mutants the one-printf, one-function reading let through.
     ("a second refused-mesh line sits after the guard and prints on every refusing "
      "frame (review-15 F2)",
@@ -1360,13 +1438,25 @@ ARMS = [
          "(int)cap);\n        }\n"
          "        mdk::log3dsPrintf(\"linearAlloc(%u) FAILED again this frame\",\n"
          "                          (unsigned)((size_t)cap * 5 * sizeof(float)));\n",
-         1)),
+         1),
+     "mesh-refusal-line-is-edge-triggered"),
     ("the refused-mesh latch is cleared once per frame from mdk_render_begin_frame "
      "(review-15 F2)",
      lambda s: s.replace("    r->inFrame = true;\n    r->frame++;",
                          "    r->inFrame = true;\n"
                          "    r->meshAllocFailureLogged = false;\n"
-                         "    r->frame++;", 1)),
+                         "    r->frame++;", 1),
+     "mesh-refusal-latch-cleared-nowhere-else"),
+    # Review-16 open question 2's pin: the same per-frame reset written through an
+    # alias, which a scan for the field NAME cannot see. It reddens the sole-clear check
+    # because the check refuses to certify a write set it cannot enumerate.
+    ("the refused-mesh latch is cleared every frame through a pointer alias "
+     "(review-16 open question 2)",
+     lambda s: s.replace("    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry",
+                         "    if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry\n"
+                         "    bool* const latchAlias = &r->meshAllocFailureLogged;\n"
+                         "    *latchAlias = false;", 1),
+     "mesh-refusal-latch-cleared-nowhere-else"),
     # Review-15 F3's lesson, applied to the backend's copy of the same net: a line in
     # the failing branch whose format never spells the refusal is invisible to a
     # format filter, and this arm is what isolates the branch half here.
@@ -1382,7 +1472,29 @@ ARMS = [
          "                              (unsigned)((size_t)cap * 5 * sizeof(float)), "
          "(int)cap);\n        }\n"
          "        mdk::log3dsPrintf(\"dynamic mesh: %d corners requested\", (int)cap);\n",
-         1)),
+         1),
+     "mesh-refusal-line-is-edge-triggered"),
+]
+
+# --- probes (review-16 R2) ----------------------------------------------------
+# Same contract as `PROBES` in `main_3ds_flow_test.sh`: a probe is a change to the
+# real file that must stay GREEN, because it is a shape the port may legitimately
+# write. Without this mechanism the c3d gate could only ever prove that a mutation
+# is caught, never that a legal spelling is accepted -- so when review-16 R2 found
+# that `if (renderer->meshAllocFailureLogged == false) {`, the second spelling
+# `LATCH_NEG` documents, failed `fullmatch` and reddened correct code, nothing in
+# the gate could have said so. The first probe pins exactly that.
+PROBES = [
+    ("the refused-mesh guard is written as a comparison, not a negation (review-16 "
+     "R2: the second LATCH_NEG spelling is a read, not a write)",
+     lambda s: s.replace("        if (!renderer->meshAllocFailureLogged) {",
+                         "        if (renderer->meshAllocFailureLogged == false) {", 1)),
+    # The other half of the same regex: the latch is reached through a struct member,
+    # so a rename of the local that holds the renderer must not redden the gate.
+    ("the refused-mesh guard reaches the latch through a renamed local pointer",
+     lambda s: s.replace("        if (!renderer->meshAllocFailureLogged) {",
+                         "        auto* const rd = renderer;\n"
+                         "        if (!rd->meshAllocFailureLogged) {", 1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------
@@ -1397,21 +1509,38 @@ if DUMP:
     for _i, _e in enumerate(ARMS):
         with open(_os.path.join(DUMP, "arm%02d.cpp" % _i), "w") as fh:
             fh.write(_e[1](SRC))
-    print("dumped %d arms to %s" % (len(ARMS), DUMP))
+    # Review-15 F5 asked for "every mutant"; the probes are mutants too, and a probe
+    # that does not compile is a probe that has never tested anything.
+    for _i, _p in enumerate(PROBES):
+        with open(_os.path.join(DUMP, "probe%02d.cpp" % _i), "w") as fh:
+            fh.write(_p[1](SRC))
+    print("dumped %d arms and %d probes to %s" % (len(ARMS), len(PROBES), DUMP))
     sys.exit(0)
 
 print("c3d_frame: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))
 arms_red = 0
-for label, mutate in ARMS:
+for label, mutate, expect in ARMS:
     mutated = mutate(SRC)
     if mutated == SRC:
         print("  FAIL c3d_frame arm %s: the mutation changed nothing, so the arm tested the "
               "file it was handed instead of the invariant" % label)
         continue
     after = adjudicate(mutated, quiet=True)
-    if after.failed:
+    # Review-16 R5: the c3d gate used to require only that an arm turn SOME check red,
+    # while the flow gate beside it required the check the arm NAMES. The difference is
+    # not cosmetic: a later predicate rewrite can move an arm from the check it was cut
+    # for onto a different one, and the gate still prints `ok`, so the arm no longer
+    # isolates anything and nothing says so. Review-14 F3's "half-pinned" class, in the
+    # one place in this family that still had it. Every one of the 44 arms is now bound,
+    # and the binding was generated from the measured run rather than typed, so it is
+    # the current truth and not an intention.
+    if after.failed and after.broke == expect:
         arms_red += 1
         print("  ok   arm %s: turned `%s` red as required" % (label, after.broke))
+    elif after.failed:
+        print("  FAIL c3d_frame arm %s: turned `%s` red, but it is cut for `%s`, so it no "
+              "longer isolates the check it claims to isolate (review-16 R5)"
+              % (label, after.broke, expect))
     else:
         print("  FAIL c3d_frame arm %s: the mutation was accepted, so the check does not pin "
               "what it claims to pin" % label)
@@ -1422,6 +1551,28 @@ if arms_red != len(ARMS):
     print("  FAIL c3d_frame: only %d of %d arms adjudicated red; a PASS here would be a "
           "reading of nothing" % (arms_red, len(ARMS)))
     sys.exit(1)
-print("PASS C3dFrame (%d checks, %d arms adjudicated red)" % (real.checks, arms_red))
+# Review-16 R2: the probes, with the same rule as the flow gate's -- a probe that
+# reddens a check is the gate rejecting a shape the port may write, and a probe that
+# reddens NOTHING is a mutation that changed nothing and so tested nothing.
+probes_green = 0
+for label, mutate in PROBES:
+    mutated = mutate(SRC)
+    if mutated == SRC:
+        print("  FAIL c3d_frame probe %s: the probe changed nothing, so it tested the file "
+              "it was handed instead of the invariant" % label)
+        continue
+    after = adjudicate(mutated, quiet=True)
+    if not after.failed:
+        probes_green += 1
+        print("  ok   probe %s stayed green" % label)
+    else:
+        print("  FAIL c3d_frame probe %s: correct code turned `%s` red, so the check "
+              "rejects a shape the port may legitimately write (review-16 R2)"
+              % (label, after.broke))
+if probes_green != len(PROBES):
+    print("  FAIL c3d_frame: only %d of %d probes stayed green" % (probes_green, len(PROBES)))
+    sys.exit(1)
+print("PASS C3dFrame (%d checks, %d arms adjudicated red, %d probes green)"
+      % (real.checks, arms_red, probes_green))
 PY
 exit $?

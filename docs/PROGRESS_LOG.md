@@ -20600,3 +20600,121 @@ hypothesis, explicitly **not** verified against GBATEK, and the clear-word conve
 `pica_matrix.h:302-319` does not transfer to a texture format), or the second Tev stage, which
 nothing in `renderer_c3d.cpp` configures while stage 0 is set on every draw. Each is one build
 and one `panel_geom.py` run. Recorded in `docs/CONTINUATION.md`'s NEXT.
+
+## Iteration 137 — batch 110: review-16 closed 6/6 (no Critical, no High) — a write-set net
+## scoped to the pass it sat inside missed the frame that contained it, and a net that reads
+## a field by its name cannot enumerate a write through an alias
+
+Review: `logs/ralph-pi/run-20261108-195620/review-16.md`. No Critical, no High. One Medium
+(R1) and five Low (R2–R6), plus three open questions. All six findings and all three
+questions are closed. No shipped instruction changed: `mdk.elf` md5
+`b1997a5dca83639acf603d518abe8e62` is unchanged since batch 107, the frame is byte-identical
+to batch 109's (`6646adf1…`), and no `mdk_3ds/**` path is in the diff, so P8 owes no
+emulator run for this batch.
+
+**R1 (Medium) — confirmed, fixed, pinned.** Check 20 enumerates every write to
+`streamFailureLogged` and allows exactly three shapes. It scanned `object_pass()`. The
+reviewer's mutant wrote `streamFailureLogged = false;` as the first statement of
+`while (aptMainLoop())` — the edit anyone would make when told "the latch must not carry
+over between frames" — and it sat outside the scanned span, compiled clean for armv6k, and
+restored review-12 R1's ~60x/s refusal spam with 20 checks, 32 arms and 12 probes green.
+The check's own comment justified the scope with "writes outside the pass are not on the
+every-frame path", which is simply false: the frame body *is* the every-frame path, and the
+latch is declared in `main()` before it. Three changes:
+
+- the scan's scope is now `frame_body_span(code)`, with the pass's span demoted to one of
+  the regions the three pinned shapes may sit in;
+- the pattern is newline-tolerant around `=` (`streamFailureLogged\n    = false;` is the
+  same statement, and a scan that cannot cross the newline does not see it — the
+  reviewer's mutant b);
+- two arms pin it, one per mutant, both verified against the reviewer's own files in
+  `/tmp/rv17` rather than against a re-invention.
+
+**R2 (Low) — confirmed on the backend, and found again on the frontend.** `LATCH_NEG`
+documents two spellings of the guard, but the optional `name->` prefix sat *inside* the
+first alternative, so `== false` could only match a bare local — a shape this backend never
+writes, since the field is reached through the struct pointer.
+`if (renderer->meshAllocFailureLogged == false) {`, which is the same state machine, failed
+`fullmatch`, the guard stopped counting as a latch guard, and the gate printed
+`FAIL … 1 refusal printf(s), all inside a latch-guarded block that arms it: no` over
+correct code. The prefix is now its own optional group. The c3d gate had **no probe
+mechanism at all**, so nothing in it could ever have said "a legal spelling was rejected";
+it now has one, with two probes (`== false`, and the latch reached through a renamed local
+pointer). The same bug existed on this side in a different place: check 20's write pattern
+read the `==` in `if (streamFailureLogged == false)` as a write and reddened the guard the
+same `LATCH_NEG` accepts. `=(?!=)` fixes it and a probe pins it. That one is my finding, not
+the reviewer's.
+
+**R3 (Low) — fixed by deleting the counts.** The header quoted "all 32 arms and 12 probes
+(and all 43 of `c3d_frame_test.sh`)" and `PASS ArmCompile (89 mutants)`. Review-15 F5 had
+raised the drift and the fix named the command that re-measures; the numbers next to it
+went stale in the same edit. The counts are gone and the command is the record. This batch
+moved them again (35 arms / 14 probes, 45 arms / 2 probes, 98 mutants), which is the point.
+
+**R4 (Low) — half confirmed, half rebutted.** The reviewer is right that the script failed
+with a message about the tree rather than the mutants, and wrong about the fix.
+`renderer_c3d.cpp:60` includes `mdk_c3d_shbin.h`, which the shader step *generates* into
+`mdk_3ds/build`; the reviewer measured only the flow mutants, and `main_3ds.cpp` does not
+include that header, so the flow half compiles on a bare clone and the c3d half cannot.
+Dropping `-I mdk_3ds/build` would not make the c3d half runnable, it would make it fail on
+a missing include instead of a missing generated file. What is kept: the path, and the two
+source dirs as a wrong-directory error. What changed: the c3d gate now checks for the
+header by name, names the command that makes it (`make -C mdk_3ds`), and a run that skipped
+a whole gate exits 1 as INCOMPLETE instead of printing a PASS over a partial count.
+
+**R5 (Low) — confirmed, fixed mechanically.** The c3d gate required only that an arm turn
+*SOME* check red; the flow gate beside it required the check the arm *names*. A later
+predicate rewrite can move an arm onto a different check and the gate still prints `ok`, so
+the arm isolates nothing and nothing says so — review-14 F3's half-pinned class, in the one
+place in the family that still had it. All 45 arms now carry the check they pin, and the
+binding was generated from the measured run rather than typed, so it is the current truth
+and not an intention. That is a legitimate derivation here: what the annotation asserts is
+"this arm reddens this check", and the gate re-verifies it on every run, so a future drift
+is a FAIL rather than a silent re-binding.
+
+**R6 (Low) — confirmed.** `docs/CONTINUATION.md` cited `renderer_c3d.cpp:1854` for
+`mdk_render_canvas_quad` in two places; the function is at `:2345`. Both corrected.
+
+**Open question 1 — stated as a limit, not hidden.** The backend's refusal net is scoped to
+`mdk_render_create_dynamic_mesh`'s body. A per-frame refusal line in another function is
+green. That is the same scope assumption R1 caught one level up, and it is kept on purpose:
+the frontend's frame body is one function that owns its whole frame, whereas a mesh factory
+legitimately delegates. Recorded in the check's comment as a limit with the condition that
+would move it.
+
+**Open question 2 — closed with a pin on both sides, not a comment.** The reviewer judged
+`bool* const latch = &r->meshAllocFailureLogged; *latch = false;` implausible and left it
+as a question. It is the same defect as the per-frame clear, written through a name the scan
+does not read, and taking a reference to a field written in two places is a normal refactor
+rather than an exotic attack. Both nets now refuse to certify a write set they cannot
+enumerate: an address-of or a reference/pointer declaration initialised from the latch
+reddens the check, with an arm each. The reviewer's own file `/tmp/rv17/c_alias_clear.cpp`
+(`bool& latchAlias = streamFailureLogged;`) went from green to red; note the `&` sits on the
+alias's name and never touches the field's, so a scan for `&streamFailureLogged` alone —
+the first version written here — does not catch it.
+
+**Open question 3 — answered by re-shaping the rule, not loosening it.** The loop required a
+`derived` argument on every refusal line, so a line that names the refused capacity and
+prints no byte figure reddened check 17 with a message about byte figures. The rule is now
+"no refusal line may *disagree* with the backend": the first figure must be the refused
+capacity; a line that names `%d KB` must carry a figure derived from it (or the unit labels
+the corner count, review-11 F1's 1024x cousin); a capacity-only line is legal. Review-15
+F3's mutant (`"objects: %d corners this frame", objectCorners`) still reddens, via the
+first-argument rule rather than the derived one, which is what makes the relaxation safe —
+verified against `/tmp/rv17/m3_review15_exact.cpp`, not argued.
+
+**Measured.** `sh tests/scripts/main_3ds_flow_test.sh` → `PASS Main3dsFlow (20 checks, 35
+arms adjudicated red, 14 probes green)`. `sh tests/scripts/c3d_frame_test.sh` → `PASS
+C3dFrame (31 checks, 45 arms adjudicated red, 2 probes green)`. `sh
+tests/scripts/arm_compile_check.sh` → `PASS ArmCompile (98 mutant(s), 0 diagnostics)` (49
+flow + 49 c3d, up from 90). `make -C tests/scripts` → `All cases match the oracle.` `bash
+tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no `.cia`). No `tools/` file
+changed, so nothing in the gate pipeline was relaxed.
+
+**Prior-solution lookup (AGENTS §0).** `pi-knowledge` `mdk-sdl` searched for prior work on
+scoping a write-set net (`frame body versus object pass`): top hits were the object-draw
+stream comments and the c3d arm block itself, i.e. no prior finding on this question, and the
+retrieved text was checked against this contract rather than trusted. No `obsidian_*` or
+`cognee_*` tools are exposed in this session, so per P9 that is recorded as a session
+configuration gap rather than as a lookup that happened; the disk vault was not used as a
+substitute for Cognee's graph search.

@@ -1,0 +1,31 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-09T18:20:33Z at 9321df4
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the picture did not move: this batch changes no shipped instruction. The diff is
+three test harnesses (tests/scripts/main_3ds_flow_test.sh, tests/scripts/c3d_frame_test.sh,
+tests/scripts/arm_compile_check.sh) and two docs files; neither shipped target compiles
+any of them. The expected result is therefore a byte-identical picture, and that is
+measured rather than asserted: this PNG's sha256 is
+6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8, identical to
+docs/frames/2026-11-09-review15-write-set-pinned.png (batch 109) and to every pinned
+frame back to 2026-11-06-review9-remediation.png (batch 93), with the gap line unchanged
+at bad_percent=1.240, max_delta=247, mean_delta=0.1819. The 3DS binary is the same proof
+read the other way: mdk.elf md5 b1997a5dca83639acf603d518abe8e62, unchanged since batch
+107, so no P8 emulator run is owed for this diff (no mdk_3ds/** path changed).
+
+what the batch was for: review-16 (logs/ralph-pi/run-20261108-195620/review-16.md) found
+no Critical and no High, one Medium and five Low, and all six are about the gate family
+that has been the work for five batches. R1 is the one that mattered: check 20's write-set
+scan stopped at the object pass, so `streamFailureLogged = false;` written as the FIRST
+STATEMENT of `while (aptMainLoop())` — the natural "reset the diagnostic latch at frame
+start" — compiled clean for armv6k, restored review-12 R1's ~60x/s refusal spam, and
+printed a green PASS while the check's own comment asserted the false premise that writes
+outside the pass are not on the every-frame path. The scan now covers the frame body, is
+newline-tolerant around `=`, and refuses a write set it cannot enumerate (a reference or
+address alias of the latch). Two arms pin it, including the reviewer's own mutants, which
+are reproduced from /tmp/rv17 and now redden check 20.
+
+why a static frame is the honest record here: the thing that was broken was the ability to
+NOTICE something breaking. A latch that prints 1710 times in the emulator log is a picture
+that does not change, which is why the defect class this family guards has never moved a
+pixel and never will. The frame is pinned to prove the batch did not move one either.

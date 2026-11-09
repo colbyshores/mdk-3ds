@@ -69,12 +69,24 @@ trap cleanup EXIT INT TERM
 
 total=0
 bad=0
+skipped=""
 for gate in flow c3d; do
     case "$WHICH" in
         all) ;;
         "$gate") ;;
         *) continue ;;
     esac
+    # The c3d gate needs the generated shader header. Name the file and the command,
+    # and do NOT let a run that skipped a whole gate read as a full pass: a total that
+    # quietly excludes a gate is how a check starts lying about its coverage
+    # (review-16 R4's real point, once the include path itself is kept).
+    if [ "$gate" = c3d ] && [ ! -f "$ROOT/mdk_3ds/build/mdk_c3d_shbin.h" ]; then
+        echo "  SKIP c3d: $ROOT/mdk_3ds/build/mdk_c3d_shbin.h is missing."
+        echo "       renderer_c3d.cpp includes that generated header, so no c3d mutant can"
+        echo "       be syntax-checked until the shader step has run: make -C mdk_3ds"
+        skipped=" c3d"
+        continue
+    fi
     case $gate in
         flow) SCRIPT=$ROOT/tests/scripts/main_3ds_flow_test.sh
               SUBJECT=$ROOT/mdk_3ds/src/main_3ds.cpp ;;
@@ -111,6 +123,13 @@ fi
 if [ "$bad" != 0 ]; then
     echo "FAIL arm_compile_check: $bad of $total mutant(s) did not compile; an arm" >&2
     echo "  that cannot build is a mutant of nothing (review-14 F3)." >&2
+    exit 1
+fi
+if [ -n "$skipped" ]; then
+    echo "FAIL ArmCompile ($total mutant(s), 0 diagnostics) -- INCOMPLETE: no mutant of" >&2
+    echo "       this gate was compiled:$skipped. The SKIP line above names the missing" >&2
+    echo "       generated file and the command that makes it. A partial run of this" >&2
+    echo "       script is not a pass." >&2
     exit 1
 fi
 echo "PASS ArmCompile ($total mutant(s), 0 diagnostics, $CXX)"

@@ -223,11 +223,13 @@
 #     libctru declares three) were caught and fixed.
 #  Every arm and every probe compiles for the 3DS target with the Makefile's own flags.
 #  The claim is re-runnable, not transcribed: `sh tests/scripts/arm_compile_check.sh`
-#  dumps all 32 arms and 12 probes of this file (and all 43 of `c3d_frame_test.sh`) and
-#  syntax-checks each with `arm-none-eabi-g++` and the flags read out of
-#  `mdk_3ds/Makefile`. Measured 2026-11-09: `PASS ArmCompile (89 mutant(s), 0
-#  diagnostics)`. An arm that cannot compile is a mutant of nothing, and a claim nobody
-#  can re-run is a claim that will rot.
+#  dumps EVERY arm and probe of this file and of `c3d_frame_test.sh` -- it reads the
+#  lists out of the two gates rather than restating them -- and syntax-checks each with
+#  `arm-none-eabi-g++` and the flags read out of `mdk_3ds/Makefile`. No count is quoted
+#  here on purpose: review-15 F5 raised the missing generator and review-16 R3 caught
+#  the transcribed counts going stale in the same file that named the command, so the
+#  command is the record and the tool prints the number. An arm that cannot compile is a
+#  mutant of nothing, and a claim nobody can re-run is a claim that will rot.
 #
 # The backend's copy of the same edge trigger (`meshAllocFailureLogged`, the line that
 # actually printed 1710 times) is pinned in c3d_frame_test.sh, which is the file whose
@@ -1067,7 +1069,20 @@ def adjudicate(text, quiet=False):
     for p, args in (prints if backend is not None else []):
         vals = args[1:]
         derived = [v for v in vals[1:] if "*" in v or "/" in v]
-        if not vals or not derived:
+        # Review-16 open question 3, answered by re-shaping the rule rather than by
+        # loosening it. The rule was "every refusal line states capacity AND a derived
+        # byte figure", which reddened a line that names the refused capacity and
+        # prints no byte figure -- a line that disagrees with NOTHING, so reddening it
+        # was a gate rejecting a shape the port may write (review-10 F6's failure).
+        # The rule is now "no refusal line may DISAGREE with the backend", stated as:
+        #   * the first figure IS the refused capacity (checked below, and the half
+        #     that catches review-15 F3's `%d corners this frame` with `objectCorners`
+        #     and no derived figure at all -- so this relaxation does not reopen F3);
+        #   * every figure AFTER it that is computed must equal the backend's own
+        #     byte figure (checked below against the renderer's expression);
+        #   * and a line that NAMES a byte unit ("%d KB") must carry one, or the unit
+        #     labels the corner count -- the 1024x cousin of review-11 F1.
+        if not vals or ("KB" in args[0] and not derived):
             fail_ok = False
             break
         # The unit the line NAMES decides whether the /1024 is required: a line that
@@ -1163,25 +1178,59 @@ def adjudicate(text, quiet=False):
     # Review-15 F1: the write SET. Checks 18 and 19 read the clear and the guard;
     # neither reads a THIRD write, so a second `streamFailureLogged = false;` --
     # one at the end of the refusing branch, one as a plain statement after the
-    # if/else -- clears the latch on the frame that refused, the guard is true
-    # again next frame, and the refusal prints ~60x/s with 17, 18 and 19 all
-    # green. Every write to the latch inside the pass must therefore be one of
-    # exactly the three shapes the state machine needs, each a DIRECT statement
-    # (depth 1) of the block that makes it run when it should:
+    # if/else, one at the top of the frame loop -- clears the latch on the frame
+    # that refused, the guard is true again next frame, and the refusal prints
+    # ~60x/s with 17, 18 and 19 all green. Every write to the latch in the frame
+    # must therefore be one of exactly the three shapes the state machine needs,
+    # each a DIRECT statement (depth 1) of the block that makes it run when it
+    # should:
     #   `= true`   in a latch-guarded block          -- the arming (check 19)
     #   `= false`  in the `else` sibling of the test -- the clear  (check 18)
     #   `= allocationFailed()` in the block enclosing the test, before it
     #                                              -- check 18's accepted form
     # A fourth write runs on a refusing frame by construction, and that is the
-    # defect. Writes OUTSIDE the pass (a respawn resetting the latch, say) are not
-    # in this net: they are not on the every-frame path this latch guards.
+    # defect. The scope of the scan is therefore THE FRAME, not the pass: review-16
+    # R1 found that a `streamFailureLogged = false;` written as the FIRST STATEMENT
+    # of `while (aptMainLoop())` -- the natural "reset the diagnostic latch at frame
+    # start so it cannot carry over" -- sat outside `object_pass()`, compiled clean
+    # for armv6k, and printed one sustained refusal ~60x/s with all 20 checks, 32
+    # arms and 12 probes green. The comment here used to justify the pass scope with
+    # "writes outside the pass are not on the every-frame path", which is simply
+    # false: the frame body IS the every-frame path, and the latch is declared in
+    # `main()` before it, so every write in that body runs on the frames that
+    # refused. The pass's own span is now just one of the regions the three pinned
+    # shapes are allowed to sit in. A write outside the frame (in a respawn, say)
+    # is still outside the net, and that half is still true: it does not run once a
+    # frame. The pattern is newline-tolerant around `=` for the same reason: a write
+    # wrapped as `streamFailureLogged\n    = false;` is the same statement, and a
+    # scan that cannot cross the newline does not see it (review-16 R1's mutant b).
+    # `(?!=)` keeps a COMPARISON out of the write set: `if (streamFailureLogged ==
+    # false)` is the second spelling LATCH_NEG accepts, not a write, and reading it
+    # as one reddened correct code -- the review-10 F6 failure, on this side.
+    frame_sp = frame_body_span(code)
+    wscope = code[frame_sp[0]:frame_sp[1]] if frame_sp else scope
+    woff = frame_sp[0] if frame_sp else off
+    # Review-16 open question 2, closed on this side too. The net enumerates writes by
+    # the latch's NAME, so a reference alias -- `bool& latchAlias = streamFailureLogged;
+    # latchAlias = false;` at the top of the frame -- is the same per-frame reset and is
+    # invisible here, exactly as on the backend. Taking a reference (or a pointer) to a
+    # field written in two places is a normal refactor, not an exotic attack, so the net
+    # refuses to certify a write set it cannot enumerate instead of passing it. Both
+    # spellings count: taking the address, and declaring a reference/pointer initialised
+    # from the latch (the reviewer's mutant is the second, where the `&` sits on the
+    # alias's name and never touches the field's).
+    aliased = bool(re.search(
+        r"&[ \t]*streamFailureLogged"
+        r"|[&*][ \t]*(?:const[ \t]*)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*streamFailureLogged",
+        wscope))
+    guarded_abs = [(off + s, off + e) for (s, e) in guarded]
     writes_ok = True
-    for w in re.finditer(r"\bstreamFailureLogged[ \t]*=[ \t]*([^;]+);", scope):
+    for w in re.finditer(r"\bstreamFailureLogged\s*=(?!=)\s*([^;]+);", wscope):
         rhs = re.sub(r"\s+", "", w.group(1))
-        pos = off + w.start()
+        pos = woff + w.start()
         if rhs == "true":
-            ok = any(sp[0] <= w.start() < sp[1]
-                     and brace_depth(scope, sp[0], w.start()) == 1 for sp in guarded)
+            ok = any(ga <= pos < gb
+                     and brace_depth(code, ga, pos) == 1 for ga, gb in guarded_abs)
         elif rhs == "false":
             ok = (else_sp is not None and else_sp[0] <= pos < else_sp[1]
                   and brace_depth(code, else_sp[0], pos) == 1)
@@ -1193,12 +1242,15 @@ def adjudicate(text, quiet=False):
         if not ok:
             writes_ok = False
             break
+    if aliased:
+        writes_ok = False
     if not writes_ok or not prints:
         writes_ok = False
     say(CHK["failure-line-names-the-refused-capacity"], fail_ok,
-        "the pass rounds up to a power of two and refuses THAT size; a line naming "
-        "anything else, or a byte figure that is not the backend's own capacity x "
-        "stride x sizeof(float), reports an allocation that was never attempted")
+        "the pass rounds up to a power of two and refuses THAT size; a refusal line "
+        "naming anything else, or a byte figure that is not the backend's own capacity "
+        "x stride x sizeof(float), or a line that says KB without a figure derived "
+        "from the capacity, reports an allocation that was never attempted")
     say(CHK["failure-latch-re-arms-on-success"], latch_ok,
         "a latch that can never clear is a one-shot log: the second, larger refusal "
         "is silent and the run reads as the first one")
@@ -1741,6 +1793,41 @@ def arm_failure_clear_once_per_frame(text):
     return text[:end] + "            streamFailureLogged = false;\n" + text[end:]
 
 
+def arm_failure_clear_at_the_top_of_the_frame(text):
+    """Clear the latch as the FIRST statement of `while (aptMainLoop())` (review-16
+    R1). This is review-15 F1's mutant (b) one scope up, and it is the more natural
+    edit of the two: "reset the diagnostic latch at frame start so it cannot carry
+    over" reads as hygiene, not as a bug. The latch is declared in `main()` before
+    the loop, so the write is in scope and runs on every frame INCLUDING the ones
+    that refused, so a sustained refusal at 4096 corners prints ~60x/s again with
+    checks 17, 18 and 19 each satisfied by the code they read. Batch 109's write net
+    scanned `object_pass()`, which is inside this loop, so it read none of it.
+    """
+    sp = frame_body_span(text)
+    if sp is None:
+        return text
+    return text[:sp[0] + 1] + "\n        streamFailureLogged = false;" + text[sp[0] + 1:]
+
+
+def arm_failure_clear_wrapped_across_lines(text):
+    """The same per-frame clear as `arm_failure_clear_once_per_frame`, but with the
+    `=` wrapped onto the next line (review-16 R1, mutant b). Semantically identical
+    to the committed clear's own statement shape; the ONLY reason it survived batch
+    109's net was that the scan's `[ \\t]*=` could not cross a newline. An arm for
+    it exists so that the newline tolerance is pinned and not an accident."
+    """
+    marker = ("            } else {\n                streamFailureLogged = false;\n"
+              "            }\n")
+    at = text.find(marker)
+    if at < 0:
+        return text
+    end = at + len(marker)
+    return (text[:end]
+            + "            streamFailureLogged\n"
+              "                = false;\n"
+            + text[end:])
+
+
 def arm_respawn_keeps_the_caches(text):
     """Keep the layout and pose caches across a runtime rebuild. This is the defect
     the object pass would have shipped: the rebuilt runtime frees the models both
@@ -1838,6 +1925,24 @@ ARMS = [
      "(review-15 F1)",
      arm_failure_clear_once_per_frame,
      CHK["failure-latch-writes-are-the-pinned-three"]),
+    # Review-16 R1: the two mutants batch 109's pass-scoped net read as clean code.
+    # The first is the defect itself one scope up; the second is the same defect
+    # spelled with the `=` on its own line, which is only a mutant because the scan
+    # is newline-tolerant -- so both are arms now, and both must redden check 20.
+    ("the refused-mesh latch is cleared once per frame through a reference alias "
+     "(review-16 open question 2)",
+     lambda s: s.replace("    while (aptMainLoop()) {",
+                         "    while (aptMainLoop()) {\n"
+                         "        bool& latchAlias = streamFailureLogged;\n"
+                         "        latchAlias = false;", 1),
+     CHK["failure-latch-writes-are-the-pinned-three"]),
+    ("the refused-mesh latch is cleared at the top of the frame loop (review-16 R1)",
+     arm_failure_clear_at_the_top_of_the_frame,
+     CHK["failure-latch-writes-are-the-pinned-three"]),
+    ("the refused-mesh latch is cleared once per frame with the `=` wrapped onto the "
+     "next line (review-16 R1)",
+     arm_failure_clear_wrapped_across_lines,
+     CHK["failure-latch-writes-are-the-pinned-three"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -1902,6 +2007,30 @@ PROBES = [
                     mdk::log3dsPrintf("objects: refused request was %d corners "
                                       "(%d bytes)", attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float)));
+""", 1)),
+    # Review-16 R2's twin on this side. `LATCH_NEG` has always accepted the
+    # `streamFailureLogged == false` spelling, but check 20's write scan read the
+    # `==` as a write and reddened the guard -- a gate rejecting a shape its own
+    # condition regex accepts, which is review-10 F6's failure with the two halves
+    # swapped. The scan now requires `=` not followed by `=`.
+    ("the refused-mesh guard is written as a comparison, not a negation (review-16 "
+     "R2: the second LATCH_NEG spelling is a read, not a write)",
+     lambda s: s.replace("                if (!streamFailureLogged) {",
+                         "                if (streamFailureLogged == false) {", 1)),
+    # Review-16 open question 3, pinned. A line inside the refusing branch that names
+    # the refused capacity and prints NO byte figure disagrees with nothing, so the
+    # re-shaped check 17 must accept it. Reddening it was the gate refusing a shape the
+    # port may write; review-10 F6 again. The half that stays red is a line naming a
+    # unit it cannot derive (see `oq3_kb`: "%d KB" printed from the corner count).
+    ("a second line in the refusing branch names the refused capacity and no byte "
+     "figure (review-16 open question 3)",
+     lambda s: s.replace("""                                      (int)((int64_t)attempted * 5 * sizeof(float) /
+                                            1024));
+""",
+                         """                                      (int)((int64_t)attempted * 5 * sizeof(float) /
+                                            1024));
+                    mdk::log3dsPrintf("objects: refused request was %d corners",
+                                      attempted);
 """, 1)),
     # Review-15 F3 restored the rule that EVERY printf inside the refusing branch is a
     # refusal line whatever its wording. A net that reads every line must also ACCEPT

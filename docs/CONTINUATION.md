@@ -1,18 +1,23 @@
 # Phase 2 continuation checkpoint
-Risk: high — **four gated predicates were rewritten, two checks were added across two gates, and the
- batch's own new tool found two arms that had never compiled.** No game code changed: `mdk_3ds/mdk.elf`
- is bit-identical to batch 108's (`b1997a5dca83639acf603d518abe8e62`, shbin `d46abb60…`), so the
- picture is unchanged and the frame pair is a byte-identical re-capture, stated not hidden. What
- makes this review-worthy is that a builder again changed what its own gate accepts, on the fifth
- consecutive round on the same three checks: check 20 now reads the whole write set of the
- refused-mesh latch, the backend's refusal net went from one printf to every one in the function
- plus every one in its failing branch, the latch's clear is now pinned as the only clear in the
- file, batch 107's format-agnostic branch scan is restored as a union with batch 108's format
- family, and `tests/scripts/arm_compile_check.sh` is a new gate-shaped tool that reads the flags
- out of `mdk_3ds/Makefile`. Every finding was reproduced on the reviewer's own compiling mutant
- first, and all 90 mutants of both gates now compile for the 3DS target — but a batch that widens
- what a gate rejects, and that found two pre-existing arms that could not compile at all, is exactly
- what an independent model should look at.
+Risk: high — **a gated predicate's scope was widened, one gate gained a probe mechanism it never
+ had, 45 arms gained a binding they never had, and a compile-check prerequisite was re-stated.**
+ No game code changed: `mdk_3ds/mdk.elf` is bit-identical to batch 108's
+ (`b1997a5dca83639acf603d518abe8e62`), so the picture is unchanged and the frame pair is a
+ byte-identical re-capture, stated not hidden. What makes this review-worthy is that this is the
+ sixth consecutive round changing what a builder's own gate accepts, on the same three checks.
+ The change that matters is a scope widening, not an addition: check 20's write-set scan stopped
+ at the object pass, so a per-frame latch clear written in the frame body that *contains* the pass
+ compiled clean and restored review-12 R1's ~60x/s spam with everything green — the reviewer's
+ Medium, reproduced from its own file before being fixed. Alongside it: the backend's `LATCH_NEG`
+ accepted a guard spelling it could never match, so a legal `== false` guard reddened the gate
+ (and the frontend's write scan had the mirror-image bug, reading a legal `== false` guard as a
+ write — found here, not by the reviewer); the c3d gate gained a probe mechanism, because a gate
+ that can only prove mutations are caught can never report that it rejects legal code; all 45 of
+ its arms gained a binding to the check each claims, generated from the measured run; and
+ `arm_compile_check.sh` now names the generated header the c3d half needs instead of an include
+ directory, and exits 1 rather than PASSing over a skipped gate. One finding is rebutted in part:
+ review-16 R4 asked for `-I mdk_3ds/build` to be dropped, and `renderer_c3d.cpp:60` includes the
+ header generated into it. All 98 mutants of both gates compile for the 3DS target.
 
 **Batch 109 (Iteration 136) — review-15 closed 5/5 (no Critical, no High): F1–F5 all fixed, none
  rebutted on merit.** **F1**: checks 18 and 19 read the clear and the guard but not the *write set*,
@@ -435,7 +440,7 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
     `player.died()`, draws Kurt after the level, refreshes the solid arena per step, and (batch 75) clears
     the right colour. Narratives "Iteration 101"…"Iteration 104".
 5b. **OPEN — the HUD half of item 5.** Blocked on a named cause, not on effort:
-   `mdk_render_canvas_quad` is a no-op on this backend (`renderer_c3d.cpp:1854`), so a HUD call would draw
+   `mdk_render_canvas_quad` is a no-op on this backend (`renderer_c3d.cpp:2345`), so a HUD call would draw
    nothing while reading as a ported HUD. The canvas seam has to land first.
 6a. **DONE (79) — the sample plane.** `mdk_core/src/audio/sound.{h,cpp}`, `limiter.{h,cpp}` and the mix half of
     `sound_device.{h,cpp}`: PCM decode of both widths, interpolation, the DirectSound pan law, the music
@@ -489,21 +494,38 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 110)
-**What is actually next, restated by batch 109.** Five consecutive batches have now closed
-external reviews on the refused-mesh gate family without moving a line of game code, and each
-round has found a real hole the previous round's "closed" rested on. Batch 109's own new tool
-found two more defects in the same file the reviewer had already read four times — two mutation
-arms that had never compiled — which is the strongest argument in this log for stopping: the
-gate family is now reading the state machine, and the marginal return on a sixth pass over it
-is below the marginal return on the game code the gate batches have been deferring. Two named
-items, both blocked on a named cause rather than on effort: (1) **the canvas seam** —
-`mdk_render_canvas_quad` is a no-op on this backend (`renderer_c3d.cpp:1854`), which is what
-priority item 5b (the HUD) and the MVE movie presenter both wait on; (2) **the collision
-batch** — `FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn
-arena and lets `ArenaSpace::setSolid` take the oracle's current + active second, and which needs
-a doorway-crossing oracle rather than a hand-written expectation. Neither is a gate batch. The
-one-sided-view investigation below stays open and is the sharper of the two picture questions.
+## NEXT (batch 111)
+**What is actually next, restated by batch 110.** Six consecutive batches have now closed
+external reviews on the refused-mesh gate family without moving a line of game code. Batch 110
+differs from 108 and 109 in one way worth naming: the reviewer found no Critical and no High, and
+the Medium it did find was a *scope* hole in a net that had already been widened twice — the same
+shape of miss, one level up, for the third time. That is the argument for stopping, not for
+another pass: a net that has been wrong about its own scope three running has to be reviewed
+against a profile or a rewrite, not patched a fourth time. **Batch 111 is expected to be a game
+batch, and a batch that changes `mdk_3ds/**` owes emulator evidence under P8.** Two named items,
+both blocked on a named cause rather than on effort: (1) **the canvas seam** —
+`mdk_render_canvas_quad` is a no-op on this backend (`renderer_c3d.cpp:2345`), which is what
+priority item 5b (the HUD) and the MVE movie presenter both wait on; (2) **the collision batch**
+— `FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn arena and
+lets `ArenaSpace::setSolid` take the oracle's current + active second, and which needs a
+doorway-crossing oracle rather than a hand-written expectation. Neither is a gate batch. The
+one-sided-view investigation below stays open and is the sharper of the two picture questions,
+and the R = 255 candidate set is now two, not five (below).
+
+**What batch 110 changed, in one paragraph, so the next gate reader does not re-derive it.**
+Check 20's write scan is scoped to `frame_body_span(code)` and not to `object_pass()`, is
+tolerance-tolerant around `=`, and reddens if the latch's address or a reference to it is ever
+taken (a write set that cannot be enumerated is not certifiable — review-16 open question 2,
+pinned on both sides). `LATCH_NEG`'s optional `name->` prefix is its own group, so both guard
+spellings work through the struct pointer, and both gates now have probes pinning the
+`== false` spelling. Check 17's rule is "no refusal line may disagree", stated as: first figure
+is the refused capacity, a line naming `%d KB` must carry a derived figure, a capacity-only line
+is legal. `c3d_frame_test.sh` has a `PROBES` list and every one of its 45 arms names the check
+it pins. `arm_compile_check.sh` requires `mdk_core/src` and `mdk_3ds/src` as a wrong-directory
+error and `mdk_3ds/build/mdk_c3d_shbin.h` as a named c3d prerequisite (`make -C mdk_3ds`), and a
+run that skips a gate exits 1 as INCOMPLETE. Measured: `PASS Main3dsFlow (20 checks, 35 arms, 14
+probes)`, `PASS C3dFrame (31 checks, 45 arms, 2 probes)`, `PASS ArmCompile (98 mutants, 0
+diagnostics)`, `make -C tests/scripts` all cases match, `bash tools/check.sh` ALL GATES PASSED.
 
 **Batch 109 re-measured the R = 255 lead while scoping, and the candidate set is now two, not five.**
 `docs/evidence/2026-11-09-L7-shader-w-current.png` again: 96000 of 96000 pixels have R = 255, 131
