@@ -27,11 +27,11 @@
 //     all and read as a ported HUD. Deferred with that cause, not stubbed.
 //   * The ropes, the sniper scope and the effects — `_ropes.Draw`, `_sniper.Draw`
 //     and `_effects.Draw` between the objects and Kurt in C# Viewer.DrawScene
-//     (Viewer.cs:706-708). None of the three is ported, so the frame here goes
+//     (Viewer.cs:705-707). None of the three is ported, so the frame here goes
 //     arena, objects, Kurt, and stops where the port's list stops.
 //
 // THE OBJECT PASS IS HERE. The runtime's objects are drawn between the arena and
-// Kurt, which is the C#'s order (Viewer.cs:702-709), at the blended transform, and
+// Kurt, which is the C#'s order (Viewer.cs:702-708), at the blended transform, and
 // the one 3DS question it carries — how big the linear stream mesh has to be — is
 // answered in the frame log and in docs/CONTINUATION.md rather than assumed.
 //
@@ -859,7 +859,7 @@ int main(int argc, char** argv) {
         }
         if (runtime) {
             // C# Viewer.DrawScene draws the objects after the arena and before
-            // Kurt (Viewer.cs:702-709): every object the scripts hold, in its
+            // Kurt (Viewer.cs:702-708): every object the scripts hold, in its
             // list's order, skipping the invisible ones. The runtime keeps removed
             // objects in its deque for pointer stability, so they are skipped here
             // too — the C#'s list has already taken them out.
@@ -879,7 +879,7 @@ int main(int argc, char** argv) {
             // shipped level, so the oracle does not take that branch either here.
             //
             // And the ropes, the sniper scope and the effects that the C# draws
-            // between the objects and Kurt (Viewer.cs:706-708) are not ported; see
+            // between the objects and Kurt (Viewer.cs:705-707) are not ported; see
             // the header.
             const float tickAlpha = runtime->tick_blend(pending);
             objectStream.reset();
@@ -909,7 +909,16 @@ int main(int argc, char** argv) {
             // corners and doubles to what the frames reach — and what it reaches is
             // what a level costs, at 5 floats (x, y, z, u, v) a corner. Logged on
             // every change, so the growth and the steady state are both readable.
-            if (objectDraw.capacity() != streamCapacityLogged) {
+            //
+            // NOT LOGGED BEFORE THERE IS A MESH (review-9 F6). `ObjectDraw::draw`
+            // returns without creating anything while the frame has no corners, so a
+            // frame with a runtime and nothing to draw used to print `stream mesh 0
+            // corners = 0 KB linear (0 corners, 0 draws this frame)` -- the same shape
+            // as renderer_c3d's real `linearAlloc(...) FAILED` line, so a future run
+            // whose mesh genuinely fails to allocate would read exactly like this
+            // benign first frame. A capacity of 0 means "no mesh yet", and there is
+            // nothing to report until the pass makes one.
+            if (objectDraw.capacity() > 0 && objectDraw.capacity() != streamCapacityLogged) {
                 streamCapacityLogged = objectDraw.capacity();
                 mdk::log3dsPrintf("objects: stream mesh %d corners = %d KB linear "
                                   "(%d corners, %d draws this frame)",

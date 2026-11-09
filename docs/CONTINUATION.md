@@ -1,13 +1,19 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — **a picture change on the console, and a cache-lifetime fix in both frontends.**
-The 3DS frontend now draws the script runtime's objects between the arena and Kurt, which moves
-**58520 px of the 96000-px top panel** against a measured noise floor of exactly 0 px. It also
-changes a respawn in **both** frontends: `ScriptRuntime` owns its model cache by value, so
-rebuilding it frees every `Model*` that `ObjectView::layouts_` and the shared pose caches are keyed
-by, and both are now dropped there. That is memory lifetime plus target-specific rendering, and it
-extends `main_3ds_flow_test.sh` from 11 checks to 15 with four arms that isolate the new ones.
-The Linux binary's picture is unchanged (`gates_frames` PASS, pinned frame byte-identical).
+Risk: high — **target-specific rendering, and a correction to the instrument every console claim rests on.**
+This batch tested the strongest standing candidate for the one-sided view — the vertex shader never forced
+the position attribute's `w`, and every devkitARM citro3d example says to — and **measured it to change
+nothing**: the fixed build's panel crop is byte-identical to the parent's (pixel sha `75b22ac5…`), so the
+attribute loader already supplies `w = 1` and the MVP's translation column was never dropped. The batch
+then measured the instrument itself: **two runs of one ELF differ by 53515 px of 96000 in full colour and
+0 px in the painted/clear map**, so the "noise floor is exactly 0 px" that recent sidecars quote does not
+reproduce, and a full-RGB panel diff is not a control. `tools/panel_geom.py` is now the canonical console
+comparison. The one-sided view is still open, with one candidate closed and the instrument's limits named.
+Also here: review-9 F2's missing gate (a duplicated object-pass draw stayed green on all 15 checks; now 16
+checks / 18 arms), and three cheap record fixes (F4/F5/F6). The Linux binary's picture is unchanged.
+
+**Batch 103 (Iteration 130) — review-9 closed 7/7 (no Critical, no High; F1-F6 fixed, F3/F7 deferred with
+cause).** See "Iteration 130" in `docs/PROGRESS_LOG.md` for the narrative and the verbatim gate output.
 
 **Batch 101 (Iteration 129) — review-7 closed 5/5, none rebutted.** **F1 (High)**: batch 100
 wrote "BOTH frontends here use the geometric arena under his feet" into `arena_space.h` and only
@@ -165,7 +171,7 @@ would stop the loop at exit 6 rather than warn.
 
 **Two historical corrections that stay load-bearing.** Batch 83's headline measurement was taken against a build that is not its parent (batch 84's retraction stands), and with review-5 F1 the pattern was three consecutive batches trusting a number whose provenance was asserted rather than reproduced — what is different now is that anyone can reproduce both halves with `git archive`/`git ls-files` + `make` in a throwaway tree, and the identity field is the ELF — and a `.3dsx` md5 is not even reproducible from the tree that built it (batch 90: two consecutive in-tree builds gave `48931bcd…` then `23c5354f…` from one byte-identical `mdk.elf`). And **the census was never inflated, so do not re-run it**: the exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one**, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands" — the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, a different quantity). The old "re-census first" instruction stays withdrawn. Coverage is stated in panel columns (review-3 F4): geometry covers panel columns **200..399** of 400, the right half of the top screen.
 
-Last updated: 2026-11-09 (**batch 102 — priority item (a) landed: the console draws the scripts' objects. `main_3ds.cpp` gains the C#'s `DrawObjects` between `view.draw()` and `kurtSprite.draw()` (Viewer.cs:702-709), at `runtime->tick_blend(pending)`, skipping the invisible and the removed, over an `objectLook` cache keyed by arena name — and the console's steady-state stream is `570 corners / 13 draws`, which is `L7_t1000_draw.txt`'s `STREAM vertices=570` and 13 queued draws exactly. The linear answer CONTINUATION asked for: the stream mesh is made ONCE at 4096 corners = 80 KB linear and NEVER grows (level 7 uses 570 of 4096), against the C#'s 5.2 MiB `Renderer.StreamVertices` and the ~1 MB linear headroom. It also fixed a defect the pass would have shipped: `ScriptRuntime` owns `modelCache_` BY VALUE (script_runtime.h:580), so `runtime.reset()` on a respawn frees every `Model*` that `ObjectView::layouts_` and the pose caches key on, and a recycled address inherits the previous model's geometry — both frontends now call `forget_poses()` + `objectView.clear()` in `spawnPlayer`, which is why the object-pass declarations sit ABOVE it. `mdk.elf` `4232fd94…` → `4d27d6f8…`, `nm | grep -ci` ObjectView/ObjectDraw 0 → 2 each. Emulator on `:99` (r1.2.1, exit 0) reaches frame 2880, `health=100` on all 53 rows, and the panel crop moves 58520 px of 96000 against a 0 px noise floor — see `docs/evidence/2026-11-09-L7-object-pass-{parent,current}.txt`. What it did NOT produce: the predicted script sound. `plays` stays at Kurt's own 1 and `voices=0`, because level 7's seven objects never fire one in 2880 frames; that measurement is still open. Superseded tail of the batch-99 line: batch 99 — priority item 6d, the 3DS frontend runs the scripts (one `ScriptRuntime` per level, built in `spawnPlayer`, ticked between Kurt and the camera, the frame mixing the mixer the runtime owns), its objects simulated and NOT drawn until this batch** `mdk.elf` `c8295e96…` → `4232fd94…`, `nm | grep -ci ScriptRuntime` 0 → 107; the emulator on `:99` (r1.2.1, exit 0) reaches frame 3480 with `objects=7` and `health=100` on all 63 rows, and no script sound fired. Superseded tail of the batch-97 line: batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
+Last updated: 2026-11-09 (**batch 103 — the strongest standing candidate for the one-sided view is closed by measurement, and the panel instrument's real noise floor is measured. The vertex shader computed the MVP with `mov r0, inpos` on a THREE-component position attribute, while every devkitARM citro3d example forces `w` to 1.0; had that component been 0 the MVP's whole translation column would have been multiplied by zero. It is not: forcing it makes the console's panel crop BYTE-IDENTICAL (pixel sha `75b22ac5…`, `docs/evidence/2026-11-09-L7-shader-w-{parent,current}.txt`), so the attribute loader already supplies `w = 1` and the shader keeps the line as an explicit statement rather than a dependency. The same run measured the instrument: two runs of ONE ELF differ by **53515 px of 96000 in full colour and 0 px in the painted/clear map** (`docs/evidence/2026-11-09-panel-noise-{a,b}.txt`), so the "0 px noise floor" recent sidecars quote does not reproduce and a full-RGB panel diff is not a control — `tools/panel_geom.py` is the canonical comparison from here. Review-9 (no Critical, no High) closed: F2's duplicated-draw mutant stayed green on all 15 checks and now reddens check 16 with its own arm (16 checks / 18 arms); F4's `11.4%` was a KB figure written as a percentage (570/4096 = **13.9%**, and 570×5×4 B = 11400 B = 11.4 **KB** of the 80 KB mesh); F5's three oracle citations are corrected to `Viewer.cs:705-707` / `702-708`; F6's `stream mesh 0 corners = 0 KB` line no longer prints before there is a mesh. F1 is the NEXT section's restatement. F3 (no `Preload` caller, unbounded object-texture residency) and F7 (mono-only evidence) are deferred with cause. `mdk.elf` `4d27d6f8…` → `9714104e…`. Emulator on `:99` (r1.2.1 `0d2adab6`, exit 0) reaches frame 2880 with `health=100` and `objects=7 obj=570c/13d`. Superseded tail of the batch-102 line: batch 102 — priority item (a) landed: the console draws the scripts' objects. `main_3ds.cpp` gains the C#'s `DrawObjects` between `view.draw()` and `kurtSprite.draw()` (Viewer.cs:702-709), at `runtime->tick_blend(pending)`, skipping the invisible and the removed, over an `objectLook` cache keyed by arena name — and the console's steady-state stream is `570 corners / 13 draws`, which is `L7_t1000_draw.txt`'s `STREAM vertices=570` and 13 queued draws exactly. The linear answer CONTINUATION asked for: the stream mesh is made ONCE at 4096 corners = 80 KB linear and NEVER grows (level 7 uses 570 of 4096), against the C#'s 5.2 MiB `Renderer.StreamVertices` and the ~1 MB linear headroom. It also fixed a defect the pass would have shipped: `ScriptRuntime` owns `modelCache_` BY VALUE (script_runtime.h:580), so `runtime.reset()` on a respawn frees every `Model*` that `ObjectView::layouts_` and the pose caches key on, and a recycled address inherits the previous model's geometry — both frontends now call `forget_poses()` + `objectView.clear()` in `spawnPlayer`, which is why the object-pass declarations sit ABOVE it. `mdk.elf` `4232fd94…` → `4d27d6f8…`, `nm | grep -ci` ObjectView/ObjectDraw 0 → 2 each. Emulator on `:99` (r1.2.1, exit 0) reaches frame 2880, `health=100` on all 53 rows, and the panel crop moves 58520 px of 96000 against a 0 px noise floor — see `docs/evidence/2026-11-09-L7-object-pass-{parent,current}.txt`. What it did NOT produce: the predicted script sound. `plays` stays at Kurt's own 1 and `voices=0`, because level 7's seven objects never fire one in 2880 frames; that measurement is still open. Superseded tail of the batch-99 line: batch 99 — priority item 6d, the 3DS frontend runs the scripts (one `ScriptRuntime` per level, built in `spawnPlayer`, ticked between Kurt and the camera, the frame mixing the mixer the runtime owns), its objects simulated and NOT drawn until this batch** `mdk.elf` `c8295e96…` → `4232fd94…`, `nm | grep -ci ScriptRuntime` 0 → 107; the emulator on `:99` (r1.2.1, exit 0) reaches frame 3480 with `objects=7` and `health=100` on all 63 rows, and no script sound fired. Superseded tail of the batch-97 line: batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
 owner-only: covering the compressed MVE audio path for the first time found a
 **heap-buffer-overflow** in `Mve::decodeAudio` — the predictor-seed loop filled `channels_` slots
 before any loop condition consulted `count = size / 2`, so a frame declaring less than
@@ -302,24 +308,45 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 103)
-*(Batch 102 took the audio/script priority order's first open item, (a) the object pass on the
-console. The one-sided view is still first among the renderer items, still unadvanced, and still needs
-the same new hypothesis, not a sixth census run with the same instrument.)*
-**The one-sided view, still first and still unadvanced.** Geometry covers panel columns **200..399** of the 400-wide top
-screen — the right half — and the live question is why coverage stops at a straight
-vertical line at the panel's middle. The census instrument is honest (header: 58464
-exact clear pixels in BOTH builds, `GPU_CULL_NONE` 69 px, depth-off 201 px, and its own
-mapping probe fails, so it cannot localise), so do not re-run it first and do not
-re-derive what Iteration 106 retired (the cull, the depth triple, the queue, the MVP, a
-deleted rotation). The next useful capture is **census and `GPU_PRIMARY_COLOR` in the
-same run**, cropped with `tools/panel_crop.py` so the comparison is frame-identical.
-Batches 88 and 89 both took sanctioned alternatives instead of this, so there is no
-cheap item queued behind it: if the view cannot be localised with a new hypothesis,
-**say so in the batch** rather than shipping a sixth measurement with the same
-instrument. What batch 89 brings to it is a habit, not a datum — review-8 F1 is a
-unit that was "corrected" by rounding to the number that made the measurement fit,
-and "the census box covers the panel" is the same shape of claim.
+## NEXT (batch 104)
+*(Batch 103 did not advance the renderer head either; it closed one candidate on it and corrected the
+instrument every claim about it rests on. The item below is restated against the committed panel, because
+review-9 F1 is right that batch 102 erased the picture this item was written against: the head item used
+to say "geometry covers panel columns 200..399 and coverage stops at a straight vertical line at the
+panel's middle", and the census equality "58464 exact clear pixels in BOTH builds" is the batch that
+invalidated it. That sentence is now false for the current build and is struck.)*
+**The one-sided view, restated against the post-object-pass panel.** What the committed crops measure
+(`python3 tools/panel_geom.py census docs/evidence/2026-11-09-L7-{object-pass-parent,shader-w-current}.png`):
+
+    arena only (batch 102 parent):  clear 58464, painted-left 0,     painted-right 37536
+    arena + objects (now):          clear     0, painted-left 48000, painted-right 48000
+
+So there are now TWO questions, not one, and the second is the sharper one.
+
+1. **The arena still never reaches the left half.** 0 painted pixels of 48000 in the arena-only build, and
+   the boundary is a straight vertical line at the panel's middle, not a silhouette. That is unchanged by
+   batch 102 and is the original defect.
+2. **Seven objects now paint the entire left half and 10520 px of the right.** A door, three BEAMS and
+   three statics do not tile a panel exactly; `painted-left = 48000` to the pixel is a fill, not a
+   placement. Review-9's open question 1 is the right question and the panel cannot answer it: the crop
+cannot distinguish "the door and beams are drawn in their places" from "a surface occludes the frame".
+
+What is CLOSED for it, so it is not re-derived: the cull enum, the depth map/test/clear triple, the queue,
+the MVP construction, a deleted rotation (Iteration 106), the sheared display transfer, and now the
+vertex attribute's `w` (batch 103, measured byte-identical). What is NOT closed: the viewport/attribute
+upload path, and the fact that the identity-MVP diagnostic triangle still paints nothing even with `w`
+forced — that one is unexplained and it is the only measured GPU behaviour in the tree that no theory
+currently covers.
+
+**The instrument rule that comes out of batch 103, and it binds every future console A/B.** Quote
+`tools/panel_geom.py geom`, not a full-RGB diff: two runs of ONE ELF differ by 53515 px of 96000 in full
+colour and 0 px in the painted/clear map, because `emurun.sh --shot` grabs the window at a wall-clock
+deadline and the guest's 60-frame log spacing hides which frame it caught while the textures animate. A
+colour claim needs a frame-locked capture, and the named blocker for that is that the 3DS backend
+implements no screenshot path at all (`render.h`: `screenshot_path` is "Linux only") — landing one is a
+batch of its own, and it is what would let the next level-7 capture be diffed against the oracle's frame
+instead of against itself. Do not ship a sixth census with the old instrument.
+
 Item 5b (the HUD) stays blocked on the same canvas seam (`mdk_render_canvas_quad`
 is a no-op on this backend). The second constraint batch 85 wrote onto it is
 **downgraded, not carried** (review-5 F5): the frame-wide alpha test and the

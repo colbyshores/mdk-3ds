@@ -19445,3 +19445,178 @@ picture evidence is committed somewhere that says so.
 new hypothesis rather than a sixth census run; behind it, (b) the bank's eviction bound and (c) the
 ndsp sink's console rate. The sink's script-sound row is still unmeasured and now has a concrete shape:
 it needs a level whose scripts play at the spawn, not another pass over level 7.
+
+## Iteration 130 — batch 103: review-9 closed 7/7 (no Critical, no High) — the vertex shader never forced the position attribute's `w`, which every devkitARM example says it must; forcing it is measured to change nothing, and the panel instrument's real run-to-run noise floor turned out to be 53515 px
+
+**Prior-solution lookup, as the contract requires.** Pi-knowledge (`mdk-sdl`, live):
+`knowledge_search` on the vertex-attribute `w` convention returned the shader,
+`pica_matrix.{h,cpp}` and `pica_matrix_tests.cpp` — the matrix conventions are
+pinned on the host, and nothing in the KB had ever named the attribute's fourth
+component. A second query on the one-sided view returned the CONTINUATION item and
+the `pica200-ndc-z0-is-the-far-clip-plane` open item. Obsidian MCP and Cognee MCP
+are **not present in this session's tool list**, so the vault was read directly
+(read-only) from `/mnt/nas/Vaults/port-docs`, narrowly: a bounded `grep` for the
+`w` convention hit `60-references/3ds-platform/citro3d/04-drawing-attributes-vbo.md:197-199`,
+which carries the same `; Force the w component of inpos to be 1.0` recipe as the
+devkitARM examples. devkitPro itself was read for the toolchain question
+(`examples/3ds/graphics/gpu/*/source/vshader.v.pica`), which AGENTS §12 allows.
+
+**What the batch set out to do, and what it actually found.** The head renderer item
+is the console's one-sided view, and the instruction was that it needs a new
+hypothesis rather than a sixth census. The new hypothesis here was not in the
+renderer's matrix path at all: the vertex shader computed
+
+```
+mov r0, inpos                     ; inpos is a THREE-component float attribute
+dp4 outpos.x, mvp[0], r0
+```
+
+and every citro3d vertex shader that ships with devkitARM forces the fourth
+component instead (`simple_tri/source/vshader.v.pica:21-23`, and the vault's
+citro3d reference at the same lines). If that component arrived as 0, every row of
+the MVP would be dotted with `(x, y, z, 0)`, the fourth column — the whole
+translation — would be multiplied by zero, and the GPU would project the world from
+the world origin rather than from the eye. That theory explained two things at
+once, which is why it was worth an iteration: the sunburst picture, and the standing
+mystery that the diagnostic triangle drawn through an **identity** matrix paints not
+one pixel (clip.w = 0 is degenerate) while every CPU-side probe reads correct. It
+also explained why twenty batches of probes could not localise the defect: the
+census computes clip with `+ cm[12]` and `+ cm[15]`, and `pica_matrix_tests.cpp`
+dots the register rows with `(x, y, z, 1)` — both include the translation, so both
+were right about a matrix the shader then threw a column of.
+
+**The theory is refuted, by bytes.** With `mov r0.xyz, inpos` + `mov r0.w, ones`
+in place, the console's panel crop is **byte-identical** to the parent build's:
+
+    pixel sha, parent (no w line):  75b22ac57828aa1b15ad5404189c3e159fcaddc5355e740a3083867130014136
+    pixel sha, current (w forced):  75b22ac57828aa1b15ad5404189c3e159fcaddc5355e740a3083867130014136
+
+So the PICA's attribute loader already fills `w` with 1.0 for a 3-component float
+attribute. The shader was never receiving a zero, the translation was never
+dropped, and the identity-MVP diagnostic triangle's silence is **still unexplained**
+— it is now the only measured GPU behaviour in this tree that no theory covers, and
+it is named as such in `NEXT`. The two instructions are kept, because the old form
+worked only because of an unpacker behaviour the shader never named, and the
+comment above them now carries the measurement so the next iteration does not
+re-derive this. Re-editing only the shader *comment* left `mdk_c3d.shbin`
+(`d46abb60…`) and `mdk.elf` (`9714104e…`) md5s untouched, which is the proof that
+what was measured is the two instructions and not the prose around them.
+
+**The finding that came out of the refutation, and it matters more than the fix.**
+To believe "48598 px changed" the batch ran the same build twice. Two runs of one
+ELF, one pinned emulator (r1.2.1 `0d2adab6`), one display, one lane kind, one
+deadline, and identical guest numbers, differ by **53515 px of 96000** in full
+colour. The geometry did not move — the R channel and the painted/clear map differ
+by **0 px** — the animation phase did. The cause is that the capture is not
+frame-locked: `emurun.sh --shot` grabs the X window at a wall-clock deadline and
+the guest prints a frame line only every 60th frame, so the frame on screen at the
+deadline sits anywhere in a ~60-frame window in which the textures animate.
+Consequences, all recorded in `docs/evidence/2026-11-09-panel-noise-{a,b}.txt`:
+
+* batch 102's "the noise floor is EXACTLY zero — two runs of the parent build
+  produce byte-identical panels" **does not reproduce**; a control that prints 0 px
+  was comparing a capture with itself. This reaches back through the sidecars that
+  quoted a full-RGB diff as their picture claim, batch 102's 58520 px included.
+* what does reproduce is the **painted-versus-clear map** (0 px across runs), which
+  is the same quantity the census has always quoted — which is why the census's
+  58464 reproduced across batches while the colour diffs never did.
+* `tools/panel_geom.py` is now the canonical console comparison: `geom` prints the
+  map diff and the census, and prints the full-RGB number next to it labelled as
+  not a control. A colour claim needs two runs per side, and the honest blocker for
+  making colour usable at all is that the 3DS backend implements no screenshot path
+  (`render.h`: `screenshot_path` is "Linux only"), so nothing in the guest can pin
+  the frame.
+
+**Review-9 disposition (no Critical, no High, so nothing to rebut; all seven
+Medium/Low accounted for).**
+
+* **F1 (Medium) — fixed.** The head item and the census equality it leaned on
+  described the pre-object-pass panel. `NEXT` is restated against the committed
+  crops: arena-only paints `left 0 / right 37536`, arena+objects paints
+  `left 48000 / right 48000`, and the "58464 in BOTH builds" equality is struck
+  with the batch that invalidated it named. The restatement also splits the item
+  into the two questions that now exist, because review-9's open question 1 is
+  correct that the crop cannot tell "the door and beams are placed" from "a surface
+  occludes the frame" — seven small models painting `48000` of a panel to the pixel
+  is a fill, not a placement.
+* **F2 (Medium) — fixed with the arm the reviewer specified.** Check 16 counts
+  `objectDraw.draw(` call sites and requires exactly one, inside the frame body;
+  `arm_objects_drawn_twice` is the reviewer's own mutant (a second `if (runtime) {
+  objectDraw.draw(...); }` before `mdk_render_end_frame`) and it turns check 16 red
+  and only check 16 red: `PASS Main3dsFlow (16 checks, 18 arms adjudicated red)`.
+* **F3 (Medium) — deferred, with cause.** `ObjectView::preload` still has no caller
+  and object-texture residency is still unbounded. It is a real gap and it is not
+  cheap: calling `Preload` at level load is the opposite of the lazy policy the
+  audio bank is still arguing about (NEXT item (b) is the same coupling), and the
+  reviewer's own run found no texture failure and no missing model. It needs the
+  residency measurement and the eviction budget in one decision, not a batch that
+  adds a `preload()` call to dodge the question.
+* **F4 (Low) — fixed in the live record.** 570/4096 is **13.9 %**, and 570 × 5 × 4 B
+  = 11400 B = 11.4 **KB** of the 80 KB mesh: the old "11.4 %" was the KB figure
+  written as a percentage. Corrected here and in `CONTINUATION`'s batch-103 line;
+  the batch-102 sidecar and its dated narrative line are left as written, because
+  older evidence pairs are append-only and the integrity gate forbids editing them.
+* **F5 (Low) — fixed.** `_ropes/_sniper/_effects.Draw` are `Viewer.cs:705-707` (not
+  706-708) and the DrawScene order is `702-708` (709 is blank; 710 is the HUD's
+  `Messages.Update`), verified with `grep -n` on `src/Mdk.Game/Viewer.cs`. Corrected
+  in `main_3ds.cpp` (header and both in-frame comments) and in
+  `main_3ds_flow_test.sh`. The third citation the reviewer named, `ObjectLook` at
+  964, is not present anywhere in `mdk_core/src` or `mdk_3ds/src` (grep for `965`
+  returns nothing in the object files), so there was nothing to correct for it.
+* **F6 (Low) — fixed and measured.** The stream-mesh line is skipped while the
+  capacity is 0. Parent run's guest log line 20 was `objects: stream mesh 0 corners
+  = 0 KB linear (0 corners, 0 draws this frame)`, which reads exactly like
+  renderer_c3d's real `linearAlloc(...) FAILED`; this run's log carries only the
+  real `4096 corners = 80 KB linear` line.
+* **F7 (Low) — deferred, with cause.** The evidence is mono. The reviewer's own
+  fallback — "one sentence naming the mechanism" — is now in `NEXT` rather than in
+  an older sidecar: `mdk_render_draw_mesh` records into the frame's queue and the
+  per-eye loop in `mdk_render_end_frame` replays that queue, so the object pass is
+  per-eye by construction and a mono capture cannot see a per-eye mistake. A stereo
+  run is worth having and is not this batch's slice.
+
+**Gates, as run.**
+- `make -C tests/scripts` → `PASS L7_dti`, `PASS L3_audio_mix`, `PASS L3_audio_meta`,
+  … → **`All cases match the oracle.`** exit 0.
+- `bash tools/check.sh` → `PASS audit_c_with_classes` 0 violations, `PASS gates_vfp`
+  0 blockers, `PASS audit_arm11_math` contract clean, `PASS audit_r11_idiv` no
+  candidates, `PASS gates_core_parity`, `SKIP gates_smdh` (no built .cia),
+  `PASS gates_frames` (`L3_f1.bmp sha=58615fc85d02e009`),
+  `PASS gates_batch_integrity` → **`CHECK: ALL GATES PASSED`** exit 0.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`
+  → `PICA`, `SHBN`, `LINK mdk.elf`, `3DSX mdk.3dsx`, exit 0. `mdk.elf`
+  `4d27d6f8…` → `9714104e…`, `mdk.3dsx` `6977e057…`.
+- `bash tests/scripts/main_3ds_flow_test.sh` → **`PASS Main3dsFlow (16 checks, 18
+  arms adjudicated red)`**, up from 15 checks and 17 arms.
+
+**Emulator evidence (AGENTS P7/P8) — owed, because `mdk_3ds/**` changed.**
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 50 --min-frames 600`, **exit 0**, on
+`Xvfb :99 -screen 0 1280x1024x24`, Mandarine r1.2.1 md5 `0d2adab6` (the harness
+refuses r1.3.0 with exit 6), forced llvmpipe, mono (`render_3d=0 factor_3d=0`),
+private lane, dspfirm present. Guest reached frame 2880 (2820 at the deadline),
+`health=100` on every row, `objects=7 obj=570c/13d peak=570c/13d`, no FAIL/WARN.
+Three runs were taken (parent-half, the A/B control pair, and the final build) and
+all three are quoted above. Emulator-green is not hardware-pass; no Old-3DS
+measurement was taken and that stays open.
+
+**Tree hygiene.** The six dirty files inherited from the operator's harness set
+(`docs/OWNER_DIRECTIVE_2026-11-05.md`, `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`,
+`ralph/builder.md`, `tools/ralph_pi_watchdog.sh`, `tools/runner/test_review_state.sh`
+and the untracked `tools/reclaim_qwen_slots.sh`) are the same set batches 100, 101
+and 102 recorded as operator-authored and left unstaged, and review-9 independently
+confirmed it is internally consistent (`REVIEW STATE: ALL CASES PASS`) and predates
+this batch. It was not staged; this batch staged its own paths by name, never
+`git add -A`.
+
+**Frame.** The pinned pair is `docs/frames/2026-11-09-b103-shader-w-measured.{png,txt}`,
+`bad_percent=1.240 max_delta=247 mean_delta=0.1819` — unchanged from batch 102, and
+the cause is the standing one: the pin is the **Linux** capture of level 3 frame 1,
+and a 3DS shader cannot move it. The console picture evidence for this batch is in
+`docs/evidence/`, which is where a claim that says so belongs.
+
+**Next**, per the priority order: the one-sided view, restated in `NEXT` as two
+questions (why the arena never reaches the left half at all, and what makes seven
+objects paint the entire left half to the pixel), with the closed candidates named
+and the instrument rule binding: `panel_geom.py geom`, two runs per side, and no
+sixth census. Behind it, (b) the bank's eviction bound and (c) the ndsp sink's
+console rate. The sink's script-sound row is still unmeasured.

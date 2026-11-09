@@ -1,0 +1,31 @@
+evidence pair — the console panel instrument's REAL run-to-run noise floor (batch 103).
+
+This file is run B of TWO RUNS OF ONE BUILD; the claim and the full method are in
+`2026-11-09-panel-noise-a.txt`, which is run A of the same pair.
+
+build:   mdk.elf md5 9b6eeeb3cfa0ce7d7728e61e2e04e607 — the SAME ELF that made run
+         A. Nothing was rebuilt between the two runs.
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 50 --min-frames 600
+                   --shot /tmp/kilo-b103/control.png
+         (emurun exit 0)
+display: :99 — Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7). Pinned
+         Mandarine r1.2.1 (md5 0d2adab6ad078c78e6d03e72086f2eb6), forced llvmpipe,
+         mono (render_3d=0 factor_3d=0), private lane.
+guest:   reached frame 2820 by the deadline, 2880 after the reap; feet
+         (0.0,4.0,0.0), eye (0.0,-4.0,4.5), yaw 90, health 100, `objects=7
+         obj=570c/13d peak=570c/13d` — every logged value identical to run A.
+capture: `python3 tools/panel_crop.py crop`, 400x240 = 96000 px.
+         pixel sha 94c411c41eb78ef918a865c7f3fe650ea0d42dce0147622198649a978e623639
+
+THE MEASUREMENT (`python3 tools/panel_geom.py geom` and `panel_crop.py diff`):
+
+    geom (painted/clear map), A vs B:   0 px of 96000
+    full RGB, A vs B:               53515 px of 96000, bbox x 0..399 y 0..239
+    R channel alone:                    0 px — the geometry did not move
+    G/B channels:                   53515 px — the animation phase did
+
+Two runs of one ELF, one emulator, one display, one lane kind, identical guest
+numbers, and half the panel's colour disagrees. The guest log's 60-frame line
+spacing hides which frame the screenshot caught, and the textures animate inside
+that window. So: quote `geom` in a sidecar, never a bare full-RGB diff, and take
+two runs per side if a colour claim is being made.

@@ -64,10 +64,40 @@
 
 .entry vmain
 .proc vmain
+    ; THE w COMPONENT IS FORCED TO 1.0, AND IT IS MEASURED TO MAKE NO
+    ; DIFFERENCE. Both statements belong in this comment, because the second one
+    ; is the only reason anyone would ever write the first.
+    ;
+    ; `inpos` is a THREE-component attribute (GPU_FLOAT, 3). Every devkitARM
+    ; citro3d vertex shader example forces the fourth component anyway -- they
+    ; carry the literal line `; Force the w component of inpos to be 1.0`
+    ; (examples/3ds/graphics/gpu/simple_tri/source/vshader.v.pica:21-23), and so
+    ; does the vault (60-references/3ds-platform/citro3d/
+    ; 04-drawing-attributes-vbo.md:197-199) -- so `mov r0, inpos` read as a
+    ; defect: if w came through as 0, every row of the MVP would be dotted with
+    ; (x, y, z, 0), the fourth column -- the TRANSLATION -- would be multiplied by
+    ; zero, and the GPU would project the world as if the camera sat at the world
+    ; origin. That would also have explained, for free, why the diagnostic triangle
+    ; drawn through an IDENTITY matrix paints nothing at all (clip.w = 0 is
+    ; degenerate) while every CPU-side probe read correct.
+    ;
+    ; IT IS NOT THE CAUSE, AND THAT IS MEASURED. The build with this line in it
+    ; produces a panel crop BYTE-IDENTICAL to the build without it (pixel sha
+    ; 75b22ac5... , docs/evidence/2026-11-09-L7-shader-w-{parent,current}.txt), so
+    ; the PICA's attribute loader already fills w with 1.0 for a 3-component float
+    ; attribute and the shader was never receiving a zero. The one-sided view is
+    ; still open, and this is one fewer candidate cause for it -- recorded here so
+    ; the next batch does not spend an iteration re-deriving it.
+    ;
+    ; KEPT ANYWAY, for the reason the contract gives for every other piece of GPU
+    ; state: the old form worked only because of an unpacker behaviour the shader
+    ; never named. Say what the shader needs instead of depending on it.
+    ;
     ; The matrix-vector product. dp4 writes only the x component of its
     ; destination, so each row of the matrix is dotted with the position
     ; separately.
-    mov r0, inpos
+    mov r0.xyz, inpos
+    mov r0.w,   ones
     dp4 outpos.x, mvp[0], r0
     dp4 outpos.y, mvp[1], r0
     dp4 outpos.z, mvp[2], r0

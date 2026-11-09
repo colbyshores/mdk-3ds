@@ -62,7 +62,7 @@
 # WHAT BATCH 102 ADDED (the object pass on the console). Drawing the runtime's
 # objects made four more things load-bearing that no compiler can see:
 #  12. the pass sits BETWEEN the arena and Kurt's sprite. The C#'s draw order is the
-#      picture (Viewer.cs:702-709); a pass that runs somewhere else in the frame
+#      picture (Viewer.cs:702-708); a pass that runs somewhere else in the frame
 #      still runs, still costs the same, and still produces the wrong frame.
 #  13. the pass is gated on the runtime existing. A level whose CMI, bank or sprites
 #      archive is missing runs without one (check 10), so `runtime` is null in a
@@ -283,11 +283,13 @@ CHK = {
     "asset-gate": "the runtime is constructed under the asset gate",
     "pitch-from-runtime": "the pitch target is camera_track, then the scripts' arena",
     "objects-drawn-in-order":
-        "the object pass is drawn between the arena and Kurt's sprite (Viewer.cs:702-709)",
+        "the object pass is drawn between the arena and Kurt's sprite (Viewer.cs:702-708)",
     "objects-gated-on-runtime":
         "the object pass runs only when there is a runtime to take its objects from",
     "objects-skip-invisible-and-removed":
         "the pass skips the invisible and the removed, as C# Viewer.DrawObjects does",
+    "objects-drawn-exactly-once":
+        "the object pass has exactly one draw call site in the frame (Viewer.cs:704)",
     "respawn-drops-the-model-caches":
         "a respawn drops the two caches keyed by a Model address, because rebuilding "
         "the runtime frees the models they are keyed by",
@@ -453,7 +455,7 @@ def adjudicate(text, quiet=False):
         "the pitch the camera rests at is the scripts' arena's, not the geometric one")
 
     # 12. the object pass is drawn, and BETWEEN the arena and Kurt's sprite. The C#
-    #     orders arena, objects, Kurt (Viewer.cs:702-709) and the order is the
+    #     orders arena, objects, Kurt (Viewer.cs:702-708) and the order is the
     #     picture: objects drawn before the arena are painted over, and objects
     #     drawn after Kurt paint over him. Presence anywhere in the file is not the
     #     invariant, which is the same reason check 1 exists.
@@ -505,6 +507,23 @@ def adjudicate(text, quiet=False):
     say(CHK["respawn-drops-the-model-caches"], caches_dropped,
         "rebuilding the runtime frees the models both caches key on; a recycled address "
         "would otherwise draw the previous model's geometry and pose")
+
+    # 16. EXACTLY ONE object-pass call site (review-9 F2). Check 12 resolves the pass
+    #     from the FIRST `objectDraw.draw(` and asserts only that that one sits between
+    #     the arena and Kurt, so a SECOND copy of the pass after Kurt is invisible to
+    #     every check in the file: the reviewer inserted `if (runtime) {
+    #     objectDraw.draw(...); }` just before mdk_render_end_frame and all 15 checks
+    #     stayed green. That mutant is a picture difference — the frame's stream is
+    #     uploaded and drawn twice, the objects are painted over Kurt, and the pass's
+    #     depth and blend transitions are taken twice — and C# Viewer.DrawScene calls
+    #     DrawObjects once (Viewer.cs:704). Counting the call sites is the whole check;
+    #     the position of the one allowed site is check 12's job, not this one's.
+    calls = [m.start() for m in re.finditer(r"objectDraw\.draw\(", text)]
+    say(CHK["objects-drawn-exactly-once"],
+        len(calls) == 1 and op is not None and frame is not None
+        and frame[0] <= calls[0] < frame[1],
+        "one DrawObjects per frame is the oracle's; a second call site replays the "
+        "stream over whatever the first one already painted")
     return r
 
 
@@ -765,6 +784,23 @@ def arm_objects_draws_removed(text):
     return mutated if n else text
 
 
+def arm_objects_drawn_twice(text):
+    """Draw the frame's object stream a SECOND time, after Kurt (review-9 F2). The
+    first call site keeps its place, its gate and its skips, so only a count can see
+    the copy -- this is the reviewer's own mutant, which the 15-check file left green.
+    It is inserted before the frame end so it is inside the frame body, where a real
+    'draw the other arena too' edit would go."""
+    op = object_pass(text)
+    if op is None:
+        return text
+    at = text.find("mdk_render_end_frame(renderer);")
+    if at < 0 or at < op["end"]:
+        return text
+    copy = ("\n        if (runtime) {\n            objectDraw.draw(renderer, &surfaces, "
+            "objectStream);\n        }\n")
+    return text[:at] + copy + text[at:]
+
+
 def arm_respawn_keeps_the_caches(text):
     """Keep the layout and pose caches across a runtime rebuild. This is the defect
     the object pass would have shipped: the rebuilt runtime frees the models both
@@ -816,6 +852,8 @@ ARMS = [
      CHK["objects-skip-invisible-and-removed"]),
     ("respawn keeps the Model-address-keyed caches", arm_respawn_keeps_the_caches,
      CHK["respawn-drops-the-model-caches"]),
+    ("object pass drawn a second time after Kurt (review-9 F2)",
+     arm_objects_drawn_twice, CHK["objects-drawn-exactly-once"]),
 ]
 
 print("main_3ds_flow: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

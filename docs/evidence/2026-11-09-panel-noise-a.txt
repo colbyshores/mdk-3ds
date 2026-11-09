@@ -1,0 +1,55 @@
+evidence pair — the console panel instrument's REAL run-to-run noise floor (batch 103).
+
+This file is run A of TWO RUNS OF ONE BUILD. Read it with
+`2026-11-09-panel-noise-b.txt`. The pair exists to replace a number the record has
+been quoting as a control and that does not reproduce.
+
+build:   one build, one ELF, unchanged between the two runs:
+         mdk.elf md5 9b6eeeb3cfa0ce7d7728e61e2e04e607 (the shader-w build before
+         the log-line change; the noise is a property of runs, not of builds, so
+         the intermediate build is the right subject and is named as such).
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 50 --min-frames 600
+                   --shot /tmp/kilo-b103/final.png        (run A, this file)
+         DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 50 --min-frames 600
+                   --shot /tmp/kilo-b103/control.png      (run B)
+         both exit 0; both reached frame 2820 by the deadline and frame 2880 after
+         the reap; same lane kind, same forced llvmpipe, same mono.
+display: :99 — Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7).
+capture: `python3 tools/panel_crop.py crop`, 400x240 = 96000 px.
+         run A pixel sha 52c44bf34fd212ea01e6064aad25c059f3b6f418777a4d5a847f03882bd5703b
+         run B pixel sha 94c411c41eb78ef918a865c7f3fe650ea0d42dce0147622198649a978e623639
+
+THE MEASUREMENT:
+
+    full RGB, run A vs run B:      53515 px of 96000   (bbox x 0..399 y 0..239)
+    geom (painted/clear), A vs B:      0 px of 96000
+    R channel alone, A vs B:           0 px of 96000
+    G/B channels alone, A vs B:    53515 px
+
+WHAT THAT MEANS, and it is not a small thing for this project's evidence.
+
+1. **A full-RGB panel diff is not reproducible across runs of the same build.**
+   The capture is not frame-locked: `emurun.sh --shot` grabs the X window at a
+   wall-clock deadline, and the guest prints a frame line only every 60th frame,
+   so the frame actually on screen at the deadline sits anywhere in a ~60-frame
+   window. The level-7 camera and object list are static but the textures animate,
+   so that window repaints most of the panel's colour. Batch 102's sidecar states
+   "the noise floor is EXACTLY zero — two runs of the parent build produce
+   byte-identical panels"; that does not reproduce here, and a control that prints
+   0 px was comparing a capture with itself. Every prior sidecar that quoted a
+   full-RGB diff as a picture claim inherits this, including batch 102's 58520 px.
+2. **The painted-versus-clear map IS reproducible** (0 px here, and the census's
+   exact clear-colour count has reproduced across batches). That is the quantity a
+   console A/B can actually claim, and `tools/panel_geom.py` is now the one place
+   that prints it, with the full-RGB number printed next to it and labelled.
+3. A real console A/B therefore needs TWO runs per side, and the parent-vs-parent
+   number is the floor the child-vs-parent number has to clear. One run per side
+   supports a geom claim and nothing else.
+
+what this pair CANNOT say: it does not say the panel instrument is useless, and it
+does not retroactively invalidate the census numbers (58464 clear in both builds,
+painted-left 0 in the arena-only build) — those are painted/clear numbers, the
+half that reproduces. It says the colour half was never a control. The fix that
+would make the colour half usable is a frame-locked capture, and the named blocker
+is that the 3DS backend has no screenshot path at all (`render.h`: `screenshot_path`
+is "Linux only"), so nothing in the guest can pin the frame.
