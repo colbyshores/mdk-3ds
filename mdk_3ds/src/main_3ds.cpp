@@ -25,9 +25,10 @@
 //     canvas draw has to become a record in the frame's queue so the per-eye
 //     replay emits it, and until that lands a HUD call here would draw nothing at
 //     all and read as a ported HUD. Deferred with that cause, not stubbed.
-//   * The scripts and their objects (ScriptRuntime, ObjectView). Same reason as
-//     the Linux frontend's: they are a subsystem of their own.
-//   * Audio. The ndsp sink is the next item after this one.
+//   * The objects the scripts own (ObjectView / ObjectDraw). The runtime RUNS
+//     here now — its simulation, its sounds, its camera and arena requests — but
+//     nothing draws its objects yet, so the level's enemies move and make noise
+//     unseen. The object pass is the next item; docs/CONTINUATION.md carries it.
 //
 // The lifecycle rules are AGENTS.md P1; the frame rules are P2.
 // ============================================================================
@@ -38,6 +39,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <memory>
 #include <string>
 
 #include "audio/audio_3ds.h"
@@ -45,6 +47,7 @@
 #include "audio/sound_mixer.h"
 #include "formats/bni.h"
 #include "formats/case_insensitive_path.h"
+#include "formats/cmi.h"
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
 #include "game/arena_space.h"
@@ -56,6 +59,7 @@
 #include "game/level_view.h"
 #include "game/player.h"
 #include "render/render.h"
+#include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
 #include "platform/input_3ds.h"
@@ -213,10 +217,35 @@ int main(int argc, char** argv) {
     mdk::formats::Bni sprites;
     mdk::KurtSprite kurtSprite;
     bool kurtSpriteReady = false;
+    // The sprites ARCHIVE parsed, which is not the same fact as kurtSpriteReady:
+    // the runtime borrows the archive (its built-in behaviours play H150_R and
+    // H150_I out of it) and a level whose Kurt-sprite decode failed still has a
+    // usable archive for the scripts.
+    bool spritesReady = false;
+    // The level's script bytecode. The C# Viewer loads it next to the geometry
+    // and the runtime cannot exist without it.
+    mdk::formats::Cmi cmi;
+    bool cmiReady = false;
     const mdk::formats::Arena* arena = nullptr;
     if (data.found()) {
         mdk::log3dsPrintf("data: %s", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, flow.state().level)) {
+            // The scripts' bytecode is a level asset, found the same way the C#
+            // finds it. A level with no CMI is a level with no scripts, and this
+            // frontend says so in the log rather than running a silent half-world.
+            char cmiPath[64];
+            snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI",
+                     (int)flow.state().level, (int)flow.state().level);
+            std::vector<uint8_t> cmiBytes;
+            if (!data.read(cmiPath, &cmiBytes)) {
+                mdk::log3dsPrintf("scripts: %s did not read -- no scripts", cmiPath);
+            } else if (!mdk::formats::Cmi::parse(&cmi, cmiBytes.data(),
+                                                 (int32_t)cmiBytes.size())) {
+                mdk::log3dsPrintf("scripts: %s did not parse -- no scripts", cmiPath);
+            } else {
+                cmiReady = true;
+                mdk::log3dsPrintf("scripts: CMI loaded (%d bytes)", (int)cmiBytes.size());
+            }
             const int32_t start = level.dti().startArena();
             if (start >= 0 && start < (int32_t)level.dti().arenas().size()) {
                 arena = level.arenaNamed(level.dti().arenas()[start].name);
@@ -243,11 +272,17 @@ int main(int argc, char** argv) {
             if (!data.read("TRAVERSE/TRAVSPRT.BNI", &spriteBytes) ||
                 !mdk::formats::Bni::parse(&sprites, std::move(spriteBytes))) {
                 mdk::log3dsPrintf("sprites: TRAVSPRT.BNI did not load -- Kurt is invisible");
-            } else if (kurtSprite.load(renderer, sprites, level.dti().palette())) {
-                kurtSpriteReady = true;
-                mdk::log3dsPrintf("sprites: Kurt's animations loaded");
             } else {
-                mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
+                // The archive PARSED, which is the runtime's requirement and not
+                // Kurt's: the archive is what the built-in behaviours play out of,
+                // the decode below is Kurt's own animations.
+                spritesReady = true;
+                if (kurtSprite.load(renderer, sprites, level.dti().palette())) {
+                    kurtSpriteReady = true;
+                    mdk::log3dsPrintf("sprites: Kurt's animations loaded");
+                } else {
+                    mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
+                }
             }
         } else {
             mdk::log3dsPrintf("level %d: FAILED to load", (int)flow.state().level);
@@ -309,13 +344,15 @@ int main(int argc, char** argv) {
     // solved by this batch; it is no longer hidden either, because the game is now
     // audible without it.
     //
-    // THE MIXER IS STANDALONE HERE, and that is the C#'s shape too: Game.cs:206
-    // builds the AudioDevice, Viewer.cs:194 builds the SoundMixer over the bank,
-    // and Kurt gets the mixer. This frontend has no ScriptRuntime (the scripts are
-    // not wired on the console yet), so the mixer lives here instead of inside one,
-    // and what it can play is Kurt's own set — footsteps, the chute, the guns,
-    // landing — not the scripts' ambient and object sounds. Those arrive with the
-    // runtime, not before it.
+    // THE MIXER LIVES IN THE RUNTIME WHEN THERE IS ONE, and that is the C#'s shape
+    // too: Game.cs:206 builds the AudioDevice, Viewer.cs:194 builds the SoundMixer
+    // over the bank, and BOTH Kurt and the ScriptRuntime get that one (Kurt.cs
+    // takes the SoundMixer as a constructor argument). So the mixer the frame mixes
+    // and the sink is attached to is `mix` below: the runtime's when the scripts
+    // run, and the standalone one built here when they cannot (no CMI, no bank or
+    // no sprites archive). What the standalone one can play is Kurt's own set —
+    // footsteps, the chute, the guns, landing — and what the runtime's adds is the
+    // scripts' ambient and object sounds, which is why this was the audio item.
     // ---------------------------------------------------------------------
     mdk::audio::SoundBank bank;
     bool bankReady = false;
@@ -335,6 +372,17 @@ int main(int argc, char** argv) {
     if (audioReady) {
         mixer.device().setSink(mdk::audioSink, nullptr);
     }
+
+    // The three assets the scripts need, all of them loaded above: the CMI is the
+    // bytecode, the bank is what decides whether a script's play_sound names a
+    // sound this level has, and the sprites archive is what the built-in
+    // behaviours play their animations out of. The C# has no run without them, and
+    // a runtime built with a hole in one of them is not a degraded oracle run but a
+    // DIFFERENT game: the Runner draws its idle chance only while idle or done, so
+    // a missing archive consumes the random stream differently from tick one. So
+    // the runtime is not constructed at all when one is missing, and the level runs
+    // without scripts, which the log says out loud.
+    const bool scriptAssetsReady = cmiReady && bankReady && spritesReady;
 
     // The BSP world Kurt moves through: the arenas the level says are reachable
     // (the C# Viewer adds only IsReachable ones -- a hidden arena whose bounds
@@ -365,6 +413,21 @@ int main(int argc, char** argv) {
     mdk::Player player;
     mdk::FollowCamera follow;
     bool playerReady = false;
+    // THE SCRIPTS. The C# Viewer owns one ScriptRuntime per level and builds a
+    // fresh one when the level reloads, and a respawn here IS a level reload, so
+    // the runtime is rebuilt in spawnPlayer with Kurt: its object list, its tick
+    // count, its arena state and its random stream all start over (Viewer.cs:232).
+    // It is a pointer because it is rebuilt, and it is gated on its three assets
+    // rather than constructed with a hole in one of them (scriptAssetsReady).
+    std::unique_ptr<mdk::scripts::ScriptRuntime> runtime;
+    // THE ONE MIXER, and which one it is depends on the runtime: the C# gives the
+    // runtime and Kurt the same SoundMixer, and ScriptRuntime OWNS its mixer, so
+    // when there is a runtime the frontend mixes that one and the sink is attached
+    // to it. With no runtime the standalone mixer built above stays in use and what
+    // can play is Kurt's own set. Re-pointed in spawnPlayer, never left dangling:
+    // it is reset to the standalone mixer before every rebuild, and the runtime's
+    // address is stable because the mixer is a member of the object pointed at.
+    mdk::audio::SoundMixer* mix = &mixer;
     // THE ONE HEALTH, taken once. The C#'s fresh Viewer seeds Kurt from the fall's
     // carry and CONSUMES it (Viewer.cs:246 -> CarryFromFall, :347-361, which does
     // `_kurt.SetHealth(carry.Health)` and then `state.Carry = null`), so the carry
@@ -385,15 +448,44 @@ int main(int argc, char** argv) {
         }
         player.setSpace(&space);
         player.setMixer(&mixer);  // a fresh Player has a null mixer (C# Kurt's ctor arg)
+        // The scripts restart with him. The runtime is destroyed and rebuilt rather
+        // than reset, because that is what the C# does (a fresh Viewer, a fresh
+        // ScriptRuntime) and because the runtime has no reset: its arena states,
+        // object deque, tick count and RNG are the level's history.
+        runtime.reset();
+        mix = &mixer;
+        if (scriptAssetsReady) {
+            // The seed. The oracle seeds its RNG with `new Random()` when no seed is
+            // passed (ScriptRuntime.cs:323), which is the clock: an oracle run is
+            // NOT reproducible here either, so a fixed seed would be the divergence,
+            // not the fidelity. The console's clock is the ARM11 cycle counter, and
+            // the value is logged at spawn so a run can be replayed by hand.
+            const int32_t seed = (int32_t)(uint32_t)svcGetSystemTick();
+            runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, seed, &bank, &player,
+                                                          &sprites));
+            runtime->option = 0;  // the oracle's Option; the gore setting is not ported
+            // Kurt's sounds go through the runtime's mixer, because in the C# they
+            // are the same mixer.
+            player.setMixer(&runtime->mixer());
+            mix = &runtime->mixer();
+            if (audioReady) {
+                // The new mixer owns a new SoundDevice, so the sink has to be handed
+                // to it: a respawn without this would be a silent level.
+                mix->device().setSink(mdk::audioSink, nullptr);
+            }
+            mdk::log3dsPrintf("scripts: runtime ready (seed %d, option 0)", (int)seed);
+        }
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
         }
         follow = mdk::FollowCamera();
         // Pin Kurt's arena to the one around the spawn, as the fresh level's start.
-        // The step loop refreshes it from here on (the C# refreshes it every step,
-        // Viewer.cs:533); what the spawn pin is FOR is the case the loop CANNOT
-        // supply, a Kurt standing outside every arena: with no pin at all, bottom()
-        // resolves nothing, the fall-out death never fires and he falls forever.
+        // The step loop refreshes it from here on (from the runtime's current arena
+        // when there is one, geometrically when there is not: the C# refreshes it
+        // every step, Viewer.cs:533); what the spawn pin is FOR is the case the loop
+        // CANNOT supply, a Kurt standing outside every arena and a runtime that has
+        // not completed its first tick: with no pin at all, bottom() resolves
+        // nothing, the fall-out death never fires and he falls forever.
         const std::string* here = space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
         if (here) {
             space.setSolid(*here);
@@ -405,6 +497,14 @@ int main(int argc, char** argv) {
     if (arena) {
         spawnPlayer();
         playerReady = true;
+    }
+    if (playerReady && !runtime) {
+        // Said out loud, because a silent half-world is the failure mode: the level
+        // plays, Kurt walks, and nothing the scripts own exists. The three assets
+        // are named so the cause is readable from the guest log alone.
+        mdk::log3dsPrintf("scripts: NOT started (cmi=%d bank=%d sprites=%d) -- no script "
+                          "sounds and no script objects", (int)cmiReady, (int)bankReady,
+                          (int)spritesReady);
     }
 
     // The camera is built once up front so the very first frame has a valid
@@ -513,16 +613,29 @@ int main(int argc, char** argv) {
             if (pending > maxPending) pending = maxPending;
             while (pending >= step) {
                 player.update(input, step);
-                // The pitch the camera eases to (Viewer.cs:746-747). The live
-                // camera_track request and the scripts' current arena are the
-                // oracle's sources and both need the script runtime, so this uses
-                // the geometric arena under Kurt, which is what the runtime-less
-                // Linux frontend uses for the same reason.
+                // The C# Viewer's step order is Kurt, then the scripts, then the
+                // camera (Viewer.cs:505-535). ScriptRuntime keeps its own 1/30 s
+                // clock, so a 1/60 s call completes a script tick every second step
+                // while Kurt's physics stay at 60 Hz.
+                if (runtime) {
+                    runtime->update(step);
+                }
+                // The pitch the camera eases to (Viewer.cs:746-747). The oracle's
+                // sources are a live camera_track request first and the scripts'
+                // current arena's rest pitch after it, and the runtime answers both.
+                // With no runtime neither exists, so the geometric arena under Kurt
+                // is the stand-in (what the runtime-less Linux frontend uses too).
                 float target = mdk::follow_camera::kDefaultPitch;
-                const std::string* here =
-                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
-                if (here) {
-                    target = level.arenaPitch(*here);
+                if (runtime) {
+                    target = runtime->cameraTrackTicks > 0
+                                 ? runtime->cameraTrackPitch
+                                 : level.arenaPitch(runtime->currentArena());
+                } else {
+                    const std::string* here =
+                        space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                    if (here) {
+                        target = level.arenaPitch(*here);
+                    }
                 }
                 follow.update(&camera, &space, player, target, step, kAspect);
                 // The collision world follows him. The C# refreshes it EVERY STEP
@@ -535,30 +648,43 @@ int main(int argc, char** argv) {
                 // probes would find no floor there, he would fall through it, and
                 // bottom() -- which DOES consider any arena holding his feet --
                 // would report that neighbour's bottom and fire the fall-out death.
-                // Without the scripts the geometric arena under his feet is the
+                //
+                // WITH A RUNTIME THE PIN IS THE ORACLE'S OWN: `SolidArenas` starts
+                // from the scripts' current arena, and that pin moves only when the
+                // arena under Kurt changes at a script tick (script_runtime.cpp:371
+                // -379, the C#'s ScriptRuntime.cs:917-931) — which is NOT the same
+                // as following his feet every 1/60 s step, and is why the runtime is
+                // preferred wherever it exists. It is skipped while empty, which is
+                // only ever before the first completed tick: setSolid("") CLEARS the
+                // pin (arena_space.cpp:61-70), and clearing it for the step or two
+                // before the runtime has started an arena would drop the spawn pin
+                // for no reason. The pin is deliberately NOT cleared when he is
+                // outside every arena: that is the fall-out case, and bottom() still
+                // has to resolve an arena for the death to fire at all.
+                //
+                // WITHOUT A RUNTIME the geometric arena under his feet is the
                 // stand-in for `SolidArenas`. It is NOT what the Linux frontend
-                // does: that one refreshes from the runtime's current arena and
-                // only when a runtime exists (mdk_linux/src/main.cpp:531-533), and
-                // it pins once at the spawn otherwise (:366-369). The oracle's own
-                // rule is neither: the scripts' pin moves only on a doorway
-                // connection or a teleport (ScriptRuntime.cs:917-931, :791), so it
-                // does NOT follow him down a fall column. Connections are not
-                // ported and this frontend has no ScriptRuntime, so the geometric
-                // refresh stays the closest available stand-in for the walking case
-                // -- the one review-8 F1 measured -- at the cost of a fall-out that
-                // can re-pin on 4 of the 1681 columns the review probed. Narrowing
-                // it to the supported steps is a separate batch with its own walk-
-                // out-of-the-arena golden, not a one-liner inside this one. The
-                // pin is deliberately NOT cleared when he is outside every arena:
-                // that is the fall-out case, and bottom() still has to resolve an
-                // arena for the death to fire at all. It is probed AGAIN rather
-                // than reusing the pitch's `here`, because the C# evaluates SetSolid
-                // after UpdateCamera and the camera's clearance can shove Kurt into
-                // a different arena than the one his step started in.
-                const std::string* solid =
-                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
-                if (solid) {
-                    space.setSolid(*solid);
+                // does: that one refreshes from the runtime's current arena and only
+                // when a runtime exists (mdk_linux/src/main.cpp:531-533), and it
+                // pins once at the spawn otherwise (:366-369). The geometric refresh
+                // is the closest available stand-in for the walking case -- the one
+                // review-8 F1 measured -- at the cost of a fall-out that can re-pin
+                // on 4 of the 1681 columns the review probed; narrowing it is a
+                // separate batch with its own walk-out-of-the-arena golden. It is
+                // probed AGAIN rather than reusing the pitch's `here`, because the C#
+                // evaluates SetSolid after UpdateCamera and the camera's clearance
+                // can shove Kurt into a different arena than the one his step
+                // started in.
+                if (runtime) {
+                    if (!runtime->currentArena().empty()) {
+                        space.setSolid(runtime->currentArena());
+                    }
+                } else {
+                    const std::string* solid =
+                        space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                    if (solid) {
+                        space.setSolid(*solid);
+                    }
                 }
                 pending -= step;
                 steps++;
@@ -583,10 +709,12 @@ int main(int argc, char** argv) {
         // device's Update runs after the screen's frame (Game.cs:334-337). Both
         // take the frame's elapsed, not the step's. It runs with no sink too, as
         // the muted C# does: the voice lifecycle has to advance or a one-shot would
-        // play forever to a silent console.
-        mixer.listenFromCamera(camera);
-        mixer.update(elapsed);
-        mixer.device().update(elapsed);
+        // play forever to a silent console. `mix` is the runtime's mixer when the
+        // scripts are running, which is the C#'s one-mixer shape and the only way a
+        // script's play_sound reaches this device at all.
+        mix->listenFromCamera(camera);
+        mix->update(elapsed);
+        mix->device().update(elapsed);
         // AFTER the device, so the clock is exactly the sum of what the device
         // was given and not of what the frame happened to measure.
         audioClock += elapsed;
@@ -648,16 +776,28 @@ int main(int argc, char** argv) {
                               (int)level.arenas().size(), (double)step);
             mdk::log3dsPrintf("audio: sink=%d bank=%d voices=%d queue=%d",
                               audioReady ? 1 : 0, bankReady ? 1 : 0,
-                              (int)mixer.voices().size(), (int)mixer.device().queueFrames());
+                              (int)mix->voices().size(), (int)mix->device().queueFrames());
+            // The scripts' own state, on the frame the input selftest reports on.
+            // `objects` is the live count (the runtime keeps removed objects in its
+            // deque for pointer stability, so objectCount subtracts them) and
+            // `arena` is the pin the step loop is using.
+            mdk::log3dsPrintf("scripts: runtime=%d objects=%d arena=%s mix=%s",
+                              runtime ? 1 : 0, runtime ? runtime->objectCount() : 0,
+                              runtime && !runtime->currentArena().empty()
+                                  ? runtime->currentArena().c_str()
+                                  : "-",
+                              runtime ? "runtime" : "standalone");
         }
         if (frame <= 5u || (frame % 60u) == 0u) {
             mdk::log3dsPrintf("frame %lu elapsed=%.4f steps=%u feet=(%.1f,%.1f,%.1f) "
-                              "yaw=%.1f health=%d eye=(%.1f,%.1f,%.1f) voices=%d plays=%d",
+                              "yaw=%.1f health=%d eye=(%.1f,%.1f,%.1f) voices=%d plays=%d "
+                              "objects=%d",
                               (unsigned long)frame, elapsed, (unsigned)steps,
                               player.feet.x, player.feet.y, player.feet.z, player.yaw,
                               player.health(), camera.position.x, camera.position.y,
-                              camera.position.z, (int)mixer.voices().size(),
-                              (int)mixer.device().nextId() - 1);
+                              camera.position.z, (int)mix->voices().size(),
+                              (int)mix->device().nextId() - 1,
+                              runtime ? runtime->objectCount() : 0);
         }
         if (audioReady && (frame % 60u) == 0u) {
             // The sink's own ledger, on the same cadence as the frame line. The

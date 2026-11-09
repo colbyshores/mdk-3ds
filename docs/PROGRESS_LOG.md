@@ -18785,3 +18785,153 @@ lookup that succeeded quietly.
   `ralph/builder.md` is `PROTECTED`: committing it without `--owner-approved` stops the loop at
   exit 6. This batch staged its paths **by name**.
 * **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools in this session.
+
+## Iteration 127 — batch 99: priority item 6d — the 3DS frontend runs the scripts, and the mixer the scripts write to is now the mixer the sink reads
+
+**What this batch is.** Not a review remediation: review-4 of run-20261108-195620 was closed by
+batch 98 and the newest review has no Critical or High finding outstanding. This is the first
+forward step on `docs/CONTINUATION.md`'s audio priority order, item **6d** — *"the 3DS frontend has
+no `ScriptRuntime`, so script sounds cannot play"* — which the same entry names as the missing piece
+behind three things (script sounds, the object pass, the camera's script inputs) and told the next
+batch to say which of the three it was landing. This batch lands **the runtime itself**: its
+simulation, its sounds, and the camera/arena requests. The **object draw is the next batch** and the
+reason is stated below rather than left implicit.
+
+**The oracle it satisfies.** `Viewer.cs:232` constructs one `ScriptRuntime` per level over the
+level's CMI, sprites archive and sound bank, with the level's `Player` and the one `SoundMixer`
+(`Viewer.cs:194` builds the mixer, `Kurt.cs` takes it as a constructor argument), and `Option` set
+from the gore setting. `Viewer.Frame` then calls, in order, `UpdateKurt`, `_scripts.Update(Step)`,
+`UpdateCamera` (`Viewer.cs:505-535`), takes the camera's rest pitch from a live `camera_track`
+request and otherwise from the scripts' current arena (`Viewer.cs:746-747`), and refreshes the
+collision world from the scripts' arenas (`Viewer.cs:533`). Every one of those five is now what
+`main_3ds.cpp` does, and the Linux frontend (`mdk_linux/src/main.cpp:377-405`, `:509-534`) is the
+same wiring on the other target, which is what made this a port rather than an invention.
+
+**The change, in `mdk_3ds/src/main_3ds.cpp` (the only shipped file touched).**
+
+* The level's CMI is loaded with its geometry (`TRAVERSE/LEVEL%d/LEVEL%d.CMI`), and the sprites
+  archive's *parse* is now tracked separately from Kurt's decode (`spritesReady` vs
+  `kurtSpriteReady`): the archive is the runtime's asset, the decode is Kurt's, and conflating them
+  would have turned a Kurt-sprite failure into a scriptless level for the wrong reason.
+* `scriptAssetsReady = cmiReady && bankReady && spritesReady`, and the runtime is **not constructed
+  at all** without all three. That gate is not tidiness: `script_runtime.h`'s constructor note is
+  that a runtime without the sprites archive plays different animations and therefore consumes a
+  **different random stream** from tick one, so a hole in it is a different game and not a degraded
+  one. The no-runtime case says so in the guest log with the three flags.
+* The runtime is built in `spawnPlayer`, i.e. rebuilt on every respawn, because the C# reloads the
+  level and builds a fresh runtime, and the C++ runtime has no reset: its object deque, arena states,
+  tick count and RNG *are* the level's history.
+* **The one mixer.** `ScriptRuntime` owns its `SoundMixer`, and every script sound is written into
+  that one (`script_vm.cpp:1258`, opcode 89 `play_sound` → `ScriptRuntime::playSound` →
+  `mixer_.play/playAt`). So the frontend mixes through a pointer, `mix`, which is the runtime's mixer
+  when there is a runtime and the standalone one when there is not, and the sink is attached to
+  whichever it is — **including after a respawn**, because a rebuilt runtime owns a new
+  `SoundDevice` and a sink left on the old one is a silent level from the first death onwards.
+* The step order is the oracle's: `player.update`, `runtime->update(step)`, `follow.update`. The
+  runtime keeps its own 1/30 s clock and expects to be called once per 1/60 s step.
+* The camera's rest pitch is `cameraTrackPitch` while `cameraTrackTicks > 0`, else
+  `arenaPitch(runtime->currentArena())`. The geometric arena under Kurt survives only as the
+  no-runtime stand-in, which is what its comment always claimed it was.
+* The solid-arena pin comes from `runtime->currentArena()`, **guarded on non-emptiness**. The guard
+  is load-bearing and easy to get wrong: `currentArena_` is empty until the runtime's first completed
+  tick (`script_runtime.cpp:371-379`), and `ArenaSpace::setSolid("")` *clears* the pin
+  (`arena_space.cpp:61-70`), so an unguarded call would drop the spawn pin for the step or two
+  before the first tick — which is the fall-out-death failure review-8 F1 measured, reached from a
+  third direction.
+
+**Two gates had to be changed, and one of them was wrong in a way this batch found.**
+
+* `tests/scripts/ndsp_sink_test.sh` pinned the frame's audio feeds by **spelling**
+  (`mixer.update(elapsed);`), so renaming them to `mix->update(elapsed);` reddened it. The fix
+  widens the pattern to either spelling and says why: which object the feed is called on is now
+  `main_3ds_flow_test.sh`'s business, and what `ndsp_sink_test.sh` owns is the narrower invariant —
+  exactly one unconditional feed, naming the same identifier the clock accumulates. All **33 arms
+  still adjudicate red** (they were rewritten against the new spelling, so they still mutate a feed
+  that exists) and all **9 correct-code probes stay green**.
+* `tests/scripts/main_3ds_flow_test.sh` gained six checks (scripts tick between Kurt and the camera;
+  the frame mixes the pointer that follows the runtime; a respawn re-points it, rebinds Kurt and
+  re-attaches the sink; the runtime is built under the asset gate; the runtime's pin is guarded on a
+  non-empty current arena; the pitch comes from the runtime) and seven arms. Two things came out of
+  writing them. First, check 4 had to be widened from *the first* `setSolid` site in the loop to
+  *every* one: the loop now has two, and a guard test that stopped at the first would have let an
+  unguarded second site clear the pin while the gate printed PASS. Second, the arm for the new
+  mixer check **failed on its first run**, and the reason was a bug in the check as written: it read
+  the module-level `SRC` instead of `adjudicate`'s own argument, so it adjudicated the unmutated
+  file for every arm and would have certified its own mutant green. That is the pass-generator
+  shape this loop has been shown eleven times, produced here by the batch whose job was to add a
+  check, and the note is now in the file.
+* `mdk.elf` moved, and this time that is a fact about the link and not an excuse: md5
+  `c8295e96663ca33be481df2e77613e46` → `4232fd94a337e9b28c1132dd15198f63`, `size` text 610612 /
+  data 7584 / bss 40200. `arm-none-eabi-nm mdk.elf | grep -ci ScriptRuntime` reports **107** where
+  it reported 0, because for the first time a shipped entry point references the runtime and
+  gc-sections has nothing to discard. (`Mve` is still 0 — there is still no movie player.)
+
+**Emulator evidence (AGENTS P8, owed because `mdk_3ds/**` changed).** `mdk_3ds/tools/emurun.sh`,
+`DISPLAY=:99`, Mandarine r1.2.1 md5 `0d2adab6ad078c78e6d03e72086f2eb6` (the pinned known-good; the
+harness would have exited 6 on r1.3.0), build `mdk_3ds/mdk.3dsx` md5 `ee3a3d7b56be71c89e6b738395720ced`,
+60 s past readiness, **exit 0**. Display `:99`, mono (`render_3d=0 factor_3d=0`), software GL forced
+(llvmpipe), host audio muted by the harness. The guest reached **frame 3480** (63 frame lines). The
+lines that carry the batch: `scripts: CMI loaded (1079557 bytes)`, `scripts: runtime ready (seed
+2037550638, option 0)`, `scripts: runtime=1 objects=0 arena=- mix=runtime` at frame 1, and
+`objects=7` on the periodic frame line — the runtime ticked, started an arena and spawned the level's
+objects on a console for the first time. `health=100` on all 63 rows, no FAIL/WARN line, and the
+audio ledger unchanged in shape (`frame=660 secs=11.123 submitted=551` → 0.990 of the rate the clock
+owes). The seed is logged because the oracle's own seed is `new Random()` (`ScriptRuntime.cs:323`),
+i.e. the clock: a fixed seed would have been the divergence, and the log makes a run replayable.
+
+**What this batch does NOT do, and why.** The objects the runtime spawns are **not drawn**: the object
+pass (`ObjectView`/`ObjectDraw`) is ported in core and the c3d backend implements the dynamic-mesh
+seam it needs, but wiring it is a picture change and a picture change carries its own frame and
+emulator evidence, which a batch gets once. So the honest state is that level 7's seven objects
+exist, tick and make noise unseen. The measured mitigation is that nothing in the 3480-frame idle
+run touched Kurt (`health=100` throughout, `plays=1` unchanged), and the object pass is the immediate
+next item. Also not claimed: **no script sound fired in the measured scene** — level 7's idle scripts
+play nothing at the spawn, so `plays` stayed at 1 (Kurt's chute). The audible half rests on the
+wiring being pinned and on opcode 89 reaching the mixer the sink reads, not on a heard sound, and it
+is stated that way here and in the frame sidecar rather than as a demonstration.
+
+**Gates, verbatim.** `make -C tests/scripts` → `All cases match the oracle.` (with
+`PASS Main3dsFlow (11 checks, 12 arms adjudicated red)`, `PASS NdspSink (18 checks, 33 arms
+adjudicated red, 9 probes green)`, `PASS C3dFrame (29 checks, 37 arms adjudicated red)`,
+`PASS MveAudioDecode`, `PASS UbsanDecode`, `PASS AudioSinkSeam`, `PASS GameFlowMatchesTheOracle`).
+`bash tools/check.sh` → `CHECK: ALL GATES PASSED`, with `gates_vfp PASS blockers=0`,
+`audit_arm11_math VERDICT: CONTRACT CLEAN`, `audit_r11_idiv no candidates`,
+`gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`,
+`gates_frames PASS`, `gates_batch_integrity PASS`, `audit_c_with_classes 0 violations`.
+`make -C mdk_3ds` → `LINK mdk.elf`, `3DSX mdk.3dsx`, no errors.
+
+**Prior-solution lookup.** Pi-knowledge `mdk-sdl` searched (hybrid, 6 results: the runtime's own
+`showArena`/`runControllers`, `arena_space.h`'s sticky-pin note, `ScriptRuntime.cs`'s
+`CurrentArena`/`SecondArena`, and `main_3ds_flow_test.sh` itself) — consistent with what was
+implemented, nothing contradicting it. **Obsidian MCP and Cognee MCP are not exposed in this
+session** (no `obsidian_*` / `cognee_*` tools), so the vault lookup is the degraded disk-only path
+and Cognee's graph search was not available at all (AGENTS P9); a bounded read of
+`10-projects/mdk-sdl` found no note mentioning the ScriptRuntime. The prior solution that actually
+mattered was in the repository: the Linux frontend's wiring, read before writing the console's.
+
+### Still open after this batch
+
+* **The object pass on the console** — the runtime's objects are simulated and not drawn. Next batch,
+  with its own picture evidence. Nothing else blocks it: `ObjectView`, `ObjectDraw` and the c3d
+  dynamic-mesh seam all exist and are used by the Linux frontend.
+* **No script sound has been observed on the console.** `plays=1` in the measured scene. A scene
+  that makes one (a level whose scripts play an ambient sound at the spawn, or a walk into a trigger)
+  is the evidence this batch does not have.
+* **The console boots level 7** (`flow: screen=4 level=7`), so every 3DS emulator measurement to date
+  is a level-7 measurement. The goldens and the pinned frame are level 3.
+* **Item 5b (the HUD)** — unchanged, still blocked on `mdk_render_canvas_quad` being a no-op on this
+  backend. The MVE movie has the same blocker.
+* **Bank eviction with a real budget** (6c's second half): unbounded growth, not a ceiling. The
+  runtime makes the growth more likely, not less: more sounds can now be requested.
+* **`FrameStatus::Broken` still has no consumer** — no movie player on either target.
+* **Three `@vfp-exempt` pins in `sound_device.cpp` still do not parse** against `gates_vfp.EXEMPT_RE`.
+* **`gates_smdh` is SKIPPED, not passed**, until a `.cia` is built.
+* **Original-3DS performance and memory behaviour remain UNMEASURED.** Emulator-green is not
+  hardware-pass (P8), and the runtime now allocates per respawn, which is a linear-heap question no
+  emulator answers faithfully.
+* **The operator's uncommitted harness set stays unstaged** (`ralph-pi.sh`, `ralph/builder.md`,
+  `ralph/LOOP_CONTEXT.md`, `tools/ralph_pi_watchdog.sh`, `tools/runner/test_review_state.sh`,
+  `docs/OWNER_DIRECTIVE_2026-11-05.md`, `tools/reclaim_qwen_slots.sh`). It is operator-authored, and
+  `ralph/builder.md` is `PROTECTED`: committing it without `--owner-approved` stops the loop at exit
+  6. This batch staged its paths **by name**.
+* **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools in this session.

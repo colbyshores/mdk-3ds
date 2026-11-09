@@ -1,14 +1,33 @@
 # Phase 2 continuation checkpoint
 
-Risk: low — **test-only diff.** No shipped source is touched: the two changed code files are
-`tests/scripts/mve_audio_tests.cpp` (three new tests) and `tests/scripts/ubsan_decode_probe.cpp`
-(one stale PASS line), and `mdk.elf` is measured byte-identical to batch 97's (md5
-`c8295e96663ca33be481df2e77613e46`, `.text 0x057ba0`), so there is no interface, data-format,
-concurrency, behaviour or target-specific change to review. What replaces the risk is evidence: an
-**eight-arm mutation battery**, each arm deleting or widening exactly one bound in the two audio
-decodes, every arm caught, and two arms (M3, M5) that were **NOT caught before this batch existed**
-— the review asked for one unpinned guard and the battery that checked it found three more of the
-same class, all silent under UBSan *and* AddressSanitizer, visible only to a value assertion.
+Risk: high — **the 3DS frontend's simulation and audio wiring change.** One shipped file moves,
+`mdk_3ds/src/main_3ds.cpp`, but it is the frontend's frame loop: the console now owns a
+`ScriptRuntime`, rebuilt on every respawn (a state transition with an allocation behind it), the
+frame mixes the runtime's mixer instead of its own (the sink is re-attached per respawn), the camera's
+rest pitch and the collision world's solid-arena pin now come from the scripts, and `mdk.elf` grows
+by ~250 KB of text because gc-sections no longer discards the runtime. It is target-specific,
+it changes behaviour rather than formatting it, and the emulator can only show so much of it.
+
+**Batch 99 (Iteration 127) — priority item 6d landed: the console runs the scripts.** The C#'s shape
+is now the console's: one `ScriptRuntime` per level over the CMI, the sprites archive and the bank,
+built in `spawnPlayer` so a respawn restarts its objects, tick count and RNG (`Viewer.cs:232`); the
+step order `player.update` → `runtime->update(step)` → `follow.update` (`Viewer.cs:505-535`); the
+pitch from `camera_track` then the scripts' arena (`Viewer.cs:746-747`); the solid-arena pin from
+`currentArena()`, **guarded on non-emptiness** because `setSolid("")` clears the pin and the runtime
+has no current arena before its first tick. The mixer is the C#'s one mixer: `ScriptRuntime` owns it,
+opcode 89 writes into it, and the frontend mixes through a pointer that follows it, with the sink
+re-attached on every rebuild. **What it does not do: draw the objects.** They are simulated and
+unseen — level 7's seven of them — and the object pass is the next batch because it is a picture
+change and a picture change carries its own frame. Emulator (P8, `:99`, Mandarine r1.2.1
+`0d2adab6`, exit 0, frame 3480): `scripts: runtime ready (seed 2037550638, option 0)`,
+`objects=7`, `health=100` on all 63 rows, ledger `frame=660 secs=11.123 submitted=551`. **No script
+sound fired in the measured scene** (`plays=1`, level 7's idle scripts play nothing at the spawn), so
+the audible half rests on the wiring being pinned, not on a heard sound. Two gates moved:
+`ndsp_sink_test.sh` no longer pins the *spelling* of the audio feeds (33 arms still red, 9 probes
+still green), and `main_3ds_flow_test.sh` gained six checks and seven arms — and its own new check
+read the module's `SRC` instead of `adjudicate`'s argument, which its own arm caught on the first
+run: a check that adjudicates the unmutated file is a pass generator, eleventh time. `mdk.elf`
+`c8295e96…` → `4232fd94…`, `nm | grep -ci ScriptRuntime` 0 → 107. Narrative "Iteration 127".
 
 **Review-4 (run-20261108-195620) closed by batch 98: four findings, no Critical, no High — three
 fixed, one confirmed and gate-blocked, none rebutted on merit** (Iteration 126). **F1 (Medium)** was
@@ -90,7 +109,7 @@ would stop the loop at exit 6 rather than warn.
 
 **Two historical corrections that stay load-bearing.** Batch 83's headline measurement was taken against a build that is not its parent (batch 84's retraction stands), and with review-5 F1 the pattern was three consecutive batches trusting a number whose provenance was asserted rather than reproduced — what is different now is that anyone can reproduce both halves with `git archive`/`git ls-files` + `make` in a throwaway tree, and the identity field is the ELF — and a `.3dsx` md5 is not even reproducible from the tree that built it (batch 90: two consecutive in-tree builds gave `48931bcd…` then `23c5354f…` from one byte-identical `mdk.elf`). And **the census was never inflated, so do not re-run it**: the exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one**, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands" — the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, a different quantity). The old "re-census first" instruction stays withdrawn. Coverage is stated in panel columns (review-3 F4): geometry covers panel columns **200..399** of 400, the right half of the top screen.
 
-Last updated: 2026-11-09 (**batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
+Last updated: 2026-11-09 (**batch 99 — priority item 6d landed: the 3DS frontend runs the scripts. One `ScriptRuntime` per level, built in `spawnPlayer` so a respawn restarts its objects, tick count and RNG; ticked between Kurt and the camera; the pitch and the solid-arena pin come from it (the pin guarded on a non-empty `currentArena()`, because `setSolid("")` clears it); and the frame mixes the mixer the runtime owns, with the sink re-attached on every rebuild. Its objects are simulated and NOT drawn — the object pass is batch 100. `mdk.elf` `c8295e96…` → `4232fd94…`, `nm | grep -ci ScriptRuntime` 0 → 107; the emulator on `:99` (r1.2.1, exit 0) reaches frame 3480 with `objects=7` and `health=100` on all 63 rows, and no script sound fired. Superseded tail of the batch-97 line: batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
 owner-only: covering the compressed MVE audio path for the first time found a
 **heap-buffer-overflow** in `Mve::decodeAudio` — the predictor-seed loop filled `channels_` slots
 before any loop condition consulted `count = size / 2`, so a frame declaring less than
@@ -208,10 +227,13 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
    unbounded growth, not a ceiling. Budget-and-evict stays open, and its two halves are coupled —
    freeing an archive's bytes requires preloading, which is the opposite of today's lazy decode.
    Narrative "Iteration 122".
-6d. **OPEN — the 3DS frontend has no `ScriptRuntime`, so script sounds cannot play.** The mixer on the console
-   is standalone and carries Kurt's own set (footsteps, chute, guns, `LAND` — measured). Ambient and object
-   sounds come from opcodes and need the runtime wired on the console, which is the same missing piece as the
-   object pass and the camera's script inputs.
+6d. **DONE (99) — the 3DS frontend runs the scripts.** `main_3ds.cpp` builds a `ScriptRuntime` per
+   level (CMI + bank + sprites archive, all three required, or the runtime is not built and the log
+   says why), rebuilds it on respawn, ticks it between Kurt and the camera, takes the pitch and the
+   solid-arena pin from it, and mixes the mixer it owns — so opcode 89's `play_sound` now reaches the
+   ndsp sink. **Its objects are simulated and NOT drawn** (see NEXT): level 7's seven of them tick
+   unseen, and the object pass is the next batch. No script sound has been *observed* on the console
+   yet (`plays=1` in the measured level-7 idle run). Narrative "Iteration 127".
 7. **DONE (83, evidence corrected by 84) — Citro3D alpha blend** (owner directive item **6** — this file's
    own numbering drifted, review F6). The blend state is installed per pass from the oracle, and the shader's
    index-0 discard is the PICA's alpha test. Batch 84 corrected the *evidence*, not the change: it is verified
@@ -224,11 +246,11 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 95)
-*(Batch 98 did not advance this item and did not pretend to: it was a review-remediation batch, and
-review-4's findings were all in the MVE audio test coverage, which is not this file's priority-order
-head. The one-sided view is still first, still unadvanced, and still needs the same new hypothesis,
-not a sixth census run with the same instrument.)*
+## NEXT (batch 100)
+*(Batch 99 did not advance the renderer head either, and did not pretend to: it took the audio priority
+order's first open item, 6d. The one-sided view is still first, still unadvanced, and still needs the
+same new hypothesis, not a sixth census run with the same instrument. Behind it, the object pass the
+runtime batch just unblocked is the item with the least speculation in it.)*
 **The one-sided view, still first and still unadvanced.** Geometry covers panel columns **200..399** of the 400-wide top
 screen — the right half — and the live question is why coverage stops at a straight
 vertical line at the panel's middle. The census instrument is honest (header: 58464
@@ -255,10 +277,18 @@ alpha test per pass on the strength of the old note; it only has to re-read
 **unblended or depth-writing** — review-6 F3: those are two independent triggers, not one
 conjunction, and an unblended canvas pass diverges on colour alone.
 
-**Audio, in priority order after the renderer items.** (a) **6d** — the console has no `ScriptRuntime`, so
-ambient and object sounds cannot play; only Kurt's own set exists, and the emulator's ledger shows it
-(`voices=0 plays=1`). It is the same missing piece as the object pass and the camera's script inputs, so
-say which of the three it unblocks before starting it. (b) **the bank still has no eviction bound** — the
+**Audio and scripts, in priority order after the renderer items.** (a) **The object pass on the
+console** — batch 99 wired the runtime, so the level's objects are now simulated and **not drawn**
+(level 7: seven of them, ticking unseen). Nothing blocks it: `ObjectView` and `ObjectDraw` are ported,
+the c3d dynamic-mesh seam is real (not a no-op like `mdk_render_canvas_quad`), and the Linux frontend's
+`objectLook`/`objectStream`/`objectDraw` glue is the precedent to copy. It is a picture change, so it
+carries its own frame and emulator evidence, and it has a 3DS question of its own to answer rather than
+only a glue question: `ObjectDraw::ensure` grows ONE linear-allocated stream mesh geometrically from
+4096 corners, and `renderer_c3d.cpp`'s own residency note budgets roughly a megabyte of linear
+headroom after the two eye targets, the command buffer and an arena's textures — so the batch reports
+the capacity a level actually reaches and what it cost, not merely that objects appeared. And it should
+finally produce the one measurement batch 99 could not: a script sound reaching the sink (`plays` above
+Kurt's own 1). (b) **the bank still has no eviction bound** — the
 numbers are measured now (batch 94, `tick1 mixsize`): decoded 6.47 / 7.88 / 10.0 MB plus archives
 4.39 / 5.90 / 5.82 MB for levels 3 / 4 / 8, against the 24 MiB application heap the crt0 header requests
 (review-1 F3 — the "16 MB of FCRAM" this line used to quote was invented; and what fits is the bank's
@@ -297,6 +327,22 @@ is blocked on, so it is not a cheap follow-on. Original-3DS behaviour remains un
 
 ## Standing facts a batch must not re-derive
 
+* **`ScriptRuntime` OWNS its `SoundMixer`, so a frontend that has a runtime has exactly one mixer to
+  mix and it is the runtime's (batch 99).** Every script sound is written into that mixer
+  (`script_vm.cpp:1258` opcode 89 → `ScriptRuntime::playSound` → `mixer_.play/playAt`), so a frontend
+  that keeps mixing its own standalone mixer produces a level that runs its scripts, drains its audio
+  queue, prints a healthy ledger and is **silent** — no crash, no error, nothing in the log. And because
+  the mixer is a member of the runtime, **rebuilding the runtime rebuilds the `SoundDevice`**: the sink
+  has to be handed to the new one on every respawn or the level after the first death is silent. Both
+  are pinned by `main_3ds_flow_test.sh`; neither is visible to a compiler or to a single-frame capture.
+* **`ArenaSpace::setSolid("")` CLEARS the pin, and `ScriptRuntime::currentArena()` is empty until the
+  runtime's first completed tick** (`script_runtime.cpp:371-379` sets it inside the arena-change
+  branch, and a 1/60 s call only completes a tick every second step). So a frontend that pins from the
+  runtime must guard on non-emptiness, or it drops the spawn pin for the first step or two — which is
+  the fall-out-death failure review-8 F1 measured, arriving from a third direction (batch 99).
+* **The console boots level 7, not level 3** (`flow: screen=4 level=7`), so every 3DS emulator
+  measurement in this file is a level-7 measurement while the goldens and the pinned frame are level 3.
+  Do not read a level-7 emulator line as evidence about level 3, or the other way round.
 * **`Mve` is ported, tested, and NOT LINKED into the shipped binary — so an unchanged `mdk.elf` is
   not evidence that a change to `formats/mve.cpp` did nothing.** `arm-none-eabi-nm mdk_3ds/mdk.elf
   | grep -ci Mve` reports **0** and `mdk_3ds/mdk.map` records `build/mve.o (__aeabi_idiv)`: the

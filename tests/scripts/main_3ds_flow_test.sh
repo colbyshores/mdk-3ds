@@ -32,6 +32,31 @@
 #      unguarded `setSolid("")` when Kurt is outside every arena CLEARS the pin,
 #      which is check 3's failure reached by the opposite edit.
 #
+# WHAT BATCH 99 ADDED (the ScriptRuntime on the console, priority item 6d). The
+# frontend now owns a script runtime, which means four more things became load-
+# bearing that no compiler can see:
+#   6. the runtime's pin is guarded on a NON-EMPTY current arena — before its first
+#      completed tick `currentArena()` is empty, and pinning the empty name clears
+#      the pin, so this is check 3's failure from a third side;
+#   7. the scripts tick inside the fixed-step loop between Kurt and the camera
+#      (Viewer.cs:505-535), because the runtime's own 1/30 s clock assumes it is
+#      called once per 1/60 s step;
+#   8. the frame mixes the pointer that follows the runtime and not the standalone
+#      mixer — ScriptRuntime OWNS its mixer and every script sound is written into
+#      that one (script_vm.cpp:1258 opcode 89 -> ScriptRuntime::playSound), so a
+#      frontend that keeps mixing its own gets a silent level with a healthy ledger;
+#   9. a respawn re-points that pointer, rebinds Kurt, and re-attaches the sink, so
+#      a rebuilt runtime is not a silent level after the first death;
+#  10. the runtime is constructed under the asset gate, because a runtime missing
+#      its CMI, bank or sprites archive is a different random stream and not a
+#      degraded oracle run;
+#  11. the camera's rest pitch comes from the runtime when one exists (camera_track
+#      first, then the scripts' arena), with the geometric arena kept only as the
+#      no-runtime stand-in.
+# Check 4 was widened from "the first setSolid site" to "every setSolid site" for
+# the same reason: the loop now has two, and a check that stopped at the first
+# would let an unguarded second one clear the pin while the gate printed PASS.
+#
 # Every check is paired with a mutation arm that must turn it red; a gate that
 # prints PASS over a mutant that never ran is a pass generator.
 #
@@ -213,16 +238,16 @@ def adjudicate(text, quiet=False):
 
     # 4. the in-loop refresh is guarded, so being outside every arena keeps the
     #    last pin instead of clearing it. Depth is the load-bearing half: a call
-    #    at depth 0 is unconditional whatever its argument looks like.
-    guarded = False
-    if loop is not None:
-        depths = line_depths(loop)
-        for i, line in code_lines(loop):
-            if re.search(r"setSolid\s*\(", line):
-                d = depths[i] if i < len(depths) else None
-                guarded = d is not None and d >= 1
-                break
-    say("the in-loop refresh is guarded, so an empty lookup does not clear the pin",
+    #    at depth 0 is unconditional whatever its argument looks like. EVERY call
+    #    site is tested, not the first: the loop now has two (the runtime's arena
+    #    and the geometric one) and a check that stopped at the first would let an
+    #    unguarded second site clear the pin while the gate printed PASS.
+    depths = line_depths(loop) if loop is not None else []
+    sites = [(i, line) for i, line in code_lines(loop)
+             if re.search(r"setSolid\s*\(", line)] if loop is not None else []
+    guarded = bool(sites) and all(
+        (depths[i] if i < len(depths) else 0) >= 1 for i, _ in sites)
+    say("every in-loop refresh is guarded, so an empty lookup does not clear the pin",
         guarded, "an unconditional setSolid with an empty name clears the pin, which is "
                  "check 3's failure reached from the other side")
 
@@ -239,8 +264,89 @@ def adjudicate(text, quiet=False):
                 loop) is not None or bool(re.search(
                 r"std::string\*[ \t]+" + re.escape(m.group(1)) + r"[ \t]*=[ \t]*\n?[ \t]*space\.arenaAt",
                 loop))
-    say("the guard is the arenaAt lookup itself", shape,
+    say("the guard is the arenaAt lookup itself", shape, 
         "a guarded setSolid whose guard is not the lookup can still clear the pin")
+
+    # 6. the runtime's pin is guarded on its own emptiness. `currentArena()` is
+    #    empty until the runtime's first completed tick (script_runtime.cpp:371-379
+    #    sets it inside the arena-change branch), and setSolid("") CLEARS the pin,
+    #    so an unguarded call would drop the spawn pin for the step or two before
+    #    the first tick — check 3's failure again, from a third side.
+    rt_pin = bool(re.search(
+        r"if[ \t]*\([ \t]*![ \t]*runtime->currentArena\([ \t]*\)\.empty\([ \t]*\)[ \t]*\)"
+        r"[ \t]*\{[ \t]*\n[ \t]*space\.setSolid\([ \t]*runtime->currentArena\([ \t]*\)[ \t]*\)",
+        loop or ""))
+    say("the runtime's pin is guarded on a non-empty current arena", rt_pin,
+        "before its first tick the runtime has no current arena, and pinning the empty "
+        "name clears the spawn pin exactly as an empty arenaAt would")
+
+    # 7. the scripts tick INSIDE the fixed-step loop, between Kurt and the camera.
+    #    The C#'s Viewer order is UpdateKurt, _scripts.Update, UpdateCamera
+    #    (Viewer.cs:505-535); a runtime updated after the camera feeds the camera a
+    #    tick behind, and one updated outside the loop runs at the frame rate while
+    #    its own 1/30 s clock assumes it is called every 1/60 s step.
+    ok_scripts = False
+    if loop is not None:
+        kurt = call_line(loop, "player.update")
+        scr = call_line(loop, "runtime->update")
+        cam = call_line(loop, "follow.update")
+        ok_scripts = kurt is not None and scr is not None and cam is not None \
+            and kurt < scr < cam
+    say("the scripts tick in the step loop, after Kurt and before the camera", ok_scripts,
+        "Viewer.cs:505-535 is Kurt, scripts, camera; outside the loop the runtime's 1/30 s "
+        "clock is driven by frames, not by steps")
+
+    # 8. the frame mixes the RUNTIME's mixer. ScriptRuntime owns its SoundMixer and
+    #    every script sound is written into that one (script_vm.cpp:1258 opcode 89
+    #    -> ScriptRuntime::playSound -> mixer_), so a frontend that keeps mixing its
+    #    own standalone mixer attaches the sink to a device the scripts never write
+    #    to: the level would run its scripts and be silent, with a healthy ledger.
+    #    (Reads `text`, the adjudicate argument, and not the module's SRC: a check
+    #    that read SRC would adjudicate the unmutated file for every arm and turn
+    #    its own arm green, which is the pass-generator shape this file exists to
+    #    avoid — and the arm for this check caught it on its first run.)
+    mix_ok = all(re.search(p, text) for p in (
+        r"mix->listenFromCamera\(camera\);", r"mix->update\(elapsed\);",
+        r"mix->device\(\)\.update\(elapsed\);")) and not re.search(
+        r"(?m)^[ \t]*mixer\.(listenFromCamera|update|device\(\)\.update)[ \t]*\(", text)
+    say("the frame mixes the pointer that follows the runtime, not the standalone mixer",
+        mix_ok, "the scripts write to the runtime's mixer; mixing another one is a silent "
+                "level that still drains its audio queue")
+
+    # 9. a respawn re-points the mixer AND re-attaches the sink. The runtime owns
+    #    its mixer and its SoundDevice, so a rebuilt runtime is a new device: the
+    #    sink attached to the old one leaves every level after the first death
+    #    silent, which is the kind of bug that only shows up after a minute of play.
+    spawn_mix = (spawn_body is not None
+                 and re.search(r"mix[ \t]*=[ \t]*&runtime->mixer\(\)[ \t]*;", spawn_body) is not None
+                 and re.search(r"player\.setMixer\(&runtime->mixer\(\)\)", spawn_body) is not None
+                 and re.search(r"mix->device\(\)[ \t]*\.setSink\(", spawn_body) is not None)
+    say("a respawn re-points the mixer, rebinds Kurt, and re-attaches the sink", spawn_mix,
+        "the rebuilt runtime owns a new SoundDevice; the old sink is a device nothing reads")
+
+    # 10. the runtime is built only when its three assets are present. A runtime
+    #     with a hole in one of them is a different random stream, not a degraded
+    #     oracle run (script_runtime.h's constructor note), so the gate has to be
+    #     the reason it is not built.
+    gate_ok = (spawn_body is not None
+               and re.search(r"if[ \t]*\([ \t]*scriptAssetsReady[ \t]*\)[ \t]*\{", spawn_body)
+               is not None
+               and re.search(r"runtime\.reset\([ \t]*new[ \t]+mdk::scripts::ScriptRuntime",
+                             spawn_body) is not None)
+    say("the runtime is constructed under the asset gate", gate_ok,
+        "a runtime without its CMI, bank or sprites archive plays a different game")
+
+    # 11. the camera's rest pitch comes from the runtime when there is one: a live
+    #     camera_track request first, then the scripts' current arena (the C#'s two
+    #     sources, Viewer.cs:746-747). The geometric arena is the no-runtime
+    #     stand-in and nothing more.
+    pitch_ok = (loop is not None
+                and "runtime->cameraTrackTicks" in loop
+                and "runtime->cameraTrackPitch" in loop
+                and "level.arenaPitch(runtime->currentArena())" in loop)
+    say("the pitch target is camera_track, then the scripts' arena", pitch_ok,
+        "Viewer.cs:746-747 asks the scripts first; the geometric arena is only the "
+        "stand-in for a frontend with no runtime")
     return r
 
 
@@ -264,6 +370,21 @@ def in_loop(mutate):
     return arm
 
 
+def strip_all_set_solid(loop):
+    """Remove every in-loop solid-pin site, runtime branch and geometric branch
+    both. Deleting only the geometric one — which is what this arm used to do,
+    and what it still has to do to stay honest — leaves the runtime's call behind,
+    so the mutant would keep refreshing the pin and the arm would test nothing."""
+    out = re.sub(r"(?m)^[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
+                 r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
+                 "", loop)
+    out = re.sub(r"(?m)^[ \t]*if[ \t]*\([ \t]*![ \t]*runtime->currentArena\([ \t]*\)"
+                 r"\.empty\([ \t]*\)[ \t]*\)[ \t]*\{[ \t]*\n"
+                 r"[ \t]*space\.setSolid\([ \t]*runtime->currentArena\([ \t]*\)[ \t]*\);[ \t]*\n"
+                 r"[ \t]*\}[ \t]*\n", "", out)
+    return out
+
+
 def arm_no_refresh(text):
     """The defect itself: the in-loop refresh deleted, the spawn pin left alone."""
     sp = STEP_LOOP
@@ -271,11 +392,10 @@ def arm_no_refresh(text):
         return text
     a, b = sp
     loop = text[a:b]
-    m = re.search(r"(?m)^[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
-                  r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", loop)
-    if not m:
+    stripped = strip_all_set_solid(loop)
+    if stripped == loop:
         return text
-    return text[:a] + loop[:m.start()] + loop[m.end():] + text[b:]
+    return text[:a] + stripped + text[b:]
 
 
 def arm_before_camera(text):
@@ -344,12 +464,98 @@ def arm_guard_on_something_else(text):
         "                }\n" + loop[m.end():] + text[b:]
 
 
+def arm_scripts_tick_deleted(text):
+    """The runtime is still built and its sounds still reach the mixer, but nothing
+    ever ticks it: the level's objects never spawn and its scripts never run."""
+    mutated, n = re.subn(r"(?m)^[ \t]*runtime->update\(step\);[ \t]*\n", "", text)
+    return mutated if n else text
+
+
+def arm_scripts_tick_after_camera(text):
+    """The tick kept, but placed after the camera step: the camera is driven by the
+    previous tick's arena, camera_track request and shake."""
+    m = re.search(r"(?m)^([ \t]*)(if[ \t]*\([ \t]*runtime[ \t]*\)[ \t]*\{[ \t]*\n"
+                  r"[ \t]*runtime->update\(step\);[ \t]*\n[ \t]*\}[ \t]*\n)", text)
+    if m is None:
+        return text
+    rest = text[:m.start()] + text[m.end():]
+    p = re.search(r"(?m)^[ \t]*follow\.update\([^;]*;[ \t]*\n", rest)
+    if p is None:
+        return text
+    return rest[:p.end()] + m.group(2) + rest[p.end():]
+
+
+def arm_mixes_standalone(text):
+    """The C#'s one-mixer shape abandoned: the frame goes back to the standalone
+    mixer, so every script sound is written into a device no sink reads."""
+    mutated = text.replace("mix->listenFromCamera(camera);", "mixer.listenFromCamera(camera);")
+    mutated = mutated.replace("mix->update(elapsed);", "mixer.update(elapsed);")
+    mutated = mutated.replace("mix->device().update(elapsed);", "mixer.device().update(elapsed);")
+    return mutated if mutated != text else text
+
+
+def arm_sink_not_reattached(text):
+    """The respawn rebuilds the runtime — and with it the mixer and its device — but
+    leaves the sink on the device the old runtime owned."""
+    sp = body_span(text, "spawnPlayer")
+    if sp is None:
+        return text
+    a, b = sp
+    body = text[a:b]
+    mutated, n = re.subn(r"(?m)^[ \t]*mix->device\(\)[ \t]*\.setSink\([^;]*;[ \t]*\n", "", body)
+    if not n:
+        return text
+    return text[:a] + mutated + text[b:]
+
+
+def arm_no_asset_gate(text):
+    """The gate replaced by `if (true)`: the runtime is built whatever the level
+    loaded, which is the different-random-stream case the header forbids."""
+    mutated, n = re.subn(r"if[ \t]*\([ \t]*scriptAssetsReady[ \t]*\)[ \t]*\{",
+                         "if (true) {", text)
+    return mutated if n else text
+
+
+def arm_runtime_pin_unguarded(text):
+    """The runtime's pin kept but no longer guarded on emptiness: before the first
+    completed tick it pins the empty name and so clears the spawn pin."""
+    mutated, n = re.subn(
+        r"(?m)^[ \t]*if[ \t]*\([ \t]*![ \t]*runtime->currentArena\([ \t]*\)"
+        r"\.empty\([ \t]*\)[ \t]*\)[ \t]*\{[ \t]*\n"
+        r"[ \t]*space\.setSolid\([ \t]*runtime->currentArena\([ \t]*\)[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
+        "                space.setSolid(runtime->currentArena());\n", text)
+    return mutated if n else text
+
+
+def arm_pitch_ignores_runtime(text):
+    """The pitch target back to the geometric arena even when a runtime exists: the
+    scripts' camera_track request and their arena both ignored."""
+    sp = STEP_LOOP
+    if sp is None:
+        return text
+    a, b = sp
+    loop = text[a:b]
+    mutated, n = re.subn(
+        r"if[ \t]*\(runtime\)[ \t]*\{[ \t]*\n[ \t]*target[ \t]*=[ \t]*\n?[ \t]*runtime->cameraTrackTicks"
+        r"[^;]*;[ \t]*\n[ \t]*\}[ \t]*(?:\n[ \t]*)?else[ \t]*\{", "if (false) {", loop)
+    if not n:
+        return text
+    return text[:a] + mutated + text[b:]
+
+
 ARMS = [
     ("in-loop-refresh-deleted (review-8 F1 itself)", arm_no_refresh),
     ("refresh-moved-before-the-camera-step", arm_before_camera),
     ("refresh-clears-the-pin-when-outside-every-arena", arm_clears_the_pin),
     ("spawn-pin-removed", arm_drops_the_spawn_pin),
     ("guard-replaced-by-an-unrelated-flag", arm_guard_on_something_else),
+    ("scripts-tick-deleted", arm_scripts_tick_deleted),
+    ("scripts-tick-moved-after-the-camera", arm_scripts_tick_after_camera),
+    ("frame-mixes-the-standalone-mixer", arm_mixes_standalone),
+    ("respawn-does-not-re-attach-the-sink", arm_sink_not_reattached),
+    ("runtime-built-without-the-asset-gate", arm_no_asset_gate),
+    ("runtime-pin-unguarded-on-an-empty-current-arena", arm_runtime_pin_unguarded),
+    ("pitch-ignores-the-runtime", arm_pitch_ignores_runtime),
 ]
 
 print("main_3ds_flow: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

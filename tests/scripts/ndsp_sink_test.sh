@@ -484,8 +484,18 @@ def adjudicate(src, main, quiet=False):
     aliases = re.findall(r"&[ \t]*audioClock\b|\w+[ \t]*&[ \t]*\w+[ \t]*=[ \t]*audioClock\b",
                          region)
     add = bare(region, r"audioClock\s*\+=\s*([A-Za-z_]\w*)\s*;")
-    fed_mixer = bare(m, r"\bmixer\.update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
-    fed_dev = bare(m, r"\bmixer\.device\(\)\.update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
+    # WHICH object is spelled here is deliberately not pinned by this file. The
+    # frontend's mixer now sits behind a pointer that follows the script runtime
+    # (`mix->update(elapsed)`), because ScriptRuntime owns the mixer every script
+    # sound is written into, and requiring that spelling is main_3ds_flow_test.sh's
+    # check "the frame mixes the pointer that follows the runtime", not this one's.
+    # What this check owns is narrower and unchanged: exactly ONE unconditional feed
+    # of the SAME identifier the clock accumulates. Accepting either spelling keeps
+    # the count a count of feeds rather than of one variable's name — two feeds in
+    # any mix of the two spellings is still two, and a guarded one is still guarded.
+    FEED = r"(?:mixer\.|mix->)"
+    fed_mixer = bare(m, r"\b" + FEED + r"update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
+    fed_dev = bare(m, r"\b" + FEED + r"device\(\)\.update\(\s*([A-Za-z_]\w*)\s*\)\s*;")
     check("frontend-logs-the-clock-with-the-ledger",
           re.search(r"frame=%[0-9a-z.]+\s+secs=%[0-9a-z.]+\s+submitted=", ledger)
           is not None
@@ -515,7 +525,7 @@ def adjudicate(src, main, quiet=False):
           and fed_mixer[0][0] == add[0][0] and fed_dev[0][0] == add[0][0],
           "`secs` is only the audio time if it sums what the mixer and the device "
           "were actually handed: the one `audioClock += X;` and both "
-          "`mixer.update(X)` / `mixer.device().update(X)` calls must each be the "
+          "`mix->update(X)` / `mix->device().update(X)` calls must each be the "
           "whole of its own line — unconditional, not the body of an `if` in any of "
           "its three brace styles (same line, `{` on the condition's line, or "
           "braceless/Allman) nor the arm of a `?:` — and must name the same "
@@ -524,7 +534,7 @@ def adjudicate(src, main, quiet=False):
           "live here: a feed handed a scaled or different value than the one "
           "accumulated (review-10 F4), and a feed that runs on SOME frames while the "
           "clock accumulates on all of them (review-11 R10-2 — "
-          "`if (frame & 1u) mixer.device().update(elapsed);` is still exactly one "
+          "`if (frame & 1u) mix->device().update(elapsed);` is still exactly one "
           "call site and makes the rate test divide by a clock at twice the audio "
           "time). Either way the rate this line exists to publish stops meaning "
           "anything"
@@ -611,10 +621,10 @@ ARMS = [
          "(unsigned)st.dspFrames, (unsigned)st.dspDropped);\n            "
          "audioClock *= 0.999;", 1))),
     ("frontend-feeds-the-device-a-scaled-elapsed",
-     lambda s, m: (s, m.replace("mixer.device().update(elapsed);",
-                                "mixer.device().update(elapsed * 0.5f);", 1))),
+     lambda s, m: (s, m.replace("mix->device().update(elapsed);",
+                                "mix->device().update(elapsed * 0.5f);", 1))),
     ("frontend-feeds-the-mixer-a-different-clock",
-     lambda s, m: (s, m.replace("mixer.update(elapsed);", "mixer.update(delta);", 1))),
+     lambda s, m: (s, m.replace("mix->update(elapsed);", "mix->update(delta);", 1))),
     # Review-11 R10-1 and R10-2, each reproduced as a mutant that adjudicated PASS
     # against the review-10 hardening. The first writes the clock through a
     # reference, so no textual write count changes; the other three guard one of
@@ -624,11 +634,11 @@ ARMS = [
                                 "audioClock += elapsed; "
                                 "{ double& ac = audioClock; ac *= 0.999; }", 1))),
     ("frontend-feeds-the-device-only-some-frames",
-     lambda s, m: (s, m.replace("mixer.device().update(elapsed);",
-                                "if (frame & 1u) mixer.device().update(elapsed);", 1))),
+     lambda s, m: (s, m.replace("mix->device().update(elapsed);",
+                                "if (frame & 1u) mix->device().update(elapsed);", 1))),
     ("frontend-feeds-the-mixer-only-some-frames",
-     lambda s, m: (s, m.replace("mixer.update(elapsed);",
-                                "if (frame & 1u) mixer.update(elapsed);", 1))),
+     lambda s, m: (s, m.replace("mix->update(elapsed);",
+                                "if (frame & 1u) mix->update(elapsed);", 1))),
     ("frontend-accumulates-the-clock-only-some-frames",
      lambda s, m: (s, m.replace("audioClock += elapsed;",
                                 "if (frame & 1u) audioClock += elapsed;", 1))),
@@ -641,8 +651,8 @@ ARMS = [
          "if (frame != 0u) {\n            audioClock += elapsed;\n        }", 1))),
     ("frontend-feeds-the-device-in-a-guarded-block",
      lambda s, m: (s, m.replace(
-         "mixer.device().update(elapsed);",
-         "if (frame != 0u) {\n            mixer.device().update(elapsed);\n        }",
+         "mix->device().update(elapsed);",
+         "if (frame != 0u) {\n            mix->device().update(elapsed);\n        }",
          1))),
     # Review-12 R11-1: the same guard in the two styles batch 92 could not see.
     # A braceless body and an Allman brace both own their line, and neither has a
@@ -652,12 +662,12 @@ ARMS = [
     # device while not paused" — written in the style the author prefers.
     ("frontend-feeds-the-device-in-a-braceless-guard",
      lambda s, m: (s, m.replace(
-         "mixer.device().update(elapsed);",
-         "if (frame & 1u)\n            mixer.device().update(elapsed);", 1))),
+         "mix->device().update(elapsed);",
+         "if (frame & 1u)\n            mix->device().update(elapsed);", 1))),
     ("frontend-feeds-the-mixer-in-a-braceless-guard",
      lambda s, m: (s, m.replace(
-         "mixer.update(elapsed);",
-         "if (frame & 1u)\n            mixer.update(elapsed);", 1))),
+         "mix->update(elapsed);",
+         "if (frame & 1u)\n            mix->update(elapsed);", 1))),
     ("frontend-accumulates-the-clock-in-a-braceless-guard",
      lambda s, m: (s, m.replace(
          "audioClock += elapsed;",
@@ -669,8 +679,8 @@ ARMS = [
          1))),
     ("frontend-feeds-the-device-in-an-allman-guard",
      lambda s, m: (s, m.replace(
-         "mixer.device().update(elapsed);",
-         "if (frame & 1u)\n        {\n            mixer.device().update(elapsed);\n        }",
+         "mix->device().update(elapsed);",
+         "if (frame & 1u)\n        {\n            mix->device().update(elapsed);\n        }",
          1))),
     # The same guard with a condition that WRAPS, which is why the header is read by
     # a walk and not by one line: the line directly above the statement is then
@@ -707,14 +717,14 @@ ARMS = [
          "            audioClock += elapsed;", 1))),
     ("frontend-feeds-the-device-in-a-wrapped-for-guard",
      lambda s, m: (s, m.replace(
-         "mixer.device().update(elapsed);",
+         "mix->device().update(elapsed);",
          "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
-         "            mixer.device().update(elapsed);", 1))),
+         "            mix->device().update(elapsed);", 1))),
     ("frontend-feeds-the-mixer-in-a-wrapped-for-guard",
      lambda s, m: (s, m.replace(
-         "mixer.update(elapsed);",
+         "mix->update(elapsed);",
          "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
-         "            mixer.update(elapsed);", 1))),
+         "            mix->update(elapsed);", 1))),
 ]
 
 # The other side of a guard test: it must not red CORRECT code, and a mutation
@@ -740,7 +750,7 @@ PROBES = [
     ("one-line-if-above-the-accumulate",
      lambda s, m: (s, m.replace(
          "audioClock += elapsed;",
-         "if (frame == 0u) mixer.listenFromCamera(camera);\n        audioClock += elapsed;", 1))),
+         "if (frame == 0u) mix->listenFromCamera(camera);\n        audioClock += elapsed;", 1))),
     ("do-while-false-above-the-accumulate",
      lambda s, m: (s, m.replace("audioClock += elapsed;",
                                 "do { } while (false);\n        audioClock += elapsed;", 1))),
@@ -752,7 +762,7 @@ PROBES = [
      lambda s, m: (s, m.replace(
          "audioClock += elapsed;",
          "audioClock += elapsed;\n        if (frame > 0u &&\n"
-         "            audioClock < 3600.0f)\n            mixer.listenFromCamera(camera);",
+         "            audioClock < 3600.0f)\n            mix->listenFromCamera(camera);",
          1))),
     # The green half of review-2 F2's fix. A wrapped `for` sits directly above the
     # accumulate and its BODY is a one-line statement, so the accumulate is not in
@@ -765,7 +775,7 @@ PROBES = [
      lambda s, m: (s, m.replace(
          "audioClock += elapsed;",
          "for (int32_t extra = 0;\n            extra < 3; extra++)\n"
-         "            mixer.listenFromCamera(camera);\n        audioClock += elapsed;",
+         "            mix->listenFromCamera(camera);\n        audioClock += elapsed;",
          1))),
     # And the same construct with the header on one line, which was never the hole
     # but is the case a naive "does this line contain `for (`" fix would break: the
@@ -773,7 +783,7 @@ PROBES = [
     ("one-line-for-body-above-the-accumulate",
      lambda s, m: (s, m.replace(
          "audioClock += elapsed;",
-         "for (int32_t extra = 0; extra < 3; extra++) mixer.listenFromCamera(camera);\n"
+         "for (int32_t extra = 0; extra < 3; extra++) mix->listenFromCamera(camera);\n"
          "        audioClock += elapsed;", 1))),
 ]
 
