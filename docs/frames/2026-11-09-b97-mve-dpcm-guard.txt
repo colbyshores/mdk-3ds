@@ -1,0 +1,35 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-09T02:43:27Z at e051da5
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the picture did not move: this batch DID change a shipped instruction — a new
+bounds guard in Mve::decodeAudio (mdk_core/src/formats/mve.cpp) — and the 3DS ELF
+is nevertheless byte-identical to batch 95's and batch 96's, md5
+c8295e96663ca33be481df2e77613e46 with .text 0x057ba0. That is not "the change was a
+no-op", it is a link fact, and it is reproducible: `arm-none-eabi-nm mdk.elf | grep
+-ci Mve` reports 0, and mdk.map records `build/mve.o (__aeabi_idiv)`, i.e. the
+object is pulled in only to satisfy a shared helper and every Mve section is
+discarded by the -ffunction-sections + gc-sections link. Nothing on either shipped
+target calls Mve yet: the movie decoder is ported and tested but no movie player
+is wired, so the heap overflow this batch fixes is NOT reachable in today's binary.
+It becomes reachable the day the MVE player lands, which is why it is fixed now and
+pinned now rather than when it first shows on screen.
+What the change IS pinned by, measured both ways: with the guard deleted the suite
+segfaults (exit 139) and `PASS UbsanDecode` redds with `reference binding to null
+pointer of type 'value_type'`; with a mono-only guard (`count < 1`) it redds with
+`AddressSanitizer: heap-buffer-overflow ... WRITE of size 4`. Two shapes of one bug,
+two different instruments, each proven to fire on its own.
+The frame is a graphics capture, so the expected result is a byte-identical
+picture, and that is measured rather than assumed: this PNG's sha256 is
+6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8, identical to
+docs/frames/2026-11-09-b96-mve-ubsan-pinned.png (batch 96),
+2026-11-09-b95-ub-audio-clock.png (batch 95) and 2026-11-06-review9-remediation.png
+(batch 93), and the gap line above is unchanged at bad_percent=1.240, max_delta=247,
+mean_delta=0.1819. The capture ran against a build-linux/mdk rebuilt from this
+tree (cmake --build build-linux --target mdk), not against a stale binary.
+emulator evidence: not owed for this batch. AGENTS P8 requires it of a batch that
+changes mdk_3ds/**, and no file under mdk_3ds/ is in this diff; the ELF above is
+the same bytes the batch-95 emulator run measured (submitted/(secs x 50) = 0.9967,
+ndsp slope 204.549/s), so re-running the harness would re-measure a build that has
+not changed. What did move is the test suite, and it is pinned by
+make -C tests/scripts (All cases match the oracle, PASS MveAudioDecode, PASS
+UbsanDecode) and by bash tools/check.sh (ALL GATES PASSED).

@@ -265,7 +265,20 @@ bool Mve::decodeAudio(int32_t at, int32_t end, int32_t size) {
 
     const int32_t fileSize = (int32_t)bytes_.size();
     const int32_t count = size / 2;
-    if (count < 0) {
+    // The declared size must leave room for one PREDICTOR SLOT PER CHANNEL, which
+    // the loop below fills before any loop condition can stop it: `written` is
+    // bounded by `count` only inside the delta loop, so a size of 2*count with
+    // count < channels_ wrote predictors_ straight past the end of `samples`.
+    // Measured with -fsanitize=address on a stereo frame declaring size 2
+    // (count 1, two channels): "heap-buffer-overflow ... WRITE of size 4" here.
+    // The C# cannot do this — `new int[size / 2]` followed by
+    // `samples[count++] = _predictors[ch]` raises IndexOutOfRange, and mve.h
+    // documents that this port answers that throw with FrameStatus::Broken, so
+    // returning false IS the oracle's behaviour, not a hardening invented here.
+    // It also subsumes the old `count < 0` test: channels_ is 1 or 2, so a
+    // negative count was already below this bound (and `size` is a u16, so there
+    // was never a negative count to catch).
+    if (count < channels_) {
         return false;
     }
 

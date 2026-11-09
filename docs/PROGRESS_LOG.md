@@ -18444,3 +18444,188 @@ owed; the sidecar says so and names the build the batch-95 emulator run measured
 * **Original-3DS performance and memory behaviour remain UNMEASURED.**
 * **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools in this session; the vault
   lookup was the disk-only fallback and the Cognee graph lookup did not happen.
+
+## Iteration 125 — batch 97: review-3 of run-20261108-195620 — the compressed MVE audio path had never been executed by a test, and the first time anything executed it, it wrote a predictor past the end of its own sample array
+
+**What this batch is.** Review-3's open question 2 was the standing gap: *"The MVE compressed
+(DPCM) path and `SilenceFrame` are still unreached by any test (`decodeAudio`'s
+predictor/clamp loop, `channel ^= channels_ - 1`). … 'the MVE audio decode' now reads as
+covered when half of it is not."* Batch 96 had pinned the PCM half and left the compressed half
+at zero coverage. Closing that gap is this batch, and the gap was worth closing for the reason
+this loop keeps being given: **the first time a test executed `Mve::decodeAudio`'s compressed
+branch, it found a heap-buffer-overflow.**
+
+**The defect, and its oracle ground truth.** `decodeAudio` sizes its output from the opcode's
+declared size (`count = size / 2`) and then seeds one predictor per channel **before any loop
+condition consults `count`**:
+
+```cpp
+std::vector<int32_t> samples((size_t)count, 0);
+int32_t written = 0;
+for (int32_t ch = 0; ch < channels_; ch++) {
+    …
+    samples[(size_t)written++] = predictors_[ch];   // written can reach channels_ - 1
+}
+```
+
+A frame declaring less than `2 * channels_` bytes therefore wrote `predictors_[ch]` past the
+end of `samples`. The old guard was `if (count < 0) return false;`, which cannot fire: `size`
+comes from `binU16`, so `count` is 0..32767 and never negative — a guard that could not fail,
+in the position of the very check that mattered.
+
+The C# cannot do this, and that is what makes the fix a port and not a hardening. `Mve.cs:220`
+is `var samples = new int[size / 2];` followed by `samples[count++] = _predictors[ch];`, which
+raises `IndexOutOfRangeException`; `mve.h` documents this port's mapping of that throw — *"The
+C#'s `NextFrame()` returns false at the end of the movie and **throws on broken data**; this
+tells the two apart"* — so `FrameStatus::Broken` **is** the oracle's answer. The fix is
+`if (count < channels_) return false;`, which also subsumes the dead `count < 0` (channels_ is
+1 or 2, so a negative count was already below the bound).
+
+**Measured both ways, with two different instruments.** Two shapes of one bug, and neither
+sanitizer sees the other's:
+
+| shape | plain build | UBSan | ASan |
+|---|---|---|---|
+| mono, declared 1 (count 0) | **segfault, exit 139** | `reference binding to null pointer of type 'value_type'` | (same abort) |
+| stereo, declared 2 (count 1, two channels) | silent | **silent** | `heap-buffer-overflow … WRITE of size 4` |
+
+The mono vector never allocated at all, so UBSan sees a null reference; the stereo vector has
+a real 4-byte allocation and the write is one slot past it, which only ASan's redzones catch.
+That is why `tests/scripts/ubsan_decode_test.sh` now compiles with
+`-fsanitize=undefined,address` and greps for `runtime error|ERROR: AddressSanitizer|ERROR:
+LeakSanitizer`. Both halves were proven to fire, each on the shape only it can see: guard
+deleted → `FAIL ubsan_decode: … reference binding to null pointer`; guard narrowed to
+`count < 1` (mono protected, stereo through) → `FAIL ubsan_decode: … heap-buffer-overflow …
+WRITE of size 4`. Restoring the guard returns `PASS UbsanDecode`.
+
+**The new coverage** (`tests/scripts/mve_audio_tests.cpp`, eight new cases, all through the real
+`Mve::nextFrame()` on a synthetic movie):
+
+* `testDeltasAreTheOracleTable` — all 256 delta indices, one movie each, against a **golden**
+  transcribed from `Mve.cs:50-66` (verified identical to `kDeltas` before the test was written,
+  so the port was already faithful and now stays that way). Seed 0 and |delta| ≤ 32589, so the
+  clamp cannot interfere and the sample *is* the table entry.
+* `testDpcmMonoAccumulatesInOneChannel` — the predictor is the previous **output**; with one
+  channel `channel ^= channels_ - 1` is `^= 0`, so every delta lands on the same predictor.
+* `testDpcmClampsToTheShortRange` — both ends, `[-32768, 32767]`, using the only two entries
+  big enough to reach a bound from a legal seed (index 119 = +32589, index 137 = −32589).
+* `testDpcmStereoSeedsBothAndAlternates` — two seeds, deltas alternating from channel 0, each
+  channel accumulating on its own predictor.
+* `testDpcmReseedsFromEachChunk` — the seed is read inside `DecodeAudio`, not outside it, so a
+  second audio-frame opcode re-seeds; a decoder that kept the member predictor would emit 502
+  and 503 where the oracle emits 7 and 8.
+* `testVersionZeroClearsCompression` — opcode 0x03 with version 0 clears the compressed flag
+  whatever the flags say (`Mve.cs:143-145`). This is the rule that decides **which** decode
+  runs, and therefore the one a DPCM fixture can get wrong and certify the PCM path by
+  accident; the fixture's version byte is now a parameter for exactly that reason.
+* `testSilenceFrameCountIsBytesOverFrameSize` — opcode 0x09's count is declared bytes over
+  `2 * channels` (the frame size, not a channel count) and truncates: mono 8 → 4, mono 5 → 2,
+  stereo 8 → 2, stereo 2 → 0.
+* `testDpcmSizeBelowThePredictorsIsBroken` — the overflow pin, four shapes, each asserting
+  `FrameStatus::Broken` and zero samples.
+
+**Mutation-checked, seven ways.** Six redden a value assertion and name themselves: one delta
+entry `32589 → 32588` (`delta table entry 119 was 3F7E9800, the oracle has 3F7E9A00`), the
+clamp's high bound, `channel = 1` as the alternation start, the silence divisor `2 * channels_
+→ channels_`, the version rule removed, and seeding only channel 0. The seventh — deleting the
+size guard — cannot print a FAIL because the process dies first; it reddens as a segfault
+(exit 139) on the plain suite and as a named sanitizer report under `ubsan_decode_test.sh`.
+That asymmetry is recorded rather than smoothed over: a check that reports by crashing is
+weaker than one that reports by naming, and the sanitizer half is what makes it honest.
+
+**Reachability, stated plainly.** This batch changes a shipped instruction and the shipped
+binary does not contain it. `mdk.elf` is md5 `c8295e96663ca33be481df2e77613e46` with `.text`
+`0x057ba0`, byte-identical to batches 95 and 96, because **no `Mve` symbol is linked into the
+ELF at all**: `arm-none-eabi-nm mdk.elf | grep -ci Mve` → `0`, and `mdk.map` records
+`build/mve.o (__aeabi_idiv)` — the object is pulled in only to satisfy a shared helper and its
+own sections are discarded by the `-ffunction-sections` + gc-sections link. Nothing in
+`mdk_core/src` or `mdk_3ds/src` outside `formats/mve.{h,cpp}` mentions `Mve`: the decoder is
+ported and now tested, but no movie player is wired on either target. So the overflow is **not
+reachable in today's binary**, and the identical ELF is a link fact and not evidence that
+nothing was compiled. It is fixed and pinned now so that it is not live on the day the MVE
+player lands.
+
+**Review-3 disposition — five findings, no Critical, one High, none rebutted on merit: two
+fixed, three owner-only.**
+
+* **F1 (High) — confirmed, unchanged, owner-only.** The watchdog heal still restarts any
+  `ActiveState=failed` unit with `reset-failed` + `start`, inverting
+  `RestartPreventExitStatus=2 6 7`. Review-3 re-states why no batch can land it (no commit
+  contains the hunk; systemd runs a root-owned copy at `/usr/local/libexec/…`), and adds that
+  `reset-failed` clears the start-rate counters so `StartLimitBurst` can never trip. The patch
+  is already recorded in Iteration 124. Not touched.
+* **F2 (Low) — fixed.** The fixture's comment claimed the init-audio flags were "the upper half
+  of the frame-time `u32`". They are not: `0x03` reads `U16(p+2)` and `U16(p+4)` and never
+  touches `+0`; the `u32` at `+0` belongs to `0x02` (`kCreateTimer`), which this movie does not
+  emit. The two leading bytes are **unread padding**, and the comment now says so and names the
+  opcode each offset belongs to. The test itself was already correct — the reviewer
+  mutation-checked it — only its explanation was wrong, and a wrong explanation about a file
+  format is how the next editor shifts the fields by two bytes.
+* **F3 (Low) — fixed, in both places.** The un-corrected "a fully decoded level 8 **fits**"
+  survived in the batch-95 superseded tail at `CONTINUATION.md:32`; it now reads *bank* with the
+  "nothing measures the level's own cost" clause. The same verb was also still standing in the
+  batch-95 closure paragraph at `:7`, which the reviewer did not name; both are corrected, since
+  one surviving copy of a struck verdict is enough to be re-derived as a closure.
+* **F4 (Low) — confirmed, owner-only.** The rewritten `docs/OWNER_DIRECTIVE_2026-11-05.md`
+  claims `tetrisphere-godot` and `perfect_dark` carry the same chains. That file is part of the
+  operator's uncommitted set, which this batch must not stage (review-4 F2 / review-10 F8), so
+  the false fleet-wide sentence is left for the owner with the reviewer's evidence attached.
+* **F5 (Low) — confirmed, owner-only.** `tools/runner/test_review_state.sh` is `100644` in the
+  worktree against `100755` in the index. This uid does not own the file and cannot `chmod` it;
+  recorded as owner task, unchanged since review-4 and review-10 asked for the same restore.
+
+**Review-3 open question 1, answered for the next iteration.** The uncommitted harness set
+(`ralph-pi.sh`, `ralph/builder.md`, `ralph/LOOP_CONTEXT.md`, `tools/ralph_pi_watchdog.sh`,
+`tools/runner/test_review_state.sh`, `docs/OWNER_DIRECTIVE_2026-11-05.md`,
+`tools/reclaim_qwen_slots.sh`) is operator-authored and stays unstaged. `ralph/builder.md` is in
+`gates_batch_integrity.PROTECTED`, and `ralph-pi.sh` invokes that gate post-batch with
+`--base/--head` and **without** `--owner-approved`, so committing it does not merely warn — it
+fails the integrity guard and stops the loop at exit 6. This batch staged its paths **by name**
+(`git add` with an explicit list, never `-A`) and committed none of that set.
+
+**Gate results, verbatim, as run.**
+
+* `make -C tests/scripts` → `All cases match the oracle.` including `PASS MveAudioDecode` and
+  `PASS UbsanDecode (probe ran both 8-bit decodes and both 16-bit paths)`.
+* `bash tools/check.sh` → `CHECK: ALL GATES PASSED` — `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`,
+  `gates_core_parity both targets link the same core`, `gates_smdh` **SKIPPED** (no built
+  `.cia`), `gates_frames every pinned frame is deterministic and unchanged`,
+  `gates_batch_integrity project invariants intact`.
+* `make -C mdk_3ds` → `3DSX mdk.3dsx`, exit 0, with `DEVKITPRO=/opt/devkitpro
+  DEVKITARM=/opt/devkitpro/devkitARM` exported (the loop exports them; a bare shell does not).
+* `mdk.elf` md5 `c8295e96663ca33be481df2e77613e46`, `.text 0x057ba0` — unchanged, for the
+  gc-sections reason above.
+* No `mdk_3ds/**` file is in the diff, so AGENTS P8 emulator evidence is not owed; the sidecar
+  says so and names the build the batch-95 emulator run measured.
+* The frame pair is `docs/frames/2026-11-09-b97-mve-dpcm-guard.{png,txt}`; the PNG's sha256 is
+  `6646adf1…`, identical to batches 93/95/96, and the capture ran against a `build-linux/mdk`
+  rebuilt from this tree rather than the stale binary that was sitting there.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` was searched (`knowledge_search`, hybrid):
+it returned `mve.cpp`'s `decodeAudio`/`decodePcm` and the oracle's `Mve.cs` DPCM block, and no
+prior finding on this overflow — the KB index predates this batch's edit, so it still shows the
+unguarded loop. Obsidian MCP tools are **absent** from this session, so the vault lookup was the
+read-only disk fallback under `/mnt/nas/Vaults/port-docs/10-projects/mdk-sdl/`, which holds no
+MVE or DPCM note. Cognee MCP is **absent** too, so the graph lookup did not happen at all; that
+is a session-configuration fault to report (AGENTS P9), not a lookup that succeeded quietly.
+
+### Still open after this batch
+
+* **F1, the watchdog heal, is LIVE and unfixed** — owner-only, patch in Iteration 124.
+* **The operator's uncommitted harness set stays unstaged**, including `ralph/builder.md`
+  (PROTECTED: committing it without `--owner-approved` stops the loop at exit 6) and the
+  `test_review_state.sh` mode bit this uid cannot restore.
+* **The MVE decoder is not wired to anything.** No movie player exists on either target, so
+  `Mve` is gc-sectioned out of the shipped ELF. The decode is ported and tested; the player is
+  not on the priority list yet.
+* **`osGetMemRegionSize(MEMREGION_APPLICATION)` on real hardware** — unchanged.
+* **Bank eviction with a real budget** (item 6c's second half): unbounded growth, not a ceiling.
+* **Item 6d** — no `ScriptRuntime` on the 3DS frontend, so script/ambient/object sounds cannot
+  play.
+* **Three `@vfp-exempt` pins in `sound_device.cpp` still do not parse** against
+  `gates_vfp.EXEMPT_RE` (batch 95's housekeeping item, unchanged).
+* **`gates_smdh` is SKIPPED, not passed**, until a `.cia` is built.
+* **Original-3DS performance and memory behaviour remain UNMEASURED.**
+* **Session-config fault (AGENTS P9):** no `obsidian_*` or `cognee_*` tools in this session; the
+  vault lookup was the disk-only fallback and the Cognee graph lookup did not happen.

@@ -1,5 +1,20 @@
 #!/bin/sh
-# ubsan_decode_test.sh — the two 8-bit PCM decodes, run under -fsanitize=undefined.
+# ubsan_decode_test.sh — the audio decodes, run under -fsanitize=undefined,address.
+#
+# WHY TWO SANITIZERS AND NOT ONE. The filename says ubsan because that is what
+# batch 96 shipped, and the name is quoted in the Makefile and in the progress
+# log's history, so it stays. Batch 97 added AddressSanitizer because UBSan cannot
+# see the second half of the defect it now guards: a compressed MVE audio frame
+# whose declared size is smaller than its channel count wrote a predictor past
+# the end of the sample array, and the two shapes of that one bug need two
+# different instruments —
+#
+#   mono,   declared 1 -> UBSan "reference binding to null pointer of type
+#                         'value_type'" (the vector never allocated at all)
+#   stereo, declared 2 -> AddressSanitizer "heap-buffer-overflow ... WRITE of
+#                         size 4" (one slot past a real 4-byte allocation, which
+#                         UBSan walks straight over and a plain build runs
+#                         silently)
 #
 # WHY THIS EXISTS AND A VALUE TEST CANNOT. Batch 95 replaced
 #
@@ -22,7 +37,8 @@
 #
 # WHAT IT RUNS. tests/scripts/ubsan_decode_probe.cpp: soundFromPcm over all 256
 # byte values and over the 16-bit extremes, and the committed MVE test (which
-# builds its own movie, so no game data is needed). The probe counts its own
+# builds its own movie, so no game data is needed) — which since batch 97 also
+# walks the compressed DPCM path and the broken-size shapes. The probe counts its own
 # assertions and exits nonzero if any fail, so "the sanitizer was quiet" cannot be
 # reported by a probe that decoded nothing.
 #
@@ -56,7 +72,7 @@ mkdir -p "$BUILD" || { printf '  FAIL ubsan_decode: cannot create %s\n' "$BUILD"
 rm -f "$PROBE" "$BLOG" "$RLOG"
 
 if ! "$CXX" -std=c++17 -O1 -g -fno-strict-aliasing \
-        -fsanitize=undefined -fno-sanitize-recover=all \
+        -fsanitize=undefined,address -fno-sanitize-recover=all \
         -I"$CORE" -I"$HERE" \
         "$HERE/ubsan_decode_probe.cpp" "$HERE/mve_audio_tests.cpp" \
         "$CORE/audio/sound.cpp" "$CORE/formats/mve.cpp" "$CORE/formats/bin_reader.cpp" \
@@ -71,10 +87,10 @@ fi
 "$PROBE" >"$RLOG" 2>&1
 rc=$?
 
-if grep -q "runtime error" "$RLOG"; then
-    printf '  FAIL ubsan_decode: undefined behaviour in the PCM decode —\n'
-    grep "runtime error" "$RLOG" | sed 's/^/    /'
-    printf '    the fix is the defined form, not a sanitizer suppression\n'
+if grep -qE "runtime error|ERROR: AddressSanitizer|ERROR: LeakSanitizer" "$RLOG"; then
+    printf '  FAIL ubsan_decode: undefined behaviour or a memory error in the decodes —\n'
+    grep -E "runtime error|ERROR: AddressSanitizer|ERROR: LeakSanitizer" "$RLOG" | sed 's/^/    /'
+    printf '    the fix is the defined, in-bounds form, not a sanitizer suppression\n'
     exit 1
 fi
 

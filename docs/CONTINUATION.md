@@ -1,10 +1,50 @@
 # Phase 2 continuation checkpoint
 
-Risk: medium — **the shipped binary does not move one byte**: after this batch's build, `mdk.elf` md5 `c8295e96663ca33be481df2e77613e46` and `.text` `0x057ba0` are both exactly what batch 95 recorded, because the only core changes are comments. The diff is tests plus comments. Not `low`, because it rewrites the adjudication logic of a gate this loop depends on for its own honesty — `ndsp_sink_test.sh`'s guard-walk stop rule now tells a statement terminator from a `for`-header clause by paren depth, which can turn previously-green mutants red and could in principle red correct code — and it adds two files to `make -C tests/scripts`, one of which compiles and runs a sanitizer probe on every gate run. The new behaviour is pinned **both ways and measured**: 3 new mutation arms that were run against the pre-fix stop clause and came back GREEN (`only 30 of 33 arms adjudicated red`) and are red after the fix, plus 2 new correct-code probes that stay green. Not `high`: no shipped interface, state transition, data format, concurrency or target-specific code changed, and no shipped instruction changed.
+Risk: high — **memory safety.** `Mve::decodeAudio` wrote a predictor past the end of its own
+sample array when a compressed audio frame declared less than `2 * channels_` bytes, and this
+batch adds the bounds guard that makes it `FrameStatus::Broken` (the C#'s `IndexOutOfRange`
+answer, per `mve.h`). It also widens a sanitizer gate: `tests/scripts/ubsan_decode_test.sh` now
+compiles `-fsanitize=undefined,address`, because the two shapes of this one bug need two
+instruments and UBSan alone walks over the stereo one. Both halves were proven to fire, each on
+the shape only it can see. Eight new tests cover the compressed path for the first time. The
+shipped binary is nevertheless byte-identical — `mdk.elf` md5 `c8295e96663ca33be481df2e77613e46`,
+`.text 0x057ba0`, unchanged from batches 95/96 — because **no `Mve` symbol is linked into the ELF
+at all** (`nm | grep -ci Mve` → 0; `mdk.map` shows `build/mve.o (__aeabi_idiv)`), so the defect
+is real, pinned, and not reachable in today's build.
+
+**Review-3 (run-20261108-195620) closed by batch 97: five findings, no Critical, one High — two
+fixed, three owner-only, none rebutted on merit** (Iteration 125). Its open question 2 was the
+batch: the compressed (DPCM) half of the MVE audio decode and `SilenceFrame` had never been
+executed by a test, and **the first time anything executed that branch it found a
+heap-buffer-overflow** — `count = size / 2` sizes the sample array, and the predictor-seed loop
+fills `channels_` slots before any loop condition consults `count`, so a frame declaring less
+than `2 * channels_` bytes wrote past the end; the guard that was there, `if (count < 0)`, could
+not fire because `size` is a `u16` and `count` is therefore never negative. Two shapes, two
+instruments, each measured: mono/declared-1 segfaults the plain suite (exit 139) and trips UBSan
+(`reference binding to null pointer of type 'value_type'`), while stereo/declared-2 is silent in
+both and only AddressSanitizer sees it (`heap-buffer-overflow … WRITE of size 4`) — which is why
+the sanitizer script now runs both. Seven mutations were run: six redden a value assertion and
+name themselves (a delta entry, the clamp bound, the alternation start, the silence divisor, the
+version rule, seeding only channel 0) and the seventh is the guard itself, which reports by
+crashing and by sanitizer report rather than by a FAIL line. **F2 (Low)** was the fixture's
+comment claiming the init-audio flags were the upper half of a frame-time `u32` — opcode `0x03`
+reads `U16(p+2)`/`U16(p+4)` and never touches `+0`; the `u32` belongs to `0x02`, so those two
+bytes are unread padding, and the comment now says so. **F3 (Low)** was a struck verdict still
+standing in prose: "a fully decoded level 8 **fits**" survived in the batch-95 tail at `:32`, and
+the same verb was also still at `:7`, which the reviewer did not name; both now read *bank* with
+the "nothing measures the level's own cost" clause. **F1 (High)** is the watchdog heal, confirmed
+live and owner-only as before (root-owned installed copy, no commit contains the hunk). **F4**
+(the directive's false fleet-wide chain claim) and **F5** (`test_review_state.sh`'s mode bit) are
+inside the operator's uncommitted set and a file this uid cannot `chmod`; both confirmed, both
+untouched. **And review-3's open question 1 is answered:** the harness set is operator-authored,
+this batch staged its paths **by name**, and `ralph/builder.md` was not committed because it is
+`PROTECTED` and `ralph-pi.sh` runs the integrity gate without `--owner-approved`, so staging it
+would stop the loop at exit 6 rather than warn.
+
 
 **Review-2 (run-20261108-195620) closed by batch 96: nine findings, no Critical, one High — eight dispositioned here, F1 confirmed and escalated owner-only** (Iteration 124). **F2 (Medium)** was the **ninth** could-not-see clause: batch 95 replaced the guard walk's line-count bound with a structural one and left a second bound in the same function — `HEADER_STOP = r"[;}:]\s*$"` stops the walk at any line ending in `;`, and a **wrapped `for` header** puts exactly that on a continuation line, so `for (int32_t extra = 0;` read as "the statement above finished", and a clock accumulated three times per frame adjudicated PASS behind a three-line header while the one-line spelling was red. A terminator now only terminates at **paren depth 0** (`paren_depth`, measured from the walk's existing `floor`), which is a fact about where a `;` can end a statement and not another budget on formatting; **33 arms red, 9 probes green**. **F4 (Low)** was that batch 95 fixed the same UB in **two** decodes and pinned only one — nothing in `tests/` could reach `Mve::decodePcm`. `tests/scripts/mve_audio_tests.cpp` now builds its own one-chunk movie (the C# twin loads the real `MDKBZK.MVE` from the gitignored tree, which the oracle boundary forbids and which would skip without the tree) and asserts the oracle's arithmetic over all 256 byte values, the stereo pair order and the 16-bit branch; it caught two of this batch's own errors on its first run. **And the class a value test cannot pin is now committed**: the multiply and the shift emit the same `lsl #8`, so batch 95's UBSan run — done in `/tmp`, never committed, the asserted-provenance shape again — is replaced by `tests/scripts/ubsan_decode_test.sh` on the `test` target, with both reversions measured (`mve.cpp:319`, `sound.cpp:67`, each `left shift of negative value -128`). **F1 (High) is confirmed and NOT fixed** — see the owner-action block: it is live on the host and no batch can land it. **F3/F5/F6/F8/F9** were the record again: a fit verdict drawn from a measurement of a different quantity (the **bank** fits; nothing measures the level's own cost), a header comment still calling the pre-scale a shift, a fourth "16 MB of FCRAM", a duplicated `HEADER_STOP`, and a SPEC quotation that dropped the inner quotes around `"system"`. **F7** is immutable by design and carried forward in this batch's sidecar.
 
-**Review-1 (run-20261108-195620) closed by batch 95: eight findings, no Critical, no High, none rebutted on merit — all eight fixed** (Iteration 123). Its scope `96cfe849..5bf0c61c` also covered `96cfe849..953369da` (batch 93), so the range review-13's timed-out dispatch owed is now covered and no longer owed. **F1 (Medium)** was the **eighth** could-not-see clause in a row and it struck this file's own fix: batch 93's guard walk was capped at `HEADER_WALK = 6` non-blank lines, so a braceless `if` whose condition wrapped over **seven** lines — the reviewer's mutant, reproduced — adjudicated PASS, i.e. the hole reopened one wrapped line further out, for the third batch running. The cap is **deleted**, not raised: the walk's bound is now the `{` of the block that owns the statement (already computed by `guard_of`), which is a structural fact about where a guard can live and not a budget on how long a condition may be. Seven correct-code probes are **committed** this time (batch 93 ran its four by hand and lost them with the terminal), and one of them is F5's. **30 arms red, 7 probes green.** **F2 (Medium)** is the UB above, and it was in **two** decodes: `mve.cpp:311` had the same shift, fixed the same way, deliberately not factored into a shared helper because one constant does not justify a `formats → audio` dependency. **F3 (Medium)** struck a false premise this file has been repeating: **there is no 16 MB of FCRAM in this contract** — the built ELF's crt0 header asks for `__heap_size = 0x01800000` (**24 MiB**) and `__linear_heap_size = 0x02000000` (32 MiB), and libctru `os.h` gives `OS_OLD_FCRAM_SIZE = 0x8000000` (**128 MiB**, 256 MiB New). A fully decoded level 8 (15.82 MB) therefore **fits** the request with 9.34 MB to spare, so the eviction item is about unbounded growth and not about a ceiling that does not exist; the four places that said 16 MB are corrected below. **F4** was a branch no test reached (every shipped sound is mono), which is exactly how a signed `frame * 2` survived in it. **F5** was an alias regex whose `\s*` matched a newline, so a correct wrapped condition that merely *named* the clock read as an address-taken alias — a gate redding correct code, which is the failure mode this file keeps naming. **F6/F7/F8** were a pin back-dated two days before the code existed, a cost comment that omitted the `vmov` its own contract prices, and `15.83` where `6,469,952 + 5,821,432 = 15,823,516` is `15.82`.
+**Review-1 (run-20261108-195620) closed by batch 95: eight findings, no Critical, no High, none rebutted on merit — all eight fixed** (Iteration 123). Its scope `96cfe849..5bf0c61c` also covered `96cfe849..953369da` (batch 93), so the range review-13's timed-out dispatch owed is now covered and no longer owed. **F1 (Medium)** was the **eighth** could-not-see clause in a row and it struck this file's own fix: batch 93's guard walk was capped at `HEADER_WALK = 6` non-blank lines, so a braceless `if` whose condition wrapped over **seven** lines — the reviewer's mutant, reproduced — adjudicated PASS, i.e. the hole reopened one wrapped line further out, for the third batch running. The cap is **deleted**, not raised: the walk's bound is now the `{` of the block that owns the statement (already computed by `guard_of`), which is a structural fact about where a guard can live and not a budget on how long a condition may be. Seven correct-code probes are **committed** this time (batch 93 ran its four by hand and lost them with the terminal), and one of them is F5's. **30 arms red, 7 probes green.** **F2 (Medium)** is the UB above, and it was in **two** decodes: `mve.cpp:311` had the same shift, fixed the same way, deliberately not factored into a shared helper because one constant does not justify a `formats → audio` dependency. **F3 (Medium)** struck a false premise this file has been repeating: **there is no 16 MB of FCRAM in this contract** — the built ELF's crt0 header asks for `__heap_size = 0x01800000` (**24 MiB**) and `__linear_heap_size = 0x02000000` (32 MiB), and libctru `os.h` gives `OS_OLD_FCRAM_SIZE = 0x8000000` (**128 MiB**, 256 MiB New). A fully decoded level 8 **bank** (15.82 MB) therefore **fits** the request with 9.34 MB left **for** the level, so the eviction item is about unbounded growth and not about a ceiling that does not exist — and that remainder is a budget and not a verdict, because nothing in the tree measures the level's own cost (review-2 F3); the places that said 16 MB are corrected below. **F4** was a branch no test reached (every shipped sound is mono), which is exactly how a signed `frame * 2` survived in it. **F5** was an alias regex whose `\s*` matched a newline, so a correct wrapped condition that merely *named* the clock read as an address-taken alias — a gate redding correct code, which is the failure mode this file keeps naming. **F6/F7/F8** were a pin back-dated two days before the code existed, a cost comment that omitted the `vmov` its own contract prices, and `15.83` where `6,469,952 + 5,821,432 = 15,823,516` is `15.82`.
 
 **Review-5 (run-20261106-062909) closed: seven findings, none rebutted** (Iteration 114). Its two durable rules are standing facts below — **a build's identity is `mdk.elf`, never `mdk.3dsx`**, and **the panel crop is `tools/panel_crop.py`**. Its F2 was the second could-not-fail check in a row; its F3 struck a false mechanism (`DrawQueue::add` clamps an out-of-range bucket to 0, so a seventh pass folds into `Solid`).
 
@@ -24,12 +64,21 @@ Risk: medium — **the shipped binary does not move one byte**: after this batch
 
 **Two historical corrections that stay load-bearing.** Batch 83's headline measurement was taken against a build that is not its parent (batch 84's retraction stands), and with review-5 F1 the pattern was three consecutive batches trusting a number whose provenance was asserted rather than reproduced — what is different now is that anyone can reproduce both halves with `git archive`/`git ls-files` + `make` in a throwaway tree, and the identity field is the ELF — and a `.3dsx` md5 is not even reproducible from the tree that built it (batch 90: two consecutive in-tree builds gave `48931bcd…` then `23c5354f…` from one byte-identical `mdk.elf`). And **the census was never inflated, so do not re-run it**: the exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one**, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands" — the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, a different quantity). The old "re-census first" instruction stays withdrawn. Coverage is stated in panel columns (review-3 F4): geometry covers panel columns **200..399** of 400, the right half of the top screen.
 
-Last updated: 2026-11-09 (**batch 96 — review-2 of run-20261108-195620 closed, 8 of 9 dispositioned and
-F1 escalated: the guard walk's stop test read a wrapped `for` header's `;` as a statement terminator, so a
-clock accumulated three times per frame adjudicated PASS; a terminator now only terminates at paren depth
-0. The MVE half of batch 95's UB fix got the test it never had, and the sanitizer run batch 95 asserted in
-`/tmp` is now a committed gate that catches both reversions. `mdk.elf` is byte-identical to batch 95's:
-`c8295e96…`, `.text` `0x057ba0`.** Superseded tail of the batch-95 line: review-1 of run-20261108-195620 closed, 8/8: the 8-bit decode's signed left shift was undefined behaviour and is now `* 256`, the stereo pair is formed in `size_t` and is executed by a test for the first time, and this file's own "16 MB of FCRAM" premise was false — the crt0 header asks for a 24 MiB heap and libctru says 128 MiB of FCRAM, so a fully decoded level 8 fits and the eviction item is about growth, not a ceiling. `mdk.elf` `5437e57c…` → `c8295e96…`, `.text` +48 B from `sample()` inlining**).
+Last updated: 2026-11-09 (**batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
+owner-only: covering the compressed MVE audio path for the first time found a
+**heap-buffer-overflow** in `Mve::decodeAudio` — the predictor-seed loop filled `channels_` slots
+before any loop condition consulted `count = size / 2`, so a frame declaring less than
+`2 * channels_` bytes wrote past its sample array, and the guard that existed (`count < 0`) could
+not fire because `size` is a `u16`. Now `count < channels_` answers `FrameStatus::Broken`, which
+is the C#'s `IndexOutOfRange` answer, and the sanitizer gate runs UBSan **and** ASan because the
+mono shape is a null reference and the stereo shape is invisible to UBSan. `mdk.elf` is
+byte-identical to batch 95's and 96's — `c8295e96…`, `.text` `0x057ba0` — for the gc-sections
+reason in the risk line above, not because nothing was compiled.** Superseded tail of the batch-96
+line: review-2 closed, 8 of 9 dispositioned and F1 escalated: the guard walk's stop test read a
+wrapped `for` header's `;` as a statement terminator, so a clock accumulated three times per
+frame adjudicated PASS; a terminator now only terminates at paren depth 0. The MVE half of batch
+95's UB fix got the test it never had, and the sanitizer run batch 95 asserted in `/tmp` is now a
+committed gate that catches both reversions.** Superseded tail of the batch-95 line: review-1 of run-20261108-195620 closed, 8/8: the 8-bit decode's signed left shift was undefined behaviour and is now `* 256`, the stereo pair is formed in `size_t` and is executed by a test for the first time, and this file's own "16 MB of FCRAM" premise was false — the crt0 header asks for a 24 MiB heap and libctru says 128 MiB of FCRAM, so a fully decoded level 8 **bank** fits with 9.34 MB left for the level — nothing measures the level's own cost — and the eviction item is about growth, not a ceiling. `mdk.elf` `5437e57c…` → `c8295e96…`, `.text` +48 B from `sample()` inlining**).
 
 **The audio-docs batch is DONE (88), its first correction is DONE (89), its second is DONE (90), its third is DONE (91), its fourth is DONE (92), and its fifth is DONE (93).** The corrections are in `mdk_3ds/src/audio/audio_3ds.{h,cpp}` and `mdk_3ds/src/main_3ds.cpp`; the text of each is `docs/PROGRESS_LOG.md` Iterations 116–121. Two durable facts are in the standing list below: **the ndsp frame counter counts mixer frames, not samples**, and **its rate is measured in the emulator (204.544 twice, 204.562, 204.566/s ⇒ a 160-sample frame at 32728.5 Hz) by a SLOPE between two ledger rows, never by one row's `dpf/secs`, which carries a constant ~20 ms start offset; the slope's error bar is ±0.02/s and comes from TWO sources — a ±1 dspframe count and a 4 ms movement of the measured window — while the console's rate stays unmeasured**.
 
@@ -210,9 +259,30 @@ slope against a clock the console itself owns, not one row's division.
 **Deferred review findings:** review-4 of run-20261105-142911 F1/F2 (the geometric solid-arena pin stands in for the unported
 DTI connection crossing; the fall probe hard-codes the start and omits the camera stage) need a
 placed-fall oracle in full order plus a walk-out golden, and are deferred to a collision batch.
-Original-3DS behaviour remains unmeasured.
+**New from batch 97: the MVE movie decoder has no player.** `formats/mve.{h,cpp}` is ported and
+now covered (PCM both widths, DPCM, silence, the broken-size shapes) but nothing calls it, so it
+is gc-sectioned out of the shipped ELF and `MISC/FLIC/MDKBZK.MVE` never plays. Wiring it needs a
+video presenter (palette + indices → a canvas or a texture), which is the same canvas seam item 5b
+is blocked on, so it is not a cheap follow-on. Original-3DS behaviour remains unmeasured.
 
 ## Standing facts a batch must not re-derive
+
+* **`Mve` is ported, tested, and NOT LINKED into the shipped binary — so an unchanged `mdk.elf` is
+  not evidence that a change to `formats/mve.cpp` did nothing.** `arm-none-eabi-nm mdk_3ds/mdk.elf
+  | grep -ci Mve` reports **0** and `mdk_3ds/mdk.map` records `build/mve.o (__aeabi_idiv)`: the
+  object is pulled in only to satisfy a shared helper and every Mve section is discarded by the
+  `-ffunction-sections` + gc-sections link, because nothing in `mdk_core/src` or `mdk_3ds/src`
+  outside `formats/mve.{h,cpp}` mentions `Mve` — there is no movie player on either target. Batch
+  97 changed a shipped instruction and the ELF still came out md5-identical for exactly this
+  reason. If you change `formats/mve.cpp` and reach for "the binary did not move, so the change was
+  inert", check the map first. (review-3 open question 2 / batch 97.)
+* **A bounds guard that cannot fire is worse than none, because it reads as coverage.**
+  `if (count < 0)` in `decodeAudio` guarded a value that comes from `binU16` and so is never
+  negative, while the write it existed to prevent went unchecked. The durable form of this check is
+  `count < channels_` — the quantity the write actually depends on. And when a defect has two
+  shapes, verify **two instruments** see it: batch 97's mono shape is a UBSan null reference and
+  its stereo shape is invisible to UBSan and only AddressSanitizer catches it, which is why
+  `ubsan_decode_test.sh` now runs both and why each half was proven to fire on its own shape.
 
 * **Level 7's start is inside DANT_1 on a floor at z = 0 and the oracle drops him there too** — DTI start
   `(0,4,9)` at angle 90, `+ StartDrop` lifts it to 12, a BSP ray down hits `z = 0.01`, follow-camera eye
