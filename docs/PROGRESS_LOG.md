@@ -19282,3 +19282,166 @@ declined, for the same reason: `CONTINUATION.md`'s owner-action block attributes
 to the operator and says *"builder must not stage these or set `MDK_OWNER_APPROVED=1`.
 Stage batch paths by name only."* This batch staged its own paths by name. Review-7's
 open question 3 (the `test_review_state.sh` mode bit) is part of that same set.
+
+## Iteration 130 — batch 102: priority item (a) — the console draws the scripts' objects, and the
+## cache that keyed itself to freed models is why the fix is in both frontends and not one
+
+**What this batch is.** Review-8 (`logs/ralph-pi/run-20261108-195620/review-8.md`) came back
+**COMPLETE with no Critical and no High**, so per the builder contract the `CONTINUATION.md` priority
+order governs rather than a remediation list. Its first open item was the audio/script order's (a):
+**the object pass on the 3DS console**. Batch 99 had given the console a `ScriptRuntime`, so level 7's
+seven objects were ticking, making noise decisions and being collided with — and nothing drew them.
+`arm-none-eabi-nm mdk_3ds/mdk.elf | grep -ci ObjectView` was 0. Not "drawn badly": the entire pass was
+gc-sectioned out of the shipped binary, because nothing referenced it.
+
+**The oracle.** `Viewer.DrawScene` (`src/Mdk.Game/Viewer.cs:702-709`) draws `_view` (the arena), then
+`DrawObjects`, then `_sprite` (Kurt), with `_ropes` / `_sniper` / `_effects` in between — none of the
+three of which is ported, so the frame here goes arena, objects, Kurt and stops where the port's list
+stops. `DrawObjects` (`:950-962`) walks `scripts.Objects` in order, skips `!obj.Visible`, and hands
+each one `ObjectLook(level, looks, obj.Arena)` and `blend.TransformOf(obj)`. `ObjectLook` (`:965-975`)
+is the arena's palette and archives when the object names an arena, and the level's `Dti.Palette` plus
+`LevelTextures` outside one, memoised by arena name. All of that already existed in the port as
+`ObjectView` / `ObjectDraw` / `ObjectStream` and in the Linux frontend's glue; what was missing was the
+call site.
+
+**What was implemented.** In `mdk_3ds/src/main_3ds.cpp`: a `MaterialResolver` on the level's DTI at
+`Shading::Original`, an `ObjectView`, an `ObjectDraw`, one `ObjectStream` reused across frames, and an
+`objectLook` lambda memoised in a `std::map<std::string, ObjectLook>` — the Linux frontend's shape,
+copied rather than re-derived. The pass runs inside `begin/end_frame`, after `view.draw()` and before
+`kurtSprite.draw()`, gated on the runtime, at `runtime->tick_blend(pending)` — `pending` being what the
+step loop left over, which is the same quantity the C# hands `FrameBlend`. It skips `!obj.visible` and
+`runtime->isRemoved(&obj)`: the C#'s list has already dropped its removed objects, and this port keeps
+them in its deque for pointer stability, so walking the deque without the second skip draws corpses the
+oracle has unlisted.
+
+**The defect the pass would have shipped, and why it is in both frontends.** `ObjectView::layouts_` is
+keyed by `(const formats::Model*, const formats::Palette*)` and the shared pose caches
+(`scripts/object.cpp`'s `g_restPoses` / `g_baked`) are keyed by `Model*`. The Linux frontend's own
+comment claimed "the models belong to the level, so it lives as long as the level does". **That is
+false for most of them.** `ScriptRuntime::findModel` parses the CMI's global models into
+`modelCache_` and holds them **by value** (`script_runtime.h:580`); only the MTO's arena models come
+from `LevelData`. And `spawnPlayer` rebuilds the runtime on every death. So a respawn frees every
+`Model*` both caches are keyed by, and the new runtime parses its models into whatever the allocator
+hands back — same level, same parse order, so the addresses very likely reappear, holding **different**
+models. A kept cache then hands a recycled address the previous model's geometry and pose. That is
+exactly the failure `pose_cache.h` was written to prevent ("a new level's model can land on a freed
+address and inherit the old one's pose"), one level up and on respawn instead of on a level change —
+and `forgetPoseCaches()` is only called from `LevelData::load`, which a respawn does not run.
+
+The C# cannot have this: a respawn is a fresh `Viewer` (`Game.cs:485`), whose constructor calls
+`MdkObject.ForgetPoses()` (`Viewer.cs:185`) and builds a fresh `ObjectView`. So both frontends now
+call `MdkObject::forget_poses()` and `objectView.clear()` where the runtime is rebuilt, and the
+object-pass declarations moved **above** `spawnPlayer` in both files so the drop is reachable from it —
+which is itself the thing a later batch would "tidy" back, and is pinned against that (check 15).
+
+**Prior-solution lookup, as owed.** `pi-knowledge` KB `mdk-sdl` (4802 chunks / 983 files) searched for
+the object pass and the layout-cache lifetime; it surfaced `object_draw.h`, `object_view.cpp` and the
+CONTINUATION item, all verified against the repository before use. **Obsidian and Cognee MCP tools are
+not exposed as declared tools in this session** — they are reachable only through the codemode bridge,
+and no `obsidian_*` / `cognee_*` call was made, so per AGENTS P9 this says which path was actually used
+rather than implying a graph lookup happened. The pose-cache hazard was found in the repository's own
+`pose_cache.h`, not in the vault.
+
+**The measurement the item owed, not just the picture.** CONTINUATION asked for the linear-memory cost
+rather than "objects appeared", because `ObjectDraw::ensure` grows ONE linear-allocated stream mesh
+geometrically from `kInitialStreamCapacity = 4096` and `renderer_c3d.cpp`'s residency note budgets
+roughly a megabyte of linear headroom. The guest log now prints it, and level 7's answer is:
+
+    objects: stream mesh 4096 corners = 80 KB linear (480 corners, 11 draws this frame)
+    frame 3 onward ... obj=570c/13d peak=570c/13d
+
+The mesh is made **once** at 4096 corners and **never grows**: 4096 × 5 floats × 4 B = 81920 B = 80 KB,
+of which the frames use 570 corners (11.4%). The C# instead commits `Renderer.StreamVertices`
+(1 << 18) = 5.2 MiB for the process, which on this target is 5.2 MiB out of a heap measured in single
+megabytes and a failed `linearAlloc` is a silently missing mesh. The capacity alone would have been a
+weak number — it is rounded up to a power of two, so 4096 cannot distinguish a 570-corner level from one
+that nearly fills it — which is why the frame line also carries the frame's own corner and draw counts
+and a running peak. Level 8's measured 5616 corners would take it to 8192 = 160 KB, still inside the
+headroom.
+
+**The absolute check is not a picture.** The console's steady-state stream is `570 corners / 13 draws`.
+The oracle golden `tests/scripts/golden/L7_t1000_draw.txt` ends `STREAM vertices=570` and queues 13
+draws over 7 objects. Same level, same object count, same corner count, same draw count — so what the
+console hands its GPU seam is the oracle's stream. That is what carries the correctness claim, because
+the console's level-7 panel is **not** the oracle's panel and was not before this batch either.
+
+**The picture, and the control that makes the number believable.** Two builds, one emulator, the
+canonical `tools/panel_crop.py` crop (400×240 = 96000 px):
+
+    panel crop, parent vs this build:  58520 px of 96000 (60.96%), bbox x 0..399 y 0..239
+    panel crop, parent vs parent:          0 px of 96000
+
+The noise floor is **exactly zero** — two runs of the parent build produce byte-identical panels — so
+all 58520 pixels are the batch and none of them is instrument scatter. Without that control a 61%
+change would have looked like the diff going wrong. Committed as
+`docs/evidence/2026-11-09-L7-object-pass-{parent,current}.png/.txt`. The parent crop's pixel sha
+`f9af51b6…` is byte-identical to the crop committed in `2026-11-06-L7-blend-enable-r2-parent.png`,
+which is a provenance check on the parent build and independently confirms the console's level-7
+framing is unchanged by this batch. Both sidecars say plainly that the console's one-sided view is a
+pre-existing open item, that this batch neither caused nor fixed it, and that neither picture should be
+read as "the console now looks right".
+
+**What this batch did NOT produce, stated because CONTINUATION predicted it.** The item said the object
+pass "should finally produce the one measurement batch 99 could not: a script sound reaching the sink".
+It did not. `plays` is 1 on all 53 logged rows and 1 is Kurt's own sound; `voices=0` throughout. Drawing
+objects does not make them sound, and level 7's door, three BEAMS and three statics never fire one in
+2880 frames. The prediction was wrong and the sink's script-sound row stays unmeasured.
+
+**Gates, as run.**
+- `make -C tests/scripts` → `All cases match the oracle.` exit 0.
+- `bash tools/check.sh` → `CHECK: ALL GATES PASSED`: `audit_c_with_classes` PASS 0 violations,
+  `gates_vfp` PASS 0 blockers, `audit_arm11_math` PASS contract clean, `audit_r11_idiv` PASS no
+  candidates, `gates_core_parity` PASS both targets link the same core, `gates_smdh` **SKIP** (no built
+  .cia), `gates_frames` PASS (`L3_f1.bmp sha=58615fc85d02e009`), `gates_batch_integrity` PASS.
+- `make -C mdk_3ds` (devkitARM) → `LINK mdk.elf`, `3DSX mdk.3dsx`. `mdk.elf` `4232fd94…` →
+  `4d27d6f8…`; `nm | grep -ci` ObjectView 0 → 2, ObjectDraw 0 → 2, ScriptRuntime 109.
+- `sh tests/scripts/main_3ds_flow_test.sh` → `PASS Main3dsFlow (15 checks, 17 arms adjudicated red)`,
+  up from 11 checks and 13 arms.
+- Emulator (AGENTS P8, owed because `mdk_3ds/**` changed): `DISPLAY=:99 mdk_3ds/tools/emurun.sh
+  --secs 50 --min-frames 600`, **exit 0**, display `:99`, Mandarine r1.2.1 md5 `0d2adab6` (the harness
+  refuses r1.3.0 with exit 6), forced llvmpipe, mono, private lane. Guest reached frame 2880,
+  `health=100` on every row, no FAIL/WARN. Emulator-green is not hardware-pass; no Old-3DS measurement
+  was taken and that stays open.
+
+**Gate work, and the three bugs the arms caught in it.** The four new checks each got a mutation arm,
+and the arm discipline — exact `arm → first-failing-check` equality — caught three defects in the gate
+itself on its first run, which is the only reason any of them are not now shipped as a check that
+certifies nothing: `object_pass()` resolved "the nearest `if` before the call", which is the pass's own
+*inner* skip rather than the runtime gate, so two checks were reading the wrong block and were red on
+the real file; one arm spliced `head + body` and silently **truncated the file** at `spawnPlayer`, which
+turned the wrong check red and would have looked like an attribution problem in the check rather than a
+bug in the arm; and the block resolver had to become "the innermost `if` block that *contains* the call".
+A check that is red on the committed file is easy to notice; an arm that quietly edits half the file is
+not.
+
+**Review-8 disposition.** No Critical and no High, so nothing to remediate or rebut. Its Medium/Low,
+with cause, per "fix when cheap and in-scope, otherwise log deferred":
+- **M1** (`frontend_solid_pin_test.sh` has no check that the geometric refresh is outside the
+  `if (runtime)` branch) — **deferred**. It is a gap in the *previous* batch's gate about the collision
+  pin, not in this batch's subsystem, and CONTINUATION already records that the collision batch will
+  rewrite that gate when `FindConnections` / `CrossedArena` land. Fixing it here would be a second
+  subsystem in one batch.
+- **M2** (the `follow.update`-then-`setSolid` order is pinned only for the 3DS file, not
+  `mdk_linux/src/main.cpp`) — **deferred**, same reason and the same rewrite.
+- **M3** (no executed evidence that the pin follows the feet across a boundary) — **deferred**; it needs
+  the doorway-crossing oracle the collision batch owns, not a hand-written expectation.
+- **L1** (re-wrap `arena_space.h:81-83`) — **deferred**, cosmetic and in a file this batch did not touch.
+- **L2** (`test_review_state.sh` mode 100755 → 100644) — **owner-only**: the file is not owned by this
+  uid and `chmod` is refused. It is part of the operator's uncommitted harness set, which this batch did
+  not stage.
+
+**Tree hygiene.** The nine dirty files inherited from the operator's harness set
+(`OWNER_DIRECTIVE_2026-11-05.md`, `ralph-pi.sh`, `ralph/LOOP_CONTEXT.md`, `ralph/builder.md`,
+`tools/ralph_pi_watchdog.sh`, `tools/runner/test_review_state.sh`, `tools/reclaim_qwen_slots.sh`) were
+left unstaged; this batch staged its own paths by name, never `git add -A`.
+
+**Frame.** The pinned pair is byte-identical to batch 99's (`6646adf1…`, gap unchanged at
+`bad_percent=1.240 max_delta=247 mean_delta=0.1819`), and the cause is the standing one: the pin is the
+**Linux** capture of level 3 frame 1, where neither the C++ nor the C# has a single script object. A
+batch that draws objects cannot move it, and `docs/evidence/` exists precisely so that this batch's real
+picture evidence is committed somewhere that says so.
+
+**Next**, per the priority order: the one-sided view is still the head renderer item and still needs a
+new hypothesis rather than a sixth census run; behind it, (b) the bank's eviction bound and (c) the
+ndsp sink's console rate. The sink's script-sound row is still unmeasured and now has a concrete shape:
+it needs a level whose scripts play at the spawn, not another pass over level 7.

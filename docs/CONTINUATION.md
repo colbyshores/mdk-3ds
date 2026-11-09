@@ -1,13 +1,13 @@
 # Phase 2 continuation checkpoint
 
-Risk: high — **both frontends' collision world changes, and two gates' power to see changes.**
-The Linux step loop stops pinning Kurt's collision arena to the script runtime's frozen
-`currentArena()` and pins the arena under his feet in **both** of its branches — the same
-behaviour change batch 100 made on the 3DS, in the frontend that takes the pinned frame, and it
-moves the fall-out death across a doorway. It also adds a gate (`frontend_solid_pin_test.sh`,
-both frontends) and replaces "any red verdict" with exact arm→check attribution in
-`main_3ds_flow_test.sh`, which changes what those gates can fail to see. All of it is review-7
-remediation; the 3DS binary is byte-identical (`mdk.elf` `b0878389…`).
+Risk: high — **a picture change on the console, and a cache-lifetime fix in both frontends.**
+The 3DS frontend now draws the script runtime's objects between the arena and Kurt, which moves
+**58520 px of the 96000-px top panel** against a measured noise floor of exactly 0 px. It also
+changes a respawn in **both** frontends: `ScriptRuntime` owns its model cache by value, so
+rebuilding it frees every `Model*` that `ObjectView::layouts_` and the shared pose caches are keyed
+by, and both are now dropped there. That is memory lifetime plus target-specific rendering, and it
+extends `main_3ds_flow_test.sh` from 11 checks to 15 with four arms that isolate the new ones.
+The Linux binary's picture is unchanged (`gates_frames` PASS, pinned frame byte-identical).
 
 **Batch 101 (Iteration 129) — review-7 closed 5/5, none rebutted.** **F1 (High)**: batch 100
 wrote "BOTH frontends here use the geometric arena under his feet" into `arena_space.h` and only
@@ -165,7 +165,7 @@ would stop the loop at exit 6 rather than warn.
 
 **Two historical corrections that stay load-bearing.** Batch 83's headline measurement was taken against a build that is not its parent (batch 84's retraction stands), and with review-5 F1 the pattern was three consecutive batches trusting a number whose provenance was asserted rather than reproduced — what is different now is that anyone can reproduce both halves with `git archive`/`git ls-files` + `make` in a throwaway tree, and the identity field is the ELF — and a `.3dsx` md5 is not even reproducible from the tree that built it (batch 90: two consecutive in-tree builds gave `48931bcd…` then `23c5354f…` from one byte-identical `mdk.elf`). And **the census was never inflated, so do not re-run it**: the exact clear-colour pixels `(16,32,48)` of the 400x240 panel are **58464 in the parent build and 58464 in this one**, and that equality is the whole argument (review-4 F8: do not restate it as "the 61 % figure stands" — the census's 61 % was 58522 near-clear pixels of a 95361-px panel at a different frame with a different tolerance, a different quantity). The old "re-census first" instruction stays withdrawn. Coverage is stated in panel columns (review-3 F4): geometry covers panel columns **200..399** of 400, the right half of the top screen.
 
-Last updated: 2026-11-09 (**batch 99 — priority item 6d landed: the 3DS frontend runs the scripts. One `ScriptRuntime` per level, built in `spawnPlayer` so a respawn restarts its objects, tick count and RNG; ticked between Kurt and the camera; the pitch and the solid-arena pin come from it (the pin guarded on a non-empty `currentArena()`, because `setSolid("")` clears it); and the frame mixes the mixer the runtime owns, with the sink re-attached on every rebuild. Its objects are simulated and NOT drawn — the object pass is batch 100. `mdk.elf` `c8295e96…` → `4232fd94…`, `nm | grep -ci ScriptRuntime` 0 → 107; the emulator on `:99` (r1.2.1, exit 0) reaches frame 3480 with `objects=7` and `health=100` on all 63 rows, and no script sound fired. Superseded tail of the batch-97 line: batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
+Last updated: 2026-11-09 (**batch 102 — priority item (a) landed: the console draws the scripts' objects. `main_3ds.cpp` gains the C#'s `DrawObjects` between `view.draw()` and `kurtSprite.draw()` (Viewer.cs:702-709), at `runtime->tick_blend(pending)`, skipping the invisible and the removed, over an `objectLook` cache keyed by arena name — and the console's steady-state stream is `570 corners / 13 draws`, which is `L7_t1000_draw.txt`'s `STREAM vertices=570` and 13 queued draws exactly. The linear answer CONTINUATION asked for: the stream mesh is made ONCE at 4096 corners = 80 KB linear and NEVER grows (level 7 uses 570 of 4096), against the C#'s 5.2 MiB `Renderer.StreamVertices` and the ~1 MB linear headroom. It also fixed a defect the pass would have shipped: `ScriptRuntime` owns `modelCache_` BY VALUE (script_runtime.h:580), so `runtime.reset()` on a respawn frees every `Model*` that `ObjectView::layouts_` and the pose caches key on, and a recycled address inherits the previous model's geometry — both frontends now call `forget_poses()` + `objectView.clear()` in `spawnPlayer`, which is why the object-pass declarations sit ABOVE it. `mdk.elf` `4232fd94…` → `4d27d6f8…`, `nm | grep -ci` ObjectView/ObjectDraw 0 → 2 each. Emulator on `:99` (r1.2.1, exit 0) reaches frame 2880, `health=100` on all 53 rows, and the panel crop moves 58520 px of 96000 against a 0 px noise floor — see `docs/evidence/2026-11-09-L7-object-pass-{parent,current}.txt`. What it did NOT produce: the predicted script sound. `plays` stays at Kurt's own 1 and `voices=0`, because level 7's seven objects never fire one in 2880 frames; that measurement is still open. Superseded tail of the batch-99 line: batch 99 — priority item 6d, the 3DS frontend runs the scripts (one `ScriptRuntime` per level, built in `spawnPlayer`, ticked between Kurt and the camera, the frame mixing the mixer the runtime owns), its objects simulated and NOT drawn until this batch** `mdk.elf` `c8295e96…` → `4232fd94…`, `nm | grep -ci ScriptRuntime` 0 → 107; the emulator on `:99` (r1.2.1, exit 0) reaches frame 3480 with `objects=7` and `health=100` on all 63 rows, and no script sound fired. Superseded tail of the batch-97 line: batch 97 — review-3 of run-20261108-195620 closed, 2 fixed and 3
 owner-only: covering the compressed MVE audio path for the first time found a
 **heap-buffer-overflow** in `Mve::decodeAudio` — the predictor-seed loop filled `channels_` slots
 before any loop condition consulted `count = size / 2`, so a frame declaring less than
@@ -302,11 +302,10 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 101)
-*(Batch 99 did not advance the renderer head either, and did not pretend to: it took the audio priority
-order's first open item, 6d. The one-sided view is still first, still unadvanced, and still needs the
-same new hypothesis, not a sixth census run with the same instrument. Behind it, the object pass the
-runtime batch just unblocked is the item with the least speculation in it.)*
+## NEXT (batch 103)
+*(Batch 102 took the audio/script priority order's first open item, (a) the object pass on the
+console. The one-sided view is still first among the renderer items, still unadvanced, and still needs
+the same new hypothesis, not a sixth census run with the same instrument.)*
 **The one-sided view, still first and still unadvanced.** Geometry covers panel columns **200..399** of the 400-wide top
 screen — the right half — and the live question is why coverage stops at a straight
 vertical line at the panel's middle. The census instrument is honest (header: 58464
@@ -333,18 +332,17 @@ alpha test per pass on the strength of the old note; it only has to re-read
 **unblended or depth-writing** — review-6 F3: those are two independent triggers, not one
 conjunction, and an unblended canvas pass diverges on colour alone.
 
-**Audio and scripts, in priority order after the renderer items.** (a) **The object pass on the
-console** — batch 99 wired the runtime, so the level's objects are now simulated and **not drawn**
-(level 7: seven of them, ticking unseen). Nothing blocks it: `ObjectView` and `ObjectDraw` are ported,
-the c3d dynamic-mesh seam is real (not a no-op like `mdk_render_canvas_quad`), and the Linux frontend's
-`objectLook`/`objectStream`/`objectDraw` glue is the precedent to copy. It is a picture change, so it
-carries its own frame and emulator evidence, and it has a 3DS question of its own to answer rather than
-only a glue question: `ObjectDraw::ensure` grows ONE linear-allocated stream mesh geometrically from
-4096 corners, and `renderer_c3d.cpp`'s own residency note budgets roughly a megabyte of linear
-headroom after the two eye targets, the command buffer and an arena's textures — so the batch reports
-the capacity a level actually reaches and what it cost, not merely that objects appeared. And it should
-finally produce the one measurement batch 99 could not: a script sound reaching the sink (`plays` above
-Kurt's own 1). (b) **the bank still has no eviction bound** — the
+**Audio and scripts, in priority order after the renderer items.** (a) **DONE — batch 102.** The
+object pass is on the console: the C#'s `DrawObjects` between the arena and Kurt, at the blended
+transform, over an `objectLook` cache. The linear question it owed is answered with a measurement and
+not a hope: level 7 makes the ONE stream mesh once at 4096 corners = **80 KB linear** and never grows
+it (the frames reach 570 corners / 13 draws, which is `L7_t1000_draw.txt`'s number exactly), against
+the C#'s 5.2 MiB `Renderer.StreamVertices`. It also surfaced and fixed a lifetime defect the pass
+would have shipped into **both** frontends — see the `Last updated` line and
+`main_3ds_flow_test.sh` check 15. What it did NOT do is the thing this paragraph predicted: no script
+sound reached the sink (`plays` stays at Kurt's own 1, `voices=0`), because level 7's seven objects
+never fire one; the sink's script-sound row is **still unmeasured**, and a level whose scripts do play
+at the spawn is what would close it. (b) **the bank still has no eviction bound** — the
 numbers are measured now (batch 94, `tick1 mixsize`): decoded 6.47 / 7.88 / 10.0 MB plus archives
 4.39 / 5.90 / 5.82 MB for levels 3 / 4 / 8, against the 24 MiB application heap the crt0 header requests
 (review-1 F3 — the "16 MB of FCRAM" this line used to quote was invented; and what fits is the bank's

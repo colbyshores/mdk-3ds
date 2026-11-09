@@ -59,6 +59,31 @@
 # the same reason: the loop now has two, and a check that stopped at the first
 # would let an unguarded second one clear the pin while the gate printed PASS.
 #
+# WHAT BATCH 102 ADDED (the object pass on the console). Drawing the runtime's
+# objects made four more things load-bearing that no compiler can see:
+#  12. the pass sits BETWEEN the arena and Kurt's sprite. The C#'s draw order is the
+#      picture (Viewer.cs:702-709); a pass that runs somewhere else in the frame
+#      still runs, still costs the same, and still produces the wrong frame.
+#  13. the pass is gated on the runtime existing. A level whose CMI, bank or sprites
+#      archive is missing runs without one (check 10), so `runtime` is null in a
+#      shipped configuration and `runtime->objects()` there is a crash in the frame
+#      path — not a degraded picture.
+#  14. the pass skips both the invisible AND the removed. The C#'s object list has
+#      already dropped its removed objects; this port keeps them in its deque for
+#      pointer stability, so walking the deque without the second skip draws what
+#      the oracle has unlisted.
+#  15. a respawn drops the two caches keyed by a Model address. ScriptRuntime OWNS
+#     its model cache and holds the models BY VALUE (script_runtime.h:580), so
+#     `runtime.reset()` frees every Model* that ObjectView::layouts_ and the shared
+#     pose caches are keyed by, and the rebuilt runtime's models land on recycled
+#     addresses — same level, same parse order, so the address very likely reappears
+#     holding a DIFFERENT model and inherits its geometry and pose. The C# cannot
+#     have this: a respawn is a fresh Viewer, whose constructor calls
+#     MdkObject.ForgetPoses() (Viewer.cs:185) and builds a fresh ObjectView. This
+#     check is also why the object-pass declarations sit ABOVE spawnPlayer: moving
+#     them down beside the draw is a one-line edit that would silently undo the fix,
+#     and it is the kind of "tidy" move a later batch makes by reflex.
+#
 # Every check is paired with a mutation arm that must turn it red; a gate that
 # prints PASS over a mutant that never ran is a pass generator.
 #
@@ -148,6 +173,42 @@ def step_loop(text):
     return text[sp[0]:sp[1]] if sp else None
 
 
+def object_pass(text):
+    """The object pass's block: the INNERMOST brace-matched `if (...) {` block that
+    actually CONTAINS `objectDraw.draw(`.
+
+    Resolved by containment and not by "the nearest `if` before the call", because
+    the pass contains a second, inner `if` (the invisible/removed skip) whose header
+    sits closer to the call than the gate does -- matching on nearness returned the
+    skip's block, whose header is not `if (runtime)` and whose body does not hold
+    the call. And it is resolved by position rather than by a pattern over the whole
+    file because the frontend has more than one `if (runtime)`: a greedy search
+    lands on the camera-pitch one in the step loop.
+
+    Returns {'start','end','header','body'} or None. `header` is the matched `if`
+    header text, which is what the gate check inspects: the pass being inside SOME
+    block is not the invariant; being inside the runtime's is."""
+    at = text.find("objectDraw.draw(")
+    if at < 0:
+        return None
+    best = None
+    for m in re.finditer(r"\bif[ \t]*\([^\n]*?\)[ \t]*\{", text[:at]):
+        sp = block_span_from(text, m.end() - 1)
+        if sp is not None and sp[0] <= at < sp[1]:
+            best = (m, sp)
+    if best is None:
+        return None
+    m, sp = best
+    return {"start": sp[0], "end": sp[1], "header": m.group(0),
+            "body": text[sp[0]:sp[1]]}
+
+
+def frame_body_span(text):
+    """Absolute (start, end) of the `while (aptMainLoop())` body — the frame, as
+    distinct from the fixed-step loop inside it."""
+    return block_span(text, r"while[ \t]*\([ \t]*aptMainLoop[ \t]*\([ \t]*\)[ \t]*\)")
+
+
 def call_line(block, name):
     """0-based line index of the first code line of `block` that is a statement
     calling `name(`, or None. Whole-line match, so a call wrapped in `if (x)` on
@@ -221,6 +282,15 @@ CHK = {
         "a respawn re-points the mixer, rebinds Kurt, and re-attaches the sink",
     "asset-gate": "the runtime is constructed under the asset gate",
     "pitch-from-runtime": "the pitch target is camera_track, then the scripts' arena",
+    "objects-drawn-in-order":
+        "the object pass is drawn between the arena and Kurt's sprite (Viewer.cs:702-709)",
+    "objects-gated-on-runtime":
+        "the object pass runs only when there is a runtime to take its objects from",
+    "objects-skip-invisible-and-removed":
+        "the pass skips the invisible and the removed, as C# Viewer.DrawObjects does",
+    "respawn-drops-the-model-caches":
+        "a respawn drops the two caches keyed by a Model address, because rebuilding "
+        "the runtime frees the models they are keyed by",
 }
 
 
@@ -380,8 +450,61 @@ def adjudicate(text, quiet=False):
                 and "runtime->cameraTrackPitch" in loop
                 and "level.arenaPitch(runtime->currentArena())" in loop)
     say(CHK["pitch-from-runtime"], pitch_ok,
-        "Viewer.cs:746-747 asks the scripts first; the geometric arena is only the "
-        "stand-in for a frontend with no runtime")
+        "the pitch the camera rests at is the scripts' arena's, not the geometric one")
+
+    # 12. the object pass is drawn, and BETWEEN the arena and Kurt's sprite. The C#
+    #     orders arena, objects, Kurt (Viewer.cs:702-709) and the order is the
+    #     picture: objects drawn before the arena are painted over, and objects
+    #     drawn after Kurt paint over him. Presence anywhere in the file is not the
+    #     invariant, which is the same reason check 1 exists.
+    op = object_pass(text)
+    arena_at = text.find("view.draw();")
+    kurt_at = text.find("kurtSprite.draw(")
+    frame = frame_body_span(text)
+    in_frame = (op is not None and frame is not None
+                and frame[0] <= op["start"] < frame[1])
+    say(CHK["objects-drawn-in-order"],
+        in_frame and arena_at >= 0 and kurt_at >= 0 and arena_at < op["start"] < kurt_at,
+        "C# Viewer.DrawScene draws the arena, then the objects, then Kurt; anywhere "
+        "else and the order of the draws is a different picture")
+
+    # 13. the pass is gated on the runtime. `runtime->objects()` on a null runtime
+    #     is a null dereference in the frame path, and the level runs without scripts
+    #     whenever its CMI, bank or sprites archive is missing (check 10), so the
+    #     null case is a shipped configuration and not a hypothetical.
+    say(CHK["objects-gated-on-runtime"],
+        op is not None and re.fullmatch(
+            r"if[ \t]*\([ \t]*runtime[ \t]*\)[ \t]*\{", op["header"]) is not None,
+        "a level with no runtime has no objects, and walking a null one is a crash in "
+        "the frame path")
+
+    # 14. the pass skips the invisible and the removed. C# Viewer.DrawObjects skips
+    #     `!obj.Visible`, and the C#'s list has already dropped its removed objects
+    #     while this port keeps them in the deque for pointer stability — so a pass
+    #     that walks the deque without skipping them draws corpses and dead pickups.
+    body = op["body"] if op else ""
+    say(CHK["objects-skip-invisible-and-removed"],
+        bool(re.search(r"![ \t]*obj\.visible", body))
+        and bool(re.search(r"isRemoved\(&obj\)", body)),
+        "the deque holds removed objects the C# has already unlisted; without both "
+        "skips the pass draws what the oracle does not")
+
+    # 15. a respawn drops the two caches keyed by a Model address. ScriptRuntime
+    #     OWNS its model cache (script_runtime.h:580, models held BY VALUE), so
+    #     `runtime.reset()` frees every Model* that ObjectView::layouts_ and the
+    #     shared pose caches are keyed by — and the new runtime's models land on
+    #     recycled addresses, same level and same parse order, so the address very
+    #     likely reappears holding a DIFFERENT model. The C# cannot have this: a
+    #     respawn is a fresh Viewer, whose constructor calls MdkObject.ForgetPoses()
+    #     (Viewer.cs:185) and builds a fresh ObjectView. This is why the object-pass
+    #     declarations sit above spawnPlayer and not beside the draw: the drop has to
+    #     be reachable from it, and moving them down would silently undo the fix.
+    caches_dropped = (spawn_body is not None
+                      and re.search(r"MdkObject::forget_poses\(\)", spawn_body) is not None
+                      and re.search(r"objectView\.clear\(\)", spawn_body) is not None)
+    say(CHK["respawn-drops-the-model-caches"], caches_dropped,
+        "rebuilding the runtime frees the models both caches key on; a recycled address "
+        "would otherwise draw the previous model's geometry and pose")
     return r
 
 
@@ -606,6 +729,58 @@ def arm_pitch_ignores_runtime(text):
     return text[:a] + mutated + text[b:]
 
 
+# --- the object pass's arms -------------------------------------------------
+def arm_objects_before_arena(text):
+    """Move the whole object pass above the arena draw. The pass still runs and
+    still skips what it should, so only the ORDER check can catch it -- which is
+    the point: the C#'s order is the picture, not an implementation detail."""
+    op = object_pass(text)
+    if op is None:
+        return text
+    block = text[op["start"]:op["end"]]
+    at = text.find("if (arena) {")
+    if at < 0 or at > op["start"]:
+        return text
+    return text[:at] + block + "\n        " + text[at:op["start"]] + text[op["end"]:]
+
+
+def arm_objects_ungated(text):
+    """Ungate the pass. `if (true)` keeps the block, its skips and its order, so
+    only the gate check can see it -- and a level whose scripts never started
+    (check 10's asset gate) is exactly the shipped case where runtime is null."""
+    op = object_pass(text)
+    if op is None or not re.fullmatch(r"if[ \t]*\([ \t]*runtime[ \t]*\)[ \t]*\{",
+                                      op["header"]):
+        return text
+    return text[:op["start"] - len(op["header"])] + "if (true) {" + text[op["start"]:]
+
+
+def arm_objects_draws_removed(text):
+    """Drop the skip, so the deque's removed objects are drawn. The C# has already
+    unlisted them; this port keeps them in place for pointer stability."""
+    mutated, n = re.subn(
+        r"if[ \t]*\([ \t]*![ \t]*obj\.visible[ \t]*\|\|[ \t]*runtime->isRemoved"
+        r"\(&obj\)[ \t]*\)[ \t]*\{[ \t]*\n[ \t]*continue[ \t]*;[ \t]*\n[ \t]*\}[ \t]*\n",
+        "", text)
+    return mutated if n else text
+
+
+def arm_respawn_keeps_the_caches(text):
+    """Keep the layout and pose caches across a runtime rebuild. This is the defect
+    the object pass would have shipped: the rebuilt runtime frees the models both
+    caches are keyed by, and a recycled address inherits the old model's geometry."""
+    spawn = body_span(text, "spawnPlayer")
+    if spawn is None:
+        return text
+    head, body, rest = text[:spawn[0]], text[spawn[0]:spawn[1]], text[spawn[1]:]
+    mutated, n = re.subn(
+        r"[ \t]*(?:mdk::scripts::)?MdkObject::forget_poses\(\)[ \t]*;[ \t]*\n"
+        r"[ \t]*objectView\.clear\(\)[ \t]*;[ \t]*\n", "\n", body)
+    if not n:
+        return text
+    return head + mutated + rest
+
+
 ARMS = [
     # Each arm names the ONE check it must turn red (review-7 F2). The attribution is
     # exact equality, so an arm that an earlier check happens to catch first is a
@@ -633,6 +808,14 @@ ARMS = [
     ("frozen-runtime-pin-added-alongside-the-geometric-one (review-7 F2)",
      arm_frozen_pin_added, CHK["pin-not-the-runtime"]),
     ("pitch-ignores-the-runtime", arm_pitch_ignores_runtime, CHK["pitch-from-runtime"]),
+    ("object pass moved above the arena draw", arm_objects_before_arena,
+     CHK["objects-drawn-in-order"]),
+    ("object pass ungated on a null runtime", arm_objects_ungated,
+     CHK["objects-gated-on-runtime"]),
+    ("object pass draws the removed", arm_objects_draws_removed,
+     CHK["objects-skip-invisible-and-removed"]),
+    ("respawn keeps the Model-address-keyed caches", arm_respawn_keeps_the_caches,
+     CHK["respawn-drops-the-model-caches"]),
 ]
 
 print("main_3ds_flow: %s — %d checks, %d mutation arms" % (PATH, real.checks, len(ARMS)))

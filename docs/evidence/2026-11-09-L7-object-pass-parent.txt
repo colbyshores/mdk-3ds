@@ -1,0 +1,58 @@
+evidence pair — the object pass on the 3DS console (batch 102).
+
+This file is the PARENT half: the build BEFORE the object pass was wired into
+`mdk_3ds/src/main_3ds.cpp`. Read the two sidecars together; the claim belongs to
+the pair, and the claim is in the `current` half.
+
+scene:   level 7, the start arena. Guest log ended at frame 2520 (the deadline
+         reading was 2460), the camera is the static start framing — feet
+         (0.0,4.0,0.0), eye (0.0,-4.0,4.5), yaw 90, health 100 on every one of
+         the 42 logged rows. The scene does not animate: this panel is
+         byte-identical to the one committed as
+         `2026-11-06-L7-blend-enable-r2-parent.png` four batches ago, which is
+         both a provenance check on this build and its own finding (see
+         `what the halves agree on` below).
+build:   HEAD 9b63dc4 (batch 101) with ONLY `mdk_3ds/src/main_3ds.cpp` restored
+         to HEAD — `git show HEAD:mdk_3ds/src/main_3ds.cpp > mdk_3ds/src/main_3ds.cpp`
+         — and then `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+         make -C mdk_3ds`. That reproduces the parent's 3DS binary exactly:
+         nothing else in the tree reaches the 3DS build (the batch's other source
+         change is `mdk_linux/src/main.cpp`, and its other change is a test
+         script). It is NOT a `git archive` build, and that is stated rather than
+         glossed: the working tree also carried the operator's uncommitted harness
+         files, none of which are compiled.
+         mdk.3dsx md5 9c67f30f0aa6e8ddf66161b34a5a8422
+         The game data is staged from the gitignored ./MDK tree and is not part of
+         the repository or of this commit; the build depends on it the way every
+         3DS build here does.
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 45 --min-frames 600 \
+                   --shot /tmp/kilo-b102/parent2.png /tmp/kilo-b102/parent.3dsx
+         (emurun exit 0; dspfirm present in the lane)
+display: :99 — Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7). Pinned
+         Mandarine r1.2.1, md5 0d2adab6ad078c78e6d03e72086f2eb6, verified by
+         emurun's own version pin (exit 6 is its refusal to run r1.3.0). Forced
+         llvmpipe (LIBGL_ALWAYS_SOFTWARE=1), mono (render_3d=0 factor_3d=0),
+         private lane and private config. Captures went under /tmp/kilo-b102
+         because /tmp/kilo belongs to another co-tenant on this box and is not
+         writable by this uid.
+capture: /tmp/kilo-b102/parent2.png, 1280x1024. The committed crop is the top
+         panel (440,253)-(839,492) INCLUSIVE, 400x240 = 96000 px, produced by
+         `python3 tools/panel_crop.py crop`, which refuses to write a crop that is
+         not exactly that size. sha256 of its pixels
+         f9af51b635680739418648cd43d9f82361d61f82f65786e203ed9436a8e20d6a —
+         byte-identical to the crop committed in
+         `2026-11-06-L7-blend-enable-r2-parent.txt`, so this half is the same
+         panel that evidence already contains and not a new framing of it.
+oracle:  none for the PICTURE, and that is stated rather than hidden. This is a
+         RELATIVE A/B: it measures what the batch did to the console's frame, never
+         whether either build is right (vault:
+         relative-vs-absolute-oracle-for-emulated-subsystems). The absolute check
+         for this batch is not a picture at all — it is in the `current` half.
+
+what the halves agree on, before the difference: the console's level-7 panel is
+NOT the corridor the Linux frontend draws at the same level, and it was not
+before this batch either. The parent half shows the same red-on-navy framing the
+committed batch-86 parent shows, byte for byte. So the console/Linux framing gap
+is pre-existing and belongs to the open one-sided-view item in
+`docs/CONTINUATION.md`; this batch neither caused it nor fixed it, and neither
+half should be read as "the console now looks right".

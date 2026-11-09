@@ -25,10 +25,15 @@
 //     canvas draw has to become a record in the frame's queue so the per-eye
 //     replay emits it, and until that lands a HUD call here would draw nothing at
 //     all and read as a ported HUD. Deferred with that cause, not stubbed.
-//   * The objects the scripts own (ObjectView / ObjectDraw). The runtime RUNS
-//     here now — its simulation, its sounds, its camera and arena requests — but
-//     nothing draws its objects yet, so the level's enemies move and make noise
-//     unseen. The object pass is the next item; docs/CONTINUATION.md carries it.
+//   * The ropes, the sniper scope and the effects — `_ropes.Draw`, `_sniper.Draw`
+//     and `_effects.Draw` between the objects and Kurt in C# Viewer.DrawScene
+//     (Viewer.cs:706-708). None of the three is ported, so the frame here goes
+//     arena, objects, Kurt, and stops where the port's list stops.
+//
+// THE OBJECT PASS IS HERE. The runtime's objects are drawn between the arena and
+// Kurt, which is the C#'s order (Viewer.cs:702-709), at the blended transform, and
+// the one 3DS question it carries — how big the linear stream mesh has to be — is
+// answered in the frame log and in docs/CONTINUATION.md rather than assumed.
 //
 // The lifecycle rules are AGENTS.md P1; the frame rules are P2.
 // ============================================================================
@@ -39,6 +44,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <map>
 #include <memory>
 #include <string>
 
@@ -57,7 +63,10 @@
 #include "game/kurt_sprite.h"
 #include "game/level_data.h"
 #include "game/level_view.h"
+#include "game/object_draw.h"
+#include "game/object_view.h"
 #include "game/player.h"
+#include "render/material_resolver.h"
 #include "render/render.h"
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
@@ -401,6 +410,60 @@ int main(int argc, char** argv) {
     }
 
     // ---------------------------------------------------------------------
+    // The object pass: the C#'s Viewer._objects, Viewer._looks and DrawObjects.
+    //
+    // WHY IT SITS HERE, BEFORE KURT AND BEFORE spawnPlayer. Two things own parts
+    // of it and they have different lifetimes:
+    //
+    //   * The RESOLVER and the LAYOUT CACHE are keyed by the level's DTI and by
+    //     the MODEL objects, and the models are owned by the RUNTIME
+    //     (ScriptRuntime::modelCache_, script_runtime.h:580 — the CMI's global
+    //     models, parsed once and held by value). A respawn rebuilds the runtime,
+    //     so every one of those Model addresses is freed and the next level run
+    //     gets new ones. Both caches key on that address: ObjectView::layouts_ on
+    //     (Model*, Palette*) and the shared pose caches on Model* (see
+    //     scripts/pose_cache.h, whose own comment names this exact failure — "a new
+    //     level's model can land on a freed address and inherit the old one's
+    //     pose"). The C# cannot have that failure: a respawn builds a fresh Viewer,
+    //     whose constructor calls MdkObject.ForgetPoses() (Viewer.cs:185) and builds
+    //     a fresh ObjectView, so both caches die with the runtime that owned the
+    //     models. So the drop has to happen HERE, in spawnPlayer, and that is why
+    //     these declarations are above it and not beside the draw below.
+    //
+    //   * The LOOKS are keyed by arena NAME and point into LevelData, which is not
+    //     rebuilt, so they survive a respawn and are not cleared by one.
+    //
+    // The shading is the original look's, as LevelView's is: the shared game code
+    // draws the original look on both targets, and the enhanced look lives behind
+    // the Linux-only header the game never includes.
+    // ---------------------------------------------------------------------
+    mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Original);
+    mdk::ObjectView objectView(objectResolver);
+    mdk::ObjectDraw objectDraw;
+    mdk::ObjectStream objectStream;
+    std::map<std::string, mdk::ObjectLook> objectLooks;
+
+    // An arena's palette and textures for its objects (C# Viewer.ObjectLook):
+    // the arena's own when it has one, the level's for an object outside every
+    // arena. Cached by arena name, exactly as the C# caches its looks.
+    auto objectLook = [&](const std::string& name) -> const mdk::ObjectLook& {
+        std::map<std::string, mdk::ObjectLook>::iterator found = objectLooks.find(name);
+        if (found != objectLooks.end()) {
+            return found->second;
+        }
+        mdk::ObjectLook look;
+        const mdk::formats::Arena* owner = level.arenaNamed(name);
+        if (owner) {
+            look.palette = &level.paletteOf(owner);
+            look.archives = level.archivesOf(owner);
+        } else {
+            look.palette = &level.dti().palette();
+            look.archives.push_back(&level.levelTextures());
+        }
+        return objectLooks.emplace(name, look).first->second;
+    };
+
+    // ---------------------------------------------------------------------
     // Kurt, and the camera that follows him.
     //
     // THE CAMERA IS THE GAME'S, not a framing stand-in: FollowCamera owns the
@@ -477,6 +540,21 @@ int main(int argc, char** argv) {
         // object deque, tick count and RNG are the level's history.
         runtime.reset();
         mix = &mixer;
+        // THE CACHES THAT KEY ON A MODEL ADDRESS DIE WITH THE RUNTIME, and this is
+        // the moment they have to be dropped. `runtime.reset()` above freed
+        // ScriptRuntime::modelCache_, so every Model* the layout cache and the pose
+        // caches are keyed by is now a freed address, and the new runtime will parse
+        // its models into whatever the allocator hands back — which, same level,
+        // same parse order, is very likely the SAME addresses holding DIFFERENT
+        // models. A layout cache kept across this line hands a recycled address the
+        // previous model's geometry; a pose cache kept across it is the failure
+        // pose_cache.h was written for. The C# drops both here: a respawn is a fresh
+        // Viewer, whose constructor calls MdkObject.ForgetPoses() (Viewer.cs:185)
+        // and constructs a fresh ObjectView. Dropping derived data is never wrong —
+        // the next layout and the next pose are rebuilt from the model — so this is
+        // safe even on the first spawn, where there is nothing cached yet.
+        mdk::scripts::MdkObject::forget_poses();
+        objectView.clear();
         if (scriptAssetsReady) {
             // The seed. The oracle seeds its RNG with `new Random()` when no seed is
             // passed (ScriptRuntime.cs:323), which is the clock: an oracle run is
@@ -576,6 +654,17 @@ int main(int argc, char** argv) {
     float pending = 0.0f;
     uint32_t frame = 0;
     uint32_t steps = 0;
+    // The stream mesh's capacity the frame log last reported, so a growth is said
+    // once instead of every frame. Zero until the first frame with corners.
+    int32_t streamCapacityLogged = -1;
+    // This frame's object-pass cost, and the peak over the run. The peak is the
+    // number that says what a level costs the stream mesh: the capacity is rounded
+    // up to a power of two, so the capacity alone cannot tell a 480-corner level
+    // from one that nearly fills its 4096.
+    int32_t objectCorners = 0;
+    int32_t objectDraws = 0;
+    int32_t objectPeakCorners = 0;
+    int32_t objectPeakDraws = 0;
     const char* exitReason = "aptMainLoop returned false";
 
     while (aptMainLoop()) {
@@ -768,6 +857,68 @@ int main(int argc, char** argv) {
         if (arena) {
             view.draw();
         }
+        if (runtime) {
+            // C# Viewer.DrawScene draws the objects after the arena and before
+            // Kurt (Viewer.cs:702-709): every object the scripts hold, in its
+            // list's order, skipping the invisible ones. The runtime keeps removed
+            // objects in its deque for pointer stability, so they are skipped here
+            // too — the C#'s list has already taken them out.
+            //
+            // The transform is the BLENDED one. The scripts tick at 1/30 s and this
+            // loop presents faster, so most frames draw an object part-way from its
+            // last tick to its current one: the C# hands ObjectView.Draw
+            // `blend.TransformOf(obj)` (Viewer.cs:959), whose alpha is
+            // ScriptRuntime.TickBlend of the step loop's leftover — which is
+            // exactly what `pending` holds here, after the loop above took every
+            // whole step out of it.
+            //
+            // What is NOT here is the other half of TransformOf: `obj == _driven`
+            // draws the object shifted by the step's lag, which needs Rides (the
+            // ridden object) and FrameBlend's Kurt pose, neither of which this port
+            // has. ScriptRuntime::ridesRidden_ is null for every tick of every
+            // shipped level, so the oracle does not take that branch either here.
+            //
+            // And the ropes, the sniper scope and the effects that the C# draws
+            // between the objects and Kurt (Viewer.cs:706-708) are not ported; see
+            // the header.
+            const float tickAlpha = runtime->tick_blend(pending);
+            objectStream.reset();
+            for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
+                if (!obj.visible || runtime->isRemoved(&obj)) {
+                    continue;
+                }
+                objectView.addObject(obj, objectLook(obj.arena), obj.transform_at(tickAlpha),
+                                     &objectStream);
+            }
+            objectDraw.draw(renderer, &surfaces, objectStream);
+            // The frame's own cost, kept for the log line below. The peak over a
+            // run is what a level costs the stream mesh; one frame's count is not.
+            objectCorners = (int32_t)objectStream.vertices.size();
+            objectDraws = (int32_t)objectStream.draws.size();
+            if (objectCorners > objectPeakCorners) {
+                objectPeakCorners = objectCorners;
+            }
+            if (objectDraws > objectPeakDraws) {
+                objectPeakDraws = objectDraws;
+            }
+            // THE LINEAR-MEMORY ANSWER, printed rather than assumed. The C# sizes
+            // its stream mesh at Renderer.StreamVertices (1 << 18 vertices = 5.2
+            // MiB) and keeps it for the process; on this target that is 5.2 MiB out
+            // of a linear heap measured in single megabytes, and a failed
+            // linearAlloc is a silently missing mesh. So the mesh starts at 4096
+            // corners and doubles to what the frames reach — and what it reaches is
+            // what a level costs, at 5 floats (x, y, z, u, v) a corner. Logged on
+            // every change, so the growth and the steady state are both readable.
+            if (objectDraw.capacity() != streamCapacityLogged) {
+                streamCapacityLogged = objectDraw.capacity();
+                mdk::log3dsPrintf("objects: stream mesh %d corners = %d KB linear "
+                                  "(%d corners, %d draws this frame)",
+                                  streamCapacityLogged,
+                                  (int)((int64_t)streamCapacityLogged * 5 * sizeof(float) /
+                                        1024),
+                                  objectCorners, objectDraws);
+            }
+        }
         if (kurtSpriteReady && playerReady) {
             // C# Viewer.DrawScene draws Kurt after the level and before the HUD.
             kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
@@ -824,13 +975,15 @@ int main(int argc, char** argv) {
         if (frame <= 5u || (frame % 60u) == 0u) {
             mdk::log3dsPrintf("frame %lu elapsed=%.4f steps=%u feet=(%.1f,%.1f,%.1f) "
                               "yaw=%.1f health=%d eye=(%.1f,%.1f,%.1f) voices=%d plays=%d "
-                              "objects=%d",
+                              "objects=%d obj=%dc/%dd peak=%dc/%dd",
                               (unsigned long)frame, elapsed, (unsigned)steps,
                               player.feet.x, player.feet.y, player.feet.z, player.yaw,
                               player.health(), camera.position.x, camera.position.y,
                               camera.position.z, (int)mix->voices().size(),
                               (int)mix->device().nextId() - 1,
-                              runtime ? runtime->objectCount() : 0);
+                              runtime ? runtime->objectCount() : 0,
+                              objectCorners, objectDraws,
+                              objectPeakCorners, objectPeakDraws);
         }
         if (audioReady && (frame % 60u) == 0u) {
             // The sink's own ledger, on the same cadence as the frame line. The

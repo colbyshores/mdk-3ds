@@ -1,0 +1,24 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-09T08:21:13Z at 9b63dc4
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+why the picture did not move: this frame is the LINUX capture — tests/frames/capture_cpp.sh
+builds mdk_linux and photographs level 3 frame 1 — and at frame 1 neither the C++ nor the C#
+has a single script object, so a batch whose subject is drawing objects cannot move it. That is
+the standing limitation docs/evidence/README.md names the object pass as the example of, and it
+is measured rather than asserted: this PNG's sha256 is
+6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8, identical to
+docs/frames/2026-11-09-b99-scripts-on-console.png (batch 99),
+docs/frames/2026-11-09-b98-mve-bounds-pinned.png (batch 98) and
+docs/frames/2026-11-09-b97-mve-dpcm-guard.png (batch 97), with the gap line unchanged at
+bad_percent=1.240, max_delta=247, mean_delta=0.1819. The Linux source DID change — the same
+respawn cache-lifetime fix landed in mdk_linux/src/main.cpp — and it moves no pixel at frame 1,
+which is why gates_frames still PASSes rather than being explained away.
+what carries this batch instead: the 3DS binary moved and the console's picture moved with it.
+mdk.elf md5 4d27d6f8531c54a388b1e8cf8bfcb0f5 (batch 99's was 4232fd94a337e9b28c1132dd15198f63);
+`arm-none-eabi-nm mdk.elf | grep -ci` reports ObjectView 2 and ObjectDraw 2 where both were 0,
+because the whole pass was gc-sectioned out of every shipped build before this batch. The
+picture evidence is docs/evidence/2026-11-09-L7-object-pass-{parent,current}.png/.txt: the top
+panel moves 58520 px of 96000 against a parent-vs-parent noise floor of exactly 0 px. The
+absolute check is not a picture at all — the console's steady-state stream is 570 corners over 13
+draws, which is tests/scripts/golden/L7_t1000_draw.txt's `STREAM vertices=570` and 13 queued
+draws exactly.

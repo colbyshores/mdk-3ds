@@ -336,6 +336,57 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---------------------------------------------------------------------
+    // The object pass: the C#'s Viewer._objects, Viewer._looks and DrawObjects.
+    //
+    // WHY IT SITS HERE, BEFORE spawnPlayer. The layout cache is keyed by
+    // (model, palette), and the models are NOT all the level's: ScriptRuntime
+    // parses the CMI's global models into its own modelCache_ and holds them BY
+    // VALUE (script_runtime.h:580), so a respawn -- which rebuilds the runtime --
+    // frees every one of those Model addresses. Both caches that key on a Model
+    // address (this layout cache, and the shared pose caches scripts/pose_cache.h
+    // exists to drop) would then be keyed by freed memory, and the new runtime's
+    // models land on recycled addresses: same level, same parse order, so the
+    // address is likely to reappear holding a DIFFERENT model, and the cache hands
+    // it the previous model's geometry and pose. The C# cannot have that: a respawn
+    // builds a fresh Viewer, whose constructor calls MdkObject.ForgetPoses()
+    // (Viewer.cs:185) and constructs a fresh ObjectView, so both caches die with
+    // the runtime that owned the models. So spawnPlayer drops both, and that is why
+    // these declarations are above it and not beside the draw below.
+    //
+    // The LOOKS are keyed by arena NAME and point into LevelData, which is not
+    // rebuilt, so they survive a respawn and are not cleared by one.
+    //
+    // The shading is the original look's, as LevelView's is: the shared game code
+    // draws the original look on both targets, and the enhanced look lives behind
+    // the Linux-only header the game never includes.
+    // ---------------------------------------------------------------------
+    mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Original);
+    mdk::ObjectView objectView(objectResolver);
+    mdk::ObjectDraw objectDraw;
+    mdk::ObjectStream objectStream;
+    std::map<std::string, mdk::ObjectLook> objectLooks;
+
+    // An arena's palette and textures for its objects (C# Viewer.ObjectLook):
+    // the arena's own when it has one, the level's for an object outside every
+    // arena. Cached by arena name, exactly as the C# caches its looks.
+    auto objectLook = [&](const std::string& name) -> const mdk::ObjectLook& {
+        std::map<std::string, mdk::ObjectLook>::iterator found = objectLooks.find(name);
+        if (found != objectLooks.end()) {
+            return found->second;
+        }
+        mdk::ObjectLook look;
+        const mdk::formats::Arena* owner = level.arenaNamed(name);
+        if (owner) {
+            look.palette = &level.paletteOf(owner);
+            look.archives = level.archivesOf(owner);
+        } else {
+            look.palette = &level.dti().palette();
+            look.archives.push_back(&level.levelTextures());
+        }
+        return objectLooks.emplace(name, look).first->second;
+    };
+
     // Kurt at the level's spawn, RAISED 3 units above the DTI's start position
     // (the C# Viewer's `StartPosition + (0,0,StartDrop)`, Viewer.cs:220 — the
     // original lands Kurt by chute, so the pad is below him), facing the start
@@ -390,6 +441,17 @@ int main(int argc, char** argv) {
         // not constructed at all, and the level runs without scripts instead of
         // running a different game.
         if (scriptAssetsReady && spritesReady) {
+            // THE CACHES THAT KEY ON A MODEL ADDRESS DIE WITH THE RUNTIME, and this
+            // is the moment they have to be dropped. The reset below frees
+            // ScriptRuntime::modelCache_, so every Model* the layout cache and the
+            // pose caches are keyed by becomes a freed address, and the new runtime
+            // parses its models into whatever the allocator hands back -- very
+            // likely the same addresses, holding different models. The C# drops both
+            // here, because a respawn is a fresh Viewer (Viewer.cs:185). Dropping
+            // derived data is never wrong: the next layout and pose are rebuilt from
+            // the model, so this is safe on the first spawn too.
+            mdk::scripts::MdkObject::forget_poses();
+            objectView.clear();
             const int32_t runtimeSeed = scriptSeedSet ? scriptSeed : freshScriptSeed();
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player,
                                                           &sprites));
@@ -416,45 +478,6 @@ int main(int argc, char** argv) {
         playerReady = true;
         mdk::windowCaptureMouse(&window, true);
     }
-
-    // ---------------------------------------------------------------------
-    // The object pass: the C#'s Viewer._objects, Viewer._looks and DrawObjects.
-    //
-    // The layout cache is keyed by (model, palette) and the models belong to the
-    // level, so it lives as long as the level does -- which here is the process:
-    // this frontend loads one level and never changes it. A level change would
-    // call ObjectView::clear() next to LevelData::load's pose-cache
-    // invalidation, and would rebuild the resolver with the new level's DTI.
-    //
-    // The shading is the original look's, as LevelView's is: the shared game code
-    // draws the original look on both targets, and the enhanced look lives behind
-    // the Linux-only header the game never includes.
-    // ---------------------------------------------------------------------
-    mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Original);
-    mdk::ObjectView objectView(objectResolver);
-    mdk::ObjectDraw objectDraw;
-    mdk::ObjectStream objectStream;
-    std::map<std::string, mdk::ObjectLook> objectLooks;
-
-    // An arena's palette and textures for its objects (C# Viewer.ObjectLook):
-    // the arena's own when it has one, the level's for an object outside every
-    // arena. Cached by arena name, exactly as the C# caches its looks.
-    auto objectLook = [&](const std::string& name) -> const mdk::ObjectLook& {
-        std::map<std::string, mdk::ObjectLook>::iterator found = objectLooks.find(name);
-        if (found != objectLooks.end()) {
-            return found->second;
-        }
-        mdk::ObjectLook look;
-        const mdk::formats::Arena* owner = level.arenaNamed(name);
-        if (owner) {
-            look.palette = &level.paletteOf(owner);
-            look.archives = level.archivesOf(owner);
-        } else {
-            look.palette = &level.dti().palette();
-            look.archives.push_back(&level.levelTextures());
-        }
-        return objectLooks.emplace(name, look).first->second;
-    };
 
     const float kStep = 1.0f / 60.0f; // the C# fixed simulation step
     const float kHudStep = 1.0f / 30.0f; // the C# HUD blink's 30 Hz boundary
