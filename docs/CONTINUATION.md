@@ -1,5 +1,42 @@
 # Phase 2 continuation checkpoint
-Risk: medium — test-infrastructure only, in one file, and no shipped byte moves: it closes two High
+Risk: medium — test-infrastructure only, in one file, and no shipped byte moves: it closes a Medium
+hole in the rule that pins the shipped R = 255 defect — a C++ statement could carry a SECOND bulk
+setter the scan never read — and re-opens four legal zero spellings that same rule wrongly refused. A
+gate that cannot see the defect it claims to refuse is a pass generator, and a gate that reddens a shape
+the port may write gets routed around (review-16 R2), so both halves are behaviour-adjacent. It closes
+review-13 **3/3** (no Critical, no High: one Medium, two Low), all three reproduced against the
+committed gate before anything changed and none rebutted. **F1**: batch 126 pinned the padding fill's
+destination and length, batch 127 pinned where it SITS, and neither pinned HOW MANY — `bulk_op`
+returned the first bulk setter in a statement, and a statement ends at a semicolon and not at a
+newline, so `memset(pixels, 0, texels * 4), memset(pixels + 4, 0xFF, 4);` at the shipped fill's
+position painted four opaque bytes at the base of the texture and printed 41/41, on the committed gate
+AND on the pre-batch one (the reviewer's own note that this is pre-existing is confirmed and is why it
+is Medium). `bulk_ops` now returns every match in the statement, deduplicated by open paren because a
+plain `memcpy(` is matched by two rules and is one operation, and the statement is `padding` only when
+EVERY setter in it is — the fail-closed doctrine the argument reader already states, applied to
+multiplicity. Four arms, one of them labelled as the accident-of-order control it is (a `memcpy` second
+was already refused because the copy rule ran first), plus a probe for the legal half: two whole-buffer
+transparent fills comma-joined, which is green both before and after and is the only thing that tells
+the fixed rule apart from an over-tightened one. **F2**: the zero class carried `[uU]?` only, so
+`memset(pixels, 0L, texels * 4)` and `0x0UL` — byte for byte the shipped fill — returned "write" while
+the comment above claimed "the zero LITERALS of the two languages"; the class is now every integer
+literal of value 0 in the four bases (decimal `0`, octal `00`, hex `0x0`, binary `0b0`) with any
+integer suffix, the prose states the scope and its edge instead of a slogan, four probes pin the zero
+side and two arms pin the edge (`07` is octal 7, `0b1` is one: refused before, refused now). **F3**:
+the previous sidecar was four generated lines with no disclosure, so the frame directory alone would
+read a static re-capture as evidence about the fill position; this pair's sidecar carries the md5, the
+`cmp`-identity, the count (136 of 137 PNGs share one md5) and the sentence that it is a PRESENCE check
+and not a fidelity check — the review-12 sidecar itself is immutable by gate and stays owner-only.
+Measured: 41 checks / 94 arms / 27 probes, up from 41/88/22 — no check added and none removed, the
+`rep.check(` name lists diff identical, so all new coverage is in arms and probes; the three genuinely
+new arms were green on the pre-batch gate and red now, the four new zero probes were red before and
+green now, and all 122 mutants compile for armv6k with 0 diagnostics. No `mdk_3ds/**` or
+`mdk_core/**` byte is in this batch, so no P8 emulator evidence is owed and none is claimed; `mdk.elf`
+`67fadc4179c40ee3a4e5090a2218641a` and `mdk_c3d.shbin` `d46abb60de20b2aa0659043aeb97b9c9` are
+byte-identical to batches 122–127. Full narrative: `docs/PROGRESS_LOG.md` "Batch 128".
+
+**Batch 127 (iteration 13) — review-12 closed 8/8 — the padding fill is pinned by where it sits.**
+Test-infrastructure only, in one file, and no shipped byte moves: it closed two High
 holes in the rule that pins the shipped R = 255 defect — a padding fill could sit anywhere, and a
 NONZERO character literal counted as "the transparent texel" — and re-opens two legal spellings that
 same rule had wrongly refused. A gate that cannot see the defect it claims to refuse is a pass
@@ -938,6 +975,68 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 128)
+**The texel family is closed on the operation, the spelling, the position and the multiplicity, and the
+loop must now leave it.** This is the fifth consecutive batch whose finding was not a missing check but
+the rule the previous batch had just added reading *N* of *N+1* dimensions of the defect it names —
+batch 124's path resolution, 125's parameter, 126's operation, 127's position, 128's multiplicity — and
+that recurrence is the signal, not a compliment: a rule that takes five batches to converge is being
+maintained rather than finished, and a sixth would say the same about this one. What the ten texel
+checks now pin: the helper's byte layout (host); each expansion's body against every write spelling —
+subscript on a name, on a cast, a dereference anywhere in the statement, a shift-assign or compound
+assign through EITHER side of the `*`, and **every** bulk byte-setter in the statement that is not the
+whole-buffer transparent zero fill, whichever intrinsic or algorithm spells it, qualified or reached
+through a `using`-declaration; the fill's destination, its length as arithmetic rather than as text,
+its POSITION against the first write and against the loop nesting, and now its COUNT; the argument order
+of every 5-argument call in the file; and each call's alpha against the path its own arguments resolve
+to, by alias, by hoisted byte, by PARAMETER at its call sites in this file, and by stride. An eleventh
+texel check needs a finding these ten cannot reach, and the honest answer is that the next finding in
+this area will be a dimension of a rule a batch wrote, which is an argument for a different subsystem,
+not for an eleventh check. The stated limits are the known edges and all are written where the claim is
+made: a sink fed through the PARAMETER of a factored-out function; a 3-byte source read through a
+hoisted pointer; a palette arriving through an expression the scan cannot read; a palette needing a
+FOURTH hop of call-site resolution (the bound is three hops, and it fails open for the path only); two
+same-name function definitions, which `fn_def_site` resolves to the first; a per-row padding fill,
+refused because proving that region is all padding is arithmetic this scan does not do; a loop this scan
+cannot read as a loop (a macro that expands to one) is not searched for a write inside it; and — new,
+from this batch — a bulk setter that reaches the statement through a macro this scan does not expand,
+which is why the rule is on the statement and not on the program.
+
+**The two named game items are the next real work and both are blocked on a named cause, not on
+effort.** (1) **the canvas seam** — `mdk_render_canvas_quad` is a no-op on this backend, which is what
+priority item 5b (the HUD) and the MVE movie presenter both wait on; the canvas draw has to become a
+record in the frame's queue so the per-eye replay draws it once per eye, and it is the largest
+unbuilt piece of "a CIA that plays a level". (2) **the collision batch** — `FindConnections` +
+`CrossedArena`, which unfreezes `currentArena_` from the spawn arena and lets `ArenaSpace::setSolid`
+take the oracle's current + active second, and which needs a doorway-crossing oracle rather than a
+hand-written expectation. Either one changes `mdk_3ds/**` and therefore owes an `emurun.sh` verdict
+block on `DISPLAY=:99`, recorded in the full shape review-4 F3 named (invocation, display, emulator
+md5, `guest log :` path, frames, exit code). Note again that `/tmp/kilo` is owned by another uid on this
+host and is not writable by the loop's uid (`piagent`), so a capture directory has to be chosen that the
+loop can actually write — batch 128 used `/tmp/mdk-scratch-pi` — and the harness's own `TMPDIR` handling
+checked before the run.
+
+**Three things in this area stay stated rather than fixed, and none is a defect.** (1) The index-0
+discard's survival is argued from construction plus the helper's host row and is NOT directly measured —
+measuring it needs a keyed texture over a non-black clear colour, which the pinned scene does not
+contain. (2) RGBA8 tiling on real hardware (review-7's open question 1) is UNRESOLVED and cannot be
+resolved from this host: the vault block this file cites says Morton, MDK writes linear per-texel, and
+the coherence measurement that clears it was taken in Mandarine, which is explicitly not hardware
+evidence. It is a hardware capture or a Mandarine GPU-decode read, not a gate. (3) The frame pair is a
+PRESENCE check, not a fidelity check — and from this batch that statement is in the sidecar as well as
+here, which is review-13 F3's whole content.
+
+**Owner-only items unchanged, plus one.** The dirty `ralph/builder.md` (PROTECTED, seventh batch
+running, and invisible to a gate that reads committed ranges only), whether `mdk_3ds/Makefile` joins
+`PROTECTED`, `tools/check.sh` being protected so `arm_compile_check.sh` stays a quoted runner rather
+than a gate, that a historical `docs/frames/*.txt` sidecar cannot be amended by any batch — so
+review-11 F5 and review-13 F3 can only be satisfied forward, never backward — that
+`gates_batch_integrity.py:68-70` demands exactly one newly added `docs/frames/*.png` per batch while a
+batch with no shipped byte can only supply a byte-identical re-capture (136 of the tree's 137 PNGs now
+share one md5), and that `mdk.3dsx` is NOT bit-reproducible, so `mdk.elf` and `mdk_c3d.shbin` are the
+build hashes to quote. Also unchanged: neither `obsidian_*` nor `cognee_*` is exposed in this session,
+so the vault lookup stays the degraded disk-only path and Cognee's graph search is unavailable (P9).
 
 ## NEXT (batch 127)
 **The texel family is closed on the operation, on the position and on the spelling, and the loop

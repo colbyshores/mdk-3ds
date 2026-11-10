@@ -286,18 +286,30 @@ USING_STD = re.compile(r"using[ \t]+std::([A-Za-z_][A-Za-z0-9_]*)[ \t]*;")
 BARE_FILL = re.compile(r"(?<![\w:.])(fill_n|fill)[ \t]*\(")
 BARE_COPY = re.compile(r"(?<![\w:.])(copy_n|copy)[ \t]*\(")
 # The value that means "transparent texel": an all-zero texel is alpha 0 under ANY
-# byte order (the index-0 discard invariant batch 120 pinned). The scope is the zero
-# LITERALS of the two languages, and it has to be stated as a scope, because review-12
-# F2 found the previous alternative `'(?:\\0|x0+|0)'` accepting `'0'` -- the CHARACTER
-# 0x30, so a padding row of [0x30, 0x30, 0x30, 0x30] is alpha 48, opaque garbage --
-# and `'x0'`, a multi-character constant, both of which `fullmatch`ed as "the
-# transparent texel" while a NONZERO fill is the shipped symptom's own class. Batch
-# 125 refused both; batch 126's literal fix let them through, so this was a regression.
+# byte order (the index-0 discard invariant batch 120 pinned). The scope is the
+# spellings whose VALUE is the byte zero, and it has to be stated as a scope, because
+# review-12 F2 found the previous alternative `'(?:\\0|x0+|0)'` accepting `'0'` -- the
+# CHARACTER 0x30, so a padding row of [0x30, 0x30, 0x30, 0x30] is alpha 48, opaque
+# garbage -- and `'x0'`, a multi-character constant, both of which `fullmatch`ed as
+# "the transparent texel" while a NONZERO fill is the shipped symptom's own class.
+# Batch 125 refused both; batch 126's literal fix let them through, so this was a
+# regression, and review-12 F5 closed the hex-escape half the same way.
+# INTEGER literals of value 0 in any base, with any integer suffix: decimal `0`,
+# octal `00`, hex `0x0`, binary `0b0`. Review-13 F2: the class carried `[uU]?` only,
+# so the `size_t`-flavoured `0L` and `0x0UL` -- byte for byte the shipped fill --
+# returned "write" and reddened a correct filler while the prose above claimed the
+# zero literals of the two languages, and a gate that reddens a suffix gets routed
+# around (review-16 R2). The suffix class is `[uUlL]*` and the four bases are
+# exhaustive, so what is refused is exactly the NONZERO value: `07` is octal 7 and
+# `0b1` is one, and each is pinned by an arm so the widening cannot rot open.
 # Inside the quotes only the ESCAPES are zero: `'\0'`, `'\00'`, `'\000'` (octal) and
 # `'\x0'`, `'\x00'` (hex). The old `x0+` alternative could never have reached a hex
 # escape anyway, because the text of one starts with the backslash (review-12 F5).
-# This is why the argument reader below keeps literal text at all.
-ZERO_FILL = re.compile(r"(?:0[xX]0+[uU]?|0[uU]?|'\\0{1,3}'|'\\x0{1,2}')")
+# Stated limit: a PREFIXED character literal (`L'\0'`) is not in the class and is
+# refused; a memset fill value is an `int` argument and the unprefixed spellings are
+# what this tree writes. This is why the argument reader below keeps literal text.
+ZERO_FILL = re.compile(r"(?:0[xX]0+[uUlL]*|0[bB]0+[uUlL]*|0+[uUlL]*|"
+                       r"'\\0{1,3}'|'\\x0{1,2}')")
 # The two subscript spellings of a direct texel write: a subscript on a name and a
 # subscript on a cast. Review-12 F3: the operator slot was `[+\-*/%&^|]?`, which cannot
 # reach `<<=` or `>>=` because `<` and `>` are not in the class -- so
@@ -1437,39 +1449,60 @@ def adjudicate(text, quiet=False):
         shape as the per-row one above: a loop this scan cannot read as a loop (`do` is
         read, a macro that expands to one is not) is not searched for a write inside it.
         Review-12 F6 is review-11 F3 one spelling further: `std::fill` was matched and
-        `fill` after `using std::fill;` was not."""
-        def bulk_op(stmt, using):
-            """(kind, paren) for the bulk byte-setter in this statement, (None, None) if
-            there is none. `kind` is 'copy' when the statement MOVES SOURCE BYTES and
-            one of 'memset' / 'fill' / 'fill_n' when it SETS A CONSTANT (review-11 F3:
-            the operation, not the spelling). A qualified spelling is always in scope; a
-            bare algorithm name is in scope only when the file carries its
-            `using std::` declaration (review-12 F6)."""
-            m = BULK_COPY.search(stmt)
-            if m:
-                return "copy", m.end() - 1
-            m = BULK_FILL.search(stmt)
-            if m:
-                g = m.group(0)
-                kind = "memset" if "memset" in g else ("fill_n" if "fill_n" in g else "fill")
-                return kind, m.end() - 1
-            for rx, kind in ((BARE_COPY, "copy"), (BARE_FILL, None)):
-                m = rx.search(stmt)
-                if m and m.group(1) in using:
-                    return kind or m.group(1), m.end() - 1
-            return None, None
+        `fill` after `using std::fill;` was not.
 
-        def bulk_classify(stmt, allocs, using):
-            """'write', 'padding' or None for a bulk byte-setter in this statement.
+        Review-13 F1 is that rule one dimension further. Batch 126 read the fill's
+        DESTINATION and LENGTH, batch 127 read where it SITS, and neither read how MANY:
+        `bulk_op` adjudicated the FIRST bulk setter in a statement and no more, and a C++
+        statement is delimited by a semicolon rather than a newline, so the comma
+        operator puts two of them in one statement. `memset(pixels, 0, texels * 4),
+        memset(pixels + 4, 0xFF, 4);` is one statement carrying the legal padding fill
+        and an offset opaque fill of the base of the texture, and the gate vouched for
+        the statement on the strength of the first -- green at 41/41, and green on the
+        pre-batch gate too, so this was a hole batch 125 left open rather than one this
+        batch cut. Every match is now adjudicated and the statement is 'padding' only if
+        EVERY setter in it is the padding fill, which is the same fail-closed doctrine
+        the argument reader already states about an argument list it cannot read. Stated
+        limit, in the shape of the two above: a setter that reaches the statement through
+        a macro this scan does not expand is still invisible, so the rule is on the
+        statement and not on the program."""
+        def bulk_ops(stmt, using):
+            """Every bulk byte-setter in this statement, in source order, as a list of
+            (kind, paren). `kind` is 'copy' when the operation MOVES SOURCE BYTES and one
+            of 'memset' / 'fill' / 'fill_n' when it SETS A CONSTANT (review-11 F3: the
+            operation, not the spelling). A qualified spelling is always in scope; a bare
+            algorithm name is in scope only when the file carries its `using std::`
+            declaration (review-12 F6)."""
+            found = []
+            for rx in (BULK_COPY, BULK_FILL, BARE_COPY, BARE_FILL):
+                bare = rx is BARE_COPY or rx is BARE_FILL
+                for m in rx.finditer(stmt):
+                    if bare and m.group(1) not in using:
+                        continue
+                    g = m.group(0)
+                    found.append((m.start(), m.end() - 1,
+                                  "copy" if rx is BULK_COPY or rx is BARE_COPY
+                                  else ("memset" if "memset" in g
+                                        else ("fill_n" if "fill_n" in g else "fill"))))
+            # A plain `memcpy(` is matched by both the qualified and the bare rule and
+            # the two are ONE operation; the open paren is the identity that separates
+            # that duplicate from a second setter further along the same statement.
+            out, seen = [], set()
+            for _start, paren, kind in sorted(found):
+                if paren not in seen:
+                    seen.add(paren)
+                    out.append((kind, paren))
+            return out
+
+        def bulk_one(kind, paren, stmt, allocs):
+            """'write' or 'padding' for ONE bulk setter, located by its kind and the index
+            of its open paren in `stmt`.
 
             'write' puts texel bytes into texel memory without the helper. 'padding' is
             the whole-buffer transparent fill of a buffer THIS BODY ALLOCATED, which is
             legal only in a position that cannot erase a texel (see below). An argument
             list this scan cannot read fails closed: a bulk write whose fill,
             destination or length it cannot parse is a write it cannot vouch for."""
-            kind, paren = bulk_op(stmt, using)
-            if kind is None:
-                return None
             if kind == "copy":
                 return "write"
             args = call_args_at(stmt, paren, keep_literals=True)
@@ -1498,6 +1531,20 @@ def adjudicate(text, quiet=False):
             n = re.sub(r"\s+", "", length)
             return "padding" if any(dst == base and n == size
                                     for base, size in allocs) else "write"
+
+        def bulk_classify(stmt, allocs, using):
+            """'write', 'padding' or None for the bulk byte-setters of this statement.
+
+            EVERY setter in the statement is adjudicated, not the first the scan reaches
+            (review-13 F1), and the statement is 'padding' only when EVERY one of them is
+            the padding fill: one offset, opaque or unreadable second setter makes the
+            whole statement a write, because a setter this scan cannot vouch for is a
+            setter it has not read."""
+            verdicts = [bulk_one(kind, paren, stmt, allocs)
+                        for kind, paren in bulk_ops(stmt, using)]
+            if not verdicts:
+                return None
+            return "write" if "write" in verdicts else "padding"
 
         if body is None:
             return ["(the expansion is absent)"]
@@ -3227,6 +3274,55 @@ ARMS = [
          "paletteRgba[index * 4 + 2], 255u);\n"
          "            fill(pixel, pixel + 4, 0xFFu);", 1),
      "index-texels-are-rotated-for-the-pica"),
+    # Review-13 F1: batch 126 pinned the padding fill's destination and length, batch 127
+    # pinned where it SITS, and neither pinned HOW MANY. `bulk_op` adjudicated the first
+    # bulk setter in a statement and stopped, and a C++ statement ends at a semicolon and
+    # not at a newline, so the comma operator puts a second setter in the same statement
+    # behind the legal one -- four opaque bytes at the base of the texture, green at
+    # 41/41 on the committed gate AND on the pre-batch one, so this is a hole batch 125
+    # left open rather than one this batch cut. The rule is now EVERY setter in the
+    # statement, and these arms are what say so.
+    ("a comma-joined second memset paints the base of the texture behind the legal "
+     "padding fill (review-13 F1: the scan read one bulk setter per statement)",
+     lambda s: s.replace("    memset(pixels, 0, texels * 4);",
+                         "    memset(pixels, 0, texels * 4), memset(pixels + 4, 0xFF, 4);",
+                         1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("the second setter in the statement is the C++ algorithm rather than the intrinsic "
+     "(review-13 F1: multiplicity is not spelling-specific)",
+     lambda s: s.replace("#include <utility>",
+                         "#include <algorithm>\n#include <utility>", 1)
+         .replace("    memset(pixels, 0, texels * 4);",
+                  "    memset(pixels, 0, texels * 4), "
+                  "std::fill(pixels + 4, pixels + 8, 0xFFu);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("three setters in one statement with the legal one first (review-13 F1: the rule is "
+     "every match, not the first two)",
+     lambda s: s.replace("    memset(pixels, 0, texels * 4);",
+                         "    memset(pixels, 0, texels * 4), memset(pixels + 4, 0xFF, 4), "
+                         "memset(pixels + 8, 0xFF, 4);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("a memcpy is the second setter in the padding fill's statement (review-13 F1: the "
+     "pre-batch gate refused THIS one only because the copy rule happened to run first, "
+     "which was an accident of order and not a rule)",
+     lambda s: s.replace("    memset(pixels, 0, texels * 4);",
+                         "    memset(pixels, 0, texels * 4), "
+                         "memcpy(pixels + 4, paletteRgba, 4);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-13 F2's edge: the zero-literal class now carries every base and every integer
+    # suffix, so the refusals have to be exactly the NONZERO values. `07` is octal 7 and
+    # `0b1` is one; both were refused before the widening and stay refused, and these two
+    # arms are what stop the widening rotting open.
+    ("the padding fill is the OCTAL 07 (review-13 F2: widening the suffix class must not "
+     "sweep in a nonzero octal)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, 07, texels * 4);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("the padding fill is the BINARY 0b1 (review-13 F2: the same edge on the base the "
+     "widening added)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, 0b1, texels * 4);", 1),
+     "index-texels-are-rotated-for-the-pica"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -3538,6 +3634,33 @@ PROBES = [
              "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source",
              "    fill_n(pixels, texels * 4, 0);\n"
              "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source", 1)),
+    # Review-13 F1's green half. Two whole-buffer transparent fills of the same buffer in
+    # one comma-joined statement wipe nothing the helper wrote, so the rule -- every
+    # setter in the statement is the padding fill -- accepts it. Nobody would ship it; it
+    # is here because a rule that closed F1 by reddening every multi-setter statement
+    # would have traded a false negative for a false positive, which review-16 R2 says
+    # gets routed around, and only a probe can tell the two rules apart.
+    ("two whole-buffer padding fills comma-joined in one statement (review-13 F1: the "
+     "legal half of multiplicity)",
+     lambda s: s.replace("    memset(pixels, 0, texels * 4);",
+                         "    memset(pixels, 0, texels * 4), "
+                         "memset(pixels, 0, texels * 4);", 1)),
+    # Review-13 F2's green half: a memset fill value is an `int` parameter, so the
+    # suffix-flavoured and non-decimal zero literals are byte for byte the shipped fill.
+    ("the padding fill is spelled 0L (review-13 F2: a long zero is still zero)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, 0L, texels * 4);", 1)),
+    ("the padding fill is spelled 0x0UL (review-13 F2: the suffix class the previous "
+     "regex refused)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, 0x0UL, texels * 4);", 1)),
+    ("the padding fill is the octal zero 00 (review-13 F2: a base the widening added)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, 00, texels * 4);", 1)),
+    ("the padding fill is the binary zero 0b0 (review-13 F2: and the other base it "
+     "added)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, 0b0, texels * 4);", 1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------

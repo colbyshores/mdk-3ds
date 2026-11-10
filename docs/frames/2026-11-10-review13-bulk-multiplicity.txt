@@ -1,0 +1,22 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-10T18:01:16Z at 0b8c974
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+why this picture did not move, and what it can and cannot show (review-13 F3: the disclosure a
+  sidecar carries is the only thing that distinguishes a re-capture from a copy, and the previous
+  pair omitted it): this batch changed no shipped byte at all. It widens one host gate,
+  tests/scripts/c3d_frame_test.sh, which READS renderer_c3d.cpp and is not linked into the game, and
+  nothing else in the tree. No mdk_3ds/** and no mdk_core/** path is in the diff. Measured after the
+  rebuild rather than copied: `make -C mdk_3ds` exits 0 with mdk.elf md5 67fadc4179c40ee3a4e5090a2218641a
+  and mdk_3ds/build/mdk_c3d.shbin md5 d46abb60de20b2aa0659043aeb97b9c9, both byte-identical to batches
+  122-127, so no GPU program, no texel and no byte order moved. This PNG is md5
+  6769a13731983d65cee9df02da6cff37, `cmp`-identical to its predecessors: the pin is the Linux/Vulkan
+  capture of level 3 frame 1, while the path this batch pins is the 3DS backend's texel expansion,
+  which the pin cannot reach by construction. So this pair is a PRESENCE check -- the commit carries a
+  frame and its number -- and NOT a fidelity check; the instrument that does show a texel-order change
+  is the committed pair docs/evidence/2026-11-09-L7-texel-order-fixed.png, whose sidecar carries the
+  panel colour census. A re-capture of a static frame, stated and not hidden, and the pin and the
+  ceiling in reference.sha256 do not move.
+count, generated at publish time rather than transcribed (review-9 F6): `md5sum docs/frames/*.png
+  | grep -c 6769a13731983d65cee9df02da6cff37` = 136 over 137 PNGs, so this pair is the 136th file with
+  that md5 and 135 identical captures precede it.

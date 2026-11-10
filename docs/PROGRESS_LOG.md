@@ -22962,3 +22962,116 @@ batch could write; the NEXT block records it because AGENTS.md P7 names `/tmp/ki
 question 3 (is a 3-byte source path actually planned?) stays stated and moot in the direction that
 matters. Review-7's open question 1 (RGBA8 Morton tiling on real hardware) still needs a hardware
 capture, not a gate.
+
+## Batch 128 (iteration 14) — review-13 closed 3/3: the bulk-fill rule reads every setter in the statement, and the zero literal stops refusing zero
+
+Review-13 (`logs/ralph-pi/run-20261109-233059/review-13.md`, DeepSeek V4.1 Flash TH, independence
+`family=qwen` vs `family=deepseek`, harness `sha=1eb103c7cd54901f`) had **no Critical and no High**:
+one Medium and two Low, and its verdict was COMPLETE on batch 127's own closure. All three were
+reproduced against the committed gate before anything changed and **none is rebutted** — F1's
+comma-joined pair printed `PASS C3dFrame (41 checks, 88 arms adjudicated red, 22 probes green)` at
+exit 0, and F2's `0L` / `0x0UL` each printed a named FAIL on a filler byte-equivalent to the shipped
+one. The diff is one file — `tests/scripts/c3d_frame_test.sh` — plus this log, the checkpoint, and one
+frame pair. No `mdk_3ds/**` and no `mdk_core/**` byte is in the batch, so no P8 emulator evidence is
+owed and none is claimed. Build products re-measured after the rebuild rather than copied:
+`mdk.elf` `67fadc4179c40ee3a4e5090a2218641a` and `mdk_c3d.shbin` `d46abb60de20b2aa0659043aeb97b9c9`,
+both byte-identical to batches 122–127. The `.3dsx` is deliberately not quoted, for the reason
+review-12 F8 records.
+
+**The oracle line is unchanged and unchanged-by-construction.** `palette.hlsl:70`
+(`float4(palette.rgb, 1.0)`, index-0 discard at `:67`) and the seam contract in `render.h` still
+decide what the texel rules enforce, and the shipped `expandIndices`/`expandRgba` still zero the whole
+buffer once at the base before their first loop. What changed is which statements the gate can refuse
+and which zero spellings it is forbidden to refuse.
+
+**F1 (Medium, confirmed and fixed): the rule read one bulk setter per statement.** Batch 126 pinned
+the fill's destination and length, batch 127 pinned where it sits, and neither pinned **how many**:
+`bulk_op` searched `BULK_COPY`, then `BULK_FILL`, then the bare names, and returned the first hit. A
+C++ statement is delimited by a semicolon and not by a newline, so the comma operator puts two setters
+in one statement, and the statement was adjudicated on the strength of whichever one the scan reached
+first. Measured on the committed gate: `memset(pixels, 0, texels * 4), memset(pixels + 4, 0xFF, 4);`
+at the shipped fill's position — four opaque bytes at the base of the texture, the shipped symptom's
+own class — printed **41/41 at exit 0**, while the same two calls as two statements printed RED. The
+reviewer's own note that this is **pre-existing and not a regression introduced by batch 127** is
+confirmed and is the reason it is Medium: what batch 127 added was the prose claiming the operation was
+pinned "whichever intrinsic or algorithm spells it", and a claim the gate does not keep is the vault's
+`a-gate-over-a-field-subset-passes-when-the-load-hides-in-the-ungated-fields` with multiplicity as the
+ungated dimension. The fix is the reviewer's: `bulk_op` becomes `bulk_ops`, which returns **every**
+match in the statement in source order (deduplicated by the open-paren index, because a plain `memcpy(`
+is matched by both the qualified and the bare rule and the two are one operation), and the per-operation
+body moves to `bulk_one`. `bulk_classify` then returns `'write'` if **any** setter in the statement is a
+write and `'padding'` only when **every** one of them is, which is the same fail-closed doctrine the
+argument reader already states about a list it cannot parse: a setter the scan has not read is a setter
+it cannot vouch for. Four arms: the reviewer's comma pair, the same multiplicity with the second setter
+spelled `std::fill`, a three-setter statement with the legal one first, and a `memcpy` as the second
+setter — the last of which the pre-batch gate already refused, **only because the copy rule happened to
+run first**, which was an accident of order and not a rule, and its own label says so. One probe: two
+whole-buffer transparent fills comma-joined, which is legal C++ and wipes nothing the helper wrote, so
+a rule that closed F1 by reddening every multi-setter statement would have traded a false negative for
+a false positive (review-16 R2). **Stated limit, in the shape of the two already written there:** a
+setter that reaches the statement through a macro this scan does not expand is still invisible, so the
+rule is on the statement and not on the program.
+
+**F2 (Low, confirmed and fixed): the zero-literal class refused zero, and the prose said so.** The
+class was `0[xX]0+[uU]?|0[uU]?|'\\0…'|'\\x0…'`, so `memset(pixels, 0L, texels * 4)` and
+`memset(pixels, 0x0UL, texels * 4)` — byte for byte the shipped fill, with the suffix a `size_t`-flavoured
+zero carries — returned `"write"` and reddened a correct filler, while the comment above it stated the
+scope as "the zero LITERALS of the two languages". That is review-16 R2's class exactly: a gate that
+reddens a shape the port may write gets routed around, and it is the same prose-overclaim the batch had
+just fixed for `'\x00'`. The class is now every integer literal whose value is zero in the four bases —
+decimal `0`, octal `00`, hex `0x0`, binary `0b0` — each with any integer suffix `[uUlL]*`, plus the
+character escapes it already had, and the comment states the scope and its edge instead of a slogan.
+Because the widening is a widening, its edge is pinned rather than asserted: `07` is octal 7 and `0b1`
+is one, and both are arms (they were refused before the widening and stay refused). Four probes for the
+zero side (`0L`, `0x0UL`, `00`, `0b0`), each red on the pre-batch gate and green now. **Stated limit:**
+a prefixed character literal (`L'\0'`) is not in the class and is refused — a memset fill value is an
+`int` argument and the unprefixed spellings are what this tree writes.
+
+**F3 (Low, confirmed and fixed for the record going forward): the sidecar stopped saying what the
+picture cannot show.** `docs/frames/2026-11-10-review12-fill-position.txt` is four generated lines and
+carries no disclosure, while its predecessor (`…review11-bulk-fill-rule.txt`) stated that its PNG was
+`cmp`-identical to an earlier pair and that the pin cannot reach the path that batch pinned — and
+review-11 F5 (still open, owner-only) is that the sidecar prose is the only thing distinguishing a
+re-capture from a copy. The fact was in `docs/PROGRESS_LOG.md` but not in the durable per-frame record,
+so a later reader of the frame directory alone would take `…review12-fill-position.png` as evidence
+about the fill position. This batch's sidecar carries the disclosure in full: the PNG's md5, that it is
+`cmp`-identical to its predecessors, that the pin is a Linux/Vulkan capture of a static frame while the
+path this batch pins is the 3DS backend's texel expansion, that it is therefore a **presence check and
+not a fidelity check**, which committed instrument does show a texel-order change, and the duplicate
+count generated at publish time (136 of 137 PNGs share one md5). The review-12 sidecar itself cannot
+be amended: `gates_batch_integrity.py` fails any batch that modifies a historical frame or sidecar and
+that gate is `PROTECTED`, which is review-13's own open question 2 and stays owner-only.
+
+**Measured, not asserted.** `PASS C3dFrame (41 checks, 94 arms adjudicated red, 27 probes green)`, up
+from 41/88/22: **no check added and none removed** — the `rep.check(` name lists diff old-vs-new at 41
+identical names — so all of the new coverage is in arms and probes, as it must be when the finding is a
+hole in an existing rule. Record accuracy, checked the way review-13 checked batch 127: the pre-batch
+gate was extracted with `git show HEAD:tests/scripts/c3d_frame_test.sh` and every new arm and probe was
+adjudicated with the OLD `adjudicate`. Arms 88/89/90 (the three genuinely new multiplicity shapes) were
+**green before and red now**; arm 91 (the `memcpy` second setter) and arms 92/93 (`07`, `0b1`) were red
+before and are red now, and are labelled in the file as an accident-of-order control and as the
+widening's edge rather than counted as new coverage; probes 23–26 (the four zero spellings) were **red
+before and green now**, and probe 22 (the legal comma pair) is green both ways, which is the only thing
+that distinguishes the fixed rule from an over-tightened one. All 122 mutants (94 arms + 27 probes +
+parent) compile for armv6k with 0 diagnostics, and 73 shipped sources stay format-clean.
+
+**Gates, verbatim.** `make -C tests/scripts` → `All cases match the oracle.` with 567 `PASS` lines.
+`bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`audit_c_with_classes 0 violations`, `gates_vfp 0
+blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity` both
+targets link the same core, `gates_smdh SKIP` no built .cia, `gates_frames VERDICT: CONTRACT CLEAN`,
+`gates_batch_integrity BATCH INTEGRITY: PASS`, `gates_completion LEDGER VERIFIED`). `make -C mdk_3ds` →
+exit 0, `stage_romfs: staged 69 files, 79M`, `3DSX mdk.3dsx`, nothing recompiled because no shipped
+source changed. `tests/scripts/arm_compile_check.sh c3d` → `PASS ArmCompile (122 mutant(s), 0
+diagnostics, 73 shipped source(s) format-clean, 4 format mutant(s) refused, 1/1 honest call(s)
+accepted)`.
+
+**Prior-solution lookup.** Pi-knowledge `mdk-sdl` (4802 chunks / 983 files) was searched for the bulk
+setter classification and returned the gate file itself and the CONTINUATION narrative — no prior
+finding on multiplicity, so the empty result is a lead-not-found, not a lookup failure. The Obsidian and
+Cognee MCP tools are **not exposed in this session**, so the vault lookup is the degraded disk-only path
+and Cognee's graph search was unavailable at all (AGENTS P9: a session configuration fault to report,
+not a lookup that happened). The disk path supplied the pattern this batch is an instance of,
+`30-architecture/patterns/a-gate-over-a-field-subset-passes-when-the-load-hides-in-the-ungated-fields`.
+`/tmp/kilo` is owned by another uid on this host and is not writable by `piagent`, so scratch, mutant
+dumps and gate logs for this batch went to `/tmp/mdk-scratch-pi`; no emulator run was needed and none
+was made, so no display was used.
