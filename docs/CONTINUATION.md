@@ -1,27 +1,46 @@
 # Phase 2 continuation checkpoint
 Risk: medium — test-infrastructure only, in one file: it widens what `c3d_frame_test.sh` can refuse
-and narrows one rule that reddened legal reads; a gate that cannot see the defect it claims to
-refuse is a pass generator, so the change is behaviour-adjacent even though no shipped byte moves.
-It closes review-10 4/4 (no Critical, **one High**), reproduced against the committed gate before
-anything changed, and the High falsified batch 124's "no free pass" claim. **F1**: the palette-path
+and narrows rules that reddened legal spellings, so it both opens and closes coverage on the rule
+that pins the shipped R = 255 defect. A gate that cannot see the defect it claims to refuse is a
+pass generator, and a gate that reddens a shape the port may write gets routed around (review-16
+R2), so both halves are behaviour-adjacent even though no shipped byte moves. It closes review-11
+4/4 (no Critical, no High: three Medium, two Low), all five reproduced against the committed gate
+before anything changed, and every one of them sat INSIDE the rule batch 125 had just added. **F1**:
+batch 125 adjudicated a memset destination by `return "+" in args[0]`, which is neither "is this an
+offset" nor "is this the padding" — `memset(&pixel[3], 0, 1)`, `memset(&out[(size_t)x * 4], 0, 4)`
+and `memset(pixel, 0, 4)` each erased texel bytes a correct helper call had just written and each
+passed 41/41; the destination is now adjudicated against the body's OWN allocation (a zero fill is
+the padding fill only when it names the buffer the body `malloc`'d and its length is that
+allocation's own size expression), and a per-row padding fill is a stated refusal, not a workaround.
+**F3**: the intrinsic list was a spelling list — `\bmemset` cannot match `__builtin_memset` and the
+`std::` algorithms were in no list — so the match is now the OPERATION (`BULK_FILL` sets a constant,
+`BULK_COPY` moves source bytes, which is a texel write whatever it copies), with three probes holding
+the legal C++ spellings of the padding fill open. **F2**: the whitelisted `'\0'` was unreachable
+because `call_args_at` dropped literal contents; it now takes `keep_literals`, defaulted off so every
+other reader is untouched. **F4**: batch 125's read fix read `>>=` as a comparison, so the tail is
+now `[^=;]*(?:<<|>>|[^=!<>])=(?!=)` and shift-assigns are writes again. **F5** (the frame pair being
+the 134th byte-identical PNG) is owner-only: `gates_batch_integrity.py` is PROTECTED. Measured: 41
+checks / 81 arms / 19 probes, up from 41/74/16 — no check added or removed, so the new coverage is
+all in arms and probes; every new arm was green on the pre-batch gate and red now, and all 101
+mutants compile for armv6k with 0 diagnostics. No `mdk_3ds/**` or `mdk_core/**` byte is in this
+batch, so no P8 emulator evidence is owed and none is claimed; `mdk_c3d.shbin`
+`d46abb60de20b2aa0659043aeb97b9c9` is byte-identical to batches 122–125 and the re-published frame
+is the duplicate F5 describes. Full narrative: `docs/PROGRESS_LOG.md` "Batch 126".
+
+**Batch 125 (iteration 11) — review-10 closed 4/4 — the path resolution reaches the parameter, and
+the write rules stop reading reads.** Review-11 found the defects inside this batch's own rule (see
+Batch 126 above), but every claim this paragraph makes still holds. **F1**: the palette-path
 resolution dead-ended at a PARAMETER, and the branch an unresolved call falls into — source-fed,
 "the alpha must be the fourth byte" — is exactly what the shipped defect does with the palette's
-alpha, so a filler whose palette parameter was renamed passed all 41 checks; a parameter now
-resolves at the function's call sites in this file (two arms, one green-half probe), and the false
-claim is replaced by the stated limit: a palette arriving through an expression the scan cannot
-read resolves source-fed. **F2**: the deref-write tail `[^=;]*=` swallowed the operator of `!=`,
-`<=` and `>=`, so reads through a pointer reddened a correct filler; the tail now matches only an
-assignment, `binding()`'s same-class `==` hole is fixed, and the read spellings are committed as a
-probe — which is also F4, whose "26-spelling table" now exists as suite artifacts. **F3**: memset
-is adjudicated by what the fill means — a zero fill at a base pointer is the padding fill (an
-all-zero texel is alpha 0 under ANY byte order, the index-0 invariant), a nonzero fill or an
-offset destination is a texel write, and an unparseable argument list fails closed. Measured: 41
-checks / 74 arms / 16 probes, up from 41/71/13; every new arm green on the pre-batch gate and red
-now, and all 91 mutants compile for armv6k with 0 diagnostics. No `mdk_3ds/**` or `mdk_core/**`
-byte is in this batch, so no P8 emulator evidence is owed and none is claimed; `mdk.elf`
-`67fadc4179c40ee3a4e5090a2218641a`, `mdk_c3d.shbin` `d46abb60de20b2aa0659043aeb97b9c9` and the
-re-published frame are byte-identical to batch 124's. Full narrative: `docs/PROGRESS_LOG.md`
-"Batch 125".
+alpha, so a filler whose palette parameter was renamed passed all 41 checks; a parameter now resolves
+at the function's call sites in this file (two arms, one green-half probe). **F2**: the deref-write
+tail `[^=;]*=` swallowed the operator of `!=`, `<=` and `>=`, so reads through a pointer reddened a
+correct filler; the tail now matches only an assignment, `binding()`'s same-class `==` hole is fixed,
+and the read spellings are committed as a probe — which is also F4, whose "26-spelling table" now
+exists as suite artifacts. **F3**: memset was adjudicated at all — a zero fill at a base pointer is
+the padding fill (an all-zero texel is alpha 0 under ANY byte order, the index-0 invariant), a
+nonzero fill is a texel write, and an unparseable argument list fails closed. Measured: 41 checks /
+74 arms / 16 probes, up from 41/71/13. Full narrative: `docs/PROGRESS_LOG.md` "Batch 125".
 
 **Batch 124 (iteration 10) — review-9 closed 8/8 — the texel path is resolved, not recognised.**
 It closes review-9 8/8 (no Critical, **two High**), and both Highs falsified batch 123's closure
@@ -877,6 +896,59 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 126)
+**The texel family is closed on the OPERATION, not on a spelling — and it should stop here, with the
+residual named instead of claimed away.** Review-11's three Mediums were all inside the rule batch
+125 had just added, which is the third batch running where the finding was not the missing check but
+a check that matched a spelling of the defect. What the ten texel checks now pin: the helper's byte
+layout (host); each expansion's body against every write spelling — subscript on a name, on a cast,
+a dereference anywhere in the statement, a shift-assign or compound assign through a dereference, and
+any bulk byte-setter that is not the whole-buffer transparent fill, whichever intrinsic or algorithm
+spells it; the argument order of every 5-argument call in the file; and each call's alpha against the
+path its own arguments resolve to, by alias, by hoisted byte, by PARAMETER at its call sites in this
+file, and by stride. An eleventh texel check needs a finding these ten cannot reach. The stated limits
+are the known edges and all are written where the claim is made: a sink fed through the PARAMETER of
+a factored-out function; a 3-byte source read through a hoisted pointer; a palette arriving through
+an expression the scan cannot read (a member of a member, a call whose name says nothing, a filler
+with no call site in this file); a palette needing a FOURTH hop of call-site resolution (the bound is
+three hops, and it fails open for the path only — the alpha stays fail-closed); two same-name
+function definitions, which `fn_def_site` resolves to the first (it would fail toward the stricter
+branch, not toward a free pass); and — new, from review-11 F1 — **a per-row padding fill
+(`memset(out + (size_t)width * 4, 0, (paddedWidth - width) * 4)`) is refused**, because proving that
+region is all padding is arithmetic on `width` and `paddedWidth` this scan does not do. A batch that
+wants that shape widens the rule with that proof; it does not route around it.
+
+**Three things in this area stay stated rather than fixed, and none is a defect.** (1) The index-0
+discard's survival is argued from construction plus the helper's host row and is NOT directly
+measured — measuring it needs a keyed texture over a non-black clear colour, which the pinned scene
+does not contain. (2) RGBA8 tiling on real hardware (review-7's open question 1) is UNRESOLVED and
+cannot be resolved from this host: the vault block this file cites says Morton, MDK writes linear
+per-texel, and the coherence measurement that clears it was taken in Mandarine, which is explicitly
+not hardware evidence. It is a hardware capture or a Mandarine GPU-decode read, not a gate. (3) The
+frame pair is a PRESENCE check, not a fidelity check — see the owner-only item below.
+
+**Owner-only items unchanged, plus one.** The dirty `ralph/builder.md` (PROTECTED, fifth batch
+running, and invisible to a gate that reads committed ranges only), whether `mdk_3ds/Makefile` joins
+`PROTECTED`, `tools/check.sh` being protected so `arm_compile_check.sh` stays a quoted runner rather
+than a gate, the fact that a historical `docs/frames/*.txt` sidecar cannot be amended by any batch,
+so a sidecar error can only be carried forward, and — new, review-11 F5 — that
+`gates_batch_integrity.py:68-70` demands exactly one newly added `docs/frames/*.png` per batch while
+a batch with no shipped byte can only supply a byte-identical re-capture: 134 of the tree's 135 PNGs
+share one md5. Either exempt batches whose diff carries no `mdk_3ds/**`/`mdk_core/**`/
+`build-linux/**` path, or require the new PNG's md5 to differ from every historical one. Until then
+the frame pair proves the picture did not regress only when a byte moved, and this batch says so.
+
+**The two named game items are unchanged and both are blocked on a named cause, not on effort.**
+(1) **the canvas seam** — `mdk_render_canvas_quad` is a no-op on this backend, which is what
+priority item 5b (the HUD) and the MVE movie presenter both wait on; the canvas draw has to become
+a record in the frame's queue so the per-eye replay draws it once per eye, and it is the largest
+unbuilt piece of "a CIA that plays a level". (2) **the collision batch** — `FindConnections` +
+`CrossedArena`, which unfreezes `currentArena_` from the spawn arena and lets `ArenaSpace::setSolid`
+take the oracle's current + active second, and which needs a doorway-crossing oracle rather than a
+hand-written expectation. Either one changes `mdk_3ds/**` and therefore owes an `emurun.sh` verdict
+block on `DISPLAY=:99`, recorded in the full shape review-4 F3 named (invocation, display, emulator
+md5, `guest log :` path, frames, exit code).
 
 ## NEXT (batch 125)
 **The texel family is closed on resolved paths — parameters included — and it should stop here

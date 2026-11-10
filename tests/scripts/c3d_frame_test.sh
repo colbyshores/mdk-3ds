@@ -246,7 +246,29 @@ DEREF_PRE_WORDS = ("else", "return", "do", "case", "and", "or", "not", "xor")
 # read as writes — a dead guard reddened a correct filler, review-16 R2's own failure
 # class. The tail now requires an ASSIGNMENT: an `=` that is not part of `==`, `!=`,
 # `<=` or `>=`, which is what the prose here always claimed the rule was.
-DEREF_WRITE_TAIL = re.compile(r"[^=;]*(?<![=!<>])=(?!=)")
+# Review-11 F4: the tail used to be `[^=;]*(?<![=!<>])=(?!=)`, which refuses an `=`
+# preceded by `<` or `>` -- correct for `<=` and `>=`, and also correct for `>>=` and
+# `<<=`, which are WRITES. The shift-assign operators are now matched as themselves,
+# so `*(pixel + 3) >>= 1` is a write and `*s >= 1` still is not.
+DEREF_WRITE_TAIL = re.compile(r"[^=;]*(?:<<|>>|[^=!<>])=(?!=)")
+
+
+# The bulk byte-setters, split by what they DO (review-11 F3). The class is "a byte
+# written into texel memory without the helper", and the list cannot be a spelling
+# list: `\bmemset` cannot match `__builtin_memset` (the character before it is a word
+# character), and `std::fill`/`std::copy` are the same two operations in the other
+# spelling the house style permits -- all three walked through a list of names.
+# A COPY moves SOURCE bytes, so it is never the padding fill; a FILL sets a constant,
+# and whether that constant is the transparent texel is what decides it.
+BULK_FILL = re.compile(r"(?<![\w])(?:__builtin_|std::)?memset[ \t]*\(|"
+                       r"(?<![\w])std::(?:fill_n|fill)[ \t]*\(")
+BULK_COPY = re.compile(r"(?<![\w])(?:__builtin_|std::)?(?:memcpy|memmove)[ \t]*\(|"
+                       r"(?<![\w])std::(?:copy_n|copy)[ \t]*\(")
+# The value that means "transparent texel": an all-zero texel is alpha 0 under ANY
+# byte order (the index-0 discard invariant batch 120 pinned), in every spelling of
+# zero the two languages have -- review-11 F2's `\0` included, which is why the
+# argument reader below keeps literal text.
+ZERO_FILL = re.compile(r"(?:0[xX]0+|0[uU]?|'(?:\\0|x0+|0)')")
 
 
 def deref_write(stmt):
@@ -255,8 +277,10 @@ def deref_write(stmt):
     `*(pixel + 3) = paletteRgba[index * 4 + 3]`, `*pixel = x`, `if (c) *(p + 3) = x`
     and `for (...) *p = x` are writes; `const uint8_t* colours = paletteRgba;`,
     `y = *p`, `texels * 4`, `a == *p`, `*s != 0`, `*s <= 0` and `*s >= 1` are not.
-    The tail matches an `=` that is no part of a comparison (`(?<![=!<>])=(?!=)`),
-    which is what stops a READ through a pointer from counting. The subscript rules
+    The tail matches an `=` that is no part of a comparison -- `[^=!<>]` refuses the
+    compound operators that compare, and `<<`/`>>` are matched as the shift-assigns
+    they are (review-11 F4) -- which is what stops a READ through a pointer from
+    counting. The subscript rules
     beside it never had review-10 F2's hole: their operator slot `[+\-*/%&^|]?` does
     not admit `!`, `<` or `>`, so a single-equals comparison could not reach their `=`.
 
@@ -611,14 +635,21 @@ def call_args(line, name):
     return None
 
 
-def call_args_at(text, paren):
+def call_args_at(text, paren, keep_literals=False):
     """The top-level argument strings of the call whose '(' sits at `paren`.
 
     Multi-line and string-aware on purpose (review-6 F1). `call_args` above takes a
     LINE and a function name, and both shipped `texelBytes` calls wrap across two or
     three lines, so the argument a check needs -- the forced alpha in expandIndices,
     the source alpha in expandRgba -- is not on the line the call was found on. A
-    line-based reader would report those calls as argument-free."""
+    line-based reader would report those calls as argument-free.
+
+    Review-11 F2: by default a quoted literal contributes only its OPENING quote, so
+    `memset(pixels, '\\0', n)` arrives as `['pixels', "'", 'n']` and a rule that
+    whitelists the fill cannot see it. `keep_literals` keeps the literal text instead,
+    for the one rule that adjudicates a literal -- the bulk fill. It is opt-in because
+    the other readers of this function match identifiers and subscripts, and a literal
+    body would only give them more text to mistake for code."""
     depth = 0
     cur = ""
     args = []
@@ -628,9 +659,15 @@ def call_args_at(text, paren):
         c = text[i]
         if c in '"\'':
             quote = c
+            start = i
             i += 1
             while i < n and text[i] != quote:
                 i += 2 if text[i] == "\\" else 1
+            if keep_literals:
+                if depth >= 1:
+                    cur += text[start:i + 1]
+                i += 1
+                continue
         elif c in "([{":
             depth += 1
             if depth == 1:
@@ -1324,38 +1361,81 @@ def adjudicate(text, quiet=False):
         `memset` was not, and the asymmetry is a hole, not a simplification -- memset is
         the one intrinsic that can set a byte to a CONSTANT, so `memset(pixel + 3,
         0xFF, 1);` one line after a correct helper call re-pins the alpha to 255, byte
-        for byte the shipped symptom, with the gate's blessing. memset is now
-        adjudicated by what the fill MEANS: an all-zero texel is alpha 0 under ANY byte
-        order (the index-0 discard invariant batch 120 pinned), so a zero fill at a
-        base pointer is the padding fill and stays legal, while a NONZERO fill sets
-        bytes the helper owns and a fill aimed at an OFFSET (`pixel + 3`) is a targeted
-        write whatever its value -- zeroing one byte of a filled texel hides the texel
-        the helper just drew."""
-        def memset_writes_texels(stmt):
-            """True when a `memset` in this body writes texel bytes the helper owns.
+        for byte the shipped symptom, with the gate's blessing.
 
-            See the review-10 F3 paragraph above. An argument list this scan cannot
-            read fails closed: a memset whose fill or destination it cannot parse is
-            a memset it cannot vouch for."""
-            m = re.search(r"\bmemset[ \t]*\(", stmt)
+        Review-11 F1 and F3 closed the two ways batch 125's own memset rule failed. F3:
+        the rule was a NAME list, and `\bmemset` cannot match `__builtin_memset` (the
+        character before it is a word character) while `std::fill` and `std::copy` were
+        in no list at all -- the exact defect, one spelling over, green at 41/41. The
+        match is now the OPERATION: memset/__builtin_memset/std::memset/std::fill/
+        std::fill_n set a constant, memcpy/memmove/std::copy move source bytes, and a
+        COPY is a texel write whatever it copies because the source is in the seam's
+        order. F1: the destination was adjudicated by whether its TEXT contained a `+`,
+        which is neither "is this an offset" nor "is this the padding", and it failed
+        both ways -- `memset(&pixel[3], 0, 1)`, `memset(&out[(size_t)x * 4], 0, 4)` and
+        `memset(pixel, 0, 4)` each erase texel bytes the helper just wrote and each
+        printed `checks=41 failed=0`. A zero fill is now the padding fill only when the
+        destination is the buffer this body allocated AND the length is that allocation's
+        own size expression -- i.e. it fills the whole buffer with the transparent texel
+        and nothing else. Stated limit: a per-row padding fill (`memset(out + width * 4,
+        0, (paddedWidth - width) * 4)`) is refused, because proving that region is all
+        padding is arithmetic on width and paddedWidth this scan does not do; the shipped
+        filler zeroes the whole buffer once at the base, and a batch that wants a per-row
+        fill must widen this rule with that proof, not work around it."""
+        def bulk_writes_texels(stmt, allocs):
+            """True when a bulk byte-setter in this body writes texel bytes the helper owns.
+
+            An argument list this scan cannot read fails closed: a bulk write whose fill,
+            destination or length it cannot parse is a write it cannot vouch for."""
+            if BULK_COPY.search(stmt):
+                return True
+            m = BULK_FILL.search(stmt)
             if not m:
                 return False
-            args = call_args_at(stmt, m.end() - 1)
-            if not args or len(args) < 3:
+            args = call_args_at(stmt, m.end() - 1, keep_literals=True)
+            if not args:
                 return True
-            if not re.fullmatch(r"(?:0[xX]0+|0[uU]?|'\\0')", args[1].strip()):
+            op = m.group(0)
+            if "memset" in op:
+                if len(args) < 3:
+                    return True
+                dst, fill, length = args[0], args[1], args[2]
+            elif "fill_n" in op:
+                if len(args) < 3:
+                    return True
+                dst, length, fill = args[0], args[1], args[2]
+            else:                       # std::fill(first, last, value)
+                if len(args) < 3:
+                    return True
+                dst, fill = args[0], args[2]
+                head = " ".join(dst.split()) + " + "
+                last = " ".join(args[1].split())
+                if not last.startswith(head):
+                    return True         # `std::fill(p + 3, ...)` is not a base fill
+                length = last[len(head):]
+            if not ZERO_FILL.fullmatch(" ".join(fill.split())):
                 return True
-            return "+" in args[0]
+            d = " ".join(dst.split())
+            n = " ".join(length.split())
+            return not any(d == base and n == size for base, size in allocs)
 
         if body is None:
             return ["(the expansion is absent)"]
+        # The buffers this body allocated, by name and by the size expression it asked
+        # for: that pair is the only destination+length the padding fill may have. The
+        # assignment is read as `name = <anything but ;> malloc(` because the shipped
+        # spelling wraps the size in a `static_cast<uint8_t*>(...)`.
+        allocs = []
+        for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*[^;]*?\bmalloc[ \t]*\(", body):
+            margs = call_args_at(body, m.end() - 1)
+            if margs and len(margs) == 1:
+                allocs.append((m.group(1), " ".join(margs[0].split())))
         hits = []
         for stmt in statements(blank_comments(body)):
             if re.search(r"\w[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
                re.search(r"\)[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
                deref_write(stmt) or \
-               re.search(r"\b(?:memcpy|memmove)[ \t]*\(", stmt) or \
-               memset_writes_texels(stmt):
+               bulk_writes_texels(stmt, allocs):
                 hits.append(stmt)
         return hits
 
@@ -1533,7 +1613,19 @@ def adjudicate(text, quiet=False):
         whose name says nothing, a filler with no call site in this file -- resolves
         as NOT palette-fed, and the source-fed branch then asks for the fourth byte.
         What stays fail-closed is the ALPHA: an alpha this scan cannot read at all is
-        refused by the alpha rule, not waved through by this one."""
+        refused by the alpha rule, not waved through by this one.
+
+        Two numbers this walk had never written down, in answer to review-11's open
+        questions 2 and 3. (1) THE BOUND IS THREE HOPS: `depth >= 3` refuses at depth 3,
+        and it fails open for the PATH only (the alpha stays fail-closed), because a
+        palette needing a fourth hop has also passed through an argument the scan cannot
+        read -- the residual stated above. It is written here so the next reviewer
+        checks a number instead of re-deriving one. (2) `fn_def_site` resolves a name to
+        the FIRST definition in the file and `fn_call_sites` gathers sites by name alone,
+        so two same-name functions (legal C++, nothing in the tree forbids it) would cross
+        parameters and arguments. Not reachable today; and a cross would resolve a palette
+        as SOURCE-fed, which asks for the fourth byte -- it fails toward the stricter
+        branch, not toward a free pass."""
         if not expr:
             return False
         if re.search(r"palette", expr, re.IGNORECASE):
@@ -1591,7 +1683,9 @@ def adjudicate(text, quiet=False):
         """(name offset, '(' offset) of the DEFINITION of `fname`, or (None, None).
 
         FN_DEF requires the `(` to follow the name with only whitespace between,
-        so the first `(` at or after a matched name is that definition's own."""
+        so the first `(` at or after a matched name is that definition's own.
+        Stated limit (review-11 open question 2): with two same-name definitions this
+        returns the FIRST, and `fn_call_sites` cannot tell their call sites apart."""
         blank = blank_cached(text)
         for m in FN_DEF.finditer(blank):
             if m.group(1) == fname:
@@ -2853,6 +2947,85 @@ ARMS = [
          "paletteRgba[index * 4 + 2], 255u);\n"
          "            memset(pixel + 3, 0xFF, 1);", 1),
      "index-texels-are-rotated-for-the-pica"),
+    # Review-11 F1: batch 125 adjudicated the memset DESTINATION by whether its text
+    # contained a `+`, which is neither "is this an offset" nor "is this the padding".
+    # Each of these three is one inserted line after a CORRECT helper call, each erases
+    # texel bytes the helper just wrote, and each printed `checks=41 failed=0` on the
+    # committed gate. They are arms now because the rule is "a bulk fill is the padding
+    # fill only if it fills the whole buffer with the transparent texel".
+    ("a zero memset aimed at an ADDRESS-OF SUBSCRIPT erases a texel's alpha after a "
+     "correct helper call (review-11 F1)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            memset(&pixel[3], 0, 1);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("a zero memset aimed at a SUBSCRIPTED row offset erases a whole texel after a "
+     "correct helper call (review-11 F1)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            memset(&out[(size_t)x * 4], 0, 4);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("a zero memset of a whole texel hides it after a correct helper call (review-11 "
+     "F1: the destination is a bare name, so `+` could not see it)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            memset(pixel, 0, 4);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-11 F3: the intrinsic list was a SPELLING list. `\bmemset` cannot match
+    # `__builtin_memset` (the character before it is a word character), and the C++
+    # algorithms that set or copy bytes were in no list at all -- the shipped defect,
+    # three spellings over, green at 41/41.
+    ("__builtin_memset re-pins the alpha after a correct helper call (review-11 F3: "
+     "the same intrinsic, one prefix away)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            __builtin_memset(pixel + 3, 0xFF, 1);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("std::fill re-pins the alpha after a correct helper call (review-11 F3: the C++ "
+     "spelling of the same constant fill)",
+     lambda s: s.replace("#include <utility>", "#include <algorithm>\n#include <utility>", 1)
+         .replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            std::fill(pixel, pixel + 4, 0xFFu);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("std::copy copies the palette's own order into the texel after a correct helper "
+     "call (review-11 F3: the row memcpy in the C++ spelling)",
+     lambda s: s.replace("#include <utility>", "#include <algorithm>\n#include <utility>", 1)
+         .replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            std::copy(&paletteRgba[index * 4], &paletteRgba[index * 4] + 4, pixel);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-11 F4: the batch-125 tail `(?<![=!<>])=(?!=)` refused an `=` preceded by
+    # `<` or `>` -- right for `<=` and `>=`, and also right for `>>=`, which is a WRITE.
+    # The pre-batch gate caught this one; the batch that fixed review-10 F2 narrowed it
+    # away. `|=` is the control: a compound assign was never missed.
+    ("a shift-assign through a dereference writes a texel byte (review-11 F4: the "
+     "batch-125 tail read `>>=` as a comparison)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            *(pixel + 3) >>= 1;", 1),
+     "index-texels-are-rotated-for-the-pica"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -3109,6 +3282,33 @@ PROBES = [
      "exemption is the value, not the literal)",
      lambda s: s.replace("    memset(pixels, 0, texels * 4);",
                          "    memset(pixels, 0u, texels * 4);", 1)),
+    # Review-11 F2: batch 125 whitelisted `'\\0'` but `call_args_at` dropped the body
+    # of every literal, so the fill arrived as a bare quote and the spelling the rule
+    # set out to accept was unreachable -- a byte-identical padding fill, refused.
+    # Red on the pre-batch gate (2 checks), green now.
+    ("the padding zero-fill is spelled '\\0' (review-11 F2: the literal reaches the "
+     "rule that whitelists it)",
+     lambda s: s.replace("    memset(pixels, 0, texels * 4);",
+                         "    memset(pixels, '\\0', texels * 4);", 1)),
+    # Review-11 F3's green half: the bulk rule is about what the fill MEANS, so the
+    # C++ spelling of the same whole-buffer transparent fill is as legal as memset.
+    # If these redden, the rule has become a name ban again.
+    ("the padding fill is spelled std::fill over the whole buffer (review-11 F3: the "
+     "C++ algorithm is the same operation)",
+     lambda s: s.replace("#include <utility>", "#include <algorithm>\n#include <utility>", 1)
+         .replace(
+             "    memset(pixels, 0, texels * 4);\n"
+             "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source",
+             "    std::fill(pixels, pixels + texels * 4, 0);\n"
+             "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source", 1)),
+    ("the padding fill is spelled std::fill_n over the whole buffer (review-11 F3: "
+     "the count form of the same operation)",
+     lambda s: s.replace("#include <utility>", "#include <algorithm>\n#include <utility>", 1)
+         .replace(
+             "    memset(pixels, 0, texels * 4);\n"
+             "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source",
+             "    std::fill_n(pixels, texels * 4, 0);\n"
+             "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source", 1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------
