@@ -126,7 +126,12 @@ FN_DEF = re.compile(r"(?m)^(?:(?:static|inline|constexpr|explicit)[ \t]+)*"
 def code_lines(text):
     """(index, text) for lines that are code. Comments are dropped, because this
     file documents its own rules in prose and a naive match would read the prose
-    as a call site."""
+    as a call site.
+
+    Limit, stated because review-8 F5 asked for limits to be stated where the claim
+    is made: a line whose first character is `*` is dropped as a block-comment
+    continuation, so a bare `*dst = ...;` write is invisible HERE. That is why
+    `texel_bypasses` scans `statements(blank_comments(...))` instead."""
     out = []
     for i, line in enumerate(text.splitlines()):
         s = line.strip()
@@ -138,19 +143,77 @@ def code_lines(text):
 
 def block_span_from(text, pos):
     """(start, end) offsets of the brace-matched block whose '{' is at or after
-    `pos`; `end` is one past the matching '}'."""
-    i = text.find("{", pos)
-    if i < 0:
-        return None
-    depth = 0
-    for j in range(i, len(text)):
-        if text[j] == "{":
+    `pos`; `end` is one past the matching '}'.
+
+    Review-8 F3: the scan is comment- and string-aware. A brace inside a comment
+    used to move the boundary, so a function whose body followed a comment
+    containing `}` was adjudicated over a TRUNCATED body and everything after the
+    comment was never read -- the reviewer's mutant hid a full set of direct texel
+    writes behind `// the oracle's shader discards index 0 }` and passed every
+    check. `blank_comments` already states this rule for the bypass scan (prose is
+    not code); this is the same rule applied where the SPANS every other check
+    reads are resolved, without blanking the file once per function."""
+    n = len(text)
+    i, depth, start = pos, 0, -1
+    while i < n:
+        c = text[i]
+        if c in '"\'':
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        if c == "{":
+            if depth == 0:
+                start = i
             depth += 1
-        elif text[j] == "}":
+        elif c == "}" and start >= 0:
             depth -= 1
             if depth == 0:
-                return (i, j + 1)
+                return (start, i + 1)
+        i += 1
     return None
+
+
+def statements(text):
+    """`text` folded into statements: a `;`, `{` or `}` at bracket depth zero ends
+    one, and one inside `(...)` or `[...]` does not.
+
+    Review-8 F1: the direct-write detector scanned PHYSICAL lines, and all three of
+    its write regexes required a character AFTER the `=`, so the same write split
+    after the `=` -- `((uint8_t*)pixel)[3] =\n    paletteRgba[index * 4 + 3];`, the
+    exact statement batch 122's own F5 arm pins -- matched none of them and the gate
+    printed PASS over the shipped R = 255 defect. This file wraps long expressions
+    at ~100 columns routinely, so the wrapped spelling is the ordinary one, not an
+    exotic one. A write happens in a statement; the line is a formatting artefact."""
+    out, cur, depth = [], [], 0
+    for ch in text:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch in ";{}" and depth <= 0:
+            folded = " ".join("".join(cur).split())
+            if folded:
+                out.append(folded)
+            cur = []
+            continue
+        cur.append(ch)
+    folded = " ".join("".join(cur).split())
+    if folded:
+        out.append(folded)
+    return out
 
 
 def block_span(text, pattern):
@@ -194,6 +257,26 @@ def blank_comments(text):
         else:
             i += 1
     return "".join(out)
+
+
+_BLANK_ONE = None
+
+
+def blank_cached(text):
+    """`blank_comments` memoised on the one text an adjudication passes around.
+
+    Offsets are preserved by construction, so a position found in the blanked copy
+    still indexes the original -- which is what lets `fn_spans`, `fn_body_span` and
+    `body_span` resolve definitions in the blanked copy (review-8 F3: a commented-out
+    function definition used to be a definition) while every caller keeps slicing the
+    original text. One entry, keyed on identity: the bodies are slices, so a growing
+    cache would only grow."""
+    global _BLANK_ONE
+    if _BLANK_ONE is not None and _BLANK_ONE[0] is text:
+        return _BLANK_ONE[1]
+    out = blank_comments(text)
+    _BLANK_ONE = (text, out)
+    return out
 
 
 def brace_depth(text, a, b):
@@ -249,9 +332,13 @@ def printf_format(text, paren):
 
 def fn_body_span(text, name):
     """(start, end) of a function whose return type is anything, through its closing
-    brace. `body_span` requires `void`, and the mesh factory returns MdkMeshId."""
+    brace. `body_span` requires `void`, and the mesh factory returns MdkMeshId.
+
+    Resolved over `blank_cached(text)`: a commented-out definition is not a
+    definition (review-8 F3), and offsets survive blanking, so the span still
+    indexes the original text every caller slices."""
     m = re.search(r"(?m)^[ \t]*[A-Za-z_][A-Za-z0-9_:* \t]*[ \t]+" + re.escape(name) +
-                  r"[ \t]*\([^;{]*\)[ \t]*\{", text)
+                  r"[ \t]*\([^;{]*\)[ \t]*\{", blank_cached(text))
     if not m:
         return None
     sp = block_span_from(text, m.end() - 1)
@@ -264,9 +351,12 @@ def body_span(text, name):
 
     The `{` is part of the match on purpose: without it the pattern also matches
     the forward declaration `static void name(...);`, which comes first in this
-    file, and the body of an unrelated block gets handed back as the function."""
+    file, and the body of an unrelated block gets handed back as the function.
+
+    Resolved over `blank_cached(text)` for the same reason as `fn_body_span.
+    """
     m = re.search(r"(?m)^[ \t]*(?:static[ \t]+)?void[ \t]+" + re.escape(name) +
-                  r"[ \t]*\([^;{]*\)[ \t]*\{", text)
+                  r"[ \t]*\([^;{]*\)[ \t]*\{", blank_cached(text))
     if not m:
         return None
     sp = block_span_from(text, m.end() - 1)
@@ -1133,17 +1223,17 @@ def adjudicate(text, quiet=False):
     # is not an assignment, so neither is caught -- and a probe pins that hoisting
     # such a read into `src[0]` stays green.
     def expansion(name):
-        """(span, body, [absolute '(' of each pica::texelBytes call]) for one
-        expansion. `body_span` only matches `void` functions and these return a
-        `uint8_t*`, so the more permissive `fn_body_span` is the one that resolves
-        them; a missing expansion returns nothing, which every check below reads
-        as a failure rather than a skip."""
+        """(span, body, [absolute '(' of each helper call]) for one expansion.
+        `body_span` only matches `void` functions and these return a `uint8_t*`, so
+        the more permissive `fn_body_span` is the one that resolves them; a missing
+        expansion returns nothing, which every check below reads as a failure rather
+        than a skip."""
         sp = fn_body_span(text, name)
         if sp is None:
             return None, None, []
         body = text[sp[0]:sp[1]]
         parens = [sp[0] + m.end() - 1
-                  for m in re.finditer(r"\bpica::texelBytes\s*\(", body)]
+                  for m in re.finditer(helper_call_re(text), body)]
         return sp, body, parens
 
     def texel_bypasses(body):
@@ -1155,24 +1245,25 @@ def adjudicate(text, quiet=False):
         held something else, and the alpha check went on printing `255u` because it
         reads the ARGUMENT. The rule is "no direct texel write", so every spelling of
         a write is refused: a subscript on a name, a subscript on a cast, a bare
-        dereference, and the bulk copies.
+        dereference, and the bulk copies. A compound assignment (`pixel[0] += 1`) is a
+        write too and is refused; a COMPARISON is not, and the `[^=]` terminator is
+        what keeps `==`, `!=`, `<=` and `>=` out of the hit set.
 
-        The scan runs over `blank_comments(body)` rather than `code_lines` on purpose.
-        `code_lines` drops any line whose first character is `*`, because in this file
-        that is a block-comment continuation -- which silently makes a genuine
-        `*dst = ...;` write invisible to it. `blank_comments` is the comment-aware
-        blanker, so the dereference spelling is actually seen here."""
+        Review-8 F1: the scan ran over LINES, and every one of those regexes needs a
+        character after the `=`, so the same statement split after the `=` -- the
+        spelling this file itself wraps to at ~100 columns -- matched none of them.
+        It now runs over `statements(blank_comments(body))`: comment-aware (so a bare
+        `*dst = ...;` is seen, which `code_lines` drops) and continuation-folded (so
+        the write is one unit whatever the formatter did to it)."""
         if body is None:
             return ["(the expansion is absent)"]
         hits = []
-        for line in blank_comments(body).splitlines():
-            if not line.strip():
-                continue
-            if re.search(r"\w[ \t]*\[[^\]]*\][ \t]*=[ \t]*[^=]", line) or \
-               re.search(r"\)[ \t]*\[[^\]]*\][ \t]*=[ \t]*[^=]", line) or \
-               re.search(r"^[ \t]*\*[^=;]*=[ \t]*[^=]", line) or \
-               re.search(r"\b(?:memcpy|memmove)[ \t]*\(", line):
-                hits.append(line.strip())
+        for stmt in statements(blank_comments(body)):
+            if re.search(r"\w[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
+               re.search(r"\)[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
+               re.search(r"^\*[^=;]*=[ \t]*[^=]", stmt) or \
+               re.search(r"\b(?:memcpy|memmove)[ \t]*\(", stmt):
+                hits.append(stmt)
         return hits
 
     def alpha_of(text, paren):
@@ -1205,18 +1296,62 @@ def adjudicate(text, quiet=False):
         """[(name, (start, end))] for every function definition in the file.
 
         Review-7 F1 asked for a WHOLE-FILE rule, and a whole-file rule needs every
-        function, not the two this file happens to have named."""
+        function, not the two this file happens to have named. The definitions are
+        found in `blank_cached(text)` so a commented-out definition is not a
+        definition (review-8 F3); offsets survive blanking, so the spans still index
+        the text every caller slices."""
         out = []
-        for m in FN_DEF.finditer(text):
+        for m in FN_DEF.finditer(blank_cached(text)):
             sp = block_span_from(text, m.end() - 1)
             if sp:
                 out.append((m.group(1), (m.start(), sp[1])))
         return out
 
+    def helper_call_re(text):
+        """The regex for a call of the texel helper, qualified or not.
+
+        Review-8 F5: a `using mdk::pica::texelBytes;` makes the unqualified spelling
+        legal C++, and a gate that recognised only `pica::texelBytes` read such a
+        file as having NO helper call at all -- 0 calls, every filler wrong. The
+        unqualified name is accepted only when the file actually carries the
+        using-declaration, so the helper's qualification stays the invariant and is
+        now stated here rather than implicit in one regex (review-8 open question 2)."""
+        if re.search(r"\busing[ \t]+(?:mdk::)?pica::texelBytes[ \t]*;", text):
+            return r"\b(?:pica::)?texelBytes[ \t]*\("
+        return r"\bpica::texelBytes[ \t]*\("
+
     def helper_writers(text):
         """Names of functions in this file that fill texel memory through the helper."""
+        pat = re.compile(helper_call_re(text))
         return set(n for n, sp in fn_spans(text)
-                   if "pica::texelBytes" in text[sp[0]:sp[1]])
+                   if pat.search(text[sp[0]:sp[1]]))
+
+    def texel_calls(text):
+        """[(offset, args)] for every 5-argument helper call in the FILE.
+
+        Review-8 F2: the channel-order and alpha rules used to read the arguments of
+        the two named expansions only, so a third filler that called the helper with
+        the palette bytes swapped -- the shipped R = 255 defect with the helper
+        intact -- passed every check. A rule about what the helper is handed has to
+        look at every place the helper is handed something."""
+        out = []
+        blank = blank_cached(text)
+        for m in re.finditer(helper_call_re(text), blank):
+            args = call_args_at(text, m.end() - 1)
+            if args and len(args) == 5:
+                out.append((m.start(), args))
+        return out
+
+    def palette_fed(args):
+        """True when a helper call's colour arguments read a palette.
+
+        The two paths have OPPOSITE alpha rules -- an indexed texel's alpha is forced
+        opaque because the oracle's shader writes 1.0, an RGBA texel's alpha is the
+        source's own fourth byte because the seam carries a real alpha -- so a
+        file-wide rule must be able to tell them apart without naming them. The
+        palette is the only thing an index expansion reads its colours from, so the
+        argument text says which path the call is on."""
+        return any(re.search(r"palette", a or "", re.IGNORECASE) for a in args[1:4])
 
     def texel_fillers(text):
         """[(name, body)] for every function that allocates a padded RGBA8 buffer.
@@ -1241,12 +1376,16 @@ def adjudicate(text, quiet=False):
         return None
 
     def sink_calls(text):
-        """[(offset, args)] for every `C3D_TexLoadImage` call, comments excluded."""
+        """[(offset, args)] for every `C3D_TexLoadImage` call, comments excluded.
+
+        Review-8 F4: the exclusion used to skip only a line whose first characters
+        were `//`, so a sink inside a `/* */` block, or after a `//` on a shared
+        line, was adjudicated as a real sink and reddened a correct file. Prose is
+        not code -- the rule `blank_comments` exists to enforce -- so the sites are
+        now found in the blanked copy."""
         out = []
-        for m in re.finditer(r"\bC3D_TexLoadImage[ \t]*\(", text):
-            ls = text.rfind("\n", 0, m.start()) + 1
-            if text[ls:m.start()].lstrip().startswith("//"):
-                continue
+        blank = blank_cached(text)
+        for m in re.finditer(r"\bC3D_TexLoadImage[ \t]*\(", blank):
             args = call_args_at(text, m.end() - 1)
             if args:
                 out.append((m.start(), args))
@@ -1264,12 +1403,24 @@ def adjudicate(text, quiet=False):
         that reddens a shape the port may write gets routed around. `texture.source.data()`
         still resolves to nothing and is still refused, and so does pointer arithmetic
         into a buffer whose producer this scan cannot see: fail closed on what it cannot
-        read."""
+        read.
+
+        Review-8 F5 widened two of those refusals, because both are shapes a later
+        batch may legitimately write: a buffer kept on the struct (`texture.pixels`,
+        assigned in the enclosing function) resolves through that assignment, and a
+        helper reached unqualified through a `using`-declaration is the helper. What
+        is STILL refused, and is a stated limit rather than an oversight: a sink
+        factored into its own function that takes the pointer as a PARAMETER
+        (`uploadTexels(&texture.tex, pixels)`), because resolving a parameter needs
+        the call sites of that function, i.e. a call graph this scan does not have.
+        A gate that reddens that shape gets routed around; a gate that guessed at it
+        would be reading a data flow it had not found."""
         a = (arg or "").strip()
         names = re.findall(r"(?:^|[^.\w])([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(", " " + a)
         if names:
             return names
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", a) and body_text:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:[.-]>?[A-Za-z_][A-Za-z0-9_]*)*", a) \
+                and body_text:
             return re.findall(r"\b" + re.escape(a) +
                               r"[ \t]*=[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(", body_text)
         return []
@@ -1346,6 +1497,55 @@ def adjudicate(text, quiet=False):
               "RGBA path: the alpha is pinned separately, because this path's alpha is the "
               "source's fourth byte rather than a constant)" % (rgba_order or "nothing"))
 
+    # EVERY HELPER CALL IN THE FILE, NOT THE TWO NAMED ONES (review-8 F2). The four
+    # checks above read the arguments of `expandIndices` and `expandRgba`; a THIRD
+    # filler that called the helper with the palette bytes swapped, or with a forced
+    # `0u` alpha, was the shipped R = 255 defect with the helper INTACT, and passed all
+    # 39 checks, because `every-texel-filler-rotates-through-the-helper` asks only
+    # WHETHER the helper is called. A rule about what the helper is handed has to look
+    # at every place the helper is handed something, so the same two properties are
+    # re-adjudicated here over every 5-argument call in the file. The two paths are
+    # told apart by `palette_fed`, not by a name: an indexed texel's alpha is forced
+    # opaque (the oracle's shader writes 1.0), and anything else may be opaque or may
+    # carry the source's own fourth byte -- a third path that expanded a 3-byte source
+    # and forced 255 is a shape the port may write, so it is not refused. An alpha this
+    # scan cannot read at all (a call, a variable) is refused: fail closed.
+    all_calls = texel_calls(text)
+    order_bad, alpha_bad = [], []
+    for cpos, cargs in all_calls:
+        cline = text.count("\n", 0, cpos) + 1
+        corder = [byte_index(a) for a in cargs[1:4]]
+        if corder != [0, 1, 2]:
+            order_bad.append("line %d hands texelBytes the source bytes %s"
+                             % (cline, corder or "nothing"))
+        calpha = (cargs[4] or "").strip()
+        opaque = re.fullmatch(r"(?:255|0xFF)u?", calpha) is not None
+        if palette_fed(cargs):
+            if not opaque:
+                alpha_bad.append("line %d hands a PALETTE-fed texel the alpha `%s`"
+                                 % (cline, calpha or "nothing"))
+        elif not opaque and byte_index(cargs[4]) != 3:
+            alpha_bad.append("line %d hands a SOURCE-fed texel the alpha `%s`"
+                             % (cline, calpha or "nothing"))
+    rep.check("every-texel-call-hands-the-helper-the-source-order",
+              bool(all_calls) and not order_bad,
+              "%d helper call(s) in the file, %d with the wrong channel order: %s (the "
+              "palette and the seam are both RGBA in memory and the PICA reads "
+              "[A, B, G, R], so on every path the red source is byte 0 and the blue "
+              "source is byte 2; a filler that calls the helper with them swapped is "
+              "the shipped defect in a spelling that still calls the helper)"
+              % (len(all_calls), len(order_bad),
+                 "; ".join(order_bad) if order_bad else "none"))
+    rep.check("every-texel-call-hands-the-pica-its-path-s-alpha",
+              bool(all_calls) and not alpha_bad,
+              "%d helper call(s) in the file, %d with an alpha its path does not allow: "
+              "%s (a palette-fed texel must force opaque -- the oracle writes 1.0, and a "
+              "palette-stored 0 discards the texel against the GPU_GREATER alpha test -- "
+              "while a source-fed texel must be opaque or the source's own fourth byte, "
+              "because a forced 0 hides every texel on that path)"
+              % (len(all_calls), len(alpha_bad),
+                 "; ".join(alpha_bad) if alpha_bad else "none"))
+
     # THE WHOLE FILE, NOT TWO NAMES (review-7 F1). Batch 121 pinned `expandIndices`
     # and `expandRgba`; a NAME pin is not the property. The reviewer's
     # `expandIndicesFast`, wired in INSTEAD of the pinned expansion and writing
@@ -1354,10 +1554,11 @@ def adjudicate(text, quiet=False):
     # So: every function that ALLOCATES a padded RGBA8 buffer must rotate through the
     # helper, and the set is measured rather than named -- an empty set is a failure.
     fillers = texel_fillers(text)
-    bad_fillers = ["%s (%s)" % (n, "no pica::texelBytes call" if "pica::texelBytes" not in b
+    helper_pat = re.compile(helper_call_re(text))
+    bad_fillers = ["%s (%s)" % (n, "no pica::texelBytes call" if not helper_pat.search(b)
                                 else "; ".join(texel_bypasses(b)))
                    for n, b in fillers
-                   if "pica::texelBytes" not in b or texel_bypasses(b)]
+                   if not helper_pat.search(b) or texel_bypasses(b)]
     rep.check("every-texel-filler-rotates-through-the-helper",
               bool(fillers) and not bad_fillers,
               "%d texel-filling function(s) in the file, %d wrong: %s (a texel filler is any "
@@ -2041,6 +2242,134 @@ ARMS = [
                          "C3D_TexLoadImage(&texture.tex, texture.source.data(),\n"
                          "                       GPU_TEXFACE_2D, 0);", 1),
      "texel-sink-is-fed-by-a-helper-writer"),
+    # Review-8 F1: the SAME writes, wrapped after the `=`. Batch 122's F5 arm pins the
+    # unwrapped cast write, and the reviewer showed that inserting a newline after the
+    # `=` -- the spelling this file wraps to at ~100 columns routinely -- passed all 39
+    # checks with memory holding the palette's alpha in the red slot. Three spellings,
+    # because the detector recognises three spellings and a fix that closed only the
+    # one the reviewer quoted would have left the other two open.
+    ("a wrapped subscript-on-name write restores the palette alpha (review-8 F1)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            pixel[3] =\n"
+         "                paletteRgba[index * 4 + 3];", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("a wrapped subscript-on-cast write restores the palette alpha (review-8 F1)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            ((uint8_t*)pixel)[3] =\n"
+         "                paletteRgba[index * 4 + 3];", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("a wrapped bare-dereference write restores the palette alpha (review-8 F1)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            *pixel =\n"
+         "                paletteRgba[index * 4 + 3];", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-8 F2: a THIRD filler that calls the helper -- so batch 122's filler clause
+    # is satisfied -- but hands it the palette bytes swapped, or a forced-transparent
+    # alpha. That is the shipped R = 255 defect with the helper intact, and it passed
+    # every batch-122 check because the order and alpha rules read only the two named
+    # expansions. Each arm keeps the OTHER property intact, so each isolates one check.
+    ("a third filler calls the helper with the palette red and blue swapped "
+     "(review-8 F2)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesSwapped(const uint8_t* indices, int32_t width,\n"
+         "                                     int32_t height, const uint8_t* paletteRgba,\n"
+         "                                     int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 2],\n"
+         "                                  paletteRgba[index * 4 + 1],\n"
+         "                                  paletteRgba[index * 4 + 0], 255u);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesSwapped(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-call-hands-the-helper-the-source-order"),
+    ("a third filler calls the helper with a forced-transparent alpha (review-8 F2)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesClear(const uint8_t* indices, int32_t width,\n"
+         "                                   int32_t height, const uint8_t* paletteRgba,\n"
+         "                                   int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],\n"
+         "                                  paletteRgba[index * 4 + 1],\n"
+         "                                  paletteRgba[index * 4 + 2], 0u);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesClear(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-call-hands-the-pica-its-path-s-alpha"),
+    # Review-8 F3: a `}` inside a comment used to close the resolved body early, so
+    # everything after the comment was never adjudicated. This filler calls the helper
+    # CORRECTLY before the comment -- so the order and alpha clauses are satisfied --
+    # and writes the palette's own order after it. With a brace-naive span the whole
+    # file passes; with a blanked span the writes are inside the body and the filler
+    # clause refuses them.
+    ("a third filler hides its direct writes behind a comment containing a brace "
+     "(review-8 F3)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesBraced(const uint8_t* indices, int32_t width,\n"
+         "                                    int32_t height, const uint8_t* paletteRgba,\n"
+         "                                    int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    mdk::pica::texelBytes(pixels, paletteRgba[0], paletteRgba[1],\n"
+         "                          paletteRgba[2], 255u);\n"
+         "    // the oracle's shader discards index 0 }\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            pixel[0] = paletteRgba[index * 4 + 0];\n"
+         "            pixel[1] = paletteRgba[index * 4 + 1];\n"
+         "            pixel[2] = paletteRgba[index * 4 + 2];\n"
+         "            pixel[3] = 255;\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesBraced(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-filler-rotates-through-the-helper"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -2130,6 +2459,53 @@ PROBES = [
          "texture.realHeight,",
          "        pixels = expandIndicesFast(texture.source.data(), texture.realWidth, "
          "texture.realHeight,", 1)),
+    # Review-8 F3's green half: a brace in PROSE must not truncate the resolved body.
+    # With a brace-naive counter the body ended at the comment and the helper call fell
+    # outside it, which reddened a correct file -- the same defect as the arm above, on
+    # the side that must stay green.
+    ("a brace inside a comment does not truncate the resolved body (review-8 F3)",
+     lambda s: s.replace(
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            mdk::pica::texelBytes(out + (size_t)x * 4,",
+         "        // the PICA reads [A, B, G, R], so there is no } shortcut here\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            mdk::pica::texelBytes(out + (size_t)x * 4,", 1)),
+    # Review-8 F4's green half: a commented-out sink is prose about a sink, not a sink.
+    # The batch-122 skip removed only a line whose first characters were `//`, so a
+    # block comment beside the real call reddened a correct file.
+    ("a commented-out C3D_TexLoadImage beside the real one is not a second sink "
+     "(review-8 F4)",
+     lambda s: s.replace(
+         "    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);",
+         "    /* the first upload site, kept while the eviction path settled:\n"
+         "       C3D_TexLoadImage(&texture.tex, texture.source.data(),\n"
+         "                       GPU_TEXFACE_2D, 0); */\n"
+         "    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);", 1)),
+    # Review-8 F5's two widened refusals, pinned as shapes the port may write.
+    ("the helper is reached through a using-declaration rather than qualified at every "
+     "call site (review-8 F5: the qualification is not the invariant, the helper is)",
+     lambda s: s.replace("static uint8_t* expandIndices(const uint8_t* indices,",
+                         "using mdk::pica::texelBytes;\n\n"
+                         "static uint8_t* expandIndices(const uint8_t* indices,", 1)
+              .replace("mdk::pica::texelBytes(", "texelBytes(")),
+    ("the expanded buffer is kept on the texture record and the sink reads it there "
+     "(review-8 F5: a member assigned from a helper writer is the same data flow)",
+     lambda s: s.replace("struct C3dTexture {\n    C3D_Tex tex;",
+                         "struct C3dTexture {\n    C3D_Tex tex;\n"
+                         "    uint8_t* expanded = nullptr;", 1)
+              .replace(
+                  "        pixels = expandIndices(texture.source.data(), "
+                  "texture.realWidth, texture.realHeight,\n"
+                  "                               texture.palette.data(), "
+                  "texture.paddedWidth, texture.paddedHeight);",
+                  "        texture.expanded = expandIndices(texture.source.data(),\n"
+                  "                               texture.realWidth, texture.realHeight,\n"
+                  "                               texture.palette.data(),\n"
+                  "                               texture.paddedWidth, texture.paddedHeight);\n"
+                  "        pixels = texture.expanded;", 1)
+              .replace("    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);",
+                       "    C3D_TexLoadImage(&texture.tex, texture.expanded,\n"
+                       "                       GPU_TEXFACE_2D, 0);", 1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------

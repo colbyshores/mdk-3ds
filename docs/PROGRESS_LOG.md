@@ -22254,3 +22254,173 @@ emulator only, and emulator-green is explicitly not hardware evidence (P8). It n
 capture, Mandarine's `GPU_RGBA8` decode path, or a ruling on whether `tex3ds` swizzles 32-bit
 formats. The gate family itself is declared closed at six texel checks: a seventh needs a defect
 these six cannot reach, and review-7's five mutants are all inside them now.
+
+## Batch 123 (iteration 9) — review-8 closed 5/5 (no Critical; two High): the texel scan stops
+## reading lines, stops reading names, and stops reading prose as code
+
+**The finding that set the shape.** Review-8 (DeepSeek V4.1 Flash TH, `family=deepseek` against
+this builder's `family=qwen`, independence proved in the review itself) had no Critical but **two
+Highs**, and its verdict was INCOMPLETE. Both Highs falsified batch 122's closure claim, and both
+were reproduced on a copy of the tree in `/tmp/rev8` against the *committed* gate before anything
+was changed — seven fail-open `exit=0` results confirmed, exactly as the reviewer measured. The
+sentence that matters is not "the texel defect is fixed" but "**this gate cannot see it**", because
+a gate that cannot see the defect is a pass generator, and every batch after it inherits the
+false green.
+
+**F1 (High, confirmed) — the bypass scan read LINES, so one newline after the `=` hid the write.**
+Batch 122's F5 arm is `((uint8_t*)pixel)[3] = paletteRgba[index*4+3];`. Insert a newline after the
+`=` — the spelling this very file wraps to at ~100 columns, and which the shipped expansion uses
+for its own helper call — and every write regex missed it, because each one requires a character
+after the `=` on the same line. All 39 checks passed over memory holding the palette's alpha in the
+red slot. The scan now runs over `statements(blank_comments(body))`: a new folder that folds each
+continuation into one unit at bracket depth 0 (so a `;` inside a `for (...)` header does not split
+it, and a `}` inside a call argument does not either) and is comment-aware before it splits. Three
+arms, not one, because the detector recognises three spellings and a fix that closed only the
+spelling the reviewer quoted would have left the other two open: subscript-on-name, subscript-on-
+cast, and bare dereference, each wrapped, each bound to `index-texels-are-rotated-for-the-pica`.
+Compound assignment (`pixel[0] += 1`) is a write and is now refused too; comparisons are not, and
+the `[^=]` terminator is what keeps `==`, `!=`, `<=` and `>=` out of the hit set — verified against
+the shipped file, whose `source[x]` and `if (!pixels)` shapes stay clean.
+
+**F2 (High, confirmed) — the order and alpha rules read two NAMES, so a third filler was the
+defect with the helper intact.** Batch 122 pinned the sink and the filler *set* to the helper, but
+the four argument checks still read only `expandIndices` and `expandRgba`. A third filler that
+calls `pica::texelBytes` — so the filler clause is satisfied — with the palette's red and blue
+arguments swapped, or with a forced `0u` alpha, reproduced the shipped R = 255 defect with all 39
+checks green. Two new **whole-file** checks re-adjudicate the same two properties over every
+5-argument helper call in the file: `every-texel-call-hands-the-helper-the-source-order` requires
+the three colour arguments to name source bytes `[0, 1, 2]` wherever the call sits, and
+`every-texel-call-hands-the-pica-its-path-s-alpha` requires each call's alpha to match *its own
+path*. The two paths are told apart by what feeds the call (`palette_fed`: an argument naming the
+palette), not by a function name — a palette-fed texel must force opaque, because the oracle's
+shader writes 1.0 and a palette-stored 0 discards the texel against the `GPU_GREATER` alpha test;
+anything else may be opaque or may carry the source's own fourth byte, which deliberately leaves
+room for a future 3-byte-source path instead of refusing a shape the port may write. An alpha this
+scan cannot read at all (a call, a bare variable) is refused: fail closed on what it cannot read.
+Two arms, each keeping the *other* property intact so each isolates one check: the swapped filler
+breaks only the order rule, the `0u` filler only the alpha rule.
+
+**F3 (Medium, confirmed) — a `}` inside a comment closed the resolved body early.** The brace
+matchers counted braces in raw text, so `// the oracle's shader discards index 0 }` ended the
+function body for `block_span_from`, `fn_spans` and `body_span`, and everything after the comment
+was never adjudicated. That is a fail-open *and* a false-red in one defect: the reviewer's filler
+with direct writes after such a comment passed every check, and a correct file with a brace in
+prose reddens a check it should pass. The matchers now resolve over a memoised `blank_cached(text)`
+— comments and string literals blanked, **offsets preserved**, so every caller still slices the
+raw text and the messages still quote real source. One arm (the reviewer's hidden-writes filler,
+with its helper call left *correct* so the order and alpha clauses cannot catch it first, bound to
+`every-texel-filler-rotates-through-the-helper`) and one probe (a brace in a comment in `expandRgba`
+before the helper call) pin both directions.
+
+**F4 (Low, confirmed) — a commented-out sink counted as a sink.** The sink scan skipped only a
+line whose first characters were `//`, so a block comment quoting an old `C3D_TexLoadImage` beside
+the real one was adjudicated as a second, unfed sink and reddened a correct file. The sink calls
+now resolve over the same blanked text as everything else, so prose is not code. One probe.
+
+**F5 (Low, confirmed) — two refusals were shapes the port may write; the third is now a stated
+limit.** `producers_of` refused an unqualified `texelBytes(` call even under
+`using mdk::pica::texelBytes;`, and refused a buffer kept on the texture record. Both are legal
+spellings of the same data flow, and review-16 R2 is the standing reason not to redden them: a
+gate that rejects a shape the port may write gets routed around, and the routed-around gate is
+worse than no gate because it looks like scrutiny. The helper is now recognised qualified *or*
+unqualified when a `using`-declaration for it is present in the file, and a member field assigned
+from a helper writer (`texture.expanded = expandIndices(...)`) resolves like a local does. Two
+probes, both compiling and both green. **What is still refused, stated in the gate rather than
+left implicit in a regex:** a sink factored into its own function that takes the pointer as a
+*parameter* (`uploadTexels(&texture.tex, pixels)`). Resolving a parameter needs that function's
+call sites, i.e. a call graph this scan does not have, and a gate that guessed at it would be
+reading a data flow it had not found. The reviewer's `J_helper_sink` mutant therefore still exits
+1, and that is the documented boundary, not an oversight.
+
+**One reviewer mutant deliberately stays red, and should.** `I_struct_field_sink` hands the sink
+`texture.pixels` — but nothing ever assigns `texture.pixels`, and no such member exists on
+`C3dTexture`, so the mutant does not compile. It is not a legal shape with a refused spelling; it
+is a sink with no producer, which is precisely what the clause exists to refuse. The legal version
+of the same idea is the new probe, which adds the member *and* its assignment from `expandIndices`,
+and it is green.
+
+**Review-8 open question 1, answered: the declared family is TEN checks, and the count is now
+written down instead of phrased.** Batch 122's "six texel checks" was already a miscount of its own
+file (eight matched), and this batch adds two more. The family is: `index-texels-are-rotated-for-
+the-pica`, `rgba-texels-are-rotated-for-the-pica`, `index-texel-alpha-is-forced-opaque`,
+`rgba-texel-alpha-is-the-sources`, `index-texel-channels-are-in-source-order`,
+`rgba-texel-channels-are-in-source-order`, `every-texel-filler-rotates-through-the-helper`,
+`texel-sink-is-fed-by-a-helper-writer`, and the two new whole-file ones,
+`every-texel-call-hands-the-helper-the-source-order` and
+`every-texel-call-hands-the-pica-its-path-s-alpha`. Six per-path checks over the two named
+expansions, two over the measured filler set, one over the sink, two over every call in the file.
+A future reviewer should read this list, not a phrase in a checkpoint.
+
+**Review-8 open question 2, answered: the qualification was never the invariant, and the gate now
+says so.** Batch 122 refused an unqualified call as a side effect of resolving the helper by its
+qualified spelling, not as a decision. The invariant is *the helper* — that texel bytes are written
+through `pica::texelBytes` and not by hand — so a `using`-declaration is accepted, and the
+`texture.source.data()` exclusion that makes the sink clause fail closed is now documented as what
+it is: a member call is not a producer, so an argument that resolves to nothing is refused. That
+reasoning is in `helper_call_re` and `producers_of`, not only in a regex.
+
+**Review-8 open question 3 is unchanged and still not resolvable from this host:** review-7's open
+question 1 (is RGBA8 Morton-tiled on real hardware?) needs a hardware capture. Correctly left
+open.
+
+**Gates, verbatim.**
+
+    make -C tests/scripts   ->  All cases match the oracle.        (exit 0)
+        PASS C3dFrame (41 checks, 65 arms adjudicated red, 10 probes green)
+        PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes green)
+        PASS PicaMatrix / PASS AudioSinkSeam / PASS EmurunHarness (68 checks)
+    bash tools/check.sh     ->  CHECK: ALL GATES PASSED            (exit 0)
+        PASS audit_c_with_classes 0 violations; PASS gates_vfp 0 blockers;
+        PASS audit_arm11_math contract clean; PASS audit_r11_idiv no candidates;
+        PASS gates_core_parity; SKIP gates_smdh (no built .cia);
+        PASS gates_frames (L3_f1.bmp sha=58615fc85d02e009); PASS gates_batch_integrity
+    make -C mdk_3ds         ->  3DSX mdk.3dsx                      (exit 0)
+        mdk.elf md5 67fadc4179c40ee3a4e5090a2218641a
+        build/mdk_c3d.shbin md5 d46abb60de20b2aa0659043aeb97b9c9
+    tests/scripts/arm_compile_check.sh c3d
+        -> PASS ArmCompile (76 mutant(s), 0 diagnostics, 73 shipped source(s)
+           format-clean, 4 format mutant(s) refused, 1/1 honest call(s) accepted)
+
+Measured on the reviewer's own mutants, as required: **K1/K2/K3 (F1), A/B/D (F2) and H (F3) all
+exit 1** naming the check that caught them; **G_commented_sink (F4) and N_using_decl (F5) now exit
+0**, which is the correct direction — those were false reds on legal shapes; `I_struct_field_sink`
+and `J_helper_sink` still exit 1, for the two reasons stated above. The family went from 39 checks
+/ 59 arms / 6 probes to **41 / 65 / 10**, and every one of the 76 mutants the gate now extracts
+(65 arms + 10 probes + the parent) compiles for `armv6k` with 0 diagnostics — the `using`-
+declaration probe and the struct-member probe were the two that could have been mutants of
+nothing, and they are not.
+
+**Codegen neutrality, measured.** No `mdk_3ds/**` or `mdk_core/**` byte is in this diff, and the
+built `mdk.elf` (`67fadc4179c40ee3a4e5090a2218641a`) and `mdk_c3d.shbin`
+(`d46abb60de20b2aa0659043aeb97b9c9`) are byte-identical to batch 122's. The re-published frame pair
+is therefore **byte-identical** to batch 122's (`cmp` clean, md5 `6769a13731983d65cee9df02da6cff37`,
+the 132nd pair): this batch changed no pixel, and no visual change is claimed. Because no
+`mdk_3ds/**` path changed, **no P8 emulator evidence is owed and none is claimed.**
+
+**Prior-solution lookup.** `pi-knowledge` KB `mdk-sdl` (4802 chunks / 983 files) searched for the
+texel sink, the statement-folder idiom and for prior comment-aware brace matching in this
+repository's harnesses; the retrieved `c3d_frame_test.sh` chunk predates this batch's edit, so the
+repository working tree was the authority for the harness and the KB was used only to confirm no
+earlier batch had already written a statement folder. No `obsidian_*`/`cognee_*` tools are exposed
+in this session — recorded as a session gap under P9, not reported as a lookup that happened — so
+the vault was read directly, read-only and narrowly. Cognee's graph search was therefore not
+consulted, and that is a degraded lookup, stated as such.
+
+`ralph/builder.md` was dirty at dispatch again, and is left uncommitted on purpose for the second
+batch running: it is in `gates_batch_integrity`'s `PROTECTED` set, and staging it without
+`MDK_OWNER_APPROVED` is exactly the failure that gate exists to raise ("staged change to protected
+contract requires owner approval"). The pending edit is the owner's, not this batch's — the
+reviewer identity moves to `litellm/deepseek-v4.1-flash-th`, which is the model that wrote
+review-7 and review-8, and a new "Search scope and bounded commands" section confines search to
+this repository. Both are already the behaviour this batch worked under. This batch staged its
+paths explicitly rather than with `git add -A`, so the protected file is not smuggled into the
+commit and the owner's approval stays the owner's to give.
+
+**What is next.** Unchanged and still blocked on their named causes, not on effort: (1) the canvas
+seam, which priority item 5b (the HUD) and the MVE presenter both wait on; (2) the collision batch
+(`FindConnections`, `CrossedArena`). Still open and stated rather than fixed, because neither can
+be resolved from this host: review-7 open question 1 (RGBA8 tiling on real hardware, needs a
+capture), and the parameter-passing sink limit above, which needs a call graph. The texel family is
+declared closed at **ten** checks — the count written out above rather than phrased — and a
+eleventh would need a defect these ten cannot reach. All seven of review-8's fail-open mutants and
+both of its false-red probes are inside them now.

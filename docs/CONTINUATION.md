@@ -1,16 +1,28 @@
 # Phase 2 continuation checkpoint
 Risk: medium - test-infrastructure only: it widens what `c3d_frame_test.sh` can refuse, and a gate
-that can be routed around is a pass generator, so the change is behaviour-adjacent even though no
-shipped byte moves. It closes review-7 6/6 (no Critical, no High). The batch-121 pin named two
-functions; review-7 showed a THIRD texel filler wired into the sink reproduces the shipped
-R = 255 defect with all 35 checks green. The pin now sits on the SINK and on the WHOLE FILE: every
-`C3D_TexLoadImage` data argument must resolve to a producer that fills through `pica::texelBytes`,
-and every function that mallocs a `paddedWidth*paddedHeight*4` buffer must rotate through the
-helper. Two more checks pin the argument PROVENANCE ORDER (swapping the palette's red and blue
-indices was invisible to every batch-121 check) and the RGBA alpha is now the source's own fourth
-byte rather than "not 255". Measured on the reviewer's own mutants: 39 checks / 59 arms / 6
-probes, up from 35/53/4, and all five of its mutants now exit 1 with the check named. No
-`mdk_3ds/**` path is in this batch, so no P8 emulator evidence is owed and none is claimed.
+that cannot see the defect it claims to refuse is a pass generator, so the change is behaviour-
+adjacent even though no shipped byte moves. It closes review-8 5/5 (no Critical, **two High**).
+Both Highs falsified batch 122's closure claim, and both were reproduced against the committed gate
+before anything changed. F1: the bypass scan read LINES, and every write regex needs a character
+after the `=`, so inserting one newline after the `=` - the spelling this file itself wraps to -
+passed all 39 checks with memory holding the palette's alpha in the red slot; the scan now folds
+each statement into one unit over comment-blanked text, and three arms (subscript-on-name,
+subscript-on-cast, bare dereference, each wrapped) pin it. F2: the channel-order and alpha rules
+read only the two NAMED expansions, so a third filler that calls the helper with the palette's red
+and blue swapped, or with a forced `0u` alpha, was the shipped R = 255 defect with the helper
+intact and passed everything; two new whole-file checks re-adjudicate both properties over every
+5-argument call in the file, telling the paths apart by what feeds the call rather than by a name.
+F3 (Medium) made the brace matchers comment-aware, because a `}` in a comment used to close the
+resolved body early and leave everything after it unadjudicated. F4 (Low) stopped a commented-out
+`C3D_TexLoadImage` counting as a sink. F5 (Low) accepts a `using`-declared helper and a member
+field assigned from a helper writer; a sink taking the pointer as a PARAMETER stays refused and is
+now a stated limit in the gate, not an implicit regex behaviour. Measured on the reviewer's own
+mutants: 41 checks / 65 arms / 10 probes, up from 39/59/6; its seven fail-open mutants all exit 1
+naming the check, and its two false-red probes now pass. The texel family is declared at TEN checks
+and the list is written out in batch 123's log entry, because "six texel checks" was a miscount of
+its own file. No `mdk_3ds/**` path is in this batch, so no P8 emulator evidence is owed and none is
+claimed; the built `mdk.elf` and `mdk_c3d.shbin` and the re-published frame are byte-identical to
+batch 122's.
 
 **Batch 122 (iteration 8) - review-7 closed 6/6.** F1, F2 and F3 (Medium) fixed; F4, F5 and F6
 (Low) fixed, none rebutted. F1's recommended remediation was taken in a stronger form than
@@ -23,7 +35,10 @@ bypass detector; the scan now runs over `blank_comments`. F3's measurement was f
 and is corrected in the Makefile, in `docs/CONTINUATION.md` and in batch 121's log entry (marked
 as a correction, not rewritten); what actually holds is that 0 basenames map to two distinct
 source paths. F6 cannot be fixed in place - `gates_batch_integrity` refuses any edit to a
-historical sidecar - so the corrected count rides forward in this pair. Full narrative:
+historical sidecar - so the corrected count rides forward in this pair. Two things this batch
+claimed that review-8 later falsified, left visible rather than quietly repaired: that the bypass
+detector saw "every spelling of a write" (it did not see a wrapped one) and that the texel family
+was closed at six checks (it was eight, and is now ten). Full narrative:
 `docs/PROGRESS_LOG.md` "Batch 122".
 
 **Batch 121 (iteration 7) - review-6 closed 4/4.** F1 fixed with a pin at each site plus two
