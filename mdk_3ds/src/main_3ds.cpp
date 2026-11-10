@@ -267,8 +267,8 @@ int main(int argc, char** argv) {
                                   (int)level.arenas().size());
                 if (view.load(renderer, &level, arena, &surfaces)) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
-                                      view.batchCount(), view.vertexCount(),
-                                      arena->triangleCount());
+                                      (int)view.batchCount(), (int)view.vertexCount(),
+                                      (int)arena->triangleCount());
                 } else {
                     mdk::log3dsPrintf("view: FAILED");
                     arena = nullptr;
@@ -952,7 +952,7 @@ int main(int argc, char** argv) {
                     const int32_t attempted = objectDraw.attemptedCapacity();
                     mdk::log3dsPrintf("objects: stream mesh of %d corners = %d KB "
                                       "linear — linearAlloc FAILED, no objects drawn",
-                                      attempted,
+                                      (int)attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /
                                             1024));
                 }
@@ -963,10 +963,10 @@ int main(int argc, char** argv) {
                 streamCapacityLogged = objectDraw.capacity();
                 mdk::log3dsPrintf("objects: stream mesh %d corners = %d KB linear "
                                   "(%d corners, %d draws this frame)",
-                                  streamCapacityLogged,
+                                  (int)streamCapacityLogged,
                                   (int)((int64_t)streamCapacityLogged * 5 * sizeof(float) /
                                         1024),
-                                  objectCorners, objectDraws);
+                                  (int)objectCorners, (int)objectDraws);
             }
         }
         if (kurtSpriteReady && playerReady) {
@@ -1016,7 +1016,7 @@ int main(int argc, char** argv) {
             // deque for pointer stability, so objectCount subtracts them) and
             // `arena` is the pin the step loop is using.
             mdk::log3dsPrintf("scripts: runtime=%d objects=%d arena=%s mix=%s",
-                              runtime ? 1 : 0, runtime ? runtime->objectCount() : 0,
+                              runtime ? 1 : 0, runtime ? (int)runtime->objectCount() : 0,
                               runtime && !runtime->currentArena().empty()
                                   ? runtime->currentArena().c_str()
                                   : "-",
@@ -1031,9 +1031,9 @@ int main(int argc, char** argv) {
                               player.health(), camera.position.x, camera.position.y,
                               camera.position.z, (int)mix->voices().size(),
                               (int)mix->device().nextId() - 1,
-                              runtime ? runtime->objectCount() : 0,
-                              objectCorners, objectDraws,
-                              objectPeakCorners, objectPeakDraws);
+                              runtime ? (int)runtime->objectCount() : 0,
+                              (int)objectCorners, (int)objectDraws,
+                              (int)objectPeakCorners, (int)objectPeakDraws);
         }
         if (audioReady && (frame % 60u) == 0u) {
             // The sink's own ledger, on the same cadence as the frame line. The

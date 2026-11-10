@@ -603,14 +603,23 @@ REFUSAL_FMT = re.compile(r"FAILED|refus", re.IGNORECASE)
 # `%08x`, `%-5d`, `%.1f`, `%5.1f` and `%*d` did not match at all, and the comment's
 # claim that "a format with a conversion and no argument is still red" was false for
 # every one of them -- a dropped argument in those spellings was skipped, and
-# `log3dsPrintf` carries no printf format attribute so the compiler could not see it
-# either. The pattern is now the conversion grammar: flags, width, precision, length
-# modifier, conversion letter. STATED LIMIT: the space flag is not in the flag class
-# (it is what made the old pattern exclude `% `), so a format writing `"% d"` reads
-# as a literal percent, not a conversion -- and check 17 REFUSES such a line instead of
-# skipping it, because "the gate read no conversion" is not "the format asks for no
-# figure" (review-22 F1).
-FIGURE_FMT = re.compile(r"%(?!%)[-+#0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[hlLqjzt]*[a-zA-Z]")
+# `log3dsPrintf` carried no printf format attribute either, so nothing checked it.
+# The pattern is the conversion grammar: flags, width, precision, length modifier,
+# conversion letter.
+#
+# Review-22 F1 closed the last gap in that claim: the SPACE flag was missing from the
+# flag class, so `"% d"` read as a literal percent and every figure rule skipped a line
+# that `vsnprintf` -- and, once batch 117 landed the attribute, the compiler too -- read
+# as a conversion asking for an int. A flag class that reads less than the library does
+# is a pass generator wearing a stated limit. The class now matches what the library
+# matches, so a space-flagged conversion is adjudicated ON ITS MERITS:
+# `("objects: refused % d bytes", objectCorners)` is red because a slot its own text
+# calls a byte figure prints a corner count, not because the gate cannot parse it.
+# STATED LIMIT: a conversion C itself does not have -- a `%' grouping flag, a `%1$'
+# positional field -- is still outside the class, and the skip in check 17 REFUSES any
+# percent it cannot read rather than wave it through, so a future grammar gap is a named
+# failure and not an exemption.
+FIGURE_FMT = re.compile(r"%(?!%)[-+ #0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[hlLqjzt]*[a-zA-Z]")
 
 # The unit a refusal line's own format text names for the figure beside it
 # (review-18 F3). This is the only textual signal that separates "the number of bytes
@@ -1376,8 +1385,18 @@ def adjudicate(text, quiet=False):
         # Review-18 F4: a conversion with no argument is undefined behaviour, and this
         # comment always claimed it was red; with the old one-letter FIGURE_FMT it was
         # red only for the spellings that pattern matched. Now the claim is true of the
-        # whole conversion grammar, which matters because `log3dsPrintf` carries no
-        # printf format attribute and the compiler never saw the dropped argument.
+        # whole conversion grammar.
+        #
+        # Batch 117 gave `mdk::log3dsPrintf` a `format (printf, 1, 2)` attribute, so the
+        # compiler diagnoses a dropped argument now too -- and this rule STAYS, for two
+        # reasons. A warning is not a gate: nothing fails a build on it, and this loop
+        # stops on `tools/check.sh` and the suites, not on a notice in a build log. And
+        # the slot loop below indexes `vals` through the conversions, so without this line
+        # a dropped argument is a Python IndexError that kills the suite instead of one
+        # named FAIL -- review-15 F4's class. What the compiler owns and this check never
+        # did is the TYPE of the argument at every one of the tree's 72 log call sites:
+        # `tests/scripts/arm_compile_check.sh` compiles the shipped sources with
+        # -Werror=format, which is where that half lives now.
         #
         # Review-19 F2: a conversion does not consume ONE argument. `%*d` reads a width
         # and then the value, so `("objects: refused %*d bytes", bytes)` asks for two
@@ -2051,9 +2070,9 @@ def arm_failure_corner_slot_names_the_frame_count(text):
     `PASS Main3dsFlow`. The reviewer's mutant; no existing arm covers this shape,
     because every other arm that changes the corner figure also changes the byte
     figure and so reds through the byte half instead."""
-    return text.replace("""                                      attempted,
+    return text.replace("""                                      (int)attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /""",
-                        """                                      objectCorners,
+                        """                                      (int)objectCorners,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /""",
                         1)
 
@@ -2067,9 +2086,9 @@ def arm_failure_corner_slot_names_a_second_frame_count(text):
     shipped. Reproduced here before the fix, on the reviewer's own shape."""
     return text.replace('mdk::log3dsPrintf("objects: stream mesh of %d corners = %d KB "',
                         'mdk::log3dsPrintf("objects: stream mesh refused %d of %d '
-                        'corners = %d KB "', 1).replace("""                                      attempted,
+                        'corners = %d KB "', 1).replace("""                                      (int)attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /""",
-                        """                                      attempted, objectCorners,
+                        """                                      (int)attempted, (int)objectCorners,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /""", 1)
 
 
@@ -2083,9 +2102,9 @@ def arm_failure_corner_unit_written_before_its_conversion(text):
     spelling is a probe."""
     return text.replace('mdk::log3dsPrintf("objects: stream mesh of %d corners = %d KB "',
                         'mdk::log3dsPrintf("objects: stream mesh refused: corners %d, '
-                        'attempted %d = %d KB "', 1).replace("""                                      attempted,
+                        'attempted %d = %d KB "', 1).replace("""                                      (int)attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /""",
-                        """                                      objectCorners, attempted,
+                        """                                      (int)objectCorners, (int)attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /""", 1)
 
 
@@ -2193,9 +2212,9 @@ def probe_failure_star_width_supplies_its_width(text):
     quantity."""
     return text.replace('mdk::log3dsPrintf("objects: stream mesh of %d corners = %d KB "',
                         'mdk::log3dsPrintf("objects: stream mesh of %*d corners = %d KB "',
-                        1).replace("""                                      attempted,
+                        1).replace("""                                      (int)attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /""",
-                        """                                      24, attempted,
+                        """                                      24, (int)attempted,
                                       (int)((int64_t)attempted * 5 * sizeof(float) /""",
                         1)
 
@@ -2277,14 +2296,20 @@ def arm_failure_unit_less_line_hides_the_capacity_past_the_last_conversion(text)
 
 
 def arm_failure_space_flag_conversion_names_a_byte_unit(text):
-    """A conversion this gate cannot read, in a slot its own text calls a byte figure
-    (review-22 F1). `FIGURE_FMT` does not match the space flag -- stated limit, same file --
+    """A space-flagged conversion in a slot its own text calls a byte figure
+    (review-22 F1). `FIGURE_FMT` did not match the space flag -- its own stated limit --
     so `("objects: refused % d bytes", objectCorners)` looked like a format that asks for
     nothing and was skipped by EVERY figure rule, the byte-unit backstop included. But
     `vsnprintf` DOES print the space flag (log_3ds.cpp:79), so the line really does report a
     9 KB refusal of an 80 KB request with `PASS Main3dsFlow`. Batch 113 reddened it and batch
-    114 crashed on it; the gate cannot read the conversion, so it must refuse the line rather
-    than wave it through."""
+    114 crashed on it.
+
+    Batch 117 put the space flag in the flag class, so this is now refused because a byte
+    slot prints a corner count -- on its merits, the way every other wrong-figure line is
+    refused -- and not because the gate cannot parse it. The accept side of the same flag
+    is a probe (`a refusal line prints the refused capacity's byte figure with a space
+    flag`): the flag class is pinned from both sides, and the unreadable-percent refusal is
+    what is left behind it for a conversion neither C nor this gate has."""
     return text.replace("""                                            1024));
                 }""",
                         """                                            1024));
@@ -3075,6 +3100,23 @@ PROBES = [
                     mdk::log3dsPrintf("objects: refused %d corners at frame %lu",
                                       attempted, (unsigned long)frame);
                 }""", 1)),
+    # Review-22 F1's ACCEPT side, and the pin for the space flag in FIGURE_FMT's flag
+    # class. The gate now reads `% d` the way `vsnprintf` and the compiler do, so a
+    # space-flagged conversion is adjudicated on its merits: this line puts the refused
+    # capacity's OWN byte figure in the slot its text calls a byte figure, so it agrees
+    # with `renderer_c3d.cpp` and must stay green. Take the flag out of the class and this
+    # probe is the thing that says so -- the format then carries a percent the gate cannot
+    # read and the skip refuses it. That is why the flag class needs both halves pinned and
+    # not only the arm (review-22 F3's shape, one rule on).
+    ("a refusal line prints the refused capacity's byte figure with a space flag "
+     "(review-22 F1: the flag is read, not refused)",
+     lambda s: s.replace("""                                      (int)((int64_t)attempted * 5 * sizeof(float) /
+                                            1024));
+""", """                                      (int)((int64_t)attempted * 5 * sizeof(float) /
+                                            1024));
+                    mdk::log3dsPrintf("objects: refused % d bytes",
+                                      (int)((int64_t)attempted * 5 * sizeof(float)));
+""", 1)),
     ("a refusal line puts a name in front of the refused capacity (review-18 F3)",
      lambda s: s.replace("""                                            1024));
                 }""", """                                            1024));

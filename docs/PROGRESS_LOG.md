@@ -21456,3 +21456,131 @@ searched (one unrelated hit on `script_vm.cpp` float comments, no prior finding 
 grammar or the space flag); no `obsidian_*` or `cognee_*` tools are exposed in this session, which is
 recorded as a session gap and not as a lookup that happened (AGENTS.md P9). `ralph/builder.md` was
 dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose.
+
+## Batch 117 (iteration 3) — the compiler owns printf arguments now: `mdk::log3dsPrintf` carries
+## `format (printf, 1, 2)`, the 23 mismatches it found are fixed and measured codegen-neutral, and
+## the gate's conversion grammar matches the library's for the first time
+
+**What this batch is, and what it is not.** Review-22 was closed 7/7 by batch 116, and its open
+question 2 named the way out of a gate family that is now fifteen rounds deep: "Whether that regex
+should be replaced by a real conversion parser (or `log3dsPrintf` given a `format(printf,…)`
+attribute so the compiler, not the gate, catches argument defects) is a scope decision above this
+batch." Batch 116 agreed in its own NEXT and named it as the next batch, with the cost stated: a
+shipped-header change that owes P8 emulator evidence. This is that batch. **No review finding was
+open** — review-22 carried no Critical and no High and all seven of its findings were closed by
+batch 116 — so nothing here is a remediation and nothing is a rebuttal. This is the one item the
+review asked to be escalated, taken up on its merits.
+
+**The shipped change, and what it found on its first compile.** `mdk::log3dsPrintf` is a variadic
+logger with **72 call sites in three files**, and the only thing in the tree that ever checked its
+arguments was check 17 of `main_3ds_flow_test.sh`, which reads **one** of them. Adding
+
+```c++
+void log3dsPrintf(const char* format, ...) __attribute__((format(printf, 1, 2)));
+```
+
+to `mdk_3ds/src/platform/log_3ds.h` made the compiler look at the other seventy-one, and the first
+build it looked at reported **23 `-Wformat=` diagnostics at 8 call sites**: `%d` handed an
+`int32_t`, which on `arm-none-eabi` is `long int` (`view.batchCount()`, `arena->triangleCount()`,
+`runtime->objectCount()`, `objectCorners`/`objectDraws`/`objectPeakCorners`/`objectPeakDraws`,
+`streamCapacityLogged`, `attempted`, and the ten `Census` counters in `logCensus`). Every one is a
+32-bit value printed by a 32-bit conversion, so the printed bytes were always right and the fix is a
+`(int)` cast at the call site — the file's own existing convention, which `(unsigned long)frame`
+with `%lu` and `(int)mix->voices().size()` already follow. The casts were chosen over `%ld` because
+the format strings are what the gate adjudicates and there was no reason to churn them too.
+
+**Measured, not asserted: the change moves no instruction.** `mdk.elf` is
+`b1997a5dca83639acf603d518abe8e62` before the change and `b1997a5dca83639acf603d518abe8e62` after
+it — byte-identical, the same identity that has stood since batch 107. `int32_t` and `int` are the
+same width on this target, so the cast is a no-op the optimiser never sees, and the emulator's guest
+log prints the same lines it printed before (`view: 135 batches, 2544 vertices, 870 triangles`,
+`objects: stream mesh 4096 corners = 80 KB linear (480 corners, 11 draws this frame)`). The frame
+pair is therefore a byte-identical re-capture (`6769a13731983d65cee9df02da6cff37`), stated and not
+hidden, exactly as it has been since batch 113.
+
+**Why the attribute is a gate and not a notice.** A warning that nothing fails on is not a check, and
+`tools/check.sh` is owner-protected and cannot be wired here. So the enforcement went into
+`tests/scripts/arm_compile_check.sh`, which already compiles with the Makefile's flags and already
+refuses to report a pass it did not measure. It now has a **format pass** with both halves:
+
+* **73 shipped sources** (`mdk_3ds/src` + `mdk_core/src`, every `.cpp`) compiled with
+  `-Wall -Wextra -Werror=format -fsyntax-only`. Today all 73 are clean, so any future mismatch — at
+  any call site, not the one the gate reads — stops the script by file and line.
+* **Four mutants that MUST be refused**, each a class this family was written about: a dropped
+  argument (review-18 F4), a `%*d` with no value (review-19 F2), a pointer where `%d` asks for an
+  int, and the class the tree itself was carrying 23 times (`%d` with an `int32_t`). Plus **one
+  honest call that must compile**, because a refuse-only net is the review-10 F6 failure.
+
+Both halves were mutated to prove they bite. Deleting the attribute from the header: all four
+mutants compile and the script prints `FAIL arm_compile_check: mut_dropped_argument COMPILED. … the
+__attribute__((format (printf, 1, 2))) is gone from platform/log_3ds.h` for each of the four.
+Reintroducing one `(int)` cast removal in `main_3ds.cpp`: `FAIL arm_compile_check:
+mdk_3ds/src/main_3ds.cpp is not format-clean` naming `1028:48`. Neither half can rot away silently.
+
+**What the compiler cannot see, and the gate keeps.** `("objects: refused %d bytes",
+objectCorners)` is format-clean and is review-11 F1's 9 KB refusal of an 80 KB request. Which
+quantity a figure *claims to be* is not a type question, so check 17 keeps every one of its rules,
+including the arity rule — and the arity rule stays for two reasons beyond that: a compiler warning
+fails nothing, and the slot loop below it indexes `vals` through the conversions, so without the
+guard a dropped argument is a Python `IndexError` that kills the suite instead of one named FAIL
+(review-15 F4's class). The stale comment claiming the rule mattered "because `log3dsPrintf` carries
+no printf format attribute" is corrected in place rather than left to rot.
+
+**The grammar gap closes.** Review-22 F1's real residue was that `FIGURE_FMT`'s flag class lacked
+the space flag, so `% d` was invisible to the gate. Batch 116 refused such a line because it could
+not read it; that is fail-closed but it is the gate disagreeing with `vsnprintf`. The flag class is
+now `[-+ #0]*`, which is what the library matches, so a space-flagged conversion is adjudicated on
+its merits: `("objects: refused % d bytes", objectCorners)` is red because a slot its own text calls
+a byte figure prints a corner count. Pinned from **both** sides, because a rule pinned on one side
+is review-22 F3: the existing arm refuses it, and a new probe accepts
+`("objects: refused % d bytes", (int)((int64_t)attempted * 5 * sizeof(float)))` — the refused
+capacity's own byte figure. Reverting the flag class turns that probe red by name (`23 of 24`),
+which is the pin. The unreadable-percent refusal stays behind it as the backstop for a conversion
+neither C nor this gate has (`%'`, `%1$`). Four arms and one probe anchor on the refusal line's
+argument text and were repointed at `(int)attempted` in the same commit; the suite catches a stale
+anchor by refusing to score the arm, which is how the fourth one was not missed.
+
+**Boundary stated, not hidden.** The mutant compile pass does **not** gain `-Werror=format`, and
+that is a boundary rather than an oversight: measured on this tree, **29 of the 133 arms and probes
+are format defects on purpose** — `probe20`'s dangling argument is review-21 F1's shape, which the
+compiler now catches too. An arm's job is to be a text the gate must refuse, not a line the shipped
+build would accept. And the Makefile is unchanged: `-Werror=format` in the shipped build is an
+AGENTS R10 build-setting change with its own evidence bar (clean-build commands, disassembly,
+hardware checks), and the gate achieves the same refusal without touching the flags the console
+binary is built with. If a later batch wants the build itself to refuse, that is the R10 batch, and
+this one has now measured that the tree is clean for it.
+
+**Emulator evidence (AGENTS P8 — `mdk_3ds/**` changed, so it is owed).** `mdk_3ds/tools/emurun.sh
+--secs 45 --min-frames 60`, **exit 0**: display `:99`; emulator `mandarine.AppImage md5 0d2adab6`
+(the pinned r1.2.1, not the r1.3.0 that cannot boot); `frames: reached 2520 by the deadline (47
+frame lines logged)`, and after the reap the guest log ends at **frame 2580, 48 frame lines**;
+`gl: forced llvmpipe`; `stereo: render_3d=0 factor_3d=0 (0 = mono)`; `audio: SDL_AUDIODRIVER=dummy`;
+`dspfirm.cdc` present; lane `/tmp/mdk-emurun.186547`. Guest log lines that matter, unchanged in
+content from batch 116's run: `backend: PICA200 Citro3D`, `flow: screen=4 level=7`,
+`scripts: runtime ready (seed 160991576, option 1)`, `arena: DANT_1 (19 arenas)`,
+`view: 135 batches, 2544 vertices, 870 triangles`,
+`frame 2520 … health=100 … objects=7 obj=570c/13d peak=570c/13d`, and the audio ledger advancing
+every 60 frames (`audio: frame=420 secs=7.146 submitted=353 done=350 …`). Emulator-green is not
+hardware-pass: no original 3DS is in hand, and Old-3DS performance readiness stays open.
+
+**Gates, verbatim.** `make -C tests/scripts` → `All cases match the oracle.` with
+`PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes green)` and
+`PASS C3dFrame (31 checks, 49 arms adjudicated red, 2 probes green)`. `bash tools/check.sh` →
+`CHECK: ALL GATES PASSED`, with `PASS audit_c_with_classes 0 violations`, `PASS gates_vfp 0
+blockers`, `PASS audit_arm11_math contract clean`, `PASS audit_r11_idiv no candidates`,
+`PASS gates_core_parity`, `SKIP gates_smdh (no built .cia)`, `PASS gates_frames`,
+`BATCH INTEGRITY: PASS`. `make -C mdk_3ds` builds, `mdk.elf` `b1997a5dca83639acf603d518abe8e62`,
+zero warnings. `sh tests/scripts/arm_compile_check.sh all` → `PASS ArmCompile (133 mutant(s), 0
+diagnostics, 73 shipped source(s) format-clean, 4 format mutant(s) refused,
+/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` searched for prior findings on a printf format
+attribute and on compiler-side log checking: the hits are the current `log_3ds.cpp`, an
+`audio_3ds.cpp` log call and `ndsp_sink_test.sh`'s format-string arms — no prior finding predating
+this one. No `obsidian_*` or `cognee_*` tools are exposed in this session, which is recorded as a
+session gap and not as a lookup that happened (AGENTS P9); the disk fallback was one targeted
+non-recursive `grep` of `/mnt/nas/Vaults/port-docs` for `format(printf`/`-Werror=format`, which
+returned a single unrelated line — `10-projects/nolf/findings/…:183` "pre-existing, documented
+`-Werror=format-overflow` failures remain" — a different project, and evidence only that the house
+already treats format diagnostics as something to fail on. `ralph/builder.md` was dirty at dispatch,
+is `PROTECTED`, and is left uncommitted on purpose.

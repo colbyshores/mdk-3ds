@@ -31,6 +31,21 @@
 # could actually commit. It does NOT prove the arm reddens a check — that is the
 # gate's own job, and the gate adjudicates arms on the host.
 #
+# THE FORMAT PASS, AND WHY IT LIVES HERE (batch 117, review-22 open question 2).
+# `mdk::log3dsPrintf` now carries `__attribute__((format (printf, 1, 2)))`, so the
+# compiler checks the argument count and type of every one of the tree's log calls —
+# 72 of them in three files — where check 17 of `main_3ds_flow_test.sh` adjudicates ONE
+# refusal line. A warning nobody fails on is a notice, not a gate, so this script is
+# where the diagnostic becomes one: it compiles every shipped source with
+# `-Werror=format` and refuses the run if any of them is not format-clean, and it keeps
+# four mutants that MUST be refused (a dropped argument, a star width with no value, a
+# pointer where an int is asked, an `int32_t` printed by `%d`) plus one honest call that
+# must compile. Take the attribute out of `platform/log_3ds.h` and the four mutants
+# compile, which fails this script by name — the attribute cannot rot away silently.
+# What the compiler CANNOT see, and check 17 still owns, is WHICH quantity a figure
+# claims to be: `("objects: refused %d bytes", objectCorners)` is format-clean and is
+# review-11 F1's 9 KB refusal of an 80 KB request.
+#
 # usage: sh arm_compile_check.sh [flow|c3d|all]     (default: all)
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -155,16 +170,139 @@ if [ "$total" = 0 ]; then
     echo "  nothing does not get to print a pass." >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# THE FORMAT PASS. Two halves, both needed.
+#
+# (1) every shipped source compiles with -Werror=format. This is the half that makes
+#     the attribute load-bearing: the tree currently carries zero format diagnostics,
+#     so a future one — anywhere, not just on the line check 17 reads — stops a gate.
+# (2) four mutants that MUST be refused, and one honest call that must compile. Without
+#     them the pass would still print PASS if someone deleted the format attribute, and
+#     a check that cannot fail at the thing it names is the defect this loop has now
+#     been reviewed for twenty-two times. The four are the classes check 17's arity rule
+#     was written for (review-18 F4's dropped argument, review-19 F2's star width) plus
+#     the class the shipped tree actually carried 23 times: `%d` handed an `int32_t`,
+#     which on this target is `long int`.
+#
+# The mutant compile pass above deliberately does NOT add -Werror=format, and that is a
+# boundary rather than an oversight: 29 of the 132 arms and probes are format defects on
+# purpose (probe20's dangling argument is review-21 F1's shape), and an arm's job is to be
+# a text the gate must refuse, not a line the shipped build would accept.
+# ---------------------------------------------------------------------------
+FMT_FLAGS="$ARCH -O2 -ffunction-sections -fdata-sections -fno-math-errno \
+          -fno-strict-aliasing $DEFINES -std=gnu++17 -fno-exceptions -fno-rtti \
+          -Wall -Wextra -Wno-unused-parameter -Werror=format -fsyntax-only"
+FMT_DIR=$TMP/format
+mkdir -p "$FMT_DIR"
+
+fmt_files=0
+fmt_bad=0
+for f in $(find "$ROOT/mdk_3ds/src" "$ROOT/mdk_core/src" -name '*.cpp' | sort); do
+    if [ "$f" = "$ROOT/mdk_3ds/src/render/renderer_c3d.cpp" ] \
+       && [ ! -f "$ROOT/mdk_3ds/build/mdk_c3d_shbin.h" ]; then
+        echo "  SKIP format sweep: renderer_c3d.cpp includes the generated"
+        echo "       mdk_3ds/build/mdk_c3d_shbin.h; make -C mdk_3ds writes it."
+        skipped="$ skipped format:renderer_c3d.cpp"
+        continue
+    fi
+    fmt_files=$((fmt_files + 1))
+    # shellcheck disable=SC2086
+    if ! "$CXX" $FMT_FLAGS $INCLUDES "$f" >"$FMT_DIR/$(basename "$f").log" 2>&1; then
+        fmt_bad=$((fmt_bad + 1))
+        echo "FAIL arm_compile_check: ${f#$ROOT/} is not format-clean"
+        sed "s/^/  /" "$FMT_DIR/$(basename "$f").log" | head -8
+    fi
+done
+
+cat > "$FMT_DIR/mut_dropped_argument.cpp" <<'MUT'
+#include "platform/log_3ds.h"
+// review-18 F4: `%d %d` with one argument. The second conversion reads whatever the
+// stack hands back and writes it into the file the test harness reads.
+void mdk_format_mutant() { mdk::log3dsPrintf("objects: refused %d %d bytes", 1); }
+MUT
+
+cat > "$FMT_DIR/mut_star_width_without_its_value.cpp" <<'MUT'
+#include "platform/log_3ds.h"
+// review-19 F2: `%*d` consumes TWO arguments, a width and then the value. One supplied
+// is undefined behaviour, and `len(convs) > len(vals)` called that balanced.
+void mdk_format_mutant() { mdk::log3dsPrintf("objects: refused %*d bytes", 1); }
+MUT
+
+cat > "$FMT_DIR/mut_pointer_where_int_is_asked.cpp" <<'MUT'
+#include "platform/log_3ds.h"
+// A pointer printed as a number: the type half, which no value test can see and which
+// is why the attribute is worth having on every call site and not on one.
+void mdk_format_mutant() { mdk::log3dsPrintf("objects: refused %d bytes", "81920"); }
+MUT
+
+cat > "$FMT_DIR/mut_int32_printed_as_int.cpp" <<'MUT'
+#include "platform/log_3ds.h"
+#include <stdint.h>
+// The class the shipped tree carried 23 times before this batch: `%d` handed an
+// `int32_t`, which on arm-none-eabi is `long int`.
+void mdk_format_mutant() {
+    const int32_t attempted = 4096;
+    mdk::log3dsPrintf("objects: refused %d bytes", attempted);
+}
+MUT
+
+cat > "$FMT_DIR/probe_honest_refusal_call.cpp" <<'MUT'
+#include "platform/log_3ds.h"
+#include <stdint.h>
+// The accept side. This is the shipped refusal line, and it must compile: a format pass
+// that refuses correct code is review-10 F6's failure, and the reason a refuse-only net
+// is never enough.
+void mdk_format_probe() {
+    const int32_t attempted = 4096;
+    mdk::log3dsPrintf("objects: stream mesh of %d corners = %d KB linear",
+                      (int)attempted,
+                      (int)((int64_t)attempted * 5 * sizeof(float) / 1024));
+}
+MUT
+
+fmt_refused=0
+fmt_uncaught=0
+for m in "$FMT_DIR"/mut_*.cpp; do
+    [ -e "$m" ] || continue
+    # shellcheck disable=SC2086
+    if "$CXX" $FMT_FLAGS $INCLUDES "$m" >"$m.log" 2>&1; then
+        fmt_uncaught=$((fmt_uncaught + 1))
+        echo "FAIL arm_compile_check: $(basename "$m" .cpp) COMPILED."
+        echo "       mdk::log3dsPrintf is not format-checked: the"
+        echo "       __attribute__((format (printf, 1, 2))) is gone from platform/log_3ds.h."
+    else
+        fmt_refused=$((fmt_refused + 1))
+    fi
+done
+
+# shellcheck disable=SC2086
+if ! "$CXX" $FMT_FLAGS $INCLUDES "$FMT_DIR/probe_honest_refusal_call.cpp" \
+      >"$FMT_DIR/probe.log" 2>&1; then
+    echo "FAIL arm_compile_check: the honest log call does not compile, so the format"
+    echo "       pass rejects code the port writes. The diagnostic:"
+    sed 's/^/  /' "$FMT_DIR/probe.log" | head -8
+    fmt_bad=$((fmt_bad + 1))
+fi
+
+echo "  format: $fmt_files shipped source(s) with -Werror=format, $fmt_refused mutant(s)"
+echo "          refused, 1 honest call accepted"
+
+if [ "$fmt_bad" != 0 ] || [ "$fmt_uncaught" != 0 ]; then
+    echo "FAIL arm_compile_check: the format pass is not clean ($fmt_bad source(s) not"
+    echo "  format-clean, $fmt_uncaught mutant(s) not refused)."
+    exit 1
+fi
 if [ "$bad" != 0 ]; then
     echo "FAIL arm_compile_check: $bad of $total mutant(s) did not compile; an arm" >&2
     echo "  that cannot build is a mutant of nothing (review-14 F3)." >&2
     exit 1
 fi
 if [ -n "$skipped" ]; then
-    echo "FAIL ArmCompile ($total mutant(s), 0 diagnostics) -- INCOMPLETE: no mutant of" >&2
-    echo "       this gate was compiled:$skipped. The SKIP line above names the missing" >&2
+    echo "FAIL ArmCompile ($total mutant(s), 0 diagnostics) -- INCOMPLETE: part of this" >&2
+    echo "       script was not compiled:$skipped. The SKIP line above names the missing" >&2
     echo "       generated file and the command that makes it. A partial run of this" >&2
     echo "       script is not a pass." >&2
     exit 1
 fi
-echo "PASS ArmCompile ($total mutant(s), 0 diagnostics, $CXX)"
+echo "PASS ArmCompile ($total mutant(s), 0 diagnostics, $fmt_files shipped source(s) format-clean, $fmt_refused format mutant(s) refused, $CXX)"

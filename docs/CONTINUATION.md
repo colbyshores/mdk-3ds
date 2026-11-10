@@ -1,13 +1,57 @@
 # Phase 2 continuation checkpoint
-Risk: medium — test-only diff, one file (`tests/scripts/main_3ds_flow_test.sh`): check 17's
-figure-less skip becomes fail-closed for a conversion the gate cannot read, one rule states its own
-reach, the shipped-source adjudication is named the way the mutant one is, and two arms plus one
-probe pin clauses that had nothing behind them. Review-22 found no Critical and no High; F1-F6 are
-fixed each with a pin that fails by name when the fix is reverted, F7 is stated as a limit with the
-reason, and two of batch 115's quoted tallies are corrected against the committed tool. No shipped
-instruction changed, so `mdk.elf` is bit-identical to batch 107's
-(`b1997a5dca83639acf603d518abe8e62`, re-measured after the edit) and the frame pair is a
+Risk: medium — a shipped change in three `mdk_3ds/**` files plus a new gate half: `mdk::log3dsPrintf`
+gains `__attribute__((format (printf, 1, 2)))`, the 23 `%d`/`int32_t` mismatches it reports are
+fixed with `(int)` casts at the call sites, and `arm_compile_check.sh` now refuses any shipped source
+that is not format-clean, with four mutants that must NOT compile and one honest call that must.
+Measured bounded rather than argued: `mdk.elf` is bit-identical to batch 107's
+(`b1997a5dca83639acf603d518abe8e62`, re-measured after the edit), the guest log lines are unchanged,
+the emulator run is exit 0 to frame 2580 on `:99` with the pinned Mandarine, and the frame pair is a
 byte-identical re-capture, stated not hidden.
+
+**Batch 117 (iteration 3) — review-22's open question 2, taken up: the compiler owns printf
+arguments now.** No review finding was open (review-22 had no Critical, no High, and batch 116 closed
+F1–F7), so this is not a remediation batch: it is the escalation the review named and batch 116
+scheduled. `mdk::log3dsPrintf` had **72 call sites in three files** and the only checker in the tree
+read **one** of them; the attribute made the compiler read the other seventy-one and the first build
+reported **23 `-Wformat=` diagnostics at 8 call sites** — `%d` handed an `int32_t`, which on
+`arm-none-eabi` is `long int` (`view.batchCount()`, `arena->triangleCount()`,
+`runtime->objectCount()`, the four `object*` counters, `streamCapacityLogged`, `attempted`, and the
+ten `Census` counters in `logCensus`). All are 32-bit values behind a 32-bit conversion, so the fix
+is the file's own convention — a `(int)` cast at the call, chosen over `%ld` because the format
+strings are what the gate adjudicates — and it is **measured** codegen-neutral: `mdk.elf` byte-for-byte
+unchanged and the emulator's log lines identical. A warning nobody fails on is not a gate, and
+`tools/check.sh` is protected, so `tests/scripts/arm_compile_check.sh` is where it bites: **73
+shipped sources** compiled with `-Wall -Wextra -Werror=format -fsyntax-only` (all clean today, so any
+future mismatch anywhere stops a gate by file and line) plus **four mutants that must be refused**
+(dropped argument = review-18 F4, `%*d` with no value = review-19 F2, a pointer where `%d` asks an
+int, and the `%d`/`int32_t` class the tree itself carried) and **one honest call that must compile**.
+Both halves were mutated: delete the attribute and all four mutants compile and fail by name; remove
+one `(int)` cast and the sweep names `main_3ds.cpp:1028:48`. What the compiler cannot see — which
+quantity a figure *claims to be* — stays check 17's, arity rule included (a warning fails nothing, and
+without the guard a dropped argument is an `IndexError` that kills the suite instead of a named FAIL);
+the comment claiming the rule existed "because `log3dsPrintf` carries no printf format attribute" is
+corrected in place. The grammar gap review-22 F1 exposed is closed rather than refused: `FIGURE_FMT`'s
+flag class is `[-+ #0]*`, what `vsnprintf` matches, so `% d` is adjudicated on its merits — the
+existing arm refuses `("objects: refused % d bytes", objectCorners)` as a wrong figure, and a new
+probe accepts the same slot carrying the capacity's own byte figure; reverting the flag class turns
+that probe red by name (`23 of 24`). Four arms and one probe anchored on the refusal line's argument
+text were repointed at `(int)attempted` in the same commit. Stated boundaries: the mutant compile pass
+does not gain `-Werror=format` (measured: **29 of 133** arms and probes are format defects on purpose
+— `probe20`'s dangling argument is review-21 F1's shape), and the Makefile is untouched because
+`-Werror=format` in the shipped build is an AGENTS R10 build-setting change with its own evidence
+bar, which this batch has now made cheap by measuring the tree clean for it. Measured: `PASS
+Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes green)`, `PASS C3dFrame (31 checks, 49
+arms adjudicated red, 2 probes green)`, `PASS ArmCompile (133 mutant(s), 0 diagnostics, 73 shipped
+source(s) format-clean, 4 format mutant(s) refused, /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`,
+`make -C tests/scripts` -> `All cases match the oracle.`, `bash tools/check.sh` -> `CHECK: ALL GATES
+PASSED` (`gates_smdh SKIP`, no built `.cia`), `make -C mdk_3ds` builds with `mdk.elf`
+`b1997a5dca83639acf603d518abe8e62` and zero warnings. `mdk_3ds/**` changed, so P8 evidence is owed
+and is in the progress log: `emurun.sh --secs 45 --min-frames 60` **exit 0**, display `:99`,
+emulator `mandarine.AppImage md5 0d2adab6`, frame 2580 / 48 frame lines, `health=100`,
+`objects=7 obj=570c/13d`, mono, llvmpipe. `pi-knowledge` `mdk-sdl` searched, no prior finding
+predating this one; no `obsidian_*`/`cognee_*` tools are exposed in this session, recorded as a
+session gap and not as a lookup that happened, with one targeted vault `grep` as the disk fallback.
+`ralph/builder.md` was dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose.
 
 **Batch 116 (Iteration 23) — review-22 closed 7/7: F1–F6 fixed with a pin each, F7 stated as a
 limit; nothing rebutted.** **F1 (Medium, confirmed)**: the skip batch 115 added was keyed on the
@@ -672,6 +716,38 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 117)
+**The gate family is closed on the terms batch 116 named, and this batch paid for it.** Review-22's
+open question 2 asked whether the conversion grammar should keep being patched or whether the compiler
+should own it; batch 117 gave `mdk::log3dsPrintf` the `format (printf, 1, 2)` attribute, made the
+diagnostic a gate in `arm_compile_check.sh`, and closed the one grammar gap the reviews kept finding
+by putting the space flag in `FIGURE_FMT`. What the family now pins, and what it no longer needs to
+grow: the compiler owns argument **count and type** at all 72 log call sites, the gate owns which
+quantity each figure **claims to be**, and a conversion neither C nor `FIGURE_FMT` can read (`%'`,
+`%1$`) is refused by name rather than skipped. A thirteenth patch to check 17 is not planned; if a
+review finds a fourteenth thing that a reader with a profile could have found, the retirement argument
+batch 113 wrote is due and this file should say so.
+
+**Two cheap follow-ups this batch measured and deliberately did not spend.** (1) `-Werror=format` in
+`mdk_3ds/Makefile`, so the shipped build itself refuses a mismatch instead of warning: the tree is now
+measured clean for it (73/73 sources, zero diagnostics), and it is an AGENTS R10 build-setting change
+owing the toolchain-version, clean-build-command, disassembly and hardware-check evidence R10 asks
+for. (2) Teaching `tools/check.sh` to invoke `arm_compile_check.sh`, which today is a script the loop
+runs and quotes rather than one the gate runs -- `tools/check.sh` is owner-protected, so that is an
+owner edit, and it is named here so it is not lost.
+
+**The two named game items are unchanged and both are blocked on a named cause, not on effort.** (1)
+**the canvas seam** -- `mdk_render_canvas_quad` is a no-op on this backend
+(`renderer_c3d.cpp:2345`), which is what priority item 5b (the HUD) and the MVE movie presenter both
+wait on; the canvas draw has to become a record in the frame's queue so the per-eye replay draws it
+once per eye, and it is the largest unbuilt piece of "a CIA that plays a level". (2) **the collision
+batch** -- `FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn arena
+and lets `ArenaSpace::setSolid` take the oracle's current + active second, and which needs a
+doorway-crossing oracle rather than a hand-written expectation. Either one changes `mdk_3ds/**` and
+therefore owes an `emurun.sh` verdict block on `DISPLAY=:99`. The one-sided-view investigation below
+stays open and is the sharper of the two picture questions, and the R = 255 candidate set is still
+two, not five (below).
 
 ## NEXT (batch 116)
 **What is actually next, restated by batch 116.** This is the twelfth round on the same three checks,

@@ -1070,12 +1070,13 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
 static void logCensus(RendererC3D* r) {
     const Census& c = r->census;
     mdk::log3dsPrintf("census frame=%d draws=%d tris=%d behind=%d offscreen=%d onscreen=%d depthout=%d near60=%d cw=%d ccw=%d w=[%.1f,%.1f] areaset=%.4f",
-                      r->frame, (int)r->drawCount, c.triangles, c.behind,
-                      c.offscreen, c.onscreen, c.depthOut, c.near60, c.cw, c.ccw, c.minW,
+                      r->frame, (int)r->drawCount, (int)c.triangles, (int)c.behind,
+                      (int)c.offscreen, (int)c.onscreen, (int)c.depthOut, (int)c.near60,
+                      (int)c.cw, (int)c.ccw, c.minW,
                       c.maxW, c.areaSum);
     if (c.bestDraw >= 0) {
         mdk::log3dsPrintf("census nearest draw=%d first=%d w=%.1f area=%+.8f v0=(%.3f,%.3f,%.3f) v1=(%.3f,%.3f,%.3f) v2=(%.3f,%.3f,%.3f)",
-                          c.bestDraw, c.bestFirst, c.bestW, c.bestArea,
+                          (int)c.bestDraw, (int)c.bestFirst, c.bestW, c.bestArea,
                           c.bestV[0], c.bestV[1], c.bestV[2], c.bestV[3],
                           c.bestV[4], c.bestV[5], c.bestV[6], c.bestV[7],
                           c.bestV[8]);
