@@ -131,6 +131,12 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t width, int32
 
 // Create an RGBA8 texture (the enhanced look's expanded colour textures, the
 // canvas's images, the panorama).
+//
+// `rgba` IS RGBA IN MEMORY ON BOTH TARGETS, and each backend converts for its
+// own GPU. Vulkan takes the bytes as they stand (`VK_FORMAT_R8G8B8A8_UNORM`);
+// the 3DS rotates them, because the PICA's RGBA8 is a little-endian word with
+// red in the TOP byte, i.e. `[A, B, G, R]` in memory. A caller that pre-rotated
+// to suit one target would be wrong on the other.
 MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r, int32_t width, int32_t height,
                                             const uint8_t* rgba);
 

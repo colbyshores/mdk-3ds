@@ -132,7 +132,13 @@ $(BUILD)/vm_tests: $(OBJECTS_VM)
 	@echo "LINK $@"
 	@$(CXX) $(LDFLAGS) $(OBJECTS_VM) -o $@
 
--include $(OBJECTS:.o=.d) $(BUILD)/vm_tests.d
+# INCLUDE BOTH OBJECT LISTS. `vm_tests` is built from OBJECTS_VM, and its own
+# .d is only the link-time one; the per-file dependency files of OBJECTS_VM were
+# left out, so a header change did NOT rebuild a vm_tests-only object and the
+# gate reported PASS against a stale binary. It was found the hard way: a row
+# added to pica_matrix_tests.cpp, and a deliberate inversion of the byte order it
+# pins, both came back green until the .o was touched by hand.
+-include $(OBJECTS:.o=.d) $(OBJECTS_VM:.o=.d) $(BUILD)/vm_tests.d
 
 clean:
 	@rm -rf $(BUILD)

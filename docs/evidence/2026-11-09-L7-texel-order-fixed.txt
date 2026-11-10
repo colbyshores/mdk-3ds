@@ -1,0 +1,97 @@
+evidence — the RGBA8 texel byte order, on the 3DS console (batch 120).
+
+Read this WITH `2026-11-09-L7-shader-w-current.png`, which is the shipped half:
+that panel is what this backend produced for its entire history, and this one is
+what it produces now. The two are the same level, the same arena, the same frame
+number range, the same instrument, and the only thing that changed between them
+is the order of four bytes.
+
+scene:   level 7, the start arena. Guest log ended at frame 8820 (152 frame lines
+         logged), feet (0.0,4.0,0.0), eye (0.0,-4.0,4.5), yaw 90, health 100 on
+         every logged row, `objects=7 obj=570c/13d peak=570c/13d`.
+build:   this batch's tree, `DEVKITPRO=/opt/devkitpro
+         DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds`.
+         mdk.elf  md5 67fadc4179c40ee3a4e5090a2218641a   <- the code identity
+         mdk.3dsx md5 b5ee256e2f41a5ce6f421dbf5df71e21   <- the container AT CAPTURE
+         build/mdk_c3d.shbin md5 d46abb60de20b2aa0659043aeb97b9c9
+         The ELF is the identity that matters and it is reproducible: a later
+         `make -C mdk_3ds` on the same tree reproduces `67fadc41...` exactly. The
+         .3dsx is NOT bit-reproducible, because `stage_romfs` restages 69 files on
+         every build; rebuilding after this capture produced
+         `30e63f418deff6c8399bc69393f78b5b` from a byte-identical ELF. Quote the
+         ELF, not the container, when comparing runs.
+         The shbin is BYTE-IDENTICAL to batch 103's. That is deliberate and it is
+         part of the evidence: no shader, no combiner, no Tev stage and no matrix
+         changed. The only build input that moved is the CPU-side texel
+         expansion, so nothing below can be attributed to the GPU program.
+command: DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 150 --min-frames 60 \
+                   --display 99 --grep 'census|flow'
+         (emurun exit 0; dspfirm present in the lane; the capture was taken
+         inside the settle window with `DISPLAY=:99 import -window root`, because
+         emurun's own `--shot` could not write into the lane's capture dir)
+display: :99 — Xvfb :99 -screen 0 1280x1024x24, headless (AGENTS.md P7). Pinned
+         Mandarine r1.2.1 (md5 0d2adab6ad078c78e6d03e72086f2eb6), forced
+         llvmpipe, mono (render_3d=0 factor_3d=0), private lane
+         /tmp/mdk-emurun.706174.
+capture: the top panel (440,253)-(839,492) INCLUSIVE, 400x240 = 96000 px, by
+         `python3 tools/panel_crop.py crop`. sha256 of its pixels
+         9994780d2af172c793ffef00c88390355ffca2535b5296cef862243ff18f3e81
+
+WHAT WAS WRONG. The PICA's RGBA8 is a little-endian 32-bit word with RED IN THE
+TOP BYTE — `[A, B, G, R]` in memory — which is the same convention this backend
+had already been forced to discover for the clear word (`pica::clearColour`,
+pica_matrix.h, measured two runs on this same instrument). The texel expansions
+never got the memo: `expandIndices` wrote the palette's `[R, G, B]` plus a forced
+alpha of 255 straight into memory, so the hardware read its RED from the byte the
+port had pinned to 255. Every painted pixel came back with R = 255. Green and
+blue were the palette's blue and green, swapped, and the texel's ALPHA was the
+palette's red byte.
+
+WHY IT WAS NOT OBVIOUS. The alpha is the index-0 discard (`GPU_GREATER 0`), and a
+discarded texel is all four bytes zero, whose alpha is zero under ANY byte order.
+So the transparency kept working perfectly while every colour it let through was
+wrong — the symptom looked like a palette or a combiner bug, never like a discard.
+
+THE HOST-SIDE PROOF, taken before any code was changed, against the real level-7
+palette parsed out of `MDK/TRAVERSE/LEVEL7/LEVEL7.DTI` block 3 (142 distinct
+colours) and the shipped panel's 130 non-clear colours:
+
+    panel colours matching the palette under the ROTATED read:  85 / 130
+    panel colours matching the palette under a LITERAL read:     3 / 130
+
+THE MEASUREMENT, shipped panel against this batch's panel. Each of the shipped
+panel's top colours is predicted exactly by swapping its G and B back and letting
+the red be the palette's own red:
+
+    OLD (shipped)        n      ->  NEW (this batch)        n
+       (255, 0, 0)   20331   ->         (0, 0, 0)      9357
+      (255, 44, 141)  10349   ->     (223, 141, 44)    9402
+       (255, 0, 28)    7536   ->       (171, 28, 0)    7156
+       (255, 7, 95)    5340   ->       (187, 95, 7)    4925
+      (255, 1, 142)    5232   ->      (213, 142, 1)    3793
+      (255, 0, 100)    5231   ->      (255, 100, 0)    4920
+       (255, 28, 69)    4824   ->      (136, 69, 28)   4824   <- same pixel count
+      (255, 100, 190)   3544   ->    (227, 190, 100)   2697
+       (255, 12, 14)    3415   ->        (8, 14, 12)   3185
+        (255, 0, 9)     2519   ->       (123, 9, 0)    2065
+        (255, 7, 9)     2125   ->         (4, 9, 7)    2125   <- same pixel count
+      (255, 0, 124)    1851   ->      (201, 124, 0)    1504
+
+    12 / 12 of the shipped panel's top colours reappear, G/B restored.
+
+    R == 255:   shipped 96000 / 96000 px      this batch 5899 / 96000 px
+    distinct:   shipped 131 colours           this batch 147 colours
+
+The 5899 remaining R == 255 pixels are legitimate: the level palette contains
+real reds (the shipped panel could not tell a real red from the artifact, which
+is exactly why "R = 255 everywhere" read as a red wash). And 87 of this panel's
+147 distinct colours are found LITERALLY in the level-7 palette; the rest are
+arena and SYS_PAL colours, which the level's own block-3 table does not contain.
+
+WHAT THIS DOES NOT SETTLE. Mandarine is the instrument, and AGENTS.md P8 says
+emulator-green is not hardware-pass. The byte order here is the PICA's documented
+colour format and it is the same one the clear word was already measured against,
+so the two ends of the seam now agree; but the claim "the 3DS picture is correct"
+still needs a console capture, and it stays open with the rest of P6. The
+one-sided-view geometry question is a SEPARATE question and this batch does not
+claim to have answered it — it only removes colour as a confound for it.

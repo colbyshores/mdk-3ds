@@ -1,17 +1,32 @@
 # Phase 2 continuation checkpoint
-Risk: medium — review-4 remediation, and every line of it is inside one runner,
-`tests/scripts/arm_compile_check.sh`: the format pass now refuses to print `PASS` when it
-measured nothing. A manifest pins the mutant and probe names, the directory's count must match
-the manifest, and a loop that measures zero fails at the last point before the pass line; the
-partial-failure sentence is now conditional on the count it describes. No shipped instruction
-changed — `mdk.elf` is byte-identical at `b1997a5dca83639acf603d518abe8e62`, the frame pair is a
-byte-identical re-capture, and no `mdk_3ds/**` path is in the diff, so no P8 evidence is owed —
-but the diff changes **when a check reports a pass**, which is adjudication behaviour, so it is
-not classified low. Evidence: four mutations of the runner (delete the honest probe's heredoc,
-delete one of the four mutants, rename a loop's glob, add an unlisted heredoc) each now fail by
-name where the shipped script printed `PASS` with exit 0, and the unmutated run is unchanged at
-`PASS ArmCompile (133 mutant(s), 0 diagnostics, 73 shipped source(s) format-clean, 4 format
-mutant(s) refused, 1/1 honest call(s) accepted)`.
+Risk: high - changes the byte order of every RGBA8 texel the 3DS backend uploads, which is a
+data format on the shipped rendering path, and it is target-specific. It closes the
+longest-standing measured defect in the console picture: R = 255 on 96000 of 96000 panel pixels,
+because the PICA reads RGBA8 as a little-endian word with red in the TOP byte while the texel
+expansions wrote the seam's RGBA order straight through, so the forced alpha of 255 landed in
+red. Measured before (85/130 panel colours match the level-7 palette under the rotated read,
+3/130 literal) and after (12/12 of the shipped panel's top colours reappear with G/B restored
+and a real red; R = 255 falls to 5899/96000, all genuine palette reds). Pinned by a host row,
+`testTheTexelByteOrder`, negative-controlled: inverting `pica::texelBytes` fails 11 checks.
+Emulator evidence attached (emurun exit 0, 8820 frames, `:99`, Mandarine r1.2.1, shbin
+byte-identical to batch 103, so no GPU program moved). Also found and fixed on the way:
+`tests/scripts/Makefile` never included `$(OBJECTS_VM:.o=.d)`, so a header edit did not rebuild
+a `vm_tests`-only object and the gate reported PASS against a stale binary; this batch hit that
+for real, twice, before it was caught.
+
+**Batch 120 (iteration 6) - the R = 255 colour defect, closed.** The standing lead in this file
+for many batches, now resolved. It was candidate (a) of the two named here, the texel byte order;
+candidate (b), an unconfigured second Tev stage, was never involved. `pica::texelBytes` is the
+new single definition of the PICA's `[A, B, G, R]` texel layout, used by `expandIndices` and by
+`expandRgba` - the latter is no longer a row-wise `memcpy`, which is what painted every
+flat-coloured surface with its own alpha as red. The seam's own convention is unchanged and is
+now written down in `render/render.h`: `rgba` is RGBA in memory on both targets and each backend
+converts for its own GPU. The index-0 discard is unaffected and had to stay that way, so it is
+pinned: an all-zero texel has alpha 0 under ANY byte order, which is the whole reason the defect
+hid behind transparency that kept working. See
+`docs/evidence/2026-11-09-L7-texel-order-fixed.txt`. Downstream: colour is no longer a confound
+for the one-sided-view geometry question, which stays open and is NOT claimed here. The R = 255
+candidate set in this file is now empty.
 
 **Batch 119 (iteration 5) — review-4 closed 4/4 (no Critical, no High): F1 and F2 fixed and
 pinned by mutations, F3 closed as a record correction, F4 stated as owner-only.** **F1 (Medium,

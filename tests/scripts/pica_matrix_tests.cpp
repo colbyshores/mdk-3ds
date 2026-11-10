@@ -696,6 +696,70 @@ void testTheClearColourByteOrder() {
     PICA_CHECK(channelsLand);
 }
 
+void testTheTexelByteOrder() {
+    // THE SAME TRAP ONE UNIT EARLIER. `testTheClearColourByteOrder` pins the
+    // colour that FILLS the frame; this pins the colour that gets DRAWN on it.
+    // Both are the PICA's RGBA8, so both are `[A, B, G, R]` in memory — red in
+    // the top byte of the little-endian word — and the seam's RGBA-in-memory
+    // order has to be rotated before it is handed to the GPU.
+    //
+    // ASSERTED AS BYTES, ON PURPOSE. The clear row above is a word and is
+    // checked as bit fields; this one writes memory and the whole question is
+    // which byte lands at which address. Same hardware convention, opposite
+    // assertion shape — see the comment on `pica::texelBytes`.
+    uint8_t t[4] = {0, 0, 0, 0};
+    mdk::pica::texelBytes(t, 0x11u, 0x22u, 0x33u, 0x44u);
+    PICA_CHECK(t[0] == 0x44u);   // A
+    PICA_CHECK(t[1] == 0x33u);   // B
+    PICA_CHECK(t[2] == 0x22u);   // G
+    PICA_CHECK(t[3] == 0x11u);   // R
+
+    // Read it back the way the hardware does, as a little-endian word whose red
+    // is the TOP byte, and require the channels to land where the seam meant
+    // them. This is the property the shipped defect broke: it is what lets a
+    // future reader see WHY the order is not the seam's own.
+    const uint32_t word = (uint32_t)t[0] | ((uint32_t)t[1] << 8) |
+                          ((uint32_t)t[2] << 16) | ((uint32_t)t[3] << 24);
+    PICA_CHECK((word >> 24) == 0x11u);               // R
+    PICA_CHECK(((word >> 16) & 0xFFu) == 0x22u);     // G
+    PICA_CHECK(((word >> 8) & 0xFFu) == 0x33u);      // B
+    PICA_CHECK((word & 0xFFu) == 0x44u);             // A
+
+    // THE DEFECT, STATED AS THE FAILURE IT CAUSED. Writing the seam's RGBA
+    // order straight through put the forced alpha of 255 in the hardware's red
+    // channel, so EVERY painted pixel came back with R = 255: measured on the
+    // pinned instrument, 96000 of 96000 pixels of
+    // docs/evidence/2026-11-09-L7-shader-w-current.png, 131 distinct colours and
+    // not one of them with a red that was not 255. The naive order is exactly
+    // what this check forbids.
+    uint8_t naive[4] = {0x11u, 0x22u, 0x33u, 0x44u};
+    PICA_CHECK(naive[3] != t[3] || naive[0] != t[0]);
+    PICA_CHECK(!(naive[0] == t[0] && naive[1] == t[1] &&
+                 naive[2] == t[2] && naive[3] == t[3]));
+
+    // The index-0 discard survives the rotation, which is the property that made
+    // the defect invisible: an all-zero texel has alpha 0 under ANY byte order,
+    // so the discard kept working while every colour it let through was wrong.
+    uint8_t zero[4] = {9, 9, 9, 9};
+    mdk::pica::texelBytes(zero, 0u, 0u, 0u, 0u);
+    PICA_CHECK(zero[0] == 0u);   // the alpha the discard tests, still zero
+
+    // And a general sweep: no channel may collide, and the alpha must never land
+    // in red. A swap of the wrong pair, or an identity, breaks one of these.
+    bool lands = true;
+    for (uint32_t v = 0; v < 256u; v++) {
+        uint8_t s[4];
+        mdk::pica::texelBytes(s, (uint8_t)v, (uint8_t)(255u - v), (uint8_t)(v ^ 0x5Au), 0xF0u);
+        const uint32_t w = (uint32_t)s[0] | ((uint32_t)s[1] << 8) |
+                           ((uint32_t)s[2] << 16) | ((uint32_t)s[3] << 24);
+        if ((w >> 24) != v || ((w >> 16) & 0xFFu) != 255u - v ||
+            ((w >> 8) & 0xFFu) != (v ^ 0x5Au) || (w & 0xFFu) != 0xF0u) {
+            lands = false;
+        }
+    }
+    PICA_CHECK(lands);
+}
+
 } // namespace
 
 namespace test {
@@ -720,6 +784,7 @@ int runPicaMatrixTests() {
     testTheRealMatrixPutsTheNearPlaneNearest();
     testTheEyePlanFollowsTheSlider();
     testTheClearColourByteOrder();
+    testTheTexelByteOrder();
     return failures;
 }
 

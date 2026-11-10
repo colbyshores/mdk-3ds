@@ -331,6 +331,41 @@ constexpr uint32_t clearColour(uint32_t argb) {
     return ((argb & 0x00FFFFFFu) << 8) | ((argb >> 24) & 0xFFu);
 }
 
+// Write one RGBA8 texel into the four bytes the PICA reads.
+//
+// THE SAME TRAP, ONE UNIT EARLIER IN THE PIPE. `clearColour` above fixed the
+// colour that FILLS the frame; this fixes the colour that gets DRAWN on it, and
+// the two ends had been disagreeing with the hardware in opposite directions.
+//
+// The PICA's RGBA8 is a 32-bit word read little-endian with **red in the TOP
+// byte** — the identical convention `clearColour` had to match, and for the same
+// reason: it is one GPU's colour format, not two. So the four bytes at a texel's
+// address are `[A, B, G, R]`, and the seam's RGBA-in-memory order (which the
+// Vulkan backend consumes directly as `VK_FORMAT_R8G8B8A8_UNORM`, and which
+// `render.h` documents) has to be rotated before it is handed over.
+//
+// WHAT IT LOOKED LIKE WHEN IT WAS WRONG, which is the reason this is a rule and
+// not a footnote: the expansions wrote `[R, G, B, 255]`, so the hardware read
+// red from the byte the port had forced to 255. Every painted pixel on the
+// console came back with R = 255 — measured on the pinned instrument, 96000 of
+// 96000 pixels of `docs/evidence/2026-11-09-L7-shader-w-current.png`, which is
+// why the 3DS picture has read as a red wash for this backend's whole history.
+// Green and blue were the palette's blue and green, swapped, and the texel's
+// ALPHA was the palette's red byte — so the index-0 discard still appeared to
+// work, because a discarded texel is all four bytes zero and its alpha is zero
+// under any byte order. The one defect the symptom hid.
+//
+// ASSERT IT AS BYTES, NOT AS A WORD. `clearColour` returns a word and is checked
+// as bit fields; this one writes memory, and the whole point is which byte lands
+// at which address. The two are checked in opposite ways on purpose — see the
+// comment on the clear row, which is about the same trap from the other side.
+inline void texelBytes(uint8_t* dst, uint32_t r, uint32_t g, uint32_t b, uint32_t a) {
+    dst[0] = (uint8_t)a;
+    dst[1] = (uint8_t)b;
+    dst[2] = (uint8_t)g;
+    dst[3] = (uint8_t)r;
+}
+
 // The depth the PICA stores for a converted NDC z — the model of what the two
 // constants above do, kept next to them so the two cannot drift apart. The GPU
 // does this arithmetic; the backend never calls this per fragment. It IS called

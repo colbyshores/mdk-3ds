@@ -1290,6 +1290,11 @@ static int32_t acquireTextureSlot(RendererC3D* renderer) {
 // The palette's own alpha is NOT used: the C#'s shader takes the palette's
 // RGB and writes an alpha of 1.0, and the transparency comes from the
 // index-0 discard.
+//
+// THE FOUR BYTES GO IN THE PICA'S ORDER, NOT THE PALETTE'S. The palette is
+// RGBA in memory, the hardware reads `[A, B, G, R]`, and writing the palette's
+// order straight through is what pinned the console's red channel to 255 on
+// every painted pixel. See `pica::texelBytes`.
 static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t height,
                               const uint8_t* paletteRgba, int32_t paddedWidth,
                               int32_t paddedHeight) {
@@ -1314,10 +1319,8 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
                 // black-with-alpha-255, which is what the palette says.
                 continue;
             }
-            pixel[0] = paletteRgba[index * 4 + 0];
-            pixel[1] = paletteRgba[index * 4 + 1];
-            pixel[2] = paletteRgba[index * 4 + 2];
-            pixel[3] = 255;
+            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],
+                                  paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);
         }
     }
     return pixels;
@@ -1328,6 +1331,11 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
 // power-of-two dimensions of at least 8, just as it does for an index
 // texture. The draw path's UV transform maps the real rectangle into the
 // padded one.
+//
+// NOT A memcpy, AND THAT IS THE POINT. The source is the seam's RGBA-in-memory
+// order; the PICA wants `[A, B, G, R]` (`pica::texelBytes`), so every texel has
+// to be rotated on the way in. Row-wise memcpy was the first version and it is
+// what painted every flat-coloured surface with its own alpha as red.
 static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
                            int32_t paddedWidth, int32_t paddedHeight) {
     const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;
@@ -1336,10 +1344,14 @@ static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
         return nullptr;
     }
     memset(pixels, 0, texels * 4);
-    const size_t rowBytes = (size_t)width * 4;
     for (int32_t y = 0; y < height; y++) {
-        memcpy(pixels + (size_t)y * (size_t)paddedWidth * 4,
-               source + (size_t)y * rowBytes, rowBytes);
+        const uint8_t* row = source + (size_t)y * (size_t)width * 4;
+        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;
+        for (int32_t x = 0; x < width; x++) {
+            mdk::pica::texelBytes(out + (size_t)x * 4,
+                                  row[(size_t)x * 4 + 0], row[(size_t)x * 4 + 1],
+                                  row[(size_t)x * 4 + 2], row[(size_t)x * 4 + 3]);
+        }
     }
     return pixels;
 }

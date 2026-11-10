@@ -21834,3 +21834,137 @@ happened; the disk fallback was one targeted `grep` of `/mnt/nas/Vaults/port-doc
 returned four pattern notes, of which `30-architecture/patterns/before-planning-a-measurement-
 check-the-run-reaches-it.md` (shape vs reach of an instrument) is the closest to batch 118's F1
 and was read.
+
+---
+
+## Batch 120 (iteration 6) — the R = 255 texel byte order, closed
+
+**What was implemented.** The PICA200's RGBA8 is a little-endian 32-bit word with **red in the
+top byte**, i.e. the four bytes at a texel's address are `[A, B, G, R]`. This is the same
+convention `pica::clearColour` was already forced to match for the frame's *fill* colour
+(`pica_matrix.h`, measured on this instrument: `0xFF102030` paints `#ff1020`, `0x102030FF`
+paints `#102030`). The texel expansions never got the memo. `expandIndices` wrote the palette's
+`[R, G, B]` plus a forced alpha of 255 straight into memory, so the hardware read its **red**
+from the byte the port had pinned to 255 — every painted pixel on the console came back with
+R = 255, with green and blue carrying the palette's blue and green swapped and the texel's alpha
+carrying the palette's red. `expandRgba` was a row-wise `memcpy` and did the same to every
+flat-coloured surface.
+
+The fix is one new host-testable definition, `mdk::pica::texelBytes(dst, r, g, b, a)`, written in
+the PICA's order and used by both expansions. `expandRgba` is now a per-texel rotation, not a
+`memcpy`. The seam's own convention is unchanged — `render/render.h` now says so explicitly:
+`rgba` is RGBA in memory on **both** targets, Vulkan takes it as-is as
+`VK_FORMAT_R8G8B8A8_UNORM`, the 3DS rotates it. A caller that pre-rotated to suit one target
+would be wrong on the other, which is why the conversion belongs in the backend and not in
+`surface_cache.cpp`.
+
+**Oracle / spec reference.** None, and it is important that this is said out loud: the C# oracle
+has no byte order, it runs on Vulkan/D3D where `RGBA8` means what the API says it means. This is
+`AGENTS.md` §11 P6 territory — a target-specific hardware convention, established by measurement
+on the pinned instrument and by the already-measured clear word, not ported from anything. The
+behaviour it restores is the behaviour the oracle produces on every other target: the palette's
+own red, in the red channel.
+
+**Why the defect hid.** The alpha is the index-0 discard (`C3D_AlphaTest(true, GPU_GREATER, 0)`),
+and a discarded texel is all four bytes zero, whose alpha is zero under *any* byte order. So
+transparency kept working perfectly while every colour it let through was wrong. The symptom
+therefore read as a palette or combiner bug and never as a discard, which is a large part of why
+this stayed open for so many batches.
+
+**The host-side proof, taken before any code was changed.** The level-7 palette parsed out of
+`MDK/TRAVERSE/LEVEL7/LEVEL7.DTI` block 3 (142 distinct colours) against the shipped panel's 130
+non-clear colours:
+
+    panel colours matching the palette under the ROTATED read:  85 / 130
+    panel colours matching the palette under a LITERAL read:     3 / 130
+
+That is what promoted the hypothesis from "one of two candidates" to "the answer", and it cost
+one `python3` invocation and no builds.
+
+**The measurement, after the change.** `docs/evidence/2026-11-09-L7-texel-order-fixed.txt`,
+read against the shipped `2026-11-09-L7-shader-w-current.png`. Each of the shipped panel's top
+colours is predicted exactly by swapping its G and B back and letting the red be the palette's
+own:
+
+    OLD (shipped)        n      ->  NEW (this batch)        n
+       (255, 0, 0)   20331   ->         (0, 0, 0)      9357
+      (255, 44, 141)  10349   ->     (223, 141, 44)    9402
+       (255, 0, 28)    7536   ->       (171, 28, 0)    7156
+       (255, 7, 95)    5340   ->       (187, 95, 7)    4925
+      (255, 1, 142)    5232   ->      (213, 142, 1)    3793
+      (255, 0, 100)    5231   ->      (255, 100, 0)    4920
+       (255, 28, 69)    4824   ->      (136, 69, 28)   4824
+      (255, 100, 190)   3544   ->    (227, 190, 100)   2697
+        (255, 7, 9)     2125   ->         (4, 9, 7)    2125
+
+    12 / 12 of the shipped panel's top colours reappear, G/B restored.
+    R == 255:  shipped 96000/96000 px   ->  this batch 5899/96000 px
+    distinct:  shipped 131 colours      ->  this batch 147 colours
+
+Two of those rows match to the *pixel count* (4824 and 2125), which is the strongest form the
+evidence takes: same pixels, same pixels' two channels swapped back, and a red that is now the
+palette's instead of the port's. The 5899 remaining R = 255 pixels are real palette reds — the
+shipped panel could not distinguish a real red from the artifact, which is exactly why "R = 255
+everywhere" looked like a red wash rather than a swap.
+
+**A second defect found on the way, and it is the more dangerous one.** `tests/scripts/Makefile`
+included `$(OBJECTS:.o=.d)` and `$(BUILD)/vm_tests.d` but **not** `$(OBJECTS_VM:.o=.d)`. Every
+test file that exists only for `vm_tests` therefore had no header dependencies at all: editing a
+header did not rebuild its object, and the gate reported `PASS PicaMatrix` against a binary from
+before the edit. This was not theoretical — the first negative control of this batch's own test
+came back **green with the byte order deliberately inverted**, and only `touch`ing the `.o` by
+hand produced the honest `11 check(s) FAILED`. A gate that passes against a stale object is worse
+than no gate, because it looks like evidence. Fixed by including both object lists' dep files,
+and re-verified: inverting `pica::texelBytes` now fails by itself, with no manual touch, and
+restoring it goes green again.
+
+**Gates, verbatim.**
+
+    make -C tests/scripts   ->  All cases match the oracle.   (PASS PicaMatrix)
+    bash tools/check.sh     ->  CHECK: ALL GATES PASSED
+                                audit_c_with_classes 0 violations / gates_vfp 0 blockers /
+                                audit_arm11_math contract clean / audit_r11_idiv no candidates /
+                                gates_core_parity both targets link the same core /
+                                gates_smdh SKIP (no built .cia) / gates_frames CONTRACT CLEAN /
+                                gates_batch_integrity PASS
+    make -C mdk_3ds         ->  3DSX mdk.3dsx   (DEVKITPRO=/opt/devkitpro
+                                 DEVKITARM=/opt/devkitpro/devkitARM)
+
+**Emulator evidence (AGENTS P7/P8).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 150
+--min-frames 60 --display 99 --grep 'census|flow'`, **exit 0**. Display `:99`
+(`Xvfb :99 -screen 0 1280x1024x24`, headless — never the operator's screen). Mandarine r1.2.1,
+md5 `0d2adab6ad078c78e6d03e72086f2eb6`, forced llvmpipe, mono (`render_3d=0 factor_3d=0`),
+private lane `/tmp/mdk-emurun.706174`, `dspfirm.cdc` present. Guest log ended at **frame 8820**,
+152 frame lines, `flow: screen=4 level=7`, `objects=7 obj=570c/13d peak=570c/13d`, health 100 on
+every row. Panel cropped with `tools/panel_crop.py crop` (400x240, 96000 px, pixel sha256
+`9994780d2af172c793ffef00c88390355ffca2535b5296cef862243ff18f3e81`). `mdk.elf`
+`67fadc4179c40ee3a4e5090a2218641a`, `mdk.3dsx` `b5ee256e2f41a5ce6f421dbf5df71e21`, and
+`build/mdk_c3d.shbin` `d46abb60de20b2aa0659043aeb97b9c9` — the shbin is **byte-identical to
+batch 103's**, which is part of the evidence: no shader, combiner, Tev stage or matrix moved, so
+nothing here can be attributed to the GPU program. `emurun`'s own `--shot` could not write
+(`/tmp/kilo` belongs to another user; `import` was found and used directly into
+`/tmp/kilo-b120`), so the capture was taken inside the settle window by hand rather than by the
+flag. That is recorded rather than hidden because a capture whose provenance is fuzzy is not
+evidence.
+
+**Review findings.** The newest external review (`logs/ralph-pi/run-20261109-233059/review-4.md`)
+has no Critical and no High and was already closed 4/4 at HEAD `2624f5d`, so this iteration owed a
+new batch rather than remediation, and there was nothing to fix or rebut.
+
+**Prior-solution lookup.** `pi-knowledge` KB `mdk-sdl` searched for the texture-format and
+clear-word history. Obsidian and Cognee MCP tools are **absent from this session**, so the vault
+was read directly from `/mnt/nas/Vaults/port-docs` (read-only): the PICA200 and citro3d reference
+notes list the RGBA8 format but record **no** byte order, and no prior port had written this down
+— which is the reason `pica::texelBytes` carries the measurement in its comment instead of a
+citation. Cognee was not reachable and is recorded as not consulted rather than consulted.
+
+**What is next.** Per the priority order, unchanged and still blocked on their named causes, not
+on effort: (1) the canvas seam, which priority item 5b (the HUD) and the MVE presenter both wait
+on, and which now additionally has to carry the flat/ortho marker the vault's stereo-shear note
+requires; (2) the collision batch (`FindConnections`, `CrossedArena`). The R = 255 lead is
+**closed** and should no longer be treated as open. The one-sided-view geometry question is
+separate and untouched — this batch removes colour as a confound for it and claims nothing else.
+
+**Still open, unchanged:** Old-3DS hardware verification of everything in §11 P6 (no console in
+hand; emulator-green is not hardware-pass), and the fact that Mandarine masks FCRAM exhaustion,
+edge-stretch and heap wear (P8).
