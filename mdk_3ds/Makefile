@@ -124,8 +124,22 @@ INCLUDE := -I$(CORESRC) \
 	-I$(DEVKITPRO)/libctru/include \
 	-I$(PORTLIBS)/include
 
+# -Werror=format is the shipped half of the printf contract (review-23 F1). AGENTS R10
+# forbids -ffast-math and -Ofast because they CHANGE arithmetic; this flag changes no
+# byte of codegen, it only refuses the build. `mdk::log3dsPrintf` carries
+# __attribute__((format (printf, 1, 2))) and has 72 call sites in three files, and
+# before this line the only automated reader of those arguments was a gate that
+# adjudicates ONE refusal line -- a mismatch elsewhere printed a wrong figure into the
+# file the test harness reads and built with a warning nobody had to read. Batch 117
+# measured the tree clean for this flag (73 sources, 0 diagnostics) and measured its
+# casts codegen-neutral; batch 118 makes the "it is a gate" claim TRUE by putting the
+# flag here, because a diagnostic no gate fails is a notice (review-23 F1). Do NOT
+# delete it to unblock a build: fix the call site instead.
+# tests/scripts/arm_compile_check.sh keeps the mutants that prove the attribute itself
+# has not been deleted, and it reads ARCH/DEFINES from this file but NOT this flag, on
+# purpose: 26 of the 133 mutant sources are format defects BY DESIGN (review-23 F3).
 CXXFLAGS := $(COMMONFLAGS) $(INCLUDE) -std=gnu++17 -fno-exceptions -fno-rtti \
-	-Wall -Wextra -Wno-unused-parameter
+	-Wall -Wextra -Wno-unused-parameter -Werror=format
 
 LDFLAGS := $(ARCH) -specs=3dsx.specs -Wl,-Map,$(TARGET).map \
 	-L$(DEVKITPRO)/libctru/lib -L$(PORTLIBS)/lib

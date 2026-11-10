@@ -32,18 +32,34 @@ void log3dsClose();
 //
 // The printf format attribute is load-bearing, not decoration. The tree has 72
 // call sites across three files and nothing used to check them: the gate that
-// adjudicates log arguments reads ONE refusal line in main_3ds.cpp, so a
-// dropped argument, a star width with no width argument, or an `int32_t` handed
-// to `%d` anywhere else in the tree wrote stack garbage -- or a wrong unit --
-// into the file the test harness reads, and nothing noticed. With the attribute
-// the compiler checks every call site; the call sites carry `(int)` casts where
-// the value is an `int32_t`, which on this target is `long int`, and those casts
-// are width-preserving, so no log byte and no instruction changed (measured:
-// `mdk.elf` is bit-identical with and without them). See
-// tests/scripts/arm_compile_check.sh, which compiles the shipped sources with
-// -Werror=format so the diagnostic is a gate and not a notice, and keeps mutants
-// that must NOT compile. What the compiler cannot see is WHICH quantity a figure
-// claims to be, and that stays the gate's job (check 17 of main_3ds_flow_test.sh).
+// adjudicates log arguments reads ONE refusal line in main_3ds.cpp, so a dropped
+// argument or a star width with no width argument anywhere else in the tree read
+// whatever the call happened to leave in the next slot and wrote it into the file
+// the test harness reads, and nothing noticed.
+//
+// Two things make that diagnostic a gate rather than a notice, and they are
+// different: (1) `mdk_3ds/Makefile` compiles every shipped source with
+// `-Werror=format`, so a mismatched call FAILS `make -C mdk_3ds` -- a gate this
+// loop runs -- and that is the half that enforces the tree; (2)
+// tests/scripts/arm_compile_check.sh keeps four mutants that must NOT compile and
+// one honest call that must, so the attribute cannot be deleted silently. That
+// script is a runner a batch invokes and quotes, NOT part of the loop's gate chain
+// (review-23 F1); the enforcement lives in the Makefile.
+//
+// With the attribute the compiler checks every call site; the call sites carry
+// `(int)` casts where the value is an `int32_t`, which on this target is
+// `long int`. Those 23 sites were standard-level undefined behaviour, NOT a
+// corrupted byte: `int` and `long int` are both 4 bytes and occupy the same
+// varargs slot here (`__INT32_TYPE__ long int`, `__SIZEOF_INT__ ==
+// __SIZEOF_LONG__ == 4`), so the printed bytes were always right and the cast is
+// a correctness-of-type fix, not a data-repair one (review-23 F2). The casts are
+// width-preserving, so no log byte and no instruction changed (measured:
+// `mdk.elf` is bit-identical with and without them, and bit-identical again with
+// `-Werror=format` added to the shipped build).
+//
+// What the compiler cannot see is WHICH quantity a figure claims to be, and that
+// stays the gate's job (check 17 of main_3ds_flow_test.sh): a call can be
+// format-clean and still print a corner count where the sentence says bytes.
 void log3dsPrintf(const char* format, ...) __attribute__((format(printf, 1, 2)));
 
 } // namespace mdk

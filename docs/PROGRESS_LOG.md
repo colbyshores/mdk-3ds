@@ -21503,6 +21503,13 @@ hidden, exactly as it has been since batch 113.
 `tests/scripts/arm_compile_check.sh`, which already compiles with the Makefile's flags and already
 refuses to report a pass it did not measure. It now has a **format pass** with both halves:
 
+> **Corrected by review-23 F1 (batch 118).** The paragraph above is the claim that was wrong: no
+> gate in the loop's chain (`make -C tests/scripts`, `tools/check.sh`, `make -C mdk_3ds`) invokes
+> `arm_compile_check.sh`, so moving the enforcement *there* moved it into a runner, not into a
+> gate. Batch 118 paid the R10 build-setting bar and put `-Werror=format` in `mdk_3ds/Makefile`, so
+> `make -C mdk_3ds` — which the loop does run — now fails a mismatched call site, and the claim is
+> true instead of reworded. The script keeps the mutants that prove the attribute is alive.
+
 * **73 shipped sources** (`mdk_3ds/src` + `mdk_core/src`, every `.cpp`) compiled with
   `-Wall -Wextra -Werror=format -fsyntax-only`. Today all 73 are clean, so any future mismatch — at
   any call site, not the one the gate reads — stops the script by file and line.
@@ -21541,7 +21548,7 @@ argument text and were repointed at `(int)attempted` in the same commit; the sui
 anchor by refusing to score the arm, which is how the fourth one was not missed.
 
 **Boundary stated, not hidden.** The mutant compile pass does **not** gain `-Werror=format`, and
-that is a boundary rather than an oversight: measured on this tree, **29 of the 133 arms and probes
+that is a boundary rather than an oversight: measured on this tree, **26 of the 133 arms and probes
 are format defects on purpose** — `probe20`'s dangling argument is review-21 F1's shape, which the
 compiler now catches too. An arm's job is to be a text the gate must refuse, not a line the shipped
 build would accept. And the Makefile is unchanged: `-Werror=format` in the shipped build is an
@@ -21584,3 +21591,103 @@ returned a single unrelated line — `10-projects/nolf/findings/…:183` "pre-ex
 `-Werror=format-overflow` failures remain" — a different project, and evidence only that the house
 already treats format diagnostics as something to fail on. `ralph/builder.md` was dirty at dispatch,
 is `PROTECTED`, and is left uncommitted on purpose.
+
+## Batch 118 (iteration 4) — review-3 closed 4/4: the format diagnostic became a real gate, and
+## three sentences about its own enforcement turned out to be false
+**Review:** `logs/ralph-pi/run-20261109-233059/review-3.md` (batch 117, `41c3c67b..6f36339b`).
+No Critical and no High. F1 (Medium) blocked the verdict; F2/F3/F4 (Low) are record and gate
+accuracy. **All four confirmed against the compiler and the shipped tree; none rebutted.**
+
+**F1 (Medium, confirmed) — the claim "the diagnostic is a gate and not a notice" was false, and it
+is now true instead of reworded.** The reviewer was right on the facts: `ralph-pi.sh` `run_gates`
+invokes exactly three commands (`make -C tests/scripts`, `tools/check.sh`, `make -C mdk_3ds`) and
+none of them runs `tests/scripts/arm_compile_check.sh`, so batch 117 had moved enforcement from a
+gate into a runner and called the move a gate. Its own header even documented why it is not wired
+into `make -C tests/scripts` (the host suite must build where devkitARM is absent), which made the
+contradiction structural rather than a typo. The reviewer offered (a) wire it into `tools/check.sh`
+— owner-protected, so not this batch's to edit — or (b) reword the claim. This batch took a third
+option, because (b) would have made the sentence honest by making the enforcement smaller: **put
+`-Werror=format` in `mdk_3ds/Makefile`'s `CXXFLAGS`**, so `make -C mdk_3ds` — a gate the loop
+actually runs — refuses a mismatched call site. Evidence, in the order it was measured:
+
+* `make -C mdk_3ds -n` after a clean: **73** compile commands, every one carrying `-Werror=format`.
+  The first attempt at this check reported **0** because the objects were up to date and make
+  printed nothing — an incremental build would have made this claim unmeasured, so the flag was
+  re-verified only after `make clean`.
+* A genuine clean rebuild: **0 errors**, and `mdk.elf` **bit-identical** to batch 117's
+  `b1997a5dca83639acf603d518abe8e62`. A diagnostic-only flag cannot move codegen, and that is now
+  measured rather than asserted. This is the AGENTS R10 build-setting bar: devkitARM
+  `arm-none-eabi-g++ 15.2.0`, clean build commands inspected, binary identity measured, emulator run
+  below. The Makefile comment says plainly: do NOT delete the flag to unblock a build, fix the call.
+* **The pin.** A deliberate mismatch — `void mdk_fmt_probe_bad(int32_t v) { log3dsPrintf("probe
+%d", v); }` added to `platform/log_3ds.cpp` — makes the shipped build fail with
+  `error: format '%d' expects argument of type 'int', but argument 2 has type 'int32_t' {aka 'long
+  int'} [-Werror=format=]` and `make: *** [Makefile:188: build/log_3ds.o] Error 1`. Reverted.
+* `log_3ds.h` now names the Makefile as the enforcing half and says outright that
+  `arm_compile_check.sh` is "a runner a batch invokes and quotes, NOT part of the loop's gate
+  chain". Batch 117's PROGRESS_LOG paragraph that made the false claim carries a marked correction
+  in place rather than a silent rewrite (batch 116's precedent).
+
+**F2 (Low, confirmed) — the header's justification for the 23 casts was false, and it contradicted
+this file.** `log_3ds.h` said an `int32_t` handed to `%d` "wrote stack garbage — or a wrong unit";
+line 21487 of this log says the printed bytes were always right. The compiler settles it:
+`arm-none-eabi-g++ -dM -E` gives `__INT32_TYPE__ long int`, `__SIZEOF_INT__ 4`, `__SIZEOF_LONG__ 4`
+— same width, same varargs slot, so nothing was ever corrupted. Those 23 sites were standard-level
+undefined behaviour with **no ABI-observable effect on this target**; the cast is a type-correctness
+fix, not a data repair. The header now says exactly that and keeps "reads whatever the call happened
+to leave in the next slot" for the dropped-argument and star-width shapes, where it IS true.
+
+**F3 (Low, confirmed) — "29 of the 132" was wrong twice, and getting the right answer nearly went
+wrong here too.** Re-measured with the gate's own dump and the gate's own `FMT_FLAGS`: flow **81
+files / 26 format-defective**, c3d **52 / 0** → **26 of 133**, matching the reviewer exactly and
+contradicting the script comment, `CONTINUATION.md` and this log. The near-miss is worth recording:
+the first attempt grepped the compiler output for `-Wformat` and reported **0**, because GCC prints
+the tag as `[-Werror=format=]`, not `-Wformat`. A tally is only as good as the grep that produced
+it. Corrected in all three places.
+
+**F4 (Low, confirmed) — the script printed an acceptance it had not measured.** A failing honest
+probe incremented `fmt_bad`, the SOURCE counter, while the summary printed `1 honest call accepted`
+unconditionally; the run then blamed "N source(s) not format-clean" for a sweep that was clean. The
+probe half is now a glob over `probe_*.cpp` with its own `ok/total` counters, its own FAIL line, and
+a PASS line that carries the measured `1/1`. Demonstrated by mutation: deleting one `(int)` cast
+from the probe prints `0/1 honest call(s) accepted`, fails with "No honest call was accepted; the
+source sweep above was clean and is NOT what failed here", exit 1; restored, `1/1` and PASS.
+
+**Found while measuring, recorded not fixed.** (a) A clean build emits **3 pre-existing
+`-Wreorder` warnings** in `mdk_core/src/audio/sound_mixer.{h,cpp}`. Batch 117's "zero warnings" was
+an incremental-build artifact — cached objects print nothing. It is outside this batch's slice, and
+it is why `-Werror` blanket is not what was added: `-Werror=format` is, and it is clean. (b) The
+attribute-liveness mutants still live only in the un-wired runner, so **deleting the attribute is
+caught by a runner a batch must invoke, not by a gate**; closing that half needs an owner edit to
+`tools/check.sh`, named as an owner decision and not taken here. (c) The mutant compile pass still
+does not gain `-Werror=format`, because 26 of the 133 mutant sources are format defects BY DESIGN;
+the Makefile comment now says the runner must not inherit the flag.
+
+**Gate results, verbatim.** `PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes
+green)`, `PASS C3dFrame (31 checks, 49 arms adjudicated red, 2 probes green)`, `PASS NdspSink (18
+checks, 33 arms adjudicated red, 9 probes green)`, `PASS FrontendSolidPin (10 checks, 10 arms
+adjudicated red)`, `PASS PanelGeom (10 checks, 7 arms adjudicated red, 2 probes green)`, `PASS
+EmurunHarness (68 checks: config placement + mount ownership)`, `PASS SpritesRefusal (2 arms
+adjudicated)`, `PASS UbsanDecode (...)`, `PASS ArmCompile (133 mutant(s), 0 diagnostics, 73 shipped
+source(s) format-clean, 4 format mutant(s) refused, 1/1 honest call(s) accepted,
+/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`, `make -C tests/scripts` -> `All cases match the
+oracle.`, `bash tools/check.sh` -> `CHECK: ALL GATES PASSED` (`gates_vfp 0 blockers`,
+`audit_c_with_classes 0 violations`, `gates_frames PASS`, `gates_batch_integrity PASS`,
+`gates_smdh SKIP`, no built `.cia`), `make -C mdk_3ds` builds with `mdk.elf`
+`b1997a5dca83639acf603d518abe8e62`, 0 errors, 3 pre-existing `-Wreorder` warnings.
+
+**P8 emulator evidence** (`mdk_3ds/**` changed): `emurun.sh --secs 45 --min-frames 60` **exit 0**,
+display `:99`, emulator `mandarine.AppImage md5 0d2adab6` (pinned r1.2.1), build `mdk.3dsx`,
+**frame 2580** after the reap (48 frame lines), `health=100`, `objects=7 obj=570c/13d
+peak=570c/13d`, `voices=0 plays=1`, mono (`render_3d=0 factor_3d=0`), `llvmpipe` forced. The guest
+log lines are identical to batch 117's, which is what a diagnostic-only flag must produce. The frame
+pair `docs/frames/2026-11-10-printf-gate-enforced.png` is a **byte-identical re-capture** (png md5
+`6769a137…`, equal to every frame in the tree) and is stated, not hidden: no pixel could move.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` searched; top hits were `log_3ds.cpp/.h` and
+`renderer_c3d.cpp`, no prior finding on gate enforcement. Note the KB's `log_3ds.h` chunk is
+**stale** — it still shows the pre-batch-117 declaration with no format attribute — so the
+repository, not the KB, was the authority. No `obsidian_*` or `cognee_*` tools are exposed in this
+session, recorded as a session gap and not as a lookup that happened (AGENTS.md P9); one narrow
+vault grep for `Werror=format|arm_compile_check` returned only an unrelated `nolf` note.
+`ralph/builder.md` was dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose.

@@ -31,17 +31,22 @@
 # could actually commit. It does NOT prove the arm reddens a check — that is the
 # gate's own job, and the gate adjudicates arms on the host.
 #
-# THE FORMAT PASS, AND WHY IT LIVES HERE (batch 117, review-22 open question 2).
-# `mdk::log3dsPrintf` now carries `__attribute__((format (printf, 1, 2)))`, so the
-# compiler checks the argument count and type of every one of the tree's log calls —
-# 72 of them in three files — where check 17 of `main_3ds_flow_test.sh` adjudicates ONE
-# refusal line. A warning nobody fails on is a notice, not a gate, so this script is
-# where the diagnostic becomes one: it compiles every shipped source with
-# `-Werror=format` and refuses the run if any of them is not format-clean, and it keeps
-# four mutants that MUST be refused (a dropped argument, a star width with no value, a
-# pointer where an int is asked, an `int32_t` printed by `%d`) plus one honest call that
-# must compile. Take the attribute out of `platform/log_3ds.h` and the four mutants
-# compile, which fails this script by name — the attribute cannot rot away silently.
+# THE FORMAT PASS, AND WHAT HALF OF THE ENFORCEMENT IT IS (batch 117; corrected by
+# review-23 F1 in batch 118). `mdk::log3dsPrintf` carries
+# `__attribute__((format (printf, 1, 2)))`, so the compiler checks the argument count and
+# type of every one of the tree's log calls -- 72 of them in three files -- where check 17
+# of `main_3ds_flow_test.sh` adjudicates ONE refusal line. Batch 117 said this script is
+# "where the diagnostic becomes a gate", and that was false: no command in the loop's gate
+# chain runs this file, so enforcement put here lived in a runner, not a gate. It now lives
+# in `mdk_3ds/Makefile`, which adds `-Werror=format` to `CXXFLAGS`, so `make -C mdk_3ds` --
+# which the loop DOES run -- fails a mismatched call site. The two halves are different and
+# both are needed: the Makefile enforces the tree, and THIS script proves the attribute is
+# still alive, by keeping four mutants that MUST be refused (a dropped argument, a star
+# width with no value, a pointer where an int is asked, an `int32_t` printed by `%d`) plus
+# honest calls that must compile. Take the attribute out of `platform/log_3ds.h` and the
+# four mutants compile, which fails this script by name -- the attribute cannot rot away
+# silently. Closing that last gap (a deleted attribute caught by a GATE, not a runner) needs
+# this script wired into owner-protected `tools/check.sh`, which is an owner decision.
 # What the compiler CANNOT see, and check 17 still owns, is WHICH quantity a figure
 # claims to be: `("objects: refused %d bytes", objectCorners)` is format-clean and is
 # review-11 F1's 9 KB refusal of an 80 KB request.
@@ -186,9 +191,12 @@ fi
 #     which on this target is `long int`.
 #
 # The mutant compile pass above deliberately does NOT add -Werror=format, and that is a
-# boundary rather than an oversight: 29 of the 132 arms and probes are format defects on
-# purpose (probe20's dangling argument is review-21 F1's shape), and an arm's job is to be
-# a text the gate must refuse, not a line the shipped build would accept.
+# boundary rather than an oversight: 26 of the 133 mutant sources are format defects on
+# purpose (measured: 26 in the flow gate, 0 in the c3d gate; `probe20`'s dangling
+# argument is review-21 F1's shape), and an arm's job is to be a text the gate must
+# refuse, not a line the shipped build would accept. The shipped build carries
+# -Werror=format itself (mdk_3ds/Makefile), and that is the half that enforces the tree;
+# this pass is the half that proves the attribute is still alive.
 # ---------------------------------------------------------------------------
 FMT_FLAGS="$ARCH -O2 -ffunction-sections -fdata-sections -fno-math-errno \
           -fno-strict-aliasing $DEFINES -std=gnu++17 -fno-exceptions -fno-rtti \
@@ -276,21 +284,49 @@ for m in "$FMT_DIR"/mut_*.cpp; do
     fi
 done
 
-# shellcheck disable=SC2086
-if ! "$CXX" $FMT_FLAGS $INCLUDES "$FMT_DIR/probe_honest_refusal_call.cpp" \
-      >"$FMT_DIR/probe.log" 2>&1; then
-    echo "FAIL arm_compile_check: the honest log call does not compile, so the format"
-    echo "       pass rejects code the port writes. The diagnostic:"
-    sed 's/^/  /' "$FMT_DIR/probe.log" | head -8
-    fmt_bad=$((fmt_bad + 1))
-fi
+# The accept side is counted, never asserted. Review-23 F4: this used to be a single
+# hard-coded call whose failure incremented the SOURCE counter, so a run that accepted
+# zero honest calls still printed "1 honest call accepted" and then blamed a source file
+# that was clean. A script whose whole contract is that it refuses to report a pass it did
+# not measure must not print an acceptance it did not measure. Every probe_*.cpp is
+# compiled, counted, and reported as `ok/total`.
+fmt_probes=0
+fmt_probe_ok=0
+fmt_probe_bad=0
+for p in "$FMT_DIR"/probe_*.cpp; do
+    [ -e "$p" ] || continue
+    fmt_probes=$((fmt_probes + 1))
+    # shellcheck disable=SC2086
+    if "$CXX" $FMT_FLAGS $INCLUDES "$p" >"$p.log" 2>&1; then
+        fmt_probe_ok=$((fmt_probe_ok + 1))
+    else
+        fmt_probe_bad=$((fmt_probe_bad + 1))
+        echo "FAIL arm_compile_check: $(basename "$p" .cpp) is an honest log call that does NOT"
+        echo "       compile, so the format pass rejects code the port writes (review-10 F6's"
+        echo "       failure: a net that refuses correct code is worse than no net). Diagnostic:"
+        sed 's/^/  /' "$p.log" | head -8
+    fi
+done
 
+# Each half of the format pass reports its own count, so a failure names the half that
+# failed instead of blaming the source sweep for a probe (review-23 F4).
 echo "  format: $fmt_files shipped source(s) with -Werror=format, $fmt_refused mutant(s)"
-echo "          refused, 1 honest call accepted"
+echo "          refused, $fmt_probe_ok/$fmt_probes honest call(s) accepted"
 
-if [ "$fmt_bad" != 0 ] || [ "$fmt_uncaught" != 0 ]; then
-    echo "FAIL arm_compile_check: the format pass is not clean ($fmt_bad source(s) not"
-    echo "  format-clean, $fmt_uncaught mutant(s) not refused)."
+if [ "$fmt_bad" != 0 ]; then
+    echo "FAIL arm_compile_check: the format pass is not clean -- $fmt_bad shipped source(s)"
+    echo "  printed a format diagnostic (named above). The attribute is live; a call site is wrong."
+    exit 1
+fi
+if [ "$fmt_uncaught" != 0 ]; then
+    echo "FAIL arm_compile_check: $fmt_uncaught format mutant(s) COMPILED -- the attribute is"
+    echo "  gone or weakened, so nothing checks the tree's 72 log call sites."
+    exit 1
+fi
+if [ "$fmt_probe_bad" != 0 ]; then
+    echo "FAIL arm_compile_check: $fmt_probe_bad of $fmt_probes honest log call(s) were refused"
+    echo "  by the format pass. No honest call was accepted; the source sweep above was clean"
+    echo "  and is NOT what failed here."
     exit 1
 fi
 if [ "$bad" != 0 ]; then
@@ -305,4 +341,4 @@ if [ -n "$skipped" ]; then
     echo "       script is not a pass." >&2
     exit 1
 fi
-echo "PASS ArmCompile ($total mutant(s), 0 diagnostics, $fmt_files shipped source(s) format-clean, $fmt_refused format mutant(s) refused, $CXX)"
+echo "PASS ArmCompile ($total mutant(s), 0 diagnostics, $fmt_files shipped source(s) format-clean, $fmt_refused format mutant(s) refused, $fmt_probe_ok/$fmt_probes honest call(s) accepted, $CXX)"

@@ -1,12 +1,49 @@
 # Phase 2 continuation checkpoint
-Risk: medium — a shipped change in three `mdk_3ds/**` files plus a new gate half: `mdk::log3dsPrintf`
-gains `__attribute__((format (printf, 1, 2)))`, the 23 `%d`/`int32_t` mismatches it reports are
-fixed with `(int)` casts at the call sites, and `arm_compile_check.sh` now refuses any shipped source
-that is not format-clean, with four mutants that must NOT compile and one honest call that must.
-Measured bounded rather than argued: `mdk.elf` is bit-identical to batch 107's
-(`b1997a5dca83639acf603d518abe8e62`, re-measured after the edit), the guest log lines are unchanged,
-the emulator run is exit 0 to frame 2580 on `:99` with the pinned Mandarine, and the frame pair is a
-byte-identical re-capture, stated not hidden.
+Risk: medium — review-3 remediation, and one line of it changes a shipped build setting: `-Werror=format`
+is added to `mdk_3ds/Makefile`'s `CXXFLAGS` so a mismatched `log3dsPrintf` call FAILS `make -C mdk_3ds`
+(a gate the loop runs) instead of warning. It is target-specific build config, so the R10 evidence bar
+was paid rather than argued: devkitARM `arm-none-eabi-g++ 15.2.0`, `make -n` after a clean shows the
+flag on all **73** compile commands, a genuine clean rebuild gives **0 errors** and `mdk.elf`
+**bit-identical** at `b1997a5dca83639acf603d518abe8e62`, a deliberate `%d`/`int32_t` call makes the
+shipped build fail with `Error 1` and is then reverted, the emulator is exit 0 to frame 2580 on `:99`
+with the pinned Mandarine, and the frame pair is a byte-identical re-capture, stated not hidden. The
+rest of the diff is a header comment, a shell script's counter accounting, and record corrections.
+
+**Batch 118 (iteration 4) — review-3 closed 4/4 (no Critical, no High): F1–F4 all fixed, none
+rebutted, and the fix to F1 made the claim true instead of shrinking it.** **F1 (Medium, confirmed)**:
+batch 117 said the printf diagnostic "is a gate and not a notice" while nothing in the loop's gate
+chain ran the script it had put the enforcement in — `run_gates` invokes exactly three commands and
+`arm_compile_check.sh` is not one of them, and that script's own header explained why it is not wired
+into `make -C tests/scripts`, so the contradiction was structural. The reviewer offered wiring it
+into owner-protected `tools/check.sh` or rewording the claim; this batch took neither and instead put
+`-Werror=format` in the shipped `CXXFLAGS`, so the gate the loop already runs is the thing that
+refuses a mismatch, and the header now names the Makefile as the enforcing half and says outright
+that the script is "a runner a batch invokes and quotes, NOT part of the loop's gate chain". The
+first `-n` check reported 0 compile commands because the objects were cached — an incremental build
+would have made this claim unmeasured, so it was re-verified only after `make clean`. **F2 (Low,
+confirmed)**: the header justified the 23 casts by saying `%d` with an `int32_t` "wrote stack garbage
+— or a wrong unit", which is false on this target and contradicted this log's own line 21487;
+`-dM -E` gives `__INT32_TYPE__ long int` with `__SIZEOF_INT__ == __SIZEOF_LONG__ == 4`, so the
+printed bytes were always right and the 23 were standard-level UB with no ABI-observable effect.
+**F3 (Low, confirmed)**: "29 of the 132" was wrong on both numbers — re-measured **26 of 133** (flow
+26, c3d 0) — and the re-measurement nearly produced a wrong 0, because GCC prints the tag as
+`[-Werror=format=]` and a grep for `-Wformat` matches none of it. **F4 (Low, confirmed)**: a failing
+honest probe incremented the SOURCE counter while the summary printed `1 honest call accepted`
+unconditionally and then blamed a clean sweep; the probe half is now a counted glob reporting
+`ok/total` with its own FAIL line, shown by mutation (`0/1`, exit 1, "the source sweep above was
+clean and is NOT what failed here"). Recorded not fixed: a clean build carries **3 pre-existing
+`-Wreorder` warnings** in `sound_mixer`, so batch 117's "zero warnings" was a cached-objects
+artifact; and deleting the format *attribute* is still caught only by the un-wired runner, which
+needs an owner edit to `tools/check.sh` to close. Measured: `PASS Main3dsFlow (20 checks, 56 arms
+adjudicated red, 24 probes green)`, `PASS C3dFrame (31 checks, 49 arms adjudicated red, 2 probes
+green)`, `PASS ArmCompile (133 mutant(s), 0 diagnostics, 73 shipped source(s) format-clean, 4 format
+mutant(s) refused, 1/1 honest call(s) accepted, …)`, `make -C tests/scripts` -> `All cases match the
+oracle.`, `bash tools/check.sh` -> `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`),
+`make -C mdk_3ds` builds `mdk.elf` `b1997a5dca83639acf603d518abe8e62` with 0 errors. `pi-knowledge`
+`mdk-sdl` searched — its `log_3ds.h` chunk is stale (still the pre-batch-117 declaration), so the
+repository was the authority; no `obsidian_*`/`cognee_*` tools are exposed in this session, recorded
+as a session gap and not as a lookup that happened. `ralph/builder.md` was dirty at dispatch, is
+`PROTECTED`, and is left uncommitted on purpose.
 
 **Batch 117 (iteration 3) — review-22's open question 2, taken up: the compiler owns printf
 arguments now.** No review finding was open (review-22 had no Critical, no High, and batch 116 closed
@@ -36,10 +73,12 @@ existing arm refuses `("objects: refused % d bytes", objectCorners)` as a wrong 
 probe accepts the same slot carrying the capacity's own byte figure; reverting the flag class turns
 that probe red by name (`23 of 24`). Four arms and one probe anchored on the refusal line's argument
 text were repointed at `(int)attempted` in the same commit. Stated boundaries: the mutant compile pass
-does not gain `-Werror=format` (measured: **29 of 133** arms and probes are format defects on purpose
-— `probe20`'s dangling argument is review-21 F1's shape), and the Makefile is untouched because
+does not gain `-Werror=format` (measured: **26 of 133** arms and probes are format defects on
+purpose — corrected by review-23 F3, which printed `29`; `probe20`'s dangling argument is
+review-21 F1's shape), and the Makefile is untouched because
 `-Werror=format` in the shipped build is an AGENTS R10 build-setting change with its own evidence
-bar, which this batch has now made cheap by measuring the tree clean for it. Measured: `PASS
+bar, which this batch has now made cheap by measuring the tree clean for it — and batch 118 paid
+that bar and put the flag in the Makefile. Measured: `PASS
 Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes green)`, `PASS C3dFrame (31 checks, 49
 arms adjudicated red, 2 probes green)`, `PASS ArmCompile (133 mutant(s), 0 diagnostics, 73 shipped
 source(s) format-clean, 4 format mutant(s) refused, /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`,
