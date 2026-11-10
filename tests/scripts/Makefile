@@ -143,8 +143,14 @@ $(BUILD)/vm_tests: $(OBJECTS_VM)
 # half had no mechanism here -- a source edit always rebuilt its own object, even
 # under the old line, measured the same way. The negative control that came back
 # green was the header inversion, which is what this line fixes.) No second
-# staleness path is known: the `notdir` object names are unique across both lists
-# (53 and 65 objects, 0 duplicate basenames), so no VPATH collision exists today.
+# staleness path is known: the `notdir` object names do not collide. Measured from
+# `make -p`: SOURCES holds 52 paths and SOURCES_VM 64, and every `notdir` basename
+# maps to exactly ONE source path -- 51 basenames are shared between the two lists
+# and resolve to the same file, and 0 basenames map to two different sources (65
+# distinct basenames over 65 distinct paths). That is the property a VPATH collision
+# would break, and it holds; batch 121's "53 and 65 objects, 0 duplicate basenames"
+# was wrong on both counts and stated a uniqueness no one can check, because 51
+# basenames ARE duplicated across the two lists (review-7 F3).
 -include $(OBJECTS:.o=.d) $(OBJECTS_VM:.o=.d) $(BUILD)/vm_tests.d
 
 clean:

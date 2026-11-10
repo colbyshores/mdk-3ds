@@ -1,18 +1,30 @@
 # Phase 2 continuation checkpoint
-Risk: medium - touches behaviour-adjacent test infrastructure and a shipped header's comment, but
-moves no shipped instruction. It closes review-6 4/4 (no Critical, no High): the R = 255 texel fix
-is now pinned at the two call sites that had the defect, not only at the helper, which is what the
-reviewer's mutation showed was missing (both expansions restored to the pre-batch code left every
-gate green). Four adjudicated checks and four bound arms are added to `c3d_frame_test.sh`, taking
-it to 35 checks / 53 arms / 4 probes, and the reviewer's combined revert is now refused with all
-four named (exit 1). Two of the four pin the ALPHA, which no byte-order pin can see: the index
-path must force an opaque alpha (`shaders/palette.hlsl:70` returns `.rgb, 1.0`) and the RGBA path
-must not. Measured codegen-neutral: after forcing the header's two dependents to recompile,
-`mdk.elf` is md5 67fadc4179c40ee3a4e5090a2218641a and the shbin d46abb60de20b2aa0659043aeb97b9c9,
-both byte-identical to batch 120. Emulator evidence attached (emurun exit 0, frame 2580, `:99`,
-Mandarine r1.2.1 md5 0d2adab6). Two record corrections ride along, both measured: a false
-prior-art claim (the vault DID record the byte order, at `GX-to-PICA200/22-textures.md:112`, and
-perfect_dark shipped the same fix) and a Makefile comment whose stated repro had no mechanism.
+Risk: medium - test-infrastructure only: it widens what `c3d_frame_test.sh` can refuse, and a gate
+that can be routed around is a pass generator, so the change is behaviour-adjacent even though no
+shipped byte moves. It closes review-7 6/6 (no Critical, no High). The batch-121 pin named two
+functions; review-7 showed a THIRD texel filler wired into the sink reproduces the shipped
+R = 255 defect with all 35 checks green. The pin now sits on the SINK and on the WHOLE FILE: every
+`C3D_TexLoadImage` data argument must resolve to a producer that fills through `pica::texelBytes`,
+and every function that mallocs a `paddedWidth*paddedHeight*4` buffer must rotate through the
+helper. Two more checks pin the argument PROVENANCE ORDER (swapping the palette's red and blue
+indices was invisible to every batch-121 check) and the RGBA alpha is now the source's own fourth
+byte rather than "not 255". Measured on the reviewer's own mutants: 39 checks / 59 arms / 6
+probes, up from 35/53/4, and all five of its mutants now exit 1 with the check named. No
+`mdk_3ds/**` path is in this batch, so no P8 emulator evidence is owed and none is claimed.
+
+**Batch 122 (iteration 8) - review-7 closed 6/6.** F1, F2 and F3 (Medium) fixed; F4, F5 and F6
+(Low) fixed, none rebutted. F1's recommended remediation was taken in a stronger form than
+proposed: pinning the sink to the two NAMES would have refused a legal third expansion, so the
+sink is pinned to the HELPER (the producer must fill texels through `pica::texelBytes`) and a
+probe holds the legal third-expansion spelling open, which is the half that keeps the gate from
+being routed around (review-16 R2). F5 also fixed a blind spot the reviewer did not name:
+`code_lines` drops any line starting with `*`, so a bare `*dst = x;` write was invisible to the
+bypass detector; the scan now runs over `blank_comments`. F3's measurement was false as written
+and is corrected in the Makefile, in `docs/CONTINUATION.md` and in batch 121's log entry (marked
+as a correction, not rewritten); what actually holds is that 0 basenames map to two distinct
+source paths. F6 cannot be fixed in place - `gates_batch_integrity` refuses any edit to a
+historical sidecar - so the corrected count rides forward in this pair. Full narrative:
+`docs/PROGRESS_LOG.md` "Batch 122".
 
 **Batch 121 (iteration 7) - review-6 closed 4/4.** F1 fixed with a pin at each site plus two
 probes holding the legal spellings open; F2 fixed by correcting the record in place and moving the
@@ -21,8 +33,10 @@ to a second witness; F3 confirmed but its recommended remediation is forbidden -
 `gates_batch_integrity` refuses any batch that edits a historical sidecar (measured), so the
 required "why this picture did not move" paragraph is carried forward in this batch's pair
 instead; F4 confirmed and the comment now names only the mechanism that reproduces (a HEADER
-edit), with the reviewer's residual VPATH-collision scenario closed by measurement (0 duplicate
-basenames across 53 + 65 objects). Full narrative: `docs/PROGRESS_LOG.md` "Batch 121". Two
+edit), with the reviewer's residual VPATH-collision scenario closed by measurement - a claim
+batch 122 corrected: the counts were 52 and 64, 51 basenames are shared between the lists, and
+what holds is that no basename maps to two distinct paths. Full narrative:
+`docs/PROGRESS_LOG.md` "Batch 121". Two
 review-6 open questions are left stated and unfixed on purpose: the index-0 discard is argued
 from construction rather than measured (it needs a keyed texture over a non-black clear, which
 the pinned scene has no), and `expandRgba`'s per-texel loop versus the old row `memcpy` is cold
@@ -814,6 +828,41 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 122)
+**The texel gate is closed on the sink and the whole file, not on two names, and the gate family
+should stop growing here.** Review-7 had no Critical and no High and all six findings are closed.
+What the family now pins: the helper's byte layout (host), the two expansions' bodies, the
+argument provenance order, both alphas, every texel-filling function in the file, and the one
+place the PICA receives the bytes. A seventh texel check needs a finding that these six cannot
+reach, and review-7's five mutants are all inside them now.
+
+**Two things in this area stay stated rather than fixed, and neither is a defect.** (1) The
+index-0 discard's survival is argued from construction plus the helper's host row and is NOT
+directly measured - measuring it needs a keyed texture over a non-black clear colour, which the
+pinned scene does not contain. (2) RGBA8 tiling on real hardware (review-7's open question 1) is
+UNRESOLVED and cannot be resolved from this host: the vault block this file cites says Morton,
+MDK writes linear per-texel, and the coherence measurement that clears it was taken in Mandarine,
+which is explicitly not hardware evidence. It is a hardware capture or a Mandarine GPU-decode
+read, not a gate.
+
+**Owner-only items unchanged:** the dirty `ralph/builder.md` (PROTECTED, invisible to a gate that
+reads committed ranges), whether `mdk_3ds/Makefile` joins `PROTECTED`, `tools/check.sh` being
+protected so `arm_compile_check.sh` stays a quoted runner rather than a gate, and the fact that a
+historical `docs/frames/*.txt` sidecar cannot be amended by any batch, so a sidecar error can
+only be carried forward.
+
+**The two named game items are unchanged and both are blocked on a named cause, not on effort.**
+(1) **the canvas seam** - `mdk_render_canvas_quad` is a no-op on this backend, which is what
+priority item 5b (the HUD) and the MVE movie presenter both wait on; the canvas draw has to
+become a record in the frame's queue so the per-eye replay draws it once per eye, and it is the
+largest unbuilt piece of "a CIA that plays a level". (2) **the collision batch** -
+`FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn arena and lets
+`ArenaSpace::setSolid` take the oracle's current + active second, and which needs a
+doorway-crossing oracle rather than a hand-written expectation. Either one changes
+`mdk_3ds/**` and therefore owes an `emurun.sh` verdict block on `DISPLAY=:99`, recorded in the
+full shape review-4 F3 named (invocation, display, emulator md5, `guest log :` path, frames,
+exit code).
 
 ## NEXT (batch 121)
 **The texel path is now pinned where the defect was, and the gate family is closed again on the

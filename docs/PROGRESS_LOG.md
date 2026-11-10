@@ -22053,7 +22053,12 @@ the `.cpp` half of the comment had no mechanism, as the reviewer said. The comme
 only the reproduced mechanism, says which half of the old sentence was a misattribution, and
 closes the reviewer's residual failure scenario by measurement rather than by assertion: the
 `notdir` object names are unique across both source lists (53 and 65 objects, 0 duplicate
-basenames), so there is no VPATH collision to leave live.
+basenames), so there is no VPATH collision to leave live. [Corrected by batch 122, review-7 F3:
+that measurement does not reproduce. `make -p` expands SOURCES to 52 paths and SOURCES_VM to 64,
+and 51 basenames appear in BOTH lists, so "0 duplicate basenames across both lists" was false as
+written. The property that does hold, and that is the one a VPATH collision would break, is that
+every `notdir` basename maps to exactly one source path: 0 basenames map to two different files
+(65 distinct basenames over 65 distinct paths). The Makefile comment now says that, measured.]
 
 **Gates, verbatim.**
 
@@ -22116,3 +22121,136 @@ non-black clear colour, which the pinned scene does not contain), and its open q
 `expandRgba` is now a per-texel loop where it was a row `memcpy` — cold by §2's criteria and
 unmeasured in both states, so no finding, but the delta is unmeasured if eviction thrash ever
 lands on RGBA surfaces.
+
+---
+
+## Batch 122 (iteration 8) — review-7 closed 6/6 (no Critical, no High): the texel pin moves from
+## two names to the sink and the whole file
+
+**The finding that set the shape.** Review-7 (DeepSeek V4.1 Flash TH, `family=deepseek` against
+this builder's `family=qwen`, independence proved in the review itself) had no Critical and no
+High, and its verdict was INCOMPLETE on three Mediums. The one that mattered was F1: batch 121's
+pin resolved `expandIndices` and `expandRgba` **by name** and read only those two bodies. The
+reviewer appended a valid `expandIndicesFast` containing exactly the pre-batch writes, pointed
+`makeTexture` at it, and got `PASS C3dFrame (35 checks, 53 arms adjudicated red, 4 probes green)`
+with `exit=0` — the shipped R = 255 defect, reproduced green, because a name pin does not cover a
+function that has not been written yet. Reproduced here before changing anything, on a copy of the
+tree in `/tmp/rev7`: the same mutant now exits 1 and names two checks.
+
+**F1 (Medium, confirmed) — fixed, and in a stronger form than recommended.** The reviewer proposed
+"every `C3D_TexLoadImage` site's data argument must be the return value of
+`expandIndices`/`expandRgba`". Taken literally that pins two NAMES again and refuses a legal third
+expansion, which is the review-16 R2 failure mode (a gate that rejects a shape the port may write
+gets routed around). What ships instead is two clauses:
+
+* `every-texel-filler-rotates-through-the-helper` — a **whole-file** rule. A texel filler is
+  defined by what it allocates (any function whose body mallocs a `paddedWidth*paddedHeight*4`
+  buffer), not by its name, so the set is measured: today it is exactly the two expansions, and
+  renaming both reddens the check instead of emptying it silently. An empty set is a failure.
+* `texel-sink-is-fed-by-a-helper-writer` — every `C3D_TexLoadImage` data argument must resolve,
+  directly or through the assignments to that local in the enclosing function, to producer
+  functions in this file that fill texels through `pica::texelBytes`. An argument that resolves to
+  no producer (`texture.source.data()`) is refused as loudly as one that resolves to a bypassing
+  filler.
+
+One arm per clause, as asked: the reviewer's own third-filler mutant (bound to the filler rule),
+and a sink handed the unrotated source directly, which is the only mutation that isolates the
+sink clause from the filler clause. Two probes hold the legal spellings open: a third expansion
+that rotates through the helper and takes the sink stays green, and so does handing the expansion
+to the sink INLINE rather than through a local. The second one caught a false positive in this
+batch's own first version, which resolved only `pixels = name(...)` and would have refused
+`C3D_TexLoadImage(&tex, expandIndices(...), ...)` — the same data flow in a tidier spelling, and
+exactly the review-16 R2 shape that gets a gate routed around. It now reads every call written in
+the argument, and still refuses a member call (`texture.source.data()`) and pointer arithmetic into
+a buffer whose producer it cannot see: fail closed on what it cannot read. This is the half that
+keeps the gate refusing the defect and not a name.
+
+**F2 (Medium, confirmed) — fixed by pinning argument provenance order.** The batch-121 checks
+asked whether the helper was called and what the alpha was; neither question reads *which source
+byte each colour argument names*. `texelBytes(pixel, palette[... + 2], palette[... + 1],
+palette[... + 0], 255u)` is the shipped defect with the helper intact, and the reviewer measured
+all four texel checks green over it on both sites. Two new checks,
+`index-texel-channels-are-in-source-order` and `rgba-texel-channels-are-in-source-order`, extract
+the trailing byte offset of each colour argument and require `[0, 1, 2]`. Both of the reviewer's
+swap mutants now exit 1 naming exactly its check. The existing hoisted-`src` probe keeps the
+ascending `src[0..3]` spelling green, so the rule reads provenance rather than a spelling.
+
+**F4 (Low, confirmed) — fixed.** `rgba-texel-alpha-is-the-sources` refused only the literal
+`255`/`0xFF`, so `..., row[(size_t)x*4+2], 0u)` walked through and made every RGBA texel
+invisible behind the alpha test — the mirror image of the defect the check exists to prevent. It
+now requires the alpha argument to be the source's own fourth byte (trailing offset 3), and a new
+arm forces `0u` and is refused.
+
+**F5 (Low, confirmed) — fixed, and it exposed a blind spot the review did not name.** The bypass
+detector matched only `\w[ ... ] =`, so `((uint8_t*)pixel)[3] = paletteRgba[index*4+3];` was
+invisible and the alpha check went on printing `255u` because it reads the *argument* while
+memory held something else. The detector now refuses a subscript on a name, a subscript on a cast,
+a bare dereference, and the bulk copies. Fixing it surfaced a second hole: the scan used
+`code_lines`, which drops any line whose first character is `*` because in this file that is a
+block-comment continuation — so a genuine `*dst = x;` write could never have been seen by it at
+all. The scan now runs over `blank_comments`, the comment-aware blanker, so the dereference
+spelling is actually read. One arm (the cast write) is bound to `index-texels-are-rotated-for-the-pica`.
+
+**F3 (Medium, confirmed) — the measurement was false and is corrected in three places.**
+`make -p` expands `SOURCES` to **52** paths and `SOURCES_VM` to **64**, not 53 and 65, and **51**
+basenames appear in *both* lists, so "0 duplicate basenames across both lists" was untrue as
+written. The property that actually holds, and the one a VPATH collision would break, is that
+every `notdir` basename maps to exactly one source path: **0** basenames map to two distinct
+files (65 distinct basenames over 65 distinct paths). Corrected in `tests/scripts/Makefile`, in
+this file's batch-121 paragraph, and in batch 121's own log entry — marked as a correction with
+the original claim left visible, not rewritten.
+
+**F6 (Low, confirmed) — right, and unfixable in place for the second time.** The batch-121
+sidecar says "byte-identical to the 129 captures before it"; the measured number is 128.
+`gates_batch_integrity` refuses any batch that modifies a historical frame or measurement
+(`staged batch modifies a historical frame or measurement`, and the same rule in
+`validate_range`), and that gate is owner-protected, so the corrected count rides forward in this
+pair's sidecar. This pair is the 130th file with md5 `6769a13731983d65cee9df02da6cff37`.
+
+**Gates, verbatim.**
+
+    make -C tests/scripts   ->  All cases match the oracle.        (exit 0)
+        PASS C3dFrame (39 checks, 59 arms adjudicated red, 6 probes green)
+        PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes green)
+        PASS PicaMatrix / PASS AudioSinkSeam / PASS EmurunHarness (68 checks)
+    bash tools/check.sh     ->  CHECK: ALL GATES PASSED            (exit 0)
+        PASS audit_c_with_classes 0 violations; PASS gates_vfp 0 blockers;
+        PASS audit_arm11_math contract clean; PASS audit_r11_idiv no candidates;
+        PASS gates_core_parity; SKIP gates_smdh (no built .cia);
+        PASS gates_frames (L3_f1.bmp sha=58615fc85d02e009); PASS gates_batch_integrity
+    make -C mdk_3ds         ->  3DSX mdk.3dsx                      (exit 0)
+        mdk.elf md5 67fadc4179c40ee3a4e5090a2218641a
+        build/mdk_c3d.shbin md5 d46abb60de20b2aa0659043aeb97b9c9
+    tests/scripts/arm_compile_check.sh c3d
+        -> PASS ArmCompile (66 mutant(s), 0 diagnostics, 73 shipped source(s)
+           format-clean, 4 format mutant(s) refused, 1/1 honest call(s) accepted)
+
+Codegen neutrality is measured, not asserted: no `mdk_3ds/**` or `mdk_core/**` path is in this
+diff, and the built `mdk.elf` and `mdk_c3d.shbin` are byte-identical to batch 121's and batch
+120's. Because no `mdk_3ds/**` path changed, **no P8 emulator evidence is owed and none is
+claimed** — the standing rule is that a batch changing the 3DS tree carries an `emurun.sh` verdict
+block, and this batch does not change it. `arm_compile_check.sh` is quoted rather than claimed as
+a gate: `tools/check.sh` is owner-protected and does not invoke it, so every one of the 66 mutants
+extracted from this gate (59 arms + 6 probes + the parent) was compiled here with the cross
+compiler to prove none is a mutant of nothing.
+
+**Prior-solution lookup.** `pi-knowledge` KB `mdk-sdl` searched for the texel sink and for this
+gate's pin idiom; its `c3d_frame_test.sh` chunk predates this batch's edit, so the repository was
+the authority for the harness. No `obsidian_*`/`cognee_*` tools are exposed in this session —
+recorded as a session gap, not as a lookup that happened — so the vault was read directly,
+read-only and narrowly: `GX-to-PICA200/22-textures.md` around the cited lines, which confirms
+review-7's open question 1 rather than closing it (the RGBA8 table row describes a 4×4/64 B
+"AR-pairs then GB-pairs" tile and the block below it assigns a Morton `texel_index`, while MDK
+writes linear per-texel `[A,B,G,R]`). Cognee was not reachable and is recorded as not consulted.
+`ralph/builder.md` was dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose; this
+batch staged its paths explicitly rather than with `git add -A`.
+
+**What is next.** Unchanged and still blocked on their named causes, not on effort: (1) the canvas
+seam, which priority item 5b (the HUD) and the MVE presenter both wait on; (2) the collision batch
+(`FindConnections`, `CrossedArena`). One item this batch leaves open and states rather than fixes,
+because it cannot be resolved from this host: review-7 open question 1, whether RGBA8 is Morton-
+tiled on real hardware. Mandarine's coherence measurement clears the shipped linear write in the
+emulator only, and emulator-green is explicitly not hardware evidence (P8). It needs a hardware
+capture, Mandarine's `GPU_RGBA8` decode path, or a ruling on whether `tex3ds` swizzles 32-bit
+formats. The gate family itself is declared closed at six texel checks: a seventh needs a defect
+these six cannot reach, and review-7's five mutants are all inside them now.

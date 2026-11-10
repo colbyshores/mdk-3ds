@@ -113,6 +113,15 @@ EMIT_DRAW = r"C3D_DrawArrays\s*\(|C3D_DrawElements\s*\("
 # (review-4 F2).
 RESET = r"queue\.(?:reset|clear)\s*\("
 
+# A function definition, whatever it returns. `fn_body_span` above resolves ONE
+# named function; review-7 F1 needs EVERY function in the file, because the rule
+# it asks for is a whole-file rule ("any function that fills texel memory must
+# rotate through the helper") and a rule that only sees the two functions this
+# file happens to name is a name pin, not a rule.
+FN_DEF = re.compile(r"(?m)^(?:(?:static|inline|constexpr|explicit)[ \t]+)*"
+                    r"[A-Za-z_][A-Za-z0-9_:*<>&, \t]*?[ \t]+"
+                    r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*\([^;{]*\)[ \t]*(?:const[ \t]*)?\{")
+
 
 def code_lines(text):
     """(index, text) for lines that are code. Comments are dropped, because this
@@ -1138,15 +1147,32 @@ def adjudicate(text, quiet=False):
         return sp, body, parens
 
     def texel_bypasses(body):
-        """Statements in a body that write texel memory without the helper."""
+        """Statements in a body that write texel memory without the helper.
+
+        Review-7 F5: this used to look only for the `name[i] = ...` shape, so a
+        post-write through a cast -- `((uint8_t*)pixel)[3] = paletteRgba[index*4+3];`,
+        the palette's own alpha restored -- kept all four checks green while memory
+        held something else, and the alpha check went on printing `255u` because it
+        reads the ARGUMENT. The rule is "no direct texel write", so every spelling of
+        a write is refused: a subscript on a name, a subscript on a cast, a bare
+        dereference, and the bulk copies.
+
+        The scan runs over `blank_comments(body)` rather than `code_lines` on purpose.
+        `code_lines` drops any line whose first character is `*`, because in this file
+        that is a block-comment continuation -- which silently makes a genuine
+        `*dst = ...;` write invisible to it. `blank_comments` is the comment-aware
+        blanker, so the dereference spelling is actually seen here."""
         if body is None:
             return ["(the expansion is absent)"]
         hits = []
-        for _, line in code_lines(body):
-            s = line.strip()
+        for line in blank_comments(body).splitlines():
+            if not line.strip():
+                continue
             if re.search(r"\w[ \t]*\[[^\]]*\][ \t]*=[ \t]*[^=]", line) or \
+               re.search(r"\)[ \t]*\[[^\]]*\][ \t]*=[ \t]*[^=]", line) or \
+               re.search(r"^[ \t]*\*[^=;]*=[ \t]*[^=]", line) or \
                re.search(r"\b(?:memcpy|memmove)[ \t]*\(", line):
-                hits.append(s)
+                hits.append(line.strip())
         return hits
 
     def alpha_of(text, paren):
@@ -1156,10 +1182,104 @@ def adjudicate(text, quiet=False):
             return None
         return args[4]
 
+    def args_of(text, paren):
+        """The five arguments of a `texelBytes` call, or []."""
+        args = call_args_at(text, paren) if paren is not None else None
+        return args if args and len(args) == 5 else []
+
+    def byte_index(arg):
+        """The byte offset a source expression reads: `row[(size_t)x * 4 + 2]` -> 2,
+        `src[3]` -> 3, and None for a constant such as `255u` or `0u`.
+
+        Review-7 F2: the defect class being pinned is a wrong CHANNEL ORDER, and its
+        cheapest alternate spelling was `texelBytes(pixel, palette[... + 2],
+        palette[... + 1], palette[... + 0], 255u)` -- every batch-121 check stayed
+        green over it, because they asked whether the helper was called and what the
+        alpha was, never which byte each colour argument read."""
+        if not arg:
+            return None
+        m = re.search(r"(\d+)[ \t]*\]$", arg.strip())
+        return int(m.group(1)) if m else None
+
+    def fn_spans(text):
+        """[(name, (start, end))] for every function definition in the file.
+
+        Review-7 F1 asked for a WHOLE-FILE rule, and a whole-file rule needs every
+        function, not the two this file happens to have named."""
+        out = []
+        for m in FN_DEF.finditer(text):
+            sp = block_span_from(text, m.end() - 1)
+            if sp:
+                out.append((m.group(1), (m.start(), sp[1])))
+        return out
+
+    def helper_writers(text):
+        """Names of functions in this file that fill texel memory through the helper."""
+        return set(n for n, sp in fn_spans(text)
+                   if "pica::texelBytes" in text[sp[0]:sp[1]])
+
+    def texel_fillers(text):
+        """[(name, body)] for every function that allocates a padded RGBA8 buffer.
+
+        The class is defined by what the function ALLOCATES -- a
+        `paddedWidth * paddedHeight * 4` byte buffer is texel memory whatever the
+        function is called -- so renaming both expansions reddens the check below
+        instead of emptying it silently."""
+        out = []
+        for name, sp in fn_spans(text):
+            body = text[sp[0]:sp[1]]
+            if re.search(r"malloc[ \t]*\([^;]*\*[ \t]*4[ \t]*\)", body) and \
+               re.search(r"padded(?:Width|Height)", body):
+                out.append((name, body))
+        return out
+
+    def enclosing_fn(text, pos):
+        """The text of the function containing the absolute offset `pos`."""
+        for name, sp in fn_spans(text):
+            if sp[0] <= pos < sp[1]:
+                return text[sp[0]:sp[1]]
+        return None
+
+    def sink_calls(text):
+        """[(offset, args)] for every `C3D_TexLoadImage` call, comments excluded."""
+        out = []
+        for m in re.finditer(r"\bC3D_TexLoadImage[ \t]*\(", text):
+            ls = text.rfind("\n", 0, m.start()) + 1
+            if text[ls:m.start()].lstrip().startswith("//"):
+                continue
+            args = call_args_at(text, m.end() - 1)
+            if args:
+                out.append((m.start(), args))
+        return out
+
+    def producers_of(arg, body_text):
+        """The function names that can hand `arg` its value inside `body_text`: every
+        call written in the argument, else every `arg = name(...)`.
+
+        Calls are read wherever they sit in the argument, not only at its start, and a
+        member call (`.data()`) is not a producer: an inline
+        `C3D_TexLoadImage(&tex, expandIndices(a, b, c), ...)` and a ternary between the
+        two expansions are the same data flow as the shipped `pixels = expandIndices(...)`
+        one line earlier, and refusing them would be review-16 R2's failure -- a gate
+        that reddens a shape the port may write gets routed around. `texture.source.data()`
+        still resolves to nothing and is still refused, and so does pointer arithmetic
+        into a buffer whose producer this scan cannot see: fail closed on what it cannot
+        read."""
+        a = (arg or "").strip()
+        names = re.findall(r"(?:^|[^.\w])([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(", " " + a)
+        if names:
+            return names
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", a) and body_text:
+            return re.findall(r"\b" + re.escape(a) +
+                              r"[ \t]*=[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(", body_text)
+        return []
+
     idx_span, idx_body, idx_parens = expansion("expandIndices")
     rgba_span, rgba_body, rgba_parens = expansion("expandRgba")
     idx_bypass = texel_bypasses(idx_body)
     rgba_bypass = texel_bypasses(rgba_body)
+    idx_args = args_of(text, idx_parens[0]) if idx_parens else []
+    rgba_args = args_of(text, rgba_parens[0]) if rgba_parens else []
 
     rep.check("index-texels-are-rotated-for-the-pica",
               idx_body is not None and bool(idx_parens) and not idx_bypass,
@@ -1197,13 +1317,83 @@ def adjudicate(text, quiet=False):
               "palette's own alpha byte is not the oracle's alpha, and the alpha test is "
               "GPU_GREATER against 0, so a palette-stored 0 discards the texel)"
               % (idx_alpha or "(no 5-argument texelBytes call)"))
+    # Review-7 F4: this refused only the LITERAL 255, so `..., row[(size_t)x*4+2], 0u)`
+    # walked through and made every RGBA texel invisible -- the mirror image of the
+    # defect the check exists to prevent. It now asks for the source's own fourth byte.
     rep.check("rgba-texel-alpha-is-the-sources",
-              rgba_alpha is not None and
-              re.fullmatch(r"(?:255|0xFF)u?", rgba_alpha) is None,
+              rgba_alpha is not None and byte_index(rgba_alpha) == 3,
               "the alpha an RGBA texel hands the PICA is `%s` (the seam carries a real "
-              "alpha on this path, so a forced 255 discards the texture's own "
-              "transparency -- the index path's rule does not transfer here)"
+              "alpha on this path, so it must be the source's OWN fourth byte: a forced "
+              "255 discards the texture's transparency and a forced 0 hides every RGBA "
+              "texel -- the index path's rule does not transfer here)"
               % (rgba_alpha or "(no 5-argument texelBytes call)"))
+
+    # THE CHANNEL ORDER OF THE ARGUMENTS (review-7 F2). The batch-121 pair asked
+    # whether the helper was called and what the alpha was; neither question reads
+    # WHICH SOURCE BYTE each colour argument names, so swapping the red and blue
+    # sources printed `ok` four times and put red on the console again.
+    idx_order = [byte_index(a) for a in idx_args[1:4]]
+    rgba_order = [byte_index(a) for a in rgba_args[1:4]]
+    rep.check("index-texel-channels-are-in-source-order",
+              idx_order == [0, 1, 2],
+              "the index expansion hands texelBytes the palette bytes %s (the palette is "
+              "RGBA in memory, so the red source is byte 0 and the blue source is byte 2; "
+              "handing them over swapped is the shipped defect in a spelling that still "
+              "calls the helper)" % (idx_order or "nothing"))
+    rep.check("rgba-texel-channels-are-in-source-order",
+              rgba_order == [0, 1, 2],
+              "the rgba expansion hands texelBytes the source bytes %s (same rule on the "
+              "RGBA path: the alpha is pinned separately, because this path's alpha is the "
+              "source's fourth byte rather than a constant)" % (rgba_order or "nothing"))
+
+    # THE WHOLE FILE, NOT TWO NAMES (review-7 F1). Batch 121 pinned `expandIndices`
+    # and `expandRgba`; a NAME pin is not the property. The reviewer's
+    # `expandIndicesFast`, wired in INSTEAD of the pinned expansion and writing
+    # `out[x * 4 + 0] = palette[...]`, reproduced the shipped R = 255 defect with all
+    # 35 checks green, because nothing below looked at any other body or at the sink.
+    # So: every function that ALLOCATES a padded RGBA8 buffer must rotate through the
+    # helper, and the set is measured rather than named -- an empty set is a failure.
+    fillers = texel_fillers(text)
+    bad_fillers = ["%s (%s)" % (n, "no pica::texelBytes call" if "pica::texelBytes" not in b
+                                else "; ".join(texel_bypasses(b)))
+                   for n, b in fillers
+                   if "pica::texelBytes" not in b or texel_bypasses(b)]
+    rep.check("every-texel-filler-rotates-through-the-helper",
+              bool(fillers) and not bad_fillers,
+              "%d texel-filling function(s) in the file, %d wrong: %s (a texel filler is any "
+              "function that mallocs a paddedWidth*paddedHeight*4 buffer; the set is measured, "
+              "so renaming both expansions reddens this check instead of emptying it silently)"
+              % (len(fillers), len(bad_fillers),
+                 "; ".join(bad_fillers) if bad_fillers else "none"))
+
+    # AND THE SINK (review-7 F1). The property is "the bytes the PICA is handed were
+    # rotated", and the only place that can be enforced is where the PICA receives
+    # them. Every `C3D_TexLoadImage` data argument must resolve -- directly, or
+    # through the assignments to that local in the enclosing function -- to producer
+    # functions in this file that fill texels through the helper. A third expansion
+    # that USES the helper stays green: the gate refuses the defect, not a name
+    # (review-16 R2's rule, that a check rejecting a legal shape gets routed around).
+    sinks = sink_calls(text)
+    writers = helper_writers(text)
+    bad_sinks = []
+    for pos, sargs in sinks:
+        sarg = sargs[1] if len(sargs) > 1 else None
+        prods = producers_of(sarg, enclosing_fn(text, pos))
+        if not prods:
+            bad_sinks.append("%s resolves to no producer in this file"
+                             % (sarg or "(no data argument)"))
+        for p in prods:
+            if p not in writers:
+                bad_sinks.append("%s = %s(...) fills texels without the helper"
+                                 % (sarg, p))
+    rep.check("texel-sink-is-fed-by-a-helper-writer",
+              bool(sinks) and not bad_sinks,
+              "%d C3D_TexLoadImage site(s), %d bad: %s (the sink is where the PICA receives "
+              "the bytes, so it is the only place a texel-order pin can bite; a filler called "
+              "INSTEAD of the two named ones used to reproduce the shipped defect with every "
+              "batch-121 check green)"
+              % (len(sinks), len(bad_sinks),
+                 "; ".join(bad_sinks) if bad_sinks else "none"))
     return rep
 
 
@@ -1768,6 +1958,89 @@ ARMS = [
      lambda s: s.replace("row[(size_t)x * 4 + 2], row[(size_t)x * 4 + 3]);",
                          "row[(size_t)x * 4 + 2], 255u);", 1),
      "rgba-texel-alpha-is-the-sources"),
+    # Review-7 F4: the batch-121 alpha check refused only the LITERAL 255, so a forced
+    # `0u` -- which hides every RGBA texel behind the alpha test -- walked through it.
+    ("rgba-expansion-forces-a-transparent-alpha (review-7 F4)",
+     lambda s: s.replace("row[(size_t)x * 4 + 2], row[(size_t)x * 4 + 3]);",
+                         "row[(size_t)x * 4 + 2], 0u);", 1),
+     "rgba-texel-alpha-is-the-sources"),
+    # Review-7 F2: the cheapest alternate spelling of the channel-order defect. Each
+    # one still calls the helper and still hands over an alpha, so no batch-121 check
+    # could see it; the reviewer measured all four green on both sites.
+    ("index-expansion-swaps-the-palette-red-and-blue-sources (review-7 F2)",
+     lambda s: s.replace(
+         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],\n"
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 2],\n"
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 0], 255u);", 1),
+     "index-texel-channels-are-in-source-order"),
+    ("rgba-expansion-swaps-the-source-red-and-blue-bytes (review-7 F2)",
+     lambda s: s.replace(
+         "                                  row[(size_t)x * 4 + 0], "
+         "row[(size_t)x * 4 + 1],\n"
+         "                                  row[(size_t)x * 4 + 2], "
+         "row[(size_t)x * 4 + 3]);",
+         "                                  row[(size_t)x * 4 + 2], "
+         "row[(size_t)x * 4 + 1],\n"
+         "                                  row[(size_t)x * 4 + 0], "
+         "row[(size_t)x * 4 + 3]);", 1),
+     "rgba-texel-channels-are-in-source-order"),
+    # Review-7 F5: a write through a CAST was invisible to the batch-121 bypass
+    # detector, which looked only for `name[i] = ...`. The alpha check kept printing
+    # `255u` (it reads the argument) while memory held the palette's own alpha.
+    ("index-expansion-restores-the-palette-alpha-through-a-cast (review-7 F5)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            ((uint8_t*)pixel)[3] = paletteRgba[index * 4 + 3];", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-7 F1, first clause: a THIRD texel filler, written instead of the pinned
+    # two. This is the reviewer's own mutant, quoted from the pre-batch file: a new
+    # `expandIndicesFast` that writes the palette's own order and a rewired call site.
+    # It reproduces the shipped R = 255 defect and left all 35 checks green.
+    ("a third texel filler writes the palette order and the sink is rewired to it "
+     "(review-7 F1)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesFast(const uint8_t* indices, int32_t width,\n"
+         "                                  int32_t height, const uint8_t* paletteRgba,\n"
+         "                                  int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            pixel[0] = paletteRgba[index * 4 + 0];\n"
+         "            pixel[1] = paletteRgba[index * 4 + 1];\n"
+         "            pixel[2] = paletteRgba[index * 4 + 2];\n"
+         "            pixel[3] = 255;\n"
+         "        }\n"
+         "    }\n"
+         "    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesFast(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-filler-rotates-through-the-helper"),
+    # Review-7 F1, second clause: the SINK itself. The expansion is skipped entirely
+    # and the seam's unrotated source is handed to the PICA -- the shipped defect
+    # reached from the other direction, and the one mutation that isolates the sink
+    # from the filler rule (no new filler exists, so only the sink can refuse it).
+    ("the sink is handed the unrotated source directly (review-7 F1)",
+     lambda s: s.replace("C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);",
+                         "C3D_TexLoadImage(&texture.tex, texture.source.data(),\n"
+                         "                       GPU_TEXFACE_2D, 0);", 1),
+     "texel-sink-is-fed-by-a-helper-writer"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -1808,6 +2081,55 @@ PROBES = [
      lambda s: s.replace("paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);",
                          "paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 0xFFu);",
                          1)),
+    # The sink rule reads DATA FLOW, not a spelling. Handing the expansion inline -- no
+    # intermediate local at all -- is the same program, and a check that refused it would
+    # be routed around the first time someone tidied the temporary away.
+    ("the sink is handed the expansion inline rather than through a local (review-7 F1: "
+    "the pin is on the producer, not on the temporary)",
+     lambda s: s.replace("    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);",
+                         "    C3D_TexLoadImage(&texture.tex,\n"
+                         "                       texture.indexed\n"
+                         "                           ? expandIndices(texture.source.data(), "
+                         "texture.realWidth, texture.realHeight,\n"
+                         "                             texture.palette.data(), "
+                         "texture.paddedWidth, texture.paddedHeight)\n"
+                         "                           : expandRgba(texture.source.data(), "
+                         "texture.realWidth, texture.realHeight,\n"
+                         "                                texture.paddedWidth, "
+                         "texture.paddedHeight),\n"
+                         "                       GPU_TEXFACE_2D, 0);", 1)),
+    # The other half of the same rule: a third expansion that rotates through the
+    # helper and is wired into the sink is a shape the port may write -- an RGBA4 or a
+    # HUD path would be exactly this -- and a gate that reddened it would be routed
+    # around, which is the failure review-16 R2 named.
+    ("a third expansion that rotates through the helper and takes the sink is accepted "
+     "(review-7 F1: the pin is on the helper and the sink, not on two names)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesFast(const uint8_t* indices, int32_t width,\n"
+         "                                  int32_t height, const uint8_t* paletteRgba,\n"
+         "                                  int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],\n"
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "        }\n"
+         "    }\n"
+         "    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesFast(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------
