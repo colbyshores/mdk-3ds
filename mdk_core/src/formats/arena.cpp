@@ -16,12 +16,28 @@ namespace {
 // Names of 10 bytes: an odd count pads to 4.
 const int32_t kAlignment = 4;
 
+// The Arena objects alive right now, behind Arena::liveCount(). A plain
+// counter, not an atomic: arenas are constructed and destroyed in level load
+// and teardown, which is main-thread work (the tree creates no worker thread
+// today), and the only reader is a test. If a worker ever parses an arena,
+// this becomes an atomic and AGENTS.md P4's handoff applies to it.
+int64_t g_liveArenas = 0;
+
 } // namespace
 
+Arena::Arena() {
+    ++g_liveArenas;
+}
+
 Arena::~Arena() {
-    // Nothing to release: every buffer is a member. The destructor exists
+    --g_liveArenas;
+    // Nothing else to release: every buffer is a member. The destructor exists
     // so the class can be held by pointer and freed with delete, which is
     // how the arenas are handed out.
+}
+
+int64_t Arena::liveCount() {
+    return g_liveArenas;
 }
 
 Arena* Arena::parse(const std::string& name, const uint8_t* bytes, int32_t byteCount, int32_t offset) {

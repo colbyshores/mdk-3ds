@@ -83,6 +83,18 @@ public:
 
     ~Arena();
 
+    // How many Arena objects are alive right now.
+    //
+    // It exists so OWNERSHIP is testable, and nothing else reads it. The
+    // contract in mto.h is that an Mto frees the arenas it parsed and not the
+    // ones it was given; a test can only prove that by watching the objects
+    // die. tests/formats/format_tests.cpp is that test. It is a counter, not
+    // a registry: it says how many, never which.
+    //
+    // Arenas are constructed and destroyed in level load and teardown, which
+    // is main-thread work, so the counter needs no atomic; see arena.cpp.
+    static int64_t liveCount();
+
     // An arena of an MTO. `offset` points to its size field.
     static Arena* parse(const std::string& name, const uint8_t* bytes, int32_t byteCount, int32_t offset);
 
@@ -178,7 +190,7 @@ public:
     int32_t triangleCount() const { return (int32_t)triangleMaterials_.size(); }
 
 private:
-    Arena() = default;
+    Arena();
 
     // The world section: the materials, the BSP tree, the triangles and the
     // vertices.

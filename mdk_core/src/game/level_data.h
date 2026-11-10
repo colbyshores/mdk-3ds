@@ -70,7 +70,9 @@ public:
     // list, and the group machinery (the C# TriangleGroups) converts flagged
     // triangles and stores per-group state ON the arenas, so the play setup and
     // the scripts need write access. The arenas are owned by the MTO and the
-    // level's corridor list, neither of which makes them const.
+    // level's corridor list, neither of which makes them const: the MTO's
+    // destructor frees the ones it parsed (mto.h) and ~LevelData frees the
+    // corridors.
     formats::Arena* arenaNamedMutable(const std::string& name);
 
     // The DTI entry of the arena of that name, or null. Case-sensitive, like

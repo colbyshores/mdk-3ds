@@ -35,6 +35,21 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     // consumer, including a harness with no viewer. Dropping them is never wrong:
     // they hold derived data, so the next pose is rebuilt from the model.
     scripts::forgetPoseCaches();
+
+    // Loading into a LevelData that already holds one STARTS OVER. The MTO
+    // releases the arenas it parsed, the corridors are ours to delete, and the
+    // palette cache is keyed by arena pointer so it must not outlive either.
+    // Without this a second load would append a second helping to arenas_ and
+    // leak the previous level's corridors. On a fresh object every line here
+    // is a no-op.
+    out->palettes_.clear();
+    for (size_t i = 0; i < out->corridors_.size(); i++) {
+        delete out->corridors_[i];
+    }
+    out->corridors_.clear();
+    out->arenas_.clear();
+    out->mto_ = formats::Mto();
+
     out->number_ = number;
 
     char base[128];

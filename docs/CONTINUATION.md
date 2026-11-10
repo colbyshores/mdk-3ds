@@ -1,9 +1,41 @@
 # Phase 2 continuation checkpoint
-Risk: medium — the diff is one guard in `tests/formats/Makefile` and moves no shipped byte (`mdk.elf`
-re-measured identical at `a82a78938f8fbcd514f167b1b751ab45`, all three gates green), so it is not `high`;
-it is not `low` because its substance is the disposition of three open Critical/High findings in the
-loop's own completion harness that this uid can neither fix nor stage, which is a contested architecture
-question, not formatting.
+Risk: high — the batch changes resource lifetime: who frees an `Arena` (`formats/mto.*`,
+`game/level_data.*`, `formats/beta_demo.*`), which is memory safety, and the shipped 3DS binary moves
+(`mdk.elf` `a82a78938f8fbcd514f167b1b751ab45` → `a6bae2efc3ad8899649e8ad8fc4fd9d1`). All three gates and
+ASan+UBSan are green and the emulator ran the final binary, but a lifetime change is high by the rubric and
+is not being downgraded to avoid the review.
+
+**Batch 131 (iteration 3 of the ledger row `core.formats`) — the arenas have an owner.** Batch 130 left a
+measured lead: the format target under ASan+UBSan reported `47394202 byte(s) leaked in 15442 allocation(s)`,
+every one of 193 leak stacks under `Mto::getArena`, because `Mto` had no destructor while `LevelData::~LevelData`
+commented that "the arenas belong to the MTO" and `beta_demo.h` said the caller deletes the arenas `add()`
+hands over. Both statements are now true. **`getArena()` parses, so the Mto frees**: a new `owned_` vector
+records the arenas the Mto made and `~Mto()` deletes exactly those — which is what the oracle's
+`Dictionary<string, Arena>` in `Mto.cs` means in a language with destructors. **`add()` borrows**, so
+`owned_` never sees it, and the naive destructor that deletes the whole cache is a double free in
+`BetaDemo::loadMto` (measured: the run aborts). `Mto` is movable and not copyable, and both move operations
+are hand-written rather than defaulted — the assignment must release what the target owned, because
+`LevelData::load`'s `out->mto_ = Mto::parse(...)` is exactly that path, and a defaulted move would leak the
+previous level there instead. `beta_demo.cpp`'s `*outMto = mto` became a move. `LevelData::load` now resets
+a reused out-param (palettes, corridors, arenas, MTO) instead of appending a second helping — which my own
+change made a hazard, since a second load would otherwise have left `arenas_` dangling rather than leaking.
+`Arena::liveCount()` was added so the contract is testable in the normal build, and **five cases** pin it
+(`MtoFreesTheArenasItParsed`, `MtoKeepsTheArenasItWasGiven`, `LevelDataReleasesItsArenasAndCorridors`,
+`MtoAssignmentReleasesWhatItOwned`, `LevelDataLoadIntoALoadedLevelStartsOver`), each shown to fail under a
+sabotage of the code it pins. **ASan+UBSan after: rc 0, zero leaks, zero runtime errors, `156218 checks,
+0 failures`.** Gates: `make -C tests/scripts` → `All cases match the oracle.`; `bash tools/check.sh`
+(`DISPLAY=:99`) → `CHECK: ALL GATES PASSED`; `make -C mdk_3ds` → rc 0. Emulator (`emurun.sh`, `:99`,
+mandarine md5 `0d2adab6`, rc 0) reached guest frame 2580 on level 7 with the arenas owned. **Review-15 is
+closed 1/10 on remediation (R15-8, batch 130) and 10/10 on disposition**: R15-1/2/3 and R15-4/5/6/7/9 are
+confirmed against the files and are owner-only, R15-10 is accepted as disclosed. **The owner has landed the
+completion harness in the working tree** — the ledger, `OWNER_BLOCKS.md`, `gates_completion.py`, the
+`check.sh` gate 9 and `ralph-pi.sh`'s per-iteration row selection all exist and run (`COMPLETION[d1]: 9 done
+/ 13 total / 0 owner-blocked / 4 open`) — but they are **uncommitted and not builder work**: six of the nine
+dirty paths are `PROTECTED`, four are `coleshores`-owned and unwritable by uid 994, and `git commit` runs
+`gates_batch_integrity.py --staged`, which refuses them without `MDK_OWNER_APPROVED`. This batch did not
+self-authorise that; it committed only its own paths and left the owner's files untouched. **R15-1 is
+therefore still the one blocker**: `core.formats` has a green acceptance and an `evidence` column no batch
+can fill, and attempt 9 ends the loop with `exit 6`. Full narrative: `docs/PROGRESS_LOG.md` "Batch 131".
 
 **Batch 130 (iteration 2 of the ledger row `core.formats`) — the format target's link-graph guard stops
 reporting clean when it cannot run, and the row's own blocker is measured rather than asserted.** The

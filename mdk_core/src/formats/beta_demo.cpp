@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include <charconv>
+#include <utility>
 
 #include "formats/ascii_case.h"
 #include "formats/bin_reader.h"
@@ -687,7 +688,11 @@ bool BetaDemo::loadMto(int32_t level, Mto* outMto, std::vector<Arena*>* outArena
         arenas.push_back(arena);
     }
 
-    *outMto = mto;
+    // Moved, not copied: an Mto owns the arenas it parsed and may not be
+    // copied (see mto.h). These came from add(), so the move transfers the
+    // BORROWED pointers only, and the arenas themselves stay the caller's in
+    // *outArenas.
+    *outMto = std::move(mto);
     *outArenas = arenas;
     return true;
 }

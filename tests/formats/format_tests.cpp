@@ -261,3 +261,154 @@ MDK_TEST(EntryNamedFindsTheDtiArena) {
     MDK_CHECK(level.entryNamed("hmo_1") == nullptr);
     MDK_CHECK(level.entryNamed("NO_SUCH_ARENA") == nullptr);
 }
+
+// ---------------------------------------------------------------------------
+// WHO FREES AN ARENA
+// ---------------------------------------------------------------------------
+
+// The Mto frees the arenas it parsed for itself.
+//
+// THE DEFECT THIS PINS. An Mto parsed arenas with `new` and nothing ever
+// freed them. LevelData::~LevelData deletes the corridors and says the
+// arenas "belong to the MTO", and the MTO had no destructor at all, so a
+// level's arenas were lost on every level load, and one more arena per arena
+// a script asked for late in a level (ScriptRuntime's FindModel path calls
+// getArena too). ASan on this very target measured 47394202 bytes in 15442
+// allocations with every stack under Mto::getArena.
+MDK_TEST(MtoFreesTheArenasItParsed) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    std::vector<uint8_t> mtoBytes;
+    MDK_CHECK(readDataFile("TRAVERSE/LEVEL3/LEVEL3O.MTO", &mtoBytes));
+
+    const int64_t before = Arena::liveCount();
+    int64_t parsed = 0;
+    {
+        Mto mto = Mto::parse(mtoBytes.data(), (int32_t)mtoBytes.size());
+        const size_t names = mto.arenaNames().size();
+        MDK_CHECK(names > 0);
+        for (size_t i = 0; i < names; i++) {
+            if (mto.getArena(mto.arenaNames()[i])) {
+                parsed++;
+            }
+        }
+        MDK_CHECK(parsed > 0);
+        // They are alive while the Mto is: the cache is what stops a corridor
+        // that is re-entered from being parsed twice, so they must not die
+        // early. This is also the proof that liveCount counts.
+        MDK_CHECK_EQ(Arena::liveCount() - before, parsed);
+    }
+    // And they are gone with it. This is the assertion the leak violated.
+    MDK_CHECK_EQ(Arena::liveCount(), before);
+}
+
+// The Mto does NOT free the arenas it was handed with add().
+//
+// The other half of the contract, and the reason a deleting destructor was
+// not simply written: beta_demo.h's "THE ARENAS BELONG TO THE CALLER". A
+// destructor that deleted everything in the cache would free the demo's
+// arenas from under the vector that still holds them. This arm is also the
+// positive control for the counter: it shows a live arena staying live, so
+// the arm above cannot pass because the counter is stuck.
+MDK_TEST(MtoKeepsTheArenasItWasGiven) {
+    const int64_t before = Arena::liveCount();
+
+    // A world section of nothing: four zero counts -- materials, nodes,
+    // triangles, vertices -- is a valid empty arena.
+    std::vector<uint8_t> empty(64, 0);
+    Arena* mine = Arena::parseWorld("GIVEN_1", empty.data(), (int32_t)empty.size(), 0);
+    MDK_CHECK(mine != nullptr);
+    if (!mine) {
+        return;
+    }
+    MDK_CHECK_EQ(Arena::liveCount(), before + 1);
+
+    {
+        Mto mto;
+        mto.add(mine);
+        MDK_CHECK(mto.has("GIVEN_1"));
+        // The cache hands back the very object that was added, so the demo's
+        // arenas are not re-parsed, and not adopted.
+        MDK_CHECK(mto.getArena("GIVEN_1") == mine);
+    }
+
+    // The Mto died and did not take the arena with it.
+    MDK_CHECK_EQ(Arena::liveCount(), before + 1);
+    // And it is a live object, not a dangling pointer: reading its name is
+    // reading memory somebody still owns.
+    MDK_CHECK_STR_EQ(mine->name(), "GIVEN_1");
+    delete mine;
+    MDK_CHECK_EQ(Arena::liveCount(), before);
+}
+
+// A whole level gives back every arena it took: the MTO's and its own
+// corridors. The two owners, and the two destructors, have to agree.
+MDK_TEST(LevelDataReleasesItsArenasAndCorridors) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    const int64_t before = Arena::liveCount();
+    {
+        mdk::LevelData level;
+        MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+        const int64_t alive = (int64_t)level.arenas().size();
+        MDK_CHECK(alive > 0);
+        // Every arena the level lists is one object, alive, and owned by
+        // exactly one of the two: the MTO took the arenas, the level took the
+        // corridors. No double count, no orphan.
+        MDK_CHECK_EQ(Arena::liveCount() - before, alive);
+    }
+    MDK_CHECK_EQ(Arena::liveCount(), before);
+}
+
+// Assigning a different MTO over a live one releases what the live one owned.
+//
+// This is the shape of LevelData::load's `out->mto_ = Mto::parse(...)`, and it
+// is why the move assignment is written by hand instead of defaulted: a
+// defaulted move moves the owned_ vector out and drops the old Arena pointers
+// on the floor, which is the leak above wearing the fix's clothes.
+MDK_TEST(MtoAssignmentReleasesWhatItOwned) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    std::vector<uint8_t> mtoBytes;
+    MDK_CHECK(readDataFile("TRAVERSE/LEVEL3/LEVEL3O.MTO", &mtoBytes));
+
+    const int64_t before = Arena::liveCount();
+    Mto holder = Mto::parse(mtoBytes.data(), (int32_t)mtoBytes.size());
+    MDK_CHECK(holder.getArena("HMO_1") != nullptr);
+    MDK_CHECK(Arena::liveCount() > before);
+
+    holder = Mto();
+    MDK_CHECK_EQ(Arena::liveCount(), before);
+
+    // And the object still works afterwards, rather than holding a buffer it
+    // can no longer index.
+    holder = Mto::parse(mtoBytes.data(), (int32_t)mtoBytes.size());
+    MDK_CHECK(holder.getArena("HMO_1") != nullptr);
+    MDK_CHECK(Arena::liveCount() > before);
+}
+
+// Loading a level into a LevelData that already holds one is a new level, not
+// a second helping: the old arenas go, the old corridors go, and the count
+// says one level's worth either way.
+MDK_TEST(LevelDataLoadIntoALoadedLevelStartsOver) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    const int64_t before = Arena::liveCount();
+    mdk::LevelData level;
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+    const int64_t oneLevel = Arena::liveCount() - before;
+    MDK_CHECK(oneLevel > 0);
+    MDK_CHECK_EQ((int64_t)level.arenas().size(), oneLevel);
+
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+    MDK_CHECK_EQ(Arena::liveCount() - before, oneLevel);
+    MDK_CHECK_EQ((int64_t)level.arenas().size(), oneLevel);
+}

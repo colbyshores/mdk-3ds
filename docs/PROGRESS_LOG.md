@@ -23449,3 +23449,190 @@ blocker, unchanged: no batch can close a ledger row.** Until the owner either fl
 makes `docs/COMPLETION_LEDGER.tsv` writable and out of `PROTECTED` with monotonic-transition checks in place
 of blanket protection (review-15 R15-1's remediation), attempt 9 ends the loop with `exit 6` and the port
 cannot reach its own definition of done.
+
+## Batch 131 (iteration 3, ledger row `core.formats`) — the arenas have an owner: the MTO frees the ones it parsed and keeps its hands off the ones it was given
+
+### The item, and why this is the work on it
+
+The ledger dispatched `core.formats` (acceptance `make -C tests/formats`) for the third time. Batch 130
+re-measured that acceptance green and recorded the one substantive thing left in the row that a batch can
+land: the format target under ASan+UBSan reported **`47394202 byte(s) leaked in 15442 allocation(s)`**,
+every stack under `Mto::getArena`, and named the cause — `Mto` had no destructor, `Mto::add` stores
+*borrowed* arenas that `beta_demo.h` says the caller deletes, and `LevelData::~LevelData` comments "the
+arenas belong to the MTO" while nothing implemented that. This batch is that work.
+
+### What was implemented
+
+**`mdk_core/src/formats/mto.h` / `mto.cpp` — the ownership split, written down and then made true.**
+
+- `getArena()` parses an arena out of the borrowed buffer and caches it. The Mto *made* it, so the Mto frees
+  it: a new `owned_` vector records exactly those pointers and `~Mto()` deletes them. This is also what the
+  oracle does — `src/Mdk.Formats/Mto.cs` keeps parsed arenas in `Dictionary<string, Arena> _arenas`, and in
+  C# the dictionary's liveness *is* the ownership; the GC is the destructor. The C++ now says the same thing
+  in the one place the C++ has to say it.
+- `add()` is handed an arena. The caller keeps it and deletes it; the Mto only points at it. That is
+  `beta_demo.h`'s existing "THE ARENAS BELONG TO THE CALLER" contract, unchanged, and it is the reason a
+  destructor that deleted everything in the cache would have been a **double free** in
+  `BetaDemo::loadMto`. `add()` deliberately does not touch `owned_`.
+- `Mto` is now **movable and not copyable**. A copy would put the same owned `Arena*` in two objects and both
+  would delete it. Declaring `~Mto()` suppresses the *implicit* moves, so both move operations are declared
+  explicitly — and neither is defaulted: the move **assignment** releases what the target already owned
+  (a defaulted move would move `owned_` out and drop the old pointers on the floor, i.e. the same leak in a
+  new place, on the very path `LevelData::load` uses: `out->mto_ = Mto::parse(...)`), and both leave the
+  source with `bytes_ = nullptr, byteCount_ = 0` so a moved-from Mto never holds a buffer it cannot index.
+  `Mto::parse` returning by value and `LevelData::load` move-assigning the result both still work; nothing
+  copied an `Mto` except `beta_demo.cpp`, now fixed below.
+- `getArena()`'s null-caching is untouched on purpose: the C# does `_arenas[name] = Arena.Parse(...)`, which
+  caches whatever the parse returned, and `owned_` records only a real arena, because there is nothing to
+  delete for a null and deleting one would be worse.
+
+**`mdk_core/src/formats/beta_demo.cpp` / `.h`** — `*outMto = mto;` was a *copy* of an Mto holding borrowed
+arenas; it is now `*outMto = std::move(mto);`, which transfers the borrowed pointers and leaves the arenas
+the caller's `*outArenas` still owns. `<utility>` is included for `std::move`. The header's ownership
+paragraph now states the split rather than only the borrowed half.
+
+**`mdk_core/src/game/level_data.cpp` / `.h`** — `LevelData::load` takes an out-param and may be called on a
+`LevelData` that already holds a level. It did not clear anything, so a second load appended a second helping
+to `arenas_` and leaked the previous level's corridors; and now that the MTO actually frees its arenas, that
+same second load would have left `arenas_` holding **dangling pointers** — a worse outcome than the leak it
+replaced. So `load` now starts over: `palettes_.clear()` (it is keyed by arena pointer), delete and clear
+`corridors_`, clear `arenas_`, and move-assign an empty `Mto` (which releases the previous level's arenas).
+On a fresh object every line is a no-op. `~LevelData`'s comment is now true in both directions.
+
+**`mdk_core/src/formats/arena.cpp` / `.h`** — `Arena::liveCount()`, the number of `Arena` objects alive. It
+exists so the ownership contract is *testable in the normal build* rather than only under a sanitizer: a test
+can parse arenas, destroy their owner, and watch them die. It is a counter, not a registry — it says how many,
+never which — and nothing in the game reads it. The counter is a plain `int64_t`, not an atomic: arenas are
+constructed and destroyed in level load and teardown, which is main-thread work, and `mdk_core` creates no
+worker thread today (grep for `threadCreate`/`pthread_create`/`std::thread` across `mdk_core/src`,
+`mdk_3ds/src`, `mdk_linux/src` returns nothing); the file says so and says what to change if that stops
+being true. `Arena()` went from `= default` in the header to a definition in the .cpp, which is where the
+increment lives.
+
+**`tests/formats/format_tests.cpp`** — five cases, all of them shown to fail without the code they pin:
+
+| case | what it pins |
+|---|---|
+| `MtoFreesTheArenasItParsed` | level 3's arenas are alive while the Mto is (the cache must not free early) and gone with it |
+| `MtoKeepsTheArenasItWasGiven` | an `add()`ed arena survives its Mto, is still readable, and the counter is not stuck (the positive control for the naive-destructor double free) |
+| `LevelDataReleasesItsArenasAndCorridors` | a whole level gives back exactly `arenas().size()` objects — the two owners agree, no double count, no orphan |
+| `MtoAssignmentReleasesWhatItOwned` | move-assigning over a live Mto releases its arenas, and the object still works afterwards |
+| `LevelDataLoadIntoALoadedLevelStartsOver` | loading twice into one `LevelData` is one level's worth, not two |
+
+### Sabotage arms (each pin shown to fail, not assumed to)
+
+| sabotage | measured result |
+|---|---|
+| `~Mto` deletes nothing | `FAIL format_tests.cpp:304 Arena::liveCount() == before (got 83, want 73)` and `:364 (got 93, want 83)` — 2 failures |
+| `add()` also records as owned (the naive destructor) | the run **aborts** (`Makefile:94: test] Aborted (core dumped)`) on the double free |
+| move-assignment does not release | `FAIL :387 (got 1, want 0)` and `:412 (got 27, want 17)` — 2 failures |
+| `LevelData::load` does not reset | `FAIL :412 (got 24, want 17)` and `:413 arenas().size() (got 34, want 17)` — 2 failures |
+| restored | `156218 checks, 0 failures` |
+
+### Evidence
+
+- **The leak, before and after, same command, same build dir:**
+  `make -C tests/formats BUILD=build-asan CXXFLAGS="… -fsanitize=address,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,undefined"`
+  before: `SUMMARY: AddressSanitizer: 47394202 byte(s) leaked in 15442 allocation(s)`, rc 2, and 193 leak
+  entries whose stacks each contain `Mto::getArena` (a 1:1 count match — nothing leaked from anywhere else).
+  after: **rc 0, zero `leaked`/`ERROR:`/`runtime error` lines**, `156218 checks, 0 failures`. UBSan silent
+  throughout.
+- **Acceptance** `make -C tests/formats`: `running 20 tests` … `156218 checks, 0 failures`, rc 0 (was 15
+  tests / 156190 checks; the +16 checks are the new cases' own assertions).
+- **Gate 1** `make -C tests/scripts`: `All cases match the oracle.`, rc 0. No golden moved: the change is
+  lifetime-only, and every oracle value in the suite is unchanged.
+- **Gate 2** `bash tools/check.sh` with `DISPLAY=:99`: `CHECK: ALL GATES PASSED`, rc 0 — `PASS
+  audit_c_with_classes 0 violations`, `PASS gates_vfp 0 blockers`, `PASS audit_arm11_math contract clean`,
+  `PASS audit_r11_idiv no candidates`, `PASS gates_core_parity`, `SKIP gates_smdh` (no built .cia),
+  `PASS gates_frames`, `PASS gates_batch_integrity`, `PASS gates_completion`.
+- **Gate 3** `make -C mdk_3ds`: rc 0, `LINK mdk.elf` → `3DSX mdk.3dsx`; `mdk.elf` md5
+  `a6bae2efc3ad8899649e8ad8fc4fd9d1` (batch 130 recorded `a82a78938f8fbcd514f167b1b751ab45`; the binary
+  moved because the ownership code is in it — the reviewer's open question 2 is answered: the elf is at
+  `mdk_3ds/mdk.elf`, not `mdk_3ds/build/`).
+- **Emulator (AGENTS P7/P8, the shipped binary changed even though `mdk_3ds/**` did not).**
+  `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 45 --shot /tmp/mdk-b131/emurun.png` → **rc 0**. Verdict:
+  `display : :99`; `emulator mandarine.AppImage md5 0d2adab6` (the pinned r1.2.1, not the r1.3.0 that
+  segfaults); `build /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx`; `frames reached 2520 by the deadline
+  (47 frame lines logged)` and after the reap the guest log ends at **frame 2580**; `gl forced llvmpipe`;
+  `stereo render_3d=0 factor_3d=0` (mono); `backend: PICA200 Citro3D`; `flow: screen=4 level=7`; the last
+  frame lines show `steps=2533 health=100 objects=7 obj=570c/13d peak=570c/13d`, i.e. the level loaded, the
+  scripts are running and nothing faulted with the arenas now being owned. The elf that run measured is
+  byte-identical to the final build's (`a6bae2ef…`). **Emulator-green is not hardware-pass**: no console was
+  in hand, so the `hw.*` rows stay open, and Mandarine still masks FCRAM exhaustion — which matters for a
+  leak fix, because the emulator's bigger heap is exactly what would have hidden this one.
+- `/tmp/kilo` is `coleshores:coleshores` and not writable by this uid, so captures went to `/tmp/mdk-b131`;
+  the display used is recorded above (`:99`, Xvfb pid 2316266).
+
+### Oracle and contract references
+
+`src/Mdk.Formats/Mto.cs` (the dictionary that owns what it parsed), `src/Mdk.Formats/BetaDemo.cs`'s
+`Add(arena)` path, and `src/Mdk.Game/Level/LevelData.cs`'s arena/corridor lists. AGENTS.md §10: no virtuals,
+no templates, no exceptions — the fix is ordinary member functions and a file-static helper;
+`audit_c_with_classes` still reports 0 violations. AGENTS.md §1/§3: nothing here is a hot-path numeric
+change (`gates_vfp` 0 blockers, `audit_arm11_math` contract clean); the destructor loops are level-load
+work. AGENTS.md P4: no new thread, and the counter's thread assumption is written down. AGENTS.md P6: the
+evidence above is the required set for a memory-lifetime change.
+
+### Review-15 disposition (newest external review: `logs/ralph-pi/run-20261110-181413/review-1.md`)
+
+**The owner has landed the completion harness in the working tree.** `docs/COMPLETION_LEDGER.tsv`,
+`docs/OWNER_BLOCKS.md` and `tools/runner/gates_completion.py` now exist, `tools/check.sh` runs
+`gates_completion` as gate 9 (selftest 13 arms PASS, `COMPLETION[d1]: 9 done / 13 total / 0 owner-blocked /
+4 open`), and `ralph-pi.sh` now selects the ledger row per iteration and stops at `COMPLETION_ITEM_MAX`.
+That is the harness review-15 asked for. It is **uncommitted**, and it is the dirty tree this batch
+inherited.
+
+| finding | disposition |
+|---|---|
+| R15-1 Critical — a row whose acceptance passes cannot be flipped, and the stall-breaker parks the unit | **still open, still owner-only, and now measured against the landed files rather than predicted.** `docs/COMPLETION_LEDGER.tsv` is `coleshores:coleshores` with `test -w` NO for uid 994, it is in `gates_batch_integrity.PROTECTED`, and `ralph-pi.sh` never passes `--owner-approved` nor exports `MDK_OWNER_APPROVED`. `--next` returns `core.formats` with an empty `evidence` column after a green acceptance; attempt 9 trips the `exit 6` stop. The reviewer's own remediation (monotonic-transition checks in place of blanket protection) is a one-line edit in a file no batch may write or stage. Not weakened, not worked around. |
+| R15-2 Critical — a `done` row is accepted on three unrelated facts | confirmed against `gates_completion.py:validate_done_rows`; owner-only (the file is `PROTECTED` and unwritable). Not disputed. |
+| R15-3 High — the completion exit outranks a red gate suite | confirmed (`ralph-pi.sh`'s completion block consults neither `LAST_GATES` nor `FAILS`); owner-only. |
+| R15-4/5 Medium, R15-6/7 Low — `validate_no_regression` counts instead of comparing ids and has no seeded arm; `owner_blocked_ids` is dead code while `word_present` matches prose; `completion_next` discards the NOT-VERIFIED rc; `exit 6` means three things | all confirmed against the files, all in `gates_completion.py` / `ralph-pi.sh`, all owner-only. Escalated, not closed. |
+| R15-8 Low — the format target's `nm` guard reported clean when `nm` could not run | **fixed in batch 130**, and this batch re-measured the guard working (it runs on every `make -C tests/formats` and the target linked). |
+| R15-9 Low — `CONTINUATION.md:871` cited for the d1 goal | confirmed; the citation is in the ledger and `ralph-pi.sh`, both owner-owned. Deferred with cause: owner-only. |
+| R15-10 Low — a sidecar may name its parent commit | accepted as disclosed; this batch's sidecar names `00192da`, its parent, because a frame is published before its own commit exists. `gates_frames` and `docs/frames/README.md` are owner-protected frame tooling. |
+
+### The inherited dirty tree, and why it was not committed
+
+Nine paths were dirty at dispatch: `ralph-pi.sh`, `ralph/builder.md`, `tools/check.sh`,
+`tools/runner/gates_batch_integrity.py` (modified) and the three new ledger files. They are **the owner's
+own work, not a timed-out builder's**: `ralph-pi.sh`, `docs/COMPLETION_LEDGER.tsv`, `docs/OWNER_BLOCKS.md`
+and `tools/runner/gates_completion.py` are `coleshores:coleshores` and not writable by uid 994, so no
+builder iteration could have written them. Six of the nine are in `gates_batch_integrity.PROTECTED`, and
+`core.hooksPath=tools/hooks` means `git commit` runs `gates_batch_integrity.py --staged`, which refuses a
+protected change unless `MDK_OWNER_APPROVED=1`. Setting that variable would be this batch authorising its
+own protected contract edits, which `ralph/builder.md` reserves to the owner ("A needed spec/gate change is
+a separate owner-authorized task"), so the owner's files are **left in the working tree, unmodified and
+uncommitted**, and only this batch's own paths are committed. Consequence recorded rather than hidden: the
+loop will keep reporting a dirty tree, and `gates_completion` is being run from the working tree, not from
+a commit.
+
+### Prior-solution lookup
+
+- **Pi knowledge (`mdk-sdl`, 4802 chunks / 983 files)** — searched for the arena-ownership question; the
+  hits were the current `mto.h`/`mto.cpp`/`arena.cpp` text and `src/Mdk.Formats/Mto.cs` itself, i.e. no
+  prior solution recorded. Verified against the repository, not trusted.
+- **Obsidian MCP** — not exposed as tools in this session (no `obsidian_*` tool). Per AGENTS P9 that is a
+  session configuration fault to report, and the disk fallback was used narrowly: a bounded `grep` over
+  `/mnt/nas/Vaults/port-docs` for arena-ownership/MTO terms found no relevant note (only
+  `50-tooling/ralph-pi-unattended-loop-script.md`), and `10-projects/mdk-sdl/` holds only the loop-audit and
+  Mandarine notes.
+- **Cognee MCP** — not exposed as tools in this session, so the graph was **not** consulted. Stated rather
+  than implied.
+
+### Next, per the ledger
+
+`core.formats`'s substance is now done: the target links (batch 129), its guard cannot report clean when it
+cannot run (batch 130), and the arenas it exercises are owned, freed, and pinned by five tests, with the
+sanitizer at zero leaks. **The row still cannot be closed by a batch** — R15-1 is unchanged and is now the
+only thing between this row and `done`: the owner must flip the row (evidence `tests/formats/format_tests.cpp`,
+verified commit = this batch) or make the ledger writable with monotonic-transition checks. If the ledger is
+not touched, attempt 9 ends the loop with `exit 6`.
+
+Two things this batch deliberately did **not** widen into, recorded so the next attempt does not re-derive
+them: (a) an ASan/LSan step inside `make -C tests/formats`' default goal — that would widen the row's own
+acceptance command, which the loop forbids unless the gate is what the item needs, and the counter test
+already pins the leak in the default build; the exact sanitizer command is recorded above so it is
+reproducible. (b) `BetaDemo::loadMto` still has **no caller anywhere in the tree** (grep over `mdk_core`,
+`tests`, `mdk_3ds`, `mdk_linux`), so the demo's arena ownership is exercised only by the `add()` arm above;
+when the beta demo is wired into the flow, whoever wires it owns the `*outArenas` deletes.

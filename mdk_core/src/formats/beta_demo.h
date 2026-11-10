@@ -27,8 +27,11 @@
 // so the 3DS reads them from its ROMFS tree (AGENTS.md P5).
 //
 // THE ARENAS BELONG TO THE CALLER. The C#'s Mto owns the arenas it is given;
-// the C++'s Mto only points at them, so the caller keeps them alive and
-// deletes them when the Mto is done with.
+// the C++'s Mto only points at the ones add() hands it, so the caller keeps
+// them alive and deletes them when the Mto is done with. (The arenas an Mto
+// parses out of its own bytes are its own — see mto.h.) So a caller of
+// loadMto gets the arenas twice over, once borrowed inside the Mto and once
+// in the vector it must free.
 // ============================================================================
 
 #include <stdint.h>
