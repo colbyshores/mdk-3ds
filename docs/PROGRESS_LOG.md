@@ -22539,3 +22539,106 @@ open question 2 (is a 3-byte source path actually planned?) is now moot in the d
 matters: the stride rule makes a 3-byte path legal and pinned as a probe, whether or not one
 ships. Review-7's open question 1 (is RGBA8 Morton-tiled on real hardware?) stays open and needs a
 hardware capture, not a gate.
+
+---
+
+## Batch 125 (iteration 11) — review-10 closed 4/4: the path resolution reaches the parameter, and the write rules stop reading reads
+
+Review-10 (`logs/ralph-pi/run-20261109-233059/review-10.md`, DeepSeek V4.1 Flash TH,
+independence `family=qwen` vs `family=deepseek`) had **no Critical and one High**, and its verdict
+was INCOMPLETE. Nothing was rebutted: all four findings reproduced against the committed gate
+before anything changed — F1's renamed-parameter filler passed all 41 checks with the palette's
+alpha in the PICA's red slot, F2's `if (*s != 0) { continue; }` guard reddened
+`rgba-texels-are-rotated-for-the-pica`, and F3's `memset(pixel + 3, 0xFF, 1);` printed a full
+`PASS C3dFrame (41 checks, 71 arms adjudicated red, 13 probes green)`. The diff is one file —
+`tests/scripts/c3d_frame_test.sh` — plus this log, the checkpoint, and one frame pair. No
+`mdk_3ds/**` and no `mdk_core/**` byte is in the batch, so no P8 emulator evidence is owed and
+none is claimed.
+
+**The oracle line is unchanged and unchanged-by-construction.** `palette.hlsl:70`
+(`float4(palette.rgb, 1.0)`, index-0 discard at :67) and the seam contract in `render.h` still
+decide what the texel rules enforce; what changed is which spellings of the shipped R = 255
+defect the gate can read.
+
+**F1 (High, confirmed and fixed): the path resolution dead-ended at a PARAMETER, and the branch
+an unresolved call falls into was the one the defect walks through.** `provenance_palette`
+followed one-line bindings but stopped at a function parameter, and its own docstring claimed
+that was safe because "the caller's source-fed branch is the strict one" — false: the source-fed
+branch's acceptance test is "the alpha is the source's own fourth byte", which is EXACTLY what a
+palette-fed call handing over `colours[i*4+3]` does. A filler whose palette parameter was renamed
+(`const uint8_t* colours`, called with `texture.palette.data()`) was review-9 F2's shipped defect
+moved one level up, and it passed all 41 checks. A parameter is now resolved at the function's
+call sites in this file — the fillers are all called here, so a bounded scan exists — through three
+new helpers (`fn_def_site`, `fn_param_index`, `fn_call_sites`, plus `enclosing_fn_name`), and the
+call-site argument is adjudicated in the caller's body where it was written. Two arms: the
+reviewer's renamed-parameter filler, and the same defect composed with the hoisted byte locals
+batch 124's own probe made legal (binding-follow and call-site resolution must compose). One
+probe: the same renamed parameter with the alpha forced opaque stays green — the resolution is
+data flow, not a name ban, and refusing that spelling would be the route-around review-16 R2
+names. The false claim is replaced by a stated limit, in `provenance_palette` and beside the
+three branches: a palette that reaches the call through an expression this scan cannot read — a
+member of a member, a call whose name says nothing, a filler with no call site in this file —
+resolves as NOT palette-fed and is asked for the fourth byte. The alpha itself stays fail-closed.
+
+**F2 (Medium, confirmed and fixed): the deref-write tail read comparisons as assignments.**
+`DEREF_WRITE_TAIL` was `[^=;]*=[ \t]*[^=]`, and `[^=;]*` swallows the operator of a
+single-equals comparison, so `*s != 0`, `*s <= 0` and `*s >= 1` all counted as writes — a dead
+guard reddened a correct filler, which is review-16 R2's failure class (a gate that reddens a
+shape the port may write gets routed around), the class this file's whole probe doctrine exists to
+prevent. The tail now matches an `=` that is no part of a comparison:
+`[^=;]*(?<![=!<>])=(?!=)`. The three read spellings are committed as a probe — which is also
+review-10 F4's remediation: batch 124's record claimed "a table over 26 spellings: 25 as
+expected", committed no such artifact, and at least three of the spellings it claimed to have
+checked were wrong. **Reviewer open question 2 audited here:** the subscript rules are
+structurally safe (their operator slot `[+\-*/%&^|]?` does not admit `!`, `<` or `>`, so a
+single-equals comparison can never reach their `=`), the latch rules are safe (they require a
+literal `true`/`false` and a `;` after the `=`), and `binding()` had the same class of hole —
+`a == b` read as a binding of `a` to `= b` — and now carries `(?!=)`.
+
+**F3 (Medium, confirmed and fixed): memset was the one bulk intrinsic that could set a byte to a
+constant, and it was not adjudicated.** `memcpy` and `memmove` were texel writes and `memset` was
+exempt on the strength of the padding zero-fill — but `memset(pixel + 3, 0xFF, 1);` one line
+after a correct helper call re-pins the alpha to 255, byte for byte the shipped symptom, with the
+gate's blessing. memset is now adjudicated by what the fill MEANS: an all-zero texel is alpha 0
+under ANY byte order (the index-0 discard invariant batch 120 pinned), so a zero fill at a base
+pointer is the padding fill and stays legal — the shipped `memset(pixels, 0, texels * 4)` is
+exactly that — while a NONZERO fill sets bytes the helper owns and a fill aimed at an OFFSET
+(`pixel + 3`) is a targeted write whatever its value, because zeroing one byte of a filled texel
+hides the texel the helper just drew. An argument list the scan cannot parse fails closed. One
+arm (the reviewer's 0xFF re-pin, red on `index-texels-are-rotated-for-the-pica`), one probe (the
+zero fill spelled `0u` stays green — the exemption is the value, not one literal).
+
+**F4 (Low, confirmed and addressed): the spelling table is now the suite, not a `/tmp` of a past
+run.** The read spellings live in the F2 probe; the write spellings were already arms (subscript,
+cast-subscript, bare deref, three guard spellings, bulk copies, and now memset). Batch 124's
+"25 as expected" sentence is corrected here rather than rewritten in place, per the standing rule
+that historical entries are annotated, not amended.
+
+**Measured, from the committed tree.** `bash tests/scripts/c3d_frame_test.sh` → `PASS C3dFrame
+(41 checks, 74 arms adjudicated red, 16 probes green)` — up from 41/71/13: three arms and three
+probes. Every new arm was measured green-on-checks on `git show HEAD:tests/scripts/c3d_frame_test.sh`
+before it was kept (arm71/72 show only the known harness noise of a probe anchor replaced by the
+arm file itself — zero check-level failures on the old gate) and is red now; probes 13 and 14 were
+red on the old gate and are green now, which is the fix pinned from the green side.
+`sh tests/scripts/arm_compile_check.sh c3d` → `PASS ArmCompile (91 mutant(s), 0 diagnostics, 73
+shipped source(s) format-clean, 4 format mutant(s) refused, 1/1 honest call(s) accepted,
+/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`. `make -C tests/scripts` → `All cases match the
+oracle.` `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`;
+`gates_frames … VERDICT: CONTRACT CLEAN`; `gates_batch_integrity PASS`). `make -C mdk_3ds` exits 0
+with `mdk.elf` md5 `67fadc4179c40ee3a4e5090a2218641a` and `mdk_c3d.shbin` md5
+`d46abb60de20b2aa0659043aeb97b9c9`, both byte-identical to batches 122–124, so "no byte moved" is
+measured and not asserted.
+
+**Prior-solution lookup.** `pi-knowledge` KB `mdk-sdl` searched for the texel provenance gate and
+the write-spelling rules: the top hit is this gate's own current chunk and the rest are unrelated,
+i.e. no prior solution predating this one, and the repository remained the authority. No
+`obsidian_*` or `cognee_*` tools are exposed in this session; that is recorded as a session
+configuration gap (AGENTS.md P9), not as a lookup that happened, with one scoped vault grep under
+`50-tooling` and `10-projects/mdk-sdl` as the disk fallback (no note predates this finding).
+
+**Standing hazards this batch did not touch.** `ralph/builder.md` is dirty for a fourth batch
+running: it is in `gates_batch_integrity`'s `PROTECTED` set, so a batch cannot commit it without
+owner approval, and this batch staged its paths explicitly instead of `git add -A`. Review-10's
+open question 3 (is a 3-byte source path actually planned?) stays stated and moot in the direction
+that matters: the stride rule pins it either way. Review-7's open question 1 (RGBA8 Morton tiling
+on real hardware) still needs a hardware capture, not a gate.

@@ -1,9 +1,31 @@
 # Phase 2 continuation checkpoint
-Risk: medium - test-infrastructure only, in one file: it widens what `c3d_frame_test.sh` can refuse,
-and a gate that cannot see the defect it claims to refuse is a pass generator, so the change is
-behaviour-adjacent even though no shipped byte moves. It closes review-9 8/8 (no Critical, **two
-High**), and both Highs falsified batch 123's closure claim. Both were reproduced against the
-committed gate before anything changed. **F1**: the bare-dereference write rule was anchored at the
+Risk: medium — test-infrastructure only, in one file: it widens what `c3d_frame_test.sh` can refuse
+and narrows one rule that reddened legal reads; a gate that cannot see the defect it claims to
+refuse is a pass generator, so the change is behaviour-adjacent even though no shipped byte moves.
+It closes review-10 4/4 (no Critical, **one High**), reproduced against the committed gate before
+anything changed, and the High falsified batch 124's "no free pass" claim. **F1**: the palette-path
+resolution dead-ended at a PARAMETER, and the branch an unresolved call falls into — source-fed,
+"the alpha must be the fourth byte" — is exactly what the shipped defect does with the palette's
+alpha, so a filler whose palette parameter was renamed passed all 41 checks; a parameter now
+resolves at the function's call sites in this file (two arms, one green-half probe), and the false
+claim is replaced by the stated limit: a palette arriving through an expression the scan cannot
+read resolves source-fed. **F2**: the deref-write tail `[^=;]*=` swallowed the operator of `!=`,
+`<=` and `>=`, so reads through a pointer reddened a correct filler; the tail now matches only an
+assignment, `binding()`'s same-class `==` hole is fixed, and the read spellings are committed as a
+probe — which is also F4, whose "26-spelling table" now exists as suite artifacts. **F3**: memset
+is adjudicated by what the fill means — a zero fill at a base pointer is the padding fill (an
+all-zero texel is alpha 0 under ANY byte order, the index-0 invariant), a nonzero fill or an
+offset destination is a texel write, and an unparseable argument list fails closed. Measured: 41
+checks / 74 arms / 16 probes, up from 41/71/13; every new arm green on the pre-batch gate and red
+now, and all 91 mutants compile for armv6k with 0 diagnostics. No `mdk_3ds/**` or `mdk_core/**`
+byte is in this batch, so no P8 emulator evidence is owed and none is claimed; `mdk.elf`
+`67fadc4179c40ee3a4e5090a2218641a`, `mdk_c3d.shbin` `d46abb60de20b2aa0659043aeb97b9c9` and the
+re-published frame are byte-identical to batch 124's. Full narrative: `docs/PROGRESS_LOG.md`
+"Batch 125".
+
+**Batch 124 (iteration 10) — review-9 closed 8/8 — the texel path is resolved, not recognised.**
+It closes review-9 8/8 (no Critical, **two High**), and both Highs falsified batch 123's closure
+claim. Both were reproduced against the committed gate before anything changed. **F1**: the bare-dereference write rule was anchored at the
 start of the FOLDED statement, and folding makes a guard part of the statement, so
 `if (index != 0) *(pixel + 3) = ...`, an `else` and a one-line `for` body each passed all 41 checks
 with memory holding the palette's alpha in the red slot; the rule is now `deref_write`, which reads
@@ -855,6 +877,46 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 125)
+**The texel family is closed on resolved paths — parameters included — and it should stop here
+again, this time with the residual named instead of claimed away.** Review-10's one High was the
+same failure mode as review-8's and review-9's: a rule that matched a spelling of the defect
+instead of the defect. What the ten checks now pin: the helper's byte layout (host), each
+expansion's body against every write spelling — subscript on a name, on a cast, a dereference
+anywhere in the statement, and a memset whose fill is not the transparent texel — the argument
+order of every 5-argument call in the file, and each call's alpha against the path its own
+arguments resolve to, by alias, by hoisted byte, by PARAMETER at its call sites in this file, and
+by stride. An eleventh texel check needs a finding these ten cannot reach; the stated limits are
+the known edges and all are written where the claim is made: a sink fed through the PARAMETER of a
+factored-out function, a 3-byte source read through a hoisted pointer, and — new, from review-10
+F1 — a palette arriving through an expression the scan cannot read (a member of a member, a call
+whose name says nothing, a filler with no call site in this file).
+
+**Two things in this area stay stated rather than fixed, and neither is a defect.** (1) The index-0
+discard's survival is argued from construction plus the helper's host row and is NOT directly
+measured - measuring it needs a keyed texture over a non-black clear colour, which the pinned scene
+does not contain. (2) RGBA8 tiling on real hardware (review-7's open question 1) is UNRESOLVED and
+cannot be resolved from this host: the vault block this file cites says Morton, MDK writes linear
+per-texel, and the coherence measurement that clears it was taken in Mandarine, which is explicitly
+not hardware evidence. It is a hardware capture or a Mandarine GPU-decode read, not a gate.
+
+**Owner-only items unchanged:** the dirty `ralph/builder.md` (PROTECTED, fourth batch running, and
+invisible to a gate that reads committed ranges only), whether `mdk_3ds/Makefile` joins `PROTECTED`,
+`tools/check.sh` being protected so `arm_compile_check.sh` stays a quoted runner rather than a gate,
+and the fact that a historical `docs/frames/*.txt` sidecar cannot be amended by any batch, so a
+sidecar error can only be carried forward.
+
+**The two named game items are unchanged and both are blocked on a named cause, not on effort.**
+(1) **the canvas seam** - `mdk_render_canvas_quad` is a no-op on this backend, which is what
+priority item 5b (the HUD) and the MVE movie presenter both wait on; the canvas draw has to become
+a record in the frame's queue so the per-eye replay draws it once per eye, and it is the largest
+unbuilt piece of "a CIA that plays a level". (2) **the collision batch** - `FindConnections` +
+`CrossedArena`, which unfreezes `currentArena_` from the spawn arena and lets `ArenaSpace::setSolid`
+take the oracle's current + active second, and which needs a doorway-crossing oracle rather than a
+hand-written expectation. Either one changes `mdk_3ds/**` and therefore owes an `emurun.sh` verdict
+block on `DISPLAY=:99`, recorded in the full shape review-4 F3 named (invocation, display, emulator
+md5, `guest log :` path, frames, exit code).
 
 ## NEXT (batch 124)
 **The texel family is closed on resolved paths, not on recognised names, and it should stop here.**

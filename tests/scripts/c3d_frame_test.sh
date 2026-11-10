@@ -241,7 +241,12 @@ def block_span(text, pattern):
 # precedes it is a statement start, punctuation, an operator, or a control keyword.
 DEREF_PRE_PUNCT = ";{}()=!<>+-*/%&|^~"
 DEREF_PRE_WORDS = ("else", "return", "do", "case", "and", "or", "not", "xor")
-DEREF_WRITE_TAIL = re.compile(r"[^=;]*=[ \t]*[^=]")
+# Review-10 F2: the tail used to be `[^=;]*=[ \t]*[^=]`, and `[^=;]*` swallows the
+# operator of a SINGLE-equals comparison, so `*s != 0`, `*s <= 0` and `*s >= 1` all
+# read as writes — a dead guard reddened a correct filler, review-16 R2's own failure
+# class. The tail now requires an ASSIGNMENT: an `=` that is not part of `==`, `!=`,
+# `<=` or `>=`, which is what the prose here always claimed the rule was.
+DEREF_WRITE_TAIL = re.compile(r"[^=;]*(?<![=!<>])=(?!=)")
 
 
 def deref_write(stmt):
@@ -249,9 +254,11 @@ def deref_write(stmt):
 
     `*(pixel + 3) = paletteRgba[index * 4 + 3]`, `*pixel = x`, `if (c) *(p + 3) = x`
     and `for (...) *p = x` are writes; `const uint8_t* colours = paletteRgba;`,
-    `y = *p`, `texels * 4` and `a == *p` are not. The `[^=;]*=` tail is the same
-    terminator that keeps `==`, `!=`, `<=` and `>=` out of the subscript rules, and it
-    is what stops a READ through a pointer from counting.
+    `y = *p`, `texels * 4`, `a == *p`, `*s != 0`, `*s <= 0` and `*s >= 1` are not.
+    The tail matches an `=` that is no part of a comparison (`(?<![=!<>])=(?!=)`),
+    which is what stops a READ through a pointer from counting. The subscript rules
+    beside it never had review-10 F2's hole: their operator slot `[+\-*/%&^|]?` does
+    not admit `!`, `<` or `>`, so a single-equals comparison could not reach their `=`.
 
     Stated limit, in the same spirit as the parameter-passing limit below: a write
     introduced after a comma in a multi-declarator (`uint8_t *a, *b = x;`) would read
@@ -1266,10 +1273,12 @@ def adjudicate(text, quiet=False):
     # helper, so ANY indexed assignment or bulk copy in either body is refused
     # instead of a catalogue of the bad shapes: the two shipped defects were a
     # four-line `pixel[N] = ...` block and a row `memcpy`, and a third is one
-    # keystroke from either. A `memset` is not a texel write (it fills the POT
-    # padding with the transparent texel) and a read like `row[(size_t)x * 4 + 0]`
-    # is not an assignment, so neither is caught -- and a probe pins that hoisting
-    # such a read into `src[0]` stays green.
+    # keystroke from either. A zero-fill `memset` at a base pointer is not a texel
+    # write (it fills the POT padding with the transparent texel, which is alpha 0
+    # under ANY byte order) and a read like `row[(size_t)x * 4 + 0]` is not an
+    # assignment, so neither is caught -- review-10 F3 drew that line: a memset with
+    # a NONZERO fill, or aimed at an OFFSET, is a targeted write and IS caught. A
+    # probe pins that hoisting such a read into `src[0]` stays green.
     def expansion(name):
         """(span, body, [absolute '(' of each helper call]) for one expansion.
         `body_span` only matches `void` functions and these return a `uint8_t*`, so
@@ -1309,7 +1318,35 @@ def adjudicate(text, quiet=False):
         `if (index != 0) *(pixel + 3) = ...`, an `else`, and a one-line `for` body are
         that same write with punctuation in front of it, and all three passed the gate;
         the rule is now `deref_write(stmt)`, which asks what precedes the `*` instead of
-        asking whether the `*` is first."""
+        asking whether the `*` is first.
+
+        Review-10 F3: `memcpy` and `memmove` were adjudicated as bulk texel writes and
+        `memset` was not, and the asymmetry is a hole, not a simplification -- memset is
+        the one intrinsic that can set a byte to a CONSTANT, so `memset(pixel + 3,
+        0xFF, 1);` one line after a correct helper call re-pins the alpha to 255, byte
+        for byte the shipped symptom, with the gate's blessing. memset is now
+        adjudicated by what the fill MEANS: an all-zero texel is alpha 0 under ANY byte
+        order (the index-0 discard invariant batch 120 pinned), so a zero fill at a
+        base pointer is the padding fill and stays legal, while a NONZERO fill sets
+        bytes the helper owns and a fill aimed at an OFFSET (`pixel + 3`) is a targeted
+        write whatever its value -- zeroing one byte of a filled texel hides the texel
+        the helper just drew."""
+        def memset_writes_texels(stmt):
+            """True when a `memset` in this body writes texel bytes the helper owns.
+
+            See the review-10 F3 paragraph above. An argument list this scan cannot
+            read fails closed: a memset whose fill or destination it cannot parse is
+            a memset it cannot vouch for."""
+            m = re.search(r"\bmemset[ \t]*\(", stmt)
+            if not m:
+                return False
+            args = call_args_at(stmt, m.end() - 1)
+            if not args or len(args) < 3:
+                return True
+            if not re.fullmatch(r"(?:0[xX]0+|0[uU]?|'\\0')", args[1].strip()):
+                return True
+            return "+" in args[0]
+
         if body is None:
             return ["(the expansion is absent)"]
         hits = []
@@ -1317,7 +1354,8 @@ def adjudicate(text, quiet=False):
             if re.search(r"\w[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
                re.search(r"\)[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
                deref_write(stmt) or \
-               re.search(r"\b(?:memcpy|memmove)[ \t]*\(", stmt):
+               re.search(r"\b(?:memcpy|memmove)[ \t]*\(", stmt) or \
+               memset_writes_texels(stmt):
                 hits.append(stmt)
         return hits
 
@@ -1343,8 +1381,11 @@ def adjudicate(text, quiet=False):
         could not read -- and not an attempt at a call graph."""
         if not (body and ident):
             return None
+        # Review-10 F2's class, one rule over: `(?!=)` keeps `a == b` from reading as
+        # a binding of `a` to `= b`. (`!=`, `<=` and `>=` never matched: the operator
+        # character sits where `[ \t]*=` requires the `=` itself.)
         m = re.search(r"(?:^|[;{}])[^;{}=]*\b" + re.escape(ident) +
-                      r"[ \t]*=[ \t]*([^;{}]+)", body)
+                      r"[ \t]*=(?!=)[ \t]*([^;{}]+)", body)
         return m.group(1).strip() if m else None
 
     def byte_index(arg, body=None, depth=0):
@@ -1455,7 +1496,7 @@ def adjudicate(text, quiet=False):
                 out.append((m.start(), args))
         return out
 
-    def palette_fed(args, body=None):
+    def palette_fed(args, body=None, fname=None):
         """True when a helper call's colour arguments read a palette.
 
         The two paths have OPPOSITE alpha rules -- an indexed texel's alpha is forced
@@ -1469,14 +1510,30 @@ def adjudicate(text, quiet=False):
         as the alpha is the palette path with the word `palette` gone, and it walked
         through as a source-fed call, where a forced alpha is allowed. So the path is
         now resolved: an argument counts as palette-fed when the expression itself, or
-        the one-line binding of any identifier in it, reaches a palette."""
-        return any(provenance_palette(a, body) for a in args[1:4])
+        the one-line binding of any identifier in it, or the call-site argument that
+        feeds a parameter in it, reaches a palette."""
+        return any(provenance_palette(a, body, 0, fname) for a in args[1:4])
 
-    def provenance_palette(expr, body=None, depth=0):
-        """Whether `expr` reads a palette, following one-line bindings to a bounded
-        depth. Unresolved is NOT palette-fed: the caller's source-fed branch is the
-        strict one (it must hand over the source's own fourth byte), so an expression
-        this scan cannot read is refused there rather than waved through here."""
+    def provenance_palette(expr, body=None, depth=0, fname=None):
+        """Whether `expr` reads a palette, following one-line bindings and parameters
+        at their call sites to a bounded depth.
+
+        Review-10 F1: the walk used to dead-end at a PARAMETER, and the branch an
+        unresolved call falls into is the source-fed one, whose acceptance test -- the
+        alpha is the source's fourth byte -- is EXACTLY what the shipped defect does
+        with the palette's alpha. So a filler whose palette parameter was renamed
+        (`const uint8_t* colours`) was review-9 F2's defect moved one level up, and it
+        passed all 41 checks. A parameter is now resolved at the function's call sites
+        in this file: every filler here is called here (`pixels = expandIndices(...,
+        texture.palette.data(), ...)`), so the argument that feeds the parameter is
+        readable and is adjudicated in the caller's body, where it was written.
+
+        Stated limit, beside the stride limit above: a palette that reaches the call
+        through an expression this scan cannot read -- a member of a member, a call
+        whose name says nothing, a filler with no call site in this file -- resolves
+        as NOT palette-fed, and the source-fed branch then asks for the fourth byte.
+        What stays fail-closed is the ALPHA: an alpha this scan cannot read at all is
+        refused by the alpha rule, not waved through by this one."""
         if not expr:
             return False
         if re.search(r"palette", expr, re.IGNORECASE):
@@ -1485,8 +1542,20 @@ def adjudicate(text, quiet=False):
             return False
         for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expr):
             rhs = binding(ident, body)
-            if rhs and provenance_palette(rhs, body, depth + 1):
-                return True
+            if rhs:
+                if provenance_palette(rhs, body, depth + 1, fname):
+                    return True
+                continue
+            if not fname:
+                continue
+            k = fn_param_index(fname, ident)
+            if k is None:
+                continue
+            for cargs, cpos in fn_call_sites(fname):
+                if cargs and len(cargs) > k and provenance_palette(
+                        cargs[k], enclosing_fn(text, cpos), depth + 1,
+                        enclosing_fn_name(text, cpos)):
+                    return True
         return False
 
     def texel_fillers(text):
@@ -1510,6 +1579,52 @@ def adjudicate(text, quiet=False):
             if sp[0] <= pos < sp[1]:
                 return text[sp[0]:sp[1]]
         return None
+
+    def enclosing_fn_name(text, pos):
+        """The NAME of the function containing the absolute offset `pos`."""
+        for name, sp in fn_spans(text):
+            if sp[0] <= pos < sp[1]:
+                return name
+        return None
+
+    def fn_def_site(fname):
+        """(name offset, '(' offset) of the DEFINITION of `fname`, or (None, None).
+
+        FN_DEF requires the `(` to follow the name with only whitespace between,
+        so the first `(` at or after a matched name is that definition's own."""
+        blank = blank_cached(text)
+        for m in FN_DEF.finditer(blank):
+            if m.group(1) == fname:
+                return m.start(1), blank.find("(", m.start(1))
+        return None, None
+
+    def fn_param_index(fname, ident):
+        """The position of `ident` in `fname`'s parameter list, or None if it is not
+        a parameter. A declarator's name is the last identifier of its parameter (an
+        array suffix, `int argv[]`, is allowed for); the parameter list is read with
+        the same bracket-aware splitter as a call's argument list."""
+        _, paren = fn_def_site(fname)
+        if paren is None:
+            return None
+        for i, prm in enumerate(call_args_at(text, paren) or []):
+            m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:\[[^\]]*\])?$",
+                          prm.strip())
+            if m and m.group(1) == ident:
+                return i
+        return None
+
+    def fn_call_sites(fname):
+        """[(args, offset)] for every call of `fname` in this file outside its own
+        definition. The sites are found in the blanked copy, so prose that names the
+        function is not a call site (review-8 F5's rule, applied one level up)."""
+        blank = blank_cached(text)
+        npos, _ = fn_def_site(fname)
+        out = []
+        for m in re.finditer(r"\b" + re.escape(fname) + r"[ \t]*\(", blank):
+            if npos is not None and m.start() == npos:
+                continue
+            out.append((call_args_at(text, m.end() - 1), m.start()))
+        return out
 
     def sink_calls(text):
         """[(offset, args)] for every `C3D_TexLoadImage` call, comments excluded.
@@ -1641,21 +1756,29 @@ def adjudicate(text, quiet=False):
     # WHETHER the helper is called. A rule about what the helper is handed has to look
     # at every place the helper is handed something, so the same two properties are
     # re-adjudicated here over every 5-argument call in the file. The path is resolved
-    # per call, not by a name: `palette_fed` follows a one-line alias, so a palette
-    # reached through `const uint8_t* colours = paletteRgba;` is still the palette path
-    # (review-9 F2), and `stride_of` says whether the source HAS an alpha byte at all
-    # (review-9 F3). So there are three branches and no free pass:
+    # per call, not by a name: `palette_fed` follows a one-line alias (review-9 F2),
+    # then a PARAMETER at the function's call sites in this file (review-10 F1: the
+    # rename had moved one level up -- a filler whose palette parameter is `colours`
+    # carries no `palette` substring and no binding, and the source-fed branch's test,
+    # "the alpha is the fourth byte", is exactly what the shipped defect does with the
+    # palette's alpha), and `stride_of` says whether the source HAS an alpha byte at
+    # all (review-9 F3). Three branches:
     #   * palette-fed -- must force opaque, because the oracle's shader writes 1.0;
     #   * a 4-stride (or stride-unknown) source -- must hand over its OWN fourth byte,
     #     because forcing 255 throws away the transparency the seam carries;
     #   * a 3-stride source -- has no fourth byte, so it must be opaque.
     # An alpha this scan cannot read at all (a call, a variable with no binding) is
-    # refused: fail closed.
+    # refused: fail closed. The PATH, by contrast, resolves to source-fed when it
+    # cannot read -- a palette handed over by a member of a member, or by a filler
+    # with no call site in this file, is adjudicated as a source and asked for its
+    # fourth byte. That is the residual stated in `provenance_palette`, recorded here
+    # because review-10 F1 falsified batch 124's claim that no free pass existed.
     all_calls = texel_calls(text)
     order_bad, alpha_bad = [], []
     for cpos, cargs in all_calls:
         cline = text.count("\n", 0, cpos) + 1
         cbody = enclosing_fn(text, cpos)
+        cfname = enclosing_fn_name(text, cpos)
         corder = [byte_index(a, cbody) for a in cargs[1:4]]
         if corder != [0, 1, 2]:
             order_bad.append("line %d hands texelBytes the source bytes %s"
@@ -1663,7 +1786,7 @@ def adjudicate(text, quiet=False):
         calpha = (cargs[4] or "").strip()
         opaque = re.fullmatch(r"(?:255|0xFF)u?", calpha) is not None
         stride = stride_of(cargs[1], cbody)
-        if palette_fed(cargs, cbody):
+        if palette_fed(cargs, cbody, cfname):
             if not opaque:
                 alpha_bad.append("line %d hands a PALETTE-fed texel the alpha `%s`"
                                  % (cline, calpha or "nothing"))
@@ -2651,6 +2774,85 @@ ARMS = [
          "        pixels = expandIndicesLocal(texture.source.data(), texture.realWidth, "
          "texture.realHeight,", 1),
      "every-texel-filler-rotates-through-the-helper"),
+    # Review-10 F1: review-9 F2's defect, moved one level up. The path resolution
+    # dead-ended at a PARAMETER, so a filler whose palette parameter is renamed
+    # (`const uint8_t* colours`) — no `palette` substring anywhere, no binding to
+    # follow — was adjudicated source-fed, where handing over `colours[i*4+3]` is
+    # exactly what the shipped defect does. The parameter now resolves at the call
+    # site in this file, which names `texture.palette.data()`.
+    ("a third filler renames its palette parameter and hands over its alpha "
+     "(review-10 F1)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesParam(const uint8_t* indices, int32_t width,\n"
+         "                                   int32_t height, const uint8_t* colours,\n"
+         "                                   int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            mdk::pica::texelBytes(pixel, colours[index * 4 + 0],\n"
+         "                                  colours[index * 4 + 1],\n"
+         "                                  colours[index * 4 + 2],\n"
+         "                                  colours[index * 4 + 3]);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesParam(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-call-hands-the-pica-its-path-s-alpha"),
+    # Review-10 F1's second spelling: the hoisted byte locals the batch-124 probe
+    # made legal, reached through a renamed parameter. Binding-follow and call-site
+    # resolution must COMPOSE — a byte local of a parameter of a palette call is
+    # still the palette's byte.
+    ("a third filler hoists bytes through a renamed palette parameter and hands over "
+     "its alpha (review-10 F1: the two resolutions must compose)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesHoist(const uint8_t* indices, int32_t width,\n"
+         "                                   int32_t height, const uint8_t* colours,\n"
+         "                                   int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            const uint8_t r = colours[index * 4 + 0];\n"
+         "            const uint8_t g = colours[index * 4 + 1];\n"
+         "            const uint8_t b = colours[index * 4 + 2];\n"
+         "            const uint8_t a = colours[index * 4 + 3];\n"
+         "            mdk::pica::texelBytes(pixel, r, g, b, a);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesHoist(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-call-hands-the-pica-its-path-s-alpha"),
+    # Review-10 F3: memcpy and memmove were bulk texel writes and memset was not —
+    # and memset is the intrinsic that can set a byte to a constant. One line after
+    # a CORRECT helper call, `memset(pixel + 3, 0xFF, 1);` re-pins the alpha to 255,
+    # byte for byte the shipped symptom.
+    ("a memset re-pins the alpha to 255 after a correct helper call (review-10 F3)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            memset(pixel + 3, 0xFF, 1);", 1),
+     "index-texels-are-rotated-for-the-pica"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -2856,6 +3058,57 @@ PROBES = [
          "                                  255u);\n"
          "        }\n    }\n    return pixels;\n}\n\n"
          "// WHAT IS LEFT, when a texture does not fit.", 1)),
+    # Review-10 F1's green half: the parameter resolution is data flow, not a name
+    # ban. The same renamed parameter, called with the palette, is correct code when
+    # the palette path's own alpha rule is honoured — refusing this spelling would
+    # be the route-around review-16 R2 names, and it is the half that keeps the new
+    # resolution from becoming a second spelling of the word `palette`.
+    ("a third filler renames its palette parameter and still forces an opaque alpha "
+     "(review-10 F1: the rename is a path, not a defect)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesParam(const uint8_t* indices, int32_t width,\n"
+         "                                   int32_t height, const uint8_t* colours,\n"
+         "                                   int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            mdk::pica::texelBytes(pixel, colours[index * 4 + 0],\n"
+         "                                  colours[index * 4 + 1],\n"
+         "                                  colours[index * 4 + 2], 255u);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesParam(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1)),
+    # Review-10 F2: the read spellings the batch-124 record claimed its table had
+    # checked but did not commit. A comparison through a pointer is a READ; the old
+    # `[^=;]*=` tail swallowed the operator of `!=`, `<=` and `>=` and reddened a dead
+    # guard — review-16 R2's failure class, red before the fix and green after it.
+    ("a filler guards with reads through a pointer using !=, <= and >= (review-10 F2: "
+     "a comparison is not an assignment)",
+     lambda s: s.replace(
+         "            mdk::pica::texelBytes(out + (size_t)x * 4,",
+         "            const uint8_t* s = row + (size_t)x * 4;\n"
+         "            if (*s != 0) { continue; }\n"
+         "            if (*s <= 0) { }\n"
+         "            if (*s >= 1) { }\n"
+         "            mdk::pica::texelBytes(out + (size_t)x * 4,", 1)),
+    # Review-10 F3's green half: the zero-fill padding write stays legal whatever the
+    # literal's spelling, because an all-zero texel is transparent under ANY byte
+    # order — the exemption is the VALUE, not one way of writing it.
+    ("the padding zero-fill is spelled 0u rather than 0 (review-10 F3: the zero-fill "
+     "exemption is the value, not the literal)",
+     lambda s: s.replace("    memset(pixels, 0, texels * 4);",
+                         "    memset(pixels, 0u, texels * 4);", 1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------
