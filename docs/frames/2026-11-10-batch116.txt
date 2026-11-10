@@ -1,0 +1,10 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-10T00:33:21Z at 63d6ea8
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+why this picture did not move: this batch changed no shipped instruction. The only file edited
+  is tests/scripts/main_3ds_flow_test.sh, a host-side source gate, and the built binary is
+  unchanged: mdk_3ds/mdk.elf is md5 b1997a5dca83639acf603d518abe8e62, byte-identical to batch
+  107's, re-measured after the edit. This PNG is md5 6769a13731983d65cee9df02da6cff37,
+  byte-identical to the ten captures before it -- a re-capture of a static frame, stated and
+  not hidden, and the pin and the ceiling in reference.sha256 do not move.

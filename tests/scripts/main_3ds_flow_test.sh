@@ -607,7 +607,9 @@ REFUSAL_FMT = re.compile(r"FAILED|refus", re.IGNORECASE)
 # either. The pattern is now the conversion grammar: flags, width, precision, length
 # modifier, conversion letter. STATED LIMIT: the space flag is not in the flag class
 # (it is what made the old pattern exclude `% `), so a format writing `"% d"` reads
-# as a literal percent, not a conversion.
+# as a literal percent, not a conversion -- and check 17 REFUSES such a line instead of
+# skipping it, because "the gate read no conversion" is not "the format asks for no
+# figure" (review-22 F1).
 FIGURE_FMT = re.compile(r"%(?!%)[-+#0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[hlLqjzt]*[a-zA-Z]")
 
 # The unit a refusal line's own format text names for the figure beside it
@@ -946,10 +948,13 @@ CHK = {
         "words assign to a byte figure must be the backend's capacity x stride x "
         "sizeof(float) (a KB slot divides by 1024), every figure they assign to a "
         "corner figure must BE that capacity, a line whose format names no unit at all "
-        "must still print that capacity in one of the slots it fills (review-21 F2), and "
+        "must still print that capacity in one of the slots it FILLS (review-21 F2), a "
+        "format carrying a percent this gate cannot read as a conversion is refused and not "
+        "skipped (review-22 F1), and "
         "no figure may be baked into the "
         "format text at all, because a figure with no argument behind it has no source "
-        "to disagree with (review-18 F2/F3, review-19 F1/F2, review-20 F1/F2/F4)",
+        "to disagree with (review-18 F2/F3, review-19 F1/F2, review-20 F1/F2/F4, "
+        "review-21 F1/F2, review-22 F1)",
     "failure-latch-re-arms-on-success":
         "the refused-mesh latch clears when a later attempt succeeds, so a second "
         "refusal after a recovery still prints (review-11 F7)",
@@ -1352,7 +1357,21 @@ def adjudicate(text, quiet=False):
         # `min([])` killed the script with a ValueError after 16 checks: no check 18, no
         # check 19, no arm and no probe scored, and the unattributed traceback review-15 F4
         # was written about. A format that asks for nothing has no slot to adjudicate.
+        #
+        # Review-22 F1: "the gate found no conversion" is NOT "the format asks for no
+        # figure", and the skip was keyed on the first. `FIGURE_FMT` does not read the space
+        # flag -- the file says so in its own stated limit above -- so
+        # `("objects: refused % d bytes", objectCorners)` had zero convs, was skipped by
+        # EVERY rule below including the byte-unit backstop, and printed ` 480 bytes` for an
+        # 80 KB request (review-11 F1's defect wearing a flag the tool cannot parse) with a
+        # full `PASS Main3dsFlow`. Batch 113 reddened that line and batch 114 crashed on it:
+        # both failed closed, and a skip that turns a fail-closed into an exemption is a pass
+        # generator. A format carrying a percent that is not `%%` and is not a readable
+        # conversion is a format this check cannot adjudicate, so it is refused by name.
         if not convs:
+            if "%" in fmt.replace("%%", ""):
+                fail_ok = False
+                break
             continue
         # Review-18 F4: a conversion with no argument is undefined behaviour, and this
         # comment always claimed it was red; with the old one-letter FIGURE_FMT it was
@@ -1407,8 +1426,25 @@ def adjudicate(text, quiet=False):
         # wherever they sit, while `"... at frame %lu", attempted, frame` is not. What a
         # unit-less slot cannot do is be the line's only claim about the refusal: when the
         # format names no unit word ANYWHERE the refused capacity must be one of the
-        # arguments the line fills (review-21 F2). And an argument past the LAST conversion
+        # arguments the line FILLS (review-21 F2). And an argument past the LAST conversion
         # is never looked at: the format cannot ask for it, so it prints nothing.
+        #
+        # Review-22 F2: FILLS is the word that carries the weight, so it has an arm. A gate
+        # mutant that reads the argument list instead of the filled slots passed 54/54 arms
+        # and 22/22 probes while accepting `"objects: refused %d at frame %lu", objectCorners,
+        # (unsigned long)frame, attempted` -- the capacity present in the call and printed by
+        # nothing, which is review-11 F1 again with the argument parked where no conversion
+        # can reach it.
+        #
+        # Review-22 F7, stated as a limit rather than hidden: the same rule refuses a line
+        # that prints ONLY a frame number -- `("objects: linearAlloc FAILED at frame %lu",
+        # frame)` is red. That is deliberate. The gate cannot tell a unit-less figure that
+        # makes a claim about the refusal from one that does not, which is exactly why the
+        # rule exists, and the only widening that keeps review-21 F2's shape red -- accept a
+        # line whose EVERY filled slot is the frame counter -- needs a new "is this the frame
+        # counter" predicate with arms and probes of its own, for a shape the port does not
+        # write today. The honest edit a batch reaches for is to print the refused capacity
+        # alongside the frame, and that is green.
         #
         # Review-20 F2, NARROWED rather than deleted by review-21 F2: a line that names a
         # unit word is NOT separately required to print the capacity as an argument of its
@@ -1483,9 +1519,18 @@ def adjudicate(text, quiet=False):
             if printed and not any(cap_name(v) in cap_names for v in printed):
                 fail_ok = False
                 break
-        # A line that NAMES a byte unit must print one: saying KB while printing the
-        # raw byte count is 1024x wrong, the same two-numbers defect one unit out.
-        if BYTE_UNIT.search(fmt) and not figs:
+        # A line that NAMES a byte unit and ASKS FOR a figure must print a byte figure:
+        # saying KB while printing the raw byte count is 1024x wrong, the same two-numbers
+        # defect one unit out. STATED REACH (review-22 F4): the `convs` term is true at this
+        # point for every line that gets here -- the skip above either returns (a format with
+        # no percent at all) or fails the check (a percent it cannot read) -- so since batch
+        # 115 this rule has NOT adjudicated a figure-less
+        # format, and `"objects: linearAlloc FAILED, bytes refused"` (a byte word in prose,
+        # no conversion) is green by design and pinned green by a probe. The reviewer's
+        # suggested `if figs and BYTE_UNIT...` would be vacuous, since `figs` non-empty and
+        # `not figs` cannot both hold. What the rule still refuses is a format that asks for
+        # figures and derives none of them from the capacity, e.g. `("%s bytes", name)`.
+        if convs and BYTE_UNIT.search(fmt) and not figs:
             fail_ok = False
         for kb, atoms in figs:
             if atoms != (kb_form(backend) if kb else backend):
@@ -1672,7 +1717,26 @@ def adjudicate(text, quiet=False):
     return r
 
 
-real = adjudicate(SRC)
+def adjudicate_named(label, text, quiet=False):
+    """`adjudicate` with a crash turned into a NAMED failure (review-21 F1, review-22 F6).
+    A check that raises IS fail-closed, but it tells nobody anything: it stops the checks
+    after it, scores nothing, and the report is a traceback naming no property --
+    review-15 F4's symptom, which this file has now been told about three times. Batch 115
+    wrapped the mutants and left the shipped-source call bare, so the same class over the
+    real file was still an unattributed traceback with no tally; the naming now covers
+    every call, and the tally stays short either way. Returns None when it raised."""
+    try:
+        return adjudicate(text, quiet=quiet)
+    except Exception as exc:  # noqa: the point is to NAME it, not to handle it
+        print("  FAIL main_3ds flow %s: adjudicating it raised %s: %s, which names no "
+              "property and leaves every later check unscored (review-21 F1, review-22 F6)"
+              % (label, type(exc).__name__, exc))
+        return None
+
+
+real = adjudicate_named("the shipped source", SRC)
+if real is None:
+    sys.exit(1)
 
 # --- mutation arms ----------------------------------------------------------
 # Each reintroduces one of the defects the checks claim to prevent. An arm that
@@ -2090,6 +2154,21 @@ def probe_failure_capacity_wrapped_deeply_in_parens(text):
                 }""", 1)
 
 
+def probe_failure_unit_less_line_prints_the_capacity(text):
+    """The ACCEPT half of the review-21 F2 rule (review-22 F3): a refusal line whose format
+    names no unit word anywhere and prints the refused capacity in the one slot it has. It
+    disagrees with nothing -- the number is the capacity the backend was actually handed --
+    so a gate that reddens it is review-10 F6's failure again. Nothing pinned this half:
+    a mutant that refused EVERY unit-less line printing a figure kept 54/54 arms and 22/22
+    probes while reddening exactly this line."""
+    return text.replace("""                                            1024));
+                }""",
+                        """                                            1024));
+                    mdk::log3dsPrintf("objects: linearAlloc FAILED, %d refused",
+                                      attempted);
+                }""", 1)
+
+
 def arm_failure_star_width_names_no_argument(text):
     """A `%*d` conversion the call cannot supply (review-19 F2). The star reads a
     width from an argument, so this call asks for two and passes one: the line prints
@@ -2177,6 +2256,39 @@ def arm_failure_unit_less_line_names_no_capacity(text):
                         """                                            1024));
                     mdk::log3dsPrintf("objects: stream mesh refused %d",
                                       objectCorners);
+                }""", 1)
+
+
+def arm_failure_unit_less_line_hides_the_capacity_past_the_last_conversion(text):
+    """The refused capacity is in the call and printed by NOTHING (review-22 F2). Same
+    unit-less format as review-21 F2's defect, with `attempted` parked after the last
+    conversion, where no conversion can reach it and the line still prints only the frame's
+    corner count. The shipped gate refuses it because the rule reads the slots the format
+    FILLS; a gate mutant that reads the argument list instead saw the dangling `attempted`,
+    called the line honest and passed 54/54 arms and 22/22 probes -- the clause batch 115's
+    record said carried the weight was pinned by nothing, which is this file's own
+    review-21 F1 failure one round later."""
+    return text.replace("""                                            1024));
+                }""",
+                        """                                            1024));
+                    mdk::log3dsPrintf("objects: refused %d at frame %lu",
+                                      objectCorners, (unsigned long)frame, attempted);
+                }""", 1)
+
+
+def arm_failure_space_flag_conversion_names_a_byte_unit(text):
+    """A conversion this gate cannot read, in a slot its own text calls a byte figure
+    (review-22 F1). `FIGURE_FMT` does not match the space flag -- stated limit, same file --
+    so `("objects: refused % d bytes", objectCorners)` looked like a format that asks for
+    nothing and was skipped by EVERY figure rule, the byte-unit backstop included. But
+    `vsnprintf` DOES print the space flag (log_3ds.cpp:79), so the line really does report a
+    9 KB refusal of an 80 KB request with `PASS Main3dsFlow`. Batch 113 reddened it and batch
+    114 crashed on it; the gate cannot read the conversion, so it must refuse the line rather
+    than wave it through."""
+    return text.replace("""                                            1024));
+                }""",
+                        """                                            1024));
+                    mdk::log3dsPrintf("objects: refused % d bytes", objectCorners);
                 }""", 1)
 
 
@@ -2801,6 +2913,18 @@ ARMS = [
      "(review-21 open question 4)",
      arm_stale_literal("8192e1"),
      CHK["failure-line-names-the-refused-capacity"]),
+    # Review-22 F1 and F2: the conversion the gate cannot read, and the capacity parked past
+    # the last conversion. The first is the shape batch 115's skip exempted; the second is
+    # the clause that skip's own record said carried the weight and that no arm had ever
+    # touched.
+    ("a space-flag conversion the gate cannot parse names a byte unit it does not print "
+     "(review-22 F1)",
+     arm_failure_space_flag_conversion_names_a_byte_unit,
+     CHK["failure-line-names-the-refused-capacity"]),
+    ("a refusal line parks the capacity past its last conversion and prints the frame's "
+     "corner count (review-22 F2)",
+     arm_failure_unit_less_line_hides_the_capacity_past_the_last_conversion,
+     CHK["failure-line-names-the-refused-capacity"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -2983,6 +3107,9 @@ PROBES = [
      probe_failure_line_names_a_unit_in_prose_but_prints_no_figure),
     ("the refused capacity is wrapped in seven pairs of parens (review-21 F3)",
      probe_failure_capacity_wrapped_deeply_in_parens),
+    # Review-22 F3: the accept half of the unit-less rule, which nothing pinned.
+    ("a refusal line naming no unit prints the refused capacity (review-22 F3)",
+     probe_failure_unit_less_line_prints_the_capacity),
 ]
 # --- mutant dump (review-15 F5) ------------------------------------------------
 # `arm_compile_check.sh` needs the mutants as FILES so it can hand them to the
@@ -3009,22 +3136,6 @@ print("main_3ds_flow: %s — %d checks, %d mutation arms, %d green probes"
       % (PATH, real.checks, len(ARMS), len(PROBES)))
 
 
-def adjudicate_mutant(label, mutated):
-    """`adjudicate` over a mutant, with a crash turned into a named failure (review-21
-    F1). A check that raises IS fail-closed, but it tells nobody anything: it stops the
-    checks after it, scores no arm and no probe, and the report is a traceback naming no
-    property -- review-15 F4's symptom, which this file has now been told about twice.
-    A mutant the gate cannot read is a failure of the gate, said in the same voice as
-    every other failure so the tally stays short. Returns None when it raised."""
-    try:
-        return adjudicate(mutated, quiet=True)
-    except Exception as exc:  # noqa: the point is to NAME it, not to handle it
-        print("  FAIL main_3ds flow %s: adjudicating it raised %s: %s, which names no "
-              "property and leaves every later check unscored (review-21 F1)"
-              % (label, type(exc).__name__, exc))
-        return None
-
-
 arms_red = 0
 for label, mutate, expected in ARMS:
     mutated = mutate(SRC)
@@ -3032,7 +3143,7 @@ for label, mutate, expected in ARMS:
         print("  FAIL main_3ds_flow arm %s: the mutation changed nothing, so the arm tested "
               "the file it was handed instead of the invariant" % label)
         continue
-    after = adjudicate_mutant("arm " + label, mutated)
+    after = adjudicate_named("arm " + label, mutated, quiet=True)
     if after is None:
         continue
     if not after.failed:
@@ -3059,7 +3170,7 @@ for label, mutate in PROBES:
     if mutated == SRC:
         print("  FAIL main_3ds_flow probe %s: the mutation changed nothing" % label)
         continue
-    after = adjudicate_mutant("probe " + label, mutated)
+    after = adjudicate_named("probe " + label, mutated, quiet=True)
     if after is None:
         continue
     if after.failed:

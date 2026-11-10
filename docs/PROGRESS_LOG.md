@@ -21334,3 +21334,125 @@ gap and NOT as a lookup that happened; Cognee's graph search is the loss P9 name
 **Protected file.** `ralph/builder.md` was dirty at dispatch, is in `PROTECTED`
 (`tools/runner/gates_batch_integrity.py`), and review-21 independently confirmed its mtime predates
 HEAD. Left uncommitted and unmodified.
+
+## Batch 116 (iteration 23) — review-22 closed 7/7 (no Critical, no High): F1–F6 fixed with a pin
+## each, F7 stated as a limit; nothing rebutted.
+
+Review-22 (`logs/ralph-pi/run-20261109-233059/review-1.md`, scope `1b677d4e..63d6ea85`) found no
+Critical and no High. Every finding was reproduced on the reviewer's own mutant or on the shipped
+gate before anything was changed, and every fix is isolated by an arm or a probe that fails by name
+when the fix is reverted. One of the seven is a policy call and is answered by stating the limit
+rather than by widening a rule; two of batch 115's quoted tallies were stale and are corrected below.
+
+**F1 (Medium, confirmed).** The skip batch 115 added was keyed on the gate's regex instead of the
+property it states. `FIGURE_FMT` does not match the space flag — the file says so in its own stated
+limit — so `mdk::log3dsPrintf("objects: refused % d bytes", objectCorners)` produced zero `convs`,
+was skipped by EVERY figure rule below including the byte-unit backstop that used to be the
+fail-closed net, and printed ` 480 bytes` for an 80 KB request, because `vsnprintf`
+(`mdk_3ds/src/platform/log_3ds.cpp:79`) does honour the space flag. Reproduced on the shipped gate:
+`failed=False`, `PASS Main3dsFlow (20 checks, 54 arms adjudicated red, 22 probes green)`. The same
+line on batch 114's gate raised `ValueError: min() iterable argument is empty` and on batch 113's
+gate turned check 17 red — both fail closed, so the "fix" had converted a fail-closed into an
+exemption, which is this file's own pass-generator failure mode. The skip is now
+
+```python
+if not convs:
+    if "%" in fmt.replace("%%", ""):
+        fail_ok = False
+        break
+    continue
+```
+
+— a percent that is neither `%%` nor a readable conversion is a format this check cannot adjudicate,
+so it is refused and attributed instead of exempted. The reviewer's own suggested test,
+`re.search(r"%(?!%)", fmt)`, was NOT taken: it matches the SECOND percent of `%%`, so it would
+refuse every honest `%%` in the tree. `fmt.replace("%%", "")` is the reviewer's second suggestion and
+is the one that is correct. Pinned by `arm_failure_space_flag_conversion_names_a_byte_unit`;
+reverting only the branch loses exactly that arm and nothing else (`only 55 of 56 arms`).
+
+**F2 (Medium, confirmed).** The clause batch 115's record said carried the weight — "reading filled
+slots so a dangling capacity cannot vouch for the line" — was pinned by nothing. The reviewer's
+mutant (`printed` built from `vals` instead of `slots`) passed `54/54 arms, 22/22 probes` and
+accepted `"objects: refused %d at frame %lu", objectCorners, (unsigned long)frame, attempted`,
+which the shipped gate refuses; both halves were reproduced here before the change. One arm,
+`arm_failure_unit_less_line_hides_the_capacity_past_the_last_conversion`, puts the capacity past the
+last conversion while a filled slot prints the frame's corner count; the arglist mutant now loses
+exactly that arm (`only 55 of 56 arms`). This is review-21 F1's own failure mode repeated one round
+later by this builder, and it is the second time in three rounds that a sentence in a record turned
+out to have no mutant behind it.
+
+**F3 (Low, confirmed).** The accept half of the same rule was unpinned: a mutant that refuses EVERY
+unit-less line printing a figure kept `54/54 arms, 22/22 probes` while reddening
+`"objects: linearAlloc FAILED, %d refused", attempted` — a line that disagrees with nothing, since
+the number is the capacity the backend was actually handed. One probe,
+`probe_failure_unit_less_line_prints_the_capacity`; the over-refusing mutant now loses exactly that
+probe (`only 22 of 23 probes`).
+
+**F4 (Low, confirmed; the remediation's form corrected).** Two rules in check 17 disagreed and the
+record did not say which wins. The byte-unit rule still read "a line that NAMES a byte unit must
+print one" while the skip made it unreachable for a format that prints no figure, and batch 115's
+probe `"objects: linearAlloc FAILED, bytes refused"` *requires* green. The rule now states its reach
+in code (`if convs and BYTE_UNIT.search(fmt) and not figs`) and in a comment at the rule: it has not
+adjudicated a figure-less format since batch 115, that probe is green by design, and what the rule
+still refuses is a format that asks for figures and derives none of them from the capacity, e.g.
+`("%s bytes", name)`. The reviewer's suggested `if figs and BYTE_UNIT.search(fmt)` was not used
+because it is vacuous — `figs` non-empty and `not figs` cannot both hold — which the finding's own
+parenthetical half-admits.
+
+**F5 (Low, confirmed; the reviewer's evidence corrected too).** Two of batch 115's quoted gate-mutant
+tallies were stale, measured against the file before the exponent arm was appended. Re-measured on
+batch 115's committed file: deleting the review-21 F2 rule is `only 52 of 54 arms` (batch 115 quoted
+`51 of 53`) and restoring `for _ in range(6)` in `unwrap` is `only 53 of 54 arms` (quoted `52 of
+53`). Both of the reviewer's numbers reproduce exactly. One correction the other way: neither mutant
+prints a probe tally at all, because the suite exits at the arm stage before the probe loop — the
+`probes 22/22` and `probes 21/22` in the finding's evidence block are not output the shipped tool
+can produce. Batch 115's other two quotes reproduce exactly (`only 21 of 22 probes` with the skip
+deleted, the probe failing by name, and `53 of 54` for the old `LITERAL_RE`). The same two mutants on
+this batch's tool are `53 of 56` and `55 of 56`, and every tally in this batch's record was read off
+the committed file rather than quoted from a plan.
+
+**F6 (Low, confirmed).** The crash class was closed for mutants only: `real = adjudicate(SRC)` was
+bare, so the same class over the real file was still an unattributed traceback with no tally, while
+batch 115's record claimed "the class, not this instance". One `adjudicate_named(label, text, quiet)`
+now wraps every call — the shipped source and both mutant loops — and `adjudicate_mutant()` is gone.
+Demonstrated by running a bounded-unwrap gate over a seven-paren source:
+`FAIL main_3ds flow the shipped source: adjudicating it raised TypeError: expected string or
+bytes-like object, got 'NoneType', which names no property and leaves every later check unscored`,
+exit 1, zero `Traceback` lines in the output.
+
+**F7 (Low, policy call — stated as a limit, not widened).** A unit-less refusal line that prints only
+a frame number is red, and it stays red. The reviewer is right that the shape disagrees with nothing
+in the way review-17 R3 means, and right that the only widening that keeps review-21 F2's shape red is
+"accept a line whose EVERY filled slot is the frame counter" — but that is a new predicate ("is this
+the frame counter", with casts, `frame + 1`, and a second counter to decide) needing arms and probes
+of its own, for a shape the port does not write today. The honest edit a batch reaches for — print the
+refused capacity alongside the frame — is green and stays green. The limit and that answer are now in
+check 17's comment and in the check's own label, so the next batch reads the rule's reach where the
+rule is.
+
+**Review-22 open question 2, answered with a cost.** A real conversion parser, or better a
+`__attribute__((format (printf, 1, 2)))` on `mdk::log3dsPrintf`, would let the compiler — not this
+gate — catch every dropped, extra or mistyped argument, and would retire check 17's arity and
+conversion-grammar rules outright. It is the right end state and it is NOT a test-only batch: the
+attribute lives in `mdk_3ds/src/platform/log_3ds.h`, so it changes `mdk_3ds/**`, can turn existing
+call sites into warnings or errors across both targets, and owes P8 emulator evidence. Deferred to a
+batch that can pay that, and named here so it is not lost.
+
+**Stated residual, looked for and not touched.** `FIGURE_FMT`'s `(?!%)` guard rejects only the FIRST
+percent of a `%%` pair, so `"%%d"` still reads as a `%d` conversion. The consequence is a false RED
+(a line refused for an argument it does not have), never a false green, so it is fail-closed in the
+safe direction and is left alone rather than widened into this batch.
+
+Measured on the committed file: `PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 23 probes
+green)`, `PASS C3dFrame (31 checks, 49 arms adjudicated red, 2 probes green)`, `PASS ArmCompile (132
+mutant(s), 0 diagnostics, /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)` (+3 mutants = two arms and
+one probe), `make -C tests/scripts` -> `All cases match the oracle.`, `bash tools/check.sh` ->
+`CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`), `make -C mdk_3ds` builds with
+`mdk.elf` `b1997a5dca83639acf603d518abe8e62`, byte-identical to batch 107's, so no shipped
+instruction moved and the frame pair is a byte-identical re-capture (`6769a13731983d65cee9df02da6cff37`),
+stated in its own sidecar and not hidden. No `mdk_3ds/**` or `mdk_core/**` path changed, so no P8
+emulator evidence is owed and none is claimed. Prior-solution lookup: `pi-knowledge` `mdk-sdl`
+searched (one unrelated hit on `script_vm.cpp` float comments, no prior finding on the conversion
+grammar or the space flag); no `obsidian_*` or `cognee_*` tools are exposed in this session, which is
+recorded as a session gap and not as a lookup that happened (AGENTS.md P9). `ralph/builder.md` was
+dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose.

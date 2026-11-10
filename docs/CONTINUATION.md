@@ -1,11 +1,64 @@
 # Phase 2 continuation checkpoint
-Risk: medium — test-only diff, one file (`tests/scripts/main_3ds_flow_test.sh`): check 17 restores
-one line-level rule in a narrowed form, widens one skip, `unwrap` becomes a real fixpoint, the
-literal pattern gains the exponent, and a mutant that crashes the gate is now a named failure. Four
-arms and two probes are added. No shipped instruction changed, so `mdk.elf` is bit-identical to batch
-107's (`b1997a5dca83639acf603d518abe8e62`, re-measured after the edit) and the frame pair is a
-byte-identical re-capture, stated not hidden. Review-21 found no Critical and no High; all three
-findings were reproduced on the reviewer's own mutants and fixed, none rebutted.
+Risk: medium — test-only diff, one file (`tests/scripts/main_3ds_flow_test.sh`): check 17's
+figure-less skip becomes fail-closed for a conversion the gate cannot read, one rule states its own
+reach, the shipped-source adjudication is named the way the mutant one is, and two arms plus one
+probe pin clauses that had nothing behind them. Review-22 found no Critical and no High; F1-F6 are
+fixed each with a pin that fails by name when the fix is reverted, F7 is stated as a limit with the
+reason, and two of batch 115's quoted tallies are corrected against the committed tool. No shipped
+instruction changed, so `mdk.elf` is bit-identical to batch 107's
+(`b1997a5dca83639acf603d518abe8e62`, re-measured after the edit) and the frame pair is a
+byte-identical re-capture, stated not hidden.
+
+**Batch 116 (Iteration 23) — review-22 closed 7/7: F1–F6 fixed with a pin each, F7 stated as a
+limit; nothing rebutted.** **F1 (Medium, confirmed)**: the skip batch 115 added was keyed on the
+gate's regex, not on the property — `FIGURE_FMT` does not read the space flag (the file's own stated
+limit), so `("objects: refused % d bytes", objectCorners)` had zero `convs`, was skipped by EVERY
+figure rule including the byte-unit backstop, and printed ` 480 bytes` for an 80 KB request
+(`vsnprintf` honours the space flag, `log_3ds.cpp:79`) with a full `PASS Main3dsFlow`; reproduced
+verbatim, and batch 114's gate raised `ValueError` on it while batch 113's reddened it, so the crash
+fix had turned a fail-closed into an exemption. It is now `if not convs: if "%" in
+fmt.replace("%%", ""): fail; break` — a percent that is neither `%%` nor a readable conversion is a
+format this check cannot adjudicate, so it is refused and attributed. The reviewer's
+`re.search(r"%(?!%)", fmt)` was not taken: it matches the second percent of `%%` and would refuse
+every honest `%%` in the tree. One arm; reverting the branch loses exactly it (`55 of 56`). **F2
+(Medium, confirmed)**: the clause batch 115's record said carried the weight — "reading filled slots
+so a dangling capacity cannot vouch for the line" — was pinned by nothing; the reviewer's
+argument-list mutant passed `54/54 arms, 22/22 probes` while accepting
+`"objects: refused %d at frame %lu", objectCorners, (unsigned long)frame, attempted`. One arm parks
+the capacity past the last conversion, and that mutant now loses exactly it (`55 of 56`). This is
+review-21 F1 one round later, and the second time in three rounds that a sentence in a record had no
+mutant behind it. **F3 (Low, confirmed)**: the accept half of the same rule was unpinned — a mutant
+refusing every unit-less line that prints a figure kept `54/54` and `22/22` while reddening
+`"objects: linearAlloc FAILED, %d refused", attempted`; one probe, and that mutant now loses exactly
+it (`22 of 23`). **F4 (Low, confirmed, form corrected)**: the byte-unit rule now states its reach in
+code (`if convs and BYTE_UNIT...`) and at the rule — it has not adjudicated a figure-less format
+since batch 115, the prose-unit probe is green by design, and what the rule still refuses is a format
+asking for figures and deriving none from the capacity (`("%s bytes", name)`); the reviewer's
+`if figs and BYTE_UNIT...` is vacuous (`figs` and `not figs`) and was not used. **F5 (Low,
+confirmed)**: batch 115's `51 of 53` and `52 of 53` were stale quotes; re-measured on batch 115's
+committed file they are `52 of 54` and `53 of 54`, and neither mutant prints a probe tally at all
+because the suite exits at the arm stage — the `probes 22/22` and `probes 21/22` in the reviewer's
+evidence block are not output the shipped tool can produce. Batch 115's other two quotes reproduce
+exactly. **F6 (Low, confirmed)**: `real = adjudicate(SRC)` was bare, so the crash class over the real
+file was still an unnamed traceback; one `adjudicate_named(label, text, quiet)` now wraps every call,
+shown by a bounded-unwrap gate over a seven-paren source printing
+`FAIL main_3ds flow the shipped source: adjudicating it raised TypeError: ...` with exit 1 and zero
+`Traceback` lines. **F7 (Low, policy)**: a unit-less line printing only a frame number stays red,
+and the limit is now stated where the rule is; the only widening that keeps review-21 F2's shape red
+needs a "is this the frame counter" predicate with arms of its own, for a shape the port does not
+write, and the honest edit (print the capacity with the frame) is green. **Review-22 open question 2**
+is answered with a cost: a `format (printf, 1, 2)` attribute on `mdk::log3dsPrintf` would let the
+compiler retire this family's arity and grammar rules, but it lives in `mdk_3ds/src/platform/log_3ds.h`
+— a shipped-instruction change owing P8 emulator evidence — so it is a named next batch, not a
+side-effect of a gate batch. Measured: `PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 23
+probes green)`, `PASS C3dFrame (31 checks, 49 arms adjudicated red, 2 probes green)`, `PASS
+ArmCompile (132 mutant(s), 0 diagnostics)`, `make -C tests/scripts` -> `All cases match the
+oracle.`, `bash tools/check.sh` -> `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`),
+`make -C mdk_3ds` builds with `mdk.elf` `b1997a5dca83639acf603d518abe8e62`. No `mdk_3ds/**` or
+`mdk_core/**` path changed, so no P8 emulator evidence is owed and none is claimed. `pi-knowledge`
+`mdk-sdl` searched, no prior finding predating this one; no `obsidian_*`/`cognee_*` tools are exposed
+in this session, recorded as a session gap and not as a lookup that happened. `ralph/builder.md` was
+dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose.
 
 **Batch 115 (Iteration 22) — review-21 closed 3/3: F1, F2 and F3 all fixed, none rebutted.**
 **F1 (Medium, confirmed)**: a refusal line whose format names a unit word and carries NO conversion —
@@ -619,6 +672,33 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 116)
+**What is actually next, restated by batch 116.** This is the twelfth round on the same three checks,
+and the shape of the last three is the same: review-20, review-21 and review-22 each found a clause of
+check 17 whose reach depended on what `FIGURE_FMT` can and cannot read — a unit word belonging to the
+wrong conversion, a format with a conversion the pattern does not match, a space flag. Review-22
+found no Critical and no High and every finding was settleable by a mutant against the shipped
+source, so batch 113's retirement clause still does not trigger on its own terms (it turned on a
+finding "a reader with a profile could have found", and none of these is that). But the review named
+the way out and this batch agrees it is the right one: **give `mdk::log3dsPrintf` a
+`__attribute__((format (printf, 1, 2)))` and let the compiler own argument count and type**, which
+retires check 17's arity and conversion-grammar rules instead of patching them a thirteenth time. That
+is a shipped-code change in `mdk_3ds/src/platform/log_3ds.h`, it can turn existing call sites into
+warnings on both targets, and it owes P8 emulator evidence, so it is a batch of its own and not a
+side-effect of a gate batch. If the loop would rather not spend that batch, the alternative is to
+leave the family frozen at what it now pins — every figure sourced, every unit word nearest its
+conversion, no unreadable conversion accepted — and stop widening it.
+
+**The two named game items are unchanged and both are blocked on a named cause, not on effort.** (1)
+**the canvas seam** — `mdk_render_canvas_quad` is a no-op on this backend
+(`renderer_c3d.cpp:2345`), which is what priority item 5b (the HUD) and the MVE movie presenter both
+wait on; (2) **the collision batch** — `FindConnections` + `CrossedArena`, which unfreezes
+`currentArena_` from the spawn arena and lets `ArenaSpace::setSolid` take the oracle's current +
+active second, and which needs a doorway-crossing oracle rather than a hand-written expectation.
+Either one changes `mdk_3ds/**` and therefore owes an `emurun.sh` verdict block on `DISPLAY=:99`.
+The one-sided-view investigation below stays open and is the sharper of the two picture questions,
+and the R = 255 candidate set is still two, not five (below).
 
 ## NEXT (batch 114)
 **What is actually next, restated by batch 114.** This was the tenth round on the same three checks,
