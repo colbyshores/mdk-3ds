@@ -224,6 +224,54 @@ def block_span(text, pattern):
     return block_span_from(text, m.end())
 
 
+# A dereference WRITE, wherever it sits in a statement (review-9 F1).
+#
+# The batch-122 detector anchored the bare-dereference rule at `^`, i.e. at the start
+# of the FOLDED statement — and folding is what makes that anchor a hole rather than a
+# guard: `if (index != 0) *(pixel + 3) = paletteRgba[index * 4 + 3];` is ONE statement,
+# so the write is not what the statement begins with, and the shipped R = 255 defect
+# passed all 41 checks in that spelling. `else *(pixel + 3) = ...` and a one-line `for`
+# body are the same miss with different punctuation in front of them.
+#
+# The `*` cannot simply be un-anchored, because `*` also opens a POINTER DECLARATION:
+# `const uint8_t* colours = paletteRgba;` is a legal spelling this batch's own alias arm
+# writes, and a rule that reddened it would be routed around (review-16 R2). What tells
+# the two apart is the token before the `*`. A declaration puts a TYPE there — an
+# identifier that is not a keyword. A dereference begins a primary expression, so what
+# precedes it is a statement start, punctuation, an operator, or a control keyword.
+DEREF_PRE_PUNCT = ";{}()=!<>+-*/%&|^~"
+DEREF_PRE_WORDS = ("else", "return", "do", "case", "and", "or", "not", "xor")
+DEREF_WRITE_TAIL = re.compile(r"[^=;]*=[ \t]*[^=]")
+
+
+def deref_write(stmt):
+    """True when `stmt` assigns through a dereference anywhere in it.
+
+    `*(pixel + 3) = paletteRgba[index * 4 + 3]`, `*pixel = x`, `if (c) *(p + 3) = x`
+    and `for (...) *p = x` are writes; `const uint8_t* colours = paletteRgba;`,
+    `y = *p`, `texels * 4` and `a == *p` are not. The `[^=;]*=` tail is the same
+    terminator that keeps `==`, `!=`, `<=` and `>=` out of the subscript rules, and it
+    is what stops a READ through a pointer from counting.
+
+    Stated limit, in the same spirit as the parameter-passing limit below: a write
+    introduced after a comma in a multi-declarator (`uint8_t *a, *b = x;`) would read
+    as a dereference write, so `,` is deliberately NOT in the punctuation set and
+    `f(a, *p = 1)` is not caught. The first is a legal declaration and the second is
+    not a shape this port writes."""
+    for m in re.finditer(r"\*[ \t]*[A-Za-z_(]", stmt):
+        j = m.start() - 1
+        while j >= 0 and stmt[j] in " \t":
+            j -= 1
+        pre = stmt[j] if j >= 0 else ""
+        ok = pre == "" or pre in DEREF_PRE_PUNCT
+        if not ok:
+            w = re.search(r"[A-Za-z_][A-Za-z0-9_]*$", stmt[:j + 1])
+            ok = w is not None and w.group(0) in DEREF_PRE_WORDS
+        if ok and DEREF_WRITE_TAIL.match(stmt[m.start():]):
+            return True
+    return False
+
+
 def blank_comments(text):
     """`text` with every C++ comment replaced by spaces, byte offsets preserved.
     The latch checks below scan brace depth, and an apostrophe in prose -- "the
@@ -1254,14 +1302,21 @@ def adjudicate(text, quiet=False):
         spelling this file itself wraps to at ~100 columns -- matched none of them.
         It now runs over `statements(blank_comments(body))`: comment-aware (so a bare
         `*dst = ...;` is seen, which `code_lines` drops) and continuation-folded (so
-        the write is one unit whatever the formatter did to it)."""
+        the write is one unit whatever the formatter did to it.
+
+        Review-9 F1: folding makes the STATEMENT the unit, so anchoring the bare
+        dereference at `^` refused only the write that BEGAN its statement. A guarded
+        `if (index != 0) *(pixel + 3) = ...`, an `else`, and a one-line `for` body are
+        that same write with punctuation in front of it, and all three passed the gate;
+        the rule is now `deref_write(stmt)`, which asks what precedes the `*` instead of
+        asking whether the `*` is first."""
         if body is None:
             return ["(the expansion is absent)"]
         hits = []
         for stmt in statements(blank_comments(body)):
             if re.search(r"\w[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
                re.search(r"\)[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
-               re.search(r"^\*[^=;]*=[ \t]*[^=]", stmt) or \
+               deref_write(stmt) or \
                re.search(r"\b(?:memcpy|memmove)[ \t]*\(", stmt):
                 hits.append(stmt)
         return hits
@@ -1278,7 +1333,21 @@ def adjudicate(text, quiet=False):
         args = call_args_at(text, paren) if paren is not None else None
         return args if args and len(args) == 5 else []
 
-    def byte_index(arg):
+    def binding(ident, body):
+        """The right-hand side `ident` is initialised or assigned from in `body`, or
+        None. One line, declaration or assignment, first match wins.
+
+        This is the whole data-flow model, and it is deliberately one hop deep: enough
+        to read `const uint8_t* colours = paletteRgba;` and `const uint8_t r =
+        row[(size_t)x * 4 + 0];` -- the two spellings review-9 F2 and F4 found the gate
+        could not read -- and not an attempt at a call graph."""
+        if not (body and ident):
+            return None
+        m = re.search(r"(?:^|[;{}])[^;{}=]*\b" + re.escape(ident) +
+                      r"[ \t]*=[ \t]*([^;{}]+)", body)
+        return m.group(1).strip() if m else None
+
+    def byte_index(arg, body=None, depth=0):
         """The byte offset a source expression reads: `row[(size_t)x * 4 + 2]` -> 2,
         `src[3]` -> 3, and None for a constant such as `255u` or `0u`.
 
@@ -1286,11 +1355,49 @@ def adjudicate(text, quiet=False):
         cheapest alternate spelling was `texelBytes(pixel, palette[... + 2],
         palette[... + 1], palette[... + 0], 255u)` -- every batch-121 check stayed
         green over it, because they asked whether the helper was called and what the
-        alpha was, never which byte each colour argument read."""
+        alpha was, never which byte each colour argument read.
+
+        Review-9 F4: a bare identifier is a byte too when the body says so.
+        `const uint8_t r = row[(size_t)x * 4 + 0]; texelBytes(p, r, g, b, a);` is the
+        same four bytes in the same order, and a reader that stopped at the identifier
+        reddened that legal refactor in four checks -- review-16 R2's class, a gate that
+        reddens a shape the port may write. So a name is followed through its own binding
+        to a bounded depth, and a name with no binding in this body still reads as None:
+        fail closed on what the scan cannot read."""
         if not arg:
             return None
-        m = re.search(r"(\d+)[ \t]*\]$", arg.strip())
-        return int(m.group(1)) if m else None
+        a = arg.strip()
+        m = re.search(r"(\d+)[ \t]*\]$", a)
+        if m:
+            return int(m.group(1))
+        if body is not None and depth < 3 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", a):
+            rhs = binding(a, body)
+            if rhs:
+                return byte_index(rhs, body, depth + 1)
+        return None
+
+    def stride_of(arg, body=None, depth=0):
+        """The pixel stride an argument indexes its source with: `row[(size_t)x * 4 + 2]`
+        -> 4, `rgb[(size_t)x * 3]` -> 3, and None when the expression does not say.
+
+        Review-9 F3 asked for the 4-byte and 3-byte source paths to be told apart by
+        their STRIDE rather than by "anything that is not palette-fed may be opaque",
+        because the stride is what says whether the source HAS an alpha byte at all: a
+        4-stride source does and its alpha must reach the PICA, a 3-stride source has
+        none and its texel must be opaque. Stated limit: a 3-byte source read through a
+        hoisted pointer (`src[0]`) hides its stride, and the gate then reads it as a
+        4-byte source and asks for byte 3."""
+        if not arg:
+            return None
+        a = arg.strip()
+        m = re.search(r"\[[^\]]*\*[ \t]*(\d+)[^\]]*\][ \t]*$", a)
+        if m:
+            return int(m.group(1))
+        if body is not None and depth < 3 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", a):
+            rhs = binding(a, body)
+            if rhs:
+                return stride_of(rhs, body, depth + 1)
+        return None
 
     def fn_spans(text):
         """[(name, (start, end))] for every function definition in the file.
@@ -1315,8 +1422,14 @@ def adjudicate(text, quiet=False):
         file as having NO helper call at all -- 0 calls, every filler wrong. The
         unqualified name is accepted only when the file actually carries the
         using-declaration, so the helper's qualification stays the invariant and is
-        now stated here rather than implicit in one regex (review-8 open question 2)."""
-        if re.search(r"\busing[ \t]+(?:mdk::)?pica::texelBytes[ \t]*;", text):
+        now stated here rather than implicit in one regex (review-8 open question 2).
+
+        Review-9 F8: this read the RAW text while every other scan in the family reads
+        the blanked copy, so a commented-out `// using mdk::pica::texelBytes;` enabled
+        unqualified matching for the whole file -- and a local function of its own
+        called `texelBytes` then counted as "the helper", which is the defect with the
+        gate's blessing. Prose is not code, here as everywhere else."""
+        if re.search(r"\busing[ \t]+(?:mdk::)?pica::texelBytes[ \t]*;", blank_cached(text)):
             return r"\b(?:pica::)?texelBytes[ \t]*\("
         return r"\bpica::texelBytes[ \t]*\("
 
@@ -1342,16 +1455,39 @@ def adjudicate(text, quiet=False):
                 out.append((m.start(), args))
         return out
 
-    def palette_fed(args):
+    def palette_fed(args, body=None):
         """True when a helper call's colour arguments read a palette.
 
         The two paths have OPPOSITE alpha rules -- an indexed texel's alpha is forced
         opaque because the oracle's shader writes 1.0, an RGBA texel's alpha is the
         source's own fourth byte because the seam carries a real alpha -- so a
-        file-wide rule must be able to tell them apart without naming them. The
-        palette is the only thing an index expansion reads its colours from, so the
-        argument text says which path the call is on."""
-        return any(re.search(r"palette", a or "", re.IGNORECASE) for a in args[1:4])
+        file-wide rule must be able to tell them apart without naming them.
+
+        Review-9 F2: it used to ask whether the argument TEXT said so, and the claim
+        that "the argument text says which path the call is on" was false --
+        `const uint8_t* colours = paletteRgba;` followed by `colours[index * 4 + 3]`
+        as the alpha is the palette path with the word `palette` gone, and it walked
+        through as a source-fed call, where a forced alpha is allowed. So the path is
+        now resolved: an argument counts as palette-fed when the expression itself, or
+        the one-line binding of any identifier in it, reaches a palette."""
+        return any(provenance_palette(a, body) for a in args[1:4])
+
+    def provenance_palette(expr, body=None, depth=0):
+        """Whether `expr` reads a palette, following one-line bindings to a bounded
+        depth. Unresolved is NOT palette-fed: the caller's source-fed branch is the
+        strict one (it must hand over the source's own fourth byte), so an expression
+        this scan cannot read is refused there rather than waved through here."""
+        if not expr:
+            return False
+        if re.search(r"palette", expr, re.IGNORECASE):
+            return True
+        if body is None or depth >= 3:
+            return False
+        for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+            rhs = binding(ident, body)
+            if rhs and provenance_palette(rhs, body, depth + 1):
+                return True
+        return False
 
     def texel_fillers(text):
         """[(name, body)] for every function that allocates a padded RGBA8 buffer.
@@ -1472,7 +1608,7 @@ def adjudicate(text, quiet=False):
     # walked through and made every RGBA texel invisible -- the mirror image of the
     # defect the check exists to prevent. It now asks for the source's own fourth byte.
     rep.check("rgba-texel-alpha-is-the-sources",
-              rgba_alpha is not None and byte_index(rgba_alpha) == 3,
+              rgba_alpha is not None and byte_index(rgba_alpha, rgba_body) == 3,
               "the alpha an RGBA texel hands the PICA is `%s` (the seam carries a real "
               "alpha on this path, so it must be the source's OWN fourth byte: a forced "
               "255 discards the texture's transparency and a forced 0 hides every RGBA "
@@ -1483,8 +1619,8 @@ def adjudicate(text, quiet=False):
     # whether the helper was called and what the alpha was; neither question reads
     # WHICH SOURCE BYTE each colour argument names, so swapping the red and blue
     # sources printed `ok` four times and put red on the console again.
-    idx_order = [byte_index(a) for a in idx_args[1:4]]
-    rgba_order = [byte_index(a) for a in rgba_args[1:4]]
+    idx_order = [byte_index(a, idx_body) for a in idx_args[1:4]]
+    rgba_order = [byte_index(a, rgba_body) for a in rgba_args[1:4]]
     rep.check("index-texel-channels-are-in-source-order",
               idx_order == [0, 1, 2],
               "the index expansion hands texelBytes the palette bytes %s (the palette is "
@@ -1504,27 +1640,38 @@ def adjudicate(text, quiet=False):
     # 39 checks, because `every-texel-filler-rotates-through-the-helper` asks only
     # WHETHER the helper is called. A rule about what the helper is handed has to look
     # at every place the helper is handed something, so the same two properties are
-    # re-adjudicated here over every 5-argument call in the file. The two paths are
-    # told apart by `palette_fed`, not by a name: an indexed texel's alpha is forced
-    # opaque (the oracle's shader writes 1.0), and anything else may be opaque or may
-    # carry the source's own fourth byte -- a third path that expanded a 3-byte source
-    # and forced 255 is a shape the port may write, so it is not refused. An alpha this
-    # scan cannot read at all (a call, a variable) is refused: fail closed.
+    # re-adjudicated here over every 5-argument call in the file. The path is resolved
+    # per call, not by a name: `palette_fed` follows a one-line alias, so a palette
+    # reached through `const uint8_t* colours = paletteRgba;` is still the palette path
+    # (review-9 F2), and `stride_of` says whether the source HAS an alpha byte at all
+    # (review-9 F3). So there are three branches and no free pass:
+    #   * palette-fed -- must force opaque, because the oracle's shader writes 1.0;
+    #   * a 4-stride (or stride-unknown) source -- must hand over its OWN fourth byte,
+    #     because forcing 255 throws away the transparency the seam carries;
+    #   * a 3-stride source -- has no fourth byte, so it must be opaque.
+    # An alpha this scan cannot read at all (a call, a variable with no binding) is
+    # refused: fail closed.
     all_calls = texel_calls(text)
     order_bad, alpha_bad = [], []
     for cpos, cargs in all_calls:
         cline = text.count("\n", 0, cpos) + 1
-        corder = [byte_index(a) for a in cargs[1:4]]
+        cbody = enclosing_fn(text, cpos)
+        corder = [byte_index(a, cbody) for a in cargs[1:4]]
         if corder != [0, 1, 2]:
             order_bad.append("line %d hands texelBytes the source bytes %s"
                              % (cline, corder or "nothing"))
         calpha = (cargs[4] or "").strip()
         opaque = re.fullmatch(r"(?:255|0xFF)u?", calpha) is not None
-        if palette_fed(cargs):
+        stride = stride_of(cargs[1], cbody)
+        if palette_fed(cargs, cbody):
             if not opaque:
                 alpha_bad.append("line %d hands a PALETTE-fed texel the alpha `%s`"
                                  % (cline, calpha or "nothing"))
-        elif not opaque and byte_index(cargs[4]) != 3:
+        elif stride == 3:
+            if not opaque:
+                alpha_bad.append("line %d hands a 3-BYTE-sourced texel the alpha `%s`"
+                                 % (cline, calpha or "nothing"))
+        elif opaque or byte_index(cargs[4], cbody) != 3:
             alpha_bad.append("line %d hands a SOURCE-fed texel the alpha `%s`"
                              % (cline, calpha or "nothing"))
     rep.check("every-texel-call-hands-the-helper-the-source-order",
@@ -1541,8 +1688,10 @@ def adjudicate(text, quiet=False):
               "%d helper call(s) in the file, %d with an alpha its path does not allow: "
               "%s (a palette-fed texel must force opaque -- the oracle writes 1.0, and a "
               "palette-stored 0 discards the texel against the GPU_GREATER alpha test -- "
-              "while a source-fed texel must be opaque or the source's own fourth byte, "
-              "because a forced 0 hides every texel on that path)"
+              "while a source-fed texel must hand over its OWN fourth byte, because a "
+              "forced 255 discards the transparency the seam carries and a forced 0 hides "
+              "every texel on that path; only a 3-stride source, which has no fourth "
+              "byte, may force opaque)"
               % (len(all_calls), len(alpha_bad),
                  "; ".join(alpha_bad) if alpha_bad else "none"))
 
@@ -2370,6 +2519,138 @@ ARMS = [
          "        pixels = expandIndicesBraced(texture.source.data(), texture.realWidth, "
          "texture.realHeight,", 1),
      "every-texel-filler-rotates-through-the-helper"),
+    # Review-9 F1: the batch-122 dereference rule was anchored at the start of the
+    # FOLDED statement, so a write that merely had a guard in front of it was invisible
+    # -- and folding makes the guard and the write ONE statement, so this is not an
+    # exotic spelling. Three arms, one per guard spelling, because each was measured
+    # green on its own: `if`, `else`, and a one-line `for` body.
+    ("a guarded bare-dereference write restores the palette alpha (review-9 F1)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            if (index != 0)\n"
+         "                *(pixel + 3) =\n"
+         "                    paletteRgba[index * 4 + 3];", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("an else-branch bare-dereference write restores the palette alpha (review-9 F1)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            if (index == 255)\n"
+         "                pixel = out;\n"
+         "            else\n"
+         "                *(pixel + 3) = paletteRgba[index * 4 + 3];", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("a one-line for-body bare-dereference write restores the palette alpha (review-9 F1)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            for (int32_t q = 3; q < 4; q++)\n"
+         "                *(pixel + q) = paletteRgba[index * 4 + q];", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-9 F2: the path was told apart by the literal word `palette` in the colour
+    # arguments, so a one-line alias made a palette-fed call look source-fed, where a
+    # forced alpha was allowed. This is the shipped defect -- the palette's own alpha in
+    # the PICA's red slot -- with the helper intact and the word `palette` gone.
+    ("a third filler reaches the palette through an alias and hands over its alpha "
+     "(review-9 F2)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesAliased(const uint8_t* indices, int32_t width,\n"
+         "                                     int32_t height, const uint8_t* paletteRgba,\n"
+         "                                     int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    const uint8_t* colours = paletteRgba;\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            mdk::pica::texelBytes(pixel, colours[index * 4 + 0],\n"
+         "                                  colours[index * 4 + 1],\n"
+         "                                  colours[index * 4 + 2], colours[index * 4 + 3]);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesAliased(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-call-hands-the-pica-its-path-s-alpha"),
+    # Review-9 F3: a source-fed call was allowed to force an opaque alpha, so a filler
+    # on the RGBA seam could delete every transparent pixel in the game while the named
+    # `expandRgba` stayed correct and unused. The stride now decides: a 4-byte source
+    # must hand over its own fourth byte.
+    ("a third filler on the RGBA seam forces an opaque alpha (review-9 F3)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandRgbaOpaque(const uint8_t* source, int32_t width,\n"
+         "                                 int32_t height, int32_t paddedWidth,\n"
+         "                                 int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* row = source + (size_t)y * (size_t)width * 4;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            mdk::pica::texelBytes(out + (size_t)x * 4, row[(size_t)x * 4 + 0],\n"
+         "                                  row[(size_t)x * 4 + 1], row[(size_t)x * 4 + 2],\n"
+         "                                  255u);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandRgba(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandRgbaOpaque(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-call-hands-the-pica-its-path-s-alpha"),
+    # Review-9 F8: helper resolution read the RAW text, so a commented-out
+    # `using mdk::pica::texelBytes;` enabled unqualified matching for the whole file and
+    # a local function of its own called `texelBytes` counted as the helper. This filler
+    # rotates nothing: its local stand-in writes the palette's own order.
+    ("a filler rotates through a local function named texelBytes behind a commented-out "
+     "using-declaration (review-9 F8)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "// using mdk::pica::texelBytes;\n"
+         "static void texelBytes(uint8_t* dst, const uint8_t* paletteRgba,\n"
+         "                       uint32_t index) {\n"
+         "    dst[0] = paletteRgba[index * 4 + 0];\n"
+         "    dst[1] = paletteRgba[index * 4 + 1];\n"
+         "    dst[2] = paletteRgba[index * 4 + 2];\n"
+         "    dst[3] = 255;\n"
+         "}\n\n"
+         "static uint8_t* expandIndicesLocal(const uint8_t* indices, int32_t width,\n"
+         "                                   int32_t height, const uint8_t* paletteRgba,\n"
+         "                                   int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            texelBytes(pixel, paletteRgba, index);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesLocal(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1),
+     "every-texel-filler-rotates-through-the-helper"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -2506,6 +2787,75 @@ PROBES = [
               .replace("    C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);",
                        "    C3D_TexLoadImage(&texture.tex, texture.expanded,\n"
                        "                       GPU_TEXFACE_2D, 0);", 1)),
+    # Review-9 F4's green half: hoisting the four source bytes into named locals is the
+    # same program, and the batch that widened the byte reader to four checks reddened
+    # it. A refactor the port may write has to stay green, or the next builder routes
+    # around the reader instead of using it.
+    ("the rgba expansion hoists its four source bytes into named locals (review-9 F4: "
+     "a byte is a byte when the body says which one)",
+     lambda s: s.replace(
+         "            mdk::pica::texelBytes(out + (size_t)x * 4,\n"
+         "                                  row[(size_t)x * 4 + 0], "
+         "row[(size_t)x * 4 + 1],\n"
+         "                                  row[(size_t)x * 4 + 2], "
+         "row[(size_t)x * 4 + 3]);",
+         "            const uint8_t r = row[(size_t)x * 4 + 0];\n"
+         "            const uint8_t g = row[(size_t)x * 4 + 1];\n"
+         "            const uint8_t b = row[(size_t)x * 4 + 2];\n"
+         "            const uint8_t a = row[(size_t)x * 4 + 3];\n"
+         "            mdk::pica::texelBytes(out + (size_t)x * 4, r, g, b, a);", 1)),
+    # The other half of review-9 F2: an alias is legal when the alpha rule still holds.
+    # Refusing the alias spelling would be the same route-around review-16 R2 names, and
+    # it is the half that keeps the new resolution from being a name ban.
+    ("a third filler reaches the palette through an alias and still forces an opaque "
+     "alpha (review-9 F2: the alias is a path, not a defect)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandIndicesAliased(const uint8_t* indices, int32_t width,\n"
+         "                                     int32_t height, const uint8_t* paletteRgba,\n"
+         "                                     int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    const uint8_t* colours = paletteRgba;\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            const uint8_t index = source[x];\n"
+         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            mdk::pica::texelBytes(pixel, colours[index * 4 + 0],\n"
+         "                                  colours[index * 4 + 1],\n"
+         "                                  colours[index * 4 + 2], 255u);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
+         "        pixels = expandIndices(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,",
+         "        pixels = expandIndicesAliased(texture.source.data(), texture.realWidth, "
+         "texture.realHeight,", 1)),
+    # Review-9 F3's green half, and the discriminator it asked for: a 3-byte source has
+    # no alpha byte to hand over, so forcing opaque is CORRECT there, and the stride in
+    # the argument is what says so.
+    ("a filler expands a 3-byte source and forces an opaque alpha (review-9 F3: a "
+     "3-stride source has no fourth byte, so opaque is the only correct alpha)",
+     lambda s: s.replace(
+         "// WHAT IS LEFT, when a texture does not fit.",
+         "static uint8_t* expandRgb(const uint8_t* source, int32_t width, int32_t height,\n"
+         "                           int32_t paddedWidth, int32_t paddedHeight) {\n"
+         "    const size_t texels = (size_t)paddedWidth * (size_t)paddedHeight;\n"
+         "    uint8_t* pixels = static_cast<uint8_t*>(malloc(texels * 4));\n"
+         "    if (!pixels) {\n        return nullptr;\n    }\n"
+         "    memset(pixels, 0, texels * 4);\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* rgb = source + (size_t)y * (size_t)width * 3;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            mdk::pica::texelBytes(out + (size_t)x * 4, rgb[(size_t)x * 3 + 0],\n"
+         "                                  rgb[(size_t)x * 3 + 1], rgb[(size_t)x * 3 + 2],\n"
+         "                                  255u);\n"
+         "        }\n    }\n    return pixels;\n}\n\n"
+         "// WHAT IS LEFT, when a texture does not fit.", 1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------

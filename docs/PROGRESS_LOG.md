@@ -22424,3 +22424,118 @@ capture), and the parameter-passing sink limit above, which needs a call graph. 
 declared closed at **ten** checks — the count written out above rather than phrased — and a
 eleventh would need a defect these ten cannot reach. All seven of review-8's fail-open mutants and
 both of its false-red probes are inside them now.
+
+## Batch 124 (iteration 10) — review-9 closed 8/8 (no Critical; two High): the texel path is resolved, not recognised
+
+Review-9 (`logs/ralph-pi/run-20261109-233059/review-9.md`, DeepSeek V4.1 Flash TH, independence
+`family=qwen` vs `family=deepseek`) had **no Critical and two High**, and its verdict was
+INCOMPLETE. Nothing was rebutted: all eight findings reproduced against the committed gate before
+anything changed, and every one is fixed. The diff is one file — `tests/scripts/c3d_frame_test.sh`
+— plus this log, the checkpoint, and one frame pair. No `mdk_3ds/**` and no `mdk_core/**` byte is
+in the batch, so no P8 emulator evidence is owed and none is claimed.
+
+**What the family is actually for, in one line.** The oracle is `mdk_core/../src/Mdk.Game`'s
+`palette.hlsl:70` (`float4(palette.rgb, 1.0)`, index 0 discarded at :67) and the seam contract in
+`mdk_core/src/render/render.h` (`rgba` is RGBA in memory, each backend converts for its own GPU);
+the PICA reads `[A, B, G, R]` (`pica::texelBytes`, `pica_matrix.h:386`). Every finding below is the
+same shipped defect — the palette's alpha landing in the PICA's red slot, or a real alpha thrown
+away — reaching the console through a spelling the gate could not read.
+
+**F1 (High, confirmed and fixed): the bare-dereference write was anchored at the start of the
+statement, and folding makes the guard part of the statement.** Reproduced all four spellings on
+the committed gate: `if (index != 0)` + wrapped `*(pixel + 3) =`, the same write unwrapped,
+`else *(pixel + 3) = …`, and a one-line `for` body — each printed `PASS C3dFrame (41 checks, 65
+arms adjudicated red, 10 probes green)` with memory holding the palette's alpha in the red slot.
+The fix is `deref_write(stmt)`, which asks what token precedes the `*` instead of asking whether
+the `*` is first: a statement start, punctuation, an operator, or one of `else/return/do/case/
+and/or/not/xor`. It cannot simply be un-anchored, because `*` also opens a pointer declaration —
+`const uint8_t* colours = paletteRgba;` is legal code this batch's own alias arm writes — and a
+gate that reddened a declaration gets routed around (review-16 R2). Checked as a table over 26
+spellings: 25 as expected, and the 26th (`((uint8_t*)pixel)[3] = …`) is caught by the cast-subscript
+rule beside it and has its own arm. Reads (`y = *p`, `a == *p`, `f(*p, 2)`, `x = *p == q`),
+declarations (`uint8_t* pixel = …`, `for (uint8_t* p = begin; …)`) and multiplications
+(`texels * 4`, `(size_t)y * (size_t)width`) all stay clean. Three arms, one per guard spelling,
+each measured green on the pre-batch gate and red now. Stated limit, in the gate: `,` is
+deliberately not in the punctuation set, because `uint8_t *a, *b = x;` is a legal declaration; the
+cost is that `f(a, *p = 1)` is not caught.
+
+**F2 (High, confirmed and fixed): the two texel paths were told apart by a literal substring, and a
+one-line alias erased the difference.** `palette_fed` asked whether `palette` appeared in the colour
+arguments, so `const uint8_t* colours = paletteRgba;` + `colours[index * 4 + 3]` as the alpha was
+the shipped defect with the word `palette` gone, adjudicated as source-fed, where a forced alpha was
+allowed. Reproduced: full PASS. The path is now resolved by data flow — `provenance_palette` follows
+a one-line `binding()` (declaration or assignment) up to three hops, so an alias, a rename and a
+hoisted byte local all resolve to what they read. New arm: the reviewer's alias filler, green on the
+pre-batch gate, red now on `every-texel-call-hands-the-pica-its-path-s-alpha`. New probe: the same
+alias with the alpha forced opaque stays green, because the alias is a path and not a defect — that
+is the half that keeps this from becoming a name ban.
+
+**F3 (Medium, confirmed and fixed): "anything that is not palette-fed may be opaque" was the only
+check standing between the RGBA seam and a total loss of transparency.** Reproduced: a third filler
+wired into the `else` branch with `texelBytes(…, row[…+0], row[…+1], row[…+2], 255u)` printed PASS
+while every transparent pixel in the game was gone, and the named `rgba-texel-alpha-is-the-sources`
+read a correct-but-unused `expandRgba`. The reviewer's own diagnosis was that the declared
+justification was a *future* 3-byte path, and their remediation was taken: the path is now resolved
+by **stride** (`stride_of`), which is what says whether a source has an alpha byte at all. Three
+branches, no free pass: palette-fed must force opaque (the oracle writes 1.0); a 4-stride or
+stride-unknown source must hand over its own fourth byte; a 3-stride source has no fourth byte and
+must be opaque. Arm: the opaque RGBA filler. Probe: a `rgb[(size_t)x * 3 + N]` filler forcing opaque,
+which is correct code and stays green. Stated limit: a 3-byte source read through a hoisted pointer
+(`src[0]`) hides its stride and is then read as a 4-byte source.
+
+**F4 (Medium, confirmed and fixed): the byte reader stopped at an identifier, and this batch had
+widened that false red from two checks to four.** Reproduced: hoisting `const uint8_t r =
+row[(size_t)x * 4 + 0]; … texelBytes(out, r, g, b, a)` reddened `rgba-texel-alpha-is-the-sources`,
+`rgba-texel-channels-are-in-source-order`, `every-texel-call-hands-the-helper-the-source-order` and
+`every-texel-call-hands-the-pica-its-path-s-alpha` — the reviewer's number, exactly. `byte_index`
+now follows the same one-line binding, so a byte named `r` is the byte it was bound to; the hoist is
+a green probe. The alternative the reviewer offered — stating the limit instead — was not taken,
+because a refactor the port may write should not need re-pinning.
+
+**F8 (Low, confirmed and fixed): helper resolution still read the raw text while every other scan in
+the family reads the blanked copy.** A commented-out `// using mdk::pica::texelBytes;` enabled
+unqualified matching for the whole file, so a local function of its own called `texelBytes` counted
+as "the helper". Fixed by resolving the using-declaration in `blank_cached(text)`. Pinned as an ARM
+rather than a probe, and that is deliberate: a commented-`using` probe is green under both the broken
+and the fixed gate and so pins nothing, whereas the arm — a filler that rotates through a local
+stand-in writing the palette's own order, behind that commented-out `using` — was measured green on
+the pre-batch gate and is red now on `every-texel-filler-rotates-through-the-helper`.
+
+**F5, F6, F7 (Low, confirmed, all record corrections carried forward, none editable in place).**
+F5: batch 123's texel-family breakdown summed to eleven because it counted the sink check twice;
+the family is **ten** — six per-path over the two named expansions, two over the measured filler
+set (one of them the sink), two over every 5-argument call in the file — and the command that
+settles it is in the new sidecar. F6: batch 123 said its PNG was "the 132nd pair"; the measured
+figure for that pair was the 131st, and this pair is the 132nd of 133 PNGs sharing md5
+`6769a13731983d65cee9df02da6cff37`, generated by `md5sum docs/frames/*.png | grep -c` at publish
+time rather than typed. F7: batch 123's sidecar dropped the "why this picture did not move"
+paragraph `docs/frames/README.md` requires; this pair carries it, with the md5s and the counts.
+None of the three can be amended in place: `gates_batch_integrity` refuses any batch that modifies
+a frame or a measurement the range did not add, and that gate is owner-protected.
+
+**Gate results, as run.** `sh tests/scripts/c3d_frame_test.sh` → `PASS C3dFrame (41 checks, 71 arms
+adjudicated red, 13 probes green)` — up from 41/65/10: six arms and three probes, every new arm
+measured green on `git show HEAD:tests/scripts/c3d_frame_test.sh` before it was kept.
+`sh tests/scripts/arm_compile_check.sh c3d` → `PASS ArmCompile (85 mutant(s), 0 diagnostics, 73
+shipped source(s) format-clean, 4 format mutant(s) refused, 1/1 honest call(s) accepted,
+/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`. `make -C tests/scripts` → `All cases match the
+oracle.` `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`;
+`gates_frames … VERDICT: CONTRACT CLEAN`; `gates_batch_integrity PASS`). `make -C mdk_3ds` exits 0
+with `mdk.elf` md5 `67fadc4179c40ee3a4e5090a2218641a` and `mdk_c3d.shbin` md5
+`d46abb60de20b2aa0659043aeb97b9c9`, both byte-identical to batch 122's and 123's, so the claim
+that no byte moved is measured and not asserted.
+
+**Prior-solution lookup.** `pi-knowledge` KB `mdk-sdl` (4802 chunks / 983 files) searched for the
+texel gate and the bypass detector: it returned this file's own chunks plus unrelated hits from a
+second knowledge base, i.e. no prior solution to reuse, and the repository remained the authority.
+No `obsidian_*` or `cognee_*` tools are exposed in this session; that is recorded as a session
+configuration gap (AGENTS.md P9), not as a lookup that happened, and no vault claim is made in this
+batch beyond what the repository already cites.
+
+**Standing hazards this batch did not touch.** `ralph/builder.md` is dirty for a third batch
+running: it is in `gates_batch_integrity`'s `PROTECTED` set, so a batch cannot commit it without
+owner approval, and this batch staged its paths explicitly instead of `git add -A`. Review-9's
+open question 2 (is a 3-byte source path actually planned?) is now moot in the direction that
+matters: the stride rule makes a 3-byte path legal and pinned as a probe, whether or not one
+ships. Review-7's open question 1 (is RGBA8 Morton-tiled on real hardware?) stays open and needs a
+hardware capture, not a gate.
