@@ -1,5 +1,43 @@
 # Phase 2 continuation checkpoint
-Risk: medium — test-infrastructure only, in one file, and no shipped byte moves: it closes a Medium
+Risk: medium — it moves a shipped translation unit (`scripts/object.cpp` → `scripts/pose_cache.cpp`) and
+adds one source to three explicit build lists, so the shipped `mdk.elf` md5 moves; it changes no
+interface, no symbol, no statement and no behaviour, and that is verified rather than asserted (the
+moved block diffs byte-for-byte except one comment, `make -C tests/scripts` still prints `All cases
+match the oracle.` over 567 PASS lines, and the console build boots and ticks to frame 2580 in
+Mandarine). It is not `low` because a module boundary and a build graph are not formatting; it is not
+`high` because nothing a player or a save can observe is in the diff.
+
+**Batch 129 (iteration 15) — ledger row `core.formats`: the format tests link again, because the
+pose-cache handle got the translation unit its header always described.** `make -C tests/formats` had
+not linked since batch 102 (`727ade1`) and no gate ran it, so 25 batches passed over a dead target. The
+failure was `level_data.cpp:37: undefined reference to mdk::scripts::forgetPoseCaches()`, and the cause
+was a half-true comment: `scripts/pose_cache.h` says it exists so the game layer can drop the pose
+caches without including the scripts layer, but the *definition* was in `scripts/object.cpp`, so the
+header removed the include while the link still demanded the VM — measured by `nm -u` to reach `Bsp`,
+`ArenaSpace`, `Kurt`, `Player`, `SoundMixer` and `Mto`, i.e. the game. The caches, the bake helper,
+`pose_parts()`, `forgetPoseCaches()` and `forget_poses()` now live in `scripts/pose_cache.cpp`, which
+needs two formats TUs the test already lists; the move diffs byte-for-byte except one comment, and the
+three refused alternatives (link the VM, delete the call and leave the harness with no drop, stub it in
+the test) are each recorded with the reason they are wrong. The pin is a link-graph assertion in
+`tests/formats/Makefile` that greps the **linked binary** for script-VM symbols and refuses the
+artefact, because the tempting wrong repair — keep adding game sources until the linker stops
+complaining — *links*; positive control measured at 107 matching symbols in `tick1` against 0 in
+`format_tests`. No behavioural golden was added and the reason is stated rather than skipped: the drop
+is unobservable through the port's API (a rebuilt pose is bit-identical to a cached one) and the only
+distinguishing probe is map-node address identity across a `clear()`/`emplace()`, which malloc is free
+to satisfy with the same address. **Review-14 is closed 0/4 on remediation and 8/8 on disposition:**
+F1–F4 (two Critical, two High) are all confirmed against the files and all sit in the operator's
+uncommitted completion-ledger set, which this uid cannot even write (`ralph-pi.sh`,
+`docs/COMPLETION_LEDGER.tsv`, `docs/OWNER_BLOCKS.md`, `tools/runner/gates_completion.py` are
+`coleshores:coleshores` and `test -w` says NO) or may not stage (`tools/check.sh`,
+`gates_batch_integrity.py` are `PROTECTED`, and `CONTINUATION.md:871` forbids staging them and forbids
+setting `MDK_OWNER_APPROVED=1`); F5–F8 are confirmed and deferred or owner-only, each with its patch.
+That answers review-14's open question 1 with facts: **no batch can close a ledger row today**, so
+`core.formats` stays `todo` even though its acceptance now passes, and the loop can dispatch rows it
+cannot finish. Full narrative: `docs/PROGRESS_LOG.md` "Batch 129".
+
+**Batch 128 (iteration 14) — review-13 closed 3/3 — the bulk-fill rule reads every setter in the
+statement.** Test-infrastructure only, in one file, and no shipped byte moves: it closes a Medium
 hole in the rule that pins the shipped R = 255 defect — a C++ statement could carry a SECOND bulk
 setter the scan never read — and re-opens four legal zero spellings that same rule wrongly refused. A
 gate that cannot see the defect it claims to refuse is a pass generator, and a gate that reddens a shape
@@ -975,6 +1013,33 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 129)
+**The ledger now chooses the work, and the next open d1 row is `3ds.collision-doors` with an acceptance
+that does not exist.** `make -C tests/scripts test_crossing` names a target `tests/scripts/Makefile`
+does not define (review-14 F5, confirmed: its `.PHONY` list is `all bin test clean`). Two ways out and
+only one of them is a batch's: the owner rewrites the acceptance to a command that exists and
+discriminates, or a batch adds a `test_crossing` target that runs the crossing golden the row means.
+Adding a *new* phony target is additive and is allowed — what a batch must not do is change what the
+existing `make -C tests/scripts` means, because that command is the recorded acceptance of the already
+`done` `core.goldens` row and silently redefining a closed row's evidence is editing a golden by
+another route. The row's substance is also real work, not a typo fix: the crossing pin the row wants is
+the collision/door behaviour the 3DS build has never been measured against, and `3ds.hud-canvas` behind
+it has the same shape (`emurun.sh --expect hud` — no such flag; the harness's `*)` arm swallows it, so
+the command exits 2 whatever the game does). Both rows need their acceptance made executable before
+their subject is even reachable, and that is a ledger edit, which is owner-only.
+**Owner-only, blocking, in priority order:** (1) F2 — take `docs/COMPLETION_LEDGER.tsv` out of
+`PROTECTED` and gate it on monotonic transitions instead, or no batch can record progress and the loop
+parks at exit 6 on the first row it finishes; (2) F1 — make a `done` row quote measured output, not a
+path, or the ledger becomes a pass generator with a nicer name; (3) F3/F4 — gate the completion exit on
+`LAST_GATES=PASS` and give it its own exit code; (4) commit or revert the uncommitted completion-ledger
+set, which is what makes every one of these unlandable here; (5) F5's acceptance strings; (6) F6's
+outside-the-file pin for `c3d_frame_test.sh`'s declared counts. **Closed by this batch, pending the
+owner's one-line flip:** `core.formats` — `make -C tests/formats` exits 0 with `156190 checks, 0
+failures`; the row needs `status=done`, an `evidence` artefact quoting that command and its output, and
+`verified` = this batch's commit. **Still open and not touched:** every `hw.*` row (no Old-3DS hardware
+in hand, and `mdk_3ds/tools/hw_cycle.sh` does not exist), the Phase 2 RE sweep, and the two standing
+owner actions the ledger already names (`spec.voice-pool`, `re.phase-2-sweep`).
 
 ## NEXT (batch 128)
 **The texel family is closed on the operation, the spelling, the position and the multiplicity, and the

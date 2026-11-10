@@ -20,6 +20,16 @@
 // including the scripts layer (scripts includes game, and a .cpp-level cycle
 // would be worse than the two names). forget_poses() calls this; both are the
 // same drop.
+//
+// THE OTHER HALF OF THAT SENTENCE IS A SOURCE FILE. A header only removes the
+// INCLUDE; the definition has to leave scripts/object.cpp too, or every caller
+// still links the script VM. The caches and both names are therefore defined in
+// scripts/pose_cache.cpp, which needs the two formats classes it is keyed by and
+// nothing from the runtime. That is not decoration: game/level_data.cpp calls
+// this, so a target that links the level loader links whatever this is defined
+// in, and while the definition lived in object.cpp that meant the BSP, the
+// mixer, Kurt and the player -- which is why `make -C tests/formats` could not
+// link at all. See pose_cache.cpp.
 // ============================================================================
 
 namespace mdk {

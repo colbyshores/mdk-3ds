@@ -139,6 +139,7 @@ set(SOURCES
     ${CORE}/src/render/material_resolver.cpp
     ${CORE}/src/render/surface_cache.cpp
     ${CORE}/src/scripts/object.cpp
+    ${CORE}/src/scripts/pose_cache.cpp
     ${CORE}/src/scripts/script_runtime.cpp
     ${CORE}/src/scripts/script_vm.cpp
     ${CORE}/src/scripts/debris.cpp

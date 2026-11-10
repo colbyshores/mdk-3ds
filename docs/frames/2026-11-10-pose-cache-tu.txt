@@ -1,0 +1,22 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-10T18:55:00Z at 536f492
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+why this picture did not move, and what it can and cannot show: this batch DOES move shipped bytes.
+  The object-pose caches and both names that drop them leave mdk_core/src/scripts/object.cpp for a
+  translation unit of their own, mdk_core/src/scripts/pose_cache.cpp, so the shipped binary changes:
+  `mdk.elf` md5 moves from 67fadc4179c40ee3a4e5090a2218641a (batches 122-128) to
+  a82a78938f8fbcd514f167b1b751ab45, because a translation-unit boundary is a layout boundary even when
+  no statement changes. What does not move is behaviour, and this frame is not the instrument that
+  shows that: the split is the same code, the same two maps, the same keys, reached through the same two
+  names, and a cache's home TU cannot move a pixel by construction. The instruments that do are
+  `make -C tests/scripts` (`All cases match the oracle.` over the level-3 tick-1 table, the pose,
+  rolling-basis and frame-blend pins and six DTI byte-for-byte comparisons) and `make -C tests/formats`
+  (156190 checks, 0 failures), which is the target this batch exists to make link again. Measured after
+  the rebuild rather than copied: `mdk_3ds/build/mdk_c3d.shbin` md5 d46abb60de20b2aa0659043aeb97b9c9 is
+  unchanged, so no GPU program moved. This PNG is md5 6769a13731983d65cee9df02da6cff37, `cmp`-identical
+  to its predecessors, so the pair is a PRESENCE check -- the commit carries a frame and its number --
+  and NOT a fidelity check for this change. A re-capture of a static frame, stated and not hidden; the
+  pin and the ceiling in reference.sha256 do not move.
+count, generated at publish time rather than transcribed: `md5sum docs/frames/*.png | grep -c
+  6769a13731983d65cee9df02da6cff37` = 137 over 138 PNGs, so this pair is the 137th file with that md5.

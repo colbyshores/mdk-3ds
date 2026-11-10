@@ -23075,3 +23075,194 @@ not a lookup that happened). The disk path supplied the pattern this batch is an
 `/tmp/kilo` is owned by another uid on this host and is not writable by `piagent`, so scratch, mutant
 dumps and gate logs for this batch went to `/tmp/mdk-scratch-pi`; no emulator run was needed and none
 was made, so no display was used.
+
+## Batch 129 (iteration 15) — ledger row `core.formats`: the format tests link again, because the pose-cache handle got the translation unit its header always described
+
+**Ledger item.** `docs/COMPLETION_LEDGER.tsv` row `core.formats` (level d1, speed slow), acceptance
+`make -C tests/formats`, attempt 1 of 8. The row's own comment states the finding it exists to
+record: the target had not linked since batch 102 (`727ade1`), and nothing in `tools/check.sh` runs
+it, so 25 batches passed with a build target dead. This batch closes the defect; it does **not** flip
+the row, because the ledger is not writable by this uid (see *Who may close a row* below).
+
+**The defect, reproduced before anything changed.** `make -C tests/formats` failed at the last step:
+
+```
+/usr/bin/ld: build/level_data.o: in function `mdk::LevelData::load(...)':
+.../mdk_core/src/game/level_data.cpp:37:(.text+0x381): undefined reference to `mdk::scripts::forgetPoseCaches()'
+```
+
+`game/level_data.cpp:37` calls `scripts::forgetPoseCaches()`. The declaration lives in
+`scripts/pose_cache.h`, a header whose own comment says it exists so "the game layer must be able to
+invalidate the caches without including the scripts layer". That sentence was only ever half true. A
+header removes the **include**; the definition was still in `scripts/object.cpp`, so the **link**
+still demanded the whole script VM. Measured, not assumed: `nm -C -u` over `object.o`,
+`frame_blend.o` and `script_runtime.o` shows the closure reaching `mdk::Bsp::sweepBox`,
+`mdk::ArenaSpace::add`, `mdk::Kurt::hurt`, `mdk::Player::knockDown`, `mdk::audio::SoundMixer::play`,
+`mdk::formats::Mto::getArena` — i.e. the game. `tests/formats` deliberately lists the formats, two
+util files and the level loader, so it had no way to satisfy that and no business satisfying it.
+
+**The fix.** `mdk_core/src/scripts/pose_cache.cpp` is new and owns what the header always described:
+the two caches (`g_restPoses`, `g_baked`), the bake helper, `MdkObject::pose_parts()`,
+`forgetPoseCaches()` and `MdkObject::forget_poses()`. Its includes are `scripts/pose_cache.h`,
+`scripts/object.h`, `formats/model.h`, `formats/model_animation.h`, `<map>`, `<utility>`, `<vector>`
+— and the two formats TUs it needs are already in the format-test list, so the level loader's link
+closure grew by one small translation unit instead of by a game. `object.cpp` loses those 71 lines
+and the four includes it no longer uses (`<map>`, `<utility>`, `formats/model_animation.h`,
+`scripts/pose_cache.h`), and keeps three lines saying where the caches went and why the split is not
+tidiness. `pose_cache.h`'s comment now states the missing half of its own claim instead of implying it.
+
+**The move is byte-for-byte, and that was checked rather than asserted.** The removed block and the
+added block were diffed mechanically: 71 lines against 71 lines, one hunk, and the only difference is
+the comment inside `forget_poses()` that used to say "the caches live in this translation unit" and now
+names which one. No statement, no clamp, no key, no rounding moved. `mdk.elf` md5 does move
+(`67fadc4179c40ee3a4e5090a2218641a` for batches 122–128 → `a82a78938f8fbcd514f167b1b751ab45`),
+because a TU boundary is a layout boundary; `mdk_c3d.shbin` is unchanged at
+`d46abb60de20b2aa0659043aeb97b9c9`, so no GPU program moved.
+
+**Oracle reference.** `src/Mdk.Game`'s `MdkObject.RestPoses` / `MdkObject.Baked` statics and
+`MdkObject.ForgetPoses()`, dropped once per level at `Viewer.cs:185`. The port's call site
+(`LevelData::load`), the drop moment, the cache keys, the animation-frame clamp and the bake-the-whole-
+animation-once rule are all untouched by this batch: it moves where the code is compiled, not what it
+does. Nothing here reads `./MDK/` bytes beyond what the tests already read, so the owner boundary of
+2026-10-28 is not approached.
+
+**Three repairs considered and refused.** (a) *Add `scripts/object.cpp` to the format-test list*: the
+measured closure above is the whole game, and a format test that links the game is not a format test.
+(b) *Delete the call from `LevelData::load` and let the frontends drop the caches*: both frontends do
+call `MdkObject::forget_poses()` (`mdk_3ds/src/main_3ds.cpp:556`, `mdk_linux/src/main.cpp:453`), but
+the in-load call is what covers a consumer with no viewer, and `EveryLevelParses` loads every level in
+a loop through exactly the freed-address case the header warns about. Removing it trades a link error
+for a stale-pose hazard. (c) *A stub in the test*: `ralph/builder.md` forbids presenting a stub as an
+implementation, and a stubbed `forgetPoseCaches()` would make the format tests assert a drop that did
+not happen.
+
+**The pin, and why it is a link-graph assertion and not a golden.** The failure was a link failure, so
+the linker is already the test — the gap was that nobody ran the target, and the tempting wrong repair
+is to keep adding game sources to `SOURCES` until the linker stops complaining. That repair *links*,
+which is why a comment in the Makefile is not enough: `tests/formats/Makefile` now greps the **linked
+binary** for script-VM symbols (`mdk::ScriptRuntime`, `mdk::Bsp::`, `mdk::Kurt::`, `mdk::Player::`,
+`mdk::audio::SoundMixer::`, `mdk::ArenaSpace::`) and refuses the artefact if any appear, naming the
+wrong repair in its own message. Positive control, measured: the pattern matches **107** symbols in
+`tests/scripts/build/tick1`, which does link the VM, and **0** in `build/format_tests`. Checking the
+binary rather than the source list also catches a symbol that arrives through a call chain rather than
+being added to the list. No behavioural golden was added, and none was withheld out of convenience:
+the drop is unobservable through the port's API (the caches hold derived data, so a rebuilt pose is
+bit-identical to a cached one), and the only probe that would distinguish them is map-node address
+identity across a `clear()`/`emplace()` pair, which glibc is free to satisfy with the same address and
+would therefore be a flaky test. The existing `EveryLevelParses` already exercises the seam the call
+protects, by loading every level in sequence.
+
+**Gates, verbatim.** `make -C tests/formats` → exit 0, `running 15 tests`, `156190 checks, 0
+failures`. `make -C tests/scripts` → exit 0, 567 `PASS` lines, `All cases match the oracle.`
+`bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`audit_c_with_classes 0 violations`, `gates_vfp 0
+blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity` both
+targets link the same core — 66 core sources, 74 Linux SOURCES entries, `gates_smdh SKIP` no built
+.cia, `gates_frames VERDICT: CONTRACT CLEAN` with `PASS L3_f1.bmp sha=58615fc85d02e009`,
+`gates_batch_integrity BATCH INTEGRITY: PASS`, `gates_completion COMPLETION[d1]: 9 done / 13 total /
+0 owner-blocked / 4 open` + `LEDGER VERIFIED`). `make -C mdk_3ds` → exit 0, `CXX pose_cache.cpp`,
+`LINK mdk.elf`, `stage_romfs: staged 69 files, 79M`, `3DSX mdk.3dsx`. `cmake --build mdk_linux/build`
+→ `[100%] Built target mdk`, with `scripts/pose_cache.cpp.o` compiled. `gates_core_parity` caught this
+batch's own omission on its first run (`PARITY-LINUX-LIST: mdk_core/src/scripts/pose_cache.cpp`), which
+is the gate doing its job: the 3DS glob found the new file and the explicit Linux list had not.
+
+**Emulator evidence (AGENTS P8), because the shipped console binary's bytes moved.**
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 45 --min-frames 60` → **exit 0** (not 3 stale log, not 4
+dead, not 6 wrong build). Display `:99`, started for this run (`Xvfb :99 -screen 0 1280x1024x24`);
+emulator `mandarine.AppImage` md5 `0d2adab6` = the pinned r1.2.1 (`20250128-418c25c`), not the
+segfaulting r1.3.0. Instrument forced: `llvmpipe`, `graphics_api=1` (OpenGL), `render_3d=0 factor_3d=0`
+(mono), `SDL_AUDIODRIVER=dummy`, `dspfirm.cdc` present, lane `/tmp/mdk-emurun.2316640`. Guest log
+opens `main: FZ/DN ok (fpscr=0x03000010)` (R1), `backend: PICA200 Citro3D`, `data: romfs:/`,
+`scripts: CMI loaded (1079557 bytes)`, `arena: DANT_1 (19 arenas)`, and ends at **frame 2580** with
+`objects=7 obj=570c/13d peak=570c/13d plays=1` and `audio: frame=2580 submitted=2158 done=2155
+dropped=10 dspdropped=0`. Emulator-green is not hardware-pass: no Old-3DS measurement is claimed and
+the three classes Mandarine masks (heap size, clamp leniency, un-cleared FCRAM across relaunches) are
+not addressed by this batch either.
+
+**Review-14 disposition — 4 Critical/High, 2 Medium, 2 Low; none rebutted on the merits, and none of
+the Critical/High is landable by a batch.** The review's own independence block already suspected it
+("the harness edits reviewed below have never executed"), and the tree says so outright. The completion
+ledger set is operator-authored work sitting uncommitted: `ralph-pi.sh`, `docs/COMPLETION_LEDGER.tsv`,
+`docs/OWNER_BLOCKS.md` and `tools/runner/gates_completion.py` are owned `coleshores:coleshores` and
+`test -w` reports **NO** for this uid (`piagent`, groups `piagent development`), while `tools/check.sh`
+and `tools/runner/gates_batch_integrity.py` are writable but in `PROTECTED`, and the standing owner
+directive recorded at `docs/CONTINUATION.md:871` says the builder "must not stage these or set
+`MDK_OWNER_APPROVED=1`. Stage batch paths by name only." `tools/hooks/pre-commit` (`core.hooksPath =
+tools/hooks`) enforces exactly that, so an attempt to land any of it fails the batch-integrity guard
+rather than the reviewer. Each finding is therefore confirmed, with the patch the owner needs, and
+recorded as owner-only — which is the disposition this repository has used for every review finding
+whose file a batch may not touch (review-4 F3/F4, review-6 F2, review-9 F4/F5, review-10 F5–F8).
+
+- **F1 (Critical, confirmed, owner-only).** `gates_completion.py:141-166` accepts a `done` row from a
+  status flip plus any existing path plus any ancestor commit; the acceptance command is never run and
+  the evidence path is never related to the row. The reviewer's fabrication (four open d1 rows →
+  `done`, `evidence=mdk_3ds/src/main_3ds.cpp`, `verified=536f492`) prints `COMPLETION: DONE[d1]` at
+  rc 0, and that is what the file does. Remediation for the owner: require a `done` row's `evidence` to
+  name a committed artefact that quotes the acceptance command *and* a measured success line; run the
+  acceptance in-gate for `speed=fast` rows; for `speed=slow` rows require the committed measurement with
+  its command line, output and the commit it was measured at; and refuse a `done` whose `verified` does
+  not postdate the row's last status change. Quoting measured output instead of a path is the whole
+  fix — a path is an attestation, an output is evidence.
+- **F2 (Critical, confirmed, owner-only).** The ledger trio is in `PROTECTED` (`gates_batch_integrity.py:19-21`)
+  while the per-batch guard is invoked without `--owner-approved` and under a scrubbed `sudo`, so no
+  iteration can record progress and `--next` returns the same row until `COMPLETION_ITEM_MAX` parks the
+  unit at exit 6. Confirmed independently here: the ledger is not writable by this uid at all, so the
+  stall is structural and not a flag problem. The reviewer's own alternative is the right one — take
+  `docs/COMPLETION_LEDGER.tsv` out of `PROTECTED` and gate it on monotonicity instead (status only
+  `todo`/`in-progress → done`, `verified` only forward, the `acceptance` column immutable, row count
+  never shrinking), and keep `docs/OWNER_BLOCKS.md` and `tools/runner/gates_completion.py` protected so
+  a batch still cannot block its own work or edit the thing that judges it. The landing commit has the
+  same problem and needs `MDK_OWNER_APPROVED=1` from the owner, which a batch may not set.
+- **F3 (High, confirmed, owner-only).** `ralph-pi.sh:1340-1361` runs the completion exit unconditionally
+  after `run_gates`, so a closed ledger on a red gate suite logs `COMPLETION reached`, `phase milestone`
+  and `exit 0`, pre-empting the `FAILS >= FAIL_LIMIT` stop at `:1371`. Fix: require `LAST_GATES=PASS`
+  and move the block below the `FAILS`/`STALL` stops.
+- **F4 (High, confirmed, owner-only).** Completion and `MAX_ITER` both `exit 0` (`:1356`, `:1375`), so a
+  supervisor cannot tell "finished" from "out of budget" — the one distinction the block was added to
+  make. Fix: a distinct code (e.g. 10) plus the stop-code table and the heal prevent-list.
+- **F5 (Medium, confirmed, deferred).** Several acceptance strings cannot pass as written:
+  `emurun.sh --expect hud` (no such flag; the `*)` arm swallows it), bare `emurun.sh` (empty `DSX`),
+  `mdk_3ds/tools/hw_cycle.sh` (does not exist), `make -C tests/scripts test_crossing` (no such target).
+  The ledger is not writable here. Adding `test_crossing` to `tests/scripts/Makefile` was considered
+  and refused: it would change what `make -C tests/scripts` means, and that command is the recorded
+  acceptance of the already-`done` `core.goldens` row — silently redefining a closed row's evidence is
+  the same class of error as editing a golden.
+- **F6 (Medium, confirmed, deferred).** `tests/scripts/c3d_frame_test.sh` is not `PROTECTED` and five
+  batches have rewritten the file whose declared counts are its only coverage pin. Adding it to
+  `PROTECTED` would repeat F2's mistake for a file batches must legitimately extend. The reviewer's
+  other option — pin the arm/probe counts from outside the file — needs an edit to `tools/check.sh` or
+  `gates_batch_integrity.py`, both `PROTECTED`. Owner call; a floor constant in `check.sh` (which a
+  batch cannot edit) with a count check against the test file would close it without freezing the file.
+- **F7 (Low, confirmed, deferred).** The dedup comment added in batch 128 claims a plain `memcpy(` is
+  matched by two rules; the reviewer enumerated the spellings and it is not, so the dedup cannot fire
+  and the stated reason is false. Confirmed here by reading `BARE_COPY`'s lookbehind. The fix is a
+  comment reword in `tests/scripts/c3d_frame_test.sh`, a different subsystem from this batch's, so it
+  is recorded rather than smuggled in: the honest wording is "defence against a future rule overlap, not
+  a live duplicate". Batch 128's `CONTINUATION.md`/`PROGRESS_LOG.md` sentences carry the same false
+  claim and should be corrected with it.
+- **F8 (Low, confirmed, owner-only).** `ralph-pi.sh:147` cites `CONTINUATION.md:871` for the d1 goal;
+  batch 128 inserted 37 lines above it, so the citation now resolves to an unrelated owner-action
+  paragraph. The drift is structural — `CONTINUATION.md` grows at the top every batch — so the fix is to
+  cite the sentence ("Goal: a CIA that plays a level end-to-end"), not a line number. Not writable here.
+
+**Who may close a row, which is review-14's open question 1, answered with the tree's facts.** Today:
+nobody in a batch. The ledger exists only in the working tree, is owned by another uid, is not writable
+by `piagent`, and is listed in `PROTECTED` by an uncommitted edit. So `core.formats` stays `todo` after
+this batch even though its acceptance command now passes, and the row flip is a one-line owner edit
+(`status=done`, `evidence` = a committed artefact quoting the command and its output, `verified` = this
+batch's commit). Until F1 and F2 land, the loop can *dispatch* ledger rows but cannot *close* them,
+which is the half of the design the reviewer found genuinely unresolved.
+
+**Prior-solution lookup.** Pi-knowledge `mdk-sdl` (4802 chunks / 983 files) was searched for the link
+failure and the pose-cache seam; the top hits were `level_data.cpp`, `pose_cache.h` and `object.h`
+themselves — the code that documents its own intent, which is what made the header/link mismatch
+findable. No prior finding on this defect class, so that is a lead-not-found, not a failed lookup. The
+Obsidian and Cognee MCP tools are **not exposed in this session**, so the vault lookup is the degraded
+disk-only path and Cognee's graph search was unavailable entirely (AGENTS P9: a session configuration
+fault to report, not a lookup that happened). `/tmp/kilo` is owned by another uid and is not writable
+by `piagent`, so gate logs and scratch went to `/tmp/mdk-scratch-pi`; the emulator wrote its own lane
+under `/tmp/mdk-emurun.2316640`, and the display it used is recorded above.
+
+**Frame.** `docs/frames/2026-11-10-pose-cache-tu.png` (+ sidecar). The PNG is md5
+`6769a13731983d65cee9df02da6cff37`, `cmp`-identical to its 136 predecessors, and the sidecar says so
+and says why: this batch moves shipped bytes but moves no behaviour, and the frame pin (Linux/Vulkan,
+level 3 frame 1) cannot show a TU boundary. The instruments that can are the two host suites above.
