@@ -1,11 +1,44 @@
 # Phase 2 continuation checkpoint
-Risk: medium — it moves a shipped translation unit (`scripts/object.cpp` → `scripts/pose_cache.cpp`) and
-adds one source to three explicit build lists, so the shipped `mdk.elf` md5 moves; it changes no
-interface, no symbol, no statement and no behaviour, and that is verified rather than asserted (the
-moved block diffs byte-for-byte except one comment, `make -C tests/scripts` still prints `All cases
-match the oracle.` over 567 PASS lines, and the console build boots and ticks to frame 2580 in
-Mandarine). It is not `low` because a module boundary and a build graph are not formatting; it is not
-`high` because nothing a player or a save can observe is in the diff.
+Risk: medium — the diff is one guard in `tests/formats/Makefile` and moves no shipped byte (`mdk.elf`
+re-measured identical at `a82a78938f8fbcd514f167b1b751ab45`, all three gates green), so it is not `high`;
+it is not `low` because its substance is the disposition of three open Critical/High findings in the
+loop's own completion harness that this uid can neither fix nor stage, which is a contested architecture
+question, not formatting.
+
+**Batch 130 (iteration 2 of the ledger row `core.formats`) — the format target's link-graph guard stops
+reporting clean when it cannot run, and the row's own blocker is measured rather than asserted.** The
+ledger dispatched `core.formats` (acceptance `make -C tests/formats`) for the second time. The acceptance
+is green and was re-measured, not inherited: `running 15 tests` … `156190 checks, 0 failures`, rc 0.
+**The row still cannot be closed by any batch, and that is now the whole finding.** `docs/COMPLETION_LEDGER.tsv`,
+`docs/OWNER_BLOCKS.md` and `tools/runner/gates_completion.py` are `coleshores:coleshores` with `test -w`
+NO for this uid, and the ledger is additionally in `gates_batch_integrity.PROTECTED`; so a row whose
+acceptance passes keeps an empty `evidence` column, `--next` returns it every iteration, and attempt 9
+trips `ralph-pi.sh:798` → `exit 6`, which is in the unit's `RestartPreventExitStatus=2 6 7` and parks it.
+That is review-15 **R15-1 (Critical, confirmed, owner-only)** and it is the one decision that unblocks the
+loop's exit; the edit is one line in a file no batch can write. **What this batch fixed is R15-8**, the only
+finding in review-15 that sits in a file this uid may write and that is not owner-protected — and it sits on
+this row's own acceptance target. The link-graph guard was `nm -C '$@' | grep -qE '$(VM_PATTERN)'`, and a
+pipeline's status is its last command's: with `nm` off PATH, `grep` read empty input, matched nothing, and
+the guard printed the clean answer — measured on the shipped binary, the old recipe line reported clean on
+the very artefact that does link `mdk::LevelData::load`. The dump now goes to `$(BUILD)/format_tests.symbols`,
+`command -v nm` is a precondition, a nonzero `nm` or an empty dump fails and echoes `nm`'s own text, and every
+refusal path removes the artefact. Three arms measured, not argued: `nm` missing → refuses; `nm` present and
+exiting 1 → refuses with its stderr; a pattern that matches → refuses (positive control, so the guard is shown
+to fail rather than assumed to). **Review-15 is closed 1/10 on remediation and 10/10 on disposition:** R15-8
+fixed as above; R15-1/2/3 (two Critical, one High) and R15-4/5/6/7/9 are confirmed against the files and are
+owner-only, each in `ralph-pi.sh`, `gates_completion.py`, the ledger or `check.sh` — files this uid cannot
+write or may not stage, so they are escalated, not closed; R15-10 is accepted as disclosed (a frame published
+before its commit necessarily names its parent, and `gates_frames`/`docs/frames/README.md` are owner-protected
+frame tooling). **A measured lead for the next `core.formats` attempt, recorded rather than worked:** the
+format target under ASan+UBSan reports `47394202 byte(s) leaked in 15442 allocation(s)` with stacks through
+`Arena::parse` ← `Mto::getArena`; `Mto` has no destructor, `Mto::add` stores *borrowed* arenas that
+`beta_demo.h:29-31` says the caller deletes, and `LevelData::~LevelData` comments "the arenas belong to the
+MTO" while nothing implements that — so arenas a level parses on demand are owned by nobody. Fixing it is an
+ownership change across `formats/mto.*`, `game/level_data.*` and `formats/beta_demo.*` (which does
+`*outMto = mto`, a copy that a naive deleting destructor would double-free), so it is its own high-risk batch,
+not a rider on a green row. Also measured: `/tmp/kilo` is `coleshores:coleshores` and not writable by the
+loop's uid, so P7 captures went to `/tmp/mdk-b130`; the display is recorded (`:99`, Xvfb pid 2316266).
+Full narrative: `docs/PROGRESS_LOG.md` "Batch 130".
 
 **Batch 129 (iteration 15) — ledger row `core.formats`: the format tests link again, because the
 pose-cache handle got the translation unit its header always described.** `make -C tests/formats` had

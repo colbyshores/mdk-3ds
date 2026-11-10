@@ -23266,3 +23266,186 @@ under `/tmp/mdk-emurun.2316640`, and the display it used is recorded above.
 `6769a13731983d65cee9df02da6cff37`, `cmp`-identical to its 136 predecessors, and the sidecar says so
 and says why: this batch moves shipped bytes but moves no behaviour, and the frame pin (Linux/Vulkan,
 level 3 frame 1) cannot show a TU boundary. The instruments that can are the two host suites above.
+
+## Batch 130 (iteration 2, ledger row `core.formats`) — the format target's link-graph guard stops reporting clean when it cannot run
+
+**Ledger row:** `core.formats`, level `d1`, speed `slow`, acceptance `make -C tests/formats`. Attempt 2 of 8.
+The ledger chose it; this batch did not.
+
+### Why the row is still `todo` after its acceptance passes
+
+The acceptance command is green and was re-measured at this HEAD rather than inherited from batch 129:
+
+```
+$ make -C tests/formats
+running 15 tests
+- PartsMatchWhateverTheirCase
+... (15 cases)
+156190 checks, 0 failures
+rc 0
+```
+
+The row cannot be flipped to `done`, and that is now the row's entire remaining content:
+
+| file | owner | `test -w` | also |
+|---|---|---|---|
+| `docs/COMPLETION_LEDGER.tsv` | `coleshores:coleshores` | NO | in `gates_batch_integrity.PROTECTED` |
+| `docs/OWNER_BLOCKS.md` | `coleshores:coleshores` | NO | in `PROTECTED` |
+| `tools/runner/gates_completion.py` | `coleshores:coleshores` | NO | in `PROTECTED` |
+| `ralph-pi.sh` | `coleshores:coleshores` | NO | the harness itself |
+| `tools/check.sh` | `museagent:development` (writable) | yes | owner-protected by `ralph/builder.md`; also dirty from the operator |
+
+`gates_batch_integrity.py` refuses a commit that touches the ledger without `MDK_OWNER_APPROVED=1`, and
+`ralph-pi.sh` never passes `--owner-approved` and never exports that variable, so a batch that *could*
+write the ledger still could not land it. The consequence is mechanical: the row keeps an empty `evidence`
+column, `gates_completion.py --next` returns it every iteration, `COMPLETION_ITERS` increments regardless of
+*why* the row did not close, and attempt 9 trips `ralph-pi.sh:798` → `exit 6`, which the same file lists in
+the unit's `RestartPreventExitStatus=2 6 7` — the loop parks rather than finishes. This is review-15
+**R15-1**, and review-14 F2 before it. It is confirmed, live, and owner-only: the fix is one line in a file
+no batch can write. Recorded here rather than worked around, because the two workarounds available (set
+`MDK_OWNER_APPROVED=1`, or edit `gates_batch_integrity.PROTECTED` to drop the ledger) are both "relax a gate
+to obtain a pass", which this contract forbids.
+
+### What was implemented: R15-8, on the row's own acceptance target
+
+`tests/formats/Makefile` is the one file review-15 touched that this uid may write and that is not
+owner-protected, and it is the file the row's acceptance command runs. Its link-graph guard — added by batch
+129 to refuse the tempting wrong repair of "keep adding game sources until the linker stops complaining" —
+read the binary through a pipeline:
+
+```make
+@if nm -C '$@' | grep -qE '$(VM_PATTERN)'; then ... exit 1; fi
+```
+
+A pipeline's status is its last command's. With `nm` absent from `PATH`, the shell reports `nm: not found`
+on stderr, `grep` reads empty input, matches nothing, and the `if` takes the clean branch. Measured against
+the shipped artefact, the old line, with `nm` off `PATH`:
+
+```
+$ env PATH=/tmp/nmless sh -c 'if nm -C tests/formats/build/format_tests | grep -qE "mdk::LevelData::load";
+                               then echo "GUARD FIRED"; else echo "GUARD REPORTED CLEAN"; fi'
+sh: 1: nm: not found
+GUARD REPORTED CLEAN -- and this binary DOES link LevelData::load
+$ nm -C tests/formats/build/format_tests | grep -cE "mdk::LevelData::load"
+1
+```
+
+That is a gate that skips on missing input and emits the pass — the failure mode `ralph-pi.sh` names for its
+own reviewer and batch 95 names for single-sanitizer runs. The guard now takes the symbol dump to
+`$(BUILD)/format_tests.symbols`, requires `command -v nm` before anything else, fails on a nonzero `nm` or
+an empty dump (echoing `nm`'s own text), and removes the artefact on every refusal path.
+
+Three arms, all measured on the real target, so the guard is shown to fail rather than assumed to:
+
+| arm | how it was produced | result |
+|---|---|---|
+| `nm` missing | `PATH=/tmp/nmless make -C tests/formats bin` (symlink farm with `g++ as ld collect2 rm …`, no `nm`) | `LINK GRAPH: nm is not on PATH, so the link-graph guard cannot run.` / `refusing to report build/format_tests clean on a check that did not execute.` — make exits 2, artefact removed |
+| `nm` present but failing | `PATH=/tmp/badnm` with a stub `nm` that prints and exits 1 | `LINK GRAPH: nm gave no symbol dump for build/format_tests (exit 1) -- nothing to check.` + `fake nm: cannot execute` — make exits 2, artefact removed |
+| positive control | `make -C tests/formats bin VM_PATTERN="mdk::LevelData::load"` | `LINK GRAPH: build/format_tests links the script VM …` with the matched symbol listed — make exits 2, artefact removed |
+| normal build | `make -C tests/formats` | links, guard silent, `156190 checks, 0 failures`, rc 0 |
+
+No golden changed and none was added: the guard is a build-graph assertion, not a behaviour, and the shipped
+byte does not move (`mdk.elf` `a82a78938f8fbcd514f167b1b751ab45`, re-read from disk after `make -C mdk_3ds`,
+identical to batch 129's claim — which also closes review-15 open question 2, "the elf hash needs a re-run of
+`make -C mdk_3ds` to confirm").
+
+### Review-15 disposition — 1 fixed, 9 owner-only or accepted, 0 rebutted
+
+Every finding was checked against the file it cites, not against the summary.
+
+| id | sev | disposition | evidence |
+|---|---|---|---|
+| R15-1 | Critical | **confirmed, owner-only** | the table above; `test -w` NO on all three ledger files, `PROTECTED` contains the ledger, `ralph-pi.sh` never exports `MDK_OWNER_APPROVED`. Not landable by a batch, and the two available workarounds are gate relaxations |
+| R15-2 | Critical | **confirmed, owner-only** | `validate_done_rows` accepts a non-empty `acceptance` string it never runs, an `evidence` path that merely exists, and a `verified` sha that is merely an ancestor. The reviewer's fabricated-13-rows repro is a real property of the shipped gate. `tools/runner/gates_completion.py` is `coleshores:coleshores`, `test -w` NO, and it is the gate that would have to refuse the fabrication |
+| R15-3 | High | **confirmed, owner-only** | the completion block's only condition is `[ -f "$COMPLETION_GATE" ]` plus `C_RC -eq 0`; `LAST_GATES` and `FAILS` are consulted two lines later in the `state_write` the `exit 0` pre-empts. `ralph-pi.sh` is `test -w` NO |
+| R15-4 | Medium | **confirmed, owner-only** | `validate_no_regression` compares done-row *counts* against `HEAD`, and `_arm_repo()` commits a repo with no ledger, so the function returns `[]` in every selftest arm. Same unwritable file |
+| R15-5 | Medium | **confirmed, owner-only** | `owner_blocked_ids()` is defined and never called; the live check is `word_present` over the whole of `OWNER_BLOCKS.md`, prose included. Same unwritable file |
+| R15-6 | Medium | **confirmed, owner-only** | `completion_next() { completion_gate --next … 2>/dev/null; }` discards the rc and the stderr, so NOT VERIFIED and "no open rows" log identically. `ralph-pi.sh` is unwritable |
+| R15-7 | Low | **confirmed, deferred (owner-only)** | `exit 6` at `:801`, `:873`, `:923` — three causes, one code. Owner-only, and out of this row |
+| R15-8 | Low | **FIXED here** | the section above, with three measured arms |
+| R15-9 | Low | **confirmed, owner-only** | both citations of `CONTINUATION.md:871` are in files this uid cannot write (`docs/COMPLETION_LEDGER.tsv`, `ralph-pi.sh`). Agreed on the substance: a line number in a file that grows at the top every batch is not a citation |
+| R15-10 | Low | **accepted as disclosed, owner-only** | the sidecar names the parent because a frame is necessarily captured before the commit that carries it; `gates_frames.py` and `docs/frames/README.md` are owner-protected frame tooling, so "make `gates_frames` require `at <sha>` to equal the commit under review" is an owner change. This batch's frame is byte-identical to its 137 predecessors and the sidecar says so |
+
+Nothing was rebutted: the reviewer read the files correctly in every instance.
+
+### A measured lead, recorded and deliberately not worked
+
+The format target was also built under ASan+UBSan (`-fsanitize=address,undefined`, separate build dir, the
+link-graph guard still fired on it and was re-checked):
+
+```
+SUMMARY: AddressSanitizer: 47394202 byte(s) leaked in 15442 allocation(s).
+  ... mdk::formats::Arena::parse ... mdk::formats::Mto::getArena ... Level7StartsInDant1
+```
+
+No UBSan or ASan *error* fired — only leaks, and most of them are process-lifetime parse data, which is
+legitimate for a test binary. But one leak is a real ownership hole and not a test artefact: `Mto::getArena`
+`new`s an `Arena` and caches the raw pointer; `Mto` has no destructor; `Mto::add` caches *borrowed* arenas
+that `beta_demo.h:29-31` documents as the caller's to delete; and `LevelData::~LevelData` comments "the
+corridors are ours; the arenas belong to the MTO" while nothing implements that half. So the arenas a level
+parses on demand are owned by nobody. It is latent rather than live today only because every call site makes
+a fresh `LevelData` (`main_3ds.cpp:216`, `main.cpp:206`, `tick1.cpp`) and `LevelData::load` is never called
+twice on one object — and `load` itself does not reset `arenas_`, `corridors_` or `palettes_`, so a second
+load would append the new level's arenas after the old level's and let `arenaNamed()` return a stale arena.
+Fixing it is an ownership change across `formats/mto.*`, `game/level_data.*` and `formats/beta_demo.*`
+(the last does `*outMto = mto`, a copy assignment that a naive deleting destructor double-frees), which is
+`Risk: high` material and its own batch — not a rider on a row whose acceptance is already green. Logged so
+the next `core.formats` attempt has a target instead of a re-run.
+
+### Gates, verbatim
+
+```
+$ make -C tests/scripts
+All cases match the oracle.
+make: Leaving directory '/mnt/nas/Development/mdk-sdl/tests/scripts'
+PASS lines: 567                                     -> PASS (rc 0)
+
+$ DISPLAY=:99 bash tools/check.sh
+  PASS   audit_c_with_classes     0 violations
+  PASS   gates_vfp                0 blockers
+  PASS   audit_arm11_math         contract clean
+  PASS   audit_r11_idiv           no candidates
+  PASS   gates_core_parity        both targets link the same core
+  SKIP   gates_smdh               no built .cia to read
+  PASS   gates_frames             every pinned frame is deterministic and unchanged
+  PASS   gates_batch_integrity    project invariants intact
+  PASS   gates_completion         every done row is backed by evidence and a commit
+CHECK: ALL GATES PASSED                             -> PASS (rc 0)
+  COMPLETION SELFTEST: PASS (13 arms)
+  COMPLETION[d1]: 9 done / 13 total / 0 owner-blocked / 4 open
+  COMPLETION: LEDGER VERIFIED
+
+$ DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds
+stage_romfs: staged 69 files, 79M
+3DSX mdk.3dsx
+make: Leaving directory '/mnt/nas/Development/mdk-sdl/mdk_3ds'   -> PASS (rc 0)
+mdk.elf md5 a82a78938f8fbcd514f167b1b751ab45 (unchanged from batch 129; nothing in mdk_3ds/** changed,
+so make did not relink it)
+```
+
+No emulator run: this batch touches no `mdk_3ds/**` file, so P8's emulator evidence is not owed. Display
+recorded anyway for the frame capture: `DISPLAY=:99`, `Xvfb :99 -screen 0 1280x1024x24` already listening
+(pid 2316266, not started here, not killed). **`/tmp/kilo` is `coleshores:coleshores` and is not writable by
+the loop's uid**, so captures went to `/tmp/mdk-b130/` instead of the P7 path; that is an environment gap
+worth an owner line, not a silent deviation.
+
+**Frame.** `docs/frames/2026-11-10-formats-link-guard.png` (+ sidecar), md5
+`6769a13731983d65cee9df02da6cff37` — byte-identical to its 137 identical predecessors, and the sidecar says
+so: this batch moves no shipped byte, and the pinned frame (Linux/Vulkan, level 3, frame 1) cannot show a
+build-graph guard. The instruments that can are the three arms tabled above.
+
+**Prior-solution lookup.** `knowledge_search` on the `mdk-sdl` KB returned the `pose_cache.h`/`object.h`
+chunks from batch 129 and nothing prior for the `nm` guard or the `Mto` ownership question — recorded as
+"searched, no prior solution", not as a lookup that found nothing to find. Obsidian MCP and Cognee MCP are
+not exposed as tools in this session; the vault fallback was not needed because no prior finding was
+required for a build-graph guard, and that is stated rather than glossed.
+
+### Next, per the ledger
+
+`core.formats` stays `todo` with a green acceptance and an empty `evidence` column. The loop will dispatch it
+again; attempts 3-8 will either re-measure a green command or, better, work the `Mto`/`LevelData` ownership
+hole above, which is the only substantive `core.formats` work left that a batch can land. **The exact
+blocker, unchanged: no batch can close a ledger row.** Until the owner either flips `core.formats`'s row or
+makes `docs/COMPLETION_LEDGER.tsv` writable and out of `PROTECTED` with monotonic-transition checks in place
+of blanket protection (review-15 R15-1's remediation), attempt 9 ends the loop with `exit 6` and the port
+cannot reach its own definition of done.
