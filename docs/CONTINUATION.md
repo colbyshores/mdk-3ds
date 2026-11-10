@@ -1,18 +1,32 @@
 # Phase 2 continuation checkpoint
-Risk: high - changes the byte order of every RGBA8 texel the 3DS backend uploads, which is a
-data format on the shipped rendering path, and it is target-specific. It closes the
-longest-standing measured defect in the console picture: R = 255 on 96000 of 96000 panel pixels,
-because the PICA reads RGBA8 as a little-endian word with red in the TOP byte while the texel
-expansions wrote the seam's RGBA order straight through, so the forced alpha of 255 landed in
-red. Measured before (85/130 panel colours match the level-7 palette under the rotated read,
-3/130 literal) and after (12/12 of the shipped panel's top colours reappear with G/B restored
-and a real red; R = 255 falls to 5899/96000, all genuine palette reds). Pinned by a host row,
-`testTheTexelByteOrder`, negative-controlled: inverting `pica::texelBytes` fails 11 checks.
-Emulator evidence attached (emurun exit 0, 8820 frames, `:99`, Mandarine r1.2.1, shbin
-byte-identical to batch 103, so no GPU program moved). Also found and fixed on the way:
-`tests/scripts/Makefile` never included `$(OBJECTS_VM:.o=.d)`, so a header edit did not rebuild
-a `vm_tests`-only object and the gate reported PASS against a stale binary; this batch hit that
-for real, twice, before it was caught.
+Risk: medium - touches behaviour-adjacent test infrastructure and a shipped header's comment, but
+moves no shipped instruction. It closes review-6 4/4 (no Critical, no High): the R = 255 texel fix
+is now pinned at the two call sites that had the defect, not only at the helper, which is what the
+reviewer's mutation showed was missing (both expansions restored to the pre-batch code left every
+gate green). Four adjudicated checks and four bound arms are added to `c3d_frame_test.sh`, taking
+it to 35 checks / 53 arms / 4 probes, and the reviewer's combined revert is now refused with all
+four named (exit 1). Two of the four pin the ALPHA, which no byte-order pin can see: the index
+path must force an opaque alpha (`shaders/palette.hlsl:70` returns `.rgb, 1.0`) and the RGBA path
+must not. Measured codegen-neutral: after forcing the header's two dependents to recompile,
+`mdk.elf` is md5 67fadc4179c40ee3a4e5090a2218641a and the shbin d46abb60de20b2aa0659043aeb97b9c9,
+both byte-identical to batch 120. Emulator evidence attached (emurun exit 0, frame 2580, `:99`,
+Mandarine r1.2.1 md5 0d2adab6). Two record corrections ride along, both measured: a false
+prior-art claim (the vault DID record the byte order, at `GX-to-PICA200/22-textures.md:112`, and
+perfect_dark shipped the same fix) and a Makefile comment whose stated repro had no mechanism.
+
+**Batch 121 (iteration 7) - review-6 closed 4/4.** F1 fixed with a pin at each site plus two
+probes holding the legal spellings open; F2 fixed by correcting the record in place and moving the
+vault and sibling-port citations into `pica::texelBytes`, with the `clearColour` analogy demoted
+to a second witness; F3 confirmed but its recommended remediation is forbidden -
+`gates_batch_integrity` refuses any batch that edits a historical sidecar (measured), so the
+required "why this picture did not move" paragraph is carried forward in this batch's pair
+instead; F4 confirmed and the comment now names only the mechanism that reproduces (a HEADER
+edit), with the reviewer's residual VPATH-collision scenario closed by measurement (0 duplicate
+basenames across 53 + 65 objects). Full narrative: `docs/PROGRESS_LOG.md` "Batch 121". Two
+review-6 open questions are left stated and unfixed on purpose: the index-0 discard is argued
+from construction rather than measured (it needs a keyed texture over a non-black clear, which
+the pinned scene has no), and `expandRgba`'s per-texel loop versus the old row `memcpy` is cold
+by §2 and unmeasured in both states.
 
 **Batch 120 (iteration 6) - the R = 255 colour defect, closed.** The standing lead in this file
 for many batches, now resolved. It was candidate (a) of the two named here, the texel byte order;
@@ -800,6 +814,33 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 121)
+**The texel path is now pinned where the defect was, and the gate family is closed again on the
+terms review-6 named.** Review-6 had no Critical and no High; all four findings are closed (F1,
+F2, F4 fixed; F3 confirmed with its remediation blocked by an owner-protected gate). Two things
+in this area are left stated rather than fixed, and a later batch should not mistake either for
+a defect: the index-0 discard's survival is argued from construction plus the helper's host row
+and is NOT directly measured — measuring it needs a keyed texture over a non-black clear colour,
+which the pinned scene does not contain; and `expandRgba` is now a per-texel loop where it was a
+row `memcpy`, which is cold by §2's criteria and unmeasured in both states. Owner-only items
+unchanged from batch 119: the dirty `ralph/builder.md` (PROTECTED, invisible to a gate that reads
+committed ranges), whether `mdk_3ds/Makefile` joins `PROTECTED`, and `tools/check.sh` being
+protected so `arm_compile_check.sh` stays a quoted runner rather than a gate. A fourth now
+joins that list: a historical `docs/frames/*.txt` sidecar cannot be amended by any batch, so a
+sidecar omission can only be carried forward, never corrected in place.
+
+**The two named game items are unchanged and both are blocked on a named cause, not on effort.**
+(1) **the canvas seam** — `mdk_render_canvas_quad` is a no-op on this backend, which is what
+priority item 5b (the HUD) and the MVE movie presenter both wait on; the canvas draw has to
+become a record in the frame's queue so the per-eye replay draws it once per eye, and it is the
+largest unbuilt piece of "a CIA that plays a level". (2) **the collision batch** —
+`FindConnections` + `CrossedArena`, which unfreezes `currentArena_` from the spawn arena and lets
+`ArenaSpace::setSolid` take the oracle's current + active second, and which needs a
+doorway-crossing oracle rather than a hand-written expectation. Either one changes
+`mdk_3ds/**` and therefore owes an `emurun.sh` verdict block on `DISPLAY=:99`, recorded in the
+full shape review-4 F3 named (invocation, display, emulator md5, `guest log :` path, frames,
+exit code).
 
 ## NEXT (batch 119)
 **Nothing in the gate family is open, and nothing in it should be widened without a finding that

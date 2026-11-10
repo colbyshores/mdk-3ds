@@ -134,10 +134,17 @@ $(BUILD)/vm_tests: $(OBJECTS_VM)
 
 # INCLUDE BOTH OBJECT LISTS. `vm_tests` is built from OBJECTS_VM, and its own
 # .d is only the link-time one; the per-file dependency files of OBJECTS_VM were
-# left out, so a header change did NOT rebuild a vm_tests-only object and the
-# gate reported PASS against a stale binary. It was found the hard way: a row
-# added to pica_matrix_tests.cpp, and a deliberate inversion of the byte order it
-# pins, both came back green until the .o was touched by hand.
+# left out, so a HEADER edit did NOT rebuild a vm_tests-only object and the gate
+# reported PASS against a stale binary. The reproduced form is the header: with
+# the old line, `touch ../../mdk_3ds/src/render/pica_matrix.h` and rebuild gave 0
+# `CXX` lines and `PASS PicaMatrix`, and inverting `pica::texelBytes` in that
+# header stayed green until the .o was touched by hand. (Batch 120's record also
+# named "a row added to pica_matrix_tests.cpp"; review-6 F4 was right that that
+# half had no mechanism here -- a source edit always rebuilt its own object, even
+# under the old line, measured the same way. The negative control that came back
+# green was the header inversion, which is what this line fixes.) No second
+# staleness path is known: the `notdir` object names are unique across both lists
+# (53 and 65 objects, 0 duplicate basenames), so no VPATH collision exists today.
 -include $(OBJECTS:.o=.d) $(OBJECTS_VM:.o=.d) $(BUILD)/vm_tests.d
 
 clean:

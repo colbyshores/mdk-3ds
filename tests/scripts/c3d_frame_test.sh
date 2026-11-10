@@ -457,6 +457,47 @@ def call_args(line, name):
     return None
 
 
+def call_args_at(text, paren):
+    """The top-level argument strings of the call whose '(' sits at `paren`.
+
+    Multi-line and string-aware on purpose (review-6 F1). `call_args` above takes a
+    LINE and a function name, and both shipped `texelBytes` calls wrap across two or
+    three lines, so the argument a check needs -- the forced alpha in expandIndices,
+    the source alpha in expandRgba -- is not on the line the call was found on. A
+    line-based reader would report those calls as argument-free."""
+    depth = 0
+    cur = ""
+    args = []
+    i = paren
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in '"\'':
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+        elif c in "([{":
+            depth += 1
+            if depth == 1:
+                i += 1
+                continue
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                args.append(cur.strip())
+                return args
+        elif c == "," and depth == 1:
+            args.append(cur.strip())
+            cur = ""
+            i += 1
+            continue
+        if depth >= 1:
+            cur += c
+        i += 1
+    return None
+
+
 def line_range(text, sp):
     """1-based inclusive (first line, last line) of an absolute (start, end)
     span, so a file-wide call site can be tested for membership in a body."""
@@ -1063,6 +1104,106 @@ def adjudicate(text, quiet=False):
               "writes nothing today, and a helper called with it by reference -- because "
               "a name scan cannot see a write through one, so it must not be trusted "
               "while it exists (review-16 open question 2, review-18 F1/F6)")
+    # --- the two places that fill GPU texel memory (review-6 F1) --------------
+    # `pica::texelBytes` is pinned on the host by `pica_matrix_tests.cpp`, but the
+    # helper being right is NOT the shipped property. The property is that the two
+    # places which fill texel memory CALL it. Batch 120 pinned the helper and
+    # nothing else, so reverting both expansions to the pre-batch writes -- the
+    # exact shipped defect, R = 255 on 96000 of 96000 panel pixels -- left the whole
+    # suite and every runnable gate green (review-6 F1, mutation run quoted). And
+    # `renderer_c3d.cpp` includes <3ds.h>, so no host binary can reach these two
+    # call sites: a source check is the only thing that can.
+    #
+    # THE RULE IS "NO DIRECT TEXEL WRITE", NOT "NO WRONG WRITE". Inside an
+    # expansion the only permitted way to put a byte into texel memory is the
+    # helper, so ANY indexed assignment or bulk copy in either body is refused
+    # instead of a catalogue of the bad shapes: the two shipped defects were a
+    # four-line `pixel[N] = ...` block and a row `memcpy`, and a third is one
+    # keystroke from either. A `memset` is not a texel write (it fills the POT
+    # padding with the transparent texel) and a read like `row[(size_t)x * 4 + 0]`
+    # is not an assignment, so neither is caught -- and a probe pins that hoisting
+    # such a read into `src[0]` stays green.
+    def expansion(name):
+        """(span, body, [absolute '(' of each pica::texelBytes call]) for one
+        expansion. `body_span` only matches `void` functions and these return a
+        `uint8_t*`, so the more permissive `fn_body_span` is the one that resolves
+        them; a missing expansion returns nothing, which every check below reads
+        as a failure rather than a skip."""
+        sp = fn_body_span(text, name)
+        if sp is None:
+            return None, None, []
+        body = text[sp[0]:sp[1]]
+        parens = [sp[0] + m.end() - 1
+                  for m in re.finditer(r"\bpica::texelBytes\s*\(", body)]
+        return sp, body, parens
+
+    def texel_bypasses(body):
+        """Statements in a body that write texel memory without the helper."""
+        if body is None:
+            return ["(the expansion is absent)"]
+        hits = []
+        for _, line in code_lines(body):
+            s = line.strip()
+            if re.search(r"\w[ \t]*\[[^\]]*\][ \t]*=[ \t]*[^=]", line) or \
+               re.search(r"\b(?:memcpy|memmove)[ \t]*\(", line):
+                hits.append(s)
+        return hits
+
+    def alpha_of(text, paren):
+        """The alpha argument of a `texelBytes(dst, r, g, b, a)` call, or None."""
+        args = call_args_at(text, paren)
+        if not args or len(args) != 5:
+            return None
+        return args[4]
+
+    idx_span, idx_body, idx_parens = expansion("expandIndices")
+    rgba_span, rgba_body, rgba_parens = expansion("expandRgba")
+    idx_bypass = texel_bypasses(idx_body)
+    rgba_bypass = texel_bypasses(rgba_body)
+
+    rep.check("index-texels-are-rotated-for-the-pica",
+              idx_body is not None and bool(idx_parens) and not idx_bypass,
+              "%d pica::texelBytes call(s), %d direct texel write(s): %s (the palette is "
+              "RGBA in memory and the PICA reads [A, B, G, R]; writing the palette's own "
+              "order into texel memory is what painted every pixel with R = 255)"
+              % (len(idx_parens), len(idx_bypass),
+                 "; ".join(idx_bypass) if idx_bypass else "none"))
+    rep.check("rgba-texels-are-rotated-for-the-pica",
+              rgba_body is not None and bool(rgba_parens) and not rgba_bypass,
+              "%d pica::texelBytes call(s), %d direct texel write(s): %s (a row memcpy "
+              "copies the seam's RGBA order straight through, which is the same defect "
+              "in a tidier spelling)"
+              % (len(rgba_parens), len(rgba_bypass),
+                 "; ".join(rgba_bypass) if rgba_bypass else "none"))
+
+    # THE ALPHA, WHICH IS THE HALF THAT IS GAMEPLAY, NOT COLOUR. An indexed texel's
+    # alpha is FORCED OPAQUE because the oracle's own shader says so:
+    # `shaders/palette.hlsl:70` returns
+    # `float4(palette_texture.Load(...).rgb, 1.0)` — the palette's RGB and a literal
+    # 1.0, never the palette's fourth byte, with `index == 0` discarded at :67. The
+    # palette's own alpha is therefore not the oracle's alpha, and handing it to the
+    # PICA instead makes any texture whose palette stores alpha 0 at a used index
+    # vanish, because the alpha test is GPU_GREATER against reference 0. An RGBA
+    # texture is the opposite case: the seam carries a real alpha there
+    # (`render.h`), so forcing 255 throws away transparency the game asked for.
+    # Both directions are pinned, and neither is pinned by the helper's host row,
+    # which never sees a caller.
+    idx_alpha = alpha_of(text, idx_parens[0]) if idx_parens else None
+    rgba_alpha = alpha_of(text, rgba_parens[0]) if rgba_parens else None
+    rep.check("index-texel-alpha-is-forced-opaque",
+              idx_alpha is not None and
+              re.fullmatch(r"(?:255|0xFF)u?", idx_alpha) is not None,
+              "the alpha an indexed texel hands the PICA is `%s` (the C# writes 1.0; the "
+              "palette's own alpha byte is not the oracle's alpha, and the alpha test is "
+              "GPU_GREATER against 0, so a palette-stored 0 discards the texel)"
+              % (idx_alpha or "(no 5-argument texelBytes call)"))
+    rep.check("rgba-texel-alpha-is-the-sources",
+              rgba_alpha is not None and
+              re.fullmatch(r"(?:255|0xFF)u?", rgba_alpha) is None,
+              "the alpha an RGBA texel hands the PICA is `%s` (the seam carries a real "
+              "alpha on this path, so a forced 255 discards the texture's own "
+              "transparency -- the index path's rule does not transfer here)"
+              % (rgba_alpha or "(no 5-argument texelBytes call)"))
     return rep
 
 
@@ -1581,6 +1722,52 @@ ARMS = [
          "        mdk::log3dsPrintf(\"dynamic mesh: %d corners requested\", (int)cap);\n",
          1),
      "mesh-refusal-line-is-edge-triggered"),
+    # Review-6 F1: the two texel expansions, reverted to the shipped defect. Batch
+    # 120 pinned `pica::texelBytes` on the host and nothing else, so both of these
+    # reverts -- the exact code that painted the console red for the backend's whole
+    # history -- left every gate green. They are written from the pre-batch file
+    # (git 2624f5d), not invented, so each is a program a later batch could commit.
+    ("index-expansion-writes-the-palette-order-straight-through (review-6 F1)",
+     lambda s: s.replace(
+         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],\n"
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "            pixel[0] = paletteRgba[index * 4 + 0];\n"
+         "            pixel[1] = paletteRgba[index * 4 + 1];\n"
+         "            pixel[2] = paletteRgba[index * 4 + 2];\n"
+         "            pixel[3] = 255;", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("rgba-expansion-restored-to-a-row-memcpy (review-6 F1)",
+     lambda s: s.replace(
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        const uint8_t* row = source + (size_t)y * (size_t)width * 4;\n"
+         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
+         "        for (int32_t x = 0; x < width; x++) {\n"
+         "            mdk::pica::texelBytes(out + (size_t)x * 4,\n"
+         "                                  row[(size_t)x * 4 + 0], "
+         "row[(size_t)x * 4 + 1],\n"
+         "                                  row[(size_t)x * 4 + 2], "
+         "row[(size_t)x * 4 + 3]);\n"
+         "        }\n"
+         "    }",
+         "    const size_t rowBytes = (size_t)width * 4;\n"
+         "    for (int32_t y = 0; y < height; y++) {\n"
+         "        memcpy(pixels + (size_t)y * (size_t)paddedWidth * 4,\n"
+         "               source + (size_t)y * rowBytes, rowBytes);\n"
+         "    }", 1),
+     "rgba-texels-are-rotated-for-the-pica"),
+    # The two alpha arms. Each keeps the rotation intact and moves ONLY the alpha, so
+    # neither can be caught by the byte-order check: they isolate the alpha rows.
+    ("index-expansion-hands-the-palette-alpha-to-the-pica (review-6 F1)",
+     lambda s: s.replace(
+         "paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);",
+         "paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2],\n"
+         "                                  paletteRgba[index * 4 + 3]);", 1),
+     "index-texel-alpha-is-forced-opaque"),
+    ("rgba-expansion-forces-an-opaque-alpha (review-6 F1)",
+     lambda s: s.replace("row[(size_t)x * 4 + 2], row[(size_t)x * 4 + 3]);",
+                         "row[(size_t)x * 4 + 2], 255u);", 1),
+     "rgba-texel-alpha-is-the-sources"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -1602,6 +1789,25 @@ PROBES = [
      lambda s: s.replace("        if (!renderer->meshAllocFailureLogged) {",
                          "        auto* const rd = renderer;\n"
                          "        if (!rd->meshAllocFailureLogged) {", 1)),
+    # Review-6 F1's two green halves. The texel checks refuse a WRITE that bypasses
+    # the helper; a hoisted READ and an equivalent spelling of the forced alpha are
+    # both shapes the port may write, and a check that reddened either would be routed
+    # around the same way review-10 F6 and review-16 R2 predicted.
+    ("the rgba expansion reads its source through a hoisted row pointer (review-6 F1: "
+     "a read is not a texel write)",
+     lambda s: s.replace(
+         "            mdk::pica::texelBytes(out + (size_t)x * 4,\n"
+         "                                  row[(size_t)x * 4 + 0], "
+         "row[(size_t)x * 4 + 1],\n"
+         "                                  row[(size_t)x * 4 + 2], "
+         "row[(size_t)x * 4 + 3]);",
+         "            const uint8_t* src = row + (size_t)x * 4;\n"
+         "            mdk::pica::texelBytes(out + (size_t)x * 4, src[0], src[1], src[2],\n"
+         "                                  src[3]);", 1)),
+    ("the index expansion spells the forced alpha 0xFFu rather than 255u (review-6 F1)",
+     lambda s: s.replace("paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);",
+                         "paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 0xFFu);",
+                         1)),
 ]
 
 # --- mutant dump (review-15 F5) ------------------------------------------------

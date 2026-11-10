@@ -337,12 +337,33 @@ constexpr uint32_t clearColour(uint32_t argb) {
 // colour that FILLS the frame; this fixes the colour that gets DRAWN on it, and
 // the two ends had been disagreeing with the hardware in opposite directions.
 //
-// The PICA's RGBA8 is a 32-bit word read little-endian with **red in the TOP
-// byte** — the identical convention `clearColour` had to match, and for the same
-// reason: it is one GPU's colour format, not two. So the four bytes at a texel's
-// address are `[A, B, G, R]`, and the seam's RGBA-in-memory order (which the
-// Vulkan backend consumes directly as `VK_FORMAT_R8G8B8A8_UNORM`, and which
-// `render.h` documents) has to be rotated before it is handed over.
+// THE CONVENTION, AND WHERE IT COMES FROM. The PICA's RGBA8 is a 32-bit word
+// read little-endian with **red in the TOP byte**, so the four bytes at a
+// texel's address are `[A, B, G, R]` and the seam's RGBA-in-memory order (which
+// the Vulkan backend consumes directly as `VK_FORMAT_R8G8B8A8_UNORM`, and which
+// `render.h` documents) has to be rotated before it is handed over. That is not
+// a guess and not a local invention; it is recorded in two places outside this
+// repository, both read before this was written (review-6 F2 corrected an
+// earlier claim here that no prior port had written the byte order down — it
+// had, twice):
+//
+//   * Obsidian `GX-to-PICA200/22-textures.md:112`, in the encode block:
+//     `GPU_RGBA8: bytes = {A, B, G, R}  // PICA RGBA8 is little-endian` — the
+//     same note family AGENTS.md §12 names as required reading for the PICA200
+//     pixel pipeline.
+//   * `../perfect_dark/port/fast3d/gfx_citro3d.cpp:1708`, `rgba_to_abgr`, whose
+//     own comment at :1735 says the GPU is handed "PICA-layout abgr words
+//     (R[31:24] G[23:16] B[15:8] A[7:0])". That port hit the SAME defect on its
+//     RGB565 pool path and recorded the same signature — "sampled red = 255,
+//     green = source blue, blue = source green" (its §44.801az). Its distinction
+//     that a BAKE path may hold true RGBA while a POOL path holds already-packed
+//     words is the same seam question MDK answers by packing at exactly one
+//     place: here.
+//
+// The `clearColour` agreement is a SECOND witness, not the reason: it is the
+// same GPU's colour convention arriving at the other end of the pipe, and a
+// framebuffer format on its own would be the weakest available evidence for a
+// texture format.
 //
 // WHAT IT LOOKED LIKE WHEN IT WAS WRONG, which is the reason this is a rule and
 // not a footnote: the expansions wrote `[R, G, B, 255]`, so the hardware read
@@ -359,6 +380,9 @@ constexpr uint32_t clearColour(uint32_t argb) {
 // as bit fields; this one writes memory, and the whole point is which byte lands
 // at which address. The two are checked in opposite ways on purpose — see the
 // comment on the clear row, which is about the same trap from the other side.
+// And the helper being right is not the shipped property: the two CALL SITES are
+// pinned by `tests/scripts/c3d_frame_test.sh`, because this file cannot see them
+// and a host row never sees a caller.
 inline void texelBytes(uint8_t* dst, uint32_t r, uint32_t g, uint32_t b, uint32_t a) {
     dst[0] = (uint8_t)a;
     dst[1] = (uint8_t)b;

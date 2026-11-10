@@ -1,0 +1,24 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-10T06:51:50Z at cb270f8
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+why this picture did not move: this batch changed no shipped instruction. It adds adjudicated
+  checks to tests/scripts/c3d_frame_test.sh (a host gate that reads renderer_c3d.cpp and is not
+  linked into the game), corrects a comment in mdk_3ds/src/render/pica_matrix.h, and corrects a
+  comment in tests/scripts/Makefile. Measured, not asserted: after `touch mdk_3ds/src/render/
+  pica_matrix.h` forced its two dependents (pica_matrix.cpp, renderer_c3d.cpp) to recompile,
+  mdk_3ds/mdk.elf is md5 67fadc4179c40ee3a4e5090a2218641a and build/mdk_c3d.shbin is
+  d46abb60de20b2aa0659043aeb97b9c9 -- both byte-identical to batch 120's, so no GPU program,
+  no texel and no byte order moved here. This PNG is md5 6769a13731983d65cee9df02da6cff37,
+  byte-identical to the 129 captures before it: the pin is the Linux/Vulkan capture of level 3
+  frame 1, while the path this batch pins is the 3DS backend's texel expansion, which the pin
+  cannot reach by construction. The instrument that DOES show that path is the committed pair
+  docs/evidence/2026-11-09-L7-texel-order-fixed.png (md5 8401fb61e814492ed7ef864d27ff410c),
+  whose sidecar carries the panel colour census. A re-capture of a static frame, stated and not
+  hidden, and the pin and the ceiling in reference.sha256 do not move.
+note on the pair before this one: docs/frames/2026-11-10-texel-order-fixed.txt should have
+  carried this paragraph and does not (review-6 F3). It cannot be amended: gates_batch_integrity
+  refuses any batch that modifies a historical measurement ("staged batch modifies a historical
+  frame or measurement"), so the correction can only be carried forward, which is what this
+  paragraph does. That older picture is md5 6769a13731983d65cee9df02da6cff37 for the same reason
+  stated above, and its measurement lives in the same docs/evidence/ pair.

@@ -21953,10 +21953,20 @@ new batch rather than remediation, and there was nothing to fix or rebut.
 
 **Prior-solution lookup.** `pi-knowledge` KB `mdk-sdl` searched for the texture-format and
 clear-word history. Obsidian and Cognee MCP tools are **absent from this session**, so the vault
-was read directly from `/mnt/nas/Vaults/port-docs` (read-only): the PICA200 and citro3d reference
-notes list the RGBA8 format but record **no** byte order, and no prior port had written this down
-— which is the reason `pica::texelBytes` carries the measurement in its comment instead of a
-citation. Cognee was not reachable and is recorded as not consulted rather than consulted.
+was read directly from `/mnt/nas/Vaults/port-docs` (read-only). **[Corrected by batch 121,
+review-6 F2: the sentence that followed was false, and the reviewer was right to call it. The
+vault DOES record the byte order — `GX-to-PICA200/22-textures.md:112`, in the encode block,
+`GPU_RGBA8: bytes = {A, B, G, R} // PICA RGBA8 is little-endian` — and a sibling port had
+recorded the identical defect with the identical signature: `../perfect_dark`, §44.801az,
+"sampled red = 255, green = source BLUE, blue = source GREEN", with `rgba_to_abgr` shipped at
+`port/fast3d/gfx_citro3d.cpp:1708` and its comment at :1735 stating "PICA-layout abgr words
+(R[31:24] G[23:16] B[15:8] A[7:0])". The lookup was performed and reported, and its result was
+misread: the note was opened for the Morton-tiling question and its encode block was not read
+as a byte-order statement. That is the finding, and it is not a citation gap but a reading
+failure — the reference AGENTS.md §12 names as required reading was in fact opened and its
+answer was missed.] Cognee was not reachable and is recorded as not consulted rather than
+consulted. The two citations above are now carried in `pica::texelBytes`'s own comment, with
+the `clearColour` agreement demoted to the second witness it is.
 
 **What is next.** Per the priority order, unchanged and still blocked on their named causes, not
 on effort: (1) the canvas seam, which priority item 5b (the HUD) and the MVE presenter both wait
@@ -21968,3 +21978,141 @@ separate and untouched — this batch removes colour as a confound for it and cl
 **Still open, unchanged:** Old-3DS hardware verification of everything in §11 P6 (no console in
 hand; emulator-green is not hardware-pass), and the fact that Mandarine masks FCRAM exhaustion,
 edge-stretch and heap wear (P8).
+
+## Batch 121 (iteration 7) — review-6 closed 4/4 (no Critical, no High): the texel fix is now
+## pinned at the sites that had the defect, and a false prior-art claim is corrected
+
+**What was implemented.** No new ported behaviour: this is the remediation batch review-6's
+verdict asked for. The shipped change is four adjudicated source checks in
+`tests/scripts/c3d_frame_test.sh` that reach the two places in `renderer_c3d.cpp` which fill GPU
+texel memory — `expandIndices` and `expandRgba` — plus the record corrections F2 and F4 name.
+The oracle references the new checks state are `shaders/palette.hlsl:70`
+(`float4(palette_texture.Load(...).rgb, 1.0)` — the palette's RGB and a literal 1.0, with
+`index == 0` discarded at :67) for the forced opaque alpha, and `SPEC.md` §7.3 for the CPU
+expansion being the only place the palette can be applied at all.
+
+**F1 (Medium, confirmed) — fixed, and reproduced as the reviewer described it.** Batch 120
+pinned `pica::texelBytes` on the host and pinned nothing at the call sites, so the reviewer's
+mutation — both expansions restored to the pre-batch code — left the suite green. Reproduced
+first: the pre-batch `renderer_c3d.cpp` (git `2624f5d`) was spliced into the current file and
+the gate run over it, and at batch 120 that file was accepted. Four checks now stand there:
+`index-texels-are-rotated-for-the-pica` and `rgba-texels-are-rotated-for-the-pica` refuse any
+indexed assignment or bulk copy inside either expansion (the rule is "no direct texel write",
+not a catalogue of bad shapes, because the two shipped defects were a four-line `pixel[N] =`
+block and a row `memcpy` and a third is one keystroke from either);
+`index-texel-alpha-is-forced-opaque` and `rgba-texel-alpha-is-the-sources` pin the two OPPOSITE
+alphas, which is the half a byte-order pin cannot see and the half the shipped defect turned on
+— the forced 255 that landed in the hardware's red channel. Four arms, each written from the
+pre-batch file rather than invented, each bound to the check it isolates; the two alpha arms
+keep the rotation intact so they cannot be caught by the byte-order checks. Two probes hold the
+legal spellings open (a hoisted row READ is not a texel write; `0xFFu` is a legal spelling of
+the forced alpha), because a check that reddens a shape the port may write gets routed around.
+Measured after the change: the reviewer's combined revert is now refused with all four checks
+named and the gate exits 1, and `PASS C3dFrame (35 checks, 53 arms adjudicated red, 4 probes
+green)` where batch 120 printed 31/49/2. `renderer_c3d.cpp` includes `<3ds.h>` and cannot be
+host-compiled, so a source check is the only instrument that can reach these two call sites —
+which is the same reason this gate exists at all, stated in its own header.
+
+**F2 (Medium, confirmed) — fixed, and the finding is not a citation gap but a reading failure.**
+The claim at line 21957 that the vault "record **no** byte order, and no prior port had written
+this down" is false, and the reviewer's two citations check out verbatim:
+`/mnt/nas/Vaults/port-docs/GX-to-PICA200/22-textures.md:112` carries
+`GPU_RGBA8:  bytes = {A, B, G, R}                   // PICA RGBA8 is little-endian` inside the
+encode block, and `../perfect_dark/port/fast3d/gfx_citro3d.cpp:1708` ships `rgba_to_abgr` whose
+comment at :1735 states "PICA-layout abgr words (R[31:24] G[23:16] B[15:8] A[7:0])", with that
+port's §44.801az recording the same defect and the same signature ("sampled red = 255, green =
+source BLUE, blue = source GREEN"). The honest disposition is worse than "the note was never
+found": the note family was opened for the Morton-tiling question and its encode block was read
+as tiling prose rather than as a byte-order statement. The clause is corrected in place, marked
+as corrected by this batch, and the two citations now stand in `pica::texelBytes`'s own comment
+with the `clearColour` agreement demoted to the second witness it is — a framebuffer format is
+the weakest available evidence for a texture format, which was review-6's point about the old
+comment. The sibling's bake-path/pool-path distinction is recorded too, because it is the same
+seam question MDK answers by packing at exactly one place.
+
+**F3 (Low, confirmed) — the finding is right and the recommended remediation is forbidden.**
+The batch-120 sidecar does omit the paragraph `docs/frames/README.md` requires when the pinned
+picture cannot show the batch. It cannot be added: `gates_batch_integrity.py` refuses any batch
+that touches a historical measurement, measured by staging exactly the edit the reviewer
+recommended and running the gate — `BATCH INTEGRITY: FAIL / staged batch modifies a historical
+frame or measurement`, exit 1. That gate is owner-protected, so amending history is not this
+batch's to do. The correction is therefore carried forward: this batch's own sidecar
+(`docs/frames/2026-11-10-review6-texel-pins.txt`) carries the paragraph, names the md5 of the
+picture it stands for, points at the `docs/evidence/` pair that shows the changed path, and
+says outright why the pair before it is short. The pinned PNG is byte-identical for a stated
+and measured reason: this batch changed no shipped instruction (see P8 below), and the pin is
+the Linux/Vulkan capture while the pinned path is the 3DS backend's.
+
+**F4 (Low, needed investigation) — confirmed, and the record's own repro was a misattribution.**
+Both halves were measured against the pre-batch `-include` line. A header edit reproduces the
+false green exactly: `touch mdk_3ds/src/render/pica_matrix.h` then rebuild gave 0 `CXX` lines
+and `PASS PicaMatrix`, and that is the shape batch 120 actually hit, because the byte order it
+inverted as a negative control lives in `pica_matrix.h`. A source edit does not: appending a
+row to `pica_matrix_tests.cpp` printed `CXX pica_matrix_tests.cpp` even with the old line, so
+the `.cpp` half of the comment had no mechanism, as the reviewer said. The comment now names
+only the reproduced mechanism, says which half of the old sentence was a misattribution, and
+closes the reviewer's residual failure scenario by measurement rather than by assertion: the
+`notdir` object names are unique across both source lists (53 and 65 objects, 0 duplicate
+basenames), so there is no VPATH collision to leave live.
+
+**Gates, verbatim.**
+
+    make -C tests/scripts   ->  All cases match the oracle.
+                                (PASS PicaMatrix; PASS C3dFrame (35 checks, 53 arms
+                                 adjudicated red, 4 probes green))
+    bash tools/check.sh     ->  CHECK: ALL GATES PASSED
+                                audit_c_with_classes 0 violations / gates_vfp 0 blockers /
+                                audit_arm11_math contract clean / audit_r11_idiv no candidates /
+                                gates_core_parity both targets link the same core /
+                                gates_smdh SKIP (no built .cia) / gates_frames CONTRACT CLEAN
+                                (L3_f1.bmp sha=58615fc85d02e009) / gates_batch_integrity PASS
+    make -C mdk_3ds         ->  3DSX mdk.3dsx   (DEVKITPRO=/opt/devkitpro,
+                                DEVKITARM=/opt/devkitpro/devkitARM)
+    sh tests/scripts/arm_compile_check.sh c3d
+                            ->  PASS ArmCompile (58 mutant(s), 0 diagnostics, 73 shipped
+                                source(s) format-clean, 4 format mutant(s) refused,
+                                1/1 honest call(s) accepted,
+                                /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)
+
+The cross-compile runner is quoted because four arms and two probes were added to the gate it
+dumps: every new mutant is valid C++ for armv6k/VFPv2, so none of them is a mutant of nothing
+(review-14 F3's class). It is a runner a batch invokes and quotes, not part of the loop's gate
+chain — that is batch 118's stated boundary and it has not changed.
+
+**P8 emulator evidence, because `mdk_3ds/**` changed.** Invocation:
+`DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM DISPLAY=:99 bash
+mdk_3ds/tools/emurun.sh --secs 45 --min-frames 60`, **exit 0** (not 3 stale log, not 4
+emulator died, not 6 repointed `$MANDARINE`). Display `:99` (the dedicated Xvfb, already
+listening, not the operator's screen). Emulator `mandarine.AppImage md5 0d2adab6` — the pinned
+r1.2.1, verified before believing the run. Harness's own `guest log :` line, verbatim:
+`/tmp/mdk-emurun.906156/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log`. Frames: `reached 2520 by the
+deadline (47 frame lines logged, every 60th after #5)`, and after the reap the log ends at
+frame 2580 (48 frame lines). `health=100`, `objects=7 obj=570c/13d peak=570c/13d`, mono
+(`render_3d=0 factor_3d=0`), `gl: forced llvmpipe`, `backend: PICA200 Citro3D`,
+`flow: screen=4 level=7`. The claim that no shipped instruction moved is measured, not
+asserted: after `touch mdk_3ds/src/render/pica_matrix.h` forced its two dependents
+(`pica_matrix.cpp`, `renderer_c3d.cpp`) to recompile, `mdk.elf` is md5
+`67fadc4179c40ee3a4e5090a2218641a` and `build/mdk_c3d.shbin` is `d46abb60de20b2aa0659043aeb97b9c9`,
+both byte-identical to batch 120's. Emulator-green is not hardware-pass: P6 hardware evidence
+stays open and P8's masking list (FCRAM exhaustion, edge-stretch, heap wear) still applies.
+
+**Prior-solution lookup.** `pi-knowledge` KB `mdk-sdl` was searched for the texel byte order and
+for this gate's source-check idiom; its `c3d_frame_test.sh` chunk predates this batch's edit, so
+the repository was the authority for the harness and the vault for the hardware fact. No
+`obsidian_*`/`cognee_*` tools are exposed in this session — recorded as a session gap, not as a
+lookup that happened — so the vault was read directly from `/mnt/nas/Vaults/port-docs`, read-only
+and narrowly: `GX-to-PICA200/22-textures.md` around the cited line, and the two
+`perfect_dark` files review-6 named. Cognee was not reachable and is recorded as not consulted.
+`ralph/builder.md` was dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose;
+this batch staged its paths explicitly rather than with `git add -A`.
+
+**What is next.** Unchanged and still blocked on their named causes, not on effort: (1) the
+canvas seam, which priority item 5b (the HUD) and the MVE presenter both wait on, and which has
+to carry the flat/ortho marker the vault's stereo-shear note requires; (2) the collision batch
+(`FindConnections`, `CrossedArena`). Two items this batch leaves open deliberately, both stated
+rather than fixed: review-6 open question 1, that the index-0 discard's survival is argued from
+construction plus the helper row and is not directly measured (it needs a keyed texture over a
+non-black clear colour, which the pinned scene does not contain), and its open question 3, that
+`expandRgba` is now a per-texel loop where it was a row `memcpy` — cold by §2's criteria and
+unmeasured in both states, so no finding, but the delta is unmeasured if eviction thrash ever
+lands on RGBA surfaces.
