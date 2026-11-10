@@ -22645,7 +22645,7 @@ on real hardware) still needs a hardware capture, not a gate.
 
 ---
 
-## Batch 126 (iteration 12) — review-11 closed 4/4: the bulk-fill rule reads the operation, not the punctuation
+## Batch 126 (iteration 12) — review-11 closed 4/5 (F5 deferred, owner-only): the bulk-fill rule reads the operation, not the punctuation
 
 Review-11 (`logs/ralph-pi/run-20261109-233059/review-11.md`, DeepSeek V4.1 Flash TH,
 independence `family=qwen` vs `family=deepseek`) had **no Critical and no High**, and its verdict
@@ -22661,6 +22661,17 @@ is claimed. The build products were re-measured after the rebuild rather than co
 batch: `mdk_c3d.shbin` `d46abb60de20b2aa0659043aeb97b9c9`, byte-identical to batches 122–125, and
 `mdk.3dsx` `cbf11bf5b0d5b02e064335ae252f35d8`. (`mdk.elf` is not on disk after `make -C mdk_3ds`, so
 this batch makes no `mdk.elf` claim — the same gap review-11 measured.)
+
+> **Corrected by batch 127 (review-12 F8).** Both halves of that parenthetical are false, and the
+> `.3dsx` hash above is not a measurement. `mdk_3ds/mdk.elf` **is** on disk after `make -C mdk_3ds`
+> (`67fadc4179c40ee3a4e5090a2218641a`, byte-identical across rebuilds), so the "gap" it describes was
+> never there. And `mdk.3dsx` is **not** bit-reproducible: the reviewer measured `3e1978f5…` at
+> review time and `e8454c11…` / `b7db3dd4…` from two clean rebuilds of the same tree, and batch 127
+> measured a third value, `70500a0a8eeff963989f9fb2b92aaa34`, from an unmodified tree — the difference
+> sits inside the staged RomFS region. A hash that changes when nothing changed cannot be a fidelity
+> measurement, so the reproducible pair — `mdk.elf` and `mdk_c3d.shbin` — is what a batch should
+> quote, and the `.3dsx` should be named as a packaging artefact or left out. The original text above
+> is kept rather than edited away, because it is what the next reviewer will otherwise re-find.
 
 **The oracle line is unchanged and unchanged-by-construction.** `palette.hlsl:70`
 (`float4(palette.rgb, 1.0)`, index-0 discard at `:67`) and the seam contract in `render.h` still
@@ -22784,3 +22795,170 @@ running: it is in `gates_batch_integrity`'s `PROTECTED` set, its mtime is `2026-
 Review-10's open question 3 (is a 3-byte source path actually planned?) stays stated and moot in
 the direction that matters. Review-7's open question 1 (RGBA8 Morton tiling on real hardware) still
 needs a hardware capture, not a gate.
+
+---
+
+## Batch 127 (iteration 13) — review-12 closed 8/8: the padding fill is pinned by where it sits, and the zero literal stops accepting nonzero
+
+Review-12 (`logs/ralph-pi/run-20261109-233059/review-12.md`, DeepSeek V4.1 Flash TH, independence
+`family=qwen` vs `family=deepseek`) had **no Critical and two High**, and its verdict was INCOMPLETE
+on F1 and F2. All eight findings were reproduced against the committed gate before anything changed
+and **none is rebutted**: F1's after-loop fill, F2's `'0'` and `'x0'`, F3's three shift-assigns and
+F6's `using std::fill` each printed `PASS C3dFrame (41 checks, 81 arms adjudicated red, 19 probes
+green)` at exit 0, while F4's `memset(pixels, 0, texels*4)` and F5's `'\x00'` each printed two named
+FAILs for a filler byte-equivalent to the shipped one. The diff is one file —
+`tests/scripts/c3d_frame_test.sh` — plus this log, the checkpoint, and one frame pair. No
+`mdk_3ds/**` and no `mdk_core/**` byte is in the batch, so no P8 emulator evidence is owed and none is
+claimed. Build products re-measured after the rebuild rather than copied: `mdk_c3d.shbin`
+`d46abb60de20b2aa0659043aeb97b9c9`, byte-identical to batches 122–126, and `mdk.elf`
+`67fadc4179c40ee3a4e5090a2218641a`. The `.3dsx` is deliberately not quoted, for the reason F8 records.
+
+**The oracle line is unchanged and unchanged-by-construction.** `palette.hlsl:70`
+(`float4(palette.rgb, 1.0)`, index-0 discard at `:67`) and the seam contract in `render.h` still
+decide what the texel rules enforce, and the shipped `expandIndices`/`expandRgba` still zero the whole
+buffer once at the base before their first loop — which is exactly the property F1 turned from an
+assumption into a checked one. What changed is which fills the gate can refuse and which it is
+forbidden to refuse.
+
+**F1 (High, confirmed and fixed): the padding fill had no position.** Batch 126 adjudicated the fill
+by destination and length and never looked at where the fill SITS, so
+`memset(pixels, 0, texels * 4);` inserted between the expansion loop's closing brace and
+`return pixels;` zeroed every texel the helper had just written at exit 0 — the case review-11 F1 had
+named ("a zero fill at a base pointer is exempt at any length and **any position, including after the
+draw**") and the one batch 126's own closing claim ("it fills the whole buffer with the transparent
+texel and nothing else") asserted impossible. It is the vault's
+`30-architecture/patterns/a-gate-over-a-field-subset-passes-when-the-load-hides-in-the-ungated-fields`:
+two of the fill's three dimensions were gated and the defect moved into the third. The rule now binds
+the fill to a position in **two** ways, because source order alone does not close the class. (1) A
+padding fill is legal only before the first statement in the body that writes a texel — and the
+helper call counts as such a statement, because the fill's whole purpose is to be overwritten, so a
+fill that follows the first call is a wipe and not a fill. (2) A padding fill is illegal inside a
+loop whose body writes a texel, which is review-12 open question 2's "sandwiched between rows" case:
+the fill still *precedes* the call it erases, so ordering cannot see it, and the rule reads the brace
+nesting instead — a loop's body is the run of statements after its header that sit deeper than the
+header, ending at the first one that no longer does. That second half is a defect fixed and pinned by
+an arm, not a limit: a whole-buffer fill inside a loop that paints texels wipes every earlier
+iteration's rows, and there is no correct program of that shape. `statements()` grew
+`with_offsets` (default off, so every existing reader is untouched — the same opt-in shape as
+`call_args_at(keep_literals=…)`), which is what makes a position comparable at all. Two arms
+(after-the-loop, inside-the-loop), both green on the pre-batch gate and red now. **Stated limit:** a
+loop this scan cannot read as a loop — a macro that expands to one — is not searched for a write
+inside it.
+
+**F2 (High, confirmed and fixed): `ZERO_FILL` accepted nonzero literals, and that was a regression.**
+The literal alternative was `'(?:\0|x0+|0)'`, and `'0'` is the character 0x30: a padding row of
+`[0x30, 0x30, 0x30, 0x30]` is alpha 48, i.e. opaque garbage in the letterbox rows, and `'x0'` is a
+multi-character constant. Both `fullmatch`ed as "the transparent texel" — the exact class the same
+rule's own prose calls a texel write ("a NONZERO fill sets bytes the helper owns"). Batch 125 refused
+both and batch 126's literal-preservation fix let them through, which makes this the rarer thing: a
+detector regression introduced by the previous batch's fix, with no shipped symptom but a green gate
+over a wrong byte. The class is now the zero **literals** only — `0[xX]0+[uU]?`, `0[uU]?`, `'\\0'`,
+`'\\00'`, `'\\000'` (octal) and `'\\x0'`, `'\\x00'` (hex) — and the prose says "the zero literals of
+the two languages" instead of "every spelling of zero", because the old claim was what hid the hole.
+Two arms (`'0'`, `'x0'`), one probe (`'\x00'`, which is F5). This is the vault's
+`when-every-operand-matches-question-the-operation`: the destination and the length matched a padding
+fill while the value did not mean zero.
+
+**F3 (Medium, confirmed and fixed): the subscript rules kept review-11 F4's hole.** F4's fix landed in
+`DEREF_WRITE_TAIL` only. The two subscript rules kept the operator slot `[+\-*/%&^|]?`, which cannot
+reach `<<=` or `>>=` because `<` and `>` are not in the class, so `out[(size_t)x * 4 + 3] >>= 1`,
+`out[(size_t)x * 4 + 3] <<= 1` and `((uint8_t*)pixel)[3] >>= 1` each halved a texel alpha at exit 0 —
+and the batch's new docstring presented that very slot as proof the subscript side "never had
+review-10 F2's hole", which is a comment arguing for a gap. The slot is now
+`(?:<<|>>|[+\-*/%&^|])?=(?!=)`: the shift-assigns match as themselves, `(?!=)` still closes `==`, and
+`<=`/`>=` still cannot match because the `=` of a comparison is preceded by `<` or `>`, which the
+alternation accepts only as part of `<<`/`>>`. Two arms (subscript, cast-subscript); the docstring now
+says the exclusion was a gap, not a guarantee. The read side was re-checked in both directions:
+`arr[i] >> 1` as an expression and `arr[i] >= 1` as a condition stay green.
+
+**F4 (Medium, confirmed and fixed): the fill's length was compared as the author's text.**
+`memset(pixels, 0, texels*4)` — the shipped statement after a column wrap — reddened a correct filler
+on two named checks, while a re-spaced *allocation* was already fine because both sides of that
+comparison were normalised. That asymmetry is review-16 R2's class, and review-11 had already rated
+the identical one (`'\0'`) Medium for the same reason. Both sides now strip whitespace out of the
+arithmetic, so a formatting difference cannot matter; two genuinely different expressions still cannot
+compare equal. One probe.
+
+**F5 (Low, confirmed and fixed): the hex-escape alternative was dead.** `x0+` could only ever match
+the *text* `'x0…'`, never a `\x` escape, because the text of an escape starts with the backslash — so
+`'\x0'` and `'\x00'` were refused while the comment promised them. Subsumed by F2's replacement, which
+scopes the escapes explicitly; one probe pins `'\x00'`.
+
+**F6 (Low, confirmed and fixed): the algorithms stopped at the `std::` spelling.** Batch 126 required
+a literal `std::` on `fill`/`fill_n`/`copy`/`copy_n` — a deliberate choice it stated — but review-8 F5
+already sanctions the unqualified spelling for the *helper*, so the same shape here was not exotic and
+`fill(pixel, pixel + 4, 0xFFu);` after `using std::fill;` re-pinned an alpha at exit 0. The bare names
+are now in scope exactly when the file carries the matching `using std::` declaration, read from the
+blanked text so a commented-out using cannot enable them — the shape `helper_call_re` has used since
+review-8 F5, with the same false-positive reason: matching a bare `fill(` unconditionally would sweep
+in any project function of that name, and review-16 R2 says a gate reddening a shape the port may
+write gets routed around. One arm (the defect) and one probe (the legal `fill_n(pixels, texels * 4, 0)`
+after `using std::fill_n;`), so both directions are pinned and the fix cannot over-redden.
+
+**F7 (Low, confirmed and fixed): the state of record said `4/4` about a review with five findings.**
+`grep -cE '^### Finding'` is 5 for review-11 and 4 for review-10, and the `N/N` convention counts
+findings, so the header read as "review-11 fully closed" while the same sentence listed "three Medium,
+two Low". Corrected to `4/5 (F5 deferred, owner-only)` in both the checkpoint header and this log's
+batch-126 heading, and this batch's own header counts review-12 `8/8` because all eight are closed.
+
+**F8 (Low, confirmed and fixed): a `.3dsx` hash that does not reproduce, and an `.elf` claimed
+absent.** `mdk_3ds/mdk.elf` **is** on disk after `make -C mdk_3ds`
+(`67fadc4179c40ee3a4e5090a2218641a`, byte-identical across the reviewer's two rebuilds and this
+batch's), so the batch-126 sentence that it "is not on disk" was false and the gap it described never
+existed. And `mdk.3dsx` is not bit-reproducible: the reviewer measured `3e1978f5…`, `e8454c11…` and
+`b7db3dd4…`, and this batch measured `70500a0a…` and then `0c21f710…` from a no-op relink of an
+unmodified tree — five values, one tree, the difference inside the staged RomFS region. A hash that
+changes when nothing changed is not a fidelity measurement, so the batch-126 entry now carries a
+marked correction instead of a silently edited claim, and this batch quotes only the reproducible
+pair.
+
+**Review-12's open questions, answered rather than re-derived.** Q1 (`allocs` read from unblanked
+body text while the hits read the blanked copy): fixed for consistency with the file's own doctrine —
+prose is not code, so a commented-out `// junk = malloc(n)` must not put `n` on the list of sizes a
+fill may legitimately use; the reviewer built no compilable repro and this batch claims none either,
+it simply removed the asymmetry. Q2 (which position predicate): **both**, for the reason under F1 —
+source order alone leaves the inside-the-loop fill green, and this batch measured that before fixing
+it. Q3 (a frame pair for test-only batches) is unchanged and owner-only: `gates_batch_integrity.py` is
+PROTECTED, and this batch's frame is the 135th byte-identical copy of one PNG (135 of 136 share
+`6769a13731983d65cee9df02da6cff37`; the odd one out is the historical `2026-10-30-depth-pull.png`).
+
+**Measured, before and after.** Pre-batch gate: `PASS C3dFrame (41 checks, 81 arms adjudicated red,
+19 probes green)`. Post-batch: `PASS C3dFrame (41 checks, 88 arms adjudicated red, 22 probes green)` —
+seven arms and three probes added, no check added and none removed, so the 41 checks are the same 41
+and the new coverage is entirely in arms and probes. Every new arm was re-run against the committed
+pre-batch gate and was green there (F1 both placements, F2 both literals, F3 all three spellings, F6),
+and both new fill-spelling probes were red there and are green now. `arm_compile_check.sh c3d` →
+`PASS ArmCompile (111 mutant(s), 0 diagnostics, 73 shipped source(s) format-clean, 4 format
+mutant(s) refused, 1/1 honest call(s) accepted, /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)` —
+up from 101 mutants, and the `'x0'` multi-character arm compiles for armv6k, so it is a program a
+later batch could actually commit.
+
+**Gates, as run.** `make -C tests/scripts` → `All cases match the oracle.` (567 `PASS` lines, no
+failure). `bash tools/check.sh` → `CHECK: ALL GATES PASSED`, with `PASS audit_c_with_classes 0
+violations`, `PASS gates_vfp 0 blockers`, `PASS audit_arm11_math contract clean`, `PASS
+audit_r11_idiv no candidates`, `PASS gates_core_parity`, `SKIP gates_smdh no built .cia to read`,
+`PASS gates_frames every pinned frame is deterministic and unchanged`, `PASS gates_batch_integrity
+project invariants intact`. `make -C mdk_3ds` → exit 0 with `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM` exported. No `mdk_3ds/**` byte moved, so no `emurun.sh` run is
+owed and none is claimed; Old-3DS hardware readiness stays open, as always on this host.
+
+**Prior-solution lookup.** Pi-knowledge `mdk-sdl` was searched and returned the two shipped expansions
+— which is what confirmed the property F1 pins (the fill sits before the first loop in both) rather
+than restating it; the index also still holds a pre-batch-121 `expandRgba` with a row `memcpy`, so it
+is a lead and not an authority, and the working tree was read for the truth. Obsidian MCP and Cognee
+MCP are **not present in this session's tool list** — recorded as a session configuration gap under
+AGENTS.md P9, not as a lookup that happened. The vault was read directly from
+`/mnt/nas/Vaults/port-docs`, and two pattern notes apply by name:
+`30-architecture/patterns/a-gate-over-a-field-subset-passes-when-the-load-hides-in-the-ungated-fields`
+(F1: two of three dimensions gated, the defect in the third) and
+`30-architecture/patterns/when-every-operand-matches-question-the-operation` (F2: the operands
+matched, the value did not mean zero).
+
+**Standing hazards this batch did not touch.** `ralph/builder.md` is dirty for a sixth batch running:
+it is in `gates_batch_integrity`'s `PROTECTED` set, its mtime is `2026-11-05 07:26:14` — before this
+batch — so this batch staged its paths explicitly instead of `git add -A`. `/tmp/kilo` is owned by
+another uid and is not writable by the loop's uid on this host, so captures went to a directory this
+batch could write; the NEXT block records it because AGENTS.md P7 names `/tmp/kilo`. Review-10's open
+question 3 (is a 3-byte source path actually planned?) stays stated and moot in the direction that
+matters. Review-7's open question 1 (RGBA8 Morton tiling on real hardware) still needs a hardware
+capture, not a gate.

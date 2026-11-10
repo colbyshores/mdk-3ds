@@ -186,9 +186,14 @@ def block_span_from(text, pos):
     return None
 
 
-def statements(text):
+def statements(text, with_offsets=False):
     """`text` folded into statements: a `;`, `{` or `}` at bracket depth zero ends
     one, and one inside `(...)` or `[...]` does not.
+
+    With `with_offsets` the result is `(start offset, statement)` pairs, for the one
+    rule that has to compare WHERE two statements sit (review-12 F1). Default off, so
+    every existing reader keeps the plain strings it already matches against -- the
+    same opt-in shape as `call_args_at(keep_literals=...)`.
 
     Review-8 F1: the direct-write detector scanned PHYSICAL lines, and all three of
     its write regexes required a character AFTER the `=`, so the same write split
@@ -198,7 +203,8 @@ def statements(text):
     at ~100 columns routinely, so the wrapped spelling is the ordinary one, not an
     exotic one. A write happens in a statement; the line is a formatting artefact."""
     out, cur, depth = [], [], 0
-    for ch in text:
+    start, pending = None, True
+    for pos, ch in enumerate(text):
         if ch in "([":
             depth += 1
         elif ch in ")]":
@@ -206,13 +212,16 @@ def statements(text):
         elif ch in ";{}" and depth <= 0:
             folded = " ".join("".join(cur).split())
             if folded:
-                out.append(folded)
+                out.append((start, folded) if with_offsets else folded)
             cur = []
+            start, pending = None, True
             continue
+        if pending and not ch.isspace():
+            start, pending = pos, False
         cur.append(ch)
     folded = " ".join("".join(cur).split())
     if folded:
-        out.append(folded)
+        out.append((start, folded) if with_offsets else folded)
     return out
 
 
@@ -264,11 +273,41 @@ BULK_FILL = re.compile(r"(?<![\w])(?:__builtin_|std::)?memset[ \t]*\(|"
                        r"(?<![\w])std::(?:fill_n|fill)[ \t]*\(")
 BULK_COPY = re.compile(r"(?<![\w])(?:__builtin_|std::)?(?:memcpy|memmove)[ \t]*\(|"
                        r"(?<![\w])std::(?:copy_n|copy)[ \t]*\(")
+# Review-12 F6: `std::fill(...)` and `fill(...)` after `using std::fill;` are one
+# operation and the gate read only the first, which is review-11 F3's "the operation,
+# not the spelling" claim stopped one spelling short. The bare algorithm names are
+# therefore in scope ONLY when the file carries the matching `using std::` declaration
+# -- the shape `helper_call_re` already uses for the helper itself (review-8 F5), with
+# the same reason: matching a bare `fill(` unconditionally would sweep in any project
+# function of that name, and review-16 R2's rule is that a gate reddening a shape the
+# port may write gets routed around. The lookbehind refuses `q.fill(` and `std::fill(`,
+# which are a member call and the qualified spelling respectively.
+USING_STD = re.compile(r"using[ \t]+std::([A-Za-z_][A-Za-z0-9_]*)[ \t]*;")
+BARE_FILL = re.compile(r"(?<![\w:.])(fill_n|fill)[ \t]*\(")
+BARE_COPY = re.compile(r"(?<![\w:.])(copy_n|copy)[ \t]*\(")
 # The value that means "transparent texel": an all-zero texel is alpha 0 under ANY
-# byte order (the index-0 discard invariant batch 120 pinned), in every spelling of
-# zero the two languages have -- review-11 F2's `\0` included, which is why the
-# argument reader below keeps literal text.
-ZERO_FILL = re.compile(r"(?:0[xX]0+|0[uU]?|'(?:\\0|x0+|0)')")
+# byte order (the index-0 discard invariant batch 120 pinned). The scope is the zero
+# LITERALS of the two languages, and it has to be stated as a scope, because review-12
+# F2 found the previous alternative `'(?:\\0|x0+|0)'` accepting `'0'` -- the CHARACTER
+# 0x30, so a padding row of [0x30, 0x30, 0x30, 0x30] is alpha 48, opaque garbage --
+# and `'x0'`, a multi-character constant, both of which `fullmatch`ed as "the
+# transparent texel" while a NONZERO fill is the shipped symptom's own class. Batch
+# 125 refused both; batch 126's literal fix let them through, so this was a regression.
+# Inside the quotes only the ESCAPES are zero: `'\0'`, `'\00'`, `'\000'` (octal) and
+# `'\x0'`, `'\x00'` (hex). The old `x0+` alternative could never have reached a hex
+# escape anyway, because the text of one starts with the backslash (review-12 F5).
+# This is why the argument reader below keeps literal text at all.
+ZERO_FILL = re.compile(r"(?:0[xX]0+[uU]?|0[uU]?|'\\0{1,3}'|'\\x0{1,2}')")
+# The two subscript spellings of a direct texel write: a subscript on a name and a
+# subscript on a cast. Review-12 F3: the operator slot was `[+\-*/%&^|]?`, which cannot
+# reach `<<=` or `>>=` because `<` and `>` are not in the class -- so
+# `out[(size_t)x * 4 + 3] >>= 1` and `((uint8_t*)pixel)[3] >>= 1` halved a texel alpha
+# with the gate green, review-11 F4's defect on the other side of the `*`. The slot now
+# matches the shift-assigns as themselves and still refuses every comparison: `(?!=)`
+# closes `==`, and `<=`/`>=` cannot match because the `=` of a comparison is preceded by
+# `<` or `>`, which the alternation accepts only as part of `<<`/`>>`.
+SUBSCRIPT_WRITE = re.compile(r"\w[ \t]*\[[^\]]*\][ \t]*(?:<<|>>|[+\-*/%&^|])?=(?!=)[ \t]*[^=]")
+CAST_SUBSCRIPT_WRITE = re.compile(r"\)[ \t]*\[[^\]]*\][ \t]*(?:<<|>>|[+\-*/%&^|])?=(?!=)[ \t]*[^=]")
 
 
 def deref_write(stmt):
@@ -280,9 +319,10 @@ def deref_write(stmt):
     The tail matches an `=` that is no part of a comparison -- `[^=!<>]` refuses the
     compound operators that compare, and `<<`/`>>` are matched as the shift-assigns
     they are (review-11 F4) -- which is what stops a READ through a pointer from
-    counting. The subscript rules
-    beside it never had review-10 F2's hole: their operator slot `[+\-*/%&^|]?` does
-    not admit `!`, `<` or `>`, so a single-equals comparison could not reach their `=`.
+    counting. The subscript rules beside it are the same question on the other side of
+    the `*`, and review-12 F3 found they had review-11 F4's hole after all: their old
+    operator slot `[+\-*/%&^|]?` could not reach `<<=` or `>>=` either. Both now match
+    the shift-assigns and still refuse every comparison.
 
     Stated limit, in the same spirit as the parameter-passing limit below: a write
     introduced after a comma in a multi-declarator (`uint8_t *a, *b = x;`) would read
@@ -1381,61 +1421,149 @@ def adjudicate(text, quiet=False):
         0, (paddedWidth - width) * 4)`) is refused, because proving that region is all
         padding is arithmetic on width and paddedWidth this scan does not do; the shipped
         filler zeroes the whole buffer once at the base, and a batch that wants a per-row
-        fill must widen this rule with that proof, not work around it."""
-        def bulk_writes_texels(stmt, allocs):
-            """True when a bulk byte-setter in this body writes texel bytes the helper owns.
+        fill must widen this rule with that proof, not work around it.
 
-            An argument list this scan cannot read fails closed: a bulk write whose fill,
-            destination or length it cannot parse is a write it cannot vouch for."""
-            if BULK_COPY.search(stmt):
-                return True
+        Review-12 F1 is the dimension batch 126 left free: it read the fill's
+        DESTINATION and its LENGTH and never looked at where the fill SITS, so
+        `memset(pixels, 0, texels * 4)` moved to the line before `return pixels;` --
+        after every row -- erased the whole texture and printed `checks=41 failed=0`.
+        That is the case review-11 F1 named ("at any length and ANY POSITION, including
+        after the draw") and the one batch 126's own closing sentence asserted
+        impossible. A padding fill is now legal only where it cannot erase a texel:
+        before the first statement that writes one -- the helper call counts, because
+        the fill's whole purpose is to be overwritten -- and not inside a loop whose
+        body writes one, which is the same defect with the fill left where it was and
+        the rows moved around it (review-12 open question 2). Stated limit, in the same
+        shape as the per-row one above: a loop this scan cannot read as a loop (`do` is
+        read, a macro that expands to one is not) is not searched for a write inside it.
+        Review-12 F6 is review-11 F3 one spelling further: `std::fill` was matched and
+        `fill` after `using std::fill;` was not."""
+        def bulk_op(stmt, using):
+            """(kind, paren) for the bulk byte-setter in this statement, (None, None) if
+            there is none. `kind` is 'copy' when the statement MOVES SOURCE BYTES and
+            one of 'memset' / 'fill' / 'fill_n' when it SETS A CONSTANT (review-11 F3:
+            the operation, not the spelling). A qualified spelling is always in scope; a
+            bare algorithm name is in scope only when the file carries its
+            `using std::` declaration (review-12 F6)."""
+            m = BULK_COPY.search(stmt)
+            if m:
+                return "copy", m.end() - 1
             m = BULK_FILL.search(stmt)
-            if not m:
-                return False
-            args = call_args_at(stmt, m.end() - 1, keep_literals=True)
-            if not args:
-                return True
-            op = m.group(0)
-            if "memset" in op:
-                if len(args) < 3:
-                    return True
+            if m:
+                g = m.group(0)
+                kind = "memset" if "memset" in g else ("fill_n" if "fill_n" in g else "fill")
+                return kind, m.end() - 1
+            for rx, kind in ((BARE_COPY, "copy"), (BARE_FILL, None)):
+                m = rx.search(stmt)
+                if m and m.group(1) in using:
+                    return kind or m.group(1), m.end() - 1
+            return None, None
+
+        def bulk_classify(stmt, allocs, using):
+            """'write', 'padding' or None for a bulk byte-setter in this statement.
+
+            'write' puts texel bytes into texel memory without the helper. 'padding' is
+            the whole-buffer transparent fill of a buffer THIS BODY ALLOCATED, which is
+            legal only in a position that cannot erase a texel (see below). An argument
+            list this scan cannot read fails closed: a bulk write whose fill,
+            destination or length it cannot parse is a write it cannot vouch for."""
+            kind, paren = bulk_op(stmt, using)
+            if kind is None:
+                return None
+            if kind == "copy":
+                return "write"
+            args = call_args_at(stmt, paren, keep_literals=True)
+            if not args or len(args) < 3:
+                return "write"
+            if kind == "memset":
                 dst, fill, length = args[0], args[1], args[2]
-            elif "fill_n" in op:
-                if len(args) < 3:
-                    return True
+            elif kind == "fill_n":
                 dst, length, fill = args[0], args[1], args[2]
             else:                       # std::fill(first, last, value)
-                if len(args) < 3:
-                    return True
                 dst, fill = args[0], args[2]
                 head = " ".join(dst.split()) + " + "
                 last = " ".join(args[1].split())
                 if not last.startswith(head):
-                    return True         # `std::fill(p + 3, ...)` is not a base fill
+                    return "write"      # `std::fill(p + 3, ...)` is not a base fill
                 length = last[len(head):]
             if not ZERO_FILL.fullmatch(" ".join(fill.split())):
-                return True
-            d = " ".join(dst.split())
-            n = " ".join(length.split())
-            return not any(d == base and n == size for base, size in allocs)
+                return "write"
+            # The length is compared as arithmetic with the whitespace taken out, not as
+            # the author's spacing (review-12 F4): `memset(pixels, 0, texels*4)` is the
+            # shipped statement after a column wrap, and a gate that reddens a reflow
+            # gets routed around. The allocation side is normalised the same way, so all
+            # this removes is a formatting difference; two different expressions still
+            # cannot compare equal.
+            dst = " ".join(dst.split())
+            n = re.sub(r"\s+", "", length)
+            return "padding" if any(dst == base and n == size
+                                    for base, size in allocs) else "write"
 
         if body is None:
             return ["(the expansion is absent)"]
+        blank = blank_comments(body)
         # The buffers this body allocated, by name and by the size expression it asked
         # for: that pair is the only destination+length the padding fill may have. The
         # assignment is read as `name = <anything but ;> malloc(` because the shipped
-        # spelling wraps the size in a `static_cast<uint8_t*>(...)`.
+        # spelling wraps the size in a `static_cast<uint8_t*>(...)`. Read from the
+        # BLANKED body like every other scan in this file (review-12 open question 1):
+        # prose is not code, so a commented-out `// junk = malloc(n)` must not put `n`
+        # on the list of sizes a fill may legitimately use.
         allocs = []
-        for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*[^;]*?\bmalloc[ \t]*\(", body):
-            margs = call_args_at(body, m.end() - 1)
+        for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*[^;]*?\bmalloc[ \t]*\(", blank):
+            margs = call_args_at(blank, m.end() - 1)
             if margs and len(margs) == 1:
-                allocs.append((m.group(1), " ".join(margs[0].split())))
+                allocs.append((m.group(1), re.sub(r"\s+", "", margs[0])))
+        using = set(USING_STD.findall(blank_cached(text)))
+        stmts = statements(blank, with_offsets=True)
+        cls = [bulk_classify(s, allocs, using) for _, s in stmts]
+        helper = re.compile(helper_call_re(text))
+        # Brace depth of each statement, so a loop's body is the run of statements after
+        # its header that sit deeper than the header and ends at the first one that no
+        # longer does -- which is the only way to see a fill that sits INSIDE the loop it
+        # erases (review-12 open question 2).
+        depths = [brace_depth(blank, 0, off) for off, _ in stmts]
+
+        def direct_write(i):
+            """True when statement i writes texel bytes WITHOUT the helper: a subscript on
+            a name or a cast, a write through a dereference, or a bulk setter that is
+            not the padding fill."""
+            s = stmts[i][1]
+            return (cls[i] == "write" or SUBSCRIPT_WRITE.search(s) is not None
+                    or CAST_SUBSCRIPT_WRITE.search(s) is not None or deref_write(s))
+
+        def writes_texel(i):
+            """True when statement i puts a byte into texel memory at all, including the
+            helper call. The padding fill is measured against THIS and not against
+            `direct_write`: a fill that follows the first helper call is a wipe, and the
+            helper call is the legal write it would wipe."""
+            return direct_write(i) or helper.search(stmts[i][1]) is not None
+
+        first = next((i for i in range(len(stmts)) if writes_texel(i)), None)
+
+        def erased_from_inside_a_loop(i):
+            """True when statement i sits inside a loop whose body also writes texels.
+
+            A whole-buffer fill in a loop that paints texels wipes every earlier
+            iteration's rows: the review-12 F1 defect one brace deeper, and source order
+            cannot see it because the fill still precedes the write it erases."""
+            for l in range(len(stmts)):
+                head = stmts[l][1]
+                if not (re.match(r"(?:for|while)[ \t]*\(", head) or head == "do"):
+                    continue
+                e = l + 1
+                while e < len(stmts) and depths[e] > depths[l]:
+                    e += 1
+                if l < i < e and any(writes_texel(w) for w in range(l + 1, e)):
+                    return True
+            return False
+
         hits = []
-        for stmt in statements(blank_comments(body)):
-            if re.search(r"\w[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
-               re.search(r"\)[ \t]*\[[^\]]*\][ \t]*[+\-*/%&^|]?=[ \t]*[^=]", stmt) or \
-               deref_write(stmt) or \
-               bulk_writes_texels(stmt, allocs):
+        for i, (_, stmt) in enumerate(stmts):
+            if direct_write(i):
+                hits.append(stmt)
+            elif cls[i] == "padding" and ((first is not None and i > first)
+                                          or erased_from_inside_a_loop(i)):
                 hits.append(stmt)
         return hits
 
@@ -3026,6 +3154,79 @@ ARMS = [
          "paletteRgba[index * 4 + 2], 255u);\n"
          "            *(pixel + 3) >>= 1;", 1),
      "index-texels-are-rotated-for-the-pica"),
+    # Review-12 F1: batch 126 pinned the padding fill's DESTINATION and LENGTH and never
+    # looked at where it SITS, so the fill moved to the line before `return pixels;` --
+    # after every row -- erased the whole texture, and printed `checks=41 failed=0`. It
+    # is the case review-11 F1 had named ("any length and any position, including after
+    # the draw") and the one batch 126's own closing sentence asserted impossible.
+    ("the padding fill moved after the expansion loop and zeroes every texel the helper "
+     "wrote (review-12 F1: the rule read the destination and the length, not the place)",
+     lambda s: s.replace("        }\n    }\n    return pixels;",
+                         "        }\n    }\n    memset(pixels, 0, texels * 4);\n"
+                         "    return pixels;", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-12 open question 2, answered as a defect rather than a limit: the same wipe
+    # with the fill left where it was and the rows moved around it. Source order cannot
+    # see this one -- the fill still precedes the call it erases -- so the rule reads the
+    # loop nesting, and this arm is what proves the nesting is not decoration.
+    ("the padding fill sits inside the row loop, so every iteration wipes the rows "
+     "before it (review-12 F1: the same defect one brace deeper)",
+     lambda s: s.replace(
+         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],",
+         "            memset(pixels, 0, texels * 4);\n"
+         "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-12 F2: the literal alternative `'(?:\\0|x0+|0)'` accepted NONZERO fills --
+    # `'0'` is the character 0x30 and `'x0'` is a multi-character constant -- and both
+    # `fullmatch`ed as "the transparent texel", so a padding row shipped alpha 48 with
+    # the gate green. Batch 125 refused both; batch 126's literal fix let them through.
+    ("the padding fill is the CHARACTER '0', not the value 0 (review-12 F2: 0x30 is "
+     "alpha 48, so the letterbox rows ship opaque garbage)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, '0', texels * 4);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("the padding fill is the multi-character constant 'x0' (review-12 F2: the "
+     "alternative that claimed to spell a hex escape could only ever spell this)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, 'x0', texels * 4);", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-12 F3: review-11 F4 was fixed in DEREF_WRITE_TAIL only. The two subscript
+    # rules kept the operator slot `[+\-*/%&^|]?`, which cannot reach `<<=` or `>>=`, so
+    # the shift-assign hole survived on the other side of the `*` while the batch's own
+    # docstring presented that slot as proof there was no hole.
+    ("a shift-assign through a SUBSCRIPT halves a texel alpha (review-12 F3: the "
+     "review-11 F4 hole one side over)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            out[(size_t)x * 4 + 3] >>= 1;", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    ("a shift-assign through a CAST subscript halves a texel alpha (review-12 F3: the "
+     "batch-122 spelling of the same write)",
+     lambda s: s.replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            ((uint8_t*)pixel)[3] >>= 1;", 1),
+     "index-texels-are-rotated-for-the-pica"),
+    # Review-12 F6: the algorithms required a literal `std::`, so the operation was
+    # matched one spelling short of the batch's own claim -- and review-8 F5 already
+    # sanctions the unqualified spelling for the helper, so the same shape here is not
+    # exotic. The using-declaration is what puts the bare name in scope.
+    ("an unqualified fill() reached through `using std::fill;` re-pins the alpha after a "
+     "correct helper call (review-12 F6: the operation, one spelling further)",
+     lambda s: s.replace("#include <utility>",
+                         "#include <algorithm>\n#include <utility>\nusing std::fill;", 1)
+         .replace(
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);",
+         "                                  paletteRgba[index * 4 + 1], "
+         "paletteRgba[index * 4 + 2], 255u);\n"
+         "            fill(pixel, pixel + 4, 0xFFu);", 1),
+     "index-texels-are-rotated-for-the-pica"),
 ]
 
 # --- probes (review-16 R2) ----------------------------------------------------
@@ -3308,6 +3509,34 @@ PROBES = [
              "    memset(pixels, 0, texels * 4);\n"
              "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source",
              "    std::fill_n(pixels, texels * 4, 0);\n"
+             "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source", 1)),
+    # Review-12 F4: the fill's length was compared as the author's TEXT, so the shipped
+    # statement after a column wrap -- `texels*4` -- reddened a correct filler. That is
+    # review-16 R2's class, and review-11 had already rated the identical one (`'\0'`)
+    # Medium for the same reason.
+    ("the padding fill's length is written without spaces (review-12 F4: a reflow is the "
+     "same arithmetic, and the allocation side already read it that way)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, 0, texels*4);", 1)),
+    # Review-12 F5: the alternative that claimed to cover a hex escape could only ever
+    # match the text `'x0...'`, so `'\x00'` -- byte for byte the shipped fill -- was
+    # refused while the comment promised it was accepted.
+    ("the padding fill is spelled '\\x00' (review-12 F5: the hex escape the previous "
+     "alternative could not reach)",
+     lambda s: s.replace("memset(pixels, 0, texels * 4);",
+                         "memset(pixels, '\\x00', texels * 4);", 1)),
+    # The green half of review-12 F6: the bare algorithm name after a using-declaration
+    # is legal C++ and the padding fill may be spelled that way. A rule that closed F6 by
+    # reddening every bare `fill(` would have traded a false negative for a false
+    # positive, which review-16 R2 says gets routed around.
+    ("the padding fill is the unqualified spelling of the algorithm after a "
+     "using-declaration (review-12 F6: the legal half of the same spelling)",
+     lambda s: s.replace("#include <utility>",
+                         "#include <algorithm>\n#include <utility>\nusing std::fill_n;", 1)
+         .replace(
+             "    memset(pixels, 0, texels * 4);\n"
+             "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source",
+             "    fill_n(pixels, texels * 4, 0);\n"
              "    for (int32_t y = 0; y < height; y++) {\n        const uint8_t* source", 1)),
 ]
 
