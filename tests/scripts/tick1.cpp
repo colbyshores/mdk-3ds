@@ -1348,6 +1348,194 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
     return true;
 }
 
+// THE DOORWAY-CROSSING GOLDEN — golden/L4_crossing.txt and golden/L7_crossing.txt.
+//
+// WHAT IT PINS. That a move which crosses a doorway connection changes the arena the
+// scripts run, and that a move which does not, does not. This is the collision world
+// the level is walked in: while CurrentArena was written only on the first tick, Kurt
+// kept colliding with the arena he was born in after he walked through a door, which
+// is review-6 F1's fall through the room an open door led to.
+//
+// WHERE THE EXPECTED VALUES COME FROM — the oracle's OWN test suite, not this
+// implementation. Every line of the golden is one assertion of
+// src/../tests/Mdk.Game.Tests/ArenaSwitchTests.cs or DoorArenaTests.cs, quoted at
+// each line below with its file:line. Those files are committed, read-only, and were
+// written against the original game (ArenaSwitchTests' own comment is the playtest
+// that found the bug: "on level 4's MEAT_7 floor, just before the doorway to CMEAT_7
+// (connection 1012, the plane y = 14822), he was already in the corridor"). No C#
+// was run to make this golden: the .NET SDK this loop used before (/tmp/kilo/dotnet10)
+// is gone from this host, so the oracle's recorded assertions are the evidence and
+// each printed field is a field one of those tests asserts. Fields no oracle test
+// asserts are NOT printed, so nothing here is this harness's own output dressed up as
+// the oracle's.
+//
+// HOW THE TWO SCENARIOS ARE DRIVEN, and the one place that differs from the C# test.
+// Both tests place Kurt with Kurt.Teleport (or ScriptRuntime.TeleportKurt) and then
+// tick; this harness writes Player::feet and ticks, which is the same observable
+// thing — a feet position and a tick, with no movement in between. TeleportKurt also
+// sets CurrentArena directly, and teleport is not ported; where the C# test names the
+// arena it teleports into, this harness lets the first tick find it geometrically and
+// the golden pins that the two agree (level 4's spawn point answers MEAT_7 and level
+// 7's answers CDANT_1, measured, which is what the C# test asserts its teleport
+// reaches). What the teleport would still add — an arena no doorway leads to — is out
+// of reach here and is recorded as unported, not skipped silently.
+bool crossingDump(int level, const MdkData& data, const Bni* sprites, std::string* out,
+                  std::string* why) {
+    // The two scenarios, straight out of the oracle's tests.
+    const float kL4Doorway = 14822.0f;  // ArenaSwitchTests.Doorway
+    const float kL4Floor = 21.0f;       // ArenaSwitchTests.Floor
+    const float kL7Floor = -3.0f;       // DoorArenaTests.Floor
+
+    LevelData levelData;
+    if (!LevelData::load(&levelData, &data, level)) {
+        *why = "the level did not load";
+        return false;
+    }
+    char cmiPath[128];
+    snprintf(cmiPath, sizeof(cmiPath), "TRAVERSE/LEVEL%d/LEVEL%d.CMI", level, level);
+    std::vector<uint8_t> cmiBytes;
+    if (!data.read(cmiPath, &cmiBytes)) {
+        *why = "the CMI did not read";
+        return false;
+    }
+    Cmi cmi;
+    if (!Cmi::parse(&cmi, cmiBytes.data(), (int32_t)cmiBytes.size())) {
+        *why = "the CMI did not parse";
+        return false;
+    }
+    audio::SoundBank bank;
+    if (!audio::SoundBank::forLevel(&bank, data, level)) {
+        *why = "the sound bank did not load";
+        return false;
+    }
+    bank.preload();
+
+    // The Player the runtime reads its Kurt from. It is never stepped — the walk is
+    // the harness writing feet, which is what Kurt.Teleport amounts to for the arena
+    // rule under test — but it is wired the way the kurt goldens wire theirs so that
+    // anything a script does to Kurt lands on a real entity.
+    ArenaSpace space;
+    for (size_t i = 0; i < levelData.arenas().size(); i++) {
+        const Arena* arena = levelData.arenas()[i];
+        if (levelData.isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    audio::SoundMixer mixer(&bank);
+    Player player;
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    player.setFrameCounts(kurtFrameCounts(*sprites));
+
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, sprites);
+    runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
+
+    char line[256];
+    if (level == 4) {
+        snprintf(line, sizeof(line),
+                 "L4 doorway=1012 plane_y=%.4f floor_z=%.4f\n", (double)kL4Doorway,
+                 (double)kL4Floor);
+        *out += line;
+
+        // s=1 — ArenaSwitchTests.cs:52 `Assert.Equal(Room, runtime.CurrentArena)`
+        // after TeleportKurt(MEAT_7, (0, Doorway-100, Floor), 90) and one tick.
+        player.feet = Vec3{0.0f, kL4Doorway - 100.0f, kL4Floor};
+        player.yaw = 90.0f;
+        runtime.update(1.0f / 30.0f);
+        snprintf(line, sizeof(line), "L4 s=1 current=%s\n", runtime.currentArena().c_str());
+        *out += line;
+
+        // FirstTickHasNoMove — ArenaSwitchTests.cs:77 `Assert.Equal(Vector3.Zero,
+        // runtime.KurtVelocity)`: the first tick has no move to observe, so the jump
+        // from wherever Kurt was parked is not a velocity.
+        snprintf(line, sizeof(line), "L4 s=1 velocity=%.4f,%.4f,%.4f\n",
+                 (double)runtime.kurtVelocity.x, (double)runtime.kurtVelocity.y,
+                 (double)runtime.kurtVelocity.z);
+        *out += line;
+
+        // s=2 — :56 `Assert.Equal(Room, ...)`: inside the corridor's BOX (the
+        // geometric arena here is CMEAT_7, measured) but the move did not cross the
+        // doorway, so the scripts stay in the room. This is the whole bug.
+        player.feet = Vec3{0.0f, kL4Doorway - 1.0f, kL4Floor};
+        runtime.update(1.0f / 30.0f);
+        snprintf(line, sizeof(line), "L4 s=2 current=%s\n", runtime.currentArena().c_str());
+        *out += line;
+
+        // s=3 — :60-62 `CurrentArena == Corridor`, `SecondArena == Room`,
+        // `SecondActive`: through the doorway, and the room stays the active second.
+        player.feet = Vec3{0.0f, kL4Doorway + 3.0f, kL4Floor};
+        runtime.update(1.0f / 30.0f);
+        snprintf(line, sizeof(line), "L4 s=3 current=%s\n", runtime.currentArena().c_str());
+        *out += line;
+        snprintf(line, sizeof(line), "L4 s=3 second=%s\n", runtime.secondArena().c_str());
+        *out += line;
+        snprintf(line, sizeof(line), "L4 s=3 second_active=%d\n", runtime.secondActive() ? 1 : 0);
+        *out += line;
+
+        // s=4 — :66-67 `CurrentArena == Room`, `SecondArena == Corridor`: and back.
+        player.feet = Vec3{0.0f, kL4Doorway - 1.0f, kL4Floor};
+        runtime.update(1.0f / 30.0f);
+        snprintf(line, sizeof(line), "L4 s=4 current=%s\n", runtime.currentArena().c_str());
+        *out += line;
+        snprintf(line, sizeof(line), "L4 s=4 second=%s\n", runtime.secondArena().c_str());
+        *out += line;
+        return true;
+    }
+
+    // Level 7: DoorArenaTests.DoorShowsTunnelOnTheWayBack. The walk is that test's
+    // own loop — `for (var y = 655f; y < NearDoor.Y; y += 1f) StandAt((0,y,-3), 1)`,"
+    // i.e. one tick per unit of y from 655 up to but not including 688 — and the one
+    // assertion is :88 `Assert.Equal(Room, runtime.CurrentArena)`, Room = DANT_2.
+    // The doorway is CDANT_1's connection 1001, the plane y = 673, so the crossing
+    // happens on the step to y = 674 (the C#'s predicate is `to.Y > min.Y`, strict).
+    snprintf(line, sizeof(line), "L7 doorway=1001 plane_y=673.0000 floor_z=%.4f\n",
+             (double)kL7Floor);
+    *out += line;
+    player.yaw = 90.0f;
+    for (float y = 655.0f; y < 688.0f; y += 1.0f) {
+        player.feet = Vec3{0.0f, y, kL7Floor};
+        runtime.update(1.0f / 30.0f);
+    }
+    snprintf(line, sizeof(line), "L7 walk_655_to_687 current=%s\n",
+             runtime.currentArena().c_str());
+    *out += line;
+    return true;
+}
+
+// The crossing goldens: one dump per level, compared to the oracle's recorded
+// assertions. Returns the number of failures; prints one PASS/FAIL line per level.
+std::string firstDifference(const std::string& got, const std::string& expected);  // below
+int crossingCheck(const MdkData& data, const Bni* sprites) {
+    int failures = 0;
+    const int levels[] = {4, 7};
+    for (size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); i++) {
+        const int level = levels[i];
+        char goldenPath[128];
+        snprintf(goldenPath, sizeof(goldenPath), "golden/L%d_crossing.txt", level);
+        std::string expected;
+        if (!readText(goldenPath, &expected)) {
+            printf("FAIL L%d_crossing: no golden file %s\n", level, goldenPath);
+            failures++;
+            continue;
+        }
+        std::string got, why;
+        if (!crossingDump(level, data, sprites, &got, &why)) {
+            printf("FAIL L%d_crossing: %s\n", level, why.c_str());
+            failures++;
+            continue;
+        }
+        if (got == expected) {
+            printf("PASS L%d_crossing: every line is an assertion of the oracle's own "
+                   "arena-switch / door-arena test, and the ported doorway crossing "
+                   "answers all of them\n", level);
+        } else {
+            printf("FAIL L%d_crossing: %s\n", level, firstDifference(got, expected).c_str());
+            failures++;
+        }
+    }
+    return failures;
+}
+
 // The two floor probes, driven directly over every reachable arena: the C#'s
 // ArenaSpace.Floor and ArenaSpace.FloorCrossing side by side on the same segments.
 // The knock-down golden exercises floor THROUGH the game, but at one point on one pad,
@@ -2558,6 +2746,19 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // `tick1 crossing` — the doorway-crossing goldens on their own, which is what
+    // `make -C tests/scripts test_crossing` runs. The same two checks the full suite
+    // runs, so the ledger row's acceptance command and the gate cannot disagree.
+    if (argc > 1 && std::string(argv[1]) == "crossing") {
+        const int failed = crossingCheck(data, spritesArg);
+        if (failed == 0) {
+            printf("\nAll crossing cases match the oracle.\n");
+            return 0;
+        }
+        printf("\n%d crossing case(s) differ.\n", failed);
+        return 1;
+    }
+
     // Golden dumps (`tick1 dump <pose|transform|blend|layout|draw|bound|rolling> [level] [ticks]`):
     // print one dump to stdout, which is how a golden is written and how a failing
     // golden is diffed against the C# probe (the oracle twin of each of these
@@ -2588,6 +2789,16 @@ int main(int argc, char** argv) {
             std::string got;
             std::string why;
             if (!floorProbeDump(level, data, &got, &why)) {
+                printf("%s\n", why.c_str());
+                return 1;
+            }
+            printf("%s", got.c_str());
+            return 0;
+        }
+        if (what == "crossing") {
+            std::string got;
+            std::string why;
+            if (!crossingDump(level, data, spritesArg, &got, &why)) {
                 printf("%s\n", why.c_str());
                 return 1;
             }
@@ -3812,6 +4023,13 @@ int main(int argc, char** argv) {
             failures++;
         }
     }
+
+    // The doorway crossings (golden/L4_crossing.txt, golden/L7_crossing.txt). Run
+    // here as well as by `tick1 crossing`, because a crossing check that only the
+    // ledger row's own acceptance command runs is a check that rots: that is exactly
+    // how tests/formats sat broken for 25 batches with every gate green. Adding it
+    // here adds one case to this suite; it changes no existing case's expectation.
+    failures += crossingCheck(data, spritesArg);
 
     // Dynamic scene updates (open item 1). The scene is built once but the
     // scripts change group state (group_set_state) and group material

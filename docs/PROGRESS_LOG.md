@@ -23896,3 +23896,176 @@ rebutted by argument alone.
   The first is what decided this batch's shape.
 - **Cognee MCP** — no `cognee_*` tool is exposed, so the graph was **not** consulted. Stated
   rather than implied.
+
+## Iteration 134 — batch 134: the doorway crossing lands, and `test_crossing` exists to prove it
+
+**The ledger row was `3ds.collision-doors`, acceptance `make -C tests/scripts
+test_crossing`.** That command did not exist: review-4 F1 quoted it as `make: ***
+No rule to make target 'test_crossing'`, and `docs/CONTINUATION.md` said the same
+thing twice. The row's substance was never a missing make target though — it is the
+one subsystem every frontend has been working around since batch 75: Kurt changes
+arena only by crossing a doorway connection, and the port had no connections.
+
+**What was implemented** (`mdk_core/src/scripts/script_runtime.{h,cpp}`, a
+transliteration of `src/Mdk.Game/Scripts/ScriptRuntime.cs`, no invention):
+
+| C# | C++ |
+|---|---|
+| `FindConnections` (:856-881) | `ScriptRuntime::findConnections()`, called from the constructor exactly where the C# calls it (:364) |
+| `CrossedArena` (:791-803) | `ScriptRuntime::crossedArena(arena, from, to)` |
+| `CrossesDoorway` (:810-831) | file-local `crossesDoorway(record, from, to)`, every arm of the C#'s switch |
+| `Spans` (:834) | file-local `spans(a, b, min, max)`, on `mathMin`/`mathMax` (MathF's NaN and signed-zero semantics, `util/math_minmax.h`) |
+| `Doorway` (:775) | the `Doorway` enum, with `BitConverter.SingleToInt32Bits` as a `memcpy` of the bit pattern |
+| `ArenaRecords` / `_records` (:836-846) | `arenaRecords()` over a `records_` cache of borrowed DTI vectors |
+| `_connections` (:301) | `connections_`, keyed `(arena, id)` |
+| `FollowArenas` (:780-787) | `followArenas(obj)`, wired at the C#'s call site in the object loop (ObjectMotion.cs:104-107), after `motionVelocity` and before the pickup dispatch |
+
+`runTick` now does what `ScriptRuntime.cs:918-919` does: while `currentArena_` is
+empty the geometric arena under the feet answers (the C# does the same), and from
+the first crossing onwards `crossedArena(currentArena_, previousKurtPosition_,
+kurtPosition_)` decides. `currentArena_` is no longer the spawn arena for the whole
+level, which is what `script_runtime.h`'s own comment said was missing and what
+review-6 F1 was about.
+
+**Two oracle details deliberately NOT faked.** The C#'s `IsBeta ? BetaArena()`
+branch is unreachable here (the 1996 demo is not reachable from this runtime), and
+the C#'s `Kurt.EnterArena()` inside the crossing branch is a slide-timer reset
+(`Kurt.Slide.cs:97-105`, returns at once unless Kurt is sliding) while the slide is
+unported (`game/player.h`) — so it is provably a no-op today, and the comment says
+it MUST come back with the slide rather than being quietly omitted.
+
+**The goldens, and where their numbers come from.** No C# ran for this batch: the
+.NET SDK this loop used for probes (`/tmp/kilo/dotnet10`) is gone from this host
+(`/tmp/kilo` is empty, `dotnet` is not on PATH, and a bounded `find` found no
+other). So `golden/L4_crossing.txt` and `golden/L7_crossing.txt` are transcribed
+from the **oracle's own committed test suite** — `tests/Mdk.Game.Tests/ArenaSwitchTests.cs`
+and `DoorArenaTests.cs`, read-only in this repo, written against the original game —
+and every golden line is one assertion of one of those files, cited in
+`tick1.cpp` where the value is produced. Fields no oracle test asserts are not
+printed, so nothing in the goldens is this harness grading itself. The C++ answers
+all of them:
+
+```
+L4 doorway=1012 plane_y=14822.0000 floor_z=21.0000
+L4 s=1 current=MEAT_7          <- ArenaSwitchTests.cs:52
+L4 s=1 velocity=0.0000,0.0000,0.0000   <- FirstTickHasNoMove (:77)
+L4 s=2 current=MEAT_7          <- :56, inside the corridor's BOX, not through the door
+L4 s=3 current=CMEAT_7         <- :60
+L4 s=3 second=MEAT_7           <- :61
+L4 s=3 second_active=1         <- :62
+L4 s=4 current=MEAT_7          <- :66
+L4 s=4 second=CMEAT_7          <- :67
+L7 doorway=1001 plane_y=673.0000 floor_z=-3.0000
+L7 walk_655_to_687 current=DANT_2      <- DoorArenaTests.cs:88
+```
+
+`make -C tests/scripts test_crossing` is a new phony target that runs exactly these
+two cases; the same two cases also run inside `tick1`'s own case list, so
+`make -C tests/scripts` runs them too and the row cannot go green on a check the
+gate never executes — which is the exact failure mode that let `tests/formats` sit
+broken for 25 batches (batch 133's record). Adding them adds two cases to the
+existing suite and changes no existing case's expectation: the suite went from 567
+PASS to 569 PASS with the same 0 FAIL / 0 SKIP.
+
+**Shown red** (a golden nobody can break is a decoration):
+
+| mutation | result |
+|---|---|
+| the tick never consults `crossedArena` (the pre-batch state) | `FAIL L4 s=3 current=MEAT_7` and `FAIL L7 walk current=CDANT_1`, rc 1 |
+| `from.y <= minY` → `from.y < minY` (the on-the-plane boundary) | `FAIL L7`, rc 1 |
+| `DoorwayDrop` 5 → 0 | **both still PASS** — not pinned, recorded as a gap |
+| the two hatch arms (`MinusZ`/`PlusZ`) removed | **both still PASS** — not pinned, and see below |
+
+**The hatch arms are the batch's own near-miss, and it is in the record.** The first
+draft of `crossesDoorway` ported only the four axis arms and let 6/7 fall through to
+the `Left` default. A survey of the shipped DTIs (levels 3-8,
+`docs/evidence/2026-11-10-crossing.txt`) says why that would have been a real bug:
+
+```
+L3 dirs=0 1 2 3 6 7   L4 dirs=0 1 2 3       L5 dirs=6 7
+L6 dirs=0 1 2 3 6 7   L7 dirs=0 1 2 3       L8 dirs=0 1 2 3 6 7
+```
+
+**Level 5's doorways are ALL hatches**, and 6/7 also occur in 3, 6 and 8. Measured
+with a synthetic move straight down through each dir-6 record's plane: `HMO_2 →
+CHMO_2`, `MUSE_1 → CMUSE_1`, `OLYM_3 → COLYM_3`, `GUNT_4 → CGUNT_4`, and with the
+arms removed every one of those answers "no crossing" — the hatches sealed. The
+goldens do not catch it, because the oracle's test suite has no hatch assertion
+(`ArenaSwitchTests` is level 4's +Y door, `DoorArenaTests` level 7's, and
+`AirlockTests` asserts door states, not `CurrentArena`). The arms are ported from
+the C#'s text and demonstrated on shipped geometry; **the hatch pin stays open**
+and needs a dotnet probe or a new oracle assertion. Inventing the expected value
+here would have been the implementation grading itself.
+
+Also measured, and recorded because it bounds the port: every connection id pairs
+exactly two arenas in every shipped level (`ids_not_pairing_2 = 0`), so the C#'s
+"last of a group of three wins" tie-break is unreachable on this data — ported
+anyway, because the C# is the oracle. And 4/5 (the diagonals) appear in no shipped
+level, which is what the C#'s "unused by the levels" comment claims, now measured
+rather than trusted.
+
+**Review-4 disposition.** F1 (High) named two acceptance cells that do not exist;
+**this batch closes the `3ds.collision-doors` half of it** — the command exists, is
+run by the gate suite, and discriminates (shown red twice). The `3ds.hud-canvas`
+half (`emurun.sh --expect hud`) is a ledger cell and `emurun.sh`'s argument list,
+both owner-side, and stays owed. F2, F3, F5, F6, F7, F8 are in
+`docs/COMPLETION_LEDGER.tsv`, `docs/OWNER_BLOCKS.md`, `tools/runner/gates_completion.py`
+and `ralph-pi.sh` — `coleshores`-owned and in `PROTECTED`, so no batch can act on
+them; batch 133 reproduced F2 and recorded all six, and this batch adds nothing to
+that. F4 was closed by the owner mid-iteration in `8c751cc`. **0 findings rebutted.**
+
+**Prior-solution lookup for this batch.**
+
+- **Pi knowledge (`mdk-sdl`, live)** — `knowledge_search` on the doorway-crossing
+  terms returned the C# oracle's `CrossedArena` first (0.948), then the two
+  comments in this repo that said the subsystem was missing
+  (`script_runtime.h`, `arena_space.h`), then `docs/original-engine.md`'s
+  "Kurt changes arena only by crossing a connection's doorway, or by a teleport".
+  No prior solution existed to reuse; the leads confirmed the plan. It also surfaced
+  `src/Mdk.Game/Level/ArenaStops.cs`, a second consumer of the same `Doorway`
+  reinterpretation with its own "(hatches: none)" note — a different slice, noted
+  not touched.
+- **Obsidian MCP** — no `obsidian_*` tool is exposed in this session, which AGENTS
+  P9 says to report as a session fault rather than paper over. Disk fallback used
+  narrowly and read-only (`grep -rl` over `10-projects/mdk-sdl/` for the crossing
+  terms): no note on this subsystem.
+- **Cognee MCP** — no `cognee_*` tool is exposed, so the graph was **not**
+  consulted. Stated rather than implied.
+
+**Gates, run on the final tree, verbatim.**
+
+- `make -C tests/scripts` → exit 0, final line `All cases match the oracle.`
+  (569 `PASS`, 0 `FAIL`, 0 `SKIP`; the two new lines are `PASS L4_crossing` and
+  `PASS L7_crossing`).
+- `make -C tests/scripts test_crossing` → exit 0, `All crossing cases match the
+  oracle.` — the ledger row's acceptance command.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM DISPLAY=:99 bash
+  tools/check.sh` → exit 0, `CHECK: ALL GATES PASSED`: `PASS audit_c_with_classes
+  0 violations`, `PASS gates_vfp 0 blockers`, `PASS audit_arm11_math contract
+  clean`, `PASS audit_r11_idiv no candidates`, `PASS gates_core_parity`,
+  `SKIP gates_smdh` (no built .cia), `PASS gates_frames`,
+  `PASS gates_batch_integrity`, `PASS gates_completion`.
+- `DEVKITPRO=… DEVKITARM=… make -C mdk_3ds` → exit 0, `3DSX mdk.3dsx`,
+  `mdk.elf` md5 `aa3fa7b4616fd9593fe7de5380f25a00` (it moved from batch 133's
+  `06bb4a915db8cc5af5f96aaecf1405aa`: this batch changes shipped code).
+- `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 30 --min-frames 60` → **exit 0**,
+  `display : :99`, `emulator mandarine.AppImage md5 0d2adab6` (the pinned r1.2.1),
+  `backend: PICA200 Citro3D`, `flow: screen=4 level=7`, `frames: reached 1620 by
+  the deadline … the log ends at frame 1680`, `objects=7 plays=1` at frame 1620,
+  `stereo render_3d=0` (mono), `dspfirm.cdc` present. Emulator-green is not
+  hardware-pass, and this run is an idle level-7 Kurt who never crosses anything:
+  it shows no regression and exercises no crossing.
+- `tools/publish_frame.sh b134-crossing` → exit 0,
+  `docs/frames/2026-11-10-b134-crossing.png` + `.txt`; the pinned level-3 frame 1
+  gap ceiling is unchanged (`bad_percent=1.240 max_delta=247 mean_delta=0.1819`),
+  which is expected: frame 1 has a stationary Kurt and no crossing to make.
+
+**What this does NOT do.** The frontends still pin the collision world from the
+geometric arena under the feet, because the oracle's pin is the LIST of current +
+active second (`ScriptRuntime.cs:265`, `Viewer.cs:533`) and `ArenaSpace::setSolid`
+takes one name; making the now-live `currentArena_` the frontend's pin needs a
+two-name `setSolid` and is the next batch, with `frontend_solid_pin_test.sh` to
+match. `TeleportKurt` is unported, so an arena no doorway leads to is still
+unreachable. `FollowArenas` is ported and wired but has no golden (its oracle test
+needs `PreloadArena` and the drawn-arena list). Old-3DS performance readiness
+remains unmeasured and stays open.

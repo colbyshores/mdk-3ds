@@ -1,0 +1,2 @@
+L7 doorway=1001 plane_y=673.0000 floor_z=-3.0000
+L7 walk_655_to_687 current=DANT_2

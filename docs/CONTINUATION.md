@@ -1,11 +1,35 @@
 # Phase 2 continuation checkpoint
-Risk: medium — the diff is one gate script (`gates_core_parity.py` gains check 6, which builds and runs
-`tests/formats`), one evidence capture, the frame pair and these docs. **No game source and no shipped byte
-changed** (`mdk.elf` md5 `06bb4a915db8cc5af5f96aaecf1405aa`, identical to batch 132), no golden, gate threshold
-or reference hash moved, and all three gates pass. It is medium rather than low because it changes what the
-gate suite *executes* — `bash tools/check.sh` now compiles and links a target it never built — and because the
-batch chose to host that check in an unprotected gate rather than in owner-protected `tools/check.sh`; that
-hosting decision is the one thing worth an independent look.
+Risk: high — this batch changes a shipped state transition in the core: `ScriptRuntime::currentArena_` stops
+being the spawn arena for the whole level and starts moving when a move crosses a DTI doorway, which changes
+which objects tick, which arena controllers run, and the camera's rest pitch on **both** targets (`mdk.elf`
+md5 moves `06bb4a91…` → `aa3fa7b4616fd9593fe7de5380f25a00`). It is high for a second reason the reviewer should
+weigh: no C# could be run on this host (the .NET SDK at `/tmp/kilo/dotnet10` is gone), so the two new goldens'
+expected values are transcribed from the oracle's own committed test files (`tests/Mdk.Game.Tests/
+ArenaSwitchTests.cs`, `DoorArenaTests.cs`) rather than from a live oracle run — every line cites its assertion,
+no unasserted field is printed, and two mutations show the goldens go red without the port, but transcription
+is weaker evidence than measurement and the hatch arms (DTI dirs 6/7, which are **all of level 5's doorways**)
+are ported and demonstrated yet **not pinned** by any oracle assertion.
+
+**Batch 134 (iteration 1 of the ledger row `3ds.collision-doors`) — the doorway crossing lands, and
+`test_crossing` exists.** The row's acceptance command did not exist (review-4 F1: `No rule to make target
+'test_crossing'`), and the substance behind it was the subsystem every frontend has worked around since batch 75:
+`FindConnections`, `CrossedArena`, `CrossesDoorway`, `Spans`, the `Doorway` enum, the `_records` cache and
+`FollowArenas`, transliterated from `ScriptRuntime.cs:775-881` and wired at the C#'s own call sites — the
+constructor (`findConnections`, :364), the tick (:918-919) and the object loop (ObjectMotion.cs:104-107). The
+port answers **every** assertion of the oracle's two crossing tests: level 4 stays in `MEAT_7` while Kurt is
+inside the corridor's *box* but through no door, moves to `CMEAT_7` at y = 14825 with `MEAT_7` as the active
+second, comes back, and level 7's tunnel walk reaches `DANT_2`. `make -C tests/scripts test_crossing` is a new
+phony target for those two cases and they also run inside `tick1`'s case list, so the row cannot rot the way
+`tests/formats` did. Shown red on two mutations (frozen arena → both levels; the on-the-plane boundary → level
+7) and shown green-but-unpinned on two others (`DoorwayDrop`, the hatch arms) — recorded as gaps, not hidden.
+The near-miss is in the record: the first draft dropped the `MinusZ`/`PlusZ` arms, and the shipped DTIs use dirs
+6/7 in levels 3, 5, 6 and 8, so level 5 would have had every doorway sealed. Gates: `make -C tests/scripts` →
+`All cases match the oracle.` rc 0 (569 PASS, 0 FAIL, 0 SKIP); `make -C tests/scripts test_crossing` → `All
+crossing cases match the oracle.` rc 0; `DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED` rc 0;
+`make -C mdk_3ds` → rc 0. Emulator (`emurun.sh`, `:99`, mandarine md5 `0d2adab6`, rc 0): level 7 idle, frame
+1620/1680, `objects=7 plays=1` — no regression, and no crossing exercised. Full narrative:
+`docs/PROGRESS_LOG.md` "Iteration 134"; measurements and the not-pinned list:
+`docs/evidence/2026-11-10-crossing.txt`.
 
 **Batch 133 (iteration 5 of the ledger row `core.formats`) — the format target is now built by the gate suite.**
 The row's own comment named two defects and batches 129-132 fixed only the first: the link was broken, and it
@@ -1134,6 +1158,27 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 134)
+**`3ds.collision-doors`'s substance is landed and pinned; the row's ledger cell is the owner's to flip** (the
+ledger is `coleshores`-owned and in `PROTECTED`). In priority order for the next batch: **(1) the frontend pin.**
+`currentArena_` is now the oracle's, so `mdk_3ds/src/main_3ds.cpp` and the Linux frontend can stop refreshing the
+collision world from the geometric arena under Kurt's feet — but the oracle passes the LIST of current + active
+second (`ScriptRuntime.cs:265`, `Viewer.cs:533`) and `ArenaSpace::setSolid` takes one name, so this needs a
+two-name `setSolid` first, and `tests/scripts/frontend_solid_pin_test.sh` reads both frontends for the old rule
+and must move with it. **(2) the hatch pin.** DTI dirs 6/7 are every doorway on level 5 and half of 3/6/8; the
+arms are ported and demonstrated on shipped geometry but no oracle assertion covers them, so the pin needs
+either a restored dotnet probe (the SDK at `/tmp/kilo/dotnet10` is gone from this host — an owner/environment
+item) or a new assertion in the oracle's own suite. **(3) `FollowArenas`'s golden**, which needs `PreloadArena`
+and the drawn-arena list (the oracle's `DoorArenaTests` door assertions). **(4) `TeleportKurt`**, which is the
+only other way the oracle moves `currentArena_` and the only way into an arena no doorway leads to. **Owner-only
+and still owed:** review-4's F2, F3, F5, F6, F7, F8 (all in `docs/COMPLETION_LEDGER.tsv`, `docs/OWNER_BLOCKS.md`,
+`tools/runner/gates_completion.py`, `ralph-pi.sh` — `PROTECTED`, unwritable by uid 994), the `3ds.hud-canvas`
+acceptance cell (`emurun.sh --expect hud` has no such flag), and the still-uncommitted protected
+`ralph/builder.md` (modified in the working tree at dispatch; this batch did not stage it). **Still open and not
+touched:** every `hw.*` row (no Old-3DS hardware in hand, no `mdk_3ds/tools/hw_cycle.sh`), the Phase 2 RE sweep,
+and the two standing owner blocks (`spec.voice-pool`, `re.phase-2-sweep`). Old-3DS performance readiness remains
+unmeasured and stays open.
 
 ## NEXT (batch 133)
 **`core.formats` is `done` and stays that way by construction.** The owner flipped the row in `8c751cc` and this

@@ -187,6 +187,18 @@ public:
     bool canSeeKurt(MdkObject* obj, float range, float cone);
     bool kurtLooksAt(const MdkObject* obj, float minRange, float maxRange, float cone);
     void showArena(const std::string& arena);
+    // Which arena a move enters when it crosses a connection of `arena` (C#
+    // CrossedArena, ScriptRuntime.cs:791-803), or "" when it crosses none. The C#
+    // keeps this private and reaches it through RunTick and FollowArenas; the port
+    // exposes it for the same reason it exposes debris() below — the crossing
+    // golden has to name the arena a move enters, not only the arena the tick ended
+    // in.
+    std::string crossedArena(const std::string& arena, const Vec3& from, const Vec3& to);
+    // FollowArenas (ScriptRuntime.cs:780): an object with FlagChangesArena goes
+    // into the arena its OWN last move crossed, so the board follows Kurt through a
+    // door and its script keeps running (LEVEL4's first run ends in MEAT_3). The
+    // ObjectMotion.Update call site is the object loop in runTick.
+    void followArenas(MdkObject* obj);
     void setGroupState(const std::string& arena, int32_t group, int32_t operation);
     void setGroupHitFlags(const std::string& arena, int32_t group, int32_t flags);
     void setGroupHitScript(const std::string& arena, int32_t group, int32_t mask, int32_t script);
@@ -421,6 +433,10 @@ public:
 
     // ---- Readable state (the driver dumps these) ----
     const std::string& currentArena() const { return currentArena_; }
+    // C# SecondArena / SecondActive (ScriptRuntime.cs:259-260): the arena left
+    // behind on a crossing, and whether it still counts as one of Kurt's arenas.
+    const std::string& secondArena() const { return secondArena_; }
+    bool secondActive() const { return secondActive_; }
     // The C# TickCount: the completed simulation ticks. It is zero during the
     // first tick and increments after that tick, as the oracle does.
     int32_t tickCount() const { return tickCount_; }
@@ -432,6 +448,13 @@ public:
     }
 
 private:
+    // FindConnections (ScriptRuntime.cs:856): pair the DTI type-6 connection
+    // records of every arena by their id, so (arena, id) names the arena on the
+    // other side of that doorway. Called once from the constructor, as the C# does.
+    void findConnections();
+    // C# ArenaRecords (:836): an arena's DTI records, found once. Null when no
+    // arena has that name, which is the C#'s empty list.
+    const std::vector<formats::Dti::Record>* arenaRecords(const std::string& arena);
     void runTick();
     // ObjectBehaviors.ShowBehind: the arena a door opens onto.
     void showBehindDoor(MdkObject* obj);
@@ -586,21 +609,31 @@ private:
     // C# ScriptRuntime.CurrentArena (ScriptRuntime.cs:200): the arena the scripts
     // think Kurt is in, and the source of the camera's rest pitch.
     //
-    // IT IS WRITTEN EXACTLY ONCE, on the runtime's first tick, and a frontend that
-    // collides against it must know that. The oracle moves it in only two ways -- a
-    // move that crosses a doorway CONNECTION (CrossedArena, ScriptRuntime.cs:791-803
-    // over the DTI type-6 records paired by FindConnections, :855-881) or a teleport
-    // -- and NEITHER is ported, so this field is the spawn arena for the whole level
-    // and never the arena Kurt walked into. That is not a cosmetic gap: pinning the
-    // collision world to it freezes Kurt's floor at the arena he was born in, and
-    // review-6 F1 is the walk through an open door that fell through the room it led
-    // to. The frontends therefore refresh from the geometric arena under his feet
-    // instead (arena_space.h's setSolid note). Porting FindConnections +
-    // CrossedArena is what makes this field the oracle's, and it also gates the
-    // per-object crossing (ScriptRuntime.cs:776-787).
+    // THE ORACLE MOVES IT IN TWO WAYS, and one of them is still not ported:
+    //   * a move that crosses a doorway CONNECTION (CrossedArena, ScriptRuntime.cs
+    //     :791-803 over the DTI type-6 records paired by FindConnections, :856-881)
+    //     -- ported, and pinned by golden/L4_crossing.txt and golden/L7_crossing.txt;
+    //   * a teleport (TeleportKurt, :460-481) -- NOT ported, so nothing can put Kurt
+    //     in an arena no doorway leads to.
+    // So on the first tick it is still the geometric arena under the feet (the C#
+    // does the same while CurrentArena is empty), and after that it moves exactly
+    // when a move crosses a doorway. A frontend that collides against it must know
+    // the first-tick half: review-6 F1 was the frozen pin freezing Kurt's floor at
+    // the arena he was born in, and the frontends still refresh from the geometric
+    // arena (arena_space.h's setSolid note) because the oracle's collision world is
+    // the LIST of the current arena AND the active second (ScriptRuntime.cs:265,
+    // Viewer.cs:533) and ArenaSpace::setSolid takes one name.
     std::string currentArena_;
     std::string secondArena_;
     bool secondActive_ = false;
+    // C# ScriptRuntime._connections (ScriptRuntime.cs:301): (arena, connection id)
+    // -> the arena on the other side. Built once, from EVERY arena in the DTI (not
+    // just the reachable ones), because a doorway is a doorway.
+    std::map<std::pair<std::string, int32_t>, std::string> connections_;
+    // C# _records (:840): each arena's DTI records, found once. The vectors belong
+    // to level_->dti(), which the runtime borrows for its whole life exactly like
+    // bsps_ and floors_ above.
+    std::map<std::string, const std::vector<formats::Dti::Record>*> records_;
     Vec3 kurtPosition_{};
     // The combat state of a runtime with NO Kurt entity bound (a harness that
     // passes a null Player): kurt() falls back to this, and there is no second

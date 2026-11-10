@@ -288,6 +288,11 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     targetPosition_ = kurtPosition_;
     targetYaw_ = kurtYaw_;
     previousKurtPosition_ = kurtPosition_;
+
+    // The arenas' doorways are paired once, when the runtime is built, exactly as
+    // the C# does (ScriptRuntime.cs:364). Every crossing test in a tick reads this
+    // table, so a runtime without it is a level with no doors.
+    findConnections();
 }
 
 Vec3 ScriptRuntime::kurtLiveVelocity() const {
@@ -325,6 +330,180 @@ float ScriptRuntime::tick_blend(float ahead) const {
     return alpha < 0.0f ? 0.0f : (alpha > 1.0f ? 1.0f : alpha);
 }
 
+namespace {
+
+// The DTI record type of a link between two arenas (C# LevelData.Connection,
+// LevelData.cs:10). Two arenas that carry the same connection id are joined, and
+// each of them writes down the doorway it is reached through.
+const uint32_t kRecordConnection = 6;
+
+// C# ScriptRuntime.DoorwayDrop / HatchDrop (ScriptRuntime.cs:82-83). A horizontal
+// doorway's box reaches DoorwayDrop below its own bottom, so a walk into it counts
+// even when Kurt is a little below the sill; a hatch (a MinusZ/PlusZ doorway) is
+// crossed at HatchDrop below its record, i.e. just about at the floor.
+const float kDoorwayDrop = 5.0f;
+const float kHatchDrop = 0.5f;
+
+// C# ScriptRuntime.Doorway (ScriptRuntime.cs:775): the connection record's ANGLE
+// field, read as an integer, says which way a move goes out through the doorway.
+// The numbers are the enum's, in its order, and every arm of the C#'s switch is
+// here — including the two hatches (MinusZ/PlusZ), which are NOT decoration: the
+// shipped DTIs of levels 3-8 use 0,1,2,3 AND 6,7, and level 5's doorways are ALL
+// hatches (measured: docs/evidence/2026-11-10-crossing.txt — dropping the two hatch
+// arms seals every hatch on levels 3, 5, 6 and 8). Only Left/Right (4/5) are absent
+// from every shipped level, exactly as the C#'s comment says of the diagonals.
+enum Doorway {
+    kDoorwayMinusX = 0,
+    kDoorwayPlusX = 1,
+    kDoorwayMinusY = 2,
+    kDoorwayPlusY = 3,
+    kDoorwayRight = 5,
+    kDoorwayMinusZ = 6,
+    kDoorwayPlusZ = 7
+};
+
+// The record's angle reinterpreted as the Doorway integer, exactly the C#'s
+// BitConverter.SingleToInt32Bits(record.Angle). This is a BIT pattern, not a
+// numeric conversion: nothing is rounded, and the same 4 bytes decide the doorway on
+// both targets. memcpy because the aliasing rules are not a place to be clever.
+int32_t doorwayOf(float angle) {
+    int32_t bits = 0;
+    memcpy(&bits, &angle, sizeof(bits));
+    return bits;
+}
+
+// Whether a move from a to b on one axis is within [min, max] or crosses it
+// (C# ScriptRuntime.Spans, :834). mathMin/mathMax, not fminf/fmaxf: the oracle
+// writes MathF.Min/MathF.Max, which propagate a NaN instead of hiding it.
+bool spans(float a, float b, float min, float max) {
+    return mathMax(a, b) >= min && mathMin(a, b) <= max;
+}
+
+// Whether a move goes out through a doorway: across its plane in its direction, and
+// the move within (or across) the doorway on the other axes (C# CrossesDoorway,
+// :810-831). A horizontal doorway's box reaches kDoorwayDrop below it; the diagonal
+// ones only test where the move ENDS. The record's min is its Position and its max
+// its BoxEnd -- the far corner the DTI reader keeps in the name's bytes.
+bool crossesDoorway(const formats::Dti::Record& record, const Vec3& from, const Vec3& to) {
+    const float minX = record.position[0];
+    const float minY = record.position[1];
+    const float minZ = record.position[2];
+    const float maxX = record.boxEnd[0];
+    const float maxY = record.boxEnd[1];
+    const float maxZ = record.boxEnd[2];
+    // A hatch (a MinusZ/PlusZ doorway) is crossed just below its record, at
+    // HatchDrop: Kurt's feet are ON the floor he steps through, not 5 units under it.
+    const float plane = minZ - kHatchDrop;
+    const bool withinX = spans(from.x, to.x, minX, maxX);
+    const bool withinY = spans(from.y, to.y, minY, maxY);
+    const bool withinZ = spans(from.z, to.z, minZ - kDoorwayDrop, maxZ);
+    // Which side of the min..max diagonal the move ends on, for the two diagonal
+    // doorways. Written exactly as the C# spells it, including the operand order.
+    const float side =
+        (to.x - minX) * (maxY - minY) - (maxX - minX) * (to.y - minY);
+    switch (doorwayOf(record.angle)) {
+        case kDoorwayMinusX:
+            return withinY && withinZ && to.x < minX && from.x >= minX;
+        case kDoorwayPlusX:
+            return withinY && withinZ && to.x > minX && from.x <= minX;
+        case kDoorwayMinusY:
+            return withinX && withinZ && to.y < minY && from.y >= minY;
+        case kDoorwayPlusY:
+            return withinX && withinZ && to.y > minY && from.y <= minY;
+        case kDoorwayMinusZ:
+            return withinX && withinY && to.z < plane && from.z >= plane;
+        case kDoorwayPlusZ:
+            return withinX && withinY && to.z > plane && from.z <= plane;
+        case kDoorwayRight:
+            return withinX && withinY && withinZ && side > 0.0f;
+        default:
+            // Doorway.Left, and every other value the field can hold: the C#'s `_`
+            // arm, so an unknown angle reads as Left and not as "no doorway".
+            return withinX && withinY && withinZ && side < 0.0f;
+    }
+}
+
+}  // namespace
+
+std::string ScriptRuntime::crossedArena(const std::string& arena, const Vec3& from,
+                                        const Vec3& to) {
+    // C# ScriptRuntime.CrossedArena (:791-803): the FIRST connection record of this
+    // arena whose doorway the move crosses, and whose id is paired with another
+    // arena, is the arena the move enters. The order is the DTI's record order, and
+    // an unpaired record is skipped -- both of those decide an answer when two
+    // doorways are close enough that one move crosses both.
+    const std::vector<formats::Dti::Record>* records = arenaRecords(arena);
+    if (records == nullptr) {
+        return std::string();
+    }
+    for (size_t i = 0; i < records->size(); i++) {
+        const formats::Dti::Record& record = (*records)[i];
+        if (record.type != kRecordConnection || !crossesDoorway(record, from, to)) {
+            continue;
+        }
+        std::map<std::pair<std::string, int32_t>, std::string>::const_iterator other =
+            connections_.find(std::make_pair(arena, record.id));
+        if (other != connections_.end()) {
+            return other->second;
+        }
+    }
+    return std::string();
+}
+
+void ScriptRuntime::followArenas(MdkObject* obj) {
+    // C# FollowArenas (:780-787): the arena its OWN last move crossed, and only a
+    // non-empty answer replaces the object's arena -- a move through no doorway
+    // leaves it where it is.
+    const std::string arena = crossedArena(obj->arena, obj->previous_position, obj->position);
+    if (!arena.empty()) {
+        obj->arena = arena;
+    }
+}
+
+const std::vector<formats::Dti::Record>* ScriptRuntime::arenaRecords(
+    const std::string& arena) {
+    std::map<std::string, const std::vector<formats::Dti::Record>*>::iterator found =
+        records_.find(arena);
+    if (found != records_.end()) {
+        return found->second;
+    }
+    const formats::Dti::ArenaEntry* entry = level_->entryNamed(arena);
+    const std::vector<formats::Dti::Record>* records = entry != nullptr ? &entry->records
+                                                                        : static_cast<const std::vector<formats::Dti::Record>*>(nullptr);
+    records_.insert(std::make_pair(arena, records));
+    return records;
+}
+
+void ScriptRuntime::findConnections() {
+    // C# FindConnections (:856-881), over EVERY arena in the DTI. Two arenas that
+    // write down the same connection id are joined; the grouping is by id and the
+    // pairing is every ordered pair inside a group, so with the usual two arenas per
+    // id each of them gets the other. Should a level ever give one id three arenas,
+    // the C#'s nested loops leave the LAST one of the group as the answer, in DTI
+    // order -- reproduced, not "fixed", because the C# is the oracle.
+    std::map<int32_t, std::vector<std::string> > byId;
+    const std::vector<formats::Dti::ArenaEntry>& arenas = level_->dti().arenas();
+    for (size_t i = 0; i < arenas.size(); i++) {
+        const formats::Dti::ArenaEntry& entry = arenas[i];
+        for (size_t j = 0; j < entry.records.size(); j++) {
+            if (entry.records[j].type == kRecordConnection) {
+                byId[entry.records[j].id].push_back(entry.name);
+            }
+        }
+    }
+    for (std::map<int32_t, std::vector<std::string> >::iterator it = byId.begin();
+         it != byId.end(); ++it) {
+        const std::vector<std::string>& names = it->second;
+        for (size_t a = 0; a < names.size(); a++) {
+            for (size_t b = 0; b < names.size(); b++) {
+                if (names[a] != names[b]) {
+                    connections_[std::make_pair(names[a], it->first)] = names[b];
+                }
+            }
+        }
+    }
+}
+
 void ScriptRuntime::runTick() {
     // The C# copies Kurt's live feet and yaw into the script runtime at the
     // start of every tick (ScriptRuntime.cs:886-889). A bound Player is the
@@ -358,7 +537,14 @@ void ScriptRuntime::runTick() {
     }
 
     // Kurt changes arena only through a connection; on the first tick he is
-    // placed and the arena under him is found.
+    // placed and the arena under him is found (ScriptRuntime.cs:918-919).
+    //
+    // The C#'s first branch is `IsBeta ? BetaArena() : ...`. The 1996 demo is not
+    // reachable from this runtime (see the IsBeta note by the animation lookup), so
+    // the retail branch is the whole behaviour here; when the demo lands, BetaArena
+    // (:29-34) has to be ported and NOT approximated by the geometric arena, which
+    // is a different rule (smallest box around Kurt, only if the current arena
+    // connects to it).
     std::string arena;
     if (currentArena_.empty()) {
         formats::Vec3f at;
@@ -367,11 +553,19 @@ void ScriptRuntime::runTick() {
         at.z = kurtPosition_.z;
         const std::string* found = space_.arenaAt(at);
         arena = found ? *found : std::string();
+    } else {
+        arena = crossedArena(currentArena_, previousKurtPosition_, kurtPosition_);
     }
 
     if (!arena.empty() && arena != currentArena_) {
         if (!currentArena_.empty()) {
             secondArena_ = currentArena_;
+            // The C# also calls Kurt.EnterArena() here (ScriptRuntime.cs:926). That
+            // is a SLIDE-timer reset (Kurt.Slide.cs:97-105: it returns at once
+            // unless Kurt is sliding with no slide left), and the slide is not
+            // ported (game/player.h), so the call cannot do anything here yet. It
+            // MUST come back with the slide, or a slide that carries Kurt through a
+            // doorway keeps its slide budget in the new arena.
         }
         secondActive_ = true;
         currentArena_ = arena;
@@ -428,6 +622,15 @@ void ScriptRuntime::runTick() {
         if (!obj->dead) {
             motionPath(obj);
             motionVelocity(obj);
+            // An object that changes arena follows its own move through a doorway
+            // (ObjectMotion.cs:104-107, after ApplyVelocity and before the pickup
+            // dispatch). motionVelocity returns early on a zero-length move, and so
+            // does the C#'s ApplyVelocity -- the C#'s Update keeps going to
+            // FollowArenas either way, so the hook is HERE, not inside
+            // motionVelocity, even though a move that did not happen crosses nothing.
+            if (!obj->dead && (obj->flags & MdkObject::FlagChangesArena) != 0) {
+                followArenas(obj);
+            }
             // UpdatePickup runs after ApplyVelocity (ObjectMotion.cs:118), only if the
             // object survived the velocity step (the C# returns on Dead before it). The
             // C# dispatch gives ThrownKind>0 precedence over FlagPickup (UpdateThrown,

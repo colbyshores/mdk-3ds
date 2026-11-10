@@ -1,0 +1,151 @@
+Doorway-crossing evidence — batch 134 (ledger row 3ds.collision-doors)
+=====================================================================
+
+WHAT THIS IS
+------------
+The measured artefact behind golden/L4_crossing.txt and golden/L7_crossing.txt,
+the ported FindConnections / CrossedArena / CrossesDoorway / FollowArenas in
+mdk_core/src/scripts/script_runtime.cpp, and the `make -C tests/scripts
+test_crossing` target.
+
+PROVENANCE OF THE EXPECTED VALUES — read this first.
+No C# was executed for this batch. The .NET SDK this loop used for oracle probes
+(/tmp/kilo/dotnet10, 10.0.402) is not on this host any more: /tmp/kilo is empty
+and `dotnet` is not on PATH (checked: `which dotnet`, `find / -maxdepth 4 -name
+dotnet -type f` -> nothing). So every expected value in the two goldens is
+transcribed from the ORACLE'S OWN committed test suite, which is read-only in
+this repository:
+
+  tests/Mdk.Game.Tests/ArenaSwitchTests.cs   (level 4, MEAT_7 <-> CMEAT_7)
+  tests/Mdk.Game.Tests/DoorArenaTests.cs     (level 7, CDANT_1 -> DANT_2)
+
+Those tests were written against the original game ("Found by playtest", in
+their own words) and they are the oracle's recorded assertions, not this
+implementation's output. Each golden line cites the assertion it comes from.
+Fields no oracle test asserts are NOT in the golden.
+
+1. THE CONNECTION SURVEY (levels 3-8, from the shipped DTIs)
+-----------------------------------------------------------
+    L3 arenas=19 type6=28 ids=14 ids_not_pairing_2=0 dirs=0 1 2 3 6 7
+    L4 arenas=19 type6=28 ids=14 ids_not_pairing_2=0 dirs=0 1 2 3
+    L5 arenas=19 type6=16 ids=8  ids_not_pairing_2=0 dirs=6 7
+    L6 arenas=19 type6=32 ids=16 ids_not_pairing_2=0 dirs=0 1 2 3 6 7
+    L7 arenas=19 type6=32 ids=16 ids_not_pairing_2=0 dirs=0 1 2 3
+    L8 arenas=19 type6=32 ids=16 ids_not_pairing_2=0 dirs=0 1 2 3 6 7
+    ALL_DIRS: 0 1 2 3 6 7
+
+  * `dirs` is the DTI record's angle field reinterpreted as the C#'s Doorway
+    enum: 0 -X, 1 +X, 2 -Y, 3 +Y, 4 Left, 5 Right, 6 -Z, 7 +Z.
+  * Every connection id pairs EXACTLY TWO arenas in every shipped level
+    (ids_not_pairing_2 = 0), so the C#'s "last of a group of three wins"
+    tie-break in FindConnections is unreachable on this data. It is ported
+    anyway, because the C# is the oracle, and it is what a future level would
+    need.
+  * 4 and 5 (the diagonals) appear in NO shipped level, which is what the C#'s
+    comment ("unused by the levels") claims, and it is now measured.
+  * 6 and 7 (the hatches) appear in levels 3, 5, 6 and 8, and level 5's
+    doorways are ONLY hatches. See section 4 — this is the one that was nearly
+    lost.
+
+2. THE TWO PINNED DOORWAYS
+--------------------------
+Level 4, the oracle's ArenaSwitchTests case (connection 1012):
+
+    CONN arena=MEAT_7  id=1012 dir=3 pos=-6.00,14822.00,21.00 box=6.00,14822.00,33.00
+    CONN arena=CMEAT_7 id=1012 dir=2 pos=-6.00,14822.00,21.00 box=6.00,14822.00,33.00
+
+  dir 3 = +Y on the room's side, dir 2 = -Y on the corridor's side: the same
+  plane y = 14822 seen from each arena, which is what makes the crossing
+  reversible. The geometric arena at the test's points (ArenaSpace::arenaAt,
+  reachable arenas only):
+
+    arenaAt(0,14722,21) = MEAT_7      <- where the oracle teleports Kurt
+    arenaAt(0,14821,21) = CMEAT_7     <- INSIDE THE CORRIDOR'S BOX, not through
+                                        the doorway: the bug the test is named
+                                        for
+    arenaAt(0,14825,21) = CMEAT_7
+
+  So the first tick's geometric answer and the oracle's teleport agree at the
+  start point, and at y = 14821 they deliberately do not — which is the whole
+  content of the golden's `s=2 current=MEAT_7`.
+
+Level 7, the oracle's DoorArenaTests case (connection 1001):
+
+    CONN arena=DANT_2  id=1001 dir=2 pos=-13.00,673.00,-3.00 box=13.00,673.00,18.00
+    CONN arena=CDANT_1 id=1001 dir=3 pos=-13.00,673.00,-3.00 box=13.00,673.00,18.00
+
+    arenaAt(0,655,-3) = CDANT_1       <- where the oracle teleports Kurt
+    arenaAt(0,688,-3) = DANT_2
+
+  The walk is the test's own loop (one tick per unit of y, 655..687). The
+  crossing happens on the step to y = 674, because the C#'s predicate is
+  `to.Y > min.Y` (strict) and `from.Y <= min.Y`: from 673 to 674 is the first
+  move that satisfies both.
+
+3. WHAT THE GOLDENS PIN, AND THE MUTATIONS THAT SHOW IT
+-------------------------------------------------------
+`make -C tests/scripts test_crossing` -> rc 0, both cases PASS.
+
+  M1 — the pre-batch state (the tick never consults CrossedArena):
+       FAIL L4_crossing: L4 s=3 current=MEAT_7 (expected CMEAT_7)
+       FAIL L7_crossing: L7 walk_655_to_687 current=CDANT_1 (expected DANT_2)
+       -> rc 1. Both cases discriminate; the frozen arena is caught on both
+       levels.
+  M2 — the +Y boundary made strict (`from.y <= minY` -> `from.y < minY`):
+       FAIL L7_crossing (current=CDANT_1), L4 still PASS.
+       -> the "a move that starts exactly on the plane comes from the far side"
+       half is pinned, by level 7 only.
+  M3 — DoorwayDrop 5 -> 0: BOTH CASES STILL PASS.
+       -> NOT PINNED. Both pinned doorways have their record's z at or above
+       Kurt's feet, so the 5-unit skirt below a horizontal doorway is not what
+       decides either case. Recorded as unpinned rather than dressed up.
+  M4 — the two hatch arms removed (see section 4): both goldens still PASS.
+       -> NOT PINNED either. Stated plainly below.
+
+4. THE HATCH ARMS: LOAD-BEARING, AND NOT PINNED
+-----------------------------------------------
+A synthetic move straight down through each dir-6 record's own plane, on the
+shipped data, with the arms ported:
+
+    L3 arena=HMO_2    id=1002 dir=6 pos=-21.00,1092.00,68.00  => CHMO_2
+    L3 arena=HMO_8    id=1009 dir=6 pos=378.00,2419.00,-263.00 => CHMO_6
+    L5 arena=MUSE_1   id=1000 dir=6 pos=-12.00,-10.00,-3.00   => CMUSE_1
+    L5 arena=MUSE_2   id=1002 dir=6 pos=197.00,86.00,-580.00  => CMUSE_2
+    L6 arena=OLYM_3   id=1004 dir=6 pos=-1703.00,193.00,-680.00 => COLYM_3
+    L8 arena=GUNT_4   id=1007 dir=6 pos=-431.00,1430.00,-192.00 => CGUNT_4
+    (and the dir-7 side of each pair correctly answers "-" for the same
+    downward move: a hatch opens one way per record.)
+
+With the two arms deleted, EVERY one of those answers becomes "-" — the hatches
+are sealed, and on level 5 that is every doorway in the level. The goldens stay
+green either way, so this is a real gap in the pin, not a hypothetical one.
+
+WHY IT IS NOT PINNED: the oracle's test suite has no hatch-crossing assertion
+(ArenaSwitchTests is level 4's +Y door; DoorArenaTests is level 7's;
+AirlockTests asserts door states, not CurrentArena), and no oracle run was
+possible on this host. Inventing an expected value here would be the
+implementation grading itself, which is the one thing a golden may not do. The
+arms are ported from the C#'s text and demonstrated on the shipped geometry;
+the pin needs either a dotnet probe or a new oracle assertion, and it is
+recorded as open.
+
+5. WHAT ELSE THIS DOES NOT EVIDENCE
+-----------------------------------
+  * FollowArenas (the per-object FlagChangesArena crossing) is ported and wired
+    at the C#'s call site, but no golden exercises it: it needs a
+    FlagChangesArena object that actually moves across a doorway, and the oracle
+    test that would pin it (DoorArenaTests' door.Arena assertions) also needs
+    PreloadArena / ShowArena("") / the drawn-arena list, none of which is
+    ported.
+  * TeleportKurt is not ported, so "an arena no doorway leads to" is
+    unreachable; the first tick's geometric arena stands in for the oracle's
+    teleport, and section 2 shows where the two agree.
+  * The frontends still pin the collision world from the geometric arena under
+    the feet (arena_space.h's setSolid note), because the oracle passes the LIST
+    of current + active second and ArenaSpace::setSolid takes one name. Making
+    currentArena_ the frontend's pin is the next batch, and it needs a two-name
+    setSolid first.
+  * Spans' inclusivity at the doorway's x/z edges is not pinned (both pinned
+    crossings sit strictly inside).
+  * Emulator evidence for this batch is a level-7 idle run (Kurt does not move),
+    so it shows no regression and does not exercise a single crossing.

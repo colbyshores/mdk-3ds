@@ -1,0 +1,9 @@
+L4 doorway=1012 plane_y=14822.0000 floor_z=21.0000
+L4 s=1 current=MEAT_7
+L4 s=1 velocity=0.0000,0.0000,0.0000
+L4 s=2 current=MEAT_7
+L4 s=3 current=CMEAT_7
+L4 s=3 second=MEAT_7
+L4 s=3 second_active=1
+L4 s=4 current=MEAT_7
+L4 s=4 second=CMEAT_7

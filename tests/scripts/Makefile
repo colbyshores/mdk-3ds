@@ -100,11 +100,20 @@ OBJECTS := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))
 OBJECTS_VM := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES_VM)))
 VPATH := $(sort $(dir $(SOURCES) $(SOURCES_VM)))
 
-.PHONY: all bin test clean
+.PHONY: all bin test test_crossing clean
 
 all: test
 
 bin: $(BUILD)/tick1 $(BUILD)/vm_tests
+
+# The doorway-crossing cases on their own — the acceptance command of the ledger row
+# 3ds.collision-doors. It runs the SAME two checks the `test` recipe runs (they are
+# inside `tick1`'s own case list, not a separate binary), so this target cannot pass
+# while the full suite fails them, and the row cannot go green on a check the gate
+# never runs. Additive: `make -C tests/scripts` still means what the `core.goldens`
+# row's recorded acceptance means, with these two cases added to it.
+test_crossing: $(BUILD)/tick1
+	@$(BUILD)/tick1 crossing
 
 test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@$(BUILD)/vm_tests
