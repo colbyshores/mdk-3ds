@@ -1,13 +1,43 @@
 # Phase 2 continuation checkpoint
-Risk: medium — review-3 remediation, and one line of it changes a shipped build setting: `-Werror=format`
-is added to `mdk_3ds/Makefile`'s `CXXFLAGS` so a mismatched `log3dsPrintf` call FAILS `make -C mdk_3ds`
-(a gate the loop runs) instead of warning. It is target-specific build config, so the R10 evidence bar
-was paid rather than argued: devkitARM `arm-none-eabi-g++ 15.2.0`, `make -n` after a clean shows the
-flag on all **73** compile commands, a genuine clean rebuild gives **0 errors** and `mdk.elf`
-**bit-identical** at `b1997a5dca83639acf603d518abe8e62`, a deliberate `%d`/`int32_t` call makes the
-shipped build fail with `Error 1` and is then reverted, the emulator is exit 0 to frame 2580 on `:99`
-with the pinned Mandarine, and the frame pair is a byte-identical re-capture, stated not hidden. The
-rest of the diff is a header comment, a shell script's counter accounting, and record corrections.
+Risk: medium — review-4 remediation, and every line of it is inside one runner,
+`tests/scripts/arm_compile_check.sh`: the format pass now refuses to print `PASS` when it
+measured nothing. A manifest pins the mutant and probe names, the directory's count must match
+the manifest, and a loop that measures zero fails at the last point before the pass line; the
+partial-failure sentence is now conditional on the count it describes. No shipped instruction
+changed — `mdk.elf` is byte-identical at `b1997a5dca83639acf603d518abe8e62`, the frame pair is a
+byte-identical re-capture, and no `mdk_3ds/**` path is in the diff, so no P8 evidence is owed —
+but the diff changes **when a check reports a pass**, which is adjudication behaviour, so it is
+not classified low. Evidence: four mutations of the runner (delete the honest probe's heredoc,
+delete one of the four mutants, rename a loop's glob, add an unlisted heredoc) each now fail by
+name where the shipped script printed `PASS` with exit 0, and the unmutated run is unchanged at
+`PASS ArmCompile (133 mutant(s), 0 diagnostics, 73 shipped source(s) format-clean, 4 format
+mutant(s) refused, 1/1 honest call(s) accepted)`.
+
+**Batch 119 (iteration 5) — review-4 closed 4/4 (no Critical, no High): F1 and F2 fixed and
+pinned by mutations, F3 closed as a record correction, F4 stated as owner-only.** **F1 (Medium,
+confirmed)**: reproduced verbatim — with the honest probe's heredoc removed the script printed
+`0/0 honest call(s) accepted` and then `PASS ArmCompile`, exit 0, while the same file already
+refuses exactly that shape for the mutant sweep. Fixed with a manifest checked from three
+directions, because each catches a mutation the others survive: a name with no file fails by
+name (a deleted or renamed heredoc), a file no name lists fails by count (an unlisted heredoc
+would never be compiled), and a loop measuring zero fails before the pass line (a glob renamed
+inside the loop, every file present). The reviewer's `!= 0` guard alone was not taken as the
+whole fix, because their own scenario includes deleting **one** of the four mutants, which
+leaves three refused and a nonzero guard satisfied while a class silently disappears. **F2
+(Low, confirmed)**: `1/2 honest call(s) accepted` was immediately contradicted by "No honest
+call was accepted"; the sentence is now conditional, and the case was latent rather than
+harmless — with one shipped probe a failing probe always leaves zero accepted, so it goes live
+the moment anyone adds a second. **F3 (Low, confirmed)**: batch 118's P8 line omitted the
+invocation and the guest-log path; the recoverable half was verified from the surviving lane
+(`/tmp/mdk-emurun.319894`, 48 frame lines ending at frame 2580) and the invocation is not
+reconstructed because it is recorded nowhere. The standing rule is now stated in the progress
+log and in the standing facts below: a P8 block quotes the invocation and the harness's own
+`guest log :` line verbatim. **F4 (Low, confirmed, not actionable by a batch)**: the dirty
+`ralph/builder.md` is `PROTECTED`, invisible to a gate that reads committed ranges only, and
+both remediations are owner-only — so this batch staged its paths explicitly instead of
+`git add -A` and left it uncommitted. Review-4's open question 1 (should `mdk_3ds/Makefile` join
+`PROTECTED`) is the same class and also owner-only. Full narrative: `docs/PROGRESS_LOG.md`
+"Batch 119".
 
 **Batch 118 (iteration 4) — review-3 closed 4/4 (no Critical, no High): F1–F4 all fixed, none
 rebutted, and the fix to F1 made the claim true instead of shrinking it.** **F1 (Medium, confirmed)**:
@@ -756,6 +786,30 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
+## NEXT (batch 119)
+**Nothing in the gate family is open, and nothing in it should be widened without a finding that
+needs it.** Review-4 found no Critical and no High, its Medium was a coverage hole in a runner
+rather than a claim about the shipped build, and the runner now fails closed on measuring
+nothing. Two items from that review are **owner-only** and are named here so they are not lost:
+(a) `ralph/builder.md` is dirty in the worktree, is `PROTECTED`, and cannot be committed or
+stashed by a batch, and the gate that would notice a worktree edit is itself `PROTECTED`;
+(b) whether `mdk_3ds/Makefile` joins `PROTECTED`, so a shipped build-flag change is gated by the
+suite rather than by review and R10 discipline alone. A third standing owner item predates them:
+`tools/check.sh` is owner-protected, so `arm_compile_check.sh` — the runner that proves the
+printf attribute is alive — stays outside the loop's gate chain by owner decision.
+
+**The two named game items are unchanged and both are blocked on a named cause, not on effort.**
+(1) **the canvas seam** — `mdk_render_canvas_quad` is a no-op on this backend
+(`renderer_c3d.cpp:2345`), which is what priority item 5b (the HUD) and the MVE movie presenter
+both wait on; the canvas draw has to become a record in the frame's queue so the per-eye replay
+draws it once per eye, and it is the largest unbuilt piece of "a CIA that plays a level". (2)
+**the collision batch** — `FindConnections` + `CrossedArena`, which unfreezes `currentArena_`
+from the spawn arena and lets `ArenaSpace::setSolid` take the oracle's current + active second,
+and which needs a doorway-crossing oracle rather than a hand-written expectation. Either one
+changes `mdk_3ds/**` and therefore owes an `emurun.sh` verdict block on `DISPLAY=:99`, recorded
+in the full shape review-4 F3 named (invocation, display, emulator md5, `guest log :` path,
+frames, exit code).
+
 ## NEXT (batch 117)
 **The gate family is closed on the terms batch 116 named, and this batch paid for it.** Review-22's
 open question 2 asked whether the conversion grammar should keep being patched or whether the compiler
@@ -1335,6 +1389,11 @@ double the bank and re-open 6c.
 * **The level data is readable with 10 lines of Python, and it settles parse arguments outright.** For a DTI,
   block *i* is at `4 + u32(20 + 4*i)`, and block 0 is `u32 startArena, vec3 startPosition, f32 startAngle`.
 
+* **A P8 block is the harness's verdict block, not a summary of it** (review-4 F3). Quote the
+  `emurun.sh` invocation as typed, the `display`, the emulator md5, the harness's own
+  `guest log :` path, the frame figures and the exit code. A one-line summary is not auditable
+  once the `/tmp` lane is collected, and a batch cannot reconstruct the invocation afterwards —
+  batch 118 learned this and batch 119 recorded the rule.
 * **A frame sidecar must state, in its own text, why the pinned picture did not move, with the measurement that shows it** (`docs/frames/README.md:56-62`, review-9 F3). Batch 89's does not, and that gap is now permanent: `gates_batch_integrity.py` refuses any change to a frame `.txt` the range did not add ("history is immutable") and is itself `PROTECTED`, so a sidecar cannot be annotated after the fact by a batch. Write the paragraph at capture time. A static frame with no stated cause is exactly the byte-identical-record-proves-nothing failure `docs/evidence/README.md` was written about, and `validate_png_pair` will not catch it — it checks scene identity, `captured:` and one oracle field, nothing more.
 
 ## Verification commands

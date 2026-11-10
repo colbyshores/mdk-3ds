@@ -45,7 +45,9 @@
 # width with no value, a pointer where an int is asked, an `int32_t` printed by `%d`) plus
 # honest calls that must compile. Take the attribute out of `platform/log_3ds.h` and the
 # four mutants compile, which fails this script by name -- the attribute cannot rot away
-# silently. Closing that last gap (a deleted attribute caught by a GATE, not a runner) needs
+# silently. Both halves are pinned BY NAME in a manifest below, because a glob that stops
+# matching is not a compile error: it is a pass that measured nothing (review-4 F1).
+# Closing that last gap (a deleted attribute caught by a GATE, not a runner) needs
 # this script wired into owner-protected `tools/check.sh`, which is an owner decision.
 # What the compiler CANNOT see, and check 17 still owns, is WHICH quantity a figure
 # claims to be: `("objects: refused %d bytes", objectCorners)` is format-clean and is
@@ -269,6 +271,51 @@ void mdk_format_probe() {
 }
 MUT
 
+# THE MANIFEST (review-4 F1). Both halves of the format pass are found by a glob over
+# files THIS script wrote a few lines above, so the way either half dies is not a
+# compile error, it is a heredoc deleted or renamed: the glob matches nothing, the loop
+# body never runs, and the script prints `0/0 honest call(s) accepted` and then
+# `PASS ArmCompile` with exit 0. Reproduced on a copy of this file with the probe heredoc
+# removed. The mutant sweep above has refused that shape since review-14 (`no mutants
+# were extracted; a run that measured nothing does not get to print a pass`); the format
+# pass is now held to the same rule from three directions, because each one catches a
+# mutation the other two survive:
+#   (1) every name listed here MUST exist -- catches a heredoc deleted or renamed;
+#   (2) the directory MUST hold exactly as many sources as the manifest names -- catches
+#       a heredoc ADDED without being listed, which would never be compiled;
+#   (3) each loop MUST measure a nonzero count (below, next to the PASS line) -- catches
+#       a glob renamed inside a loop while every file is still present.
+# A nonzero-only guard, which is the shape review-4 recommended, does not by itself
+# close the scenario review-4 named: deleting ONE of the four mutants satisfies it while
+# quietly dropping a class the pass exists to refuse, so the names are what is pinned.
+FMT_MUT_WANT="mut_dropped_argument mut_star_width_without_its_value
+              mut_pointer_where_int_is_asked mut_int32_printed_as_int"
+FMT_PROBE_WANT="probe_honest_refusal_call"
+
+# number of words in $1 (a manifest entry per line or per space)
+fmt_words() { set -- $1; echo $#; }
+
+for want in $FMT_MUT_WANT $FMT_PROBE_WANT; do
+    if [ ! -f "$FMT_DIR/$want.cpp" ]; then
+        echo "FAIL arm_compile_check: the format pass wrote no $want.cpp, so the class it"
+        echo "  names is no longer measured at all. The heredoc that writes it in this file"
+        echo "  is missing or renamed (review-4 F1); restoring it is the fix, and deleting"
+        echo "  it from the manifest above is not."
+        exit 1
+    fi
+done
+fmt_mut_want=$(fmt_words "$FMT_MUT_WANT")
+fmt_probe_want=$(fmt_words "$FMT_PROBE_WANT")
+fmt_mut_have=$(find "$FMT_DIR" -maxdepth 1 -name 'mut_*.cpp' | wc -l)
+fmt_probe_have=$(find "$FMT_DIR" -maxdepth 1 -name 'probe_*.cpp' | wc -l)
+if [ "$fmt_mut_have" != "$fmt_mut_want" ] || [ "$fmt_probe_have" != "$fmt_probe_want" ]; then
+    echo "FAIL arm_compile_check: $FMT_DIR holds $fmt_mut_have mutant and $fmt_probe_have"
+    echo "  probe source(s) while the manifest names $fmt_mut_want and $fmt_probe_want. A"
+    echo "  source no manifest entry names is never compiled, and the pass would report a"
+    echo "  smaller set than it claims (review-4 F1)."
+    exit 1
+fi
+
 fmt_refused=0
 fmt_uncaught=0
 for m in "$FMT_DIR"/mut_*.cpp; do
@@ -325,8 +372,31 @@ if [ "$fmt_uncaught" != 0 ]; then
 fi
 if [ "$fmt_probe_bad" != 0 ]; then
     echo "FAIL arm_compile_check: $fmt_probe_bad of $fmt_probes honest log call(s) were refused"
-    echo "  by the format pass. No honest call was accepted; the source sweep above was clean"
-    echo "  and is NOT what failed here."
+    echo "  by the format pass."
+    # Review-4 F2: this sentence used to claim that no honest call was accepted whatever
+    # the count said, so `1/2 honest call(s) accepted` was immediately contradicted by a
+    # line saying the whole accept side was dead -- and a reader told to look for a cause
+    # that does not exist looks in the shipped sources, which this run just proved clean.
+    # The claim is now conditional on the count it describes.
+    if [ "$fmt_probe_ok" = 0 ]; then
+        echo "  No honest call was accepted, so the accept side is dead. The source sweep"
+        echo "  above was clean and is NOT what failed here."
+    else
+        echo "  $fmt_probe_ok of $fmt_probes was accepted, so the accept side is partly"
+        echo "  broken and the named file above is the whole of it. The source sweep above"
+        echo "  was clean and is NOT what failed here."
+    fi
+    exit 1
+fi
+# Review-4 F1, the third direction: the manifest proves the files exist and the counts
+# prove nothing is unlisted, but each loop still finds its own files by glob. A glob
+# renamed inside a loop measures nothing while every check above stays green, so a zero
+# measured is refused here, at the last point before the pass could print a pass.
+if [ "$fmt_refused" = 0 ] || [ "$fmt_probes" = 0 ]; then
+    echo "FAIL arm_compile_check: the format pass measured nothing -- $fmt_refused mutant(s)"
+    echo "  refused, $fmt_probe_ok/$fmt_probes honest call(s) accepted. The sources are all"
+    echo "  present (the manifest above checked them), so a glob in one of the two loops is"
+    echo "  broken; a run that measured nothing does not get to print a pass."
     exit 1
 fi
 if [ "$bad" != 0 ]; then

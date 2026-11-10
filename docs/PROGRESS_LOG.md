@@ -21691,3 +21691,146 @@ repository, not the KB, was the authority. No `obsidian_*` or `cognee_*` tools a
 session, recorded as a session gap and not as a lookup that happened (AGENTS.md P9); one narrow
 vault grep for `Werror=format|arm_compile_check` returned only an unrelated `nolf` note.
 `ralph/builder.md` was dirty at dispatch, is `PROTECTED`, and is left uncommitted on purpose.
+
+## Batch 119 (iteration 5) — review-4 closed 4/4 (no Critical, no High): the format pass can
+## no longer print a pass it did not measure, and its failure sentence now matches its own count
+
+Review: `logs/ralph-pi/run-20261109-233059/review-4.md`. No Critical, no High: one Medium
+(R4-F1) and three Low (R4-F2, R4-F3, R4-F4), plus two open questions. All four are closed —
+F1 and F2 fixed and each pinned by a mutation that now fails by name, F3 closed as a record
+correction with the recoverable half verified, F4 stated as an owner-only action because both
+of its remediations touch `PROTECTED` files. No shipped instruction changed: `mdk.elf` md5
+`b1997a5dca83639acf603d518abe8e62` is unchanged since batch 107, the frame pair is a
+byte-identical re-capture, and the only file edited is a runner.
+
+**R4-F1 (Medium) — confirmed, fixed, pinned.** Reproduced first, on a copy of the committed
+script with only the honest probe's heredoc removed, and it reproduced the reviewer's
+`/tmp/rv2/noprobe.log` exactly:
+
+```
+  format: 73 shipped source(s) with -Werror=format, 4 mutant(s)
+          refused, 0/0 honest call(s) accepted
+PASS ArmCompile (133 mutant(s), 0 diagnostics, 73 shipped source(s) format-clean, 4 format
+mutant(s) refused, 0/0 honest call(s) accepted, /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)
+```
+
+exit 0. The file already carried the doctrine for the other half — *"no mutants were
+extracted; a run that measured nothing does not get to print a pass"* — and the format pass
+had no equivalent, so a half of it could vanish by a deleted or renamed heredoc and the run
+still reported a pass.
+
+The fix is a **manifest** of the names the pass writes, checked from three directions, because
+each direction catches a mutation the other two survive:
+
+1. every name in `FMT_MUT_WANT` / `FMT_PROBE_WANT` must exist as a file — a heredoc deleted or
+   renamed fails **by name**;
+2. the directory must hold exactly as many `mut_*.cpp` / `probe_*.cpp` as the manifest names —
+   a heredoc **added** without a manifest entry, which would never be compiled, fails by count;
+3. each loop must measure a nonzero count, checked at the last point before the pass could
+   print a pass — a glob renamed *inside* a loop, with every file present, fails as measured
+   nothing.
+
+The reviewer's recommended remediation was the `!= 0` guard alone, and direction (3) is that
+guard; it is not sufficient by itself, because the failure scenario the finding names includes
+*"one of the four `mut_*.cpp` heredocs"*, and deleting one of four leaves three refused, which
+a nonzero guard accepts while the pass silently loses a class it exists to refuse. Pinning the
+names is what closes the scenario as stated.
+
+Mutations, each a full run of a copy of the committed script:
+
+| mutation | result |
+|---|---|
+| M1 delete the honest probe's heredoc (review-4 F1's own scenario) | `FAIL … the format pass wrote no probe_honest_refusal_call.cpp, so the class it names is no longer measured at all`, exit 1 (was PASS, `0/0`, exit 0) |
+| M2 delete **one** of the four mutants (`mut_star_width_without_its_value`) | `FAIL … wrote no mut_star_width_without_its_value.cpp`, exit 1 — the case a nonzero-only guard leaves green |
+| M3 rename the mutant loop's glob to `mut_*.cxx`, every file still present | `FAIL … the format pass measured nothing -- 0 mutant(s) refused, 1/1 honest call(s) accepted`, exit 1 |
+| M5 add a probe heredoc with no manifest entry | `FAIL … holds 4 mutant and 2 probe source(s) while the manifest names 4 and 1`, exit 1 |
+
+The unmutated script is unchanged in what it measures: `PASS ArmCompile (133 mutant(s), 0
+diagnostics, 73 shipped source(s) format-clean, 4 format mutant(s) refused, 1/1 honest call(s)
+accepted, /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`, exit 0. **Stated limit:** a
+mutation that deletes a heredoc *and* its manifest entry together is invisible to this guard,
+exactly as deleting the `total = 0` guard is invisible to that one. The guard protects against
+an edit that forgets, not against one that intends.
+
+**R4-F2 (Low) — confirmed, fixed, pinned.** Reproduced with a second, deliberately broken
+probe alongside the shipped one, and it printed the contradiction verbatim: `1/2 honest
+call(s) accepted` and then `FAIL … 1 of 2 honest log call(s) were refused by the format pass.
+No honest call was accepted; …`. The sentence is now conditional on the count it describes.
+Mutation M4 (a broken second probe, listed in the manifest) prints:
+
+```
+FAIL arm_compile_check: 1 of 2 honest log call(s) were refused
+  by the format pass.
+  1 of 2 was accepted, so the accept side is partly
+  broken and the named file above is the whole of it. The source sweep above
+  was clean and is NOT what failed here.
+```
+
+exit 1. Worth stating why this was latent rather than harmless: with one shipped probe a
+failing probe necessarily leaves `fmt_probe_ok == 0`, so the false sentence could not print
+from the shipped tree — it becomes live the moment anyone adds a second probe, which is the
+same edit that would have made R4-F1's zero-guard the only thing standing.
+
+**R4-F3 (Low) — confirmed, closed as a record correction.** Batch 118's P8 line gave exit,
+display, emulator md5, frame and health, and omitted the invocation and the guest-log path.
+What is still recoverable was verified in this batch from the surviving lane: lane
+`/tmp/mdk-emurun.319894`, guest log `xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log`, mtime
+`2026-11-09 19:16:48`, 48 `frame ` lines ending at frame 2580 — which is the reviewer's
+independent confirmation, reproduced. The invocation itself is recorded nowhere in the
+repository and is not reconstructed here. This batch changes no `mdk_3ds/**` path, so no P8
+evidence is owed and none is claimed as owed; a run was made anyway and is recorded in the
+full shape the finding asks for, so that shape exists in the record:
+
+```
+$ DISPLAY=:99 MANDARINE=/mnt/nas/Development/mandarine.AppImage \
+    mdk_3ds/tools/emurun.sh --secs 45 --min-frames 60        # exit 0
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6
+guest log : /tmp/mdk-emurun.432856/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log
+frames    : reached 2520 by the deadline (47 frame lines logged); after the reap the log
+            ends at frame 2580 (48 frame lines)
+stereo    : render_3d=0 factor_3d=0 (mono); gl: forced llvmpipe; audio: dummy sink; dspfirm seeded
+flow      : screen=4 level=7 … frame 2520 health=100 voices=0 plays=1 objects=7 obj=570c/13d peak=570c/13d
+```
+
+It re-measures the unchanged `b1997a5d` elf and is stated as a re-measurement, not as evidence
+for a change. The standing rule adopted from this batch: a P8 block quotes the `emurun.sh`
+invocation and the harness's own `guest log :` line verbatim — a summary line is not a verdict
+block.
+
+**R4-F4 (Low) — confirmed, not actionable by a batch.** `ralph/builder.md` is dirty in the
+worktree and is listed in `PROTECTED` in `tools/runner/gates_batch_integrity.py:12`, which
+validates committed ranges only and therefore cannot see a worktree edit. Both remediations
+the reviewer names are owner-only: commit or stash the file deliberately, or give
+`gates_batch_integrity.py` — itself `PROTECTED` — a worktree check. The hazard is real and this
+batch met it: the loop's `commit` tool runs `git add -A`, which would have committed the
+protected contract file under a builder-authored message, so this batch staged its own paths
+explicitly and left `ralph/builder.md` untouched and uncommitted. Its mtime
+(`2026-11-05 07:26:14`) predates batch 118 by four days and its text matches `ralph-pi.sh:110`,
+consistent with an owner edit rather than builder scope creep. **Open question 1** (should
+`mdk_3ds/Makefile` join `PROTECTED`, so a shipped build-flag change is gated by the suite and
+not only by review and R10 discipline) is the same class and also owner-only; recorded, not
+acted on.
+
+**Gates, verbatim.**
+
+- `make -C tests/scripts` → `All cases match the oracle.` with `PASS Main3dsFlow (20 checks,
+  56 arms adjudicated red, 24 probes green)`, `PASS C3dFrame (31 checks, 49 arms adjudicated
+  red, 2 probes green)`, `PASS EmurunHarness (68 checks: config placement + mount ownership)`.
+- `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`;
+  `gates_frames PASS`, `gates_batch_integrity PASS`, `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`).
+- `make -C mdk_3ds` → exit 0, `mdk.elf` md5 `b1997a5dca83639acf603d518abe8e62`, unchanged.
+- `sh tests/scripts/arm_compile_check.sh` → `PASS ArmCompile (133 mutant(s), 0 diagnostics,
+  73 shipped source(s) format-clean, 4 format mutant(s) refused, 1/1 honest call(s) accepted,
+  /opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)`, exit 0.
+
+**Prior-solution lookup.** `pi-knowledge` `mdk-sdl` searched for the doctrine
+("measured nothing" / honest-probe counters): one hit, `tests/scripts/ubsan_decode_test.sh`'s
+*"the probe did not compile, so nothing was measured"* guard — the same rule in another runner,
+read as precedent, no prior finding predates this one. No `obsidian_*` / `cognee_*` tools are
+exposed in this session, recorded as a session gap (AGENTS P9) and not as a lookup that
+happened; the disk fallback was one targeted `grep` of `/mnt/nas/Vaults/port-docs`, which
+returned four pattern notes, of which `30-architecture/patterns/before-planning-a-measurement-
+check-the-run-reaches-it.md` (shape vs reach of an instrument) is the closest to batch 118's F1
+and was read.
