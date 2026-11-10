@@ -693,6 +693,13 @@ bool BetaDemo::loadMto(int32_t level, Mto* outMto, std::vector<Arena*>* outArena
     // BORROWED pointers only, and the arenas themselves stay the caller's in
     // *outArenas.
     *outMto = std::move(mto);
+    // The out-vector OWNS what it holds — the caller frees them, that is what
+    // "the arenas belong to the caller" means — so replacing it releases what a
+    // previous call left there. Assigning over it leaked a caller's whole first
+    // level. Same rule LevelData::load follows for a reused out-param.
+    for (size_t i = 0; i < outArenas->size(); i++) {
+        delete (*outArenas)[i];
+    }
     *outArenas = arenas;
     return true;
 }

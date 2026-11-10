@@ -32,6 +32,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <type_traits>
+
 using namespace mdk::formats;
 
 namespace {
@@ -266,6 +268,25 @@ MDK_TEST(EntryNamedFindsTheDtiArena) {
 // WHO FREES AN ARENA
 // ---------------------------------------------------------------------------
 
+// THE PIN THAT CANNOT BE SILENCED AT RUNTIME. Arena::liveCount() is the only
+// way a test can see an arena die, and the implicit copy and move operations do
+// not go through the constructor and destructor that maintain it: one copy of a
+// live arena makes the counter say one object while two exist, and deleting the
+// original then says zero while the copy is still being drawn -- which would
+// make every case below lie in whichever direction the copy happened. So the
+// operations are deleted in arena.h and these four lines are what stops anyone
+// un-deleting them and quietly breaking the instrument. A copy site anywhere in
+// the tree is a compile error for the same reason.
+static_assert(!std::is_copy_constructible<Arena>::value,
+              "Arena must not be copy-constructible: liveCount() would under-count");
+static_assert(!std::is_copy_assignable<Arena>::value,
+              "Arena must not be copy-assignable: liveCount() would under-count");
+static_assert(!std::is_move_constructible<Arena>::value,
+              "Arena must not be movable: the source's destructor decrements for an "
+              "object the destination is now using");
+static_assert(!std::is_move_assignable<Arena>::value,
+              "Arena must not be move-assignable: same reason as the move constructor");
+
 // The Mto frees the arenas it parsed for itself.
 //
 // THE DEFECT THIS PINS. An Mto parsed arenas with `new` and nothing ever
@@ -411,4 +432,51 @@ MDK_TEST(LevelDataLoadIntoALoadedLevelStartsOver) {
     MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
     MDK_CHECK_EQ(Arena::liveCount() - before, oneLevel);
     MDK_CHECK_EQ((int64_t)level.arenas().size(), oneLevel);
+}
+
+// A load that FAILS leaves an empty level, not a mixture of two levels.
+//
+// THE DEFECT THIS PINS. The reset at the top of LevelData::load released the
+// arenas, the corridors and the palette cache, but not the DTI, the MTO's bytes
+// or the level's texture archive -- and the reads that fill them are
+// individually fallible, and a failed read does not touch the buffer it was
+// given. So a load that failed after the reset kept the PREVIOUS level's DTI
+// and textures in an object that claimed to hold another one, and archivesOf()
+// searches the level archive for every arena's materials: the new level's
+// arenas would resolve their surfaces against the old level's textures. It is
+// unreachable with the shipped data (all six levels have their four files) and
+// one step away from reachable with a mod, a corrupt install, or a level
+// selector that tries the next number.
+MDK_TEST(AFailedLoadLeavesAnEmptyLevel) {
+    const MdkData& game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    const int64_t before = Arena::liveCount();
+    mdk::LevelData level;
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+    MDK_CHECK(!level.arenas().empty());
+    MDK_CHECK(!level.dti().arenas().empty());
+    MDK_CHECK(!level.levelTextures().textures().empty());
+    MDK_CHECK_EQ(level.number(), 3);
+    MDK_CHECK(Arena::liveCount() > before);
+
+    // Level 999 has no files at all, so this fails at the first read.
+    MDK_CHECK(!mdk::LevelData::load(&level, &game, 999));
+
+    // And nothing of level 3 is left: the arenas are gone with the MTO that
+    // parsed them, and the DTI, the textures and the number are the empty
+    // level's, not level 3's.
+    MDK_CHECK_EQ(Arena::liveCount(), before);
+    MDK_CHECK(level.arenas().empty());
+    MDK_CHECK(level.dti().arenas().empty());
+    MDK_CHECK(level.levelTextures().textures().empty());
+    MDK_CHECK_EQ(level.number(), 0);
+
+    // The object still works: a load of a real level afterwards is a level.
+    MDK_CHECK(mdk::LevelData::load(&level, &game, 3));
+    MDK_CHECK(!level.arenas().empty());
+    MDK_CHECK(!level.levelTextures().textures().empty());
+    MDK_CHECK_EQ(level.number(), 3);
+    MDK_CHECK_EQ(Arena::liveCount() - before, (int64_t)level.arenas().size());
 }

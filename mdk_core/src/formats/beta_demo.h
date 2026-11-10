@@ -32,6 +32,10 @@
 // parses out of its own bytes are its own — see mto.h.) So a caller of
 // loadMto gets the arenas twice over, once borrowed inside the Mto and once
 // in the vector it must free.
+//
+// THE OUT-VECTOR IS REPLACED, NOT APPENDED. It owns what it holds, so whatever
+// it held when it was handed in is deleted by the call. A caller that passes a
+// vector holding arenas from somewhere else is handing them over to be freed.
 // ============================================================================
 
 #include <stdint.h>

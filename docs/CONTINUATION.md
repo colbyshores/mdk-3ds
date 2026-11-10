@@ -1,9 +1,38 @@
 # Phase 2 continuation checkpoint
-Risk: high — the batch changes resource lifetime: who frees an `Arena` (`formats/mto.*`,
-`game/level_data.*`, `formats/beta_demo.*`), which is memory safety, and the shipped 3DS binary moves
-(`mdk.elf` `a82a78938f8fbcd514f167b1b751ab45` → `a6bae2efc3ad8899649e8ad8fc4fd9d1`). All three gates and
-ASan+UBSan are green and the emulator ran the final binary, but a lifetime change is high by the rubric and
-is not being downgraded to avoid the review.
+Risk: high — the batch is resource-lifetime work again (`formats/arena.h` deletes Arena's copy/move
+operations, `game/level_data.cpp` completes `LevelData::load`'s reset and moves `number_` to the success
+path, `formats/beta_demo.*` frees the out-vector `loadMto` replaces), and the shipped 3DS binary moves
+(`mdk.elf` `a6bae2efc3ad8899649e8ad8fc4fd9d1` → `06bb4a915db8cc5af5f96aaecf1405aa`). All three gates,
+ASan+UBSan and the emulator are green on the final binaries and no oracle value moved, but a lifetime change
+is high by the rubric and is not being downgraded to avoid the review.
+
+**Batch 132 (iteration 4 of the ledger row `core.formats`) — the ownership counter cannot be made to lie.**
+Review-3 confirmed three defects in the contract batch 131 wrote, all of one family: it held only while
+nobody wrote an ordinary line of C++. **`Arena` is now non-copyable and non-movable** — `liveCount()` is the
+only instrument that can see an arena die and the implicit copy operations bypass the constructor and
+destructor that maintain it, so one copy made the counter say one object while two existed and deleting the
+original then said zero while the copy was still being drawn; the four `= delete` lines plus four
+`static_assert`s in `format_tests.cpp` make the counter's invariant a compile-time property (shown: remove
+the deletes and the target does not compile, all four assertions firing). **`LevelData::load`'s reset is
+complete** — it released four fields and left `dti_`, `mtoBytes_` and `levelTextures_` behind, and a failed
+`readFile` does not touch the buffer it was given, so a load that failed after the reset was a *mixture*:
+level N wearing level 3's DTI and textures, which `archivesOf()` would have used for the new arenas'
+surfaces. Every field is now emptied before the first read and `number_` is set only on success, so the rule
+is one line — *a `LevelData` after `load` holds exactly the level that call loaded* — and
+`AFailedLoadLeavesAnEmptyLevel` pins it (shown: remove the reset lines and it fails on exactly the three
+fields). **`BetaDemo::loadMto` now releases the out-vector it replaces**, which leaked a caller's whole
+first level on a second call; it has no caller yet, so that half is compile-verified by the Linux target
+only, and this batch did not widen `tests/formats`' source list to force the point. **Review-3 is closed
+7/7: F2/F5/F6 fixed, F1/F3/F4/F7 owner-only and recorded as owed** — F1 remains the sole blocker on the row
+(`docs/COMPLETION_LEDGER.tsv` is PROTECTED and `coleshores`-owned, so no batch can fill its evidence column
+and attempt 9 ends the loop with `exit 6`), F3 is `make -C tests/formats` in `tools/check.sh`'s gates, F4 is
+a capture-binary identity check in `gates_frames.py` (this batch's own frame came from a binary built at
+`14:21:42`, after every source edit, and reproduced the manifest hash), F7 is a `gates_completion.py`
+selftest arm. Gates: `make -C tests/scripts` → `All cases match the oracle.` rc 0 (per-step rc 0); `bash
+tools/check.sh` (`DISPLAY=:99`) → `CHECK: ALL GATES PASSED`; `make -C mdk_3ds` → rc 0. ASan+UBSan on the
+format target: rc 0, zero leaks, `156235 checks, 0 failures`. Emulator (`emurun.sh`, `:99`, mandarine md5
+`0d2adab6`, rc 0) reached guest frame 2580 on level 7, identical to batch 131. Full narrative:
+`docs/PROGRESS_LOG.md` "Batch 132".
 
 **Batch 131 (iteration 3 of the ledger row `core.formats`) — the arenas have an owner.** Batch 130 left a
 measured lead: the format target under ASan+UBSan reported `47394202 byte(s) leaked in 15442 allocation(s)`,

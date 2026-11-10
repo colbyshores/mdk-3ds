@@ -23538,7 +23538,9 @@ increment lives.
   after: **rc 0, zero `leaked`/`ERROR:`/`runtime error` lines**, `156218 checks, 0 failures`. UBSan silent
   throughout.
 - **Acceptance** `make -C tests/formats`: `running 20 tests` … `156218 checks, 0 failures`, rc 0 (was 15
-  tests / 156190 checks; the +16 checks are the new cases' own assertions).
+  tests / 156190 checks; the **+28** checks are the new cases' own assertions — 16 from the first three
+  cases and 12 from the last two. This line said +16, which was true of an intermediate state of the batch
+  and was never updated; review-3 F6, corrected in batch 132).
 - **Gate 1** `make -C tests/scripts`: `All cases match the oracle.`, rc 0. No golden moved: the change is
   lifetime-only, and every oracle value in the suite is unchanged.
 - **Gate 2** `bash tools/check.sh` with `DISPLAY=:99`: `CHECK: ALL GATES PASSED`, rc 0 — `PASS
@@ -23636,3 +23638,115 @@ already pins the leak in the default build; the exact sanitizer command is recor
 reproducible. (b) `BetaDemo::loadMto` still has **no caller anywhere in the tree** (grep over `mdk_core`,
 `tests`, `mdk_3ds`, `mdk_linux`), so the demo's arena ownership is exercised only by the `add()` arm above;
 when the beta demo is wired into the flow, whoever wires it owns the `*outArenas` deletes.
+
+---
+
+## Batch 132 (iteration 4, ledger row `core.formats`) — the ownership counter cannot be made to lie, and a failed load leaves nothing of the old level
+
+### What changed, and what it answers
+
+Review-3 raised three defects in the ownership contract batch 131 wrote. They are one family:
+the contract held only for as long as nobody wrote an ordinary line of C++.
+
+1. **`Arena` is not copyable and not movable** (`mdk_core/src/formats/arena.h`). Review-3
+   **F2, Medium, confirmed**. `Arena::liveCount()` is the only instrument that can see an
+   arena die, and it is maintained by `Arena::Arena()` and `~Arena()`. The implicit copy
+   operations go through neither, so `Arena copy = *a;` left the counter saying one object
+   while two existed, and deleting the original then said zero while the copy was still being
+   drawn — which would have made the five batch-131 pins fire for a non-defect, or hide a
+   real survivor, depending on the delete order. `Mto` already had `= delete` for exactly
+   this hazard and `Arena` did not. All four operations are now deleted beside the private
+   constructor, and the pin is a `static_assert` block in `format_tests.cpp`, so the
+   counter's invariant is a compile-time property instead of a comment — and a copy site
+   anywhere in the tree is a compile error, not a review finding.
+   **Sabotage proof:** with the four `= delete` lines removed the format target does not
+   compile, and all four assertions fire (`format_tests.cpp:280/282/284/287`); restoring them
+   returns it to `156235 checks, 0 failures`.
+2. **`LevelData::load`'s reset is complete** (`mdk_core/src/game/level_data.cpp`). Review-3
+   **F5, Low, confirmed**. The batch-131 reset released four fields and left `dti_`,
+   `mtoBytes_` and `levelTextures_` holding the previous level — and the reads that fill them
+   are individually fallible, and a failed `readFile` does not touch the buffer it was given
+   (`filesystem_posix.cpp:48`, `filesystem_romfs.cpp:143`). So a load that failed after the
+   reset produced a *mixture*: an object claiming to be level N wearing level 3's DTI and
+   textures, and `archivesOf()` searches the level archive for every arena's materials, so
+   the new arenas would resolve their surfaces against the old level's textures. The reset
+   now empties every field and `number_` is assigned only on the success path. The rule, in
+   one line: **a `LevelData` after `load` holds exactly the level that call loaded — the new
+   one on success, nothing at all on failure.** Pinned by the new
+   `AFailedLoadLeavesAnEmptyLevel`. **Sabotage proof:** with the three new reset lines and
+   the moved `number_` assignment removed, that case fails on exactly the three fields
+   (`format_tests.cpp:472` dti, `:473` textures, `:474` `level.number() == 0 (got 999, want
+   0)`), 3 failures of 156235 checks; restoring them returns it to 0. Unreachable with the
+   shipped data (all six levels ship all four files) and one step from reachable with a mod,
+   a corrupt install, or a level selector that tries the next number — the same "unreachable
+   today, cheap to make impossible" class as batch 130's `nm` guard.
+3. **`BetaDemo::loadMto` releases the out-vector it replaces** (`formats/beta_demo.cpp`,
+   `formats/beta_demo.h`). Review-3 open question 3. `*outArenas = arenas` overwrote a reused
+   vector of *owned* pointers without freeing what it held, so a caller that loaded twice
+   leaked its first level's arenas. The call now deletes what the vector held, and `beta_demo.h`
+   states the rule ("THE OUT-VECTOR IS REPLACED, NOT APPENDED"). **No caller exists yet**
+   (grep over `mdk_core`, `tests`, `mdk_3ds`, `mdk_linux`), so this half is compile-verified
+   only: the Linux target compiles `beta_demo.cpp` (`mdk_linux/CMakeLists.txt:88`) and built
+   clean, and `tests/formats` does not link it — this batch did not widen the format target's
+   source list to force the point, because that list is the boundary batch 129/130 just
+   pinned.
+
+No oracle value moved. Nothing in the diff changes a pixel, a tick, a byte of parsed data or
+a gameplay predicate: it deletes operations nobody calls, completes a reset nobody reaches
+yet, and frees a vector nobody passes twice.
+
+### Review-3 disposition — 7 findings: 3 fixed, 4 owner-only, 0 rebutted
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| F1 ledger row `core.formats` cannot be closed by a batch; loop parks at `exit 6` | High | **Owner-only, unchanged.** `docs/COMPLETION_LEDGER.tsv` is in `gates_batch_integrity.PROTECTED` and is `coleshores`-owned (unwritable by uid 994). The fix is either flipping the row (evidence `tests/formats/format_tests.cpp`, verified commit = this batch) or replacing blanket protection with a monotonic-transition check. This batch did not self-authorise either. |
+| F2 `Arena` copyable while `liveCount()` is the ownership instrument | Medium | **Fixed + pinned** — deleted copy/move, four `static_assert`s, sabotage shown above. |
+| F3 nothing in the loop builds or runs `tests/formats` | Medium | **Owed, owner.** `tools/check.sh` is PROTECTED and is already dirty in the owner's own tree. The one line needed, in `run_gates`: `make -C tests/formats`. Recorded as owed rather than left implicit; the row's own acceptance command is still executed only by hand. |
+| F4 `gates_frames` cannot tell a stale capture binary from a fresh one | Medium | **Owed, owner** (`tools/runner/gates_frames.py` is PROTECTED): record the capture binary's path+sha256+mtime in the sidecar and refuse a binary older than the newest render source. **This batch did not repeat the hole:** the frame below came from `build-linux/mdk` `sha256 a6c4a6ab923c8934…`, mtime `2026-11-10 14:21:42`, which post-dates every source edit (latest `14:19:18`), and `gates_frames` reproduced `L3_f1.bmp sha=58615fc85d02e009`, the manifest's `cpp=` hash, from that binary. |
+| F5 a failed `LevelData::load` leaves the previous level's DTI/textures | Low | **Fixed + pinned** — see 2 above. |
+| F6 the batch-131 record said "+16 checks" where the arithmetic is +28 | Low | **Fixed in the record** — the batch-131 line now reads +28 (16 from the first three cases, 12 from the last two) and says why it was wrong. |
+| F7 `gates_completion.is_ancestor()`'s real non-ancestor arm is unpinned | Low | **Owed, owner** (`tools/runner/gates_completion.py` is PROTECTED). Agreed on the mechanism: the only sha-shaped failures today come from the missing-object path, so a regression in the `merge-base --is-ancestor` return-code handling would go unnoticed. |
+
+### Evidence
+
+| Check | Result |
+|---|---|
+| **Acceptance** `make -C tests/formats` | rc 0 — `running 21 tests` … `156235 checks, 0 failures` (was 20 tests / 156218 checks; **+17** from the new case) |
+| ASan+UBSan, same target | `make -C tests/formats BUILD=build-asan CXXFLAGS="… -fsanitize=address,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,undefined"`, then the binary: **rc 0, zero `leaked`/`ERROR:`/`runtime error` lines**, `156235 checks, 0 failures`. Leak-free stays true after the lifetime edits. |
+| **Gate 1** `make -C tests/scripts` | rc 0 — `All cases match the oracle.`, 567 `PASS` lines, no golden moved. Re-run per step for hard exit codes: `vm_tests` 0, `sprites_refusal_test.sh` 0, `c3d_frame_test.sh` 0, `ndsp_sink_test.sh` 0, `ubsan_decode_test.sh` 0, `main_3ds_flow_test.sh` 0, `frontend_solid_pin_test.sh` 0, `panel_geom_test.sh` 0, `emurun_harness_test.sh` 0, `tick1` 0. |
+| **Gate 2** `DISPLAY=:99 bash tools/check.sh` | rc 0 — `CHECK: ALL GATES PASSED`: `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity both targets link the same core`, `gates_smdh SKIP (no built .cia)`, `gates_frames every pinned frame is deterministic and unchanged`, `gates_batch_integrity project invariants intact`, `gates_completion every done row is backed by evidence and a commit`; gate 9 `COMPLETION SELFTEST: PASS (13 arms)`, `COMPLETION[d1]: 9 done / 13 total / 0 owner-blocked / 4 open`. |
+| **Gate 3** `make -C mdk_3ds` | rc 0. `mdk.elf` md5 `06bb4a915db8cc5af5f96aaecf1405aa` (was `a6bae2efc3ad8899649e8ad8fc4fd9d1`), `mdk.3dsx` staged 69 files / 79M. Zero compiler warnings in the log. |
+| Linux target (not a loop gate, but the only shipped target that compiles `beta_demo.cpp`) | `cmake --build build-linux --target mdk` → rc 0, `Built target mdk`, zero warnings. |
+| Emulator (AGENTS P8, `DISPLAY=:99`) | `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 45 --shot /tmp/mdk-b132/emurun2.png` → **rc 0** (not 3, not 4, not 6). Mandarine `/mnt/nas/Development/mandarine.AppImage` md5 `0d2adab6ad078c78e6d03e72086f2eb6` (r1.2.1, the pinned known good). `flow: screen=4 level=7`, `frame 2520 … steps=2534`, post-reap `the guest log ends at frame 2580 (48 frame lines logged)`, `stereo render_3d=0 factor_3d=0` (mono), `gl forced llvmpipe`. Identical to batch 131's run: the lifetime changes moved no frame. |
+| Frame | `docs/frames/2026-11-10-arena-copy-immunity.png` + `.txt`, captured `2026-11-10T21:31:26Z`; `gates_frames` `PASS L3_f1.bmp sha=58615fc85d02e009` = the manifest's `cpp=` hash. |
+| Language/numeric gates | `audit_c_with_classes` 0 violations — the new `= delete` declarations and the `static_assert` block add no `virtual`, no template of the project's, no `assert()`. `<type_traits>` is not on the banned-include list and pulls no code. |
+
+Logs: `/tmp/mdk-b132/` (`/tmp/kilo` is `coleshores`-owned and not writable by uid 994).
+
+### Prior-solution lookup
+
+- **Pi knowledge (`mdk-sdl`)** — present but **stale**: `knowledge_status` reported *updated 2360m ago,
+  29 files modified since last index*, and both `knowledge_search` (hybrid and fast) and
+  `knowledge_symbol_search liveCount` returned nothing for code that is in the tree. That is the
+  documented staleness, not an absence of prior art, so the index was refreshed with
+  `knowledge_update` (+690 / −343 / 4459 unchanged) and the same search then returned `arena.h`,
+  `arena.cpp` and `mto.h`. The refreshed hit is this subsystem's own contract text, i.e. no prior
+  solution to a *new* problem was found.
+- **Obsidian MCP** — no `obsidian_*` tool is exposed in this session, which AGENTS P9 says to report
+  as a session configuration fault rather than paper over. Disk fallback used narrowly: the vault's
+  `10-projects/mdk-sdl/` and `30-architecture/patterns/` notes on arena ownership / 3DS lifetime
+  were already summarised in `AGENTS.md` and batch 131's log; nothing new for copy immunity.
+- **Cognee MCP** — no `cognee_*` tool is exposed, so the graph was **not** consulted. Stated rather
+  than implied.
+
+### Next, per the ledger
+
+`core.formats`'s substance is now closed on every axis a batch can reach: the target links
+(129), its guard cannot report clean when it cannot run (130), its arenas are owned and freed
+(131), and the instrument that proves it can no longer be broken by an ordinary C++ operation
+(132), with the sanitizer at zero leaks and a failed load leaving nothing behind. **R15-1/F1 is
+still the only thing between this row and `done`, and it is owner-only**: flip the row (evidence
+`tests/formats/format_tests.cpp`, verified commit = this batch) or make the ledger writable with
+monotonic-transition checks. If the ledger is not touched, attempt 9 ends the loop with `exit 6`.
+Two owner gate changes are also owed and recorded above: `make -C tests/formats` in
+`tools/check.sh`'s gates (F3) and a capture-binary identity check in `gates_frames.py` (F4).

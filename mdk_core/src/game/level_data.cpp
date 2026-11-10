@@ -36,12 +36,22 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     // they hold derived data, so the next pose is rebuilt from the model.
     scripts::forgetPoseCaches();
 
-    // Loading into a LevelData that already holds one STARTS OVER. The MTO
-    // releases the arenas it parsed, the corridors are ours to delete, and the
-    // palette cache is keyed by arena pointer so it must not outlive either.
-    // Without this a second load would append a second helping to arenas_ and
-    // leak the previous level's corridors. On a fresh object every line here
-    // is a no-op.
+    // Loading into a LevelData that already holds one STARTS OVER, and a load
+    // that FAILS leaves an EMPTY level, never a mixture of two levels. Every
+    // field is released here, BEFORE the first read, because four of the six
+    // reads below are individually fallible and a reset that missed a field
+    // would leave the PREVIOUS level's DTI, MTO bytes or textures behind in an
+    // object that claims to hold another one: archivesOf() searches the level
+    // archive for every arena's materials, so the new level's arenas would
+    // resolve their surfaces against the old level's textures. On a fresh
+    // object every line here is a no-op.
+    //
+    // The MTO releases the arenas it parsed (mto.h), the corridors are ours to
+    // delete, and the palette cache is keyed by arena pointer so it must not
+    // outlive either. Without those two lines a second load would append a
+    // second helping to arenas_ and leak the previous level's corridors.
+    out->number_ = 0;
+    out->dti_ = formats::Dti();
     out->palettes_.clear();
     for (size_t i = 0; i < out->corridors_.size(); i++) {
         delete out->corridors_[i];
@@ -49,8 +59,8 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     out->corridors_.clear();
     out->arenas_.clear();
     out->mto_ = formats::Mto();
-
-    out->number_ = number;
+    out->mtoBytes_.clear();
+    out->levelTextures_ = formats::TextureArchive();
 
     char base[128];
     snprintf(base, sizeof(base), "TRAVERSE/LEVEL%d/LEVEL%d", (int)number, (int)number);
@@ -79,8 +89,9 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     }
 
     // The arenas. The bytes are kept in the level (mtoBytes_): the MTO and the
-    // arenas/animations it parses borrow them for the level's whole life.
-    out->mtoBytes_.clear();
+    // arenas/animations it parses borrow them for the level's whole life. The
+    // reset above already emptied it, and a failed read does not touch the
+    // buffer it was given, so the reset is what keeps a failed load empty.
     path = std::string(base) + "O.MTO";
     if (!data->read(path, &out->mtoBytes_)) {
         return false;
@@ -131,6 +142,9 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
         }
     }
 
+    // The number is set only on success. A level that failed to load is an
+    // empty object, and it must not claim a number it has no files for.
+    out->number_ = number;
     return true;
 }
 

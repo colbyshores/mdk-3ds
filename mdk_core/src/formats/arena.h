@@ -192,6 +192,27 @@ public:
 private:
     Arena();
 
+    // AN ARENA IS NOT COPYABLE AND NOT MOVABLE.
+    //
+    // An arena is made by one of the three parse functions above and lives
+    // behind the pointer they return: the MTO's cache, a level's corridor list
+    // and the demo's vector all hold `Arena*`, never an `Arena`. So copying
+    // one is not merely unused, it is wrong twice over. liveCount() is the
+    // instrument the ownership contract in mto.h is pinned with, and the
+    // implicit copy operations do not pass through the constructor and
+    // destructor that maintain it: copying a live arena makes the counter say
+    // one object while two exist, and deleting the original then says zero
+    // while the copy is still being drawn. A move is no better — the source's
+    // destructor decrements for an object the destination is now using.
+    //
+    // With these gone the counter's invariant is a compile-time property
+    // instead of a comment, and the copy that would have broken it does not
+    // build. The pin is in tests/formats/format_tests.cpp.
+    Arena(const Arena&) = delete;
+    Arena& operator=(const Arena&) = delete;
+    Arena(Arena&&) = delete;
+    Arena& operator=(Arena&&) = delete;
+
     // The world section: the materials, the BSP tree, the triangles and the
     // vertices.
     void parseWorldSection(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset,
