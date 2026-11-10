@@ -141,7 +141,28 @@ ITER_TIMEOUT="${ITER_TIMEOUT:-14400}"
 # REVIEW_TIMEOUT + 10m, so the collector is never killed before its reviewer returns.
 REVIEW_TIMEOUT="${REVIEW_TIMEOUT:-10800}"
 REVIEW_FAIL_LIMIT="${REVIEW_FAIL_LIMIT:-2}"
-MAX_ITER="${MAX_ITER:-80}"
+# The completion ledger is what "done" MEANS. Without it the loop had no exit but
+# a budget (`MAX_ITER`) or, in the sibling project, a model-emitted FINAL line --
+# both attestations. Level d1 is the owner's own goal (CONTINUATION.md:871);
+# d2 adds everything spec-complete that needs no console; d3 adds the closed-lid
+# autonomous hardware cycle. Raise the level only when the owner says so.
+COMPLETION_LEVEL="${COMPLETION_LEVEL:-d1}"
+# Consecutive iterations allowed on ONE open ledger row before the loop stops for
+# an operator. This is the antidote to 25 consecutive batches spent on one gate
+# rule: an item that cannot be closed in this many iterations needs a decision or
+# a re-scoped acceptance criterion, not a 26th attempt. Exit 6 parks the unit.
+COMPLETION_ITEM_MAX="${COMPLETION_ITEM_MAX:-8}"
+COMPLETION_GATE="$ROOT/tools/runner/gates_completion.py"
+# MAX_ITER defaults to a DERIVED budget, not a fixed 80: at 25 iterations per open
+# row it scales with what is actually left, so the cap cannot truncate the port
+# mid-work. An explicit MAX_ITER still wins.
+if [ -z "${MAX_ITER:-}" ]; then
+    _open_rows="$(python3 "$COMPLETION_GATE" --count --level "$COMPLETION_LEVEL" 2>/dev/null)"
+    case "$_open_rows" in ''|*[!0-9]*) _open_rows=3 ;; esac
+    MAX_ITER=$(( _open_rows * 25 ))
+    [ "$MAX_ITER" -lt 80 ] && MAX_ITER=80
+    unset _open_rows
+fi
 STALL_LIMIT="${STALL_LIMIT:-3}"
 FAIL_LIMIT="${FAIL_LIMIT:-3}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-300}"
@@ -216,6 +237,15 @@ state_write() {
 # accident: a full disk stops the loop (restartable, burst-capped) instead of
 # running an iteration on a record it did not write.
 state_set() { state_write "$1=$2"; }
+
+# --- the completion ledger: what "done" means ------------------------------
+# `--next` names the row this iteration works; `--strict` answers whether every
+# row at this level is closed. Neither writes anything: the gate reads evidence,
+# it never produces it. A harness that could mark its own row done would be the
+# `FINAL`-line failure wearing a gate.
+completion_gate() { python3 "$COMPLETION_GATE" "$@"; }
+completion_next()   { completion_gate --next --level "$COMPLETION_LEVEL" 2>/dev/null; }
+completion_strict() { completion_gate --strict --level "$COMPLETION_LEVEL" 2>&1; }
 
 # --- model identity: the upstream string, never the alias --------------------
 # (vault: model-identity-is-the-upstream-string-not-the-alias). On a shared
@@ -747,8 +777,46 @@ while :; do
     ITER=$((ITER+1))
     ILOG="$RUN_DIR/iter-$ITER.log"
     HEAD_BEFORE="$(git -C "$ROOT" rev-parse HEAD)"
+    # Which ledger row is this iteration for? The ledger picks it, not the
+    # builder: `ralph/builder.md` used to say "start from the first unfinished
+    # item" in prose, and prose is reinterpreted every iteration. That is how
+    # batches 114-127 all named the same two items and none of them did one.
+    C_ITEM_ID=""; C_ITEM_CMD=""; C_ITEM_SPEED=""
+    C_ITEM_LINE="$(completion_next || true)"
+    if [ -n "$C_ITEM_LINE" ]; then
+        IFS=$'\t' read -r C_ITEM_ID C_ITEM_SPEED C_ITEM_CMD <<<"$C_ITEM_LINE"
+        if [ "$C_ITEM_ID" = "$(state_get COMPLETION_ITEM)" ]; then
+            _prev_iters="$(state_get COMPLETION_ITERS)"
+            case "$_prev_iters" in ''|*[!0-9]*) _prev_iters=0 ;; esac
+            C_ITEM_ITERS=$(( _prev_iters + 1 ))
+        else
+            C_ITEM_ITERS=1
+        fi
+        state_set COMPLETION_ITEM "$C_ITEM_ID"
+        state_set COMPLETION_ITERS "$C_ITEM_ITERS"
+        log "iter=$ITER ledger item=$C_ITEM_ID attempt=$C_ITEM_ITERS/$COMPLETION_ITEM_MAX"
+        if [ "$C_ITEM_ITERS" -gt "$COMPLETION_ITEM_MAX" ]; then
+            log "STOP: ledger item $C_ITEM_ID has had $((C_ITEM_ITERS-1)) iterations without passing its acceptance command ($C_ITEM_CMD) — this needs an owner decision or a re-scoped acceptance criterion, not another attempt"
+            echo "LEDGER ITEM STALLED at iter $ITER: $C_ITEM_ID — $C_ITEM_CMD (see $RUN_DIR/iter-$ITER.log)" >>"$SUMMARY"
+            exit 6
+        fi
+    else
+        log "iter=$ITER no open ledger row at $COMPLETION_LEVEL (the iteration runs as before)"
+    fi
     {
         cat "$BUILDER_FILE"
+        if [ -n "$C_ITEM_ID" ]; then
+            printf '\n---\n\n'
+            printf 'THIS ITERATION SOLE LEDGER ITEM (the ledger chose it; you may not)\n\n'
+            printf 'item:       %s\n' "$C_ITEM_ID"
+            printf 'speed:      %s\n' "$C_ITEM_SPEED"
+            printf 'acceptance: %s\n' "$C_ITEM_CMD"
+            printf '\nWork this item to the acceptance command above. Do not open a different\n'
+            printf 'ledger row. Do not widen a gate unless the gate is what this item needs;\n'
+            printf 'a batch that only elaborates a test is not work on this item.\n'
+            printf 'Attempt %s of %s on this item; at %s the loop stops for an operator.\n' \
+                "$C_ITEM_ITERS" "$COMPLETION_ITEM_MAX" "$COMPLETION_ITEM_MAX"
+        fi
         printf '\n---\n\n'
         cat "$PROMPT_FILE"
         # docs/KILO_RALPH_LOOP_POLICY.md is the owner's GENERIC loop policy. It is
@@ -1271,6 +1339,26 @@ POLICY_PRECEDENCE
     # any key the loop writes elsewhere, so these three vanished from the durable
     # record every single iteration. Now an unnamed key survives the rewrite instead
     # of disappearing from it, and the writer's status is checked (AR6-4).
+    # The real exit: did the ledger close? This is the only stop that means
+    # "finished" rather than "out of budget". rc=2 is NOT VERIFIED (ledger
+    # missing or unreadable) and must keep the loop running rather than end it
+    # on a check that never ran — the same distinction netload_stub's
+    # run_tests.py draws between a failure and an environment that could not
+    # verify.
+    if [ -f "$COMPLETION_GATE" ]; then
+        C_OUT="$(completion_strict)"; C_RC=$?
+        if [ "$C_RC" -eq 0 ]; then
+            log "COMPLETION[$COMPLETION_LEVEL] reached at iter $ITER — every ledger row at or below the level is done or owner-blocked"
+            printf '%s\n' "$C_OUT" >>"$SUMMARY"
+            echo "COMPLETION reached at iter $ITER: $COMPLETION_LEVEL" >>"$SUMMARY"
+            phase milestone
+            exit 0
+        elif [ "$C_RC" -eq 2 ]; then
+            log "COMPLETION: NOT VERIFIED at iter $ITER — $C_OUT"
+        else
+            log "COMPLETION[$COMPLETION_LEVEL] open at iter $ITER: $(printf '%s' "$C_OUT" | head -1)"
+        fi
+    fi
     state_write "ITER=$ITER" "LAST_RC=$RC" "HEAD=$(git -C "$ROOT" rev-parse --short HEAD)" \
         "STALL=$STALL" "FAILS=$FAILS" "REVIEW_CALLS=$REVIEW_CALLS" \
         "ITERS_SINCE_REVIEW=$ITERS_SINCE_REVIEW" "REVIEW_SKIP_COUNT=$REVIEW_SKIP_COUNT" \

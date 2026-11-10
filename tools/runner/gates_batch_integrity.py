@@ -13,6 +13,12 @@ PROTECTED = {
     "AGENTS.md",
     "SPEC.md",
     "SPEC-COMPLETION.md",
+    # The completion ledger is the definition of "done". A batch that can edit
+    # the rows it is judged against can declare itself finished, so the ledger
+    # and its owner-block register are protected exactly like the gates.
+    "docs/COMPLETION_LEDGER.tsv",
+    "docs/OWNER_BLOCKS.md",
+    "tools/runner/gates_completion.py",
     "tools/check.sh",
     "tools/runner/gates_frames.py",
     "tools/runner/gates_batch_integrity.py",
@@ -175,7 +181,7 @@ def main() -> int:
     # Static project invariants: do not let a low-tier worker silently rewrite
     # the mission, disable its gates, or replace the configured oracle.
     required = {
-        "tools/check.sh": ["tools/runner/gates_frames.py", "gates_vfp.py", "gates_core_parity.py", "gates_batch_integrity.py"],
+        "tools/check.sh": ["tools/runner/gates_frames.py", "gates_vfp.py", "gates_core_parity.py", "gates_batch_integrity.py", "gates_completion.py"],
         "ralph/builder.md": ["READ-ONLY behavioural", "Never weaken a gate", "Phase 2", "EVERY COMMIT", "owner-protected"],
         "SPEC-COMPLETION.md": ["behavioural oracle", "post-process gap sweep", "frame-golden harness", "original `./MDK/MDKD3D.EXE`"],
         "docs/frames/README.md": ["visual history", "publish_frame.sh", "oracle is never published"],

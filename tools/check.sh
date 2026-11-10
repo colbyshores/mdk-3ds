@@ -180,5 +180,35 @@ if [ $rc -ne 0 ]; then
 fi
 record PASS "gates_batch_integrity" "project invariants intact"
 
+# ---------------------------------------------------------------------------
+# 9. the completion ledger
+# ---------------------------------------------------------------------------
+# This gate does NOT fail while work remains: an open row is the normal state of
+# a port in progress. It fails only on a claim it cannot verify -- a `done` row
+# whose evidence is missing, whose verified commit is not an ancestor of HEAD,
+# or an `owner-blocked` row that docs/OWNER_BLOCKS.md does not name. The exit-1
+# "still incomplete" answer belongs to the loop's --strict call, not to the
+# suite, or every iteration would be red until the whole port is finished.
+gate "gates_completion (the ledger's done rows must be verified, not asserted)"
+$PY tools/runner/gates_completion.py --selftest > "$tmp/completion-selftest.log" 2>&1
+rc=$?
+if [ $rc -ne 0 ]; then
+    cat "$tmp/completion-selftest.log" >&2
+    fail "gates_completion" "the gate's own seeded arms do not all redden"
+fi
+grep -E '^COMPLETION SELFTEST' "$tmp/completion-selftest.log" | sed 's/^/  /'
+$PY tools/runner/gates_completion.py --report > "$tmp/completion.log" 2>&1
+rc=$?
+grep -E '^COMPLETION' "$tmp/completion.log" | sed 's/^/  /'
+if [ $rc -eq 2 ]; then
+    cat "$tmp/completion.log" >&2
+    fail "gates_completion" "the ledger could not be read (NOT VERIFIED)"
+fi
+if [ $rc -ne 0 ]; then
+    grep -E '^  - ' "$tmp/completion.log" >&2
+    fail "gates_completion" "a done row is not verified"
+fi
+record PASS "gates_completion" "every done row is backed by evidence and a commit"
+
 printf '\n%s' "$SUMMARY"
 printf '\nCHECK: ALL GATES PASSED\n'
