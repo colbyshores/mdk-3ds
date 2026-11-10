@@ -21132,7 +21132,12 @@ the format calls a byte figure to equal the backend's own `cap * 5 * sizeof(floa
 slot) and the corner rule requires every slot it calls a corner figure to BE the capacity, so a
 line whose only figure is the honest KB figure disagrees with nothing. A line-level demand that the
 capacity also appear as an argument of its own could therefore only ever refuse a line that was
-already correct — and the cheap way past it was to print a corner figure the line did not need,
+already correct [CORRECTED IN BATCH 115, REVIEW-21 F2: this sentence is false as written. The rule
+also refused a refusal line whose format names NO unit word and prints a figure that is not the
+refused request — `"objects: refused %d at frame %lu", objectCorners, (unsigned long)frame` — and
+batch 114 accepted that with `PASS Main3dsFlow (20 checks, 50 arms, 20 probes)`. The property is
+restored in the narrowed form in batch 115 below; the honest byte-only line stays green.] — and the
+cheap way past it was to print a corner figure the line did not need,
 which buys back review-11 F1's `480 corners = 80 KB` with the gate's own PASS. That is review-10
 F6's trade and this family has now been caught making it twice, which is the answer to the
 reviewer's open question 1: the rule is "the capacity explains every figure the line claims", not
@@ -21208,4 +21213,124 @@ is the record of the last nine rounds.
 
 **Protected file.** `ralph/builder.md` was dirty at dispatch, is in `PROTECTED`
 (`tools/runner/gates_batch_integrity.py`), and review-20 independently confirmed its mtime predates
+HEAD. Left uncommitted and unmodified.
+
+---
+
+## Batch 115 (iteration 22) — review-21 closed 3/3 (no Critical, no High): F1, F2 and F3 all
+fixed, none rebutted
+
+**Scope.** `tests/scripts/main_3ds_flow_test.sh` only, plus these two state files and the frame
+pair. No `mdk_3ds/**` and no `mdk_core/**` path changed, so no P8 emulator evidence is owed and
+none is claimed, and `mdk_3ds/mdk.elf` is still `b1997a5dca83639acf603d518abe8e62` — bit-identical
+to batch 107's, re-verified by a full `make -C mdk_3ds` after the edit rather than asserted. The
+oracle reference for the property under test is unchanged: `mdk_3ds/src/main_3ds.cpp:953` prints the
+capacity the pass handed the backend, and `renderer_c3d.cpp`'s own `linearAlloc(...)` line is the
+byte count it has to agree with.
+
+**F1 (Medium) — CONFIRMED, fixed at the property the skip was missing, and at the class.**
+Reproduced first, exactly as reported: with the refusing branch carrying
+`mdk::log3dsPrintf("objects: linearAlloc FAILED, bytes refused", attempted);` the shipped gate died
+with `ValueError: min() iterable argument is empty`, `exit=1`, checks 18–20 never run, no arm and no
+probe scored. The root cause is that the review-17 R3 skip asked the wrong question: it read
+`not vals and not convs`, which is about the ARGUMENT LIST, when what puts a line outside the figure
+rules is that the FORMAT prints no figure. The same format with a dangling argument — which is what
+a refusal line looks like after a batch deletes a conversion and forgets the argument, the exact
+edit review-18 F2 was written about — fell through into a slot loop over zero conversions and
+`min([])`. The skip is now `if not convs: continue`, which subsumes review-17 R3's case and states
+the property once: a format that asks for nothing has no slot to adjudicate. Nothing else moved:
+the baked-digit rule runs ABOVE it, so review-18 F2's `"objects: refused 81920 bytes"` is still red,
+and the arity rule below is vacuous for a format that asks for nothing. Pinned by
+`probe_failure_line_names_a_unit_in_prose_but_prints_no_figure`.
+
+The second half is the class, not this instance. `adjudicate_mutant()` now turns a raising
+adjudication into a named FAIL of the arm or probe that caused it. Evidence that both halves bite:
+reverting only the skip gives `FAIL main_3ds flow probe a refusal line spells a unit in prose and
+prints no figure at all (review-21 F1): adjudicating it raised ValueError: min() iterable argument
+is empty` and `only 21 of 22 probes stayed green`; reverting the skip AND removing the wrapper dies
+with the raw traceback and no tally at all, which is what review-21 F1 found and what review-15 F4
+found in a different check. A gate that cannot read a mutant is a failure of the gate, and it is now
+said in the same voice as every other failure.
+
+**F2 (Medium) — CONFIRMED, and fixed by restoring the property rather than by correcting prose.**
+Both reviewer mutants reproduce: `"objects: refused %d at frame %lu", objectCorners,
+(unsigned long)frame` and `"objects: stream mesh refused %d", objectCorners` are
+`PASS Main3dsFlow (20 checks, 50 arms adjudicated red, 20 probes green)` on the shipped gate and
+`FAIL` at check 17 on batch 113's (`git show d5f60d9:tests/scripts/main_3ds_flow_test.sh`). The
+reviewer is right that batch 114's rationale sentence is false as written — the whole-argument rule
+did not only refuse lines that disagreed with nothing, it also refused these — and right that the
+check *description* had been narrowed honestly, so the defect is the rationale plus a coverage loss
+nobody recorded.
+
+The reviewer offered two acceptable remediations and flagged the choice as the owner's (open
+question 1). This batch takes the first: the property survives in the form that still matters. A
+refusal line whose format names NO unit word anywhere must print the refused capacity in one of the
+slots it FILLS. It did not take the second (correct the sentences and add a probe pinning the
+accepted shape) because `PROBES` is documented as "correct code each check must accept", and the
+shape in question is review-11 F1's defect: a probe would have made the suite REQUIRE the gate to
+accept the thing the check exists to refuse, which is a worse record than the sentence was. Two
+details carry the weight. (a) The rule is conditional on the line printing at least one non-string
+argument, so review-17 R3's figure-less companion line stays green. (b) It reads the slots the
+format FILLS, not the argument list, so a capacity parked past the last conversion — which prints
+nothing — cannot vouch for a line that prints the frame's corner count.
+
+Why this does not repeat review-20 F2: every honest line that finding was about names the unit its
+figure is in (`"... linearAlloc FAILED, %d KB refused", kb`, `"refused corners %d = %d KB linear"`),
+so each is exempt and each existing probe still passes unchanged. And the route-around batch 114
+named — print a corner figure the line did not need — now has to print a corner figure that IS the
+capacity, which is the requirement itself, not a way around it. Pinned by two arms; the gate mutant
+that deletes the rule loses exactly those two and prints `only 51 of 53 arms adjudicated red`.
+Batch 114's claim to have settled review-20's open question 1 with "the capacity explains every
+figure the line claims" is withdrawn: that is the rule for a line that names a unit, and a line that
+names none now has to name the capacity.
+
+**F3 (Low) — CONFIRMED, fixed by making the docstring true.** Direct calls of the shipped
+functions: six nested parens unwrap to `81920` and `bare_literal` is True; seven, eight and nine do
+not, and `cap_name("(((((((attempted)))))))")` returned `(attempted)`, so the same bound that let a
+deeply wrapped stale figure through the literal rule also reddened an honest line that wrapped the
+capacity that deep. `unwrap()` is now `while True` with the equality return. It terminates because
+every pass only removes characters — a cast becomes a space, a matched pair of parens goes, and the
+result is stripped — so a pass that changes the text makes it strictly shorter and the loop cannot
+oscillate; the equality break alone is the fixpoint the comment always claimed. Pinned from both
+sides: the arm `(((((((81920)))))))` is red on the shipped gate and green on a gate mutant with the
+bound put back (`only 52 of 53 arms`), and the probe `(((((((attempted)))))))` is green on the
+shipped gate and red on that same mutant, verified by running the bounded gate over that file.
+
+**Review-21 open question 4, the other half of it.** The same finding noted that `bare_literal` did
+not model an exponent, and it did not: `8192e1` IS 81920 and the pattern matched `8192` and stopped,
+so a stale figure in scientific notation was green. `LITERAL_RE` now has an exponent alternative and
+one more arm; the gate mutant that puts the old pattern back prints `only 53 of 54 arms adjudicated
+red`. The claim is now "one fixpoint unwrap, one pattern, twelve spellings", and the >6-deep-paren
+half of the same question is closed by the fixpoint above rather than enumerated.
+
+**Deferred with cause (owner-protected tooling, not this batch's to change).** Review-21 open
+question 2: `tools/runner/gates_batch_integrity.py` inspects the committed range and the staged set,
+so an unstaged working-tree edit of a `PROTECTED` file is invisible to it — recorded, not touched,
+because that gate is owner-protected. Review-21 open question 3: a re-published frame is
+indistinguishable from a new capture by `gates_frames`; the only control is disclosure, and this
+batch's frame is byte-identical to the thirteen before it, stated here and in the sidecar rather
+than hidden.
+
+**Gates, as measured.** `sh tests/scripts/main_3ds_flow_test.sh` → `PASS Main3dsFlow (20 checks,
+54 arms adjudicated red, 22 probes green)`. `sh tests/scripts/c3d_frame_test.sh` → `PASS C3dFrame
+(31 checks, 49 arms adjudicated red, 2 probes green)` (unchanged: no backend rule moved). `sh
+tests/scripts/arm_compile_check.sh` → `PASS ArmCompile (129 mutant(s), 0 diagnostics,
+/opt/devkitpro/devkitARM/bin/arm-none-eabi-g++)` — 77 flow + 52 c3d, up six from batch 114's 123,
+which is exactly the four new arms and two new probes, every one of them compiled for the target.
+`make -C tests/scripts` → `All cases match the oracle.` `bash tools/check.sh` → `CHECK: ALL GATES
+PASSED` with `SKIP gates_smdh  no built .cia to read`, `PASS gates_frames`, `BATCH INTEGRITY: PASS`
+and `audit_c_with_classes 0 violations` / `gates_vfp 0 blockers`. `make -C mdk_3ds` → builds
+(`exit=0`, `3DSX mdk.3dsx`, DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM), `mdk.elf`
+md5 `b1997a5dca83639acf603d518abe8e62`.
+
+**Prior-solution lookup (AGENTS §0, P9).** `pi-knowledge` `mdk-sdl` searched for prior work on
+which refusal-line slots a gate may adjudicate and on a gate dying mid-suite instead of naming a
+failure (`check 17 refusal line figure rules unit word attribution conversion no conversion`): the
+single hit was `SPEC-COMPLETION.md`'s reference list, unrelated — no finding predating this one, and
+the retrieved text was treated as a lead and checked against the repository. No `obsidian_*` or
+`cognee_*` tools are exposed in this session, so per P9 that is recorded as a session configuration
+gap and NOT as a lookup that happened; Cognee's graph search is the loss P9 names.
+
+**Protected file.** `ralph/builder.md` was dirty at dispatch, is in `PROTECTED`
+(`tools/runner/gates_batch_integrity.py`), and review-21 independently confirmed its mtime predates
 HEAD. Left uncommitted and unmodified.

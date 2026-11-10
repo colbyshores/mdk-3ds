@@ -247,9 +247,12 @@
 #     own refusal writes. It is deleted, not narrowed: the per-slot rules already require
 #     every byte figure to BE the backend's capacity arithmetic and every corner figure
 #     to BE the capacity, so the line-level rule could only ever refuse a line that
-#     disagreed with nothing, and the cheap way past it was to print a corner figure the
-#     line did not need. That is review-11 F1's wrong request bought with the gate's own
-#     PASS, and review-10 F6 is the same trade. A probe pins the honest line for good.
+#     disagreed with nothing [CORRECTED BY BATCH 115 / REVIEW-21 F2: it also refused a
+#     line that named no unit word at all and printed a figure that was not the refused
+#     request, and deleting it accepted that; the property is restored in the narrowed
+#     form], and the cheap way past it was to print a corner figure the line did not
+#     need. That is review-11 F1's wrong request bought with the gate's own PASS, and
+#     review-10 F6 is the same trade. A probe pins the honest line for good.
 #  F4 (Low, CONFIRMED): (a) the corner rule read only the text AFTER its conversion, so
 #     `corners %d, attempted %d = %d KB` printed the frame's corner count green while
 #     say() claimed every corner slot; a unit word now belongs to the conversion NEAREST
@@ -263,6 +266,35 @@
 #     was reproduced verbatim; the reviewer's placement of the pre-arm between
 #     `r->inFrame = true;` and `r->frame++;` broke an unrelated arm's anchor, which the
 #     harness refuses to report on rather than paper over.
+#
+# WHAT REVIEW-21 (run-20261108-195620) FOUND AND THIS BATCH FIXED, each reproduced on
+# the reviewer's own mutant before any edit:
+#  F1 (Medium, CONFIRMED): check 17 died with `ValueError: min() iterable argument is
+#     empty` on a refusal line whose format NAMES a unit word and carries NO conversion
+#     -- `("objects: linearAlloc FAILED, bytes refused", attempted)`, the edit a batch
+#     makes when it deletes a conversion and leaves the argument behind. Fail-closed,
+#     but it stopped checks 18-20, scored no arm and no probe, and named no property:
+#     review-15 F4's symptom again, reached because the review-17 R3 skip read `not vals
+#     and not convs` when what makes a line unreadable by the figure rules is that the
+#     FORMAT prints no figure, whatever it is handed. The skip now reads `not convs`, one
+#     probe pins it, and an arm or probe whose adjudication raises is reported as a named
+#     FAIL of its own instead of a traceback.
+#  F2 (Medium, CONFIRMED): batch 114's rationale for deleting the whole-argument rule was
+#     false as written. The rule did not only ever refuse a line that disagreed with
+#     nothing: it also refused a refusal line that names NO unit word and prints a figure
+#     that is not the refused request, and batch 114 accepted that with a full PASS, with
+#     no arm and no probe recording the loss. The property is restored in the narrowed
+#     form that still bites -- a refusal line whose format names no unit at all must print
+#     the refused capacity in one of the slots it FILLS (a dangling argument past the last
+#     conversion prints nothing and cannot vouch for the line). Every honest line
+#     review-20 F2 was about names the unit its figure is in, so the byte-only line stays
+#     green and `"objects: refused %d at frame %lu", objectCorners, (unsigned long)frame`
+#     is red again. Two arms.
+#  F3 (Low, CONFIRMED): `unwrap` was documented as a fixpoint and bounded at six passes,
+#     so a figure wrapped in seven parens walked through `bare_literal` green while
+#     `cap_name` failed to read a capacity wrapped that deep and reddened an honest line.
+#     Each pass only removes characters, so the equality break alone IS a fixpoint; the
+#     bound is gone, one arm pins the literal half and one probe the capacity half.
 #
 # The backend's copy of the same edge trigger (`meshAllocFailureLogged`, the line that
 # actually printed 1710 times) is pinned in c3d_frame_test.sh, which is the file whose
@@ -636,22 +668,35 @@ def unwrap(t):
     `((int64_t)81920)` and `(int64_t)(81920)` are the same figure as `81920`, and a
     rule that reads one spelling of four is the rule review-19 F4 was written about,
     one spelling on. The two-word casts need their own pattern: `CAST_RE` matches one
-    word."""
-    for _ in range(6):
+    word.
+
+    Review-21 F3: the loop was `for _ in range(6)`, which is a BOUND wearing a
+    docstring that says fixpoint -- at seven nested parens the unwrap stopped, so
+    `(((((((81920)))))))` walked through `bare_literal` green, and the same bound made
+    `cap_name` fail to read a capacity wrapped that deep, a false red on an honest
+    line. Every pass here only removes characters (a cast becomes a space, a matched
+    pair of parens goes, and the result is stripped), so a pass that changes the text
+    makes it strictly shorter and the loop cannot oscillate: the equality break alone
+    is the fixpoint the comment always claimed.
+    """
+    while True:
         n = MULTI_CAST_RE.sub(" ", CAST_RE.sub(" ", t)).strip()
         if wrapping_paren(n):
             n = n[1:-1].strip()
         if n == t:
-            break
+            return n
         t = n
-    return t
 
 
 # A number that stands for itself: decimal or hex, with an integer suffix, with a
-# sign, or as a float with an `f`. Review-20 F4c: the old pattern was unsigned and
-# integer-only, so `81920.0f` and `-81920` were stale figures that walked through the
-# rule that exists to refuse stale figures.
+# sign, as a float with an `f`, or with an exponent. Review-20 F4c: the old pattern was
+# unsigned and integer-only, so `81920.0f` and `-81920` were stale figures that walked
+# through the rule that exists to refuse stale figures. Review-21 open question 4: the
+# exponent was the same hole one spelling on -- `8192e1` IS 81920, and the old pattern
+# matched `8192` and gave up, so a stale figure written in scientific notation was
+# green. Hex must carry its `0x`, or the identifier `abc` would read as a literal.
 LITERAL_RE = re.compile(r"[-+]?(?:0[xX][0-9a-fA-F]+[uUlLiI]*"
+                        r"|(?:\d+\.\d*|\.\d+|\d+)[eE][-+]?\d+[fF]?"
                         r"|(?:\d+\.\d*|\.\d+)[fFlL]?|\d+[uUlLiIfFlL]?)")
 
 
@@ -659,10 +704,10 @@ def bare_literal(v):
     """True when `v` IS a number rather than computed from one (review-19 F4,
     review-20 F4c). `81920`, `81920u`, `0x14000`, `0x14000UL`, `(int64_t)81920`,
     `(unsigned long)81920`, `(81920)`, `((int64_t)81920)`, `(int64_t)(81920)`,
-    `-81920` and `81920.0f` are ONE defect -- a figure with no source to disagree
-    with -- in eleven spellings, so the test is one fixpoint unwrap and one pattern,
-    not a list of spellings. Hex must carry its `0x`, or the identifier `abc` would
-    read as a literal.
+    `-81920`, `81920.0f` and `8192e1` are ONE defect -- a figure with no source to
+    disagree with -- in twelve spellings, so the test is one fixpoint unwrap and one
+    pattern, not a list of spellings. Hex must carry its `0x`, or the identifier `abc`
+    would read as a literal.
     """
     return bool(LITERAL_RE.fullmatch(unwrap(v)))
 
@@ -900,7 +945,9 @@ CHK = {
         "the frame's corner count (review-11 F1): every figure the format's own unit "
         "words assign to a byte figure must be the backend's capacity x stride x "
         "sizeof(float) (a KB slot divides by 1024), every figure they assign to a "
-        "corner figure must BE that capacity, and no figure may be baked into the "
+        "corner figure must BE that capacity, a line whose format names no unit at all "
+        "must still print that capacity in one of the slots it fills (review-21 F2), and "
+        "no figure may be baked into the "
         "format text at all, because a figure with no argument behind it has no source "
         "to disagree with (review-18 F2/F3, review-19 F1/F2, review-20 F1/F2/F4)",
     "failure-latch-re-arms-on-success":
@@ -1291,14 +1338,21 @@ def adjudicate(text, quiet=False):
         if re.search(r"\d", FIGURE_FMT.sub(" ", fmt)):
             fail_ok = False
             break
-        # Review-17 R3: a refusal line that states NO figure at all -- the natural
-        # companion to the backend's own `linearAlloc(%u) FAILED`, e.g. "objects:
-        # linearAlloc FAILED for the stream mesh" -- disagrees with nothing, so it
-        # cannot fail a rule about disagreement. Reddening it was the gate refusing a
-        # shape the port may write (review-10 F6), and the failure text even described
-        # a defect the line did not have. The rule is therefore conditional on the
-        # format NAMING a figure.
-        if not vals and not convs:
+        # Review-17 R3, widened by review-21 F1: what puts a line outside the figure
+        # rules is that it PRINTS no figure, and that is a property of the FORMAT, not of
+        # the argument list. A refusal line that states no figure -- the natural companion
+        # to the backend's own `linearAlloc(%u) FAILED`, e.g. "objects: linearAlloc FAILED
+        # for the stream mesh" -- disagrees with nothing, so it cannot fail a rule about
+        # disagreement. Reddening it was the gate refusing a shape the port may write
+        # (review-10 F6), and the failure text even described a defect the line did not
+        # have. But the skip read `not vals and not convs`, so the SAME format with a
+        # dangling argument -- `("objects: linearAlloc FAILED, bytes refused", attempted)`,
+        # which is what a refusal line looks like after a batch deletes a conversion and
+        # forgets the argument -- fell through into a slot loop over zero conversions, and
+        # `min([])` killed the script with a ValueError after 16 checks: no check 18, no
+        # check 19, no arm and no probe scored, and the unattributed traceback review-15 F4
+        # was written about. A format that asks for nothing has no slot to adjudicate.
+        if not convs:
             continue
         # Review-18 F4: a conversion with no argument is undefined behaviour, and this
         # comment always claimed it was red; with the old one-letter FIGURE_FMT it was
@@ -1345,25 +1399,31 @@ def adjudicate(text, quiet=False):
         # column width as a byte figure, which reddened a legal line while the UB line
         # stayed green.
         #
-        # STATED LIMIT (review-19 F4, review-20 F2/F4): a slot that the format's own
-        # unit words assign NEITHER a byte nor a corner unit is not adjudicated against
-        # the backend, UNLESS its argument is a literal -- a literal figure has no
-        # source whatever unit is named, so `81920`, `81920u`, `0x14000`,
-        # `(int64_t)81920`, `(81920)`, `-81920` and `81920.0f` are all refused wherever
-        # they sit, while `"... at frame %lu", attempted, frame` is not. And an
-        # argument past the LAST conversion is never looked at: the format cannot ask
-        # for it, so it prints nothing.
+        # STATED LIMIT (review-19 F4, review-20 F2/F4, review-21 F2): a slot that the
+        # format's own unit words assign NEITHER a byte nor a corner unit is not
+        # adjudicated against the backend's arithmetic, UNLESS its argument is a literal --
+        # a literal figure has no source whatever unit is named, so `81920`, `81920u`,
+        # `0x14000`, `(int64_t)81920`, `(81920)`, `-81920` and `81920.0f` are all refused
+        # wherever they sit, while `"... at frame %lu", attempted, frame` is not. What a
+        # unit-less slot cannot do is be the line's only claim about the refusal: when the
+        # format names no unit word ANYWHERE the refused capacity must be one of the
+        # arguments the line fills (review-21 F2). And an argument past the LAST conversion
+        # is never looked at: the format cannot ask for it, so it prints nothing.
         #
-        # Review-20 F2: the line is NOT separately required to print the capacity as an
-        # argument of its own. The per-slot rules below already say that every figure
-        # the format calls a byte figure IS the backend's own capacity arithmetic and
-        # every figure it calls a corner figure IS the capacity, so a line printing
-        # only the KB figure -- the shape `renderer_c3d.cpp`'s own refusal writes, and
-        # the shape the next batch will reach for -- explains its one figure and is
-        # about the refusal. Batch 113's whole-argument rule reddened it, and the cheap
-        # way out was to print a corner figure the line did not need, which buys back
-        # review-11 F1's wrong request as the price of satisfying the gate. Review-10
-        # F6 is the same trade and this family has now made it twice.
+        # Review-20 F2, NARROWED rather than deleted by review-21 F2: a line that names a
+        # unit word is NOT separately required to print the capacity as an argument of its
+        # own. The per-slot rules below already say that every figure the format calls a
+        # byte figure IS the backend's own capacity arithmetic and every figure it calls a
+        # corner figure IS the capacity, so a line printing only the KB figure -- the shape
+        # `renderer_c3d.cpp`'s own refusal writes, and the shape the next batch will reach
+        # for -- explains its one figure and is about the refusal. Batch 113's
+        # whole-argument rule reddened it, and the cheap way out was to print a corner
+        # figure the line did not need, which buys back review-11 F1's wrong request as the
+        # price of satisfying the gate. Review-10 F6 is the same trade and this family has
+        # now made it twice. Batch 114 read that as "the line-level rule can only refuse a
+        # line that disagrees with nothing" and deleted the rule outright; review-21 F2
+        # proved it also refused a line naming NO unit word at all, so what survives is the
+        # one form that cannot be satisfied by inventing a figure -- see below.
         slots = []
         used = 0
         for i in range(len(convs)):
@@ -1405,6 +1465,22 @@ def adjudicate(text, quiet=False):
             if any(k == "byte" for k, _ in claims[i]):
                 continue
             if any(k == "corner" for k, _ in claims[i]) and cap_name(v) not in cap_names:
+                fail_ok = False
+                break
+        # Review-21 F2: the whole-argument property, in the form that still bites. A line
+        # whose format names a unit word is adjudicated slot by slot above. A line whose
+        # format names NO unit word anywhere has no slot to adjudicate, and batch 114's
+        # deletion of the line-level rule let it print anything: `"objects: refused %d at
+        # frame %lu", objectCorners, (unsigned long)frame` is review-11 F1's 9-KB refusal
+        # of an 80-KB request with the unit word taken out, and it went green with a full
+        # `PASS Main3dsFlow`. What survives asks only that the capacity the backend was
+        # refused be one of the arguments the line FILLS -- a dangling argument past the
+        # last conversion prints nothing and cannot vouch for the line -- and it stays out
+        # of the way of every honest line review-20 F2 was about, because each of those
+        # names the unit its own figure is in.
+        if not BYTE_UNIT.search(fmt) and not CORNER_UNIT.search(fmt):
+            printed = [v for _, v in slots if not v.lstrip().startswith('"')]
+            if printed and not any(cap_name(v) in cap_names for v in printed):
                 fail_ok = False
                 break
         # A line that NAMES a byte unit must print one: saying KB while printing the
@@ -1984,6 +2060,36 @@ def probe_failure_line_prints_only_the_byte_figure(text):
                 }""", 1)
 
 
+def probe_failure_line_names_a_unit_in_prose_but_prints_no_figure(text):
+    """A refusal line whose FORMAT spells a byte unit while printing no figure at all,
+    with an argument left behind (review-21 F1): the edit a batch makes when it deletes a
+    conversion and forgets the argument. The line prints no number, so it disagrees with
+    nothing, and a format that asks for no argument has no slot to adjudicate -- the old
+    code fell through to a slot loop over zero conversions and killed the script with
+    `min() iterable argument is empty` after 16 checks, scoring no arm, no probe and no
+    property. This probe is what pins the skip: delete it and the probe dies."""
+    return text.replace("""                                            1024));
+                }""",
+                        """                                            1024));
+                    mdk::log3dsPrintf("objects: linearAlloc FAILED, bytes refused",
+                                      attempted);
+                }""", 1)
+
+
+def probe_failure_capacity_wrapped_deeply_in_parens(text):
+    """The refused capacity wrapped in more parens than the old `for _ in range(6)` could
+    unwrap (review-21 F3). `(((((((attempted))))))))` IS the capacity at any depth, and a
+    bound dressed up as a fixpoint reddened this honest line while letting a stale figure
+    wrapped that deep walk through the literal rule. Contrived spelling, real property:
+    `bare_literal` and `cap_name` read the same unwrap."""
+    return text.replace("""                                            1024));
+                }""",
+                        """                                            1024));
+                    mdk::log3dsPrintf("objects: refused request was %d corners",
+                                      (((((((attempted))))))));
+                }""", 1)
+
+
 def arm_failure_star_width_names_no_argument(text):
     """A `%*d` conversion the call cannot supply (review-19 F2). The star reads a
     width from an argument, so this call asks for two and passes one: the line prints
@@ -2034,6 +2140,44 @@ def arm_stale_literal(spelling):
 
 
 arm_failure_suffixed_literal_names_no_source = arm_stale_literal("81920u")
+
+# Review-21 F3: the same defect at a depth the old `for _ in range(6)` could not reach.
+# Seven nested parens is not a new defect, it is the old one wearing a seventh paren, and
+# the bound was invisible until someone counted.
+arm_failure_deeply_parenthesised_literal_names_no_source = arm_stale_literal(
+    "(((((((81920)))))))")
+
+
+def arm_failure_unit_less_line_names_the_frame_count(text):
+    """A refusal line that names NO unit word anywhere and prints the frame's corner
+    count (review-21 F2). Batch 114 deleted the whole-argument rule to let the honest
+    byte-only line through, and the deletion also let THIS through: no slot of
+    `"objects: refused %d at frame %lu"` names a byte or a corner unit, so the slot rules
+    had nothing to say about the 480 in the first slot and the line printed a 9 KB refusal
+    of an 80 KB request with `PASS Main3dsFlow (20 checks, 50 arms, 20 probes)`. The
+    reviewer's mutant, reproduced over the shipped gate before the rule was restored in
+    its narrowed form."""
+    return text.replace("""                                            1024));
+                }""",
+                        """                                            1024));
+                    mdk::log3dsPrintf("objects: refused %d at frame %lu",
+                                      objectCorners, (unsigned long)frame);
+                }""", 1)
+
+
+def arm_failure_unit_less_line_names_no_capacity(text):
+    """The same defect with the frame slot taken off: one slot, no unit word, and the
+    frame's corner count where the refused capacity belongs (review-21 F2, the reviewer's
+    second mutant). `"... stream mesh refused %d", objectCorners` names neither a byte
+    nor a corner unit, so only the line-level rule can refuse it, and it is the shape a
+    batch writes when it wants to say the request was refused and never asks which
+    request."""
+    return text.replace("""                                            1024));
+                }""",
+                        """                                            1024));
+                    mdk::log3dsPrintf("objects: stream mesh refused %d",
+                                      objectCorners);
+                }""", 1)
 
 
 def arm_failure_line_names_the_frame_count(text):
@@ -2636,6 +2780,27 @@ ARMS = [
      "(review-20 F4c)",
      arm_stale_literal("81920.0f"),
      CHK["failure-line-names-the-refused-capacity"]),
+    # Review-21 F2/F3: the two shapes the shipped gate let through with a full PASS. The
+    # first two are the unit-less refusal line -- with a frame slot and without -- and
+    # they isolate the line-level rule batch 114 deleted along with the rule review-20 F2
+    # was about. The third is the stale figure at a depth the old bounded unwrap could not
+    # reach, which is the only thing that pins `unwrap` to a real fixpoint.
+    ("a refusal line naming no unit prints the frame's corner count (review-21 F2)",
+     arm_failure_unit_less_line_names_the_frame_count,
+     CHK["failure-line-names-the-refused-capacity"]),
+    ("a refusal line naming no unit never mentions the refused capacity (review-21 F2)",
+     arm_failure_unit_less_line_names_no_capacity,
+     CHK["failure-line-names-the-refused-capacity"]),
+    ("a stale figure wrapped in SEVEN parens walks through the bounded unwrap "
+     "(review-21 F3)",
+     arm_failure_deeply_parenthesised_literal_names_no_source,
+     CHK["failure-line-names-the-refused-capacity"]),
+    # Review-21 open question 4: the exponent was the same stale figure with the decimal
+    # point moved into the notation, and the old pattern matched `8192` and stopped.
+    ("a stale figure written in scientific notation walks through the literal rule "
+     "(review-21 open question 4)",
+     arm_stale_literal("8192e1"),
+     CHK["failure-line-names-the-refused-capacity"]),
 ]
 
 # Correct code each check must accept. A gate that reddens a legitimate edit is a
@@ -2809,6 +2974,15 @@ PROBES = [
     ("a refusal line names the corner unit BEFORE its conversion and prints the "
      "capacity there (review-20 F4a)",
      probe_failure_corner_unit_written_before_its_conversion),
+    # Review-21 F1 and F3: the two shapes the gate must keep accepting. The first is the
+    # no-conversion skip that batch 114's fall-through crashed on -- delete the skip and
+    # this probe dies instead of the suite. The second is the capacity at a depth the
+    # bounded unwrap could not read, which is the false-red half of the same finding.
+    ("a refusal line spells a unit in prose and prints no figure at all "
+     "(review-21 F1)",
+     probe_failure_line_names_a_unit_in_prose_but_prints_no_figure),
+    ("the refused capacity is wrapped in seven pairs of parens (review-21 F3)",
+     probe_failure_capacity_wrapped_deeply_in_parens),
 ]
 # --- mutant dump (review-15 F5) ------------------------------------------------
 # `arm_compile_check.sh` needs the mutants as FILES so it can hand them to the
@@ -2833,6 +3007,24 @@ if DUMP:
 
 print("main_3ds_flow: %s — %d checks, %d mutation arms, %d green probes"
       % (PATH, real.checks, len(ARMS), len(PROBES)))
+
+
+def adjudicate_mutant(label, mutated):
+    """`adjudicate` over a mutant, with a crash turned into a named failure (review-21
+    F1). A check that raises IS fail-closed, but it tells nobody anything: it stops the
+    checks after it, scores no arm and no probe, and the report is a traceback naming no
+    property -- review-15 F4's symptom, which this file has now been told about twice.
+    A mutant the gate cannot read is a failure of the gate, said in the same voice as
+    every other failure so the tally stays short. Returns None when it raised."""
+    try:
+        return adjudicate(mutated, quiet=True)
+    except Exception as exc:  # noqa: the point is to NAME it, not to handle it
+        print("  FAIL main_3ds flow %s: adjudicating it raised %s: %s, which names no "
+              "property and leaves every later check unscored (review-21 F1)"
+              % (label, type(exc).__name__, exc))
+        return None
+
+
 arms_red = 0
 for label, mutate, expected in ARMS:
     mutated = mutate(SRC)
@@ -2840,7 +3032,9 @@ for label, mutate, expected in ARMS:
         print("  FAIL main_3ds_flow arm %s: the mutation changed nothing, so the arm tested "
               "the file it was handed instead of the invariant" % label)
         continue
-    after = adjudicate(mutated, quiet=True)
+    after = adjudicate_mutant("arm " + label, mutated)
+    if after is None:
+        continue
     if not after.failed:
         print("  FAIL main_3ds_flow arm %s: the mutation was accepted, so the check does not "
               "pin what it claims to pin" % label)
@@ -2865,7 +3059,9 @@ for label, mutate in PROBES:
     if mutated == SRC:
         print("  FAIL main_3ds_flow probe %s: the mutation changed nothing" % label)
         continue
-    after = adjudicate(mutated, quiet=True)
+    after = adjudicate_mutant("probe " + label, mutated)
+    if after is None:
+        continue
     if after.failed:
         print("  FAIL main_3ds_flow probe %s: correct code turned `%s` red, so the check "
               "rejects a shape the port may legitimately write" % (label, after.broke))

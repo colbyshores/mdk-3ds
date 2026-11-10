@@ -1,11 +1,54 @@
 # Phase 2 continuation checkpoint
-Risk: medium — test-only diff, one file (`tests/scripts/main_3ds_flow_test.sh`): check 17's figure
-rules change shape (one line-level rule deleted, one slot-attribution rule widened, one literal test
-widened) and five arms plus two probes are added. No shipped instruction changed, so `mdk.elf` is
-bit-identical to batch 107's (`b1997a5dca83639acf603d518abe8e62`, re-measured after the edit) and
-the frame pair is a byte-identical re-capture, stated not hidden. Review-20 found no Critical and no
-High, so the mandatory-remediation gate was not triggered; the three Mediums and one Low were closed
-anyway because two of them were a gate that could not fail and a gate that refused legal code.
+Risk: medium — test-only diff, one file (`tests/scripts/main_3ds_flow_test.sh`): check 17 restores
+one line-level rule in a narrowed form, widens one skip, `unwrap` becomes a real fixpoint, the
+literal pattern gains the exponent, and a mutant that crashes the gate is now a named failure. Four
+arms and two probes are added. No shipped instruction changed, so `mdk.elf` is bit-identical to batch
+107's (`b1997a5dca83639acf603d518abe8e62`, re-measured after the edit) and the frame pair is a
+byte-identical re-capture, stated not hidden. Review-21 found no Critical and no High; all three
+findings were reproduced on the reviewer's own mutants and fixed, none rebutted.
+
+**Batch 115 (Iteration 22) — review-21 closed 3/3: F1, F2 and F3 all fixed, none rebutted.**
+**F1 (Medium, confirmed)**: a refusal line whose format names a unit word and carries NO conversion —
+`("objects: linearAlloc FAILED, bytes refused", attempted)`, a deleted conversion with its argument
+left behind — killed check 17 with `ValueError: min() iterable argument is empty`, exit 1, checks
+18–20 unscored, no arm and no probe scored; reproduced verbatim. The review-17 R3 skip asked about
+the argument list (`not vals and not convs`) when what excludes a line is that the FORMAT prints no
+figure, so it is now `if not convs: continue`, with the baked-digit rule above it still refusing
+`"objects: refused 81920 bytes"`. One probe pins the skip, and `adjudicate_mutant()` now reports a
+raising adjudication as a named FAIL: with the skip reverted the probe fails by name and the tally
+says `21 of 22 probes`, where with the wrapper also removed the suite dies on a bare traceback —
+review-15 F4's symptom, now closed as a class. **F2 (Medium, confirmed)**: batch 114's rationale for
+deleting the whole-argument rule was false — the rule also refused a refusal line naming NO unit word
+that prints a figure which is not the refused request, and batch 114 accepted
+`"objects: refused %d at frame %lu", objectCorners, (unsigned long)frame` with a full PASS while
+batch 113 reddened it. Of the two remediations the reviewer offered (restore the property in the form
+that still matters, or state the loss and pin the accepted shape) this batch takes the FIRST: a
+refusal line whose format names no unit anywhere must print the refused capacity in one of the slots
+it FILLS — conditioned on it printing a figure at all, and reading filled slots so a dangling
+capacity cannot vouch for the line. It was not the prose-plus-probe route because `PROBES` is
+"correct code each check must accept" and that shape is review-11 F1's defect. Every honest line
+review-20 F2 was about names its unit and stays green; the route-around of printing an unneeded
+corner figure now has to print the capacity. Two arms; deleting the rule loses exactly those two
+(`51 of 53`). Batch 114's answer to review-20's open question 1 is withdrawn. **F3 (Low,
+confirmed)**: `unwrap` was documented as a fixpoint and bounded at six passes, so
+`(((((((81920)))))))` walked through the literal rule green while `cap_name` failed to read a
+capacity wrapped that deep and reddened an honest line; it is now `while True` with the equality
+return, terminating because every pass only removes characters. Pinned from both sides — the arm is
+red shipped and green on a gate mutant with the bound restored (`52 of 53`), and the probe is green
+shipped and red on that mutant. Review-21 open question 4's other half is closed too: `8192e1` IS
+81920 and the old pattern matched `8192` and stopped, so `LITERAL_RE` gained an exponent
+alternative and one more arm (reverting the pattern loses exactly it, `53 of 54`). **Open questions
+2 and 3 are deferred with cause**: `tools/runner/gates_batch_integrity.py` not seeing an unstaged
+`PROTECTED` edit, and a re-published frame being indistinguishable from a new capture, both live in
+owner-protected tooling. Measured: `PASS Main3dsFlow (20 checks, 54 arms adjudicated red, 22 probes
+green)`, `PASS C3dFrame (31 checks, 49 arms adjudicated red, 2 probes green)`, `PASS ArmCompile (129
+mutant(s), 0 diagnostics)`, `make -C tests/scripts` -> `All cases match the oracle.`, `bash
+tools/check.sh` -> `CHECK: ALL GATES PASSED` (`gates_smdh SKIP`, no built `.cia`), `make -C mdk_3ds`
+builds with `mdk.elf` `b1997a5dca83639acf603d518abe8e62`. No `mdk_3ds/**` or `mdk_core/**` path
+changed, so no P8 emulator evidence is owed and none is claimed. `pi-knowledge` `mdk-sdl` searched,
+no prior finding predating this one; no `obsidian_*`/`cognee_*` tools are exposed in this session,
+recorded as a session gap and not as a lookup that happened. `ralph/builder.md` was dirty at
+dispatch, is `PROTECTED`, and is left uncommitted on purpose.
 
 **Batch 114 (Iteration 21) — review-20 closed 4/4: F1, F2 and F4 fixed, F3 rebutted with evidence.**
 **F1 (Medium, confirmed)**: neither half of batch 113's F1 fix was pinned -- deleting the whole
