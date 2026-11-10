@@ -1,10 +1,37 @@
 # Phase 2 continuation checkpoint
-Risk: high — the batch is resource-lifetime work again (`formats/arena.h` deletes Arena's copy/move
-operations, `game/level_data.cpp` completes `LevelData::load`'s reset and moves `number_` to the success
-path, `formats/beta_demo.*` frees the out-vector `loadMto` replaces), and the shipped 3DS binary moves
-(`mdk.elf` `a6bae2efc3ad8899649e8ad8fc4fd9d1` → `06bb4a915db8cc5af5f96aaecf1405aa`). All three gates,
-ASan+UBSan and the emulator are green on the final binaries and no oracle value moved, but a lifetime change
-is high by the rubric and is not being downgraded to avoid the review.
+Risk: medium — the diff is one gate script (`gates_core_parity.py` gains check 6, which builds and runs
+`tests/formats`), one evidence capture, the frame pair and these docs. **No game source and no shipped byte
+changed** (`mdk.elf` md5 `06bb4a915db8cc5af5f96aaecf1405aa`, identical to batch 132), no golden, gate threshold
+or reference hash moved, and all three gates pass. It is medium rather than low because it changes what the
+gate suite *executes* — `bash tools/check.sh` now compiles and links a target it never built — and because the
+batch chose to host that check in an unprotected gate rather than in owner-protected `tools/check.sh`; that
+hosting decision is the one thing worth an independent look.
+
+**Batch 133 (iteration 5 of the ledger row `core.formats`) — the format target is now built by the gate suite.**
+The row's own comment named two defects and batches 129-132 fixed only the first: the link was broken, and it
+stayed broken for 25 batches *"unnoticed because check.sh never ran this target"*. That second half was still
+true at dispatch — the row could rot back with every gate green. `tools/runner/gates_core_parity.py` check 6
+(PARITY-FORMATS) now closes it: it parses `tests/formats/Makefile`'s own `SOURCES` block, reports
+`PARITY-FORMATS-GHOST` (an entry that does not exist) and `PARITY-FORMATS-BASENAME` (two entries sharing a
+basename, which the Makefile's `notdir` object keys silently collapse into one object), and then **builds and
+runs** the target as `PARITY-FORMATS-LINK` — a nonzero exit, a timeout, a missing `make`, or an exit 0 that
+printed no `N checks, M failures` line are all MUST, never a skip. Shown red on four probes (ghost entry;
+stub `tests/formats/texture.cpp`, where the collapse really did break the link with `undefined reference to
+mdk::formats::Texture::parse`; an `undefined reference to mdk_notARealSymbol()` in `formats/dti.cpp`, the
+exact shape of the original rot; and `PATH=/nonexistent`), reverted, and green clean at 1.6 s warm /
+16 s cold. `docs/evidence/2026-11-10-core-formats.txt` is the measured artefact batch 129 said the row needed,
+and it states what the run does *not* evidence — including that the target compiles 16 of the 32 sources under
+`mdk_core/src/formats`, now printed as a gate note instead of hidden. **The ledger closed under this iteration
+by its owner**: `8c751cc` committed the ledger and flipped `core.formats` to `done` (evidence `tests/formats`,
+verified `8ba4335`), so review-4 F1's ledger half is the owner's and is done; what this batch adds is what keeps
+a `done` row with a *slow* acceptance command true between milestones. Gates: `make -C tests/formats` →
+`156235 checks, 0 failures` rc 0 from a clean build; `make -C tests/scripts` → `All cases match the oracle.`
+rc 0 (567 PASS, 0 FAIL, 0 SKIP); `DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED` rc 0 with
+`PASS gates_core_parity` and the new `note: format target: make -C tests/formats exit 0 -- 156235 checks, 0
+failures`; `make -C mdk_3ds` → rc 0. Review-4 is 8 findings: 1 closed here (F1's `core.formats` half), 1 closed
+by the owner mid-iteration (F4), 6 owner-only and recorded (`F2` reproduced — deleting the two open rows turns
+`--strict` from rc 1 to `COMPLETION: DONE[d1]` rc 0 — `F3`, `F5`, `F6`, `F7`, `F8`), 0 rebutted by argument
+alone. Full narrative: `docs/PROGRESS_LOG.md` "Batch 133".
 
 **Batch 132 (iteration 4 of the ledger row `core.formats`) — the ownership counter cannot be made to lie.**
 Review-3 confirmed three defects in the contract batch 131 wrote, all of one family: it held only while
@@ -1107,6 +1134,27 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 133)
+**`core.formats` is `done` and stays that way by construction.** The owner flipped the row in `8c751cc` and this
+batch gated the cause its comment names, so the next dispatch is `3ds.collision-doors` (`--next` confirms).
+**Review-4's remaining six findings are all in files a batch cannot write** — `tools/runner/gates_completion.py`,
+`docs/COMPLETION_LEDGER.tsv`, `docs/OWNER_BLOCKS.md` and `ralph-pi.sh` are `coleshores`-owned, not writable by
+uid 994, and in `PROTECTED`. In priority order: **(1) F2** — `gates_completion` compares *counts* of `done` rows,
+so deleting the open rows (the only rows that can buy completeness) turns `--strict` green; reproduced, and it is
+the one finding that makes the loop's real exit condition forgeable. Compare ids, not counts, and seed two arms.
+**(2) F5** — `completion_next()` discards stderr and the caller reads empty stdout as "no open row", so a ledger
+that cannot be read (exit 2) silently removes the item constraint for an iteration; only exit 1 means "nothing
+open". **(3) F3** — `d1` is defined as the owner's goal but omits `p8.cia-build`, which is filed `d2`, and cites
+`CONTINUATION.md:871` for text that is at `:1040`; either move the row or say that `d1` is a build and the CIA is
+deferred. **(4) F6/F7** — a `done` row is verified by "some path exists", and `word_present` lets prose in
+`OWNER_BLOCKS.md` legalise a block; `owner_blocked_ids()` is dead code. **(5) F8** — a frame sidecar cannot name
+the binary it came from; the field belongs in `gates_frames.py`. **Also owed by the owner:** `ralph/builder.md` is
+still modified and uncommitted (protected, so this batch would not stage it), and two acceptance cells name
+commands that do not exist (`make -C tests/scripts test_crossing`, `emurun.sh --expect hud`). **Still open and
+not touched:** every `hw.*` row (no Old-3DS hardware in hand, and `mdk_3ds/tools/hw_cycle.sh` does not exist),
+the Phase 2 RE sweep, and the two standing owner blocks (`spec.voice-pool`, `re.phase-2-sweep`). Old-3DS
+performance readiness remains unmeasured and stays open.
 
 ## NEXT (batch 129)
 **The ledger now chooses the work, and the next open d1 row is `3ds.collision-doors` with an acceptance

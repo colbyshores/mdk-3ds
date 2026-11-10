@@ -1,0 +1,93 @@
+acceptance evidence -- docs/COMPLETION_LEDGER.tsv row `core.formats`
+level d1, speed slow, acceptance command: make -C tests/formats
+
+This file is the artefact the ledger row's `evidence` column can point at. It is
+the measured output of the row's own acceptance command, captured by running it,
+not transcribed. The gate that now runs this command on every iteration is
+`tools/runner/gates_core_parity.py` check 6 (PARITY-FORMATS), which `tools/check.sh`
+already invokes as gate 5 -- see docs/PROGRESS_LOG.md "Batch 133" for why the
+check hangs off the parity gate instead of being a new gate 10.
+
+captured: 2026-11-10T15:38:59-07:00 at 8ba4335
+compiler: g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+binary:   tests/formats/build/format_tests sha256 f2377bc6c819f7e82a2b11b09c7d40f0e36d9fa226497475f8b24e61aade1c9d
+build state: from scratch -- `make -C tests/formats clean` immediately before,
+             so every translation unit compiled and the link actually happened.
+             A warm build would not prove the link graph.
+display:     not applicable (no window is opened; AGENTS.md P7 does not engage)
+
+command: make -C tests/formats
+exit:    0
+output verbatim:
+  make: Entering directory '/mnt/nas/Development/mdk-sdl/tests/formats'
+  CXX  main.cpp
+  CXX  path_tests.cpp
+  CXX  format_tests.cpp
+  CXX  math_lut_tests.cpp
+  CXX  random_tests.cpp
+  CXX  ../../mdk_core/src/util/math_lut.cpp
+  CXX  ../../mdk_core/src/util/random.cpp
+  CXX  ../../mdk_core/src/formats/bin_reader.cpp
+  CXX  ../../mdk_core/src/formats/palette.cpp
+  CXX  ../../mdk_core/src/formats/texture.cpp
+  CXX  ../../mdk_core/src/formats/texture_archive.cpp
+  CXX  ../../mdk_core/src/formats/dti.cpp
+  CXX  ../../mdk_core/src/formats/mto.cpp
+  CXX  ../../mdk_core/src/formats/arena.cpp
+  CXX  ../../mdk_core/src/formats/model.cpp
+  CXX  ../../mdk_core/src/formats/model_animation.cpp
+  CXX  ../../mdk_core/src/formats/file_system.cpp
+  CXX  ../../mdk_core/src/formats/case_insensitive_path.cpp
+  CXX  ../../mdk_core/src/formats/local_paths.cpp
+  CXX  ../../mdk_core/src/formats/mdk_data.cpp
+  CXX  ../../mdk_core/src/formats/sni.cpp
+  CXX  ../../mdk_core/src/formats/sprite_animation.cpp
+  CXX  ../../mdk_core/src/formats/fti.cpp
+  CXX  ../../mdk_core/src/scripts/pose_cache.cpp
+  CXX  ../../mdk_core/src/game/level_data.cpp
+  LINK build/format_tests
+  running 21 tests
+  - PartsMatchWhateverTheirCase
+  - MissingFilesKeepTheirName
+  - KeysOfThePathsSectionAreRead
+  - WindowsLineEndingsAreRead
+  - NoFileNoPath
+  - EveryLevelParses
+  - Level7StartsInDant1
+  - Level3Hmo1ArenaModels
+  - OnlyKeyedTexturesSeeThrough
+  - EntryNamedFindsTheDtiArena
+  - MtoFreesTheArenasItParsed
+  - MtoKeepsTheArenasItWasGiven
+  - LevelDataReleasesItsArenasAndCorridors
+  - MtoAssignmentReleasesWhatItOwned
+  - LevelDataLoadIntoALoadedLevelStartsOver
+  - AFailedLoadLeavesAnEmptyLevel
+  - MathLutInitIsIdempotent
+  - FastSinMatchesLibm
+  - FastCosMatchesLibm
+  - FastAtan2MatchesLibm
+  - random_matches_dotnet_compatprng
+  
+  156235 checks, 0 failures
+  make: Leaving directory '/mnt/nas/Development/mdk-sdl/tests/formats'
+
+what this evidences:
+  - the format target LINKS. That is the row's whole finding: it had not linked
+    since batch 102 (727ade1) because level_data.cpp calls
+    scripts::forgetPoseCaches() and the target did not carry the translation
+    unit that now defines it. Batch 129 (de2d94d) fixed the link; batches 130-132
+    hardened the boundary guard, the arena ownership and LevelData::load's reset.
+  - the 21 registered format tests run and report 156235 checks, 0 failures.
+  - the link-graph guard inside tests/formats/Makefile passed: the binary does
+    not pull in the script VM (no mdk::ScriptRuntime / mdk::Bsp:: / mdk::Kurt:: /
+    mdk::Player:: / mdk::audio::SoundMixer:: / mdk::ArenaSpace:: symbol).
+
+what this does NOT evidence:
+  - that the format target covers the format subsystem. It compiles 16 of the 32
+    sources under mdk_core/src/formats; the other 16 (beta_demo, bni, cmi,
+    cmi_beta, fall3d, flc, font, gif, glb, mve, png, script_decoder,
+    script_decoder_beta, script_opcodes, sniper_screen, wav) are not in its
+    SOURCES. gates_core_parity now prints that list as a note instead of hiding it.
+  - anything about the 3DS build, the frame golden, or Old-3DS performance. Those
+    are separate gates and a separate ledger row.

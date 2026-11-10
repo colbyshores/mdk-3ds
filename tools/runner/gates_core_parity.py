@@ -51,6 +51,23 @@ THE THREE CHECKS.
      it is reported here too, because a list entry that names a file that was
      RENAMED is the other half of the same omission.
 
+  6. PARITY-FORMATS. `tests/formats/Makefile` is a THIRD hand-maintained
+     source list over `mdk_core/src/**`, and it was the one nothing ever built:
+     the target failed to LINK for 25 batches with every gate green, because
+     `tools/check.sh` did not run it. A list nobody builds rots, and restating
+     the rule is a known-ineffective control -- the only thing that has ever
+     caught this class is building the config (vault:
+     build-config-link-sweep-the-rule-is-not-the-remedy). So this gate builds
+     and runs the target and reports three things: PARITY-FORMATS-GHOST (a
+     SOURCES entry that does not exist), PARITY-FORMATS-BASENAME (two entries
+     sharing a basename, which the Makefile's `notdir` object keys collapse
+     into ONE object, exactly the hazard PARITY-3DS-BASENAME covers on the 3DS
+     side), and PARITY-FORMATS-LINK (the target does not build and run clean).
+     No `make`, a timeout, a nonzero exit, or a run that prints no check count
+     is a MUST here and never a skip: a check that silently does not run is a
+     pass generator, which is the mistake batch 130 removed from this same
+     target's `nm` guard.
+
 Exit code 1 if any finding is a MUST.
 """
 
@@ -59,6 +76,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
+import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -76,6 +95,120 @@ LOCAL_INCLUDE_RE = re.compile(r'^[ \t]*#[ \t]*include[ \t]+"([^"]+)"', re.M)
 # quoted include also searches the including file's own directory first).
 ANGLE_INCLUDE_RE = re.compile(r"^[ \t]*#[ \t]*include[ \t]+<([^>]+)>", re.M)
 WILDCARD_CORE_RE = re.compile(r"\$\(wildcard\s+\$\(CORESRC\)([^)]*)\)")
+# The format-test target: a third source list, and the one no gate built.
+FORMATS_DIR_REL = "tests/formats"
+FORMATS_MAKE_REL = "tests/formats/Makefile"
+FORMATS_TREE_REL = f"{CORE_SRC_REL}/formats"
+# The target compiles ~20 translation units at -O1, so a cold build is tens of
+# seconds and a warm one is under a second. This bound is a hang detector, not a
+# budget: running past it is a finding, never a skip.
+FORMATS_LINK_TIMEOUT = 900
+SOURCES_ASSIGN_RE = re.compile(r"^SOURCES\s*[:+]?=")
+CHECK_COUNT_RE = re.compile(r"(\d+) checks, (\d+) failures")
+
+
+def parse_make_var(name: str, text: str) -> str:
+    """The value of a simple `NAME := value` assignment ('' when absent)."""
+    match = re.search(rf"^{name}\s*[:+]?=\s*(\S[^\n]*)", text, re.M)
+    return match.group(1).split("#", 1)[0].strip() if match else ""
+
+
+def parse_make_sources(text: str) -> list[str]:
+    """The entries of a `SOURCES := \\` continuation block, comments stripped.
+
+    This reads the SAME block `make` reads -- a check that parsed a copy of the
+    list would be checking its own copy, not the build.
+    """
+    lines = text.splitlines()
+    for index, raw in enumerate(lines):
+        line = raw.split("#", 1)[0].strip()
+        if not SOURCES_ASSIGN_RE.match(line):
+            continue
+        entries: list[str] = []
+        rest = line.split("=", 1)[1].strip()
+        while True:
+            if rest.endswith("\\"):
+                piece = rest[:-1].strip()
+                if piece:
+                    entries.append(piece)
+                index += 1
+                if index >= len(lines):
+                    break
+                rest = lines[index].split("#", 1)[0].strip()
+                continue
+            if rest:
+                entries.append(rest)
+            break
+        return entries
+    return []
+
+
+def is_core_source(path: Path, root: Path) -> bool:
+    """Whether a resolved path is under `mdk_core/src` (and not a test's own TU)."""
+    try:
+        path.resolve().relative_to((root / CORE_SRC_REL).resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def resolve_format_entry(entry: str, make_dir: Path, core_rel: str) -> Path | None:
+    """A format-test SOURCES entry resolved the way its own Makefile resolves it.
+
+    None means "this parser cannot resolve it", which is reported rather than
+    skipped silently: an entry that stops being readable is the same omission
+    wearing a different hat.
+    """
+    if entry.startswith("$(CORE)/"):
+        if not core_rel:
+            return None
+        return (make_dir / core_rel / entry[len("$(CORE)/"):]).resolve()
+    if "$(" in entry:
+        return None
+    return (make_dir / entry).resolve()
+
+
+def build_and_run_format_target(root: Path) -> tuple[bool, str]:
+    """(clean, detail) from `make -C tests/formats`, which builds AND runs it.
+
+    Every way this fails to produce a measurement is a failure. A host with no
+    `make`, a timeout, a nonzero exit, and -- the subtle one -- an exit 0 that
+    printed no check count, all mean "the format target was not verified", and
+    reporting that as clean is how the target rotted for 25 batches.
+    """
+    make = shutil.which("make")
+    if make is None:
+        return False, ("make is not on PATH, so the format target could not be built "
+                       "-- NOT CHECKED is not a pass")
+    try:
+        proc = subprocess.run(
+            [make, "-C", str(root / FORMATS_DIR_REL)],
+            capture_output=True, text=True, timeout=FORMATS_LINK_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"make -C {FORMATS_DIR_REL} did not finish within {FORMATS_LINK_TIMEOUT}s"
+    except OSError as exc:
+        return False, f"make -C {FORMATS_DIR_REL} could not start: {exc}"
+    output = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        reason = ""
+        for line in output.splitlines():
+            if any(needle in line for needle in ("undefined reference", "error:", "LINK GRAPH")):
+                reason = line.strip()
+                break
+        if not reason:
+            reason = (output.strip().splitlines() or ["(no output)"])[-1].strip()
+        return False, f"make -C {FORMATS_DIR_REL} exited {proc.returncode}: {reason}"
+    match = CHECK_COUNT_RE.search(output)
+    if match is None:
+        return False, (f"make -C {FORMATS_DIR_REL} exited 0 without printing a check count, "
+                       "so its tests did not run")
+    checks, failures = int(match.group(1)), int(match.group(2))
+    if failures:
+        return False, f"the format target reports {checks} checks, {failures} failures"
+    if not checks:
+        return False, "the format target reports zero checks, so it tested nothing"
+    return True, f"make -C {FORMATS_DIR_REL} exit 0 -- {checks} checks, 0 failures"
 
 
 @dataclass
@@ -95,6 +228,7 @@ class Report:
     core_headers: int
     linux_entries: int
     three_ds_glob_depth: int
+    format_target: str = ""
     findings: list[Finding] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -107,6 +241,7 @@ class Report:
             "core_headers": self.core_headers,
             "linux_entries": self.linux_entries,
             "three_ds_glob_depth": self.three_ds_glob_depth,
+            "format_target": self.format_target,
             "notes": self.notes,
             "findings": [asdict(f) for f in self.findings],
         }
@@ -337,6 +472,80 @@ def run(root: Path | None = None) -> Report:
                           "them is never compiled")
             )
 
+    # --- 6. the format-test target: a third list, and the one nothing built ---
+    format_target = ""
+    formats_make = root / FORMATS_MAKE_REL
+    if not formats_make.exists():
+        findings.append(
+            Finding("PARITY-FORMATS", "MUST", FORMATS_MAKE_REL,
+                    "the format-test Makefile does not exist -- its source list "
+                    "cannot be checked")
+        )
+    else:
+        make_text = formats_make.read_text(encoding="utf-8", errors="replace")
+        fmt_entries = parse_make_sources(make_text)
+        core_rel = parse_make_var("CORE", make_text)
+        listed_core: set[Path] = set()
+        if not fmt_entries:
+            findings.append(
+                Finding("PARITY-FORMATS", "MUST", FORMATS_MAKE_REL,
+                        "no SOURCES block was parsed -- this check would be "
+                        "reading a list make does not read")
+            )
+        else:
+            make_dir = formats_make.parent
+            by_name: dict[str, str] = {}
+            for entry in fmt_entries:
+                path = resolve_format_entry(entry, make_dir, core_rel)
+                rel = repo_rel(path, root) if path is not None else entry
+                if path is None:
+                    findings.append(
+                        Finding("PARITY-FORMATS-GHOST", "MUST", rel,
+                                f"SOURCES entry {entry!r} uses a variable this "
+                                "parser cannot resolve, so its existence is unknown")
+                    )
+                    continue
+                if not path.exists():
+                    findings.append(
+                        Finding("PARITY-FORMATS-GHOST", "MUST", rel,
+                                "listed in tests/formats/Makefile's SOURCES but "
+                                "does not exist on disk")
+                    )
+                    continue
+                if path.suffix in SRC_EXTS and is_core_source(path, root):
+                    listed_core.add(path)
+                previous = by_name.get(path.name)
+                if previous is not None and previous != rel:
+                    findings.append(
+                        Finding("PARITY-FORMATS-BASENAME", "MUST", rel,
+                                f"basename collides with {previous} -- the "
+                                "Makefile keys objects by `notdir`, so one of "
+                                "them is never compiled")
+                    )
+                by_name[path.name] = rel
+            tree = sorted(p for p in (root / FORMATS_TREE_REL).glob("*.cpp")) \
+                if (root / FORMATS_TREE_REL).is_dir() else []
+            untested = [repo_rel(p, root) for p in tree if p not in listed_core]
+            notes.append(
+                f"format target SOURCES: {len(fmt_entries)} entries, "
+                f"{len(listed_core)} of them under {CORE_SRC_REL}"
+            )
+            notes.append(
+                f"format target compiles {len(tree) - len(untested)} of {len(tree)} sources "
+                f"under {FORMATS_TREE_REL}; NOT compiled by it: "
+                + (", ".join(Path(p).name for p in untested) if untested else "(none)")
+            )
+        clean, detail = build_and_run_format_target(root)
+        format_target = detail
+        if not clean:
+            findings.append(
+                Finding("PARITY-FORMATS-LINK", "MUST", FORMATS_DIR_REL,
+                        detail + " -- the format target is the ledger row "
+                                 "core.formats' acceptance command, and a target "
+                                 "nothing builds is a target that rots")
+            )
+        notes.append(f"format target: {detail}")
+
     blockers = sum(1 for f in findings if f.severity == "MUST")
     reviews = sum(1 for f in findings if f.severity == "SHOULD")
     status = "FAIL" if blockers else "PASS"
@@ -348,6 +557,7 @@ def run(root: Path | None = None) -> Report:
         core_headers=len(headers),
         linux_entries=len(entries),
         three_ds_glob_depth=depth,
+        format_target=format_target,
         findings=findings,
         notes=notes,
     )
@@ -373,7 +583,8 @@ def main(argv: list[str] | None = None) -> int:
     for note in report.notes:
         print(f"  note: {note}")
     if not report.findings:
-        print("\n  VERDICT: CONTRACT CLEAN -- every core source is on both targets.")
+        print("\n  VERDICT: CONTRACT CLEAN -- every core source is on both targets,")
+        print("  and the format-test target built and ran clean (see the format note above).")
         return 0
     print(f"\n  {len(report.findings)} FINDING(S):")
     for finding in report.findings:
