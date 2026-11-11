@@ -835,8 +835,11 @@ void ScriptRuntime::showArena(const std::string& arena) {
 // drawn or live with him. "NONE" is the C#'s NoArena (:85). The `arena == SecondArena` test
 // runs BEFORE the assignment (:604), so preloading the arena that is already the second does
 // nothing at all: not the deactivation, not LoadArena, so it pulls that arena's doors no
-// second time. SecondActive is cleared AFTER the load (:611), which is what lets PullDoors
-// still see the previous second as active and leave its doors alone.
+// second time. SecondArena is reassigned BEFORE the load and SecondActive is cleared AFTER it
+// (:609-611), so during a preload the previous second is no longer SecondArena by the time
+// PullDoors runs and the only exemption that can apply to its doors is Kurt's own arena. That
+// is the oracle's ordering and it is observable: moving the clear above the load, or hoisting the
+// assignment, changes which doors move.
 void ScriptRuntime::preloadArena(const std::string& arena) {
     if (arena.empty() || arena == "NONE" || arena == secondArena_) {
         return;
@@ -849,6 +852,10 @@ void ScriptRuntime::preloadArena(const std::string& arena) {
 // C# ScriptRuntime.LoadArena (ScriptRuntime.cs:615-623, arena_load 0x419d00): "only one arena
 // (not corridor) is loaded at a time" -- the MTO holds a ROOM's geometry and a corridor is not
 // in it, so loading a corridor leaves the resident arena alone and only pulls its doors.
+// Three oracle callers: showArena, preloadArena, and TeleportSecond (:516), the last of which
+// belongs to the unported TeleportKurt, so two of the three are ported here. When
+// TeleportKurt lands it owes this call too -- a teleport that only names the neighbour leaves
+// it an inactive, unloaded second with its doors still parked in the room it came from.
 void ScriptRuntime::loadArena(const std::string& arena) {
     if (level_->mto().has(arena)) {
         residentArena_ = arena;
@@ -865,6 +872,13 @@ static void moveDoor(MdkObject* obj);
 // which keep theirs. Without it a door stays parked in the corridor it was spawned in, which
 // is the artefact the oracle's DoorArenaTests class comment opens with ("the doorway showed the
 // sky"): the door is not in the drawn list, so neither is its geometry.
+//
+// The pixel half of that artefact is NOT reachable here yet. What makes an undrawn door
+// invisible is the drawn-list CONSUMERS -- the C#'s `obj.Visible` (ObjectBehaviors, unported;
+// MdkObject::visible still defaults to true and has no writer) and the renderer's arena list --
+// and neither is ported, so geometry is drawn regardless of the list. This restores the oracle's
+// RULE ahead of its effect, the way residentArena_ is written ahead of its reader; the batch that
+// ports obj.Visible still owes itself the capture that shows the doorway change.
 //
 // The C#'s Objects.Where(...) is a filter over the whole object list and the loop below is the
 // same predicate per object; moveDoor changes only arena/connects/yaw, so nothing here

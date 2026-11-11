@@ -1,0 +1,258 @@
+================================================================================
+Batch 140 — the two trigger arms batch 139 left compile-verified: the SHOW box and
+the id = -1 CLEAR, walked on shipped level-7 geometry. Review-6 remediation.
+Ledger row 3ds.collision-doors, attempt 7 of 8.
+Acceptance command: `make -C tests/scripts test_crossing` (the row's gate) and
+`make -C tests/scripts` (the new case is an executed `vm_tests` assertion).
+Review closed: logs/ralph-pi/run-20261110-230107/review-6.md (DeepSeek V4.1 Flash
+TH, no Critical, no High, verdict INCOMPLETE on F1 alone): F1 (Medium) fixed, F2,
+F3, F4, F5, F6 (Low) fixed. No finding rebutted.
+Measured 2026-11-11 (UTC), tree at f25ad69 + this batch's working tree.
+`mdk.elf` md5 UNCHANGED at 6586bee947a2ca7ccce988ddb858114a: this batch changes no
+shipped behaviour, and that hash being identical is the proof.
+================================================================================
+
+§1. WHAT CHANGED, AND THE ORACLE LINE FOR EACH PIECE
+--------------------------------------------------------------------------------
+ONE EXECUTED CASE, FIVE RECORD CORRECTIONS, ZERO SHIPPED BEHAVIOUR.
+
+  * tests/scripts/vm_tests.cpp — `testTriggerShowBoxDrawsAndTheMinusOneBoxClears`
+    (review-6 F5, and CONTINUATION priority (2)): the `TriggerShow` arm and the
+    "names no arena" arm of CheckTriggers, which batch 139 recorded as
+    compile-verified only. Registered in main(), prints
+    `PASS TriggerShowBoxDrawsAndTheMinusOneBoxClears`.
+      src/Mdk.Game/Scripts/ScriptRuntime.cs:727-730   Show -> ShowArena(arena)
+      src/Mdk.Game/Scripts/ScriptRuntime.cs:731-734   Load with no arena -> ShowArena("")
+      src/Mdk.Game/Scripts/ScriptRuntime.cs:574-578   ShowArena("") empties SecondArena
+                                                      AND deactivates it
+      src/Mdk.Game/Scripts/ScriptRuntime.cs:617-620   a corridor is not in the MTO, so
+                                                      LoadArena leaves the resident arena
+  * docs/OPCODE_COVERAGE.md — review-6 F1. Opcode 223 `arena_set_neighbour` left
+    the "Remaining" list and the arena/world group when batch 139 implemented it,
+    and the file did not say so. Recounted from the brace-matched method spans the
+    same way the file documents: C# 238 cases, C++ 214 labels / 213 unique, the
+    extra label being opcode 249's nested `case 0:`, so 212 true dispatches and
+    26 remaining (212 + 26 = 238). Heading, the "Remaining" wording, the two lists
+    and the owned-case recount all moved from 27 to 26; a dated batch bullet and a
+    "223 left with the trigger-box batch" clause were added in the neighbours'
+    prose style. The older DATED recounts inside per-batch bullets are left alone:
+    they record what was true at their own recount date.
+  * mdk_core/src/scripts/script_runtime.cpp — review-6 F2 (the `preloadArena`
+    comment claimed a protection the ordering cannot provide) and F4 (the
+    `pullDoors` comment claimed a pixel artefact that is not reachable yet), plus
+    the third `LoadArena` caller named in its comment (F3's family).
+  * mdk_core/src/scripts/script_runtime.h — review-6 F4: `drawnArenas()` is now
+    labelled written-and-unread, the way `residentArena()` already was.
+  * docs/CONTINUATION.md, docs/PROGRESS_LOG.md, docs/evidence/
+    2026-11-11-trigger-boxes.txt — review-6 F3 (`TeleportSecond`, ScriptRuntime.cs:
+    516, is the oracle's third `LoadArena` caller) and F6 (six drifted line
+    citations corrected, and re-corrected for this batch's own comment edits).
+
+WHAT THE ORACLE SAYS, AND WHY THE TWO ARMS ARE NOT ONE ARM. `CheckTriggers` reads
+the record's id as an index into the ARENA list (:726) and then splits on the type:
+a SHOW box calls `ShowArena(arena)`, which takes the second slot ACTIVE, draws it,
+starts its arena state and spawns its DTI aliens; a LOAD box calls
+`PreloadArena(arena)`, which takes the same slot INACTIVE and does none of that.
+A LOAD that names nothing goes through `ShowArena("")` instead of through the
+preload (:731-734) — and `ShowArena("")` is the only way the second slot is ever
+emptied from inside the trigger loop. Batch 139 walked CDANT_1, whose two boxes are
+both type 3, so neither of those two arms ran. A port that swapped the arms, or
+that dropped the empty-name case, passed every gate in the tree.
+
+§2. THE TEST, AND WHY EACH PIN IS THE ORACLE'S AND NOT THE IMPLEMENTATION'S
+--------------------------------------------------------------------------------
+tests/scripts/vm_tests.cpp, `testTriggerShowBoxDrawsAndTheMinusOneBoxClears`,
+registered in main and printing `PASS TriggerShowBoxDrawsAndTheMinusOneBoxClears`.
+
+SHIPPED GEOMETRY, AND THE ORACLE'S OWN SPOT. Level 7's DANT_10 writes two type-1
+boxes (golden/L7_dti.txt:45-46, big-endian float bits, min/max the way :718-719
+takes them):
+
+    id=18  x[509,511] y[4968,5077] z[0,7]    id=-1  x[511,514] y[4964,5082] z[0,6]
+
+and `DoorArenaTests` already names where to stand: `Far = "DANT_10"`, `FarSpot =
+(495, 5005, 24)` (tests/Mdk.Game.Tests/DoorArenaTests.cs:33-34). The C# gets there
+with `TeleportKurt`, which is unported; here the FIRST tick's geometric arena lookup
+answers the same arena, so the walk starts on the oracle's own spot and
+`currentArena_` is DANT_10 — the only arena whose records these boxes can be,
+because :711 reads `CurrentArena`.
+
+  1. The first tick, at FarSpot: `currentArena() == "DANT_10"`, `residentArena() ==
+     "DANT_10"`, `drawnArenas().size() == 1`, and no object of CDANT_9's exists.
+  2. x = 496..508 at y = 5005, one tick per unit: nothing fires. The walk stays out
+     of the DANT_10 -> CDANT_9 doorway, which is at y = 5001 and only a MinusY move
+     inside x[482,508] crosses — walking DOWN at x = 508 does cross it, and the
+     probe showed `currentArena` flipping to CDANT_9, which is why the descent in
+     step 4 is at x = 510 instead.
+  3. THE SHOW BOX, ALONE. The step 508 -> 509 crosses x = 509, the id=18 box's near
+     edge. `secondArena() == "CDANT_9"` (arenas[18], the last of the DTI's 19
+     arenas, golden/L7_dti.txt:86), `secondActive()`, `drawnArenas().size() == 2`
+     with the corridor SECOND, `residentArena()` still DANT_10 because a corridor is
+     not in the MTO (:617-620), and a CDANT_9 object now exists. That last one is the
+     observable that separates the two arms beyond the flag: an ACTIVE second is a
+     LIVE arena (`IsLiveArena`, :703), so the corridor's own controller runs and its
+     objects appear, which a preload never does. (This was written up as `PullDoors`
+     having run until mutation M1 disproved it: `preloadArena` reaches `pullDoors`
+     too, and under M1 no corridor object appears at all, so the object is the live
+     arena's controller, not the door pull.) The step to x = 510 re-fires the box and
+     changes nothing.
+  4. DOWN to y = 4965 at x = 510, one unit per tick: the steps inside the show box's
+     y range re-fire it; below y = 4968 nothing fires; the second is still CDANT_9.
+  5. THE CLEAR BOX, ALONE. The step 510 -> 511 at y = 4965. The show box cannot
+     answer at this y — its range starts at 4968 and a horizontal move at 4965
+     touches none of its edges — so this tick isolates the `arena.empty()` arm:
+     `secondArena().empty()`, `!secondActive()`, `drawnArenas().size() == 1` with
+     DANT_10 alone, `residentArena()` unmoved. x = 512..514 keeps it cleared.
+  6. THE BOXES ARE XY-ONLY, AND THE HEIGHT PINS IT. Both boxes' z range is 0..7 and
+     FarSpot is at z = 24, so a port that read the trigger as a 3-D volume would
+     never fire either box. :713-720 is Vector2 arithmetic on the feet.
+
+WHAT THIS DOES NOT PIN, STATED RATHER THAN HIDDEN. The OTHER no-arena arm — a
+type-3 (LOAD) record whose id names nothing — is NOT reachable from shipped data.
+Every type-3 id in all six DTI goldens is 0..9 while every level writes 19 arenas,
+so no load box can name nothing; mutation M4 below confirms nothing reddens when
+that arm is removed. That arm stays compile-verified. Also unpinned, as batch 139
+recorded: the PullDoors active-second exemption (M5 there, a negative result).
+
+§3. GATE RESULTS, VERBATIM
+--------------------------------------------------------------------------------
+make -C tests/scripts                                 (571 -> 572 cases)
+    PASS TriggerBoxesPreloadAndPullDoors
+    PASS TriggerShowBoxDrawsAndTheMinusOneBoxClears
+    All cases match the oracle.                                rc 0
+    572 PASS lines, 0 FAIL, 0 SKIP.
+    git status tests/scripts/golden -> clean: NO GOLDEN CHANGED.
+
+make -C tests/scripts test_crossing                  (the row's acceptance command)
+    PASS L4_crossing / PASS L7_crossing
+    All crossing cases match the oracle.                       rc 0, 2 cases
+
+DISPLAY=:99 bash tools/check.sh
+    CHECK: ALL GATES PASSED                                    rc 0
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             L3_f1.bmp sha=58615fc85d02e009
+                                       VERDICT: CONTRACT CLEAN
+      PASS   gates_batch_integrity    project invariants intact
+      PASS   gates_completion         every done row is backed by evidence
+      note: crossing selftest: 8 seeded arms, all adjudicated as claimed
+      COMPLETION SELFTEST: PASS (13 arms); COMPLETION[d1]: 10 done / 13 total
+
+make -C mdk_3ds  (DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM)
+    3DSX mdk.3dsx                                              rc 0
+    mdk.elf md5 6586bee947a2ca7ccce988ddb858114a  — UNCHANGED from batch 139,
+    which is the point: no shipped line changed.
+
+cmake --build build-linux                            rc 0 (Built target mdk)
+
+mdk_3ds/tools/emurun.sh --min-frames 60   DISPLAY=:99, rc 0
+    display :99; emulator mandarine.AppImage md5 0d2adab6 (the pinned r1.2.1,
+    /mnt/nas/Development/mandarine.AppImage -> the 20250128-418c25c extract)
+    backend: PICA200 Citro3D; flow: screen=4 level=7
+    gl forced llvmpipe; stereo render_3d=0 factor_3d=0 (mono); audio muted
+    frames: reached 2520 by the deadline (47 frame lines logged); after the reap
+    the guest log ends at frame 2580 (48 frame lines logged)
+    frame 2460 elapsed=0.0167 steps=2473 feet=(0.0,4.0,0.0) yaw=90.0 health=100
+                 voices=0 plays=1 objects=7 obj=570c/13d peak=570c/13d
+    frame 2520 elapsed=0.0167 steps=2533 health=100 objects=7
+    lane /tmp/mdk-emurun.1596940
+    Same scene, same numbers as batch 139's run, and it must be: the binary is
+    byte-identical. It is ~2500 ticks of the shipped trigger path over real
+    level-7 records with nothing diverging, and it is NOT a trigger-box
+    demonstration — the scene idles at the level-7 spawn and no box fires. The
+    gap review-6 left open in its own Open Questions 2 is unchanged: proving the
+    trigger succession needs a C# run (no `dotnet` on this box) or a walk on
+    hardware.
+
+docs/frames/2026-11-11-trigger-show-and-clear.png  md5 6769a13731983d65cee9df02da6cff37
+    BYTE-IDENTICAL to batch 136/137/138/139's, disclosed: at level 3 frame 1 Kurt
+    is at the spawn, where no trigger box of that arena is crossed. The sidecar
+    records the same 1.240% ceiling.
+
+§4. MUTATION PROBES (each was made real in the tree, built, run, and reverted)
+--------------------------------------------------------------------------------
+M1  the two arms SWAPPED (`TriggerShow -> preloadArena`, the else -> `showArena`):
+        FAIL line 6207: !runtime.secondActive()
+        FAIL line 6209: runtime.drawnArenas().size() == 1
+        FAIL line 6223: runtime.drawnArenas().size() == 1
+        FAIL line 6226: !runtime.secondActive()
+        FAIL line 6233: runtime.drawnArenas().size() == 1   (x5, one per step)
+    and 11 more in the new case:
+        FAIL line 6418: runtime.secondActive()
+        FAIL line 6419: runtime.drawnArenas().size() == 2
+        FAIL line 6420: runtime.drawnArenas()[1] == "CDANT_9"
+        FAIL line 6428: corridorObjects() > 0
+        FAIL line 6434 / 6435 / 6446 / 6455 / 6466 (x3)
+    rc 1, 20 checks FAILED. Reddens BOTH cases, from both directions: the show box
+    leaves the corridor inactive and undrawn, the load box's arena comes out active,
+    and no corridor object appears at all — which is what corrected §2's account of
+    WHY the object is a show-only observable. Reverted; green again.
+
+M2  the show arm ignores an empty name (`if (!arena.empty()) showArena(arena)`),
+    i.e. the id = -1 box stops clearing:
+        FAIL line 6455: runtime.secondArena().empty()
+        FAIL line 6456: !runtime.secondActive()
+        FAIL line 6457: runtime.drawnArenas().size() == 1
+        FAIL line 6466 / 6467 (x3, one per step still inside the box)
+    rc 1, 9 checks FAILED. The clear arm, isolated: the corridor stays the active
+    second through the whole y = 4965 walk. Reverted.
+
+M3  the id read as an index into the arena's CONNECTION list instead of the arena
+    list (the bound becomes the arena's type-6 record count):
+        FAIL line 6417: runtime.secondArena() == "CDANT_9"
+        FAIL line 6418: runtime.secondActive()
+        FAIL line 6419: runtime.drawnArenas().size() == 2
+        FAIL line 6420: runtime.drawnArenas()[1] == "CDANT_9"
+        FAIL line 6428 / 6433 / 6434 / 6435 / 6445 / 6446
+    rc 1, 10 checks FAILED. DANT_10 writes exactly ONE connection record, so id = 18
+    is out of range, names no arena, and the box clears instead of showing. This is
+    the reading batch 139 recorded as inseparable in CDANT_1 (its M6, not attempted):
+    here the shipped data DOES separate the two readings, so the :726 claim is now
+    pinned on data that can tell them apart. Reverted.
+
+M4  the LOAD-with-no-arena arm removed (`else if (arena.empty()) { }`): NOTHING
+    REDDENED ("All cases match the oracle."). Recorded as a negative result, not
+    hidden, and it is the evidence for §2's "what this does not pin": no shipped
+    type-3 record can name nothing, so that arm is unreachable from the corpus.
+
+§5. WHAT THIS BATCH DOES NOT EVIDENCE
+--------------------------------------------------------------------------------
+* NO GOLDEN EXECUTES A TRIGGER BOX, and none can be added: `dotnet` is gone from
+  this box, so no oracle dump exists for the trigger path. Every expected value in
+  the new case is read off the C# and the shipped DTI golden.
+* The emulator idles at a spawn: no trigger box has ever been SEEN firing on the
+  3DS target, only executed in the host harness. Unchanged from batch 139.
+* The TriggerLoad-with-no-arena arm (:731-734) is unreachable from shipped data and
+  stays compile-verified (M4).
+* The PullDoors active-second exemption is still ported-and-unpinned (batch 139 M5).
+* `residentArena_` and `drawnArenas()` are still written and unread by any frontend;
+  review-6's Open Question 3 asked for a `drawnArenas()` assertion and this batch
+  supplies one (size AND order), but the accessor still has no production reader.
+* review-6's Open Question 1 (`gates_batch_integrity` cannot see a worktree-only
+  protected edit; `ralph/builder.md` is modified-unstaged and PROTECTED) is
+  owner-only. This batch staged explicit paths and never `git add -A`, so it could
+  not be swept in.
+* Prior-solution lookups: pi-knowledge `mdk-sdl` was searched for the trigger and
+  arena-load path and returned the oracle's ScriptRuntime.cs regions and the
+  DoorArenaTests class, which is what named FarSpot as the walkable start. The
+  Obsidian and Cognee MCP tools are NOT present in this session's tool list, so per
+  AGENTS.md P9 that is a session configuration fault to report, not a lookup that
+  happened; the vault on disk was not read as a substitute this iteration.
+* PROCESS NOTE, stated rather than hidden, because batch 139 recorded this exact
+  hazard and it was still repeated here. The mutation harness reverts with
+  `git checkout -- mdk_core/src/scripts/script_runtime.cpp`, which restores the
+  COMMITTED blob -- so when the file also carries this batch's uncommitted comment
+  fixes, reverting a mutation silently destroys them. It happened: the first
+  `git show --stat` after the commit showed nine files and no `script_runtime.cpp`,
+  i.e. F2, F3 and F4 had landed in the prose and not in the code they describe. The
+  fixes were re-applied, both targets rebuilt, the elf re-checked, and the commit
+  re-made with all ten paths. The recipe is the one batch 139 already wrote down:
+  back the file up and restore FROM THE BACKUP, never from git, while a mutation is
+  in flight -- and read `git show --stat` before believing the batch is in.
+* Old-3DS hardware: no console in hand, nothing here is hardware evidence. The
+  gates that are age-gated on a profile capture remain waived by PROJECT_FROZEN_AT
+  and `gates_vfp` reports "clean under the freeze".

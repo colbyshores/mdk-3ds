@@ -1,12 +1,46 @@
 # Phase 2 continuation checkpoint
-Risk: high — shipped arena behaviour changes on both targets. Every tick now runs the DTI trigger boxes
-(`CheckTriggers`), so a box can take the second arena slot and make an arena resident; `showArena` now
-loads what it shows, which means a door leading into the shown arena can be taken out of the neighbour
-that holds it and turned 180°; and VM opcode 223, previously unimplemented, now does the same through
-the scripts. None of it is visible in the pinned frame (level 3 frame 1 is a spawn, and the frame is
-byte-identical), and the level-7 emulator scene idles at its spawn, so the behaviour is pinned by an
-executed `vm_tests` case on shipped level-7 geometry plus four mutations, not by a capture. High for
-what it decides — where Kurt's floors are and where a door stands — not for its size.
+Risk: low — no shipped line changed. This batch adds one executed `vm_tests` case and corrects prose
+(the coverage record, four comments, six drifted citations); `mdk.elf` is byte-identical to batch 139's
+at `6586bee947a2ca7ccce988ddb858114a`, all 572 host cases and every gate pass, and the pinned frame is
+unchanged. Low is the classification the risk rules give a test-plus-comments diff, and the binary hash
+is the evidence that nothing else moved.
+
+**Batch 140 (iteration 7 of the ledger row `3ds.collision-doors`) — the two trigger arms batch 139 left
+compile-verified are now executed, and review-6 is closed 6/6.** Review-6 (`review-6.md`, DeepSeek V4.1
+Flash TH, no Critical, no High, verdict INCOMPLETE on F1 alone): **F1** (Medium — opcode 223 was still
+listed as unimplemented in `docs/OPCODE_COVERAGE.md`) and **F2, F3, F4, F5, F6** (all Low) are fixed;
+nothing is rebutted. F1 was a recount the file had to carry: C# 238 cases, C++ 214 labels / 213 unique,
+opcode 249's nested `case 0:` being the one non-dispatch, so **212 true dispatches and 26 remaining**
+(212 + 26 = 238), recounted from the same brace-matched method spans the file documents. **F5** was the
+real work: `CheckTriggers`' `TriggerShow → ShowArena(arena)` arm (`ScriptRuntime.cs:727-730`) and its
+names-no-arena arm (`:731-734`, the only route from inside the trigger loop to `ShowArena("")`, which is
+the only thing that ever empties the second slot) had never run, because `CDANT_1`'s pair are both type 3
+— and a port that swapped the two arms, or dropped the clear, passed every gate. Level 7's `DANT_10`
+ships both: a `type=1 id=18` box at x[509,511] y[4968,5077] and a `type=1 id=-1` box at x[511,514]
+y[4964,5082] (`golden/L7_dti.txt:45-46`), and `DoorArenaTests.FarSpot = (495, 5005, 24)` is the oracle's
+own spot immediately left of them; the first tick's geometric lookup answers `DANT_10` where the C#
+would have used the unported `TeleportKurt`. `testTriggerShowBoxDrawsAndTheMinusOneBoxClears` walks
+there and pins the SHOW arm alone (the corridor `arenas[18] = CDANT_9` takes the second slot ACTIVE and
+DRAWN, and an object of the corridor's appears because an active second is a LIVE arena (`:703`) so its
+own controller runs — which a preload never does — while the resident arena does NOT move, because a
+corridor is not in the MTO, `:617-620`), then the CLEAR arm alone — the two boxes' y ranges
+differ, so at y = 4965 only the `id = -1` box can answer and the clear is not a side effect of the show.
+Mutations: **M1** (arms swapped) reddens the new case and batch 139's, **M2** (the show arm ignores an
+empty name) reddens the clear lines, **M3** (the id read as a connection-list index) reddens the show
+lines — and M3 is the reading batch 139 recorded as inseparable in `CDANT_1`, which `DANT_10` separates
+because it writes exactly one connection record, so id 18 is out of range and the box would clear instead
+of showing. **M4** (the load-with-no-arena arm removed) reddens NOTHING, recorded as the negative result
+that proves the claim it stands for: every type-3 id in all six DTI goldens is 0..9 against 19 arenas per
+level, so that arm is unreachable from shipped data and stays compile-verified. Gates: `make -C
+tests/scripts` → `All cases match the oracle.` rc 0, **572** PASS / 0 FAIL / 0 SKIP (was 571) and no
+golden changed; `test_crossing` (the row's acceptance command) 2 cases rc 0; `DISPLAY=:99 bash
+tools/check.sh` → `CHECK: ALL GATES PASSED` rc 0; `make -C mdk_3ds` → rc 0 with `mdk.elf`
+`6586bee947a2ca7ccce988ddb858114a` UNCHANGED; `cmake --build build-linux` rc 0; `emurun.sh
+--min-frames 60` on `:99`, mandarine `0d2adab6`, rc 0, level 7 frame 2520/2580, `health=100 objects=7
+plays=1` — the same numbers as batch 139 because the binary is identical. Frame
+`docs/frames/2026-11-11-trigger-show-and-clear.png` byte-identical to its four predecessors.
+Measurements, four mutations including one negative, and the not-evidenced list:
+`docs/evidence/2026-11-11-trigger-show-and-clear.txt`; narrative: `docs/PROGRESS_LOG.md` "Iteration 140".
 
 **Batch 139 (iteration 6 of the ledger row `3ds.collision-doors`) — the DTI trigger boxes land, and
 with them the arena-load path they drive.** Review-5 (`review-5.md`, DeepSeek V4.1 Flash TH, no
@@ -16,7 +50,9 @@ of that list — Viewer.cs:702 draws `DrawnArenas`, Viewer.cs:533 `SetSolid` rea
 fixed; **F3** (the `gates_batch_integrity` revision check) is owner-only. This is the pair of writers
 batch 138 left on either side of its snapshot point, and they are one chain: `CheckTriggers`
 (`ScriptRuntime.cs:707-740`, 0x41bf1c) is the only per-tick caller of `PreloadArena` (`:602-612`),
-which is the only caller of `LoadArena` besides `ShowArena`'s own (`:582-589`), which is the only
+which is the only caller of `LoadArena` besides `ShowArena`'s own (`:582-589`) — the oracle's third
+`LoadArena` caller is `TeleportSecond` (`:516`), inside the unported `TeleportKurt`, and it owes the
+same call when that lands (review-6 F3) — which is the only
 caller of `PullDoors` (`:628-643`) — the door move whose absence is the "the doorway showed the sky"
 artefact `DoorArenaTests` opens with. Ported: `checkTriggers()` at the oracle's position immediately
 ABOVE `updateDrawnArenas()`, `segmentsCross`/`crossesBox` as `:756-770`/`:743-755` line for line (the
@@ -1349,6 +1385,49 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 140)
+**Batch 139's item (2) is closed — both remaining trigger arms are executed — so what is left on
+`3ds.collision-doors` is evidence the harness cannot produce yet, not code.** In priority order:
+**(1) a crossing capture, and with it a mid-tick door and a trigger box.** The 3DS rest pitch, the
+drawn-list pin across a doorway, the one-tick lag and the trigger boxes and door pull all read a
+`currentArena()` that moves, and no capture has ever shown any of them: an `emurun.sh` run that walks
+level 4 through connection 1012 (or level 7 through 1001 and down the `CDANT_1` tunnel into the
+y = 569..592 boxes, or across the `DANT_10` pair at x = 509 and 511) on `:99` would close review-1
+OQ3, review-2 OQ3, review-3 OQ3, review-4's mid-tick gap, review-6's OQ2 and batch 139's "never seen on
+the 3DS target" in one go. It needs a scripted walk in the harness, so it is not free, and it is the
+only thing that retires the "the emulator idles at a spawn" caveat for good. **(2) `PullDoors` through
+real geometry**: the pin uses built doors because on foot `updateDoor` turns the real door first; a
+scripted walk or `TeleportKurt` would let the oracle's own `LoadedArenaPullsItsDoors` be reproduced
+instead of re-stated. **(3) the hatch pin.** DTI dirs 6/7 are every doorway on level 5 and half of
+3/6/8; the arms are ported and demonstrated on shipped geometry but no oracle assertion covers them,
+and the dotnet probe that would produce one is gone (`/tmp/kilo/dotnet10` is absent and `/tmp/kilo` is
+not writable by this uid — an owner/environment item). **(4) `FollowArenas`'s golden**, which needs
+nothing new now that `PreloadArena` exists. **(5) `TeleportKurt`**, the only other way the oracle moves
+`currentArena_` and the only way into an arena no doorway leads to; it is also the only reader of the
+resident arena (`IsCorridorLoaded`, `:522-531`), so until it lands `residentArena_` stays
+written-and-unread, and it is what would let the crossing goldens' first-tick lines become oracle
+assertions. It brings `TeleportSecond` with it, and `TeleportSecond` owes `LoadArena(neighbour.Name)`
+(`:516`) — naming the neighbour without the load leaves an inactive, unloaded second with its doors still
+parked in the room it came from (review-6 F3). **(6)** the rest of `UpdateArenas` — the loaded-arena
+bookkeeping, the loop sounds and `obj.Visible` — still lives behind `updateDrawnArenas()`, and until
+`obj.Visible` lands the drawn list has no consumer and the "doorway showed the sky" artefact cannot
+manifest here at all (review-6 F4). **(7) the snowboard branch of `solidArenas()`** is written and
+unreachable: `ridesBoard_` has no writer until the ride slice, so that half is compile-verified only.
+**(8)** the one arm no shipped data reaches: a type-3 (LOAD) record naming no arena (`:731-734`),
+unreachable because every type-3 id in all six DTI goldens is 0..9 against 19 arenas per level (batch
+140's M4). **Owner-only and still owed:** review-5 **F3** (the `gates_batch_integrity` revision check)
+and review-6 OQ1 (that gate cannot see a worktree-only protected edit, and `ralph/builder.md` has been
+modified-unstaged since 2026-11-05, so the loop is running under instructions that exist in no commit),
+review-1 **F4** / review-3 **F3** (`SCRIPTS_REQUIRED_CASES` lives in a non-`PROTECTED` file), review-4
+**OQ2** (a 0-byte `review-N.md` at dispatch is read as "no findings"), the `3ds.hud-canvas` acceptance
+cell (`emurun.sh --expect hud` has no such flag), a decision on whether the gate suite should ever run
+all 572 golden cases (measured 7m27s warm, so today `gates_core_parity` runs only the crossing target),
+and the missing Obsidian/Cognee MCP servers in the builder session (AGENTS P9: a disk-only lookup is a
+degraded lookup, and this iteration had neither). **Still open and not touched:** every `hw.*` row (no
+Old-3DS hardware in hand, no `mdk_3ds/tools/hw_cycle.sh`), the Phase 2 RE sweep, and the two standing
+owner blocks (`spec.voice-pool`, `re.phase-2-sweep`). Old-3DS performance readiness remains unmeasured
+and stays open.
 
 ## NEXT (batch 139)
 **The row's writers around the snapshot point are all ported now, so what is left on

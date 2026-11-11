@@ -483,13 +483,18 @@ public:
     const std::vector<std::string>& solidArenas() const;
     // C# ScriptRuntime.DrawnArenas (ScriptRuntime.cs:262): the drawn list ITSELF, with
     // the snowboard's drop of element 1 NOT applied. solidArenas() above is what the
-    // COLLISION world reads (Viewer.cs:533 SetSolid); this is what the VIEW reads
-    // (Viewer.cs:702 `_view.Draw(_scripts.DrawnArenas, ...)`) and what the rest of
+    // COLLISION world reads (Viewer.cs:533 SetSolid); this is what the VIEW reads in the
+    // oracle (Viewer.cs:702 `_view.Draw(_scripts.DrawnArenas, ...)`) and what the rest of
     // UpdateArenas will read when the loaded-arena bookkeeping lands. Read it instead of
     // reaching for currentArena()/secondArena(): those two are the tick's END, and this is
     // its snapshot -- which is exactly the mistake review-4 F1 removed from the collision
     // path. Same object as solidArenas() off the board, and the only writer is
     // updateDrawnArenas().
+    //
+    // Written and NOT yet read: no view in this port consumes it -- the 3DS frontend draws on
+    // obj.visible, which defaults to true and has no writer -- so nothing but a test would
+    // redden if this list were wrong. That is why the trigger cases assert it directly
+    // (size and order), rather than trusting it as an oracle for the view.
     const std::vector<std::string>& drawnArenas() const { return drawnArenas_; }
     // C# ScriptRuntime._residentArena (:312): the last arena whose MTO was resident, i.e.
     // the last arena LoadArena found in the MTO rather than a corridor. The C# reads it in

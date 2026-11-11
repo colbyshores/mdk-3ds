@@ -24528,7 +24528,9 @@ byte-identical to batch 136/137/138's.
 **Why one batch and not four.** Batch 138 ended by naming the two writers that sit on either side of
 its snapshot point, and they turned out to be one chain, not two items: `CheckTriggers`
 (`ScriptRuntime.cs:707-740`, 0x41bf1c) is the only per-tick caller of `PreloadArena` (`:602-612`),
-`PreloadArena` is the only caller of `LoadArena` besides `ShowArena`'s own (`:582-589`), and
+`PreloadArena` is the only caller of `LoadArena` besides `ShowArena`'s own (`:582-589`) — the
+oracle's third is `TeleportSecond` (`:516`), inside the unported `TeleportKurt`, and it owes the
+same call when that lands (review-6 F3) — and
 `LoadArena` (`:615-623`, arena_load 0x419d00) is the only caller of `PullDoors` (`:628-643`) — the
 door move whose absence is the "the doorway showed the sky" artefact the oracle's `DoorArenaTests`
 comment opens with. Porting the box without the load would have meant stubbing the load. Opcode 223
@@ -24617,3 +24619,129 @@ target; the Obsidian and Cognee MCP tools are absent from this session's tool li
 P9 is a session configuration fault to report and not a lookup that happened. review-5 F3, review-1 F4
 / review-3 F3 and the `SCRIPTS_REQUIRED_CASES` item stay owner-only; `ralph/builder.md` is PROTECTED
 and modified-unstaged and was not swept in. Old-3DS performance readiness stays unmeasured and open.
+
+## Iteration 140 — batch 140: the two trigger arms batch 139 left compile-verified are executed on shipped geometry, and review-6 is closed 6/6 — the SHOW box, the `id = -1` CLEAR, and the opcode-223 coverage record that had not moved
+
+Review: `logs/ralph-pi/run-20261110-230107/review-6.md` (DeepSeek V4.1 Flash TH, no Critical, no High,
+verdict **INCOMPLETE** on F1 alone, 1 Medium + 5 Low). **All six are fixed; none is rebutted.** `mdk.elf`
+is **unchanged** at `6586bee947a2ca7ccce988ddb858114a` — this batch touches no shipped line, and the
+identical hash is the evidence, not a claim — the 571 golden cases are still 571 and unchanged, the new
+case makes it **572 PASS, 0 FAIL, 0 SKIP**, and the pinned frame is byte-identical to batch
+136/137/138/139's.
+
+**F5 was the work, and it was a real gap, not a bookkeeping one.** `CheckTriggers` splits on the record
+type after resolving the id against the arena list (`ScriptRuntime.cs:726`): a SHOW box calls
+`ShowArena(arena)`, which takes the second slot ACTIVE, draws it, starts its arena state and spawns its
+DTI aliens; a LOAD box calls `PreloadArena(arena)`, which takes the same slot INACTIVE and does none of
+that; and a LOAD that names nothing goes through `ShowArena("")` rather than through the preload
+(`:731-734`) — which matters because `ShowArena("")` is the only thing in the runtime that ever empties
+the second slot, so that arm is the trigger loop's only route to "put the world away". Batch 139 walked
+`CDANT_1`, whose two boxes are both type 3, so neither the show arm nor the clear arm had ever executed,
+and a port that **swapped the two arms** or **dropped the clear** passed every gate in the tree. Review-6
+was right that this was reachable from data the batch had already loaded, and right that the reason
+recorded for it ("no reachable box on level 7 has `id = -1`") was simply false: level 7's `DANT_10` ships
+a `type=1 id=18` box and a `type=1 id=-1` box (`golden/L7_dti.txt:45-46`).
+
+**The spot is the oracle's own, which is what made this cheap.** `DoorArenaTests` already carries `Far =
+"DANT_10"` and `FarSpot = (495, 5005, 24)` (`:33-34`) — immediately left of those two boxes, whose near
+edges are x = 509 and x = 511. The C# stands there with `TeleportKurt`, which is unported; here the first
+tick's geometric arena lookup answers the same arena, so `currentArena_` is `DANT_10` — the only arena
+whose records these boxes can be, since `:711` reads `CurrentArena` — and the walk is the oracle's own
+one unit per tick. The boxes are `id=18 x[509,511] y[4968,5077] z[0,7]` and `id=-1 x[511,514]
+y[4964,5082] z[0,6]`, and both z ranges are 0..7 while Kurt stands at z = 24, so the case also pins that
+the box is XY-only (`:713-720` is Vector2 on the feet): a 3-D reading never fires either box.
+
+**The two arms are pinned apart from each other, which is the part worth the walk.** Their y ranges
+differ: the show box starts at 4968, the clear box at 4964. So the case shows the corridor at y = 5005,
+walks DOWN to y = 4965 at x = 510 — outside the doorway's x[482,508], because walking down at x = 508
+crosses `DANT_10 → CDANT_9` and the probe showed `currentArena` flipping, which is not what is under
+test — and then steps 510 → 511 at y = 4965, where the show box cannot answer (4965 is below its range
+and a horizontal move at 4965 touches none of its edges) and only the `id = -1` box fires. The clear is
+therefore pinned alone, not as a side effect of the show having fired first. The show half is pinned by
+what a preload cannot do: `secondArena() == "CDANT_9"` (arenas[18], the last of the DTI's 19 arenas,
+`golden/L7_dti.txt:86`) **active**, `drawnArenas().size() == 2` with the corridor second, and an object of
+the corridor's present — which is the second being LIVE rather than merely named, since an active second
+is a live arena (`IsLiveArena`, `:703`) and its own controller runs, while a preload leaves it inactive
+so nothing of the corridor's ever spawns. (The first draft of this narrative attributed that object to
+`LoadArena → PullDoors`. Mutation **M1** disproved it: `preloadArena` reaches `pullDoors` too, and under
+M1 no corridor object appears at all, so the object is the live arena's controller and not the door pull.
+The mutation corrected the comment, which is what the pin was for.) And the resident arena does NOT move,
+because a corridor is not in the MTO (`:617-620`) — a
+different consequence from batch 139's room preload, pinned rather than assumed.
+
+**Mutations, all made real, built, run and reverted.** **M1** (the two arms swapped, `TriggerShow →
+preloadArena` and the else → `showArena`) reddens the new case *and* batch 139's — 20 checks in all, 9 in
+batch 139's and 11 in the new one — from both directions:
+the corridor comes out inactive and undrawn, and the load box's arena comes out active. **M2** (the show
+arm ignores an empty name, so the `id = -1` box stops clearing) reddens the clear lines and only those:
+the corridor stays the active second through the whole y = 4965 walk. **M3** (the id read as an index
+into the arena's CONNECTION list instead of the arena list) reddens the show lines, and it is worth
+naming: batch 139 recorded as M6, not attempted, that its `CDANT_1` data cannot separate the two readings
+because `connections[0] → DANT_1` and `arenas[0] = DANT_1`. `DANT_10` writes exactly ONE connection
+record, so id 18 is out of range on that reading, names no arena, and the box would CLEAR instead of
+showing — so the `:726` claim is now pinned on shipped data that can actually tell the two apart. **M4**
+(the load-with-no-arena arm removed) reddens **nothing**, recorded as a negative result rather than
+hidden, and it is the evidence for the claim it stands for: every type-3 id in all six DTI goldens is
+0..9 while every level writes 19 arenas, so no load box can name nothing and that arm stays
+compile-verified.
+
+**F1 (Medium) was a record that had not moved.** Opcode 223 `arena_set_neighbour` landed in batch 139 and
+`docs/OPCODE_COVERAGE.md` still listed it as unimplemented in both places, where every other opcode batch
+records its own departure. Recounted the way the file documents — brace-matched method spans, numeric
+`case` labels, set semantics — the C# owns **238** cases and the C++ now has **214** labels / **213**
+unique, the extra label being opcode 249's nested `case 0:`, so **212 true dispatches and 26 remaining**
+(212 + 26 = 238). The heading, the "Remaining" wording, both lists and the owned-case recount moved 27 →
+26, and a dated batch bullet plus a "223 left with the trigger-box batch" clause were added in the
+neighbours' prose style. The older **dated** recounts inside per-batch bullets were left alone on
+purpose: they record what was true at their own recount date, and silently rewriting those is how a
+coverage file stops being evidence.
+
+**F2, F3, F4 and F6 were prose that overstated or mis-cited, and each was checked against the C# before
+being changed.** **F2**: the `preloadArena` comment said `SecondActive` being cleared after the load is
+"what lets `PullDoors` still see the previous second as active" — it does not, because `SecondArena` is
+reassigned *before* `LoadArena` (`:609-611`), so by the time `PullDoors` evaluates
+`other == CurrentArena || (SecondActive && other == SecondArena)` the previous second is no longer
+`SecondArena` and the only exemption that can protect its doors is Kurt's own arena. The code matched
+the oracle; only the stated reason was wrong, and a wrong reason is an invitation to "simplify" the
+ordering. **F3**: `TeleportSecond` (`:516`) is the oracle's third `LoadArena` caller, inside the
+unported `TeleportKurt`; three prose records claimed a two-caller graph, so `loadArena()` now names all
+three and says what a teleport that names the neighbour without loading it would leave behind. **F4**:
+the `pullDoors` comment justified itself with the "doorway showed the sky" artefact, but that artefact
+cannot manifest here — `MdkObject::visible` defaults to true and has no writer, and `updateDrawnArenas`
+leaves `obj.Visible` unported — so the comment now says the rule is ported ahead of its effect and that
+whoever ports `obj.Visible` still owes the capture; `drawnArenas()` is labelled written-and-unread the
+way `residentArena()` already was, which also answers review-6's OQ3 by asserting the list's size *and*
+order rather than trusting it. **F6**: six drifted citations corrected — and corrected again for this
+batch's own comment edits, which moved `script_runtime.cpp` a second time, so the evidence file now says
+plainly which tree its numbers belong to.
+
+**Gates, verbatim.** `make -C tests/scripts` → `All cases match the oracle.` rc 0, **572 PASS / 0 FAIL /
+0 SKIP**, `git status tests/scripts/golden` clean — **no golden changed**, and none can be added:
+`dotnet` is gone from this box. `make -C tests/scripts test_crossing` (the ledger row's own acceptance
+command) → `PASS L4_crossing`, `PASS L7_crossing`, rc 0. `DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL
+GATES PASSED` rc 0 with `audit_c_with_classes 0 violations`, `gates_vfp 0 blockers`, `audit_arm11_math
+contract clean`, `audit_r11_idiv no candidates`, `gates_core_parity` PASS, `gates_smdh` SKIP (no built
+.cia), `gates_frames` PASS (`L3_f1.bmp sha=58615fc85d02e009`), `gates_batch_integrity` PASS,
+`gates_completion` PASS (10 done / 13 total). `make -C mdk_3ds` → rc 0, `mdk.elf`
+`6586bee947a2ca7ccce988ddb858114a` **unchanged**. `cmake --build build-linux` → rc 0.
+`emurun.sh --min-frames 60` on `:99` with the pinned mandarine `0d2adab6` → rc 0, level 7, frame 2520 by
+the deadline / 2580 after the reap, `health=100 objects=7 plays=1`, 0.0167 s/step: the same numbers as
+batch 139 because the binary is byte-identical, and it is a regression net rather than a trigger
+demonstration — the scene idles at the level-7 spawn and no box fires. Review-6's own OQ2 said as much
+and it stays open: proving the trigger succession needs a C# run or a walk on hardware, and neither
+exists here. Frame `docs/frames/2026-11-11-trigger-show-and-clear.png` md5
+`6769a13731983d65cee9df02da6cff37`, byte-identical to its four predecessors and disclosed as such.
+Full measurements, the four mutations including the negative one, and the not-evidenced list are in
+`docs/evidence/2026-11-11-trigger-show-and-clear.txt`.
+
+**What this batch does not evidence, stated rather than hidden.** No golden executes a trigger box, and
+none can be added. The load-with-no-arena arm is unreachable from shipped data (M4). The `PullDoors`
+active-second exemption is still ported-and-unpinned (batch 139's M5). `residentArena_` and
+`drawnArenas()` still have no production reader. Prior-solution lookups: pi-knowledge `mdk-sdl` was
+searched for the trigger and arena-load path and returned the oracle's `ScriptRuntime.cs` regions and the
+`DoorArenaTests` class, which is what named `FarSpot` as the walkable start; the Obsidian and Cognee MCP
+tools are absent from this session's tool list, which per AGENTS.md P9 is a session configuration fault
+to report and not a lookup that happened. review-6 OQ1 (the integrity gate cannot see a worktree-only
+protected edit) and review-5 F3 stay owner-only; `ralph/builder.md` is PROTECTED and modified-unstaged
+and was not swept in — this batch staged explicit paths and never `git add -A`. Old-3DS performance
+readiness stays unmeasured and open.

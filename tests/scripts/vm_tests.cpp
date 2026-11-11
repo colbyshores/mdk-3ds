@@ -6312,6 +6312,162 @@ void testTriggerBoxesPreloadAndPullDoors(LevelData* levelData, const Cmi* cmi,
     CHECK(!sawUnimplemented(kArenaSetNeighbour));
 }
 
+// THE OTHER TWO TRIGGER ARMS: THE SHOW BOX, AND THE id = -1 CLEAR.
+//
+// WHY THIS WAS NEXT. Review-6 F5 and CONTINUATION priority (2) are the same item:
+// batch 139 walked CDANT_1, whose two boxes are both type 3, so the
+// `TriggerShow -> ShowArena(arena)` arm (:727-730) and the "names no arena ->
+// ShowArena("")" arm (:731-734) had never been EXECUTED. That is not a small gap.
+// SHOW and LOAD are the two halves of the trigger rule and they do DIFFERENT things:
+// a preload takes the second slot INACTIVE and does not draw it (batch 139's pin),
+// while a show takes it ACTIVE, draws it, and makes it live with Kurt. A port that
+// swapped the two arms, or that dropped the clear, passed every gate.
+//
+// THE GEOMETRY IS SHIPPED, AND THE SPOT IS THE ORACLE'S OWN. Level 7's DANT_10
+// writes two type-1 boxes (golden/L7_dti.txt:45-46, big-endian float bits, min/max
+// taken the way :718-719 takes them):
+//
+//     id=18  x[509,511] y[4968,5077] z[0,7]    id=-1  x[511,514] y[4964,5082] z[0,6]
+//
+// and DoorArenaTests already names where to stand: `Far = "DANT_10"`, `FarSpot =
+// (495, 5005, 24)` (:33-34). The C# gets there with TeleportKurt, which is unported;
+// here the FIRST tick's geometric lookup answers the same arena, so the walk starts
+// on the oracle's own spot and `currentArena_` is DANT_10 -- the only arena whose
+// records these boxes are, because :711 reads CurrentArena.
+//
+// THE BOXES ARE XY-ONLY, AND THAT IS PINNED BY THE HEIGHT. Both boxes' z range is
+// 0..7 while FarSpot stands at z = 24, so a port that read the box as a 3-D volume
+// would never fire it. :713-720 is Vector2 arithmetic on the feet and nothing else.
+//
+// arenas[18] is CDANT_9, the last of the DTI's 19 arenas (golden/L7_dti.txt:86), and
+// it is a CORRIDOR. So the show draws it and makes it live, but it is not in the MTO
+// and the resident arena stays DANT_10 (:617-620) -- a different consequence from
+// batch 139's room preload, pinned separately rather than assumed. And because
+// DANT_10 writes exactly ONE connection record, this id is the first shipped trigger
+// id that CANNOT be read as an index into the connection list: batch 139 recorded
+// that its CDANT_1 ids (0, 1) named the same arena either way, so the shipped data
+// could not separate the two readings. Here a connection-list index of 18 is out of
+// range, names no arena, and the box would CLEAR instead of showing.
+//
+// THE TWO ARMS ARE PINNED APART FROM EACH OTHER. The show box's y range is
+// [4968,5077] and the clear box's is [4964,5082], so at y = 4965 the show box is out
+// of reach and only the id = -1 box can fire: the clear is pinned ALONE, not as a
+// side effect of the show having fired first. At y = 5005 both boxes fire on the
+// step into x = 511, in the DTI's record order, which is the other thing this case
+// pins: the arms run in record order, not in some order of the port's choosing.
+//
+// WHAT THIS DOES NOT PIN. The TriggerLoad arm that names no arena (a type-3 record
+// with an id of -1) is NOT reachable from shipped data: every type-3 id in all six
+// DTI goldens is 0..9 while every level writes 19 arenas, so no load box can name
+// nothing. That arm stays compile-verified, and says so here instead of being
+// claimed as covered.
+void testTriggerShowBoxDrawsAndTheMinusOneBoxClears(LevelData* levelData, const Cmi* cmi,
+                                                    audio::SoundBank* bank) {
+    const float kZ = 24.0f;     // DoorArenaTests.FarSpot.Z
+    const float kY = 5005.0f;   // DoorArenaTests.FarSpot.Y
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    audio::SoundMixer mixer(bank);
+    Player player;
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
+
+    player.feet = Vec3{495.0f, kY, kZ};  // DoorArenaTests.FarSpot
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.currentArena() == "DANT_10");
+    CHECK(runtime.residentArena() == "DANT_10");
+    CHECK(runtime.drawnArenas().size() == 1);   // the room alone
+    // Nothing of the corridor's is in the world yet. An arena's own objects appear only
+    // while it is LIVE, and only Kurt's arena and the ACTIVE second are live (:703), so
+    // this counts the second slot having never been active.
+    const auto corridorObjects = [&runtime]() {
+        int32_t n = 0;
+        for (const scripts::MdkObject& o : runtime.objects()) {
+            if (!o.dead && o.arena == "CDANT_9") ++n;
+        }
+        return n;
+    };
+    CHECK(corridorObjects() == 0);
+
+    // x = 496..508 at the oracle's y: the show box starts at x = 509, so nothing has
+    // fired, and the walk does not touch the DANT_10 -> CDANT_9 doorway either (that
+    // one is at y = 5001 and only MinusY moves cross it).
+    for (float x = 496.0f; x <= 508.0f; x += 1.0f) {
+        player.feet = Vec3{x, kY, kZ};
+        runtime.update(1.0f / 30.0f);
+    }
+    CHECK(runtime.currentArena() == "DANT_10");
+    CHECK(runtime.secondArena().empty());
+    CHECK(runtime.drawnArenas().size() == 1);
+    CHECK(corridorObjects() == 0);
+
+    // THE SHOW BOX. The step 508 -> 509 crosses x = 509, the id=18 box's near edge,
+    // and it is the SHOW arm (:727-730): the corridor takes the second slot ACTIVE --
+    // a preload would have left it inactive and undrawn -- and the drawn list is TWO
+    // arenas with the corridor second. The corridor is not in the MTO, so the resident
+    // arena does NOT move (:617-620).
+    player.feet = Vec3{509.0f, kY, kZ};
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.secondArena() == "CDANT_9");  // arenas[18], the DTI's last
+    CHECK(runtime.secondActive());
+    CHECK(runtime.drawnArenas().size() == 2);
+    CHECK(runtime.drawnArenas()[1] == "CDANT_9");
+    CHECK(runtime.residentArena() == "DANT_10");
+    // And the second is LIVE, not merely named: an active second is a live arena
+    // (IsLiveArena, :703), so the corridor's own controller runs and its objects appear.
+    // A preload leaves the slot inactive and nothing of the corridor's ever spawns --
+    // mutation M1, which routes the show box through preloadArena, reddens this line
+    // along with the three above it. This is the observable that separates the two arms
+    // beyond the active flag itself.
+    CHECK(corridorObjects() > 0);
+
+    // Still inside it: the box fires on every step (:720) and changes nothing.
+    player.feet = Vec3{510.0f, kY, kZ};
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.secondArena() == "CDANT_9");
+    CHECK(runtime.secondActive());
+    CHECK(runtime.drawnArenas().size() == 2);
+
+    // DOWN to y = 4965 at x = 510, one unit per tick. Every step inside the show
+    // box's y range re-fires the show; below y = 4968 nothing fires, and the second
+    // is still the corridor when the next step starts.
+    for (float y = 5004.0f; y >= 4965.0f; y -= 1.0f) {
+        player.feet = Vec3{510.0f, y, kZ};
+        runtime.update(1.0f / 30.0f);
+    }
+    CHECK(runtime.currentArena() == "DANT_10");
+    CHECK(runtime.secondArena() == "CDANT_9");
+    CHECK(runtime.secondActive());
+
+    // THE id = -1 BOX, ALONE. At y = 4965 the show box cannot answer: its y starts at
+    // 4968 and a move at 4965 touches none of its edges, so the step 510 -> 511 is
+    // the clear arm on its own (:731-734 -> ShowArena("")), which empties the second
+    // AND deactivates it (:574-578). The drawn list is the room alone again, and the
+    // resident arena still never moved.
+    player.feet = Vec3{511.0f, 4965.0f, kZ};
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.secondArena().empty());
+    CHECK(!runtime.secondActive());
+    CHECK(runtime.drawnArenas().size() == 1);
+    CHECK(runtime.drawnArenas()[0] == "DANT_10");
+    CHECK(runtime.residentArena() == "DANT_10");
+
+    // AND IT KEEPS FIRING while the box is still crossed (`to.X < max.X`, so up to
+    // x = 513 and the edge step onto 514).
+    for (float x = 512.0f; x <= 514.0f; x += 1.0f) {
+        player.feet = Vec3{x, 4965.0f, kZ};
+        runtime.update(1.0f / 30.0f);
+        CHECK(runtime.secondArena().empty());
+        CHECK(!runtime.secondActive());
+    }
+}
+
 // A rebuilt ScriptRuntime owns a NEW SoundMixer, and that mixer owns a NEW
 // SoundDevice, so the sink the frontend attached to the old device does NOT
 // follow the rebuild. Review-6 F3: on the console the respawn path is not
@@ -6653,6 +6809,8 @@ int main() {
     printf("PASS SolidArenasAreTheDrawnListAndThePinTakesBoth\n");
     testTriggerBoxesPreloadAndPullDoors(&levelData, &cmi, &bank);
     printf("PASS TriggerBoxesPreloadAndPullDoors\n");
+    testTriggerShowBoxDrawsAndTheMinusOneBoxClears(&levelData, &cmi, &bank);
+    printf("PASS TriggerShowBoxDrawsAndTheMinusOneBoxClears\n");
     testPushKurtDispatchesDecodedListToPlayer(&levelData, &cmi, &bank);
     printf("PASS PushKurtDispatchesDecodedListToPlayer\n");
     testPushKurtModeZeroFrameAndLiftAreExact(&levelData, &cmi, &bank);

@@ -4,13 +4,13 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ has **213** numeric labels / 212 unique labels (211 true dispatches), leaving **27** unimplemented. The
+  owns **238** cases, the C++ has **214** numeric labels / 213 unique labels (212 true dispatches), leaving **26** unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
   `noteUnimplemented` (decoded, no-op, scripts stay in sync).
 - The reachability probe (C++ `unimplemented()` after running each level to
-  t30000) was rerun after the ammo-condition batch: none of the remaining 27
+  t30000) was rerun after the ammo-condition batch: none of the remaining 26
   opcodes fires in levels 3-8, so the probe is clean on every level. The
   synthetic `vm_tests` harness is the route for those opcodes.
 - **Parts batch (2026-10-26):** 32/129 ported (`script_vm.cpp`, reusing
@@ -227,6 +227,16 @@ Method and reachability evidence in the final Phase 2 report. Summary:
   `mdk::Player`; the Linux frontend integration below constructs
   `ScriptRuntime` and binds that Player, so the dispatch is complete.
   Recount: C# 238, C++ 206 true dispatches, 32 remaining.
+- **Trigger-box batch (2026-11-11):** opcode 223 (`arena_set_neighbour`, arena_load
+  0x41a2d0) is ported over the runtime's second-arena slot: the operand names an
+  arena and it takes the second slot INACTIVE through the same `preloadArena` the DTI
+  type-3 trigger box drives (`ScriptRuntime.cs:602-612`), with `""`, `"NONE"` and the
+  arena that already *is* the second as the C#'s three no-ops. One `vm_tests` case
+  pins the dispatch through the VM, the inactive second, the resident-arena change and
+  that a preload does not draw the room; the same case walks level 7's shipped
+  `DANT_10` type-1 boxes, which is what executes the show arm and the `id = -1` clear
+  arm an opcode alone cannot reach. Recount: C# 238, C++ 212 true dispatches, 26
+  remaining.
 
 ## Ported so far (verified present in `ScriptVm::execute`)
 
@@ -293,7 +303,12 @@ opcode-6 row below said so, and command 1's gap was not recorded anywhere. Two
 `FormationFollowersKeepTheirSlot`); neither command fires in levels 3-8, so all
 460 goldens are byte-identical.
 
-## Remaining 27 (verified set)
+The trigger-box batch adds: 223 (`arena_set_neighbour`), over the runtime's second
+arena slot and `preloadArena` -- the same routine the DTI type-3 trigger box drives,
+which is why the two landed together. It also lands `checkTriggers`, `loadArena` and
+`pullDoors` on the runtime side, and the level-7 walk that pins all three.
+
+## Remaining 26 (verified set)
 
 13 left this list with the synthetic-harness batch (port 13 is an explicit
 false branch, `ScriptVmTests.UnimplementedConditionsAreFalse` pins it, and the
@@ -307,13 +322,13 @@ swing/rope object-state, pinned by two `vm_tests` tests. 156 (`spawn_at_point`) 
 112, 114, 128,
 130, 131, 132, 133, 136, 142, 143, 158, 159, 167,
 171, 172, 173, 178, 181, 184, 189, 190,
-209, 221, 223, 224,
+209, 221, 224,
 247
 
 **Reachability, re-probed to t30000 (2026-10-28, `tick1 probe 30000`):**
 after the Debris slice the only remaining opcode that fires anywhere in
 levels 3–8 is **208** (`if_part_hit`, L5 ×9134), now ported; the probe is
-clean on every level. The remaining 27 do not fire in this corpus at all —
+clean on every level. The remaining 26 do not fire in this corpus at all —
 they stay documented no-ops until a corpus or a synthetic test exercises
 them (the rule at the end of this file). The synthetic harness
 (`tests/scripts/vm_tests`, twin of `tests/Mdk.Game.Tests/ScriptVmTests.cs`)
@@ -337,7 +352,7 @@ By blocking subsystem (carried grouping, corrected for this batch):
   binds that Player, realizing them in integrated play. 174 `if_ammo` landed
   over the new ammo fields, but its pickup and combat writers remain deferred.)
 - **Arena/world (needs arena texture/sky/fan/wind state, spawn helpers):**
-  28, 130, 133, 142, 143, 159, 190, 223, 224 (156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred)
+  28, 130, 133, 142, 143, 159, 190, 224 (156 landed with the spawn slice: it needed only `runtime_.spawn` and `reference_point`, both already ported; 202 landed with the sky-mode batch, but its renderer backdrop consumer is still deferred; 223 `arena_set_neighbour` left with the trigger-box batch: it is `PreloadArena`'s other caller, so it landed with the DTI type-3 box that drives the same routine, pinned by a `vm_tests` case on shipped level-7 geometry)
 - **Effects/combat/partners (needs parts, Items.Bomb,
   chain/partner links, raycast normals):** 128, 132,
   136, 158, 167, 172, 184 (121 landed with the floor-below batch over
@@ -386,10 +401,11 @@ is worse than the current documented no-op.
 
 Method (reproducible): brace-match the C# `ScriptVm.Execute` and the C++
 `ScriptVm::execute` method spans, take the set of numeric `case` labels in each,
-and compare as sets. Current count: C# **238**, C++ **213 labels / 212 unique**,
-remaining **27**. The C++ set has the nested `case 0:` mode arm inside opcode
-249's switch, which is not a dispatch, so there are **211 true dispatches** and
-211 + 27 = 238. Recounted 2026-10-28 after opcode 174 was added; the raw C++
+and compare as sets. Current count: C# **238**, C++ **214 labels / 213 unique**,
+remaining **26**. The C++ set has the nested `case 0:` mode arm inside opcode
+249's switch, which is not a dispatch, so there are **212 true dispatches** and
+212 + 26 = 238. Recounted 2026-11-11 after opcode 223 was added (it was 213
+labels / 212 unique / 211 true dispatches / 27 remaining after opcode 174); the raw C++
 label count includes opcode 249's nested `case 0` and `case 1` arms, with the
 latter duplicating top-level opcode 1.
 

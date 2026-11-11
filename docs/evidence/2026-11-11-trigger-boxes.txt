@@ -8,6 +8,9 @@ Review closed: logs/ralph-pi/run-20261110-230107/review-5.md (DeepSeek V4.1
 Flash TH, no Critical, no High, verdict COMPLETE, 3 Low) — F1 fixed here, F2
 fixed here, F3 owner-only.
 Measured 2026-11-11 (UTC), tree at 11c7753 + this batch's working tree.
+Line citations were re-verified against the tree at batch 140 (review-6 F6): six of
+them had drifted when drafted, and batch 140's own comment edits moved the file
+again, so every script_runtime.cpp number below is the batch-140 one.
 ================================================================================
 
 §1. WHAT CHANGED, AND THE ORACLE LINE FOR EACH PIECE
@@ -34,6 +37,10 @@ because they are one chain and not two items:
       does nothing at all — not the deactivation, not the load, so it pulls that
       arena's doors no second time. SecondActive is cleared AFTER the load, which
       is what lets PullDoors still see the previous second as active.
+      [CORRECTED BY REVIEW-6 F2, BATCH 140: it does not. SecondArena has already
+      been reassigned by the time LoadArena runs, so the previous second is no
+      longer SecondArena and the only PullDoors exemption that can apply to its
+      doors is Kurt's own arena. The code was right; this sentence was not.]
   src/Mdk.Game/Scripts/ScriptRuntime.cs:615-623  LoadArena (arena_load 0x419d00):
       `if (Level.Mto.Has(arena)) _residentArena = arena;` then PullDoors(arena).
       "only one arena (not corridor) is loaded at a time" — a corridor is not in
@@ -52,20 +59,20 @@ because they are one chain and not two items:
       is gone and the calls are there.
 
 PORTED (mdk_core/src/scripts/script_runtime.{h,cpp}):
-  * `checkTriggers()` — script_runtime.cpp:911, called from runTick at the
-    oracle's own position, immediately ABOVE `updateDrawnArenas()` (:635 vs :636),
+  * `checkTriggers()` — script_runtime.cpp:925, called from runTick at the
+    oracle's own position, immediately ABOVE `updateDrawnArenas()` (:633 vs :634),
     which is where batch 138's comment said it had to go. `from` is
     previousKurtPosition_ and `to` is kurtPosition_, i.e. this tick's move, XY
     only: the C# writes _previousKurtPosition at :946, below both this call and
     the crossing, and runTick publishes it in the same place.
-  * `segmentsCross` (:389) and `crossesBox` (:410) — the C#'s SegmentsCross
+  * `segmentsCross` (:396) and `crossesBox` (:416) — the C#'s SegmentsCross
     (:756-770) and Crosses (:743-755) line for line: the parametric form,
     INCLUSIVE at both ends, FALSE for parallel segments including collinear ones.
-  * `preloadArena()` (:840) — public, because opcode 223 is its other caller.
-  * `loadArena()` (:852) and `pullDoors()` (:872) — private; `pullDoors` iterates
+  * `preloadArena()` (:843) — public, because opcode 223 is its other caller.
+  * `loadArena()` (:859) and `pullDoors()` (:886) — private; `pullDoors` iterates
     objects_ with the C#'s predicate and calls the existing `moveDoor` (a
-    forward declaration was added at :865, the definition stays with the door
-    engine at :2900).
+    forward declaration was added at :867, the definition stays with the door
+    engine at :2957).
   * `residentArena_` (the C#'s _residentArena, :312) and `residentArena()`. The
     C# reads it in exactly one place, `IsCorridorLoaded` (:522-531), which belongs
     to the unported TeleportKurt, so until that lands it is written and not read;
@@ -251,6 +258,13 @@ M6  reading the record's id as an index into the arena's CONNECTION list instead
   the `record.type == TriggerShow -> ShowArena(arena)` arm of :727-730 is
   compile-verified only, and so is the `Load with no arena -> ShowArena("")` arm,
   because no reachable box on level 7 has id = -1 or an id past the arena list.
+  [CLOSED BY BATCH 140, review-6 F5: the reason stated here was wrong — level 7's
+  DANT_10 DOES ship a type-1 id=18 box and a type-1 id=-1 box (golden/L7_dti.txt:
+  45-46), and DoorArenaTests.FarSpot is walkable onto them. Both arms are executed
+  by `testTriggerShowBoxDrawsAndTheMinusOneBoxClears`; see docs/evidence/
+  2026-11-11-trigger-show-and-clear.txt. What remains unreachable is the OTHER
+  no-arena arm, a type-3 record with id = -1: every type-3 id in all six DTI
+  goldens is 0..9 against 19 arenas per level, so no load box can name nothing.]
 * The PullDoors ACTIVE-SECOND arm is ported and unpinned (M5).
 * The PullDoors doors are BUILT, not spawned. The oracle's own
   DoorArenaTests.LoadedArenaPullsItsDoors reaches its state with TeleportKurt,
