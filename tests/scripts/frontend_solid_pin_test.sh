@@ -82,7 +82,9 @@ CHK = {
     "refresh-in-loop": "the fixed-step loop refreshes Kurt's solid arena",
     "refresh-is-geometric": "the refresh reads the geometric arena under his feet",
     "refresh-guarded": "every in-loop refresh is guarded on its own lookup",
-    "pin-not-the-runtime": "the loop never pins the runtime's frozen current arena",
+    "pin-not-the-runtime":
+        "the loop never pins the runtime's single current arena, where the oracle pins "
+        "a LIST (current + active second)",
     "spawn-pin": "the spawn pin is still there for a Kurt outside every arena",
 }
 
@@ -239,8 +241,9 @@ def arm_delete_refresh(who, text):
 
 def arm_frozen_pin_replacing(who, text):
     """Batch 99's shape: the geometric refresh REPLACED by the runtime's current
-    arena. It trips the geometric check first (there is no lookup left to read);
-    arm_frozen_pin_added is the one that isolates the frozen-pin check."""
+    arena — one name where the oracle pins the drawn LIST. It trips the geometric
+    check first (there is no lookup left to read); arm_frozen_pin_added is the one
+    that isolates the runtime-pin check."""
     sp = step_loop_span(text)
     if sp is None:
         return text
@@ -250,9 +253,9 @@ def arm_frozen_pin_replacing(who, text):
 
 
 def arm_frozen_pin_added(who, text):
-    """The frozen pin put back ALONGSIDE the geometric refresh, after it, so it is
-    the last writer and the geometric shape survives: only the frozen-pin check can
-    catch this one."""
+    """Batch 99's runtime pin put back ALONGSIDE the geometric refresh, after it, so
+    it is the last writer and the geometric shape survives: only the runtime-pin check
+    can catch this one."""
     sp = step_loop_span(text)
     if sp is None:
         return text

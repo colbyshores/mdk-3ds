@@ -36,10 +36,15 @@
 # frontend now owns a script runtime, which means four more things became load-
 # bearing that no compiler can see:
 #   6. the step loop's ONE pin reads the arena under Kurt and never the runtime's
-#      current arena — which the unported connection crossing leaves at the spawn
-#      arena for the whole level (review-6 F1: batch 99 pinned to it and a door walk
-#      fell through the room it opened into). This is the check that keeps the
-#      reverted stand-in reverted until CrossedArena lands.
+#      current arena. The connection crossing landed in batch 134, so currentArena()
+#      does move now; what makes a runtime pin wrong is an ARITY — the oracle pins the
+#      scripts' DRAWN list (current + the active second, ScriptRuntime.cs:265-278) and
+#      ArenaSpace::setSolid takes ONE name, so a pin that reads currentArena() drops
+#      the active second, the room behind the door Kurt just came through. That is the
+#      class review-6 F1 found when batch 99 pinned a currentArena_ that was, at that
+#      point, still frozen at the spawn and a door walk fell through the room it opened
+#      into. The check stands until the drawn list and a two-name setSolid land, and it
+#      is what keeps the reverted stand-in reverted.
 #   7. the scripts tick inside the fixed-step loop between Kurt and the camera
 #      (Viewer.cs:505-535), because the runtime's own 1/30 s clock assumes it is
 #      called once per 1/60 s step;
@@ -930,8 +935,8 @@ CHK = {
         "every in-loop refresh is guarded, so an empty lookup does not clear the pin",
     "guard-is-the-lookup": "the guard is the arenaAt lookup itself",
     "pin-not-the-runtime":
-        "the step loop pins from the arena under Kurt, never from the runtime's frozen "
-        "current arena",
+        "the step loop pins from the arena under Kurt, never from the runtime's single "
+        "current arena, which is one name where the oracle pins a LIST",
     "scripts-tick-order":
         "the scripts tick in the step loop, after Kurt and before the camera",
     "mixes-runtime-mixer":
@@ -1051,22 +1056,26 @@ def adjudicate(text, quiet=False):
         "a guarded setSolid whose guard is not the lookup can still clear the pin")
 
     # 6. the step loop's pin NEVER reads the runtime's current arena. Review-6 F1
-    #    (High): `currentArena_` is written exactly once, on the runtime's first
-    #    tick (script_runtime.cpp:362-378), because the DTI connection crossing that
-    #    moves the oracle's `CurrentArena` (CrossedArena, ScriptRuntime.cs:791-803)
-    #    is not ported. Pinning to it therefore freezes the collision world at the
-    #    SPAWN arena for the whole level: walk through an open door and move() --
-    #    which uses ONLY the pinned arena, arena_space.cpp:118 -- finds no floor in
-    #    the room Kurt entered, he drops through it, and bottom() fires the fall-out
-    #    death into a respawn loop. Batch 99 shipped exactly that; this check is the
-    #    pin that stops it coming back, and it is the reason the claim "with a
-    #    runtime the pin is the oracle's own" was deleted rather than kept quiet.
+    #    (High) shipped exactly that, and the reason has since changed while the check
+    #    has not: the DTI connection crossing that moves the oracle's `CurrentArena`
+    #    (CrossedArena, ScriptRuntime.cs:791-803) is ported (batch 134), so
+    #    `currentArena()` is no longer written once and frozen at the spawn. It is
+    #    still ONE name, and the oracle's pin is a LIST — the scripts' drawn arenas,
+    #    current plus the active second (ScriptRuntime.cs:265-278) — while
+    #    ArenaSpace::setSolid takes one name (game/arena_space.h says so). Pinning the
+    #    runtime's current arena therefore drops the ACTIVE SECOND, the room behind the
+    #    open door Kurt came through: move() uses ONLY the pinned arena
+    #    (arena_space.cpp:118), so it finds no floor in that room, he drops through it,
+    #    and bottom() fires the fall-out death into a respawn loop. Batch 99 shipped
+    #    that; this check is the pin that stops it coming back, and it retires with the
+    #    drawn list and a two-name setSolid, not before.
     frozen = bool(re.search(r"setSolid\([ \t]*runtime->currentArena\(", loop or ""))
     say(CHK["pin-not-the-runtime"],
         not frozen and loop_code is not None and loop_code.count("setSolid(") == 1,
-        "currentArena() does not move until CrossedArena is ported, so a pin that "
-        "reads it is the spawn arena forever; the loop must have exactly one refresh "
-        "and it must be the geometric one")
+        "the oracle pins the scripts' DRAWN list (current + active second) and "
+        "setSolid takes one name, so a pin that reads currentArena() drops the room "
+        "behind the door; the loop must have exactly one refresh and it must be the "
+        "geometric one until the drawn list lands")
 
     # 7. the scripts tick INSIDE the fixed-step loop, between Kurt and the camera.
     #    The C#'s Viewer order is UpdateKurt, _scripts.Update, UpdateCamera
@@ -1934,10 +1943,11 @@ def arm_no_asset_gate(text):
 
 
 def arm_pin_from_the_runtime(text):
-    """Batch 99's frozen pin, put back: the step loop reads the runtime's current
-    arena instead of the arena under Kurt. `currentArena_` is written once, on the
-    first tick, so this is the spawn arena for the whole level and a door walk falls
-    through the room it opened into (review-6 F1)."""
+    """Batch 99's runtime pin, put back: the step loop reads the runtime's current
+    arena instead of the arena under Kurt. The crossing is ported now, so this is no
+    longer the spawn arena forever -- but it is still ONE name where the oracle pins
+    the drawn LIST (current + active second), so the room behind the open door is not
+    solid and a door walk falls through it (review-6 F1)."""
     mutated, n = re.subn(
         r"(?m)^[ \t]*const[ \t]+std::string\*[ \t]+solid[ \t]*=[ \t]*\n"
         r"[ \t]*space\.arenaAt\([^;]*;[ \t]*\n"
@@ -1950,13 +1960,14 @@ def arm_pin_from_the_runtime(text):
 
 
 def arm_frozen_pin_added(text):
-    """Batch 99's frozen pin put back ALONGSIDE the geometric refresh, and placed
-    AFTER it, so it is the last writer and the pin ends up the spawn arena whatever
-    the geometric probe found. Review-7 F2: the arm above, which REPLACES the
-    geometric block, trips check 5 first (the guarded `arenaAt` shape is simply
-    gone), so check 6 had no mutation that isolated it and could be stubbed to a
-    pass generator without the suite noticing. This mutant leaves check 5's shape
-    intact, so only check 6 can catch it."""
+    """Batch 99's runtime pin put back ALONGSIDE the geometric refresh, and placed
+    AFTER it, so it is the last writer and the pin ends up the runtime's single name
+    whatever the geometric probe found -- which drops the oracle's active second.
+    Review-7 F2: the arm above, which REPLACES the geometric block, trips check 5
+    first (the guarded `arenaAt` shape is simply gone), so check 6 had no mutation
+    that isolated it and could be stubbed to a pass generator without the suite
+    noticing. This mutant leaves check 5's shape intact, so only check 6 can catch
+    it."""
     sp = STEP_LOOP
     if sp is None:
         return text

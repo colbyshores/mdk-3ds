@@ -199,7 +199,8 @@ public:
     // door and its script keeps running (LEVEL4's first run ends in MEAT_3). The
     // ObjectMotion.Update call site is the object loop in runTick, and it carries
     // that method's effect gate: an object with effect_frames > 0 returns from
-    // ObjectMotion.Update (:54-68) before FollowArenas (:106) is ever reached.
+    // ObjectMotion.Update (:54-68) before FollowArenas (:106) is ever reached. The
+    // call site is the inverse of that predicate: `effect_frames <= 0`.
     void followArenas(MdkObject* obj);
     void setGroupState(const std::string& arena, int32_t group, int32_t operation);
     void setGroupHitFlags(const std::string& arena, int32_t group, int32_t flags);

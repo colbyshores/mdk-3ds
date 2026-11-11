@@ -636,7 +636,17 @@ void ScriptRuntime::runTick() {
             // previous_position is written only for a non-effect object (below, with
             // Roll and Bank), so an effect's "move" would be read off a stale segment
             // from before the effect started and could relocate it across a doorway.
-            if (!obj->dead && obj->effect_frames == 0 &&
+            //
+            // The gate is the INVERSE of the oracle's predicate, so it is `<= 0` and
+            // not `== 0`: the C# returns for a POSITIVE count and runs the normal path
+            // for anything else, and the three gates in this loop must agree with
+            // motionPath() and motionVelocity(), which test `> 0` to return.
+            // No writer in either tree makes it negative today (the oracle's two are
+            // ScriptRuntime.cs:1780 and :1784, both positive counts), so this is
+            // exactness against the oracle rather than a live behaviour change, and no
+            // golden can distinguish the two spellings until an effects port writes a
+            // writer.
+            if (!obj->dead && obj->effect_frames <= 0 &&
                 (obj->flags & MdkObject::FlagChangesArena) != 0) {
                 followArenas(obj);
             }
@@ -644,14 +654,15 @@ void ScriptRuntime::runTick() {
             // object survived the velocity step (the C# returns on Dead before it). The
             // C# dispatch gives ThrownKind>0 precedence over FlagPickup (UpdateThrown,
             // not UpdatePickup), and returns for effect objects before this section.
-            if (!obj->dead && obj->effect_frames == 0 && obj->thrown_kind <= 0 &&
+            if (!obj->dead && obj->effect_frames <= 0 && obj->thrown_kind <= 0 &&
                 (obj->flags & MdkObject::FlagPickup) != 0) {
                 motionPickup(obj);
             }
             // AdvanceAnimation (ObjectMotion.cs:132), after ApplyVelocity and the
             // pickup dispatch. An effect object returned from Update before this
-            // point, so it never advances an animation here.
-            if (!obj->dead && obj->effect_frames == 0) {
+            // point, so it never advances an animation here. Same inverse predicate
+            // as the two gates above: `<= 0`, because the oracle returns on `> 0`.
+            if (!obj->dead && obj->effect_frames <= 0) {
                 float time = obj->animation_time;
                 advanceAnimation(obj, kTick);
                 // The frame sound (ObjectMotion.cs:133): fired once when the frame

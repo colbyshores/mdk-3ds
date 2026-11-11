@@ -751,12 +751,13 @@ int main(int argc, char** argv) {
                 // is the crossing: `currentArena()` used to be written once and then
                 // never move off the spawn arena, because `CrossedArena` was not
                 // ported, and this line therefore held the SPAWN arena's rest pitch
-                // for a whole level. Batch 134 ported the DTI doorway crossing
-                // (script_runtime.cpp:527-573), so the input moves when a move
-                // crosses a connection and the formula here is the oracle's on a live
-                // input, not a frozen one. What is still a stand-in is the collision
-                // pin below this loop, which follows the geometric arena under Kurt's
-                // feet because `setSolid` takes one name and the oracle passes two.
+                // for a whole level. Batch 134 ported the DTI doorway crossing (the
+                // `crossedArena` call where `currentArena_` is set in runTick), so the
+                // input moves when a move crosses a connection and the formula here is
+                // the oracle's on a live input, not a frozen one. What is still a
+                // stand-in is the collision pin below this loop, which follows the
+                // geometric arena under Kurt's feet because `setSolid` takes one name
+                // and the oracle passes two.
                 // No capture yet shows a crossing on this frontend: the emulator runs
                 // idle a level, so the pitch change is unmeasured (docs/PROGRESS_LOG.md).
                 float target = mdk::follow_camera::kDefaultPitch;
@@ -789,23 +790,28 @@ int main(int argc, char** argv) {
                 // current arena plus the active second (ScriptRuntime.cs:265-278) --
                 // and `CurrentArena` moves only when a move crosses a doorway
                 // CONNECTION (CrossedArena, :791-803, over the DTI type-6 records)
-                // or a teleport puts him elsewhere. Neither is ported, so
-                // `currentArena_` is written exactly once, on the runtime's first
-                // tick (script_runtime.cpp:362-378), and pinning to it freezes the
-                // collision world at the SPAWN arena for the whole level. That was
-                // batch 99, and review-6 F1 is the finding: walking through an open
-                // door dropped Kurt through the room he walked into. The claim that
-                // followed it -- "with a runtime the pin is the oracle's own" -- was
-                // false in this tree and is gone.
+                // or a teleport puts him elsewhere. The crossing IS ported now (batch
+                // 134: findConnections and crossedArena in script_runtime.cpp, called
+                // from the tick), so `currentArena_` moves on a doorway and the frozen-
+                // at-spawn argument that used to sit here is gone. What keeps this a
+                // stand-in is an ARITY: the oracle hands `SetSolid` a LIST and
+                // `ArenaSpace::setSolid` takes ONE name (game/arena_space.h), and the
+                // drawn list itself is not ported. Pinning `runtime->currentArena()`
+                // would therefore drop the ACTIVE SECOND -- the room behind the door
+                // Kurt just came through -- which is the class review-6 F1 found when
+                // batch 99 pinned a `currentArena_` that was, at that point, frozen at
+                // the spawn: walking through an open door dropped Kurt through the room
+                // he walked into. One name that is the wrong one beats one name that is
+                // stale; neither is the oracle's value.
                 //
                 // The geometric pin is wrong in the other direction and by less: it
                 // can re-pin during a fall-out, which is review-8 F1's 4 columns of
                 // 1681, because the oracle's pin does NOT move while he falls out of
-                // the world. The fix is the crossing, not a cleverer stand-in: port
-                // the DTI type-6 connection pairs and `CrossedArena`, then pin the
-                // runtime's drawn list -- which also needs `ArenaSpace::setSolid` to
-                // take TWO names, because the C# passes a list and this one keeps
-                // `_solid[0]` as Kurt's arena. Named in docs/CONTINUATION.md.
+                // the world. The fix is the drawn list, not a cleverer stand-in: port
+                // the scripts' drawn-arena list (what LoadArena + PullDoors maintain,
+                // ScriptRuntime.cs:615-643) and give `ArenaSpace::setSolid` the TWO
+                // names the C# passes, since this one keeps `_solid[0]` as Kurt's
+                // arena. Named as the next collision slice in docs/CONTINUATION.md.
                 //
                 // It is probed AGAIN rather than reusing the pitch's `here`, because
                 // the C# evaluates SetSolid after UpdateCamera and the camera's

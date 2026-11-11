@@ -1,0 +1,19 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-11T02:05:21Z at e10c256
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+
+why this batch cannot move the picture, with the measurement that shows it:
+md5 6769a13731983d65cee9df02da6cff37 is identical to docs/frames/2026-11-11-crossing-review-remediation.png
+(batch 135) and to every committed frame since the object pass, and the reason is two facts, not one guess.
+(1) The pin is level 3 at frame 1, and at frame 1 no script object exists yet in either tree, so nothing the
+object loop does — which is the only shipped code this batch changed — has run when the capture is taken.
+(2) The change itself is `effect_frames == 0` -> `<= 0` at three gates of ScriptRuntime::runTick's object
+loop, and `effect_frames` has no writer anywhere in the port (reads only: script_runtime.cpp,
+object_view.cpp:225, tests/scripts/tick1.cpp:137 and :2149), so the two spellings cannot disagree on any
+input this build can construct. The rest of the batch is text in comments and two test scripts, and one gate
+(gates_core_parity's crossing check), none of which reaches a pixel. The 3DS ELF does move, because the
+predicate is real code: mdk.elf md5 4129b376cc17169f841f04f72a815d87 -> 3b2a13a86ed2ee39121cf9a312eb8f1a,
+and the emulator run of that ELF (emurun.sh, DISPLAY=:99, mandarine md5 0d2adab6, rc 0) prints the same
+level-7 idle picture as its predecessor: `flow: screen=4 level=7`, frame 1620 by the deadline / 1680 in the
+log, `objects=7 plays=1 voices=0`, feet (0.0,4.0,0.0) — no regression, and no crossing exercised.

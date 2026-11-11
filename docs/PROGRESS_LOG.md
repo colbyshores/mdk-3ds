@@ -24215,3 +24215,123 @@ hatch arms (DTI dirs 6/7) still have no oracle assertion. `TeleportKurt` is unpo
 so an arena no doorway leads to is still unreachable, and `LoadArena`/`PullDoors` are
 unported, so a door can still stay behind in the neighbour that leads into the arena
 Kurt crossed into. Old-3DS performance readiness remains unmeasured and stays open.
+
+## Iteration 136 — batch 136: review-2 remediated 4/4 — the record stops saying the crossing is unported, and the crossing gate now requires both cases
+
+**Ledger row:** `3ds.collision-doors`, attempt 3 of 8, acceptance `make -C tests/scripts test_crossing`.
+**Review remediated:** `logs/ralph-pi/run-20261110-230107/review-2.md` (DeepSeek V4.1 Flash TH; builder
+litellm/qwen — cross-family, the reviewer proved independence in its own header). Four findings, all Low, no
+Critical, no High; verdict INCOMPLETE on F1 and F2. **All four were reproduced against the tree before any of
+them was touched, and all four held. None is rebutted.**
+
+**Prior-solution lookup.** `knowledge_search` on the `mdk-sdl` KB ran and returned a lead from the sibling
+tetrisphere-godot KB (`gate_prints_the_guard_cause_line` — a gate whose printed cause line was read through a
+helper that dropped it), which is F3's class. Obsidian MCP and Cognee MCP tools are **absent from this
+session's tool list**, so neither was consulted over MCP; per AGENTS P9 that is a session-configuration gap and
+is recorded here rather than papered over. The vault was read directly and narrowly instead, and the note that
+applied is `30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md`: a guard that
+routes "not what I was created to protect" into the same path as "all clear" is a pass generator. That is
+exactly F2, and it is why the fix names the required case set instead of counting lines.
+
+### F1 (Low, confirmed) — the F7 remediation was partial, so "remediated 7/7" was not true of the tree
+
+The reviewer's quote was exact. `mdk_3ds/src/main_3ds.cpp:792-793` still read *"Neither is ported, so
+`currentArena_` is written exactly once, on the runtime's first tick (`script_runtime.cpp:362-378`)"* thirty
+lines below the comment batch 135 had corrected — and `script_runtime.cpp:362-378` is the constructor, not the
+crossing, which is the tick's `crossedArena` call. The same false present tense was still in
+`tests/scripts/main_3ds_flow_test.sh` at five places (the header's item 6, the `CHK` description, check 6's
+body, check 6's failure text, and the docstrings of `arm_pin_from_the_runtime` and `arm_frozen_pin_added`), and
+in weaker form at `tests/scripts/frontend_solid_pin_test.sh:85` ("the runtime's frozen current arena").
+
+All of it now states the reason that is true, and the reason is an **arity**, not a freeze: the crossing is
+ported, so `currentArena()` moves on a doorway; but the oracle's pin is `SolidArenas`, the scripts' **drawn
+list** — current plus the active second (`ScriptRuntime.cs:265-278`, `Viewer.cs:533`) — while
+`ArenaSpace::setSolid` takes **one** name and the drawn list is not ported. Pinning `runtime->currentArena()`
+therefore drops the active second, the room behind the door Kurt just came through, and `move()` uses only the
+pinned arena (`arena_space.cpp:118`), so that is still review-6 F1's fall-through, reached from a different
+direction than the frozen pin batch 99 actually shipped. **No check's logic and no mutation arm changed** — the
+arms still build the same mutants and still redden `pin-not-the-runtime`; only the prose and the failure text
+moved, which is what review-2 asked for ("keep both checks and their mutation arms").
+
+Two rot hazards were fixed while in there: two comments cited the crossing as
+`script_runtime.cpp:527-573`, which is not where it is, and a line range moves on every edit above it; they now
+name the `crossedArena` call instead.
+
+### F2 (Low, confirmed) — the crossing gate refused zero PASS lines and accepted one
+
+Reproduced the reviewer's probe first (a stub `make` on `PATH` printing only `PASS L4_crossing` plus the
+verdict, exit 0): before the fix it returned `(True, '… 1 crossing case(s): L4')`. After it returns
+
+```
+(False, 'the crossing target exited 0 but never ran L7_crossing, so the case set this check exists to
+ protect is not intact -- a deleted case is the same pass generator as a zero case, one degree weaker')
+```
+
+and the failure scenario the reviewer named was then run **end to end on the real target, not a stub**:
+`crossingCheck`'s `const int levels[] = {4, 7};` edited to `{4}`, the gate re-invoked, and it reddened with the
+same message; the edit was reverted and `git diff --stat tests/scripts/tick1.cpp` came back empty. So the L7
+case review-1 F3 bought can no longer be deleted with every gate green and `golden/L7_crossing.txt` orphaned.
+The required set is a named constant, `SCRIPTS_REQUIRED_CASES = frozenset({"4","7"})`, with the reason written
+at its definition rather than in a commit message.
+
+### F3 (Low, confirmed) — the gate's own text described the pre-batch gate
+
+The module docstring said "THE THREE CHECKS" with seven checks under it; the failure verdict printed *"a core
+source on one target only is a SILENTLY DIFFERENT GAME"* whatever had actually failed, so a red crossing golden
+was diagnosed to the operator as a parity problem; and `Report` carried `format_target` but no crossing field,
+so `--json` saw the crossing only inside `notes`. All three fixed. The verdict line now deliberately names **no
+cause** and says the rule tag on each finding is the diagnosis, with a comment in the code saying why it must
+stay that way — a generic sentence printed over a specific failure is the message that trains the reader to skip
+the gate.
+
+### F4 (Low, confirmed) — the effect gate was `== 0` where the oracle returns on `> 0`
+
+`src/Mdk.Game/Scripts/ObjectMotion.cs:54` is `if (obj.EffectFrames > 0) { …; return; }`, so the normal path
+runs on `<= 0`. The object loop's three gates (the `followArenas` hook, the pickup dispatch, `advanceAnimation`)
+tested `== 0`, disagreeing both with the oracle and with the port's own `motionPath()`/`motionVelocity()`, which
+test `> 0` to return. All three now test `<= 0`, and `script_runtime.h`'s `followArenas` comment states the call
+site's predicate. **This is latent and is recorded as latent:** `effect_frames` has no writer anywhere in the
+port (reads only, in `script_runtime.cpp`, `object_view.cpp:225`, `tests/scripts/tick1.cpp:137` and `:2149`) and
+the oracle's two writers (`ScriptRuntime.cs:1780`, `:1784`) assign positive counts, so **no golden distinguishes
+the two spellings today and none can until an effects port writes a writer.** It is exactness against the oracle,
+not a behaviour change, and it is stated as unpinned rather than dressed with a test that cannot reach it.
+
+### Gates, as run
+
+```
+make -C tests/scripts test_crossing  -> All crossing cases match the oracle.            rc 0 (2 PASS: L4, L7)
+make -C tests/scripts                -> All cases match the oracle.                      rc 0 (569 PASS, 0 FAIL)
+DISPLAY=:99 bash tools/check.sh      -> CHECK: ALL GATES PASSED                          rc 0
+    note: crossing target: make -C tests/scripts test_crossing exit 0 -- 2 crossing case(s): L4, L7
+    PASS audit_c_with_classes 0 violations | PASS gates_vfp 0 blockers | PASS audit_arm11_math
+    PASS audit_r11_idiv no candidates | PASS gates_core_parity | SKIP gates_smdh (no built .cia)
+    PASS gates_frames | PASS gates_batch_integrity | PASS gates_completion
+make -C mdk_3ds                      -> rc 0, mdk.elf md5 3b2a13a86ed2ee39121cf9a312eb8f1a (was 4129b376…)
+cmake --build build-linux            -> rc 0
+sh tests/scripts/main_3ds_flow_test.sh     -> PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes green)
+sh tests/scripts/frontend_solid_pin_test.sh -> PASS FrontendSolidPin (10 checks, 10 arms adjudicated red)
+```
+
+**Emulator evidence (AGENTS P8, because `mdk_3ds/src/main_3ds.cpp` changed).** Invocation as typed:
+`DISPLAY=:99 bash mdk_3ds/tools/emurun.sh --secs 30 --shot /tmp/kilo-pi/3ds-b136.png`, **exit code 0**.
+Harness verdict block: `display : :99`; `emulator : mandarine.AppImage md5 0d2adab6`; `dspfirm : dspfirm.cdc
+(the lane's sdmc/3ds/dspfirm.cdc; ndsp needs it)`; `guest log :
+/tmp/mdk-emurun.560812/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log`; `frames : reached 1620 by the deadline (32
+frame lines logged, every 60th after #5); the post-reap line below is the log's real last frame` → `after the
+reap the guest log ends at frame 1680 (33 frame lines logged)`; `flow: screen=4 level=7`; the last logged line
+`frame 1620 elapsed=0.0167 steps=1632 feet=(0.0,4.0,0.0) yaw=90.0 health=100 eye=(0.0,-4.0,4.5) voices=0
+plays=1 objects=7 obj=570c/13d peak=570c/13d`. No regression against batch 134's identical figures, and **no
+crossing exercised** — the emulator idles a level, so the 3DS rest pitch on a live crossing is still unmeasured
+(review-1 open question 3, review-2 open question 3, both still open). Emulator-green is not hardware-pass.
+
+**Frame.** `docs/frames/2026-11-11-b136-review2-remediation.png` + `.txt`, published by
+`tools/publish_frame.sh b136-review2-remediation`. The PNG is byte-identical to batch 135's
+(`6769a13731983d65cee9df02da6cff37`), and the sidecar says why in its own text with the measurement: the pin is
+level 3 frame 1, where no script object exists yet, and the only shipped change is a predicate on a field that
+has no writer. Older pairs were not touched.
+
+**Not evidenced by this batch** (full list in `docs/evidence/2026-11-11-review2-remediation.txt` §3): no golden
+can distinguish `== 0` from `<= 0`; no capture shows a doorway crossing on the 3DS; whether shipped content ever
+sets `FlagChangesArena` is still unknown (review-2 open question 1); whether the gate suite should ever run all
+569 cases is an owner decision (open question 4). `ralph/builder.md` is still modified-unstaged and `PROTECTED`
+(review-1 F4, owner-only): this batch staged its own paths by name and did not sweep it in.

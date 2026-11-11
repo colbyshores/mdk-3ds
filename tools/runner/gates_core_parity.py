@@ -22,7 +22,8 @@ binaries disagree about the game. The explicit list turns that omission into
 a build error; the glob cannot, because a glob has no memory of what it
 should have found.
 
-THE THREE CHECKS.
+THE CHECKS. Seven of them, and two of them BUILD AND RUN a target rather than
+reading text, because a list nobody builds rots (see 6 and 7).
 
   1. PARITY-LINUX-LIST. Every `.cpp` under `mdk_core/src/**` must appear in
      the Linux `SOURCES` list. A core `.cpp` that is not listed is compiled
@@ -129,6 +130,14 @@ SCRIPTS_TIMEOUT = 900
 SCRIPTS_VERDICT = "All crossing cases match the oracle."
 SCRIPTS_PASS_RE = re.compile(r"^PASS L(\d+)_crossing", re.M)
 SCRIPTS_FAIL_RE = re.compile(r"^FAIL L\d+_crossing", re.M)
+# The case set this check exists to protect, so "some crossing passed" can never be
+# read as "the crossing is pinned". L4 is the corridor doorway (the oracle's
+# ArenaSwitchTests) and L7 is the tunnel walk (DoorArenaTests) whose s=675 line is
+# the only thing that separates the crossing rule from a geometric arena lookup --
+# review-1 F3 of run-20261110-230107 bought it and review-2 F2 of the same run is
+# this constant: a gate that accepts ONE PASS lets a future batch delete the L7
+# entry from crossingCheck's levels[] with every gate green and its golden orphaned.
+SCRIPTS_REQUIRED_CASES = frozenset({"4", "7"})
 SOURCES_ASSIGN_RE = re.compile(r"^SOURCES\s*[:+]?=")
 CHECK_COUNT_RE = re.compile(r"(\d+) checks, (\d+) failures")
 
@@ -247,7 +256,10 @@ def run_scripts_crossing_target(root: Path) -> tuple[bool, str]:
     like), a verdict line that never printed, a FAIL line that printed anyway, and
     -- the pass generator this particular shape allows -- a verdict with ZERO
     `PASS L<n>_crossing` lines behind it, which is what deleting the cases instead
-    of fixing them would look like.
+    of fixing them would look like. Zero is not the only escape hatch though: one
+    PASS also satisfies "not zero", so the case set is required by name
+    (SCRIPTS_REQUIRED_CASES) and a run that skipped one of the two levels is a
+    MUST, not a smaller pass (review-2 F2).
     """
     make = shutil.which("make")
     if make is None:
@@ -285,6 +297,12 @@ def run_scripts_crossing_target(root: Path) -> tuple[bool, str]:
     if not passed:
         return False, ("the crossing target printed its verdict with no PASS L<n>_crossing "
                        "line behind it, so there are no crossing cases left to pass")
+    missing = sorted(SCRIPTS_REQUIRED_CASES - set(passed))
+    if missing:
+        return False, ("the crossing target exited 0 but never ran %s, so the case set this "
+                       "check exists to protect is not intact -- a deleted case is the same "
+                       "pass generator as a zero case, one degree weaker"
+                       % " and ".join("L" + n + "_crossing" for n in missing))
     return True, ("make -C %s %s exit 0 -- %d crossing case(s): %s"
                   % (SCRIPTS_DIR_REL, SCRIPTS_TARGET, len(passed),
                      ", ".join("L" + n for n in passed)))
@@ -308,6 +326,7 @@ class Report:
     linux_entries: int
     three_ds_glob_depth: int
     format_target: str = ""
+    crossing_target: str = ""
     findings: list[Finding] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -321,6 +340,7 @@ class Report:
             "linux_entries": self.linux_entries,
             "three_ds_glob_depth": self.three_ds_glob_depth,
             "format_target": self.format_target,
+            "crossing_target": self.crossing_target,
             "notes": self.notes,
             "findings": [asdict(f) for f in self.findings],
         }
@@ -630,6 +650,7 @@ def run(root: Path | None = None) -> Report:
     # crossing cases lived inside `tick1`'s case list, which `tools/check.sh` never
     # invokes, so "the row cannot rot" was a promise about the builder's habits.
     clean, detail = run_scripts_crossing_target(root)
+    crossing_target = detail
     if not clean:
         findings.append(
             Finding("PARITY-SCRIPTS-CROSSING", "MUST", SCRIPTS_DIR_REL,
@@ -651,6 +672,7 @@ def run(root: Path | None = None) -> Report:
         linux_entries=len(entries),
         three_ds_glob_depth=depth,
         format_target=format_target,
+        crossing_target=crossing_target,
         findings=findings,
         notes=notes,
     )
@@ -676,15 +698,22 @@ def main(argv: list[str] | None = None) -> int:
     for note in report.notes:
         print(f"  note: {note}")
     if not report.findings:
-        print("\n  VERDICT: CONTRACT CLEAN -- every core source is on both targets,")
-        print("  and the format-test target built and ran clean (see the format note above).")
+        print("\n  VERDICT: CONTRACT CLEAN -- every core source is on both targets, and")
+        print("  both build-and-run targets ran clean: the format tests and the crossing")
+        print("  cases (the notes above say what each measured).")
         return 0
     print(f"\n  {len(report.findings)} FINDING(S):")
     for finding in report.findings:
         print(f"    [{finding.rule}] {finding.file}")
         print(f"        {finding.detail}")
-    print("\n  VERDICT: VIOLATIONS -- a core source on one target only is a")
-    print("  SILENTLY DIFFERENT GAME, not a phase.")
+    # The verdict line names NO cause of its own, because it is printed for every
+    # finding and a generic sentence over a specific failure is a message that lies:
+    # a red crossing golden used to be reported here as a core-source parity problem
+    # (review-2 F3). The rule tag on each finding is the diagnosis.
+    print("\n  VERDICT: VIOLATIONS -- see the rule tag on each finding above; that tag")
+    print("  is the cause, not this line. A core source on one target only is a")
+    print("  SILENTLY DIFFERENT GAME, and a crossing finding is the ledger row's")
+    print("  acceptance command failing. They are different failures.")
     return 1
 
 

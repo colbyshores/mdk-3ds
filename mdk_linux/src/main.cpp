@@ -576,11 +576,12 @@ int main(int argc, char** argv) {
                 // rule: the oracle's `SolidArenas` is the scripts' DRAWN list, and
                 // `CurrentArena` moves when a move crosses a doorway connection
                 // (`CrossedArena`, ScriptRuntime.cs:791-803) or when a teleport puts
-                // Kurt elsewhere. The crossing IS ported now (batch 134, this file's
-                // own `script_runtime.cpp:527-573`), so `currentArena_` is no longer
-                // written once on the first tick and left there; what is NOT ported is
-                // the drawn list it feeds and `TeleportKurt`, and `ArenaSpace::setSolid`
-                // takes one name where the oracle passes current + active second. That
+                // Kurt elsewhere. The crossing IS ported now (batch 134, the
+                // `crossedArena` call where `currentArena_` is set in runTick), so
+                // `currentArena_` is no longer written once on the first tick and left
+                // there; what is NOT ported is the drawn list it feeds and
+                // `TeleportKurt`, and `ArenaSpace::setSolid` takes one name where the
+                // oracle passes current + active second. That
                 // is why the pin is still geometric and not `runtime->currentArena()`.
                 // This branch used to pin `runtime->currentArena()` — the SPAWN arena
                 // for the whole level — so walking Kurt out through an open doorway
