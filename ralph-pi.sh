@@ -1364,6 +1364,19 @@ POLICY_PRECEDENCE
     # any key the loop writes elsewhere, so these three vanished from the durable
     # record every single iteration. Now an unnamed key survives the rewrite instead
     # of disappearing from it, and the writer's status is checked (AR6-4).
+    # The harness closes the row, not the model. ledger_close.py reads the row's
+    # registered acceptance command from the protected ledger and RUNS it; only a
+    # pass rewrites the row. The builder gains the ability to finish a row without
+    # gaining the ability to attest one. A dirty tracked tree is refused, so
+    # `verified` cannot point at a commit that lacks the work.
+    if [ -n "${C_ITEM_ID:-}" ] && [ -f "$ROOT/tools/runner/ledger_close.py" ]; then
+        if python3 "$ROOT/tools/runner/ledger_close.py" --row "$C_ITEM_ID" >>"$LOG" 2>&1; then
+            log "ledger_close: $C_ITEM_ID certified (the row closes only if its command passed)"
+        else
+            log "ledger_close: $C_ITEM_ID not certified this iteration; the row stays open"
+        fi
+    fi
+
     # The real exit: did the ledger close? This is the only stop that means
     # "finished" rather than "out of budget". rc=2 is NOT VERIFIED (ledger
     # missing or unreadable) and must keep the loop running rather than end it

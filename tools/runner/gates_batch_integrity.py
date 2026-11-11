@@ -19,6 +19,11 @@ PROTECTED = {
     "docs/COMPLETION_LEDGER.tsv",
     "docs/OWNER_BLOCKS.md",
     "tools/runner/gates_completion.py",
+    # The closer runs acceptance commands and rewrites the ledger, so it is the
+    # one script that can legitimately change a row. Protecting it keeps that
+    # power out of reach of an ordinary batch; the sanctioned path to closing a
+    # row is running this tool, not editing the row.
+    "tools/runner/ledger_close.py",
     "tools/check.sh",
     "tools/runner/gates_frames.py",
     "tools/runner/gates_batch_integrity.py",
