@@ -6126,6 +6126,192 @@ void testSolidArenasAreTheDrawnListAndThePinTakesBoth(LevelData* levelData, cons
     CHECK(runtime.solidArenas()[0] == "DANT_2");
 }
 
+// THE DTI TRIGGER BOXES AND THE ARENA-LOAD PATH THEY DRIVE (CheckTriggers 0x41bf1c,
+// arena_load 0x419d00, the door move 0x43ca00).
+//
+// WHY THIS WAS NEXT. CheckTriggers (ScriptRuntime.cs:707-740) is the LAST writer above the
+// drawn-list snapshot: the oracle's tick is `CheckTriggers(); UpdateArenas();` (:934-935),
+// so the arena a trigger box preloads belongs to THIS tick's collision pin, while a door or
+// an arena_show that runs in the object loop below belongs to the next one's. It is also the
+// only per-tick caller of PreloadArena (:602-612), which is the only caller of LoadArena
+// besides ShowArena's own (:582-589), and LoadArena is the only caller of PullDoors
+// (:628-643) -- the door move whose absence is the "the doorway showed the sky" bug the
+// oracle's DoorArenaTests comment opens with. None of the four was ported.
+//
+// THE GEOMETRY IS SHIPPED, NOT CHOSEN. Level 7's corridor CDANT_1 writes down two type-3
+// trigger boxes and the DTI golden decodes them (golden/L7_dti.txt:49-50, big-endian float
+// bits, min/max taken the way :718-719 does):
+//
+//     id=1  x[103,169] y[582,592]        id=0  x[103,169] y[569,580]
+//
+// with the arena list order the DTI's own (:2 DANT_1, :4 DANT_2), so the record's id is an
+// INDEX INTO THAT LIST (:726). Neither box has anything to do with Z -- the record's third
+// coordinate is -42..-36, under a tunnel whose floor is -3, and :718-720 reads X and Y only
+// -- so the walk below fires from the floor, which any Z test would break.
+//
+// WHY THE PIN IS THE DRAWN LIST. Everything else that names an arena -- a door's arena_show
+// while it stands open and its ShowArena("") when it finishes closing, an arena controller's
+// opcode 100 -- runs in the object loop, BELOW the snapshot. So by the end of a tick
+// SecondArena/SecondActive/residentArena are whatever those scripts last said, not what the
+// box did. The snapshot is taken between the two, and it is what the collision pin and the
+// renderer use, so the drawn list is the one thing that shows a trigger box firing ON THE
+// TICK IT FIRED. That is what the position of checkTriggers() in runTick is for, and moving
+// that call below updateDrawnArenas() reddens the drawnArenas() line below.
+void testTriggerBoxesPreloadAndPullDoors(LevelData* levelData, const Cmi* cmi,
+                                         audio::SoundBank* bank) {
+    const float kFloor = -3.0f;   // DoorArenaTests.Floor: the tunnel's floor
+    const float kBoxX = 136.0f;   // inside both CDANT_1 boxes' x[103,169]
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    audio::SoundMixer mixer(bank);
+    Player player;
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
+
+    player.feet = Vec3{0.0f, 655.0f, kFloor};
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.currentArena() == "CDANT_1");
+
+    // Sideways into the boxes' column, one tick per unit as the oracle's own walks do.
+    // Nothing above y = 592 is a box. The corridor's own scripts name DANT_2 while the tunnel
+    // door stands open, and when that door finishes closing it clears the second with
+    // ShowArena("") (ObjectBehaviors, already ported), so Kurt ends up in the corridor alone
+    // with DANT_2 still the resident arena -- the one the corridor showed while it could.
+    for (float x = 1.0f; x <= kBoxX; x += 1.0f) {
+        player.feet = Vec3{x, 655.0f, kFloor};
+        runtime.update(1.0f / 30.0f);
+    }
+    CHECK(runtime.currentArena() == "CDANT_1");
+    CHECK(runtime.secondArena().empty());
+    CHECK(!runtime.secondActive());
+    CHECK(runtime.drawnArenas().size() == 1);
+    CHECK(runtime.residentArena() == "DANT_2");
+
+    // DOWN TO THE UPPER BOX. The step 593 -> 592 does not land INSIDE it (`to.Y < max.Y` is
+    // strict, :720): it touches the box's y = 592 edge, and it is Crosses (:743-755) that
+    // fires -- the half of the predicate a point-in-box-only port drops. The preload takes the
+    // second slot and leaves it INACTIVE (:609-611), and the MTO has DANT_2, so DANT_2 becomes
+    // the resident arena: the record's id is an INDEX INTO THE ARENA LIST (:726) and arenas[1]
+    // is DANT_2 (golden/L7_dti.txt:4), which is what the residentArena() line below reads.
+    for (float y = 654.0f; y >= 581.0f; y -= 1.0f) {
+        player.feet = Vec3{kBoxX, y, kFloor};
+        runtime.update(1.0f / 30.0f);
+    }
+    CHECK(runtime.secondArena() == "DANT_2");
+    CHECK(!runtime.secondActive());
+    CHECK(runtime.residentArena() == "DANT_2");
+    CHECK(runtime.drawnArenas().size() == 1);   // a preload does not DRAW the room
+
+    // A THIRD arena, and ACTIVE, so the next box has something to displace and the tick it
+    // fires on is visible. showArena is opcode 100 (arena_show).
+    runtime.showArena("DANT_3");
+    CHECK(runtime.secondActive());
+    CHECK(runtime.residentArena() == "DANT_3");
+
+    // THE STEP 581 -> 580 FIRES THE id=0 BOX, and it lands in THIS tick's snapshot and not in
+    // the next one's: the second becomes the INACTIVE DANT_1, so the drawn list is the
+    // corridor alone, and arenas[0] is DANT_1 so the resident arena changes with it. Moving
+    // checkTriggers() below updateDrawnArenas() reddens the drawnArenas() line.
+    player.feet = Vec3{kBoxX, 580.0f, kFloor};
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.drawnArenas().size() == 1);
+    CHECK(runtime.drawnArenas()[0] == "CDANT_1");
+    CHECK(runtime.secondArena() == "DANT_1");
+    CHECK(!runtime.secondActive());
+    CHECK(runtime.residentArena() == "DANT_1");
+
+    // AND IT KEEPS FIRING, because the box is still crossed on every step down.
+    for (float y = 579.0f; y >= 575.0f; y -= 1.0f) {
+        player.feet = Vec3{kBoxX, y, kFloor};
+        runtime.update(1.0f / 30.0f);
+        CHECK(runtime.drawnArenas().size() == 1);
+        CHECK(runtime.secondArena() == "DANT_1");
+    }
+
+    // PULLDOORS (:628-643): the doors leading INTO an arena being loaded come out of the
+    // neighbour that holds them and turn around, EXCEPT from Kurt's own arena and the active
+    // second. The oracle's own assertion is DoorArenaTests.LoadedArenaPullsItsDoors, and it
+    // reaches the state with TeleportKurt -- unported -- because on foot UpdateDoor's own move
+    // (ObjectBehaviors.cs:99, ported in updateDoor()) has already turned the door by the time
+    // Kurt stands in the third arena. So THESE doors are built, not spawned, and what is
+    // under test is the rule: which doors move, which are exempt, and the turn. No ticks
+    // below, so nothing but the calls named here changes anything.
+    Player walker;
+    walker.setSpace(&space);
+    walker.setMixer(&mixer);
+    scripts::ScriptRuntime pull(levelData, cmi, 1, bank, &walker, nullptr);
+    pull.option = 1;
+    walker.feet = Vec3{0.0f, 655.0f, kFloor};
+    pull.update(1.0f / 30.0f);
+    CHECK(pull.currentArena() == "CDANT_1");
+
+    scripts::MdkObject kurtSide;
+    kurtSide.arena = "CDANT_1";
+    kurtSide.connects = "DANT_2";
+    kurtSide.flags = scripts::MdkObject::FlagDoor;
+    kurtSide.door_state = kDoorClosed;  // shut, and shut it stays: Kurt is far from it
+    kurtSide.yaw = 90.0f;               // DoorArenaTests.DoorYaw, the tunnel door's own
+    kurtSide.position = Vec3{0.0f, 673.0f, kFloor};
+    pull.objects().push_back(kurtSide);
+    scripts::MdkObject* kurtDoor = &pull.objects().back();
+
+    scripts::MdkObject otherSide;
+    otherSide.arena = "DANT_2";
+    otherSide.connects = "CDANT_2";
+    otherSide.flags = scripts::MdkObject::FlagDoor;
+    otherSide.door_state = kDoorClosed;
+    otherSide.yaw = 90.0f;
+    otherSide.position = Vec3{75.0f, 1004.0f, -6.0f};
+    pull.objects().push_back(otherSide);
+    scripts::MdkObject* farDoor = &pull.objects().back();
+
+    // Kurt's own arena is exempt (:632-636): loading DANT_2 would take the door out of the
+    // corridor he is standing in and put it in the room he is not. The C# refuses, and the
+    // door keeps its arena, its link and its yaw.
+    pull.showArena("DANT_2");
+    CHECK(pull.residentArena() == "DANT_2");
+    CHECK(kurtDoor->arena == "CDANT_1");
+    CHECK(kurtDoor->connects == "DANT_2");
+    CHECK(kurtDoor->yaw == 90.0f);
+
+    // Preloading the arena that is already the second changes nothing, not even the flag.
+    pull.preloadArena("DANT_2");
+    CHECK(pull.secondArena() == "DANT_2");
+    CHECK(pull.secondActive());
+
+    // A corridor is not in the MTO, so loading one does NOT replace the resident arena --
+    // DANT_2 stays resident (:617-620) -- but it still pulls its doors, and DANT_2 is
+    // neither Kurt's arena nor the active second now that the second has been cleared.
+    // The turn is the oracle's own number: DoorArenaTests.TurnedYaw, 270 to 0.01.
+    pull.showArena("");
+    CHECK(pull.secondArena().empty());
+    pull.showArena("CDANT_2");
+    CHECK(pull.residentArena() == "DANT_2");
+    CHECK(farDoor->arena == "CDANT_2");
+    CHECK(farDoor->connects == "DANT_2");
+    CHECK(fabsf(farDoor->yaw - 270.0f) < 0.01f);
+
+    // OPCODE 223 (arena_set_neighbour) is the scripts' own door onto this path, and it was
+    // unimplemented until this batch: the operand names the arena to load ahead, and it lands
+    // in the second slot INACTIVE exactly as the trigger box's preload does -- so the room is
+    // resident and its doors are pulled without being drawn.
+    const int32_t kArenaSetNeighbour = 223;
+    Code ahead;
+    ahead.u8(kArenaSetNeighbour).pstr("DANT_1");
+    ahead.end();
+    runProgram(pull, ahead, farDoor);
+    CHECK(pull.secondArena() == "DANT_1");
+    CHECK(!pull.secondActive());
+    CHECK(pull.residentArena() == "DANT_1");
+    CHECK(!sawUnimplemented(kArenaSetNeighbour));
+}
+
 // A rebuilt ScriptRuntime owns a NEW SoundMixer, and that mixer owns a NEW
 // SoundDevice, so the sink the frontend attached to the old device does NOT
 // follow the rebuild. Review-6 F3: on the console the respawn path is not
@@ -6465,6 +6651,8 @@ int main() {
     printf("PASS TheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet\n");
     testSolidArenasAreTheDrawnListAndThePinTakesBoth(&levelData, &cmi, &bank);
     printf("PASS SolidArenasAreTheDrawnListAndThePinTakesBoth\n");
+    testTriggerBoxesPreloadAndPullDoors(&levelData, &cmi, &bank);
+    printf("PASS TriggerBoxesPreloadAndPullDoors\n");
     testPushKurtDispatchesDecodedListToPlayer(&levelData, &cmi, &bank);
     printf("PASS PushKurtDispatchesDecodedListToPlayer\n");
     testPushKurtModeZeroFrameAndLiftAreExact(&levelData, &cmi, &bank);

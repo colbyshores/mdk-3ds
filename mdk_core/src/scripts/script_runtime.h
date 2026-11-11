@@ -187,6 +187,13 @@ public:
     bool canSeeKurt(MdkObject* obj, float range, float cone);
     bool kurtLooksAt(const MdkObject* obj, float minRange, float maxRange, float cone);
     void showArena(const std::string& arena);
+    // PreloadArena (ScriptRuntime.cs:602-612, arena_set_neighbour 0x41a2d0 / opcode 223,
+    // and the DTI type-3 trigger box): the arena takes the SECOND slot and is loaded, but
+    // the second stays INACTIVE, so the room is loaded ahead of Kurt rather than drawn and
+    // live with him. The `arena == SecondArena` test is the C#'s and it runs BEFORE the
+    // assignment, so preloading the arena that is already the second does nothing at all --
+    // not even LoadArena, so it pulls that arena's doors no second time.
+    void preloadArena(const std::string& arena);
     // Which arena a move enters when it crosses a connection of `arena` (C#
     // CrossedArena, ScriptRuntime.cs:791-803), or "" when it crosses none. The C#
     // keeps this private and reaches it through RunTick and FollowArenas; the port
@@ -474,6 +481,22 @@ public:
     // The scratch is a member, not a temporary, for the C#'s own reason ("kept: no
     // list per step", :285): a frontend reads this once per simulation step.
     const std::vector<std::string>& solidArenas() const;
+    // C# ScriptRuntime.DrawnArenas (ScriptRuntime.cs:262): the drawn list ITSELF, with
+    // the snowboard's drop of element 1 NOT applied. solidArenas() above is what the
+    // COLLISION world reads (Viewer.cs:533 SetSolid); this is what the VIEW reads
+    // (Viewer.cs:702 `_view.Draw(_scripts.DrawnArenas, ...)`) and what the rest of
+    // UpdateArenas will read when the loaded-arena bookkeeping lands. Read it instead of
+    // reaching for currentArena()/secondArena(): those two are the tick's END, and this is
+    // its snapshot -- which is exactly the mistake review-4 F1 removed from the collision
+    // path. Same object as solidArenas() off the board, and the only writer is
+    // updateDrawnArenas().
+    const std::vector<std::string>& drawnArenas() const { return drawnArenas_; }
+    // C# ScriptRuntime._residentArena (:312): the last arena whose MTO was resident, i.e.
+    // the last arena LoadArena found in the MTO rather than a corridor. The C# reads it in
+    // exactly one place, IsCorridorLoaded (:522-531), which belongs to the unported
+    // TeleportKurt, so until that lands this is written and not read -- the accessor exists
+    // so the write is pinned by a test instead of looking like dead state.
+    const std::string& residentArena() const { return residentArena_; }
     // The C# TickCount: the completed simulation ticks. It is zero during the
     // first tick and increments after that tick, as the oracle does.
     int32_t tickCount() const { return tickCount_; }
@@ -493,6 +516,20 @@ private:
     // arena has that name, which is the C#'s empty list.
     const std::vector<formats::Dti::Record>* arenaRecords(const std::string& arena);
     void runTick();
+    // CheckTriggers (ScriptRuntime.cs:707-740, 0x41bf1c): the DTI trigger boxes of KURT'S
+    // arena -- type 1 shows the arena of its id, type 3 loads it ahead, and an id of -1 (or
+    // one past the arena list) names no arena, which shows "" and so clears the second.
+    // Called from runTick at the oracle's own position, immediately above
+    // updateDrawnArenas(), because it is a writer of the three fields that snapshot reads.
+    void checkTriggers();
+    // LoadArena (ScriptRuntime.cs:615-623, arena_load 0x419d00): records the resident
+    // arena when the MTO has it, and pulls its doors.
+    void loadArena(const std::string& arena);
+    // PullDoors (ScriptRuntime.cs:628-643): the doors leading INTO `arena` are taken out
+    // of the neighbour that holds them and turned around, so Kurt meets them in the room he
+    // is walking towards -- except from his own arena and the active second, which keep
+    // theirs.
+    void pullDoors(const std::string& arena);
     // ObjectBehaviors.ShowBehind: the arena a door opens onto.
     void showBehindDoor(MdkObject* obj);
     // One receiver of command_objects (0x4405d0); true when it joined a formation.
@@ -672,6 +709,9 @@ private:
     std::string currentArena_;
     std::string secondArena_;
     bool secondActive_ = false;
+    // C# ScriptRuntime._residentArena (ScriptRuntime.cs:312), written only by loadArena()
+    // when the MTO has the arena, exactly as :617-620 does.
+    std::string residentArena_;
     // C# ScriptRuntime._connections (ScriptRuntime.cs:301): (arena, connection id)
     // -> the arena on the other side. Built once, from EVERY arena in the DTI (not
     // just the reachable ones), because a doorway is a doorway.

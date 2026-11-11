@@ -826,6 +826,12 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 100:  // arena_show
             runtime_.showArena(strval(op(ins, 0)));
             break;
+        case 223:  // arena_set_neighbour (arena_load 0x41a2d0)
+            // The other caller of preloadArena besides the DTI type-3 trigger box: the
+            // scripts name the arena to load ahead, and it goes into the second slot
+            // INACTIVE (ScriptRuntime.cs:602-612). Empty and "NONE" are the C#'s no-ops.
+            runtime_.preloadArena(strval(op(ins, 0)));
+            break;
 
         case 111:  // set_instance
             obj->instance_id = ival(op(ins, 0)) & 0xFFFF;

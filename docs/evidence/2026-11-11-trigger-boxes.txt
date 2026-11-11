@@ -1,0 +1,288 @@
+================================================================================
+Batch 139 — the DTI trigger boxes and the arena-load path they drive:
+CheckTriggers, PreloadArena, LoadArena + resident arena, PullDoors, opcode 223
+Ledger row 3ds.collision-doors, attempt 6 of 8.
+Acceptance command: `make -C tests/scripts` (the new case is an executed
+`vm_tests` assertion; `test_crossing` is unchanged and still the row's gate).
+Review closed: logs/ralph-pi/run-20261110-230107/review-5.md (DeepSeek V4.1
+Flash TH, no Critical, no High, verdict COMPLETE, 3 Low) — F1 fixed here, F2
+fixed here, F3 owner-only.
+Measured 2026-11-11 (UTC), tree at 11c7753 + this batch's working tree.
+================================================================================
+
+§1. WHAT CHANGED, AND THE ORACLE LINE FOR EACH PIECE
+--------------------------------------------------------------------------------
+THE GAP. Batch 138 moved the drawn-list snapshot to the oracle's position and
+recorded, in the code and in its own evidence file, that two writers still sat
+outside it: `CheckTriggers` immediately ABOVE (unported) and `LoadArena` +
+`PullDoors` inside whatever called `ShowArena` (unported). Both landed here,
+because they are one chain and not two items:
+
+  src/Mdk.Game/Scripts/ScriptRuntime.cs:707-740  CheckTriggers (0x41bf1c)
+      :711   foreach record in ArenaRecords(CurrentArena)
+      :713   type must be TriggerShow(1) or TriggerLoad(3)
+      :718-719  min/max of Position and BoxEnd, MathF.Min/Max, XY ONLY
+      :720   inside = to.X >= min.X && to.Y >= min.Y && to.X < max.X && to.Y < max.Y
+      :721   if (!inside && !Crosses(min, max, from, to)) continue;
+      :726   arena = Id >= 0 && Id < Level.Dti.Arenas.Count ? Arenas[Id].Name : ""
+      :727-738  Show -> ShowArena(arena); Load with no arena -> ShowArena("");
+                Load with an arena -> PreloadArena(arena)
+  src/Mdk.Game/Scripts/ScriptRuntime.cs:602-612  PreloadArena (arena_set_neighbour
+      0x41a2d0, VM opcode 223): ""/NONE/`arena == SecondArena` return; then
+      SecondArena = arena; LoadArena(arena); SecondActive = false. The test runs
+      BEFORE the assignment, so preloading the arena that is already the second
+      does nothing at all — not the deactivation, not the load, so it pulls that
+      arena's doors no second time. SecondActive is cleared AFTER the load, which
+      is what lets PullDoors still see the previous second as active.
+  src/Mdk.Game/Scripts/ScriptRuntime.cs:615-623  LoadArena (arena_load 0x419d00):
+      `if (Level.Mto.Has(arena)) _residentArena = arena;` then PullDoors(arena).
+      "only one arena (not corridor) is loaded at a time" — a corridor is not in
+      the MTO, so it leaves the resident arena alone and still pulls its doors.
+  src/Mdk.Game/Scripts/ScriptRuntime.cs:628-643  PullDoors: for each Connection
+      record of `arena`, the neighbour `other` from _connections, skipping
+      `other == CurrentArena || (SecondActive && other == SecondArena)`, every
+      live flagged door with `Arena == other && Connects == arena` gets
+      ObjectBehaviors.MoveDoor (ObjectBehaviors.cs:437-444: arena/connects swap,
+      yaw += 180 mod 360). This is the door move whose absence the oracle's
+      DoorArenaTests class comment opens with ("the doorway showed the sky").
+  src/Mdk.Game/Scripts/ScriptRuntime.cs:582-589  ShowArena now gets its LoadArena
+      calls back: `arena == CurrentArena` -> LoadArena(arena); else if
+      `arena != SecondArena` -> SecondArena = arena; LoadArena(arena). The port
+      had both branches and a comment saying LoadArena was not called; the comment
+      is gone and the calls are there.
+
+PORTED (mdk_core/src/scripts/script_runtime.{h,cpp}):
+  * `checkTriggers()` — script_runtime.cpp:911, called from runTick at the
+    oracle's own position, immediately ABOVE `updateDrawnArenas()` (:635 vs :636),
+    which is where batch 138's comment said it had to go. `from` is
+    previousKurtPosition_ and `to` is kurtPosition_, i.e. this tick's move, XY
+    only: the C# writes _previousKurtPosition at :946, below both this call and
+    the crossing, and runTick publishes it in the same place.
+  * `segmentsCross` (:389) and `crossesBox` (:410) — the C#'s SegmentsCross
+    (:756-770) and Crosses (:743-755) line for line: the parametric form,
+    INCLUSIVE at both ends, FALSE for parallel segments including collinear ones.
+  * `preloadArena()` (:840) — public, because opcode 223 is its other caller.
+  * `loadArena()` (:852) and `pullDoors()` (:872) — private; `pullDoors` iterates
+    objects_ with the C#'s predicate and calls the existing `moveDoor` (a
+    forward declaration was added at :865, the definition stays with the door
+    engine at :2900).
+  * `residentArena_` (the C#'s _residentArena, :312) and `residentArena()`. The
+    C# reads it in exactly one place, `IsCorridorLoaded` (:522-531), which belongs
+    to the unported TeleportKurt, so until that lands it is written and not read;
+    the accessor exists so the write is pinned by a test instead of looking like
+    dead state.
+  * `drawnArenas()` (review-5 F2) — the drawn list itself, as opposed to
+    `solidArenas()`, which is what the collision world reads (the C# has two
+    readers: Viewer.cs:702 draws DrawnArenas, Viewer.cs:533 SetSolid reads
+    SolidArenas). Review-5 F1 was the comment in the cutscene early-return that
+    still described the drawn list as unported; it now says what is and is not
+    ported there.
+  * VM opcode 223 `arena_set_neighbour` (script_vm.cpp:829) -> preloadArena. It
+    was in the unimplemented list before this batch, and no golden dumps an
+    unimplemented opcode, so implementing it cannot redden a golden.
+
+§2. THE TEST, AND WHY EACH PIN IS THE ORACLE'S AND NOT THE IMPLEMENTATION'S
+--------------------------------------------------------------------------------
+tests/scripts/vm_tests.cpp, `testTriggerBoxesPreloadAndPullDoors` (:6160),
+registered in main and printing `PASS TriggerBoxesPreloadAndPullDoors`.
+
+SHIPPED GEOMETRY, read off the DTI golden and not chosen: level 7's corridor
+CDANT_1 writes two type-3 boxes (golden/L7_dti.txt:49-50; the floats are
+big-endian bits, min/max taken the way :718-719 does)
+
+    id=1  x[103,169] y[582,592]        id=0  x[103,169] y[569,580]
+
+with the arena list order the DTI's own (:2 DANT_1, :4 DANT_2). Both boxes sit at
+z = -42..-36, under a tunnel whose floor is -3, and :718-720 reads X and Y only,
+so the walk fires from the floor — a Z test would switch both boxes off.
+
+  1. Kurt walks x = 1..136 at y = 655, one tick per unit (the oracle's own walks
+     are one unit per tick). Nothing above y = 592 is a box. The corridor's own
+     scripts name DANT_2 while the tunnel door stands open and the door's close
+     clears the second with ShowArena("") (ObjectBehaviors.cs:99, already
+     ported), so the pin is `secondArena().empty()`, `!secondActive()`,
+     `drawnArenas().size() == 1` and `residentArena() == "DANT_2"` (:6191-6194).
+  2. He walks y = 654..581 at x = 136. The step 593 -> 592 does NOT land inside
+     the id=1 box (`to.Y < max.Y` is strict) — it touches the box's y = 592 edge,
+     and it is Crosses that fires. The preload takes the second slot INACTIVE and
+     makes DANT_2 resident, which is the id-is-an-index-into-the-arena-list claim
+     (:726, arenas[1] = DANT_2): `secondArena() == "DANT_2"`, `!secondActive()`,
+     `residentArena() == "DANT_2"`, `drawnArenas().size() == 1` — a preload does
+     not DRAW the room (:6206-6209).
+  3. A third arena is then shown ACTIVE (`showArena("DANT_3")`, opcode 100) so
+     the next box has something to displace, and the step 581 -> 580 fires the
+     id=0 box on the EDGE alone. The drawn list is the corridor alone on THAT
+     tick (:6223) — this is the position pin, the one that says checkTriggers
+     runs above the snapshot — and `secondArena() == "DANT_1"`, `!secondActive()`,
+     `residentArena() == "DANT_1"` (arenas[0]). It keeps firing every step down
+     (:6233).
+  4. PullDoors, with NO ticks in this part so nothing but the named calls moves:
+     two built doors (see §4 for why they are built) — one in CDANT_1 connecting
+     to DANT_2, one in DANT_2 connecting to CDANT_2, both shut (door_state
+     kDoorClosed, so the door engine neither opens nor closes them and neither
+     calls ShowArena) and both at yaw 90 (DoorArenaTests.DoorYaw).
+     `showArena("DANT_2")` -> the door in Kurt's own arena is EXEMPT (:632-636):
+     arena, connects and yaw unchanged (:6279-6281), and DANT_2 is resident.
+     `preloadArena("DANT_2")` -> already the second, so nothing at all, not even
+     the flag.
+     `showArena("")` then `showArena("CDANT_2")` -> a corridor is not in the MTO
+     so DANT_2 stays resident (:6294), and the door in DANT_2 leading into
+     CDANT_2 is pulled: `arena == "CDANT_2"`, `connects == "DANT_2"`, and the
+     turn is the oracle's own number, 270 to 0.01 (DoorArenaTests.TurnedYaw).
+  5. Opcode 223 runs through the VM on the same runtime: `secondArena() ==
+     "DANT_1"`, `!secondActive()`, `residentArena() == "DANT_1"`, and
+     `sawUnimplemented(223)` is false (:6309-6312).
+
+§3. GATE RESULTS, VERBATIM
+--------------------------------------------------------------------------------
+make -C tests/scripts                                 (THE ACCEPTANCE COMMAND)
+    PASS TriggerBoxesPreloadAndPullDoors
+    All cases match the oracle.                                rc 0
+    571 PASS lines, 0 FAIL, 0 SKIP (was 570: this batch adds one case).
+    git status tests/scripts/golden -> clean: NO GOLDEN CHANGED.
+
+make -C tests/scripts test_crossing                  (the row's existing gate)
+    PASS L4_crossing / PASS L7_crossing
+    All crossing cases match the oracle.                       rc 0, 2 cases
+
+DISPLAY=:99 bash tools/check.sh
+    CHECK: ALL GATES PASSED                                    rc 0
+      PASS audit_c_with_classes 0 violations
+      PASS gates_vfp 0 blockers
+      PASS audit_arm11_math        contract clean
+      PASS audit_r11_idiv          no candidates
+      PASS gates_core_parity       both targets link the same core
+      SKIP gates_smdh              no built .cia to read
+      PASS gates_frames            L3_f1.bmp sha=58615fc85d02e009
+                                   VERDICT: CONTRACT CLEAN
+      PASS gates_batch_integrity   project invariants intact
+      PASS gates_completion        every done row is backed by evidence
+      note: format target: make -C tests/formats exit 0 -- 156235 checks, 0 failures
+      note: crossing selftest: 8 seeded arms, all adjudicated as claimed
+      COMPLETION SELFTEST: PASS (13 arms); COMPLETION[d1]: 10 done / 13 total
+
+make -C mdk_3ds      (DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM)
+    LINK mdk.elf / 3DSX mdk.3dsx                               rc 0
+    mdk.elf md5 6586bee947a2ca7ccce988ddb858114a
+    (was dbaf850adeac8738bf6ce2d3b5f92e81 — checkTriggers and the door pull are
+    shipped core, so both targets' binaries move; this is expected, not a drift)
+
+cmake --build build-linux                                      rc 0
+
+mdk_3ds/tools/emurun.sh --min-frames 60     DISPLAY=:99, rc 0
+    display :99; emulator mandarine.AppImage md5 0d2adab6 (the pinned r1.2.1,
+    /mnt/nas/Development/mandarine.AppImage -> the 20250128-418c25c extract)
+    backend: PICA200 Citro3D; flow: screen=4 level=7
+    gl forced llvmpipe; stereo render_3d=0 factor_3d=0 (mono); audio muted
+    frames: reached 2460 by the deadline (46 frame lines logged); after the reap
+    the guest log ends at frame 2520 (47 frame lines logged)
+    frame 2460 elapsed=0.0167 steps=2473 feet=(0.0,4.0,0.0) yaw=90.0 health=100
+                 voices=0 plays=1 objects=7 obj=570c/13d peak=570c/13d
+    lane /tmp/mdk-emurun.1254643
+    What this run does and does not show: it is ~2500 ticks of the new
+    checkTriggers() over REAL shipped level-7 DTI records with the real scripts
+    running, and nothing diverges (health, object count, plays and the frame time
+    all match batch 138's run at 0.0167-0.0189 s/step). It is NOT a trigger-box
+    demonstration: the scene idles at the level-7 spawn, Kurt never enters
+    CDANT_1's tunnel, and no box fires. No crossing and no trigger box on the
+    emulator, same gap as batch 138.
+
+docs/frames/2026-11-11-trigger-boxes.png  md5 6769a13731983d65cee9df02da6cff37
+    BYTE-IDENTICAL to batch 136/137/138's, disclosed: at level 3 frame 1 Kurt is
+    at the spawn, where no trigger box of that arena is crossed and the drawn
+    list answers the same arena as the geometric lookup did. The frame gate is
+    green and the sidecar records the same 1.240% ceiling.
+
+§4. MUTATION PROBES (each was made real in the tree, run, and reverted)
+--------------------------------------------------------------------------------
+M1  `checkTriggers()` moved BELOW `updateDrawnArenas()` — the position claim:
+        FAIL line 6223: runtime.drawnArenas().size() == 1
+    rc 1, "1 check(s) FAILED". The tick the id=0 box fires still shows DANT_3,
+    i.e. the trigger's preload is a tick late, exactly the way the door's was
+    before batch 138. Reverted; green again.
+M2  the `inside` half kept and the `crossesBox` half dropped (a point-in-box-only
+    port of :720-721):
+        FAIL line 6223: runtime.drawnArenas().size() == 1
+        FAIL line 6225: runtime.secondArena() == "DANT_1"
+        FAIL line 6226: !runtime.secondActive()
+        FAIL line 6227: runtime.residentArena() == "DANT_1"
+    rc 1, 4 failures. The step 581 -> 580 touches the edge without landing inside,
+    so nothing fires until y = 579 and the box's tick is missed. Reverted.
+M3  the `segmentsCross` u-term written with s.X instead of r.X. THIS WAS NOT A
+    PROBE: it is the bug the first draft of this case had, found because the
+    x-walk at y = 655 fired both boxes at x = 103 (a horizontal move "crossed"
+    every box whose x-range it reached, whatever the y). Restoring it now reddens
+        FAIL line 6191: runtime.secondArena().empty()
+        FAIL line 6194: runtime.residentArena() == "DANT_2"
+        FAIL line 6223 / 6225 / 6226 / 6227 (as above)
+    rc 1, 6 failures. Recorded because it is the only evidence in this file that
+    the case can tell a wrong SegmentsCross from a right one: the shipped boxes
+    are axis-aligned and Kurt's walks are axis-aligned, and the inclusive t/u
+    endpoints are what make the edge step fire at all.
+M4  the PullDoors CURRENT-ARENA exemption removed (`other == CurrentArena`):
+        FAIL line 6279: kurtDoor->arena == "CDANT_1"
+        FAIL line 6280: kurtDoor->connects == "DANT_2"
+        FAIL line 6281: kurtDoor->yaw == 90.0f
+    rc 1, 3 failures: the door is taken out of the corridor Kurt is standing in.
+M5  the PullDoors ACTIVE-SECOND exemption removed (`SecondActive && other ==
+    SecondArena`): NO CHECK REDDENED ("All VM unit tests match the oracle.").
+    Recorded as a negative result, not hidden. The arm is ported and correct
+    against :633, but it is not observable through this harness: PullDoors runs
+    at the top of the tick and `updateDoor` (ObjectBehaviors.cs:99, ported) moves
+    the same door later in the same tick, so the exempt and non-exempt paths end
+    the tick in the same place. A pin would need a door that is live as the second
+    and NOT moved by updateDoor, which the shipped door rules do not allow.
+M6  reading the record's id as an index into the arena's CONNECTION list instead
+    of the arena list: NOT ATTEMPTED, because the shipped data cannot tell the two
+    apart in CDANT_1 — connections[0] leads to DANT_1 and arenas[0] is DANT_1,
+    connections[1] leads to DANT_2 and arenas[1] is DANT_2. What IS pinned is
+    that the id names an arena at all, that the two boxes name two different ones,
+    and that the answer is not a connection id (the connection ids here are 1000
+    and 1001, and an id of 1000 or 1001 would name no arena and clear the second).
+
+§5. WHAT THIS BATCH DOES NOT EVIDENCE
+--------------------------------------------------------------------------------
+* NO GOLDEN EXECUTES A TRIGGER BOX, and none can be added: `dotnet` is gone from
+  this box (`command -v dotnet` rc 1; /tmp/kilo/dotnet10 absent and /tmp/kilo is
+  owned by coleshores and not writable by this uid), so no oracle dump can be
+  produced for the trigger path. Every value above is read off the C# source and
+  the shipped DTI golden, and the case is an executed C++ assertion, not a golden.
+* Only type 3 (TriggerLoad) is exercised. Level 7's CDANT_1 pair are both type 3;
+  the `record.type == TriggerShow -> ShowArena(arena)` arm of :727-730 is
+  compile-verified only, and so is the `Load with no arena -> ShowArena("")` arm,
+  because no reachable box on level 7 has id = -1 or an id past the arena list.
+* The PullDoors ACTIVE-SECOND arm is ported and unpinned (M5).
+* The PullDoors doors are BUILT, not spawned. The oracle's own
+  DoorArenaTests.LoadedArenaPullsItsDoors reaches its state with TeleportKurt,
+  which is unported; on foot, by the time Kurt stands in the third arena,
+  updateDoor has already turned the real door (ObjectBehaviors.cs:99), so the
+  shipped geometry cannot show the pull. What is under test is the rule — which
+  doors move, which are exempt, and the turn — and the doors carry the oracle's
+  own yaw and the oracle's own MoveDoor.
+* LoadArena's PullDoors through REAL geometry (a door that actually moves because
+  Kurt crossed) still needs TeleportKurt or a scripted walk, and neither exists.
+* The emulator idles at a spawn: no trigger box, no crossing, no door pull has
+  ever been seen on the 3DS target (CONTINUATION NEXT 1).
+* `residentArena_` is written and never read, because its only C# reader is
+  `IsCorridorLoaded` (:522-531) inside the unported TeleportKurt.
+* PROCESS NOTE, stated rather than hidden: mid-batch the implementation file was
+  destroyed by a `git checkout <path>` used to undo a mutation probe (the index
+  held the pre-batch blob). The four functions were rewritten from the oracle and
+  the mutation set above was re-run on the rewritten file; every CHECK in the case
+  passes and the diff was re-read line by line against ScriptRuntime.cs:582-643
+  and :707-770. The lesson is recorded in the mutation recipe: back the file up
+  and restore from the backup, never from git, while a mutation is in flight.
+* review-5 F3 (the `gates_batch_integrity` revision check) is owner-only, as are
+  review-1 F4 / review-3 F3 (`ralph/builder.md` is PROTECTED and modified-unstaged
+  — the owner's own edit — and `SCRIPTS_REQUIRED_CASES` lives in a non-PROTECTED
+  file). This batch committed explicit paths, never `git add -A`, so it could not
+  be swept in.
+* Prior-solution lookups: pi-knowledge `mdk-sdl` was searched and returned the
+  oracle's ScriptRuntime.cs:73/75 and the DoorArenaTests class, which is what
+  named PullDoors as the row's real target. The Obsidian and Cognee MCP tools are
+  NOT present in this session's tool list, so per AGENTS.md P9 that is a session
+  configuration fault to report rather than a lookup that happened; the vault on
+  disk was not read as a substitute this iteration.
+* Old-3DS hardware: no console in hand, nothing here is hardware evidence. The
+  gates that are age-gated on a profile capture remain waived by
+  PROJECT_FROZEN_AT and `gates_vfp` reports "clean under the freeze".

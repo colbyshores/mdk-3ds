@@ -337,6 +337,13 @@ namespace {
 // each of them writes down the doorway it is reached through.
 const uint32_t kRecordConnection = 6;
 
+// The DTI record types of a trigger box (C# ScriptRuntime.TriggerShow / TriggerLoad,
+// ScriptRuntime.cs:705-706, CheckTriggers 0x41bf1c): type 1 SHOWS the arena its id names and
+// type 3 LOADS it ahead. Both are boxes written in Kurt's arena and both are tested every
+// tick; nothing else in the DTI is a trigger.
+const uint32_t kRecordTriggerShow = 1;
+const uint32_t kRecordTriggerLoad = 3;
+
 // C# ScriptRuntime.DoorwayDrop / HatchDrop (ScriptRuntime.cs:82-83). A horizontal
 // doorway's box reaches DoorwayDrop below its own bottom, so a walk into it counts
 // even when Kurt is a little below the sill; a hatch (a MinusZ/PlusZ doorway) is
@@ -377,6 +384,45 @@ int32_t doorwayOf(float angle) {
 // writes MathF.Min/MathF.Max, which propagate a NaN instead of hiding it.
 bool spans(float a, float b, float min, float max) {
     return mathMax(a, b) >= min && mathMin(a, b) <= max;
+}
+
+// C# ScriptRuntime.SegmentsCross (:756-770): whether the segment a-b crosses c-d, in XY.
+// The parametric form, INCLUSIVE at both ends (t and u in [0,1], so a move that merely
+// touches a corner counts), and FALSE for parallel segments -- including collinear ones,
+// which the denominator cannot separate. The orientation-sign form a port might reach for
+// disagrees at exactly those two places, so this is :758-769 line for line. u is (q x r)/
+// denominator with q = c - a, exactly as :766 writes it: the second term carries r.X, and a
+// slip to s.X makes a horizontal move cross a box it is nowhere near.
+bool segmentsCross(const formats::Vec2f& a, const formats::Vec2f& b, const formats::Vec2f& c,
+                   const formats::Vec2f& d) {
+    const float rx = b.x - a.x;
+    const float ry = b.y - a.y;
+    const float sx = d.x - c.x;
+    const float sy = d.y - c.y;
+    const float denominator = rx * sy - ry * sx;
+    if (denominator == 0.0f) {
+        return false;
+    }
+    const float t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / denominator;
+    const float u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / denominator;
+    return t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f;
+}
+
+// C# ScriptRuntime.Crosses (:743-755): whether a move crosses one of the four edges of a box
+// in XY. The corner order is the C#'s array literal and `(i + 1) % 4` closes the loop, so the
+// four edges are the box's, and a move that starts inside and ends inside crosses none of
+// them -- which is why CheckTriggers tests `inside` SEPARATELY and on the END of the move
+// only.
+bool crossesBox(const formats::Vec2f& min, const formats::Vec2f& max, const formats::Vec2f& from,
+                const formats::Vec2f& to) {
+    const formats::Vec2f corners[4] = {min, formats::Vec2f{max.x, min.y}, max,
+                                       formats::Vec2f{min.x, max.y}};
+    for (int i = 0; i < 4; i++) {
+        if (segmentsCross(from, to, corners[i], corners[(i + 1) % 4])) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Whether a move goes out through a doorway: across its plane in its direction, and
@@ -578,9 +624,13 @@ void ScriptRuntime::runTick() {
     // in the C# -- KurtTouchesGroups, Rides.Update, CollectPickups, the object loop
     // (:962-987) and RunControllers (:991) -- can still move CurrentArena,
     // SecondArena and SecondActive (a door opening/closing, an arena_show opcode) and
-    // the oracle's pin does NOT follow them until the next tick. CheckTriggers is
-    // unported, so nothing else belongs between the crossing and this call; when it
-    // lands it goes immediately above it, not below.
+    // the oracle's pin does NOT follow them until the next tick.
+    //
+    // CheckTriggers is the other writer, and it is the LAST one above the snapshot: the
+    // oracle's own order is `CheckTriggers(); UpdateArenas();` (:934-935), so the arena a
+    // trigger box shows or preloads belongs to THIS tick's pin, while a door or an arena_show
+    // that runs in the object loop below belongs to the next one's.
+    checkTriggers();
     updateDrawnArenas();
 
     // ScriptRuntime.cs:945-946 records Kurt's observed feet delta before the
@@ -763,23 +813,12 @@ void ScriptRuntime::showArena(const std::string& arena) {
     }
 
     if (arena == currentArena_) {
-        // The C# calls LoadArena(arena) here (ScriptRuntime.cs:582-586), and LoadArena
-        // (:615-623) does two things this port does NOT do: it records _residentArena
-        // (the one non-corridor arena whose MTO is in memory) and it calls PullDoors
-        // (:628-643), which takes the doors leading INTO `arena` out of the neighbouring
-        // arenas that hold them and turns them around (ObjectBehaviors.MoveDoor).
-        // Neither half is ported: there is no resident-arena state and no door move, and
-        // the drawn-arena list UpdateArenas feeds them is a later slice.
-        //
-        // What changed is that this branch is no longer first-tick-only. Since the
-        // doorway crossing landed, showArena runs on every crossing, where objects DO
-        // exist -- so the missing PullDoors is a live gap, not a harmless one: Kurt can
-        // cross into an arena whose door is still parked in the neighbour that leads to
-        // it, which is the frozen/shut-door artefact the oracle's DoorArenaTests class
-        // comment describes. Recorded as the next item for this subsystem, next to
-        // PreloadArena (:602-614, also unported) and the drawn-arena list.
+        // The C# loads Kurt's own arena too (:582-586): it is the one arena whose doors
+        // PullDoors must NOT move, but its resident-arena bookkeeping still runs.
+        loadArena(arena);
     } else if (arena != secondArena_) {
         secondArena_ = arena;
+        loadArena(arena);
     }
 
     secondActive_ = true;
@@ -787,6 +826,128 @@ void ScriptRuntime::showArena(const std::string& arena) {
     if (!state.started) {
         state.started = true;
         spawnDtiAliens(arena);
+    }
+}
+
+// C# ScriptRuntime.PreloadArena (ScriptRuntime.cs:602-612, arena_set_neighbour 0x41a2d0, VM
+// opcode 223): the arena takes the SECOND slot and is loaded, but the second stays INACTIVE,
+// so the room is loaded ahead of Kurt -- its doors pulled, its MTO resident -- without being
+// drawn or live with him. "NONE" is the C#'s NoArena (:85). The `arena == SecondArena` test
+// runs BEFORE the assignment (:604), so preloading the arena that is already the second does
+// nothing at all: not the deactivation, not LoadArena, so it pulls that arena's doors no
+// second time. SecondActive is cleared AFTER the load (:611), which is what lets PullDoors
+// still see the previous second as active and leave its doors alone.
+void ScriptRuntime::preloadArena(const std::string& arena) {
+    if (arena.empty() || arena == "NONE" || arena == secondArena_) {
+        return;
+    }
+    secondArena_ = arena;
+    loadArena(arena);
+    secondActive_ = false;
+}
+
+// C# ScriptRuntime.LoadArena (ScriptRuntime.cs:615-623, arena_load 0x419d00): "only one arena
+// (not corridor) is loaded at a time" -- the MTO holds a ROOM's geometry and a corridor is not
+// in it, so loading a corridor leaves the resident arena alone and only pulls its doors.
+void ScriptRuntime::loadArena(const std::string& arena) {
+    if (level_->mto().has(arena)) {
+        residentArena_ = arena;
+    }
+    pullDoors(arena);
+}
+
+// Defined below with the rest of the door engine (ObjectBehaviors.MoveDoor, 0x43ca00).
+static void moveDoor(MdkObject* obj);
+
+// C# ScriptRuntime.PullDoors (ScriptRuntime.cs:628-643): an arena being loaded takes the doors
+// leading to it out of the neighbours that hold them and turns them around, so Kurt meets them
+// in the room he is walking towards -- except from his own arena and from the active second,
+// which keep theirs. Without it a door stays parked in the corridor it was spawned in, which
+// is the artefact the oracle's DoorArenaTests class comment opens with ("the doorway showed the
+// sky"): the door is not in the drawn list, so neither is its geometry.
+//
+// The C#'s Objects.Where(...) is a filter over the whole object list and the loop below is the
+// same predicate per object; moveDoor changes only arena/connects/yaw, so nothing here
+// disturbs the sequence the way a removal would.
+void ScriptRuntime::pullDoors(const std::string& arena) {
+    const std::vector<formats::Dti::Record>* records = arenaRecords(arena);
+    if (records == nullptr) {
+        return;  // the C#'s ArenaRecords() is an empty list for an arena the DTI does not know
+    }
+    for (size_t i = 0; i < records->size(); i++) {
+        const formats::Dti::Record& record = (*records)[i];
+        if (record.type != kRecordConnection) {
+            continue;
+        }
+        std::map<std::pair<std::string, int32_t>, std::string>::const_iterator other =
+            connections_.find(std::make_pair(arena, record.id));
+        if (other == connections_.end()) {
+            continue;
+        }
+        // The two exemptions, in the C#'s order (:633): the neighbour Kurt is standing in, and
+        // the neighbour that is the ACTIVE second. Both keep their door, because a door pulled
+        // out of a drawn arena would leave its doorway showing nothing.
+        if (other->second == currentArena_ || (secondActive_ && other->second == secondArena_)) {
+            continue;
+        }
+        for (std::deque<MdkObject>::iterator it = objects_.begin(); it != objects_.end(); ++it) {
+            MdkObject* door = &(*it);
+            if (!door->dead && (door->flags & MdkObject::FlagDoor) != 0 &&
+                door->arena == other->second && door->connects == arena) {
+                moveDoor(door);
+            }
+        }
+    }
+}
+
+// C# ScriptRuntime.CheckTriggers (ScriptRuntime.cs:707-740, 0x41bf1c): the DTI trigger boxes
+// of KURT'S arena. The move it tests is THIS tick's, and in XY ONLY: `from` is the previous
+// position the tick has not published yet (the C# writes _previousKurtPosition at :946, below
+// both this call and the crossing, and so does runTick) and `to` is Kurt's feet now. Z is not
+// part of a trigger box at all -- the reader fills the record's third coordinate and :718
+// ignores it -- so a box catches Kurt at any height above it, which is what the shipped boxes
+// assume: level 7's CDANT_1 pair sits at z = -42..-36 under a tunnel whose floor is -3, and a
+// Z test would switch both of them off.
+void ScriptRuntime::checkTriggers() {
+    const formats::Vec2f from{previousKurtPosition_.x, previousKurtPosition_.y};
+    const formats::Vec2f to{kurtPosition_.x, kurtPosition_.y};
+    const std::vector<formats::Dti::Record>* records = arenaRecords(currentArena_);
+    if (records == nullptr) {
+        return;  // the C#'s `EntryNamed(CurrentArena)?.Records ?? []` (:711)
+    }
+    const std::vector<formats::Dti::ArenaEntry>& arenas = level_->dti().arenas();
+    for (size_t i = 0; i < records->size(); i++) {
+        const formats::Dti::Record& record = (*records)[i];
+        if (record.type != kRecordTriggerShow && record.type != kRecordTriggerLoad) {
+            continue;
+        }
+        // mathMin/mathMax, not fminf/fmaxf: the C# writes MathF.Min/MathF.Max (:718-719),
+        // which propagates a NaN corner instead of hiding it. Same reason as spans().
+        const formats::Vec2f min{mathMin(record.position[0], record.boxEnd[0]),
+                                 mathMin(record.position[1], record.boxEnd[1])};
+        const formats::Vec2f max{mathMax(record.position[0], record.boxEnd[0]),
+                                 mathMax(record.position[1], record.boxEnd[1])};
+        // Closed near side, open far side, and on the END of the move only (:720). A move that
+        // starts inside and walks out is caught by crossesBox, not by this.
+        const bool inside = to.x >= min.x && to.y >= min.y && to.x < max.x && to.y < max.y;
+        if (!inside && !crossesBox(min, max, from, to)) {
+            continue;
+        }
+        // The id is an INDEX INTO THE ARENA LIST (:726) -- not a name, and not a connection id.
+        // -1, the "clear it" box every shipped level ships, and an id past the end both name no
+        // arena; the two types then split, and the LOAD of no arena goes through the
+        // ShowArena("") arm rather than through PreloadArena (:731-738).
+        const std::string arena =
+            (record.id >= 0 && (size_t)record.id < arenas.size())
+                ? arenas[(size_t)record.id].name
+                : std::string();
+        if (record.type == kRecordTriggerShow) {
+            showArena(arena);
+        } else if (arena.empty()) {
+            showArena(std::string());
+        } else {
+            preloadArena(arena);
+        }
     }
 }
 
