@@ -241,14 +241,15 @@ def cmd_count(rows: list[Row], level: str) -> int:
     return 0
 
 
-def cmd_next(rows: list[Row], level: str) -> int:
+def cmd_next(rows: list[Row], level: str, exclude: list[str]) -> int:
     cap = LEVELS[level]
+    skip = set(exclude)
     ordered = sorted(
-        (row for row in rows if row.rank() <= cap and row.open()),
+        (row for row in rows if row.rank() <= cap and row.open() and row.id not in skip),
         key=lambda row: (row.rank(), row.line),
     )
     if not ordered:
-        print("NEXT: none — every row at or below this level is closed", file=sys.stderr)
+        print("NEXT: none — every row at or below this level is closed or parked", file=sys.stderr)
         return 1
     row = ordered[0]
     print(f"{row.id}\t{row.speed}\t{row.acceptance}")
@@ -352,7 +353,7 @@ def selftest() -> int:
                ledger().replace("__SHA__", sha) +
                "b.item\td1\tfast\ttodo\tmake b\t\t\n")
         rows = parse_ledger(root / LEDGER_REL)
-        capture = cmd_next(rows, "d1")
+        capture = cmd_next(rows, "d1", [])
         ok = capture == 0
     finally:
         temp.cleanup()
@@ -376,6 +377,8 @@ def main() -> int:
     parser.add_argument("--report", action="store_true", help="validate shape and every done row (the default)")
     parser.add_argument("--next", action="store_true", help="print the first open row")
     parser.add_argument("--count", action="store_true", help="print the number of open rows")
+    parser.add_argument("--exclude", action="append", default=[], metavar="ID",
+                        help="row id to skip when choosing --next (repeatable; a parked row)")
     parser.add_argument("--strict", action="store_true", help="exit 1 while work remains")
     parser.add_argument("--selftest", action="store_true", help="run the seeded arms")
     args = parser.parse_args()
@@ -394,7 +397,7 @@ def main() -> int:
     if args.count:
         return cmd_count(rows, args.level)
     if args.next:
-        return cmd_next(rows, args.level)
+        return cmd_next(rows, args.level, args.exclude)
     if not is_git_checkout(root):
         print(f"COMPLETION: NOT VERIFIED -- {root} is not a git checkout", file=sys.stderr)
         return 2

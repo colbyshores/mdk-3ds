@@ -153,6 +153,11 @@ COMPLETION_LEVEL="${COMPLETION_LEVEL:-d1}"
 # a re-scoped acceptance criterion, not a 26th attempt. Exit 6 parks the unit.
 COMPLETION_ITEM_MAX="${COMPLETION_ITEM_MAX:-8}"
 COMPLETION_GATE="$ROOT/tools/runner/gates_completion.py"
+# Rows parked after COMPLETION_ITEM_MAX attempts. A row that will not close needs
+# a re-scoped criterion, not a ninth attempt and not a dead campaign: park it,
+# say so, and work the next row. It stays OPEN in the ledger, so the park is
+# visible instead of being laundered into a false done.
+COMPLETION_SKIP_FILE="$LOGDIR/completion-parked"
 # MAX_ITER defaults to a DERIVED budget, not a fixed 80: at 25 iterations per open
 # row it scales with what is actually left, so the cap cannot truncate the port
 # mid-work. An explicit MAX_ITER still wins.
@@ -244,7 +249,15 @@ state_set() { state_write "$1=$2"; }
 # it never produces it. A harness that could mark its own row done would be the
 # `FINAL`-line failure wearing a gate.
 completion_gate() { python3 "$COMPLETION_GATE" "$@"; }
-completion_next()   { completion_gate --next --level "$COMPLETION_LEVEL" 2>/dev/null; }
+completion_next() {
+    local args=(--next --level "$COMPLETION_LEVEL") id
+    if [ -r "$COMPLETION_SKIP_FILE" ]; then
+        while IFS= read -r id; do
+            [ -n "$id" ] && args+=(--exclude "$id")
+        done <"$COMPLETION_SKIP_FILE"
+    fi
+    completion_gate "${args[@]}" 2>/dev/null
+}
 completion_strict() { completion_gate --strict --level "$COMPLETION_LEVEL" 2>&1; }
 
 # --- model identity: the upstream string, never the alias --------------------
@@ -792,14 +805,26 @@ while :; do
         else
             C_ITEM_ITERS=1
         fi
+        # The count is NOT persisted past the cap. Persisting it before the check
+        # let a restart manufacture attempts it never made: measured at 79 on a
+        # row with an 8-attempt budget, which no restart could ever clear.
+        if [ "$C_ITEM_ITERS" -gt "$COMPLETION_ITEM_MAX" ]; then
+            echo "$C_ITEM_ID" >>"$COMPLETION_SKIP_FILE"
+            log "ROW PARKED: $C_ITEM_ID spent $COMPLETION_ITEM_MAX attempts without passing '$C_ITEM_CMD' — parking it and working the next row; it stays OPEN in the ledger for an operator"
+            echo "ROW PARKED at iter $ITER: $C_ITEM_ID — $C_ITEM_CMD (see $RUN_DIR/iter-$ITER.log)" >>"$SUMMARY"
+            C_ITEM_LINE="$(completion_next || true)"
+            if [ -n "$C_ITEM_LINE" ]; then
+                IFS=$'\t' read -r C_ITEM_ID C_ITEM_SPEED C_ITEM_CMD <<<"$C_ITEM_LINE"
+                C_ITEM_ITERS=1
+            else
+                log "STOP: every open ledger row at $COMPLETION_LEVEL is parked — an operator must re-scope one or flip it"
+                echo "ALL LEDGER ROWS PARKED at iter $ITER (see $COMPLETION_SKIP_FILE)" >>"$SUMMARY"
+                exit 6
+            fi
+        fi
         state_set COMPLETION_ITEM "$C_ITEM_ID"
         state_set COMPLETION_ITERS "$C_ITEM_ITERS"
         log "iter=$ITER ledger item=$C_ITEM_ID attempt=$C_ITEM_ITERS/$COMPLETION_ITEM_MAX"
-        if [ "$C_ITEM_ITERS" -gt "$COMPLETION_ITEM_MAX" ]; then
-            log "STOP: ledger item $C_ITEM_ID has had $((C_ITEM_ITERS-1)) iterations without passing its acceptance command ($C_ITEM_CMD) — this needs an owner decision or a re-scoped acceptance criterion, not another attempt"
-            echo "LEDGER ITEM STALLED at iter $ITER: $C_ITEM_ID — $C_ITEM_CMD (see $RUN_DIR/iter-$ITER.log)" >>"$SUMMARY"
-            exit 6
-        fi
     else
         log "iter=$ITER no open ledger row at $COMPLETION_LEVEL (the iteration runs as before)"
     fi

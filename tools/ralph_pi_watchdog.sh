@@ -14,6 +14,18 @@ PHASEFILE="$ROOT/logs/ralph-pi/phase"
 if ! systemctl is-active --quiet "$SERVICE"; then
     state="$(systemctl show -p ActiveState --value "$SERVICE" 2>/dev/null || true)"
     if [ "$state" = "failed" ]; then
+        # A park code is a DECISION, not a crash. The unit sets
+        # RestartPreventExitStatus=6 7 8 so that a blocked review (7), a failed
+        # review dispatch (8) or an exhausted ledger row (6) stops for an operator.
+        # Reviving those unconditionally is what turned one parked row into a
+        # restart storm: the loop exited 6 in 30s, the watchdog restarted it, and
+        # the attempt counter climbed to 79 without doing any work.
+        park_code="$(systemctl show -p ExecMainStatus --value "$SERVICE" 2>/dev/null)"
+        case "$park_code" in
+            6|7|8)
+                logger -t ralph-pi-watchdog "service parked (exit $park_code); NOT restarting — this needs an operator or a ledger change"
+                exit 0 ;;
+        esac
         logger -t ralph-pi-watchdog "service is failed; reset-failed + start"
         systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
         systemctl start "$SERVICE" >/dev/null 2>&1 || true
