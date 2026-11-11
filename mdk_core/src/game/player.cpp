@@ -558,6 +558,24 @@ Vec3 Player::shove(Vec3 offset) {
     return Vec3{feet.x - start.x, feet.y - start.y, feet.z - start.z};
 }
 
+void Player::teleport(const Vec3& at, float newYaw) {
+    // C# Kurt.Teleport (Kurt.cs:249-261), in the C#'s order. "The chute closes
+    // silently": ChuteOpen = false and StopChuteSound(), which is CHUTEON stopped
+    // WITHOUT CHUTEIN (the same call death makes, and for the same reason: Kurt left
+    // the chute otherwise than by closing it). Then the three speeds go, which is the
+    // "he stops" of the summary: a teleport does not carry the walk, the strafe or the
+    // fall into the new place. `_keeper = null` is not here -- Kurt.Keeper.cs is not
+    // ported, so there is no carrier to let go of.
+    chuteOpen = false;
+    stopChuteSound();
+    feet = at;
+    yaw = newYaw;
+    forwardSpeed = 0.0f;
+    strafeSpeed = 0.0f;
+    verticalSpeed = 0.0f;
+    teleports++;
+}
+
 void Player::setHealth(int health) {
     // C# SetHealth: max(health, 0) -- on the one health, which lives on the
     // combat half this Player owns.

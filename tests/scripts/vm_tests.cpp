@@ -6335,9 +6335,11 @@ void testTriggerBoxesPreloadAndPullDoors(LevelData* levelData, const Cmi* cmi,
 // on the oracle's own spot and `currentArena_` is DANT_10 -- the only arena whose
 // records these boxes are, because :711 reads CurrentArena.
 //
-// THE BOXES ARE XY-ONLY, AND THAT IS PINNED BY THE HEIGHT. Both boxes' z range is
-// 0..7 while FarSpot stands at z = 24, so a port that read the box as a 3-D volume
-// would never fire it. :713-720 is Vector2 arithmetic on the feet and nothing else.
+// THE BOXES ARE XY-ONLY, AND THAT IS PINNED BY THE HEIGHT. The show box's z range is
+// 0..7 and the clear box's 0..6 (golden/L7_dti.txt:45 and :46, whose third box
+// coordinate is 40E00000 and 40C00000), while FarSpot stands at z = 24, so a port that
+// read either box as a 3-D volume would never fire it. :713-720 is Vector2 arithmetic
+// on the feet and nothing else.
 //
 // arenas[18] is CDANT_9, the last of the DTI's 19 arenas (golden/L7_dti.txt:86), and
 // it is a CORRIDOR. So the show draws it and makes it live, but it is not in the MTO
@@ -6349,12 +6351,17 @@ void testTriggerBoxesPreloadAndPullDoors(LevelData* levelData, const Cmi* cmi,
 // could not separate the two readings. Here a connection-list index of 18 is out of
 // range, names no arena, and the box would CLEAR instead of showing.
 //
-// THE TWO ARMS ARE PINNED APART FROM EACH OTHER. The show box's y range is
-// [4968,5077] and the clear box's is [4964,5082], so at y = 4965 the show box is out
-// of reach and only the id = -1 box can fire: the clear is pinned ALONE, not as a
-// side effect of the show having fired first. At y = 5005 both boxes fire on the
-// step into x = 511, in the DTI's record order, which is the other thing this case
-// pins: the arms run in record order, not in some order of the port's choosing.
+// THE TWO BOXES ARE PINNED APART FROM EACH OTHER, AND THEY ARE BOTH SHOW BOXES. The
+// show box's y range is [4968,5077] and the clear box's is [4964,5082], so at y = 4965
+// the show box is out of reach and only the id = -1 box can fire: the clear is pinned
+// ALONE, not as a side effect of the show having fired first. At y = 5005 both boxes
+// fire on the step into x = 511, in the DTI's record order, which is the other thing
+// this case pins: the arms run in record order, not in some order of the port's
+// choosing. Review-7 F1, and the correction matters: BOTH records are `type=1`
+// (golden/L7_dti.txt:45-46), so BOTH take the TriggerShow arm (:727-730) and the id =
+// -1 box clears by naming no arena to that arm -- ShowArena("") and its own empty test
+// at :574-578 -- NOT by the `else if (arena.empty())` LOAD arm at :731-734, which no
+// shipped record reaches at all (see the paragraph below, and the batch's M4).
 //
 // WHAT THIS DOES NOT PIN. The TriggerLoad arm that names no arena (a type-3 record
 // with an id of -1) is NOT reachable from shipped data: every type-3 id in all six
@@ -6419,12 +6426,15 @@ void testTriggerShowBoxDrawsAndTheMinusOneBoxClears(LevelData* levelData, const 
     CHECK(runtime.drawnArenas().size() == 2);
     CHECK(runtime.drawnArenas()[1] == "CDANT_9");
     CHECK(runtime.residentArena() == "DANT_10");
-    // And the second is LIVE, not merely named: an active second is a live arena
-    // (IsLiveArena, :703), so the corridor's own controller runs and its objects appear.
-    // A preload leaves the slot inactive and nothing of the corridor's ever spawns --
-    // mutation M1, which routes the show box through preloadArena, reddens this line
-    // along with the three above it. This is the observable that separates the two arms
-    // beyond the active flag itself.
+    // And objects of the corridor are in the world. The cause is ShowArena's own
+    // `if (!state.Started) { state.Started = true; SpawnDtiAliens(arena); }` (:594-598,
+    // the only caller of SpawnDtiAliens in the oracle), which a preload does NOT do
+    // (:602-612 has no such call) -- review-7 F3, which corrected an earlier draft that
+    // credited liveness. Liveness (IsLiveArena, :703) only gates their per-tick UPDATE,
+    // so the discriminating fact is that the spawn is show-only. Mutation M1, which
+    // routes the show box through preloadArena, reddens this line along with the three
+    // above it -- and the batch that ports the loaded-arena half of UpdateArenas has to
+    // keep SpawnDtiAliens out of PreloadArena or this pin stops separating the arms.
     CHECK(corridorObjects() > 0);
 
     // Still inside it: the box fires on every step (:720) and changes nothing.
@@ -6446,10 +6456,12 @@ void testTriggerShowBoxDrawsAndTheMinusOneBoxClears(LevelData* levelData, const 
     CHECK(runtime.secondActive());
 
     // THE id = -1 BOX, ALONE. At y = 4965 the show box cannot answer: its y starts at
-    // 4968 and a move at 4965 touches none of its edges, so the step 510 -> 511 is
-    // the clear arm on its own (:731-734 -> ShowArena("")), which empties the second
-    // AND deactivates it (:574-578). The drawn list is the room alone again, and the
-    // resident arena still never moved.
+    // 4968 and a move at 4965 touches none of its edges, so the step 510 -> 511 is this
+    // box on its own. It is a `type=1` record with id = -1, so it takes the SHOW arm
+    // (:726 reads the id as an arena-list index and finds none, :727-730 calls
+    // ShowArena("")) and the clear happens inside ShowArena's own empty test, which
+    // empties the second AND deactivates it (:574-578). The drawn list is the room alone
+    // again, and the resident arena still never moved.
     player.feet = Vec3{511.0f, 4965.0f, kZ};
     runtime.update(1.0f / 30.0f);
     CHECK(runtime.secondArena().empty());
@@ -6466,6 +6478,436 @@ void testTriggerShowBoxDrawsAndTheMinusOneBoxClears(LevelData* levelData, const 
         CHECK(runtime.secondArena().empty());
         CHECK(!runtime.secondActive());
     }
+}
+
+// TELEPORT_KURT, LEVEL 4 — the oracle's own ArenaSwitchTests cases that needed a teleport,
+// run here. tests/Mdk.Game.Tests/ArenaSwitchTests.cs is the source of every expected value
+// below, and the two it does not assert are named where they appear.
+//
+// WHY THIS IS A SEPARATE CASE FROM golden/L4_crossing.txt. The crossing golden drives its
+// first state geometrically and says so in its header, because the port had no teleport:
+// "the port has no TeleportKurt, so this harness lets the first tick find the arena
+// geometrically and the line pins that the two agree on MEAT_7". That golden is the
+// oracle's, so it stays exactly as it is; what this case adds is the teleport's OWN
+// observables, which no golden has ever run — the arena state a teleport writes, the
+// first-tick rule a teleport overrides, and the arena a teleport makes solid.
+void testTeleportKurtLevel4(const MdkData& data) {
+    const float kDoorway = 14822.0f;  // ArenaSwitchTests.Doorway (connection 1012's plane)
+    const float kFloor = 21.0f;       // ArenaSwitchTests.Floor
+
+    LevelData levelData;
+    if (!LevelData::load(&levelData, &data, 4)) {
+        printf("  FAIL line %d: level 4 did not load\n", __LINE__);
+        failures++;
+        return;
+    }
+    Cmi cmi;
+    {
+        std::vector<uint8_t> bytes;
+        if (!data.read("TRAVERSE/LEVEL4/LEVEL4.CMI", &bytes) ||
+            !Cmi::parse(&cmi, bytes.data(), (int32_t)bytes.size())) {
+            printf("  FAIL line %d: level 4's CMI did not read\n", __LINE__);
+            failures++;
+            return;
+        }
+    }
+    audio::SoundBank bank;
+    if (!audio::SoundBank::forLevel(&bank, data, 4)) {
+        printf("  FAIL line %d: level 4's bank did not load\n", __LINE__);
+        failures++;
+        return;
+    }
+
+    // CreateRuntime (:30-42): the space holds every REACHABLE arena, and the runtime reads
+    // its Kurt from a Player. The C#'s fixture builds a Kurt over the same space.
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData.arenas()) {
+        if (levelData.isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    audio::SoundMixer mixer(&bank);
+    Player player;
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, &player, nullptr);
+    runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
+
+    // ---- FirstTickHasNoMove, as the contrast case (ArenaSwitchTests.cs:74-82).
+    // That test uses Kurt.Teleport — Kurt's OWN teleport, which moves the body and writes
+    // no arena state — and asserts KurtVelocity is zero: the first tick has no move to
+    // observe, so the jump from wherever Kurt was parked is not a velocity. Player::teleport
+    // is the C#'s Kurt.Teleport (Kurt.cs:249), so this is that test and not an imitation of
+    // it: note the chute flag and the three speeds, which the teleport zeroes and which is
+    // all of "he stops" that this port can show.
+    player.teleport(Vec3{0.0f, kDoorway - 100.0f, kFloor}, 90.0f);
+    CHECK(player.chuteOpen == false);
+    CHECK(player.forwardSpeed == 0.0f && player.strafeSpeed == 0.0f &&
+          player.verticalSpeed == 0.0f);
+    CHECK(player.teleports == 1);
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.kurtVelocity.x == 0.0f && runtime.kurtVelocity.y == 0.0f &&
+          runtime.kurtVelocity.z == 0.0f);  // :81
+    CHECK(runtime.currentArena() == "MEAT_7");
+
+    // ---- FirstTickKeepsTeleport (ArenaSwitchTests.cs:89-97), on a FRESH runtime: the C#
+    // fixture is fresh and the tick it steps is its tick 0, which is the only tick the rule
+    // under test can fire on. Reusing the runtime above would have made the case vacuous —
+    // mutation M1 (the flag dropped from the first-tick rule) reddens nothing there, and
+    // that negative result was found by running the mutation, not by reading the code.
+    // The soak tour put Kurt ON a doorway before the first tick; the first tick then took
+    // his new place as the previous one, so he "stayed in the room while in the corridor
+    // and fell out when it went". The teleport names the destination as the previous
+    // position and raises the flag the first tick now tests (:911
+    // `if (_tickCount == 0 && !_teleported)`).
+    ArenaSpace soakSpace;
+    for (const formats::Arena* arena : levelData.arenas()) {
+        if (levelData.isReachable(arena->name())) {
+            soakSpace.add(arena);
+        }
+    }
+    audio::SoundMixer soakMixer(&bank);
+    Player soakPlayer;
+    soakPlayer.setSpace(&soakSpace);
+    soakPlayer.setMixer(&soakMixer);
+    scripts::ScriptRuntime soak(&levelData, &cmi, 1, &bank, &soakPlayer, nullptr);
+    soak.option = 1;
+    //
+    // Kurt is teleported ONTO the plane (y = 14822 exactly) and then stepped to 14825. The
+    // velocity line is the flag itself: with it, the previous position is still the
+    // teleport's and the move is 3 units, so 90 u/s; without it the first tick overwrote
+    // the previous position with the destination and the velocity is zero — and the arena
+    // line goes with it, because a zero move crosses no doorway and Kurt stays in the room
+    // while standing in the corridor. Both halves of the bug, in two lines.
+    soak.teleportKurt("MEAT_7", Vec3{0.0f, kDoorway, kFloor}, 90.0f);
+    CHECK(soak.currentArena() == "MEAT_7");
+    // TeleportSecond's FIRST arm (:498-502): into a room the second is EMPTIED, because a
+    // room is drawn on its own and a second would be a room behind a door that does not
+    // exist. It is emptied and NOT left inactive: ShowArena runs after TeleportSecond
+    // (:469 after :468) and its `SecondActive = true` (:592) is unconditional, so the slot
+    // is an empty ACTIVE one -- which is what the drawn list reads as the room alone
+    // (:661-664 add the second only when it is both active AND named). Nothing in the C#
+    // suite asserts the second after a teleport into a room (its two teleport-into-a-corridor
+    // cases are the level-7 ones below), so these three lines are the port's own, named as
+    // such, and the pair of them is what swapping the two calls reddens (mutation M2).
+    CHECK(soak.secondArena().empty());
+    CHECK(soak.secondActive());
+    // ShowArena loaded it, and the MTO has MEAT_7, so it is the resident arena (:617-620).
+    CHECK(soak.residentArena() == "MEAT_7");
+    // The unnamed teleport is the one that flashes; a named one does not (:477-480).
+    CHECK(soakPlayer.combat().whiteFlash() == 0.0f);
+    CHECK(soakPlayer.teleports == 1);  // and it moved KURT too: TeleportKurt ends with Kurt.Teleport
+
+    soakPlayer.teleport(Vec3{0.0f, kDoorway + 3.0f, kFloor}, soakPlayer.yaw);  // StepTo (:96)
+    soak.update(1.0f / 30.0f);
+    CHECK(soak.kurtVelocity.y == 90.0f);  // 3 units at 30 ticks/s, because the flag held
+    CHECK(soak.currentArena() == "CMEAT_7");  // :96
+    // And the room he left is the ACTIVE second, which is the crossing running off the
+    // teleport's previous position: the drawn list is the corridor and the room.
+    CHECK(soak.secondArena() == "MEAT_7");
+    CHECK(soak.drawnArenas().size() == 2);
+
+    // ---- TeleportMakesUnreachableArenaSolid (ArenaSwitchTests.cs:102-119). An arena no
+    // connection leads to is not in Kurt's space until a script teleports him into it
+    // (level.gd enter_arena). The C# builds an EMPTY space here, picks the first arena that
+    // is unreachable and has vertices, and takes the centre of its vertex box.
+    ArenaSpace bare;  // the PLAYER's space, deliberately left empty: the C#'s fixture is
+                      // an empty space, and the runtime builds its own from the reachable
+                      // arenas exactly as the C#'s driver line in the fixture does.
+    audio::SoundMixer bareMixer(&bank);
+    Player barePlayer;
+    barePlayer.setSpace(&bare);
+    barePlayer.setMixer(&bareMixer);
+    scripts::ScriptRuntime bareRuntime(&levelData, &cmi, 1, &bank, &barePlayer, nullptr);
+    bareRuntime.option = 1;
+    const formats::Arena* target = nullptr;
+    for (const formats::Arena* arena : levelData.arenas()) {
+        if (!levelData.isReachable(arena->name()) && !arena->vertices().empty()) {
+            target = arena;
+            break;
+        }
+    }
+    CHECK(target != nullptr);
+    if (target != nullptr) {
+        const std::vector<formats::Vec3f>& verts = target->vertices();
+        formats::Vec3f mn = verts[0];
+        formats::Vec3f mx = verts[0];
+        for (const formats::Vec3f& v : verts) {
+            mn.x = mathMin(mn.x, v.x);
+            mn.y = mathMin(mn.y, v.y);
+            mn.z = mathMin(mn.z, v.z);
+            mx.x = mathMax(mx.x, v.x);
+            mx.y = mathMax(mx.y, v.y);
+            mx.z = mathMax(mx.z, v.z);
+        }
+        const Vec3 center{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f};
+        // Assert.DoesNotContain(space.At(center), ...) (:114) then Assert.Contains (:117),
+        // read through the runtime's space, which is the one enterArena() adds to (see the
+        // arenaSpace() note: the port has two spaces where the C# has one, so this pins the
+        // arena RULE and not yet the collision). ArenaSpace has no C++ twin of the LIST At
+        // returns -- arenaAt answers the first box that contains the point -- so this is the
+        // weaker pair: not the answer before, and the answer after.
+        const Vec at{center.x, center.y, center.z};
+        const std::string* before = bareRuntime.arenaSpace().arenaAt(at);
+        CHECK(before == nullptr || *before != target->name());
+        bareRuntime.teleportKurt(target->name(), center, 0.0f);
+        const std::string* after = bareRuntime.arenaSpace().arenaAt(at);
+        CHECK(after != nullptr && *after == target->name());  // :117
+        CHECK(bareRuntime.currentArena() == target->name());
+    }
+
+    // ---- The unnamed teleport: teleport_player with an empty arena name (opcode 112's
+    // first operand) moves Kurt INSIDE his current arena and white-flashes him (:477-480,
+    // Kurt.WhiteFlash = MathF.Max(Kurt.WhiteFlash, TeleportFlash) with TeleportFlash = 255).
+    // No C# assertion covers it — the suite never passes "" — so it is named here as the
+    // port's own, and it is the only thing in the tree that reaches that branch.
+    bareRuntime.teleportKurt(std::string(), Vec3{0.0f, 10.0f, 0.0f}, 0.0f);
+    CHECK(barePlayer.combat().whiteFlash() == 255.0f);
+    CHECK(barePlayer.teleports == 2);  // the unnamed teleport moved the body
+    CHECK(bareRuntime.currentArena() == (target ? target->name() : std::string()));
+}
+
+// TELEPORT_KURT, LEVEL 7 — DoorArenaTests' three teleport cases, which batch 139 could
+// only re-state because they reach their state with TeleportKurt. Every expected value is
+// that file's; the constants are its own (Tunnel/Room/Corridor, TunnelDoor, TurnedYaw,
+// CorridorSpot, FarSpot, TunnelSpot, FarFromDoor, DoorYaw).
+void testTeleportKurtLoadsCorridorsAndPullsDoors(LevelData* levelData, const Cmi* cmi,
+                                                 audio::SoundBank* bank) {
+    const std::string kTunnel = "CDANT_1";
+    const std::string kRoom = "DANT_2";
+    const std::string kCorridor = "CDANT_2";
+    const std::string kFar = "DANT_10";
+    const Vec3 kTunnelDoor{0.0f, 673.0f, -3.0f};
+    const float kDoorYaw = 90.0f;
+    const float kTurnedYaw = 270.0f;
+    const Vec3 kFarSpot{495.0f, 5005.0f, 24.0f};
+    const Vec3 kTunnelSpot{0.0f, 485.0f, 19.0f};
+    const Vec3 kCorridorSpot{100.0f, 990.0f, -6.0f};
+    const Vec3 kFarFromDoor{0.0f, 750.0f, -8.0f};
+
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    audio::SoundMixer mixer(bank);
+    Player player;
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    runtime.option = 1;
+
+    // StandAt (:60-67): put Kurt somewhere and tick, with Kurt's OWN teleport between.
+    auto standAt = [&player, &runtime, kDoorYaw](const Vec3& at, int ticks) {
+        for (int i = 0; i < ticks; i++) {
+            player.teleport(at, kDoorYaw);
+            runtime.update(1.0f / 30.0f);
+        }
+    };
+    // DoorAt (:68-69): the first live door within a unit of a place. It takes the runtime,
+    // because this case runs three of them and the C#'s DoorAt takes its own.
+    auto doorAt = [](scripts::ScriptRuntime& which, const Vec3& at) -> scripts::MdkObject* {
+        for (scripts::MdkObject& o : which.objects()) {
+            if (o.dead || (o.flags & scripts::MdkObject::FlagDoor) == 0) {
+                continue;
+            }
+            const float dx = o.position.x - at.x;
+            const float dy = o.position.y - at.y;
+            const float dz = o.position.z - at.z;
+            if (sqrtf(dx * dx + dy * dy + dz * dz) < 1.0f) {
+                return &o;
+            }
+        }
+        return nullptr;
+    };
+
+    // ---- TeleportLoadsCorridorArena (:84-99). "A teleport into a corridor not loaded loads
+    // the last arena (DTI order) leading to it, which becomes the ACTIVE second (0x41bce4):
+    // from DANT_10 into CDANT_1, DANT_2 behind its door." The first teleport is into a room,
+    // so the second slot is emptied and DANT_10 becomes the resident arena; the second is
+    // into a corridor the resident arena has no connection to, so TeleportSecond's THIRD arm
+    // runs — DANT_2 named, INACTIVE, and loaded ahead — and ShowArena then activates it.
+    runtime.teleportKurt(kFar, kFarSpot, 0.0f);
+    standAt(kFarSpot, 1);
+    CHECK(runtime.currentArena() == kFar);
+    CHECK(runtime.residentArena() == kFar);
+    runtime.teleportKurt(kTunnel, kTunnelSpot, kDoorYaw);
+    standAt(kTunnelSpot, 1);
+    CHECK(runtime.secondArena() == kRoom);   // :98
+    CHECK(runtime.secondActive());           // ShowArena's doing, not TeleportSecond's
+    CHECK(runtime.residentArena() == kRoom);  // the load-ahead put DANT_2 in the MTO
+    bool drawnHasRoom = false;
+    for (const std::string& name : runtime.drawnArenas()) {
+        drawnHasRoom = drawnHasRoom || name == kRoom;
+    }
+    CHECK(drawnHasRoom);  // :99
+
+    // ---- TeleportKeepsLoadedCorridor (:101-115). "A teleport into a corridor OF THE LOADED
+    // arena keeps the second arena (0x41bce4): from DANT_2 into CDANT_2, none." Fresh
+    // runtime, because the arm is about what the second ALREADY held — here the first
+    // teleport empties it and the second must leave it empty, so the arm's evidence is the
+    // absence: a TeleportSecond that fell through to the neighbour scan would name DANT_1 or
+    // DANT_2 and the drawn list would be two arenas.
+    ArenaSpace space2;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space2.add(arena);
+        }
+    }
+    audio::SoundMixer mixer2(bank);
+    Player walker;
+    walker.setSpace(&space2);
+    walker.setMixer(&mixer2);
+    scripts::ScriptRuntime keep(levelData, cmi, 1, bank, &walker, nullptr);
+    keep.option = 1;
+    auto keepAt = [&walker, &keep, kDoorYaw](const Vec3& at, int ticks) {
+        for (int i = 0; i < ticks; i++) {
+            walker.teleport(at, kDoorYaw);
+            keep.update(1.0f / 30.0f);
+        }
+    };
+    keep.teleportKurt(kRoom, kFarFromDoor, kDoorYaw);
+    keepAt(kFarFromDoor, 1);
+    CHECK(keep.currentArena() == kRoom);
+    CHECK(keep.residentArena() == kRoom);
+    keep.teleportKurt(kCorridor, kCorridorSpot, 0.0f);
+    keepAt(kCorridorSpot, 1);
+    CHECK(keep.secondArena().empty());   // :113
+    CHECK(keep.drawnArenas().size() == 1 && keep.drawnArenas()[0] == kCorridor);  // :114
+    // IsCorridorLoaded read the resident arena to reach that answer, which is the first
+    // time this port has ever read residentArena_ rather than only written it.
+    CHECK(keep.residentArena() == kRoom);  // a corridor is not in the MTO (:617-620)
+
+    // ---- LoadedArenaPullsItsDoors (:64-82), the oracle's own PullDoors assertion, which
+    // batch 139 could only reach with built doors. The tunnel's real door — CDANT_1's
+    // spawn_connector at (0,673,-3) at yaw 90 — is exempt while CDANT_1 is Kurt's arena, and
+    // the preload of DANT_2 with the second cleared is what takes it into the room and turns
+    // it to 270. No ticks after the preload, so nothing else can move it.
+    ArenaSpace space3;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space3.add(arena);
+        }
+    }
+    audio::SoundMixer mixer3(bank);
+    Player puller;
+    puller.setSpace(&space3);
+    puller.setMixer(&mixer3);
+    scripts::ScriptRuntime pull(levelData, cmi, 1, bank, &puller, nullptr);
+    pull.option = 1;
+    auto pullAt = [&puller, &pull, kDoorYaw](const Vec3& at, int ticks) {
+        for (int i = 0; i < ticks; i++) {
+            puller.teleport(at, kDoorYaw);
+            pull.update(1.0f / 30.0f);
+        }
+    };
+    pull.teleportKurt(kTunnel, Vec3{0.0f, 655.0f, -3.0f}, kDoorYaw);
+    pullAt(Vec3{0.0f, 655.0f, -3.0f}, 1);
+    CHECK(pull.currentArena() == kTunnel);
+    pull.teleportKurt(kCorridor, kCorridorSpot, 0.0f);
+    pullAt(kCorridorSpot, 1);
+    CHECK(pull.currentArena() == kCorridor);
+    // "DANT_2 stays loaded from the tunnel; a trigger clears it."
+    pull.showArena(std::string());
+    pull.preloadArena(kRoom);
+    scripts::MdkObject* door = doorAt(pull, kTunnelDoor);
+    CHECK(door != nullptr);
+    if (door != nullptr) {
+        CHECK(door->arena == kRoom);      // :80
+        CHECK(door->connects == kTunnel);  // :81
+        CHECK(door->yaw > kTurnedYaw - 0.01f && door->yaw < kTurnedYaw + 0.01f);  // :82
+    }
+}
+
+// TELEPORT_KURT, THE DISPATCH — opcodes 112 (teleport_player) and 173
+// (teleport_player_keep) through real bytecode. The runtime method takes
+// (arena, position, yaw); the BYTES say [pstr, f32, f32, f32, f32] for 112
+// (src/Mdk.Formats/Scripts/ScriptOpcodes.g.cs:376) and one op173_target operand for 173
+// (:436, and the C++ decoder's readOp173Target is its twin). A dispatch that read the yaw
+// from operand 3, or the z from operand 4, or turned before instead of after adding the
+// offset, passes every runtime case above and puts Kurt into geometry. The yield is the
+// other half the bytes pin: opcode 112 ends the script ONLY when it named an arena
+// (ScriptVm.cs:1771-1778) and opcode 173 always does (:1296-1299).
+void testTeleportOpcodesDispatch(LevelData* levelData, const Cmi* cmi, audio::SoundBank* bank) {
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    audio::SoundMixer mixer(bank);
+    Player player;
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    runtime.option = 1;
+    player.feet = Vec3{0.0f, 655.0f, -3.0f};
+    player.yaw = 90.0f;
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.currentArena() == "CDANT_1");
+    const float kDoorway = 673.0f;   // CDANT_1's connection 1001 plane (golden/L7_dti.txt:52)
+
+    // ---- 112 with a named arena: the arena, the feet, the yaw, and the script ENDS.
+    Code named;
+    named.u8(112).pstr("DANT_2").f32(0.0f).f32(750.0f).f32(-8.0f).f32(45.0f);
+    named.u8(kSetVar).u8(kGlobal).u8(0).f32(1.0f);  // the marker after the teleport
+    named.end();
+    scripts::MdkObject obj;
+    obj.restart = 0;
+    runtime.globalVariables[0] = 0.0f;
+    runProgram(runtime, named, &obj);
+    CHECK(runtime.currentArena() == "DANT_2");
+    CHECK(player.feet.x == 0.0f && player.feet.y == 750.0f && player.feet.z == -8.0f);
+    CHECK(player.yaw == 45.0f);  // operand 4, not operand 3
+    CHECK(runtime.globalVariables[0] == 0.0f);  // the yield: the marker never ran
+    CHECK(obj.restart == 0);
+
+    // ---- 112 with an EMPTY arena: Kurt moves inside his own arena, flashes, and the
+    // script KEEPS RUNNING (the C#'s `if (name.Length != 0)` around the yield).
+    Code unnamed;
+    unnamed.u8(112).pstr("").f32(0.0f).f32(700.0f).f32(-3.0f).f32(0.0f);
+    unnamed.u8(kSetVar).u8(kGlobal).u8(0).f32(1.0f);
+    unnamed.end();
+    obj.restart = 0;
+    runtime.globalVariables[0] = 0.0f;
+    runProgram(runtime, unnamed, &obj);
+    CHECK(runtime.currentArena() == "DANT_2");   // no arena named, so none entered
+    CHECK(player.feet.y == 700.0f && player.feet.z == -3.0f);
+    CHECK(player.combat().whiteFlash() == 255.0f);
+    CHECK(runtime.globalVariables[0] == 1.0f);  // and it fell through: the marker ran
+    CHECK(runtime.isRemoved(&obj) == false);  // the script ran on to its end, not a yield
+
+    // ---- 173, the keep form: [arena] teleports to Kurt's OWN place and yaw, so the only
+    // thing that moves is the arena. From DANT_2 across the doorway he was standing at:
+    // the teleport puts him back where he was, in the corridor, and the corridor's
+    // TeleportSecond arm runs (CDANT_1 is not in the MTO, and DANT_2 -- the resident arena
+    // -- connects to it, so IsCorridorLoaded answers and the second is left alone).
+    runtime.teleportKurt("CDANT_1", Vec3{0.0f, kDoorway - 13.0f, -3.0f}, 90.0f);
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.currentArena() == "CDANT_1");
+    Code keep;
+    keep.u8(173).pstr("CMEAT_6");  // a level-4 name: arenaNamed finds nothing, so the
+                                   // arena is still entered as far as the runtime knows
+    keep.end();
+    obj.restart = 0;
+    runProgram(runtime, keep, &obj);
+    CHECK(obj.restart == 0);  // opcode 173 yields whatever the slot held
+    CHECK(player.feet.y == kDoorway - 13.0f);  // kept: no offset operand, no move
+
+    // ---- 173, the offset form: ["", arena, dx, dy, dz, dyaw]. The C#'s CMEAT_6 lift is
+    // 1971 up; here the same shape, from Kurt's snapshot, and the turn ADDED to his yaw.
+    Code shifted;
+    shifted.u8(173).pstr("").pstr("DANT_2").f32(10.0f).f32(-20.0f).f32(1971.0f).f32(90.0f);
+    shifted.end();
+    obj.restart = 0;
+    runProgram(runtime, shifted, &obj);
+    CHECK(runtime.currentArena() == "DANT_2");
+    CHECK(player.feet.x == 10.0f);
+    CHECK(player.feet.y == kDoorway - 33.0f);
+    CHECK(player.feet.z == 1968.0f);
+    CHECK(player.yaw == 180.0f);  // 90 kept + 90 turned
+    CHECK(obj.restart == 0);
 }
 
 // A rebuilt ScriptRuntime owns a NEW SoundMixer, and that mixer owns a NEW
@@ -6811,6 +7253,12 @@ int main() {
     printf("PASS TriggerBoxesPreloadAndPullDoors\n");
     testTriggerShowBoxDrawsAndTheMinusOneBoxClears(&levelData, &cmi, &bank);
     printf("PASS TriggerShowBoxDrawsAndTheMinusOneBoxClears\n");
+    testTeleportKurtLevel4(data);
+    printf("PASS TeleportKurtLevel4\n");
+    testTeleportKurtLoadsCorridorsAndPullsDoors(&levelData, &cmi, &bank);
+    printf("PASS TeleportKurtLoadsCorridorsAndPullsDoors\n");
+    testTeleportOpcodesDispatch(&levelData, &cmi, &bank);
+    printf("PASS TeleportOpcodesDispatch\n");
     testPushKurtDispatchesDecodedListToPlayer(&levelData, &cmi, &bank);
     printf("PASS PushKurtDispatchesDecodedListToPlayer\n");
     testPushKurtModeZeroFrameAndLiftAreExact(&levelData, &cmi, &bank);

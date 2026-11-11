@@ -12,6 +12,28 @@ Measured 2026-11-11 (UTC), tree at f25ad69 + this batch's working tree.
 shipped behaviour, and that hash being identical is the proof.
 ================================================================================
 
+CORRECTIONS APPLIED BY BATCH 141 (review-7 of run-20261110-230107, F1/F3/F4). The
+measurements below are left exactly as measured; what was wrong was what this file
+SAID about three of them, so the corrections are annotations, not rewrites.
+
+  F1 (Medium) — §2 step 5 and the "the only route" framing in CONTINUATION were
+     wrong about WHICH arm the id = -1 box takes. Both DANT_10 boxes are `type=1`
+     (golden/L7_dti.txt:45-46), so both take the TriggerShow arm (:727-730); the
+     clear box clears by naming no arena to that arm, and ShowArena's own empty
+     test (:574-578) does the clearing. The `else if (arena.empty())` LOAD arm at
+     :731-734 is reached only by a type-3 record and is NOT executed here — which
+     is exactly what this file's own M4 already proved ("NOTHING REDDENED"). §5's
+     "stays compile-verified" line was right all along; §2 step 5 contradicted it.
+  F3 (Low) — §2 step 3 credited liveness for the corridor's objects appearing. The
+     cause is ShowArena's show-only `SpawnDtiAliens` (:597); liveness only gates
+     their per-tick update. M1's red is still M1's red; the explanation was not.
+  F4 (Low) — §2 step 6 said "Both boxes' z range is 0..7". The show box is 0..7 and
+     the clear box 0..6, as this file's own geometry dump two lines above shows.
+  F5 (Low) — batch 140's COMMIT MESSAGE reported M2 as "10 red" and M3 as "11 red"
+     where this file, measured, says 9 and 10. This file is the measurement; the
+     commit message was counting the `(x3)` expansions. Reconciled here rather than
+     by editing a published commit.
+
 §1. WHAT CHANGED, AND THE ORACLE LINE FOR EACH PIECE
 --------------------------------------------------------------------------------
 ONE EXECUTED CASE, FIVE RECORD CORRECTIONS, ZERO SHIPPED BEHAVIOUR.

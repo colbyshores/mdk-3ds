@@ -575,10 +575,14 @@ void ScriptRuntime::runTick() {
     shake = 0.0f;
 
     // The first tick has no movement to observe (ScriptRuntime.cs:911-917,
-    // after the decrements above, as in the oracle). A later teleport can set
-    // the previous position in the C#; no teleport source exists in this
-    // slice, so the ordinary delta is kept.
-    if (tickCount_ == 0) {
+    // after the decrements above, as in the oracle). A teleport can set the
+    // previous position, and when it did BEFORE this first tick the C# keeps it
+    // (`&& !_teleported`, :911): the soak tour teleported onto a doorway before the
+    // first tick, the first tick overwrote the teleport's destination with the same
+    // place, and Kurt stayed in the room while standing in the corridor until it went
+    // (ArenaSwitchTests.FirstTickKeepsTeleport). The flag is never cleared, and cannot
+    // need clearing: this rule only runs at tick 0.
+    if (tickCount_ == 0 && !teleported_) {
         previousKurtPosition_ = kurtPosition_;
     }
 
@@ -838,8 +842,14 @@ void ScriptRuntime::showArena(const std::string& arena) {
 // second time. SecondArena is reassigned BEFORE the load and SecondActive is cleared AFTER it
 // (:609-611), so during a preload the previous second is no longer SecondArena by the time
 // PullDoors runs and the only exemption that can apply to its doors is Kurt's own arena. That
-// is the oracle's ordering and it is observable: moving the clear above the load, or hoisting the
-// assignment, changes which doors move.
+// is the oracle's ordering and HALF of it is observable: hoisting the assignment above the
+// load leaves the previous second in `secondArena_` while PullDoors runs, and a door held by
+// a neighbour that is that previous second is then exempt and does not move. Moving the clear
+// above the load is NOT observable, and the reason is worth writing down because it is the
+// reason a reader cannot see it: once `secondArena_` is the arena being loaded, the second
+// exemption would need a connection whose far end is that same arena, and `findConnections()`
+// never writes one -- its only writer pairs two DIFFERENT names (the `names[a] != names[b]`
+// guard), so no arena is ever its own neighbour.
 void ScriptRuntime::preloadArena(const std::string& arena) {
     if (arena.empty() || arena == "NONE" || arena == secondArena_) {
         return;
@@ -911,6 +921,143 @@ void ScriptRuntime::pullDoors(const std::string& arena) {
                 moveDoor(door);
             }
         }
+    }
+}
+
+// C# ScriptRuntime.EnterArena (ScriptRuntime.cs:449-456): the arena joins Kurt's
+// collision space. This is how an arena no doorway leads to becomes solid -- until a
+// script teleports Kurt into it, nothing puts it in the space (level.gd enter_arena),
+// and ArenaSpace::add already refuses an arena with no vertices, as the C#'s Add does.
+// The C#'s `ArenaEntered?.Invoke(arena)` runs first; its one subscriber is
+// LevelView.Enter (Viewer.cs:255 -> Level/LevelView.cs:87), which sets `Reachable` on the
+// arena's VIEW so the draw includes it. The level view is presentation and is deferred,
+// so the event has no C++ twin and this is the half that has a consumer.
+void ScriptRuntime::enterArena(const std::string& arena) {
+    const formats::Arena* entered = level_->arenaNamed(arena);
+    if (entered != nullptr) {
+        space_.add(entered);
+    }
+}
+
+// C# ScriptRuntime.IsCorridorLoaded (ScriptRuntime.cs:522-531): the corridors loaded with
+// an arena are its own, Kurt's, and the second's -- so a teleport into one of them does
+// not have to go looking for a room to load ahead. This is the ONLY reader of
+// residentArena_ in the whole oracle, which is what batch 139 left "written and not yet
+// read"; with TeleportKurt ported it is read.
+bool ScriptRuntime::isCorridorLoaded(const std::string& corridor, const std::string& from) {
+    if (corridor == secondArena_ || corridor == from) {
+        return true;
+    }
+    const std::vector<formats::Dti::Record>* records = arenaRecords(residentArena_);
+    if (records == nullptr) {
+        return false;  // the C#'s `EntryNamed(...)?.Records ?? []` for a name no arena has
+    }
+    for (size_t i = 0; i < records->size(); i++) {
+        const formats::Dti::Record& record = (*records)[i];
+        if (record.type != kRecordConnection) {
+            continue;
+        }
+        std::map<std::pair<std::string, int32_t>, std::string>::const_iterator other =
+            connections_.find(std::make_pair(residentArena_, record.id));
+        if (other != connections_.end() && other->second == corridor) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// C# ScriptRuntime.TeleportSecond (ScriptRuntime.cs:496-519, 0x41bce4): what the SECOND
+// slot does when a teleport moves Kurt, and it runs BEFORE ShowArena (:468 before :469),
+// which is what makes the third arm observable -- ShowArena then activates whatever this
+// left in the slot. Three arms, in the C#'s order:
+//   * into a ROOM (the MTO has it): the second is emptied and deactivated. A room is
+//     drawn on its own; a second would be a room behind a door that does not exist.
+//   * into a corridor that is already loaded (IsCorridorLoaded): NOTHING. The second
+//     keeps what it had, because the room it names is still the one on the other side.
+//   * into a corridor not loaded: the LAST arena in DTI order that is a room and has a
+//     connection into it (CDANT_1 -> DANT_2), named as the second, INACTIVE, and LOADED
+//     ahead -- the LoadArena batch 139 recorded as owed here (:516) is here, so the
+//     room's doors are pulled into it before Kurt arrives.
+void ScriptRuntime::teleportSecond(const std::string& arena, const std::string& from) {
+    if (level_->mto().has(arena)) {
+        secondArena_ = std::string();
+        secondActive_ = false;
+        return;
+    }
+
+    if (isCorridorLoaded(arena, from)) {
+        return;
+    }
+
+    // Level.Dti.Arenas.LastOrDefault(...): the scan runs to the end and keeps the LAST
+    // match, so this cannot break out early -- two rooms reaching one corridor is rare in
+    // shipped data but it is a DTI that answers differently, not a bug to fix.
+    const std::vector<formats::Dti::ArenaEntry>& arenas = level_->dti().arenas();
+    std::string neighbour;
+    bool found = false;
+    for (size_t i = 0; i < arenas.size(); i++) {
+        const formats::Dti::ArenaEntry& entry = arenas[i];
+        if (!level_->mto().has(entry.name)) {
+            continue;
+        }
+        for (size_t j = 0; j < entry.records.size(); j++) {
+            const formats::Dti::Record& record = entry.records[j];
+            if (record.type != kRecordConnection) {
+                continue;
+            }
+            std::map<std::pair<std::string, int32_t>, std::string>::const_iterator other =
+                connections_.find(std::make_pair(entry.name, record.id));
+            if (other != connections_.end() && other->second == arena) {
+                neighbour = entry.name;
+                found = true;
+                break;  // this arena matches; keep looking for a LATER one
+            }
+        }
+    }
+
+    secondArena_ = found ? neighbour : std::string();
+    secondActive_ = false;
+    if (found) {
+        loadArena(neighbour);
+    }
+}
+
+// C# ScriptRuntime.TeleportKurt (ScriptRuntime.cs:460-481, teleport_player 0x41bce4,
+// VM opcodes 112 and 173): "Moves Kurt (teleport_player): within the arena with a white
+// flash when `arena` is empty, otherwise into that arena." The order is the C#'s and two
+// parts of it are load-bearing. (1) CurrentArena is written BEFORE TeleportSecond, so
+// TeleportSecond's `from` is the arena Kurt LEFT while ShowArena sees the one he ENTERED
+// -- which is why a teleport into a corridor leaves ShowArena taking its `arena ==
+// CurrentArena` branch instead of writing the second slot a second time. (2) The
+// previous position is set to the DESTINATION and teleported_ is raised: no teleport is
+// ever a move across a connection, and the first-tick rule above must not overwrite it.
+void ScriptRuntime::teleportKurt(const std::string& arena, const Vec3& position, float yaw) {
+    if (!arena.empty()) {
+        enterArena(arena);
+
+        const std::string from = currentArena_;
+        currentArena_ = arena;
+        teleportSecond(arena, from);
+        showArena(arena);
+
+        // No move crosses a connection (0x41bce4 sets 0x5739cc too).
+        previousKurtPosition_ = position;
+        teleported_ = true;
+    }
+
+    // The C# cannot reach here without a Kurt: its constructor requires one
+    // (ScriptRuntime.cs:168). With no Player bound there is no entity to move, and
+    // writing only the runtime's own snapshot would invent a Kurt whose feet the next
+    // tick overwrites with the place he was NOT teleported to -- the same guard and the
+    // same reason pushKurt records.
+    if (player_ != nullptr) {
+        player_->teleport(position, yaw);
+    }
+
+    if (arena.empty()) {
+        // MathF.Max, so a flash already standing stronger than the teleport's is kept --
+        // and mathMax propagates a NaN through it exactly as MathF does.
+        kurt().setWhiteFlash(mathMax(kurt().whiteFlash(), kTeleportFlash));
     }
 }
 

@@ -24745,3 +24745,111 @@ to report and not a lookup that happened. review-6 OQ1 (the integrity gate canno
 protected edit) and review-5 F3 stay owner-only; `ralph/builder.md` is PROTECTED and modified-unstaged
 and was not swept in — this batch staged explicit paths and never `git add -A`. Old-3DS performance
 readiness stays unmeasured and open.
+
+## Iteration 141 — batch 141: `TeleportKurt` lands — opcodes 112 and 173 stop being documented no-ops, the oracle's own teleport assertions run as executed cases, and review-7 is closed 5/5
+
+Review: `logs/ralph-pi/run-20261110-230107/review-7.md` (DeepSeek V4.1 Flash TH, no Critical, no High,
+verdict **INCOMPLETE** on F1 + F2, 2 Medium + 3 Low). **All five are confirmed against the C# and fixed;
+none is rebutted.** `mdk.elf` **moves**, `6586bee947a2ca7ccce988ddb858114a` → `5549857c421bca2926635ec6a3e0f23e`,
+because this batch ships code; the host suite goes **572 → 575 PASS, 0 FAIL, 0 SKIP** with no golden
+changed, and the pinned frame is byte-identical to its four predecessors (`6769a13731983d65cee9df02da6cff37`)
+because level 3 frame 1 contains no teleport.
+
+**F1 was the one that mattered, and it was a contradiction inside the previous batch's own record.** Both
+`DANT_10` boxes are `type=1` (`golden/L7_dti.txt:45-46`), so both take the `TriggerShow` arm
+(`:727-730`); the `id = -1` box clears by naming no arena to *that* arm and `ShowArena`'s own empty test
+(`:574-578`) does the clearing. The `else if (arena.empty())` LOAD arm at `:731-734` is reached only by a
+type-3 record — and batch 140's own M4 had already measured that removing it reddens nothing. So the file
+that said "`:731-734` stays compile-verified" and the file that said "this tick isolates the
+`arena.empty()` arm" were describing different code, and the second one was wrong. Relabelled in
+`vm_tests`, in the evidence file (as a correction block, leaving the measurements untouched) and in
+CONTINUATION. **F2** was the same shape: `preloadArena`'s comment asserted that moving the
+`secondActive_ = false` above the `loadArena` would change which doors move. It would not. Once
+`secondArena_` is the arena being loaded, the second exemption needs a connection whose far end is that
+same arena, and `findConnections()`'s only writer pairs two *different* names (`names[a] != names[b]`), so
+no arena is ever its own neighbour. The hoist half of the claim is real and is kept; the clear half is
+replaced by the reason it cannot matter, which is the thing a future reader needs before "tidying" the
+ordering. **F3**: the corridor's objects appear because `ShowArena` calls `SpawnDtiAliens` (`:597`, its
+only caller in the oracle) and a preload does not — not because an active second is live; liveness only
+gates the per-tick update, so the pin's power rests on the spawn being show-only, and the batch that ports
+the loaded-arena half of `UpdateArenas` has to keep it that way or the pin stops separating the arms.
+**F4**: the two boxes' z ranges are 0..7 and 0..6, not both 0..7. **F5**: batch 140's commit message
+counted the `(x3)` expansions where its evidence file counted checks; reconciled in that file rather than
+by editing a published commit.
+
+**The shipped slice.** `ScriptRuntime::teleportKurt` is `ScriptRuntime.cs:460-481` (0x41bce4) and it is one
+method with two VM spellings, so opcodes 112 `teleport_player` and 173 `teleport_player_keep` land with it
+or not at all. The order is the C#'s and two parts of it are load-bearing: `CurrentArena` is written
+*before* `TeleportSecond`, so `TeleportSecond`'s `from` is the arena Kurt left while `ShowArena` sees the
+one he entered — which is why a teleport into a corridor leaves `ShowArena` taking its `arena ==
+CurrentArena` branch instead of writing the second slot twice — and the previous position is set to the
+*destination* with `teleported_` raised, because no teleport is ever a move across a connection. With it
+come `teleportSecond` (three arms: a room empties and deactivates the second, a loaded corridor changes
+nothing, an unloaded corridor takes the last DTI room that connects into it, inactive and **loaded
+ahead**), `isCorridorLoaded`, `enterArena`, and `Player::teleport` (the C#'s `Kurt.Teleport`: chute closed
+silently, feet and yaw set, all three speeds zeroed — "he stops"). Three things this closes that earlier
+batches recorded as owed: the `LoadArena(neighbour)` at `:516` that batch 139 named as review-6 F3's debt
+is now paid, so a teleport-named neighbour is not left an unloaded second with its doors in the room it
+came from; `residentArena_` is **read** for the first time, because `IsCorridorLoaded` is its only oracle
+reader and it is now ported; and `DoorArenaTests.LoadedArenaPullsItsDoors` — the oracle's own `PullDoors`
+assertion, which batch 139 could only re-state with hand-built doors — now runs against the **shipped**
+level-7 door at (0,673,-3) and gets `arena = DANT_2`, `connects = CDANT_1`, `yaw = 270`.
+
+**Three executed cases, and the oracle's own assertions are the expected values.** `ArenaSwitchTests`
+(level 4, loaded inside the case because `vm_tests`' fixture is level 7): `FirstTickKeepsTeleport` —
+teleport ON the doorway plane, step three units, and the velocity is 90 u/s because the first tick did
+*not* overwrite the teleport's previous position, with the corridor as the current arena and the room left
+as the active second; and `TeleportMakesUnreachableArenaSolid`. `DoorArenaTests` (level 7):
+`TeleportLoadsCorridorArena`, `TeleportKeepsLoadedCorridor` and `LoadedArenaPullsItsDoors`, above. Plus a
+bytecode case, because the runtime method takes `(arena, position, yaw)` and cannot show an operand-order
+bug: opcode 112 is `[pstr, f32, f32, f32, f32]` and yields only when it named an arena, and opcode 173 is
+the `op173_target` operand — `[arena]` keeps Kurt's place and yaw, `["", arena, dx, dy, dz, dyaw]` adds
+them — and always yields.
+
+**Eight mutations, all run, and two of them found bugs in the tests rather than in the port.** M1 (the
+first-tick flag dropped) 4 red, M2 (`showArena` moved before `teleportSecond`) 4 red, M3
+(`isCorridorLoaded`'s early return made unreachable) 3 red, M4 (the load-ahead dropped) 1 red, M5
+(`enterArena` a no-op) 1 red, M6 (the white flash removed) 2 red, M7 (opcode 112's yaw read from operand 3,
+i.e. from the z) 1 red, M8 (opcode 112 yielding unconditionally) 1 red. **M1 reddened NOTHING in its first
+draft**, and the reason was the test: it reused the runtime the contrast block had already ticked, so
+`tickCount_` was 1 and the first-tick rule could not fire with or without the flag. The C#'s fixture is
+fresh, and now the case is. The first draft's `DoorAt` also captured the wrong runtime in its lambda — a
+green run would have hidden that, and it was caught only because the door happened to exist in the other
+runtime too and disagreed. Both are recorded because "the mutation is red" is worth nothing unless someone
+ran it. One honest negative stands: opcode 173's short-list guards are unreachable from a well-formed
+program, because `readOp173Target` only produces the six-element list when it read the name and all four
+floats; they are a defensive reading of a malformed operand, not a behaviour, and no mutation reddens them.
+
+**What the batch surfaced instead of hiding: the port has two `ArenaSpace`s where the C# has one.** The
+oracle's `Viewer` builds a single space and hands the same object to Kurt and to the runtime
+(`Viewer.cs:194`, `:207`), so `EnterArena`'s `space.Add` is immediately a collision surface. Here the
+frontend gives the Player its own (`main.cpp:413`, `main_3ds.cpp:535`) and the runtime builds its own from
+the reachable arenas, so `enterArena` reaches the SCRIPTS' space — the one `runTick`'s geometric lookup
+reads — and a teleport-only arena answers the arena rule without yet making Kurt collide with it. That is
+the one thing the C#'s `TeleportMakesUnreachableArenaSolid` is actually about, so the port's version
+asserts the weaker thing and says so at the line, and unifying the spaces is CONTINUATION's priority (2)
+with its own batch, not a workaround here. `LevelView.Enter` — the `ArenaEntered` subscriber that marks a
+teleported-to arena reachable for the DRAW — is deferred with the level view, so the visible half of that
+assertion is not reachable at all yet.
+
+**Gates, verbatim.** `make -C tests/scripts test_crossing` (the row's acceptance command) → `All crossing
+cases match the oracle.` rc 0, 2 cases. `make -C tests/scripts` → `All cases match the oracle.` rc 0, 575
+PASS / 0 FAIL / 0 SKIP, no golden touched. `DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED`
+rc 0 (`audit_c_with_classes` 0 violations, `gates_vfp` 0 blockers, `audit_arm11_math` contract clean,
+`audit_r11_idiv` no candidates, `gates_core_parity` both targets link the same core, `gates_smdh` SKIP no
+built .cia, `gates_frames` `L3_f1.bmp sha=58615fc85d02e009`, `gates_batch_integrity` PASS, `gates_completion`
+`LEDGER VERIFIED`). `make -C mdk_3ds` rc 0 (DEVKITPRO/DEVKITARM exported; `3DSX mdk.3dsx`, staged 69 files
+79M). `cmake --build build-linux -j8` rc 0. `mdk_3ds/tools/emurun.sh --min-frames 60` on `:99`, mandarine
+md5 `0d2adab6` (the pinned r1.2.1), rc 0: level 7, frame 2520 by the deadline / 2580 after the reap,
+`health=100 objects=7 plays=1`, llvmpipe forced, mono, audio muted — the same numbers as batch 140, which
+is the honest reading: the emulator idles at a level-7 spawn and no script teleports Kurt there, so
+neither opcode has been SEEN on the console. Emulator-green is not hardware-pass, and Old-3DS performance
+readiness stays open.
+
+**Lookups and housekeeping.** pi-knowledge (`mdk-sdl`, live) returned the C# teleport chunk and was used as
+a pointer to the oracle lines, then verified against the file. Obsidian MCP and Cognee MCP are absent from
+this session's tool list; the disk fallback was used narrowly (`grep -rl "TeleportKurt|teleport_player"
+/mnt/nas/Vaults/port-docs/10-projects/mdk-sdl/` → nothing), and per AGENTS P9 that is a degraded lookup and
+a session fault to report, not a lookup that happened. `ralph/builder.md` is PROTECTED and modified-unstaged
+(it is not this batch's edit) and was not swept in: this batch staged explicit paths and never `git add -A`.
+This was attempt 8 of 8 on `3ds.collision-doors`, so the loop stops for an operator after this batch.

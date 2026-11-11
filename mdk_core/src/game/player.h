@@ -172,6 +172,23 @@ public:
     // meets (the camera's push, C# Kurt.Shove). Returns how far he went.
     Vec3 shove(Vec3 offset);
 
+    // C# Kurt.Teleport (Kurt.cs:249, "Moves Kurt (a script's teleport): he stops").
+    // The chute closes silently, the feet and yaw are set, and all three speeds go:
+    // a teleport is not a move he is still carrying. ScriptRuntime::teleportKurt
+    // (opcode 112 / 173) is its only caller in this port, as in the oracle.
+    // NOT reproduced, because the subsystem is not ported: `_keeper = null`
+    // (Kurt.cs:254) belongs to Kurt.Keeper.cs, which has no C++ twin, and the
+    // `Teleports++` counter below has no reader until FrameBlend's Kurt half does.
+    void teleport(const Vec3& at, float newYaw);
+
+    // C# Kurt.Teleports (Kurt.cs:126, incremented by Teleport at :260). Its only
+    // reader in the oracle is FrameBlend's jump test (FrameBlend.cs:53: a pose whose
+    // teleport count moved is never interpolated), and that half of FrameBlend is
+    // deferred with the ride state (frame_blend.h), so this is written and not yet
+    // read -- the same shape as ScriptRuntime::residentArena_, and for the same
+    // reason: so the write is pinned by a test instead of looking like dead state.
+    int teleports = 0;
+
 private:
     void updateVertical(const Input& input, const Vec3& move, float delta);
     void updateAir(bool jumpHeld, float delta);

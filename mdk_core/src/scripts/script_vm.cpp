@@ -833,6 +833,56 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.preloadArena(strval(op(ins, 0)));
             break;
 
+        case 112: {  // teleport_player (0x41bce4)
+            // [arena, x, y, z, yaw]: Kurt goes to that place and, when the arena is named,
+            // into that arena (ScriptRuntime.cs:460). The C# casts o[0] to string, so a
+            // non-string operand throws there; strval answers "" here, which is the port's
+            // standing reading of a malformed operand and lands in the no-arena arm.
+            const std::string& name = strval(op(ins, 0));
+            const Vec3 at{fval(op(ins, 1)), fval(op(ins, 2)), fval(op(ins, 3))};
+            runtime_.teleportKurt(name, at, fval(op(ins, 4)));
+            // A teleport that named an arena ENDS the script: the scripts that move Kurt
+            // between arenas are one-shot, and the C# yields (:1772-1777). The unnamed one
+            // -- a flash and a step inside the same arena -- falls through and keeps running,
+            // which is the difference between these two branches and not a detail.
+            if (!name.empty()) {
+                obj->restart = 0;
+                clearStack(obj);
+                return kYield;
+            }
+            break;
+        }
+        case 173: {  // teleport_player_keep (0x454556)
+            // As teleport_player, but FROM Kurt's place and yaw: [arena] keeps them, and
+            // ["", arena, dx, dy, dz, dyaw] adds an offset (LEVEL4's CMEAT_6 lifts Kurt
+            // 1971 up into MEAT_7). The empty first slot is what selects the offset form;
+            // the arena name is then the SECOND slot (ScriptVm.cs:1285-1299).
+            const std::vector<ScriptValue>& keep = listval(op(ins, 0));
+            const std::string& name = keep.empty() ? kEmptyString : strval(keep[0]);
+            const bool shifted = name.empty();
+            Vec3 offset{};
+            float turn = 0.0f;
+            if (shifted) {
+                // The C#'s V(keep, 2) is keep[2..4] and its F(keep[5]); a short list reads
+                // as the null operand, i.e. zero, instead of throwing as the C# cast does.
+                offset.x = keep.size() > 2 ? fval(keep[2]) : 0.0f;
+                offset.y = keep.size() > 3 ? fval(keep[3]) : 0.0f;
+                offset.z = keep.size() > 4 ? fval(keep[4]) : 0.0f;
+                turn = keep.size() > 5 ? fval(keep[5]) : 0.0f;
+            }
+            const std::string& arena =
+                shifted && keep.size() > 1 ? strval(keep[1]) : name;
+            const Vec3 from = runtime_.kurtPosition();
+            runtime_.teleportKurt(arena, Vec3{from.x + offset.x, from.y + offset.y,
+                                             from.z + offset.z},
+                                  runtime_.kurtYaw() + turn);
+            // Unconditional, unlike opcode 112: the C# yields whatever the arena slot held
+            // (:1296-1299), because the keep form is always a move between scripts.
+            obj->restart = 0;
+            clearStack(obj);
+            return kYield;
+        }
+
         case 111:  // set_instance
             obj->instance_id = ival(op(ins, 0)) & 0xFFFF;
             break;

@@ -88,6 +88,9 @@ public:
     static const int32_t kHitTypeKurt = -11;
     static const int32_t kHitPart = -3;
     static const int32_t kHitTypePart = -4;
+    // C# ScriptRuntime.TeleportFlash (:112): the white flash a teleport-with-no-arena
+    // leaves on Kurt, as a MathF.Max so a stronger flash already standing is kept.
+    static constexpr float kTeleportFlash = 255.0f;
     static const float kTick;
     static constexpr float kTicksPerSecond = 30.0f;
 
@@ -194,6 +197,15 @@ public:
     // assignment, so preloading the arena that is already the second does nothing at all --
     // not even LoadArena, so it pulls that arena's doors no second time.
     void preloadArena(const std::string& arena);
+    // TeleportKurt (ScriptRuntime.cs:460-481, teleport_player 0x41bce4 / opcode 112 and
+    // teleport_player_keep 173): Kurt goes where the script says, and -- when the script
+    // NAMED an arena -- so does the arena state: EnterArena, CurrentArena, TeleportSecond,
+    // ShowArena, and the previous position set to the destination so no move crosses a
+    // connection. An EMPTY arena name moves Kurt inside his current arena and white-flashes
+    // him instead (the level.gd enter_arena split). Public because the VM seam needs it;
+    // the C# has it public too and its other callers are the soak tour, the soak test, the
+    // level console and the viewer's demo teleports.
+    void teleportKurt(const std::string& arena, const Vec3& position, float yaw);
     // Which arena a move enters when it crosses a connection of `arena` (C#
     // CrossedArena, ScriptRuntime.cs:791-803), or "" when it crosses none. The C#
     // keeps this private and reaches it through RunTick and FollowArenas; the port
@@ -232,6 +244,10 @@ public:
     // Whether the object was removed (no longer one of the C#'s Objects).
     bool isRemoved(const MdkObject* obj) const;
     const Vec3& kurtPosition() const { return kurtPosition_; }
+    // C# ScriptRuntime.KurtYaw (:202), the same per-tick snapshot of Kurt's facing that
+    // KurtPosition is of his feet: written at :889 and read by the scripts until the next
+    // tick. teleport_player_keep (opcode 173) turns it, so it needs the reader.
+    float kurtYaw() const { return kurtYaw_; }
     // C# Kurt.Velocity (Kurt.cs:132-133), in u/s: the walking terms, the
     // horizontal knock-down push and the vertical speed. inherit_kurt_vel
     // (opcode 170) reads this at dispatch time. It is distinct from the C#
@@ -502,6 +518,17 @@ public:
     // TeleportKurt, so until that lands this is written and not read -- the accessor exists
     // so the write is pinned by a test instead of looking like dead state.
     const std::string& residentArena() const { return residentArena_; }
+    // The scripts' ArenaSpace. THE PORT HAS TWO WHERE THE C# HAS ONE: the oracle's Viewer
+    // builds a single ArenaSpace and hands the SAME object to Kurt and to the runtime
+    // (Viewer.cs:194, :207), so EnterArena's add is immediately a collision surface. Here
+    // the frontend gives the Player its own and the runtime builds its own from the
+    // reachable arenas (the constructor, as the driver does). This one is the one the
+    // scripts read: it is what runTick's geometric arena lookup uses and what enterArena()
+    // adds to, so a teleport-only arena reaches the ARENA RULE here and not yet the
+    // collision. Unifying the two is recorded as an open item, not papered over. Exposed
+    // for the reason residentArena() is: so the write is pinned by a test instead of
+    // looking like dead state.
+    ArenaSpace& arenaSpace() { return space_; }
     // The C# TickCount: the completed simulation ticks. It is zero during the
     // first tick and increments after that tick, as the oracle does.
     int32_t tickCount() const { return tickCount_; }
@@ -535,6 +562,19 @@ private:
     // is walking towards -- except from his own arena and the active second, which keep
     // theirs.
     void pullDoors(const std::string& arena);
+    // EnterArena (ScriptRuntime.cs:449-456): the arena joins Kurt's collision space, which
+    // is how an arena no doorway leads to becomes solid. The C# also raises its ArenaEntered
+    // event; its one subscriber is LevelView.Enter (Viewer.cs:255), which marks the arena
+    // Reachable for the DRAW, and the level view is presentation this port defers.
+    void enterArena(const std::string& arena);
+    // TeleportSecond (ScriptRuntime.cs:496-519, 0x41bce4): what happens to the SECOND slot
+    // when a teleport moves Kurt. None into a room; into a corridor that is not loaded, the
+    // last arena in DTI order that leads to it, loaded ahead; into a corridor already
+    // loaded, unchanged.
+    void teleportSecond(const std::string& arena, const std::string& from);
+    // IsCorridorLoaded (ScriptRuntime.cs:522-531): the corridor is Kurt's present, his
+    // previous arena, or a corridor of the resident arena.
+    bool isCorridorLoaded(const std::string& corridor, const std::string& from);
     // ObjectBehaviors.ShowBehind: the arena a door opens onto.
     void showBehindDoor(MdkObject* obj);
     // One receiver of command_objects (0x4405d0); true when it joined a formation.
@@ -746,6 +786,12 @@ private:
     bool ridesBoard_ = false;
     Vec3 targetPosition_{};
     Vec3 previousKurtPosition_{};  // C# _previousKurtPosition
+    // C# _teleported (:316): set by TeleportKurt and read once, by the first-tick rule
+    // (:911). The first tick normally has no move to observe, so it takes Kurt's place as
+    // the previous one; a teleport BEFORE that first tick has already chosen the previous
+    // position, and overwriting it is the soak-tour bug ArenaSwitchTests.FirstTickKeepsTeleport
+    // records ("he stayed in the room while in the corridor and fell out when it went").
+    bool teleported_ = false;
     float kurtYaw_ = 0.0f;
     float targetYaw_ = 0.0f;
     MdkObject* alienTarget_ = nullptr;  // C# ScriptRuntime.AlienTarget (opcode 251)
