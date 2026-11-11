@@ -24069,3 +24069,149 @@ match. `TeleportKurt` is unported, so an arena no doorway leads to is still
 unreachable. `FollowArenas` is ported and wired but has no golden (its oracle test
 needs `PreloadArena` and the drawn-arena list). Old-3DS performance readiness
 remains unmeasured and stays open.
+
+## Iteration 135 — batch 135: review-1 remediated 7/7 — the crossing goldens' provenance is true, level 7 now discriminates, and the gate suite runs the row's acceptance command
+
+**Ledger row:** `3ds.collision-doors`, attempt 2 of 8. Acceptance command
+`make -C tests/scripts test_crossing` → exit 0.
+
+**The review.** `logs/ralph-pi/run-20261110-230107/review-1.md` — DeepSeek V4.1
+Flash TH, over `65cb755d..1107e762` (batch 134). Seven findings, **no Critical and
+no High**, verdict INCOMPLETE with four items named as must-fix (F1, F2, F3, F4) and
+three cheap ones (F5, F6, F7). All seven are addressed here or named as owner-only.
+None was rebutted: each one was reproduced first, and every one held.
+
+**Prior-solution lookup.** Pi-knowledge `mdk-sdl` (live): the hits that shaped the
+work were `tests/scripts/vm_tests.cpp` ("The C# file is the specification: same
+programs, same assertions, same level. A divergence fails here, not in a golden")
+and `tests/scripts/system_numerics_tests.cpp` (expected values "written the oracle's
+way and compared as bits") — the house rule that a golden's number comes from the C#,
+which is exactly what F1 found broken — plus the mutation-arm convention in
+`tests/scripts/panel_geom_test.sh` / `c3d_frame_test.sh`, which is why the new gate
+line and the new golden line each ship with a probe that reddens them. **Obsidian MCP
+and Cognee MCP are not available in this session** (no `obsidian_*` / `cognee_*` tools
+are exposed), which per AGENTS P9 is a session configuration fault to report, not a
+lookup that happened. The vault was read directly instead, narrowly:
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md`,
+which is the pattern F2's fix had to follow (every "could not check" branch is a MUST,
+never a skip).
+
+### F1 (Medium, confirmed) — the provenance citations were wrong in every instance
+
+Reproduced: `sed -n '52p' tests/Mdk.Game.Tests/ArenaSwitchTests.cs` is
+`var runtime = CreateRuntime();`, not the `Assert.Equal(Room, runtime.CurrentArena)`
+the golden's comment claimed; `:56`, `:60` and `:66` are comments and `:61`, `:67` are
+`StepTo` calls; `DoorArenaTests.cs:88` is a `StandAt` call in a different test. The
+reviewer's deeper point is the one that mattered: **there is no oracle assertion of
+`CurrentArena` after a bare teleport plus one tick anywhere in the suite**, so
+`L4 s=1 current=MEAT_7` was the port's geometric answer wearing a citation. Fixed by
+re-auditing every citation with `grep -n` against the C# (the full old→new table is in
+`docs/evidence/2026-11-11-crossing-remediation.txt` §1), rewriting the golden's header
+to name the two lines that are NOT oracle assertions instead of claiming none exist,
+and changing the PASS line from "every line is an assertion of the oracle's own
+arena-switch / door-arena test" to what is actually true. The C#-side citation drift
+(`CrossesDoorway` `:810-831`→`:808-830`, `Spans` `:834`→`:832`, `ArenaRecords`
+`:836`→`:834`) is fixed in `script_runtime.{cpp,h}`.
+
+### F3 (Medium, confirmed) — the level-7 case passed a geometric-arena implementation
+
+Reproduced and re-measured: `arenaAt(0, y, -3)` answers `CDANT_1` up to y = 675 and
+`DANT_2` from y = 676, while the crossing happens on the step to y = 674, so the old
+single-line L7 golden (walk ends at 687) could not tell the two rules apart. The
+golden now also prints the state one step into the corridor:
+
+    L7 s=675 current=DANT_2 geometry=CDANT_1
+
+`current` is the crossing rule, `geometry` is the arena box under the feet, and the
+fact that they differ is the check. Provenance stated in the golden's header: the C#
+asserts only at the end of its own walk loop (`DoorArenaTests.cs:76-79`, `:81`), so
+this line is the C#'s predicate applied to the shipped DTI, not a C# assertion — and
+it was predicted from that rule before the build printed it. Mutation proof (the
+reviewer's own scenario, `runTick` taking `space_.arenaAt(kurtPosition_)` every tick):
+`L4 s=2` and `L7 s=675` both go red, exit 1; reverted, and the clean build is green.
+
+### F2 (Medium, confirmed) — the anti-rot protection the batch claimed did not exist
+
+Reproduced: nothing in `tools/` referenced `tests/scripts`, so all 569 cases — the
+crossing pair included — ran only because the builder prompt says to, which is the
+same voluntary mechanism under which `tests/formats` sat broken for 25 batches.
+`tools/check.sh` is owner-protected, so the check went where batch 133 put the format
+target: **`gates_core_parity.py` check 7, PARITY-SCRIPTS-CROSSING**, running
+`make -C tests/scripts test_crossing`. The scope was chosen by measurement, not
+taste: the full suite is **7m27s warm**, so it cannot live in the gate suite, while
+`test_crossing` is **0.7 s warm / 38 s cold**. It fails on no `make`, a timeout, a
+nonzero exit, a missing verdict line, a `FAIL` line, and — the pass generator this
+shape allows — a verdict printed with **zero** `PASS L<n>_crossing` lines behind it.
+Three probes red and reverted (no `make`; a broken golden; a zero-case loop), and the
+two comments that made the false claim (`tick1.cpp`'s registration, the
+`tests/scripts/Makefile` target comment) now name the gate that does the job. What the
+gate does NOT cover is recorded, not hidden: the other 567 cases still depend on the
+builder running them.
+
+### F5, F6, F7 (Low, confirmed) — folded in
+
+- **F6**: `followArenas` now carries `ObjectMotion.Update`'s effect gate
+  (`ObjectMotion.cs:54-68` returns before `ApplyVelocity` `:98` and therefore before
+  `FollowArenas` `:106`). The port evaluated a crossing for an effect object using a
+  `previous_position` that is only refreshed for non-effect objects, i.e. a stale
+  segment that could relocate an object across a doorway. Latent today — `effect_frames`
+  has no writer yet — which is why no golden moves.
+- **F5**: `showArena`'s `arena == currentArena_` branch was justified by "no objects
+  exist yet on the first tick", which the crossing made false. The comment now says
+  what is missing (`LoadArena`'s `_residentArena` and `PullDoors`, `ScriptRuntime.cs:615-643`),
+  that the branch now runs on every crossing with objects alive, and that this is the
+  frozen-door artefact `DoorArenaTests` exists for — recorded next to `PreloadArena`.
+- **F7**: the three comments that still said the crossing was unported are corrected —
+  `mdk_3ds/src/main_3ds.cpp` (the rest-pitch input is no longer frozen),
+  `mdk_linux/src/main.cpp` (`currentArena_` is no longer written once), and
+  `arena_space.h` plus `frontend_solid_pin_test.sh`'s header, which now give the
+  *current* reason the pin stays geometric: the oracle passes a LIST and `setSolid`
+  takes one name, and the drawn list is unported. No check was changed; the mutation
+  arms still redden.
+
+### F4 (Medium, confirmed) — owner-only, and it is still open
+
+`ralph/builder.md` is in `PROTECTED` and is modified-unstaged in the working tree
+(the reviewer-model rename and the search-scope section, both of which match the
+prompt this iteration was actually dispatched with, so the owner wrote it). A batch
+cannot commit a protected path — `gates_batch_integrity` is right to refuse it — and
+must not revert an owner edit. This batch therefore committed with **explicit paths,
+not `git add -A`**, so the protected file could not be swept in; it is still uncommitted
+and still needs the owner to commit or revert it deliberately.
+
+### Gates and measurements, as run
+
+- `make -C tests/scripts test_crossing` → `All crossing cases match the oracle.` **rc 0**
+  (`PASS L4_crossing`, `PASS L7_crossing`).
+- `make -C tests/scripts` → `All cases match the oracle.` **rc 0** — 569 PASS, 0 FAIL,
+  0 SKIP (7m27s warm).
+- `DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED` **rc 0**:
+  `PASS audit_c_with_classes` (0 violations), `PASS gates_vfp` (0 blockers),
+  `PASS audit_arm11_math`, `PASS audit_r11_idiv`, `PASS gates_core_parity` (now with
+  `note: crossing target: make -C tests/scripts test_crossing exit 0 — 2 crossing
+  case(s): L4, L7`), `SKIP gates_smdh` (no built .cia), `PASS gates_frames`,
+  `PASS gates_batch_integrity`, `PASS gates_completion`.
+- `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds` →
+  **rc 0**; `mdk.elf` md5 `4129b376cc17169f841f04f72a815d87` (was
+  `aa3fa7b4616fd9593fe7de5380f25a00` — the F6 guard is the only code change; the rest
+  is comments).
+- `cmake --build build-linux` → **rc 0** (both targets compile the changed core).
+- Emulator, AGENTS P8, because `mdk_3ds/**` changed: `DISPLAY=:99
+  mdk_3ds/tools/emurun.sh` → **rc 0**, `display : :99`, `emulator mandarine.AppImage
+  md5 0d2adab6` (the pinned r1.2.1), `backend: PICA200 Citro3D`,
+  `flow: screen=4 level=7`, `frames: reached 2460 by the deadline`, post-reap the
+  guest log ends at frame 2580, `objects=7 plays=1`, stereo mono. It is an idle
+  level-7 Kurt that never crosses anything: no regression, and **no crossing
+  exercised**, so the 3DS rest-pitch change is still unmeasured on a real crossing.
+- `tools/publish_frame.sh crossing-review-remediation` → exit 0,
+  `docs/frames/2026-11-11-crossing-review-remediation.png` + `.txt`. The PNG is
+  byte-identical to the previous frame (`6769a137…`), which is the expected result for
+  a batch that moves no pixels: the pinned level-3 frame 1 has a stationary Kurt, no
+  doorway, and no effect object. Gap ceiling unchanged (`bad_percent=1.240
+  max_delta=247 mean_delta=0.1819`).
+
+**What this does NOT do.** No crossing has been observed on either frontend, and the
+hatch arms (DTI dirs 6/7) still have no oracle assertion. `TeleportKurt` is unported,
+so an arena no doorway leads to is still unreachable, and `LoadArena`/`PullDoors` are
+unported, so a door can still stay behind in the neighbour that leads into the arena
+Kurt crossed into. Old-3DS performance readiness remains unmeasured and stays open.

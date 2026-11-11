@@ -7,10 +7,10 @@
 # his feet as the stand-in". A claim that spans two files cannot be gated by a test
 # that reads one of them, and review-7 F1 is the proof: batch 100 reverted the 3DS
 # frontend's frozen pin, wrote that sentence, and left the Linux frontend still
-# pinning `runtime->currentArena()` — a value the unported DTI connection crossing
-# leaves at the SPAWN arena for the whole level (CrossedArena, ScriptRuntime.cs:791
-# -803 is not ported, so `currentArena_` is written once, on the runtime's first
-# tick, script_runtime.cpp:360-378). `ArenaSpace::setSolid` is STICKY: while
+# pinning `runtime->currentArena()` — a value the DTI connection crossing left at
+# the SPAWN arena for the whole level back when `CrossedArena` (ScriptRuntime.cs:791
+# -803) was unported and `currentArena_` was written once, on the runtime's first
+# tick. `ArenaSpace::setSolid` is STICKY: while
 # `_solid` is non-empty `move()` uses only it (arena_space.cpp:111-124), so the pin
 # stayed on the arena Kurt was born in. Walking out through an open doorway left
 # that BSP's geometry behind, `bottom()` resolved the neighbour holding his feet,
@@ -32,7 +32,7 @@
 #   3. every in-loop refresh is GUARDED on its lookup, so a Kurt outside every arena
 #      keeps his last arena instead of clearing the pin (an unguarded
 #      `setSolid("")` is the opposite defect, reached from the other side);
-#   4. the loop never pins the runtime's frozen `currentArena()`, and has exactly one
+#   4. the loop never pins the runtime's single-name `currentArena()`, and has exactly one
 #      refresh — the review-6 F1 / review-7 F1 rule;
 #   5. the spawn pin survives, because the loop cannot supply it: outside every
 #      arena `arenaAt` answers null, and with no pin at all `bottom()` resolves
@@ -203,8 +203,10 @@ def adjudicate(who, text, quiet=False):
     frozen = re.search(r"setSolid\([ \t]*runtime->currentArena\(", loop or "") is not None
     say(CHK["pin-not-the-runtime"],
         not frozen and len(sites) == 1,
-        "currentArena() is written once, on the runtime's first tick, so a pin that "
-        "reads it is the spawn arena for the whole level; the loop must have exactly "
+        "the oracle pins the DRAWN list (current + active second) and setSolid takes "
+        "one name, so a pin that reads currentArena() is a single name where the "
+        "oracle has two -- and before batch 134 ported the crossing it was worse still, "
+        "the spawn arena for the whole level; the loop must have exactly "
         "one refresh and it must be the geometric one")
 
     say(CHK["spawn-pin"],

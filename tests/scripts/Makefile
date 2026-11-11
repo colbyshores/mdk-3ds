@@ -109,9 +109,12 @@ bin: $(BUILD)/tick1 $(BUILD)/vm_tests
 # The doorway-crossing cases on their own — the acceptance command of the ledger row
 # 3ds.collision-doors. It runs the SAME two checks the `test` recipe runs (they are
 # inside `tick1`'s own case list, not a separate binary), so this target cannot pass
-# while the full suite fails them, and the row cannot go green on a check the gate
-# never runs. Additive: `make -C tests/scripts` still means what the `core.goldens`
-# row's recorded acceptance means, with these two cases added to it.
+# while the full suite fails them. The gate suite runs THIS target, not the whole
+# suite: PARITY-SCRIPTS-CROSSING in tools/runner/gates_core_parity.py builds and runs
+# it from tools/check.sh, which is what stops the row rotting the way tests/formats
+# did (review-1 of run-20261110-230107 F2). Additive: `make -C tests/scripts` still
+# means what the `core.goldens` row's recorded acceptance means, with these two cases
+# added to it.
 test_crossing: $(BUILD)/tick1
 	@$(BUILD)/tick1 crossing
 

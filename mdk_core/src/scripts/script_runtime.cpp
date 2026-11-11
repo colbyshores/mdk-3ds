@@ -373,7 +373,7 @@ int32_t doorwayOf(float angle) {
 }
 
 // Whether a move from a to b on one axis is within [min, max] or crosses it
-// (C# ScriptRuntime.Spans, :834). mathMin/mathMax, not fminf/fmaxf: the oracle
+// (C# ScriptRuntime.Spans, :832). mathMin/mathMax, not fminf/fmaxf: the oracle
 // writes MathF.Min/MathF.Max, which propagate a NaN instead of hiding it.
 bool spans(float a, float b, float min, float max) {
     return mathMax(a, b) >= min && mathMin(a, b) <= max;
@@ -381,7 +381,7 @@ bool spans(float a, float b, float min, float max) {
 
 // Whether a move goes out through a doorway: across its plane in its direction, and
 // the move within (or across) the doorway on the other axes (C# CrossesDoorway,
-// :810-831). A horizontal doorway's box reaches kDoorwayDrop below it; the diagonal
+// :808-830). A horizontal doorway's box reaches kDoorwayDrop below it; the diagonal
 // ones only test where the move ENDS. The record's min is its Position and its max
 // its BoxEnd -- the far corner the DTI reader keeps in the name's bytes.
 bool crossesDoorway(const formats::Dti::Record& record, const Vec3& from, const Vec3& to) {
@@ -628,7 +628,16 @@ void ScriptRuntime::runTick() {
             // does the C#'s ApplyVelocity -- the C#'s Update keeps going to
             // FollowArenas either way, so the hook is HERE, not inside
             // motionVelocity, even though a move that did not happen crosses nothing.
-            if (!obj->dead && (obj->flags & MdkObject::FlagChangesArena) != 0) {
+            //
+            // The effect gate is NOT decoration: ObjectMotion.Update returns at
+            // :54-68 for EffectFrames > 0, BEFORE ApplyVelocity and therefore before
+            // FollowArenas at :106, so an effect object never evaluates a crossing in
+            // the oracle. It matters here for the same reason it does there:
+            // previous_position is written only for a non-effect object (below, with
+            // Roll and Bank), so an effect's "move" would be read off a stale segment
+            // from before the effect started and could relocate it across a doorway.
+            if (!obj->dead && obj->effect_frames == 0 &&
+                (obj->flags & MdkObject::FlagChangesArena) != 0) {
                 followArenas(obj);
             }
             // UpdatePickup runs after ApplyVelocity (ObjectMotion.cs:118), only if the
@@ -689,8 +698,21 @@ void ScriptRuntime::showArena(const std::string& arena) {
     }
 
     if (arena == currentArena_) {
-        // LoadArena: the resident arena and its doors. No objects exist yet on
-        // the first tick, so there is nothing to pull.
+        // The C# calls LoadArena(arena) here (ScriptRuntime.cs:582-586), and LoadArena
+        // (:615-623) does two things this port does NOT do: it records _residentArena
+        // (the one non-corridor arena whose MTO is in memory) and it calls PullDoors
+        // (:628-643), which takes the doors leading INTO `arena` out of the neighbouring
+        // arenas that hold them and turns them around (ObjectBehaviors.MoveDoor).
+        // Neither half is ported: there is no resident-arena state and no door move, and
+        // the drawn-arena list UpdateArenas feeds them is a later slice.
+        //
+        // What changed is that this branch is no longer first-tick-only. Since the
+        // doorway crossing landed, showArena runs on every crossing, where objects DO
+        // exist -- so the missing PullDoors is a live gap, not a harmless one: Kurt can
+        // cross into an arena whose door is still parked in the neighbour that leads to
+        // it, which is the frozen/shut-door artefact the oracle's DoorArenaTests class
+        // comment describes. Recorded as the next item for this subsystem, next to
+        // PreloadArena (:602-614, also unported) and the drawn-arena list.
     } else if (arena != secondArena_) {
         secondArena_ = arena;
     }

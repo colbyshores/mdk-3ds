@@ -744,18 +744,21 @@ int main(int argc, char** argv) {
                 // sources are a live camera_track request first and the scripts'
                 // current arena's rest pitch after it.
                 //
-                // The two halves are NOT equally ported, and saying so is the point.
-                // camera_track is real script output: opcode 203 writes it and it
-                // decays per tick, so the runtime is the only possible source and
-                // this is the oracle's own rule. The ARENA half is not: it reads
-                // `currentArena()`, which the unported DTI connection crossing never
-                // moves off the spawn arena (see the pin below this loop), so the
-                // rest pitch is the SPAWN arena's for the whole level. The geometric
-                // arena under Kurt would follow him and is what the runtime-less
-                // branch uses, but substituting it here would be a deliberate
-                // deviation from `ArenaPitch(CurrentArena)` on a picture path with
-                // no measurement behind it, so it is left as the oracle's formula on
-                // a frozen input and named here. The crossing fixes both.
+                // The two halves are ported, but not by the same batch, and saying
+                // so is the point. camera_track is real script output: opcode 203
+                // writes it and it decays per tick, so the runtime is the only
+                // possible source and this is the oracle's own rule. The ARENA half
+                // is the crossing: `currentArena()` used to be written once and then
+                // never move off the spawn arena, because `CrossedArena` was not
+                // ported, and this line therefore held the SPAWN arena's rest pitch
+                // for a whole level. Batch 134 ported the DTI doorway crossing
+                // (script_runtime.cpp:527-573), so the input moves when a move
+                // crosses a connection and the formula here is the oracle's on a live
+                // input, not a frozen one. What is still a stand-in is the collision
+                // pin below this loop, which follows the geometric arena under Kurt's
+                // feet because `setSolid` takes one name and the oracle passes two.
+                // No capture yet shows a crossing on this frontend: the emulator runs
+                // idle a level, so the pitch change is unmeasured (docs/PROGRESS_LOG.md).
                 float target = mdk::follow_camera::kDefaultPitch;
                 if (runtime) {
                     target = runtime->cameraTrackTicks > 0

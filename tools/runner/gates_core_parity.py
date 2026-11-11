@@ -68,6 +68,22 @@ THE THREE CHECKS.
      pass generator, which is the mistake batch 130 removed from this same
      target's `nm` guard.
 
+  7. PARITY-SCRIPTS-CROSSING. `tests/scripts` is a FOURTH hand-maintained list,
+     and `tools/check.sh` has never run any of it: all 569 golden cases, the two
+     doorway-crossing cases included, ran only because the builder prompt tells
+     the agent to run them -- the same voluntary mechanism under which
+     `tests/formats` sat broken for 25 batches (review-1 of run-20261110-230107
+     F2). Running the whole suite here is not possible (measured: 7m27s warm, so
+     the gate suite would go from about a minute to eight), so this check runs
+     the ledger row's own acceptance command, `make -C tests/scripts
+     test_crossing`, which is 0.7 s warm and 38 s from a clean build. It reports
+     a MUST for no `make`, a timeout, a nonzero exit, a run that printed no
+     verdict line, a run with a FAIL line, and -- the pass generator this shape
+     makes possible -- a verdict line with ZERO `PASS L<n>_crossing` lines, which
+     is what deleting the cases instead of fixing them would look like. It needs
+     the game data, because the crossing cases read the shipped DTI; a host
+     without it is a MUST naming that cause, not a skip.
+
 Exit code 1 if any finding is a MUST.
 """
 
@@ -103,6 +119,16 @@ FORMATS_TREE_REL = f"{CORE_SRC_REL}/formats"
 # seconds and a warm one is under a second. This bound is a hang detector, not a
 # budget: running past it is a finding, never a skip.
 FORMATS_LINK_TIMEOUT = 900
+# The scripts' crossing cases: the acceptance command of the ledger row
+# 3ds.collision-doors, and the only part of `tests/scripts` cheap enough for the
+# gate suite to run on every batch (measured: 0.7 s warm, 38 s cold, against the
+# full suite's 7m27s warm).
+SCRIPTS_DIR_REL = "tests/scripts"
+SCRIPTS_TARGET = "test_crossing"
+SCRIPTS_TIMEOUT = 900
+SCRIPTS_VERDICT = "All crossing cases match the oracle."
+SCRIPTS_PASS_RE = re.compile(r"^PASS L(\d+)_crossing", re.M)
+SCRIPTS_FAIL_RE = re.compile(r"^FAIL L\d+_crossing", re.M)
 SOURCES_ASSIGN_RE = re.compile(r"^SOURCES\s*[:+]?=")
 CHECK_COUNT_RE = re.compile(r"(\d+) checks, (\d+) failures")
 
@@ -209,6 +235,59 @@ def build_and_run_format_target(root: Path) -> tuple[bool, str]:
     if not checks:
         return False, "the format target reports zero checks, so it tested nothing"
     return True, f"make -C {FORMATS_DIR_REL} exit 0 -- {checks} checks, 0 failures"
+
+
+def run_scripts_crossing_target(root: Path) -> tuple[bool, str]:
+    """(clean, detail) from `make -C tests/scripts test_crossing`.
+
+    The ledger row's own acceptance command, run by the gate suite instead of by
+    the builder's good intentions. Every way it fails to produce a measurement is
+    a failure, exactly as PARITY-FORMATS-LINK treats the format target: no make,
+    a timeout, a nonzero exit (which is also what a host with no game data looks
+    like), a verdict line that never printed, a FAIL line that printed anyway, and
+    -- the pass generator this particular shape allows -- a verdict with ZERO
+    `PASS L<n>_crossing` lines behind it, which is what deleting the cases instead
+    of fixing them would look like.
+    """
+    make = shutil.which("make")
+    if make is None:
+        return False, ("make is not on PATH, so the crossing target could not be built "
+                       "-- NOT CHECKED is not a pass")
+    try:
+        proc = subprocess.run(
+            [make, "-C", str(root / SCRIPTS_DIR_REL), SCRIPTS_TARGET],
+            capture_output=True, text=True, timeout=SCRIPTS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return False, (f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} did not finish within "
+                       f"{SCRIPTS_TIMEOUT}s")
+    except OSError as exc:
+        return False, f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} could not start: {exc}"
+    output = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        reason = ""
+        for line in output.splitlines():
+            if any(needle in line for needle in ("FAIL", "error:", "undefined reference",
+                                                 "No such file", "not found")):
+                reason = line.strip()
+                break
+        if not reason:
+            reason = (output.strip().splitlines() or ["(no output)"])[-1].strip()
+        return False, (f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} exited {proc.returncode}: "
+                       f"{reason} (no game data reads exactly like this)")
+    if SCRIPTS_VERDICT not in output:
+        return False, (f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} exited 0 without printing "
+                       f"{SCRIPTS_VERDICT!r}, so the crossing cases did not run")
+    if SCRIPTS_FAIL_RE.search(output):
+        return False, ("the crossing target printed a FAIL line and exited 0 anyway, so its "
+                       "verdict is not the result of the cases")
+    passed = SCRIPTS_PASS_RE.findall(output)
+    if not passed:
+        return False, ("the crossing target printed its verdict with no PASS L<n>_crossing "
+                       "line behind it, so there are no crossing cases left to pass")
+    return True, ("make -C %s %s exit 0 -- %d crossing case(s): %s"
+                  % (SCRIPTS_DIR_REL, SCRIPTS_TARGET, len(passed),
+                     ", ".join("L" + n for n in passed)))
 
 
 @dataclass
@@ -545,6 +624,20 @@ def run(root: Path | None = None) -> Report:
                                  "nothing builds is a target that rots")
             )
         notes.append(f"format target: {detail}")
+
+    # --- 7. the scripts' crossing target: a row's acceptance command, gated ---
+    # The fourth hand-maintained list, and the one the gate suite did not run: the
+    # crossing cases lived inside `tick1`'s case list, which `tools/check.sh` never
+    # invokes, so "the row cannot rot" was a promise about the builder's habits.
+    clean, detail = run_scripts_crossing_target(root)
+    if not clean:
+        findings.append(
+            Finding("PARITY-SCRIPTS-CROSSING", "MUST", SCRIPTS_DIR_REL,
+                    detail + " -- this is the ledger row 3ds.collision-doors' "
+                             "acceptance command, and a target only the builder "
+                             "chooses to run is a target that rots")
+        )
+    notes.append(f"crossing target: {detail}")
 
     blockers = sum(1 for f in findings if f.severity == "MUST")
     reviews = sum(1 for f in findings if f.severity == "SHOULD")

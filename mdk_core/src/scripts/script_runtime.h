@@ -197,7 +197,9 @@ public:
     // FollowArenas (ScriptRuntime.cs:780): an object with FlagChangesArena goes
     // into the arena its OWN last move crossed, so the board follows Kurt through a
     // door and its script keeps running (LEVEL4's first run ends in MEAT_3). The
-    // ObjectMotion.Update call site is the object loop in runTick.
+    // ObjectMotion.Update call site is the object loop in runTick, and it carries
+    // that method's effect gate: an object with effect_frames > 0 returns from
+    // ObjectMotion.Update (:54-68) before FollowArenas (:106) is ever reached.
     void followArenas(MdkObject* obj);
     void setGroupState(const std::string& arena, int32_t group, int32_t operation);
     void setGroupHitFlags(const std::string& arena, int32_t group, int32_t flags);
@@ -452,7 +454,7 @@ private:
     // records of every arena by their id, so (arena, id) names the arena on the
     // other side of that doorway. Called once from the constructor, as the C# does.
     void findConnections();
-    // C# ArenaRecords (:836): an arena's DTI records, found once. Null when no
+    // C# ArenaRecords (:834): an arena's DTI records, found once. Null when no
     // arena has that name, which is the C#'s empty list.
     const std::vector<formats::Dti::Record>* arenaRecords(const std::string& arena);
     void runTick();

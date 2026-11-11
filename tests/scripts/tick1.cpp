@@ -1356,18 +1356,40 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
 // kept colliding with the arena he was born in after he walked through a door, which
 // is review-6 F1's fall through the room an open door led to.
 //
-// WHERE THE EXPECTED VALUES COME FROM — the oracle's OWN test suite, not this
-// implementation. Every line of the golden is one assertion of
-// src/../tests/Mdk.Game.Tests/ArenaSwitchTests.cs or DoorArenaTests.cs, quoted at
-// each line below with its file:line. Those files are committed, read-only, and were
-// written against the original game (ArenaSwitchTests' own comment is the playtest
-// that found the bug: "on level 4's MEAT_7 floor, just before the doorway to CMEAT_7
-// (connection 1012, the plane y = 14822), he was already in the corridor"). No C#
-// was run to make this golden: the .NET SDK this loop used before (/tmp/kilo/dotnet10)
-// is gone from this host, so the oracle's recorded assertions are the evidence and
-// each printed field is a field one of those tests asserts. Fields no oracle test
-// asserts are NOT printed, so nothing here is this harness's own output dressed up as
-// the oracle's.
+// WHERE THE EXPECTED VALUES COME FROM — the oracle's OWN test suite, and the two
+// lines that are NOT from it. Most lines of the two goldens transcribe one assertion
+// of tests/Mdk.Game.Tests/ArenaSwitchTests.cs or DoorArenaTests.cs, cited at the line
+// with the file:line of the ASSERTION itself. (Review-1 of run-20261110-230107 F1: an
+// earlier draft cited where the C# test happened to start instead — a comment line or
+// a StepTo call in four places — so the record could not be checked against the file
+// it cited. Every citation below is the assertion's own line, re-read from the C#.)
+// No C# was run to make this golden: the .NET SDK this loop used before
+// (/tmp/kilo/dotnet10) is gone from this host, so transcribing the committed,
+// read-only C# tests is the available evidence, and transcription is weaker than
+// measurement. Those files were written against the original game — ArenaSwitchTests'
+// own comment is the playtest that found the bug: "on level 4's MEAT_7 floor, just
+// before the doorway to CMEAT_7 (connection 1012, the plane y = 14822), he was
+// already in the corridor".
+//
+// TWO LINES ARE NOT ORACLE ASSERTIONS, and they are named here instead of hidden:
+//   * `L4 s=1 current` — the C# names its first arena by TELEPORTING into it
+//     (ArenaSwitchTests.cs:53 `TeleportKurt(Room, …)`) and asserts nothing after that
+//     first tick; there is no assertion of CurrentArena after a bare teleport anywhere
+//     in the suite. The port has no TeleportKurt, so this harness lets the first tick
+//     find the arena geometrically and the line pins that the two agree on MEAT_7.
+//     That agreement is the same room reached by two rules, not an oracle assertion.
+//   * `L7 s=675 …` — an intermediate state of DoorArenaTests' own walk loop (:76-79),
+//     which the C# asserts only at its end (:81). Its value is the C#'s crossing
+//     predicate applied to the shipped DTI (connection 1001, plane y = 673, so the
+//     step to y = 674 crosses), and it is in the golden because it is the line that
+//     separates the crossing rule from a geometric arena lookup: at y = 675 the
+//     crossing answer is DANT_2 while the box under the feet is still CDANT_1, so an
+//     implementation that took the arena geometrically every tick reddens HERE. L4's
+//     s=2 is the same discriminator on the other level; without s=675 the L7 case
+//     passes a geometric implementation unchanged (review-1 F3).
+// The `doorway=` header lines are not assertions either: they name the constants the
+// C# test itself declares (ArenaSwitchTests.cs:20-21, DoorArenaTests.cs:24,27) and the
+// DTI connection id, so a reader can tell which doorway the case is about.
 //
 // HOW THE TWO SCENARIOS ARE DRIVEN, and the one place that differs from the C# test.
 // Both tests place Kurt with Kurt.Teleport (or ScriptRuntime.TeleportKurt) and then
@@ -1376,9 +1398,9 @@ bool kurtHurtDump(int level, int steps, int schedule, const MdkData& data, const
 // sets CurrentArena directly, and teleport is not ported; where the C# test names the
 // arena it teleports into, this harness lets the first tick find it geometrically and
 // the golden pins that the two agree (level 4's spawn point answers MEAT_7 and level
-// 7's answers CDANT_1, measured, which is what the C# test asserts its teleport
-// reaches). What the teleport would still add — an arena no doorway leads to — is out
-// of reach here and is recorded as unported, not skipped silently.
+// 7's answers CDANT_1, measured). What the teleport would still add — an arena no
+// doorway leads to — is out of reach here and is recorded as unported, not skipped
+// silently.
 bool crossingDump(int level, const MdkData& data, const Bni* sprites, std::string* out,
                   std::string* why) {
     // The two scenarios, straight out of the oracle's tests.
@@ -1437,15 +1459,18 @@ bool crossingDump(int level, const MdkData& data, const Bni* sprites, std::strin
                  (double)kL4Floor);
         *out += line;
 
-        // s=1 — ArenaSwitchTests.cs:52 `Assert.Equal(Room, runtime.CurrentArena)`
-        // after TeleportKurt(MEAT_7, (0, Doorway-100, Floor), 90) and one tick.
+        // s=1 — NOT an oracle assertion (see the header). The C# reaches this state by
+        // TeleportKurt(MEAT_7, (0, Doorway-100, Floor), 90) at ArenaSwitchTests.cs:53
+        // and asserts nothing until :58; the arena is named by the teleport, not
+        // derived. This harness has no teleport, so the first tick finds the arena
+        // geometrically and the line pins that the two agree on MEAT_7.
         player.feet = Vec3{0.0f, kL4Doorway - 100.0f, kL4Floor};
         player.yaw = 90.0f;
         runtime.update(1.0f / 30.0f);
         snprintf(line, sizeof(line), "L4 s=1 current=%s\n", runtime.currentArena().c_str());
         *out += line;
 
-        // FirstTickHasNoMove — ArenaSwitchTests.cs:77 `Assert.Equal(Vector3.Zero,
+        // FirstTickHasNoMove — ArenaSwitchTests.cs:81 `Assert.Equal(Vector3.Zero,
         // runtime.KurtVelocity)`: the first tick has no move to observe, so the jump
         // from wherever Kurt was parked is not a velocity.
         snprintf(line, sizeof(line), "L4 s=1 velocity=%.4f,%.4f,%.4f\n",
@@ -1453,16 +1478,19 @@ bool crossingDump(int level, const MdkData& data, const Bni* sprites, std::strin
                  (double)runtime.kurtVelocity.z);
         *out += line;
 
-        // s=2 — :56 `Assert.Equal(Room, ...)`: inside the corridor's BOX (the
-        // geometric arena here is CMEAT_7, measured) but the move did not cross the
-        // doorway, so the scripts stay in the room. This is the whole bug.
+        // s=2 — :58 `Assert.Equal(Room, runtime.CurrentArena)`, after StepTo(:57) put
+        // him at Doorway-1: inside the corridor's BOX (the geometric arena here is
+        // CMEAT_7, measured) but the move did not cross the doorway, so the scripts
+        // stay in the room. This is the whole bug, and this is the line that catches it.
         player.feet = Vec3{0.0f, kL4Doorway - 1.0f, kL4Floor};
         runtime.update(1.0f / 30.0f);
         snprintf(line, sizeof(line), "L4 s=2 current=%s\n", runtime.currentArena().c_str());
         *out += line;
 
-        // s=3 — :60-62 `CurrentArena == Corridor`, `SecondArena == Room`,
-        // `SecondActive`: through the doorway, and the room stays the active second.
+        // s=3 — :62 `Assert.Equal(Corridor, runtime.CurrentArena)`,
+        // :63 `Assert.Equal(Room, runtime.SecondArena)`,
+        // :64 `Assert.True(runtime.SecondActive)`: through the doorway at Doorway+3,
+        // and the room stays the active second.
         player.feet = Vec3{0.0f, kL4Doorway + 3.0f, kL4Floor};
         runtime.update(1.0f / 30.0f);
         snprintf(line, sizeof(line), "L4 s=3 current=%s\n", runtime.currentArena().c_str());
@@ -1472,7 +1500,8 @@ bool crossingDump(int level, const MdkData& data, const Bni* sprites, std::strin
         snprintf(line, sizeof(line), "L4 s=3 second_active=%d\n", runtime.secondActive() ? 1 : 0);
         *out += line;
 
-        // s=4 — :66-67 `CurrentArena == Room`, `SecondArena == Corridor`: and back.
+        // s=4 — :68 `Assert.Equal(Room, runtime.CurrentArena)` and
+        // :69 `Assert.Equal(Corridor, runtime.SecondArena)`: and back.
         player.feet = Vec3{0.0f, kL4Doorway - 1.0f, kL4Floor};
         runtime.update(1.0f / 30.0f);
         snprintf(line, sizeof(line), "L4 s=4 current=%s\n", runtime.currentArena().c_str());
@@ -1485,7 +1514,7 @@ bool crossingDump(int level, const MdkData& data, const Bni* sprites, std::strin
     // Level 7: DoorArenaTests.DoorShowsTunnelOnTheWayBack. The walk is that test's
     // own loop — `for (var y = 655f; y < NearDoor.Y; y += 1f) StandAt((0,y,-3), 1)`,"
     // i.e. one tick per unit of y from 655 up to but not including 688 — and the one
-    // assertion is :88 `Assert.Equal(Room, runtime.CurrentArena)`, Room = DANT_2.
+    // assertion is :81 `Assert.Equal(Room, runtime.CurrentArena)`, Room = DANT_2.
     // The doorway is CDANT_1's connection 1001, the plane y = 673, so the crossing
     // happens on the step to y = 674 (the C#'s predicate is `to.Y > min.Y`, strict).
     snprintf(line, sizeof(line), "L7 doorway=1001 plane_y=673.0000 floor_z=%.4f\n",
@@ -1495,6 +1524,18 @@ bool crossingDump(int level, const MdkData& data, const Bni* sprites, std::strin
     for (float y = 655.0f; y < 688.0f; y += 1.0f) {
         player.feet = Vec3{0.0f, y, kL7Floor};
         runtime.update(1.0f / 30.0f);
+        // The discriminator, one step into the corridor (see the header): the crossing
+        // rule has had him in DANT_2 since the step to 674, while the arena BOX under
+        // his feet does not change until y = 676. Printing both is the point — a tick
+        // that took the arena geometrically answers CDANT_2 here and reddens the
+        // golden, which is the failure the end-of-walk line alone cannot see.
+        if (y == 675.0f) {
+            const std::string* box = space.arenaAt(
+                Vec{player.feet.x, player.feet.y, player.feet.z});
+            snprintf(line, sizeof(line), "L7 s=675 current=%s geometry=%s\n",
+                     runtime.currentArena().c_str(), box ? box->c_str() : "(none)");
+            *out += line;
+        }
     }
     snprintf(line, sizeof(line), "L7 walk_655_to_687 current=%s\n",
              runtime.currentArena().c_str());
@@ -1525,9 +1566,9 @@ int crossingCheck(const MdkData& data, const Bni* sprites) {
             continue;
         }
         if (got == expected) {
-            printf("PASS L%d_crossing: every line is an assertion of the oracle's own "
-                   "arena-switch / door-arena test, and the ported doorway crossing "
-                   "answers all of them\n", level);
+            printf("PASS L%d_crossing: the ported doorway crossing answers the oracle's "
+                   "own arena-switch / door-arena assertions (the two lines that are NOT "
+                   "oracle assertions are named in the golden's header)\n", level);
         } else {
             printf("FAIL L%d_crossing: %s\n", level, firstDifference(got, expected).c_str());
             failures++;
@@ -4025,10 +4066,14 @@ int main(int argc, char** argv) {
     }
 
     // The doorway crossings (golden/L4_crossing.txt, golden/L7_crossing.txt). Run
-    // here as well as by `tick1 crossing`, because a crossing check that only the
-    // ledger row's own acceptance command runs is a check that rots: that is exactly
-    // how tests/formats sat broken for 25 batches with every gate green. Adding it
-    // here adds one case to this suite; it changes no existing case's expectation.
+    // here as well as by `tick1 crossing`. Being inside this suite is NOT what keeps
+    // the crossing from rotting — `tools/check.sh` does not run `make -C tests/scripts`
+    // (measured: the suite is 7m27s warm, so it cannot), and review-1 of
+    // run-20261110-230107 F2 said so about an earlier draft of this comment. What
+    // keeps it from rotting is PARITY-SCRIPTS-CROSSING in tools/runner/
+    // gates_core_parity.py, which runs `make -C tests/scripts test_crossing` from the
+    // gate suite. This line is here so the full suite cannot pass while the crossing
+    // fails; it adds one case and changes no existing case's expectation.
     failures += crossingCheck(data, spritesArg);
 
     // Dynamic scene updates (open item 1). The scene is built once but the

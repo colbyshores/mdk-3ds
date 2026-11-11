@@ -71,17 +71,20 @@ public:
     // particular they do not move while he falls out of the world (measured: the
     // oracle's own pin rows, golden/L7_spawn_fall.txt's account). BOTH frontends
     // here use the geometric arena under his feet as the stand-in, IN BOTH OF THEIR
-    // BRANCHES -- with a script runtime and without one -- and they can do nothing
-    // else while the connections are unported: ScriptRuntime::currentArena_ is
-    // written once, on the first tick, so a frontend that pinned the runtime's
-    // current arena would freeze the collision world at the spawn arena for the
-    // whole level. That is not a hypothetical: review-6 F1 found it on the 3DS
-    // frontend and review-7 F1 found the same frozen pin on the Linux one, which is
-    // the frontend that takes the pinned frame. Both now refresh from the feet,
+    // BRANCHES -- with a script runtime and without one. They did that because the
+    // connections were unported and ScriptRuntime::currentArena_ was written once,
+    // on the first tick, so pinning the runtime's current arena froze the collision
+    // world at the spawn arena for the whole level. That is not a hypothetical:
+    // review-6 F1 found it on the 3DS frontend and review-7 F1 found the same frozen
+    // pin on the Linux one, which is the frontend that takes the pinned frame. Both
+    // now refresh from the feet,
     // and tests/scripts/frontend_solid_pin_test.sh reads both frontends for it.
-    // Connections are not
-    // ported, so neither stand-in is the oracle's rule; both are better than a pin
-    // left at the spawn. And every frontend must pin at the spawn, because a
+    // The crossing landed after that (batch 134: ScriptRuntime::crossedArena, and
+    // currentArena_ now moves on a doorway), so the frozen-pin argument no longer
+    // holds -- but the geometric stand-in stays, for the reason at the bottom of this
+    // comment: the oracle's value is a LIST and this takes one name, and the drawn
+    // list it passes is itself not ported. Both stand-ins are better than a pin left
+    // at the spawn. And every frontend must pin at the spawn, because a
     // Kurt standing outside every arena otherwise leaves bottom() with nothing to
     // resolve and the fall-out death never fires.
     // The oracle passes a LIST (the current arena plus the active second) and this
