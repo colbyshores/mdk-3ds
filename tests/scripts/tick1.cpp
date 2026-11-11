@@ -608,7 +608,7 @@ bool spawnFallDump(int level, int steps, const MdkData& data, const Bni* sprites
     const std::string* pinned =
         space.arenaAt(Vec{player.feet.x, player.feet.y, player.feet.z});
     if (pinned) {
-        space.setSolid(*pinned);
+        space.setSolid({*pinned});
     }
 
     Input input;
@@ -620,7 +620,7 @@ bool spawnFallDump(int level, int steps, const MdkData& data, const Bni* sprites
         const std::string* now =
             space.arenaAt(Vec{player.feet.x, player.feet.y, player.feet.z});
         if (now) {
-            space.setSolid(*now);
+            space.setSolid({*now});
         }
         float bottom = 0.0f;
         const bool have =
@@ -1566,9 +1566,18 @@ int crossingCheck(const MdkData& data, const Bni* sprites) {
             continue;
         }
         if (got == expected) {
+            // The PASS line must not claim a provenance the artifact cannot show.
+            // A golden here is compared BYTE FOR BYTE (`got == expected` below), so it
+            // cannot carry a header or any other prose: a comment added to
+            // golden/L4_crossing.txt would fail the case it documented. The lines that
+            // are not oracle assertions are therefore named where the dump is written
+            // -- the header comment above crossingDump -- and this says so rather than
+            // pointing at a header that does not exist (review-3 F1).
             printf("PASS L%d_crossing: the ported doorway crossing answers the oracle's "
-                   "own arena-switch / door-arena assertions (the two lines that are NOT "
-                   "oracle assertions are named in the golden's header)\n", level);
+                   "own arena-switch / door-arena assertions (the lines that are NOT "
+                   "oracle assertions are named above crossingDump, where the dump is "
+                   "written: a golden is compared byte for byte and cannot carry "
+                   "prose)\n", level);
         } else {
             printf("FAIL L%d_crossing: %s\n", level, firstDifference(got, expected).c_str());
             failures++;

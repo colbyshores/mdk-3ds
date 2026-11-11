@@ -3,14 +3,13 @@
 # collision world, gated against both of them at once.
 #
 # WHY THIS EXISTS SEPARATELY FROM main_3ds_flow_test.sh. `arena_space.h` ships a
-# sentence about BOTH frontends: "BOTH frontends here use the geometric arena under
-# his feet as the stand-in". A claim that spans two files cannot be gated by a test
-# that reads one of them, and review-7 F1 is the proof: batch 100 reverted the 3DS
-# frontend's frozen pin, wrote that sentence, and left the Linux frontend still
-# pinning `runtime->currentArena()` — a value the DTI connection crossing left at
-# the SPAWN arena for the whole level back when `CrossedArena` (ScriptRuntime.cs:791
-# -803) was unported and `currentArena_` was written once, on the runtime's first
-# tick. `ArenaSpace::setSolid` is STICKY: while
+# sentence about BOTH frontends and about the branch each of them has. A claim that
+# spans two files cannot be gated by a test that reads one of them, and review-7 F1
+# is the proof: batch 100 reverted the 3DS frontend's frozen pin, wrote that sentence,
+# and left the Linux frontend still pinning `runtime->currentArena()` — a value the
+# DTI connection crossing left at the SPAWN arena for the whole level back when
+# `CrossedArena` (ScriptRuntime.cs:791-803) was unported and `currentArena_` was
+# written once, on the runtime's first tick. `ArenaSpace::setSolid` is STICKY: while
 # `_solid` is non-empty `move()` uses only it (arena_space.cpp:111-124), so the pin
 # stayed on the arena Kurt was born in. Walking out through an open doorway left
 # that BSP's geometry behind, `bottom()` resolved the neighbour holding his feet,
@@ -22,25 +21,35 @@
 # SDL/Vulkan window seam. What is load-bearing here is also not arithmetic, it is
 # WHERE a call sits and WHAT it reads, which is the reason main_3ds_flow_test.sh and
 # c3d_frame_test.sh exist. The sticky-pin mechanism itself is executed by the host
-# suite (vm_tests' ArenaSpace contract cases); this gate pins the call sites.
+# suite (vm_tests' ArenaSpace contract cases, and
+# SolidArenasAreTheDrawnListAndThePinTakesBoth for the value), and the SHAPE that
+# feeds it is pinned here.
 #
 # WHAT IS PINNED, per frontend:
 #   1. the fixed-step loop refreshes the solid arena at all — a pin set only in the
 #      spawn block is the defect review-8 F1 found;
-#   2. that refresh reads the GEOMETRIC arena under the feet (`arenaAt` feeding a
-#      `setSolid(*that)`), which is the stand-in the header claims;
-#   3. every in-loop refresh is GUARDED on its lookup, so a Kurt outside every arena
-#      keeps his last arena instead of clearing the pin (an unguarded
-#      `setSolid("")` is the opposite defect, reached from the other side);
-#   4. the loop never pins the runtime's single-name `currentArena()`, and has exactly one
-#      refresh — the review-6 F1 / review-7 F1 rule;
-#   5. the spawn pin survives, because the loop cannot supply it: outside every
-#      arena `arenaAt` answers null, and with no pin at all `bottom()` resolves
-#      nothing and the fall-out death never fires.
+#   2. that refresh reads the runtime's DRAWN LIST (`solidArenas()`), which is the
+#      oracle's value (ScriptRuntime.cs:265-278, Viewer.cs:533: current arena plus
+#      the active second);
+#   3. the branch with NO runtime — the asset gate, no scripts, so no drawn list to
+#      read — keeps the geometric arena under the feet (`arenaAt` feeding a
+#      `setSolid({*that})`), which is the stand-in `arena_space.h` claims;
+#   4. every in-loop refresh is GUARDED, so a Kurt outside every arena (or a runtime
+#      that has not completed its first tick) keeps his last arena instead of
+#      clearing the pin (an unguarded `setSolid` is the opposite defect, reached from
+#      the other side);
+#   5. the loop never pins the runtime's single `currentArena()`, and has exactly one
+#      refresh per branch — the review-6 F1 / review-7 F1 rule, which is now an
+#      ARITY rule and not a staleness rule: one name where the oracle passes two
+#      drops the room behind the door Kurt came through;
+#   6. the spawn pin survives, because the loop cannot supply it: outside every
+#      arena `arenaAt` answers null and before the first tick the drawn list is the
+#      empty name, so with no pin at all `bottom()` resolves nothing and the
+#      fall-out death never fires.
 #
-# Checks 1-5 overlap three of main_3ds_flow_test.sh's eleven checks for the 3DS
-# file. That is deliberate: the shared claim needs one gate that reads both files,
-# and a claim is only as gated as its weakest frontend.
+# Checks 1-6 overlap several of main_3ds_flow_test.sh's checks for the 3DS file.
+# That is deliberate: the shared claim needs one gate that reads both files, and a
+# claim is only as gated as its weakest frontend.
 #
 # Every check is paired with a mutation arm per frontend, and every arm names the
 # one check it must turn red (review-7 F2's rule: an arm satisfied by a different
@@ -64,27 +73,46 @@ FRONTENDS = [
 # (`step` on the console, `kStep` on Linux), so one regex covers both.
 STEP_LOOP = r"while[ \t]*\([ \t]*pending[ \t]*>=[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*\)"
 
-# The geometric refresh as both frontends write it: a lookup, then a guarded
+# The runtime branch: the scripts' drawn list, guarded on the runtime existing. The
+# closing brace is left open on purpose: both frontends write `} else {`, and the
+# fallback branch is the next check's.
+RUNTIME_PIN = (r"(?m)^[ \t]*if[ \t]*\([ \t]*runtime[ \t]*\)[ \t]*\{[ \t]*\n"
+               r"[ \t]*space\.setSolid\([ \t]*runtime->solidArenas\([ \t]*\)[ \t]*\);"
+               r"[ \t]*\n[ \t]*\}")
+
+# The no-runtime branch as both frontends write it: a lookup, then a guarded
 # setSolid of what the lookup returned.
 GEOMETRIC = (r"(?m)^[ \t]*const[ \t]+std::string\*[ \t]+solid[ \t]*=[ \t]*\n"
              r"[ \t]*space\.arenaAt\([^;]*;[ \t]*\n"
              r"[ \t]*if[ \t]*\([ \t]*solid[ \t]*\)[ \t]*\{[ \t]*\n"
-             r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n")
+             r"[ \t]*space\.setSolid\([ \t]*\{[ \t]*\*solid[ \t]*\}[ \t]*\);[ \t]*\n"
+             r"[ \t]*\}[ \t]*\n")
 
 SPAWN_PIN = (r"(?m)^[ \t]*if[ \t]*\(here\)[ \t]*\{[ \t]*\n"
-             r"[ \t]*space\.setSolid\([ \t]*\*here[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n")
+             r"[ \t]*space\.setSolid\([ \t]*\{[ \t]*\*here[ \t]*\}[ \t]*\);[ \t]*\n"
+             r"[ \t]*\}[ \t]*\n")
 
 FROZEN_PIN = ("                if (!runtime->currentArena().empty()) {\n"
               "                    space.setSolid(runtime->currentArena());\n"
               "                }\n")
 
+# The geometric stand-in, for the arm that restores the pre-batch shape.
+GEOMETRIC_STANDIN = ("                const std::string* solid =\n"
+                     "                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});\n"
+                     "                if (solid) {\n"
+                     "                    space.setSolid({*solid});\n"
+                     "                }\n")
+
 CHK = {
     "refresh-in-loop": "the fixed-step loop refreshes Kurt's solid arena",
-    "refresh-is-geometric": "the refresh reads the geometric arena under his feet",
-    "refresh-guarded": "every in-loop refresh is guarded on its own lookup",
-    "pin-not-the-runtime":
-        "the loop never pins the runtime's single current arena, where the oracle pins "
-        "a LIST (current + active second)",
+    "pin-is-the-drawn-list":
+        "with a runtime the refresh is the scripts' DRAWN list (current + active "
+        "second), which is the oracle's value at Viewer.cs:533",
+    "fallback-is-geometric": "the branch with no runtime keeps the geometric arena under his feet",
+    "refresh-guarded": "every in-loop refresh is guarded",
+    "pin-not-the-single-current-arena":
+        "the loop never pins the runtime's single current arena, and has exactly one "
+        "refresh per branch",
     "spawn-pin": "the spawn pin is still there for a Kurt outside every arena",
 }
 
@@ -191,30 +219,35 @@ def adjudicate(who, text, quiet=False):
         "with no refresh in the step body the pin is wherever the spawn left it, and "
         "move() uses only the pinned arena (arena_space.cpp:111-124)")
 
-    say(CHK["refresh-is-geometric"], re.search(GEOMETRIC, loop or "") is not None,
-        "the header claims the geometric arena under the feet; a pin fed by anything "
-        "else is a different claim")
+    say(CHK["pin-is-the-drawn-list"], re.search(RUNTIME_PIN, loop or "") is not None,
+        "the oracle hands SetSolid the scripts' drawn list (ScriptRuntime.cs:265-278, "
+        "Viewer.cs:533); a pin fed by anything else while a runtime exists is a "
+        "different claim, and one name drops the room behind the door")
+
+    say(CHK["fallback-is-geometric"], re.search(GEOMETRIC, loop or "") is not None,
+        "the header claims the geometric arena under the feet for the branch with no "
+        "scripts; a fallback fed by anything else is a different claim")
 
     depths = line_depths(loop) if loop else []
     sites = [(i, line) for i, line in code_lines(loop or "") if re.search(r"setSolid\s*\(", line)]
     guarded = bool(sites) and all((depths[i] if i < len(depths) else 0) >= 1 for i, _ in sites)
     say(CHK["refresh-guarded"], guarded,
-        "an unconditional setSolid of an empty name clears the pin, which is the "
-        "spawn-pin check's failure reached from the other side")
+        "an unconditional setSolid of a list that resolves to nothing clears the pin, "
+        "which is the spawn-pin check's failure reached from the other side")
 
     frozen = re.search(r"setSolid\([ \t]*runtime->currentArena\(", loop or "") is not None
-    say(CHK["pin-not-the-runtime"],
-        not frozen and len(sites) == 1,
-        "the oracle pins the DRAWN list (current + active second) and setSolid takes "
-        "one name, so a pin that reads currentArena() is a single name where the "
-        "oracle has two -- and before batch 134 ported the crossing it was worse still, "
-        "the spawn arena for the whole level; the loop must have exactly "
-        "one refresh and it must be the geometric one")
+    say(CHK["pin-not-the-single-current-arena"],
+        not frozen and len(sites) == 2,
+        "the oracle pins the DRAWN list (current + active second), so a pin that reads "
+        "currentArena() is one name where the oracle has two and drops the room behind "
+        "the door Kurt came through (review-6 F1); the loop must have exactly one "
+        "refresh per branch, the drawn list with a runtime and the lookup without one")
 
     say(CHK["spawn-pin"],
         spawn_body is not None and re.search(SPAWN_PIN, spawn_body) is not None,
-        "outside every arena the loop's lookup answers null, and with no pin at "
-        "all bottom() resolves nothing and the fall-out death never fires")
+        "outside every arena the loop's lookup answers null and before the first tick "
+        "the drawn list is the empty name, and with no pin at all bottom() resolves "
+        "nothing and the fall-out death never fires")
     return r
 
 
@@ -229,61 +262,73 @@ for who, path in FRONTENDS:
     real.append(adjudicate(who, FILES[who]))
 
 
-def arm_delete_refresh(who, text):
-    """The pin set once and never refreshed: review-8 F1 and review-7 F1."""
+def _in_loop(text, mutate):
     sp = step_loop_span(text)
     if sp is None:
         return text
     a, b = sp
-    mutated, n = re.subn(GEOMETRIC, "", text[a:b])
-    return (text[:a] + mutated + text[b:]) if n else text
+    mutated = mutate(text[a:b])
+    return text[:a] + mutated + text[b:]
+
+
+def arm_delete_refresh(who, text):
+    """The pin set once and never refreshed: review-8 F1 and review-7 F1. BOTH
+    branches go, because either one alone still refreshes and would leave this arm
+    for another check to catch."""
+    def mutate(loop):
+        out, n1 = re.subn(RUNTIME_PIN, "", loop)
+        out, n2 = re.subn(GEOMETRIC, "", out)
+        return out if (n1 and n2) else loop
+    return _in_loop(text, mutate)
+
+
+def arm_restore_geometric(who, text):
+    """The pre-batch shape put back: the runtime branch replaced by the geometric
+    stand-in, so the pin is one arena chosen by the feet instead of the scripts'
+    drawn list. Only the drawn-list check can catch this one."""
+    def mutate(loop):
+        out, n = re.subn(RUNTIME_PIN, GEOMETRIC_STANDIN, loop)
+        return out if n else loop
+    return _in_loop(text, mutate)
 
 
 def arm_frozen_pin_replacing(who, text):
-    """Batch 99's shape: the geometric refresh REPLACED by the runtime's current
+    """Batch 99's shape: the geometric fallback REPLACED by the runtime's current
     arena — one name where the oracle pins the drawn LIST. It trips the geometric
     check first (there is no lookup left to read); arm_frozen_pin_added is the one
-    that isolates the runtime-pin check."""
-    sp = step_loop_span(text)
-    if sp is None:
-        return text
-    a, b = sp
-    mutated, n = re.subn(GEOMETRIC, FROZEN_PIN, text[a:b])
-    return (text[:a] + mutated + text[b:]) if n else text
+    that isolates the single-name check."""
+    def mutate(loop):
+        out, n = re.subn(GEOMETRIC, FROZEN_PIN, loop)
+        return out if n else loop
+    return _in_loop(text, mutate)
 
 
 def arm_frozen_pin_added(who, text):
-    """Batch 99's runtime pin put back ALONGSIDE the geometric refresh, after it, so
-    it is the last writer and the geometric shape survives: only the runtime-pin check
-    can catch this one."""
-    sp = step_loop_span(text)
-    if sp is None:
-        return text
-    a, b = sp
-    loop = text[a:b]
-    m = re.search(GEOMETRIC, loop)
-    if not m:
-        return text
-    return text[:a] + loop[:m.end()] + FROZEN_PIN + loop[m.end():] + text[b:]
+    """Batch 99's runtime pin put back ALONGSIDE the two branch refreshes, after
+    them, so it is the last writer and both shapes survive: only the single-name
+    check can catch this one."""
+    def mutate(loop):
+        m = re.search(GEOMETRIC, loop)
+        if not m:
+            return loop
+        return loop[:m.end()] + FROZEN_PIN + loop[m.end():]
+    return _in_loop(text, mutate)
 
 
 def arm_unguarded(who, text):
-    """The tidy-up that clears the pin when Kurt is outside every arena. It ADDS an
-    unguarded refresh rather than replacing the guarded one, because replacing it
-    also removes the lookup the geometric check reads, and that check would then
-    catch the mutant first — which is the pass-generator shape this file's own arm
-    table forbids. An extra unguarded site clears the pin just as dead."""
-    sp = step_loop_span(text)
-    if sp is None:
-        return text
-    a, b = sp
-    loop = text[a:b]
-    m = re.search(GEOMETRIC, loop)
-    if not m:
-        return text
-    return text[:a] + loop[:m.end()] + \
-        "                space.setSolid(solid ? *solid : std::string());\n" + \
-        loop[m.end():] + text[b:]
+    """The tidy-up that clears the pin when the list resolves to nothing: the same
+    refresh, hoisted out of its guard and placed before it. It ADDS a site rather
+    than replacing one, because replacing the guarded pair also removes the shapes
+    the other checks read, and that check would catch the mutant first — which is
+    the pass-generator shape this file's own arm table forbids."""
+    def mutate(loop):
+        m = re.search(RUNTIME_PIN, loop)
+        if not m:
+            return loop
+        return loop[:m.start()] + \
+            "                space.setSolid(runtime->solidArenas());\n" + \
+            loop[m.start():]
+    return _in_loop(text, mutate)
 
 
 def arm_delete_spawn_pin(who, text):
@@ -297,9 +342,12 @@ def arm_delete_spawn_pin(who, text):
 
 ARMS = [
     ("in-loop-refresh-deleted", arm_delete_refresh, CHK["refresh-in-loop"]),
-    ("frozen-runtime-pin-replacing-the-geometric-one", arm_frozen_pin_replacing,
-     CHK["refresh-is-geometric"]),
-    ("frozen-runtime-pin-added-alongside", arm_frozen_pin_added, CHK["pin-not-the-runtime"]),
+    ("geometric-stand-in-restored-for-the-runtime", arm_restore_geometric,
+     CHK["pin-is-the-drawn-list"]),
+    ("frozen-runtime-pin-replacing-the-fallback", arm_frozen_pin_replacing,
+     CHK["fallback-is-geometric"]),
+    ("frozen-runtime-pin-added-alongside", arm_frozen_pin_added,
+     CHK["pin-not-the-single-current-arena"]),
     ("refresh-unguarded-clears-the-pin", arm_unguarded, CHK["refresh-guarded"]),
     ("spawn-pin-deleted", arm_delete_spawn_pin, CHK["spawn-pin"]),
 ]

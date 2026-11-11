@@ -416,14 +416,16 @@ int main(int argc, char** argv) {
         }
         follow = mdk::FollowCamera();
         // Pin Kurt's arena to the one around the spawn (the C# SetSolid of the
-        // scripts' current arena). The step loop refreshes it from the arena under
-        // his feet from here on; this first pin is what covers a Kurt standing
-        // outside every arena, where the loop's lookup finds nothing and bottom()
-        // -- and so the fall-out death -- would otherwise resolve nothing at all.
+        // scripts' drawn arenas). The step loop refreshes it from the runtime's drawn
+        // list from here on, or from the arena under his feet when there is no
+        // runtime; this first pin is what covers a Kurt standing outside every arena
+        // and a runtime that has not ticked yet, where the lookup finds nothing and
+        // bottom() -- and so the fall-out death -- would otherwise resolve nothing at
+        // all.
         const std::string* here =
             space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
         if (here) {
-            space.setSolid(*here);
+            space.setSolid({*here});
         }
 
         // The C# reloads the level and constructs a fresh ScriptRuntime when
@@ -571,38 +573,42 @@ int main(int argc, char** argv) {
                 // `kurts()` returns only it, so a pin left behind is Kurt colliding
                 // with a room he has already left.
                 //
-                // WHAT IT FOLLOWS is the geometric arena under his feet, WITH A
-                // RUNTIME AND WITHOUT ONE, and that is a stand-in, not the oracle's
-                // rule: the oracle's `SolidArenas` is the scripts' DRAWN list, and
-                // `CurrentArena` moves when a move crosses a doorway connection
-                // (`CrossedArena`, ScriptRuntime.cs:791-803) or when a teleport puts
-                // Kurt elsewhere. The crossing IS ported now (batch 134, the
-                // `crossedArena` call where `currentArena_` is set in runTick), so
-                // `currentArena_` is no longer written once on the first tick and left
-                // there; what is NOT ported is the drawn list it feeds and
-                // `TeleportKurt`, and `ArenaSpace::setSolid` takes one name where the
-                // oracle passes current + active second. That
-                // is why the pin is still geometric and not `runtime->currentArena()`.
-                // This branch used to pin `runtime->currentArena()` — the SPAWN arena
-                // for the whole level — so walking Kurt out through an open doorway
-                // left that BSP's geometry behind, `bottom()` resolved the neighbour
-                // holding his feet, and the fall-out death fired into a respawn loop.
-                // That is review-6 F1's defect in the frontend that takes the pinned
-                // frame, and review-7 F1 named it here. The 3DS frontend now does what
-                // this does; `arena_space.h` carries the account of both stand-ins and
-                // why neither is the oracle's rule, and
-                // `tests/scripts/frontend_solid_pin_test.sh` gates both for it.
+                // WITH A RUNTIME THIS IS THE ORACLE'S OWN VALUE, not a stand-in:
+                // `ScriptRuntime::solidArenas()` is the scripts' DRAWN list — the
+                // current arena plus the active second (ScriptRuntime.cs:265-278,
+                // UpdateArenas :660-666) — which is what Viewer.cs:533 hands
+                // `SetSolid`. It moves when a move crosses a doorway CONNECTION
+                // (`CrossedArena`, :791-803) and it does NOT follow the feet, so it
+                // holds while Kurt falls out of the world instead of re-pinning below
+                // the arena he left. This is the frontend that takes the pinned frame,
+                // which is why both shapes this line used to have are gone: batch 99
+                // pinned `runtime->currentArena()` — ONE name where the oracle passes
+                // two — so walking out through an open doorway dropped the room behind
+                // the door, `bottom()` resolved the neighbour holding his feet, and the
+                // fall-out death fired into a respawn loop (review-6 F1, named here by
+                // review-7 F1). One name that is the wrong one is no better than a stale
+                // one; the oracle's value is the LIST, and `arena_space.h` carries the
+                // account of what the pin is and why, gated for both frontends by
+                // `tests/scripts/frontend_solid_pin_test.sh`.
                 //
-                // It is probed AGAIN rather than reusing the pitch's `here`, because
-                // the C# evaluates SetSolid after UpdateCamera and the camera's
-                // clearance can move Kurt into another arena. The pin is deliberately
-                // NOT cleared when he is outside every arena: that is the fall-out
-                // case, and `bottom()` still has to resolve an arena for the death to
-                // fire at all.
-                const std::string* solid =
-                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
-                if (solid) {
-                    space.setSolid(*solid);
+                // The branch with NO runtime is the asset gate: a level whose CMI, bank
+                // or sprites archive is missing runs without scripts, so there is no
+                // drawn list to read and the geometric arena under his feet is the
+                // stand-in — wrong in both directions (it can re-pin during a fall-out
+                // and it carries one name) but better than no pin at all. It is probed
+                // AGAIN rather than reusing the pitch's `here`, because the C# evaluates
+                // SetSolid after UpdateCamera and the camera's clearance can move Kurt
+                // into another arena. It is deliberately NOT cleared when he is outside
+                // every arena: that is the fall-out case, and `bottom()` still has to
+                // resolve an arena for the death to fire at all.
+                if (runtime) {
+                    space.setSolid(runtime->solidArenas());
+                } else {
+                    const std::string* solid =
+                        space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                    if (solid) {
+                        space.setSolid({*solid});
+                    }
                 }
                 // The C# advances the HUD blink once per 30 Hz boundary
                 // (Viewer.cs:535-538), not once per 60 Hz frame.

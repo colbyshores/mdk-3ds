@@ -58,13 +58,19 @@ void ArenaSpace::add(const formats::Arena* arena) {
     _arenas.insert(_arenas.begin() + at, std::make_unique<Entry>(arena, mn, mx, volume));
 }
 
-void ArenaSpace::setSolid(const std::string& name) {
-    // C# ArenaSpace.SetSolid: Kurt's arena is the named one while pinned.
+void ArenaSpace::setSolid(const std::vector<std::string>& names) {
+    // C# ArenaSpace.SetSolid (ArenaSpace.cs:45-55): clear, then add the arena each
+    // name resolves to, in order -- Kurt's own arena first, then the active second.
+    // C# Named() returns the FIRST arena with that name (so a repeated name adds it
+    // twice, as the C# does) and null for one no arena has, which is how the "" the
+    // scripts use for "no arena" contributes nothing instead of clearing the pin.
     _solid.clear();
-    for (const auto& up : _arenas) {
-        if (up->arena->name() == name) {
-            _solid.push_back(&up->bsp);
-            return;
+    for (const std::string& name : names) {
+        for (const auto& up : _arenas) {
+            if (up->arena->name() == name) {
+                _solid.push_back(&up->bsp);
+                break;
+            }
         }
     }
 }

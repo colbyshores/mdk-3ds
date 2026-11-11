@@ -5650,7 +5650,7 @@ void testDeathUsesTheOraclesCompleteFallOperation(LevelData* levelData) {
     if (arenaName == nullptr) {
         return;
     }
-    space.setSolid(*arenaName);
+    space.setSolid({*arenaName});
 
     Input input;
     const float delta = 1.0f / 30.0f;
@@ -5942,7 +5942,7 @@ void testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(LevelData* le
     // move meets geometry. Level 7 spawns Kurt 12 units above DANT_1's floor at
     // z=0, so the probe has to be longer than that; a 1-unit probe hits nothing
     // and would make the comparison below prove nothing.
-    space.setSolid(*spawn);
+    space.setSolid({*spawn});
     const ArenaSpace::Result own = space.move(at, Vec{0.0f, 0.0f, -50.0f},
                                               ArenaSpace::kMotionFall, 0.0f);
     CHECK(own.hit());
@@ -5965,7 +5965,7 @@ void testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(LevelData* le
     if (other == nullptr) {
         return;
     }
-    space.setSolid(*other);
+    space.setSolid({*other});
     const ArenaSpace::Result stale = space.move(at, Vec{0.0f, 0.0f, -50.0f},
                                                 ArenaSpace::kMotionFall, 0.0f);
     CHECK(!stale.hit());
@@ -5975,7 +5975,7 @@ void testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(LevelData* le
     // fall-out death never fires; pinned, it still answers with his arena's bottom.
     const Vec below{at.x, at.y, -1000.0f};
     float bottom = 0.0f;
-    space.setSolid(*spawn);
+    space.setSolid({*spawn});
     CHECK(space.bottom(below, &bottom));
     const float pinned = bottom;
     ArenaSpace unpinned;
@@ -5987,6 +5987,112 @@ void testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(LevelData* le
     float lost = 0.0f;
     CHECK(!unpinned.bottom(below, &lost));
     CHECK(pinned > -1000.0f);
+}
+
+// The oracle's collision world is a LIST, and this is the only place the port
+// EXECUTES both halves of that claim: that the list is the runtime's DRAWN one
+// (current arena plus the active second, ScriptRuntime.cs:265-278 and UpdateArenas
+// :660-666) and that ArenaSpace pins both names, so the room behind the door Kurt
+// came through stays solid. The frontends' own gates (main_3ds_flow_test.sh,
+// frontend_solid_pin_test.sh) can only read the shape of the call; what they cannot
+// see is whether the value it passes is the oracle's. Review-6 F1 is the failure
+// this pins: batch 99 passed ONE name where the oracle passes two, and the room
+// behind the door went un-solid under Kurt, which is the last move here, executed.
+//
+// The walk is the oracle's own DoorArenaTests geometry on level 7 (the same one
+// golden/L7_crossing.txt records): the room DANT_1, the tunnel DANT_2, the doorway
+// connection 1001 on the plane y = 673, floor z = -3.
+void testSolidArenasAreTheDrawnListAndThePinTakesBoth(LevelData* levelData, const Cmi* cmi,
+                                                     audio::SoundBank* bank) {
+    const float kFloor = -3.0f;   // DoorArenaTests.Floor
+    ArenaSpace space;
+    for (const formats::Arena* arena : levelData->arenas()) {
+        if (levelData->isReachable(arena->name())) {
+            space.add(arena);
+        }
+    }
+    audio::SoundMixer mixer(bank);
+    Player player;
+    player.setSpace(&space);
+    player.setMixer(&mixer);
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
+    runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
+
+    // BEFORE THE FIRST TICK. The C#'s _drawnArenas is empty until UpdateArenas runs
+    // at the end of the first tick (:935), so SetSolid gets nothing and Kurt collides
+    // with the arenas around his feet. This port's list is the single "" the C# would
+    // put in the first slot (:661 adds CurrentArena unconditionally), and ArenaSpace
+    // drops a name no arena has -- so the two agree by resolving to no pin, which is
+    // what the second half of this block proves.
+    player.feet = Vec3{0.0f, 655.0f, kFloor};
+    CHECK(runtime.solidArenas().size() == 1);
+    CHECK(runtime.solidArenas()[0].empty());
+    space.setSolid(runtime.solidArenas());
+    float bottom = 0.0f;
+    const Vec belowTheWorld{0.0f, 655.0f, -1000.0f};
+    CHECK(!space.bottom(belowTheWorld, &bottom));
+
+    // THE FIRST TICK places him (ScriptRuntime.cs:918-919: while CurrentArena is
+    // empty it is the arena around him), so the list is his arena alone and the
+    // second slot is still inactive. He starts in the corridor, CDANT_1, and the walk
+    // below crosses into the room DANT_2 -- the same pair golden/L7_crossing.txt
+    // records at s=675, where the crossing rule says DANT_2 and the box under his
+    // feet still says CDANT_1.
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.currentArena() == "CDANT_1");
+    CHECK(runtime.solidArenas().size() == 1);
+    CHECK(runtime.solidArenas()[0] == "CDANT_1");
+
+    // The oracle's walk: one tick per unit of y up to but not including 688. The
+    // doorway plane is y = 673 and the predicate is strict (`to.Y > min.Y`), so the
+    // crossing lands on the step to 674.
+    for (float y = 655.0f; y < 688.0f; y += 1.0f) {
+        player.feet = Vec3{0.0f, y, kFloor};
+        runtime.update(1.0f / 30.0f);
+    }
+    CHECK(runtime.currentArena() == "DANT_2");
+    CHECK(runtime.secondActive());
+    CHECK(runtime.secondArena() == "CDANT_1");
+
+    // The list, in the C#'s order: Kurt's arena first (ArenaSpace's move sweeps
+    // element 0 as his own and the rest as the free pass) and the active second
+    // behind it.
+    CHECK(runtime.solidArenas().size() == 2);
+    CHECK(runtime.solidArenas()[0] == "DANT_2");
+    CHECK(runtime.solidArenas()[1] == "CDANT_1");
+
+    // And the two names are what makes the room behind the door solid. Standing back
+    // inside the room he left -- the state a slide or a knock-back can put him in one
+    // tick before the crossing could follow -- a downward move finds the floor only
+    // while BOTH names are pinned. Pinned with the current arena alone, the shape
+    // review-6 F1 shipped, the same move falls through it: that is the defect this
+    // batch's list exists to prevent, executed rather than argued.
+    const Vec insideTheRoomHeLeft{0.0f, 660.0f, kFloor};
+    space.setSolid(runtime.solidArenas());
+    const ArenaSpace::Result both =
+        space.move(insideTheRoomHeLeft, Vec{0.0f, 0.0f, -50.0f},
+                   ArenaSpace::kMotionFall, 0.0f);
+    CHECK(both.hit());
+
+    const std::vector<std::string> onlyTheCurrent{runtime.currentArena()};
+    space.setSolid(onlyTheCurrent);
+    const ArenaSpace::Result alone =
+        space.move(insideTheRoomHeLeft, Vec{0.0f, 0.0f, -50.0f},
+                   ArenaSpace::kMotionFall, 0.0f);
+    CHECK(!alone.hit());
+
+    // An inactive second is not drawn and not solid (UpdateArenas :663-666), and a
+    // name no arena has resolves to nothing instead of clearing what came before it
+    // (C# Named(), ArenaSpace.cs:45-55).
+    const std::vector<std::string> unknown{"DANT_2", "NOT_AN_ARENA"};
+    space.setSolid(unknown);
+    const ArenaSpace::Result unknownKept =
+        space.move(insideTheRoomHeLeft, Vec{0.0f, 0.0f, -50.0f},
+                   ArenaSpace::kMotionFall, 0.0f);
+    CHECK(!unknownKept.hit());
+    const std::vector<std::string> empty;
+    space.setSolid(empty);
+    CHECK(space.bottom(insideTheRoomHeLeft, &bottom));
 }
 
 // A rebuilt ScriptRuntime owns a NEW SoundMixer, and that mixer owns a NEW
@@ -6326,6 +6432,8 @@ int main() {
     printf("PASS FloorProbeAnswersWhatTheTriggerAsks\n");
     testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(&levelData);
     printf("PASS TheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet\n");
+    testSolidArenasAreTheDrawnListAndThePinTakesBoth(&levelData, &cmi, &bank);
+    printf("PASS SolidArenasAreTheDrawnListAndThePinTakesBoth\n");
     testPushKurtDispatchesDecodedListToPlayer(&levelData, &cmi, &bank);
     printf("PASS PushKurtDispatchesDecodedListToPlayer\n");
     testPushKurtModeZeroFrameAndLiftAreExact(&levelData, &cmi, &bank);

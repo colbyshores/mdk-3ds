@@ -138,6 +138,10 @@ SCRIPTS_FAIL_RE = re.compile(r"^FAIL L\d+_crossing", re.M)
 # this constant: a gate that accepts ONE PASS lets a future batch delete the L7
 # entry from crossingCheck's levels[] with every gate green and its golden orphaned.
 SCRIPTS_REQUIRED_CASES = frozenset({"4", "7"})
+# How many seeded outputs crossing_arm_failures adjudicates: the seven judge arms
+# plus the wrapper's no-`make` arm. A constant so the note, the selftest verdict and
+# the arms cannot disagree about how many there were.
+CROSSING_ARM_COUNT = 8
 SOURCES_ASSIGN_RE = re.compile(r"^SOURCES\s*[:+]?=")
 CHECK_COUNT_RE = re.compile(r"(\d+) checks, (\d+) failures")
 
@@ -246,37 +250,27 @@ def build_and_run_format_target(root: Path) -> tuple[bool, str]:
     return True, f"make -C {FORMATS_DIR_REL} exit 0 -- {checks} checks, 0 failures"
 
 
-def run_scripts_crossing_target(root: Path) -> tuple[bool, str]:
-    """(clean, detail) from `make -C tests/scripts test_crossing`.
+def judge_crossing_output(returncode: int, output: str) -> tuple[bool, str]:
+    """(clean, detail) for the text the crossing target produced.
 
-    The ledger row's own acceptance command, run by the gate suite instead of by
-    the builder's good intentions. Every way it fails to produce a measurement is
-    a failure, exactly as PARITY-FORMATS-LINK treats the format target: no make,
-    a timeout, a nonzero exit (which is also what a host with no game data looks
-    like), a verdict line that never printed, a FAIL line that printed anyway, and
-    -- the pass generator this particular shape allows -- a verdict with ZERO
-    `PASS L<n>_crossing` lines behind it, which is what deleting the cases instead
-    of fixing them would look like. Zero is not the only escape hatch though: one
-    PASS also satisfies "not zero", so the case set is required by name
-    (SCRIPTS_REQUIRED_CASES) and a run that skipped one of the two levels is a
-    MUST, not a smaller pass (review-2 F2).
+    Split out of run_scripts_crossing_target so the adjudication -- the only part of
+    this check that is a decision rather than a subprocess -- can be exercised by
+    `--selftest` without building the world. Review-3 F2 of run-20261110-230107: the
+    required-case rule that review-2 F2 bought was pinned by NOTHING in the tree, so
+    shrinking SCRIPTS_REQUIRED_CASES or weakening the set difference back to "not
+    zero" kept every gate green and no test noticed.
+
+    Every way the target fails to produce a measurement is a failure, exactly as
+    PARITY-FORMATS-LINK treats the format target: a nonzero exit (which is also what a
+    host with no game data looks like), a verdict line that never printed, a FAIL line
+    that printed anyway, and -- the pass generator this particular shape allows -- a
+    verdict with ZERO `PASS L<n>_crossing` lines behind it, which is what deleting the
+    cases instead of fixing them would look like. Zero is not the only escape hatch
+    though: one PASS also satisfies "not zero", so the case set is required by name
+    (SCRIPTS_REQUIRED_CASES) and a run that skipped one of the two levels is a MUST,
+    not a smaller pass (review-2 F2).
     """
-    make = shutil.which("make")
-    if make is None:
-        return False, ("make is not on PATH, so the crossing target could not be built "
-                       "-- NOT CHECKED is not a pass")
-    try:
-        proc = subprocess.run(
-            [make, "-C", str(root / SCRIPTS_DIR_REL), SCRIPTS_TARGET],
-            capture_output=True, text=True, timeout=SCRIPTS_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        return False, (f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} did not finish within "
-                       f"{SCRIPTS_TIMEOUT}s")
-    except OSError as exc:
-        return False, f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} could not start: {exc}"
-    output = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode != 0:
+    if returncode != 0:
         reason = ""
         for line in output.splitlines():
             if any(needle in line for needle in ("FAIL", "error:", "undefined reference",
@@ -285,7 +279,7 @@ def run_scripts_crossing_target(root: Path) -> tuple[bool, str]:
                 break
         if not reason:
             reason = (output.strip().splitlines() or ["(no output)"])[-1].strip()
-        return False, (f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} exited {proc.returncode}: "
+        return False, (f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} exited {returncode}: "
                        f"{reason} (no game data reads exactly like this)")
     if SCRIPTS_VERDICT not in output:
         return False, (f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} exited 0 without printing "
@@ -308,6 +302,89 @@ def run_scripts_crossing_target(root: Path) -> tuple[bool, str]:
                      ", ".join("L" + n for n in passed)))
 
 
+def run_scripts_crossing_target(root: Path) -> tuple[bool, str]:
+    """(clean, detail) from `make -C tests/scripts test_crossing`.
+
+    The ledger row's own acceptance command, run by the gate suite instead of by the
+    builder's good intentions. The decision itself is judge_crossing_output above,
+    which is where the arms of `--selftest` point.
+    """
+    make = shutil.which("make")
+    if make is None:
+        return False, ("make is not on PATH, so the crossing target could not be built "
+                       "-- NOT CHECKED is not a pass")
+    try:
+        proc = subprocess.run(
+            [make, "-C", str(root / SCRIPTS_DIR_REL), SCRIPTS_TARGET],
+            capture_output=True, text=True, timeout=SCRIPTS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return False, (f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} did not finish within "
+                       f"{SCRIPTS_TIMEOUT}s")
+    except OSError as exc:
+        return False, f"make -C {SCRIPTS_DIR_REL} {SCRIPTS_TARGET} could not start: {exc}"
+    output = (proc.stdout or "") + (proc.stderr or "")
+    return judge_crossing_output(proc.returncode, output)
+
+
+def crossing_arm_failures() -> list[str]:
+    """The seeded outputs this gate must adjudicate, and the verdict each must get.
+
+    The same shape as `gates_completion --selftest`: an arm the adjudicator accepts
+    when it should refuse is a pass generator restored, and an arm it refuses when it
+    should accept means the gate is red on a healthy tree. Neither is visible from a
+    normal run, because a normal run only ever sees the one output the tree produces.
+
+    `run()` calls this on every gate run -- tools/check.sh is owner-protected and a
+    batch cannot wire a new `--selftest` call into it, so the arms ride along with the
+    gate they pin instead of waiting for an owner -- and `--selftest` prints them on
+    their own.
+    """
+    green = ("PASS L4_crossing: the ported doorway crossing\n"
+             "PASS L7_crossing: the ported doorway crossing\n" + SCRIPTS_VERDICT + "\n")
+    arms: list[tuple[str, tuple[int, str], bool]] = [
+        ("both required cases green", (0, green), True),
+        ("the cases in the other order",
+         (0, "PASS L7_crossing: x\nPASS L4_crossing: x\n" + SCRIPTS_VERDICT + "\n"), True),
+        ("one case only -- review-2 F2's pass generator",
+         (0, "PASS L4_crossing: x\n" + SCRIPTS_VERDICT + "\n"), False),
+        ("the verdict printed with no PASS behind it", (0, SCRIPTS_VERDICT + "\n"), False),
+        ("the verdict never printed at all", (0, "PASS L4_crossing: x\n"), False),
+        ("a FAIL line under a green verdict", (0, green + "FAIL L7_crossing: x\n"), False),
+        ("a nonzero exit (no game data, a broken build)",
+         (2, "make: *** [test] Error 1\n"), False),
+    ]
+    failures: list[str] = []
+    for label, (returncode, output), want_clean in arms:
+        clean, detail = judge_crossing_output(returncode, output)
+        if clean != want_clean:
+            failures.append("%s: adjudicated %s, expected %s -- %s"
+                            % (label, "clean" if clean else "red",
+                               "clean" if want_clean else "red", detail))
+
+    # And the wrapper's own escape hatch: a host with no `make` is a MUST, never a
+    # skip. This arm patches the module's lookup instead of feeding the judge.
+    saved = shutil.which
+    shutil.which = lambda _name: None
+    try:
+        clean, detail = run_scripts_crossing_target(Path("/nonexistent"))
+    finally:
+        shutil.which = saved
+    if clean:
+        failures.append("make-missing-on-PATH: adjudicated clean, expected red -- " + detail)
+    return failures
+
+
+def crossing_selftest() -> int:
+    """Print the seeded arms and their verdicts (the `--selftest` entry point)."""
+    failures = crossing_arm_failures()
+    for failure in failures:
+        print("  FAIL crossing selftest " + failure)
+    if failures:
+        print(f"CROSSING SELFTEST: FAIL ({len(failures)} of {CROSSING_ARM_COUNT} arms)")
+        return 1
+    print(f"CROSSING SELFTEST: PASS ({CROSSING_ARM_COUNT} arms)")
+    return 0
 @dataclass
 class Finding:
     rule: str
@@ -660,6 +737,26 @@ def run(root: Path | None = None) -> Report:
         )
     notes.append(f"crossing target: {detail}")
 
+    # --- 8. the crossing gate's own seeded arms ---
+    # The check that exists to refuse a one-case PASS is worth nothing if the refusal
+    # can be edited away unnoticed, and nothing in the tree imports this file
+    # (review-3 F2 of run-20261110-230107). So the seeded outputs run HERE, inside the
+    # gate, on every run: an arm that stops reddening is a finding on the same green
+    # run that would otherwise have hidden it.
+    arm_failures = crossing_arm_failures()
+    if arm_failures:
+        findings.append(
+            Finding("PARITY-SCRIPTS-CROSSING-SELFTEST", "MUST", SCRIPTS_DIR_REL,
+                    "the crossing target's own seeded arms did not all adjudicate as "
+                    "claimed: " + "; ".join(arm_failures)
+                    + " -- a crossing arm that stops reddening is the pass generator "
+                      "review-2 F2 bought this check to close, restored")
+        )
+    notes.append("crossing selftest: %d seeded arms, %s"
+                 % (CROSSING_ARM_COUNT,
+                    "all adjudicated as claimed" if not arm_failures
+                    else f"{len(arm_failures)} WRONG"))
+
     blockers = sum(1 for f in findings if f.severity == "MUST")
     reviews = sum(1 for f in findings if f.severity == "SHOULD")
     status = "FAIL" if blockers else "PASS"
@@ -685,7 +782,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--root", type=Path, default=REPO_ROOT)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--selftest", action="store_true",
+                        help="run the seeded crossing-target outputs; every arm must "
+                             "adjudicate as claimed")
     args = parser.parse_args(argv)
+
+    if args.selftest:
+        return crossing_selftest()
 
     report = run(args.root)
     if args.json:

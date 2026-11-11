@@ -1,0 +1,163 @@
+================================================================================
+Batch 137 — the frontend pin becomes the oracle's drawn list
+Ledger row 3ds.collision-doors, attempt 4 of 8.
+Acceptance command: `make -C tests/scripts test_crossing`.
+Measured 2026-11-11 (UTC), tree at a041517 + this batch's working tree.
+================================================================================
+
+§1. WHAT CHANGED, AND THE ORACLE LINE FOR EACH PIECE
+--------------------------------------------------------------------------------
+ArenaSpace::setSolid took ONE name; the oracle hands SetSolid a LIST.
+
+  src/Mdk.Game/Collision/ArenaSpace.cs:45-55   SetSolid(IReadOnlyList<string>)
+      _solid.Clear(); for each name, Named(name) -> _solid.Add(bsp).
+      Named() answers the FIRST arena with that name and null for a name no arena
+      has, so an unknown name (including the "" the scripts use for "no arena")
+      adds nothing and an empty list leaves nothing pinned.
+  -> mdk_core/src/game/arena_space.{h,cpp}: the one-name overload is GONE and the
+     list form replaces it, so the arity mismatch cannot be reintroduced by
+     accident. A name resolves to the first arena that has it (the C#'s `break`
+     after a match), and a name no arena has is skipped without clearing what came
+     before it. `move()` already swept element 0 as Kurt's own arena and the rest
+     as the free pass (arena_space.cpp:134-146), exactly as the C# does, so no
+     other change was needed for a two-name pin to mean what it means there.
+
+  src/Mdk.Game/Scripts/ScriptRuntime.cs:265-284  SolidArenas
+      !Rides.OnBoard() -> _drawnArenas; on the board -> drawn[0] alone.
+  src/Mdk.Game/Scripts/ScriptRuntime.cs:660-666  UpdateArenas' drawn list
+      drawn = [CurrentArena] and, if (SecondActive && SecondArena != ""), SecondArena.
+  src/Mdk.Game/Viewer.cs:533                     _space.SetSolid(_scripts.SolidArenas)
+      after UpdateCamera, every step.
+  -> mdk_core/src/scripts/script_runtime.{h,cpp}: ScriptRuntime::solidArenas()
+     derives that list from currentArena_ / secondArena_ / secondActive_ into a
+     member scratch (the C# keeps _solidFirst for the same reason, ":284 kept: no
+     list per step"). UpdateArenas itself is not ported, so the list is derived
+     rather than cached; the three fields are written only by the crossing in
+     runTick (script_runtime.cpp:562-571) and by showArena (:728-755), both inside
+     the tick that UpdateArenas closes (ScriptRuntime.cs:935), so a reader outside
+     the tick sees the list the last tick produced. The snowboard half is written
+     (ridesBoard_ guard) even though the ride slice is unported and the flag is
+     false on every tick of the corpus: it is the ONE case where a one-name pin IS
+     the oracle's value, which is the over-generalisation review-3 open question 4
+     warned about, so the code says it rather than leaving it implied.
+  -> mdk_3ds/src/main_3ds.cpp and mdk_linux/src/main.cpp: the per-step pin is
+     `if (runtime) space.setSolid(runtime->solidArenas()); else <geometric lookup>`.
+     The geometric stand-in survives ONLY in the no-runtime branch (the asset gate,
+     where a level missing its CMI/bank/sprites runs without scripts and there is
+     no drawn list to read). The spawn pin is unchanged in both frontends.
+
+§2. GATE RESULTS, VERBATIM
+--------------------------------------------------------------------------------
+make -C tests/scripts test_crossing
+    PASS L4_crossing: ... (the lines that are NOT oracle assertions are named above
+        crossingDump, where the dump is written: a golden is compared byte for byte
+        and cannot carry prose)
+    PASS L7_crossing: ... (same)
+    All crossing cases match the oracle.                       rc 0, 2 cases
+
+make -C tests/scripts
+    All cases match the oracle.                                rc 0
+    570 PASS lines, 0 FAIL, 0 SKIP. (569 before this batch; the 570th is the new
+    vm_tests case SolidArenasAreTheDrawnListAndThePinTakesBoth.)
+
+sh tests/scripts/frontend_solid_pin_test.sh
+    PASS FrontendSolidPin (12 checks, 12 arms adjudicated red)   rc 0
+    (was 10 checks / 10 arms: the geometric check split into "the runtime branch is
+    the drawn list" and "the no-runtime branch is geometric", each with its own arm.)
+
+sh tests/scripts/main_3ds_flow_test.sh
+    PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes green)  rc 0
+
+python3 tools/runner/gates_core_parity.py --selftest
+    CROSSING SELFTEST: PASS (8 arms)                           rc 0
+
+DISPLAY=:99 bash tools/check.sh
+    CHECK: ALL GATES PASSED                                    rc 0
+      note: format target: make -C tests/formats exit 0 -- 156235 checks, 0 failures
+      note: crossing target: make -C tests/scripts test_crossing exit 0 --
+            2 crossing case(s): L4, L7
+      note: crossing selftest: 8 seeded arms, all adjudicated as claimed
+      COMPLETION SELFTEST: PASS (13 arms); COMPLETION[d1]: 10 done / 13 total
+      PASS audit_c_with_classes 0 violations; PASS gates_vfp 0 blockers;
+      PASS audit_arm11_math; PASS audit_r11_idiv; PASS gates_core_parity;
+      SKIP gates_smdh (no built .cia); PASS gates_frames; PASS
+      gates_batch_integrity; PASS gates_completion
+
+make -C mdk_3ds            (DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM)
+    LINK mdk.elf / 3DSX mdk.3dsx                               rc 0
+    mdk.elf md5 e29531aecceedd197df85a497f876a31
+    (was 3b2a13a86ed2ee39121cf9a312eb8f1a — the pin moved, so the binary moves)
+
+cmake --build build-linux                                      rc 0
+
+mdk_3ds/tools/emurun.sh                       DISPLAY=:99, rc 0
+    display :99; emulator mandarine.AppImage md5 0d2adab6 (the pinned r1.2.1,
+    /mnt/nas/Development/mandarine.AppImage -> m121/...20250128-418c25c)
+    backend: PICA200 Citro3D; flow: screen=4 level=7
+    frames: reached 2460 by the deadline (46 frame lines); after the reap the guest
+    log ends at frame 2520 (47 frame lines logged)
+    frame 2460 ... feet=(0.0,4.0,0.0) yaw=90.0 health=100 voices=0 plays=1 objects=7
+    lane /tmp/mdk-emurun.705778, log
+    /tmp/mdk-emurun.705778/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log
+    No regression against batch 136's run, and NO CROSSING EXERCISED: the scene
+    idles at the spawn, so the 3DS rest pitch and the drawn-list pin across a
+    doorway are still unmeasured on the emulator.
+
+docs/frames/2026-11-11-drawn-list-pin.png  md5 6769a13731983d65cee9df02da6cff37
+    BYTE-IDENTICAL to batch 136's frame, disclosed: at level 3 frame 1 Kurt is at
+    the spawn, where the drawn list and the geometric lookup answer the same arena,
+    so a batch that changes which rule picks it cannot move this pixel set. The
+    frame gate is green and the sidecar records the same 1.240% ceiling.
+
+§3. MUTATION PROBES (each was made real in the tree, run, and reverted)
+--------------------------------------------------------------------------------
+M1  solidArenas() without the active second (`if (false && !ridesBoard_ && ...)`)
+    -> tests/scripts/build/vm_tests:
+         FAIL line 6060: runtime.solidArenas().size() == 2
+         FAIL line 6062: runtime.solidArenas()[1] == "CDANT_1"
+         FAIL line 6075: both.hit()
+       The third is the point: with one name pinned, a downward move at (0,660,-3)
+       — inside the corridor Kurt crossed out of — loses its floor. That is
+       review-6 F1's fall through the room behind the door, executed on shipped
+       level-7 geometry, not argued.
+M2  the 3DS frontend's runtime branch back to `space.setSolid(runtime->currentArena())`
+    -> frontend_solid_pin_test.sh reddens "with a runtime the refresh is the
+       scripts' DRAWN list" and "the loop never pins the runtime's single current
+       arena"; main_3ds_flow_test.sh reddens "the step loop pins the runtime's
+       DRAWN LIST". Both reverted; both PASS again.
+M3  SCRIPTS_REQUIRED_CASES shrunk to {"4"} (review-3 F2's exact scenario)
+    -> gates_core_parity --selftest:
+         FAIL crossing selftest one case only -- review-2 F2's pass generator:
+         adjudicated clean, expected red
+       CROSSING SELFTEST: FAIL (1 of 8 arms)                   rc 1
+       and the same failure is a MUST finding inside the gate's normal run.
+    The arms run inside run() on every `tools/check.sh`, not only under
+    --selftest, because tools/check.sh is owner-protected and a batch cannot wire
+    a new selftest call into it.
+
+§4. WHAT THIS BATCH DOES NOT EVIDENCE
+--------------------------------------------------------------------------------
+* No crossing on the emulator. The harness idles level 7 at the spawn; a scripted
+  walk through connection 1012/1001 in emurun.sh is its own slice (CONTINUATION
+  NEXT item 2). The drawn-list pin across a doorway is executed on the host
+  (vm_tests) and its call shape is gated on both frontends, but no captured 3DS
+  frame has ever shown it.
+* The snowboard branch of solidArenas() cannot be reached: ridesBoard_ has no
+  writer until the ride slice lands, so that half is compile-verified only.
+* LoadArena + PullDoors (ScriptRuntime.cs:615-643) is still unported, so a door can
+  still stay behind in the neighbour after Kurt crosses. The drawn list does not
+  change that; it is NEXT item 3 and it needs the same list this batch landed.
+* TeleportKurt is still unported, so the other way the oracle moves CurrentArena is
+  still unreachable, and the crossing goldens' first-tick lines stay "two rules that
+  agree" rather than oracle assertions.
+* The frame is unchanged, so this batch has no visual evidence either way.
+* review-3 F3 (SCRIPTS_REQUIRED_CASES lives in a non-PROTECTED file) is NOT
+  addressed: closing it means editing gates_batch_integrity.py's PROTECTED list or
+  the ledger, both owner-only. M3 is the mitigation available from a batch: the
+  shrink is now loud on the next gate run instead of silent.
+* review-3 open question 1 (a 0-byte review-3.md at dispatch) is a harness defect
+  outside this repository's gates.
+* /tmp/kilo is owned by coleshores and not writable by this uid, so this batch's
+  captures are under /tmp/mdk-b137 instead of the AGENTS.md P7 path. Same
+  environment item as the missing /tmp/kilo/dotnet10.
+* Old-3DS hardware: no console in hand, nothing here is hardware evidence.

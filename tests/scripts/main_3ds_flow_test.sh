@@ -35,16 +35,17 @@
 # WHAT BATCH 99 ADDED (the ScriptRuntime on the console, priority item 6d). The
 # frontend now owns a script runtime, which means four more things became load-
 # bearing that no compiler can see:
-#   6. the step loop's ONE pin reads the arena under Kurt and never the runtime's
-#      current arena. The connection crossing landed in batch 134, so currentArena()
-#      does move now; what makes a runtime pin wrong is an ARITY — the oracle pins the
-#      scripts' DRAWN list (current + the active second, ScriptRuntime.cs:265-278) and
-#      ArenaSpace::setSolid takes ONE name, so a pin that reads currentArena() drops
-#      the active second, the room behind the door Kurt just came through. That is the
-#      class review-6 F1 found when batch 99 pinned a currentArena_ that was, at that
-#      point, still frozen at the spawn and a door walk fell through the room it opened
-#      into. The check stands until the drawn list and a two-name setSolid land, and it
-#      is what keeps the reverted stand-in reverted.
+#   6. the step loop's pin reads the runtime's DRAWN LIST and never its single
+#      current arena. The oracle hands SetSolid the scripts' drawn arenas -- current
+#      plus the active second (ScriptRuntime.cs:265-278, Viewer.cs:533) -- and move()
+#      sweeps only the pinned arenas, so one name drops the room behind the open door
+#      Kurt came through. That is the class review-6 F1 found when batch 99 pinned a
+#      currentArena_ that was, at that point, still frozen at the spawn and a door walk
+#      fell through the room it opened into. Batch 134 ported the crossing and batch
+#      137 ported the list (ScriptRuntime::solidArenas, and ArenaSpace::setSolid now
+#      takes the NAMES the C# passes), so the check requires the list instead of
+#      forbidding the single name: with a runtime the loop must call
+#      solidArenas(), without one the geometric lookup, exactly one refresh per branch.
 #   7. the scripts tick inside the fixed-step loop between Kurt and the camera
 #      (Viewer.cs:505-535), because the runtime's own 1/30 s clock assumes it is
 #      called once per 1/60 s step;
@@ -934,9 +935,9 @@ CHK = {
     "refresh-guarded":
         "every in-loop refresh is guarded, so an empty lookup does not clear the pin",
     "guard-is-the-lookup": "the guard is the arenaAt lookup itself",
-    "pin-not-the-runtime":
-        "the step loop pins from the arena under Kurt, never from the runtime's single "
-        "current arena, which is one name where the oracle pins a LIST",
+    "pin-is-the-drawn-list":
+        "the step loop pins the runtime's DRAWN LIST (current + active second) and "
+        "never its single current arena, which is one name where the oracle has two",
     "scripts-tick-order":
         "the scripts tick in the step loop, after Kurt and before the camera",
     "mixes-runtime-mixer":
@@ -1045,7 +1046,7 @@ def adjudicate(text, quiet=False):
     shape = False
     if loop is not None:
         m = re.search(r"if[ \t]*\(([A-Za-z_][A-Za-z0-9_]*)\)[ \t]*\{[ \t]*\n[ \t]*"
-                      r"space\.setSolid\([ \t]*\*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\)", loop)
+                      r"space\.setSolid\([ \t]*\{[ \t]*\*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\}", loop)
         if m:
             shape = m.group(1) == m.group(2) and re.search(
                 r"arenaAt\([^;]*\);[ \t]*\n[ \t]*const[ \t]+std::string\*[ \t]*" + re.escape(m.group(1)),
@@ -1055,27 +1056,27 @@ def adjudicate(text, quiet=False):
     say(CHK["guard-is-the-lookup"], shape, 
         "a guarded setSolid whose guard is not the lookup can still clear the pin")
 
-    # 6. the step loop's pin NEVER reads the runtime's current arena. Review-6 F1
-    #    (High) shipped exactly that, and the reason has since changed while the check
-    #    has not: the DTI connection crossing that moves the oracle's `CurrentArena`
-    #    (CrossedArena, ScriptRuntime.cs:791-803) is ported (batch 134), so
-    #    `currentArena()` is no longer written once and frozen at the spawn. It is
-    #    still ONE name, and the oracle's pin is a LIST — the scripts' drawn arenas,
-    #    current plus the active second (ScriptRuntime.cs:265-278) — while
-    #    ArenaSpace::setSolid takes one name (game/arena_space.h says so). Pinning the
-    #    runtime's current arena therefore drops the ACTIVE SECOND, the room behind the
-    #    open door Kurt came through: move() uses ONLY the pinned arena
-    #    (arena_space.cpp:118), so it finds no floor in that room, he drops through it,
-    #    and bottom() fires the fall-out death into a respawn loop. Batch 99 shipped
-    #    that; this check is the pin that stops it coming back, and it retires with the
-    #    drawn list and a two-name setSolid, not before.
+    # 6. the step loop pins the runtime's DRAWN LIST, and never its single current
+    #    arena. The oracle hands SetSolid the scripts' drawn arenas -- current plus
+    #    the active second (ScriptRuntime.cs:265-278, handed over at Viewer.cs:533) --
+    #    and move() sweeps ONLY the pinned arenas, so one name drops the room behind
+    #    the open door Kurt came through: no floor there, he drops through it, and
+    #    bottom() fires the fall-out death into a respawn loop. Batch 99 shipped
+    #    exactly that (review-6 F1); the geometric stand-in that replaced it was right
+    #    to stop the fall and wrong to stop at one name. Batch 137 ported the list
+    #    (ScriptRuntime::solidArenas, ArenaSpace::setSolid taking the names the C#
+    #    passes), so this check now REQUIRES it: solidArenas() with a runtime, the
+    #    lookup without one, exactly one refresh per branch, and never currentArena().
+    #    The value itself is executed by vm_tests'
+    #    SolidArenasAreTheDrawnListAndThePinTakesBoth; this is the shape.
     frozen = bool(re.search(r"setSolid\([ \t]*runtime->currentArena\(", loop or ""))
-    say(CHK["pin-not-the-runtime"],
-        not frozen and loop_code is not None and loop_code.count("setSolid(") == 1,
-        "the oracle pins the scripts' DRAWN list (current + active second) and "
-        "setSolid takes one name, so a pin that reads currentArena() drops the room "
-        "behind the door; the loop must have exactly one refresh and it must be the "
-        "geometric one until the drawn list lands")
+    drawn = bool(re.search(r"setSolid\([ \t]*runtime->solidArenas\([ \t]*\)[ \t]*\)",
+                           loop or ""))
+    say(CHK["pin-is-the-drawn-list"],
+        drawn and not frozen and loop_code is not None and loop_code.count("setSolid(") == 2,
+        "the oracle pins the scripts' DRAWN list (current + active second), so a pin "
+        "that reads currentArena() drops the room behind the door; the loop must have "
+        "exactly one refresh per branch and the runtime's must be solidArenas()")
 
     # 7. the scripts tick INSIDE the fixed-step loop, between Kurt and the camera.
     #    The C#'s Viewer order is UpdateKurt, _scripts.Update, UpdateCamera
@@ -1786,12 +1787,14 @@ def in_loop(mutate):
 
 def strip_all_set_solid(loop):
     """Remove every in-loop solid-pin site, runtime branch and geometric branch
-    both. Deleting only the geometric one — which is what this arm used to do,
-    and what it still has to do to stay honest — leaves the runtime's call behind,
-    so the mutant would keep refreshing the pin and the arm would test nothing."""
+    both. Deleting only one leaves the other refreshing the pin, so the mutant would
+    test nothing."""
+    out = re.sub(r"(?m)^[ \t]*if[ \t]*\([ \t]*runtime[ \t]*\)[ \t]*\{[ \t]*\n"
+                 r"[ \t]*space\.setSolid\([ \t]*runtime->solidArenas\([ \t]*\)[ \t]*\);"
+                 r"[ \t]*\n", "", loop)
     out = re.sub(r"(?m)^[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
-                 r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
-                 "", loop)
+                 r"[ \t]*space\.setSolid\([ \t]*\{[ \t]*\*solid[ \t]*\}[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
+                 "", out)
     out = re.sub(r"(?m)^[ \t]*if[ \t]*\([ \t]*![ \t]*runtime->currentArena\([ \t]*\)"
                  r"\.empty\([ \t]*\)[ \t]*\)[ \t]*\{[ \t]*\n"
                  r"[ \t]*space\.setSolid\([ \t]*runtime->currentArena\([ \t]*\)[ \t]*\);[ \t]*\n"
@@ -1831,7 +1834,7 @@ def arm_before_camera(text):
     m = re.search(r"(?m)^[ \t]*const[ \t]+std::string\*[ \t]+solid[ \t]*=[ \t]*\n"
                   r"[ \t]*space\.arenaAt\([^;]*;[ \t]*\n"
                   r"[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
-                  r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
+                  r"[ \t]*space\.setSolid\([ \t]*\{[ \t]*\*solid[ \t]*\}[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
                   loop)
     if not m:
         return text
@@ -1844,19 +1847,25 @@ def arm_before_camera(text):
 
 
 def arm_clears_the_pin(text):
-    """The tidy-up that clears the pin when Kurt is outside every arena."""
+    """The tidy-up that clears the pin when the drawn list resolves to nothing (no
+    runtime has ticked yet, or Kurt is outside every arena): the same refresh hoisted
+    out of its guard and placed before it, unguarded. It ADDS a site rather than
+    replacing one, because replacing the guarded pair removes the shapes the other
+    checks read and one of those would catch the mutant first -- which is the
+    pass-generator shape this file's own arm table forbids."""
     sp = STEP_LOOP
     if sp is None:
         return text
     a, b = sp
     loop = text[a:b]
-    m = re.search(r"(?m)^[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
-                  r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", loop)
+    m = re.search(r"(?m)^[ \t]*if[ \t]*\([ \t]*runtime[ \t]*\)[ \t]*\{[ \t]*\n"
+                  r"[ \t]*space\.setSolid\([ \t]*runtime->solidArenas\([ \t]*\)[ \t]*\);",
+                  loop)
     if not m:
         return text
     return text[:a] + loop[:m.start()] + \
-        "                space.setSolid(solid ? *solid : std::string());\n" + \
-        loop[m.end():] + text[b:]
+        "                space.setSolid(runtime->solidArenas());\n" + \
+        loop[m.start():] + text[b:]
 
 
 def arm_drops_the_spawn_pin(text):
@@ -1867,7 +1876,7 @@ def arm_drops_the_spawn_pin(text):
     a, b = sp
     body = text[a:b]
     m = re.search(r"(?m)^[ \t]*if[ \t]*\(here\)[ \t]*\{[ \t]*\n"
-                  r"[ \t]*space\.setSolid\([ \t]*\*here[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", body)
+                  r"[ \t]*space\.setSolid\([ \t]*\{[ \t]*\*here[ \t]*\}[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", body)
     if not m:
         return text
     return text[:a] + body[:m.start()] + body[m.end():] + text[b:]
@@ -1881,12 +1890,12 @@ def arm_guard_on_something_else(text):
     a, b = sp
     loop = text[a:b]
     m = re.search(r"(?m)^[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
-                  r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", loop)
+                  r"[ \t]*space\.setSolid\([ \t]*\{[ \t]*\*solid[ \t]*\}[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", loop)
     if not m:
         return text
     return text[:a] + loop[:m.start()] + \
         "                if (playerReady) {\n" \
-        "                    space.setSolid(*solid);\n" \
+        "                    space.setSolid({*solid});\n" \
         "                }\n" + loop[m.end():] + text[b:]
 
 
@@ -1952,7 +1961,7 @@ def arm_pin_from_the_runtime(text):
         r"(?m)^[ \t]*const[ \t]+std::string\*[ \t]+solid[ \t]*=[ \t]*\n"
         r"[ \t]*space\.arenaAt\([^;]*;[ \t]*\n"
         r"[ \t]*if[ \t]*\([ \t]*solid[ \t]*\)[ \t]*\{[ \t]*\n"
-        r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
+        r"[ \t]*space\.setSolid\([ \t]*\{[ \t]*\*solid[ \t]*\}[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n",
         "                if (!runtime->currentArena().empty()) {\n"
         "                    space.setSolid(runtime->currentArena());\n"
         "                }\n", text)
@@ -1974,7 +1983,7 @@ def arm_frozen_pin_added(text):
     a, b = sp
     loop = text[a:b]
     m = re.search(r"(?m)^[ \t]*if[ \t]*\(solid\)[ \t]*\{[ \t]*\n"
-                  r"[ \t]*space\.setSolid\([ \t]*\*solid[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", loop)
+                  r"[ \t]*space\.setSolid\([ \t]*\{[ \t]*\*solid[ \t]*\}[ \t]*\);[ \t]*\n[ \t]*\}[ \t]*\n", loop)
     if not m:
         return text
     return text[:a] + loop[:m.end()] + \
@@ -2775,8 +2784,8 @@ ARMS = [
     # that isolates check 6.
     ("pin-taken-from-the-runtime's-frozen-current-arena (review-6 F1)",
      arm_pin_from_the_runtime, CHK["guard-is-the-lookup"]),
-    ("frozen-runtime-pin-added-alongside-the-geometric-one (review-7 F2)",
-     arm_frozen_pin_added, CHK["pin-not-the-runtime"]),
+    ("frozen-runtime-pin-added-alongside-the-drawn-list-one (review-7 F2)",
+     arm_frozen_pin_added, CHK["pin-is-the-drawn-list"]),
     ("pitch-ignores-the-runtime", arm_pitch_ignores_runtime, CHK["pitch-from-runtime"]),
     ("object pass moved above the arena draw", arm_objects_before_arena,
      CHK["objects-drawn-in-order"]),

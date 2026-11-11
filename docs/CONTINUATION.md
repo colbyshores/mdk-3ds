@@ -1,12 +1,55 @@
 # Phase 2 continuation checkpoint
-Risk: medium — a review remediation whose only shipped-code change is three integer comparisons in the core's
-object loop (`effect_frames == 0` → `<= 0`, the oracle's inverse predicate; `effect_frames` has no writer in the
-port, so no shipped behaviour moves and no golden can distinguish them), plus one gate that every future batch
-runs now refusing a one-case crossing PASS instead of only a zero-case one, plus text in two test scripts and
-three source comments that asserted the doorway crossing was unported after it had been ported. `mdk.elf` md5
-moves `4129b376…` → `3b2a13a86ed2ee39121cf9a312eb8f1a` and the pinned frame is byte-identical to the previous
-one. Medium, not low, because it changes a gate and a shipped predicate; not high, because no interface, data
-format, state transition, memory ownership, or hot path changed.
+Risk: high — the shipped collision pin changes on BOTH frontends. `ArenaSpace::setSolid` loses its
+one-name form and takes the LIST the oracle passes (`ArenaSpace.cs:45-55`), and
+`ScriptRuntime::solidArenas()` — the scripts' drawn list, current arena plus the active second
+(`ScriptRuntime.cs:265-278`, handed over at `Viewer.cs:533`) — replaces the geometric arena under
+Kurt's feet as what the frontends collide against. So which BSPs are solid during a door walk, and
+what happens while Kurt falls out of the world, change on the 3DS and on the Linux target. Pinned by
+a new executed `vm_tests` case (the level-7 crossing, both names solid, and the one-name defect
+shown losing its floor) and by both frontend shape gates; the pinned frame is byte-identical because
+level 3 frame 1 is a spawn, where the two rules agree. Not high for its size — the diff is small —
+but for what it decides.
+
+**Batch 137 (iteration 4 of the ledger row `3ds.collision-doors`) — the frontend pin becomes the
+oracle's drawn list, and review-3 is closed 2/2 with one finding owner-only.** This is priority item
+**(1)** of batches 134-136. `ArenaSpace::setSolid(const std::string&)` is replaced by
+`setSolid(const std::vector<std::string>&)` — clear, then add the arena each name resolves to, first
+match wins, an unresolvable name (including the `""` the scripts use for "no arena") adds nothing
+without clearing what came before it — and the one-name form is gone rather than kept as an overload,
+because the arity mismatch was the defect. `ScriptRuntime::solidArenas()` derives the drawn list from
+`currentArena_`/`secondArena_`/`secondActive_` into a member scratch (the C# keeps `_solidFirst` for
+the same reason); `UpdateArenas` is unported, so the list is derived, not cached, and the comment
+states why that is the same value wherever a frontend reads it. Both frontends now pin
+`if (runtime) space.setSolid(runtime->solidArenas()); else <geometric lookup>` after the camera step;
+the geometric stand-in survives only in the no-runtime (asset-gate) branch and the spawn pin is
+untouched. The snowboard half is written and guarded on `ridesBoard_` (no writer yet) because it is
+the ONE case where a one-name pin is the oracle's value — review-3 open question 4. New executed pin:
+`vm_tests`' `SolidArenasAreTheDrawnListAndThePinTakesBoth` walks the oracle's level-7
+`DoorArenaTests` geometry and proves that with both names pinned a downward move inside the room
+Kurt left keeps its floor while pinning the current arena alone loses it — review-6 F1 executed, and
+mutation M1 shows it reddening. `frontend_solid_pin_test.sh` went 10/10 → 12 checks/12 arms (the
+geometric check split into drawn-list and fallback, each with its own arm) and
+`main_3ds_flow_test.sh`'s check 6 now requires the list instead of forbidding a runtime pin; both
+still adjudicate every arm red (56 there, 24 green probes) and mutation M2 reddens both on the real
+file. **Review-3 (DeepSeek V4.1 Flash TH, verdict COMPLETE, 3 Low, no Critical/High): all three
+reproduced, none rebutted.** **F1 fixed** — the crossing PASS line claimed the non-oracle lines were
+"named in the golden's header" and a golden is byte-compared so it cannot carry prose; they are named
+above `crossingDump` and the text now says that and why. **F2 fixed** — the required-case rule was
+pinned by nothing in the tree, so the adjudication moved into `judge_crossing_output` with eight
+seeded arms (`crossing_arm_failures`) that run inside the gate on every `tools/check.sh` (check.sh is
+owner-protected, so no `--selftest` call could be wired in) and via `--selftest`; mutation M3 shrinks
+`SCRIPTS_REQUIRED_CASES` to `{"4"}` and the selftest reddens exactly that arm. **F3 owner-only** —
+protecting the constant means editing `PROTECTED` or the ledger. Gates: `make -C tests/scripts
+test_crossing` → `All crossing cases match the oracle.` rc 0 (2 cases); `make -C tests/scripts` →
+`All cases match the oracle.` rc 0 (**570** PASS, 0 FAIL, 0 SKIP — the 570th is this batch's);
+`DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED` rc 0 with `note: crossing selftest: 8
+seeded arms, all adjudicated as claimed`; `make -C mdk_3ds` → rc 0, `mdk.elf`
+`e29531aecceedd197df85a497f876a31` (moved: the pin is shipped code); `cmake --build build-linux` →
+rc 0. Emulator (`emurun.sh`, `:99`, mandarine md5 `0d2adab6`, rc 0): level 7 idle, frame 2460/2520,
+`objects=7 plays=1` — no regression, **no crossing exercised**. Frame
+`docs/frames/2026-11-11-drawn-list-pin.png` is byte-identical to its predecessor, as expected for a
+batch whose pin cannot differ at a spawn. Measurements, three mutations, not-evidenced list:
+`docs/evidence/2026-11-11-drawn-list-pin.txt`; narrative: `docs/PROGRESS_LOG.md` "Iteration 137".
 
 **Batch 136 (iteration 3 of the ledger row `3ds.collision-doors`) — review-2 remediated 4/4: the record stops
 saying the crossing is unported, and the crossing gate now requires both cases.**
@@ -1216,6 +1259,39 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 137)
+**The row's acceptance command passes, the gate suite runs it and refuses a one-case PASS, and the
+frontends now collide against the oracle's drawn list instead of a geometric stand-in.** What is left
+on `3ds.collision-doors`, in priority order: **(1) a crossing capture.** The 3DS rest pitch and the
+drawn-list pin both read a `currentArena()` that moves, and no capture has ever shown it: an
+`emurun.sh` run that walks level 4 through connection 1012 (or level 7 through 1001) on `:99` would
+close review-1 OQ3, review-2 OQ3 and review-3 OQ3 at once, and it needs a scripted walk in the
+harness, so it is not free. **(2) `LoadArena` + `PullDoors`** (`ScriptRuntime.cs:615-643`): an arena
+being loaded takes the doors leading into it out of its neighbours and turns them around
+(`ObjectBehaviors.MoveDoor`, `_residentArena`), and until it lands a door can stay behind in the
+neighbour after Kurt crosses. It is what `DoorArenaTests` actually asserts, and the drawn-list
+dependency it named is now ported, so this is the remaining collision gap. **(3) the hatch pin.** DTI
+dirs 6/7 are every doorway on level 5 and half of 3/6/8; the arms are ported and demonstrated on
+shipped geometry but no oracle assertion covers them, and the dotnet probe that would produce one is
+gone (`/tmp/kilo/dotnet10` is absent and `/tmp/kilo` is not writable by this uid — an
+owner/environment item). **(4) `FollowArenas`'s golden**, which needs `PreloadArena`
+(`ScriptRuntime.cs:602-614`) — the drawn-list half of its dependency landed here. **(5)
+`TeleportKurt`**, the only other way the oracle moves `currentArena_` and the only way into an arena
+no doorway leads to; it is also what would let the crossing goldens' first-tick lines become oracle
+assertions instead of two rules that agree. **(6) the snowboard branch of `solidArenas()`** is written
+and unreachable: `ridesBoard_` has no writer until the ride slice, so that half is compile-verified
+only. **Owner-only and still owed:** review-1 **F4** (`ralph/builder.md` is `PROTECTED` and
+modified-unstaged — it now carries the TH reviewer identity and the search-scope rule; a batch can
+neither commit nor revert it), review-3 **F3** (make `SCRIPTS_REQUIRED_CASES` owner-protected: it
+lives in `gates_core_parity.py`, which is not in `PROTECTED`; the new seeded arms make a shrink loud
+on the next gate run rather than silent, which is the most a batch can do), review-4's F2-F8, the
+`3ds.hud-canvas` acceptance cell (`emurun.sh --expect hud` has no such flag), and a decision on
+whether the gate suite should ever run all 570 golden cases (measured 7m27s warm, so today
+`gates_core_parity` runs only the crossing target). **Still open and not touched:** every `hw.*` row
+(no Old-3DS hardware in hand, no `mdk_3ds/tools/hw_cycle.sh`), the Phase 2 RE sweep, and the two
+standing owner blocks (`spec.voice-pool`, `re.phase-2-sweep`). Old-3DS performance readiness remains
+unmeasured and stays open.
 
 ## NEXT (batch 136)
 **The row's acceptance command passes, is run by the gate suite, and can no longer be satisfied by one of its

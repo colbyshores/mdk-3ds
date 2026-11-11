@@ -701,6 +701,30 @@ void ScriptRuntime::runControllers() {
     }
 }
 
+const std::vector<std::string>& ScriptRuntime::solidArenas() const {
+    // C# ScriptRuntime.SolidArenas (ScriptRuntime.cs:265-284), whose non-board value
+    // is the drawn list UpdateArenas builds at :660-666: the current arena, then the
+    // second one only while it is active AND named. The snowboard branch (:271-283)
+    // keeps drawn[0] alone, and drawn[0] is always the current arena because :661
+    // adds it unconditionally -- so the board case is this list without the second,
+    // which is what the `!ridesBoard_` half below encodes. The ride slice is
+    // unported, so ridesBoard_ is false on every tick the corpus has and that half
+    // is not reachable yet; it is here so the rule is the C#'s the day it lands.
+    //
+    // The current arena goes in even when it is "", exactly as :661 does: the empty
+    // name is ArenaSpace's to drop (its C# Named() finds no arena called ""), not
+    // this function's.
+    solidArenas_.clear();
+    solidArenas_.push_back(currentArena_);
+    if (!ridesBoard_ && secondActive_ && !secondArena_.empty()) {
+        // Both rooms are solid, which is the whole point of the list: move() sweeps
+        // element 0 first and the rest as the free pass (arena_space.cpp), so the
+        // room behind the door Kurt came through keeps its floor.
+        solidArenas_.push_back(secondArena_);
+    }
+    return solidArenas_;
+}
+
 void ScriptRuntime::showArena(const std::string& arena) {
     if (arena.empty() || arena == "NONE") {
         secondArena_ = "";

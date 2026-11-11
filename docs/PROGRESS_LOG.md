@@ -24335,3 +24335,100 @@ can distinguish `== 0` from `<= 0`; no capture shows a doorway crossing on the 3
 sets `FlagChangesArena` is still unknown (review-2 open question 1); whether the gate suite should ever run all
 569 cases is an owner decision (open question 4). `ralph/builder.md` is still modified-unstaged and `PROTECTED`
 (review-1 F4, owner-only): this batch staged its own paths by name and did not sweep it in.
+
+## Iteration 137 — batch 137: the frontend pin becomes the oracle's drawn list — `ArenaSpace::setSolid` takes the names the C# passes, and review-3 is closed 2/2 with one owner-only
+
+**Ledger row:** `3ds.collision-doors`, attempt 4 of 8, acceptance `make -C tests/scripts
+test_crossing`. This is priority item **(1) "the frontend pin"** from batch 134-136's NEXT, and it
+is the first batch of this row that changes what the shipped frontends *do* rather than what the
+record says about it.
+
+**Prior-solution lookup.** `knowledge_search` on the `mdk-sdl` KB returned `game/arena_space.h`'s
+own `setSolid` note, `arena_space.cpp`'s move, and `frontend_solid_pin_test.sh` — i.e. the port's
+own account of the stand-in, which is what this batch had to make true. Obsidian MCP and Cognee MCP
+are not exposed as tools in this Pi session, so neither was consulted over the wire; the vault
+fallback was not needed because the KB and the repository carried the whole history (review-6 F1,
+review-7 F1, review-8 F1 are all recorded in the files this batch edits). That is recorded rather
+than glossed, per AGENTS.md P9.
+
+**What landed.** `ArenaSpace::setSolid(const std::string&)` is gone; the only form is
+`setSolid(const std::vector<std::string>&)`, transliterated from `ArenaSpace.cs:45-55` — clear, then
+add the arena each name resolves to, first match wins, an unresolvable name (including the `""` the
+scripts use for "no arena") adds nothing without clearing what came before it, an empty list pins
+nothing. Replacing the signature rather than overloading it is deliberate: the arity mismatch *was*
+the defect, and a one-name overload left the trap armed. `ScriptRuntime::solidArenas()` is the
+oracle's `SolidArenas` (`ScriptRuntime.cs:265-284`): the drawn list from `UpdateArenas` (:660-666) —
+current arena, plus the second while it is active and named — built into a member scratch for the
+C#'s own reason (`_solidFirst`, ":284 kept: no list per step"). `UpdateArenas` is not ported, so the
+list is derived from the three fields it reads rather than cached, and the comment states why that is
+the same value wherever a frontend can read it. Both frontends now do
+`if (runtime) space.setSolid(runtime->solidArenas()); else <geometric lookup>` at the point the C#
+evaluates `SetSolid` (after the camera, `Viewer.cs:533`); the geometric stand-in survives only in the
+no-runtime branch, where there is no drawn list to read, and the spawn pin is untouched. The
+snowboard half of `SolidArenas` (on the board Kurt collides with his own arena alone) is written and
+guarded on `ridesBoard_`, which no writer sets yet — it is the one case where a one-name pin *is* the
+oracle's value, which is review-3 open question 4's over-generalisation, so the code says it.
+
+**The new executed pin.** `vm_tests`' `SolidArenasAreTheDrawnListAndThePinTakesBoth` walks the
+oracle's own level-7 `DoorArenaTests` geometry (corridor `CDANT_1`, room `DANT_2`, connection 1001,
+plane y = 673, floor z = −3) and asserts the list before the first tick (the single `""`), after the
+first tick (`CDANT_1` alone), and after the crossing (`DANT_2`, `CDANT_1` active, in that order) —
+then pins both names and proves a downward move inside the room Kurt left still finds its floor,
+while pinning the current arena alone loses it. That last pair is review-6 F1's defect executed on
+shipped geometry instead of argued. Mutation M1 in `docs/evidence/2026-11-11-drawn-list-pin.txt` §3
+shows it: dropping the second from `solidArenas()` reddens three checks including `both.hit()`.
+
+**The gates that had to move with it.** `frontend_solid_pin_test.sh` grew from 10 checks/10 arms to
+12/12: "the refresh is geometric" split into "with a runtime it is the drawn list" and "without one it
+is geometric", each with its own arm, and the single-name check now requires exactly one refresh per
+branch. `main_3ds_flow_test.sh`'s check 6 stopped forbidding a runtime pin and started requiring the
+list (`solidArenas()` present, `currentArena()` absent, two sites); its arms moved to the new shapes
+and it still adjudicates 56 arms red with 24 probes green. Both files' arms were re-run after the
+change, and mutation M2 (the 3DS branch back to `currentArena()`) reddens both gates on the real file,
+not only in the arm harness.
+
+**Review-3 (`logs/ralph-pi/run-20261110-230107/review-3.md`, DeepSeek V4.1 Flash TH, verdict
+COMPLETE, three Low findings, no Critical/High).** All three were reproduced; none is rebutted.
+**F1 fixed**: the crossing PASS line claimed the non-oracle lines "are named in the golden's header",
+and no golden has a header — a golden is compared byte-for-byte, so it *cannot* carry prose. The
+lines were already named, in the comment above `crossingDump`; the PASS text now points there and
+says why a golden cannot hold it. The two record sentences batch 135 wrote ("the golden's header now
+names…") are corrected below rather than rewritten in place. **F2 fixed**: the required-case rule that
+review-2 F2 bought was pinned by nothing in the tree, so the adjudication was split out of the
+subprocess into `judge_crossing_output` and given eight seeded arms (`crossing_arm_failures`), which
+run *inside* the gate on every `tools/check.sh` — `tools/check.sh` is owner-protected, so a
+`--selftest` call could not be wired in and the arms ride with the gate they pin — and are also
+printable via `--selftest`. Mutation M3 shrinks `SCRIPTS_REQUIRED_CASES` to `{"4"}` and the selftest
+reddens exactly the arm review-3 named. **F3 not done, owner-only**: making the constant itself
+protected means editing `gates_batch_integrity.py`'s `PROTECTED` list or the ledger, both outside a
+batch. **Open question 4** is closed in the code (the board case is stated where it is written).
+**Open question 3** (no crossing capture) is unchanged and still the row's biggest hole. **Open
+question 1** — a 0-byte `review-3.md` at dispatch — is a harness defect outside this repository.
+
+**Gates, actual results.** `make -C tests/scripts test_crossing` → `All crossing cases match the
+oracle.` rc 0, 2 cases. `make -C tests/scripts` → `All cases match the oracle.` rc 0, **570** PASS /
+0 FAIL / 0 SKIP (569 before; the new one is this batch's). `sh tests/scripts/frontend_solid_pin_test.sh`
+→ `PASS FrontendSolidPin (12 checks, 12 arms adjudicated red)`. `sh tests/scripts/main_3ds_flow_test.sh`
+→ `PASS Main3dsFlow (20 checks, 56 arms adjudicated red, 24 probes green)`.
+`python3 tools/runner/gates_core_parity.py --selftest` → `CROSSING SELFTEST: PASS (8 arms)`.
+`DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED` rc 0, with `note: crossing target: …
+2 crossing case(s): L4, L7` and the new `note: crossing selftest: 8 seeded arms, all adjudicated as
+claimed`. `make -C mdk_3ds` → rc 0, `mdk.elf` `e29531aecceedd197df85a497f876a31` (moved, as it must:
+the pin is shipped code now). `cmake --build build-linux` → rc 0. Emulator (`emurun.sh`, `:99`,
+mandarine md5 `0d2adab6`, rc 0): level 7 idle, frame 2460 by the deadline / 2520 after the reap,
+`objects=7 plays=1 voices=0` — no regression, **no crossing exercised**. Frame
+`docs/frames/2026-11-11-drawn-list-pin.png` is byte-identical to its predecessor, disclosed: at level
+3 frame 1 the drawn list and the geometric lookup answer the same arena. Measurements, the three
+mutations and the not-evidenced list: `docs/evidence/2026-11-11-drawn-list-pin.txt`.
+
+**Correction to the record (review-3 F1).** Iteration 135's entry above says the golden's header was
+rewritten to name the non-oracle lines, and iteration 136's repeats the claim through the PASS text.
+Neither is what the artifacts show: the goldens are byte-compared and carry no header, and the naming
+lives in the comment above `crossingDump`. The claim is left in place where it was written, as the
+record of what was believed then; batch 137 is where it stopped being said.
+
+**Still owed by an owner:** review-1 **F4** / review-3's note — `ralph/builder.md` is `PROTECTED` and
+modified-unstaged (it now documents the TH reviewer identity and the search-scope rule); this batch
+staged its paths by name and did not sweep it in. review-3 **F3** (protect
+`SCRIPTS_REQUIRED_CASES`). review-4's F2-F8. The `3ds.hud-canvas` acceptance cell. Whether the gate
+suite should ever run all 570 cases. Old-3DS performance readiness stays unmeasured and open.

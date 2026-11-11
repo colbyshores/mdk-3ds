@@ -440,6 +440,36 @@ public:
     // behind on a crossing, and whether it still counts as one of Kurt's arenas.
     const std::string& secondArena() const { return secondArena_; }
     bool secondActive() const { return secondActive_; }
+    // C# ScriptRuntime.SolidArenas (ScriptRuntime.cs:265-278): the arenas Kurt
+    // COLLIDES with, which the oracle hands ArenaSpace::setSolid every step
+    // (Viewer.cs:533). It is the DRAWN list -- the current arena plus the active
+    // second, the list UpdateArenas builds at :660-666 -- and NOT the arena under
+    // Kurt's feet: it moves on a doorway crossing or a teleport and stays put while
+    // he falls out of the world.
+    //
+    // UpdateArenas itself is not ported (it also drives object visibility and the
+    // loop sounds), so this DERIVES the list from the three fields it reads instead
+    // of caching a copy of it. That is the same value at every point the oracle reads
+    // SolidArenas: the three fields are written only by the crossing in runTick
+    // (:562-571) and by showArena (:728-755), both inside the tick, and UpdateArenas
+    // runs at the end of that same tick (:935), so a reader outside the tick -- which
+    // is the only place a frontend is -- sees the list the last tick produced. Before
+    // the first tick the C#'s list is empty and this one is the single "" that
+    // resolves to no arena, which is the same collision world: no pin.
+    //
+    // The current arena is pushed UNCONDITIONALLY, as the C# does, so an empty
+    // current arena is a list of one name that ArenaSpace::setSolid cannot resolve
+    // (its C# Named() answers null) rather than a list this function emptied. The
+    // snowboard half is the oracle's too: on the board Kurt collides with his own
+    // arena ALONE (ScriptRuntime.cs:271-283), so the active second drops out. The
+    // ride slice is unported, so ridesBoard_ is false on every tick of the corpus
+    // and that branch cannot be reached yet -- it is here so the rule is the C#'s on
+    // the day the board lands, and it is the one case where a one-name pin IS the
+    // oracle's value.
+    //
+    // The scratch is a member, not a temporary, for the C#'s own reason ("kept: no
+    // list per step", :284): a frontend reads this once per simulation step.
+    const std::vector<std::string>& solidArenas() const;
     // The C# TickCount: the completed simulation ticks. It is zero during the
     // first tick and increments after that tick, as the oracle does.
     int32_t tickCount() const { return tickCount_; }
@@ -622,10 +652,11 @@ private:
     // does the same while CurrentArena is empty), and after that it moves exactly
     // when a move crosses a doorway. A frontend that collides against it must know
     // the first-tick half: review-6 F1 was the frozen pin freezing Kurt's floor at
-    // the arena he was born in, and the frontends still refresh from the geometric
-    // arena (arena_space.h's setSolid note) because the oracle's collision world is
-    // the LIST of the current arena AND the active second (ScriptRuntime.cs:265,
-    // Viewer.cs:533) and ArenaSpace::setSolid takes one name.
+    // the arena he was born in. The frontends do NOT pin this field though -- they
+    // pin solidArenas() below, because the oracle's collision world is the LIST of
+    // the current arena AND the active second (ScriptRuntime.cs:265, Viewer.cs:533)
+    // and one name where the oracle has two drops the room behind the door Kurt came
+    // through.
     std::string currentArena_;
     std::string secondArena_;
     bool secondActive_ = false;
@@ -638,6 +669,9 @@ private:
     // bsps_ and floors_ above.
     std::map<std::string, const std::vector<formats::Dti::Record>*> records_;
     Vec3 kurtPosition_{};
+    // C# _solidFirst (ScriptRuntime.cs:284): the scratch SolidArenas returns so a
+    // per-step read does not allocate. Derived on every read, never cached.
+    mutable std::vector<std::string> solidArenas_;
     // The combat state of a runtime with NO Kurt entity bound (a harness that
     // passes a null Player): kurt() falls back to this, and there is no second
     // copy of it anywhere. With a Player bound, kurt() IS the entity's own.

@@ -58,41 +58,45 @@ public:
     // Adds an arena once (a teleport may add one no connection leads to).
     void add(const formats::Arena* arena);
 
-    // Pins Kurt's arena to the one with that name (C# ArenaSpace.SetSolid). While
-    // set, the move, the sight/crosses probes and bottom() treat it as Kurt's
-    // arena even when his feet leave its bounds -- the sticky arena the original
-    // keeps (arena+0x44e) and the scripts refresh on a crossing. Because it is
-    // sticky, a frontend WITHOUT the scripts has to refresh it itself as Kurt moves
-    // (C# Viewer.cs:533 refreshes it every step). WHAT it refreshes to is not the
-    // same on every frontend, and the difference is measured, not stylistic: the
-    // oracle's value is the SCRIPTS' drawn arenas (ScriptRuntime.cs:265), which
-    // move only when a move crosses a doorway connection (CrossedArena, :791) or a
-    // teleport puts him elsewhere -- they do NOT follow the geometric arena, and in
-    // particular they do not move while he falls out of the world (measured: the
-    // oracle's own pin rows, golden/L7_spawn_fall.txt's account). BOTH frontends
-    // here use the geometric arena under his feet as the stand-in, IN BOTH OF THEIR
-    // BRANCHES -- with a script runtime and without one. They did that because the
-    // connections were unported and ScriptRuntime::currentArena_ was written once,
-    // on the first tick, so pinning the runtime's current arena froze the collision
-    // world at the spawn arena for the whole level. That is not a hypothetical:
-    // review-6 F1 found it on the 3DS frontend and review-7 F1 found the same frozen
-    // pin on the Linux one, which is the frontend that takes the pinned frame. Both
-    // now refresh from the feet,
-    // and tests/scripts/frontend_solid_pin_test.sh reads both frontends for it.
-    // The crossing landed after that (batch 134: ScriptRuntime::crossedArena, and
-    // currentArena_ now moves on a doorway), so the frozen-pin argument no longer
-    // holds -- but the geometric stand-in stays, for the reason at the bottom of this
-    // comment: the oracle's value is a LIST and this takes one name, and the drawn
-    // list it passes is itself not ported. Both stand-ins are better than a pin left
-    // at the spawn. And every frontend must pin at the spawn, because a
-    // Kurt standing outside every arena otherwise leaves bottom() with nothing to
-    // resolve and the fall-out death never fires.
-    // The oracle passes a LIST (the current arena plus the active second) and this
-    // takes one name, so the drawn list is not even expressible here until a
-    // two-name form lands; `_solid` is already a vector and kurt() reads element 0.
-    // Clears the pin if no arena has that name (then the arenas around the feet are
-    // used, as before).
-    void setSolid(const std::string& name);
+    // Pins Kurt's collision arenas to the named ones (C# ArenaSpace.SetSolid,
+    // ArenaSpace.cs:45-55). The list is cleared and then EVERY name is resolved in
+    // order: C# Named() answers the first arena with that name and null for a name
+    // no arena has, so an unknown name -- including the "" the scripts use for "no
+    // arena" -- contributes nothing, and an empty list leaves nothing pinned. While
+    // the pin is non-empty, the move, the sight/crosses probes and bottom() use it
+    // and ignore the arenas around the feet -- the sticky arena the original keeps
+    // (arena+0x44e) -- and `move()` collides with element 0 first and the rest as
+    // the free pass, exactly as the C# does. Because it is sticky it has to be
+    // refreshed every step, which is what the oracle does
+    // (`_space.SetSolid(_scripts.SolidArenas)`, Viewer.cs:533).
+    //
+    // WHAT THE FRONTENDS PASS. With a script runtime, `ScriptRuntime::solidArenas()`:
+    // the oracle's own value, the scripts' DRAWN list (the current arena plus the
+    // active second, ScriptRuntime.cs:265-278 and UpdateArenas :660-666). It moves
+    // when a move crosses a doorway connection (CrossedArena, :791) or a teleport
+    // puts Kurt elsewhere, and it does NOT move while he falls out of the world
+    // (measured: the oracle's own pin rows, golden/L7_spawn_fall.txt's account).
+    // Both frontends pass that now; they used to pass the geometric arena under
+    // Kurt's feet in both of their branches, because `currentArena_` was written
+    // once on the first tick while the connections were unported and pinning it
+    // froze the collision world at the spawn arena for a whole level (review-6 F1
+    // on the 3DS frontend, review-7 F1 on the Linux one, which takes the pinned
+    // frame). Batch 134 ported the crossing and this batch ported the list, so the
+    // frozen-pin argument and the arity argument that replaced it are both gone.
+    //
+    // The branch with NO runtime -- the asset gate, where a level missing its CMI,
+    // bank or sprites archive runs without scripts -- has no drawn list to read, so
+    // it keeps the geometric arena as a stand-in. It is a stand-in, not the oracle's
+    // rule: it follows the feet, so it can re-pin during a fall-out, and it carries
+    // one name, so a door walk leaves the room behind un-solid. It still beats no
+    // pin at all, and tests/scripts/frontend_solid_pin_test.sh reads both frontends
+    // for exactly this two-branch shape.
+    //
+    // Every frontend also pins at the spawn, because a Kurt standing outside every
+    // arena otherwise leaves bottom() with nothing to resolve and the fall-out death
+    // never fires -- and the runtime's list resolves to nothing until its first tick
+    // has set the current arena.
+    void setSolid(const std::vector<std::string>& names);
 
     // Moves Kurt's feet by delta, sliding along faces met obliquely enough
     // ((D·n)^2 <= slideK·|D|^2).
@@ -157,7 +161,7 @@ private:
     // a vector insert relocate an Entry and silently alias a held Bsp* to the
     // wrong arena. unique_ptr keeps each Entry at a stable address.
     std::vector<std::unique_ptr<Entry>> _arenas;
-    std::vector<Bsp*> _solid;   // Kurt's pinned arena (setSolid); empty = those around him by bounds
+    std::vector<Bsp*> _solid;   // Kurt's pinned arenas (setSolid); empty = those around him by bounds
     std::vector<Bsp*> _around;  // scratch for the move's arena list
     std::vector<Bsp*> _kurts;   // scratch for kurts()/sight()
 };

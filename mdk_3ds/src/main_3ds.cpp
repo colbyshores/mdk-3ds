@@ -582,15 +582,17 @@ int main(int argc, char** argv) {
         }
         follow = mdk::FollowCamera();
         // Pin Kurt's arena to the one around the spawn, as the fresh level's start.
-        // The step loop refreshes it from here on (from the runtime's current arena
-        // when there is one, geometrically when there is not: the C# refreshes it
-        // every step, Viewer.cs:533); what the spawn pin is FOR is the case the loop
-        // CANNOT supply, a Kurt standing outside every arena and a runtime that has
-        // not completed its first tick: with no pin at all, bottom() resolves
-        // nothing, the fall-out death never fires and he falls forever.
+        // The step loop refreshes it from here on (from the runtime's DRAWN LIST --
+        // current arena plus the active second -- when there is one, geometrically
+        // when there is not: the C# refreshes it every step, Viewer.cs:533); what the
+        // spawn pin is FOR is the case the loop CANNOT supply, a Kurt standing outside
+        // every arena and a runtime that has not completed its first tick, when the
+        // drawn list is the empty name that resolves to no arena at all: with no pin,
+        // bottom() resolves nothing, the fall-out death never fires and he falls
+        // forever.
         const std::string* here = space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
         if (here) {
-            space.setSolid(*here);
+            space.setSolid({*here});
         }
         mdk::log3dsPrintf("spawn: feet=(%.1f,%.1f,%.1f) yaw=%.1f health=%d arenas=%d",
                           player.feet.x, player.feet.y, player.feet.z, player.yaw,
@@ -754,10 +756,7 @@ int main(int argc, char** argv) {
                 // for a whole level. Batch 134 ported the DTI doorway crossing (the
                 // `crossedArena` call where `currentArena_` is set in runTick), so the
                 // input moves when a move crosses a connection and the formula here is
-                // the oracle's on a live input, not a frozen one. What is still a
-                // stand-in is the collision pin below this loop, which follows the
-                // geometric arena under Kurt's feet because `setSolid` takes one name
-                // and the oracle passes two.
+                // the oracle's on a live input, not a frozen one.
                 // No capture yet shows a crossing on this frontend: the emulator runs
                 // idle a level, so the pitch change is unmeasured (docs/PROGRESS_LOG.md).
                 float target = mdk::follow_camera::kDefaultPitch;
@@ -784,45 +783,45 @@ int main(int argc, char** argv) {
                 // bottom() -- which DOES consider any arena holding his feet --
                 // would report that neighbour's bottom and fire the fall-out death.
                 //
-                // WHAT IT FOLLOWS IS THE GEOMETRIC ARENA UNDER KURT'S FEET, with a
-                // runtime and without one, and that is a STAND-IN, not the oracle's
-                // rule. The oracle's `SolidArenas` is the scripts' DRAWN list -- the
-                // current arena plus the active second (ScriptRuntime.cs:265-278) --
-                // and `CurrentArena` moves only when a move crosses a doorway
-                // CONNECTION (CrossedArena, :791-803, over the DTI type-6 records)
-                // or a teleport puts him elsewhere. The crossing IS ported now (batch
-                // 134: findConnections and crossedArena in script_runtime.cpp, called
-                // from the tick), so `currentArena_` moves on a doorway and the frozen-
-                // at-spawn argument that used to sit here is gone. What keeps this a
-                // stand-in is an ARITY: the oracle hands `SetSolid` a LIST and
-                // `ArenaSpace::setSolid` takes ONE name (game/arena_space.h), and the
-                // drawn list itself is not ported. Pinning `runtime->currentArena()`
-                // would therefore drop the ACTIVE SECOND -- the room behind the door
-                // Kurt just came through -- which is the class review-6 F1 found when
-                // batch 99 pinned a `currentArena_` that was, at that point, frozen at
-                // the spawn: walking through an open door dropped Kurt through the room
-                // he walked into. One name that is the wrong one beats one name that is
-                // stale; neither is the oracle's value.
+                // WITH A RUNTIME THIS IS THE ORACLE'S OWN VALUE, not a stand-in:
+                // `ScriptRuntime::solidArenas()` is the scripts' DRAWN list -- the
+                // current arena plus the active second (ScriptRuntime.cs:265-278,
+                // UpdateArenas :660-666) -- which is exactly what Viewer.cs:533 hands
+                // `SetSolid`. It moves when a move crosses a doorway CONNECTION
+                // (CrossedArena, :791-803, over the DTI type-6 records) and it does
+                // NOT follow the feet, so it holds while Kurt falls out of the world
+                // instead of re-pinning below the arena he left (review-8 F1's four
+                // columns of 1681). It is read AFTER `follow.update` because that is
+                // where the C# evaluates SetSolid and the camera's clearance can move
+                // Kurt into another arena.
                 //
-                // The geometric pin is wrong in the other direction and by less: it
-                // can re-pin during a fall-out, which is review-8 F1's 4 columns of
-                // 1681, because the oracle's pin does NOT move while he falls out of
-                // the world. The fix is the drawn list, not a cleverer stand-in: port
-                // the scripts' drawn-arena list (what LoadArena + PullDoors maintain,
-                // ScriptRuntime.cs:615-643) and give `ArenaSpace::setSolid` the TWO
-                // names the C# passes, since this one keeps `_solid[0]` as Kurt's
-                // arena. Named as the next collision slice in docs/CONTINUATION.md.
+                // What it deliberately is NOT is `currentArena()` alone. One name
+                // where the oracle passes two drops the ACTIVE SECOND -- the room
+                // behind the door Kurt just came through -- and `move()` sweeps only
+                // the pinned arenas, so he finds no floor in the room he left, drops
+                // through it, and `bottom()` fires the fall-out death into a respawn
+                // loop. That is review-6 F1's defect class (batch 99 shipped it) and
+                // both `tests/scripts/main_3ds_flow_test.sh` and
+                // `tests/scripts/frontend_solid_pin_test.sh` keep it red.
                 //
-                // It is probed AGAIN rather than reusing the pitch's `here`, because
-                // the C# evaluates SetSolid after UpdateCamera and the camera's
-                // clearance can shove Kurt into a different arena than the one his
-                // step started in. The pin is deliberately NOT cleared when he is
-                // outside every arena: that is the fall-out case, and bottom() still
-                // has to resolve an arena for the death to fire at all.
-                const std::string* solid =
-                    space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
-                if (solid) {
-                    space.setSolid(*solid);
+                // The branch with NO runtime is the asset gate: a level whose CMI,
+                // bank or sprites archive is missing runs without scripts, so there
+                // is no drawn list to read and the geometric arena under his feet is
+                // the stand-in. It is a stand-in in both directions -- it can re-pin
+                // during a fall-out, and it carries one name -- and it is kept because
+                // it still beats a pin left at the spawn. It is probed AGAIN rather
+                // than reusing the pitch's `here` for the same reason the C# evaluates
+                // SetSolid after UpdateCamera. It is NOT cleared when he is outside
+                // every arena: that is the fall-out case, and `bottom()` still has to
+                // resolve an arena for the death to fire at all.
+                if (runtime) {
+                    space.setSolid(runtime->solidArenas());
+                } else {
+                    const std::string* solid =
+                        space.arenaAt(mdk::Vec{player.feet.x, player.feet.y, player.feet.z});
+                    if (solid) {
+                        space.setSolid({*solid});
+                    }
                 }
                 pending -= step;
                 steps++;
