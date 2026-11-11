@@ -369,6 +369,53 @@ check "F5 and both real emulators survive the filter" "4102
 check "F5 an unreadable comm is kept: not ruling out is not ruling in" "4101" \
       "$(candidates_of 4101)"
 
+# --- the `--expect` adjudication, lifted and RUN -----------------------------
+#
+# `--expect hud` is a ledger row's acceptance command, and the only thing that
+# makes an acceptance command evidence is that it fails when the thing did not
+# happen. It cannot be exercised here end to end -- that needs the emulator, a
+# display and a minute -- so the function is lifted out of the real harness (not
+# retyped, or this certifies a copy) and run against synthetic guest logs.
+EXPECT_FN="$(awk '/^# --- expectations ---/{f=1;next} /^# --- end expectations/{f=0} f' "$EMU")"
+check "the expectation block was lifted from emurun.sh (non-vacuity)" "1" \
+      "$(printf '%s\n' "$EXPECT_FN" | grep -q "expect_check()" && echo 1 || echo 0)"
+check "and the lift is syntactically complete, not a truncation of it" "0" \
+      "$(printf '%s\n' "$EXPECT_FN" | bash -n 2>/dev/null; printf '%s' "$?")"
+
+expect_rc() { # <log content> <name> -> the adjudication's exit code
+    local content="$1" name="${2:-hud}"
+    local log; log="$(mktemp)"
+    printf '%s\n' "$content" > "$log"
+    ( eval "$EXPECT_FN"; expect_check "$name" "$log" ) >/dev/null 2>&1
+    local rc=$?
+    rm -f "$log"
+    printf '%s' "$rc"
+}
+
+check "hud: a canvas line with quads and draws above zero passes" "0" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)')"
+check "hud: no canvas line at all fails" "1" \
+      "$(expect_rc 'frame 60 elapsed=1.0000 steps=60')"
+check "hud: quads=0 fails -- the frontend asked for nothing" "1" \
+      "$(expect_rc 'canvas: quads=0 draws=0 mesh=-1 corners=0 eyes=1 (canvas frame 1)')"
+check "hud: queued but never drawn fails (quads 12, draws 0)" "1" \
+      "$(expect_rc 'canvas: quads=12 draws=0 mesh=3 corners=72 eyes=1 (canvas frame 1)')"
+check "hud: a canvas line with no numbers fails, not a silent pass" "1" \
+      "$(expect_rc 'canvas: drew something')"
+check "hud: a later frame's line counts, so one good frame is enough" "0" \
+      "$(expect_rc 'frame 1 elapsed=0.0166 steps=1
+canvas: quads=4 draws=4 mesh=3 corners=24 eyes=1 (canvas frame 1)')"
+check "hud: an unrelated line sharing the 'canvas: ' prefix does not shadow the evidence" "0" \
+      "$(expect_rc 'canvas: stream mesh 384 corners = 7 KB linear
+canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)')"
+check "hud: and the mesh note on its own is NOT the evidence" "1" \
+      "$(expect_rc 'canvas: stream mesh 384 corners = 7 KB linear')"
+check "hud: the LAST canvas line decides, so a HUD that stopped fails" "1" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)
+canvas: quads=0 draws=0 mesh=3 corners=0 eyes=1 (canvas frame 61)')"
+check "an unknown expectation is a usage error (2), not a failed run (7)" "2" \
+      "$(expect_rc 'canvas: quads=12 draws=12' menu)"
+
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership)"
     exit 0

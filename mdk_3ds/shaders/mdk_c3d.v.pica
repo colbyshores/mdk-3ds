@@ -32,6 +32,25 @@
 ; original's shader picks the frame with `uv.y = (frac(uv.y) + frame) /
 ; frame_count`).
 ;
+; THE TINT, at uniform register 5.
+;
+; WHY A UNIFORM AND NOT A VERTEX COLOUR. The 2D canvas tints its quads: the
+; skull fades in by drawing the sprite multiplied by an alpha, and a flat
+; rectangle is a colour with no texture at all. The Vulkan backend carries that
+; tint as a per-draw push constant (renderer_vk.cpp's PushConstants::colour), so
+; the seam already treats the tint as PER DRAW, not per vertex -- and the
+; original's shader does the same thing (`color * tint` over a material tint,
+; shaders/palette.hlsl). A vertex colour attribute would be the other design:
+; it would widen every vertex in the game by four bytes to carry a value that
+; is constant across a whole draw, and the world's surfaces are unlit and
+; untinted, so 100% of the arena's vertices would carry a constant.
+;
+; It is a vec4 and not a packed word on purpose: the four channels arrive as
+; four floats, so there is no byte order to get wrong. The two colour byte
+; orders this backend already had to measure (the clear word and the texel,
+; pica_matrix.h) are both pinned; a fifth, unverifiable one was avoided
+; instead of added.
+;
 ; Attributes (bound by C3D_AttrInfo):
 ;   v0 = position (float3)
 ;   v1 = texcoord (float2)
@@ -40,7 +59,8 @@
 ; uploaded: the original look's world surfaces are unlit (the palette
 ; decides the colour) and the flat-coloured surfaces are drawn with a
 ; one-pixel texture of that colour, so the colour never reaches the
-; fragment stage. The output colour is therefore white.
+; fragment stage. The output colour is the tint uniform, which every
+; untinted draw leaves at white.
 ; ============================================================================
 
 .constf constants(0.0, 1.0, -1.0, 0.5)
@@ -61,6 +81,10 @@
 ; The UV transform, in uniform register 4: x and y are the scale, z and w
 ; are the offset. A single vec4, not an array.
 .fvec uvtransform
+
+; The tint, in uniform register 5. White for every draw that does not ask for
+; a colour; the 2D canvas writes it per draw.
+.fvec tint
 
 .entry vmain
 .proc vmain
@@ -103,7 +127,11 @@
     dp4 outpos.z, mvp[2], r0
     dp4 outpos.w, mvp[3], r0
 
-    mov outclr, ones
+    ; THE TINT IS THE PRIMARY COLOUR. An untinted draw has white here, and the
+    ; combiner's REPLACE(texture) ignores this register entirely; the canvas's
+    ; draws use MODULATE(texture, primary), which is the oracle's `color * tint`
+    ; (shaders/palette.hlsl) including its alpha, which is what fades the skull.
+    mov outclr, tint
 
     ; The texture coordinate, scaled and offset for the padded texture.
     mov r1, uvtransform

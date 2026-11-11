@@ -69,7 +69,15 @@ private:
         int32_t hotspotY = 0;
     };
 
-    void loadImage(const formats::Bni& sprites, const char* name, Image* out);
+    // The palette is a parameter and not just the `palette_` id, because the two
+    // backends need different things: the seam's index-texture call takes the
+    // palette BYTES as well as the id, the Vulkan backend ignores the bytes and
+    // samples the palette at draw time through the id, and the Citro3D backend
+    // cannot make the texture at all without the bytes (it expands the indices on
+    // the CPU, renderer_c3d.cpp). Passing nullptr here used to work on Linux and
+    // refused every HUD image on the 3DS.
+    void loadImage(const formats::Bni& sprites, const char* name, Image* out,
+                   const formats::Palette& palette);
     void drawImage(const Image& image, float x, float y, const Colour& tint);
     void drawNumber(int32_t value, float centreX, float y);
     void drawInventory(const HudState& state);

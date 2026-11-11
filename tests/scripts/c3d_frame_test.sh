@@ -2377,13 +2377,21 @@ def arm_loop_bound(text, old, new):
 def arm_canvas_quad_emits(text, stmt):
     """Give mdk_render_canvas_quad a body that reaches the GPU, which is what a
     HUD batch writes if it reads the seam contract as "do not flush" instead of
-    "the queue is the only way" (review-3 F1)."""
-    one = " void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* q) { (void)r; (void)q; }"
-    if one not in text:
+    "the queue is the only way" (review-3 F1).
+
+    The seam is found by its SIGNATURE and not by its body. It used to be found by
+    matching the whole one-line stub, which meant the arm could only ever mutate a
+    stub: once the seam grew a real body the mutation matched nothing, the arm
+    "changed nothing", and the invariant it exists to certify went uncertified with
+    the gate still green -- review-14 F3's class from the other side. The renderer
+    parameter's name is read out of the signature too, so renaming it cannot route
+    the arm around the check (review-10 F6's lesson, applied to the arms instead of
+    the checks). `stmt` spells the parameter `@`."""
+    m = re.search(r"void[ \t]+mdk_render_canvas_quad[ \t]*\(([^)]*)\)[ \t]*\{", text)
+    if not m:
         return text
-    return text.replace(one,
-                        " void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* q) {\n"
-                        "    (void)r; (void)q;\n    " + stmt + "\n }", 1)
+    param = m.group(1).split(",")[0].split()[-1]
+    return text[:m.end()] + "\n    " + stmt.replace("@", param) + "\n" + text[m.end():]
 
 
 real = adjudicate(SRC)
@@ -2412,8 +2420,13 @@ ARMS = [
      # that exists only in a comment in this file -- the emitter is `replayQueue`. The
      # mutant never compiled, so it was a mutant of nothing (review-14 F3's class), and
      # the check it claimed to isolate was being certified by text no compiler accepts.
-     lambda s: re.sub(r"(void mdk_render_canvas_begin\(MdkRenderer r\) \{)",
-                      r"\1\n    replayQueue(asC3d(r));", s, count=1),
+     #
+     # It then used to splice after a literal copy of the seam's signature, which pinned
+     # the parameter's name the way review-10 F6 says a check must not: the seam now
+     # takes `rr`, an arm that cannot find its seam mutates nothing, and a mutation of
+     # nothing certifies nothing. `arm_seam_replay` finds any seam by name, which is
+     # what the two arms beside it already use.
+     lambda s: arm_seam_replay(s, "mdk_render_canvas_begin", "asC3d(rr)"),
      "replay-only-at-frame-end"),
     ("inset-replay-restored",
      lambda s: re.sub(r"(void mdk_render_begin_inset\(MdkRenderer r, const mdk::Inset\* i\) \{)",
@@ -2433,7 +2446,8 @@ ARMS = [
      lambda s: arm_canvas_quad_emits(s, "C3D_DrawArrays(GPU_TRIANGLE_STRIP, 0, 4);"),
      "no-mid-frame-flush"),
     ("canvas-quad-draws-a-record-directly",
-     lambda s: arm_canvas_quad_emits(s, "mdk::MeshDraw rec;\n    drawRecorded(asC3d(r), &rec);"),
+     lambda s: arm_canvas_quad_emits(
+         s, "mdk::MeshDraw rec;\n    drawRecorded(asC3d(@), &rec);"),
      "no-mid-frame-flush"),
     ("diagnostic-guarded-to-one-eye",
      lambda s: arm_guard_loop_statement(s, "drawDiagnostic"),

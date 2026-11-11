@@ -135,6 +135,43 @@ void registers(const float m[16], float out[16]) {
     }
 }
 
+void canvasMatrix(float out[16], float canvasWidth) {
+    // The C#'s CreateOrthographicOffCenter(0, W, H, 0, 0, 1) in the engine's
+    // row-major, row-vector layout: the translation in row 3, and the y scale
+    // NEGATIVE because the canvas's y runs down while the landscape clip's runs
+    // up (the C# gets the same sign from passing bottom and top swapped).
+    float m[16] = {0};
+    m[0] = 2.0f / canvasWidth;
+    m[5] = -2.0f / (float)kCanvasHeight;
+    // THE DEPTH, and it is not zero. `eyeViewProjection` step (A) records that
+    // this GPU's clip z runs [-w, 0] rather than the GL [-w, w]: the scene's own
+    // matrices bake `clip.z -= clip.w` for exactly that reason. A canvas flat at
+    // z = 0 therefore sits precisely on the far clip plane, which is the one place
+    // a rasteriser is entitled to reject the whole triangle. Overlay tests no
+    // depth, so a value in the middle of the range costs nothing and removes the
+    // hazard.
+    //
+    // IT IS NOT THE REASON THE CANVAS IS INVISIBLE, AND THAT IS MEASURED
+    // (2026-10-29, docs/PROGRESS_LOG.md): with z at -0.5 the HUD is still absent
+    // from the capture. It stays because sitting on a clip plane is wrong whether
+    // or not it is the current symptom, not because it fixed anything.
+    m[10] = 0.0f;
+    m[14] = -0.5f;
+    m[12] = -1.0f;
+    m[13] = 1.0f;
+    m[15] = 1.0f;
+
+    // The panel's quarter turn, the same column operation as step (B) of
+    // `eyeViewProjection` above, for the same reason: the canvas is drawn over
+    // the scene into the same portrait target.
+    for (int k = 0; k < 4; k++) {
+        out[k * 4 + 0] = m[k * 4 + 1];
+        out[k * 4 + 1] = -m[k * 4 + 0];
+        out[k * 4 + 2] = m[k * 4 + 2];
+        out[k * 4 + 3] = m[k * 4 + 3];
+    }
+}
+
 DepthState depthStateForPass(Pass pass) {
     // One line per pass, each readable against the oracle line it comes from
     // (Renderer.cs:565,606-607). Nothing here is inferred: a pass that is

@@ -316,6 +316,125 @@ void testTheShaderReadsTheRegistersTheWayTheMatrixMeansThem() {
 }
 
 // ---------------------------------------------------------------------------
+// THE CANVAS MATRIX
+//
+// The 2D canvas is drawn in its own pixel space through its own orthographic
+// projection, and the one thing that projection has to agree with is the SCENE's
+// quarter turn: the panel is portrait and both the world and the HUD are
+// landscape, so if the two rotations differ the HUD lands rotated relative to
+// the picture it is drawn over. On the host there is no panel to look at, so the
+// agreement is pinned against the scene's own recipe instead.
+// ---------------------------------------------------------------------------
+
+// The C#'s canvas projection, expanded the way System.Numerics expands it, from
+// the oracle's own arguments and nothing else: `CreateOrthographicOffCenter(
+// -margin.X, CanvasWidth + margin.X, CanvasHeight + margin.Y, -margin.Y, 0, 1)`
+// at Renderer.cs:736 with the VR margin at zero, so left = 0, right = W,
+// TOP = H, BOTTOM = 0 -- the y arguments are NOT swapped. M11 = 2/(right-left),
+// M22 = 2/(top-bottom), M33 = 1/(near-far), and the translation row the two
+// centres, which is what puts the canvas top (y = 0) at clip MINUS 1. The Vulkan
+// backend is a bit-for-bit copy of this (`renderer_vk.cpp`'s `canvasOrtho`).
+void oracleCanvasOrtho(float out[16], float w, float h) {
+    for (int i = 0; i < 16; i++) {
+        out[i] = 0.0f;
+    }
+    out[0] = 2.0f / (w - 0.0f);
+    out[5] = 2.0f / (h - 0.0f);
+    out[10] = 1.0f / (0.0f - 1.0f);
+    out[12] = (0.0f + w) / (0.0f - w);
+    out[13] = (0.0f + h) / (0.0f - h);
+    out[14] = 0.0f / (0.0f - 1.0f);
+    out[15] = 1.0f;
+}
+
+// The ONE deliberate difference from the oracle, named instead of buried in a
+// constant: this target's landscape clip is y-UP (that is what `eyeViewProjection`
+// consumes and what the scene is drawn through), where the oracle's and Vulkan's
+// are y-DOWN. So the y row is negated, canvas y = 0 goes to clip +1, and the HUD
+// lands on the scene's top-left instead of mirrored off it. See the header note on
+// `canvasMatrix` -- the bug this step exists to prevent is a later batch "aligning
+// the 3DS with the oracle" and painting the HUD upside down.
+void flipToYUpClip(float m[16]) {
+    m[5] = -m[5];
+    m[13] = -m[13];
+}
+
+void testTheCanvasUsesTheScenesQuarterTurn() {
+    // The width `mdk_render_canvas_width` returns on this target: 360 high and as
+    // wide as the rotated framebuffer's aspect makes it (600 for a 240x400 panel).
+    const float kW = 600.0f;
+    const float kH = mdk::kCanvasHeight;
+
+    float canvas[16];
+    mdk::pica::canvasMatrix(canvas, kW);
+
+    // The scene's rotation, taken from the function the scene actually uses. With
+    // an identity view and projection `eyeViewProjection` IS the two conversions
+    // and nothing else, and `testThePicaRecipe` pins that it maps a point to
+    // (y, -x, z-w, w). Composing the oracle's ortho with THAT is the expected
+    // answer, so this row compares the canvas against the scene rather than
+    // against a copy of itself.
+    float rotate[16];
+    mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, rotate);
+    float ortho[16];
+    oracleCanvasOrtho(ortho, kW, kH);
+    flipToYUpClip(ortho);
+
+    // Corners and centre of the canvas, in its own pixels: x right, y DOWN.
+    const float pts[5][2] = {{0.0f, 0.0f},
+                             {kW, 0.0f},
+                             {0.0f, kH},
+                             {kW, kH},
+                             {kW / 2.0f, kH / 2.0f}};
+    for (int i = 0; i < 5; i++) {
+        const float p[4] = {pts[i][0], pts[i][1], 0.0f, 1.0f};
+        float landscape[4];
+        xform(ortho, p, landscape);
+        float want[4];
+        xform(rotate, landscape, want);
+        float got[4];
+        xform(canvas, p, got);
+
+        // The panel position agrees with the scene's, to the bit.
+        PICA_CHECK(got[0] == want[0]);
+        PICA_CHECK(got[1] == want[1]);
+        PICA_CHECK(got[3] == want[3]);
+        // And it is inside the clip volume, or the quad is not drawn at all --
+        // the failure mode every other matrix row in this file is about.
+        PICA_CHECK(got[0] >= -1.0f && got[0] <= 1.0f);
+        PICA_CHECK(got[1] >= -1.0f && got[1] <= 1.0f);
+        // THE THIRD AXIS IS THE ONE THAT WAS OUT. This GPU's clip z runs
+        // [-w, 0] -- `testThePicaRecipe` pins that the scene's own recipe puts a
+        // point at z-w, and the whole reason it does is that range. A canvas flat
+        // at z = 0 sits PRECISELY on the far plane, and a triangle on a clip plane
+        // may be rejected whole, silently, with the x/y the census checks looking
+        // perfect. So the canvas goes to the middle of the range instead, and what
+        // is pinned here is the invariant, not the number: strictly inside.
+        PICA_CHECK(got[2] < 0.0f);
+        PICA_CHECK(got[2] > -got[3]);
+        PICA_CHECK(got[2] == -0.5f * got[3]);
+    }
+
+    // The four corners land on the four corners of the panel, which is the whole
+    // of "the canvas fills the view" (Renderer.cs:735, margin zero). Written out
+    // rather than derived, because which corner goes WHERE is the thing a wrong
+    // sign gets wrong: the canvas's top-left is the panel's TOP-RIGHT, and the
+    // Vulkan backend's y-down spelling would put it at the top-LEFT.
+    float tl[4];
+    const float tlPx[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    xform(canvas, tlPx, tl);
+    PICA_CHECK(tl[0] == 1.0f && tl[1] == 1.0f);
+    float br[4];
+    const float brPx[4] = {kW, kH, 0.0f, 1.0f};
+    xform(canvas, brPx, br);
+    PICA_CHECK(br[0] == -1.0f && br[1] == -1.0f);
+    float mid[4];
+    const float midPx[4] = {kW / 2.0f, kH / 2.0f, 0.0f, 1.0f};
+    xform(canvas, midPx, mid);
+    PICA_CHECK(mid[0] == 0.0f && mid[1] == 0.0f);
+}
+
+// ---------------------------------------------------------------------------
 // THE DEPTH STATE
 //
 // Three things have to agree: which passes test and which write (the oracle's
@@ -773,6 +892,7 @@ int runPicaMatrixTests() {
     testTheWorldComposesOnTheLeftOfTheView();
     testTheRegistersAreColumns();
     testTheShaderReadsTheRegistersTheWayTheMatrixMeansThem();
+    testTheCanvasUsesTheScenesQuarterTurn();
     testTheDepthStateComesFromThePass();
     testTheOpaquePassesDoNotBlend();
     testTheBlendedPassUsesTheOraclesFactors();

@@ -24853,3 +24853,229 @@ this session's tool list; the disk fallback was used narrowly (`grep -rl "Telepo
 a session fault to report, not a lookup that happened. `ralph/builder.md` is PROTECTED and modified-unstaged
 (it is not this batch's edit) and was not swept in: this batch staged explicit paths and never `git add -A`.
 This was attempt 8 of 8 on `3ds.collision-doors`, so the loop stops for an operator after this batch.
+
+## Iteration 142 — batch 142: the 2D canvas lands in the Citro3D queue and the HUD is wired to it — and the HUD does not appear, so the batch ships the seam plus a measured negative, not a picture
+
+**What landed.** `mdk_render_canvas_*` is implemented on the Citro3D backend as queue
+records: `canvas_begin`/`canvas_quad`/`canvas_end` accumulate quads, `canvas_end` uploads
+them as one mesh and adds one record per same-material run (the oracle's own merge,
+`Renderer.cs:340-358`, `:727-745`), and the `Pass::Overlay` marker is what tells
+`drawRecorded` to install the record's `world` verbatim instead of composing it with the
+eye matrix (`Renderer.cs:1073`). The tint is a vertex-shader uniform (`.fvec tint`,
+register 5) with the canvas combiner at `MODULATE(GPU_TEXTURE0, GPU_PRIMARY_COLOR)`; the
+scene keeps `REPLACE(GPU_TEXTURE0)` so no already-measured pixel moves. `pica::canvasMatrix`
+builds the canvas's orthographic projection with the panel's quarter turn, and
+`mdk_3ds/tools/emurun.sh --expect hud` gates on the `canvas:` census line (exit 7).
+`HudView::loadImage` now hands the palette to the texture factory, which the 3DS index
+expansion needs and Vulkan ignores.
+
+**THE EXIT CRITERION IS NOT MET.** The HUD is not visible in the capture. The harness gate
+passes, and it is important to say why that is not the same claim: the gate proves the
+records were queued and that the per-eye replay emitted them, which is a weaker statement
+than "pixels changed". The gap is recorded here and in `docs/OPEN_ITEMS.md` rather than
+papered over by the gate's green.
+
+**The hunt, with the measurement that closed each door.** Every probe below is one emulator
+run on `:99` with the pinned mandarine (md5 `0d2adab6`), level 7, mono, `eyes=1`.
+
+- *Geometry.* The frame census runs on the same `upload` pointer that is handed to
+  `C3D_FVUnifMtx4x4`, and it reports the canvas as the nearest draw: `w=1.0`,
+  `v0=(500.000,287.000,0.000)` → ndc `(-0.59444,-0.66667)`, area `-0.098`. The placement
+  the GPU was told is on the panel. Not the matrix.
+- *The tint uniform and the primary colour.* The scene was drawn with
+  `MODULATE(GPU_TEXTURE0, GPU_PRIMARY_COLOR)` — a combiner that would be black if the
+  primary were zero. The level rendered normally, so `.fvec tint` reaches `outclr` and the
+  fragment primary is `(1,1,1,1)` including its alpha. Not the uniform, not `outclr`, not
+  the TEV's primary source.
+- *The HUD textures.* The canvas combiner was forced to `REPLACE(GPU_PRIMARY_COLOR)`, which
+  reads no texture at all. Nothing appeared. Not the texels, not the palette expansion.
+- *The per-draw matrix write.* `installEye` was made to write the canvas matrix as the frame
+  matrix. The level scrambled, which proves the write reaches the GPU, and the canvas was
+  then placed by it whether or not the per-draw write lands. Nothing appeared. Not the
+  per-draw uniform write.
+- *The GPU command buffer.* `C3D_GetCmdBufUsage()` measured at the end of the frame:
+  **0.113** against `2 × C3D_DEFAULT_CMDBUF_SIZE`. `GPUCMD_Add` is not dropping the frame's
+  last commands, which is the failure mode the canvas (last in the queue) and the diagnostic
+  triangle (last in the frame) would both share. Not a dropped command.
+- *The far clip plane.* `eyeViewProjection` step (A) records this GPU's clip z as `[-w, 0]`,
+  and a canvas flat at z = 0 sits on that plane. The canvas matrix was moved to z = -0.5 and
+  the record confirmed it (`m10=0 m14=-500 m15=1000`). Nothing appeared. The canvas z stays
+  at -0.5 as a correctness fix, with its comment saying plainly that it fixed nothing.
+- *The clipper's fixed-point format.* The whole canvas matrix was scaled by 256, leaving
+  every divided coordinate bit-identical, on the theory that sub-integer clip coordinates
+  collapse. Nothing appeared. Reverted.
+- *A buffer allocated inside a frame.* The canvas mesh is the only canvas resource allocated
+  during a frame; it was moved to `mdk_render_create`, before any frame. Nothing appeared.
+  Reverted.
+
+**The second symptom is older than this batch and is probably the same disease.** The
+diagnostic triangle — identity matrix, clip coordinates ±0.8, `REPLACE(GPU_PRIMARY_COLOR)`,
+depth test off — has never once appeared on a capture; `drawDiagnostic`'s own comment
+records a 69-pixel frame difference where a screen-sized white triangle should be, and the
+shader's w note records an earlier hunt for the same thing. Moving its z to -0.5 changed
+nothing. In this scene every one of the 151 scene draws carries an identity world and so
+takes the frame matrix, which leaves the canvas and the diagnostic as the only two draws
+that (a) write the mvp per draw and (b) hand the clipper sub-integer coordinates — and both
+of those were tested above and rejected. What they still share, and what the next batch
+should attack, is untested: that a draw issued at the tail of the frame does not land.
+
+**Not applicable, checked rather than assumed.** The vault's
+`citro3d-display-list-stereo-replay-non-fast3d.md` records Forsaken dropping its HUD and
+2D insets under display-list replay, and `docs/OPEN_ITEMS.md` points at it. That failure
+needs a second eye whose callback runs after the replay fires; this capture is mono
+(`eyes=1`, one `installEye` + one `replayQueue`), so the caveat does not reach it.
+
+**Gates, verbatim.** `make -C tests/scripts` → `All cases match the oracle.` rc 0, no
+golden touched; `PicaMatrix` now pins the canvas matrix against the scene's own recipe and
+pins the third axis strictly inside `[-w, 0]`. `DISPLAY=:99 bash tools/check.sh` →
+`CHECK: ALL GATES PASSED` (`audit_c_with_classes` 0 violations, `gates_vfp` 0 blockers,
+`audit_arm11_math` contract clean, `audit_r11_idiv` no candidates, `gates_core_parity`
+both targets link the same core, `gates_smdh` SKIP no built .cia, `gates_frames` PASS,
+`gates_batch_integrity` PASS, `gates_completion` `LEDGER VERIFIED`). `make -C mdk_3ds`
+rc 0. `cmake --build build-linux -j8` rc 0. `mdk_3ds/tools/emurun.sh --expect hud` rc 0 on
+`:99`, mandarine md5 `0d2adab6`, llvmpipe forced, mono, audio muted — with the caveat above
+that this gate does not prove visibility.
+
+**Lookups.** pi-knowledge (`mdk-sdl`, live) was searched for prior findings on invisible
+Citro3D geometry and returned the diagnostic-triangle note, the shader's w note, and SPEC
+§7.5's zero-area-viewport trap (already installed at `renderer_c3d.cpp:1060`); all three
+were then read in the tree rather than trusted. Obsidian MCP and Cognee MCP are absent from
+this session's tool list — the vault was read from disk, which per AGENTS P9 is a degraded
+lookup and a session fault to report, not a lookup that happened.
+
+**Adversarial review of this batch, and its disposition.** The reviewer ran, read the
+oracle, and returned no Critical and no High. **It was NOT INDEPENDENT and must not be
+read as an adversarial certification**: no `--- REVIEW IDENTITY ---` block was appended
+to `ralph/validator.md` in this session, and the reviewer resolved to the same
+`litellm/qwen` family as the builder (`tools/runner/model_identity.py same` → `same`).
+That is a harness configuration fault to report, not a review that happened; the findings
+below were each re-verified against the cited source before being acted on, which is what
+makes them usable despite the family match.
+
+- **F1 (Medium, confirmed, fixed).** The canvas test's reference matrix and the
+  `pica_matrix.h` y-axis note claimed the oracle passes its y arguments swapped and puts
+  the canvas top at clip +1. It does not: `Renderer.cs:736` is
+  `CreateOrthographicOffCenter(0, W, H, 0, 0, 1)` — `top = H`, `bottom = 0` — so
+  `M22 = +2/H` and `M42 = -1`, and `renderer_vk.cpp`'s `canvasOrtho` is a bit-for-bit copy
+  of that. The test was therefore pinning agreement with the implementation's own
+  convention while claiming the oracle as its source. Fixed by splitting the reference into
+  `oracleCanvasOrtho` (the oracle's real expansion) and a named `flipToYUpClip` step, so
+  the one deliberate difference — this target's landscape clip is y-up — is a stated
+  decision instead of a silent copy. The implementation's sign was already right and did
+  not move.
+- **F2 (Medium, confirmed, fixed).** `drawDiagnostic` runs after the replay, so once the
+  shader drove `outclr` from the tint uniform the diagnostic inherited the last canvas
+  quad's colour and alpha — and a quad of alpha 0 would have the frame's own alpha test
+  discard the one draw whose job is to say the frame is alive. It now writes white to the
+  tint and updates the cache, for the same reason it already does that for the depth state.
+- **F3 (Medium, confirmed, fixed).** `--expect hud` could not detect a HUD that stopped,
+  because the census line was printed only when `quads > 0`; the two harness cases that
+  fed it `quads=0` were feeding it a line the renderer could not emit. The line now prints
+  every sixtieth frame whatever the count, which is what makes the "last line decides"
+  claim the harness makes actually true.
+- **F4 (Medium, confirmed, fixed).** The harness comment claimed the log line separates
+  "the HUD drew" from "the HUD was queued and dropped". It does not, and this batch's own
+  `OPEN_ITEMS.md` is the proof. The comment now says plainly that a green `--expect hud`
+  is a queued-and-emitted verdict and not a visibility verdict, and names the probe that
+  would prove visibility (a known-colour quad diffed against a HUD-off run).
+- **F5 (Medium, confirmed, fixed).** `tintLocation` was used as a `C3D_FVUnifSet` index
+  with no `>= 0` test, and `C3D_FVUnifWritePtr` (c3d/uniforms.h:15-21) does no bounds
+  checking, so a `-1` is a write before a `.bss` array. All three locations are now
+  validated at create and the create refuses with the same `return nullptr` every other
+  create failure uses.
+- **F6 (Low, confirmed, fixed).** `mdk_render_canvas_capacity` returned 512 while its
+  comment called the cap the oracle's; the oracle's is 4096 quads (`Renderer.cs:198`
+  compared as `CanvasQuads * QuadVertices` at `:342`). It is a ceiling and not an
+  allocation, so it now returns 4096.
+- **F7 (Low, confirmed, fixed).** The merge predicate compared `frame`, which is not part
+  of the oracle's `Material` (`Renderer.cs:60-61`), and the record carried `q.frame` into
+  the uv transform where `Renderer.cs:741` hardcodes 0. Both now match the oracle; no
+  caller sets `frame` today, so no pixel moves.
+- **F8 (Low, pre-existing, DEFERRED with cause).** Three HUD divergences the diff did not
+  introduce but now makes reachable on the 3DS: `drawBar` omits `HudView.cs:283-284`'s
+  `MathF.Round` (bar width off by up to 1 px), `frameRect`'s vertical bars are not inset
+  as `Renderer.cs:332-338` insets them (identical only because every caller passes alpha
+  1.0), and `drawNumber` clamps negatives where the oracle would emit a `-` glyph. They
+  belong to the HUD-visibility batch, not this one, and are recorded rather than fixed
+  here so the fix lands with a capture that can show it.
+
+The reviewer also attacked and could not break the merge rule against
+`Renderer.cs:352-362` (including that `Blend` is compared, so a flat quad and an additive
+quad cannot merge), the Overlay-as-screen-space marker against `Renderer.cs:1073`, the tint
+semantics against `shaders/palette.hlsl`, the HUD draw order against `HudView.cs:157-186`,
+and the claim that no scene draw can inherit canvas state across an eye or frame boundary.
+
+### Iteration 142, finished (attempt 2 of the ledger row `3ds.hud-canvas`)
+
+The previous attempt of this row was killed by the watchdog with the whole batch uncommitted. This attempt
+**finished and committed that work** (builder rule: an inherited dirty tree is finished first), and added five
+things of its own.
+
+**What this attempt changed.** (1) `pica_matrix.h`'s `canvasMatrix` note said "NO DEPTH CONVERSION … its
+vertices are all z = 0, so z passes through and lands at NDC 0" while the function translates z to −0.5 and
+`pica_matrix_tests.cpp` pins `got[2] == -0.5*w`. A header that contradicts both its function and its test is
+the exact class review-7 F4 and review-8 F4/F5 were raised for, so the paragraph now states the −0.5 and says
+again that it fixed nothing. (2) The duplicated `The 2D canvas` banner the previous attempt left. (3) The
+frame sidecar's "why the picture did not move" paragraph, written at capture time as the standing rule
+requires. (4) review-8 **F4** and **F5**: `script_runtime.h`'s `residentArena()` note still said the field is
+"written and not read" because `IsCorridorLoaded` "belongs to the unported TeleportKurt", and
+`script_runtime.cpp`'s `loadArena` note still said the third caller "owes this call too" — both were made
+false by batch 141 and both now say what the tree does. (5) review-8 **F6**: the orphan half-sentence
+`**Batch 140 … the two trigger arms batch 139 left` at `CONTINUATION.md:59`, deleted.
+
+**The ninth hypothesis, and the negative result about the probe itself.** `docs/OPEN_ITEMS.md` handed the next
+batch a candidate: that a draw issued at the tail of the frame does not land (the canvas is last in the queue
+and the diagnostic triangle is last in the frame, and neither has ever painted). The test run was a red
+triangle drawn immediately after `installEye`, before the replay, with the white diagnostic left at the tail:
+red would mean the head lands and the tail does not, white would mean the tail lands after all, neither would
+mean the two draws share something other than position. **The result is that neither answer is observable
+here**: the level-7 scene covers every pixel of the panel (the census: 947 of 1050 triangles on-screen, and
+the capture is a full-panel sunburst with no sky gap), the probe's depth test and write are both off so the
+scene paints over it, and the two candidate captures differ only by the scene's own animation. The probe was
+reverted, the hypothesis is **neither confirmed nor refuted**, and the lesson is written where the next batch
+will read it: a probe on this target has to be diffed against a HUD-off run with a colour the scene cannot
+produce, not just moved to a different place in the frame.
+
+**Review-8's disposition.** No Critical and no High, so nothing was mandatory. **Fixed here**: F4, F5 (above)
+and F6 (above). **Deferred with cause**: **F1** (two `ArenaSpace`s — architectural, touches `move()`, the
+solid pin, the sight probes and both frontends, and is already recorded as a divergence in
+`docs/evidence/2026-11-11-teleport-kurt.txt` §5 and in `script_runtime.h`'s own `arenaSpace()` note); **F2**
+and **F3** (two missing executed pins on the *teleport* batch — a hoist of the unnamed arm's two writes and a
+conditional 173 yield both leave the suite green; both are real gaps and both belong to `3ds.collision-doors`,
+not to `3ds.hud-canvas`, and chasing them here would have made this batch two subsystems). They are the first
+test-writing items in `NEXT (batch 143)`.
+
+**Gates, verbatim, as run by this attempt on the committed tree.** `make -C tests/scripts` →
+`All cases match the oracle.` rc 0; `grep -c '^PASS'` = **587**, `grep -c '^FAIL\|SKIP'` = **0**; no golden
+was regenerated (the +12 over batch 141's 575 are this batch's `PASS hud: …` harness cases and the new
+`PASS PicaMatrix`/`PASS C3dFrame` rows). `DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED` rc 0,
+with `audit_c_with_classes 0 violations`, `gates_vfp PASS blockers=0`, `audit_arm11_math CONTRACT CLEAN`,
+`audit_r11_idiv` no candidates, `gates_core_parity` both targets, `gates_smdh` SKIP (no built .cia),
+`gates_frames PASS L3_f1.bmp sha=58615fc85d02e009`, `gates_batch_integrity PASS`, `gates_completion LEDGER
+VERIFIED`. `make -C mdk_3ds` rc 0 → `mdk.elf` md5 `096d49f68eb544d402aa9eaf7a17245d`,
+`mdk_c3d.shbin` md5 `59d5e0e8ec1dc12827b6cd516715de0f`. `cmake --build build-linux -j8` rc 0.
+
+**P8 emulator evidence (AGENTS §11), the row's own acceptance command.** Invocation as typed:
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` → **exit 0**. display `:99`; emulator
+`mandarine.AppImage md5 0d2adab6` (the pinned r1.2.1); guest log
+`/tmp/mdk-emurun.3934631/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log`; gl forced llvmpipe
+(`LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe`), `graphics_api=1` (OpenGL); stereo `render_3d=0
+factor_3d=0` (mono); audio muted; lane `/tmp/mdk-emurun.3934631`. Guest lines: `backend: PICA200 Citro3D`,
+`flow: screen=4 level=7`, `hud: loaded`, `uniforms: mvp=0 uvtransform=4 tint=5`, `canvas mesh: 384 corners =
+7 KB linear`, `frame 2520 … health=100 objects=7 plays=1`, and the adjudicated line
+`expect : hud OK -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame 2520)`; the log ends at
+frame 2580. **Emulator-green is not hardware-pass, and here it is not even picture-green**: the line proves
+the records were queued and emitted, not that pixels changed, and the panel shows no HUD.
+
+**Lookups (this attempt).** pi-knowledge was searched live, and it paid: a query for prior findings on
+invisible Citro3D geometry returned, besides this repo's own notes (the diagnostic-triangle comment, the
+shader's w note, SPEC §7.5's zero-area-viewport trap — all then read in the tree rather than trusted), a hit
+in the **sibling `tetrisphere-godot` knowledge base**: `docs/validation/c3d-sky-orient-2026-10-27.md`,
+`c3d-hud-viewport-2026-10-27.md`, `c3d-hud-shared-2026-10-28.md` and `c3d-ui-space-2026-10-27.md`, which
+measure the thing this row has not thought of — citro3d's top screen is a 240x400 **memory** target whose
+rotation interacts with the projection and with `C3D_FrameDrawOn`'s memory-space viewport, and swapping
+`Mtx_OrthoTilt` for `Mtx_Ortho` in a UI ortho **swapped the two axes**. That is recorded as an untested
+lead in `docs/OPEN_ITEMS.md` rather than acted on here, because acting on it is the next batch and this one
+was already committed-sized. Obsidian MCP and Cognee MCP are absent from this session's tool list — the
+vault was not read at all this attempt, which per AGENTS P9 is a degraded lookup and a session fault to
+report, not a lookup that happened.

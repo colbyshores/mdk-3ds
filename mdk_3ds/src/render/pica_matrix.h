@@ -136,6 +136,62 @@ void drawMatrix(const float world[16], const float eyeVp[16], float out[16]);
 // floats), which is why this writes floats instead of a citro3d type.
 void registers(const float m[16], float out[16]);
 
+// The matrix a CANVAS draw uploads: the orthographic projection of the canvas's
+// pixel space onto the whole panel, with the PICA's quarter turn baked in.
+//
+// THE ORACLE'S, LINE FOR LINE. `Renderer.cs:736` builds the canvas transform as
+//
+//     CreateOrthographicOffCenter(-margin.X, CanvasWidth + margin.X,
+//                                 CanvasHeight + margin.Y, -margin.Y, 0, 1)
+//
+// and hands it to the command as its WORLD (`Renderer.cs:1073`,
+// `material.Pass == Pass.Overlay ? command.World : nearer * view.ViewProjection`).
+// The canvas is therefore not composed with the eye matrix at all: it is already
+// clip space. `margin` is the VR viewer's inset and is zero for every stereo mode
+// this port builds (`StereoModes.CanvasZoom` returns 1 for None and SideBySide),
+// so this function takes the width and no margin.
+//
+// THE y AXIS IS DELIBERATELY NOT THE C#'s, AND SAYING IT WRONG HERE WOULD BE THE
+// WAY TO GET IT WRONG. System.Numerics expands the oracle's call as
+// `M22 = 2/(top-bottom) = +2/H`, `M42 = (bottom+top)/(bottom-top) = -1`: the
+// arguments are NOT swapped (`top = CanvasHeight`, `bottom = 0`), so the oracle
+// puts the canvas top (y = 0) at clip MINUS 1. The Vulkan backend is a bit-for-bit
+// copy of that (`renderer_vk.cpp`'s `canvasOrtho`: `out[5] = +2/H`, `out[13] = -1`)
+// because a Vulkan framebuffer is y-DOWN and wants exactly that.
+//
+// This target is the opposite. The engine's landscape clip is y-UP -- that is what
+// `eyeViewProjection` consumes and what the scene is drawn through -- so the canvas
+// has to agree with the scene it is drawn over, and the y row is NEGATED against
+// the oracle: `m[5] = -2/H`, `m[13] = +1`. Getting it the oracle's way paints the
+// HUD upside down and mirrored, which is at least visible.
+//
+// `tests/scripts/pica_matrix_tests.cpp`'s canvas row starts from the oracle's
+// expansion and applies that negation as a named step, so the difference is a
+// decision the test states instead of a convention it silently copies.
+//
+// THE QUARTER TURN IS THE SCENE'S, APPLIED THE SAME WAY. The panel is portrait
+// (240x400) and the canvas is landscape, exactly like the scene, so the same
+// proper rotation `eyeViewProjection` applies at its step (B) goes here: new
+// column 0 = old column 1, new column 1 = -old column 0. That is the whole
+// argument for the orientation: whatever the panel does with the scene's clip
+// +x, it does with the canvas's, so the HUD lands where the scene's top and
+// right are, and the two cannot drift apart.
+//
+// NO DEPTH CONVERSION, BUT NOT AT z = 0 EITHER. The scene's step (A) maps the
+// engine's [0,1] NDC z into the PICA's [-1,0]; the canvas has no depth to convert
+// (its pass neither tests nor writes depth, `depthStateForPass`). It is still not
+// left at 0: this GPU's clip z runs [-w, 0], so a canvas flat at z = 0 sits exactly
+// on the far clip plane, which is the one place a rasteriser may reject the whole
+// triangle. The matrix translates z to -0.5 -- the middle of the range, free for a
+// pass that writes no depth -- and `pica_matrix_tests.cpp`'s canvas row pins the
+// invariant (strictly inside) rather than the number. It is NOT the reason the
+// canvas is invisible; that is measured, and `canvasMatrix`'s own body says so.
+//
+// `canvasWidth` is `mdk_render_canvas_width`'s value (360 high, as wide as the
+// panel's aspect makes it: 600 on the 3DS). A zero or negative width is refused
+// by the caller, not clamped here: a canvas with no width has no draws.
+void canvasMatrix(float out[16], float canvasWidth);
+
 // ---------------------------------------------------------------------------
 // THE FRAME'S DEPTH STATE
 // ---------------------------------------------------------------------------

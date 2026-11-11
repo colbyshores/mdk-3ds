@@ -375,6 +375,55 @@ struct RendererC3D {
     int blendPass = -1;
     int blendMode = -1;
 
+    // The tint uniform's location (see the shader: register 5, after the mvp
+    // and the uv transform). A location and not a literal, for the reason the two
+    // above are: the shader's own table is what says where it lives.
+    int tintLocation = 0;
+
+    // Whether the tint uniform currently holds white -- the state the cull mode,
+    // the depth state, the blend state and the matrix are cached in, for the same
+    // reason: `C3D_FVUnifSet` dirties the uniform buffer on every call, and an
+    // all-Solid frame must not pay for a write that changes nothing. installEye
+    // writes white and sets this true, so the first canvas draw of an eye is the
+    // first write and the scene draws after it cost one compare.
+    bool tintIsWhite = true;
+
+    // THE CANVAS BATCH. The quads are held here between canvas_begin and
+    // canvas_end, and canvas_end turns them into ONE mesh upload plus one queued
+    // record per material group -- the oracle's own shape (Renderer.cs:340-358
+    // accumulates and merges, :727-745 queues them). Nothing is emitted until the
+    // per-eye replay, which is what `c3d_frame_test.sh` refuses anything else to
+    // do (review-1 F4, review-3 F1).
+    //
+    // The quads are kept as well as the corners because each record needs its
+    // material, and because merging consecutive same-material quads -- which is
+    // what the oracle does -- has to read them.
+    //
+    // Both are cleared and refilled every frame and neither is freed: the capacity
+    // they reach is the HUD's steady state, and per-frame growth is what
+    // AGENTS.md 10 forbids in a hot path (the same argument `DrawQueue` makes).
+    std::vector<mdk::CanvasQuad> canvasQuads;
+    std::vector<mdk::Vertex> canvasVerts;
+
+    // The mesh the canvas's corners are uploaded into, and what it can hold.
+    // Made on the first frame that draws a canvas, sized to that frame, and grown
+    // by doubling after that: the HUD's quad count changes with the inventory and
+    // the digits, and a frame that needs more than the mesh holds is the only
+    // time any of this reallocates.
+    MdkMeshId canvasMesh = -1;
+    int32_t canvasCapacity = 0;
+
+    // The texture a flat canvas quad is drawn with: eight texels of white, so the
+    // tint is the whole colour. See `canvasWhiteNote` in the create path.
+    MdkTextureId canvasWhite = -1;
+
+    // The frame's canvas census, for the log line the emulator harness reads
+    // (`emurun.sh --expect hud`): the quads queued by canvas_end and the Overlay
+    // draws the replay actually emitted.
+    int32_t canvasQuadsThisFrame = 0;
+    int32_t canvasDrawsThisFrame = 0;
+    int32_t canvasFrames = 0;
+
     int frame = 0;
     int32_t drawCount = 0;
     int32_t triangleCount = 0;
@@ -558,7 +607,21 @@ inline GpuVertex expand(const mdk::Vertex& v) {
     // The uniform locations.
     r->mvpLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "mvp");
     r->uvLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "uvtransform");
-    mdk::log3dsPrintf("uniforms: mvp=%d uvtransform=%d", (int)r->mvpLocation, (int)r->uvLocation);
+    r->tintLocation = shaderInstanceGetUniformLocation(r->program.vertexShader, "tint");
+    mdk::log3dsPrintf("uniforms: mvp=%d uvtransform=%d tint=%d", (int)r->mvpLocation,
+                      (int)r->uvLocation, (int)r->tintLocation);
+    // A NAME THE SHADER DOES NOT EXPORT is not a location, and citro3d does not
+    // bounds-check one: `C3D_FVUnifWritePtr` (c3d/uniforms.h:15-21) indexes
+    // `C3D_FVUnifDirty[type][id+i]` and `C3D_FVUnif[type][id]` with no test, so a
+    // -1 from a stale or stripped .shbin is a write before a .bss array on every
+    // eye and every canvas draw -- silent corruption where a refusal belongs.
+    // The Makefile has explicit anti-staleness rules for the shader, so this is a
+    // narrow window; it is still the only place it can be caught (review-9 F5).
+    if (r->mvpLocation < 0 || r->uvLocation < 0 || r->tintLocation < 0) {
+        mdk::log3dsPrintf("shader is missing a uniform it must export -- refusing");
+        shaderProgramFree(&r->program);
+        return nullptr;   // the same refusal every other create failure uses
+    }
 
     r->scratchSize = kGpuScratchSize;
     r->scratch = linearAlloc(r->scratchSize);
@@ -578,6 +641,38 @@ inline GpuVertex expand(const mdk::Vertex& v) {
     r->eyeSeparation = desc ? (float)desc->stereo.separation : 0.0f;
 
     r->ready = true;
+
+    // THE CANVAS'S WHITE TEXTURE, made once here and never released.
+    //
+    // A flat canvas quad (the health bar, the damage flash, the selection box) is
+    // a colour with no texture, and this combiner takes its colour from the
+    // texture times the tint. White is the identity of that multiply, so binding
+    // white makes the tint the whole colour.
+    //
+    // EIGHT texels and not one, which is what `SurfaceCache::flatColourId` uses
+    // for the scene's flat surfaces. The UV transform scales a texture by real
+    // over padded, and a 1x1 is padded to 8x8 with TRANSPARENT texels, so its
+    // scale is 1/8 and a quad's far edge samples the padding instead of the
+    // colour. An 8x8 of white has a scale of exactly 1: every uv in [0,1] lands
+    // on a white texel whatever the filter does with it.
+    //
+    // It is made after `ready` because the seam's own texture factory refuses to
+    // run before it, and it is never released: the canvas asks for it on any
+    // frame, and a texture the backend owns cannot be evicted from under it.
+    {
+        uint8_t white[8 * 8 * 4];
+        for (int i = 0; i < 8 * 8; i++) {
+            white[i * 4 + 0] = 255;
+            white[i * 4 + 1] = 255;
+            white[i * 4 + 2] = 255;
+            white[i * 4 + 3] = 255;
+        }
+        r->canvasWhite = mdk_render_create_rgba_texture(r, 8, 8, white);
+        if (r->canvasWhite < 0) {
+            mdk::log3dsPrintf("canvas: the white texture FAILED to allocate -- flat "
+                              "canvas quads (flashes, bars, the selection box) are dropped");
+        }
+    }
     return r;
 }
 
@@ -842,6 +937,15 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     mdk::pica::registers(r->eyeVp, gpuMtx.m);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
     r->matrixIsFrame = true;
+
+    // THE UNIFORM THAT EVERY DRAW WITHOUT A TINT LEAVES AT WHITE, written once
+    // per eye for the same reason the matrix is: an unwritten uniform holds the
+    // previous frame's value, and the last thing that wrote this one was the last
+    // canvas quad of the last frame -- a half-transparent red, which would tint
+    // the whole scene if it survived into this one. `tintIsWhite` records it so
+    // the scene's draws do not re-write it and the first canvas draw does.
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+    r->tintIsWhite = true;
 
     C3D_BindProgram(&r->program);
 
@@ -1153,6 +1257,37 @@ static void logCensus(RendererC3D* r) {
         }
         drawDiagnostic(r);
     }
+    // THE CANVAS LINE, and it is the evidence `mdk_3ds/tools/emurun.sh --expect
+    // hud` reads. Why a log line and not a pixel: the HUD's own colours are white,
+    // grey and black, so a screenshot cannot tell "the HUD drew" from "the HUD was
+    // queued and dropped", and the two numbers on this line can -- `quads` is what
+    // the frontend asked for and `draws` is what the per-eye replay actually
+    // emitted, so a canvas that was queued but never drawn, or drawn into one eye
+    // only, is a different pair of numbers and not the same picture.
+    //
+    // On the first frame and then every sixtieth, which is the cadence the
+    // frontend's own frame line uses: a line every frame is a line nobody reads,
+    // and a line once is a line that cannot show the HUD disappearing mid-run.
+    //
+    // IT PRINTS EVEN WHEN THE ANSWER IS ZERO, and that is the whole point of the
+    // line being evidence (review-9 F3). `emurun.sh --expect hud` reads the LAST
+    // line, on the argument that the last line is the one that says the HUD was
+    // still drawing when the run ended. A line printed only when quads > 0 cannot
+    // honour that: a HUD that stops mid-run simply stops printing, and the last
+    // good line keeps the gate green. Zero has to be sayable for the gate to be
+    // able to say it.
+    {
+        r->canvasFrames++;
+        if (r->canvasFrames == 1 || (r->canvasFrames % 60) == 0) {
+            mdk::log3dsPrintf("canvas: quads=%d draws=%d mesh=%d corners=%d eyes=%d "
+                              "(canvas frame %d)",
+                              (int)r->canvasQuadsThisFrame, (int)r->canvasDrawsThisFrame,
+                              (int)r->canvasMesh, (int)r->canvasVerts.size(),
+                              (int)r->eyes.passes, (int)r->canvasFrames);
+        }
+    }
+    r->canvasQuadsThisFrame = 0;
+    r->canvasDrawsThisFrame = 0;
     r->queue.reset();
     // C3D_FrameEnd is the ONLY present path. It triggers the auto display
     // transfer set up by C3D_RenderTargetSetOutput.
@@ -1881,12 +2016,51 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     }
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, scaleX, scaleY, offsetX, offsetY);
 
-    // The combiner: the texture's colour, with its own alpha (so index 0
-    // is transparent), replacing the primary colour.
+    // THE COMBINER, and with it the question of where a draw's colour comes from.
+    //
+    // A scene draw: the texture's colour, with its own alpha (so index 0 is
+    // transparent), replacing the primary colour. The world is unlit and untinted
+    // -- the palette decides the colour -- so there is nothing else to multiply.
+    //
+    // A canvas draw (Pass::Overlay): the texture's colour TIMES the primary
+    // colour, which is the tint uniform. That is the oracle's `color * tint`
+    // (shaders/palette.hlsl), and it covers both kinds of canvas quad: an image
+    // faded by an alpha (the skull) and a flat rectangle, which is drawn on white
+    // so the tint is the whole colour. The alpha channel gets the same multiply,
+    // which is what makes the fade a fade: the frame-wide alpha test then still
+    // discards the texels the palette made transparent, because 0 times any tint
+    // is 0.
+    //
+    // WHY THE SCENE KEEPS REPLACE AND DOES NOT just always MODULATE: white times
+    // the texture is the same colour in arithmetic, but every capture this
+    // backend has ever measured was taken with REPLACE installed, and a combiner
+    // op is not the place to spend a fidelity question. The cost of the split is
+    // nothing: `C3D_GetTexEnv` marks the stage dirty on every call (measured from
+    // the linked libcitro3dd.a: it sets bit 26+id of the context's dirty word),
+    // so this block already re-sends the combiner on every draw either way.
+    const bool overlay = draw->material.pass == mdk::Pass::Overlay;
     C3D_TexEnv* env = C3D_GetTexEnv(0);
     C3D_TexEnvInit(env);
-    C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
-    C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+    if (overlay) {
+        C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+        C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+    } else {
+        C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
+        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+    }
+
+    // THE TINT, in uniform register 5. Only the canvas asks for one; the cache
+    // restores white for the first scene draw after a canvas batch so the scene
+    // cannot inherit the last quad's half-transparent red.
+    if (overlay) {
+        const mdk::Colour& tint = draw->material.colour;
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, tint.r, tint.g, tint.b, tint.a);
+        r->tintIsWhite = false;
+        r->canvasDrawsThisFrame++;
+    } else if (!r->tintIsWhite) {
+        C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+        r->tintIsWhite = true;
+    }
 
     // The vertex data. The buffer info names the linear memory the GPU
     // reads. Two attributes (position, texture coordinate), so the
@@ -1957,22 +2131,34 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // for the same reason -- a per-draw C3D_* call is real ARM11 time and this
     // one dirties the uniform buffer.
     //
-    // The two PICA conversions are already inside r->eyeVp and they are
+    // THE TWO PICA conversions are already inside r->eyeVp and they are
     // right-multiplications by fixed matrices, so composing the world against
     // the baked matrix is the same product as rebuilding it (see pica_matrix.h).
-    const bool identityWorld = mdk::pica::isIdentity(draw->world);
-    if (!identityWorld || !r->matrixIsFrame) {
-        float m[16];
-        if (identityWorld) {
-            // Restoring the frame's matrix after a draw that installed its own.
-            memcpy(m, r->eyeVp, sizeof(m));
-        } else {
-            mdk::pica::drawMatrix(draw->world, r->eyeVp, m);
-        }
+    //
+    // EXCEPT FOR THE CANVAS, WHICH IS NOT IN THE WORLD AT ALL. The oracle picks
+    // the transform by the pass (Renderer.cs:1073):
+    //
+    //     material.Pass == Pass.Overlay ? command.World : nearer * view.ViewProjection
+    //
+    // so an Overlay record's `world` IS the whole transform -- the orthographic
+    // projection of the canvas's pixel space onto the panel, which is what
+    // `pica::canvasMatrix` builds and `mdk_render_canvas_end` stores. Composing
+    // it with the eye matrix would put the HUD at the arena's origin and behind
+    // the camera, and it is exactly the mistake the pass is the flag for.
+    float composed[16];
+    const float* upload = r->eyeVp;
+    if (overlay) {
+        upload = draw->world;
+    } else if (!mdk::pica::isIdentity(draw->world)) {
+        mdk::pica::drawMatrix(draw->world, r->eyeVp, composed);
+        upload = composed;
+    }
+    const bool frameMatrix = upload == r->eyeVp;
+    if (!frameMatrix || !r->matrixIsFrame) {
         C3D_Mtx gpuMtx;
-        mdk::pica::registers(m, gpuMtx.m);
+        mdk::pica::registers(upload, gpuMtx.m);
         C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
-        r->matrixIsFrame = identityWorld;
+        r->matrixIsFrame = frameMatrix;
     }
 
     // THE PASS'S CULLING, PER DRAW.
@@ -2051,11 +2237,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // is, which is what the cull enum turns on.
     if (r->census.active && count >= 3) {
         float cm[16];
-        if (identityWorld) {
-            memcpy(cm, r->eyeVp, sizeof(cm));
-        } else {
-            mdk::pica::drawMatrix(draw->world, r->eyeVp, cm);
-        }
+        memcpy(cm, upload, sizeof(cm));
         const float* cv = static_cast<const float*>(mesh.data);
         const int32_t tris = count / 3;
         for (int32_t t = 0; t < tris; t++) {
@@ -2289,6 +2471,17 @@ static void drawDiagnostic(RendererC3D* r) {
     // scenes it is needed for. The cache is told, because this writes the
     // state behind the per-draw check's back.
     installDepthState(r, mdk::pica::DepthState{false, false});
+    // THE TINT IS WRITTEN WHITE HERE, and it is load-bearing since the shader
+    // started driving `outclr` from it (review-9 F2). The diagnostic's combiner
+    // is REPLACE(PRIMARY_COLOR), and the canvas is the last thing the replay
+    // draws, so without this the triangle is painted in the last canvas quad's
+    // colour at that quad's alpha -- and a quad of alpha 0 would have the frame's
+    // own alpha test discard the one draw whose job is to say the frame is alive.
+    // Before the tint existed `outclr` was a constant white and the question did
+    // not arise. The cache is told because this writes behind the per-draw check's
+    // back, exactly as the depth call above does.
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+    r->tintIsWhite = true;
     C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
     // The uniform now holds the identity, not the frame's matrix. The next
     // installEye -- the other eye, or this one's next frame -- is what puts it
@@ -2338,7 +2531,91 @@ static void replayQueue(RendererC3D* r) {
 // The 2D canvas
 // ---------------------------------------------------------------------------
 
- void mdk_render_canvas_begin(MdkRenderer r) {
+// Two consecutive canvas quads share a draw when their material is the same.
+//
+// This is the oracle's batching, not an optimisation invented here: the C#
+// merges a quad into the previous command when the materials compare equal
+// (Renderer.cs:352-357, "Neighbouring quads of one material draw together"), so
+// the HUD's four frame rectangles are one draw there and would be four here
+// without this. The comparison is exact float equality on the colour because the
+// C#'s is too -- a record's `==` on a Vector4 compares the four floats -- and
+// being wrong in either direction is harmless: not merging draws the same
+// picture in more calls.
+static bool sameCanvasMaterial(const mdk::CanvasQuad& a, const mdk::CanvasQuad& b) {
+    return a.texture == b.texture && a.palette == b.palette &&
+           a.frame_count == b.frame_count &&
+           a.additive == b.additive && a.colour.r == b.colour.r &&
+           a.colour.g == b.colour.g && a.colour.b == b.colour.b &&
+           a.colour.a == b.colour.a;
+}
+
+// The quad's six corners, in the oracle's order: two triangles, LT RT RB /
+// LT RB LB (Renderer.cs:345-350). The winding is the scene's, and the Overlay
+// pass is unculled anyway (`drawRecorded` culls only Solid).
+static void appendCanvasCorners(std::vector<mdk::Vertex>& out, const mdk::CanvasQuad& q) {
+    const float x[4] = {q.x0, q.x1, q.x2, q.x3};
+    const float y[4] = {q.y0, q.y1, q.y2, q.y3};
+    const float u[4] = {q.u0, q.u1, q.u2, q.u3};
+    const float v[4] = {q.v0, q.v1, q.v2, q.v3};
+    const int order[6] = {0, 1, 2, 0, 2, 3};
+    for (int i = 0; i < 6; i++) {
+        const int c = order[i];
+        mdk::Vertex vert;
+        vert.pos = mdk::Vec3{x[c], y[c], 0.0f};
+        vert.uv = mdk::Vec2{u[c], v[c]};
+        // The vertex colour is not uploaded on this target (five floats a corner,
+        // and the tint is a uniform), but leaving it uninitialised would make the
+        // mesh's bytes depend on what was in the vector before.
+        vert.colour = 0u;
+        out.push_back(vert);
+    }
+}
+
+// The canvas mesh, made on the first frame that needs one and grown when a frame
+// needs more corners than it holds.
+//
+// Growing means releasing the old one and making a bigger one, which is the
+// deferred path every other resource here uses: the old buffer is freed at the
+// next frame boundary, after C3D_FrameBegin has waited for the queue that may
+// still be reading it (AGENTS.md P3). The cost is one allocation per size change,
+// and the HUD's size settles after the first frames of a level.
+static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
+    if (r->canvasMesh >= 0 && r->canvasCapacity >= corners) {
+        return true;
+    }
+    const int32_t maxCorners = mdk_render_canvas_capacity(rr) * 6;
+    int32_t cap = corners < 64 * 6 ? 64 * 6 : corners * 2;
+    if (cap > maxCorners) {
+        cap = maxCorners;
+    }
+    if (corners > cap) {
+        return false;
+    }
+    if (r->canvasMesh >= 0) {
+        mdk_render_release_mesh(rr, r->canvasMesh);
+        r->canvasMesh = -1;
+        r->canvasCapacity = 0;
+    }
+    r->canvasMesh = mdk_render_create_dynamic_mesh(rr, cap);
+    if (r->canvasMesh < 0) {
+        // The factory prints its own refusal line, edge-triggered (review-10 F3).
+        return false;
+    }
+    r->canvasCapacity = cap;
+    // `canvas mesh:` and not `canvas:` -- the frame line below is the harness's
+    // evidence and an allocation note that shares its prefix shadows it. The
+    // object stream's mesh line uses the same `things: stream mesh N corners`
+    // shape for the same reason.
+    mdk::log3dsPrintf("canvas mesh: %d corners = %d KB linear", (int)cap,
+                      (int)((int64_t)cap * 5 * sizeof(float) / 1024));
+    return true;
+}
+
+ void mdk_render_canvas_begin(MdkRenderer rr) {
+    RendererC3D* r = asC3d(rr);
+    if (!r) {
+        return;
+    }
     // NO FLUSH HERE, and that is a contract rather than an omission (review-1
     // F4). With the per-eye replay at the frame end, a mid-frame flush emits
     // THIS frame's queued records into whatever target installEye last
@@ -2346,17 +2623,94 @@ static void replayQueue(RendererC3D* r) {
     // -- and a flushDraws-shaped one empties the queue too, so the eye loop
     // replays nothing: a scene that vanished behind a correct clear colour.
     //
-    // Nothing calls this on the 3DS today (canvas_begin outside the backends is
-    // an empty grep) and mdk_render_canvas_quad is a no-op on this backend, so
-    // the flush was never load-bearing -- it was a latent black screen. When the
-    // HUD lands it must be a RECORD IN THE QUEUE, drawn inside the eye loop once
-    // per eye; docs/OPEN_ITEMS.md carries the requirement, and the gate that
-    // refuses a draw here covers canvas_quad, the seam hud_view.cpp actually
-    // calls (review-3 F1).
-    (void)r;
+    // What the canvas does instead is what this seam was always meant to do: it
+    // accumulates, and `canvas_end` puts the batch IN THE QUEUE as Overlay
+    // records, which the per-eye replay draws once per eye, after every other
+    // pass -- the oracle's order (draw_queue.h, Renderer.cs:1000-1004). The
+    // gate that refuses a flush or an immediate draw here covers canvas_quad too,
+    // the seam hud_view.cpp actually calls (review-3 F1).
+    r->canvasQuads.clear();
 }
- void mdk_render_canvas_quad(MdkRenderer r, const mdk::CanvasQuad* q) { (void)r; (void)q; }
- void mdk_render_canvas_end(MdkRenderer r) { (void)r; }
+
+ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
+    RendererC3D* r = asC3d(rr);
+    if (!r || !q || !r->ready || !r->inFrame) {
+        return;
+    }
+    // The batch's bound, and it is the oracle's: past its own canvas cap the C#
+    // drops the quad (Renderer.cs:341-344) rather than growing without limit, and
+    // `mdk_render_canvas_capacity` is that cap for this backend. Dropping is the
+    // right failure because the alternative is a per-frame allocation in the HUD's
+    // draw path, which is what AGENTS.md 10 forbids.
+    const int32_t cap = mdk_render_canvas_capacity(rr);
+    if (cap > 0 && (int32_t)r->canvasQuads.size() >= cap) {
+        return;
+    }
+    r->canvasQuads.push_back(*q);
+}
+
+ void mdk_render_canvas_end(MdkRenderer rr) {
+    RendererC3D* r = asC3d(rr);
+    if (!r || !r->inFrame) {
+        return;
+    }
+    const int32_t quads = (int32_t)r->canvasQuads.size();
+    if (quads == 0) {
+        return;
+    }
+    const int32_t corners = quads * 6;
+    if (!ensureCanvasMesh(rr, r, corners)) {
+        r->canvasQuads.clear();
+        return;
+    }
+
+    r->canvasVerts.clear();
+    for (size_t i = 0; i < r->canvasQuads.size(); i++) {
+        appendCanvasCorners(r->canvasVerts, r->canvasQuads[i]);
+    }
+    mdk_render_update_mesh(rr, r->canvasMesh, r->canvasVerts.data(), corners);
+
+    // THE TRANSFORM, once for the batch: the canvas's pixel space onto the whole
+    // panel, with the panel's quarter turn baked in (pica::canvasMatrix). The C#
+    // builds it once in QueueCanvas too (Renderer.cs:736) and hands the same
+    // matrix to every canvas command.
+    float screen[16];
+    mdk::pica::canvasMatrix(screen, mdk_render_canvas_width(rr));
+
+    int32_t i = 0;
+    while (i < quads) {
+        int32_t run = 1;
+        while (i + run < quads && sameCanvasMaterial(r->canvasQuads[(size_t)i],
+                                                     r->canvasQuads[(size_t)(i + run)])) {
+            run++;
+        }
+        const mdk::CanvasQuad& q = r->canvasQuads[(size_t)i];
+        mdk::MeshDraw d;
+        d.mesh = r->canvasMesh;
+        d.first_vertex = i * 6;
+        d.vertex_count = run * 6;
+        // A flat quad has no texture of its own; white is the identity of the
+        // combiner's multiply, so the tint is the whole colour. If the white
+        // texture could not be allocated the id is -1 and drawRecorded drops the
+        // draw, which is the refusal the create path logged.
+        d.material.texture = q.texture >= 0 ? q.texture : r->canvasWhite;
+        d.material.palette = q.palette;
+        d.material.colour = q.colour;
+        d.material.frame_count = q.frame_count > 0 ? q.frame_count : 1;
+        d.material.pass = mdk::Pass::Overlay;
+        // The oracle's AddRect is the same quad with `Blend = Blend.Add`
+        // (Renderer.cs:329); `blendStateForPass` already knows what that means.
+        d.material.blend = q.additive ? mdk::Blend::Add : mdk::Blend::Alpha;
+        d.frame = 0;   // the oracle hardcodes it: `new DrawCommand(..., material, 0, screen)`
+        memcpy(d.world, screen, sizeof(screen));
+        r->queue.add(d);
+        i += run;
+    }
+
+    r->canvasQuadsThisFrame = quads;
+    r->canvasQuads.clear();
+}
+
  float mdk_render_canvas_width(MdkRenderer r) {
     (void)r;
     // The canvas is 360 units high and its width follows the view's aspect,
@@ -2370,7 +2724,15 @@ static void replayQueue(RendererC3D* r) {
 }
  int32_t mdk_render_canvas_capacity(MdkRenderer r) {
     (void)r;
-    return 512;
+    // The oracle's own cap, in the oracle's own unit: `CanvasQuads = 4096`
+    // (Renderer.cs:198) compared against the VERTEX count as
+    // `CanvasQuads * QuadVertices` (Renderer.cs:342), i.e. 4096 quads. It is a
+    // ceiling, not an allocation -- `ensureCanvasMesh` sizes the buffer from the
+    // quads actually queued and only clamps at `capacity * 6` corners -- so
+    // matching the oracle costs nothing today and stops the menus and the message
+    // queue, which want hundreds of quads, from silently dropping everything past
+    // the 512th (review-9 F6).
+    return 4096;
 }
 
 // ---------------------------------------------------------------------------

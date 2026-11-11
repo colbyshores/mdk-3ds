@@ -1,0 +1,28 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-11T21:45:12Z at 59710df
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+why the picture did not move: this batch's shipped code is on the other target. The
+pinned frame is the Linux/Vulkan capture of level 3 frame 1, and everything under
+mdk_3ds/ — the Citro3D canvas seams, the shader's tint uniform, pica::canvasMatrix —
+is compiled by no Linux target at all. The one shared file the batch touches is
+mdk_core/src/game/hud_view.cpp, and its change is that loadImage now hands the
+palette BYTES to mdk_render_create_index_texture alongside the palette id: the
+Citro3D backend needs those bytes to expand indices into texels on the CPU, and the
+Vulkan backend ignores them and samples the palette at draw time through the id
+(renderer_vk.cpp). So no Linux pixel can move, and that is measured rather than
+asserted: this PNG's sha256 is
+6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8, identical to
+docs/frames/2026-11-11-teleport-kurt.png (batch 141) and to every pinned frame back
+through 2026-11-09-review15-write-set-pinned.png (batch 108), with the gap line
+unchanged at bad_percent=1.240, max_delta=247, mean_delta=0.1819.
+what DID move is the console build, and it moved on purpose: mdk.elf md5
+096d49f68eb544d402aa9eaf7a17245d (parent 5549857c421bca2926635ec6a3e0f23e) and
+mdk_3ds/build/mdk_c3d.shbin 59d5e0e8ec1dc12827b6cd516715de0f, the shader rebuilt for
+its new uniform register 5. THE HUD IS NOT ON THE PANEL, and this frame cannot show
+that either way: the canvas queues and emits (canvas: quads=4 draws=2 mesh=2
+corners=24 eyes=1 every frame) and draws no pixels. The measurement, the eight
+rejected hypotheses and the one still open are docs/OPEN_ITEMS.md "The 3DS canvas
+draws no pixels" and docs/PROGRESS_LOG.md "Iteration 142". A green
+`emurun.sh --expect hud` is a queued-and-emitted verdict and NOT a visibility verdict;
+the sidecar says so because the gate cannot.

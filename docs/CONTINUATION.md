@@ -1,13 +1,50 @@
 # Phase 2 continuation checkpoint
-Risk: high — this batch moves shipped code and changes when the arena state moves. It ports `TeleportKurt`
-(`ScriptRuntime.cs:460-481`, 0x41bce4) with `TeleportSecond`, `IsCorridorLoaded`, `EnterArena` and the
-`_teleported` first-tick rule, and wires VM opcodes 112 `teleport_player` and 173 `teleport_player_keep`,
-which were documented no-ops and now execute. `mdk.elf` moves `6586bee947a2ca7ccce988ddb858114a` →
-`5549857c421bca2926635ec6a3e0f23e`; 575 host cases (was 572) and every gate pass; the pinned frame is
-byte-identical because no teleport is in level 3 frame 1. High is the honest level: new state transitions,
-new per-tick condition, target-specific shipped code, and one divergence it surfaces rather than hides
-(the port has two `ArenaSpace`s where the C# has one, so `enterArena` reaches the arena rule and not yet
-the collision — see `docs/evidence/2026-11-11-teleport-kurt.txt` §5).
+Risk: high — this batch puts new GPU state on the shipped target and ships a measured negative with it. It
+implements the Citro3D 2D canvas as queue records (`canvas_begin`/`canvas_quad`/`canvas_end` → one mesh upload
+plus one record per same-material run, the oracle's own merge), gives the vertex shader a fifth uniform
+(`.fvec tint`, register 5) and splits the combiner so `Pass::Overlay` modulates while the scene keeps
+`REPLACE`, adds `pica::canvasMatrix`, wires the HUD into `main_3ds.cpp`, and changes a shared-core signature
+(`HudView::loadImage` now takes the palette). `mdk.elf` moves `5549857c421bca2926635ec6a3e0f23e` →
+`096d49f68eb544d402aa9eaf7a17245d` and the shader rebuilds (`mdk_c3d.shbin` → `59d5e0e8ec1dc12827b6cd516715de0f`);
+587 host cases (was 575) and every gate pass; the pinned frame is byte-identical because nothing here reaches
+the Linux capture path. High is the honest level: GPU state written every frame, a resource created and grown
+inside a frame, a new per-draw matrix path, and — the reason no green can be read as a pass — **the HUD draws
+no pixels**, which is recorded rather than hidden (`docs/OPEN_ITEMS.md`, "The 3DS canvas draws no pixels").
+
+**Batch 142 (the ledger row `3ds.hud-canvas`) — the canvas lands as queue records, the HUD is wired, and the
+picture does not appear; the batch ships the seam, the gate and eight closed doors.** The seam is the oracle's
+shape: quads accumulate between `canvas_begin` and `canvas_end`, `canvas_end` uploads one mesh and queues one
+record per same-material run (`Renderer.cs:340-358`, `:727-745`), and the `Pass::Overlay` marker is what tells
+`drawRecorded` to install the record's `world` verbatim instead of composing it with the eye matrix
+(`Renderer.cs:1073`). The tint is a vertex-shader uniform, not a vertex attribute, because the seam already
+treats the tint as per-draw and the Vulkan backend carries it as a push constant. `emurun.sh --expect hud`
+(exit 7) is the row's acceptance command and it passes — and it is a **queued-and-emitted** verdict, not a
+visibility verdict, which is said in the harness comment, the sidecar and the open item because the gate
+cannot say it itself. **Eight hypotheses were closed by running, not reading** (the matrix and the per-draw
+write, the tint uniform and `GPU_PRIMARY_COLOR`, the HUD textures and the palette expansion, the command
+buffer at 0.113, the far clip plane, the clipper's fixed-point range, a buffer allocated inside a frame — the
+full list with its numbers is `docs/OPEN_ITEMS.md` and `docs/PROGRESS_LOG.md` "Iteration 142"). **A ninth was
+attempted by this attempt and was inconclusive by its own design**: the head-of-frame probe (a red triangle
+drawn immediately after `installEye`, before the replay) cannot be seen, because the level-7 scene covers
+every pixel of the panel, so "the head draw landed" and "it did not" produce the same capture. It is recorded
+as a negative about the probe, not about the hypothesis; the queue-order test OPEN_ITEMS names is still the
+next one to run, and it has to be made observable (a known-colour quad diffed against a HUD-off run), not just
+moved. Review-8 is closed on what this batch could act on: **no Critical and no High**; **F4** and **F5** (the
+two comments that still said `TeleportKurt` was unported) and **F6** (the orphan Batch-140 fragment at
+`CONTINUATION.md:59`) are fixed here; **F1** (two `ArenaSpace`s), **F2** (no executed pin that the unnamed
+teleport arm leaves `_previousKurtPosition`/`_teleported` alone) and **F3** (opcode 173's unconditional yield
+unpinned) are deferred with cause in `docs/PROGRESS_LOG.md` — they are the teleport row's, not this row's.
+Gates, verbatim: `make -C tests/scripts` → `All cases match the oracle.` rc 0, **587** `^PASS` / 0 FAIL /
+0 SKIP (was 575; the +12 are this batch's harness cases), no golden changed; `DISPLAY=:99 bash tools/check.sh`
+→ `CHECK: ALL GATES PASSED` rc 0 (`audit_c_with_classes` 0, `gates_vfp` 0 blockers, `audit_arm11_math` clean,
+`audit_r11_idiv` no candidates, `gates_core_parity` both targets, `gates_smdh` SKIP no built .cia,
+`gates_frames` `L3_f1.bmp sha=58615fc85d02e009`, batch integrity PASS, ledger VERIFIED); `make -C mdk_3ds`
+rc 0; `cmake --build build-linux -j8` rc 0; and the row's own acceptance command
+`mdk_3ds/tools/emurun.sh --expect hud` → rc **0** on `:99`, mandarine md5 `0d2adab6`, llvmpipe forced, mono,
+level 7 frame 2520/2580, `expect : hud OK -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame
+2520)`. Frame `docs/frames/2026-11-11-hud-canvas.png` is byte-identical to its predecessors (sha256
+`6646adf1…49cf8`), which is what a batch that cannot reach the Linux capture should produce — and its sidecar
+says plainly that the frame proves nothing about the HUD.
 
 **Batch 141 (iteration 8 of the ledger row `3ds.collision-doors`) — the teleport lands, and with it the
 oracle's own teleport assertions stop being re-stated. Review-7 is closed 5/5, nothing rebutted.** Review-7
@@ -55,8 +92,6 @@ batch 140, i.e. **neither opcode has ever been seen on the 3DS target**. Frame
 produce. Measurements, the mutations, the two negative results and the not-evidenced list — above all the
 two-`ArenaSpace` divergence: `docs/evidence/2026-11-11-teleport-kurt.txt`; narrative: `docs/PROGRESS_LOG.md`
 "Iteration 141".
-
-**Batch 140 (iteration 7 of the ledger row `3ds.collision-doors`) — the two trigger arms batch 139 left
 
 **Batch 140 (iteration 7 of the ledger row `3ds.collision-doors`) — the two trigger arms batch 139 left
 compile-verified are now executed, and review-6 is closed 6/6.** Review-6 (`review-6.md`, DeepSeek V4.1
@@ -1439,7 +1474,44 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
 
-## NEXT (batch 142)
+## NEXT (batch 143)
+Batch 142 closed the ledger row's acceptance command (`emurun.sh --expect hud` → rc 0) and **not the thing the
+row is named for**: the HUD still paints nothing. In priority order:
+**(1) find why a Citro3D canvas draw paints no pixels.** The seam is correct on every CPU-side measurement
+(4 quads, 2 records, the matrix the census reads is the matrix the GPU is handed, the panel lands inside the
+clip square) and eight state hypotheses are already closed by running — read `docs/OPEN_ITEMS.md` "The 3DS
+canvas draws no pixels" before spending a probe, because six of those eight look like obvious first guesses.
+The next probe has to be **observable**, which batch 142's head-of-frame probe was not: draw one known-colour
+probe quad (pure magenta, alpha 1, the whole canvas) as the canvas's only quad, capture, and diff against a
+run with `hudReady` false; then repeat with the Overlay bucket sorted FIRST in the queue. A diff that moves on
+neither run says the fault is not positional and is in the draw itself, and that is worth two runs. The old
+sibling symptom is the clue: the diagnostic triangle has never painted either, and it shares only two things
+with the canvas — a per-draw matrix write and being last in the frame — both already tested and rejected.
+**(2) review-8 F2 and F3, the two cheap pins the teleport row owes**: nothing executed pins that the *unnamed*
+`teleport_player` arm leaves `previousKurtPosition_`/`teleported_` alone (hoisting them out of the `if` leaves
+575 green), and nothing pins opcode 173's *unconditional* yield (a conditional one also leaves 575 green).
+Both are test-writing in `tests/scripts/vm_tests.cpp`, both were confirmed by the reviewer's own mutants, and
+three records currently claim F3 is pinned when it is not. **(3) the two `ArenaSpace`s** (review-8 F1): the C#
+hands ONE space to Kurt and the runtime (Viewer.cs:194, :207); the port has two, so `enterArena` reaches the
+arena RULE and not the collision, which is what `TeleportMakesUnreachableArenaSolid` is actually about. It
+touches the solid pin, `move()`, the sight probes and both frontends — its own batch. **(4)** everything the
+batch-142 plan below carried and batch 142 did not reach: the crossing capture, `ShutDoors`/`Behaviors.Shut`,
+the hatch pin, `FollowArenas`'s golden, `obj.Visible`. **Owner-visible consequence of this batch, stated
+plainly:** the harness closes a ledger row by running its acceptance command, so `3ds.hud-canvas` now closes
+on a green `--expect hud` while the HUD draws no pixels. The gate measures what it can measure (queued and
+emitted) and says so in its own comment, the sidecar and the open item; whether the row should be re-scoped to
+a pixel test is an owner decision, not a batch's. **Owner-only and still owed:** review-5 **F3**, review-6 OQ1
+/ review-7 OQ3 (`ralph/builder.md` modified-unstaged since 2026-11-05, invisible to `gates_batch_integrity`),
+review-7 OQ1 (a 0-byte `review-N.md` reads as "no findings") and OQ2, review-1 **F4** / review-3 **F3**
+(`SCRIPTS_REQUIRED_CASES` is not in a `PROTECTED` file), whether the gate suite should ever run all 587 golden
+cases, and the missing Obsidian/Cognee MCP servers in the builder session (AGENTS P9: a disk-only lookup is a
+degraded lookup; batch 142 had neither server). **Still open and not touched:** every `hw.*` row (no Old-3DS
+hardware in hand), the Phase 2 RE sweep, and the two standing owner blocks (`spec.voice-pool`,
+`re.phase-2-sweep`). Old-3DS performance readiness remains unmeasured and stays open.
+
+## NEXT (batch 142) — SUPERSEDED
+*Batch 142 was dispatched on the ledger row `3ds.hud-canvas`, not on this plan; the ledger picks the row and
+the batch may not. Kept verbatim because the items below it are still open.*
 **This was attempt 8 of 8 on `3ds.collision-doors`, so the loop stops for an operator after this batch.**
 What is left on the row, in priority order: **(1) a crossing capture, and with it a mid-tick door and a
 trigger box.** Unchanged from batch 140 and still the top item: the 3DS rest pitch, the drawn-list pin

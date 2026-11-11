@@ -564,6 +564,65 @@ different kind and it is still open — what it is has not been identified.
   is a new harness concept on both sides and its own slice; the chute-stop-on-death line
   is pinned instead by a health-zero landing, which reaches the same dead branch.
 
+## The 3DS canvas draws no pixels (found in batch 142; OPEN)
+
+The 2D canvas is implemented and its records are replayed — `canvas: quads=4 draws=2
+mesh=2 corners=24 eyes=1` every frame, and the frame census places the panel on the screen
+using the same matrix pointer the GPU is handed — and **no canvas pixel reaches the panel**.
+`mdk_3ds/tools/emurun.sh --expect hud` is green and is *not* proof of visibility; it proves
+the draw was emitted. Do not treat that gate as the item being closed.
+
+Measured and rejected, each in its own emulator run (the numbers are in `docs/PROGRESS_LOG.md`,
+iteration 142 — do not re-derive them):
+
+- the canvas matrix and the per-draw matrix write (installEye made to write the canvas matrix:
+  the level scrambled, the HUD still absent);
+- the tint uniform and `GPU_PRIMARY_COLOR` (the scene drawn with `MODULATE(tex, PRIMARY)`
+  renders normally, so the primary is white including alpha);
+- the HUD textures and the palette expansion (`REPLACE(PRIMARY_COLOR)`, no texture read);
+- GPU command-buffer overflow (`C3D_GetCmdBufUsage()` = 0.113 at frame end);
+- the far clip plane (canvas z moved to -0.5, confirmed in the record);
+- the clipper's fixed-point range (whole matrix ×256, ndc bit-identical);
+- a vertex buffer allocated inside a frame (the canvas mesh moved to `mdk_render_create`).
+
+**What is still shared with the old, unrelated-looking symptom**: the diagnostic triangle has
+never painted either (`drawDiagnostic`'s comment: 69 px of 96000, not a screen-sized
+triangle), and the shader's w note records a previous failed hunt for that. In a level-7
+frame every scene draw carries an identity world and takes the frame matrix, so the canvas
+and the diagnostic are the only draws issued at the tail of the frame. **The next candidate
+is that a draw issued after the scene's draws does not land** — test it by making the canvas
+the FIRST record in the queue (or by drawing the diagnostic before the replay), not by
+re-testing state.
+
+**THE HEAD-OF-FRAME PROBE WAS RUN AND IS INCONCLUSIVE — do not re-run it as it was.** Attempt 2
+of this row drew a red triangle immediately after `installEye`, before the replay, with the
+white diagnostic left at the tail. It cannot answer the question: **the level-7 scene covers
+every pixel of the panel** (947 of 1050 triangles on-screen; the capture is a full-panel
+sunburst with no sky gap) and the probe's depth test and write are both off, so the scene
+paints over it whether or not it landed. The two captures differed only by the scene's own
+animation. Any positional probe here must be **observable**: one known-colour quad (pure
+magenta, alpha 1, the whole canvas) as the canvas's only quad, diffed against a run with
+`hudReady` false — a colour the scene cannot produce.
+
+**PRIOR ART, found by the pi-knowledge lookup and not yet tested (the sibling `tetrisphere-godot`
+port hit this same class and wrote it up).** Its validation notes —
+`docs/validation/c3d-sky-orient-2026-10-27.md`, `c3d-hud-viewport-2026-10-27.md`,
+`c3d-hud-shared-2026-10-28.md`, `c3d-ui-space-2026-10-27.md` — measure that **citro3d's top
+screen is a 240x400 memory target whose rotation interacts with the projection and the
+viewport**: `C3D_FrameDrawOn` installs the *memory-space* viewport from `frameBuf.width/height`,
+a physical-size `C3D_SetViewport(0,0,400,240)` silently clips the picture to a band, and
+**replacing `Mtx_OrthoTilt` with `Mtx_Ortho` for a UI ortho SWAPPED THE TWO AXES** because the
+`*Tilt` variants carry the top-screen rotation that a plain ortho does not. MDK bakes its own
+quarter turn into every matrix (`eyeViewProjection` step (B), and `canvasMatrix` applies the
+same one) and sets `C3D_SetViewport(0, 0, 240, 400)`, i.e. the memory size — so the port is on
+the good side of the viewport half of that finding, but **nobody has checked whether citro3d
+applies its own top-screen flip/rotate below the matrix**, which would hit exactly the two draws
+that write their own matrix per draw and no others. That is the first thing to test, and it is
+testable from the installed `libcitro3dd` disassembly the sibling already read.
+
+Not the vault's stereo-replay HUD trap: `citro3d-display-list-stereo-replay-non-fast3d.md`
+needs a second eye whose callback runs after the replay fires, and this capture is mono.
+
 ## The frame-record directive (closed as an open item, kept as a rule)
 
 Owner directive 2026-10-29 landed mid-iteration 28, written by the other loop

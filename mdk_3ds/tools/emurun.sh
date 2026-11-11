@@ -53,12 +53,20 @@
 #   mdk_3ds/tools/emurun.sh --grep 'tex:|draws' # extra patterns to extract
 #   mdk_3ds/tools/emurun.sh --shot /tmp/f.png    # capture the offscreen display
 #   mdk_3ds/tools/emurun.sh --min-frames 60      # refuse to report a short run
+#   mdk_3ds/tools/emurun.sh --expect hud         # fail unless the HUD drew
 #   mdk_3ds/tools/emurun.sh path/to/other.3dsx
 #
 # EXIT CODES
 #   0 ok | 2 launch/environment failed | 3 STALE LOG, refused to report
 #   4 emulator died before producing a log | 5 run too short to measure
 #   6 emulator version is not the pinned known-good build
+#   7 the run was healthy but a --expect evidence line was not there
+#
+# WHY 7 IS NOT 2 OR 5. A missing HUD is not a broken launch and not a short run:
+# the emulator ran, the game ran, and the thing the batch was for did not happen.
+# Folding it into either of those would let a caller that only checks "did the
+# harness work" read a failure as a pass -- which is the same mistake as an
+# `--expect` that exits 0 whatever the game does.
 # ============================================================================
 
 set -u
@@ -73,6 +81,7 @@ SECS=45
 EXTRA_GREP=""
 SHOT=""
 MIN_FRAMES=0
+EXPECT=""
 
 # The known-good Mandarine build (AGENTS.md P8). r1.3.0
 # (77e2e887f3af1b62fa52cfcfe65709f2) segfaults during level load.
@@ -92,6 +101,7 @@ while [ $# -gt 0 ]; do
     --grep)       EXTRA_GREP="$2"; shift 2 ;;
     --shot)       SHOT="$2";       shift 2 ;;
     --min-frames) MIN_FRAMES="$2"; shift 2 ;;
+    --expect)     EXPECT="$2";     shift 2 ;;
     --display)    DISPLAY_NUM="$2"; shift 2 ;;
     -h|--help)    awk 'NR>2 { if ($0 ~ /^# ={10,}/) exit; print }' "$0"; exit 0 ;;
     *)            DSX="$1";        shift ;;
@@ -785,6 +795,83 @@ grep "$READY_TOKEN" "$LOG" | head -3
 grep 'romfsInit\|FAILED\|level\|draws issued' "$LOG" | head -8
 grep "$FRAME_RE" "$LOG" | tail -3
 [ -z "$EXTRA_GREP" ] || grep -E "$EXTRA_GREP" "$LOG" | head -20
+
+# --- expectations -----------------------------------------------------------
+# `--expect NAME` turns a ledger row's acceptance cell into this harness's exit
+# code, so "the HUD works on the 3DS" is a command that fails when the HUD does
+# not. An acceptance that cannot fail is not evidence.
+#
+# It is a FUNCTION and not a couple of lines at the bottom for one reason: the
+# harness cannot be run end to end by the host suite (it needs a console
+# emulator, a display and a minute of wall clock), so the only way to gate the
+# adjudication is to LIFT it and run it against a synthetic log. That is what
+# tests/scripts/emurun_harness_test.sh does, with the same technique it already
+# uses for the config functions: lifted from this file, not retyped there, or the
+# test certifies a copy.
+#
+# The evidence is a guest LOG LINE and not a pixel, and the claim it can carry is
+# narrower than it looks: it proves the canvas was QUEUED and EMITTED, not PAINTED.
+# `draws` counts the records the replay reached `C3D_DrawArrays` with, and nothing
+# downstream feeds back, so a frame whose draws the GPU never rasterises prints the
+# same line as a frame that painted (measured: docs/OPEN_ITEMS.md, "The 3DS canvas
+# draws no pixels", where this flag is green over a HUD with no pixels on screen).
+# What the two numbers DO separate is the CPU-side half of the story -- the quads the
+# frontend asked for against the draws the per-eye replay emitted, so a canvas that
+# was queued but dropped by a mesh or texture check, or drawn into one eye only, is a
+# different pair of numbers. The pixel question needs a known-colour probe quad diffed
+# against a HUD-off run, which does not exist yet; until it does, a green `--expect
+# hud` is not a visibility verdict and must not be recorded as one. A screenshot is
+# still taken and published for the human to look at (`--shot`).
+expect_check() { # expect_check <name> <log> ; 0 when the evidence is there
+    local name="$1" log="$2"
+    local line quads draws
+    case "$name" in
+        hud)
+            # The line is found by its OWN SHAPE (`canvas: quads=`) and the LAST one
+            # wins, for two reasons. A prefix as loose as `canvas: ` is shadowed by an
+            # unrelated line that happens to share it -- measured on the first run of
+            # this flag, where the mesh-allocation note `canvas: stream mesh 384
+            # corners` came first and the check reported a HUD failure over a HUD that
+            # had drawn. And the last line, not the first, is the one that says the HUD
+            # was still drawing when the run ended.
+            line="$(grep '^canvas: quads=' "$log" 2>/dev/null | tail -1)"
+            if [ -z "$line" ]; then
+                echo "emurun: --expect hud FAILED: the guest wrote no 'canvas:' line, " >&2
+                echo "          so the HUD's canvas was never queued (hud.load failed, " >&2
+                echo "          or the frontend never calls the canvas seams)." >&2
+                return 1
+            fi
+            quads="$(printf '%s' "$line" | sed -n 's/.*quads=\([0-9][0-9]*\).*/\1/p')"
+            draws="$(printf '%s' "$line" | sed -n 's/.*draws=\([0-9][0-9]*\).*/\1/p')"
+            # Both numbers, and both non-zero. `quads` alone would also be printed
+            # by a batch that was queued and then dropped (no mesh, no texture);
+            # `draws` alone could not say whether the frontend asked for anything.
+            if [ -z "$quads" ] || [ "$quads" -le 0 ] || [ -z "$draws" ] || \
+               [ "$draws" -le 0 ]; then
+                echo "emurun: --expect hud FAILED: the canvas line is '$line'" >&2
+                echo "          (quads and draws both have to be above zero)." >&2
+                return 1
+            fi
+            echo "expect    : hud OK -- $line"
+            return 0
+            ;;
+        *)
+            echo "emurun: --expect '$name' is not a known expectation (hud)" >&2
+            return 2
+            ;;
+    esac
+}
+# --- end expectations ---------------------------------------------------------
+
+if [ -n "$EXPECT" ]; then
+  expect_check "$EXPECT" "$LOG"
+  rc=$?
+  if [ "$rc" -eq 2 ]; then
+    exit 2
+  elif [ "$rc" -ne 0 ]; then
+    exit 7
+  fi
+fi
 
 if [ "$LAST_FRAME" -lt "$MIN_FRAMES" ]; then
   echo "emurun: only reached frame $LAST_FRAME (< --min-frames $MIN_FRAMES). Refusing to report." >&2

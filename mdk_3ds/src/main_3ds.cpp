@@ -19,12 +19,13 @@
 //     2026-11-05: boot straight into a level), so the frontend starts with
 //     Start::Level and treats any other screen as the end of the run rather than
 //     pretending to show one.
-//   * The HUD. hud_view.cpp is ported and the frontend would call it in three
-//     lines, but mdk_render_canvas_quad is a NO-OP on this backend (see the
-//     comment by its definition in renderer_c3d.cpp and docs/OPEN_ITEMS.md): a
-//     canvas draw has to become a record in the frame's queue so the per-eye
-//     replay emits it, and until that lands a HUD call here would draw nothing at
-//     all and read as a ported HUD. Deferred with that cause, not stubbed.
+//   * The HUD is HERE. hud_view.cpp was ported long before this backend could
+//     draw it, because mdk_render_canvas_quad was a no-op on the Citro3D backend;
+//     the canvas is now a record in the frame's queue (renderer_c3d.cpp's canvas
+//     seams) and the HUD loads, blinks and draws like the Linux frontend's. What
+//     it shows is what the port has: health, the skull and its fade, the flashes,
+//     and an empty inventory -- the pickup and target-bar writers land with their
+//     own subsystems and the HUD must not invent them.
 //   * The ropes, the sniper scope and the effects — `_ropes.Draw`, `_sniper.Draw`
 //     and `_effects.Draw` between the objects and Kurt in C# Viewer.DrawScene
 //     (Viewer.cs:705-707). None of the three is ported, so the frame here goes
@@ -59,6 +60,7 @@
 #include "game/arena_space.h"
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
+#include "game/hud_view.h"
 #include "game/input.h"
 #include "game/kurt_sprite.h"
 #include "game/level_data.h"
@@ -231,6 +233,12 @@ int main(int argc, char** argv) {
     // H150_I out of it) and a level whose Kurt-sprite decode failed still has a
     // usable archive for the scripts.
     bool spritesReady = false;
+    // The HUD, off the same archive and the same palette (C# Viewer hands
+    // TRAVERSE/TRAVSPRT.BNI to HudView and KurtSprite alike). Its own readiness is
+    // a separate fact from Kurt's: the HUD's sprites are four images out of the
+    // archive and either half can fail to decode without the other.
+    mdk::HudView hud;
+    bool hudReady = false;
     // The level's script bytecode. The C# Viewer loads it next to the geometry
     // and the runtime cannot exist without it.
     mdk::formats::Cmi cmi;
@@ -291,6 +299,12 @@ int main(int argc, char** argv) {
                     mdk::log3dsPrintf("sprites: Kurt's animations loaded");
                 } else {
                     mdk::log3dsPrintf("sprites: FAILED to decode Kurt's animations");
+                }
+                if (hud.load(renderer, sprites, level.dti().palette())) {
+                    hudReady = true;
+                    mdk::log3dsPrintf("hud: loaded");
+                } else {
+                    mdk::log3dsPrintf("hud: FAILED to decode the HUD sprites");
                 }
             }
         } else {
@@ -654,6 +668,11 @@ int main(int argc, char** argv) {
     const float step = mdk::flow::GameFlow::stepFor(false, false, 0.0f);
     const float maxPending = step * 10.0f;  // the C#'s ten-step ceiling
     float pending = 0.0f;
+    // The HUD's blink runs on the C#'s 30 Hz clock and not on the frame's, so it
+    // needs its own accumulator beside `pending` (Viewer.cs:535-538, and the same
+    // pair the Linux frontend keeps).
+    const float kHudStep = 1.0f / 30.0f;
+    float hudPending = 0.0f;
     uint32_t frame = 0;
     uint32_t steps = 0;
     // The stream mesh's capacity the frame log last reported, so a growth is said
@@ -823,6 +842,13 @@ int main(int argc, char** argv) {
                         space.setSolid({*solid});
                     }
                 }
+                // The C# advances the HUD blink once per 30 Hz boundary
+                // (Viewer.cs:535-538), not once per 60 Hz frame.
+                hudPending += step;
+                if (hudPending >= kHudStep) {
+                    hud.tick();
+                    hudPending -= kHudStep;
+                }
                 pending -= step;
                 steps++;
             }
@@ -982,9 +1008,27 @@ int main(int argc, char** argv) {
             kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
-        // The HUD would be drawn here (hud_view.cpp is ported); see the header for
-        // why it is not called yet: the canvas seam on this backend discards every
-        // quad, so a call here would be a stub presented as a port.
+        if (hudReady) {
+            // The HUD is the last thing drawn before the frame ends, which is the
+            // C#'s order (Viewer.DrawScene: the canvas is the Overlay pass, and
+            // the queue draws Overlay after every other pass). The canvas seams
+            // queue it rather than drawing it: see renderer_c3d.cpp's canvas
+            // section for why a 3DS canvas cannot flush at its own boundary.
+            //
+            // What the state carries is what this port has: health, death and the
+            // two combat flashes, all read off Kurt himself exactly as
+            // Viewer.HudStateOf passes them (Viewer.cs:913). The inventory and the
+            // target bar stay empty until the pickup and shooting subsystems land,
+            // because the C# starts them empty and nothing here may invent them.
+            mdk::HudState state;
+            state.health = player.health();
+            state.dead = player.dead;
+            state.hurtFlash = player.combat().hurtFlash();
+            state.whiteFlash = player.combat().whiteFlash();
+            mdk_render_canvas_begin(renderer);
+            hud.draw(renderer, state);
+            mdk_render_canvas_end(renderer);
+        }
         mdk_render_end_frame(renderer);
         frame++;
 

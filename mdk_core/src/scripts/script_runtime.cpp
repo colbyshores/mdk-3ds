@@ -862,10 +862,10 @@ void ScriptRuntime::preloadArena(const std::string& arena) {
 // C# ScriptRuntime.LoadArena (ScriptRuntime.cs:615-623, arena_load 0x419d00): "only one arena
 // (not corridor) is loaded at a time" -- the MTO holds a ROOM's geometry and a corridor is not
 // in it, so loading a corridor leaves the resident arena alone and only pulls its doors.
-// Three oracle callers: showArena, preloadArena, and TeleportSecond (:516), the last of which
-// belongs to the unported TeleportKurt, so two of the three are ported here. When
-// TeleportKurt lands it owes this call too -- a teleport that only names the neighbour leaves
-// it an inactive, unloaded second with its doors still parked in the room it came from.
+// Three oracle callers, all three ported: showArena, preloadArena, and TeleportSecond
+// (:516) -- the last one landed with TeleportKurt, so a teleport that only names the
+// neighbour does not leave it an inactive, unloaded second with its doors still parked
+// in the room it came from.
 void ScriptRuntime::loadArena(const std::string& arena) {
     if (level_->mto().has(arena)) {
         residentArena_ = arena;

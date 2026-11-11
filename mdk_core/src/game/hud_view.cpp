@@ -65,9 +65,9 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
         return false;
     }
 
-    loadImage(sprites, "SC_STAT", &panel_);
-    loadImage(sprites, "SKULL", &skull_);
-    loadImage(sprites, "SNIP_TXT", &digits_);
+    loadImage(sprites, "SC_STAT", &panel_, palette);
+    loadImage(sprites, "SKULL", &skull_, palette);
+    loadImage(sprites, "SNIP_TXT", &digits_, palette);
 
     formats::SpriteAnimation pickups;
     if (sprites.animation("PICKUPS", &pickups)) {
@@ -95,14 +95,22 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
     return panel_.texture >= 0 && digits_.texture >= 0;
 }
 
-void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* out) {
+void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* out,
+                        const formats::Palette& palette) {
     formats::Texture texture;
     if (!sprites.image(name, &texture)) {
         return;
     }
+    // The palette's bytes go in with the indices. The C# hands its
+    // `CreateIndexTexture` the indices alone and binds the palette at draw
+    // (CanvasImages.cs:14), which is what the Vulkan backend does with them; the
+    // 3DS has no palette texture, so it needs the bytes now to expand the indices
+    // into texels. It is the SAME palette the draw names (`palette_` above and
+    // `q.palette` in drawImage), so the two targets end up with one palette's
+    // colours either way -- but only if the bytes are handed over here.
     out->texture = mdk_render_create_index_texture(renderer_, texture.width(),
                                                    texture.height() * texture.frameCount(),
-                                                   texture.indices(), nullptr);
+                                                   texture.indices(), palette.rgba());
     out->w = (float)texture.width();
     out->h = (float)texture.height();
 }

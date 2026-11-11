@@ -514,9 +514,10 @@ public:
     const std::vector<std::string>& drawnArenas() const { return drawnArenas_; }
     // C# ScriptRuntime._residentArena (:312): the last arena whose MTO was resident, i.e.
     // the last arena LoadArena found in the MTO rather than a corridor. The C# reads it in
-    // exactly one place, IsCorridorLoaded (:522-531), which belongs to the unported
-    // TeleportKurt, so until that lands this is written and not read -- the accessor exists
-    // so the write is pinned by a test instead of looking like dead state.
+    // exactly one place, IsCorridorLoaded (:522-531), and that reader is ported
+    // (`isCorridorLoaded`, script_runtime.cpp) -- so this field IS read by the scripts, and
+    // has been since the teleport landed. The accessor exists for the separate reason the
+    // comment used to give: it lets a test pin the write instead of trusting the reader.
     const std::string& residentArena() const { return residentArena_; }
     // The scripts' ArenaSpace. THE PORT HAS TWO WHERE THE C# HAS ONE: the oracle's Viewer
     // builds a single ArenaSpace and hands the SAME object to Kurt and to the runtime
