@@ -1,14 +1,54 @@
 # Phase 2 continuation checkpoint
-Risk: high — the shipped collision pin changes on BOTH frontends. `ArenaSpace::setSolid` loses its
-one-name form and takes the LIST the oracle passes (`ArenaSpace.cs:45-55`), and
-`ScriptRuntime::solidArenas()` — the scripts' drawn list, current arena plus the active second
-(`ScriptRuntime.cs:265-278`, handed over at `Viewer.cs:533`) — replaces the geometric arena under
-Kurt's feet as what the frontends collide against. So which BSPs are solid during a door walk, and
-what happens while Kurt falls out of the world, change on the 3DS and on the Linux target. Pinned by
-a new executed `vm_tests` case (the level-7 crossing, both names solid, and the one-name defect
-shown losing its floor) and by both frontend shape gates; the pinned frame is byte-identical because
-level 3 frame 1 is a spawn, where the two rules agree. Not high for its size — the diff is small —
-but for what it decides.
+Risk: high — the collision pin's TIMING changes on both targets. The scripts' drawn list is now a
+snapshot taken at the oracle's `UpdateArenas` point (`ScriptRuntime.cs:935`, early in the tick) instead
+of a live read of `currentArena_`/`secondArena_`/`secondActive_`, so after a mid-tick `showArena` — a
+door opening or closing, an `arena_show` opcode — the arenas that are solid for the next step differ
+for one tick, and the pre-first-tick pin goes from `[""]` to empty. Same collision world at a spawn and
+across a crossing; different for exactly one tick after a door moves. Pinned by an executed `vm_tests`
+assertion (the level-7 crossing, then the door's own callee called, then the pin unchanged and the
+floor still hit) and shown reddening on the pre-batch code; the frame is byte-identical because level 3
+frame 1 is a spawn. High for what it decides, not for its size.
+
+**Batch 138 (iteration 5 of the ledger row `3ds.collision-doors`) — review-4 is closed 3/3: the drawn
+list becomes the tick's snapshot.** This is still priority item **(1)** of batches 134-137.
+**F1 (Medium)** held: batch 137 derived the list at read time and justified it by saying `UpdateArenas`
+"runs at the end of that same tick (`ScriptRuntime.cs:935`)" — the line is right, the position is not.
+`:935` sits right after the crossing and `CheckTriggers` and BEFORE the object loop (`:962-987`) and
+`RunControllers` (`:991`), and `_drawnArenas` is assigned nowhere else (`:694-695`), so the oracle's
+pin is a snapshot of the tick's START and every later writer reaches it a tick late — a door closing
+(`ObjectBehaviors.cs:99`), a door opening (`:411`), opcode 100 `arena_show` (`ScriptVm.cs:474`), all
+three ported. So the port dropped the active second a whole tick before the oracle does: over
+`CDANT_1` the next `move()` sweeps only `DANT_2`, finds no floor, and `bottom()` answers with
+`_solid[0]`'s minimum Z. Now `ScriptRuntime::updateDrawnArenas()` — the ported drawn-list half of
+`UpdateArenas` (`:658-664`) — runs at the oracle's own position (`script_runtime.cpp:584`, where the
+C# has `CheckTriggers(); UpdateArenas();`) and is the only writer of `drawnArenas_` (the C#'s
+`_drawnArenas`), and `solidArenas()` returns that cache instead of reading the fields; the rest of
+`UpdateArenas` (loaded arenas, loop sounds, `obj.Visible`) stays unported and the comment says where
+it and `CheckTriggers` must go. Before the first tick the list is empty, which is the oracle's value.
+Executed pin: after the level-7 crossing the case calls `showArena("")` — what a closing door calls —
+and proves the fields moved while the pin did not, that a downward move inside the room Kurt left still
+hits its floor, and that the NEXT tick is where the second drops; mutation M1 (deriving again) reddens
+three checks including the fall-through. **F2 (Low)** held: the same case's pre-first-tick assertions
+pinned the derivation's `[""]` instead of the oracle's empty list, so the faithful fix would have
+reddened them; they now assert `empty()` and the `bottom()` half is untouched. **F3 (Low)** held:
+`CROSSING_ARM_COUNT` was a hand-maintained third copy of the arm count; `crossing_arms()` now returns
+the arms (the wrapper's no-`make` arm folded in) and both printouts take `len(arms)` — M2 adds an arm
+and the verdict prints 9, and batch 137's M3 still reddens the "one case only" arm. Also corrected,
+unprompted: four off-by-a-few oracle citations in the prose this batch touches (`:660-666`→`:658-664`,
+`:265-278`→`:265-282`, `:271-283`→`:274-280`, `_solidFirst` `:284`→`:285`), each verified by printing
+the cited lines. Gates: `make -C tests/scripts test_crossing` → `All crossing cases match the oracle.`
+rc 0 (2 cases); `make -C tests/scripts` → `All cases match the oracle.` rc 0 (**570** PASS, 0 FAIL,
+0 SKIP — same 570, this batch adds assertions to an existing case); `DISPLAY=:99 bash tools/check.sh`
+→ `CHECK: ALL GATES PASSED` rc 0 with `note: crossing selftest: 8 seeded arms, all adjudicated as
+claimed`; `make -C mdk_3ds` → rc 0, `mdk.elf` `dbaf850adeac8738bf6ce2d3b5f92e81` (moved: the snapshot
+is shipped code); `cmake --build build-linux` → rc 0; both frontend gates re-ran green (12/12 arms and
+20 checks/56 arms/24 probes). Emulator (`emurun.sh`, `:99`, mandarine md5 `0d2adab6`, rc 0): level 7
+idle, frame 2520 by the deadline / 2580 in the log, `health=100 objects=7 plays=1` — no regression,
+**no crossing exercised**. Frame `docs/frames/2026-11-11-drawn-list-snapshot.png` is byte-identical to
+its two predecessors, as expected for a batch whose change cannot reach a spawn. Measurements, three
+mutations and the not-evidenced list — above all that **no golden executes a mid-tick `showArena`**, so
+the lag is pinned through the door's callee rather than the door: `docs/evidence/2026-11-11-drawn-list-snapshot.txt`;
+narrative: `docs/PROGRESS_LOG.md` "Iteration 138".
 
 **Batch 137 (iteration 4 of the ledger row `3ds.collision-doors`) — the frontend pin becomes the
 oracle's drawn list, and review-3 is closed 2/2 with one finding owner-only.** This is priority item
@@ -1259,6 +1299,44 @@ away but it is no longer first, and no new 1-ULP work opens unless a listed item
 *(Items 1-8 are closed work and each points at its narrative. This file is over its ~150-line budget and stays
 so deliberately: the owner-action block and the standing-facts list are the parts a batch must not lose, and
 the closed items above are the only cheap material. Trimming further is an owner edit, not a batch.)*
+
+## NEXT (batch 138)
+**The row's acceptance command passes and the pin is now the oracle's snapshot, so the only thing left
+on `3ds.collision-doors` is evidence the harness cannot produce yet, plus the two writers that sit on
+either side of the snapshot point.** In priority order: **(1) a crossing capture, and with it a
+mid-tick door.** The 3DS rest pitch, the drawn-list pin across a doorway and this batch's one-tick lag
+all read a `currentArena()` that moves, and no capture has ever shown any of them: an `emurun.sh` run
+that walks level 4 through connection 1012 (or level 7 through 1001) on `:99` would close review-1
+OQ3, review-2 OQ3, review-3 OQ3 and review-4's mid-tick gap at once, because the door that opens or
+closes on the far side of a doorway is the only writer that can land after the snapshot. It needs a
+scripted walk in the harness, so it is not free. Until then the lag is pinned by calling the door's own
+callee between ticks (`vm_tests`), which is the property, not the path. **(2) `CheckTriggers`
+(`ScriptRuntime.cs:707`)** — the last writer ABOVE the snapshot point, unported, so a trigger box that
+shows or preloads an arena still does nothing. Its position is now named in the code (immediately above
+`updateDrawnArenas()`, `script_runtime.cpp:584`); putting it anywhere else lands its `ShowArena` a tick
+late, exactly the way the door's does today. **(3) `LoadArena` + `PullDoors`**
+(`ScriptRuntime.cs:615-643`): an arena being loaded takes the doors leading into it out of its
+neighbours and turns them around (`ObjectBehaviors.MoveDoor`, `_residentArena`), and until it lands a
+door can stay behind in the neighbour after Kurt crosses. It is what `DoorArenaTests` actually asserts.
+**(4) the hatch pin.** DTI dirs 6/7 are every doorway on level 5 and half of 3/6/8; the arms are
+ported and demonstrated on shipped geometry but no oracle assertion covers them, and the dotnet probe
+that would produce one is gone (`/tmp/kilo/dotnet10` is absent and `/tmp/kilo` is not writable by this
+uid — an owner/environment item). **(5) `FollowArenas`'s golden**, which needs `PreloadArena`
+(`ScriptRuntime.cs:602-614`). **(6) `TeleportKurt`**, the only other way the oracle moves
+`currentArena_` and the only way into an arena no doorway leads to; it is also what would let the
+crossing goldens' first-tick lines become oracle assertions instead of two rules that agree. **(7)**
+the rest of `UpdateArenas` — the loaded-arena bookkeeping, the loop sounds and `obj.Visible` — now has
+a home (`updateDrawnArenas()`), and **(8) the snowboard branch of `solidArenas()`** is written and
+unreachable: `ridesBoard_` has no writer until the ride slice, so that half is compile-verified only.
+**Owner-only and still owed:** review-1 **F4** / review-3 **F3** (`ralph/builder.md` is `PROTECTED` and
+modified-unstaged, and `SCRIPTS_REQUIRED_CASES` lives in a non-`PROTECTED` file), review-4 **OQ2** (a
+0-byte `review-N.md` at dispatch is read as "no findings"), the `3ds.hud-canvas` acceptance cell
+(`emurun.sh --expect hud` has no such flag), and a decision on whether the gate suite should ever run
+all 570 golden cases (measured 7m27s warm, so today `gates_core_parity` runs only the crossing
+target). **Still open and not touched:** every `hw.*` row (no Old-3DS hardware in hand, no
+`mdk_3ds/tools/hw_cycle.sh`), the Phase 2 RE sweep, and the two standing owner blocks
+(`spec.voice-pool`, `re.phase-2-sweep`). Old-3DS performance readiness remains unmeasured and stays
+open.
 
 ## NEXT (batch 137)
 **The row's acceptance command passes, the gate suite runs it and refuses a one-case PASS, and the

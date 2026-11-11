@@ -24432,3 +24432,85 @@ modified-unstaged (it now documents the TH reviewer identity and the search-scop
 staged its paths by name and did not sweep it in. review-3 **F3** (protect
 `SCRIPTS_REQUIRED_CASES`). review-4's F2-F8. The `3ds.hud-canvas` acceptance cell. Whether the gate
 suite should ever run all 570 cases. Old-3DS performance readiness stays unmeasured and open.
+
+## Iteration 138 — batch 138: review-4 closed 3/3 — the drawn list is the tick's SNAPSHOT, not a read of its fields, and the arm count is derived
+
+Review: `logs/ralph-pi/run-20261110-230107/review-4.md` (DeepSeek V4.1 Flash TH, no Critical, no
+High, verdict INCOMPLETE). All three findings reproduced against the oracle and **none is rebutted**:
+F1 (Medium) fixed, F2 and F3 (Low) fixed. `mdk.elf` `e29531ae…` → `dbaf850adeac8738bf6ce2d3b5f92e81`
+(the snapshot is shipped code on both targets), and the pinned frame is byte-identical to batch
+136's and 137's, which is what a batch that cannot move level 3 frame 1 looks like.
+
+**F1 (Medium) — confirmed, fixed, pinned.** Batch 137 justified deriving the drawn list at read
+time by saying `UpdateArenas` "runs at the end of that same tick (`ScriptRuntime.cs:935`)". The line
+is right, the position is not: `:935` sits immediately after the doorway crossing and
+`CheckTriggers` and **before** `KurtTouchesGroups`, `Rides.Update`, `CollectPickups`, the object loop
+(`:962-987`) and `RunControllers` (`:991`), and `_drawnArenas` is assigned nowhere else in the tree
+(`:694-695`). So the oracle's pin is a snapshot of the tick's **start**, and every writer after
+`:935` reaches it a tick late — writers this port has: a door closing (`ObjectBehaviors.cs:99` →
+`script_runtime.cpp:2849`), a door opening (`:411` → `:2801`) and opcode 100 `arena_show`
+(`ScriptVm.cs:474` → `script_vm.cpp:827`). Reproduced by reading the oracle's `RunTick` end to end
+and grepping every assignment to `_drawnArenas`; the reviewer's level-7 scenario holds — with the
+door close landing after the snapshot, the port dropped `CDANT_1` from the pin at the end of tick N
+while the oracle drops it at tick N+1's `UpdateArenas`, so the next `move()` sweeps only `DANT_2`,
+finds no floor, and `bottom()` answers with `_solid[0]`'s minimum Z.
+Fix: `ScriptRuntime::updateDrawnArenas()` is the ported **drawn-list half** of `UpdateArenas`
+(`:658-664`), called at the oracle's own position (`script_runtime.cpp:584`, immediately after the
+crossing block, where the C# has `CheckTriggers(); UpdateArenas();`) and the only writer of the new
+`drawnArenas_` member (the C#'s `_drawnArenas`, `:310`). `solidArenas()` now returns that cache —
+off the board, and `drawn[0]` alone on it (`:274-280`) — and no longer reads the three fields at all.
+The rest of `UpdateArenas` (loaded-arena bookkeeping, loop sounds, `obj.Visible`) stays unported and
+the comment says so, says where it belongs, and says that `CheckTriggers` must land **above** the
+call when it arrives. Before the first tick the list is now EMPTY, which is the oracle's value, where
+batch 137 produced the single `""` that resolves to no arena: same collision world, but no longer an
+artefact. The pinning test is executed, not argued: after the level-7 crossing the case calls
+`showArena("")` — exactly what a closing door calls — and pins that the fields moved while the pin
+did not, that a downward move at (0,660,-3) inside the room Kurt left still hits its floor, and that
+the next tick's snapshot is where the second drops. Mutation **M1** (deriving from the fields again,
+i.e. F1 restored) reddens three checks including the fall-through, exit 1.
+
+**F2 (Low) — confirmed, fixed.** The same case's pre-first-tick block asserted
+`solidArenas().size() == 1` and `[0].empty()`, which is the derivation's artefact, not the oracle's
+empty list — so the more faithful fix F1 asked for would have reddened the test that was supposed to
+protect the behaviour. The `bottom()` half (the collision effect, which is what actually matters) is
+kept unchanged; the shape assertions became `solidArenas().empty()`, the oracle's value.
+
+**F3 (Low) — confirmed, fixed.** `CROSSING_ARM_COUNT = 8` was a hand-maintained third copy of the arm
+count in the file whose own comment named a second copy as the risk: a ninth arm would have printed
+`PASS (8 arms)` with nine running. `crossing_arms()` now returns the arms — the wrapper's no-`make`
+arm folded in as an entry like every other — and `crossing_arm_failures()` returns
+`(failures, len(arms))`, which both the `--selftest` verdict and the note inside `run()` print. The
+constant is gone. Mutation **M2** appends an arm at runtime and the verdict prints 9; mutation **M3**
+(batch 137's, re-run because the refactor moved the arms) still reddens exactly the "one case only"
+arm with exit 1.
+
+**Also corrected, unprompted, while re-reading the oracle for F1.** Four citations in the prose this
+batch touches were off: `ScriptRuntime.cs:660-666` → `:658-664` (the drawn list, 2 late), `:265-278`
+→ `:265-282` (the `SolidArenas` property, 4 early), `:271-283` → `:274-280` (the snowboard half),
+`_solidFirst` `:284` → `:285` (`:284` is its doc line). Every one was verified by printing the cited
+lines, the way review-1 F1 of this run demanded, and they are fixed in all seven files that carried
+them — prose only in the two shell gates, no check, arm or pattern changed.
+
+**Gates, verbatim.** `make -C tests/scripts test_crossing` → `All crossing cases match the oracle.`
+rc 0 (2 cases). `make -C tests/scripts` → `All cases match the oracle.` rc 0, **570** PASS, 0 FAIL,
+0 SKIP (the same 570 as batch 137: this batch adds assertions to an existing case, not a new one).
+`DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED` rc 0 with `note: crossing target:
+make -C tests/scripts test_crossing exit 0 — 2 crossing case(s): L4, L7` and `note: crossing
+selftest: 8 seeded arms, all adjudicated as claimed`. `make -C mdk_3ds` → rc 0, `mdk.elf`
+`dbaf850adeac8738bf6ce2d3b5f92e81`. `cmake --build build-linux` → rc 0. The two frontend gates
+re-ran green: `frontend_solid_pin_test.sh` 12 checks / 12 arms red, `main_3ds_flow_test.sh` 20
+checks / 56 arms red / 24 probes green. Emulator (`emurun.sh --min-frames 60`, `:99`, mandarine md5
+`0d2adab6`, rc 0): level 7 idle, frame 2520 by the deadline and 2580 in the log after the reap,
+`health=100 objects=7 plays=1` — no regression, and **no crossing exercised**, so neither the
+drawn-list pin across a doorway nor this batch's one-tick lag has ever been shown on the console.
+Frame `docs/frames/2026-11-11-drawn-list-snapshot.png` md5 `6769a137…`, byte-identical to its two
+predecessors, disclosed. Measurements, the three mutations and the not-evidenced list — including
+that **no golden executes a mid-tick `showArena`** (the harness has no in-tick hook, so the lag is
+pinned by calling the door's own callee between ticks) and that `vm_tests` prints a case's PASS line
+whether or not its CHECKs failed — are `docs/evidence/2026-11-11-drawn-list-snapshot.txt`.
+
+**Still owed by an owner:** review-1 **F4** / review-3 **F3** — `ralph/builder.md` is `PROTECTED` and
+still modified-unstaged (the owner's own edit: the TH reviewer identity and the search-scope rule),
+and `SCRIPTS_REQUIRED_CASES` lives in a non-`PROTECTED` file. This batch staged its paths by name and
+did not sweep it in. review-4's OQ2 (a 0-byte `review-N.md` at dispatch) is a harness defect. Old-3DS
+performance readiness stays unmeasured and open.

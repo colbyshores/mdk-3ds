@@ -572,6 +572,17 @@ void ScriptRuntime::runTick() {
         showArena(arena);
     }
 
+    // The collision world is snapshotted HERE, at the oracle's own position:
+    // ScriptRuntime.cs:934-935 runs CheckTriggers() and then UpdateArenas(), and
+    // UpdateArenas is the only writer of _drawnArenas (:694-695). Everything after it
+    // in the C# -- KurtTouchesGroups, Rides.Update, CollectPickups, the object loop
+    // (:962-987) and RunControllers (:991) -- can still move CurrentArena,
+    // SecondArena and SecondActive (a door opening/closing, an arena_show opcode) and
+    // the oracle's pin does NOT follow them until the next tick. CheckTriggers is
+    // unported, so nothing else belongs between the crossing and this call; when it
+    // lands it goes immediately above it, not below.
+    updateDrawnArenas();
+
     // ScriptRuntime.cs:945-946 records Kurt's observed feet delta before the
     // object scripts run. The C# computes it after CollectPickups; pickups and
     // the other movement writers that can precede it are later slices, so the
@@ -701,26 +712,45 @@ void ScriptRuntime::runControllers() {
     }
 }
 
+void ScriptRuntime::updateDrawnArenas() {
+    // C# ScriptRuntime.UpdateArenas (:658-664, the drawn half). The current arena goes
+    // in even when it is "", exactly as :660 does: the empty name is ArenaSpace's to
+    // drop (its C# Named() finds no arena called ""), not this function's. The second
+    // goes in only while it is BOTH active and named (:661-664). Both rooms being in
+    // the list is the whole point of it: move() sweeps element 0 as Kurt's own arena
+    // and the rest as the free pass (arena_space.cpp), so the room behind the door he
+    // came through keeps its floor. The other half of UpdateArenas -- the loaded-arena
+    // bookkeeping, the loop sounds and obj.Visible -- is unported; when it lands it
+    // belongs in this same call, at this same point.
+    drawnArenas_.clear();
+    drawnArenas_.push_back(currentArena_);
+    if (secondActive_ && !secondArena_.empty()) {
+        drawnArenas_.push_back(secondArena_);
+    }
+}
+
 const std::vector<std::string>& ScriptRuntime::solidArenas() const {
-    // C# ScriptRuntime.SolidArenas (ScriptRuntime.cs:265-284), whose non-board value
-    // is the drawn list UpdateArenas builds at :660-666: the current arena, then the
-    // second one only while it is active AND named. The snowboard branch (:271-283)
-    // keeps drawn[0] alone, and drawn[0] is always the current arena because :661
-    // adds it unconditionally -- so the board case is this list without the second,
-    // which is what the `!ridesBoard_` half below encodes. The ride slice is
-    // unported, so ridesBoard_ is false on every tick the corpus has and that half
-    // is not reachable yet; it is here so the rule is the C#'s the day it lands.
+    // C# ScriptRuntime.SolidArenas (ScriptRuntime.cs:265-282). Off the board it is the
+    // drawn list itself -- the snapshot updateDrawnArenas() took at the tick's own
+    // UpdateArenas point, NOT a fresh read of currentArena_/secondArena_ (which is what
+    // a door or an arena_show that ran later in the tick would have moved). On the
+    // board it is drawn[0] alone (:274-280), and drawn[0] is always the current arena
+    // because :660 adds it unconditionally -- so the board case is this list without the
+    // second, which is what the `!ridesBoard_` half below encodes. The ride slice is
+    // unported, so ridesBoard_ is false on every tick the corpus has and that half is
+    // not reachable yet; it is here so the rule is the C#'s the day it lands.
     //
-    // The current arena goes in even when it is "", exactly as :661 does: the empty
-    // name is ArenaSpace's to drop (its C# Named() finds no arena called ""), not
-    // this function's.
+    // Before the first tick drawnArenas_ is empty and so is the C#'s _drawnArenas:
+    // ArenaSpace::setSolid then clears its pin and Kurt collides with the arenas around
+    // his feet, in both trees.
+    if (!ridesBoard_) {
+        return drawnArenas_;
+    }
     solidArenas_.clear();
-    solidArenas_.push_back(currentArena_);
-    if (!ridesBoard_ && secondActive_ && !secondArena_.empty()) {
-        // Both rooms are solid, which is the whole point of the list: move() sweeps
-        // element 0 first and the rest as the free pass (arena_space.cpp), so the
-        // room behind the door Kurt came through keeps its floor.
-        solidArenas_.push_back(secondArena_);
+    if (!drawnArenas_.empty()) {
+        // drawn[0] is the current arena, so on the board the room behind the door is
+        // NOT swept: that is the oracle's rule, not an oversight (:274-280).
+        solidArenas_.push_back(drawnArenas_[0]);
     }
     return solidArenas_;
 }

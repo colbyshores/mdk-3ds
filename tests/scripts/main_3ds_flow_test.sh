@@ -37,7 +37,7 @@
 # bearing that no compiler can see:
 #   6. the step loop's pin reads the runtime's DRAWN LIST and never its single
 #      current arena. The oracle hands SetSolid the scripts' drawn arenas -- current
-#      plus the active second (ScriptRuntime.cs:265-278, Viewer.cs:533) -- and move()
+#      plus the active second (ScriptRuntime.cs:265-282, Viewer.cs:533) -- and move()
 #      sweeps only the pinned arenas, so one name drops the room behind the open door
 #      Kurt came through. That is the class review-6 F1 found when batch 99 pinned a
 #      currentArena_ that was, at that point, still frozen at the spawn and a door walk
@@ -1058,7 +1058,7 @@ def adjudicate(text, quiet=False):
 
     # 6. the step loop pins the runtime's DRAWN LIST, and never its single current
     #    arena. The oracle hands SetSolid the scripts' drawn arenas -- current plus
-    #    the active second (ScriptRuntime.cs:265-278, handed over at Viewer.cs:533) --
+    #    the active second (ScriptRuntime.cs:265-282, handed over at Viewer.cs:533) --
     #    and move() sweeps ONLY the pinned arenas, so one name drops the room behind
     #    the open door Kurt came through: no floor there, he drops through it, and
     #    bottom() fires the fall-out death into a respawn loop. Batch 99 shipped

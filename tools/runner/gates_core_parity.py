@@ -97,6 +97,7 @@ import shutil
 import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CORE_SRC_REL = "mdk_core/src"
@@ -138,10 +139,9 @@ SCRIPTS_FAIL_RE = re.compile(r"^FAIL L\d+_crossing", re.M)
 # this constant: a gate that accepts ONE PASS lets a future batch delete the L7
 # entry from crossingCheck's levels[] with every gate green and its golden orphaned.
 SCRIPTS_REQUIRED_CASES = frozenset({"4", "7"})
-# How many seeded outputs crossing_arm_failures adjudicates: the seven judge arms
-# plus the wrapper's no-`make` arm. A constant so the note, the selftest verdict and
-# the arms cannot disagree about how many there were.
-CROSSING_ARM_COUNT = 8
+# How many seeded arms ran is DERIVED from the arms themselves (see crossing_arms);
+# a constant here would be a third copy of the number, and the note, the selftest
+# verdict and the arms could disagree about it with every gate green (review-4 F3).
 SOURCES_ASSIGN_RE = re.compile(r"^SOURCES\s*[:+]?=")
 CHECK_COUNT_RE = re.compile(r"(\d+) checks, (\d+) failures")
 
@@ -327,8 +327,8 @@ def run_scripts_crossing_target(root: Path) -> tuple[bool, str]:
     return judge_crossing_output(proc.returncode, output)
 
 
-def crossing_arm_failures() -> list[str]:
-    """The seeded outputs this gate must adjudicate, and the verdict each must get.
+def crossing_arms() -> list[tuple[str, Callable[[], tuple[bool, str]], bool]]:
+    """The seeded arms this gate must adjudicate: (label, adjudicate, want_clean).
 
     The same shape as `gates_completion --selftest`: an arm the adjudicator accepts
     when it should refuse is a pass generator restored, and an arm it refuses when it
@@ -339,51 +339,65 @@ def crossing_arm_failures() -> list[str]:
     batch cannot wire a new `--selftest` call into it, so the arms ride along with the
     gate they pin instead of waiting for an owner -- and `--selftest` prints them on
     their own.
+
+    THE COUNT IS THE LENGTH OF THIS LIST. It used to be a constant next to it, which
+    under-reported the moment anyone added an arm and reddened nothing (review-4 F3),
+    so the wrapper's no-`make` arm is an entry like every other instead of a tail that
+    had to be counted by hand.
     """
     green = ("PASS L4_crossing: the ported doorway crossing\n"
              "PASS L7_crossing: the ported doorway crossing\n" + SCRIPTS_VERDICT + "\n")
-    arms: list[tuple[str, tuple[int, str], bool]] = [
-        ("both required cases green", (0, green), True),
+
+    def judge(returncode: int, output: str) -> Callable[[], tuple[bool, str]]:
+        return lambda: judge_crossing_output(returncode, output)
+
+    def make_missing() -> tuple[bool, str]:
+        # The wrapper's own escape hatch: a host with no `make` is a MUST, never a
+        # skip. This arm patches the module's lookup instead of feeding the judge.
+        saved = shutil.which
+        shutil.which = lambda _name: None
+        try:
+            return run_scripts_crossing_target(Path("/nonexistent"))
+        finally:
+            shutil.which = saved
+
+    return [
+        ("both required cases green", judge(0, green), True),
         ("the cases in the other order",
-         (0, "PASS L7_crossing: x\nPASS L4_crossing: x\n" + SCRIPTS_VERDICT + "\n"), True),
+         judge(0, "PASS L7_crossing: x\nPASS L4_crossing: x\n" + SCRIPTS_VERDICT + "\n"), True),
         ("one case only -- review-2 F2's pass generator",
-         (0, "PASS L4_crossing: x\n" + SCRIPTS_VERDICT + "\n"), False),
-        ("the verdict printed with no PASS behind it", (0, SCRIPTS_VERDICT + "\n"), False),
-        ("the verdict never printed at all", (0, "PASS L4_crossing: x\n"), False),
-        ("a FAIL line under a green verdict", (0, green + "FAIL L7_crossing: x\n"), False),
+         judge(0, "PASS L4_crossing: x\n" + SCRIPTS_VERDICT + "\n"), False),
+        ("the verdict printed with no PASS behind it", judge(0, SCRIPTS_VERDICT + "\n"), False),
+        ("the verdict never printed at all", judge(0, "PASS L4_crossing: x\n"), False),
+        ("a FAIL line under a green verdict", judge(0, green + "FAIL L7_crossing: x\n"), False),
         ("a nonzero exit (no game data, a broken build)",
-         (2, "make: *** [test] Error 1\n"), False),
+         judge(2, "make: *** [test] Error 1\n"), False),
+        ("make-missing-on-PATH: the wrapper's escape hatch", make_missing, False),
     ]
+
+
+def crossing_arm_failures() -> tuple[list[str], int]:
+    """The selftest's failures, and how many arms ran (derived -- see crossing_arms)."""
     failures: list[str] = []
-    for label, (returncode, output), want_clean in arms:
-        clean, detail = judge_crossing_output(returncode, output)
+    arms = crossing_arms()
+    for label, adjudicate, want_clean in arms:
+        clean, detail = adjudicate()
         if clean != want_clean:
             failures.append("%s: adjudicated %s, expected %s -- %s"
                             % (label, "clean" if clean else "red",
                                "clean" if want_clean else "red", detail))
-
-    # And the wrapper's own escape hatch: a host with no `make` is a MUST, never a
-    # skip. This arm patches the module's lookup instead of feeding the judge.
-    saved = shutil.which
-    shutil.which = lambda _name: None
-    try:
-        clean, detail = run_scripts_crossing_target(Path("/nonexistent"))
-    finally:
-        shutil.which = saved
-    if clean:
-        failures.append("make-missing-on-PATH: adjudicated clean, expected red -- " + detail)
-    return failures
+    return failures, len(arms)
 
 
 def crossing_selftest() -> int:
     """Print the seeded arms and their verdicts (the `--selftest` entry point)."""
-    failures = crossing_arm_failures()
+    failures, count = crossing_arm_failures()
     for failure in failures:
         print("  FAIL crossing selftest " + failure)
     if failures:
-        print(f"CROSSING SELFTEST: FAIL ({len(failures)} of {CROSSING_ARM_COUNT} arms)")
+        print(f"CROSSING SELFTEST: FAIL ({len(failures)} of {count} arms)")
         return 1
-    print(f"CROSSING SELFTEST: PASS ({CROSSING_ARM_COUNT} arms)")
+    print(f"CROSSING SELFTEST: PASS ({count} arms)")
     return 0
 @dataclass
 class Finding:
@@ -743,7 +757,7 @@ def run(root: Path | None = None) -> Report:
     # (review-3 F2 of run-20261110-230107). So the seeded outputs run HERE, inside the
     # gate, on every run: an arm that stops reddening is a finding on the same green
     # run that would otherwise have hidden it.
-    arm_failures = crossing_arm_failures()
+    arm_failures, arm_count = crossing_arm_failures()
     if arm_failures:
         findings.append(
             Finding("PARITY-SCRIPTS-CROSSING-SELFTEST", "MUST", SCRIPTS_DIR_REL,
@@ -753,7 +767,7 @@ def run(root: Path | None = None) -> Report:
                       "review-2 F2 bought this check to close, restored")
         )
     notes.append("crossing selftest: %d seeded arms, %s"
-                 % (CROSSING_ARM_COUNT,
+                 % (arm_count,
                     "all adjudicated as claimed" if not arm_failures
                     else f"{len(arm_failures)} WRONG"))
 

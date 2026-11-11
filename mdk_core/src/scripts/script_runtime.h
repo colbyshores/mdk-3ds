@@ -440,35 +440,39 @@ public:
     // behind on a crossing, and whether it still counts as one of Kurt's arenas.
     const std::string& secondArena() const { return secondArena_; }
     bool secondActive() const { return secondActive_; }
-    // C# ScriptRuntime.SolidArenas (ScriptRuntime.cs:265-278): the arenas Kurt
+    // C# ScriptRuntime.SolidArenas (ScriptRuntime.cs:265-282): the arenas Kurt
     // COLLIDES with, which the oracle hands ArenaSpace::setSolid every step
     // (Viewer.cs:533). It is the DRAWN list -- the current arena plus the active
-    // second, the list UpdateArenas builds at :660-666 -- and NOT the arena under
+    // second, the list UpdateArenas builds at :658-664 -- and NOT the arena under
     // Kurt's feet: it moves on a doorway crossing or a teleport and stays put while
     // he falls out of the world.
     //
-    // UpdateArenas itself is not ported (it also drives object visibility and the
-    // loop sounds), so this DERIVES the list from the three fields it reads instead
-    // of caching a copy of it. That is the same value at every point the oracle reads
-    // SolidArenas: the three fields are written only by the crossing in runTick
-    // (:562-571) and by showArena (:728-755), both inside the tick, and UpdateArenas
-    // runs at the end of that same tick (:935), so a reader outside the tick -- which
-    // is the only place a frontend is -- sees the list the last tick produced. Before
-    // the first tick the C#'s list is empty and this one is the single "" that
-    // resolves to no arena, which is the same collision world: no pin.
+    // It is a SNAPSHOT, not a live view of the three fields. The C# fills _drawnArenas
+    // only at the end of UpdateArenas (:694-695) and UpdateArenas runs EARLY in RunTick
+    // (:935): after the doorway crossing and CheckTriggers, but BEFORE the object loop
+    // and the arena controllers. So a showArena that lands later in the same tick -- a
+    // door closing (ObjectBehaviors.cs:99) or opening (:411), or an arena_show opcode
+    // (ScriptVm.cs:474) -- does NOT change what the next step collides against; that
+    // list changes on the NEXT tick's snapshot. Deriving the list from the fields here
+    // instead was one tick early for every one of those writers (review-4 F1), which
+    // drops the active second a whole tick before the oracle does: over CDANT_1 a fall
+    // then finds no floor, and bottom() reports the wrong arena's minimum Z.
+    // updateDrawnArenas() is the ported drawn-list half of UpdateArenas and is the only
+    // writer; before the first tick the list is EMPTY, exactly as the C#'s _drawnArenas
+    // is then, which is no pin at all.
     //
-    // The current arena is pushed UNCONDITIONALLY, as the C# does, so an empty
-    // current arena is a list of one name that ArenaSpace::setSolid cannot resolve
-    // (its C# Named() answers null) rather than a list this function emptied. The
+    // The current arena is pushed UNCONDITIONALLY by that snapshot, as :660 does, so an
+    // arena-less runtime snapshots a list of one name that ArenaSpace::setSolid cannot
+    // resolve (its C# Named() answers null) rather than a list this function emptied. The
     // snowboard half is the oracle's too: on the board Kurt collides with his own
-    // arena ALONE (ScriptRuntime.cs:271-283), so the active second drops out. The
+    // arena ALONE (ScriptRuntime.cs:274-280), so the active second drops out. The
     // ride slice is unported, so ridesBoard_ is false on every tick of the corpus
     // and that branch cannot be reached yet -- it is here so the rule is the C#'s on
     // the day the board lands, and it is the one case where a one-name pin IS the
     // oracle's value.
     //
     // The scratch is a member, not a temporary, for the C#'s own reason ("kept: no
-    // list per step", :284): a frontend reads this once per simulation step.
+    // list per step", :285): a frontend reads this once per simulation step.
     const std::vector<std::string>& solidArenas() const;
     // The C# TickCount: the completed simulation ticks. It is zero during the
     // first tick and increments after that tick, as the oracle does.
@@ -495,6 +499,14 @@ private:
     bool commandObject(MdkObject* sender, MdkObject* receiver, int32_t command, int32_t target,
                        const Vec3& destination, int32_t formationIndex);
     void runControllers();
+    // The DRAWN-LIST half of C# ScriptRuntime.UpdateArenas (ScriptRuntime.cs:648-699),
+    // called at the oracle's own position in the tick (see runTick). The rest of that
+    // method -- putting away the objects of arenas no longer loaded, their loop sounds,
+    // and obj.Visible -- is unported, so this caches only the list SolidArenas returns.
+    // It is the ONLY writer of drawnArenas_, and it must stay the only one: the C#'s
+    // _drawnArenas is assigned nowhere else (:694-695), which is what makes the pin a
+    // snapshot of the tick's start rather than of its end.
+    void updateDrawnArenas();
     void spawnDtiAliens(const std::string& arena);
 
     // Collision / footing (ObjectMotion's Sweep 0x45fec4 + the arena BSP/floor maps).
@@ -669,8 +681,13 @@ private:
     // bsps_ and floors_ above.
     std::map<std::string, const std::vector<formats::Dti::Record>*> records_;
     Vec3 kurtPosition_{};
-    // C# _solidFirst (ScriptRuntime.cs:284): the scratch SolidArenas returns so a
-    // per-step read does not allocate. Derived on every read, never cached.
+    // C# _drawnArenas (ScriptRuntime.cs:310): the arenas drawn -- Kurt's plus the
+    // active second -- as the tick's UpdateArenas left them. Written only by
+    // updateDrawnArenas(), empty before the first tick, and read by solidArenas().
+    std::vector<std::string> drawnArenas_;
+    // C# _solidFirst (ScriptRuntime.cs:285): the scratch SolidArenas returns on the
+    // snowboard so a per-step read does not allocate. Derived on every read, never
+    // cached -- and only on the board, since off it solidArenas() returns drawnArenas_.
     mutable std::vector<std::string> solidArenas_;
     // The combat state of a runtime with NO Kurt entity bound (a harness that
     // passes a null Player): kurt() falls back to this, and there is no second

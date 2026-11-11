@@ -5990,10 +5990,11 @@ void testTheSolidArenaPinIsStickyAndReplacesTheArenasAroundTheFeet(LevelData* le
 }
 
 // The oracle's collision world is a LIST, and this is the only place the port
-// EXECUTES both halves of that claim: that the list is the runtime's DRAWN one
-// (current arena plus the active second, ScriptRuntime.cs:265-278 and UpdateArenas
-// :660-666) and that ArenaSpace pins both names, so the room behind the door Kurt
-// came through stays solid. The frontends' own gates (main_3ds_flow_test.sh,
+// EXECUTES the claims that list rests on: that it is the runtime's DRAWN one
+// (current arena plus the active second, ScriptRuntime.cs:265-282 and UpdateArenas
+// :658-664), that ArenaSpace pins both names, and that the list is a SNAPSHOT taken at
+// the tick's UpdateArenas point rather than a live read of the three fields.
+// The frontends' own gates (main_3ds_flow_test.sh,
 // frontend_solid_pin_test.sh) can only read the shape of the call; what they cannot
 // see is whether the value it passes is the oracle's. Review-6 F1 is the failure
 // this pins: batch 99 passed ONE name where the oracle passes two, and the room
@@ -6018,15 +6019,15 @@ void testSolidArenasAreTheDrawnListAndThePinTakesBoth(LevelData* levelData, cons
     scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, &player, nullptr);
     runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
 
-    // BEFORE THE FIRST TICK. The C#'s _drawnArenas is empty until UpdateArenas runs
-    // at the end of the first tick (:935), so SetSolid gets nothing and Kurt collides
-    // with the arenas around his feet. This port's list is the single "" the C# would
-    // put in the first slot (:661 adds CurrentArena unconditionally), and ArenaSpace
-    // drops a name no arena has -- so the two agree by resolving to no pin, which is
-    // what the second half of this block proves.
+    // BEFORE THE FIRST TICK the oracle has no list AT ALL: _drawnArenas is written only
+    // by UpdateArenas (:694-695) and that has not run yet, so SetSolid gets an empty
+    // list and Kurt collides with the arenas around his feet. The assertion is the
+    // oracle's value (empty), not the shape an implementation happens to produce --
+    // review-4 F2 is that this block used to pin the derivation's single "" instead, so
+    // the snapshot fix that makes it the oracle's value would have reddened it. The
+    // collision effect is proved by the second half of the block either way.
     player.feet = Vec3{0.0f, 655.0f, kFloor};
-    CHECK(runtime.solidArenas().size() == 1);
-    CHECK(runtime.solidArenas()[0].empty());
+    CHECK(runtime.solidArenas().empty());
     space.setSolid(runtime.solidArenas());
     float bottom = 0.0f;
     const Vec belowTheWorld{0.0f, 655.0f, -1000.0f};
@@ -6093,6 +6094,36 @@ void testSolidArenasAreTheDrawnListAndThePinTakesBoth(LevelData* levelData, cons
     const std::vector<std::string> empty;
     space.setSolid(empty);
     CHECK(space.bottom(insideTheRoomHeLeft, &bottom));
+
+    // THE PIN IS A SNAPSHOT, NOT THE FIELDS (review-4 F1). UpdateArenas runs EARLY in
+    // the oracle's RunTick (:935, right after the crossing and CheckTriggers) and it is
+    // the only writer of _drawnArenas, so a showArena that lands later in the same tick
+    // -- a door closing (ObjectBehaviors.cs:99) or opening (:411), an arena_show opcode
+    // (ScriptVm.cs:474) -- moves CurrentArena/SecondArena/SecondActive and the pin does
+    // NOT follow it until the next tick's snapshot. Deriving the list from the fields
+    // instead drops the active second a whole tick early: over CDANT_1 the next move()
+    // then finds no floor and bottom() answers with the wrong arena's minimum Z.
+    //
+    // showArena("") is exactly what a closing door calls, and this harness has no hook
+    // to run it INSIDE a tick, so it is called between them; the property under test is
+    // the one both spellings exercise -- the list changes only at the snapshot, never
+    // between reads -- and no golden exercises the mid-tick door path (recorded as
+    // not-evidenced, not claimed here).
+    runtime.showArena("");
+    CHECK(!runtime.secondActive());              // the fields moved...
+    CHECK(runtime.secondArena().empty());
+    CHECK(runtime.solidArenas().size() == 2);    // ...the pin did not
+    CHECK(runtime.solidArenas()[1] == "CDANT_1");
+    space.setSolid(runtime.solidArenas());
+    const ArenaSpace::Result stillSolid =
+        space.move(insideTheRoomHeLeft, Vec{0.0f, 0.0f, -50.0f},
+                   ArenaSpace::kMotionFall, 0.0f);
+    CHECK(stillSolid.hit());
+
+    // And the NEXT tick's snapshot is where it goes, no earlier.
+    runtime.update(1.0f / 30.0f);
+    CHECK(runtime.solidArenas().size() == 1);
+    CHECK(runtime.solidArenas()[0] == "DANT_2");
 }
 
 // A rebuilt ScriptRuntime owns a NEW SoundMixer, and that mixer owns a NEW

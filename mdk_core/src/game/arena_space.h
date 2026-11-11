@@ -72,7 +72,7 @@ public:
     //
     // WHAT THE FRONTENDS PASS. With a script runtime, `ScriptRuntime::solidArenas()`:
     // the oracle's own value, the scripts' DRAWN list (the current arena plus the
-    // active second, ScriptRuntime.cs:265-278 and UpdateArenas :660-666). It moves
+    // active second, ScriptRuntime.cs:265-282 and UpdateArenas :658-664). It moves
     // when a move crosses a doorway connection (CrossedArena, :791) or a teleport
     // puts Kurt elsewhere, and it does NOT move while he falls out of the world
     // (measured: the oracle's own pin rows, golden/L7_spawn_fall.txt's account).

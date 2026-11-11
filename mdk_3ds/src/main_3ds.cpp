@@ -785,8 +785,8 @@ int main(int argc, char** argv) {
                 //
                 // WITH A RUNTIME THIS IS THE ORACLE'S OWN VALUE, not a stand-in:
                 // `ScriptRuntime::solidArenas()` is the scripts' DRAWN list -- the
-                // current arena plus the active second (ScriptRuntime.cs:265-278,
-                // UpdateArenas :660-666) -- which is exactly what Viewer.cs:533 hands
+                // current arena plus the active second (ScriptRuntime.cs:265-282,
+                // UpdateArenas :658-664) -- which is exactly what Viewer.cs:533 hands
                 // `SetSolid`. It moves when a move crosses a doorway CONNECTION
                 // (CrossedArena, :791-803, over the DTI type-6 records) and it does
                 // NOT follow the feet, so it holds while Kurt falls out of the world

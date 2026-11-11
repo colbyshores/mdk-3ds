@@ -29,7 +29,7 @@
 #   1. the fixed-step loop refreshes the solid arena at all — a pin set only in the
 #      spawn block is the defect review-8 F1 found;
 #   2. that refresh reads the runtime's DRAWN LIST (`solidArenas()`), which is the
-#      oracle's value (ScriptRuntime.cs:265-278, Viewer.cs:533: current arena plus
+#      oracle's value (ScriptRuntime.cs:265-282, Viewer.cs:533: current arena plus
 #      the active second);
 #   3. the branch with NO runtime — the asset gate, no scripts, so no drawn list to
 #      read — keeps the geometric arena under the feet (`arenaAt` feeding a
@@ -220,7 +220,7 @@ def adjudicate(who, text, quiet=False):
         "move() uses only the pinned arena (arena_space.cpp:111-124)")
 
     say(CHK["pin-is-the-drawn-list"], re.search(RUNTIME_PIN, loop or "") is not None,
-        "the oracle hands SetSolid the scripts' drawn list (ScriptRuntime.cs:265-278, "
+        "the oracle hands SetSolid the scripts' drawn list (ScriptRuntime.cs:265-282, "
         "Viewer.cs:533); a pin fed by anything else while a runtime exists is a "
         "different claim, and one name drops the room behind the door")
 
