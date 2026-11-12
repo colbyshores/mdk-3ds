@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import struct
 import subprocess
 import sys
@@ -76,9 +77,33 @@ def validate_range(base: str, head: str, owner_approved: bool) -> list[str]:
         for path in sorted(changed & PROTECTED):
             errors.append(f"protected contract changed without owner approval: {path}")
     range_adds = set(git("diff", "--name-only", "--diff-filter=A", f"{base}..{head}"))
-    frames = {p for p in range_adds if p.startswith(FRAME_DIR) and p.endswith(".png")}
-    if len(frames) != 1:
-        errors.append(f"batch must add exactly one frame PNG in {FRAME_DIR}; found {len(frames)}")
+
+    # The frame rule is PER BUILDER COMMIT, not per range. The range form was a
+    # fail-closed trap for two legitimate shapes:
+    #   - an owner infrastructure commit ("loop:", "ledger:") landing inside the
+    #     loop's window: the commit hook makes it carry a frame too, so the range
+    #     saw two and the loop stopped on its own bookkeeping;
+    #   - a window that spans more than one batch commit.
+    # Per commit, each builder batch still has to ship exactly one pinned frame,
+    # which is the rule the owner directive actually states.
+    infra = re.compile(r"^(loop|ledger|owner)\b", re.IGNORECASE)
+    frames: set[str] = set()
+    for line in git("log", "--format=%H\t%s", f"{base}..{head}"):
+        sha, _, subject = line.partition("\t")
+        if not sha.strip():
+            continue
+        if infra.match(subject.strip()):
+            continue
+        adds = set(git("show", "--name-only", "--diff-filter=A", "--format=", sha))
+        commit_frames = {p for p in adds if p.startswith(FRAME_DIR) and p.endswith(".png")}
+        frames |= commit_frames
+        if len(commit_frames) != 1:
+            errors.append(
+                f"{sha[:8]} ({subject.strip()[:60]}): must add exactly one frame PNG "
+                f"in {FRAME_DIR}; found {len(commit_frames)}. A batch publishes ONE "
+                f"pinned frame; any additional capture belongs in docs/evidence/, "
+                f"which this rule does not police."
+            )
     touched_frames = {p for p in changed if p.startswith(FRAME_DIR)}
     for frame in touched_frames:
         if frame.endswith(".png") and frame not in range_adds:
