@@ -633,9 +633,12 @@ explanation it was used to buy. What is left, and it is much narrower:
 THEM.** Probes 5f through 5i built their quads at **vertex z = 0** and drew them through the
 identity matrix, so clip z landed on exactly 0 — and this GPU's clip volume is [-w, 0], the
 fact `pica::canvasMatrix`'s own comment records and the reason it puts the canvas at -0.5.
-Every one of those quads was clipped before rasterisation, which is why the scratch buffer
-and the per-draw write were each "proven" guilty in turn. A probe whose geometry cannot
-reach the screen proves nothing about the thing it was testing.
+Every one of those quads looked clipped before rasterisation, which is why the scratch buffer
+and the per-draw write were each "proven" guilty in turn. A probe whose geometry cannot reach
+the screen proves nothing about the thing it was testing. **The clip-z explanation for those
+nulls was later withdrawn** — the bypassed-transform build paints at both clip z = 0 and clip
+z = -0.5 — but the probes were still worthless, for the reason two paragraphs above: nothing
+about the matrix survives to the shader on those draws, whatever the z.
 
 **THE NEXT EXPERIMENT, and it is the one this item has pointed at twice without running.**
 The sibling `tetrisphere-godot` port measured that **citro3d's top screen is a 240x400 memory
@@ -660,15 +663,52 @@ same quad drawn through a hand-written plain orthographic matrix, through the id
 matrix at four different clip z, and at four different w, paints nothing either. Whatever
 citro3d does below the matrix, it is not what is removing these draws.
 
-**THE NEXT EXPERIMENT THAT CAN ACTUALLY DISCRIMINATE.** The vertex shader emits a constant
-clip position that ignores `mvp` entirely — a full-clip square out of the first two vertices
-of any mesh, with everything else about the draw unchanged. The identity-matrix probes above
-already put known-good clip coordinates into `mvp`, so if the constant-position build also
-paints nothing, the fault is not in the matrix path at all and is in something the Overlay
-draw sets that the Solid draw does not; if it paints, the uniform write is dead for these
-draws and the write mechanism is the target. Either answer is one build.
+**THE DISCRIMINATING EXPERIMENT WAS RUN, AND IT ANSWERED. THE SHADER IS THE SPLIT.**
+`mdk_3ds/shaders/mdk_c3d.v.pica` is editable PICA assembly (`picasso` builds it from
+`shaders/mdk_c3d.v.pica`), so the four `dp4 outpos.*, mvp[n], r0` lines were replaced, for one
+build, with `mov outpos.xyz, inpos` + `mov outpos.w, ones`: **the vertex position becomes the
+clip position and `mvp` is not read at all**, so nothing about the uniform — its location, its
+dirty range, when it was written — can matter. A probe then wrote a clip-space square
+((-0.9,-0.9) to (0.9,0.9) at z = -0.5, w = 1) into the arena mesh's own buffer and drew it
+`Pass::Overlay` with the white texture and a green tint.
 
-**A PROBE THAT COULD NOT HAVE WORKED, RECORDED SO IT IS NOT RE-RUN.** The first version of
+**THE PANEL FILLED: 58320 pixels of exactly (0,255,0) — and 24000 pixels of exactly (0,0,255),
+which is the shipped diagnostic canary, painting for the first time in the project's history.**
+24000 is exactly a quarter of the panel, which is what the canary's raw canvas corners
+(0,0)-(16,16) clipped into the clip square produce, so the number is not a coincidence
+reading. Then `installEye` was made to install `pica::canvasMatrix` as the ONLY matrix the
+frame ever writes, with the shipped shader restored: the level turns to garbage as expected
+and the canary still paints nothing.
+
+**WHAT THAT CLOSES, ALL AT ONCE, WITH NO FURTHER PROBES NEEDED.** With the transform bypassed
+the canvas's own state paints, so every one of these is now proven fine and must not be
+re-probed: the Overlay pass and its blend, the white texture, the tint uniform and
+`GPU_PRIMARY_COLOR`, the `MODULATE` combiner, the depth state, the cull mode and winding, the
+canvas mesh's bytes and its buffer, the scratch buffer, the vertex attribute and buffer
+permutation, and the clip window — including clip z = 0 and clip z = -0.5, both of which
+painted, so **the "clip z = 0 is this GPU's far plane" explanation recorded above is itself
+wrong and is withdrawn.** What is left is the matrix the vertex shader holds: the geometry
+survives, the transform does not.
+
+**AND IT RETIRES THE UNIFORM-WRITE-TIMING THEORY TOO.** `C3D_BindProgram` after the per-draw
+`C3D_FVUnifMtx4x4` changes nothing, and installing the canvas matrix once at eye scope — the
+only matrix the frame ever writes — also changes nothing. So it is not that a write between
+draws is dropped; it is that **a canvas-space matrix reaches the shader and does not do what
+its arithmetic says it should**, while `eyeVp` through the identical `registers()` +
+`C3D_FVUnifMtx4x4` path renders the level correctly.
+
+**THE NEXT EXPERIMENT, and it is a shader experiment, not a C++ one.** Make the vertex shader
+report the matrix it holds instead of using it: write `mvp[3]` (squared, because Picasso has
+no `abs`) into `outclr` while the position stays the raw vertex position, so the Overlay
+combiner paints the matrix column as the pixel colour. **This was attempted and the probe
+painted nothing at all, which is itself a clue and has not been explained: reading `mvp` into
+`outclr` suppressed a draw that paints when `outclr` comes from `tint`.** Two readings, and
+they are cheap to separate: either the `.fvec`-to-colour path is illegal in a way `picasso`
+accepts and the GPU rejects, or the uniform the shader reads as `mvp` is not the memory
+citro3d was told to write. The second is the one worth the effort, and the way to test it is
+to give the shader a SECOND matrix uniform at a location MDK chooses, write the same matrix to
+both, and have the position use the new one — if the new location works and location 0 does
+not, the collision is the bug and its name is knowable.**A PROBE THAT COULD NOT HAVE WORKED, RECORDED SO IT IS NOT RE-RUN.** The first version of
 the tail probe used `Pass::Solid`. `drawRecorded` forces the tint white on every non-Overlay
 draw, so a magenta Solid draw is impossible and its null result meant nothing. Overlay is the
 only pass whose tint is the record's colour, and Overlay takes `world` as the whole

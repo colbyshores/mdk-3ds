@@ -25306,3 +25306,55 @@ which would hit exactly the draws that write their own matrix per draw and leave
 that inherit `eyeVp` alone, which is precisely the shape of what is left. If that comes back
 clean, the next build has the vertex shader emit a constant clip position that ignores `mvp`
 entirely, which separates "the uniform arrives" from "the geometry survives" in one run.
+
+### Batch 144, second half — the discriminating experiment, run in the shader, and what it closed
+
+The named next step from the first half of this iteration was "have the vertex shader emit a
+clip position that ignores `mvp`". It was run in the same batch rather than deferred, because
+`mdk_3ds/shaders/mdk_c3d.v.pica` is editable assembly built by `picasso`, so the change was
+four lines and one rebuild.
+
+**It answered immediately, and it answered against everything this batch had just concluded.**
+Replacing the four `dp4 outpos.*, mvp[n], r0` lines with `mov outpos.xyz, inpos` and
+`mov outpos.w, ones` — so the vertex position IS the clip position and `mvp` is never read —
+and drawing a clip-space square from the arena mesh's own buffer through `Pass::Overlay`
+produced **58320 pixels of exactly (0,255,0) and 24000 pixels of exactly (0,0,255)**. The
+second number is the shipped diagnostic canary, painting for the first time since the canvas
+was wired up, and 24000 is exactly one quarter of the panel, which is what the canary's raw
+canvas corners (0,0)-(16,16) clipped into the clip square must produce.
+
+That single run closes more than the twenty-three C++ probes before it did, because with the
+transform bypassed the canvas's own state paints: the Overlay pass and its blend, the white
+texture, the tint and `GPU_PRIMARY_COLOR`, the `MODULATE` combiner, the depth state, the cull
+mode and winding, the canvas mesh's bytes and buffer, the scratch buffer, the attribute and
+buffer permutation, and the clip window are all proven fine and are now listed as closed
+rather than as suspects. **It also withdraws this batch's own clip-z explanation**: the
+bypassed build paints at clip z = 0 and at clip z = -0.5, so the quads in probes 5f-5i were
+not clipped by their z after all. They were still worthless probes, but for the surviving
+reason, not that one.
+
+**And it retires the uniform-write-timing theory**, which was the shape of the remaining
+suspicion. `C3D_BindProgram` after the per-draw `C3D_FVUnifMtx4x4` changes nothing, and
+making `installEye` install `pica::canvasMatrix` as the ONLY matrix the frame ever writes —
+so there is no per-draw write to lose — also changes nothing: the level turns to garbage as it
+must and the canary still paints nothing. So a write is not being dropped between draws. A
+canvas-space matrix reaches the shader and does not do what its arithmetic says, while
+`eyeVp` through the identical `registers()` + `C3D_FVUnifMtx4x4` path renders the level
+correctly.
+
+**One follow-up was attempted and did not work, and it is recorded rather than hidden.** The
+plan was to make the shader report the matrix it holds by writing `mvp[3]` (squared, since
+Picasso has no `abs`) into `outclr`, with the Overlay combiner painting that column as the
+pixel colour. The probe painted nothing at all — a draw that paints when `outclr` comes from
+`tint` stops painting when `outclr` comes from `mvp`. That is unexplained and it is itself a
+clue. The next step is to give the shader a second matrix uniform at a location MDK chooses,
+write the same matrix to both, and have the position use the new one: if the new location
+works and location 0 does not, there is a uniform-location collision and it has a name.
+
+Shader assembly notes learned the hard way, so the next batch does not rediscover them:
+Picasso has no `abs` instruction (square the value instead), and `ones` cannot be a `source2`
+operand of `add` (move it to a register first).
+
+Everything was reverted: `mdk.elf` is byte-identical to the committed build (`e70fcb73`) and
+`mdk_c3d.shbin` is unchanged (`59d5e0e8`). No shipped artefact changed in the second half of
+this iteration; the output is documentation and a closed list of suspects.
