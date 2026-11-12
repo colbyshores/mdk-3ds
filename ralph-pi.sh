@@ -809,6 +809,24 @@ while :; do
     # builder: `ralph/builder.md` used to say "start from the first unfinished
     # item" in prose, and prose is reinterpreted every iteration. That is how
     # batches 114-127 all named the same two items and none of them did one.
+    # Periodic re-arm: a parked row is not abandoned forever. Without this, a row
+    # that parks while another row is still open never retries, so a level can
+    # never reach zero open rows even after the blocking defect is fixed -- which
+    # is exactly what happened to 3ds.hud-canvas after its 8th attempt found the
+    # uniform-order bug. After COMPLETION_REARM_ITERS iterations, clear the park
+    # list and the attempt counters so the rows get a fresh budget; a genuinely
+    # blocked row simply parks again, and each cycle is recorded.
+    if [ -s "$COMPLETION_SKIP_FILE" ]; then
+        _parked_at="$(state_get COMPLETION_PARKED_AT)"
+        case "$_parked_at" in ''|*[!0-9]*) _parked_at=$ITER; state_set COMPLETION_PARKED_AT "$ITER" ;; esac
+        if [ $(( ITER - _parked_at )) -ge "${COMPLETION_REARM_ITERS:-10}" ]; then
+            attention "rearm" "parked rows get a fresh budget after $(( ITER - _parked_at )) iterations: $(tr '\n' ' ' <"$COMPLETION_SKIP_FILE")"
+            : >"$COMPLETION_SKIP_FILE"
+            state_set COMPLETION_ITEM ""
+            state_set COMPLETION_ITERS 0
+            state_set COMPLETION_PARKED_AT "$ITER"
+        fi
+    fi
     C_ITEM_ID=""; C_ITEM_CMD=""; C_ITEM_SPEED=""
     C_ITEM_LINE="$(completion_next || true)"
     if [ -n "$C_ITEM_LINE" ]; then
@@ -824,6 +842,7 @@ while :; do
         # let a restart manufacture attempts it never made: measured at 79 on a
         # row with an 8-attempt budget, which no restart could ever clear.
         if [ "$C_ITEM_ITERS" -gt "$COMPLETION_ITEM_MAX" ]; then
+            [ -s "$COMPLETION_SKIP_FILE" ] || state_set COMPLETION_PARKED_AT "$ITER"
             echo "$C_ITEM_ID" >>"$COMPLETION_SKIP_FILE"
             log "ROW PARKED: $C_ITEM_ID spent $COMPLETION_ITEM_MAX attempts without passing '$C_ITEM_CMD' — parking it and working the next row; it stays OPEN in the ledger for an operator"
             echo "ROW PARKED at iter $ITER: $C_ITEM_ID — $C_ITEM_CMD (see $RUN_DIR/iter-$ITER.log)" >>"$SUMMARY"
