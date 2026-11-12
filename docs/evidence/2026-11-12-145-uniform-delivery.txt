@@ -224,3 +224,55 @@ if the level renders normally it did not. Then test bind->write->draw and
 write->bind->draw on the level. Do NOT re-run, all measured here: the uniform
 location (0 and 2), the canary's corner-vs-centre position, and
 `C3D_BindProgram` after a per-draw matrix write.
+
+================================================================================
+RUN 7 — THE CONCLUSION ABOVE IS REFUTED. READ THIS BEFORE ACTING ON IT.
+`--expect hud` -> EXIT 7, but the LEVEL moved 73427 of 96000 px.
+================================================================================
+lane /tmp (shot mdk-emurun-expect.zpGRcf.png); frames 2520
+panel crop: 2026-11-12-145-perdraw-shift.png
+  vs 2026-11-12-145-shipped.png: **73427 px of 96000 differ**, bbox the whole
+  panel (x 0..399, y 0..239).
+
+The edit was two lines in `drawRecorded`, then reverted:
+
+    if (true /* force the per-draw write on for every draw */) {
+        ...
+        gpuMtx.m[3] += 0.5f;          // +0.5 in clip x
+
+Two things were proven at once, and the second one undoes this file's headline.
+
+1. **A per-draw `C3D_FVUnifMtx4x4` after `installEye`'s bind DOES reach the
+   vertex shader.** The whole level shifted by half the clip width. That is not
+   a 100-px canary being missed; it is 76% of the panel moving.
+2. **So "a uniform written after `installEye` does not arrive" is FALSE**, and
+   every sentence in this file that rests on it is withdrawn — including the
+   `C3Di_LoadShaderUniforms`-per-frame suspect and the "bigger than the HUD, no
+   object is placed by its world matrix either" worry. Object placement is fine;
+   batch 142's `MeshDraw::world` write works, which is exactly what this run
+   demonstrates.
+
+**AND NOTE WHAT THE EXPERIMENT ALSO SHOWS.** The per-draw write is normally
+SKIPPED for the level's identity-world draws by the `frameMatrix &&
+matrixIsFrame` cache — so before this run, the level was placed entirely by
+`installEye`'s write and the per-draw path had never been exercised on it. The
+experiment had to force the branch on to test it. A cached-off path that has
+never run on the main scene is worth knowing.
+
+**WHAT THE CANVAS BUG IS NOW.** The matrix delivery is exonerated for per-draw
+writes in general, so run 5's 0 pixels cannot be the write failing to land. In
+run 5 the matrix landed and the canary still did not appear, which leaves the
+canary's OWN geometry: `drawDiagnostic` builds a 6-vertex buffer and hands it to
+`BufInfo_Add(info, marker, 5 * sizeof(float), 2, 0x10)`. **The vertex layout and
+attribute stride of that buffer are the next suspect**, and the instrument to
+judge on is the level-sized signal, not the canary.
+
+**THE NEXT EXPERIMENT, NAMED.** Keep `drawDiagnostic`'s matrix exactly as shipped
+and vary ONLY the canary's vertex buffer: (a) feed it the same 5-float layout a
+`drawRecorded` mesh uses, since that layout is now proven to rasterise, and
+(b) if it still paints nothing, replace the canary's vertices with the exact
+bytes of a level mesh that is known to draw, keeping the canvas matrix. If (b)
+paints, the canvas matrix is wrong for real geometry after all; if (b) paints
+nothing, the fault is in the state `drawDiagnostic` installs and not in its
+geometry at all. Do NOT re-run: the per-draw matrix write ordering, the uniform
+location, the canary's corner-vs-centre position, and rebinding after a write.

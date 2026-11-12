@@ -15,6 +15,15 @@ the canary's position is exonerated, and `C3D_BindProgram` after the write is ex
 what is left is that a uniform written after `installEye`'s bind does not arrive, which
 contradicts the devkitPro pattern the vault records and therefore points at something in MDK's
 own frame. Full record: `docs/evidence/2026-11-12-145-uniform-delivery.txt`.
+**AND READ ITS RUN 7 BEFORE USING THAT NARROWING — a seventh run refutes it.** Forcing the
+per-draw matrix write on and shifting clip x by 0.5 moves 73427 of the panel's 96000 pixels, so a
+per-draw `C3D_FVUnifMtx4x4` after `installEye`'s bind DOES reach the shader and "the uniform does
+not arrive" is withdrawn. What survives is runs 1-6 as measurements (matrix arithmetic confirmed
+float for float; uniform location, canary position and rebinding all exonerated); what the bug is
+now is the canary's own vertex layout in `drawDiagnostic`'s `BufInfo_Add`, with the named next
+experiment written down. A second finding stands on its own: the per-draw write is normally
+cached OFF for the level's identity-world draws, so that path had never been exercised on the main
+scene before this.
 **All three gates are green.** `make -C mdk_3ds` rc 0 with byte-identical artefacts, and
 `DISPLAY=:99 bash tools/check.sh` rc 0 with every sub-gate green. `make -C tests/scripts` was rc 2
 at the parent commit with 93 `c3d_frame` mutation arms inert, and is **rc 0 now**: two stale

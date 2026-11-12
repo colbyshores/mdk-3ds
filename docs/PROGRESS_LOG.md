@@ -1,3 +1,36 @@
+## Iteration 145c — the batch's own headline is refuted by a seventh run: per-draw matrix writes DO land
+
+**Read this before using anything in the entry below about uniform delivery.** A seventh
+emulator run, two lines of experiment in `drawRecorded`, then reverted, moves 73427 of the
+panel's 96000 pixels. Forcing the per-draw matrix write on for every draw and adding `+0.5f` to
+clip x shifts the entire level by half the screen. **A per-draw `C3D_FVUnifMtx4x4` issued after
+`installEye`'s bind reaches the vertex shader.** So the sentence this batch committed — "a uniform
+written after `installEye` does not arrive" — is false, and with it go the `C3Di_LoadShaderUniforms`
+suspect and the worry that no object is placed by its `MeshDraw::world`. Object placement works;
+that is precisely what the run demonstrates. The withdrawal is written at the top of the run
+record in `docs/evidence/2026-11-12-145-uniform-delivery.txt`, not quietly deleted, because the
+six runs behind it are still good measurements of the things they individually measured.
+
+**What survives, and what the bug is now.** Runs 1-6 stand as measurements: the canvas matrix's
+arithmetic is confirmed float for float, the uniform location is not the problem, the canary's
+position is not the problem, and rebinding after a write does nothing. What does not survive is
+the INFERENCE that tied them together. Since the matrix write lands, run 5's zero pixels means the
+matrix landed and the canary still did not appear, which moves the suspect from the uniform to the
+canary's own geometry: `drawDiagnostic` builds a 6-vertex buffer and hands it to
+`BufInfo_Add(info, marker, 5 * sizeof(float), 2, 0x10)`. **The vertex layout and attribute stride
+of that buffer are next**, and the named experiment is to give the canary the same 5-float layout
+`drawRecorded` uses — a layout now proven to rasterise — and judge on a level-sized signal.
+
+**A second thing the run exposes, worth more than the refutation.** The per-draw write is normally
+SKIPPED for the level's identity-world draws by the `frameMatrix && matrixIsFrame` cache, so the
+level had been placed entirely by `installEye`'s single write and the per-draw path had never been
+exercised on the main scene. The experiment had to force the branch open to test it. A cached-off
+path that has never run on the scene is a thing worth knowing about your renderer, and it is how a
+batch can believe a path is proven when only its cache is proven.
+
+**Reverted; `mdk.elf` is back to `e70fcb73` and the shader to `59d5e0e8`.** No shipped byte
+changed. The ledger row stays open, attempt 7 of 8.
+
 ## Iteration 145 — ledger row `3ds.hud-canvas`, attempt 6 of 8: the canvas bug is narrowed to the vertex-uniform delivery
 
 **Prior-solution lookup, recorded per AGENTS.md P9.** The `obsidian_*` and `cognee_*` MCP
