@@ -315,16 +315,46 @@ void refused(const char* fmt, ...);
 // handle was allocated from (review-6 F2). Handing the pool to the caller makes the
 // pairing impossible to lose: there is no ledger to desynchronize, nothing left to
 // drain at teardown, and a refusal has exactly one owner for the pool it made.
-void endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {
-    vkEndCommandBuffer(cb);
-    VkSubmitInfo submit = {};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cb;
-    vkQueueSubmit(ctx->queue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(ctx->queue);
+// Returns false when the upload was NEVER EXECUTED.
+//
+// The three VkResults here were discarded, and the caller could not tell an upload
+// that ran from one the driver refused: `createHostImage` returned true for an image
+// whose layout transition and buffer->image copy lived in a command stream that was
+// never submitted, which is review-5 F1's "an image that exists but is not the
+// texture" re-opened one level down (review-7 F1). AGENTS.md P3 asks for the same
+// distinction from the other side: CPU ownership, cache visibility and GPU
+// completion are three obligations, and `vkQueueWaitIdle` is the completion boundary
+// this file has for a one-shot queue.
+//
+// They are sequenced, not merely checked. A command buffer whose `vkEndCommandBuffer`
+// failed is not finalised, and submitting an unfinalised command buffer is invalid
+// use, so a failed end must not reach the submit; and there is no point waiting for a
+// submission the queue refused.
+bool endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {
+    bool ok = vkEndCommandBuffer(cb) == VK_SUCCESS;
+    if (!ok) {
+        refused("end of a one-shot command buffer: the recording is not finalised, so "
+                "nothing it holds is submitted and its caller must not believe it was");
+    }
+    if (ok) {
+        VkSubmitInfo submit = {};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cb;
+        if (vkQueueSubmit(ctx->queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS) {
+            refused("submit of a one-shot upload: nothing was copied and nothing was "
+                    "transitioned, so the resource this upload was made for is refused");
+            ok = false;
+        }
+    }
+    if (ok && vkQueueWaitIdle(ctx->queue) != VK_SUCCESS) {
+        refused("wait for a one-shot upload: the copy is not known to have finished, so "
+                "the staging memory it read is not yet safe to release");
+        ok = false;
+    }
     vkFreeCommandBuffers(ctx->device, pool, 1, &cb);
     vkDestroyCommandPool(ctx->device, pool, nullptr);
+    return ok;
 }
 
 // Returns the command buffer and, through `outPool`, the pool it came from; the
@@ -492,7 +522,19 @@ bool createHostBuffer(mdk::vk::Context* ctx, VkDeviceSize size, VkBufferUsageFla
         *outBuffer = VK_NULL_HANDLE;
         return false;
     }
-    vkBindBufferMemory(ctx->device, *outBuffer, *outMemory, 0);
+    // A discarded VkResult here left a buffer bound to nothing, mapped, and handed
+    // back as a success: every memcpy into it landed in the CPU's copy of an
+    // unbound allocation and the frame drew whatever the buffer actually held.
+    if (vkBindBufferMemory(ctx->device, *outBuffer, *outMemory, 0) != VK_SUCCESS) {
+        refused("bind of a host buffer of %llu bytes: the buffer and its memory are "
+                "destroyed, so the caller refuses the resource that asked for them",
+                (unsigned long long)size);
+        vkDestroyBuffer(ctx->device, *outBuffer, nullptr);
+        *outBuffer = VK_NULL_HANDLE;
+        vkFreeMemory(ctx->device, *outMemory, nullptr);
+        *outMemory = VK_NULL_HANDLE;
+        return false;
+    }
     if (outMapped) {
         if (vkMapMemory(ctx->device, *outMemory, 0, VK_WHOLE_SIZE, 0, outMapped) != VK_SUCCESS) {
             // Destroy the object BEFORE releasing the memory bound to it. Freeing
@@ -552,7 +594,16 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
         *outImage = VK_NULL_HANDLE;
         return false;
     }
-    vkBindImageMemory(ctx->device, *outImage, *outMemory, 0);
+    if (vkBindImageMemory(ctx->device, *outImage, *outMemory, 0) != VK_SUCCESS) {
+        refused("bind of a %dx%d image of %llu bytes: the image and its memory are "
+                "destroyed, so the caller gets no texture rather than an unbound one",
+                width, height, (unsigned long long)size);
+        vkDestroyImage(ctx->device, *outImage, nullptr);
+        *outImage = VK_NULL_HANDLE;
+        vkFreeMemory(ctx->device, *outMemory, nullptr);
+        *outMemory = VK_NULL_HANDLE;
+        return false;
+    }
     *outMapped = nullptr;
 
     // The pixels go through a staging buffer and a buffer->image copy.
@@ -578,6 +629,7 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
 
     VkCommandPool oneShotPool = VK_NULL_HANDLE;
     VkCommandBuffer cb = beginOneShotTracked(ctx, &oneShotPool);
+    bool uploaded = false;
     if (cb) {
         VkImageMemoryBarrier toTransfer = {};
         toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -616,15 +668,22 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                              0, nullptr, 0, nullptr, 1, &toSample);
-        endOneShot(ctx, oneShotPool, cb);
-    } else {
+        uploaded = endOneShot(ctx, oneShotPool, cb);
+    }
+    if (!uploaded) {
         // THE IMAGE IS NOT THE TEXTURE. It exists, but nothing was ever copied
         // into it and its layout was never set, so a `return true` here handed
         // the caller a texture that samples as noise and a log with no failure
         // in it (review-5 F1). Destroy it; the caller's own line names the
         // texture this one was meant to become.
-        refused("%dx%d image of %llu bytes could not be filled or transitioned: no "
-                "one-shot command buffer, so the image is destroyed, not returned",
+        //
+        // There are two ways to arrive here and they used to be one: no command
+        // buffer at all, and a command buffer whose submit the driver refused
+        // (review-7 F1). Whoever refused it printed the cause; this line names
+        // which image is being destroyed instead of returned, which is the half
+        // the caller needs and the half nobody else can say.
+        refused("%dx%d image of %llu bytes is destroyed, not returned: its fill and "
+                "layout transition were never executed",
                 width, height, (unsigned long long)size);
         if (staging) {
             vkDestroyBuffer(ctx->device, staging, nullptr);
@@ -654,6 +713,18 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
     viewInfo.subresourceRange.levelCount = 1;
     viewInfo.subresourceRange.layerCount = 1;
     if (vkCreateImageView(ctx->device, &viewInfo, nullptr, outView) != VK_SUCCESS) {
+        // The image and its memory were this function's to keep until it handed
+        // them over. Returning false with both still bound and still non-null
+        // leaked them and left the caller holding a handle it had been told not
+        // to use (review-6 open question 3, CONTINUATION item 1).
+        refused("view of a %dx%d image: the image and its memory are destroyed, so the "
+                "caller creates no texture rather than one nothing can sample",
+                width, height);
+        vkDestroyImage(ctx->device, *outImage, nullptr);
+        *outImage = VK_NULL_HANDLE;
+        vkFreeMemory(ctx->device, *outMemory, nullptr);
+        *outMemory = VK_NULL_HANDLE;
+        *outView = VK_NULL_HANDLE;
         return false;
     }
     return true;
@@ -786,7 +857,15 @@ bool captureSwapchain(RendererVk* r, const char* path) {
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr,
                          1, &toPresent);
-    endOneShot(&r->ctx, oneShotPool, cb);
+    if (!endOneShot(&r->ctx, oneShotPool, cb)) {
+        // `endOneShot` already printed why. A buffer nobody copied into is not a
+        // screenshot: writing it out would publish a BMP of whatever the allocator
+        // left in the mapping and print "wrote" over the top of it.
+        vkUnmapMemory(r->ctx.device, memory);
+        vkDestroyBuffer(r->ctx.device, buffer, nullptr);
+        vkFreeMemory(r->ctx.device, memory, nullptr);
+        return false;
+    }
 
     const uint8_t* raw = static_cast<const uint8_t*>(mapped);
     std::vector<uint8_t> bgra((size_t)size);
@@ -1435,7 +1514,17 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
     {
         VkPipelineCacheCreateInfo cacheInfo = {};
         cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-        vkCreatePipelineCache(r->ctx.device, &cacheInfo, nullptr, &r->pipeCache);
+        // A pipeline cache is an optimisation, so refusing it is not fatal — but the
+        // handle must not stay undefined and reach vkCreateGraphicsPipelines, which is
+        // the undefined-handle-into-the-next-call shape `vkAllocateCommandBuffers` had
+        // (review-5 F1). A null cache is the spec's "no cache", so that is what a
+        // failure leaves behind, and it is said out loud rather than absorbed.
+        if (vkCreatePipelineCache(r->ctx.device, &cacheInfo, nullptr, &r->pipeCache) !=
+            VK_SUCCESS) {
+            r->pipeCache = VK_NULL_HANDLE;
+            refused("pipeline cache: every pipeline this run builds is compiled from "
+                    "scratch instead of reused, which is slower and nothing else");
+        }
     }
 
     // The original look samples with NEAREST, and the C# has TWO samplers
@@ -1506,7 +1595,14 @@ void mdk_render_destroy(MdkRenderer rr) {
     if (!r) {
         return;
     }
-    vkDeviceWaitIdle(r->ctx.device);
+    if (vkDeviceWaitIdle(r->ctx.device) != VK_SUCCESS) {
+        // There is nothing to do with the information except record it: the
+        // alternative to destroying these resources is leaking them, and the
+        // process is going away either way. What must not happen is a teardown
+        // that could not fence its own destroys and says nothing about it (P3).
+        refused("teardown wait for the device failed: the destroys that follow are not "
+                "fenced against a frame that may still be running");
+    }
     for (size_t i = 0; i < r->pipelines.size(); i++) {
         vkDestroyPipeline(r->ctx.device, r->pipelines[i].pipeline, nullptr);
     }
@@ -1949,7 +2045,16 @@ void mdk_render_update_mesh(MdkRenderer r_, MdkMeshId m_, const mdk::Vertex* v, 
     // frame it belongs to is being recorded (render.h), and every caller does that
     // -- this is a guard, not a path.
     if (!r->inFrame) {
-        vkDeviceWaitIdle(r->ctx.device);
+        if (vkDeviceWaitIdle(r->ctx.device) != VK_SUCCESS) {
+            // The whole point of the wait is that the previous frame may still be
+            // reading this slot. A wait that failed does not establish that, and
+            // memcpy-ing under a running frame is the CPU reuse P3 puts the
+            // completion boundary before.
+            refused("update of mesh %d outside a recorded frame could not wait for the "
+                    "device: the update is skipped rather than written under a frame "
+                    "that may still be reading this slot", m_);
+            return;
+        }
     }
     const int slot = meshSlot(m, &r->ctx);
     void* mapped = m.mapped[slot];

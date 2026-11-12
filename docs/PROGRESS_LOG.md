@@ -26141,3 +26141,123 @@ reads `live measurement: unavailable (oracle pixels absent at
 /tmp/mdk-frame-reference/L3_f1.bmp)` — the fidelity half stays owner-gated
 behind `tests/frames/regenerate_reference.sh`. Full record:
 `docs/evidence/2026-11-12-150-refusal-gate-redescribed.txt`.
+
+## Iteration 151 — batch 151: `linux.render-frame` — review-7's four Mediums and one Low were all real: the one-shot submit now reports whether it ran, and the refusal gate stopped reading one spelling of everything
+
+**The ledger row is `linux.render-frame` (d1, acceptance `bash tools/check.sh`),
+attempt 4.** The acceptance was already green at the parent commit — the inherited
+dirty tree was the previous iteration's capture of exactly that (`docs/evidence/
+linux.render-frame-99d8ff7.txt`, committed here) — so the work this iteration was
+the review's, which was the same subsystem and had a verdict of INCOMPLETE on it.
+Review: `logs/ralph-pi/run-20261112-153051/review-1.md`, builder family=qwen,
+reviewer family=deepseek, proved independent. 0 Critical, 0 High, four Medium, one
+Low. **Every one was reproduced against the parent tree before anything changed, and
+every one was real. Nothing was rebutted.**
+
+**R7-F1 (Medium), the only shipped-code defect the reviewer named, and the one that
+matters.** `endOneShot` discarded the VkResults of `vkEndCommandBuffer`,
+`vkQueueSubmit` and `vkQueueWaitIdle` and returned void, so `createHostImage`
+returned `true` for an image whose layout transition and buffer→image copy lived in
+a command stream that was never submitted — review-5 F1's "an image that exists but
+is not the texture", re-opened one level down on the function batch 150 had just
+rewritten. B5 could not see it because B5's regex was `vkAllocate*`: the gate named
+the verb family it had been written against instead of the property. `endOneShot`
+now returns bool, the three results are sequenced rather than merely checked (a
+failed `vkEndCommandBuffer` must not reach the submit — submitting an unfinalised
+command buffer is invalid use — and a refused submit skips the wait),
+`createHostImage` refuses and destroys when the upload did not execute, and
+`captureSwapchain` fails instead of publishing a BMP of a buffer nobody copied into.
+
+**Then the same class turned up five more times, by making B5 honest rather than by
+looking.** Widening B5 to the spec's result-bearing verb families reddened
+`vkBindBufferMemory` (a buffer bound to nothing, then mapped and handed back as a
+success — every memcpy landing in the CPU's copy of an unbound allocation),
+`vkBindImageMemory` (same, for an image), `vkCreatePipelineCache` (an undefined
+handle reaching `vkCreateGraphicsPipelines`, the exact shape
+`vkAllocateCommandBuffers` had), and both `vkDeviceWaitIdle` calls — the
+out-of-frame dynamic-mesh update, where a failed wait does not establish that the
+previous frame stopped reading the slot, so the update is now skipped rather than
+memcpy'd under a running frame (AGENTS.md P3), and teardown, where nothing can be
+done with the information except record it. The families are hardcoded instead of
+parsed from `vulkan_core.h` because a gate that stops checking when its input is
+missing is a pass generator (vault:
+`a-gate-that-skips-on-missing-input-is-a-pass-generator`).
+
+**The three gate findings were the review-6 defect class again, in the checks batch
+150 had just rewritten, which is the part worth recording.** R7-F2: B8 read only the
+two callee bodies, so `endOneShot(ctx, VK_NULL_HANDLE, cb)` at both call sites —
+freeing a foreign command buffer into handle zero and destroying handle zero — left
+it green; it now pairs each call's pool argument with the identifier that call's
+`beginOneShotTracked` filled, and requires every begin to have an end. R7-F3: B3's
+figures were the arguments containing the two-word `unsigned long long`, so
+`(unsigned)mdk::vk::kFramesInFlight` — the third number in both size-bearing lines —
+was derived by nothing, and `(unsigned)8` passed; figures are now keyed on any
+integral cast and *classified* (size / size×frames / frames / anything else is red),
+with two set rules: a line must contain the size at all, and a frames count may not
+appear without the total it multiplies out to — that last rule is what keeps batch
+150's own `figure-prints-frames-in-flight-only` arm red, because each figure read
+alone would be legal. R7-F4: B4 matched `return VK_NULL_HANDLE;` exactly, so
+deleting the descriptor refusal and writing `return (VK_NULL_HANDLE);` — or returning
+a null-initialised local by name — left all 12 checks green while the callers drew
+with the previous draw's set bound; both spellings are discovered now. R7-F5: the
+disclosure is in this batch's sidecar, and batch 150's pair was not touched.
+
+**B6 was rewritten, not weakened.** It used to find the `else` sibling of `if (cb)`
+and look for a refusal in it — one shape, not the property. Once `endOneShot` could
+fail, the refusal had to cover "the submit did not run" too and moved to a block B6
+could not see. It now pins: the one-shot result is read, a block that both refuses
+and returns false sits between that read and the single `return true`, and there is
+exactly one `return true`. Batch 150's `unfilled-image-reports-success` arm still
+reds it; a new `upload-result-discarded` arm reds it too.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`,
+**592 PASS / 0 FAIL**, and `PASS LinuxRefusalReport (12 checks, 26 arms adjudicated
+red)` — 12 checks unchanged, 20 arms → 26, every arm still naming the one check it
+turns red. `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`,
+`COMPLETION: LEDGER VERIFIED`. `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5
+`728eb2350c3ef8a81acda15f75617c1e` UNCHANGED — `git diff --name-only` contains no
+`mdk_3ds/` path, so no emulator run was owed and none was faked.
+`cmake --build build-linux -j8` rc 0, no new diagnostics under the project's
+`-Wall -Wextra`.
+
+**THE CHECK THAT PROVES THE CHECK.** Against `git show
+HEAD:mdk_linux/src/render/renderer_vk.cpp` — the code this batch replaces — the new
+gate goes red on exactly two of the twelve checks and nothing else, naming the eight
+discarded VkResults (208 `vkEndCommandBuffer`, 213 `vkQueueSubmit`, 214
+`vkQueueWaitIdle`, 313 `vkBindBufferMemory`, 368 `vkBindImageMemory`, 1134
+`vkCreatePipelineCache`, 1195 and 1581 `vkDeviceWaitIdle`) and the unfilled-image
+success. A gate red on the defect it was written for and green on everything else is
+the only evidence that it reads the file and not its own expectations.
+
+**Prior-solution lookup.** `pi-knowledge` `knowledge_search` on the `mdk-sdl` KB
+returned `docs/OPEN_ITEMS.md` (the per-backend submission point) and the C#
+`Renderer.cs` upload-batching note — leads, not a solution; both checked against the
+tree. Obsidian MCP and Cognee MCP tools are **absent from this session's tool list**
+(a session configuration fault to report, per AGENTS.md P9), so the vault was read
+read-only from `/mnt/nas/Vaults/port-docs`; Cognee's graph search was therefore NOT
+consulted. The vault note that did apply is
+`30-architecture/patterns/a-gate-that-skips-on-missing-input-is-a-pass-generator.md`,
+which is why B5's families are hardcoded rather than parsed from a header. Note for
+the next lane: `/tmp/kilo` is `coleshores`-owned and not writable by `piagent`, so
+this lane's captures went to `/tmp/mdk-lane`.
+
+**The frame** is a re-capture, `cmp`-identical to its 136 predecessors
+(`6769a137…`), because every changed byte is on a path the driver takes only when it
+refuses and lavapipe never says no; the sidecar now carries the disclosure review-7
+F5 asked for, including the tree state at capture, which review-6 had asked twice.
+The fidelity half is still dark on this host (oracle pixels absent, owner-gated
+behind `tests/frames/regenerate_reference.sh`). Full record:
+`docs/evidence/2026-11-12-151-submit-results-read.txt`.
+
+**THE BLOCKER ON THE ROW ITSELF, MEASURED THIS ITERATION.** `python3
+tools/runner/ledger_close.py --row linux.render-frame` prints
+`ledger_close: running acceptance for linux.render-frame: bash tools/check.sh`,
+runs it, and then `ledger_close: could not verify -- [Errno 13] Permission denied:
+'/mnt/nas/Development/mdk-sdl/docs/COMPLETION_LEDGER.tsv'`. The acceptance is not the
+problem — the row is green and has been since batch 149 — the ledger file is
+`coleshores`-owned and this lane is `piagent`, and the row is in
+`gates_batch_integrity.PROTECTED` so hand-editing is a finding rather than a fix.
+Until a lane can write the ledger, the loop will keep re-dispatching a row whose
+acceptance passes.

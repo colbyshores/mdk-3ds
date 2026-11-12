@@ -56,20 +56,27 @@
 #        directions: a figure that mentions LESS than the size (a bare
 #        `kFramesInFlight`, or `cap / 8`) is as red as one that mentions something
 #        else. EVERY size site contributes, so one readable site cannot vouch for
-#        the others (review-5 F4, review-6 F1);
-#     B4 DISCOVERY, not a list: every `return VK_NULL_HANDLE` in the file has a
-#        `refused(` attributed to THAT return. B1 can only check the sites it was
-#        told about, and review-5 F1 was a site it had not been told about
-#        (`getDescriptorSet`, whose callers then drew with the PREVIOUS draw's
-#        descriptor set bound — a wrong picture, not a missing one). Attribution is
-#        per return and not per function, because an unbraced `if (x) return
-#        VK_NULL_HANDLE;` in a function that already refuses once is otherwise
-#        vouched for by a refusal that has nothing to do with it (review-6 F3);
-#     B5 every `vkAllocate*` call has its VkResult read, because an unchecked
-#        `vkAllocateCommandBuffers` hands back an undefined handle that the next
-#        call happily dereferences (review-5 F1);
-#     B6 `createHostImage` does not report success for an image it never filled
-#        or transitioned (review-5 F1);
+#        the others (review-5 F4, review-6 F1). And EVERY number in the line counts,
+#        including the frames-in-flight count itself, which a reader of only the
+#        `unsigned long long` arguments never saw (review-7 F3);
+#     B4 DISCOVERY, not a list: every null-handle return in the file has a `refused(`
+#        attributed to THAT return. B1 can only check the sites it was told about, and
+#        review-5 F1 was a site it had not been told about (`getDescriptorSet`, whose
+#        callers then drew with the PREVIOUS draw's descriptor set bound — a wrong
+#        picture, not a missing one). Attribution is per return and not per function,
+#        because an unbraced `if (x) return VK_NULL_HANDLE;` in a function that already
+#        refuses once is otherwise vouched for by a refusal that has nothing to do with
+#        it (review-6 F3). And the discovery is not spelling-dependent: a rule that
+#        matches one spelling of a null return is a rule that can be satisfied by
+#        retyping the return (review-7 F4);
+#     B5 every result-bearing Vulkan call has its VkResult read. An unchecked
+#        `vkAllocateCommandBuffers` hands back an undefined handle that the next call
+#        happily dereferences (review-5 F1), and so does the `vkQueueSubmit` whose
+#        refusal nobody read (review-7 F1) — so the obligation follows the spec's
+#        naming convention, not the one verb family an earlier version named;
+#     B6 `createHostImage` does not report success for an image whose fill and layout
+#        transition were never executed, whether that is because there was no command
+#        buffer or because its submit was refused (review-5 F1, review-7 F1);
 #     B7 a refusal prints ONCE PER DISTINCT REQUEST. The Citro3D backend latches
 #        with a bool and it must, because that line printed 1710 times in one run
 #        (review-10 F3); a bool is too coarse here, where a descriptor set is
@@ -79,10 +86,11 @@
 #        every frame, which measured 22500 lines for 48 distinct requests
 #        (review-5 F2).
 #     B8 the one-shot command buffer and the pool it came from are handed over
-#        together, and every failure exit after the pool exists destroys the pool it
-#        made. They used to be paired by POSITION in a file-scope vector, and one
-#        stranded entry made every later `endOneShot` free a foreign command buffer
-#        into the wrong pool (review-6 F2);
+#        together — AT THE CALL SITE, not only inside the two functions — and every
+#        failure exit after the pool exists destroys the pool it made. They used to be
+#        paired by POSITION in a file-scope vector, and one stranded entry made every
+#        later `endOneShot` free a foreign command buffer into the wrong pool
+#        (review-6 F2, review-7 F2);
 #     B9 in a teardown block the memory is released LAST, after the buffer or image
 #        bound to it is destroyed. `vkFreeMemory` on memory still bound to a live
 #        object is invalid use, and this file had two of them (review-6 F6).
@@ -143,7 +151,7 @@ CHK = {
     "B2": "the refusal helper formats the caller's varargs and flushes",
     "B3": "the printed byte figure is built from the size the create call was given",
     "B4": "every null-handle return in the file is preceded by a refusal",
-    "B5": "every vkAllocate* result is read",
+    "B5": "every result-bearing Vulkan call's VkResult is read",
     "B6": "createHostImage does not claim success for an image it never filled",
     "B7": "a refusal prints once per distinct request, not once per refusal",
     "B8": "the one-shot command buffer and its pool are handed over together",
@@ -153,6 +161,24 @@ CHK = {
 # The identifiers a printed byte figure may use besides the ones in the create
 # call's size argument: the frames-in-flight count and the namespace it lives in.
 EXTRA_SIZE_TOKENS = {"kFramesInFlight", "mdk", "vk"}
+
+# A printed figure is any refused() argument carrying a cast to an integral type.
+# Keying on the two-word `unsigned long long` spelling alone left the frames-in-flight
+# count — printed as `(unsigned)mdk::vk::kFramesInFlight` — derived by nothing, while
+# the check's own comment called it the one extra factor that belongs (review-7 F3).
+INTEGRAL_CAST = re.compile(
+    r"\(\s*(?:unsigned long long|unsigned short|unsigned int|unsigned|signed|long"
+    r"|short|int|size_t|VkDeviceSize|uint32_t|int32_t)\s*\)")
+
+# The Vulkan entry-point families whose calls return a VkResult, by the spec's naming
+# convention. The void families deliberately NOT here are vkDestroy*, vkFree*,
+# vkUnmap*, vkCmd*, vkGet* and vkUpdate*. This is hardcoded rather than parsed out of
+# vulkan_core.h because a gate that stops checking when its input is missing is a pass
+# generator, and because the point is to cover the NEXT result-bearing call in a
+# checked family, not only the ones that were missed once.
+RESULT_VERBS = ("Create", "Allocate", "Bind", "Map", "Begin", "End", "Queue",
+                "Device", "Wait", "Reset", "Acquire", "Enumerate", "Flush",
+                "Store", "Invalidate", "Release")
 
 
 def block_span_from(text, pos):
@@ -296,6 +322,15 @@ def split_args(s):
 
 def tokens(expr):
     return set(re.findall(r"[A-Za-z_]\w*", expr))
+
+
+def args_at(text, pos):
+    """The split argument list of the call whose name ends at `pos`."""
+    j = text.find("(", pos - 1)
+    if j < 0:
+        return []
+    end = close_brace(text, j, "(", ")")
+    return split_args(text[j + 1:end]) if end > 0 else []
 
 
 def enclosing_brace(text, pos):
@@ -522,7 +557,7 @@ def backend_checks(r, text, quiet):
             if len(args) < 2 or not tokens(args[1]):
                 continue
             want = tokens(args[1])
-            figures = [a for a in split_args(call) if "unsigned long long" in a]
+            figures = [a for a in split_args(call) if INTEGRAL_CAST.search(a)]
             if not figures:
                 continue
             checked += 1
@@ -530,24 +565,46 @@ def backend_checks(r, text, quiet):
             src_ops = set(re.findall(r"[/*%]", args[1]))
             src_nums = set(re.findall(r"\d+", args[1]))
             request = " ".join(args[1].split())
+            kinds = []
             for f in figures:
-                expr = re.sub(r"\(\s*unsigned long long\s*\)", " ", f)
+                expr = INTEGRAL_CAST.sub(" ", f)
+                toks = tokens(expr)
                 # The frames-in-flight count is the one extra factor that belongs in
-                # a request: the create call is per slot and the line prints both the
-                # per-slot figure and the total.
+                # a request: the create call is per slot and the line prints the
+                # per-slot figure, the total, and the count that turns one into the
+                # other. Each of the three is a different shape and each is checked
+                # against the request; what may not appear is a fourth shape.
                 flat = re.sub(r"\*?\s*(?:mdk::vk::)?kFramesInFlight\s*\*?", " ", expr)
-                toks = tokens(flat)
-                if not (want <= toks and toks <= want | EXTRA_SIZE_TOKENS):
+                ftoks = tokens(flat)
+                ops = set(re.findall(r"[/*%]", flat)) - src_ops
+                nums = set(re.findall(r"\d+", flat)) - src_nums
+                if toks and toks <= EXTRA_SIZE_TOKENS:
+                    kinds.append("frames")
+                    if nums or ops or "kFramesInFlight" not in toks:
+                        bad.append("%s prints `%s` where the frames-in-flight count "
+                                   "belongs: the line says `x N frames in flight` and "
+                                   "that N is not the count the request was made of"
+                                   % (name, " ".join(f.split())))
+                elif not (want <= toks and toks <= want | EXTRA_SIZE_TOKENS):
                     bad.append("%s prints a figure built from `%s`, not from the `%s` it "
                                "handed the create call"
                                % (name, " ".join(sorted(toks)) or "nothing at all",
                                   request))
-                elif (set(re.findall(r"[/*%]", flat)) - src_ops
-                      or set(re.findall(r"\d+", flat)) - src_nums):
+                elif ftoks != want or ops or nums:
                     bad.append("%s rescales its figure: it prints `%s` for a request of "
                                "`%s`, so the bytes in the log disagree with what the "
                                "driver was asked for by that factor"
                                % (name, " ".join(flat.split()), request))
+                else:
+                    kinds.append("size" if ftoks == toks else "total")
+            if "size" not in kinds:
+                bad.append("%s never prints the `%s` it handed the create call, so the "
+                           "line describes some other allocation" % (name, request))
+            if "frames" in kinds and "total" not in kinds:
+                bad.append("%s prints a frames-in-flight count with no total: the line "
+                           "says `x N frames in flight` while the largest byte figure in "
+                           "it is one slot, which is review-5 F3's disagreement in the "
+                           "other direction" % name)
     unread = [n for n in SIZE_SITES if n not in per_site]
     say(CHK["B3"], checked > 0 and not bad and not unread,
         "two numbers for one allocation is the review-11 F1 defect: a printed figure "
@@ -570,56 +627,78 @@ def backend_checks(r, text, quiet):
     # already refused once was vouched for by a refusal that has nothing to do with
     # it, which review-6 F3 ran and found green.
     silent = []
-    nulls = list(re.finditer(r"\breturn[ \t]+VK_NULL_HANDLE[ \t]*;", code))
-    for m in nulls:
-        if not refusal_for_return(code, m.start()):
-            silent.append("line %d" % line_of(code, m.start()))
+    nulls = [m.start() for m in re.finditer(
+        r"\breturn[ \t]+\(?[ \t]*VK_NULL_HANDLE[ \t]*\)?[ \t]*;", code)]
+    # A null handle handed back through a named local is the same return with a step
+    # through a variable. The discovery used to match one spelling, which made the
+    # rule satisfiable by retyping the return: delete the refusal, write
+    # `return (VK_NULL_HANDLE);` or `VkDescriptorSet none = VK_NULL_HANDLE; return
+    # none;`, and the gate that exists to make a null handle loud said nothing
+    # (review-7 F4).
+    for lname in sorted({m.group(1) for m in re.finditer(
+            r"\bVk\w+[ \t]+(\w+)[ \t]*=[ \t]*VK_NULL_HANDLE[ \t]*;", code)}):
+        nulls += [m.start() for m in re.finditer(
+            r"\breturn[ \t]+" + lname + r"[ \t]*;", code)]
+    for pos in sorted(set(nulls)):
+        if not refusal_for_return(code, pos):
+            silent.append("line %d" % line_of(code, pos))
     say(CHK["B4"], bool(nulls) and not silent,
         "a null handle is a resource the caller does not have; a file that returns one "
         "without saying so is the silent missing picture this gate exists to stop" +
         ("" if not silent else " — silent at " + ", ".join(silent)))
 
-    # B5: an unchecked VkResult is an undefined out-parameter. The one review-5
-    # found was `vkAllocateCommandBuffers`, whose handle the very next call began.
+    # B5: an unchecked VkResult is an undefined out-parameter or an unexecuted
+    # submission. The obligation used to be keyed on `vkAllocate*` alone, which is how
+    # `vkEndCommandBuffer`, `vkQueueSubmit`, `vkQueueWaitIdle` and
+    # `vkCreatePipelineCache` sat outside it with their results thrown away — the gate
+    # named the verb it had been written against instead of the property (review-7 F1).
+    # So the set is the naming convention: an entry point in a result-bearing family
+    # returns a VkResult. The void families are named where RESULT_VERBS is defined.
     unchecked = []
-    allocs = list(re.finditer(r"\bvkAllocate[A-Za-z]*\s*\(", code))
-    for m in allocs:
+    calls = [m for m in re.finditer(r"\bvk(?:%s)[A-Za-z0-9_]*" % "|".join(RESULT_VERBS),
+                                    code)
+             if code[m.end():].lstrip().startswith("(")]
+    for m in calls:
         start = -1
         for ch in (";", "{", "}"):
             start = max(start, code.rfind(ch, 0, m.start()))
         end = code.find(";", m.end())
         stmt = code[start + 1:end if end > 0 else len(code)]
         if "VK_SUCCESS" not in stmt:
-            unchecked.append("line %d" % line_of(code, m.start()))
-    say(CHK["B5"], bool(allocs) and not unchecked,
-        "a discarded VkResult leaves the handle undefined and the next call uses it" +
+            unchecked.append("line %d (%s)" % (line_of(code, m.start()), m.group(0)))
+    say(CHK["B5"], bool(calls) and not unchecked,
+        "a discarded VkResult leaves a handle undefined or a submission unexecuted, and "
+        "the next call uses it either way" +
         ("" if not unchecked else " — unchecked at " + ", ".join(unchecked)))
 
     # B6: the one refusal that used to report SUCCESS. `createHostImage` made the
     # image, failed to get a command buffer to fill and transition it, and returned
     # true: a texture of undefined bytes with no failure anywhere (review-5 F1).
+    #
+    # This check used to find the `else` sibling of `if (cb)` and look for a refusal in
+    # it, which pinned one shape instead of the property. Once `endOneShot` could fail,
+    # the refusal had to cover "the submit did not run" as well as "there was no
+    # command buffer", and the shape it moved to was one the check could not see. So
+    # what is pinned is the property, in three parts: the one-shot result is READ, a
+    # block that both refuses and returns false sits between that read and the
+    # `return true`, and there is exactly one `return true` to reach.
     filled = False
     sp = body_span(code, "createHostImage")
     if sp:
         body = code[sp[0]:sp[1]]
-        seg = ""
-        m = re.search(r"\bif[ \t]*\([ \t]*![ \t]*cb[ \t]*\)", body)
-        if m:
-            sp2 = block_span_from(body, m.end() - 1)
-            seg = body[sp2[0]:sp2[1]] if sp2 else ""
-        else:
-            m = re.search(r"\bif[ \t]*\([ \t]*cb[ \t]*\)", body)
-            if m:
-                sp2 = block_span_from(body, m.end() - 1)
-                if sp2:
-                    em = re.match(r"\s*else\s*\{", body[sp2[1]:])
-                    if em:
-                        sp3 = block_span_from(body, sp2[1] + em.end() - 1)
-                        seg = body[sp3[0]:sp3[1]] if sp3 else ""
-        filled = "refused(" in seg and "return false" in seg
+        read = re.search(r"(?:=[ \t]*|[ \t]*if[ \t]*\([ \t]*!)[ \t]*endOneShot\(", body)
+        rets = [sp[0] + m.start() for m in re.finditer(r"\breturn[ \t]+true[ \t]*;", body)]
+        guard = None
+        if read and len(rets) == 1:
+            read_at = sp[0] + read.end()
+            for cond, block, spn in blocks(code, sp[0], sp[1]):
+                if ("refused(" in block and "return false" in block
+                        and spn[0] > read_at and spn[1] <= rets[0]):
+                    guard = spn
+        filled = bool(read and guard)
     say(CHK["B6"], filled,
-        "an image that was never filled or transitioned is not a texture, and returning "
-        "true for it is a refusal the log never sees (review-5 F1)")
+        "an image whose fill and layout transition were never executed is not a texture, "
+        "and saying it is one is a refusal the log never sees (review-5 F1, review-7 F1)")
 
     # B7: one line per DISTINCT request. The Citro3D backend latches with a bool
     # because its mesh line printed 1710 times in one run (review-10 F3); a bool is
@@ -662,16 +741,46 @@ def backend_checks(r, text, quiet):
                 open_ = enclosing_brace(obody, m.start())
                 if "vkDestroyCommandPool" not in obody[open_:m.start()]:
                     stranded.append("line %d" % line_of(code, sp[0] + m.start()))
+    # AND AT THE CALL SITE. The defect was a PAIRING, and a pairing lives where the two
+    # halves meet. Both callee bodies stay exactly as correct as they are while a caller
+    # hands `endOneShot` a pool that is not the one `beginOneShotTracked` filled: with
+    # `endOneShot(ctx, VK_NULL_HANDLE, cb)` — one token, the kind a bad merge or a
+    # tidy-up produces — every upload frees a foreign command buffer into handle zero
+    # and destroys handle zero, and a check that read only the two callee bodies stayed
+    # green (review-7 F2).
+    handovers = []
+    for m in re.finditer(r"\bbeginOneShotTracked\s*\(", code):
+        if sp and sp[0] <= m.start() < sp[1]:
+            continue  # the definition, not a call
+        a = args_at(code, m.end())
+        mm = re.search(r"&\s*(\w+)", a[1]) if len(a) >= 2 else None
+        handovers.append((m.start(), mm.group(1) if mm else None))
+    mismatched = []
+    ended = 0
+    for m in re.finditer(r"\bendOneShot\s*\(", code):
+        if esp and esp[0] <= m.start() < esp[1]:
+            continue
+        ended += 1
+        a = args_at(code, m.end())
+        pool = a[1].strip() if len(a) >= 2 else ""
+        prior = [ident for pos, ident in handovers if pos < m.start() and ident]
+        if not prior or pool != prior[-1]:
+            mismatched.append("line %d (`%s`)" % (line_of(code, m.start()),
+                                                  pool or "no pool argument"))
+    if ended != len(handovers):
+        mismatched.append("%d begin calls but %d end calls: a one-shot pool that is "
+                          "never ended is never destroyed" % (len(handovers), ended))
     say(CHK["B8"], bool(sp) and bool(esp)
         and "*outPool = pool" in obody
         and "vkFreeCommandBuffers(ctx->device, pool" in ebody
         and "vkDestroyCommandPool(ctx->device, pool" in ebody
         and "[0]" not in ebody
-        and not stranded,
+        and not stranded and not mismatched,
         "a command buffer freed into a pool it did not come from, and that pool "
         "destroyed under it, is corruption rather than a missing picture; pairing "
         "them by position let one refusal desynchronize the pairing for the rest of "
-        "the run" + ("" if not stranded else " — pool stranded at " + ", ".join(stranded)))
+        "the run" + ("" if not stranded else " — pool stranded at " + ", ".join(stranded))
+        + ("" if not mismatched else " — pool mismatched at " + ", ".join(mismatched)))
 
     # B9: in a teardown block the memory is released LAST, after the buffer or image
     # bound to it is destroyed. `vkFreeMemory` on memory still bound to a live object
@@ -922,13 +1031,72 @@ def be_oneshot_positional_ledger(text):
     file-scope vector instead of being handed it, so one refusal desynchronizes it
     for the rest of the run (review-6 F2). B8 only."""
     out = text.replace(
-        "void endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {",
+        "bool endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {",
         "std::vector<VkCommandPool> g_oneShotPools;\n\n"
-        "void endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {", 1)
+        "bool endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {", 1)
     if out == text:
         return text
     return out.replace("    vkFreeCommandBuffers(ctx->device, pool, 1, &cb);",
                        "    vkFreeCommandBuffers(ctx->device, g_oneShotPools[0], 1, &cb);", 1)
+
+
+def be_oneshot_call_site_passes_null(text):
+    """Both call sites hand `endOneShot` handle zero instead of the pool they were
+    given, which is one token and the kind of thing a bad merge or a tidy-up does. The
+    two callee bodies are untouched, so a check that reads only them — as B8 did until
+    review-7 F2 — stays green while every upload frees a foreign command buffer into
+    handle zero and destroys handle zero. B8 only."""
+    out = text.replace("endOneShot(ctx, oneShotPool, cb)",
+                       "endOneShot(ctx, VK_NULL_HANDLE, cb)", 1)
+    out = out.replace("endOneShot(&r->ctx, oneShotPool, cb)",
+                      "endOneShot(&r->ctx, VK_NULL_HANDLE, cb)", 1)
+    return out if out != text else text
+
+
+def be_upload_result_discarded(text):
+    """`endOneShot` can fail now and the caller stops listening: the upload is assumed
+    to have run, which is review-5 F1 back again through the door review-7 F1 opened.
+    B6 only."""
+    return text.replace("uploaded = endOneShot(ctx, oneShotPool, cb);",
+                        "endOneShot(ctx, oneShotPool, cb);\n        uploaded = true;", 1)
+
+
+def be_submit_result_dropped(text):
+    """The one-shot VkResult discarded again — the exact code review-7 F1 found, which
+    a gate keyed on `vkAllocate*` could not see. B5 only."""
+    return text.replace("bool ok = vkEndCommandBuffer(cb) == VK_SUCCESS;",
+                        "vkEndCommandBuffer(cb);\n    bool ok = true;", 1)
+
+
+def be_frames_figure_replaced_by_literal(text):
+    """The frames-in-flight count in the line becomes `8`. The request is
+    `kFramesInFlight`, which is 2, so the line disagrees with the request by 4x — the
+    review-5 F3 defect, in the one number a reader of only `unsigned long long`
+    arguments never looked at (review-7 F3). B3 only."""
+    return text.replace("(unsigned long long)cap, (unsigned)mdk::vk::kFramesInFlight);",
+                        "(unsigned long long)cap, (unsigned)8);", 1)
+
+
+def be_null_return_respelled(text):
+    """The descriptor refusal deleted and its return respelled as
+    `return (VK_NULL_HANDLE);`. The callers draw with the PREVIOUS draw's set bound —
+    a wrong picture — and a discovery that matches one spelling of a null return does
+    not notice (review-7 F4). B4 only."""
+    out = text.replace('repeat ? "REPEAT" : "CLAMP");\n        return VK_NULL_HANDLE;',
+                       'repeat ? "REPEAT" : "CLAMP");\n        return (VK_NULL_HANDLE);', 1)
+    if out == text:
+        return text
+    return be_delete_descriptor_refusal(out)
+
+
+def be_null_return_via_local(text):
+    """The same refusal deleted with the null handle returned through a named local,
+    the other spelling a canonical-text matcher does not see (review-7 F4). B4 only."""
+    out = text.replace('repeat ? "REPEAT" : "CLAMP");\n        return VK_NULL_HANDLE;',
+                       'repeat ? "REPEAT" : "CLAMP");\n        return set;', 1)
+    if out == text:
+        return text
+    return be_delete_descriptor_refusal(out)
 
 
 def be_free_before_destroy(text):
@@ -969,6 +1137,12 @@ arm_backend("helper-remembers-only-the-last", be_helper_remembers_only_the_last,
 arm_backend("oneshot-pool-not-handed-over", be_oneshot_pool_not_handed_over, "B8")
 arm_backend("oneshot-pool-stranded-on-refusal", be_oneshot_pool_stranded, "B8")
 arm_backend("oneshot-pairing-by-position-restored", be_oneshot_positional_ledger, "B8")
+arm_backend("oneshot-call-site-passes-null-pool", be_oneshot_call_site_passes_null, "B8")
+arm_backend("upload-result-discarded", be_upload_result_discarded, "B6")
+arm_backend("one-shot-submit-result-dropped", be_submit_result_dropped, "B5")
+arm_backend("frames-figure-replaced-by-a-literal", be_frames_figure_replaced_by_literal, "B3")
+arm_backend("null-return-respelled", be_null_return_respelled, "B4")
+arm_backend("null-return-through-a-named-local", be_null_return_via_local, "B4")
 arm_backend("memory-freed-before-destroy", be_free_before_destroy, "B9")
 
 checks = sum(r.checks for r in real)
