@@ -564,6 +564,43 @@ different kind and it is still open — what it is has not been identified.
   is a new harness concept on both sides and its own slice; the chute-stop-on-death line
   is pinned instead by a health-zero landing, which reaches the same dead branch.
 
+## The c3d_frame mutation suite is inert — root cause of the red `make -C tests/scripts` (found in batch 145; OPEN, TOP PRIORITY)
+
+`make -C tests/scripts` exits 2. It exited 2 at the parent commit as well, and the FAIL sets are
+byte-identical (93 `c3d_frame` mutation arms plus one check, the same 94 lines in both), so this
+is not a regression introduced by batch 145 — it was proved by stashing and re-running at
+`1069a79`. The loop status asked for a root cause; this is it.
+
+**The one failing check is `diagnostic-drawn-once`.** `tests/scripts/c3d_frame_test.sh:827-833`
+requires the literal `C3D_DrawArrays(GPU_TRIANGLES, 0, 3)` to appear exactly once and inside
+`drawDiagnostic`. **Batch 142 converted the canvas and the canary from immediate draws to queue
+records**, so that call exists nowhere in the file and no correct code can satisfy the check
+again. It reports `0 diagnostic draw(s); inside drawDiagnostic: no`.
+
+**Why that silences the whole mutation suite rather than just one line.** Each arm must turn red
+exactly the check it targets. A check that is already red before any mutation turns red for every
+mutant, so every arm reports `turned \`diagnostic-drawn-once\` red, but it is cut for <its real
+target>, so it no longer isolates the check it claims to isolate` and **tests nothing**. Ninety-
+three arms, every run, printing a failure and exercising no code. This is the failure mode the
+file's own comments are full of — a gate that looks busy and verifies nothing — arrived at by a
+legitimate architecture change instead of by a bad edit.
+
+**The fix, and why it was not done in batch 145.** Re-express the invariant the check was written
+for — the canary is emitted exactly once, from `drawDiagnostic`, after the real draws — in the
+queue architecture's own terms, and re-point the arms registered against it near line 2411
+(`diagnostic-drawn-once` is the target of at least the arm at 2411). This file is the most
+heavily reviewed test in the repository; its comments cite review-6 through review-19 closing
+holes in precisely these arms. An edit made under time pressure that loosens an arm would re-open
+one of those holes while turning the gate green, which is strictly worse than the honest red that
+is shipped. The shape of the correct check: count the canary's EMISSION (the queue record it
+pushes), require exactly one, require it inside `drawDiagnostic`, and require the emission to
+come after `replayQueue`'s statement in the eye loop — the three things the old literal happened
+to imply and that the arms at 2411-2417 still need a target for.
+
+**Verify the fix by the arm count, not the exit code.** When it is right, the 93 "cut" lines
+become `turned <target> red as required` lines. A green run that still prints 93 "cut" lines means
+the check was deleted or weakened rather than re-expressed.
+
 ## The 3DS canvas draws no pixels (found in batch 142; OPEN)
 
 The 2D canvas is implemented and its records are replayed — `canvas: quads=4 draws=2
@@ -708,7 +745,9 @@ accepts and the GPU rejects, or the uniform the shader reads as `mvp` is not the
 citro3d was told to write. The second is the one worth the effort, and the way to test it is
 to give the shader a SECOND matrix uniform at a location MDK chooses, write the same matrix to
 both, and have the position use the new one — if the new location works and location 0 does
-not, the collision is the bug and its name is knowable.**A PROBE THAT COULD NOT HAVE WORKED, RECORDED SO IT IS NOT RE-RUN.** The first version of
+not, the collision is the bug and its name is knowable.
+
+**A PROBE THAT COULD NOT HAVE WORKED, RECORDED SO IT IS NOT RE-RUN.** The first version of
 the tail probe used `Pass::Solid`. `drawRecorded` forces the tint white on every non-Overlay
 draw, so a magenta Solid draw is impossible and its null result meant nothing. Overlay is the
 only pass whose tint is the record's colour, and Overlay takes `world` as the whole
@@ -752,6 +791,88 @@ testable from the installed `libcitro3dd` disassembly the sibling already read.
 
 Not the vault's stereo-replay HUD trap: `citro3d-display-list-stereo-replay-non-fast3d.md`
 needs a second eye whose callback runs after the replay fires, and this capture is mono.
+
+**ITERATION 145: THE SPLIT IS THE UNIFORM DELIVERY, AND THE LOCATION-COLLISION READING OF
+ITERATION 144 IS DEAD.** Five emulator runs on Mandarine r1.2.1 (md5 `0d2adab6…`),
+`DISPLAY=:99`, mono, forced llvmpipe, each with its own fresh lane and log. The shipped build
+measures `emurun.sh --expect hud` **exit 7**: `canvas: quads=4 draws=2 mesh=2 corners=24
+eyes=1`, level rendered (147 distinct panel colours), **0** canary pixels of exact (0,0,255).
+
+1. **`mvp` IS vertex uniform 0.** The guest line reads `uniforms: mvp=0 uvtransform=4 tint=5`.
+   The `.constf constants(...)` does **not** push the named `.fvec` uniforms up, which is what
+   the long comment at `renderer_c3d.cpp:270-290` asserted; that comment is corrected in this
+   batch. Picasso assigns `.fvec` addresses in declaration order — reordering the declarations
+   to `uvtransform, tint, mvp[4]` makes the same line read `mvp=2 uvtransform=0 tint=1`.
+2. **THE VALUES ARE CORRECT AND SUFFICIENT.** For one build the four `dp4` lines were driven
+   from `.constf` literals holding *exactly* the floats `registers(canvasMatrix(600,360))`
+   produces — `col0=(0,-2/360,0,1) col1=(-2/600,0,0,1) col2=(0,0,0,-0.5) col3=(0,0,0,1)` —
+   with the uniform never read, and the canary moved from the canvas corner to the canvas
+   centre. **`--expect hud-visible` EXITED 0 with 100 canary pixels**, and the panel was
+   90743 px of the clear colour `(16,32,48)`: the level vanished, exactly as canvasMatrix
+   applied to world-space geometry predicts. 100 px is the predicted size of a 16-canvas-px
+   square at the centre, so the mapping is confirmed float-for-float, not just directionally.
+3. **THE CORNER IS NOT THE REASON.** Shipped uniform path, canary at the centre: **0 px**. The
+   canary's position was never the variable, so the corner canary stays.
+4. **THE UNIFORM LOCATION IS NOT THE REASON.** `mvp` moved to vertex uniform 2 (`mvp=2`): **0
+   px.** Iteration 144's named experiment — a second matrix at a location MDK chooses — is
+   therefore answered without being run: there is no location collision, at 0 or at 2.
+5. **THE PER-DRAW MATRIX WRITE DOES NOT REACH THE SHADER.** `drawDiagnostic` was made to write,
+   through the same `C3D_FVUnifMtx4x4` at the same point in the frame, a matrix that maps the
+   canary's canvas (0,0)-(16,16) onto clip (-0.8,-0.8)-(0.8,0.8) — **64% of the panel**, so no
+   arithmetic subtlety, clip plane or crop can hide behind it. **0 px.** Re-issuing
+   `C3D_BindProgram` immediately after that write also gives **0 px** (which independently
+   confirms iteration 144's `BindProgram`-after-the-write result).
+
+**WHAT THAT LEAVES, STATED PRECISELY.** A vertex-shader uniform written by `installEye` reaches
+the shader — the level renders, and it renders through the identical `registers()` +
+`C3D_FVUnifMtx4x4` path. A vertex-shader uniform written later in the same frame, after
+`installEye`'s `C3D_BindProgram`, does not: the shader keeps `eyeVp`, so every canvas-space
+vertex is projected by the level's camera and lands off-panel. That is one sentence, and it
+explains the level being fine and the canvas being empty with one program and one uniform.
+
+**AND IT IS BIGGER THAN THE HUD.** `drawRecorded` composes and writes `MeshDraw::world` per draw
+for exactly the same reason (batch 142's object-placement fix). If post-`installEye` uniform
+writes do not land, **no object is placed by its world matrix either** — the arena batch and
+Kurt carry identity worlds so the level looks right, which is precisely why nothing else
+noticed. Any follow-up must check object placement, not only the HUD.
+
+**AND IT CONTRADICTS THE LIBRARY'S OWN DOCUMENTED USAGE, WHICH IS THE MOST USEFUL THING HERE
+AND IS A VAULT FIND, NOT A GUESS.** The devkitPro example in the vault
+(`60-references/3ds-platform/citro3d/01-overview-and-init.md:179-186`) is
+`C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, uLoc_projection, &projection);` immediately followed by
+`C3D_DrawArrays(GPU_TRIANGLES, ...)`, with the program bound once in `sceneInit` and never
+re-bound. **Write-then-draw with no re-bind is the pattern the library's own examples ship, and
+it works there.** So "a post-bind uniform write does not reach the shader" is a MEASURED
+SYMPTOM IN MDK'S FRAME, not a citro3d rule, and the next iteration should look for what in
+MDK's frame breaks the pattern rather than accepting the ordering as a law. The difference
+between the example and MDK that stands out is that MDK calls `C3D_BindProgram` once per eye
+per frame, and `C3D_BindProgram` calls `C3Di_LoadShaderUniforms` unconditionally — even on the
+`beq` path taken when the program is already the current one (`arm-none-eabi-objdump -dr
+base.o`) — which re-arms the shader's own param-data upload every frame.
+
+**THE NEXT EXPERIMENT, and it is a C++ one now, not a shader one.** Use the LEVEL as the
+instrument instead of a 100-px canary, because the level is a 46000-px signal and cannot be
+argued about: in `installEye`, write `pica::canvasMatrix` INSTEAD of `eyeVp` and delete every
+other matrix write in the frame. If the level vanishes to the clear colour (the probe-1
+signature) the write landed and the rule is about *timing*, not about the value; if the level
+renders normally it did not. Then test the two candidate orders directly — bind→write→draw and
+write→bind→draw — on the level, not on the canary. `C3D_UpdateUniforms` is called from
+`C3Di_UpdateContext`, which `C3D_DrawArrays` calls first (`arm-none-eabi-objdump -dr
+drawArrays.o`: `C3D_DrawArrays` is the only caller besides `C3D_DrawElements` and
+`C3D_ImmDrawBegin`), so citro3d's own bookkeeping says a per-draw flush *should* happen; the
+measurement says it does not, and the measurement wins.
+
+**DO NOT RE-RUN, all measured 2026-11-12:** the uniform location (0 and 2), the canary's
+corner-vs-centre position, `C3D_BindProgram` after a per-draw matrix write, and any probe that
+judges a matrix through the canary alone when a level-sized instrument would settle it in one
+run.
+
+**SEPARATE FOLLOW-UP FROM REVIEW-1 F1, LANDED AS A COMMENT NOT A CODE CHANGE.** The per-mesh
+`GSPGPU_FlushDataCache` in `mdk_render_update_mesh` is redundant: `C3D_FrameEnd(0)` flushes the
+whole `__ctru_linear_heap` before the queue is submitted, which is AGENTS.md P3's own sentence,
+and `GSPGPU_FlushDataCache` is a synchronous `svcSendSyncRequest`. Dropping it is a real
+ARM11 win and is gated on an original-3DS capture, because Mandarine cannot distinguish the
+call from its absence. The comments now say this instead of claiming P3 needs the call.
 
 ## The frame-record directive (closed as an open item, kept as a rule)
 

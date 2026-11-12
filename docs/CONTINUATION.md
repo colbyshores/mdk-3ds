@@ -1,21 +1,27 @@
 # Phase 2 continuation checkpoint
-Risk: low — this batch changes no shipped pixel and no numeric behaviour. It removes the
-temporary probe code the previous iteration left in `end_frame` and `drawDiagnostic`,
-restores `replayQueue`, and corrects two comments that asserted a cause the measurements
-refute: `C3D_TexFlush` after `C3D_TexLoadImage` and `GSPGPU_FlushDataCache` in
-`mdk_render_update_mesh` are both genuine AGENTS.md P3 obligations on real silicon and stay,
-but neither is the canvas bug, and Mandarine's PICA renderer reads the same host memory the
-emulated CPU wrote, so no cache clean can explain a capture taken here. `mdk.elf` moves
-`00d67ff4bbbc9d9a0fab088b935e6842` → `e70fcb733e0389fe3ba881b4b4d40074`; the shader is
-unchanged (`mdk_c3d.shbin` `59d5e0e8ec1dc12827b6cd516715de0f`). The ledger row stays open.
-**Twenty-three probes this iteration refuted the previous iteration's headline finding** — the
-frame's tail is alive, and replaying the whole first bucket after `installEye` paints 46831
-of the panel's 96000 pixels — and closed, by direct measurement, the white texture, the mesh
-and texture cache flushes, the per-draw matrix write, the canvas mesh's bytes and address,
-`pica::canvasMatrix`'s value float by float, the winding, the clip z and the clip w. What is
-left is narrower and stated in `docs/OPEN_ITEMS.md`, "The 3DS canvas draws no pixels": no
-canvas-space geometry has been shown to rasterise under any matrix, and the rotation and
-viewport hypotheses are now closed by measurement rather than left to read.
+Risk: low — no shipped code or shader byte changes: every probe this batch ran was reverted,
+`mdk.elf` and `mdk_c3d.shbin` are byte-identical to the parent commit. The batch is six
+emulator measurements, their committed evidence in `docs/evidence/`, and four comment/doc
+corrections that each replace an assertion the measurements refute. The ledger row stays open.
+**The canvas bug is now narrowed to the vertex-uniform DELIVERY, and the narrowing is
+measured, not reasoned.** Driving the vertex shader from `.constf` literals holding exactly the
+floats `registers(canvasMatrix(600,360))` produces makes the canary paint — `--expect
+hud-visible` exits 0 with 100 canary pixels and the level collapsed to the clear colour, the
+exact signature canvasMatrix applied to world geometry predicts. The same values through the
+`mvp` uniform paint nothing, at vertex uniform 0 and at uniform 2 alike, and a matrix written
+per-draw that would cover 64% of the panel paints nothing either. So the canvas matrix's
+arithmetic is confirmed float-for-float and exonerated, the uniform LOCATION is exonerated,
+the canary's position is exonerated, and `C3D_BindProgram` after the write is exonerated — and
+what is left is that a uniform written after `installEye`'s bind does not arrive, which
+contradicts the devkitPro pattern the vault records and therefore points at something in MDK's
+own frame. Full record: `docs/evidence/2026-11-12-145-uniform-delivery.txt`.
+**Gate state, stated plainly:** `make -C mdk_3ds` rc 0 with byte-identical artefacts, and
+`DISPLAY=:99 bash tools/check.sh` rc 0 with every sub-gate green. `make -C tests/scripts` is rc 2
+— **and was rc 2 at the parent commit with a byte-identical FAIL set**, proved by stashing and
+re-running. Its single failing check is `diagnostic-drawn-once`, which batch 142 made
+unsatisfiable by moving the canary to queue records, and whose redness makes all 93 mutation arms
+inert. Root-caused, deliberately not fixed under time pressure, and the top open item with the
+fix's shape written down in `docs/OPEN_ITEMS.md`.
 
 
 **Batch 142 (the ledger row `3ds.hud-canvas`) — the canvas lands as queue records, the HUD is wired, and the

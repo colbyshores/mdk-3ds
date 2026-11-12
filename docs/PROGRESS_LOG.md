@@ -1,3 +1,136 @@
+## Iteration 145 — ledger row `3ds.hud-canvas`, attempt 6 of 8: the canvas bug is narrowed to the vertex-uniform delivery
+
+**Prior-solution lookup, recorded per AGENTS.md P9.** The `obsidian_*` and `cognee_*` MCP
+tools are **not present in this session's tool list**. That is a session configuration fault
+and is recorded as one rather than treated as a completed lookup; per P9 a disk-only read is a
+*degraded* lookup, not an equivalent one, because it loses Cognee's graph search entirely. The
+vault was therefore read read-only from `/mnt/nas/Vaults/port-docs`. It paid for itself
+immediately: `60-references/3ds-platform/citro3d/01-overview-and-init.md:179-186` is the
+devkitPro example doing `C3D_FVUnifMtx4x4(...)` immediately followed by `C3D_DrawArrays(...)`
+with the program bound once in `sceneInit` and never re-bound — write-then-draw with no re-bind
+is the library's own shipped usage. Pi-knowledge (`knowledge_search`, KB `mdk-sdl`, mode
+hybrid) returned the existing `shaderProgramConfigure` note in `renderer_c3d.cpp` and AGENTS.md
+P2's "all uniform registers must be written every frame"; neither is a prior fix for this.
+
+**Review dispositioned: `logs/ralph-pi/run-20261112-035144/review-1.md`** (DeepSeek V4.1 Flash
+TH, proved independent). No Critical and no High. All four findings were checked against the
+linked archives before being accepted or acted on.
+
+- **F1 (Medium) — FIXED in the comments.** Re-measured against
+  `/opt/devkitpro/libctru/lib/libcitro3dd.a`: `C3D_FrameEnd` does `tst r4,#2` then
+  `ldr r0,__ctru_linear_heap`; `ldr r1,__ctru_linear_heap_size`; `bl GSPGPU_FlushDataCache`, and
+  `GSPGPU_FlushDataCache` in `libctru.a:gspgpu.o` ends in `bl svcSendSyncRequest`. So the
+  frame-end flush publishes the whole linear heap before the queue is submitted — which is
+  AGENTS.md P3's own sentence — and the per-mesh `GSPGPU_FlushDataCache` is redundant, at the
+  cost of one synchronous GSP round-trip per mesh upload per frame. **The ordering argument the
+  ledger asked for is now written down in `mdk_render_update_mesh`'s comment, and it does not
+  favour keeping the call: no path lets the GPU read the mesh bytes before that flush.** The
+  call is nevertheless kept, for one honest reason and not the old false one: Mandarine's PICA
+  renderer reads the same host memory the emulated CPU wrote, so **no emulator run can
+  distinguish the call from its absence**, and removing a cache clean on the strength of an
+  instrument that cannot see it is the same mistake as adding one. Dropping it is a named
+  follow-up gated on an original-3DS capture. `C3D_TexFlush` stays for the narrower and better
+  reason that it is citro3d's own documented pairing for `C3D_TexLoadImage`.
+- **F2 (Medium) — FIXED, with one recommended step rebutted.** Six panel crops plus a full P8
+  verdict block per run are now committed at `docs/evidence/2026-11-12-145-uniform-delivery.txt`
+  (+ six `tools/panel_crop.py`-checked 400x240 PNGs). **The step "add the why-the-pin-did-not-move
+  sentence to both existing sidecars" is NOT done and cannot be:**
+  `tools/runner/gates_batch_integrity.py:110-112` fails a batch that modifies a historical
+  `docs/frames/*.txt` ("history is immutable"), and `docs/frames/README.md` is owner-protected.
+  The explanation is in the new evidence file instead, in a section headed for exactly that
+  question. The finding itself is accepted and closed: the pinned frame is a HOST level-3 capture
+  and the canvas bug lives only in the 3DS seam, so no host capture can move when it is probed.
+- **F3 (Low) — FIXED.** Re-verified with `arm-none-eabi-readelf -r texture.o`: one
+  `R_ARM_CALL GSPGPU_FlushDataCache` at 0x40 in `.rel.text.C3D_TexFlush`. The comment now says
+  "the ONE call site in `texture.o` is inside `C3D_TexFlush`".
+- **F4 (Low) — FIXED.** Blank line inserted before `**A PROBE THAT COULD NOT HAVE WORKED`.
+
+**The six emulator runs.** Mandarine r1.2.1, md5 `0d2adab6ad078c78e6d03e72086f2eb6` verified,
+`DISPLAY=:99`, forced llvmpipe, mono, one private lane per run, every run through
+`mdk_3ds/tools/emurun.sh`; no run reported exit 3, 4 or 6. Full blocks in the evidence file.
+
+1. **Shipped build, `--expect hud` → EXIT 7.** `canvas: quads=4 draws=2 mesh=2 corners=24
+   eyes=1`; 0 canary px; level renders (147 panel colours). And the guest line reads
+   **`uniforms: mvp=0 uvtransform=4 tint=5`**.
+2. **Matrix as `.constf` literals, uniform never read, canary at the canvas centre → EXIT 0,
+   100 canary px.** The panel is 90743 px of the clear colour `(16,32,48)`: the level collapsed
+   exactly as canvasMatrix applied to world geometry predicts, and 100 px is the predicted size
+   of a 16-canvas-px square at the centre. **The canvas matrix's arithmetic is confirmed float
+   for float.**
+3. **Shipped uniform path, canary at the centre → 0 px.** One variable from run 2. The canary's
+   position was never the variable, so the corner canary stays as shipped.
+4. **`mvp` moved to vertex uniform 2 (`mvp=2 uvtransform=0 tint=1`) → 0 px.** This answers
+   iteration 144's named next experiment without needing a second uniform: **there is no
+   location collision, at 0 or at 2.**
+5. **A per-draw matrix that maps the canary onto 64% of the panel → 0 px.** Chosen so no clip
+   plane, crop edge or arithmetic subtlety can hide behind it.
+6. **Run 5 plus `C3D_BindProgram` immediately after the write → 0 px, panel byte-identical to
+   run 3.** Independently reproduces iteration 144's rebind result on a far larger signal.
+
+**What that leaves, and the correction that goes with it.** A uniform written by `installEye`
+reaches the shader — the level renders through the identical `registers()` +
+`C3D_FVUnifMtx4x4` path. A uniform written later in the same frame does not, so every
+canvas-space vertex is projected by the level's camera and lands off-panel. **But the vault
+shows the library's own example doing exactly write-then-draw with a one-time bind, so this is
+a measured symptom inside MDK's frame and not a citro3d rule**, and the archives hand over the
+one difference worth chasing: MDK calls `C3D_BindProgram` once per eye per frame, and
+`C3D_BindProgram` calls `C3Di_LoadShaderUniforms` even on the `beq` path taken when the program
+is already current (`base.o`, `C3D_BindProgram` +0x24 → `ac: bl C3Di_LoadShaderUniforms`),
+re-arming the shader's own param-data upload every frame. The example binds once; MDK binds
+every frame.
+
+**AND IT IS BIGGER THAN THE HUD.** `drawRecorded` writes `MeshDraw::world` per draw for exactly
+the same reason batch 142 added it. If post-`installEye` uniform writes do not land, **no object
+is placed by its world matrix either** — the arena batch and Kurt carry identity worlds, which
+is why the level looks right and nothing else noticed. Any fix must be checked against object
+placement, not only against the HUD.
+
+**A FALSE CLAIM ABOUT THE SHADER IS RETIRED.** The long comment at `renderer_c3d.cpp:270-290`
+asserted that `.constf constants(...)` pushes the named `.fvec` uniforms up so `mvp` is NOT at
+vertex uniform 0. The guest log says `mvp=0` on every run, and reordering the declarations to
+`uvtransform, tint, mvp[4]` makes it read `mvp=2 uvtransform=0 tint=1`. Picasso allocates
+`.constf` separately and gives `.fvec` addresses from 0 in declaration order. The comment is
+corrected, and with it goes the "the uniform the shader reads as `mvp` is not the memory
+citro3d was told to write" reading that shaped iteration 144's plan.
+
+**GATES, WITH THEIR REAL OUTPUT.** `make -C mdk_3ds` → **rc 0**, and the artefacts are
+byte-identical to the parent (`mdk.elf` `e70fcb733e0389fe3ba881b4b4d40074`,
+`mdk_c3d.shbin` `59d5e0e8ec1dc12827b6cd516de0f`) — which is what a comment-and-docs batch must
+produce, and it is the check that proves nothing shipped moved. `DISPLAY=:99 bash tools/check.sh`
+→ **rc 0, ALL GATES PASSED**, including `gates_frames` (every pinned frame deterministic and
+unchanged), `gates_batch_integrity`, `gates_completion`, `audit_c_with_classes` (0 violations)
+and `gates_vfp` (0 blockers); `gates_smdh` SKIPs for want of a built `.cia`. `make -C
+tests/scripts` → **rc 2, and it was rc 2 at the parent commit too**: the FAIL sets are
+byte-identical (93 `c3d_frame` mutation arms plus one check, the same 94 lines in both), so this
+batch adds no failure. It was stashed and re-run at `1069a79` to prove that rather than assume
+it.
+
+**THE ROOT CAUSE OF THAT RED, WHICH THE LOOP STATUS ASKED FOR.** The single failing check is
+`diagnostic-drawn-once`, and `tests/scripts/c3d_frame_test.sh:827-833` requires
+`C3D_DrawArrays(GPU_TRIANGLES, 0, 3)` to appear once, inside `drawDiagnostic`. **Batch 142
+converted the canvas and the canary from immediate draws to queue records, so that literal call
+no longer exists anywhere and the check cannot be satisfied by any correct code.** Its redness is
+not cosmetic: every mutation arm is required to turn red exactly the check it targets, and a
+check that is red before any mutation turns red for every mutant, so **all 93 arms now report
+"turned `diagnostic-drawn-once` red, but it is cut for …" and test nothing.** The mutation
+harness has been silently inert since batch 142 while still printing 93 lines a run.
+
+**NOT FIXED HERE, ON PURPOSE, AND THAT IS A DECISION NOT AN OMISSION.** The faithful repair is to
+re-express the invariant the check was written for — the canary is emitted exactly once, from
+`drawDiagnostic`, after the real draws — against the queue architecture, and to re-point the
+arms at line 2411 that target it. That file is the most heavily reviewed test in the repository
+(its own comments cite review-6 through review-19 closing holes in exactly these arms), and a
+hurried edit that loosens an arm would re-open a hole while looking like a green gate — the exact
+failure the file exists to prevent. The check is left red and the fix is the top open item with
+its shape written down.
+
+**Everything was reverted.** `mdk.elf` is byte-identical to the committed build (`e70fcb73`) and
+`mdk_c3d.shbin` is unchanged (`59d5e0e8`). No shipped artefact changed; the output is six
+measurements, their committed evidence, and four corrected records.
+
+**Inherited red test, reported not hidden:** `index-texels-are-rotated-for-the-pica` in
+`tests/scripts/c3d_frame_test.sh` is red at the base commit too — the reviewer cut 94 arms on
+both base and head and confirmed it is not this diff's regression. It is still red.
 ## What this batch did (Phase 2 iteration 3 — the Runner's running half is pinned, and the record around it is corrected)
 
 ### Verification actually run for this batch (finishing iteration, 2026-11-01)

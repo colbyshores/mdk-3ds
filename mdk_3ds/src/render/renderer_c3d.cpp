@@ -272,18 +272,29 @@ struct RendererC3D {
 
     // The uniforms' LOCATIONS, not their register numbers.
     //
-    // THE PICA'S UNIFORM REGISTERS AND ITS CONSTANT REGISTERS ARE THE SAME
-    // REGISTERS, and the constants come FIRST. A shader that declares
-    // `.constf constants(...)` before its uniforms pushes the uniforms up
-    // by however many registers the constants took -- so the matrix is NOT
-    // at registers 0-3, and writing it there overwrites the constants.
+    // THE LOCATION COMES FROM THE SHADER'S OWN TABLE, AND THAT IS THE ONLY
+    // PART OF THE OLD STORY HERE THAT SURVIVED.
     //
-    // The symptom is a screen that shows only the clear colour: the
-    // shader reads garbage for its matrix, every vertex lands outside the
-    // clip volume, and nothing is rasterised. There is no error.
+    // WHAT THIS COMMENT USED TO ASSERT, AND THE MEASUREMENT THAT KILLED IT
+    // (2026-11-12, iteration 145): it said the `.constf constants(...)` declared
+    // at the top of `mdk_c3d.v.pica` pushes the named `.fvec` uniforms up, so
+    // `mvp` is NOT at vertex uniform 0 and writing it there would overwrite the
+    // constants. The guest log says otherwise, on every run: `uniforms: mvp=0
+    // uvtransform=4 tint=5`. Picasso gives the named `.fvec` uniforms addresses
+    // from 0 in DECLARATION ORDER and allocates `.constf` separately; the
+    // constants do not push anything up, and `mvp` really is vertex uniform 0.
+    // (Verified by reordering the declarations: with `uvtransform, tint, mvp[4]`
+    // the same line reads `uniforms: mvp=2 uvtransform=0 tint=1`.)
     //
-    // The location is what the shader's own uniform table says, and it
-    // accounts for the constants.
+    // WHY THAT MATTERS AND WHY IT ALSO FIXED NOTHING: the wrong claim made
+    // "the matrix the vertex shader holds is not the matrix
+    // `registers()`+`C3D_FVUnifMtx4x4` wrote" look like a location collision.
+    // It is not one -- moving `mvp` to register 2 changes nothing at all, and
+    // the canvas is invisible at both locations. See docs/OPEN_ITEMS.md, "The
+    // 3DS canvas draws no pixels", for what IS measured.
+    //
+    // The location is what the shader's own uniform table says. Read it; do not
+    // assume a register number.
     int mvpLocation = 0;
     int uvLocation = 0;
 
@@ -1641,11 +1652,23 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     // flush is a separate call, `C3D_TexFlush`, and that is measured rather than
     // remembered: in the linked `libcitro3dd.a`, `GSPGPU_FlushDataCache` is
     // referenced by exactly three objects (`renderqueue.o`, `texture.o`,
-    // `tex3ds.o`), and inside `texture.o` both call sites are inside
-    // `C3D_TexFlush` - `C3D_TexLoadImage` has none (`arm-none-eabi-objdump -dr
-    // texture.o`; `C3D_TexUpload` is an inline that calls `C3D_TexLoadImage` and
-    // does not flush either). Skipping it leaves AGENTS.md P3's CPU/GPU
-    // cache-visibility obligation unmet on real silicon, so it stays.
+    // `tex3ds.o`), and the ONE call site in `texture.o` is inside
+    // `C3D_TexFlush` - `C3D_TexLoadImage` has none (`arm-none-eabi-readelf -r
+    // texture.o`: one `R_ARM_CALL GSPGPU_FlushDataCache`, at 0x40, in
+    // `.rel.text.C3D_TexFlush`; `C3D_TexUpload` is an inline that calls
+    // `C3D_TexLoadImage` and does not flush either).
+    //
+    // IT IS NOT WHAT MAKES P3 MET, AND THE OLD COMMENT SAID IT WAS (review-1
+    // F1). `C3D_FrameEnd` in this citro3d flushes the WHOLE linear heap --
+    // `tst r4,#2` then `ldr r0,__ctru_linear_heap; ldr r1,__ctru_linear_heap_size;
+    // bl GSPGPU_FlushDataCache` (`arm-none-eabi-objdump -dr renderqueue.o`) --
+    // and this file calls `C3D_FrameEnd(0)`, which is exactly AGENTS.md P3's
+    // "flushes linear memory before queue execution". So the obligation is met
+    // by the frame end whether or not this line is here. `C3D_TexFlush` stays
+    // for the narrower and better reason: it is citro3d's OWN pairing for
+    // `C3D_TexLoadImage`, the library's documented contract for a non-VRAM
+    // texture, and using a library the way it says to be used is not redundant
+    // work.
     //
     // IT IS NOT THE CANVAS BUG, AND THE CLAIM THAT IT WAS IS MEASURED DEAD
     // (2026-11-11). This flush was landed on the theory that the 8x8 white
@@ -1927,32 +1950,47 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
         out[i * 5 + 3] = v[i].uv.x;
         out[i * 5 + 4] = v[i].uv.y;
     }
-    // THE CPU/GPU CACHE-VISIBILITY OBLIGATION (AGENTS.md P3).
+    // THE CPU/GPU CACHE-VISIBILITY OBLIGATION (AGENTS.md P3) -- AND THIS CALL IS
+    // NOT WHAT MEETS IT.
     //
-    // The ARM11's D-cache is write-back and the PICA200 is not coherent with it.
-    // A CPU write into linear memory therefore reaches the GPU only when the
-    // dirty line leaves the cache: the kernel's clean is what makes it happen on
-    // demand. citro3d does this for the paths it owns - `GSPGPU_FlushDataCache`
-    // is referenced by `renderqueue.o`, `texture.o` and `tex3ds.o` in the linked
-    // `libcitro3dd.a` (measured with `arm-none-eabi-nm --undefined-only`), which
-    // is why a texture upload reaches the GPU and a mesh upload did not. The
-    // sibling port learned the same thing the same way and states the rule the
-    // same way (`ts_3ds/src/rendering/c3d/01_setup.inc`: linear memory is
-    // "cache-managed: the flush is what makes CPU writes visible to the GPU
-    // (P3's cache-visibility obligation)").
+    // WHAT IS MEASURED (review-1 F1, re-measured 2026-11-12 against the linked
+    // `/opt/devkitpro/libctru/lib/libcitro3dd.a`):
+    //   * `C3D_FrameEnd` flushes the ENTIRE linear heap: `tst r4,#2`, then
+    //     `ldr r0, __ctru_linear_heap`; `ldr r1, __ctru_linear_heap_size`;
+    //     `bl GSPGPU_FlushDataCache` (`arm-none-eabi-objdump -dr renderqueue.o`,
+    //     relocs 0x168/0x16c). `mdk_render_end_frame`'s caller reaches
+    //     `C3D_FrameEnd(0)`.
+    //   * citro3d submits the command queue at that same frame end, so the flush
+    //     precedes the GPU ever reading the vertex data. That is AGENTS.md P3's
+    //     own sentence: the default `C3D_FrameEnd(0)` path "flushes linear memory
+    //     before queue execution".
+    //   * `GSPGPU_FlushDataCache` in this libctru is a SYNCHRONOUS service call:
+    //     it ends in `bl svcSendSyncRequest` (`libctru.a:gspgpu.o`). So this line
+    //     costs one GSP round-trip per mesh upload per frame, and the object
+    //     stream, Kurt, the canvas and the diagnostic all upload every frame.
     //
-    // IT IS REQUIRED, AND IT IS NOT THE CANVAS BUG. This line was first landed
-    // on the theory that a mesh written during the frame was still dirty when the
-    // replay handed its address to `C3D_DrawArrays`, and that this is why the
-    // canvas was invisible. That theory is REFUTED for every capture this loop
-    // has taken (2026-11-11): Mandarine's PICA renderer reads the same host
-    // memory the emulated CPU wrote, so there is no incoherence here for a flush
-    // to fix, and the canvas is still absent both with this flush in place and
+    // THE ORDERING ARGUMENT, WRITTEN DOWN RATHER THAN IMPLIED. There is none that
+    // favours keeping it. The mesh bytes are written here, the draws are recorded
+    // later in the same frame, and the queue is not handed to the GPU until
+    // `C3D_FrameEnd(0)` -- which flushes first. No path lets the GPU read these
+    // bytes before that flush, so the frame-end flush is sufficient and this call
+    // is redundant. The old comment claimed the opposite ("P3 asks for it and real
+    // silicon needs it"); that claim is withdrawn.
+    //
+    // IT STAYS ANYWAY, FOR ONE HONEST REASON: the only target this loop can
+    // measure on is Mandarine, whose PICA renderer reads the same host memory the
+    // emulated CPU wrote, so NO EMULATOR RUN CAN DISTINGUISH this call from its
+    // absence (measured 2026-11-11: the canvas is absent both with this flush and
     // with the D-cache deliberately thrashed by 512 KB of unrelated linear writes
-    // immediately before the draw. The flush stays because P3 asks for it and
-    // real silicon needs it, not because it fixed anything - a change that moves
-    // nothing on the only measurement available is a hypothesis, not a fix.
-    // See docs/OPEN_ITEMS.md, "The 3DS canvas draws no pixels".
+    // before the draw). Removing a cache clean on the strength of an instrument
+    // that cannot see it would be the same mistake as adding one. Dropping it is a
+    // named follow-up in docs/OPEN_ITEMS.md, gated on an original-3DS capture --
+    // and it is a PERFORMANCE win on the 268 MHz target, not a correctness fix.
+    //
+    // AND IT WAS NEVER THE CANVAS BUG. The theory that a mesh written during the
+    // frame was still dirty when the replay handed its address to
+    // `C3D_DrawArrays` is refuted; see docs/OPEN_ITEMS.md, "The 3DS canvas draws
+    // no pixels", for what the measurements now do say.
     //
     // THE RANGE IS THE WRITTEN PREFIX, NOT THE BUFFER. The clean is per line and
     // the cost is proportional to the range; a mesh of 4096 quads is 245760
