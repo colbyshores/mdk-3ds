@@ -65,9 +65,15 @@ public:
     // refusal prints nothing either, so a refused mesh on Linux is still a silent
     // missing picture" (review-11 F4). The Vulkan backend prints its own refusals
     // too (`renderer_vk.cpp`'s `refused()`), so a refused resource on either
-    // target names itself in the log. `tests/scripts/linux_refusal_report_test.sh`
-    // gates the shape of both halves; the refusal itself cannot be executed on this
-    // host, because lavapipe never says no.
+    // target names itself in the log -- and that sentence is CHECKED now, not
+    // asserted. Review-5 F1 found two Vulkan paths that still returned a null
+    // handle in silence (a descriptor set and a one-shot command buffer) while
+    // their callers carried on drawing, so the promise held for the sites someone
+    // had thought to list and failed for the rest. The gate DISCOVERS them: every
+    // `return VK_NULL_HANDLE` in that file must be preceded by a `refused(` call,
+    // whichever function it sits in. `tests/scripts/linux_refusal_report_test.sh`
+    // gates the shape of both halves; the refusal itself cannot be executed on
+    // this host, because lavapipe never says no.
     //
     // HOT PATH (AGENTS.md 2): once per drawn batch per frame. It is one memcpy
     // of the stream and a Material per draw -- no float->int conversion (R2), no

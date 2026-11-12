@@ -25887,3 +25887,137 @@ operand of `add` (move it to a register first).
 Everything was reverted: `mdk.elf` is byte-identical to the committed build (`e70fcb73`) and
 `mdk_c3d.shbin` is unchanged (`59d5e0e8`). No shipped artefact changed in the second half of
 this iteration; the output is documentation and a closed list of suspects.
+
+## Iteration 149 — batch 149: review-5 closed 4/4 with one owner-blocked — the Vulkan backend's refusals are discovered instead of listed, a refused draw stops sampling someone else's texture, and one refusal now costs one line
+
+Ledger row `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`, attempt 2 of 8.
+Tree at start: `06d1d6f` (batch 148). Review answered: `logs/ralph-pi/run-20261112-035144/review-5.md`
+(DeepSeek V4.1 Flash, independence proved in its own header). **No Critical or High findings**, so
+this was a Medium/Low remediation batch, and every one of the four actionable findings was confirmed
+against the source before it was touched.
+
+**F1 (Medium) was real, and it was worse than "silent".** Batch 148 shipped the sentence "The Vulkan
+backend prints its own refusals too (`renderer_vk.cpp`'s `refused()`), so a refused resource on
+either target names itself in the log". Two paths in that file returned a null handle with nothing
+printed:
+
+* `getDescriptorSet()` — on `vkAllocateDescriptorSets != VK_SUCCESS` it returned `VK_NULL_HANDLE`,
+  and all three callers (`drawRecorded`, the sky draw, `mdk_render_canvas_quad`) were written
+  `if (set) { vkCmdBindDescriptorSets(...); }` followed by an unconditional `vkCmdDraw`. Vulkan
+  descriptor binding is persistent dynamic state, so the draw that failed to bind sampled whatever
+  set the previous draw bound. That is not the emptier frame this row was written about, it is a
+  *wrong* frame: a wall wearing another surface's pixels, silently.
+* `beginOneShotTracked()` — `vkAllocateCommandBuffers`' VkResult was discarded entirely (so a null
+  handle went straight into `vkBeginCommandBuffer`), and `createHostImage()` wrapped its whole
+  copy-and-barrier block in `if (cb) { … }`, fell past it, and `return true`. A texture of undefined
+  bytes in an undefined layout, reported to its caller as a successful creation.
+
+Confirmed against the file, then fixed. `refused()` now sits at every null-handle return in
+`renderer_vk.cpp`: the one-shot command pool, the one-shot command-buffer allocate and begin (both
+results now checked), `vkAllocateDescriptorSets`, both `vkCreateGraphicsPipelines` sites (they
+printed, but without the `[vk] REFUSED` prefix and without the fflush B2 exists for),
+`createModule` — whose discarded `vkCreateShaderModule` result defeated its own caller's
+`if (!module)` guard, since a failed create leaves an out-parameter undefined rather than null —
+and both `vkCreateSampler` sites, where a null sampler means every textured draw in the run samples
+nothing. The pipeline cache is left deliberately unchecked and says so: it is an optimisation, and a
+run without one draws the same picture. The three descriptor callers now `return` instead of
+drawing, with the reason in the comment: a missing picture is the failure this file reports; a wrong
+picture is not. `createHostImage`'s `if (cb)` gained an `else` that frees the staging pair, destroys
+the image and its memory, prints, and returns false — so the caller's own line names the texture
+this one was meant to become.
+
+**F2 (Medium) was real and its fix needed a measurement, not an opinion.** The shipped rationale said
+the Vulkan helper "prints on EVERY refusal instead of latching once per run, which is what the
+Citro3D backend does and why". The Citro3D backend latches: `meshAllocFailureLogged` is set on the
+refusal and cleared on the success path, and `c3d_frame_test.sh` pins it *because* that line printed
+1710 times in one run (review-10 F3). The comment cited the sibling as doing the opposite of what it
+does. A bool latch is right there and wrong here, because the Vulkan sites repeat per DRAW — a
+descriptor set is allocated for every textured draw — and a bool would report the first refusal of a
+run and hide every larger one after it, which is the review-11 F7 defect the frontend's re-arming
+latch exists to avoid. So the helper now prints **once per distinct request**: it formats the
+caller's varargs, and keeps a bounded set (256 entries) of the requests each site has already named,
+keyed on the address of the site's own format literal — every call site passes a string literal, so
+the pointer is a free per-site id and two sites cannot collide. Past the cap everything prints,
+because an unreported refusal is the bug and a repeated line is only noise.
+
+The first version of this helper remembered only the LAST message per site. The fault injection
+killed it. With every descriptor allocation forced to fail, level 3 attempts **48** distinct
+(texture, palette, sampler) triples across **187** textured draws per frame, and a last-message
+latch printed **22500 lines** in a 120-frame run — identical to printing every time — because a site
+that refuses 48 rotating requests never matches the one it last named. The set prints **48**. That
+number is why B7 requires a scan over a collection and carries an arm
+(`helper-remembers-only-the-last`, `i < g_refusalLines.size()` → `i < 1`) that turns it red for the
+one-slot shape. The same injection also measured what the refusal costs the picture: the frame loses
+**100.000%** of its pixels (max_delta 240, mean_delta 61.9526) and the last frame reports
+`0 draws, 0 triangles` — every textured draw was skipped rather than sampled blind. Forcing every
+one-shot command buffer to fail prints 48 lines (`1804x360 image of 649440 bytes could not be
+filled or transitioned…`, then the texture's own refusal under it) and produces no frame file at
+all, because the screenshot readback uses a one-shot command buffer too and that path says so as
+well. Un.injected: 0 REFUSED lines and the pinned frame unchanged.
+
+**F3 (Low) was real**: `(%llu bytes)` beside "x 2 frames in flight" was ONE slot's size, so the
+reader computed a 96 KB budget where the driver was asked for 192 KB. Both frames-in-flight sites
+now print `(%llu bytes total, %llu per slot)`. **F4 (Low) was real**: B1 checked a hardcoded list of
+nine functions and B3 counted a size site only when the create call's size argument was a bare
+identifier, passing on `checked > 0` — so the gate could not see a site it had not been told about,
+which is exactly what F1 was.
+
+**The gate grew the eyes the finding said it lacked.** `tests/scripts/linux_refusal_report_test.sh`
+went from 6 checks / 7 arms to **10 checks / 13 arms**, each arm still naming the one check it turns
+red. B4 is the discovery rule: every `return VK_NULL_HANDLE` in the file must have a `refused(`
+before it in its own block, whole file, no list. B5 requires every `vkAllocate*` VkResult to be read.
+B6 pins that `createHostImage` cannot report success for an image it never filled. B7 pins the
+dedup, as a set. B3 now reads the create call's size argument as an expression (so
+`sizeof(mdk::Vertex) * (VkDeviceSize)n` is still pinned) and requires every size site to contribute,
+so one readable site can no longer vouch for the rest. Two harness bugs surfaced while arming it and
+are fixed in the same file: `call_args` counted brackets inside string literals, so a refusal message
+containing `(%llu bytes)` truncated its own call and the site dropped out of B3 without a sound; and
+`blocks()` ended a condition at `find(")")` instead of matching it. The evidence that the new checks
+bite where they claim to: run against batch 148's `renderer_vk.cpp`, they go red four times —
+`silent at line 230, line 702, line 797, line 816`, `unchecked at line 239`, the createHostImage
+claim, and the dedup — one red per finding.
+
+**F5 (Low) is not this batch's to fix and is not rebutted**: the ledger row stays `todo` with a green
+acceptance because `docs/COMPLETION_LEDGER.tsv` is `coleshores:coleshores 0664` and this lane is
+`piagent`, and the row is in `gates_batch_integrity.PROTECTED` so hand-editing is forbidden.
+`python3 tools/runner/ledger_close.py --row linux.render-frame` remains the one command that closes
+it, from a lane that can write the file. Same wall as `/tmp/kilo`, which is why this batch's scratch
+is `/tmp/piagent-mdk`.
+
+**Nothing was weakened to get here.** No golden, manifest, `reference.sha256`, `tools/check.sh`,
+`AGENTS.md`, `SPEC.md` or ledger file was touched. The gate changes make the gate stricter: two
+checks that used to pass on a subset now require every site, and four checks are new.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` → rc 0, `All cases match the oracle.`, 592 `^PASS`,
+0 `FAIL`. `DISPLAY=:99 bash tools/check.sh` → rc 0, `CHECK: ALL GATES PASSED`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION[d1]: 11 done / 13 total
+/ 0 owner-blocked / 2 open`, `gates_smdh SKIP` (no built .cia). `make -C mdk_3ds -j8` → rc 0,
+`mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e`, byte-identical to batch 148's, which is the
+evidence that the only shared-tree change — a comment in `mdk_core/src/game/object_draw.h` — did not
+reach the console. `cmake --build build-linux -j8` → rc 0.
+`sh tests/scripts/linux_refusal_report_test.sh` → `PASS LinuxRefusalReport (10 checks, 13 arms
+adjudicated red)`. The committed frame pair
+(`docs/frames/2026-11-12-linux-refusal-discovery.png`) is byte-identical to its two predecessors
+(`6769a13731983d65cee9df02da6cff37`): no refusal can fire in the pinned scene, so no pixel moved.
+No emulator run: nothing under `mdk_3ds/**` changed.
+
+**Prior-solution lookups.** `pi-knowledge` KB `mdk-sdl` (5149 chunks) returned `render.h`'s seam
+contract — "a failed creation returns a null handle; a failed per-frame allocation sets a sticky flag
+on the backend and degrades the frame rather than aborting", which is the sentence that settles the
+skip-the-draw decision — plus `renderer_c3d.cpp`'s `probeTextureMemory` ("an allocation that fails
+says nothing at all, and that silence is how a whole arena's textures once refused to allocate") and
+`object_draw.cpp`'s recorded-not-printed flag. Obsidian and Cognee MCP tools are **absent from this
+session's tool list** (AGENTS.md P9 says to report that rather than pretend), so the vault was read
+read-only from `/mnt/nas/Vaults/port-docs`; the note that mattered was
+`30-architecture/patterns/a-counter-that-identifies-a-population-only-while-it-fails-is-an-alarm-not-an-instrument.md`
+— a signal that only exists while a guard is refusing is an alarm, not an instrument — which is the
+argument for naming the request rather than counting refusals.
+
+**STILL OPEN.** (i) Whether descriptor-pool exhaustion is reachable in a real session is still
+unproven: nothing in the backend frees a set (`vkFreeDescriptorSets`/`vkResetDescriptorPool` appear
+nowhere; `forgetDescriptorSets()` drops only the CPU-side cache entry), so every released-and-re-made
+texture or palette consumes one of `maxSets = 4096` for the life of the process. The refusal is now
+audible when it happens; proving it can happen needs a counter or a free, which is its own slice.
+(ii) The dedup set is capped at 256 entries and prints everything past it. (iii) `vkCreateImageView`'s
+failure path in `createHostImage` still leaks the image and its memory — a leak on a refusal path,
+not a silence, and not this batch's finding.

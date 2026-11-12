@@ -48,12 +48,31 @@
 #     B1 every refusal site prints: inside each named function, every block that
 #        tests a failed create/ensure/over-capacity and returns carries a
 #        `refused(` call before that return;
-#     B2 the helper actually reaches the log — a printf AND an fflush, because a
-#        refusal is exactly the moment the process may die with a stdio buffer
-#        full of the line that explains it;
-#     B3 the byte figure a refusal prints is the expression the create call was
-#        given, so the line cannot disagree with the request (review-11 F1 again,
-#        one source of truth instead of two numbers for one allocation).
+#     B2 the helper actually reaches the log — it formats the caller's varargs
+#        and flushes, because a refusal is exactly the moment the process may die
+#        with a stdio buffer full of the line that explains it;
+#     B3 the byte figure a refusal prints is built from the size expression the
+#        create call was given (and the frames-in-flight count), and EVERY size
+#        site contributes, so one readable site cannot vouch for the others
+#        (review-5 F4);
+#     B4 DISCOVERY, not a list: every `return VK_NULL_HANDLE` in the file is
+#        preceded by a `refused(` in its own block. B1 can only check the sites
+#        it was told about, and review-5 F1 was a site it had not been told about
+#        (`getDescriptorSet`, whose callers then drew with the PREVIOUS draw's
+#        descriptor set bound — a wrong picture, not a missing one);
+#     B5 every `vkAllocate*` call has its VkResult read, because an unchecked
+#        `vkAllocateCommandBuffers` hands back an undefined handle that the next
+#        call happily dereferences (review-5 F1);
+#     B6 `createHostImage` does not report success for an image it never filled
+#        or transitioned (review-5 F1);
+#     B7 a refusal prints ONCE PER DISTINCT REQUEST. The Citro3D backend latches
+#        with a bool and it must, because that line printed 1710 times in one run
+#        (review-10 F3); a bool is too coarse here, where a descriptor set is
+#        allocated per DRAW. So the helper keeps the SET of requests each site has
+#        named and is silent only for one of them — and it has to be a set: a latch
+#        that remembers only the LAST request reprints a rotating set of them on
+#        every frame, which measured 22500 lines for 48 distinct requests
+#        (review-5 F2).
 #
 # Every check is paired with a mutation arm, and every arm names the one check it
 # must turn red (review-7 F2's rule: an arm satisfied by a different check leaves
@@ -108,9 +127,17 @@ CHK = {
     "F2": "the refusal line prints the capacity that was refused (attemptedCapacity)",
     "F3": "the refusal line is edge-triggered and re-armed in the else sibling",
     "B1": "every backend refusal site prints before it returns",
-    "B2": "the refusal helper prints and flushes",
-    "B3": "the printed byte figure is the expression the create call was given",
+    "B2": "the refusal helper formats the caller's varargs and flushes",
+    "B3": "the printed byte figure is built from the size the create call was given",
+    "B4": "every null-handle return in the file is preceded by a refusal",
+    "B5": "every vkAllocate* result is read",
+    "B6": "createHostImage does not claim success for an image it never filled",
+    "B7": "a refusal prints once per distinct request, not once per refusal",
 }
+
+# The identifiers a printed byte figure may use besides the ones in the create
+# call's size argument: the frames-in-flight count and the namespace it lives in.
+EXTRA_SIZE_TOKENS = {"kFramesInFlight", "mdk", "vk"}
 
 
 def block_span_from(text, pos):
@@ -144,8 +171,10 @@ def blocks(text, lo, hi):
     out = []
     for m in re.finditer(r"\b(if|else[ \t]+if)\s*\(", text[lo:hi]):
         start = lo + m.start()
-        cond_end = text.find(")", start)
-        sp = block_span_from(text, max(cond_end, start))
+        cond_end = close_brace(text, lo + m.end() - 1, "(", ")")
+        if cond_end < 0:
+            continue
+        sp = block_span_from(text, cond_end)
         if sp is None:
             continue
         out.append((text[start:cond_end], text[sp[0]:sp[1]], sp))
@@ -170,6 +199,89 @@ def strip_comments(text):
             continue
         out.append(line)
     return "".join(out)
+
+
+def close_brace(text, pos, open_ch, close_ch):
+    """Index of the bracket matching the one at `pos`, skipping string literals: a
+    refusal message contains parentheses, and a bracket inside a message is not a
+    bracket in the code."""
+    depth = 0
+    quote = None
+    k = pos
+    while k < len(text):
+        ch = text[k]
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return k
+        k += 1
+    return -1
+
+
+def call_args(text, name):
+    """The argument text of the first `name(` call in text, bracket-matched."""
+    i = text.find(name + "(")
+    if i < 0:
+        return None
+    j = text.find("(", i)
+    end = close_brace(text, j, "(", ")")
+    return text[j + 1:end] if end > 0 else None
+
+
+def split_args(s):
+    """Split an argument list at its top-level commas, ignoring commas inside
+    nested brackets and inside string literals (a refusal message has both)."""
+    args, depth, cur, quote = [], 0, "", None
+    for ch in s:
+        if quote:
+            cur += ch
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+            cur += ch
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            args.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    args.append(cur)
+    return args
+
+
+def tokens(expr):
+    return set(re.findall(r"[A-Za-z_]\w*", expr))
+
+
+def enclosing_brace(text, pos):
+    """Index of the `{` opening the innermost block that contains pos, or -1."""
+    depth = 0
+    for i in range(pos - 1, -1, -1):
+        ch = text[i]
+        if ch == "}":
+            depth += 1
+        elif ch == "{":
+            if depth == 0:
+                return i
+            depth -= 1
+    return -1
+
+
+def line_of(text, pos):
+    return text[:pos].count("\n") + 1
 
 
 class Result:
@@ -273,18 +385,25 @@ def backend_checks(r, text, quiet):
         "backend has always printed these and the Vulkan backend returned -1 in "
         "silence (review-11 F4)" + ("" if not missing else " — missing at " + "; ".join(missing)))
 
-    # B2: the helper prints AND flushes.
+    # B2: the helper formats the caller's varargs AND flushes.
     sp = body_span(code, "refused")
     helper = code[sp[0]:sp[1]] if sp else ""
-    say(CHK["B2"], "vprintf(" in helper and "fflush(" in helper and "[vk] REFUSED" in code,
+    say(CHK["B2"], "va_start(" in helper and ("vprintf(" in helper or "vsnprintf(" in helper)
+        and "fflush(" in helper and "[vk] REFUSED" in code,
         "a refusal is the moment the process may die with the line that explains it "
         "still sitting in a stdio buffer")
 
-    # B3: the byte figure printed is the size expression the create call was given.
+    # B3: the byte figure printed is built from the size expression the create call
+    # was given, plus the frames-in-flight count that turns it into the request.
     # The create call sits in the block's CONDITION (`if (!createHostBuffer(&r->ctx,
-    # size, ...))`), so the condition and the body are searched as one region.
+    # size, ...))`), so the condition and the body are searched as one region. The
+    # size argument is read as an EXPRESSION rather than a bare identifier, and EVERY
+    # size site has to contribute: `checked > 0` let one readable site vouch for all
+    # of them, so a refactor to `sizeof(mdk::Vertex) * n` would have dropped a site
+    # from the comparison without a sound (review-5 F4).
     bad = []
     checked = 0
+    per_site = {}
     for name in SIZE_SITES:
         sp = body_span(code, name)
         if sp is None:
@@ -294,21 +413,110 @@ def backend_checks(r, text, quiet):
             if not REFUSAL_COND.search(cond):
                 continue
             region = cond + block
-            create = re.search(r"createHost(?:Buffer|Image)\([^,]*,[ \t]*([A-Za-z_]\w*)[ \t]*,",
-                               region)
-            call = re.search(r"refused\(([^;]*?)\)[ \t]*;", block, re.S)
-            if not create or not call:
+            cargs = call_args(region, "createHostBuffer")
+            if cargs is None:
+                cargs = call_args(region, "createHostImage")
+            call = call_args(block, "refused")
+            if cargs is None or call is None:
+                continue
+            args = split_args(cargs)
+            if len(args) < 2 or not tokens(args[1]):
+                continue
+            want = tokens(args[1])
+            figures = [a for a in split_args(call) if "unsigned long long" in a]
+            if not figures:
                 continue
             checked += 1
-            expr = create.group(1)
-            if not re.search(r"\b%s\b" % re.escape(expr), call.group(1)):
-                bad.append("%s prints a figure that is not the `%s` it asked for" % (name, expr))
-    say(CHK["B3"], checked > 0 and not bad,
+            per_site[name] = per_site.get(name, 0) + 1
+            for f in figures:
+                expr = re.sub(r"\(\s*unsigned long long\s*\)", " ", f)
+                extra = tokens(expr) - want - EXTRA_SIZE_TOKENS
+                if extra:
+                    bad.append("%s prints a figure built from `%s`, not from the `%s` it "
+                               "handed the create call"
+                               % (name, " ".join(sorted(extra)), " ".join(args[1].split())))
+    unread = [n for n in SIZE_SITES if n not in per_site]
+    say(CHK["B3"], checked > 0 and not bad and not unread,
         "two numbers for one allocation is the review-11 F1 defect: a printed figure "
         "derived from something else disagrees with the request by up to 8x" +
         ("" if not bad else " — " + "; ".join(bad)) +
-        (" — and no size site was readable at all, so this check compared nothing"
-         if checked == 0 else ""))
+        ("" if checked else " — and no size site was readable at all, so this check "
+                            "compared nothing") +
+        ("" if not unread else " — and %s could not be read, so nothing there was "
+                               "compared" % ", ".join(unread)))
+
+    # B4: the DISCOVERY rule. B1 can only check the sites it was handed, and
+    # review-5 F1 was a site it had not been handed: `getDescriptorSet` returned
+    # VK_NULL_HANDLE in silence and its callers drew on with the PREVIOUS draw's set
+    # bound. This one reads the whole file, so a null handle cannot be quiet.
+    silent = []
+    nulls = list(re.finditer(r"\breturn[ \t]+VK_NULL_HANDLE[ \t]*;", code))
+    for m in nulls:
+        open_ = enclosing_brace(code, m.start())
+        if open_ < 0 or "refused(" not in code[open_:m.start()]:
+            silent.append("line %d" % line_of(code, m.start()))
+    say(CHK["B4"], bool(nulls) and not silent,
+        "a null handle is a resource the caller does not have; a file that returns one "
+        "without saying so is the silent missing picture this gate exists to stop" +
+        ("" if not silent else " — silent at " + ", ".join(silent)))
+
+    # B5: an unchecked VkResult is an undefined out-parameter. The one review-5
+    # found was `vkAllocateCommandBuffers`, whose handle the very next call began.
+    unchecked = []
+    allocs = list(re.finditer(r"\bvkAllocate[A-Za-z]*\s*\(", code))
+    for m in allocs:
+        start = -1
+        for ch in (";", "{", "}"):
+            start = max(start, code.rfind(ch, 0, m.start()))
+        end = code.find(";", m.end())
+        stmt = code[start + 1:end if end > 0 else len(code)]
+        if "VK_SUCCESS" not in stmt:
+            unchecked.append("line %d" % line_of(code, m.start()))
+    say(CHK["B5"], bool(allocs) and not unchecked,
+        "a discarded VkResult leaves the handle undefined and the next call uses it" +
+        ("" if not unchecked else " — unchecked at " + ", ".join(unchecked)))
+
+    # B6: the one refusal that used to report SUCCESS. `createHostImage` made the
+    # image, failed to get a command buffer to fill and transition it, and returned
+    # true: a texture of undefined bytes with no failure anywhere (review-5 F1).
+    filled = False
+    sp = body_span(code, "createHostImage")
+    if sp:
+        body = code[sp[0]:sp[1]]
+        seg = ""
+        m = re.search(r"\bif[ \t]*\([ \t]*![ \t]*cb[ \t]*\)", body)
+        if m:
+            sp2 = block_span_from(body, m.end() - 1)
+            seg = body[sp2[0]:sp2[1]] if sp2 else ""
+        else:
+            m = re.search(r"\bif[ \t]*\([ \t]*cb[ \t]*\)", body)
+            if m:
+                sp2 = block_span_from(body, m.end() - 1)
+                if sp2:
+                    em = re.match(r"\s*else\s*\{", body[sp2[1]:])
+                    if em:
+                        sp3 = block_span_from(body, sp2[1] + em.end() - 1)
+                        seg = body[sp3[0]:sp3[1]] if sp3 else ""
+        filled = "refused(" in seg and "return false" in seg
+    say(CHK["B6"], filled,
+        "an image that was never filled or transitioned is not a texture, and returning "
+        "true for it is a refusal the log never sees (review-5 F1)")
+
+    # B7: one line per DISTINCT request. The Citro3D backend latches with a bool
+    # because its mesh line printed 1710 times in one run (review-10 F3); a bool is
+    # too coarse here, where a descriptor set is allocated per draw, so the helper
+    # compares the rendered line and stays silent only for a request it has already
+    # named (review-5 F2).
+    cmp_ = re.search(r"strcmp\(", helper)
+    early = re.search(r"\breturn[ \t]*;", helper)
+    scan = re.search(r"for[ \t]*\([^)]*size\(\)", helper)
+    printed = helper.find("[vk] REFUSED")
+    say(CHK["B7"],
+        bool(cmp_ and early and scan and printed > 0 and cmp_.start() < early.start() < printed),
+        "a per-draw refusal that prints every time is the 1710-lines-in-one-run flood "
+        "the console already gated against (review-5 F2, review-10 F3) — and a latch "
+        "that remembers only the LAST request re-prints a rotating set of them every "
+        "frame, which measured 22500 lines for 48 distinct requests")
 
 
 def adjudicate(who, text, quiet=False):
@@ -396,8 +604,73 @@ def be_delete_dynamic_mesh_refusal(text):
 
 def be_helper_stops_flushing(text):
     """The flush dropped: the line is produced and buffered. B2 only."""
-    out = text.replace("std::fflush(stdout);\n    va_end(ap);", "va_end(ap);", 1)
+    out = text.replace('std::printf("[vk] REFUSED %s\\n", text);\n    std::fflush(stdout);',
+                       'std::printf("[vk] REFUSED %s\\n", text);', 1)
     return out if out != text else text
+
+
+def be_delete_descriptor_refusal(text):
+    """The site the list never named (review-5 F1): the print goes, and a gate that
+    only checks a list of functions does not notice. B4 only."""
+    m = re.search(r"[ \t]*refused\(\"descriptor set[^;]*;\n", text, re.S)
+    return text[:m.start()] + text[m.end():] if m else text
+
+
+def be_command_buffer_result_dropped(text):
+    """The unchecked VkResult review-5 found, restored: the allocate's result is
+    discarded again and the handle the next call begins with is undefined. B5 only."""
+    i = text.find("if (vkAllocateCommandBuffers")
+    if i < 0:
+        return text
+    j = text.find("\n    }\n", i)
+    if j < 0:
+        return text
+    return (text[:i] + "vkAllocateCommandBuffers(ctx->device, &cbAlloc, &cb);"
+            + text[j + 7:])
+
+
+def be_image_reports_success(text):
+    """The `return false` that review-5 F1 was, turned back into `return true`: the
+    image exists but was never filled or transitioned, and the function still
+    claims it is a texture. B6 only."""
+    return text.replace("        *outMemory = VK_NULL_HANDLE;\n        return false;\n    }\n"
+                        "    if (staging) {",
+                        "        *outMemory = VK_NULL_HANDLE;\n        return true;\n    }\n"
+                        "    if (staging) {", 1)
+
+
+def be_helper_prints_every_refusal(text):
+    """The dedup deleted: a sustained refusal prints again on every frame, which is
+    the 1710-lines-in-one-run flood review-10 F3 gated on the console. B7 only."""
+    return text.replace("""        if (g_refusalLines[i].site == fmt &&
+            std::strcmp(g_refusalLines[i].text, text) == 0) {
+            return;  // this exact request was named already
+        }
+""", "", 1)
+
+
+def be_helper_remembers_only_the_last(text):
+    """The one-slot latch: it compares against a remembered line, so a shape check
+    passes, but it remembers only the first entry — a site that refuses 48
+    different requests in a frame then reprints all 48 on every frame after it.
+    B7 only."""
+    return text.replace("for (size_t i = 0; i < g_refusalLines.size(); i++) {",
+                        "for (size_t i = 0; i < 1; i++) {", 1)
+
+
+def be_composite_size_prints_capacity(text):
+    """The refactor review-5 F4 described: the create call is handed a composite
+    expression and the line prints the mesh's own capacity field. The old B3 read
+    only a bare identifier, stopped checking this site, and stayed green. B3 only."""
+    out = text.replace(
+        "if (!createHostBuffer(&r->ctx, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, "
+        "&m.buffer[0],",
+        "if (!createHostBuffer(&r->ctx, sizeof(mdk::Vertex) * (VkDeviceSize)n, "
+        "VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &m.buffer[0],", 1)
+    if out == text:
+        return text
+    return out.replace("(unsigned long long)size);\n        m.used = false;",
+                       "(unsigned long long)m.capacity);\n        m.used = false;", 1)
 
 
 def be_prints_the_old_capacity(text):
@@ -415,6 +688,12 @@ arm_frontend("latch-guard-widened-to-true", fe_latch_guard_widened, "F3")
 arm_backend("site-refusal-print-deleted", be_delete_dynamic_mesh_refusal, "B1")
 arm_backend("helper-stops-flushing", be_helper_stops_flushing, "B2")
 arm_backend("prints-the-mesh-capacity", be_prints_the_old_capacity, "B3")
+arm_backend("composite-size-prints-capacity", be_composite_size_prints_capacity, "B3")
+arm_backend("descriptor-refusal-deleted", be_delete_descriptor_refusal, "B4")
+arm_backend("command-buffer-result-dropped", be_command_buffer_result_dropped, "B5")
+arm_backend("unfilled-image-reports-success", be_image_reports_success, "B6")
+arm_backend("helper-prints-every-refusal", be_helper_prints_every_refusal, "B7")
+arm_backend("helper-remembers-only-the-last", be_helper_remembers_only_the_last, "B7")
 
 checks = sum(r.checks for r in real)
 arms = [("Linux frontend", FRONT_ARMS, FILES["Linux frontend"]),

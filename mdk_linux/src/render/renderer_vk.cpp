@@ -300,6 +300,10 @@ uint32_t findMemoryType(mdk::vk::Context* ctx, uint32_t typeBits, VkMemoryProper
     return 0xFFFFFFFFu;
 }
 
+// Defined below, with the rest of the refusal reporting. Declared here because
+// the one-shot helpers are the first sites in the file that can be refused.
+void refused(const char* fmt, ...);
+
 // The one-shot pools are few (one per resource creation at load time); keep
 // them in a small vector so endOneShot can destroy them. Creations are
 // sequential (begin, use, end), so the front of the vector is always the
@@ -332,6 +336,8 @@ VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
     alloc.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
     VkCommandPool pool = VK_NULL_HANDLE;
     if (vkCreateCommandPool(ctx->device, &alloc, nullptr, &pool) != VK_SUCCESS) {
+        refused("one-shot command pool: no texture, image or screenshot upload can be "
+                "recorded while the driver keeps saying no");
         return VK_NULL_HANDLE;
     }
     g_oneShotPools.push_back(pool);
@@ -341,11 +347,19 @@ VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
     cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cbAlloc.commandBufferCount = 1;
     VkCommandBuffer cb = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(ctx->device, &cbAlloc, &cb);
+    if (vkAllocateCommandBuffers(ctx->device, &cbAlloc, &cb) != VK_SUCCESS) {
+        refused("one-shot command buffer: the upload that asked for it copies into nothing "
+                "and its caller refuses the resource instead");
+        return VK_NULL_HANDLE;
+    }
     VkCommandBufferBeginInfo begin = {};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cb, &begin);
+    if (vkBeginCommandBuffer(cb, &begin) != VK_SUCCESS) {
+        refused("begin of a one-shot command buffer: the upload that asked for it has "
+                "nowhere to be recorded");
+        return VK_NULL_HANDLE;
+    }
     return cb;
 }
 
@@ -365,24 +379,67 @@ VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
 // it, for the reason review-11 F1 gives for the frontend's copy of this line: a
 // number derived from something else (the frame's corner count, the previous
 // mesh's size) disagrees with the backend's own byte count and sends the next
-// reader after a refusal that never happened.
+// reader after a refusal that never happened. Where the driver is asked for the
+// same thing more than once — a dynamic mesh and the canvas ring are one buffer
+// PER FRAME IN FLIGHT — the line prints the total as well as the per-slot figure,
+// because "98304 bytes x 2 frames in flight" reads as a 96 KB budget when the
+// driver was actually asked for 192 KB (review-5 F3).
 //
-// It prints on EVERY refusal instead of latching once per run, which is what the
-// Citro3D backend does and why: a refusal is usually transient — a mesh that
-// grows, a texture re-made at the same size, a canvas ring resized — and a
-// one-shot latch reports the first, smallest refusal and goes silent about the
-// bigger one that followed (review-11 F7, the same argument the frontend's
-// re-arming latch is built on). A run whose device is genuinely out of memory
-// floods its log. That is the correct shape for "the GPU has nothing left".
+// ONE LINE PER DISTINCT REQUEST, NOT ONE PER REFUSAL (review-5 F2). The Citro3D
+// backend latches with a bool that a successful allocation clears
+// (`renderer_c3d.cpp`'s `meshAllocFailureLogged`), and it does that because the
+// line otherwise printed 1710 times in one run (review-10 F3, pinned by
+// `c3d_frame_test.sh`). A bool is the right shape there and the wrong one here:
+// the Vulkan sites repeat per DRAW as well as per frame — a descriptor set is
+// allocated for every textured draw — so a bool would report the first refusal of
+// a run and then hide every larger one after it, which is the review-11 F7 defect
+// the frontend's re-arming latch exists to avoid. So this helper remembers every
+// request it has already named and stays silent only for one of those: a sustained
+// refusal of the same request is one line however many frames it lasts, and a
+// request that changes — a mesh that grows, a ring that resizes, a second palette
+// — prints. Measured, not assumed: with every descriptor allocation forced to
+// fail, level 3 attempts 48 distinct (texture, palette, sampler) triples and
+// draws 187 of them per frame, so printing per refusal is 22500 lines in a 120
+// frame run and printing per distinct request is 48 (evidence:
+// docs/evidence/2026-11-12-149-refusal-discovery.txt).
 // ---------------------------------------------------------------------------
+struct RefusalLine {
+    const char* site;  // the address of the call site's own format literal
+    char text[256];
+};
+// One entry per request already named. Refusals are rare and the table is bounded,
+// so a linear scan is the right data structure. Past the cap everything prints:
+// an unreported refusal is the bug this helper exists to fix, and a repeated line
+// is only noise.
+std::vector<RefusalLine> g_refusalLines;
+const size_t kRefusalMemory = 256;
+
 void refused(const char* fmt, ...) {
+    char text[256];
     va_list ap;
     va_start(ap, fmt);
-    std::printf("[vk] REFUSED ");
-    std::vprintf(fmt, ap);
-    std::printf("\n");
-    std::fflush(stdout);
+    std::vsnprintf(text, sizeof(text), fmt, ap);
     va_end(ap);
+
+    // Every call site passes a string literal, so the address of `fmt` IS the
+    // site: two sites cannot collide, and one site's request cannot silence
+    // another's. A per-site SET is what makes this hold at a per-draw site: the
+    // descriptor refusal names 48 different requests in a level, and remembering
+    // only the last one printed would re-print all 48 on every frame after that.
+    for (size_t i = 0; i < g_refusalLines.size(); i++) {
+        if (g_refusalLines[i].site == fmt &&
+            std::strcmp(g_refusalLines[i].text, text) == 0) {
+            return;  // this exact request was named already
+        }
+    }
+    if (g_refusalLines.size() < kRefusalMemory) {
+        RefusalLine line;
+        line.site = fmt;
+        std::snprintf(line.text, sizeof(line.text), "%s", text);
+        g_refusalLines.push_back(line);
+    }
+    std::printf("[vk] REFUSED %s\n", text);
+    std::fflush(stdout);
 }
 
 // Create a host-visible buffer and map it persistently.
@@ -535,6 +592,26 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                              0, nullptr, 0, nullptr, 1, &toSample);
         endOneShot(ctx, cb);
+    } else {
+        // THE IMAGE IS NOT THE TEXTURE. It exists, but nothing was ever copied
+        // into it and its layout was never set, so a `return true` here handed
+        // the caller a texture that samples as noise and a log with no failure
+        // in it (review-5 F1). Destroy it; the caller's own line names the
+        // texture this one was meant to become.
+        refused("%dx%d image of %llu bytes could not be filled or transitioned: no "
+                "one-shot command buffer, so the image is destroyed, not returned",
+                width, height, (unsigned long long)size);
+        if (staging) {
+            vkDestroyBuffer(ctx->device, staging, nullptr);
+        }
+        if (stagingMemory) {
+            vkFreeMemory(ctx->device, stagingMemory, nullptr);
+        }
+        vkDestroyImage(ctx->device, *outImage, nullptr);
+        *outImage = VK_NULL_HANDLE;
+        vkFreeMemory(ctx->device, *outMemory, nullptr);
+        *outMemory = VK_NULL_HANDLE;
+        return false;
     }
     if (staging) {
         vkDestroyBuffer(ctx->device, staging, nullptr);
@@ -775,7 +852,13 @@ VkShaderModule createModule(mdk::vk::Context* ctx, const uint32_t* code, size_t 
     info.codeSize = bytes;
     info.pCode = code;
     VkShaderModule module = VK_NULL_HANDLE;
-    vkCreateShaderModule(ctx->device, &info, nullptr, &module);
+    // The result is checked because the caller's guard is `if (!module)`, and a
+    // failed create leaves an out-parameter undefined rather than null.
+    if (vkCreateShaderModule(ctx->device, &info, nullptr, &module) != VK_SUCCESS) {
+        refused("shader module: the driver would not take these bytes; the caller names "
+                "the stage and refuses to start the renderer");
+        return VK_NULL_HANDLE;
+    }
     return module;
 }
 
@@ -883,7 +966,9 @@ VkPipeline createPipeline(RendererVk* r, int pass, int blend, int primitive) {
 
     VkPipeline pipeline = VK_NULL_HANDLE;
     if (vkCreateGraphicsPipelines(r->ctx.device, r->pipeCache, 1, &info, nullptr, &pipeline) != VK_SUCCESS) {
-        std::printf("[vk] pipeline create failed (pass %d blend %d prim %d)\n", pass, blend, primitive);
+        refused("pipeline for pass %d blend %d prim %d: every draw that needs it is "
+                "dropped, so a whole material can vanish from the frame",
+                pass, blend, primitive);
         return VK_NULL_HANDLE;
     }
     return pipeline;
@@ -980,7 +1065,7 @@ VkPipeline createSkyPipeline(RendererVk* r) {
     VkPipeline pipeline = VK_NULL_HANDLE;
     if (vkCreateGraphicsPipelines(r->ctx.device, r->pipeCache, 1, &info, nullptr,
                                   &pipeline) != VK_SUCCESS) {
-        std::printf("[vk] sky pipeline create failed\n");
+        refused("sky pipeline: the panorama is not drawn at all this run");
         return VK_NULL_HANDLE;
     }
     return pipeline;
@@ -1014,6 +1099,15 @@ VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette
     alloc.pSetLayouts = &r->setLayout;
     VkDescriptorSet set = VK_NULL_HANDLE;
     if (vkAllocateDescriptorSets(r->ctx.device, &alloc, &set) != VK_SUCCESS) {
+        // The pool is not freed and reset anywhere in this backend, so every
+        // texture or palette released and re-made takes a set with it and the
+        // pool can run out late in a session (review-5 F1). The callers do NOT
+        // draw without a set: a draw with the previous draw's set bound is a
+        // WRONG picture, which is worse than the missing one every other
+        // refusal here produces.
+        refused("descriptor set for texture %d palette %d (%s sampler): the draw that "
+                "asked for it is skipped rather than sampled with the previous set",
+                (int)texture, (int)palette, repeat ? "REPEAT" : "CLAMP");
         return VK_NULL_HANDLE;
     }
 
@@ -1156,10 +1250,11 @@ void drawSky(RendererVk* r) {
                        0, sizeof(SkyPush), &sp);
     // The sky's panorama is clamped, like the C#'s (Renderer.cs:1029).
     VkDescriptorSet set = getDescriptorSet(r, r->panorama.sky, r->panorama.palette, false);
-    if (set) {
-        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1, &set, 0,
-                                nullptr);
+    if (!set) {
+        return;  // no set means no draw, not a stale one: see drawRecorded
     }
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1, &set, 0,
+                            nullptr);
     vkCmdDraw(cb, 3, 1, 0, 0);
 }
 
@@ -1333,7 +1428,10 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
         samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.maxLod = 0.0f;
-        vkCreateSampler(r->ctx.device, &samplerInfo, nullptr, &r->sampler);
+        if (vkCreateSampler(r->ctx.device, &samplerInfo, nullptr, &r->sampler) != VK_SUCCESS) {
+            refused("CLAMP sampler: every palette, sky and canvas sample in the run is "
+                    "bound to a null sampler");
+        }
     }
     {
         VkSamplerCreateInfo samplerInfo = {};
@@ -1349,7 +1447,11 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
         // address mode the C# differs in.
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         samplerInfo.maxLod = 0.0f;
-        vkCreateSampler(r->ctx.device, &samplerInfo, nullptr, &r->samplerRepeat);
+        if (vkCreateSampler(r->ctx.device, &samplerInfo, nullptr, &r->samplerRepeat) !=
+            VK_SUCCESS) {
+            refused("REPEAT sampler: every surface in the run samples with a null sampler, "
+                    "which is the tiled-edge look lost everywhere at once");
+        }
     }
 
     r->vertModule = createModule(&r->ctx, spv_palette_vert, spv_palette_vert_size);
@@ -1780,9 +1882,11 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r_, int32_t cap) {
                 m.memory[done] = VK_NULL_HANDLE;
                 m.mapped[done] = nullptr;
             }
-            refused("dynamic mesh of %d corners x %u frames in flight (%llu bytes): the "
-                    "object pass has nowhere to upload and draws no objects", cap,
-                    (unsigned)mdk::vk::kFramesInFlight, (unsigned long long)size);
+            refused("dynamic mesh of %d corners x %u frames in flight (%llu bytes total, "
+                    "%llu per slot): the object pass has nowhere to upload and draws no "
+                    "objects", cap, (unsigned)mdk::vk::kFramesInFlight,
+                    (unsigned long long)(size * mdk::vk::kFramesInFlight),
+                    (unsigned long long)size);
             m.used = false;
             return -1;
         }
@@ -1948,10 +2052,16 @@ void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw) {
     if (pc.textured != 0) {
         // A surface's texture REPEATS, like the C#'s (Renderer.cs:1098).
         VkDescriptorSet set = getDescriptorSet(r, draw->material.texture, draw->material.palette, true);
-        if (set) {
-            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1,
-                                    &set, 0, nullptr);
+        if (!set) {
+            // SKIPPED, NOT DRAWN BLIND. A textured draw that does not bind a set
+            // samples whatever the PREVIOUS draw bound: a wall wearing another
+            // surface's pixels, with nothing in the log to say so. That is a
+            // wrong picture, which is worse than the missing one every other
+            // refusal here produces (review-5 F1).
+            return;
         }
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1,
+                                &set, 0, nullptr);
     }
 
     // THE SLOT, not "the" buffer: a dynamic mesh is drawn from the slot this
@@ -2074,9 +2184,11 @@ bool ensureCanvasBuffer(RendererVk* r, VkDeviceSize size) {
                 r->canvasMemory[done] = VK_NULL_HANDLE;
                 r->canvasMapped[done] = nullptr;
             }
-            refused("canvas ring of %llu bytes x %u frames in flight: the HUD and every "
-                    "other canvas quad from this frame is dropped", (unsigned long long)cap,
-                    (unsigned)mdk::vk::kFramesInFlight);
+            refused("canvas ring of %llu bytes total, %llu per slot, x %u frames in "
+                    "flight: the HUD and every other canvas quad from this frame is "
+                    "dropped",
+                    (unsigned long long)(cap * mdk::vk::kFramesInFlight),
+                    (unsigned long long)cap, (unsigned)mdk::vk::kFramesInFlight);
             return false;
         }
     }
@@ -2159,10 +2271,11 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
         // The canvas's image repeats too: the C# draws it as an Overlay
         // material, and the Overlay path binds the REPEAT sampler.
         VkDescriptorSet set = getDescriptorSet(r, q->texture, q->palette, true);
-        if (set) {
-            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1, &set,
-                                    0, nullptr);
+        if (!set) {
+            return;  // this quad is not drawn; see drawRecorded (review-5 F1)
         }
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1, &set,
+                                0, nullptr);
     }
     VkDeviceSize offset = r->canvasOffset;
     vkCmdBindVertexBuffers(cb, 0, 1, &r->canvasBuffer[slot], &offset);

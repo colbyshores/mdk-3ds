@@ -1,0 +1,202 @@
+Batch 149 — linux.render-frame: the refusal invariant is DISCOVERED, not listed,
+and one line means one distinct request
+================================================================================
+Date: 2026-11-12. Builder: litellm/qwen (Qwen family).
+Ledger row: `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`.
+Tree at start: 06d1d6f (batch 148). Review answered: run-20261112-035144
+review-5 (DeepSeek V4.1 Flash), findings F1..F5, no Critical/High.
+
+WHAT REVIEW-5 ACTUALLY FOUND
+----------------------------
+F1 (Medium, confirmed). Batch 148 shipped the sentence "The Vulkan backend prints
+its own refusals too (`renderer_vk.cpp`'s `refused()`), so a refused resource on
+either target names itself in the log". Two paths in that file still returned a
+null handle in silence:
+
+  * `getDescriptorSet()` — `vkAllocateDescriptorSets` failed, returned
+    VK_NULL_HANDLE, and all THREE callers (`drawRecorded`, the sky draw,
+    `mdk_render_canvas_quad`) then did `if (set) { bind; }` and drew anyway. A
+    textured draw with no bind samples whatever set the PREVIOUS draw bound, so
+    the picture was not emptier, it was WRONG, and the log was empty.
+  * `beginOneShotTracked()` — `vkCreateCommandPool` failed silently,
+    `vkAllocateCommandBuffers` had its VkResult discarded (so a null handle went
+    straight into `vkBeginCommandBuffer`), and `createHostImage()` then ran its
+    whole copy/barrier block under `if (cb) {`, fell past it, and RETURNED TRUE:
+    an image that was never filled and never layout-transitioned was reported to
+    its caller as a texture.
+
+F2 (Medium, confirmed). The rationale comment claimed the Vulkan helper printed
+"on EVERY refusal instead of latching once per run, which is what the Citro3D
+backend does". The Citro3D backend LATCHES (`renderer_c3d.cpp`
+`meshAllocFailureLogged`, set on the refusal and cleared on the success path),
+and `c3d_frame_test.sh` pins that latch because the line printed 1710 times in
+one run (review-10 F3). The sentence cited the sibling as doing the opposite of
+what it does, and the shape it defended floods at draw-call rate.
+
+F3 (Low, confirmed). "dynamic mesh of %d corners x %u frames in flight (%llu
+bytes)" printed ONE SLOT's size next to the slot count: the reader computes 96 KB
+where the driver was asked for 192 KB. Same shape at the canvas ring.
+
+F4 (Low, confirmed). The gate could not see any of this: B1 checked a hardcoded
+list of nine functions, and B3 counted a size site only when the create call's
+size argument was a bare identifier and passed on `checked > 0`.
+
+F5 (Low, recorded, not fixable in this lane). The ledger row stays `todo` with a
+green acceptance because `docs/COMPLETION_LEDGER.tsv` is
+`coleshores:coleshores 0664` and this lane is `piagent`; the row is also in
+`gates_batch_integrity.PROTECTED`, so hand-editing is forbidden. Unchanged by
+this batch.
+
+THE CHANGE (one slice: the Linux render path's refusal reporting)
+----------------------------------------------------------------
+`mdk_linux/src/render/renderer_vk.cpp`
+1. `refused()` now prints ONE LINE PER DISTINCT REQUEST. It formats the caller's
+   varargs into a buffer, and keeps a bounded set (256 entries) of the requests
+   each site has already named, keyed on the address of the site's own format
+   literal — every call site passes a string literal, so the pointer is a free
+   per-site id. A request already named returns before the printf; a new one
+   prints and is remembered. Past the cap everything prints, because an
+   unreported refusal is the bug and a repeated line is only noise.
+   A SET is required, not a single "last message" latch: measured below.
+2. `refused()` added at every remaining silent null-handle return: the one-shot
+   command pool, the one-shot command buffer ALLOCATE (result now checked) and
+   its BEGIN (result now checked), `vkAllocateDescriptorSets`, both
+   `vkCreateGraphicsPipelines` sites (they printed, but without the `[vk]
+   REFUSED` prefix and without the fflush B2 exists for), `createModule`
+   (`vkCreateShaderModule`'s result was discarded, and its caller's guard is
+   `if (!module)`, which an undefined out-parameter defeats), and both
+   `vkCreateSampler` sites (a null sampler is every textured draw sampling
+   nothing). The pipeline cache is deliberately left unchecked: it is an
+   optimisation, and a run without one draws the same picture.
+3. The three descriptor callers now SKIP the draw when there is no set, with a
+   comment saying why: a missing picture is the failure this file reports, a
+   wrong picture is not.
+4. `createHostImage()` gained an `else` on `if (cb)`: it destroys the image and
+   its memory, frees the staging pair, prints, and returns false. The caller's
+   own refusal line then names the texture this one was meant to become.
+5. The two frames-in-flight lines print the TOTAL and the per-slot figure
+   ("(%llu bytes total, %llu per slot)"), so the number beside "x 2 frames in
+   flight" is the number the driver was asked for (F3).
+
+`mdk_core/src/game/object_draw.h` — comment only. The claim review-5 F1 proved
+false is replaced by the claim that is now checked, and it says which gate checks
+it and how (every `return VK_NULL_HANDLE` in the backend prints).
+
+`tests/scripts/linux_refusal_report_test.sh` — 6 checks -> 10, 7 arms -> 13.
+  B2 now accepts a helper that formats with `vsnprintf` (it must still take a
+     va_list and flush).
+  B3 reads the create call's size argument as an EXPRESSION and requires every
+     size site to contribute; a printed figure may only be built from that
+     expression and the frames-in-flight count (F4).
+  B4 NEW, the discovery rule: every `return VK_NULL_HANDLE` in the file has a
+     `refused(` before it in its own block. No list, whole file (F1).
+  B5 NEW: every `vkAllocate*` call's VkResult is read (F1).
+  B6 NEW: `createHostImage`'s null-command-buffer path refuses and returns
+     false (F1).
+  B7 NEW: the helper dedups, and dedups against a SET (F2).
+  Two harness bugs fixed on the way: `call_args` counted brackets inside string
+  literals, so a refusal message containing "(%llu bytes)" truncated its own call
+  and the site silently dropped out of B3; and `blocks()` found a condition's end
+  with `find(")")` instead of matching it. Both are why B3 could read "nothing".
+
+THE GATE IS RED ON THE COMMIT IT WAS WRITTEN FOR
+------------------------------------------------
+The new checks were run against batch 148's `renderer_vk.cpp` (`git show
+HEAD:mdk_linux/src/render/renderer_vk.cpp`, current `main.cpp`) —
+`sh tests/scripts/linux_refusal_report_test.sh /tmp/piagent-mdk/gatecheck`:
+
+  FAIL Linux backend: every null-handle return in the file is preceded by a
+       refusal — ... — silent at line 230, line 702, line 797, line 816
+  FAIL Linux backend: every vkAllocate* result is read — ... — unchecked at
+       line 239
+  FAIL Linux backend: createHostImage does not claim success for an image it
+       never filled — ...
+  FAIL Linux backend: a refusal prints once per distinct request, not once per
+       refusal — ...
+
+Four reds, one per finding, on the file review-5 described. On this batch's tree
+the same script prints `PASS LinuxRefusalReport (10 checks, 13 arms adjudicated
+red)`.
+
+FAULT INJECTION (lavapipe never says no, so the driver is made to)
+------------------------------------------------------------------
+Temporary env-gated injections, built, measured, and REVERTED before the commit
+(`git diff` of the committed tree contains no `MDK_INJECT`). Level 3, 320x240,
+seed 1, 120 frames, `DISPLAY=:99`, `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/
+lvp_icd.json`, `MDK_FRAME_CAPTURE=120`.
+
+(a) every `vkAllocateDescriptorSets` fails
+      lines printed ................ 48 (48 of them unique)
+      lines printed per frame ...... 0 after the first frame's 48
+      last frame ................... "0 draws, 0 triangles" — every textured
+                                     draw was skipped, none sampled a stale set
+      frame vs the same build un.injected ... bad_percent=100.000 max_delta=240
+                                     mean_delta=61.9526
+    The 48 are the distinct (texture, palette, sampler) triples the level
+    attempts. The same injection with the print-per-refusal shape review-5 F2
+    describes printed **22500 lines** for those 48 requests (187 per frame, the
+    top one alone 5398 times). A single "last message" latch — the first version
+    of this helper, which the measurement killed — also printed 22500, because a
+    site that refuses 48 rotating requests never matches the one it last named.
+    That is why B7 requires a scan over a set and has an arm (`helper-remembers-
+    only-the-last`) that turns it red for the one-slot shape.
+
+(b) every `beginOneShotTracked` returns null
+      lines printed ................ 48 (48 unique), e.g.
+        [vk] REFUSED 1804x360 image of 649440 bytes could not be filled or
+             transitioned: no one-shot command buffer, so the image is
+             destroyed, not returned
+        [vk] REFUSED index texture 1804x360 (649440 bytes): the surface it
+             belongs to draws untextured
+        [vk] REFUSED palette (256x1 RGBA, 1024 bytes): every surface that names
+             palette id 0 draws without a palette
+      No frame file: the screenshot readback uses a one-shot command buffer too,
+      so the injection refuses the capture itself — and that path says so as
+      well (`[vk] screenshot: command buffer failed`). Before this batch the same
+      injection produced a "successful" texture of undefined bytes and a log with
+      nothing in it.
+
+(c) un.injected control: 0 REFUSED lines, and the pinned frame reproduces
+    `L3_f1.bmp sha=58615fc85d02e009`, byte for byte the frame batch 148 shipped.
+
+GATES, AS RUN
+-------------
+`make -C tests/scripts -j8`            rc 0, 592 `^PASS`, 0 `FAIL`,
+                                       "All cases match the oracle."
+`DISPLAY=:99 bash tools/check.sh`      rc 0, "CHECK: ALL GATES PASSED",
+                                       "PASS L3_f1.bmp sha=58615fc85d02e009",
+                                       "BATCH INTEGRITY: PASS",
+                                       "COMPLETION[d1]: 11 done / 13 total /
+                                        0 owner-blocked / 2 open",
+                                       gates_smdh SKIPPED (no built .cia)
+`make -C mdk_3ds -j8`                  rc 0, `mdk.elf` md5
+                                       728eb2350c3ef8a81acda15f75617c1e —
+                                       IDENTICAL to batch 148's, so the
+                                       comment-only core edit did not reach the
+                                       console binary.
+`cmake --build build-linux -j8`        rc 0.
+`sh tests/scripts/linux_refusal_report_test.sh`
+                                       PASS LinuxRefusalReport (10 checks, 13
+                                       arms adjudicated red)
+NOTE: `tools/check.sh` does not run `tests/scripts`; the refusal gate is reached
+by `make -C tests/scripts`, which is a required gate in its own right.
+
+NO EMULATOR RUN: this batch touches no `mdk_3ds/**` file. The only shared-tree
+change is a comment in `mdk_core/src/game/object_draw.h`, and the identical
+`mdk.elf` md5 is the evidence that it changed nothing.
+
+STILL OPEN AFTER THIS BATCH
+---------------------------
+* Whether descriptor-pool exhaustion is REACHABLE in a real session is still
+  unproven (review-5 open question 1). Nothing in this file frees a set:
+  `vkFreeDescriptorSets`/`vkResetDescriptorPool` appear nowhere, and
+  `forgetDescriptorSets()` drops only the CPU-side cache entry, so every
+  released-and-re-made texture or palette consumes a set for the life of the
+  process (`maxSets = 4096`). Proving reachability needs a counter or a free,
+  which is a different slice from making the refusal audible when it happens.
+* The dedup set is capped at 256 entries; past it every refusal prints again.
+  A run with more than 256 distinct refusals is already a run whose device has
+  nothing left, and a flood there beats silence.
+* The `vkCreateImageView` failure path in `createHostImage` still leaks the image
+  and its memory (it returns false without destroying them). That is a leak on a
+  refusal path, not a silence, and it is not this batch's finding.

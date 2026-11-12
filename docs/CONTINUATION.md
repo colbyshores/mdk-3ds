@@ -1,75 +1,22 @@
 # Phase 2 continuation checkpoint
-Risk: high — error handling on the Linux render path: what a refused GPU resource does, and whether anyone is told.
+Risk: high — error handling on the Linux render path: which refusals speak, what a refused draw now does, and how many log lines one refusal costs.
 
-**BATCH 148 (ledger row `linux.render-frame`, acceptance `bash tools/check.sh`) — a
-refused resource on the Linux target now names itself.** `object_draw.h` had admitted
-since review-11 F4 that "the Vulkan backend's mesh refusal prints nothing either, so
-a refused mesh on Linux is still a silent missing picture. That half is recorded and
-NOT fixed". It is fixed: `renderer_vk.cpp` has a `refused()` helper (printf + fflush)
-at all ten sites that used to swallow a failure (index/RGBA texture, palette, texture
-re-make, static mesh, dynamic mesh, over-capacity update, missing mapping, canvas
-ring, unmapped canvas slot), each printing the request the driver was GIVEN, and
-`mdk_linux/src/main.cpp` consults `objectDraw.allocationFailed()` and prints
-`attemptedCapacity()`, edge-triggered and re-armed, in `main_3ds.cpp`'s shape.
-Pinned by `tests/scripts/linux_refusal_report_test.sh` — 6 checks, 7 mutation arms,
-all red as required — and demonstrated by fault injection, because lavapipe never
-refuses: a build that refuses every palette prints 5 lines and loses **59.711%** of
-the frame's pixels; a forced dynamic-mesh refusal prints 120 backend lines and
-exactly **one** frontend line for 120 frames, and both lines describe the same
-98304-byte request. No pixel of the pinned frame moved: the rebuilt binary reproduces
-`cpp=58615fc85d02e009…` byte for byte. Gates: `make -C tests/scripts` rc 0, `All
-cases match the oracle.`, 592 PASS / 0 FAIL (was 591); `DISPLAY=:99 bash
-tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`; `make -C mdk_3ds -j8` rc 0 with
-`mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e` UNCHANGED (comment-only core change);
-`cmake --build build-linux -j8` rc 0. Full record:
-`docs/evidence/2026-11-12-linux-refusal-report.txt`.
+**BATCH 149 (ledger row `linux.render-frame`, acceptance `bash tools/check.sh`) — the refusal invariant is DISCOVERED now, not listed.** Review-5 (run-20261112-035144, no Critical/High) proved batch 148's headline sentence false. Two paths in `renderer_vk.cpp` still returned a null handle in silence: `getDescriptorSet()`, whose three callers (`drawRecorded`, the sky draw, `mdk_render_canvas_quad`) did `if (set) { bind; }` and drew anyway — so a refused set produced a draw sampling the PREVIOUS draw's set, a *wrong* picture rather than an emptier one — and `beginOneShotTracked()`, which discarded `vkAllocateCommandBuffers`' VkResult and whose caller `createHostImage()` then ran past its `if (cb)` block to `return true`, reporting an image that was never filled or layout-transitioned as a texture. Both are fixed: `refused()` now sits at every null-handle return in the file (one-shot pool, command-buffer allocate and begin, descriptor set, both `vkCreateGraphicsPipelines`, `createModule`, both samplers), the three descriptor callers skip the draw instead of sampling a stale set, and `createHostImage` destroys the unusable image and returns false. Review-5 F3 (the per-slot figure printed beside "x 2 frames in flight") now prints total *and* per-slot. F2 (the comment claiming the Citro3D backend prints on every refusal, when `meshAllocFailureLogged` is a latch pinned by `c3d_frame_test.sh` because that line printed 1710 times in one run) is fixed by making the Linux helper print **once per distinct request**: it keeps a bounded set of the requests each site has named, keyed on the address of the site's own format literal. Measured, not assumed — with every descriptor allocation forced to fail, level 3 attempts 48 distinct (texture, palette, sampler) triples across 187 textured draws per frame: print-per-refusal is **22500 lines** in a 120-frame run, print-per-distinct-request is **48**, and the frame loses 100.000% of its pixels (mean delta 61.95) with the last frame reporting `0 draws, 0 triangles`. A one-slot "last message" latch — the first version of this helper, which that measurement killed — also prints 22500, which is why the gate requires a set. Full record: `docs/evidence/2026-11-12-149-refusal-discovery.txt`.
 
-**THE ROW IS GREEN AND STILL OPEN — one command closes it, from another lane.**
-`python3 tools/runner/ledger_close.py --row linux.render-frame` re-runs the
-acceptance itself and rewrites the row; it exits 2 on this lane because
-`docs/COMPLETION_LEDGER.tsv` is `coleshores:coleshores 0664` and this lane is
-`piagent`, so the tool's `write_text` raises PermissionError. Hand-editing the row is
-forbidden (it is in `gates_batch_integrity.PROTECTED`) and stays forbidden. Same
-ownership wall that left batch 147's `3ds.hud-canvas` row `todo`.
+**THE GATE GREW THE EYES THE FINDING SAID IT LACKED.** `tests/scripts/linux_refusal_report_test.sh` is 6 checks / 7 arms → **10 checks / 13 arms**, every arm still naming the one check it turns red. B4 is the discovery rule review-5 F4 asked for: every `return VK_NULL_HANDLE` in the file must be preceded by a `refused(` call, whichever function it sits in — no list. B5 requires every `vkAllocate*` VkResult to be read, B6 that `createHostImage` cannot claim success for an image it never filled, B7 that the dedup is a set and not a latch. B3 now reads the create call's size argument as an expression and requires every size site to contribute. Two harness bugs surfaced on the way and are fixed: `call_args` counted brackets inside string literals, so a message containing `(%llu bytes)` truncated its own call and the site dropped out of B3 silently, and `blocks()` ended a condition at `find(")")` instead of matching it. Run against batch 148's file the new checks go red four times, one per finding — the evidence file carries the four FAIL lines.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **592 PASS / 0 FAIL**; `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp sha=58615fc85d02e009` (the pinned frame is byte-identical to batch 148's PNG, `6769a137…`, and no refusal can fire in it); `make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e` UNCHANGED (the only shared-tree edit is a comment in `object_draw.h`); `cmake --build build-linux -j8` rc 0. No emulator run: nothing under `mdk_3ds/**` changed. Note that `tools/check.sh` does not run `tests/scripts`, so the refusal gate is reached by the golden suite.
+
+**THE ROW IS GREEN AND STILL OPEN — one command closes it, from another lane.** `python3 tools/runner/ledger_close.py --row linux.render-frame` exits 2 on this lane because `docs/COMPLETION_LEDGER.tsv` is `coleshores:coleshores 0664` and this lane is `piagent`; hand-editing is forbidden (the row is in `gates_batch_integrity.PROTECTED`). Review-5 F5 records the same wall and asks nothing of this batch. `/tmp/kilo` is likewise another user's on this host: this batch's scratch is `/tmp/piagent-mdk`.
 
 **NEXT, in order.**
-0. **Close `linux.render-frame` and `3ds.hud-canvas` from a lane that can write the
-   ledger.** Two commands: `python3 tools/runner/ledger_close.py --row
-   linux.render-frame`, and for `3ds.hud-canvas` the same tool (its acceptance
-   `mdk_3ds/tools/emurun.sh --expect hud` is green at batch 147).
-1. **Review-4 (run-20261112-035144) F1-F7 are open, deferred with cause, none
-   rebutted** — all seven are 3DS-side and belong to the `3ds.hud-canvas` row, not to
-   a Linux batch. **F1 (Medium)**: `emurun.sh`'s canary counts pure-blue pixels with
-   no positional test, so a reflected canvas (determinant −1) passes `--expect hud`
-   unchanged; the fix is to gate the marker's bbox origin. **F3**: `emurun.sh:812-822`
-   still calls `--expect hud` a non-visibility verdict, which the harness itself
-   contradicts 20 lines below. **F2/F4/F6/F7**: record corrections in
-   `docs/evidence/2026-11-12-14{6,7}-*.txt`, `docs/OPEN_ITEMS.md:294`,
-   `docs/PROGRESS_LOG.md` (the "registers() emits memory order (x,y,z,w)" sentence,
-   which is the phrase that WAS the bug), and the non-reproducible `.3dsx` hash.
-   **F5**: the ledger/prose disagreement, which is the ownership blocker above.
-2. **The level's own geometry on the console stays open** (batch 147's item 1): the
-   panel is 83419/96000 clear with two textured red-orange masses either side of the
-   panel's vertical centre; the matrix path is derived correct and the canvas proves
-   it end to end, so the next theory is the level's vertices, its per-draw world
-   composition, or its projection — and review-4's open question 1 adds a cheap
-   discriminator: dump the two masses' triangle count with `C3D_CullFace(GPU_CULL_NONE)`;
-   if it doubles, it is a winding/mirror fault, not geometry.
-3. **Re-baseline the panel instruments** (batch 147's item 2): every committed
-   before-crop is a sunburst, so every panel A/B floor is measured under the old defect.
-4. **The Linux frame's fidelity half is dark on this host and cannot be relit here.**
-   `gates_frames` check 3 (the live oracle gap) needs `/tmp/mdk-frame-reference/L3_f1.bmp`,
-   and the oracle needs a dotnet 10 host; `/tmp/kilo/dotnet10` belongs to another user
-   and no `dotnet` exists for this lane, so every recent sidecar reads "live
-   measurement: unavailable". The three known gap components are recorded in
-   `docs/OPEN_ITEMS.md` ("What the 1.240% frame gap actually is"): the sky band is
-   shader-op-order noise, the 40 px patch is an unidentified scene element, and the
-   `Player::facing()` LUT→`cosf/sinf` change is measured to move the gap 1.240 → 1.095
-   — all three change pixels, and `tests/frames/reference.sha256` is owner-protected,
-   so all three are owner-gated behind `tests/frames/regenerate_reference.sh`. Do not
-   re-derive them; they are not open questions, they are blocked ones.
-5. **Old-3DS hardware evidence stays open** (AGENTS.md P6/P8): everything here is
-   Mandarine r1.2.1 on llvmpipe, mono, `:99`. Emulator-green is not hardware-pass.
+0. **Close `linux.render-frame` and `3ds.hud-canvas` from a lane that can write the ledger.** Two commands: `python3 tools/runner/ledger_close.py --row linux.render-frame` (acceptance green at this commit) and the same tool for `3ds.hud-canvas` (its acceptance `mdk_3ds/tools/emurun.sh --expect hud` is green at batch 147).
+1. **Descriptor-pool exhaustion is still not proven reachable** (review-5 open question 1, and this batch's own open list). Nothing frees a descriptor set: `vkFreeDescriptorSets`/`vkResetDescriptorPool` appear nowhere in the backend and `forgetDescriptorSets()` drops only the CPU-side cache entry, so every released-and-re-made texture or palette consumes one of `maxSets = 4096` for the life of the process. The refusal is now audible when it happens; whether it can happen in a real session needs a counter or a free, which is its own slice.
+2. **Review-4 (run-20261112-035144) F1-F7 stay open, deferred with cause, none rebutted** — all seven are 3DS-side and belong to the `3ds.hud-canvas` row, not to a Linux batch. **F1 (Medium)**: `emurun.sh`'s canary counts pure-blue pixels with no positional test, so a reflected canvas (determinant −1) passes `--expect hud` unchanged; gate the marker's bbox origin. **F3**: `emurun.sh:812-822` still calls `--expect hud` a non-visibility verdict, which the harness itself contradicts 20 lines below. **F2/F4/F6/F7**: record corrections in `docs/evidence/2026-11-12-14{6,7}-*.txt`, `docs/OPEN_ITEMS.md:294`, `docs/PROGRESS_LOG.md` (the "registers() emits memory order (x,y,z,w)" sentence, which is the phrase that WAS the bug), and the non-reproducible `.3dsx` hash. **F5**: the ledger/prose disagreement, i.e. item 0.
+3. **The level's own geometry on the console stays open** (batch 147's item 1): the panel is 83419/96000 clear with two textured red-orange masses either side of the panel's vertical centre; the matrix path is derived correct and the canvas proves it end to end, so the next theory is the level's vertices, its per-draw world composition, or its projection — and review-4's open question 1 adds a cheap discriminator: dump the two masses' triangle count with `C3D_CullFace(GPU_CULL_NONE)`; if it doubles, it is a winding/mirror fault, not geometry.
+4. **Re-baseline the panel instruments** (batch 147's item 2): every committed before-crop is a sunburst, so every panel A/B floor is measured under the old defect.
+5. **The Linux frame's fidelity half is dark on this host and cannot be relit here.** `gates_frames` check 3 needs `/tmp/mdk-frame-reference/L3_f1.bmp`, and the oracle needs a dotnet 10 host; `/tmp/kilo/dotnet10` belongs to another user and no `dotnet` exists for this lane, so every recent sidecar reads "live measurement: unavailable". The three known gap components are recorded in `docs/OPEN_ITEMS.md` ("What the 1.240% frame gap actually is") and all three are owner-gated behind `tests/frames/regenerate_reference.sh`. They are blocked, not unknown.
+6. **Old-3DS hardware evidence stays open** (AGENTS.md P6/P8): everything here is Mandarine r1.2.1 on llvmpipe, mono, `:99`. Emulator-green is not hardware-pass.
 
 Risk: high — four lines of shipped 3DS code change what EVERY draw on the console sends to the GPU.
 `pica::registers()` wrote each vertex-uniform register's four words in (x,y,z,w) order; the PICA
