@@ -25193,3 +25193,116 @@ failure mode is invisible is not a probe, and because this one was nearly report
 answer: the same run's log was first read from a stale lane directory left by an earlier
 probe (the harness prints the guest-log path; reading it is not optional), which showed no
 probe lines at all and looked like a much stranger result than it was.
+
+## Iteration 144 — batch 144: iteration 143's "the frame's tail is dead" is refuted, so are the two cache-visibility fixes landed on that theory, and twenty-three emulator probes narrow the canvas fault to "no canvas-space geometry rasterises"
+
+**No prior-solution lookup was available.** The `obsidian_*` and `cognee_*` tools are absent
+from this session's tool list, so the mandatory Obsidian and Cognee lookups could not be run
+(AGENTS.md §0, §9 P9). This is a session configuration fault, recorded rather than worked
+around: nothing in this batch rests on a claim that a graph lookup happened. `pi-knowledge`
+was available and was used against the `mdk-sdl` base.
+
+### What was actually established, in the order it was measured
+
+Twenty-three Mandarine runs, each one variable, on the pinned r1.2.1 binary (md5
+`0d2adab6`), through `mdk_3ds/tools/emurun.sh`, display `:99`, capture read from files.
+
+1. **The tail is alive.** With the scene replay skipped, replaying the whole first bucket at
+   the tail — after `installEye`, after `logCensus`, everywhere iteration 143 said draws had
+   stopped mattering — paints the level: **46831 of the panel's 96000 pixels are not the
+   clear colour**. Iteration 143's conclusion came from drawing mesh 0's *first six
+   vertices*, which is 2 triangles of the 1050 the census counts, of which 90 are behind the
+   camera and 13 offscreen. Nothing had ever established that those two triangles were on
+   the panel. **A null from geometry that was never visible is not a null.**
+2. **A per-draw matrix write reaches the shader.** Shifting `r->eyeVp` by 40 world units
+   *after* `installEye` installed the unshifted one, and forcing the `C3D_FVUnifMtx4x4` write
+   on every draw, moves the level wholesale (panel colour histogram changes; clear pixels go
+   49169 → 76747). Same geometry, same textures, same call site: the only variable was
+   whether the uniform was written between draws.
+3. **The white texture samples opaque.** The level redrawn with `Pass::Overlay`, the white
+   texture and a green tint paints **644 pixels of exactly (0,255,0)** on the panel. That
+   single measurement kills the "the white texture never reaches the GPU, so every fragment
+   is alpha-tested away" theory, which was the stated reason for the `C3D_TexFlush` this
+   batch inherited.
+4. **The canvas's records are well-formed.** Two draws per frame, mesh 2, `valid`, 24
+   corners in a capacity of 384, `first/count` of (0,6) and (6,18), textures 1 and 3 both
+   `valid` with sources (128x64 and 128x16), and `pica::canvasMatrix` logged float by float
+   as `[0 -0.00333 0 0][-0.00556 0 0 0][0 0 0 0][1 1 -0.5 1]` — which is the derivation its
+   own comment claims, `clip = (1-2y/360, 1-2x/600, -0.5, 1)`. The corners are
+   (500,287)-(584,350) plus three 8x12 quads, all inside the canvas, all mapping inside the
+   clip square.
+5. **And none of it rasterises.** Not mesh 2 through `canvasMatrix`; not those 24 corners
+   copied into the arena mesh's proven-drawable buffer; not a quad covering the whole canvas
+   (0,0)-(600,360), which is the whole clip square; not a hand-written plain orthographic
+   canvas matrix with the quarter turn removed; not the identity matrix at clip z of 0,
+   -0.01, -0.5 or -0.99; not at w of 1, 10, 100 or 1000; either winding, so it is not the
+   negative determinant the swap-and-negate produces; not from the scratch buffer and not
+   from a dynamic mesh. **Zero pixels, every time.**
+6. **The addresses are not it.** mesh 0 `0x30249d00`, mesh 2 `0x305ea280`, scratch
+   `0x30209c00`, texture 0 `0x30249c00` — one contiguous linear region.
+
+### Two fixes reclassified from "the fix" to "required anyway", with the reasoning corrected in place
+
+Both `C3D_TexFlush` after `C3D_TexLoadImage` and `GSPGPU_FlushDataCache` in
+`mdk_render_update_mesh` were landed in the previous iteration under comments asserting they
+were the canvas bug. **Both comments are now corrected rather than deleted**, because both
+calls are genuine AGENTS.md P3 obligations on real silicon and must not be "tidied" out
+along with the false claim:
+
+- citro3d really does not flush in `C3D_TexLoadImage` (measured from the linked
+  `libcitro3dd.a`: `GSPGPU_FlushDataCache` is referenced only by `renderqueue.o`,
+  `texture.o` and `tex3ds.o`, and both `texture.o` sites are inside `C3D_TexFlush`).
+- **But it cannot be the symptom in this harness at all.** Mandarine's PICA renderer reads
+  the same host memory the emulated CPU wrote, so there is no CPU/GPU incoherence for a
+  clean to fix. And the theory was tested directly: thrashing the 8 KB D-cache with 512 KB of
+  unrelated linear writes immediately before the canvas draw changes nothing.
+- The white texture is measured opaque (point 3 above), which is the specific mechanism the
+  old comment claimed was broken.
+
+A change that moves nothing on the only measurement available is a hypothesis, not a fix,
+and the comments now say so and cite this entry.
+
+### A probe flaw that cost six runs, recorded because it is easy to repeat
+
+Probes 5f–5i built their quads at **vertex z = 0** and drew them through the identity matrix,
+so clip z landed on exactly 0 — and this GPU's clip volume is `[-w, 0]`, the fact
+`pica::canvasMatrix`'s own comment records and the reason it parks the canvas at -0.5. Every
+one of those quads was clipped before rasterisation. That is why the scratch buffer and the
+per-draw matrix write were each in turn "proven" guilty by a probe that could not have
+produced a pixel whatever the backend did. **The probes that produced the two wrong
+conclusions this entry retracts were the ones whose own geometry could not reach the screen.**
+
+A second, smaller instance of the same class: switching a record to `Pass::Solid` to reuse a
+tint also switches the combiner to `REPLACE(tex)`, which ignores the tint — one run was
+scored for green while the probe was painting white.
+
+### Verification actually run for this batch
+
+- `make -C mdk_3ds` — clean, `mdk.3dsx` links.
+- `DISPLAY=:99 bash tools/check.sh` — **ALL GATES PASSED** (`audit_c_with_classes` 0,
+  `gates_vfp` 0 blockers, `audit_arm11_math` clean, `audit_r11_idiv` no candidates,
+  `gates_core_parity`, `gates_frames`, `gates_batch_integrity`, `gates_completion`;
+  `gates_smdh` SKIP, no built `.cia`).
+- `make -C tests/scripts` — **FAILS, AND FAILS IDENTICALLY WITH `renderer_c3d.cpp` STASHED
+  TO HEAD.** The `c3d_frame` mutation arms report `index-texels-are-rotated-for-the-pica`
+  as cut. This is an inherited failure on the protected test tree, not this batch's, and it
+  is recorded rather than fixed here because `tests/` is not this batch's to edit.
+- `mdk_3ds/tools/emurun.sh --expect hud` on the cleaned build — **still red, as it must be
+  until the item closes**: `canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1`, 0 canary
+  pixels of (0,0,255), 25 needed. The level covers all 96000 panel pixels, so nothing
+  regressed while the probes were in and out.
+- All probe code is removed from `end_frame` and `drawDiagnostic`; `replayQueue(r)` is
+  restored; the probe-only forward declaration of `drawRecorded` and the probe-only
+  `C3D_SetBufInfo` call are gone.
+
+### What is open
+
+The canvas item stays open with a much shorter list of suspects and a named next step that
+does not need an emulator run: **read the installed `libcitro3dd` disassembly for whether
+citro3d applies its own top-screen flip/rotate below the matrix.** The sibling
+`tetrisphere-godot` port measured that the `Mtx_OrthoTilt` variants carry a top-screen
+rotation a plain ortho does not, and MDK bakes its own quarter turn into every matrix —
+which would hit exactly the draws that write their own matrix per draw and leave the ones
+that inherit `eyeVp` alone, which is precisely the shape of what is left. If that comes back
+clean, the next build has the vertex shader emit a constant clip position that ignores `mvp`
+entirely, which separates "the uniform arrives" from "the geometry survives" in one run.

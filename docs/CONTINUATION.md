@@ -1,20 +1,22 @@
 # Phase 2 continuation checkpoint
-Risk: medium — this batch changes no shipped pixel and no numeric behaviour, but it makes a
-ledger row's acceptance command able to fail. It replaces the Citro3D frame's full-clip-square
-white diagnostic with a 16x16 (0,0,255) canary drawn through the canvas's own matrix,
-texture, combiner, tint, cull and depth state — which also removes a latent full-panel white
-flash waiting for whoever fixes the canvas — turns `emurun.sh --expect hud` into a PIXEL
-verdict instead of a log line (so `3ds.hud-canvas`'s acceptance now FAILS, correctly: the HUD
-does not paint), corrects three records that stated the canvas y-axis derivation backwards,
-and unifies `caps.max_canvas_quads` with the capacity the queue actually enforces.
-`mdk.elf` moves `096d49f68eb544d402aa9eaf7a17245d` → `00d67ff4bbbc9d9a0fab088b935e6842`; the
-shader is unchanged (`mdk_c3d.shbin` `59d5e0e8ec1dc12827b6cd516715de0f`). Medium is the honest
-level: the renderer's shipped diagnostic draw is rewritten, the emulator harness's acceptance
-semantics change, and the row this batch works on is still open — nine probes have now closed
-the queue order, the tint/primary path, the command buffer, the canvas's mesh, texture and
-matrix, and every per-draw state, and the shortest true description left is that a mesh,
-matrix and texture `drawRecorded` renders every frame are invisible when `drawDiagnostic`
-issues them (`docs/OPEN_ITEMS.md`, "The 3DS canvas draws no pixels").
+Risk: low — this batch changes no shipped pixel and no numeric behaviour. It removes the
+temporary probe code the previous iteration left in `end_frame` and `drawDiagnostic`,
+restores `replayQueue`, and corrects two comments that asserted a cause the measurements
+refute: `C3D_TexFlush` after `C3D_TexLoadImage` and `GSPGPU_FlushDataCache` in
+`mdk_render_update_mesh` are both genuine AGENTS.md P3 obligations on real silicon and stay,
+but neither is the canvas bug, and Mandarine's PICA renderer reads the same host memory the
+emulated CPU wrote, so no cache clean can explain a capture taken here. `mdk.elf` moves
+`00d67ff4bbbc9d9a0fab088b935e6842` → `e70fcb733e0389fe3ba881b4b4d40074`; the shader is
+unchanged (`mdk_c3d.shbin` `59d5e0e8ec1dc12827b6cd516715de0f`). The ledger row stays open.
+**Twenty-three probes this iteration refuted the previous iteration's headline finding** — the
+frame's tail is alive, and replaying the whole first bucket after `installEye` paints 46831
+of the panel's 96000 pixels — and closed, by direct measurement, the white texture, the mesh
+and texture cache flushes, the per-draw matrix write, the canvas mesh's bytes and address,
+`pica::canvasMatrix`'s value float by float, the winding, the clip z and the clip w. What is
+left is narrower and stated in `docs/OPEN_ITEMS.md`, "The 3DS canvas draws no pixels": no
+canvas-space geometry has been shown to rasterise under any matrix, and the rotation and
+viewport hypotheses are now closed by measurement rather than left to read.
+
 
 **Batch 142 (the ledger row `3ds.hud-canvas`) — the canvas lands as queue records, the HUD is wired, and the
 picture does not appear; the batch ships the seam, the gate and eight closed doors.** The seam is the oracle's

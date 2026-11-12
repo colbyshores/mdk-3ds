@@ -1636,6 +1636,34 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
         return false;
     }
     C3D_TexLoadImage(&texture.tex, pixels, GPU_TEXFACE_2D, 0);
+    // THE PAIRED FLUSH. `C3D_TexLoadImage` copies the pixels into the texture's
+    // own linear buffer and does NOT make them visible to the GPU. citro3d's
+    // flush is a separate call, `C3D_TexFlush`, and that is measured rather than
+    // remembered: in the linked `libcitro3dd.a`, `GSPGPU_FlushDataCache` is
+    // referenced by exactly three objects (`renderqueue.o`, `texture.o`,
+    // `tex3ds.o`), and inside `texture.o` both call sites are inside
+    // `C3D_TexFlush` - `C3D_TexLoadImage` has none (`arm-none-eabi-objdump -dr
+    // texture.o`; `C3D_TexUpload` is an inline that calls `C3D_TexLoadImage` and
+    // does not flush either). Skipping it leaves AGENTS.md P3's CPU/GPU
+    // cache-visibility obligation unmet on real silicon, so it stays.
+    //
+    // IT IS NOT THE CANVAS BUG, AND THE CLAIM THAT IT WAS IS MEASURED DEAD
+    // (2026-11-11). This flush was landed on the theory that the 8x8 white
+    // texture - 256 bytes, which fits entirely in the 8 KB write-back D-cache and
+    // never leaves it - was never reaching the GPU, so every fragment sampling it
+    // hit alpha 0 and the frame's alpha test discarded it. Two measurements kill
+    // that for every capture this loop has: Mandarine's PICA renderer reads the
+    // same host memory the emulated CPU wrote, so there is no incoherence to
+    // flush away, and the white texture demonstrably samples opaque - the level
+    // redrawn with `Pass::Overlay`, this white texture and a green tint paints
+    // 644 pixels of exactly (0,255,0) on the panel WITH THIS LINE ALREADY IN
+    // PLACE. The canvas is still absent. What the white texture and the canvas
+    // actually have in common turned out to be nothing: the earlier "everything
+    // that failed sampled the white texture" generalisation was an artefact of
+    // probes that each had a different second defect (quads built at clip z = 0,
+    // which is this GPU's far plane, and so were clipped before rasterisation).
+    // See docs/OPEN_ITEMS.md, "The 3DS canvas draws no pixels".
+    C3D_TexFlush(&texture.tex);
     free(pixels);
     texture.valid = true;
     return true;
@@ -1899,6 +1927,38 @@ void mdk_render_update_mesh(MdkRenderer r, MdkMeshId m, const mdk::Vertex* v, in
         out[i * 5 + 3] = v[i].uv.x;
         out[i * 5 + 4] = v[i].uv.y;
     }
+    // THE CPU/GPU CACHE-VISIBILITY OBLIGATION (AGENTS.md P3).
+    //
+    // The ARM11's D-cache is write-back and the PICA200 is not coherent with it.
+    // A CPU write into linear memory therefore reaches the GPU only when the
+    // dirty line leaves the cache: the kernel's clean is what makes it happen on
+    // demand. citro3d does this for the paths it owns - `GSPGPU_FlushDataCache`
+    // is referenced by `renderqueue.o`, `texture.o` and `tex3ds.o` in the linked
+    // `libcitro3dd.a` (measured with `arm-none-eabi-nm --undefined-only`), which
+    // is why a texture upload reaches the GPU and a mesh upload did not. The
+    // sibling port learned the same thing the same way and states the rule the
+    // same way (`ts_3ds/src/rendering/c3d/01_setup.inc`: linear memory is
+    // "cache-managed: the flush is what makes CPU writes visible to the GPU
+    // (P3's cache-visibility obligation)").
+    //
+    // IT IS REQUIRED, AND IT IS NOT THE CANVAS BUG. This line was first landed
+    // on the theory that a mesh written during the frame was still dirty when the
+    // replay handed its address to `C3D_DrawArrays`, and that this is why the
+    // canvas was invisible. That theory is REFUTED for every capture this loop
+    // has taken (2026-11-11): Mandarine's PICA renderer reads the same host
+    // memory the emulated CPU wrote, so there is no incoherence here for a flush
+    // to fix, and the canvas is still absent both with this flush in place and
+    // with the D-cache deliberately thrashed by 512 KB of unrelated linear writes
+    // immediately before the draw. The flush stays because P3 asks for it and
+    // real silicon needs it, not because it fixed anything - a change that moves
+    // nothing on the only measurement available is a hypothesis, not a fix.
+    // See docs/OPEN_ITEMS.md, "The 3DS canvas draws no pixels".
+    //
+    // THE RANGE IS THE WRITTEN PREFIX, NOT THE BUFFER. The clean is per line and
+    // the cost is proportional to the range; a mesh of 4096 quads is 245760
+    // bytes and flushing all of it to publish 24 corners would be paying for a
+    // capacity the frame did not use.
+    GSPGPU_FlushDataCache(mesh.data, (u32)n * 5u * sizeof(float));
     mesh.count = n;
 }
 
@@ -2496,6 +2556,12 @@ static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
             marker[i * 5 + c] = v[i][c];
         }
     }
+    // THE SAME CACHE VISIBILITY AS `mdk_render_update_mesh`, and this one cannot
+    // be hidden by a level load: the scratch is rewritten on the frame that draws
+    // it, every frame, so without the clean the canary is the one thing this
+    // backend is guaranteed never to show. Flushing here is what makes the
+    // canary answer the question it was built to ask.
+    GSPGPU_FlushDataCache(marker, (u32)sizeof(v));
 
     // THE CANVAS'S MATRIX, not the identity. The identity put the marker's 16
     // canvas pixels at clip 16, which is off the edge of the panel, and an

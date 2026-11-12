@@ -589,49 +589,95 @@ do not re-derive them):
 - **the canvas's own mesh, texture and matrix**: forcing a known-good arena texture changes
   nothing, and the mesh's first corner reads back as (500.00, 287.00, 0.00) in the same
   linear region as the scene's meshes;
-- **the canvas's geometry and transform, by substitution**: a draw at the tail using a
-  KNOWN-GOOD STATIC scene mesh (mesh 0, first 6 vertices), the frame's own `eyeVp`, cull
-  NONE and depth off paints **zero** pixels, with the replay running and with the replay
-  skipped.
+- **the canvas's geometry and transform, by substitution** — **AND THE PROBE THAT
+  MEASURED IT, WHICH IS VOID.** Iteration 143 drew mesh 0's first 6 vertices at the tail
+  through the frame's own `eyeVp` and got zero pixels, and concluded the tail was dead.
+  Mesh 0's first 6 vertices are 2 triangles out of the 1050 the census counts, and the
+  census records 90 behind the camera and 13 offscreen: **nothing established that those
+  two triangles were visible**, so the null result could not distinguish "the tail is dead"
+  from "those two triangles are not on the panel". See the description below.
 
-**THE SHORTEST TRUE DESCRIPTION OF THE BUG, as of batch 143.** The frame's **tail** is dead.
-`drawRecorded` — the function that renders the scene 137 times a frame — was called after
-`replayQueue` with a known-good mesh (mesh 0, first 6 vertices), the frame's own `eyeVp`
-handed in through `world`, a valid arena texture and a magenta tint, and it reached
-`C3D_DrawArrays` 2219 times (the draw census counts it) and produced **zero** magenta pixels
-on the panel. So it is not `drawDiagnostic`'s sequence, not the canvas's mesh, matrix,
-texture or state, and not the queue's bucket order: **anything drawn after the replay stops
-reaching the panel**, and the canvas — being the last bucket — is the first casualty of that.
+**THE SHORTEST TRUE DESCRIPTION OF THE BUG, as of iteration 144.** The frame's tail is
+**alive**: with the scene replay skipped, replaying the whole first bucket at the tail —
+after `installEye`, after everything iteration 143 blamed — paints the level, 46831 of the
+panel's 96000 pixels. Iteration 143's "the tail is dead" is REFUTED, and so is the
+explanation it was used to buy. What is left, and it is much narrower:
 
-**THE NEXT EXPERIMENT, and it is about the boundary, not the draw.** Something between the
-last replayed draw and `C3D_FrameEnd` is the suspect. Two probes, in order of cost: **(a)**
-reverse the bucket order in `replayQueue` (Overlay first, Solid last) — if the HUD then
-paints and the level's last draws go missing instead, the frame has a draw-count or
-command-consumption ceiling and the number is the finding; **(b)** read citro3d's own
-`C3Di_UpdateContext` / `C3D_DrawArrays` in the linked `libcitro3dd.a` for a counter, ring or
-uniform-buffer bound that saturates after N draws. `C3D_GetCmdBufUsage()` reads 0.101 at the
-canvas draw, so it is not the command buffer's byte size — but that counter is citro3d's own
-view of its buffer and has not been reconciled with what the GPU actually consumed.
+- **the white texture is fine, and so is the `C3D_TexFlush` theory built on it.** The level
+  redrawn with `Pass::Overlay`, the white texture and a green tint paints 644 pixels of
+  exactly (0,255,0) on the panel **with that flush already landed**. The white texture
+  samples opaque. The flush stays as a P3 obligation on real silicon, not as a fix.
+- **the mesh cache flush is not it either, and it cannot be, in this harness.** Mandarine's
+  PICA renderer reads the same host memory the emulated CPU wrote, so there is no
+  CPU/GPU incoherence for a clean to fix; and thrashing the 8 KB D-cache with 512 KB of
+  unrelated linear writes immediately before the draw changes nothing.
+- **a per-draw matrix write is not it.** Shifting `r->eyeVp` by 40 world units after
+  `installEye` installed the unshifted one, and forcing the write on every draw, MOVES THE
+  LEVEL (the panel's colour histogram changes wholesale). A matrix written between draws
+  reaches the shader.
+- **the canvas's records are well-formed.** Two draws per frame on mesh 2, `valid`, 24
+  corners, capacity 384, in the same linear region as the scene's meshes (0x305ea280
+  against mesh 0's 0x30249d00), corners at (500,287)-(584,350) and three 8x12 quads, and
+  `pica::canvasMatrix` logged float by float as
+  `[0 -0.00333 0 0][-0.00556 0 0 0][0 0 0 0][1 1 -0.5 1]`, which is the derivation the
+  comment claims: clip = (1-2y/360, 1-2x/600, -0.5, 1).
+- **and no canvas-space geometry has ever been shown to rasterise.** Not mesh 2 through
+  `canvasMatrix`; not the same 24 corners copied into the arena mesh's proven-drawable
+  buffer; not a quad covering the whole canvas (0,0)-(600,360), which is the whole clip
+  square; not through a hand-written plain orthographic canvas matrix with the quarter turn
+  removed; not through the identity matrix at clip z of 0, -0.01, -0.5 or -0.99; not at w of
+  1, 10, 100 or 1000; either winding, so it is not the negative determinant; not from the
+  scratch buffer and not from a dynamic mesh.
+
+**A PROBE FLAW THAT VOIDED SIX RUNS, RECORDED FIRST BECAUSE IT WILL BE TEMPTING TO RE-RUN
+THEM.** Probes 5f through 5i built their quads at **vertex z = 0** and drew them through the
+identity matrix, so clip z landed on exactly 0 — and this GPU's clip volume is [-w, 0], the
+fact `pica::canvasMatrix`'s own comment records and the reason it puts the canvas at -0.5.
+Every one of those quads was clipped before rasterisation, which is why the scratch buffer
+and the per-draw write were each "proven" guilty in turn. A probe whose geometry cannot
+reach the screen proves nothing about the thing it was testing.
+
+**THE NEXT EXPERIMENT, and it is the one this item has pointed at twice without running.**
+The sibling `tetrisphere-godot` port measured that **citro3d's top screen is a 240x400 memory
+target whose rotation interacts with the projection and the viewport**: `C3D_FrameDrawOn`
+installs the *memory-space* viewport, a physical-size `C3D_SetViewport(0,0,400,240)` silently
+clips the picture to a band, and **replacing `Mtx_OrthoTilt` with `Mtx_Ortho` for a UI ortho
+SWAPPED THE TWO AXES** because the `*Tilt` variants carry the top-screen rotation a plain
+ortho does not (`docs/validation/c3d-sky-orient-2026-10-27.md`,
+`c3d-hud-viewport-2026-10-27.md`, `c3d-hud-shared-2026-10-28.md`, `c3d-ui-space-2026-10-27.md`
+in that port). MDK bakes its own quarter turn into every matrix and sets
+`C3D_SetViewport(0, 0, 240, 400)`, the memory size, so it is on the good side of the
+viewport half — **but nobody has checked whether citro3d applies its own top-screen
+flip/rotate below the matrix, which would hit exactly the draws that write their own matrix
+per draw and leave the ones that inherit `eyeVp` alone, which is the shape of what is left.**
+**BUT THAT DOOR IS NOW CLOSED BY MEASUREMENT, NOT BY READING, so do not spend a run on
+it.** The `*Tilt` helpers do exist in the linked `libcitro3dd.a` (`arm-none-eabi-nm
+--defined-only` lists `Mtx_Ortho`, `Mtx_OrthoTilt`, `Mtx_PerspTilt`, `Mtx_PerspStereoTilt`),
+so the sibling's finding is version-relevant — but a rotation or a viewport cannot explain
+what was measured: **a quad whose clip square is exactly (-1,-1)-(1,1) paints nothing**, and
+no rotation, tilt or viewport mapping turns a full-clip-square quad into zero pixels. The
+same quad drawn through a hand-written plain orthographic matrix, through the identity
+matrix at four different clip z, and at four different w, paints nothing either. Whatever
+citro3d does below the matrix, it is not what is removing these draws.
+
+**THE NEXT EXPERIMENT THAT CAN ACTUALLY DISCRIMINATE.** The vertex shader emits a constant
+clip position that ignores `mvp` entirely — a full-clip square out of the first two vertices
+of any mesh, with everything else about the draw unchanged. The identity-matrix probes above
+already put known-good clip coordinates into `mvp`, so if the constant-position build also
+paints nothing, the fault is not in the matrix path at all and is in something the Overlay
+draw sets that the Solid draw does not; if it paints, the uniform write is dead for these
+draws and the write mechanism is the target. Either answer is one build.
 
 **A PROBE THAT COULD NOT HAVE WORKED, RECORDED SO IT IS NOT RE-RUN.** The first version of
 the tail probe used `Pass::Solid`. `drawRecorded` forces the tint white on every non-Overlay
 draw, so a magenta Solid draw is impossible and its null result meant nothing. Overlay is the
 only pass whose tint is the record's colour, and Overlay takes `world` as the whole
 transform — hence handing it `eyeVp`. A probe whose failure mode is invisible is not a probe.
-
-**STILL UNTESTED PRIOR ART** (do not skip it if the experiment above says "the tail is
-dead"): the sibling `tetrisphere-godot` port's validation notes —
-`docs/validation/c3d-sky-orient-2026-10-27.md`, `c3d-hud-viewport-2026-10-27.md`,
-`c3d-hud-shared-2026-10-28.md`, `c3d-ui-space-2026-10-27.md` — measure that **citro3d's top
-screen is a 240x400 memory target whose rotation interacts with the projection and the
-viewport**: `C3D_FrameDrawOn` installs the *memory-space* viewport, a physical-size
-`C3D_SetViewport(0,0,400,240)` silently clips the picture to a band, and **replacing
-`Mtx_OrthoTilt` with `Mtx_Ortho` for a UI ortho SWAPPED THE TWO AXES** because the `*Tilt`
-variants carry the top-screen rotation a plain ortho does not. MDK bakes its own quarter
-turn into every matrix and sets `C3D_SetViewport(0, 0, 240, 400)`, the memory size, so it is
-on the good side of the viewport half — but **nobody has checked whether citro3d applies its
-own top-screen flip/rotate below the matrix**, which would hit exactly the draws that write
-their own matrix per draw. Testable from the installed `libcitro3dd` disassembly.
+**Iteration 144 fell into the same trap from the other side** and lost a run to it: a probe
+that switches a record to `Pass::Solid` to reuse a tint it set also switches the combiner to
+`REPLACE(tex)`, which ignores the tint entirely, so the probe was painting white while being
+scored for green. Score the colour the state actually produces, not the colour the probe
+intended.
 
 **What is still shared with the old, unrelated-looking symptom**: the diagnostic draw has
 never painted either, and the shader's w note records a previous failed hunt for that. It
