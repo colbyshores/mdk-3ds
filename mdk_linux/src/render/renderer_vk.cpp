@@ -31,6 +31,7 @@
 #include <volk.h>
 
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -346,6 +347,42 @@ VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cb, &begin);
     return cb;
+}
+
+// ---------------------------------------------------------------------------
+// REFUSALS ARE PRINTED, NOT SWALLOWED.
+//
+// A refused resource is a missing picture: the frame still renders, the geometry
+// is simply not in it, and every gate stays green because a frame with less in it
+// is still a frame. The Citro3D backend has always said so — `renderer_c3d.cpp`
+// prints `linearAlloc(N) FAILED for a dynamic mesh of %d corners` — and the
+// Vulkan backend answered the same failures with a bare `return -1`, which is the
+// half review-11 F4 recorded against `object_draw.h` and no batch fixed: "the
+// Vulkan backend's mesh refusal prints nothing either, so a refused mesh on Linux
+// is still a silent missing picture".
+//
+// Every refusal site below prints the request the driver was GIVEN, not a guess at
+// it, for the reason review-11 F1 gives for the frontend's copy of this line: a
+// number derived from something else (the frame's corner count, the previous
+// mesh's size) disagrees with the backend's own byte count and sends the next
+// reader after a refusal that never happened.
+//
+// It prints on EVERY refusal instead of latching once per run, which is what the
+// Citro3D backend does and why: a refusal is usually transient — a mesh that
+// grows, a texture re-made at the same size, a canvas ring resized — and a
+// one-shot latch reports the first, smallest refusal and goes silent about the
+// bigger one that followed (review-11 F7, the same argument the frontend's
+// re-arming latch is built on). A run whose device is genuinely out of memory
+// floods its log. That is the correct shape for "the GPU has nothing left".
+// ---------------------------------------------------------------------------
+void refused(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    std::printf("[vk] REFUSED ");
+    std::vprintf(fmt, ap);
+    std::printf("\n");
+    std::fflush(stdout);
+    va_end(ap);
 }
 
 // Create a host-visible buffer and map it persistently.
@@ -1562,6 +1599,8 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r_, int32_t w, int32_t 
     TextureVk& t = r->textures[id];
     if (!createHostImage(&r->ctx, w, h, VK_FORMAT_R8_UNORM, 1, px, &t.image, &t.memory,
                          &t.view, &t.mapped)) {
+        refused("index texture %dx%d (%llu bytes): the surface it belongs to draws untextured",
+                w, h, (unsigned long long)((VkDeviceSize)w * (VkDeviceSize)h));
         t.used = false;
         return -1;
     }
@@ -1598,6 +1637,8 @@ MdkTextureId mdk_render_create_rgba_texture(MdkRenderer r_, int32_t w, int32_t h
     TextureVk& t = r->textures[id];
     if (!createHostImage(&r->ctx, w, h, VK_FORMAT_R8G8B8A8_UNORM, 4, px, &t.image, &t.memory,
                          &t.view, &t.mapped)) {
+        refused("RGBA texture %dx%d (%llu bytes): whatever asked for it draws without it",
+                w, h, (unsigned long long)((VkDeviceSize)w * (VkDeviceSize)h * 4));
         t.used = false;
         return -1;
     }
@@ -1621,6 +1662,8 @@ MdkPaletteId mdk_render_create_palette(MdkRenderer r_, const uint8_t* rgba) {
     PaletteVk& p = r->palettes[id];
     if (!createHostImage(&r->ctx, 256, 1, VK_FORMAT_R8G8B8A8_UNORM, 4, rgba, &p.image,
                          &p.memory, &p.view, &p.mapped)) {
+        refused("palette (256x1 RGBA, 1024 bytes): every surface that names palette id %d "
+                "draws without a palette", id);
         p.used = false;
         return -1;
     }
@@ -1657,6 +1700,8 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
                         t.isIndex ? 1u : 4u, px, &t.image, &t.memory, &t.view, &t.mapped)) {
         destroyImage(&r->ctx, &oldImage, &oldMemory, &oldView, nullptr);
     } else {
+        refused("re-made texture %d at %dx%d: keeping the image it had, so an animated "
+                "surface freezes on its last frame instead of disappearing", t_, w, h);
         t.image = oldImage;
         t.memory = oldMemory;
         t.view = oldView;
@@ -1698,6 +1743,8 @@ MdkMeshId mdk_render_create_mesh(MdkRenderer r_, const mdk::Vertex* v, int32_t n
     const VkDeviceSize size = sizeof(mdk::Vertex) * (VkDeviceSize)n;
     if (!createHostBuffer(&r->ctx, size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &m.buffer[0],
                           &m.memory[0], &m.mapped[0])) {
+        refused("static mesh of %d corners (%llu bytes): the caller gets no mesh id and "
+                "draws nothing", n, (unsigned long long)size);
         m.used = false;
         return -1;
     }
@@ -1733,6 +1780,9 @@ MdkMeshId mdk_render_create_dynamic_mesh(MdkRenderer r_, int32_t cap) {
                 m.memory[done] = VK_NULL_HANDLE;
                 m.mapped[done] = nullptr;
             }
+            refused("dynamic mesh of %d corners x %u frames in flight (%llu bytes): the "
+                    "object pass has nowhere to upload and draws no objects", cap,
+                    (unsigned)mdk::vk::kFramesInFlight, (unsigned long long)size);
             m.used = false;
             return -1;
         }
@@ -1754,6 +1804,9 @@ void mdk_render_update_mesh(MdkRenderer r_, MdkMeshId m_, const mdk::Vertex* v, 
     MeshVk& m = r->meshes[m_];
     const VkDeviceSize size = sizeof(mdk::Vertex) * (VkDeviceSize)n;
     if (size > m.capacity) {
+        refused("update of mesh %d with %d corners (%llu bytes) against a capacity of %llu "
+                "bytes: the mesh keeps the vertices it already had", m_, n,
+                (unsigned long long)size, (unsigned long long)m.capacity);
         return;
     }
     // The slot this frame draws from, which is the one whose fence has been
@@ -1768,8 +1821,11 @@ void mdk_render_update_mesh(MdkRenderer r_, MdkMeshId m_, const mdk::Vertex* v, 
     if (!r->inFrame) {
         vkDeviceWaitIdle(r->ctx.device);
     }
-    void* mapped = m.mapped[meshSlot(m, &r->ctx)];
+    const int slot = meshSlot(m, &r->ctx);
+    void* mapped = m.mapped[slot];
     if (!mapped) {
+        refused("update of mesh %d found no mapped slot at slot %d: the frame draws the "
+                "mesh's previous contents", m_, slot);
         return;
     }
     memcpy(mapped, v, (size_t)size);
@@ -2018,6 +2074,9 @@ bool ensureCanvasBuffer(RendererVk* r, VkDeviceSize size) {
                 r->canvasMemory[done] = VK_NULL_HANDLE;
                 r->canvasMapped[done] = nullptr;
             }
+            refused("canvas ring of %llu bytes x %u frames in flight: the HUD and every "
+                    "other canvas quad from this frame is dropped", (unsigned long long)cap,
+                    (unsigned)mdk::vk::kFramesInFlight);
             return false;
         }
     }
@@ -2072,6 +2131,7 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
     }
     const uint32_t slot = r->ctx.currentFrame;
     if (!r->canvasMapped[slot]) {
+        refused("canvas slot %u has no mapping after a resize: this quad is not drawn", slot);
         return;
     }
     memcpy((char*)r->canvasMapped[slot] + r->canvasOffset, verts, bytes);

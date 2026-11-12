@@ -59,12 +59,15 @@ public:
     // Does nothing when the frame has no corners. A frame whose mesh could not
     // be made draws no objects and does not fail: a missing object pass is a
     // missing picture, not a crash. It is NOT silent — `allocationFailed()` says
-    // so, and the frontend that reads it prints it. Only the 3DS frontend does
-    // today (`main_3ds.cpp`); `mdk_linux/src/main.cpp` calls `draw` without
-    // consulting the flag and the Vulkan backend's mesh refusal prints nothing
-    // either, so a refused mesh on Linux is still a silent missing picture.
-    // That half is recorded and NOT fixed: `mdk_linux/**` is outside `AGENTS.md`
-    // §8's scope (review-11 F4).
+    // so, and BOTH frontends read it now: `main_3ds.cpp` since review-10 F3, and
+    // `mdk_linux/src/main.cpp` since the Linux refusal batch, which closed the
+    // half this comment used to record as owed -- "the Vulkan backend's mesh
+    // refusal prints nothing either, so a refused mesh on Linux is still a silent
+    // missing picture" (review-11 F4). The Vulkan backend prints its own refusals
+    // too (`renderer_vk.cpp`'s `refused()`), so a refused resource on either
+    // target names itself in the log. `tests/scripts/linux_refusal_report_test.sh`
+    // gates the shape of both halves; the refusal itself cannot be executed on this
+    // host, because lavapipe never says no.
     //
     // HOT PATH (AGENTS.md 2): once per drawn batch per frame. It is one memcpy
     // of the stream and a Material per draw -- no float->int conversion (R2), no

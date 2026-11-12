@@ -1,3 +1,113 @@
+## Iteration 148 — batch 148: `linux.render-frame` — a refused resource on the Linux target names itself instead of drawing a silently emptier frame; the gap review-11 F4 recorded as "NOT fixed" is fixed
+
+**The ledger row is `linux.render-frame` (d1, acceptance `bash tools/check.sh`), and
+the work was already named in the tree.** `mdk_core/src/game/object_draw.h` had
+carried the same admission since review-11 F4: "mdk_linux/src/main.cpp calls `draw`
+without consulting the flag and the Vulkan backend's mesh refusal prints nothing
+either, so a refused mesh on Linux is still a silent missing picture. That half is
+recorded and NOT fixed: `mdk_linux/**` is outside `AGENTS.md` §8's scope". A refused
+resource is the worst renderer failure there is, because it is invisible: the frame
+still renders, the geometry is simply not in it, the screenshot looks plausible and
+every gate stays green. `mdk_linux` being outside §8 means the ARM11 hot-path rules do
+not apply to it; it has never meant error handling is exempt. The Citro3D backend has
+printed its refusals since batch 10 (`renderer_c3d.cpp:647`, `:1921`); the Vulkan
+backend returned `-1` in silence and the Linux frontend never read the flag.
+
+**What landed (one slice: refusal reporting on the Linux render path).**
+`renderer_vk.cpp` gains a `refused()` helper (printf + fflush) and a call at every
+site that used to swallow a failure — index texture, RGBA texture, palette, texture
+re-make, static mesh, dynamic mesh, over-capacity mesh update, missing mesh mapping,
+canvas-ring growth, unmapped canvas slot. Each prints the request the driver was
+GIVEN, the same `size`/`cap` expression handed to the create call, which is
+review-11 F1's rule (a derived figure disagrees with the request by up to 8x and
+sends the next reader after a refusal that never happened); it prints on every
+refusal rather than latching once, matching the Citro3D backend and review-11 F7's
+reason for the re-arming latch. `mdk_linux/src/main.cpp` now consults
+`objectDraw.allocationFailed()` and prints `attemptedCapacity()`, edge-triggered and
+re-armed in the `else` sibling, in the shape `main_3ds.cpp:973-990` has used since
+review-10 F3. `object_draw.h`'s comment now says the half is closed and names the
+gate; it is a comment-only change and `mdk.elf` is byte-identical.
+
+**The gate, and the two pass-generators it killed on the way.** A refusal cannot be
+executed here: 1200 frames of level 3 and of level 7 print zero `REFUSED` lines,
+because lavapipe never says no. So `tests/scripts/linux_refusal_report_test.sh` is a
+source-shape gate in the style of `frontend_solid_pin_test.sh`, wired into `make
+test`: 6 checks, 7 mutation arms, each arm naming the one check it isolates, and it
+passes (`PASS LinuxRefusalReport (6 checks, 7 arms adjudicated red)`). Two of its
+checks were pass-generators in the first draft and only the arms found them: B3
+searched for the create call in the block BODY when it lives in the block CONDITION,
+so it compared nothing and stayed green under the `prints-the-mesh-capacity` arm;
+B1 initially flagged `if (!ensureCanvasBuffer(...)) return;` as an unreported
+refusal, which would have pushed a duplicate line into the log for a refusal
+`ensureCanvasBuffer` already reports — the pattern now says which delegating sites
+are exempt and why.
+
+**The executed half: fault injection.** Because no arm can make the driver refuse,
+the path was demonstrated by patching the allocator in a scratch build, running, and
+reverting. Refusing every 256x1 palette printed 4 palette refusals plus one index
+texture (its staging buffer hit the second injection, which is an unplanned but
+correct demonstration that a refused staging buffer is reported as the resource it
+belongs to), and the picture differs from the unrefused frame by **59.711% of
+pixels, max 255, mean 61.6** — a refused palette is most of the frame, which is the
+missing picture the diagnostic used to leave unmentioned. Forcing the dynamic mesh's
+create to fail over 120 frames of level 3 printed 120 backend lines (the documented
+flood) and exactly **one** `[main] objects: stream mesh of 4096 corners = 96 KB
+REFUSED by the backend` line, which is the edge trigger working, and 4096 corners x
+24 B = 98304 B = 96 KB, so the backend's line and the frontend's line describe the
+same request. After the revert the rebuilt binary reproduces the pinned frame's
+`cpp=` hash exactly: no pixel moved, and `gates_frames` says so.
+
+**Review-4 (run-20261112-035144) disposition: no Critical, no High; F1-F7 deferred
+with cause, none rebutted.** The review's scope was batch 147's `pica_matrix.cpp`
+word-order fix, and every finding is a 3DS-side record correction or a hardening of
+`emurun.sh`'s canary gate — none is reachable from a Linux render batch, and the
+builder rule is "Medium/Low: fix when cheap and in-scope; do not expand the batch to
+chase them". The one-line causes: **F1** (Medium, the canary count cannot see a
+reflected canvas) is the `3ds.hud-canvas` row's, and that row is capped and parked;
+touching `emurun.sh`'s adjudicator under a Linux row would change another row's
+acceptance command from the wrong batch. **F2, F4, F6, F7** are edits to
+`docs/evidence/2026-11-12-147-*.txt`, `docs/OPEN_ITEMS.md:294`,
+`docs/PROGRESS_LOG.md:157` and the `.3dsx` hash — 3DS record files batch 147
+touched and this batch did not. **F3** is a stale paragraph in `emurun.sh`'s
+comments, same row. **F5** is the ledger/prose disagreement, which is the ownership
+blocker below, not a prose bug. All seven are listed as open items so the next
+3DS-side batch inherits them.
+
+**Gates, verbatim.** `make -C tests/scripts` → rc 0, `All cases match the oracle.`,
+**592** `^PASS` / 0 FAIL / 0 SKIP (was 591; the +1 is this batch's gate), no golden
+changed. `DISPLAY=:99 bash tools/check.sh` → rc 0, `CHECK: ALL GATES PASSED`
+(`audit_c_with_classes` 0, `gates_vfp` 0 blockers, `audit_arm11_math` clean,
+`audit_r11_idiv` no candidates, `gates_core_parity` both targets, `gates_smdh` SKIP
+no built .cia, `gates_frames` every pinned frame deterministic and unchanged, batch
+integrity PASS, ledger VERIFIED). `make -C mdk_3ds -j8` → rc 0 with
+`DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM`, `LINK mdk.elf`,
+`mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e` **unchanged** from batch 147, which
+is what a comment-only core change must produce. `cmake --build build-linux -j8` →
+rc 0. Frame `docs/frames/2026-11-12-linux-refusal-report.png` is byte-identical to
+its predecessors by construction, and its sidecar says so and points at the
+injection numbers. Measurements, both injections and the not-pinned list:
+`docs/evidence/2026-11-12-linux-refusal-report.txt`.
+
+**The row's acceptance is green and the row still cannot be closed from this lane.**
+The sanctioned close is `python3 tools/runner/ledger_close.py --row
+linux.render-frame`, which re-runs the acceptance itself before rewriting the row.
+It exits 2 here: `docs/COMPLETION_LEDGER.tsv` is `coleshores:coleshores 0664` and
+this lane is `piagent`, so its `ledger.write_text` raises PermissionError. The ledger
+is also in `gates_batch_integrity.PROTECTED`, so hand-editing the row is forbidden and
+correctly so. One command from a lane that can write the file closes it.
+
+**Prior-solution lookups.** `pi-knowledge` (`mdk-sdl` KB, 5149 chunks) was searched
+for the row and for the Linux renderer's open gaps; it surfaced the headless-mode
+spec (§6.6), the `render.h` diagnostics block, and the `renderer_c3d.cpp` seam
+comment, and it confirmed no prior note names this refusal gap — the record was in
+`object_draw.h` and `OPEN_ITEMS.md`, which is where the fix came from. Obsidian MCP
+and Cognee MCP are **not present in this session's tool list** (AGENTS.md P9 says that
+is a session fault to report, not a licence to pretend); the vault was read directly
+(read-only) at `/mnt/nas/Vaults/port-docs/10-projects/mdk-sdl/`, which holds only
+`ralph-pi-loop-audit-2026-11-05.md` and `ralph-pi-mandarine-setup.md`, neither about
+the Linux render path. No sibling-project code was adapted: the refusal pattern came
+from this repository's own 3DS backend.
+
 ## Iteration 147 — the PICA reads a vector uniform's four words as (w, z, y, x); `registers()` wrote them as (x, y, z, w). The HUD becomes visible on the console and the row closes.
 
 **Ledger row `3ds.hud-canvas`, attempt 8 of 8 — CLOSED.** The row's acceptance command

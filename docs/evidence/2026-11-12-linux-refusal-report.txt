@@ -1,0 +1,167 @@
+Batch 148 — linux.render-frame: a refused resource on the Linux target names itself
+================================================================================
+Date: 2026-11-12. Builder: litellm/qwen (Qwen family).
+Ledger row: `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`.
+Tree at start: 278e332. No golden, no manifest, no gate script changed.
+
+WHAT WAS BROKEN, AND WHO NAMED IT FIRST
+--------------------------------------
+`mdk_core/src/game/object_draw.h` carried this sentence verbatim since review-11 F4:
+
+    "Only the 3DS frontend does today (`main_3ds.cpp`); `mdk_linux/src/main.cpp`
+    calls `draw` without consulting the flag and the Vulkan backend's mesh refusal
+    prints nothing either, so a refused mesh on Linux is still a silent missing
+    picture. That half is recorded and NOT fixed: `mdk_linux/**` is outside
+    `AGENTS.md` §8's scope (review-11 F4)."
+
+A refused resource is the worst failure the renderer can have, because it is
+invisible: the frame still renders, the geometry is simply not in it, the
+screenshot looks plausible, and every gate stays green. The Citro3D backend has
+always printed its refusals (`renderer_c3d.cpp:1921`
+`linearAlloc(%u) FAILED for a dynamic mesh of %d corners`, `:647` for the
+scratch). The Vulkan backend answered the same failures with a bare `return -1`,
+and the Linux frontend never read the flag the shared pass records. `mdk_linux`
+being outside AGENTS.md §8 means the hot-path rules do not apply to it; it has
+never meant error handling is exempt.
+
+THE CHANGE (one slice: refusal reporting on the Linux render path)
+-----------------------------------------------------------------
+1. `mdk_linux/src/render/renderer_vk.cpp` — a `refused()` helper (printf + fflush)
+   and a call at every site that used to swallow a failure:
+     * `mdk_render_create_index_texture`   — surface draws untextured
+     * `mdk_render_create_rgba_texture`    — the caller draws without it
+     * `mdk_render_create_palette`         — every surface naming that palette id
+     * `mdk_render_update_texture`         — keeps its old image (an animated
+                                            surface freezes instead of vanishing)
+     * `mdk_render_create_mesh`            — the caller gets no mesh id
+     * `mdk_render_create_dynamic_mesh`    — the object pass has nowhere to upload
+     * `mdk_render_update_mesh`            — over-capacity update, and a missing
+                                            mapping: the mesh keeps old vertices
+     * `ensureCanvasBuffer` / `canvas_quad`— the HUD and every canvas quad drops
+   Each prints the request the driver was GIVEN (the same `size`/`cap` expression
+   handed to the create call), which is the review-11 F1 rule: a figure derived
+   from something else disagrees with the request and sends the reader after a
+   refusal that never happened. It prints on every refusal rather than latching
+   once, matching the Citro3D backend and review-11 F7's reason.
+2. `mdk_linux/src/main.cpp` — the object pass now consults
+   `objectDraw.allocationFailed()` and prints the refused capacity
+   (`attemptedCapacity()`), edge-triggered and re-armed in the `else` sibling, in
+   the shape `main_3ds.cpp:973-990` has used since review-10 F3.
+3. `mdk_core/src/game/object_draw.h` — the comment that recorded the gap now says
+   it is closed and names the gate. Comment only: `mdk.elf` is byte-identical.
+4. `tests/scripts/linux_refusal_report_test.sh` (new, wired into `make test`).
+
+WHY A STATIC GATE, AND WHAT IT ACTUALLY PINS
+--------------------------------------------
+A refusal cannot be executed on this host: lavapipe never says no. Measured —
+1200 frames of level 3 and 1200 frames of level 7 print ZERO `REFUSED` lines:
+  level 3 rc 0, `grep -c REFUSED` = 0, `exiting after 1200 frames (last frame: 187 draws, 1253 triangles)`
+  level 7 rc 0, `grep -c REFUSED` = 0, `exiting after 1200 frames (last frame: 153 draws, 1042 triangles)`
+So the gate is a source-shape gate in the style of `frontend_solid_pin_test.sh`
+and `main_3ds_flow_test.sh`, which exist for the same reachability wall. Six
+checks, seven mutation arms, every arm naming the one check it isolates:
+
+  ok   Linux frontend: the object pass consults allocationFailed() and prints inside that test
+  ok   Linux frontend: the refusal line prints the capacity that was refused (attemptedCapacity)
+  ok   Linux frontend: the refusal line is edge-triggered and re-armed in the else sibling
+  ok   Linux backend: every backend refusal site prints before it returns
+  ok   Linux backend: the refusal helper prints and flushes
+  ok   Linux backend: the printed byte figure is the expression the create call was given
+  ok   Linux frontend arm refusal-block-deleted: turned `...consults allocationFailed()...` red
+  ok   Linux frontend arm prints-capacity-not-attempted-capacity: turned `...attemptedCapacity...` red
+  ok   Linux frontend arm latch-clear-deleted: turned `...edge-triggered and re-armed...` red
+  ok   Linux frontend arm latch-guard-widened-to-true: turned `...edge-triggered and re-armed...` red
+  ok   Linux backend arm site-refusal-print-deleted: turned `...every backend refusal site prints...` red
+  ok   Linux backend arm helper-stops-flushing: turned `...prints and flushes` red
+  ok   Linux backend arm prints-the-mesh-capacity: turned `...the printed byte figure...` red
+  PASS LinuxRefusalReport (6 checks, 7 arms adjudicated red)
+
+Two of those checks were pass-generators in the first draft and are not now, both
+found while building the arms: B3 searched for the create call in the block BODY
+when it lives in the block CONDITION, so it compared nothing and passed; the arm
+`prints-the-mesh-capacity` is what exposed it (it stayed green). B3 now searches
+condition+body and FAILS when no size site was readable at all.
+
+FAULT INJECTION — the lines do fire
+-----------------------------------
+Because no executed arm can make lavapipe refuse, the path was demonstrated by
+patching the allocator in a scratch build, running, and reverting. Both halves
+produce their line, and the two lines agree on the size, which is the review-11
+F1 property measured rather than asserted.
+
+  A. `createHostImage` refuses 256x1 (every palette), pinned frame:
+       4x [vk] REFUSED palette (256x1 RGBA, 1024 bytes): every surface that names palette id 0 draws without a palette
+       1x [vk] REFUSED index texture 256x320 (81920 bytes): the surface it belongs to draws untextured
+     (the second line is injection B's staging-buffer refusal propagating out of
+     createHostImage's staging path — an unplanned but correct demonstration that
+     a refused staging buffer is reported as the resource it belongs to.)
+     The picture: compare_frames.py against the unrefused frame of the same build
+       bad_percent 59.711  max_delta 255  mean_delta 61.5551
+     i.e. a refused palette is not a subtle gap; it is most of the frame. That is
+     the missing picture the diagnostic used to leave unmentioned.
+
+  B. `mdk_render_create_dynamic_mesh`'s create forced to fail, 120 frames level 3:
+       1x  [vk] REFUSED dynamic mesh of 12 corners x 2 frames in flight (288 bytes): ...
+       119x [vk] REFUSED dynamic mesh of 4096 corners x 2 frames in flight (98304 bytes): ...
+       1x  [main] objects: stream mesh of 4096 corners = 96 KB REFUSED by the backend — no objects drawn this frame
+     The backend floods (the documented shape: a device out of memory should say
+     so every frame) and the frontend prints ONCE for 120 frames, which is the
+     edge trigger working, and 4096 corners x 24 B = 98304 B = 96 KB, so the two
+     lines describe the same request.
+
+After the revert the rebuilt binary reproduces the pinned frame exactly:
+  sha256 58615fc85d02e009c10f315478aa8d2b5b3eccb3a3945517dca9587c04397368
+  == tests/frames/reference.sha256's cpp= value. No pixel moved.
+
+GATES, VERBATIM
+---------------
+  make -C tests/scripts        rc 0   "All cases match the oracle."
+                                 592 ^PASS / 0 ^FAIL / 0 SKIP (was 591; the +1 is
+                                 `PASS LinuxRefusalReport (6 checks, 7 arms adjudicated red)`)
+  DISPLAY=:99 bash tools/check.sh  rc 0   "CHECK: ALL GATES PASSED"
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             every pinned frame is deterministic and unchanged
+      PASS   gates_batch_integrity    project invariants intact
+      PASS   gates_completion         every done row is backed by evidence and a commit
+  make -C mdk_3ds -j8          rc 0 (DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM)
+      "LINK mdk.elf", "3DSX mdk.3dsx"
+      mdk.elf md5 728eb2350c3ef8a81acda15f75617c1e — UNCHANGED from batch 147,
+      which is what a comment-only mdk_core change must produce.
+  cmake --build build-linux -j8  rc 0
+  No golden changed; tests/frames/reference.sha256 untouched.
+
+WHAT THIS DOES NOT PIN, AND WHY
+-------------------------------
+* The refusal itself is not executed anywhere. There is no host that makes
+  lavapipe refuse and no seam hook for faking it; adding a fake-driver seam to
+  the production renderer to make a test possible would be the tail wagging the
+  dog. The fault-injection runs above are the executed half, and they are a
+  demonstration, not a gate: they are not re-runnable from the committed tree.
+* The 3DS half is untouched and was already reported (`main_3ds.cpp`,
+  `renderer_c3d.cpp`), and `main_3ds_flow_test.sh` gates it.
+* `mdk_render_*` guard returns (`!r || !r->ready || !px || w <= 0`) are caller
+  errors, not refusals, and deliberately print nothing: a programming error should
+  be fixed, not logged and survived. The gate's REFUSAL_COND says so.
+* `refused()` writes stdout directly, as the Vulkan backend already does for every
+  other failure (`[vk] pipeline create failed`, `[vk] shader modules failed`). It
+  is not routed through a new seam accessor, because the seam is shared with the
+  3DS and the 3DS already has its own log function.
+
+THE LEDGER ROW, AND THE BLOCKER ON CLOSING IT
+--------------------------------------------
+The row's acceptance command is `bash tools/check.sh` and it is green at this
+batch. The sanctioned way to close a row is `python3 tools/runner/ledger_close.py
+--row linux.render-frame`, which re-runs the acceptance itself and rewrites the
+row. It cannot run on this lane: `docs/COMPLETION_LEDGER.tsv` is
+`coleshores:coleshores 0664` and this lane is `piagent` (uid 994, groups
+piagent/development), so `ledger.write_text` raises PermissionError and the tool
+exits 2. The ledger is also in `gates_batch_integrity.PROTECTED`, so a batch may
+not edit the row by hand either — correctly. The row therefore stays `todo` with
+its acceptance green, and the one-command close is:
+  python3 tools/runner/ledger_close.py --row linux.render-frame
+from a lane that can write the file.

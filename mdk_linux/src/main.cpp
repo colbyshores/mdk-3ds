@@ -489,6 +489,9 @@ int main(int argc, char** argv) {
     auto last = std::chrono::steady_clock::now();
 
     uint32_t frame = 0;
+    // Edge trigger for the object pass's refusal line below. Declared with the
+    // loop-carried state because it lives as long as the frame loop.
+    bool streamFailureLogged = false;
     // Build the camera once up front so the very first frame has a valid matrix
     // even if no simulation step fits in it (a zero camera would collapse every
     // vertex to the clip origin and draw nothing).
@@ -698,6 +701,41 @@ int main(int argc, char** argv) {
                                      &objectStream);
             }
             objectDraw.draw(renderer, &surfaces, objectStream);
+            // A REFUSED STREAM MESH IS A SILENTLY EMPTY OBJECT PASS UNLESS SOMEONE
+            // PRINTS IT (review-11 F4, the half `object_draw.h` records as owed to
+            // this frontend). `ObjectDraw` cannot print: `mdk_core` has no log, and
+            // inventing one there would put a frontend's stderr inside the shared
+            // game code. So the pass RECORDS the refusal and the frontend that owns
+            // the log prints it — which is what `main_3ds.cpp` has done since
+            // review-10 F3 and what this frontend did NOT do, so on Linux a level
+            // whose stream mesh was refused lost every scripted object and said
+            // nothing at all.
+            //
+            // Edge-triggered and RE-ARMED, in the 3DS frontend's shape: the flag
+            // clears when a later attempt succeeds, so a second refusal after a
+            // recovery still prints (review-11 F7), and the clear sits in the
+            // `else` sibling of the `allocationFailed()` test so it runs on every
+            // frame that did not refuse rather than once at the end of the branch.
+            //
+            // THE CAPACITY THAT WAS REFUSED, not the frame's corner count: `ensure`
+            // rounds up to a power of two and that rounded capacity is what the
+            // backend was asked for, so the frame's own count would report a
+            // smaller refusal than the one that happened (review-11 F1). The
+            // backend's own `[vk] REFUSED` line now prints the same request in
+            // bytes, so the two lines agree by construction.
+            if (objectDraw.allocationFailed()) {
+                if (!streamFailureLogged) {
+                    streamFailureLogged = true;
+                    const int32_t attempted = objectDraw.attemptedCapacity();
+                    std::printf("[main] objects: stream mesh of %d corners = %d KB "
+                                "REFUSED by the backend — no objects drawn this frame\n",
+                                (int)attempted,
+                                (int)((int64_t)attempted * (int64_t)sizeof(mdk::Vertex) /
+                                      1024));
+                }
+            } else {
+                streamFailureLogged = false;
+            }
         }
         if (kurtSpriteReady && playerReady) {
             // C# Viewer.DrawScene draws Kurt after the level, objects and
