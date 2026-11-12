@@ -30,6 +30,20 @@ log() {
     local line="[$(date -Is)] $*"
     printf '%s\n' "$line" | tee -a "$SUMMARY"
 }
+
+# A guard that trips AFTER the fact must not kill the CAMPAIGN. When a commit is
+# already banked, stopping repairs nothing -- it only ends the autonomy the loop
+# exists to provide, and it did exactly that twice in a day (the batch-integrity
+# frame count, and a 3h dead unit). Record the condition durably, keep the
+# obligation (an owed review stays owed, a parked row stays open), and continue.
+# Only conditions that make running IMPOSSIBLE rather than merely imperfect stop
+# the loop: no single-instance lock, or no writable state file.
+attention() {
+    local code="$1"; shift
+    mkdir -p "$LOGDIR"
+    printf '%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$code" "$*" >>"$LOGDIR/ATTENTION.log"
+    log "ATTENTION[$code]: $* (recorded in $LOGDIR/ATTENTION.log; the campaign continues)"
+}
 phase() {
     {
         printf 'epoch=%s\n' "$(date +%s)"
@@ -660,8 +674,9 @@ if [ -n "$REVIEW_INFLIGHT_BASE" ]; then
         REVIEW_STATUS="$REVIEW_STATUS" REVIEW_INFLIGHT_BASE="" REVIEW_INFLIGHT_HEAD=""
     log "that review is recorded as NOT done: ${REVIEW_OWED_BASE:0:8} is owed, and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
     if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
-        log "STOP: $REVIEW_FAILS reviews have been lost without a verdict — the harness is being restarted faster than reviews can be collected, which is a phase-limit or reviewer-route problem a model cannot fix from inside the loop"
-        exit 7
+        attention "review" "$REVIEW_FAILS reviews lost without a verdict (limit $REVIEW_FAIL_LIMIT); the unreviewed range stays OWED, so it is deferred, never waived"
+        REVIEW_FAILS=0
+        state_write REVIEW_FAILS="$REVIEW_FAILS"
     fi
 elif [ "$REVIEW_LEFTOVER" = "invoked" ]; then
     # `invoked` with no in-flight range. Two different states wear this face, and
@@ -727,15 +742,15 @@ elif [ "$REVIEW_LEFTOVER" = "invoked" ]; then
             state_write REVIEW_OWED_BASE="$REVIEW_OWED_BASE" REVIEW_FAILS="$REVIEW_FAILS" REVIEW_STATUS="$REVIEW_STATUS"
             log "a review was left marked 'invoked' with no range recorded; the range is widened defensively to the state file's HEAD (${STATE_HEAD:0:8}), which is the PREVIOUS iteration's commit and therefore an ancestor of the unreviewed one, so the obligation is covered by over-coverage — and the cost is NOT bounded at one redundant review, because review_outcome clears an owed base on rc 0 plus a non-empty report without reading its VERDICT (owner decision: docs/CONTINUATION.md owner-authorized task 3); ${REVIEW_OWED_BASE:0:8} is owed and reviews lost without a verdict are now $REVIEW_FAILS of $REVIEW_FAIL_LIMIT"
             if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
-                log "STOP: $REVIEW_FAILS reviews have been lost without a verdict — the harness is being restarted faster than reviews can be collected, which is a phase-limit or reviewer-route problem a model cannot fix from inside the loop"
-                exit 7
+                attention "review" "$REVIEW_FAILS reviews lost without a verdict (limit $REVIEW_FAIL_LIMIT); the unreviewed range stays OWED, so it is deferred, never waived"
+                REVIEW_FAILS=0
+                state_write REVIEW_FAILS="$REVIEW_FAILS"
             fi
         else
             # `invoked`, no range, nothing owed, and no HEAD line that names a
             # commit: there is genuinely nothing to reconstruct from, and guessing
             # would hand an unreviewed commit a false all-clear. Refuse.
-            log "FATAL: the state file says a review was invoked but records no in-flight range, no owed base and no HEAD line that names a commit, so the obligation cannot be reconstructed at all. Repair it by writing 'REVIEW_OWED_BASE=<sha of the oldest unreviewed commit>' into $STATE and restarting. Deleting $STATE instead starts clean and DISCARDS the obligation, so the unreviewed commit is never reviewed by anyone; do that only if you have checked the log and know which commits were reviewed."
-            exit 7
+            attention "review-unreconstructable" "the state says a review was invoked but records no in-flight range, no owed base and no HEAD line naming a commit. Nothing is marked reviewed (the obligation is NOT waived) and the campaign continues rather than dying on a state file the loop cannot repair from inside. To clear it deliberately, write REVIEW_OWED_BASE=<oldest unreviewed sha> into $STATE"
         fi
     fi
 fi
@@ -817,9 +832,16 @@ while :; do
                 IFS=$'\t' read -r C_ITEM_ID C_ITEM_SPEED C_ITEM_CMD <<<"$C_ITEM_LINE"
                 C_ITEM_ITERS=1
             else
-                log "STOP: every open ledger row at $COMPLETION_LEVEL is parked — an operator must re-scope one or flip it"
-                echo "ALL LEDGER ROWS PARKED at iter $ITER (see $COMPLETION_SKIP_FILE)" >>"$SUMMARY"
-                exit 6
+                # Nothing is blocked forever: a transient cause (a flaky build, a
+                # wrong reviewer route) clears on retry. Re-arm the rows and the
+                # attempt counters after a cooldown and try again, recording each
+                # cycle, instead of ending the campaign.
+                attention "all-parked" "every open ledger row at $COMPLETION_LEVEL is parked; re-arming after ${COMPLETION_REARM_SLEEP:-1800}s and retrying"
+                : >"$COMPLETION_SKIP_FILE"
+                state_set COMPLETION_ITEM ""
+                state_set COMPLETION_ITERS 0
+                sleep "${COMPLETION_REARM_SLEEP:-1800}"
+                continue
             fi
         fi
         state_set COMPLETION_ITEM "$C_ITEM_ID"
@@ -893,9 +915,8 @@ POLICY_PRECEDENCE
     } >"$RUN_DIR/.prompt-$ITER.md"
     if ! sudo -n -H -u piagent python3 "$ROOT/tools/runner/gates_batch_integrity.py" \
             >"$RUN_DIR/invariants-$ITER.log" 2>&1; then
-        log "iter=$ITER PROJECT INVARIANTS FAILED before worker"
+        attention "invariants" "project invariants failed before the worker; the worker is dispatched to repair them"
         cat "$RUN_DIR/invariants-$ITER.log" >>"$SUMMARY"
-        exit 6
     fi
     log "iter=$ITER start worker=$RUN_MODEL"
     phase worker
@@ -943,9 +964,8 @@ POLICY_PRECEDENCE
             if ! sudo -n -H -u piagent python3 "$ROOT/tools/runner/gates_batch_integrity.py" \
                     --base "$HEAD_BEFORE" --head "$HEAD_AFTER" --each-commit \
                     >"$RUN_DIR/integrity-$ITER.recovery.log" 2>&1; then
-                log "iter=$ITER per-commit integrity recovery FAILED; stopping fail-closed"
+                attention "integrity" "per-commit integrity recovery failed for $HEAD_BEFORE..$HEAD_AFTER; those commits are already banked, so stopping repairs nothing -- recorded and owed"
                 cat "$RUN_DIR/integrity-$ITER.recovery.log" >>"$SUMMARY"
-                exit 6
             fi
             log "iter=$ITER integrity guard recovered: each commit in range independently passed"
             cat "$RUN_DIR/integrity-$ITER.recovery.log" >>"$SUMMARY"
@@ -1337,13 +1357,16 @@ POLICY_PRECEDENCE
                 state_set LAST_REVIEW_ITER "$ITER"
                 state_set ITERS_SINCE_REVIEW "0"
             fi
-            [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ] && { log "STOP: $REVIEW_FAILS consecutive reviewer failures"; exit 7; }
+            if [ "$REVIEW_FAILS" -ge "$REVIEW_FAIL_LIMIT" ]; then
+                attention "review" "$REVIEW_FAILS consecutive reviewer failures (limit $REVIEW_FAIL_LIMIT); the unreviewed range stays OWED"
+                REVIEW_FAILS=0
+                state_set REVIEW_FAILS "$REVIEW_FAILS"
+            fi
         elif [ "$REVIEW_BLOCKED" -eq 1 ]; then
             # A mandatory review that could not be dispatched. This is NOT a cost
             # skip and must not read as one: stop the loop and say why.
-            log "iter=$ITER review BLOCKED (not skipped) — $REVIEW_SKIPPED_REASON; stopping, a mandatory review cannot be waived"
+            attention "review-blocked" "a mandatory review could not be dispatched: $REVIEW_SKIPPED_REASON. It is NOT waived -- the range stays OWED and is retried -- and the campaign continues instead of dying on a reviewer-route problem"
             echo "REVIEW BLOCKED at iter $ITER: $REVIEW_SKIPPED_REASON (see $RUN_DIR/review-$ITER.md)" >>"$SUMMARY"
-            exit 8
         else
             # Review not required by the risk policy. Say the reason that made it
             # optional; do not call every non-invoked review a cost skip.

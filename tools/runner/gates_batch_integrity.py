@@ -235,7 +235,13 @@ def main() -> int:
         staged = set(git("diff", "--cached", "--name-only"))
         staged_adds = set(git("diff", "--cached", "--name-only", "--diff-filter=A"))
         frames = {p for p in staged_adds if p.startswith(FRAME_DIR) and p.endswith(".png")}
-        if not frames:
+        # The pinned-frame rule is for BUILDER batches. An owner-approved commit is
+        # infrastructure (the harness, a gate, the ledger): demanding a capture for
+        # it produced frames that record no code change and, worse, put a second
+        # frame in the loop's own batch window. Any frame that IS staged is still
+        # validated below, and the loop's per-batch frame is still enforced by the
+        # range check.
+        if not frames and not args.owner_approved:
             errors.append("staged batch has no newly added docs/frames/*.png")
         for frame in frames:
             sidecar = str(Path(frame).with_suffix(".txt"))
