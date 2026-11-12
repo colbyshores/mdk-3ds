@@ -1776,7 +1776,17 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     uint32_t h = r->ctx.extent.height;
 
     const uint32_t clear = params ? params->clear_colour : 0xFF000000u;
+    // A FRAME THAT DID NOT BEGIN IS NOT A FRAME. `beginFrame` returns false when the
+    // fence wait, the image acquire, the command-buffer reset or the buffer's begin
+    // failed — every one of which was read by nobody until this batch — and the
+    // behaviour here was a bare `return`: the frame is black, the build is green,
+    // and nothing anywhere says why. This is the seam, so this is where it prints,
+    // through the helper that remembers each distinct request so a device that
+    // refuses every frame costs one line and not one per frame.
     if (!mdk::vk::beginFrame(&r->ctx, w, h, true, clear)) {
+        refused("begin the frame at %ux%u: nothing was recorded and nothing will be "
+                "presented this frame",
+                w, h);
         return;
     }
     r->inFrame = true;
@@ -1819,12 +1829,29 @@ void mdk_render_end_frame(MdkRenderer rr) {
     // already flushed at canvas_begin; this is the catch-all for a frame with no
     // canvas, and it must come before endFrame closes the render pass.
     flushDraws(r);
-    mdk::vk::endFrame(&r->ctx);
+    // THE FRAME'S OWN RESULT WAS DISCARDED ENTIRELY. `endFrame` returns false when
+    // the fence reset, the submit or the present failed; until now the frame was
+    // reported as rendered either way, so a pinned frame whose commands never ran
+    // would be measured, published and committed as if it were the picture.
+    const bool submitted = mdk::vk::endFrame(&r->ctx);
     r->inFrame = false;
+    if (!submitted) {
+        refused("end the frame: its commands were not submitted or not presented, so this "
+                "frame did not reach the display");
+    }
     if (!r->screenshotPath.empty()) {
         const std::string path = r->screenshotPath;
         r->screenshotPath.clear();
-        captureSwapchain(r, path.c_str());
+        if (!submitted) {
+            // The readback would succeed and print its usual "wrote N" line about an
+            // image this frame never drew into. A frame record that cannot be trusted
+            // is worse than no frame record, because a frame record gets committed.
+            refused("capture the frame to %s: the frame it was asked to capture was never "
+                    "submitted, so the image would not be this frame's",
+                    path.c_str());
+        } else {
+            captureSwapchain(r, path.c_str());
+        }
     }
 }
 

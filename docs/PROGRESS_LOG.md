@@ -26419,3 +26419,112 @@ is `coleshores`-owned, this lane is `piagent`, and the row is in
 `gates_batch_integrity.PROTECTED` so hand-editing is a finding rather than a fix. This
 is attempt 5 of 8; the loop will keep re-dispatching a row whose acceptance passes until
 a lane can write the ledger.
+
+## Iteration 153 — batch 153: `linux.render-frame` — the frame seam was throwing away both of its results, and 24 more VkResults in `vk_context.cpp` went the same way
+
+**THE REVIEW THIS BATCH WAS DISPATCHED ON PRODUCED NOTHING.** The loop status block
+pointed at `logs/ralph-pi/run-20261112-153051/review-3.md` as the newest external
+review. It is **0 bytes**, with a `.identity.txt` (scope `ec3b13bc..f98a7cb0`,
+independence PROVED, builder family qwen / reviewer family deepseek) and **no
+`.rc` file at all**, where review-1 and review-2 each have a 2-byte `rc`. So the
+review of batch 152 was dispatched and returned nothing: there are no findings to
+fix and none to rebut, and per the loop's own fail-closed rule that is a FAILED
+review, not a completed one — batch 152's commit stays unreviewed and owed. The
+last review with content is `review-2.md` (review-8), and batch 152 dispositioned
+all seven of its findings. Nothing in this batch was skipped on the strength of an
+empty file; the work below came from the row's own next-list item 2, which is
+review-8 F3's own deferred recommendation.
+
+**WHAT WAS WRONG, IN ONE SENTENCE.** `mdk_render_end_frame` called
+`mdk::vk::endFrame(&r->ctx);` and discarded the bool, and
+`mdk_render_begin_frame` returned from a failed `beginFrame` without printing
+anything — so a frame whose fence wait, image acquire, command-buffer reset,
+begin, fence reset, submit or present failed was reported to the caller as a
+rendered frame, its counters were reset as if it had drawn, and its screenshot was
+read back from a swapchain image it never wrote and published as the pinned frame
+record. That is the invisible missing picture the whole refusal-reporting line of
+work exists for, sitting in the two functions that bracket every frame.
+
+**THE FIX.** Both results are read now. A failed begin refuses with the size it
+could not begin at and returns; a failed end refuses and the screenshot is
+captured only from a frame that was actually submitted — a frame record that
+cannot be trusted is worse than none, because a frame record gets committed. The
+seam prints and `vk_context.cpp` stays quiet on the frame path on purpose: the
+context file has no per-request memory and a frame-boundary failure repeats every
+frame, while the seam already owns the dedup table.
+
+**THE 24 DISCARDED VkRESULTS IN `vk_context.cpp`** (review-8 F3 named this file and
+recommended a gate over it; measured at the parent: 39 result-bearing calls, 24
+discarded; now 40 calls, 0 unchecked). The worst was `:119`,
+`vkGetPhysicalDeviceSurfaceCapabilitiesKHR`: `capabilities` is zero-initialised, a
+zero `currentExtent` is indistinguishable from a surface with no preferred size, so
+`{0,0}` went to `vkCreateSwapchainKHR`, which failed, and the only line printed
+blamed the create and not the query — zero-initialised is not "undefined", it is a
+defined value that happens to be a lie. Then both `vkGetSwapchainImagesKHR` calls
+(a zero `imageCount` means no framebuffers and a black frame with every create
+reported as a success), the depth `vkBindImageMemory` (an image bound to nothing
+makes every depth test a coin flip), two `vkCreateSemaphore` and a `vkCreateFence`
+(a null semaphore is not "no semaphore", it is a wait that is silently absent),
+four enumerations (a failed count is not "zero of them", and the "is an ICD
+installed?" line is the wrong answer for a loader that could not be asked), the
+surface format and present-mode queries (the B8G8R8A8/FIFO fallbacks are
+deliberate and stay; what was wrong is that they were silent), both
+`vkDeviceWaitIdle` calls (the one before a swapchain rebuild now refuses BEFORE
+destroying the framebuffers the wait was there to make safe — AGENTS.md P3), and
+the frame path's `vkWaitForFences`, `vkResetCommandBuffer`, `vkBeginCommandBuffer`
+and `vkResetFences`. Full site-by-site record with the failure each one caused:
+`docs/evidence/2026-11-12-153-frame-seam-results.txt` §2.
+
+**A HAZARD FOUND WHILE READING, FIXED THE LONG WAY ROUND.** `endFrame` resets the
+frame's fence and submits with it; if the submit fails the fence is never signalled
+again and the next `beginFrame` waits `UINT64_MAX` on it — one refused submit
+becomes a hang two frames later. The direct fix is `vkSignalFence`, and it is not
+available: `grep -c vkSignalFence mdk_linux/third_party/vulkan/include/vulkan/vulkan_core.h`
+is 0 while `vkGetFenceStatus` is 2, so the vendored header does not declare it, and
+third-party headers are not edited to make a call available. The fence is replaced
+instead — a fresh SIGNALED one is created first and the old destroyed only if that
+succeeded, so a failed recovery changes nothing rather than trading a hang for a
+null fence.
+
+**THE GATE: 13 checks / 30 arms → 15 checks / 36 arms.** New **B11** (the seam reads
+both results, refuses on each, and the capture sits behind the frame's own result)
+and **C1** (every result-bearing Vulkan call in `vk_context.cpp` has its result
+read). Self-test: the new gate against `git show HEAD:` of all three files reds
+**exactly two of the fifteen and nothing else** — B11 and C1, naming all 24 sites at
+their real line numbers — so no existing check was weakened to admit the new ones.
+All six new arms are the pre-batch shape of their own code. Two bugs in my first
+version of C1 would have made it a pass generator and were caught by running it: it
+read **string literals**, and since this file's refusal messages name the entry
+point that failed (`vkFailed("vkBindImageMemory(depth)", result)`) the raw scan
+found 60 discarded results where there are 23; and it counted a **mention** of a
+`VK_` constant as a read, so the very arm written to prove the check — a bare
+`vkWaitForFences(..., VK_TRUE, UINT64_MAX);` — was accepted because VK_TRUE is an
+argument. The rule is now a comparison, over text with comments and strings blanked
+line-for-line. C1's rule is B5's plus this file's name-then-test house style, and
+the two are deliberately not unified (B5's statement-local rule would red 12
+already-correct sites in the context file); unifying them is next-list item 1 with
+its proof obligation stated.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`,
+**592 PASS / 0 FAIL**, and the gate line `PASS LinuxRefusalReport (15 checks, 36 arms
+adjudicated red)`. `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`,
+`COMPLETION: LEDGER VERIFIED`. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e`
+UNCHANGED — no `mdk_3ds/` path in `git diff --name-only`, so no emulator run was owed
+and none was faked. `cmake --build build-linux -j8` rc 0, no new diagnostics.
+Healthy-run measurement on this tree: the pinned capture printed zero `REFUSED`
+lines, zero `[vk] … failed` lines, and still printed
+`[vk] screenshot: wrote /tmp/verify-frame.bmp (320x240)` — which is also the proof
+that the new capture guard is not accidentally always-false. The frame is
+`cmp`-identical to its 138 predecessors, md5 `6769a13731983d65cee9df02da6cff37`.
+
+**THE BLOCKER IS STILL THE BLOCKER, AND IT IS NOT CODE.** Re-run verbatim this
+batch: `python3 tools/runner/ledger_close.py --row linux.render-frame` runs the
+acceptance, it passes, and then `could not verify -- [Errno 13] Permission denied:
+'…/docs/COMPLETION_LEDGER.tsv'`. Measured: the ledger is `coleshores:coleshores
+0664`, this lane is `piagent` (groups `piagent,development`), and `docs/` itself is
+`museagent:development drwxrwsr-x` — so the lane could delete and replace the
+ledger and does not, because the ledger is in `gates_batch_integrity.PROTECTED` and
+a rename is a hand edit wearing a hat. The operator fix is one command:
+`chgrp development docs/COMPLETION_LEDGER.tsv`. **This is attempt 6 of 8.**

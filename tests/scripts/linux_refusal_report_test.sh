@@ -103,6 +103,22 @@
 #        named — no free, no destroy, no unmap. A failed wait is a completion boundary
 #        that was not established, not a completion, and AGENTS.md P3 puts the boundary
 #        before CPU reuse (review-8 F1).
+#     B11 the FRAME SEAM reads both of its results. `beginFrame` and `endFrame` each
+#        return bool, and until this batch the seam returned silently on the first and
+#        discarded the second outright: a frame whose fence wait, image acquire,
+#        command-buffer reset, begin, submit or present failed was reported as a
+#        rendered frame, and its screenshot was captured and published as the pinned
+#        record of a frame that never reached the display.
+#
+#   context (mdk_linux/src/render/vk/vk_context.cpp)
+#     C1 every result-bearing Vulkan call in the file has its result read. This is the
+#        property B5 was written for, one file over, and the file is where review-8 F3
+#        said it still lived: 23 of the 39 result-bearing calls there discarded their
+#        VkResult, the worst being a failed surface-capabilities query that left a
+#        zero-initialised extent and made vkCreateSwapchainKHR fail with a line
+#        blaming the create. The rule is B5's plus the file's own idiom (see
+#        `unchecked_result_calls`), because this file reads a result by naming it and
+#        testing it on the next line.
 #
 # Every check is paired with a mutation arm, and every arm names the one check it
 # must turn red (review-7 F2's rule: an arm satisfied by a different check leaves
@@ -121,6 +137,7 @@ import sys
 ROOT = sys.argv[1]
 FRONTEND = "mdk_linux/src/main.cpp"
 BACKEND = "mdk_linux/src/render/renderer_vk.cpp"
+CONTEXT = "mdk_linux/src/render/vk/vk_context.cpp"
 
 # The backend functions that can refuse, and the pattern that marks a block as a
 # REFUSAL rather than a caller-error guard. A guard (`if (!r || !px || w <= 0)`)
@@ -166,6 +183,8 @@ CHK = {
     "B8": "the one-shot command buffer and its pool are handed over together",
     "B9": "teardown frees the memory only after destroying what was bound to it",
     "B10": "a one-shot submission whose completion was never proven releases nothing",
+    "B11": "the frame seam reads both beginFrame's and endFrame's result and says so",
+    "C1": "every result-bearing Vulkan call in vk_context.cpp has its result read",
 }
 
 # The identifiers a printed byte figure may use besides the ones in the create
@@ -203,6 +222,132 @@ VOID_ENTRY_POINTS = {
     "vkGetBufferMemoryRequirements",
     "vkGetImageMemoryRequirements",
 }
+
+# The context file calls three more entry points that are not result-bearing:
+# `vkGetPhysicalDeviceQueueFamilyProperties` and `vkGetDeviceQueue` are void, and
+# `vkGetInstanceProcAddr` returns a function POINTER, not a VkResult. They are
+# added here and NOT to VOID_ENTRY_POINTS above, because that set is B5's and B5
+# must not move while a new check is being introduced. The addition is provably
+# neutral for B5: `renderer_vk.cpp` calls none of the three (grep counts zero for
+# each), so no verdict B5 gives can change because of this list.
+CONTEXT_VOID_ENTRY_POINTS = VOID_ENTRY_POINTS | {
+    "vkGetPhysicalDeviceQueueFamilyProperties",
+    "vkGetDeviceQueue",
+    "vkGetInstanceProcAddr",
+}
+
+
+def strip_code(text):
+    """Blank out comments AND string literals, keeping every line number.
+
+    String literals matter here in a way they did not for the other checks: this
+    file's refusal messages NAME the entry point that failed —
+    `vkFailed("vkBindImageMemory(depth)", result)` — and a scan that reads a
+    message sees a call site that does not exist. Without this, the pre-batch file
+    scored 60 discarded results where it has 23, and every one of the extra 37 was
+    a string.
+
+    Newlines are preserved so the line numbers this gate prints are the file's
+    (review-8 F5).
+    """
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if text[i:i + 2] == "//":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+            continue
+        if text[i:i + 2] == "/*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+            i = j
+            continue
+        if ch in "\"'":
+            j = i + 1
+            while j < n and text[j] != ch:
+                if text[j] == "\\":
+                    j += 1
+                j += 1
+            j = min(j + 1, n)
+            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+            i = j
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def unchecked_result_calls(code, void_entry_points):
+    """Every result-bearing Vulkan call whose VkResult is not read, as (line, name).
+
+    A result is READ in one of two shapes, and both are accepted because the two
+    files in this gate use different ones:
+
+      1. the call sits inside the test itself — `if (vkCreateBuffer(...) !=
+         VK_SUCCESS)` — which is `renderer_vk.cpp`'s house style and is all B5
+         accepts;
+      2. the call is assigned to a name and the next thing that touches that name
+         compares it against a `VK_` constant — `VkResult result = vkResetFences(...);
+         if (result != VK_SUCCESS)`. This is `vk_context.cpp`'s house style, and it
+         is the shape the two-call enumeration idiom needs, because a fill call may
+         legitimately answer VK_INCOMPLETE and a statement-local test cannot say so.
+
+    A reassignment before the first comparison is RED, not read: a value overwritten
+    before it was examined was never examined.
+
+    What this still cannot see: that the test does the right thing with the value, or
+    that the branch it guards is reachable. It is a shape rule, like every other
+    check in this file, because the shape is what a driver refusing is invisible
+    about.
+    """
+    calls = [m for m in re.finditer(r"\bvk(?:%s)[A-Za-z0-9_]*" % "|".join(RESULT_VERBS), code)
+             if code[m.end():].lstrip().startswith("(")]
+    calls += [m for m in re.finditer(r"\bvkGet[A-Za-z0-9_]*", code)
+              if m.group(0) not in void_entry_points
+              and code[m.end():].lstrip().startswith("(")]
+    bad = []
+    for m in sorted(set(calls), key=lambda m: m.start()):
+        start = -1
+        for ch in (";", "{", "}"):
+            start = max(start, code.rfind(ch, 0, m.start()))
+        end = code.find(";", m.end())
+        if end < 0:
+            end = len(code)
+        stmt = code[start + 1:end]
+        # A COMPARISON against a VK_ constant, not a mention of one. The first version
+        # asked whether the statement contained `VK_` at all, and the mutation written
+        # to prove this check accepted a bare
+        # `vkWaitForFences(..., VK_TRUE, UINT64_MAX);` as read, because VK_TRUE is an
+        # ARGUMENT. B5 has the same weakness and is left alone; here the rule is the
+        # comparison, which is the thing that actually reads a result.
+        if re.search(r"[!=]=[ \t]*VK_|case[ \t]+VK_", stmt):
+            continue
+        prefix = code[start + 1:m.start()]
+        named = re.search(r"(?:VkResult\s+)?(\w+)\s*=\s*$", prefix)
+        if named:
+            # The value is read if the NEXT thing that touches the name compares it
+            # against a VkResult constant. "Next thing that touches it" and not "the
+            # next statement": the swapchain-image acquire retries inside an `if` and
+            # both attempts share the one test after the block, and a rule that
+            # demanded adjacency would have to duplicate that test in the source to
+            # satisfy the gate, which is the gate writing the code. It is still not a
+            # name match over the whole function: a reassignment before the first
+            # comparison means the value was thrown away, and that is red.
+            name = named.group(1)
+            tail = code[end + 1:end + 400]
+            tested = re.search(r"\b" + re.escape(name) + r"\b[ \t]*[!=]=[ \t]*VK_"
+                               r"|\bswitch[ \t]*\([ \t]*" + re.escape(name) + r"\b[ \t]*\)",
+                               tail)
+            moved = re.search(r"\b" + re.escape(name) + r"\b[ \t]*=[ \t]*[^=]", tail)
+            if tested and (moved is None or tested.start() < moved.start()):
+                continue
+        bad.append((line_of(code, m.start()), m.group(0)))
+    return calls, bad
 
 
 def block_span_from(text, pos):
@@ -945,18 +1090,94 @@ def backend_checks(r, text, quiet):
         "what it names; freeing it there is the use-after-free the refusal's own words "
         "warned about (review-8 F1, AGENTS.md P3)" + ("" if not bad10 else " — " + "; ".join(bad10)))
 
+    # B11: the frame seam reads BOTH of its results, and says so.
+    #
+    # `beginFrame` and `endFrame` each return bool. The seam used to `return` from the
+    # first without a word and throw the second away outright, so a frame that never
+    # began or never submitted was indistinguishable from one that drew: same return
+    # value, same counters, and — worst — the same screenshot, read back from a
+    # swapchain image this frame never wrote and then published as the pinned record.
+    # The context file refuses quietly on purpose (it has no per-request memory and a
+    # frame-boundary failure repeats every frame); the seam is the layer that owns
+    # refusal reporting, so the seam is what this pins.
+    bad11 = []
+    fsp = body_span(code, "mdk_render_begin_frame")
+    begun = False
+    if fsp:
+        for cond, block, _spn in blocks(code, fsp[0], fsp[1]):
+            if "mdk::vk::beginFrame(" not in cond:
+                continue
+            head = block[:block.find("return")] if "return" in block else block
+            if "refused(" in head:
+                begun = True
+    if not begun:
+        bad11.append("mdk_render_begin_frame drops the frame without refusing before "
+                     "the return")
+    fsp = body_span(code, "mdk_render_end_frame")
+    named = re.search(r"(\w+)[ \t]*=[ \t]*mdk::vk::endFrame[ \t]*\(", code[fsp[0]:fsp[1]]) if fsp else None
+    if not named:
+        bad11.append("mdk_render_end_frame does not capture endFrame's result — a "
+                     "discarded bool is a frame that cannot fail")
+    else:
+        name = named.group(1)
+        told = False
+        for cond, block, _spn in blocks(code, fsp[0], fsp[1]):
+            # `blocks()` hands back the condition WITHOUT its closing paren, so the
+            # name has to be bounded by "not an identifier character" rather than by
+            # a bracket.
+            if re.search(r"![ \t]*" + re.escape(name) + r"(?![\w])", cond) and "refused(" in block:
+                told = True
+        if not told:
+            bad11.append("nothing tells the operator that %s was false" % name)
+        # The capture has to sit behind the frame's own result: a BMP of an image the
+        # frame never wrote reads exactly like a BMP of the frame, and a frame record
+        # that cannot be trusted is worse than none, because one gets committed.
+        shot = code.find("captureSwapchain(", fsp[0])
+        empty = code.find("screenshotPath.empty()", fsp[0])
+        if shot > empty and re.search(r"\b" + name + r"\b", code[empty:shot]) is None:
+            bad11.append("the screenshot is captured without consulting %s, so a frame "
+                         "that never submitted can still be published" % name)
+    say(CHK["B11"], not bad11,
+        "a frame whose begin, submit or present failed is not a frame; the seam is the "
+        "only layer that can say so, and its screenshot is the record the loop commits" +
+        ("" if not bad11 else " — " + "; ".join(bad11)))
+
+
+def context_checks(r, text, quiet):
+    """The Linux Vulkan context: the same result rule as B5, over the file review-8 F3
+    named as the place it still lived. See `unchecked_result_calls` for why the rule
+    is B5's plus this file's assignment-then-test idiom."""
+    code = strip_code(text)
+
+    def say(label, ok, detail=""):
+        if quiet:
+            r.quiet(label, ok)
+        else:
+            r.check(label, ok, detail)
+
+    calls, bad = unchecked_result_calls(code, CONTEXT_VOID_ENTRY_POINTS)
+    say(CHK["C1"], bool(calls) and not bad,
+        "a discarded VkResult leaves an out-parameter holding whatever the initialiser "
+        "put there and a submission unexecuted, and the next call cannot tell the two "
+        "apart" +
+        ("" if not bad else " — unchecked at " +
+         ", ".join("line %d (%s)" % t for t in bad)))
+
 
 def adjudicate(who, text, quiet=False):
     r = Result(who)
     if who.startswith("Linux frontend"):
         frontend_checks(r, text, quiet)
+    elif who.startswith("Linux context"):
+        context_checks(r, text, quiet)
     else:
         backend_checks(r, text, quiet)
     return r
 
 
 FILES = {}
-for who, rel in (("Linux frontend", FRONTEND), ("Linux backend", BACKEND)):
+for who, rel in (("Linux frontend", FRONTEND), ("Linux backend", BACKEND),
+                 ("Linux context", CONTEXT)):
     try:
         FILES[who] = open(ROOT + "/" + rel, errors="replace").read()
     except OSError as exc:
@@ -964,7 +1185,8 @@ for who, rel in (("Linux frontend", FRONTEND), ("Linux backend", BACKEND)):
         sys.exit(1)
 
 real = [adjudicate("Linux frontend", FILES["Linux frontend"]),
-        adjudicate("Linux backend", FILES["Linux backend"])]
+        adjudicate("Linux backend", FILES["Linux backend"]),
+        adjudicate("Linux context", FILES["Linux context"])]
 
 # ---------------------------------------------------------------------------
 # The arms. Each is a realistic edit that COMPILES — a mutant that would not build
@@ -973,6 +1195,11 @@ real = [adjudicate("Linux frontend", FILES["Linux frontend"]),
 # ---------------------------------------------------------------------------
 FRONT_ARMS = []
 BACK_ARMS = []
+CTX_ARMS = []
+
+
+def arm_context(label, mutate, expected):
+    CTX_ARMS.append((label, mutate, CHK[expected]))
 
 
 def arm_frontend(label, mutate, expected):
@@ -1325,9 +1552,111 @@ arm_backend("null-return-respelled", be_null_return_respelled, "B4")
 arm_backend("null-return-through-a-named-local", be_null_return_via_local, "B4")
 arm_backend("memory-freed-before-destroy", be_free_before_destroy, "B9")
 
+
+def be_begin_frame_silent(s):
+    return s.replace("""    if (!mdk::vk::beginFrame(&r->ctx, w, h, true, clear)) {
+        refused("begin the frame at %ux%u: nothing was recorded and nothing will be "
+                "presented this frame",
+                w, h);
+        return;
+    }""", """    if (!mdk::vk::beginFrame(&r->ctx, w, h, true, clear)) {
+        return;
+    }""", 1)
+
+
+def be_end_frame_result_discarded(s):
+    # The exact pre-batch shape: the frame's own result thrown away and the
+    # screenshot captured from whatever the swapchain image happened to hold.
+    return s.replace("""    const bool submitted = mdk::vk::endFrame(&r->ctx);
+    r->inFrame = false;
+    if (!submitted) {
+        refused("end the frame: its commands were not submitted or not presented, so this "
+                "frame did not reach the display");
+    }
+    if (!r->screenshotPath.empty()) {
+        const std::string path = r->screenshotPath;
+        r->screenshotPath.clear();
+        if (!submitted) {
+            // The readback would succeed and print its usual "wrote N" line about an
+            // image this frame never drew into. A frame record that cannot be trusted
+            // is worse than no frame record, because a frame record gets committed.
+            refused("capture the frame to %s: the frame it was asked to capture was never "
+                    "submitted, so the image would not be this frame's",
+                    path.c_str());
+        } else {
+            captureSwapchain(r, path.c_str());
+        }
+    }""", """    mdk::vk::endFrame(&r->ctx);
+    r->inFrame = false;
+    if (!r->screenshotPath.empty()) {
+        const std::string path = r->screenshotPath;
+        r->screenshotPath.clear();
+        captureSwapchain(r, path.c_str());
+    }""", 1)
+
+
+def be_capture_of_an_unsubmitted_frame(s):
+    # The result is read and reported, but the pinned frame is captured anyway: the
+    # picture of a frame that never reached the display, published as the record.
+    return s.replace("""        if (!submitted) {
+            // The readback would succeed and print its usual "wrote N" line about an
+            // image this frame never drew into. A frame record that cannot be trusted
+            // is worse than no frame record, because a frame record gets committed.
+            refused("capture the frame to %s: the frame it was asked to capture was never "
+                    "submitted, so the image would not be this frame's",
+                    path.c_str());
+        } else {
+            captureSwapchain(r, path.c_str());
+        }""", """        captureSwapchain(r, path.c_str());""", 1)
+
+
+arm_backend("begin-frame-refusal-deleted", be_begin_frame_silent, "B11")
+arm_backend("end-frame-result-discarded", be_end_frame_result_discarded, "B11")
+arm_backend("screenshot-of-an-unsubmitted-frame", be_capture_of_an_unsubmitted_frame, "B11")
+
+
+def ce_fence_wait_result_dropped(s):
+    # The exact pre-batch shape, declaration and all: the fence wait was a
+    # statement, and `result` belonged to the acquire that followed it.
+    return s.replace("""    VkResult result = vkWaitForFences(ctx->device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+
+    uint32_t imageIndex = 0;
+    result = vkAcquireNextImageKHR(""", """    vkWaitForFences(ctx->device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+
+    uint32_t imageIndex = 0;
+    VkResult result = vkAcquireNextImageKHR(""", 1)
+
+
+def ce_begin_command_buffer_result_dropped(s):
+    return s.replace("""    result = vkBeginCommandBuffer(frame.commandBuffer, &beginInfo);
+    if (result != VK_SUCCESS) {
+        return false;
+    }""", """    vkBeginCommandBuffer(frame.commandBuffer, &beginInfo);""", 1)
+
+
+def ce_named_result_never_tested(s):
+    # The assignment is there and the TEST is not, which is the shape a name-based
+    # scan would accept and the shape that reads nothing.
+    return s.replace("""    const VkResult idle = vkDeviceWaitIdle(ctx->device);
+    if (idle != VK_SUCCESS) {
+        vkFailed("vkDeviceWaitIdle(before the swapchain rebuild; nothing was destroyed)",
+                 idle);
+        return false;
+    }""", """    const VkResult idle = vkDeviceWaitIdle(ctx->device);
+    (void)idle;""", 1)
+
+
+arm_context("fence-wait-result-dropped", ce_fence_wait_result_dropped, "C1")
+arm_context("begin-command-buffer-result-dropped", ce_begin_command_buffer_result_dropped, "C1")
+arm_context("named-result-never-tested", ce_named_result_never_tested, "C1")
+
 checks = sum(r.checks for r in real)
 arms = [("Linux frontend", FRONT_ARMS, FILES["Linux frontend"]),
-        ("Linux backend", BACK_ARMS, FILES["Linux backend"])]
+        ("Linux backend", BACK_ARMS, FILES["Linux backend"]),
+        ("Linux context", CTX_ARMS, FILES["Linux context"])]
 total = sum(len(a[1]) for a in arms)
 print("linux_refusal_report: %d checks, %d mutation arms" % (checks, total))
 arms_red = 0

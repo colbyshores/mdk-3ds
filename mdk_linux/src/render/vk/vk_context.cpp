@@ -18,15 +18,60 @@ namespace vk {
 
 namespace {
 
+// A FAILURE THAT SPEAKS.
+//
+// Every result-bearing Vulkan call in this file has its result read, and every
+// init-path one that can fail says so: a device that refuses to build a swapchain
+// and prints nothing is a black window with a green build, which is the same
+// invisible-refusal defect `renderer_vk.cpp`'s `refused()` exists for.
+//
+// WHY THIS IS NOT THAT HELPER. `refused()` remembers every distinct request so a
+// per-draw refusal prints once; this file has no such memory and must not
+// duplicate it. That is fine because the split is by how often a site can repeat:
+// everything here runs once per process (instance, device, swapchain, depth,
+// frame resources), so a plain line cannot flood. The FRAME path is the one that
+// repeats, and it is reported by the seam instead — `beginFrame`/`endFrame`
+// return false quietly and `mdk_render_begin_frame`/`mdk_render_end_frame` print
+// through `refused()`, which is the layer that owns refusal reporting.
+//
+// It flushes for the reason the seam's helper flushes: a refusal is exactly the
+// moment the process may die with the line that explains it still in the buffer.
+void vkFailed(const char* what, VkResult result) {
+    std::printf("[vk] %s failed (VkResult %d)\n", what, (int)result);
+    std::fflush(stdout);
+}
+
+// A refusal with no VkResult to report: the call succeeded and the ANSWER is the
+// problem (a swapchain that reports zero images, say).
+void vkRefused(const char* what) {
+    std::printf("[vk] REFUSED %s\n", what);
+    std::fflush(stdout);
+}
+
 // The validation layer, when it is asked for.
 static const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
 bool hasValidationLayer() {
+    // BOTH CALLS, BOTH RESULTS. The count call and the fill call can each fail,
+    // and the fill call may legitimately answer VK_INCOMPLETE (a layer appeared
+    // between the two). A discarded result here makes "I could not read the list"
+    // and "there is no validation layer" the same return value, and the one thing
+    // that turns validation off does so in silence.
     uint32_t count = 0;
-    vkEnumerateInstanceLayerProperties(&count, nullptr);
+    VkResult result = vkEnumerateInstanceLayerProperties(&count, nullptr);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkEnumerateInstanceLayerProperties (the count; validation stays off "
+                 "because the list could not be read)", result);
+        return false;
+    }
     std::vector<VkLayerProperties> layers(count);
     if (count > 0) {
-        vkEnumerateInstanceLayerProperties(&count, layers.data());
+        result = vkEnumerateInstanceLayerProperties(&count, layers.data());
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+            vkFailed("vkEnumerateInstanceLayerProperties (the list; validation stays off)",
+                     result);
+            return false;
+        }
     }
     for (uint32_t i = 0; i < count; i++) {
         if (strcmp(layers[i].layerName, kValidationLayer) == 0) {
@@ -40,11 +85,24 @@ bool hasValidationLayer() {
 // is one we can render to; otherwise B8G8R8A8_UNORM is the fallback that
 // virtually every platform supports.
 VkSurfaceFormatKHR chooseSurfaceFormat(VkPhysicalDevice device, VkSurfaceKHR surface) {
+    // The queries are read, and a failure is PRINTED rather than swallowed: the
+    // B8G8R8A8/FIFO fallback below is deliberate and stays, but a surface whose
+    // formats could not be read is a fact the operator needs, because the
+    // fallback is a guess about someone else's display.
     uint32_t count = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &count, nullptr);
+    VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &count, nullptr);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkGetPhysicalDeviceSurfaceFormatsKHR (the count)", result);
+        count = 0;  // the out-parameter is not trustworthy when the call failed
+    }
     std::vector<VkSurfaceFormatKHR> formats(count);
     if (count > 0) {
-        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &count, formats.data());
+        result = vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &count, formats.data());
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+            vkFailed("vkGetPhysicalDeviceSurfaceFormatsKHR (the list)", result);
+            count = 0;
+            formats.clear();
+        }
     }
     for (const VkSurfaceFormatKHR& format : formats) {
         if (format.format == VK_FORMAT_B8G8R8A8_UNORM && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
@@ -67,10 +125,20 @@ VkSurfaceFormatKHR chooseSurfaceFormat(VkPhysicalDevice device, VkSurfaceKHR sur
 
 VkPresentModeKHR choosePresentMode(VkPhysicalDevice device, VkSurfaceKHR surface, bool vsync) {
     uint32_t count = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &count, nullptr);
+    VkResult result = vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &count, nullptr);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkGetPhysicalDeviceSurfacePresentModesKHR (the count)", result);
+        count = 0;
+    }
     std::vector<VkPresentModeKHR> modes(count);
     if (count > 0) {
-        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &count, modes.data());
+        result = vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &count,
+                                                           modes.data());
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+            vkFailed("vkGetPhysicalDeviceSurfacePresentModesKHR (the list)", result);
+            count = 0;
+            modes.clear();
+        }
     }
     // FIFO is ALWAYS supported and is the one that tears nothing. It is the
     // fallback for every other case, including when vsync is off: the
@@ -101,7 +169,18 @@ bool findQueueFamily(VkPhysicalDevice device, VkSurfaceKHR surface, uint32_t* ou
     for (uint32_t i = 0; i < count; i++) {
         if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
             VkBool32 presentSupported = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupported);
+            const VkResult supported =
+                vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupported);
+            if (supported != VK_SUCCESS) {
+                // A failed query leaves the out-parameter undefined, so the
+                // VK_FALSE this initialises to is not evidence that the family
+                // cannot present — it is evidence that nobody asked. Say so and
+                // move on: a family whose support is unknown is not one to build
+                // the present queue on.
+                vkFailed("vkGetPhysicalDeviceSurfaceSupportKHR (queue family skipped)",
+                         supported);
+                continue;
+            }
             if (presentSupported) {
                 *outFamily = i;
                 return true;
@@ -115,8 +194,21 @@ bool createSwapchain(Context* ctx, uint32_t width, uint32_t height, bool vsync) 
     VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(ctx->physicalDevice, ctx->surface);
     VkPresentModeKHR presentMode = choosePresentMode(ctx->physicalDevice, ctx->surface, vsync);
 
+    // A FAILED CAPABILITIES QUERY IS NOT AN EMPTY ONE. `capabilities` is
+    // zero-initialised, and a zero `currentExtent` here is indistinguishable from a
+    // surface with no preferred size, so the clamp below hands {0,0} to
+    // vkCreateSwapchainKHR — which fails, and the line printed blames the create
+    // and not the query that caused it. Zero-initialised is not "undefined"; it is
+    // a defined value that happens to be a lie, which is worse, because it looks
+    // like an answer.
     VkSurfaceCapabilitiesKHR capabilities = {};
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx->physicalDevice, ctx->surface, &capabilities);
+    VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx->physicalDevice,
+                                                                ctx->surface, &capabilities);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkGetPhysicalDeviceSurfaceCapabilitiesKHR (no swapchain can be sized "
+                 "without it)", result);
+        return false;
+    }
 
     // The extent is clamped to what the surface supports: a window that is
     // momentarily larger than the display must not make the swapchain
@@ -160,21 +252,44 @@ bool createSwapchain(Context* ctx, uint32_t width, uint32_t height, bool vsync) 
     createInfo.oldSwapchain = ctx->swapchain;
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-    VkResult result = vkCreateSwapchainKHR(ctx->device, &createInfo, nullptr, &swapchain);
+    result = vkCreateSwapchainKHR(ctx->device, &createInfo, nullptr, &swapchain);
     if (result != VK_SUCCESS) {
         std::printf("[vk] vkCreateSwapchainKHR failed (%d)\n", (int)result);
         return false;
     }
     ctx->swapchain = swapchain;
 
+    // A SWAPCHAIN WITH NO IMAGES IS A RENDERER WITH NO FRAMEBUFFER. `ctx->imageCount`
+    // drives createFramebuffers and every loop that walks the images; a zero left
+    // here means beginFrame records a frame with no framebuffer in it and the
+    // picture is black with every create reported as a success. VK_INCOMPLETE is a
+    // legitimate answer from the second call (the image set changed between the
+    // two); a zero count is never one. The count the FILL reports is the one kept,
+    // because that is the number of entries it actually wrote.
     uint32_t count = 0;
-    vkGetSwapchainImagesKHR(ctx->device, ctx->swapchain, &count, nullptr);
+    result = vkGetSwapchainImagesKHR(ctx->device, ctx->swapchain, &count, nullptr);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkGetSwapchainImagesKHR (the count)", result);
+        return false;
+    }
+    if (count == 0) {
+        vkRefused("the swapchain: it reported zero images");
+        return false;
+    }
     if (count > 16) {
         count = 16;
     }
-    ctx->imageCount = count;
     std::vector<VkImage> images(count);
-    vkGetSwapchainImagesKHR(ctx->device, ctx->swapchain, &count, images.data());
+    result = vkGetSwapchainImagesKHR(ctx->device, ctx->swapchain, &count, images.data());
+    if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+        vkFailed("vkGetSwapchainImagesKHR (the images)", result);
+        return false;
+    }
+    if (count == 0) {
+        vkRefused("the swapchain: its image list came back empty");
+        return false;
+    }
+    ctx->imageCount = count;
     for (uint32_t i = 0; i < count; i++) {
         ctx->images[i] = images[i];
     }
@@ -304,7 +419,18 @@ bool createDepthImage(Context* ctx) {
         std::printf("[vk] vkAllocateMemory(depth) failed (%d)\n", (int)result);
         return false;
     }
-    vkBindImageMemory(ctx->device, ctx->depthImage, ctx->depthMemory, 0);
+    // An image bound to nothing is a depth attachment that reads whatever the
+    // allocation happened to hold, and every depth test in the frame is then a
+    // coin flip. Destroy the object before releasing the memory bound to it.
+    result = vkBindImageMemory(ctx->device, ctx->depthImage, ctx->depthMemory, 0);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkBindImageMemory(depth)", result);
+        vkDestroyImage(ctx->device, ctx->depthImage, nullptr);
+        ctx->depthImage = VK_NULL_HANDLE;
+        vkFreeMemory(ctx->device, ctx->depthMemory, nullptr);
+        ctx->depthMemory = VK_NULL_HANDLE;
+        return false;
+    }
 
     VkImageViewCreateInfo viewInfo = {};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -400,15 +526,34 @@ bool createFrameResources(Context* ctx) {
 
         VkSemaphoreCreateInfo semInfo = {};
         semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        vkCreateSemaphore(ctx->device, &semInfo, nullptr, &frame.renderFinished);
-        vkCreateSemaphore(ctx->device, &semInfo, nullptr, &frame.presentWait);
+        // A NULL SEMAPHORE IS NOT "NO SEMAPHORE" TO A SUBMIT — it is a wait that
+        // is silently absent. `presentWait` missing means the present does not
+        // wait for the render (a torn frame); `renderFinished` missing means the
+        // present waits on nothing at all. Both are worse than a failed init, so
+        // the create is read and the context refuses.
+        result = vkCreateSemaphore(ctx->device, &semInfo, nullptr, &frame.renderFinished);
+        if (result != VK_SUCCESS) {
+            vkFailed("vkCreateSemaphore(renderFinished)", result);
+            return false;
+        }
+        result = vkCreateSemaphore(ctx->device, &semInfo, nullptr, &frame.presentWait);
+        if (result != VK_SUCCESS) {
+            vkFailed("vkCreateSemaphore(presentWait)", result);
+            return false;
+        }
 
         VkFenceCreateInfo fenceInfo = {};
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         // The fence starts SIGNALED so the first frame does not wait on a
         // fence that nobody will ever signal.
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-        vkCreateFence(ctx->device, &fenceInfo, nullptr, &frame.inFlight);
+        // A fence that does not exist is a frame that never completes: beginFrame
+        // would wait on a null handle, which is not a wait at all.
+        result = vkCreateFence(ctx->device, &fenceInfo, nullptr, &frame.inFlight);
+        if (result != VK_SUCCESS) {
+            vkFailed("vkCreateFence(inFlight)", result);
+            return false;
+        }
     }
     return true;
 }
@@ -454,10 +599,24 @@ bool createInstance(Context* ctx, bool validation) {
     }
 
     uint32_t availableCount = 0;
-    vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, nullptr);
+    // Read, and a failure leaves the list EMPTY on purpose: the check below then
+    // refuses the instance with its own line. What must not happen is a failed
+    // enumeration that looks like "the loader has no extensions".
+    VkResult result =
+        vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, nullptr);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkEnumerateInstanceExtensionProperties (the count)", result);
+        availableCount = 0;
+    }
     std::vector<VkExtensionProperties> available(availableCount);
     if (availableCount > 0) {
-        vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, available.data());
+        result =
+            vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, available.data());
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+            vkFailed("vkEnumerateInstanceExtensionProperties (the list)", result);
+            availableCount = 0;
+            available.clear();
+        }
     }
     auto isAvailable = [&](const char* name) -> bool {
         for (const VkExtensionProperties& property : available) {
@@ -489,7 +648,7 @@ bool createInstance(Context* ctx, bool validation) {
         instanceInfo.ppEnabledLayerNames = layers;
     }
 
-    VkResult result = vkCreateInstance(&instanceInfo, nullptr, &ctx->instance);
+    result = vkCreateInstance(&instanceInfo, nullptr, &ctx->instance);
     if (result != VK_SUCCESS) {
         std::printf("[vk] vkCreateInstance failed (%d)\n", (int)result);
         return false;
@@ -540,7 +699,15 @@ bool createSurface(Context* ctx, void* window) {
 
 bool createDevice(Context* ctx, uint32_t width, uint32_t height, bool vsync) {
     uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(ctx->instance, &deviceCount, nullptr);
+    // The count query and the fill are both read. A failed count is NOT "zero
+    // devices": the message below about a missing ICD is the right answer for a
+    // successful query that found nothing, and the wrong one for a loader that
+    // could not be asked.
+    VkResult result = vkEnumeratePhysicalDevices(ctx->instance, &deviceCount, nullptr);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkEnumeratePhysicalDevices (the count)", result);
+        return false;
+    }
     if (deviceCount == 0) {
         std::printf("[vk] no Vulkan physical device. (Is an ICD installed? "
                     "On a headless box, try "
@@ -548,7 +715,15 @@ bool createDevice(Context* ctx, uint32_t width, uint32_t height, bool vsync) {
         return false;
     }
     std::vector<VkPhysicalDevice> devices(deviceCount);
-    vkEnumeratePhysicalDevices(ctx->instance, &deviceCount, devices.data());
+    result = vkEnumeratePhysicalDevices(ctx->instance, &deviceCount, devices.data());
+    if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+        vkFailed("vkEnumeratePhysicalDevices (the list)", result);
+        return false;
+    }
+    if (deviceCount == 0) {
+        vkRefused("the device: the physical device list came back empty");
+        return false;
+    }
 
     bool found = false;
     for (VkPhysicalDevice candidate : devices) {
@@ -594,7 +769,7 @@ bool createDevice(Context* ctx, uint32_t width, uint32_t height, bool vsync) {
     deviceInfo.ppEnabledExtensionNames = deviceExtensions;
     deviceInfo.pEnabledFeatures = &features;
 
-    VkResult result = vkCreateDevice(ctx->physicalDevice, &deviceInfo, nullptr, &ctx->device);
+    result = vkCreateDevice(ctx->physicalDevice, &deviceInfo, nullptr, &ctx->device);
     if (result != VK_SUCCESS) {
         std::printf("[vk] vkCreateDevice failed (%d)\n", (int)result);
         return false;
@@ -620,7 +795,16 @@ void destroyContext(Context* ctx) {
         return;
     }
     if (ctx->device != VK_NULL_HANDLE) {
-        vkDeviceWaitIdle(ctx->device);
+        // Teardown cannot DO anything with a failed wait except say so: the destroys
+        // below have to happen or the device itself cannot be released. What the
+        // line buys is the record that the resources were released without a proven
+        // completion boundary (AGENTS.md P3) — the difference between a clean exit
+        // and one whose last frame was still in flight when the device went away.
+        const VkResult idle = vkDeviceWaitIdle(ctx->device);
+        if (idle != VK_SUCCESS) {
+            vkFailed("vkDeviceWaitIdle(teardown; the resources below are released without "
+                     "a proven completion)", idle);
+        }
 
         for (uint32_t i = 0; i < ctx->imageCount; i++) {
             if (ctx->framebuffers[i] != VK_NULL_HANDLE) {
@@ -677,7 +861,17 @@ void destroyContext(Context* ctx) {
 }
 
 bool recreateSwapchain(Context* ctx, uint32_t width, uint32_t height, bool vsync) {
-    vkDeviceWaitIdle(ctx->device);
+    // The wait is the ONLY thing that makes the destroys below safe: a framebuffer
+    // a submission is still reading must not be destroyed, and AGENTS.md P3 puts the
+    // completion boundary before the release. A failed wait is a boundary that was
+    // NOT established, so this refuses before it touches anything: the old swapchain
+    // stays intact and this frame is simply dropped.
+    const VkResult idle = vkDeviceWaitIdle(ctx->device);
+    if (idle != VK_SUCCESS) {
+        vkFailed("vkDeviceWaitIdle(before the swapchain rebuild; nothing was destroyed)",
+                 idle);
+        return false;
+    }
 
     for (uint32_t i = 0; i < ctx->imageCount; i++) {
         if (ctx->framebuffers[i] != VK_NULL_HANDLE) {
@@ -725,14 +919,20 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
         }
     }
 
-    // Wait for this frame's fence: the GPU must be done with the resources
-    // before the CPU touches them again. This is the GPU-completion
-    // boundary, and it is a fence, not a lock (AGENTS.md P3).
+    // THE FENCE WAIT IS THE COMPLETION BOUNDARY, so its result is the answer to "is
+    // it safe to touch this frame's resources". Discarding it means a failed wait —
+    // or a lost device — goes on to reset, begin and record a command buffer on a
+    // device that will not run it. It returns false quietly on purpose: the seam
+    // prints, once per distinct request, because a frame-boundary failure repeats
+    // every frame and this file has no refusal memory of its own.
     FrameContext& frame = ctx->frames[ctx->currentFrame];
-    vkWaitForFences(ctx->device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+    VkResult result = vkWaitForFences(ctx->device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+    if (result != VK_SUCCESS) {
+        return false;
+    }
 
     uint32_t imageIndex = 0;
-    VkResult result = vkAcquireNextImageKHR(ctx->device, ctx->swapchain, UINT64_MAX,
+    result = vkAcquireNextImageKHR(ctx->device, ctx->swapchain, UINT64_MAX,
                                             frame.presentWait, VK_NULL_HANDLE, &imageIndex);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         if (!recreateSwapchain(ctx, width, height, vsync)) {
@@ -746,11 +946,37 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
     }
     ctx->currentImage = imageIndex;
 
-    vkResetCommandBuffer(frame.commandBuffer, 0);
+    // A command buffer that failed to RESET is still recording, and beginning a
+    // recording command buffer is invalid use. A BEGIN that failed leaves every
+    // vkCmd* the renderer then issues invalid, so the frame would report success
+    // with nothing in it — the invisible empty picture, at the widest possible
+    // scale. Both are refused where they become known.
+    //
+    // WHAT THESE TWO EXITS COST, stated rather than hidden: the acquire above has
+    // already signalled `presentWait`, and nothing will consume that signal now, so
+    // the next frame's submit passes its wait one pending signal earlier than it
+    // should. It is a stale +1 on a semaphore, not a leak or a hang, it is reachable
+    // only when the driver fails a reset or a begin on an otherwise healthy device,
+    // and the OUT_OF_DATE retry above can already leave the same indeterminate signal
+    // — the spec does not say the semaphore is untouched when an acquire fails. There
+    // is nothing to call: Vulkan can post a semaphore signal from the CPU
+    // (`vkSignalSemaphore` is declared here) but has no way to WITHDRAW one, and the
+    // obvious reordering — reset and begin BEFORE the acquire — is worse, because a
+    // later acquire failure would then leave the command buffer recording, and
+    // `vkResetCommandBuffer` on a recording buffer is invalid use, which would wedge
+    // every frame after the first failure. Recorded as an open item, not silently
+    // accepted.
+    result = vkResetCommandBuffer(frame.commandBuffer, 0);
+    if (result != VK_SUCCESS) {
+        return false;
+    }
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(frame.commandBuffer, &beginInfo);
+    result = vkBeginCommandBuffer(frame.commandBuffer, &beginInfo);
+    if (result != VK_SUCCESS) {
+        return false;
+    }
 
     // The clear colour is 0xAARRGGBB (the seam's convention); the swapchain
     // is B8G8R8A8, so the bytes land reversed. UNORM, not SRGB: the C#
@@ -816,9 +1042,37 @@ bool endFrame(Context* ctx) {
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &frame.renderFinished;
 
-    vkResetFences(ctx->device, 1, &frame.inFlight);
-    VkResult result = vkQueueSubmit(ctx->queue, 1, &submitInfo, frame.inFlight);
+    // The reset is read too: if it failed the fence's state is unknown, and a
+    // submit that relies on that fence is a guess. Refuse BEFORE the submit, so
+    // nothing is queued behind a fence nobody can wait on.
+    VkResult result = vkResetFences(ctx->device, 1, &frame.inFlight);
     if (result != VK_SUCCESS) {
+        return false;
+    }
+    result = vkQueueSubmit(ctx->queue, 1, &submitInfo, frame.inFlight);
+    if (result != VK_SUCCESS) {
+        // The fence was reset and nothing is going to signal it, so the NEXT
+        // beginFrame would wait UINT64_MAX on a fence no submission will ever
+        // signal: one refused submit becomes a hang two frames later. The fence is
+        // not associated with any queue (the submit failed), so the way back to the
+        // invariant "this slot's fence is signalled when the slot is free" is a
+        // fresh signalled one. It is CREATED BEFORE the old one is destroyed, so a
+        // failed recovery changes nothing and leaves the hazard printed rather than
+        // swapping a hang for a null fence. (`vkSignalFence` is the direct way back
+        // and is not declared by the vendored header this build compiles against,
+        // so it is not available here.)
+        VkFence replacement = VK_NULL_HANDLE;
+        VkFenceCreateInfo recover = {};
+        recover.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        recover.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        const VkResult refence = vkCreateFence(ctx->device, &recover, nullptr, &replacement);
+        if (refence == VK_SUCCESS) {
+            vkDestroyFence(ctx->device, frame.inFlight, nullptr);
+            frame.inFlight = replacement;
+        } else {
+            vkFailed("vkCreateFence(replacing the fence of a refused submit; the next "
+                     "frame's fence wait may not return)", refence);
+        }
         return false;
     }
 
