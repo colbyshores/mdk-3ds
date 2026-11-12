@@ -315,12 +315,25 @@ void refused(const char* fmt, ...);
 // handle was allocated from (review-6 F2). Handing the pool to the caller makes the
 // pairing impossible to lose: there is no ledger to desynchronize, nothing left to
 // drain at teardown, and a refusal has exactly one owner for the pool it made.
-// Returns false when the upload was NEVER EXECUTED.
 //
-// The three VkResults here were discarded, and the caller could not tell an upload
-// that ran from one the driver refused: `createHostImage` returned true for an image
-// whose layout transition and buffer->image copy lived in a command stream that was
-// never submitted, which is review-5 F1's "an image that exists but is not the
+// THREE OUTCOMES, NOT TWO, AND THE THIRD ONE OWNS SOMETHING.
+//
+// This used to return a bool, which could only say "the upload did not happen" — and
+// a bool has to be one of two things, so the case where the queue ACCEPTED the work
+// and the wait then failed was reported as the case where the queue refused it. The
+// two demand opposite things of the caller. A submit the queue refused never touched
+// the resources its commands name, so they are still purely the CPU's to release. A
+// submit the queue accepted and a wait that could not prove finished may STILL BE
+// RUNNING, and releasing the memory it reads or writes is the use-after-free
+// AGENTS.md P3 forbids in its own words: "do not overwrite, resize, or free an
+// in-flight resource ... put the completion boundary BEFORE CPU reuse". A failed
+// wait is a completion boundary that was NOT established, which is not the same fact
+// as a completion (review-8 F1).
+//
+// The three VkResults here were discarded once, and the caller could not tell an
+// upload that ran from one the driver refused: `createHostImage` returned true for an
+// image whose layout transition and buffer->image copy lived in a command stream that
+// was never submitted, which is review-5 F1's "an image that exists but is not the
 // texture" re-opened one level down (review-7 F1). AGENTS.md P3 asks for the same
 // distinction from the other side: CPU ownership, cache visibility and GPU
 // completion are three obligations, and `vkQueueWaitIdle` is the completion boundary
@@ -330,31 +343,59 @@ void refused(const char* fmt, ...);
 // failed is not finalised, and submitting an unfinalised command buffer is invalid
 // use, so a failed end must not reach the submit; and there is no point waiting for a
 // submission the queue refused.
-bool endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {
-    bool ok = vkEndCommandBuffer(cb) == VK_SUCCESS;
-    if (!ok) {
+enum class OneShot {
+    done,             // the wait proved it: everything it named is safe to release
+    neverSubmitted,   // the queue refused it: safe to release, and the resource is refused
+    unfenced          // accepted, completion unknown: NOT this side of the boundary
+};
+
+OneShot endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {
+    const bool ended = vkEndCommandBuffer(cb) == VK_SUCCESS;
+    if (!ended) {
         refused("end of a one-shot command buffer: the recording is not finalised, so "
                 "nothing it holds is submitted and its caller must not believe it was");
     }
-    if (ok) {
+    bool submitted = false;
+    if (ended) {
         VkSubmitInfo submit = {};
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &cb;
-        if (vkQueueSubmit(ctx->queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS) {
+        submitted = vkQueueSubmit(ctx->queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS;
+        if (!submitted) {
             refused("submit of a one-shot upload: nothing was copied and nothing was "
                     "transitioned, so the resource this upload was made for is refused");
-            ok = false;
         }
     }
-    if (ok && vkQueueWaitIdle(ctx->queue) != VK_SUCCESS) {
-        refused("wait for a one-shot upload: the copy is not known to have finished, so "
-                "the staging memory it read is not yet safe to release");
-        ok = false;
+    OneShot result = OneShot::neverSubmitted;
+    if (submitted) {
+        // The queue has it. The retry at device scope is here because a device-wide
+        // wait proves the same thing about this queue; it waits more than this queue
+        // does — a stall, which is affordable on the one path where the narrow wait has
+        // already failed — and a queue wait can fail where a device wait does not. If
+        // both say no, the submission's completion is UNKNOWN, and unknown is not
+        // finished: the caller must not release what the commands name.
+        if (vkQueueWaitIdle(ctx->queue) == VK_SUCCESS ||
+            vkDeviceWaitIdle(ctx->device) == VK_SUCCESS) {
+            result = OneShot::done;
+        } else {
+            refused("wait for a one-shot upload: the copy is not known to have finished, "
+                    "so the memory it reads or writes is NOT safe to release and its "
+                    "caller must abandon it rather than free it");
+            result = OneShot::unfenced;
+        }
     }
-    vkFreeCommandBuffers(ctx->device, pool, 1, &cb);
+    // A command buffer whose end failed is still in the RECORDING state, and
+    // `vkFreeCommandBuffers` is not the way out of it: the reset that would be the
+    // documented recovery needs VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+    // which this pool deliberately does not ask for. Destroying the pool reclaims
+    // every command buffer allocated from it, recording or not, which is what frees
+    // this one (review-8 F6).
+    if (ended) {
+        vkFreeCommandBuffers(ctx->device, pool, 1, &cb);
+    }
     vkDestroyCommandPool(ctx->device, pool, nullptr);
-    return ok;
+    return result;
 }
 
 // Returns the command buffer and, through `outPool`, the pool it came from; the
@@ -629,7 +670,7 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
 
     VkCommandPool oneShotPool = VK_NULL_HANDLE;
     VkCommandBuffer cb = beginOneShotTracked(ctx, &oneShotPool);
-    bool uploaded = false;
+    OneShot upload = OneShot::neverSubmitted;
     if (cb) {
         VkImageMemoryBarrier toTransfer = {};
         toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -668,20 +709,47 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                              0, nullptr, 0, nullptr, 1, &toSample);
-        uploaded = endOneShot(ctx, oneShotPool, cb);
+        upload = endOneShot(ctx, oneShotPool, cb);
     }
-    if (!uploaded) {
+    if (upload == OneShot::unfenced) {
+        // NOTHING IN THIS BLOCK MAY RELEASE ANYTHING. The queue accepted the copy and
+        // the wait could not prove it finished, so it may still be reading the staging
+        // buffer and writing this image. Freeing either here is exactly what the
+        // refusal that has already printed said was not safe, and it is the
+        // use-after-free AGENTS.md P3 puts a completion boundary in front of
+        // (review-8 F1: the bool this function used to get back could only say "it did
+        // not happen", so this case was reported as the refused-submit case and fell
+        // straight into the destroy below).
+        //
+        // So ownership is abandoned, out loud. The handles are nulled because this
+        // function is no longer their owner, NOT because they were destroyed, and the
+        // caller restores the image it already had and never sees them. The leak is
+        // bounded by the number of failed waits — zero on every driver measured here,
+        // and a driver that fails a wait is a driver on its way to a lost device.
+        // The counter this line does not carry is deliberate: the refusal set keys on
+        // the rendered sentence, so a counter would make every leak a new sentence and
+        // re-open the flood B7 exists to stop.
+        refused("%dx%d image of %llu bytes and its staging buffer are abandoned, not "
+                "destroyed: a submission that may still be running wrote into them",
+                width, height, (unsigned long long)size);
+        *outImage = VK_NULL_HANDLE;
+        *outMemory = VK_NULL_HANDLE;
+        *outView = VK_NULL_HANDLE;
+        return false;
+    }
+    if (upload != OneShot::done) {
         // THE IMAGE IS NOT THE TEXTURE. It exists, but nothing was ever copied
         // into it and its layout was never set, so a `return true` here handed
         // the caller a texture that samples as noise and a log with no failure
         // in it (review-5 F1). Destroy it; the caller's own line names the
         // texture this one was meant to become.
         //
-        // There are two ways to arrive here and they used to be one: no command
-        // buffer at all, and a command buffer whose submit the driver refused
-        // (review-7 F1). Whoever refused it printed the cause; this line names
-        // which image is being destroyed instead of returned, which is the half
-        // the caller needs and the half nobody else can say.
+        // There are three ways to arrive here and they used to be one: no command
+        // buffer at all, a command buffer whose submit the driver refused, and (until
+        // review-8 F1) a submission whose completion was never proven. Whoever refused
+        // it printed the cause; this line names which image is being destroyed instead
+        // of returned, which is the half the caller needs and the half nobody else can
+        // say. The unfenced case above is the one that may NOT be destroyed.
         refused("%dx%d image of %llu bytes is destroyed, not returned: its fill and "
                 "layout transition were never executed",
                 width, height, (unsigned long long)size);
@@ -857,7 +925,18 @@ bool captureSwapchain(RendererVk* r, const char* path) {
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr,
                          1, &toPresent);
-    if (!endOneShot(&r->ctx, oneShotPool, cb)) {
+    const OneShot shot = endOneShot(&r->ctx, oneShotPool, cb);
+    if (shot == OneShot::unfenced) {
+        // The copy may still be writing this buffer. Unmapping, destroying or freeing
+        // it here is the use-after-free the refusal that has already printed said was
+        // not safe (review-8 F1), so ownership is abandoned rather than released: a
+        // screenshot is a debug artefact and a corrupted heap is not.
+        refused("screenshot buffer of %llu bytes is abandoned, not freed: a submission "
+                "that may still be running writes into it",
+                (unsigned long long)size);
+        return false;
+    }
+    if (shot != OneShot::done) {
         // `endOneShot` already printed why. A buffer nobody copied into is not a
         // screenshot: writing it out would publish a BMP of whatever the allocator
         // left in the mapping and print "wrote" over the top of it.

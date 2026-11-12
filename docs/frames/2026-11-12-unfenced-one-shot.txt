@@ -1,0 +1,30 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-12T18:31:44Z at ec3b13b
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+why this picture did not move, and what it can and cannot show (review-7 F5's disclosure, which
+  every pair since batch 150 carries): every byte this batch changed sits on a path the driver takes
+  ONLY when it refuses or cannot prove it finished. `endOneShot` now answers three ways instead of
+  two -- done, neverSubmitted, unfenced -- and the third one releases nothing: `createHostImage`
+  abandons the image, its memory and its staging buffer instead of destroying memory a submission may
+  still be writing, `captureSwapchain` abandons the readback buffer instead of unmapping and freeing
+  it, and a command buffer whose `vkEndCommandBuffer` failed is reclaimed by destroying its pool
+  rather than freed while still recording. On this host lavapipe never says no and never fails a
+  wait: every run recorded in this repository prints zero `REFUSED` lines, which is why
+  `linux_refusal_report_test.sh` is a source gate and not a golden. So the frame is a re-capture,
+  measured after the rebuild and not copied, and it is md5 6769a13731983d65cee9df02da6cff37,
+  `cmp`-identical to its 137 identical predecessors: this pair is a PRESENCE check -- the commit
+  carries a frame and its number -- and NOT a fidelity check, and the fidelity half is dark on this
+  host (oracle pixels absent, owner-gated behind tests/frames/regenerate_reference.sh). The
+  instrument that does show these paths is the gate: `sh tests/scripts/linux_refusal_report_test.sh`
+  reports 13 checks and 30 mutation arms, and against `git show HEAD:mdk_linux/src/render/renderer_vk.cpp`
+  it goes red on exactly ONE of the thirteen -- the new B10, "a one-shot submission whose completion
+  was never proven releases nothing" -- and on nothing else. Nothing here reaches the console
+  either: no `mdk_3ds/**` path is in the diff and `make -C mdk_3ds` exits 0 with mdk.elf md5
+  728eb2350c3ef8a81acda15f75617c1e, byte-identical to batch 151's, so no emulator run was owed and
+  none was faked.
+tree state at capture (review-6 open question 2, review-7 F5): the capture ran on this batch's
+  working tree, which was dirty -- `mdk_linux/src/render/renderer_vk.cpp` and
+  `tests/scripts/linux_refusal_report_test.sh` modified, plus this batch's docs -- and `at ec3b13b`
+  names the parent because a commit cannot contain its own hash. The binary that drew this frame
+  DOES contain the tri-state one-shot result; the frame just cannot show it, for the reason above.

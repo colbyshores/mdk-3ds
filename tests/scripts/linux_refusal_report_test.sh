@@ -73,10 +73,14 @@
 #        `vkAllocateCommandBuffers` hands back an undefined handle that the next call
 #        happily dereferences (review-5 F1), and so does the `vkQueueSubmit` whose
 #        refusal nobody read (review-7 F1) — so the obligation follows the spec's
-#        naming convention, not the one verb family an earlier version named;
+#        naming convention, not the one verb family an earlier version named. The void
+#        entry points are NAMED one by one rather than excluded by verb, because
+#        `vkGet*` is not a void family (review-8 F3);
 #     B6 `createHostImage` does not report success for an image whose fill and layout
 #        transition were never executed, whether that is because there was no command
-#        buffer or because its submit was refused (review-5 F1, review-7 F1);
+#        buffer or because its submit was refused (review-5 F1, review-7 F1). The
+#        refusal's CONDITION is pinned too: a block that refuses and returns false for
+#        the wrong reason is not a guard (review-8 F2);
 #     B7 a refusal prints ONCE PER DISTINCT REQUEST. The Citro3D backend latches
 #        with a bool and it must, because that line printed 1710 times in one run
 #        (review-10 F3); a bool is too coarse here, where a descriptor set is
@@ -90,10 +94,15 @@
 #        failure exit after the pool exists destroys the pool it made. They used to be
 #        paired by POSITION in a file-scope vector, and one stranded entry made every
 #        later `endOneShot` free a foreign command buffer into the wrong pool
-#        (review-6 F2, review-7 F2);
+#        (review-6 F2, review-7 F2). And nothing may return between the begin and the
+#        end except the exit the callee already cleaned up after (review-8 F4);
 #     B9 in a teardown block the memory is released LAST, after the buffer or image
 #        bound to it is destroyed. `vkFreeMemory` on memory still bound to a live
 #        object is invalid use, and this file had two of them (review-6 F6).
+#     B10 a one-shot submission the wait could not prove finished releases NOTHING it
+#        named — no free, no destroy, no unmap. A failed wait is a completion boundary
+#        that was not established, not a completion, and AGENTS.md P3 puts the boundary
+#        before CPU reuse (review-8 F1).
 #
 # Every check is paired with a mutation arm, and every arm names the one check it
 # must turn red (review-7 F2's rule: an arm satisfied by a different check leaves
@@ -156,6 +165,7 @@ CHK = {
     "B7": "a refusal prints once per distinct request, not once per refusal",
     "B8": "the one-shot command buffer and its pool are handed over together",
     "B9": "teardown frees the memory only after destroying what was bound to it",
+    "B10": "a one-shot submission whose completion was never proven releases nothing",
 }
 
 # The identifiers a printed byte figure may use besides the ones in the create
@@ -171,14 +181,28 @@ INTEGRAL_CAST = re.compile(
     r"|short|int|size_t|VkDeviceSize|uint32_t|int32_t)\s*\)")
 
 # The Vulkan entry-point families whose calls return a VkResult, by the spec's naming
-# convention. The void families deliberately NOT here are vkDestroy*, vkFree*,
-# vkUnmap*, vkCmd*, vkGet* and vkUpdate*. This is hardcoded rather than parsed out of
-# vulkan_core.h because a gate that stops checking when its input is missing is a pass
-# generator, and because the point is to cover the NEXT result-bearing call in a
-# checked family, not only the ones that were missed once.
+# convention. This is hardcoded rather than parsed out of vulkan_core.h because a gate
+# that stops checking when its input is missing is a pass generator, and because the
+# point is to cover the NEXT result-bearing call in a checked family, not only the ones
+# that were missed once.
+#
+# The exclusion used to be described as "the void families ... vkDestroy*, vkFree*,
+# vkUnmap*, vkCmd*, vkGet* and vkUpdate*", and that was simply false: `vkGet*` is NOT a
+# void family. `vkGetSwapchainImagesKHR`, `vkGetPhysicalDeviceSurfaceCapabilitiesKHR`,
+# `vkGetPhysicalDeviceSurfaceSupportKHR`, `vkGetPhysicalDeviceSurfaceFormatsKHR`,
+# `vkGetPhysicalDeviceSurfacePresentModesKHR` and `vkGetFenceStatus` all return a
+# VkResult, and the file that excludes the whole family by verb cannot see one of them
+# being discarded (review-8 F3). What is true is narrower and has to be a list: these
+# are the VOID entry points this file calls, named one at a time. Any other `vkGet*` is
+# treated as result-bearing, which is the family's default.
 RESULT_VERBS = ("Create", "Allocate", "Bind", "Map", "Begin", "End", "Queue",
                 "Device", "Wait", "Reset", "Acquire", "Enumerate", "Flush",
                 "Store", "Invalidate", "Release")
+VOID_ENTRY_POINTS = {
+    "vkGetPhysicalDeviceMemoryProperties",
+    "vkGetBufferMemoryRequirements",
+    "vkGetImageMemoryRequirements",
+}
 
 
 def block_span_from(text, pos):
@@ -234,6 +258,15 @@ def strip_comments(text):
     """Drop comment text: this tree documents its own rules in prose, and prose
     about `refused(` is not a call site.
 
+    A dropped comment line leaves its NEWLINE behind. `line_of` counts newlines in
+    the text it is handed, and while comment lines were deleted every line number
+    this gate prints — B4's silent returns, B5's unchecked calls, B8's mismatches —
+    was a line of the STRIPPED file while the record quoted them as lines of
+    `renderer_vk.cpp`: 2355 source lines became 1905, so the most load-bearing
+    number in the record could not be opened without re-deriving the offset
+    (review-8 F5, and docs/evidence/2026-11-12-152-unfenced-one-shot.txt §5 has the
+    eight sites at both numbers).
+
     A line whose first non-space character is `*` is a block-comment continuation
     ONLY while a block comment is actually open. The old line-prefix test dropped
     them unconditionally, which silently deleted real statements — every
@@ -245,15 +278,19 @@ def strip_comments(text):
     in_block = False
     for line in text.splitlines(True):
         s = line.strip()
+        blank = "\n" if line.endswith("\n") else ""
         if in_block:
             if "*/" in s:
                 in_block = False
+            out.append(blank)
             continue
         if s.startswith("//"):
+            out.append(blank)
             continue
         if s.startswith("/*"):
             if "*/" not in s:
                 in_block = True
+            out.append(blank)
             continue
         out.append(line)
     return "".join(out)
@@ -345,6 +382,20 @@ def enclosing_brace(text, pos):
                 return i
             depth -= 1
     return -1
+
+
+def block_condition(text, brace):
+    """The condition text of the `if (...)` whose body opens at `brace`, or '' when
+    the block is not an if-body (a function body, a bare block, an `else`)."""
+    if brace < 0:
+        return ""
+    pre = text[:brace].rstrip()
+    if not pre.endswith(")"):
+        return ""
+    open_ = open_brace_back(pre, len(pre) - 1, "(", ")")
+    if open_ < 0 or not re.search(r"\bif$", pre[:open_].rstrip()):
+        return ""
+    return pre[open_ + 1:len(pre) - 1]
 
 
 def open_brace_back(text, pos, open_ch, close_ch):
@@ -658,7 +709,13 @@ def backend_checks(r, text, quiet):
     calls = [m for m in re.finditer(r"\bvk(?:%s)[A-Za-z0-9_]*" % "|".join(RESULT_VERBS),
                                     code)
              if code[m.end():].lstrip().startswith("(")]
-    for m in calls:
+    # `vkGet*` is NOT a void family, so the void ones are named one at a time and
+    # every other `vkGet` in the file is result-bearing until that list says
+    # otherwise (review-8 F3).
+    calls += [m for m in re.finditer(r"\bvkGet[A-Za-z0-9_]*", code)
+              if m.group(0) not in VOID_ENTRY_POINTS
+              and code[m.end():].lstrip().startswith("(")]
+    for m in sorted(calls, key=lambda m: m.start()):
         start = -1
         for ch in (";", "{", "}"):
             start = max(start, code.rfind(ch, 0, m.start()))
@@ -676,29 +733,43 @@ def backend_checks(r, text, quiet):
     # true: a texture of undefined bytes with no failure anywhere (review-5 F1).
     #
     # This check used to find the `else` sibling of `if (cb)` and look for a refusal in
-    # it, which pinned one shape instead of the property. Once `endOneShot` could fail,
-    # the refusal had to cover "the submit did not run" as well as "there was no
-    # command buffer", and the shape it moved to was one the check could not see. So
-    # what is pinned is the property, in three parts: the one-shot result is READ, a
-    # block that both refuses and returns false sits between that read and the
-    # `return true`, and there is exactly one `return true` to reach.
+    # it, which pinned one shape instead of the property; then it pinned "any block
+    # between the read and the `return true` that refuses and returns false", which
+    # pinned a block and not its CONDITION. Reverting `if (!uploaded)` to `if (!cb)` —
+    # literally the shape this check was rewritten away from, and one token — left B6
+    # green while review-7 F1 walked back in, because a block that refuses for the
+    # wrong reason is not a guard (review-8 F2). So what is pinned is three things:
+    # the one-shot result is CAPTURED in a variable, some block's CONDITION tests that
+    # variable for "not done" — the one test that is true for every bad outcome, which
+    # is why a test naming a single bad outcome does not count — and that block refuses
+    # and returns false before the single `return true`.
     filled = False
     sp = body_span(code, "createHostImage")
     if sp:
         body = code[sp[0]:sp[1]]
-        read = re.search(r"(?:=[ \t]*|[ \t]*if[ \t]*\([ \t]*!)[ \t]*endOneShot\(", body)
+        read = re.search(r"(\w+)[ \t]*=[ \t]*endOneShot\(", body)
+        inline = re.search(r"if[ \t]*\([ \t]*![ \t]*endOneShot\(", body)
         rets = [sp[0] + m.start() for m in re.finditer(r"\breturn[ \t]+true[ \t]*;", body)]
+        test = None
+        if read:
+            var = re.escape(read.group(1))
+            test = re.search(r"\b" + var + r"[ \t]*!=[ \t]*OneShot::done\b|![ \t]*" + var + r"\b",
+                             body)
         guard = None
-        if read and len(rets) == 1:
-            read_at = sp[0] + read.end()
-            for cond, block, spn in blocks(code, sp[0], sp[1]):
-                if ("refused(" in block and "return false" in block
-                        and spn[0] > read_at and spn[1] <= rets[0]):
-                    guard = spn
-        filled = bool(read and guard)
+        if len(rets) == 1:
+            if test:
+                needle = " ".join(test.group(0).split())
+                for cond, block, spn in blocks(code, sp[0], sp[1]):
+                    if (needle in " ".join(cond.split()) and "refused(" in block
+                            and "return false" in block and spn[1] <= rets[0]):
+                        guard = spn
+            elif inline:
+                guard = inline  # `if (!endOneShot(...))` is its own guard
+        filled = bool(guard)
     say(CHK["B6"], filled,
         "an image whose fill and layout transition were never executed is not a texture, "
-        "and saying it is one is a refusal the log never sees (review-5 F1, review-7 F1)")
+        "and saying it is one is a refusal the log never sees (review-5 F1, review-7 F1, "
+        "review-8 F2: the guard's condition is the part that was unpinned)")
 
     # B7: one line per DISTINCT request. The Citro3D backend latches with a bool
     # because its mesh line printed 1710 times in one run (review-10 F3); a bool is
@@ -749,12 +820,15 @@ def backend_checks(r, text, quiet):
     # and destroys handle zero, and a check that read only the two callee bodies stayed
     # green (review-7 F2).
     handovers = []
+    begins = []
     for m in re.finditer(r"\bbeginOneShotTracked\s*\(", code):
         if sp and sp[0] <= m.start() < sp[1]:
             continue  # the definition, not a call
         a = args_at(code, m.end())
         mm = re.search(r"&\s*(\w+)", a[1]) if len(a) >= 2 else None
         handovers.append((m.start(), mm.group(1) if mm else None))
+        lhs = re.search(r"(\w+)[ \t]*=[ \t]*$", code[:m.start()])
+        begins.append((m.start(), lhs.group(1) if lhs else None))
     mismatched = []
     ended = 0
     for m in re.finditer(r"\bendOneShot\s*\(", code):
@@ -770,17 +844,41 @@ def backend_checks(r, text, quiet):
     if ended != len(handovers):
         mismatched.append("%d begin calls but %d end calls: a one-shot pool that is "
                           "never ended is never destroyed" % (len(handovers), ended))
+    # AND NOTHING RETURNS BETWEEN THE TWO. Counting call sites proves the pairing
+    # exists, not that it is reached: a `return` inserted between the begin and the end
+    # strands the pool and the command buffer exactly as the file-scope ledger did, and
+    # two equal counts never notice (review-8 F4). The one early exit that IS correct
+    # is the one the callee already cleaned up after — `if (!cb)`, when
+    # `beginOneShotTracked` destroyed the pool on its way out — so every return in that
+    # range has to be guarded on the command buffer it did not get.
+    stranded_exit = []
+    for m in re.finditer(r"\bendOneShot\s*\(", code):
+        if esp and esp[0] <= m.start() < esp[1]:
+            continue
+        prior = [b for b in begins if b[0] < m.start()]
+        if not prior or not prior[-1][1]:
+            continue
+        bpos, cbident = prior[-1]
+        for rm in re.finditer(r"\breturn\b", code[bpos:m.start()]):
+            pos = bpos + rm.start()
+            cond = block_condition(code, enclosing_brace(code, pos))
+            if not re.search(r"![ \t]*" + cbident + r"\b|" + cbident +
+                             r"[ \t]*==[ \t]*VK_NULL_HANDLE", cond):
+                stranded_exit.append("line %d (unguarded %s exit)" % (
+                    line_of(code, pos), cbident))
     say(CHK["B8"], bool(sp) and bool(esp)
         and "*outPool = pool" in obody
         and "vkFreeCommandBuffers(ctx->device, pool" in ebody
         and "vkDestroyCommandPool(ctx->device, pool" in ebody
         and "[0]" not in ebody
-        and not stranded and not mismatched,
+        and not stranded and not mismatched and not stranded_exit,
         "a command buffer freed into a pool it did not come from, and that pool "
         "destroyed under it, is corruption rather than a missing picture; pairing "
         "them by position let one refusal desynchronize the pairing for the rest of "
         "the run" + ("" if not stranded else " — pool stranded at " + ", ".join(stranded))
-        + ("" if not mismatched else " — pool mismatched at " + ", ".join(mismatched)))
+        + ("" if not mismatched else " — pool mismatched at " + ", ".join(mismatched))
+        + ("" if not stranded_exit else " — a return between the begin and the end "
+                                         "strands the pair at " + ", ".join(stranded_exit)))
 
     # B9: in a teardown block the memory is released LAST, after the buffer or image
     # bound to it is destroyed. `vkFreeMemory` on memory still bound to a live object
@@ -814,6 +912,38 @@ def backend_checks(r, text, quiet):
         "memory still bound to a live image or buffer must not be freed; the destroy "
         "comes first" + ("" if not bad9 else " — the last teardown call is a free at "
                          + ", ".join(bad9)))
+
+    # B10: the third one-shot outcome owns something. `endOneShot` can now say
+    # "accepted, completion unknown", and the only correct answer is to stop treating
+    # what the submission names as this side of the boundary. Review-8 F1 was the
+    # refusal that printed "the staging memory it read is not yet safe to release"
+    # and freed it on the next line, in both callers: a failed wait is a completion
+    # boundary that was NOT established, and AGENTS.md P3 says do not free an in-flight
+    # resource. So the block that handles the unfenced outcome must contain no release
+    # call at all — not a free, not a destroy, not an unmap. Abandoning ownership is
+    # the fix; the handles get nulled because the function stopped owning them, and
+    # that is an assignment, not a release.
+    bad10 = []
+    for fn in ("createHostImage", "captureSwapchain"):
+        fsp = body_span(code, fn)
+        handled = False
+        if fsp:
+            for cond, block, _spn in blocks(code, fsp[0], fsp[1]):
+                if "OneShot::unfenced" not in cond or "return false" not in block:
+                    continue
+                released = [c for c in ("vkFreeMemory(", "vkDestroyBuffer(",
+                                        "vkDestroyImage(", "vkUnmapMemory(") if c in block]
+                if released:
+                    bad10.append("%s releases %s inside the block that says the "
+                                 "submission may still be running" % (fn, released[0]))
+                else:
+                    handled = True
+        if not handled and not bad10:
+            bad10.append("%s has no block that refuses an unfenced submission" % fn)
+    say(CHK["B10"], not bad10,
+        "a submission the wait could not prove finished may still be reading or writing "
+        "what it names; freeing it there is the use-after-free the refusal's own words "
+        "warned about (review-8 F1, AGENTS.md P3)" + ("" if not bad10 else " — " + "; ".join(bad10)))
 
 
 def adjudicate(who, text, quiet=False):
@@ -1031,9 +1161,9 @@ def be_oneshot_positional_ledger(text):
     file-scope vector instead of being handed it, so one refusal desynchronizes it
     for the rest of the run (review-6 F2). B8 only."""
     out = text.replace(
-        "bool endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {",
+        "OneShot endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {",
         "std::vector<VkCommandPool> g_oneShotPools;\n\n"
-        "bool endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {", 1)
+        "OneShot endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {", 1)
     if out == text:
         return text
     return out.replace("    vkFreeCommandBuffers(ctx->device, pool, 1, &cb);",
@@ -1057,15 +1187,61 @@ def be_upload_result_discarded(text):
     """`endOneShot` can fail now and the caller stops listening: the upload is assumed
     to have run, which is review-5 F1 back again through the door review-7 F1 opened.
     B6 only."""
-    return text.replace("uploaded = endOneShot(ctx, oneShotPool, cb);",
-                        "endOneShot(ctx, oneShotPool, cb);\n        uploaded = true;", 1)
+    return text.replace("upload = endOneShot(ctx, oneShotPool, cb);",
+                        "endOneShot(ctx, oneShotPool, cb);\n        upload = OneShot::done;", 1)
+
+
+def be_unfilled_guard_condition_reverted(text):
+    """The one-token revert review-8 F2 named. The guard that decides whether the image
+    was filled goes back to testing the COMMAND BUFFER, which is non-null even when the
+    submit was refused: the block still refuses and still returns false, so a check
+    that reads the block and not its condition — as B6 did until review-8 F2 — stays
+    green while review-7 F1 walks back in. B6 only."""
+    return text.replace("    if (upload != OneShot::done) {", "    if (!cb) {", 1)
+
+
+def be_unfenced_pair_freed(text):
+    """The finding itself, restored: the block whose own refusal says the copy may
+    still be running frees the staging memory on its way out — the use-after-free
+    behind a log line that said it was not safe (review-8 F1). B10 only."""
+    return text.replace('''                width, height, (unsigned long long)size);
+        *outImage = VK_NULL_HANDLE;''',
+                        '''                width, height, (unsigned long long)size);
+        vkFreeMemory(ctx->device, stagingMemory, nullptr);
+        *outImage = VK_NULL_HANDLE;''', 1)
+
+
+def be_oneshot_early_return_strands_pair(text):
+    """A guard that returns BETWEEN the begin and the end. The call counts still agree,
+    both callee bodies are untouched, and the pool `beginOneShotTracked` just made is
+    never ended — review-6 F2's stranding through the caller instead of the ledger
+    (review-8 F4). B8 only."""
+    return text.replace('''    VkImageMemoryBarrier toTransfer = {};
+    toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;''',
+                        '''    if (width != height) {
+        return false;
+    }
+    VkImageMemoryBarrier toTransfer = {};
+    toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;''', 1)
+
+
+def be_get_result_dropped(text):
+    """A result-bearing `vkGet*` discarded. The comment this gate used to carry called
+    `vkGet*` a void family, and it is not one: `vkGetFenceStatus` returns a VkResult,
+    and a gate that excludes a family by verb cannot see its results thrown away
+    (review-8 F3). B5 only."""
+    return text.replace('''    vkGetPhysicalDeviceMemoryProperties(ctx->physicalDevice, &memProps);''',
+                        '''    vkGetPhysicalDeviceMemoryProperties(ctx->physicalDevice, &memProps);
+    vkGetFenceStatus(ctx->device, VK_NULL_HANDLE);''', 1)
 
 
 def be_submit_result_dropped(text):
     """The one-shot VkResult discarded again — the exact code review-7 F1 found, which
     a gate keyed on `vkAllocate*` could not see. B5 only."""
-    return text.replace("bool ok = vkEndCommandBuffer(cb) == VK_SUCCESS;",
-                        "vkEndCommandBuffer(cb);\n    bool ok = true;", 1)
+    return text.replace("const bool ended = vkEndCommandBuffer(cb) == VK_SUCCESS;",
+                        "vkEndCommandBuffer(cb);\n    const bool ended = true;", 1)
 
 
 def be_frames_figure_replaced_by_literal(text):
@@ -1139,6 +1315,10 @@ arm_backend("oneshot-pool-stranded-on-refusal", be_oneshot_pool_stranded, "B8")
 arm_backend("oneshot-pairing-by-position-restored", be_oneshot_positional_ledger, "B8")
 arm_backend("oneshot-call-site-passes-null-pool", be_oneshot_call_site_passes_null, "B8")
 arm_backend("upload-result-discarded", be_upload_result_discarded, "B6")
+arm_backend("unfilled-guard-condition-reverted", be_unfilled_guard_condition_reverted, "B6")
+arm_backend("unfenced-pair-freed", be_unfenced_pair_freed, "B10")
+arm_backend("oneshot-early-return-strands-pair", be_oneshot_early_return_strands_pair, "B8")
+arm_backend("result-bearing-vkget-discarded", be_get_result_dropped, "B5")
 arm_backend("one-shot-submit-result-dropped", be_submit_result_dropped, "B5")
 arm_backend("frames-figure-replaced-by-a-literal", be_frames_figure_replaced_by_literal, "B3")
 arm_backend("null-return-respelled", be_null_return_respelled, "B4")

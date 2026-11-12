@@ -26261,3 +26261,161 @@ problem — the row is green and has been since batch 149 — the ledger file is
 `gates_batch_integrity.PROTECTED` so hand-editing is a finding rather than a fix.
 Until a lane can write the ledger, the loop will keep re-dispatching a row whose
 acceptance passes.
+
+## Iteration 152 — batch 152: `linux.render-frame` — review-8 was right seven times; a one-shot upload whose completion cannot be proven now owns what it named instead of freeing it
+
+**The ledger row is `linux.render-frame` (d1, acceptance `bash tools/check.sh`),
+attempt 5.** The tree was clean at the parent, so the work this iteration was the
+review's: `logs/ralph-pi/run-20261112-153051/review-2.md` (builder family=qwen,
+reviewer family=deepseek, proved independent), 0 Critical, 0 High, verdict
+INCOMPLETE on R8-F1/F2/F3 with F4–F7 to record. **All seven held. None is rebutted.**
+One word of one finding is corrected, and it is recorded in the evidence file rather
+than quietly dropped (§3: `capabilities` is zero-initialised, not undefined — which is
+not safer, it is just different, because a zero `currentExtent` is not 0xFFFFFFFF so
+the zero extent is taken as the answer).
+
+**R8-F1 IS THE ONE THAT MATTERED, AND IT WAS A BOOL'S FAULT.** `endOneShot` returned
+`bool`. A bool has two values, so "the queue accepted the work and the wait could not
+prove it finished" had to share a value with "the queue refused the work" — and the two
+demand opposite things of a caller. A refused submit never touched the resources its
+commands name; an accepted one may still be running. Both callers took the shared value
+to mean "refused" and freed: `createHostImage` destroyed the staging buffer and memory
+and the image it had just handed a barrier, and `captureSwapchain` unmapped and freed
+the readback destination. The branch written to honour AGENTS.md P3 was the branch that
+violated it, and its own refusal text said so out loud: *"the staging memory it read is
+not yet safe to release"* — freed four lines later. `endOneShot` now returns
+`enum class OneShot { done, neverSubmitted, unfenced }`, and `unfenced` releases
+nothing: the handles are nulled because the function stopped owning them, not because
+they were destroyed, and the comment says it in those words. The wait is retried at
+device scope first (`vkQueueWaitIdle(...) == VK_SUCCESS || vkDeviceWaitIdle(...) ==
+VK_SUCCESS`), because a device-wide wait proves the same fact about this queue and a
+queue wait can fail where a device wait does not — that turns a class of wait failures
+into *proven* completion, which frees normally, and leaves the abandon path as the last
+resort it should be.
+
+**WHY ABANDON AND NOT RETIRE, WRITTEN DOWN BECAUSE IT LOOKS LIKE A LEAK.** The file has
+a retire list drained at the frame boundary that proves the reading frame finished, and
+the reviewer offered it as an option. It is the wrong shape here: `createHostImage`
+takes a `mdk::vk::Context*` and has no renderer to retire into (threading `RendererVk*`
+through it and its four call sites is a wider diff than the finding), and the readback
+buffer is persistently mapped while `RetiredBuffer` carries no mapping. Both are
+fixable; neither is a one-liner; and the path cannot be executed to find out, because
+`vkQueueWaitIdle` has never failed on lavapipe, llvmpipe or Mandarine in any run
+recorded in this repository. The leak is bounded by the number of failed waits, which
+is measured at zero, and it carries no counter on purpose: the refusal set keys on the
+rendered sentence, so a counter would make every leak a new sentence and re-open the
+flood B7 exists to stop.
+
+**READING THE RETIRE PATH TO JUSTIFY THAT CHOICE FOUND A NEW DEFECT, AND IT WAS
+RECORDED RATHER THAN SMUGGLED IN.** `mdk_render_release_mesh:2158` and
+`ensureCanvasBuffer:2381` retire persistently MAPPED buffers, nulling `m.mapped[slot]`
+and `r->canvasMapped[i]` — and nulling the CPU-side pointer is not an unmap.
+`settleRetired → destroyBufferPair:282` then does `vkDestroyBuffer` + `vkFreeMemory`
+with no `vkUnmapMemory` anywhere on the path. That is the same shape as R8-F6 — a
+lifetime rule asserted without the VU in hand — except it runs on every mesh release
+and every canvas resize rather than on a driver failure. It needs a decision about the
+shape of `RetiredBuffer` (carry the mapping and unmap at settle time, or unmap at
+retire time, which asks whether the CPU may still touch the pointer), so it is next-list
+item 1 with its three call sites and both candidate fixes, not a line in this batch.
+
+**R8-F2: A GUARD IS ITS CONDITION, NOT ITS BODY.** B6 asked whether some block between
+the `endOneShot` read and the single `return true` contained `refused(` and
+`return false`. The reviewer's revert — `if (!uploaded)` back to `if (!cb)`, one token,
+and literally the shape batch 151 replaced — walked straight through it, because a block
+that refuses for the wrong reason is not a guard. Pinning "the condition names the
+variable assigned from `endOneShot`" would still leave a hole with a variable in it:
+`if (upload == OneShot::neverSubmitted)` names it and lets `unfenced` fall through. So
+B6 now requires the test that is TRUE FOR EVERY BAD OUTCOME — `<var> != OneShot::done`,
+or `!<var>` for the bool spelling — on the refusing, `return false` block before the
+single `return true`. New arm `unfilled-guard-condition-reverted` runs the revert and
+reds B6 alone.
+
+**R8-F3: THE GATE WAS WRONG ABOUT THE SPEC IT WAS ENFORCING.** Its comment declared
+`vkGet*` a void family. Six of its entry points return a `VkResult`. The exclusion is
+now a named list of the three void ones this file actually calls, and any other `vkGet*`
+is result-bearing; the new arm inserts a discarded `vkGetFenceStatus(ctx->device,
+VK_NULL_HANDLE);` and reds B5 alone. The `vk_context.cpp` half is deferred with a
+measured number rather than a quote: running B5's own rule over that file finds **34
+result-bearing calls, none of them read**. The eight `vkGet` sites there were each read
+and classified — six are benign because their callers have fallbacks or a
+`VK_FALSE` initialisation, `:171/:177` leave `imageCount` 0, and `:119` is the one that
+matters today: a failed `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` yields a zero
+extent that goes straight into `vkCreateSwapchainKHR`, and the file prints a line for
+the create failure and nothing for the query that caused it.
+
+**R8-F4 AND R8-F5, THE CHEAP ONES, BOTH PINNED.** B8 counted call sites, so an inserted
+`if (cond) { return false; }` between the begin and the end stranded the pool with the
+gate green; every return in that range must now be guarded on the command buffer it did
+not get — which is exactly the one exit that IS legitimate, `if (!cb)`, because
+`beginOneShotTracked` destroyed the pool on its way out. The command-buffer identifier
+is read off each call site's assignment, not hardcoded. And `strip_comments` deleted
+comment lines, so every line number the gate printed was a line of a 1905-line ghost of
+a 2355-line file: batch 151's record's eight sites are at real lines
+319/324/325/495/555/1438/1509/1952, not 208/213/214/313/368/1134/1195/1581. Comment
+lines are blanked now, the gate's numbers match `grep -n` (verified: 364, 636, 1599 for
+`vkQueueSubmit`, `vkBindImageMemory`, `vkCreatePipelineCache`), and all 30 arms still
+adjudicate red on the corrected text. **R8-F6** is fixed conservatively and NOT proven:
+the explicit `vkFreeCommandBuffers` now runs only when the end succeeded, and the pool
+destroy reclaims a recording buffer either way, so nothing leaks under either reading;
+`vkResetCommandBuffer` was not added because resetting an individual command buffer
+needs `VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT`, which this pool does not ask
+for, so that suggestion would have introduced a different invalid use. **R8-F7** is
+deferred with cause: the fix is a `gate` line in `tools/check.sh`, which is in
+`gates_batch_integrity.PROTECTED`; `gates_core_parity.py` was considered and rejected as
+a category error.
+
+**THE CHECK THAT PROVES THE CHECK.** Against `git show
+HEAD:mdk_linux/src/render/renderer_vk.cpp` — the code this batch replaces — the gate
+goes red on **exactly one of the thirteen checks and nothing else**: B10, "a one-shot
+submission whose completion was never proven releases nothing", naming `createHostImage
+has no block that refuses an unfenced submission`. B5, B6 and B8 stay green on the
+parent, which is the correct verdict: batch 151 read the results and paired the pool,
+and what it did not do was distinguish an unproven wait from a refused one. Five arms
+anchor on text this batch introduced and therefore report "changed nothing" against the
+parent; each reds its own check on the file it was written for.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`,
+**592 PASS / 0 FAIL**, and `PASS LinuxRefusalReport (13 checks, 30 arms adjudicated
+red)` — 12 checks → 13, 26 arms → 30. `DISPLAY=:99 bash tools/check.sh` rc 0,
+`CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp sha=58615fc85d02e009`,
+`BATCH INTEGRITY: PASS`, `COMPLETION: LEDGER VERIFIED`, `COMPLETION SELFTEST: PASS (13
+arms)`. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds
+-j8` rc 0 with `mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e` UNCHANGED —
+`git diff --name-only` contains no `mdk_3ds/` path, so no emulator run was owed and
+none was faked. `cmake --build build-linux -j8` rc 0, no new diagnostics under the
+project's `-Wall -Wextra`; `audit_c_with_classes` reports 0 violations with the new
+`enum class` in the tree.
+
+**PRIOR-SOLUTION LOOKUP.** `pi-knowledge` `knowledge_search` on the `mdk-sdl` KB
+returned the C# oracle's own upload design (`Renderer.cs`: "Texture and mesh uploads
+share one command buffer and one upload buffer, submitted when it's full and before each
+frame … at most two batches in flight", and SPEC.md's note that the Vulkan backend keeps
+a 4 MiB batch with one cycled transfer buffer). That is a lead worth recording: the
+oracle does not have this defect class at all, because it does not do one submission per
+upload — the batched design makes the unfenced question rare instead of per-texture. It
+is not a fix for this finding (the port's one-shot path exists and has to be correct as
+it stands), and it is now the strongest argument for the batching slice if anyone takes
+it. Obsidian MCP and Cognee MCP tools are **absent from this session's tool list** (a
+session configuration fault to report, per AGENTS.md P9), so the vault was read
+read-only from `/mnt/nas/Vaults/port-docs`; Cognee's graph search was therefore NOT
+consulted. The vault note that came closest,
+`30-architecture/patterns/blocking-driver-ipc-per-primitive-coalesce-to-per-frame.md`,
+is status: refuted on hardware and is about the 3DS, so it was not applied. Note for the
+next lane: `/tmp/kilo` is `coleshores`-owned and not writable by `piagent`; this lane's
+captures went to `/tmp/mdk-lane`.
+
+**THE FRAME** is a re-capture, `cmp`-identical to its 137 predecessors
+(`6769a137…`), because every changed byte is on a path the driver takes only when it
+refuses or cannot prove it finished, and lavapipe does neither; the sidecar carries the
+disclosure and the tree state at capture. The fidelity half is still dark on this host
+(oracle pixels absent, owner-gated behind `tests/frames/regenerate_reference.sh`). Full
+record: `docs/evidence/2026-11-12-152-unfenced-one-shot.txt`.
+
+**THE BLOCKER ON THE ROW ITSELF, UNCHANGED.** `python3 tools/runner/ledger_close.py
+--row linux.render-frame` prints `running acceptance for linux.render-frame: bash
+tools/check.sh`, runs it — it passes, again — and then `could not verify -- [Errno 13]
+Permission denied: '/mnt/nas/Development/mdk-sdl/docs/COMPLETION_LEDGER.tsv'`. The row
+is `coleshores`-owned, this lane is `piagent`, and the row is in
+`gates_batch_integrity.PROTECTED` so hand-editing is a finding rather than a fix. This
+is attempt 5 of 8; the loop will keep re-dispatching a row whose acceptance passes until
+a lane can write the ledger.
