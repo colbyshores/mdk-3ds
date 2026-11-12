@@ -52,8 +52,13 @@ panel crop: 2026-11-12-145-shipped.png  md5 32d1048fbc6eccbaefd358fdf7651a8c
 
   expect : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1
   expect : HUD NOT VISIBLE: 0 canary pixels of pure (0,0,255), 25 needed
-  panel  : 147 distinct colours; top (223,141,44) 9575, (0,0,0) 9357,
+  panel  : 146 distinct colours; top (223,141,44) 9575, (0,0,0) 9357,
            (171,28,0) 7208 — the level renders.
+           (Corrected 2026-11-12 by review-2 F5: this line said 147. Re-counted
+           from the committed PNG with `Counter(Image.open(...).convert('RGB')
+           .getdata())` it is 146, and the three top counts are exact, so the
+           block's other numbers stand. `uniform-centre.png` genuinely does
+           yield 147 and its line was right.)
   guest  : `uniforms: mvp=0 uvtransform=4 tint=5`
 
 THE GUEST LINE IS THE FINDING, NOT NOISE. The comment at

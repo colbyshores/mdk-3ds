@@ -618,6 +618,60 @@ demands the log line *and* 25 pixels of the (0,0,255) canary the renderer draws 
 canvas's own state and space, and **it fails**. That failure is this item, stated as a
 command. Do not close it by making the gate cheaper.
 
+**THE SHORTEST TRUE DESCRIPTION OF THE BUG, as of batch 146 — read this first; every
+"shortest true description" below it in this file is a layer of an investigation, and the ones
+labelled 144 and 145 are superseded.** Eleven emulator runs have now removed, one at a time and
+each with its own run, everything between "the canvas's quads are queued" and "the GPU draws
+them":
+
+* the matrix's **arithmetic** — `.constf` literals holding exactly
+  `registers(canvasMatrix(600,360))` paint the canary (100 px, `--expect hud-visible` exits 0,
+  the level collapsing to the clear colour, which is what that matrix applied to world geometry
+  predicts);
+* the uniform **location** (vertex uniform 0 and 2 both give 0 px), the canary's **position**,
+  and `C3D_BindProgram` after a write;
+* the canvas's **geometry, buffer, texture, combiner, tint, cull, depth, clip and viewport** —
+  with `mvp` not read at all, the canary paints 24000 px;
+* **whether a per-draw matrix write reaches the shader at all** — it does: forcing the per-draw
+  write on and adding `+0.5f` to clip x moves 73427 of the panel's 96000 pixels. Batch 145's
+  headline, "a uniform written after `installEye` does not arrive", is withdrawn, and citro3d's
+  own `C3D_UpdateUniforms` says why it was always impossible: it uploads every maximal run of
+  dirty registers at every draw, so position in a frame cannot matter.
+
+**AND THE BUFFER IS NOW READ, WHICH IS WHERE THAT LEAVES IT.** Immediately before the canary's
+`C3D_DrawArrays`, `C3D_FVUnif[GPU_VERTEX_SHADER][0..3]` holds exactly the four register rows
+that paint, with `dirty=1111 uv=1 tint=1` — measured at every sampled frame to 2460, in
+`docs/evidence/2026-11-12-146-uniform-staging.txt`. The CPU side is correct at the instant
+before the draw that produces nothing. **The only link left is the GPUCMD upload and what the
+GPU does with it.**
+
+**THE NEXT EXPERIMENT, one run, with the level as the instrument.** In `installEye`, write
+`pica::canvasMatrix` INSTEAD of `eyeVp`, and delete every other matrix write in the frame.
+Then **diff the panel crop against `docs/evidence/2026-11-12-145-literal-mtx.png`** — 90743 px
+of clear `(16,32,48)` plus 100 px of exact `(0,0,255)` is the signature of the canvas matrix
+genuinely reaching every draw. Clear colour plus canary means the matrix arrives from
+`installEye`'s write and not from a per-draw one, and the question becomes the GPUCMD stream
+around `C3D_DrawArrays`; "garbage" instead means the shader does not hold what the buffer
+holds. Iteration 144 ran a version of this and recorded "the level turns to garbage as
+expected" **without diffing it against the clear-colour signature**, which is the entire
+discriminator — do the diff.
+
+**TWO TRAPS ON THE WAY, both measured.** `C3D_FVec` declares its members `w, z, y, x`
+(`c3d/types.h:37-64`), so reading the uniform buffer through `.x/.y/.z/.w` prints every
+register component-reversed and looks like a transpose bug that does not exist; MDK writes
+`C3D_Mtx::m[]` and is safe, because `pica::registers()` emits memory order (x,y,z,w). And
+`C3Di_LoadShaderUniforms`, run by `C3D_BindProgram`, stages the shader's own FLOAT24 constants
+whose re-upload **clears `C3D_FVUnifDirty[stage][id]`** — a real way for an app's uniform write
+to be silently dropped, and the vault's `c3d-interleaved-draw-leaves-vertex-uniforms-stale`
+hazard with the named cause the vault note records as unproven. It cannot fire on this shader:
+its single FLOAT24 constant has register id **95**, not 0-5 (measured from the shbin; picasso
+allocates `.constf` downward from 95 while `.fvec` allocates upward from 0, so ~90 `.constf`
+lines would start eating live `.fvec` registers).
+
+**DO NOT RE-RUN**: the uniform location, the canary's corner-vs-centre position, rebinding after
+a per-draw write, per-draw write ordering, the canary's vertex layout, or any probe that judges
+the matrix through the canary alone when a level-sized instrument would settle it in one run.
+
 Measured and rejected, each in its own emulator run. Iteration 142's list is unchanged and
 still valid; iteration 143 added these (numbers in `docs/PROGRESS_LOG.md`, iteration 143 —
 do not re-derive them):
@@ -641,7 +695,9 @@ do not re-derive them):
   two triangles were visible**, so the null result could not distinguish "the tail is dead"
   from "those two triangles are not on the panel". See the description below.
 
-**THE SHORTEST TRUE DESCRIPTION OF THE BUG, as of iteration 144.** The frame's tail is
+**THE SHORTEST TRUE DESCRIPTION OF THE BUG, as of iteration 144 — SUPERSEDED by batch 146
+above; kept because the runs it summarises are still good measurements of what they
+measured.** The frame's tail is
 **alive**: with the scene replay skipped, replaying the whole first bucket at the tail —
 after `installEye`, after everything iteration 143 blamed — paints the level, 46831 of the
 panel's 96000 pixels. Iteration 143's "the tail is dead" is REFUTED, and so is the

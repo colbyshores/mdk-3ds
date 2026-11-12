@@ -1,38 +1,68 @@
 # Phase 2 continuation checkpoint
-Risk: low — no shipped code or shader byte changes: every probe this batch ran was reverted,
-`mdk.elf` and `mdk_c3d.shbin` are byte-identical to the parent commit. The batch is six
-emulator measurements, their committed evidence in `docs/evidence/`, and four comment/doc
-corrections that each replace an assertion the measurements refute. The ledger row stays open.
-**The canvas bug is now narrowed to the vertex-uniform DELIVERY, and the narrowing is
-measured, not reasoned.** Driving the vertex shader from `.constf` literals holding exactly the
-floats `registers(canvasMatrix(600,360))` produces makes the canary paint — `--expect
-hud-visible` exits 0 with 100 canary pixels and the level collapsed to the clear colour, the
-exact signature canvasMatrix applied to world geometry predicts. The same values through the
-`mvp` uniform paint nothing, at vertex uniform 0 and at uniform 2 alike, and a matrix written
-per-draw that would cover 64% of the panel paints nothing either. So the canvas matrix's
-arithmetic is confirmed float-for-float and exonerated, the uniform LOCATION is exonerated,
-the canary's position is exonerated, and `C3D_BindProgram` after the write is exonerated — and
-what is left is that a uniform written after `installEye`'s bind does not arrive, which
-contradicts the devkitPro pattern the vault records and therefore points at something in MDK's
-own frame. Full record: `docs/evidence/2026-11-12-145-uniform-delivery.txt`.
-**AND READ ITS RUN 7 BEFORE USING THAT NARROWING — a seventh run refutes it.** Forcing the
-per-draw matrix write on and shifting clip x by 0.5 moves 73427 of the panel's 96000 pixels, so a
-per-draw `C3D_FVUnifMtx4x4` after `installEye`'s bind DOES reach the shader and "the uniform does
-not arrive" is withdrawn. What survives is runs 1-6 as measurements (matrix arithmetic confirmed
-float for float; uniform location, canary position and rebinding all exonerated); what the bug is
-now is the canary's own vertex layout in `drawDiagnostic`'s `BufInfo_Add`, with the named next
-experiment written down. A second finding stands on its own: the per-draw write is normally
-cached OFF for the level's identity-world draws, so that path had never been exercised on the main
-scene before this.
-**All three gates are green.** `make -C mdk_3ds` rc 0 with byte-identical artefacts, and
-`DISPLAY=:99 bash tools/check.sh` rc 0 with every sub-gate green. `make -C tests/scripts` was rc 2
-at the parent commit with 93 `c3d_frame` mutation arms inert, and is **rc 0 now**: two stale
-literals in `tests/scripts/c3d_frame_test.sh` — a check pinning the canary's retired 3-vertex
-triangle shape instead of its 6-vertex quad, and three arm patterns that could not match the real
-`drawDiagnostic(r, mdk_render_canvas_width(rr))` call — made one check always-red, which in a
-mutation harness turns red for every mutant and so disabled the entire suite. Fixed test-side
-only, no arm's expectation loosened, **0 of 94 adjudicating before and 94 of 94 after**. Details
-in `docs/OPEN_ITEMS.md`, closed.
+Risk: low — no shipped code or shader byte changes across batches 145 and 146: every probe was
+reverted and the rebuilt tree is byte-identical to the parent commit (`mdk.elf`
+`e70fcb733e0389fe3ba881b4b4d40074`, `mdk_c3d.shbin` `59d5e0e8ec1dc12827b6cd516715de0f`, both
+re-measured after the last revert rather than asserted). What ships is eleven emulator
+measurements with committed evidence, the citro3d uniform layer read at the disassembly level, and
+doc corrections that each replace an assertion a measurement refutes. Ledger row `3ds.hud-canvas`
+stays open at attempt 7 of 8.
+
+**Where the canvas bug actually stands, after eleven runs.** It is narrowed to the GPUCMD upload and
+the GPU's side of it, and every step of that narrowing is measured:
+
+* the canvas matrix's **arithmetic** is confirmed float for float — driving the shader from `.constf`
+  literals holding exactly `registers(canvasMatrix(600,360))` paints the canary (100 px, exit 0, the
+  level collapsed to the clear colour, which is what that matrix applied to world geometry predicts);
+* the uniform **location** is exonerated (vertex uniform 0 and 2 both give 0 px), the canary's
+  **position** is exonerated, `C3D_BindProgram` after a write is exonerated, and the canvas's
+  **geometry, buffer, texture, combiner, tint, cull, depth, clip and viewport** are exonerated by the
+  transform-bypass run, which painted 24000 px;
+* a per-draw `C3D_FVUnifMtx4x4` issued after `installEye`'s bind **does** reach the shader — forcing
+  it on and adding `+0.5f` to clip x moves 73427 of the panel's 96000 pixels — so the earlier "a
+  uniform written after `installEye` does not arrive" is withdrawn, and citro3d's own
+  `C3D_UpdateUniforms` explains why: it uploads every maximal dirty run at every draw, so position
+  in a frame cannot matter, only "dirty at the draw";
+* **and the buffer itself is now read.** Immediately before the canary's `C3D_DrawArrays`,
+  `C3D_FVUnif[GPU_VERTEX_SHADER][0..3]` holds exactly the four register rows that paint, with
+  `dirty=1111 uv=1 tint=1`. The CPU side is correct at the instant before the draw that produces
+  nothing. What is left is the upload and the GPU.
+
+**Two traps worth more than the run that found them.** `C3D_FVec` declares its members `w, z, y, x`
+(`c3d/types.h:37-64`), so reading the uniform buffer through `.x/.y/.z/.w` prints every register
+component-reversed and looks like a transpose bug that does not exist. And `C3Di_LoadShaderUniforms`
+— run by `C3D_BindProgram` — stages the shader's own FLOAT24 constants, whose re-upload **clears
+`C3D_FVUnifDirty[stage][id]`**, which is a genuine way for an app's uniform write to be silently
+dropped and is the vault's `c3d-interleaved-draw-leaves-vertex-uniforms-stale` hazard with the named
+cause the vault note records as unproven. It cannot fire here: `mdk_c3d.v.pica`'s one FLOAT24
+constant has register id **95**, not 0-5 (measured from the shbin; and picasso allocates `.constf`
+downward from 95 while `.fvec` allocates upward from 0, so a shader with ~90 `.constf` lines would
+begin eating live `.fvec` registers).
+
+**The named next experiment, one run.** In `installEye`, write `pica::canvasMatrix` instead of
+`eyeVp` and delete every other matrix write in the frame; then **diff the panel crop against
+`docs/evidence/2026-11-12-145-literal-mtx.png`** — 90743 px of clear `(16,32,48)` plus 100 px of
+exact `(0,0,255)` is the signature of the canvas matrix genuinely reaching every draw. Clear colour
+plus canary means the matrix arrives from `installEye`'s write and not from a per-draw one, and the
+question becomes the GPUCMD stream around `C3D_DrawArrays`; "garbage" instead means the shader does
+not hold what the buffer holds. Iteration 144 ran a version of this and wrote "the level turns to
+garbage as expected" without diffing it against that signature, and clear colour versus garbage is
+the whole discriminator.
+
+**Do not re-run**: the uniform location, the canary's corner-vs-centre position, rebinding after a
+per-draw write, per-draw write ordering, the canary's vertex layout, or any probe that judges the
+matrix through the canary alone when a level-sized instrument would settle it in one run.
+Full records: `docs/evidence/2026-11-12-145-uniform-delivery.txt` (seven runs, with run 7's
+withdrawal written at the top of the file rather than deleted) and
+`docs/evidence/2026-11-12-146-uniform-staging.txt`.
+
+**All three gates are green.** `make -C mdk_3ds` rc 0 with byte-identical artefacts,
+`DISPLAY=:99 bash tools/check.sh` rc 0 with every sub-gate green, and `make -C tests/scripts` rc 0
+at 94 of 94 adjudicating arms. That last one was rc 2 at the parent commit with 93 `c3d_frame`
+mutation arms inert: two stale literals in `tests/scripts/c3d_frame_test.sh` — a check pinning the
+canary's retired 3-vertex triangle shape instead of its 6-vertex quad, and three arm patterns that
+could not match the real `drawDiagnostic(r, mdk_render_canvas_width(rr))` call — made one check
+always-red, which in a mutation harness turns red for every mutant and so disabled the whole suite.
+Fixed test-side only, no arm's expectation loosened, 0 of 94 adjudicating before and 94 of 94 after.
 
 
 **Batch 142 (the ledger row `3ds.hud-canvas`) — the canvas lands as queue records, the HUD is wired, and the

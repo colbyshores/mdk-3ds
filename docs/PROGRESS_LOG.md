@@ -1,3 +1,73 @@
+## Iteration 146 — the CPU side of the canvas uniform is measured correct; the fault is downstream of the staging buffer
+
+**Ledger row `3ds.hud-canvas`, attempt 7 of 8.** Acceptance command unchanged —
+`mdk_3ds/tools/emurun.sh --expect hud`, exit 7, still red, and that is the correct answer. No
+shipped code changed. Evidence: `docs/evidence/2026-11-12-146-uniform-staging.txt`.
+
+**The one new measurement.** Batch 145 run 7 proved a per-draw matrix write reaches the shader, but
+nobody had read citro3d's own staging buffer. A temporary probe (reverted) printed
+`C3D_FVUnif[GPU_VERTEX_SHADER][mvpLocation+0..3]` and `C3D_FVUnifDirty[...]` immediately before the
+canary's `C3D_DrawArrays` and before the first Overlay draw, at every sampled frame to 2460. The
+buffer holds **exactly** `registers(canvasMatrix(600,360))` — the same four register rows that
+batch 145 run 2 put in the shader as `.constf` literals and that painted — with `dirty=1111`,
+`uv=1`, `tint=1`. **The value is right and the dirty flags are right at the instant before the draw
+that produces nothing.** "The write does not land" is now dead on the CPU side too, and the only
+link left is the GPUCMD upload and what the GPU does with it.
+
+**The trap that nearly made this batch report a transpose that does not exist.** `C3D_FVec`
+(`c3d/types.h:37-64`) declares its members **`w, z, y, x`**, so `.x` is the fourth float in memory.
+Read through the member names the buffer looks component-reversed, and it is not. MDK's own code is
+safe — it writes `C3D_Mtx::m[]`, and `pica::registers()` emits memory order (x,y,z,w), which is
+what the GPU reads — but the trap is undocumented in the vault and cost this run its first reading.
+
+**The uniform layer is now read rather than assumed** (`libcitro3dd.a`, citro3d 1.7.1, offsets in
+the evidence file): `C3D_FVUnifSet`/`C3D_FVUnifMtx4x4` are inline header functions setting one bool
+per register with no range and no ordering; `C3Di_UpdateContext` calls `C3D_UpdateUniforms(0)` and
+`(1)` on **every** path, the immediate-mode branch being the only fork and it returning to the same
+call; `C3D_UpdateUniforms` uploads every maximal dirty run. **Position in a frame cannot matter;
+only "dirty at the draw" can** — which is why batch 145's headline was not merely refuted by a
+measurement but impossible in the library as built.
+
+**And there is a real mechanism by which a write CAN be silently dropped, now found and now ruled
+out.** `C3Di_LoadShaderUniforms`, run by `C3D_BindProgram`, stages the shader's own FLOAT24
+constants, and `C3D_UpdateUniforms`'s first loop re-uploads each one and **clears
+`C3D_FVUnifDirty[stage][entry.id]`** — the app's dirty flag for that register, overwritten by the
+shader's default. That is the vault's `c3d-interleaved-draw-leaves-vertex-uniforms-stale` hazard
+with a named cause, which the vault note itself records as unproven. **It cannot fire for this
+shader:** `mdk_c3d.v.pica`'s DVLE has exactly one FLOAT24 constant and its register id is **95**,
+not 0-5 — measured from the shbin (count u32 at 0xD4, entry at 0xF8, `type=2 id=0x5F`), and
+confirmed by adding a second `.constf` with picasso: +20 bytes, count 2, new entry at id 94, so
+**picasso allocates `.constf` from the top of the 96-register fvec file downward while `.fvec`
+allocates from 0 upward**. A shader with ~90 `.constf` lines would start eating live `.fvec`
+registers through this exact path.
+
+**The next experiment, named, one run.** `installEye` writes the canvas matrix instead of `eyeVp`
+and every other matrix write in the frame is deleted; then **diff the panel crop against
+`docs/evidence/2026-11-12-145-literal-mtx.png`**, the signature of the canvas matrix genuinely
+reaching every draw (90743 px of clear `(16,32,48)`, 100 px of exact `(0,0,255)`). Clear colour +
+canary means the matrix arrives from `installEye`'s write and not from a per-draw one, and the
+question becomes the GPUCMD stream around `C3D_DrawArrays`; "garbage" instead means the shader does
+not hold what the buffer holds. Iteration 144 ran a version of this and wrote "the level turns to
+garbage as expected" **without ever diffing it against the clear-colour signature** — and clear
+colour versus garbage is the entire discriminator.
+
+**Review-2 (`run-20261112-035144/review-2.md`, DeepSeek V4.1 Flash TH): no Critical/High; F1-F5 all
+confirmed against the files, all fixed, none rebutted.** F5: the run-1 panel block said 147 distinct
+colours, the committed PNG has **146** (`uniform-centre.png` genuinely has 147 and its line was
+right); re-counted with `Counter(Image.open(...).convert('RGB').getdata())` and corrected in place
+with the method recorded. F4: "`docs/frames/README.md` is owner-protected" is false — it is not in
+`PROTECTED`; what binds it is the content pin at `gates_batch_integrity.py:217`; the finding's
+conclusion stands on the `:110-112` immutability check alone. F2: the "inherited red" paragraph
+named `index-texels-are-rotated-for-the-pica`, which this batch's own parent introduced and this
+batch fixed; the true inherited red was `diagnostic-drawn-once` at 1 check red and 93 arms inert,
+and it is now green. F3: recorded below, in the entry it belongs to. F1: `docs/CONTINUATION.md` and
+the canvas section of `docs/OPEN_ITEMS.md` are rewritten to the post-run-7, post-probe state.
+
+**Also closed: review-2's open question 1.** The probe was reverted and the tree rebuilt: `mdk.elf`
+is `e70fcb733e0389fe3ba881b4b4d40074` and `mdk_c3d.shbin` is `59d5e0e8ec1dc12827b6cd516715de0f`,
+which is what the parent commit recorded, so the shader artefact is now re-measured rather than
+asserted.
+
 ## Iteration 145c — the batch's own headline is refuted by a seventh run: per-draw matrix writes DO land
 
 **Read this before using anything in the entry below about uniform delivery.** A seventh
@@ -10,6 +80,15 @@ suspect and the worry that no object is placed by its `MeshDraw::world`. Object 
 that is precisely what the run demonstrates. The withdrawal is written at the top of the run
 record in `docs/evidence/2026-11-12-145-uniform-delivery.txt`, not quietly deleted, because the
 six runs behind it are still good measurements of the things they individually measured.
+
+**Added 2026-11-12 by review-2 F3, because the entry above overstates what was new.** The parent
+commit `7e315db` already carried the measurement that refutes the headline, in
+`docs/OPEN_ITEMS.md`: "the level's geometry MOVES when the per-draw matrix write is forced on for
+every draw and given `+0.5f` on clip x — 73427 of 96000 panel pixels differ from the shipped run,
+and the whole level shifts by half the screen." Run 7 was a **confirmation** of a fact already in
+the tree, not a discovery, and the entry above reads as if it were the latter. The useful part of
+run 7 is what it did with the confirmation — it removed the suspect that the sentence was carrying
+— and that is what it should have been labelled as.
 
 **What survives, and what the bug is now.** Runs 1-6 stand as measurements: the canvas matrix's
 arithmetic is confirmed float for float, the uniform location is not the problem, the canary's
@@ -77,6 +156,21 @@ linked archives before being accepted or acted on.
   `R_ARM_CALL GSPGPU_FlushDataCache` at 0x40 in `.rel.text.C3D_TexFlush`. The comment now says
   "the ONE call site in `texture.o` is inside `C3D_TexFlush`".
 - **F4 (Low) — FIXED.** Blank line inserted before `**A PROBE THAT COULD NOT HAVE WORKED`.
+
+**Correction to the F2 rebuttal above, added 2026-11-12 by review-2 F4.** The sentence
+"`docs/frames/README.md` is owner-protected" is **false**: `docs/frames/README.md` is not in
+`PROTECTED` in `tools/runner/gates_batch_integrity.py` (that set is `AGENTS.md`, `SPEC.md`,
+`SPEC-COMPLETION.md`, `docs/COMPLETION_LEDGER.tsv`, `docs/OWNER_BLOCKS.md`, `tools/check.sh`,
+`tools/runner/gates_completion.py`, `tools/runner/ledger_close.py`, `tools/runner/gates_frames.py`,
+`tools/runner/gates_batch_integrity.py`, `tests/frames/reference.sha256`,
+`tests/frames/capture_oracle.sh`, `tests/frames/regenerate_reference.sh`, `ralph/builder.md`,
+`ralph/PROMPT.md`, `.gitignore`). What the README IS subject to is a **content pin** at
+`gates_batch_integrity.py:217`, which requires it to keep mentioning "visual history",
+"publish_frame.sh" and "oracle is never published" — a weaker and different constraint, and the
+one that actually binds. **The finding's conclusion stands unchanged**: editing a historical
+`docs/frames/*.txt` sidecar is still blocked by the immutability check at
+`gates_batch_integrity.py:110-112`, which is the half of the rebuttal that carried the weight.
+Only the README clause was wrong.
 
 **The six emulator runs.** Mandarine r1.2.1, md5 `0d2adab6ad078c78e6d03e72086f2eb6` verified,
 `DISPLAY=:99`, forced llvmpipe, mono, one private lane per run, every run through
@@ -176,6 +270,16 @@ measurements, their committed evidence, and four corrected records.
 **Inherited red test, reported not hidden:** `index-texels-are-rotated-for-the-pica` in
 `tests/scripts/c3d_frame_test.sh` is red at the base commit too — the reviewer cut 94 arms on
 both base and head and confirmed it is not this diff's regression. It is still red.
+
+**Corrected 2026-11-12 by review-2 F2: this paragraph names the wrong check.** The inherited red
+this batch was told about, and the one that was actually still red at the base commit, was
+`diagnostic-drawn-once` in the same file: **1 check red and 93 arms inert**, because the harness
+stopped at the first failure. `index-texels-are-rotated-for-the-pica` was NOT that red — it was
+introduced by this batch's own parent and fixed by this batch. `diagnostic-drawn-once` is now
+GREEN (the diagnostic is drawn every frame, so the test's premise was stale), and the full
+`tests/scripts` gate passes 94/94 with no `make -k` needed. The paragraph is kept rather than
+deleted because the reviewer's cut of 94 arms on base and head is a real measurement of a real
+thing; it is just not the inherited red it was labelled as.
 ## What this batch did (Phase 2 iteration 3 — the Runner's running half is pinned, and the record around it is corrected)
 
 ### Verification actually run for this batch (finishing iteration, 2026-11-01)
