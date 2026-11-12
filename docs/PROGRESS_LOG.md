@@ -1,3 +1,140 @@
+## Iteration 147 — the PICA reads a vector uniform's four words as (w, z, y, x); `registers()` wrote them as (x, y, z, w). The HUD becomes visible on the console and the row closes.
+
+**Ledger row `3ds.hud-canvas`, attempt 8 of 8 — CLOSED.** The row's acceptance command
+`mdk_3ds/tools/emurun.sh --expect hud` exits **0**: `hud emitted -- canvas: quads=4 draws=2
+mesh=2 corners=24 eyes=1` and `HUD VISIBLE -- 121 canary pixels in the panel`. Evidence:
+`docs/evidence/2026-11-12-147-register-word-order.txt`, `…-147-panel-after.png`.
+
+**What the defect is.** `C3D_FVec` (`c3d/types.h:37-64`) declares `struct { float w; float z; float
+y; float x; }` and the header says the union "Matches PICA layout": a register's first word is its
+**W** and its last is its **X**. `C3D_FVUnifMtxNx4` (c3d/uniforms.h:30-36) is a struct copy and
+`C3D_UpdateUniforms` (uniforms.o, the `GPUCMD_Add` at +0xe8) passes `C3D_FVUnif + start*16` to the
+GPU verbatim with `count*4` words, so nothing between the staging buffer and the shader reorders a
+register. Three independent readings of the shipped library agree on the layout: `Mtx_Scale`
+(mtx_scale.o) multiplies offset 12 of every row by its x argument; `Mtx_Translate`'s fast path
+(mtx_translate.o) is `row_i[k] += row3[k] * t_i`, which puts the translation in each row's `.w` =
+offset 0, i.e. the column-vector convention; and `Mtx_OrthoTilt` (mtx_orthotilt.o) writes the y
+scale to offset 8 and the y translation to offset 0 of row 0, which projects the scene with x and z
+swapped and no y term unless the words are read as (w,z,y,x) — and read that way it maps
+[bottom,top] onto clip [-1,+1] with determinant +1, which is what a Tilt matrix is for.
+
+**Why the port had it backwards, and why Forsaken did not.** Forsaken's hardware-validated
+`matrix_to_c3d` (../forsaken/render_c3d.c:1121) writes the **named** fields —
+`dst->r[i].x = m[0+i]; .y = m[4+i]; .z = m[8+i]; .w = m[12+i]` — which is register i = column i of
+the engine matrix, top-down, exactly the intent MDK's own comment states. MDK wrote the same
+sequence into `C3D_Mtx::m[]`, the raw float view of the same 16 bytes, where "top-down" is the
+reverse of the named order. Every register reached the shader component-reversed, with the engine's
+TRANSLATION row in the slot the shader dots with `px` and row 0 in the slot it multiplies by 1.
+
+**Three measured symptoms, one cause — and all three were already in the record as mysteries.**
+(i) The vertex shader's own comment records that "the diagnostic triangle drawn through an IDENTITY
+matrix paints nothing at all". Under the old order `registers(I)` gives every register
+`(x,y,z,w) = (0,0,0,1)`, so every vertex maps to the single clip point (1,1,1,1). (ii) The canvas.
+`canvasMatrix(600)`'s intended registers are (0,-2/360,0,1) (-2/600,0,0,1) (0,0,0,-0.5) (0,0,0,1);
+reversed they are (1,0,-2/360,0) (1,0,0,-2/600) (-0.5,0,0,0) (1,0,0,0), so clip x = clip w and NDC
+x = NDC y = 1 for every vertex: the HUD collapses onto one panel corner. That is why batch 146's
+probe — which read the staging buffer and found "exactly the four register rows that paint" —
+concluded the CPU side was correct. It was. The **values** were right and the **order** was wrong,
+and a probe that reads the buffer cannot see an order. (iii) The sunburst: every committed panel
+crop before this one is 96000 painted pixels with no readable view, and the open item that called
+itself "the one-sided view" is the same defect.
+
+**Review-3 of run-20261112-035144, disposition.** No Critical and no High, so nothing was
+blockingly owed; the verdict was INCOMPLETE on F1/F2 with F3 "must be settled or carried". **F3 is
+the one that mattered and it is CONFIRMED and FIXED.** The reviewer's stated mechanism ("the raw
+`m[]` copy in `C3D_FVUnifMtx4x4` is delivering permuted registers") is right, and its recommended
+one-run test — write the `.constf` literals' own order instead of the matrix — was not needed,
+because the static evidence in the shipped library settled it in one reading; the console run is
+the confirmation it asked for. Its counter-evidence note ("the level renders") was the right thing
+to distrust: the level did **not** render, it painted a sunburst, and the record had been calling
+that "the one-sided view". **F1** is confirmed as a record defect and is now moot: the narrowing
+"the only link left is the GPUCMD upload" was wrong, and the corrected narrowing was not a guess
+either — the link left was the word order, which is neither the upload nor the GPU. **F2** is
+confirmed: the named experiment had four outcomes and the record interpreted two; the experiment was
+superseded by F3's. **F4** (the reverted probe had no committed patch) is a fair criticism of the
+previous batch and is answered here by committing the before/after crops and the disassembly
+quotations rather than transcribed log lines. **F5** (the "eleven runs" count was not derivable) is
+confirmed and the paragraph it lived in is gone.
+
+**The fix.** `mdk_3ds/src/render/pica_matrix.cpp`:
+
+    out[i*4+0] = m[3*4+i];   // register w
+    out[i*4+1] = m[2*4+i];   // register z
+    out[i*4+2] = m[1*4+i];   // register y
+    out[i*4+3] = m[0*4+i];   // register x
+
+`pica_matrix.h`'s declaration carries the evidence, because that is where the next reader will be.
+
+**The pin, and the honesty note about it.** `tests/scripts/pica_matrix_tests.cpp`'s `shaderRow` is
+the host suite's model of what the hardware does with a register, and it modelled memory as
+(x,y,z,w) — the same wrong assumption, in the test. The layout row and the shader row were two
+wrongs that cancelled, which is the only reason the suite was green while the console painted a
+sunburst. `shaderRow` now models the hardware; `testTheShaderReadsTheRegistersTheWayTheMatrixMeans
+Them` keeps its assertion (`shaderRow(reg, i, p) == want[i]`) exactly as it was, and
+`testTheRegistersAreColumns` keeps its "a transposed upload cannot pass" matrix and now expects the
+reversed words. **This is not a test relaxed to match an implementation**: with the corrected model
+and the OLD `registers()` the suite goes red — `FAIL pica_matrix:311: allEqual(reg, want, 16)` and
+three `FAIL pica_matrix:327` — measured by reverting the fix, rebuilding and running it. No golden
+changed. The pin that no host test can substitute is the console run.
+
+**Console, `DISPLAY=:99`, Mandarine r1.2.1 md5 `0d2adab6`, llvmpipe forced, mono, exit 0.**
+frames reached 2520 by the deadline, log ends at 2580; `backend: PICA200 Citro3D`,
+`flow: screen=4 level=7`, `frame 2520 … health=100 objects=7 obj=570c/13d peak=570c/13d`.
+`expect : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame 2520)` and
+`expect : HUD VISIBLE -- 121 canary pixels in the panel`. **Environment note, not a result:**
+`/tmp/kilo` is owned by another user on this host and is not writable by this lane, so the first run
+of the acceptance command exited 7 with "no screenshot to judge the HUD on" — `import` could not
+write its file. Captures for this batch are under `/tmp/kilo-mdk`; the harness was not touched.
+
+**Where the canary landed, which is the orientation proof.** The marker is the canvas quad
+(0,0)-(16,16), the canvas's top-left corner with y down. With the corrected order its clip box is
+x ∈ [0.911, 1], y ∈ [0.947, 1], z = −0.5, w = 1 — the far corner of the portrait target, which the
+panel's rotation puts at the top-left of the landscape capture. Measured: 121 exact (0,0,255) px
+with bbox (0,0)-(10,10), i.e. 11×11 clipped by the crop's own edge, which is what a corner landing
+predicts. The HUD's dial (bright green) measures (333,191)-(388,232): the bottom-right, where the
+C# oracle draws it (`docs/evidence/2026-11-01-L7-runner-scene.png`).
+
+**What the level looks like now, and what is still wrong.** `panel_crop.py diff` before/after:
+95756 px of 96000, bbox the whole panel. `panel_geom.py census`: before clear 0 / painted 96000;
+after clear 83419 / painted 12581 (13.1%). `panel_geom.py geom` REFUSES the pair, correctly,
+because the before panel is entirely painted so its painted/clear map is a constant. The sunburst
+is gone; what remains is the clear colour over most of the panel, the start arena's floor and light
+pool in the lower middle, and two textured red-orange masses either side of the panel's vertical
+centre. **The level's geometry is still wrong and that is a different defect.** The matrix path is
+now derived correct and the canvas proves it end to end, so the next theory is the level's
+vertices, its per-draw world composition, or its projection — not the upload. Coverage falling
+from 100% to 13.1% is not a regression (100% was the sunburst covering everything) and it is not a
+pass either. Every committed before-crop in `docs/evidence/` is a sunburst, so every panel A/B floor
+measured against them is a floor under the old defect and has to be re-measured on the new picture
+before it is quoted again.
+
+**Gates, verbatim.** `make -C tests/scripts` → `All cases match the oracle.` rc 0, **591** `^PASS` / 0 FAIL / 0 SKIP (349 `^  ok` mutation/frame-harness
+lines), no golden changed. `DISPLAY=:99 bash tools/check.sh` → `CHECK: ALL GATES PASSED`
+rc 0. `make -C mdk_3ds` → rc 0, `mdk.elf` `e70fcb733e0389fe3ba881b4b4d40074` →
+`728eb2350c3ef8a81acda15f75617c1e`, `mdk_c3d.shbin` `59d5e0e8ec1dc12827b6cd516715de0f` UNCHANGED
+(the shader byte code is not part of this fix). `cmake --build build-linux -j8` → rc 0.
+`build/vm_tests` → 95 PASS / 0 FAIL including `PASS PicaMatrix`.
+
+**Ledger bookkeeping, stated as the environment fact it is.** The row's acceptance command is green
+at this batch's commit, but `docs/COMPLETION_LEDGER.tsv` is owned by `coleshores:coleshores` mode 0664 and
+this lane runs as `piagent` (groups `piagent`, `development`), so the file is not writable here and
+the row still reads `todo`. `gates_completion` also requires the `verified` hash to be an ancestor of
+HEAD, so the row belongs in a follow-up commit anyway. The line to write, when a lane can write it:
+`3ds.hud-canvas → done`, evidence
+`mdk_3ds/src/render/pica_matrix.cpp,docs/evidence/2026-11-12-147-register-word-order.txt`,
+verified = this batch's commit short hash. Nothing about the measurement depends on the
+bookkeeping, and a follow-up commit that closes it must be titled `loop:` or `ledger:` —
+`gates_batch_integrity` requires every other commit in a batch window to add exactly one frame PNG.
+
+**Prior-solution lookup.** Pi-knowledge `mdk-sdl` searched for the uniform/matrix question; the
+vault was read directly (read-only) from `/mnt/nas/Vaults/port-docs` — the `obsidian_*` / `cognee_*`
+MCP tools are not present in this session, which is a session configuration gap to report rather
+than a lookup that happened (AGENTS.md P9). The vault's
+`60-references/3ds-platform/citro3d/03-matrices-projection.md` documents the `C3D_FVec` field order
+and states "citro3d stores matrices already transposed relative to the mathematical convention",
+but does not spell out the word-order consequence; the decisive readings came from the shipped
+`libcitro3d.a` and from Forsaken's `matrix_to_c3d`.
+
 ## Iteration 146 — the CPU side of the canvas uniform is measured correct; the fault is downstream of the staging buffer
 
 **Ledger row `3ds.hud-canvas`, attempt 7 of 8.** Acceptance command unchanged —

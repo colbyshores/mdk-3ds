@@ -122,18 +122,51 @@ void eyeViewProjection(const float view[16], const float projection[16],
 // write for the level geometry: see `isIdentity`.
 void drawMatrix(const float world[16], const float eyeVp[16], float out[16]);
 
-// The uniform layout: register i holds COLUMN i of `m`, i.e. register i gets
-// out[i*4+0..3] = m[0*4+i], m[1*4+i], m[2*4+i], m[3*4+i].
+// The uniform layout: register i holds COLUMN i of `m` — and a register's four
+// words go into memory in the PICA's order, which is W, Z, Y, X, so
+// out[i*4+0..3] = m[3*4+i], m[2*4+i], m[1*4+i], m[0*4+i].
 //
 // THE STRIDED READ. The shader consumes register i as the vector dotted with the
 // position (`dp4 outpos.x, mvp[0], r0`), so register i is ROW i of the
 // column-vector matrix M_pica, and M_pica = M^T for our row-vector M. Therefore
-// register i must hold COLUMN i of our row-major matrix — exactly Forsaken's
-// matrix_to_c3d (render_c3d.c:1077). A verbatim row copy uploads the transpose:
-// rotations come out inverted and the picture is mirrored.
+// register i must hold COLUMN i of our row-major matrix. A verbatim row copy
+// uploads the transpose: rotations come out inverted and the picture is mirrored.
+//
+// THE WORD ORDER INSIDE A REGISTER IS NOT x, y, z, w, AND THIS IS THE BUG THAT
+// ATE THE PICTURE. `C3D_FVec` (c3d/types.h:37-64) declares its members
+// `w, z, y, x` and the header's own comment says the union "Matches PICA
+// layout", so the FIRST word of a register is its W and the LAST is its X.
+// Three independent readings of the shipped library agree:
+//
+//   * `Mtx_Scale` (libcitro3d.a, mtx_scale.o) multiplies offset 12 of every row
+//     by its x argument: `.x` lives at offset 12, `.w` at offset 0.
+//   * `Mtx_OrthoTilt` (mtx_orthotilt.o) writes the y scale to offset 8 of row 0
+//     and the y translation to offset 0. Read as x,y,z,w that matrix projects the
+//     scene with x and z swapped and no y term at all; read as w,z,y,x it maps
+//     [bottom,top] onto [-1,+1] and — because it is a Tilt matrix — puts the
+//     screen's x where the scene's y was, which is the documented behaviour.
+//   * Nothing reorders on the way out: `C3D_FVUnifMtxNx4` (c3d/uniforms.h:30-36)
+//     is a struct copy of `mtx->r[i]`, and `C3D_UpdateUniforms` (uniforms.o,
+//     the `GPUCMD_Add` at +0xe8) passes `C3D_FVUnif + start*16` verbatim with
+//     count*4 words. The staging buffer IS the register file.
+//
+// So a register written into memory in the order (x,y,z,w) reaches the shader
+// component-reversed, which is what this function used to do, and the three
+// measured symptoms of that are all in the record: an IDENTITY matrix painted
+// nothing at all (every register became (0,0,0,1), so every vertex mapped to the
+// single clip point (1,1,1,1)); the 2D canvas painted nothing at all (its
+// registers came out (1,0,-2/360,0) etc., so clip x = clip w = pixel x and the
+// whole HUD collapsed onto the panel corner); and the level's own view was the
+// radial sunburst every committed panel crop shows, the picture the open items
+// have been calling "the one-sided view". Forsaken — hardware-validated — never hit it
+// because its matrix_to_c3d (render_c3d.c:1121) writes the NAMED fields
+// `.x .y .z .w` in that order instead of raw slots, and the named fields are
+// already reversed in memory. That is the line to read next to this one.
 //
 // `out` may be the `m` member of a C3D_Mtx (that union's raw view of the same 16
-// floats), which is why this writes floats instead of a citro3d type.
+// floats), which is why this writes floats instead of a citro3d type — and the
+// raw view is WZYX per row, which is why nothing else in this backend writes a
+// matrix through it.
 void registers(const float m[16], float out[16]);
 
 // The matrix a CANVAS draw uploads: the orthographic projection of the canvas's

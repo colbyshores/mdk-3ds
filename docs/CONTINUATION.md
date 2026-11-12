@@ -1,70 +1,77 @@
 # Phase 2 continuation checkpoint
-Risk: low — no shipped code or shader byte changes across batches 145 and 146: every probe was
-reverted and the rebuilt tree is byte-identical to the parent commit (`mdk.elf`
-`e70fcb733e0389fe3ba881b4b4d40074`, `mdk_c3d.shbin` `59d5e0e8ec1dc12827b6cd516715de0f`, both
-re-measured after the last revert rather than asserted). What ships is eleven emulator
-measurements with committed evidence, the citro3d uniform layer read at the disassembly level, and
-doc corrections that each replace an assertion a measurement refutes. Ledger row `3ds.hud-canvas`
-stays open at attempt 7 of 8.
+Risk: high — four lines of shipped 3DS code change what EVERY draw on the console sends to the GPU.
+`pica::registers()` wrote each vertex-uniform register's four words in (x,y,z,w) order; the PICA
+reads them as (w,z,y,x). `mdk.elf` e70fcb73→728eb235, 95756 of 96000 panel pixels move, and the
+ledger row `3ds.hud-canvas` closes on its own acceptance command. Full record:
+`docs/evidence/2026-11-12-147-register-word-order.txt`.
 
-**Where the canvas bug actually stands, after eleven runs.** It is narrowed to the GPUCMD upload and
-the GPU's side of it, and every step of that narrowing is measured:
+**THE DEFECT, AND WHY ELEVEN RUNS MISSED IT.** `C3D_FVec` (c3d/types.h:37-64) declares its members
+`w, z, y, x` — "Matches PICA layout" — so a register's FIRST word is its W and its LAST is its X.
+`C3D_FVUnifMtxNx4` is a struct copy and `C3D_UpdateUniforms` hands `C3D_FVUnif + start*16` to
+`GPUCMD_Add` verbatim (uniforms.o +0xd0..+0xe8), so nothing reorders between the staging buffer and
+the shader. `Mtx_Scale` multiplies offset 12 by its x argument, `Mtx_Translate`'s fast path puts the
+translation in each row's offset 0, and `Mtx_OrthoTilt` only projects at all read as (w,z,y,x): three
+readings of the shipped library, one answer. MDK wrote `registers()` into `C3D_Mtx::m[]`, the RAW
+view, in the order its comment calls "column i, top-down" — which in raw memory is the reverse.
+Forsaken never hit it because its `matrix_to_c3d` (render_c3d.c:1121) writes the NAMED fields
+`.x .y .z .w`, and the names are already reversed in memory.
 
-* the canvas matrix's **arithmetic** is confirmed float for float — driving the shader from `.constf`
-  literals holding exactly `registers(canvasMatrix(600,360))` paints the canary (100 px, exit 0, the
-  level collapsed to the clear colour, which is what that matrix applied to world geometry predicts);
-* the uniform **location** is exonerated (vertex uniform 0 and 2 both give 0 px), the canary's
-  **position** is exonerated, `C3D_BindProgram` after a write is exonerated, and the canvas's
-  **geometry, buffer, texture, combiner, tint, cull, depth, clip and viewport** are exonerated by the
-  transform-bypass run, which painted 24000 px;
-* a per-draw `C3D_FVUnifMtx4x4` issued after `installEye`'s bind **does** reach the shader — forcing
-  it on and adding `+0.5f` to clip x moves 73427 of the panel's 96000 pixels — so the earlier "a
-  uniform written after `installEye` does not arrive" is withdrawn, and citro3d's own
-  `C3D_UpdateUniforms` explains why: it uploads every maximal dirty run at every draw, so position
-  in a frame cannot matter, only "dirty at the draw";
-* **and the buffer itself is now read.** Immediately before the canary's `C3D_DrawArrays`,
-  `C3D_FVUnif[GPU_VERTEX_SHADER][0..3]` holds exactly the four register rows that paint, with
-  `dirty=1111 uv=1 tint=1`. The CPU side is correct at the instant before the draw that produces
-  nothing. What is left is the upload and the GPU.
+**THREE MEASURED SYMPTOMS, ONE CAUSE.** (i) an identity MVP painted nothing: every register became
+(0,0,0,1), so every vertex mapped to the single clip point (1,1,1,1); (ii) the canvas painted
+nothing: its registers came out (1,0,-2/360,0) etc., so clip x = clip w and the whole HUD collapsed
+onto one panel corner — which is exactly why batch 146's probe, reading the staging buffer, found
+"exactly the four register rows that paint": the VALUES were right and the ORDER was wrong, and no
+probe that reads the buffer through `C3D_FVec` members can see the difference; (iii) the sunburst
+the panel has shown since the crops were committed, the open item that called itself "the one-sided
+view". Batch 145's `.constf` run painted because picasso writes a `.constf` payload in declaration
+order, which is the order the hardware wants — the two paths were never equivalent, and review-3 F3
+was right that the record's claim that they were is the contradiction that mattered.
 
-**Two traps worth more than the run that found them.** `C3D_FVec` declares its members `w, z, y, x`
-(`c3d/types.h:37-64`), so reading the uniform buffer through `.x/.y/.z/.w` prints every register
-component-reversed and looks like a transpose bug that does not exist. And `C3Di_LoadShaderUniforms`
-— run by `C3D_BindProgram` — stages the shader's own FLOAT24 constants, whose re-upload **clears
-`C3D_FVUnifDirty[stage][id]`**, which is a genuine way for an app's uniform write to be silently
-dropped and is the vault's `c3d-interleaved-draw-leaves-vertex-uniforms-stale` hazard with the named
-cause the vault note records as unproven. It cannot fire here: `mdk_c3d.v.pica`'s one FLOAT24
-constant has register id **95**, not 0-5 (measured from the shbin; and picasso allocates `.constf`
-downward from 95 while `.fvec` allocates upward from 0, so a shader with ~90 `.constf` lines would
-begin eating live `.fvec` registers).
+**THE FIX AND ITS PIN.** `registers()` now writes `out[i*4+j] = m[(3-j)*4+i]`. The host suite's
+`shaderRow` was the second wrong half — it modelled the register as (x,y,z,w) in memory, and the two
+wrongs cancelled — so it now models the hardware, and `testTheShaderReadsTheRegistersTheWayTheMatrix
+MeansThem` keeps its assertion unchanged while going red against the old `registers()` (4 checks:
+`pica_matrix:311` and `:327` ×3). No golden changed; `PASS PicaMatrix`, 95 PASS / 0 FAIL.
 
-**The named next experiment, one run.** In `installEye`, write `pica::canvasMatrix` instead of
-`eyeVp` and delete every other matrix write in the frame; then **diff the panel crop against
-`docs/evidence/2026-11-12-145-literal-mtx.png`** — 90743 px of clear `(16,32,48)` plus 100 px of
-exact `(0,0,255)` is the signature of the canvas matrix genuinely reaching every draw. Clear colour
-plus canary means the matrix arrives from `installEye`'s write and not from a per-draw one, and the
-question becomes the GPUCMD stream around `C3D_DrawArrays`; "garbage" instead means the shader does
-not hold what the buffer holds. Iteration 144 ran a version of this and wrote "the level turns to
-garbage as expected" without diffing it against that signature, and clear colour versus garbage is
-the whole discriminator.
+**THE ROW'S ACCEPTANCE IS GREEN.** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` → exit **0**,
+`hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1` AND `HUD VISIBLE -- 121 canary
+pixels in the panel`. The canary's bbox is (0,0)-(10,10) of the panel crop, which is where the
+canvas's top-left 16x16 lands under the panel's quarter turn, and the HUD's dial measures
+(333,191)-(388,232) — the bottom-right, where the C# oracle draws it. The canvas is not merely
+visible, it is in the oracle's orientation. (`/tmp/kilo` is another user's on this host and is not
+writable by this lane; captures are under `/tmp/kilo-mdk`. The harness is unchanged.)
 
-**Do not re-run**: the uniform location, the canary's corner-vs-centre position, rebinding after a
-per-draw write, per-draw write ordering, the canary's vertex layout, or any probe that judges the
-matrix through the canary alone when a level-sized instrument would settle it in one run.
-Full records: `docs/evidence/2026-11-12-145-uniform-delivery.txt` (seven runs, with run 7's
-withdrawal written at the top of the file rather than deleted) and
-`docs/evidence/2026-11-12-146-uniform-staging.txt`.
+**NEXT, in order.**
+0. **Close the ledger row from a lane that can write the file.** `mdk_3ds/tools/emurun.sh --expect
+   hud` is green at this batch's commit, but `docs/COMPLETION_LEDGER.tsv` is owned by another user on this
+   host (`coleshores:coleshores`, mode 0664; this lane is `piagent`), so this batch could NOT set
+   the row. It still reads `todo`. The row to write is:
+   `3ds.hud-canvas<TAB>d1<TAB>slow<TAB>done<TAB>mdk_3ds/tools/emurun.sh --expect hud<TAB>mdk_3ds/src/render/pica_matrix.cpp,docs/evidence/2026-11-12-147-register-word-order.txt<TAB><this batch's short hash>`.
+   `gates_completion` needs the verified hash to be an ancestor of HEAD, which is why the row is a
+   follow-up commit and not part of the batch (and a follow-up commit has to be titled `loop:` or
+   `ledger:`, because `gates_batch_integrity` requires every other commit to add exactly one frame
+   PNG). This is an environment fact, not a result: the row's
+   acceptance is measured green, the bookkeeping is what is blocked.
+1. **The level's own geometry, which is now a different question and still open.** The sunburst is
+   gone; the panel is 83419/96000 clear with the start arena's floor and light pool in the lower
+   middle and two textured red-orange masses either side of the panel's vertical centre line. The
+   matrix path is derived correct and the canvas proves it end to end, so the next theory has to be
+   the level's vertices, its per-draw world composition, or its projection — not the upload. The
+   symmetry about the panel's vertical centre is the first fact to use: under the quarter turn that
+   axis is the scene's vertical, so the pair is a floor/ceiling or a left/right pair drawn where a
+   plane should be. `docs/OPEN_ITEMS.md`'s "the one-sided view" is renamed to what it now is.
+2. **Re-baseline the panel instruments.** Every committed before-crop in `docs/evidence/` is a
+   sunburst, so every A/B floor measured against them is a floor under the old defect. Coverage
+   moved from 96000 painted to 12581; a noise floor has to be re-measured on the new picture before
+   any panel A/B is quoted again (batch 103's lesson: a floor is only valid for the scene it was
+   measured on).
+3. **Old-3DS hardware evidence stays open** (AGENTS.md P6/P8): everything here is Mandarine r1.2.1
+   on llvmpipe, mono, `:99`. Emulator-green is not hardware-pass.
 
-**All three gates are green.** `make -C mdk_3ds` rc 0 with byte-identical artefacts,
-`DISPLAY=:99 bash tools/check.sh` rc 0 with every sub-gate green, and `make -C tests/scripts` rc 0
-at 94 of 94 adjudicating arms. That last one was rc 2 at the parent commit with 93 `c3d_frame`
-mutation arms inert: two stale literals in `tests/scripts/c3d_frame_test.sh` — a check pinning the
-canary's retired 3-vertex triangle shape instead of its 6-vertex quad, and three arm patterns that
-could not match the real `drawDiagnostic(r, mdk_render_canvas_width(rr))` call — made one check
-always-red, which in a mutation harness turns red for every mutant and so disabled the whole suite.
-Fixed test-side only, no arm's expectation loosened, 0 of 94 adjudicating before and 94 of 94 after.
-
-
+**DO NOT RE-RUN**: the whole batch-145/146 uniform-delivery hunt — the uniform location, the
+canary's position, rebinding after a per-draw write, per-draw write ordering, the vertex layout, the
+`.constf`-versus-uniform equivalence, or any probe that reads `C3D_FVUnif` and concludes the CPU side
+is correct. All of it was chasing a non-defect; the defect was the word order, and it is fixed.
 **Batch 142 (the ledger row `3ds.hud-canvas`) — the canvas lands as queue records, the HUD is wired, and the
 picture does not appear; the batch ships the seam, the gate and eight closed doors.** The seam is the oracle's
 shape: quads accumulate between `canvas_begin` and `canvas_end`, `canvas_end` uploads one mesh and queues one

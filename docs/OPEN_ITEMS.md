@@ -608,7 +608,25 @@ whole suite. When a structural check fails, the question is never "is the litera
 but "what invariant was the literal standing in for" — and after fixing one stale literal, count
 how many arms actually adjudicated, because a second staleness was hiding under the first.
 
-## The 3DS canvas draws no pixels (found in batch 142; OPEN)
+## CLOSED by batch 147: the 3DS canvas drew no pixels (found in batch 142)
+
+**CLOSED, AND THE CAUSE WAS NOT IN ANY OF THE ELEVEN RUNS.** `pica::registers()` wrote each
+vertex-uniform register's four words into `C3D_Mtx::m[]` in the order (x,y,z,w); the PICA reads a
+register's words as **(w,z,y,x)** — `C3D_FVec` declares `w, z, y, x` and says "Matches PICA
+layout", `Mtx_Scale` multiplies offset 12 by its x argument, `Mtx_OrthoTilt` only projects at all
+read as (w,z,y,x), and `C3D_UpdateUniforms` hands the staging buffer to `GPUCMD_Add` verbatim. So
+every register reached the shader component-reversed: for the canvas matrix that means clip x =
+clip w, NDC x = NDC y = 1, and the whole HUD collapsed onto one panel corner. The same defect is
+why an identity MVP painted nothing and why the level was a sunburst. `mdk_3ds/tools/emurun.sh
+--expect hud` now exits **0** with `HUD VISIBLE -- 121 canary pixels in the panel`, and the
+canary's bbox (0,0)-(10,10) is where the canvas's top-left 16x16 lands under the panel's quarter
+turn. `docs/evidence/2026-11-12-147-register-word-order.txt` has the disassembly, the arithmetic,
+the mutation that reddens the host suite against the old code, and the run.
+
+**Why eleven runs of reading the uniform buffer could not see it:** the buffer held the right
+*values* in the wrong *order*, and a probe that prints the buffer prints values.
+
+---
 
 The 2D canvas is implemented and its records are replayed — `canvas: quads=4 draws=2
 mesh=2 corners=24 eyes=1` every frame, and the frame census places the panel on the screen
@@ -659,7 +677,10 @@ discriminator — do the diff.
 **TWO TRAPS ON THE WAY, both measured.** `C3D_FVec` declares its members `w, z, y, x`
 (`c3d/types.h:37-64`), so reading the uniform buffer through `.x/.y/.z/.w` prints every
 register component-reversed and looks like a transpose bug that does not exist; MDK writes
-`C3D_Mtx::m[]` and is safe, because `pica::registers()` emits memory order (x,y,z,w). And
+`C3D_Mtx::m[]` and is safe, because `pica::registers()` emits memory order (x,y,z,w). **[CORRECTED
+BY BATCH 147 — this is the sentence that was the bug. The reversal is real, `registers()` emitted
+exactly that reversed order into raw memory, and MDK was NOT safe: the trap note described the
+hardware correctly and then drew the wrong conclusion about its own code.]** And
 `C3Di_LoadShaderUniforms`, run by `C3D_BindProgram`, stages the shader's own FLOAT24 constants
 whose re-upload **clears `C3D_FVUnifDirty[stage][id]`** — a real way for an app's uniform write
 to be silently dropped, and the vault's `c3d-interleaved-draw-leaves-vertex-uniforms-stale`

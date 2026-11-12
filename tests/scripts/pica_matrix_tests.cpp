@@ -80,9 +80,20 @@ void xform(const float m[16], const float p[4], float out[4]) {
 
 // What the vertex shader computes for one component: register i of the uniform
 // dotted with the position (`dp4 outpos.x, mvp[0], r0`).
+//
+// THE WORD ORDER INSIDE A REGISTER IS W, Z, Y, X, NOT X, Y, Z, W. `C3D_FVec`
+// (c3d/types.h:37-64) declares `w, z, y, x` in that memory order, citro3d's own
+// Mtx_* builders write to it the same way (`Mtx_Scale` multiplies offset 12 by
+// its x argument; `Mtx_OrthoTilt` writes the y scale to offset 8), and
+// `C3D_UpdateUniforms` copies the staging buffer to the GPU verbatim, so the
+// LAST word of a register is the one the shader calls `.x` and the first is the
+// one multiplied by 1. This helper is the only place that model is written down
+// for the host suite, and it used to say the opposite -- which is why the row
+// that reads the layout through it stayed green while the console painted a
+// sunburst. See `pica_matrix.h`'s `registers` for the full evidence.
 float shaderRow(const float reg[16], int i, const float p[4]) {
-    return reg[i * 4 + 0] * p[0] + reg[i * 4 + 1] * p[1] + reg[i * 4 + 2] * p[2] +
-           reg[i * 4 + 3] * p[3];
+    return reg[i * 4 + 3] * p[0] + reg[i * 4 + 2] * p[1] + reg[i * 4 + 1] * p[2] +
+           reg[i * 4 + 0] * p[3];
 }
 
 bool allEqual(const float* a, const float* b, int n) {
@@ -282,7 +293,9 @@ void testTheWorldComposesOnTheLeftOfTheView() {
 
 void testTheRegistersAreColumns() {
     // A matrix of distinct values, so a transposed upload cannot pass: register
-    // i holds COLUMN i, i.e. elements i, 4+i, 8+i, 12+i.
+    // i holds COLUMN i, i.e. elements i, 4+i, 8+i, 12+i -- stored W, Z, Y, X, so
+    // the column's LAST element is the register's first word and its FIRST
+    // element is the word the shader dots with x.
     float m[16];
     for (int i = 0; i < 16; i++) {
         m[i] = (float)i;
@@ -290,10 +303,10 @@ void testTheRegistersAreColumns() {
     float reg[16];
     mdk::pica::registers(m, reg);
     const float want[16] = {
-        0, 4, 8, 12,
-        1, 5, 9, 13,
-        2, 6, 10, 14,
-        3, 7, 11, 15,
+        12, 8, 4, 0,
+        13, 9, 5, 1,
+        14, 10, 6, 2,
+        15, 11, 7, 3,
     };
     PICA_CHECK(allEqual(reg, want, 16));
 }

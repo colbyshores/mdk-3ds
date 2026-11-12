@@ -127,11 +127,21 @@ void drawMatrix(const float world[16], const float eyeVp[16], float out[16]) {
 }
 
 void registers(const float m[16], float out[16]) {
+    // Register i holds COLUMN i of `m`, and the four words of a register are
+    // stored W, Z, Y, X -- see the declaration for the three measurements that
+    // establish that. Reading the column bottom-up is therefore what puts the
+    // column's first element in the slot the shader calls `.x`.
+    //
+    // The previous version of this loop wrote the column top-down, which delivered
+    // every register component-reversed: the shader's `.x` got the engine matrix's
+    // TRANSLATION row and its `.w` got row 0. That is why an identity MVP painted
+    // nothing, why the 2D canvas painted nothing, and why the level's view is a
+    // sunburst instead of a corridor.
     for (int i = 0; i < 4; i++) {
-        out[i * 4 + 0] = m[0 * 4 + i];
-        out[i * 4 + 1] = m[1 * 4 + i];
-        out[i * 4 + 2] = m[2 * 4 + i];
-        out[i * 4 + 3] = m[3 * 4 + i];
+        out[i * 4 + 0] = m[3 * 4 + i]; // register w <- row 3 of m
+        out[i * 4 + 1] = m[2 * 4 + i]; // register z <- row 2 of m
+        out[i * 4 + 2] = m[1 * 4 + i]; // register y <- row 1 of m
+        out[i * 4 + 3] = m[0 * 4 + i]; // register x <- row 0 of m
     }
 }
 
