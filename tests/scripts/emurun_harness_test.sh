@@ -382,11 +382,39 @@ check "the expectation block was lifted from emurun.sh (non-vacuity)" "1" \
 check "and the lift is syntactically complete, not a truncation of it" "0" \
       "$(printf '%s\n' "$EXPECT_FN" | bash -n 2>/dev/null; printf '%s' "$?")"
 
-expect_rc() { # <log content> <name> -> the adjudication's exit code
-    local content="$1" name="${2:-hud}"
+# A synthetic emulator capture, so the PIXEL half of `--expect hud` is exercised
+# here too. `--expect hud` now demands the canary as well as the log line (review-1
+# F1: the log line alone was green over a HUD with no pixels), and an acceptance that
+# cannot be exercised is not evidence. The capture is the emulator's documented
+# 1280x1024 window; the canary is 30 pixels of the exact colour the renderer draws.
+cap() { # cap <with-canary:0|1> -> path to a synthetic capture
+    python3 - "$1" "$ROOT/tools/panel_crop.py" <<'PY'
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
+from panel_crop import PANEL_X0, PANEL_Y0
+from PIL import Image
+img = Image.new("RGB", (1280, 1024), (16, 32, 48))
+if sys.argv[1] == "1":
+    px = img.load()
+    for i in range(30):
+        px[PANEL_X0 + (i % 10), PANEL_Y0 + (i // 10)] = (0, 0, 255)
+path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % sys.argv[1])
+img.save(path)
+print(path)
+PY
+}
+CAP_YES="$(cap 1)"
+CAP_NO="$(cap 0)"
+
+expect_rc() { # <log content> <name> [shot] -> the adjudication's exit code
+    local content="$1" name="${2:-hud}" shot
+    # `"$#"` and not `${3:-}`: an explicitly empty shot is a CASE here ("the run
+    # produced no picture"), and `${3:-$CAP_YES}` would silently substitute the
+    # good capture for it.
+    if [ "$#" -ge 3 ]; then shot="$3"; else shot="$CAP_YES"; fi
     local log; log="$(mktemp)"
     printf '%s\n' "$content" > "$log"
-    ( eval "$EXPECT_FN"; expect_check "$name" "$log" ) >/dev/null 2>&1
+    ( eval "$EXPECT_FN"; expect_check "$name" "$log" "$shot" ) >/dev/null 2>&1
     local rc=$?
     rm -f "$log"
     printf '%s' "$rc"
@@ -415,6 +443,18 @@ check "hud: the LAST canvas line decides, so a HUD that stopped fails" "1" \
 canvas: quads=0 draws=0 mesh=3 corners=0 eyes=1 (canvas frame 61)')"
 check "an unknown expectation is a usage error (2), not a failed run (7)" "2" \
       "$(expect_rc 'canvas: quads=12 draws=12' menu)"
+
+# THE HOLE review-1 F1 was about: the emitted line is green while nothing paints.
+# These two rows are the difference between an acceptance that means "the HUD is on
+# screen" and one that means "the frontend asked for a HUD".
+check "hud: emitted with no canary pixels FAILS -- the review-1 F1 hole" "1" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud "$CAP_NO")"
+check "hud-visible: the canary alone is enough (no log line needed)" "0" \
+      "$(expect_rc 'frame 60 elapsed=1.0000 steps=60' hud-visible "$CAP_YES")"
+check "hud-visible: no canary fails" "1" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud-visible "$CAP_NO")"
+check "hud-visible: with no screenshot at all it cannot claim a verdict" "1" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud-visible "")"
 
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership)"

@@ -329,34 +329,38 @@ void testTheShaderReadsTheRegistersTheWayTheMatrixMeansThem() {
 // The C#'s canvas projection, expanded the way System.Numerics expands it, from
 // the oracle's own arguments and nothing else: `CreateOrthographicOffCenter(
 // -margin.X, CanvasWidth + margin.X, CanvasHeight + margin.Y, -margin.Y, 0, 1)`
-// at Renderer.cs:736 with the VR margin at zero, so left = 0, right = W,
-// TOP = H, BOTTOM = 0 -- the y arguments are NOT swapped. M11 = 2/(right-left),
-// M22 = 2/(top-bottom), M33 = 1/(near-far), and the translation row the two
-// centres, which is what puts the canvas top (y = 0) at clip MINUS 1. The Vulkan
-// backend is a bit-for-bit copy of this (`renderer_vk.cpp`'s `canvasOrtho`).
+// at Renderer.cs:736 with the VR margin at zero. Read against the signature
+// `(left, right, bottom, top, near, far)` that means left = 0, right = W,
+// BOTTOM = H and TOP = 0: the y arguments ARE swapped, and that swap is what
+// makes the oracle y-UP. System.Numerics' expansion is
+// `M22 = 2/(top-bottom) = 2/(0-H) = -2/H` and
+// `M42 = (top+bottom)/(bottom-top) = H/H = +1`, so canvas y = 0 (its top row of
+// pixels) goes to clip +1.
+//
+// THIS TARGET COPIES THAT, UNCHANGED, AND USED NOT TO SAY SO. An earlier version
+// of this row expanded the oracle as `+2/H, -1` — i.e. with top and bottom
+// unswapped — and then applied a `flipToYUpClip` step to get back to the numbers
+// `canvasMatrix` actually builds. The arithmetic came out right by two wrongs
+// cancelling, which is exactly why it survived: the row passed while the record
+// of why was inverted (review-1 F2). The step is gone; what is left is the
+// oracle's own matrix, so this row now really does compare the 3DS canvas
+// against the oracle instead of against a flipped copy of it.
+//
+// THE VULKAN BACKEND IS THE ONE THAT FLIPS, AND IT IS RIGHT TO: `renderer_vk.cpp`
+// `canvasOrtho` writes `out[5] = +2/H`, `out[13] = -1`, which is this matrix with
+// the clip y negated, because the Vulkan viewport transform is y-DOWN. That flip
+// belongs to the API that needs it, not to the matrix.
 void oracleCanvasOrtho(float out[16], float w, float h) {
     for (int i = 0; i < 16; i++) {
         out[i] = 0.0f;
     }
     out[0] = 2.0f / (w - 0.0f);
-    out[5] = 2.0f / (h - 0.0f);
+    out[5] = 2.0f / (0.0f - h);              // = -2/H: the oracle is y-UP
     out[10] = 1.0f / (0.0f - 1.0f);
     out[12] = (0.0f + w) / (0.0f - w);
-    out[13] = (0.0f + h) / (0.0f - h);
+    out[13] = (0.0f + h) / (h - 0.0f);       // = +1
     out[14] = 0.0f / (0.0f - 1.0f);
     out[15] = 1.0f;
-}
-
-// The ONE deliberate difference from the oracle, named instead of buried in a
-// constant: this target's landscape clip is y-UP (that is what `eyeViewProjection`
-// consumes and what the scene is drawn through), where the oracle's and Vulkan's
-// are y-DOWN. So the y row is negated, canvas y = 0 goes to clip +1, and the HUD
-// lands on the scene's top-left instead of mirrored off it. See the header note on
-// `canvasMatrix` -- the bug this step exists to prevent is a later batch "aligning
-// the 3DS with the oracle" and painting the HUD upside down.
-void flipToYUpClip(float m[16]) {
-    m[5] = -m[5];
-    m[13] = -m[13];
 }
 
 void testTheCanvasUsesTheScenesQuarterTurn() {
@@ -378,7 +382,6 @@ void testTheCanvasUsesTheScenesQuarterTurn() {
     mdk::pica::eyeViewProjection(kIdentity, kIdentity, 0.0f, rotate);
     float ortho[16];
     oracleCanvasOrtho(ortho, kW, kH);
-    flipToYUpClip(ortho);
 
     // Corners and centre of the canvas, in its own pixels: x right, y DOWN.
     const float pts[5][2] = {{0.0f, 0.0f},

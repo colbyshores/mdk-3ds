@@ -1,0 +1,113 @@
+================================================================================
+Batch 143 — the HUD acceptance becomes a pixel verdict, the shipped diagnostic
+becomes a 16x16 (0,0,255) canary drawn through the canvas's own state, and nine
+emulator probes close the queue-order hypothesis.
+Ledger row 3ds.hud-canvas, attempt 3 of 8.
+Acceptance command (unchanged, owner-owned file): `mdk_3ds/tools/emurun.sh --expect hud`
+  — which now FAILS, and that is the correct answer: the HUD does not paint.
+Review closed: logs/ralph-pi/run-20261111-211020/review-1.md (DeepSeek V4.1 Flash
+TH): F1 (High) fixed, F2 (Medium) fixed, F3 (Medium) fixed, F4 (Medium) fixed,
+F5 (Low) fixed. Nothing rebutted.
+Measured 2026-11-11 (UTC). `mdk.elf` 096d49f68eb544d402aa9eaf7a17245d ->
+00d67ff4bbbc9d9a0fab088b935e6842. Shader unchanged: mdk_c3d.shbin
+59d5e0e8ec1dc12827b6cd516715de0f.
+Host: `bash tools/check.sh` -> CHECK: ALL GATES PASSED (587 host cases,
+`PASS PicaMatrix` after the F2 rewrite, `PASS EmurunHarness` 84 checks).
+Emulator: Mandarine r1.2.1 (md5 0d2adab6ad078c78e6d03e72086f2eb6, verified),
+DISPLAY=:99, every run through mdk_3ds/tools/emurun.sh, level 7.
+================================================================================
+
+THE MEASUREMENT THE GATE READS
+--------------------------------------------------------------------------------
+docs/evidence/2026-11-11-hud-canary-panel.png is the top panel (400x240, cropped
+with tools/panel_crop.py's imported rectangle — NOT a hand-typed box) of a
+level-7 frame after this batch's build.
+
+  canary pixels, exact (0,0,255):            0   (the gate needs 25)
+  most common panel colours:  (0,0,0) 9357, (223,141,44) 9230, (171,28,0) 7001
+
+The level renders. The canary does not. `emurun.sh --expect hud-visible` prints
+`0 canary pixels of pure (0,0,255) in the panel, 25 needed` and exits 7.
+
+WHY A CANARY AND NOT A DIFF
+--------------------------------------------------------------------------------
+A visibility verdict normally means diffing against a HUD-off frame. There is no
+HUD-off build, and making one would mean a renderer switch this project does not
+have and should not grow for a test. So the renderer ships a 16x16 marker in the
+canvas's own pixel space, through the canvas's own matrix, texture, combiner,
+tint path, cull and depth state, in a colour that occurs nowhere in the level-7
+capture. An exact hit in the panel can then only have come from the canvas's draw
+path — one frame, no reference, and the marker is ~110 panel pixels so a floor of
+25 cannot be met by a stray edge pixel and cannot be missed by a HUD that paints.
+
+The thing it replaced drew a white triangle over most of the clip square through
+an identity matrix. It never painted, so it proved nothing; and it would have
+flashed the whole panel white the moment the bug it watches is fixed.
+
+THE NINE PROBES
+--------------------------------------------------------------------------------
+5  log the linear heap, every mesh address, the canvas mesh's first corner
+   mesh 0 = 0x30249d00, canvas mesh 2 = 0x305ea280, v0 = (500.00, 287.00, 0.00),
+   white texture id 0, all in one linear region.
+   CLOSES: wrong canvas vertex data or addresses.
+6  scene combiner switched to MODULATE(tex, PRIMARY)
+   the level renders unchanged.
+   CLOSES: the tint uniform and GPU_PRIMARY_COLOR (alpha reaches the primary).
+7  the diagnostic as a full clip square, cull NONE, depth off, colour from the
+   white texture -> panel unchanged.
+   CLOSES: the combiner constant, the cull mode, the depth state, the winding.
+8  C3D_GetCmdBufUsage() measured AT the canvas draw
+   0.101 at draws #137-139 of ~150 (0.000 on frame 1).
+   CLOSES: command-buffer overflow (the frame-end 0.113 never proved this).
+9  replayQueue skipped, so the diagnostic is the only draw in the frame
+   the panel is 100% the clear colour (16,32,48).
+   CLOSES: the queue order — the hypothesis iteration 142 named as next.
+10 canvas draws forced onto a known-good arena texture -> no canvas pixels.
+   CLOSES: the HUD's textures.
+11 the tail draws a KNOWN-GOOD STATIC scene mesh (mesh 0, first 6 vertices)
+   through the frame's own eyeVp, tinted magenta -> ZERO magenta pixels.
+   CLOSES: the canvas's mesh and matrix, by substitution.
+12 probe 11 with the replay skipped (that draw is the only draw)
+   ZERO magenta pixels.
+   CLOSES: the tail's position among other draws.
+
+13  `drawRecorded` ITSELF called after the replay, with mesh 0 (first 6
+   vertices), the frame's own eyeVp handed in through `world`, arena texture 13
+   and a magenta tint -> 2219 calls, ZERO magenta pixels on the panel.
+   CLOSES: drawDiagnostic's own sequence, by elimination.
+   NOTE the first run of this probe used Pass::Solid, and drawRecorded forces
+   the tint white on every non-Overlay draw, so it could not have shown a
+   colour at all. Its null result meant nothing and was not a result.
+
+WHAT IS LEFT, stated as the shortest true thing
+--------------------------------------------------------------------------------
+THE FRAME'S TAIL IS DEAD. A draw issued after `replayQueue` returns does not
+reach the panel, no matter whose mesh, matrix, texture or state it carries --
+including `drawRecorded`, the function that renders the scene 137 times a
+frame. The canvas is the last bucket of the replay, so it is the first casualty.
+The next step is the boundary between the last replayed draw and C3D_FrameEnd:
+(a) reverse the bucket order in replayQueue and see whether the level's last
+draws go missing instead of the HUD's; (b) read C3Di_UpdateContext /
+C3D_DrawArrays in the linked libcitro3dd.a for a counter or ring that saturates
+after N draws. C3D_GetCmdBufUsage() is 0.101 at the canvas draw, so it is not
+the command buffer's byte size -- but that is citro3d's own view of its buffer,
+not what the GPU consumed.
+
+TWO PROCESS FAULTS THAT NEARLY PRODUCED A WRONG FINDING
+--------------------------------------------------------------------------------
+* Probe 5's build failed to compile and the harness ran the PREVIOUS binary, so
+  its silence read as a null result.
+* Probe 9's revert was a string replace that silently did not match, so probe 10
+  ran with the replay still disabled and reported probe 9's result as its own.
+Both were caught only because a measurement could not be distinguished from the
+one before it. A probe that cannot fail is not a probe — including the probes run
+to find why a probe cannot fail.
+* The first eight probes read the panel with a hand-typed rectangle 22 rows too
+  high. All were re-checked through panel_crop.py's imported rectangle; no
+  conclusion moved, which is why this is a footnote and not a retraction.
+
+NOT HARDWARE EVIDENCE
+--------------------------------------------------------------------------------
+Every number here is Mandarine on :99. No original 3DS was involved, so nothing
+here is an OG hardware pass (AGENTS P6/P8), and the emulator masks FCRAM/VRAM
+exhaustion, edge clamping and heap wear.

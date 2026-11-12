@@ -151,23 +151,34 @@ void registers(const float m[16], float out[16]);
 // this port builds (`StereoModes.CanvasZoom` returns 1 for None and SideBySide),
 // so this function takes the width and no margin.
 //
-// THE y AXIS IS DELIBERATELY NOT THE C#'s, AND SAYING IT WRONG HERE WOULD BE THE
-// WAY TO GET IT WRONG. System.Numerics expands the oracle's call as
-// `M22 = 2/(top-bottom) = +2/H`, `M42 = (bottom+top)/(bottom-top) = -1`: the
-// arguments are NOT swapped (`top = CanvasHeight`, `bottom = 0`), so the oracle
-// puts the canvas top (y = 0) at clip MINUS 1. The Vulkan backend is a bit-for-bit
-// copy of that (`renderer_vk.cpp`'s `canvasOrtho`: `out[5] = +2/H`, `out[13] = -1`)
-// because a Vulkan framebuffer is y-DOWN and wants exactly that.
+// THE y AXIS, STATED RIGHT (review-1 F2, and it replaces a version of this
+// comment that had it backwards). System.Numerics expands
+// `CreateOrthographicOffCenter(left, right, bottom, top, zNear, zFar)` as
+// `M22 = 2/(top-bottom)`, `M42 = (top+bottom)/(bottom-top)`. The oracle's call
+// passes `bottom = CanvasHeight + margin.Y` and `top = -margin.Y` — the two ARE
+// swapped against the intuitive reading, and that swap is the whole point — so
+// with margin 0:
 //
-// This target is the opposite. The engine's landscape clip is y-UP -- that is what
-// `eyeViewProjection` consumes and what the scene is drawn through -- so the canvas
-// has to agree with the scene it is drawn over, and the y row is NEGATED against
-// the oracle: `m[5] = -2/H`, `m[13] = +1`. Getting it the oracle's way paints the
-// HUD upside down and mirrored, which is at least visible.
+//     M22 = 2/(0 - H) = -2/H      M42 = (0 + H)/(H - 0) = +1
 //
-// `tests/scripts/pica_matrix_tests.cpp`'s canvas row starts from the oracle's
-// expansion and applies that negation as a named step, so the difference is a
-// decision the test states instead of a convention it silently copies.
+// i.e. THE ORACLE IS y-UP: canvas y = 0 (its top row of pixels) lands at clip
+// +1. That is what this function builds — `m[5] = -2/H`, `m[13] = +1` — so the
+// 3DS canvas agrees with the oracle LINE FOR LINE and there is NO negation
+// against it. The earlier text here claimed the oracle expanded to `+2/H, -1`
+// and that this target therefore negated the y row; both halves were wrong, the
+// expansion and the consequence, and the numbers did not move when the sentence
+// was corrected, which is how it survived a review.
+//
+// THE VULKAN BACKEND IS THE ONE THAT DIFFERS, AND FOR A REAL REASON:
+// `renderer_vk.cpp`'s `canvasOrtho` writes `out[5] = +2/H`, `out[13] = -1`,
+// which is the oracle's matrix with the clip y negated — the Vulkan viewport
+// transform is y-DOWN, so a Vulkan build has to flip what System.Numerics
+// produced. That flip belongs to the API that needs it and not to the matrix.
+//
+// `tests/scripts/pica_matrix_tests.cpp`'s canvas row now starts from the
+// oracle's expansion and states, as a named step, that this target copies it
+// unchanged; the Vulkan difference is recorded there too, so the two spellings
+// are two named decisions and not a convention silently copied.
 //
 // THE QUARTER TURN IS THE SCENE'S, APPLIED THE SAME WAY. The panel is portrait
 // (240x400) and the canvas is landscape, exactly like the scene, so the same

@@ -25079,3 +25079,117 @@ lead in `docs/OPEN_ITEMS.md` rather than acted on here, because acting on it is 
 was already committed-sized. Obsidian MCP and Cognee MCP are absent from this session's tool list — the
 vault was not read at all this attempt, which per AGENTS P9 is a degraded lookup and a session fault to
 report, not a lookup that happened.
+
+## Iteration 143 — batch 143: review-1 is dispositioned 5/5, `--expect hud` becomes a pixel verdict instead of a log line, and nine emulator probes narrow "the canvas draws no pixels" to "nothing drawn in the canvas's own state reaches the panel"
+
+**Row.** `3ds.hud-canvas`, attempt 3 of 8. Review-1 of run-20261111-211020 (DeepSeek V4.1
+Flash TH) is dispositioned 5/5: F1 fixed, F2 fixed (the record was inverted, the numbers
+were not), F3 fixed, F4 fixed, F5 fixed. No finding was rebutted.
+
+**What landed.**
+
+1. **F1 — the acceptance now measures visibility, not self-reporting.** `--expect hud` used
+   to read the guest's own `canvas:` line, so it was green over a HUD with no pixels; the
+   reviewer was right and the previous batch had already written that admission into the
+   harness comment instead of fixing it, which is not a disposition. `--expect hud` now
+   requires the log line **and** a pixel, and an `--expect` run captures its own screenshot
+   when the caller did not pass `--shot` — the ledger's acceptance cell is
+   `emurun.sh --expect hud` with no `--shot`, and a verdict that needs pixels cannot depend
+   on the caller remembering to ask for a picture. `--expect hud-visible` is the pixel
+   verdict on its own. `tests/scripts/emurun_harness_test.sh` grew four rows, including
+   `hud: emitted with no canary pixels FAILS -- the review-1 F1 hole`, so the hole is
+   pinned and not just described. **The row's acceptance command now fails, and that is the
+   correct answer: the HUD does not paint.**
+2. **The canary, which replaces the shipped diagnostic.** `drawDiagnostic` drew a white
+   triangle covering most of the clip square through an identity matrix. It never painted,
+   so it proved nothing, and the moment the bug it watches is fixed it would have flashed
+   the panel white. It is now a 16x16 marker in the canvas's own pixel space, through the
+   canvas's own matrix, texture, combiner, tint path, cull and depth state, tinted pure
+   (0,0,255) — a colour that occurs nowhere in the level-7 capture, so an exact hit in the
+   panel can only have come from the canvas's draw path. That is what lets a gate read
+   visibility out of ONE frame with no HUD-off reference build, which would need a renderer
+   switch this project does not have and should not grow for a test.
+3. **F2 — three records said the canvas y-axis derivation backwards.** The oracle is
+   `CreateOrthographicOffCenter(-margin.X, W + margin.X, H + margin.Y, -margin.Y, 0, 1)`
+   (`Renderer.cs:736`), and against the signature `(left, right, bottom, top, near, far)`
+   that means **bottom = H and top = 0 — the y arguments ARE swapped**. System.Numerics
+   expands that to `M22 = 2/(0-H) = -2/H`, `M42 = (0+H)/(H-0) = +1`: **the oracle is y-UP**,
+   and `pica::canvasMatrix` (`m[5] = -2/H`, `m[13] = +1`) copies it **unchanged**. The
+   Vulkan `canvasOrtho` (`+2/H`, `-1`) is the one that differs, because the Vulkan viewport
+   transform is y-down. The header said the opposite and the test suite carried the same
+   wrong expansion plus a `flipToYUpClip` step that negated it back — two wrongs cancelling,
+   which is exactly why the row passed while the record of why was inverted. The test now
+   expands the oracle correctly and compares `canvasMatrix` against it directly; the flip
+   step is gone. `PASS PicaMatrix` after the change, with no number moved.
+4. **F4 — one number, one definition.** `caps.max_canvas_quads` said 512 while
+   `mdk_render_canvas_capacity()` — the value the queue and the mesh actually enforce, and
+   the oracle's `CanvasQuads = 4096` — said 4096. Both now read `kCanvasQuadCapacity`.
+5. **F5 — an allocation failure no longer reads as "the frontend asked for nothing".**
+   `canvasQuadsThisFrame` is set before the `ensureCanvasMesh` early return, so the `quads=`
+   half of the census line keeps its meaning ("what the frontend asked for") on every path.
+   **F3 —** `main_3ds.cpp` claimed "the HUD loads, blinks and draws like the Linux
+   frontend's"; it now says loads, blinks, is queued and emitted, and is not measured on
+   screen, and points at the open item.
+
+**The probes, and what each one closed.** Nine emulator runs on `:99`, all through
+`emurun.sh`, all with the panel read through `panel_crop.py`'s documented rectangle.
+
+| Probe | Change | Result | Closes |
+|---|---|---|---|
+| 5 | log the linear heap, every mesh address, the canvas mesh's first corner | `mesh 0 = 0x30249d00`, canvas `mesh 2 = 0x305ea280`, `v0 = (500.00, 287.00, 0.00)`, white texture id 0 | "the canvas's vertex data or addresses are wrong" — they are neither, and every buffer is in one linear region |
+| 6 | scene combiner switched to `MODULATE(tex, PRIMARY)` | the level renders unchanged | **the tint / `GPU_PRIMARY_COLOR` path** — the uniform reaches the primary with alpha 1 |
+| 7 | the diagnostic as a full clip square, cull NONE, depth off, colour from the white texture | panel unchanged | the combiner constant, the cull mode, the depth state, and "the diagnostic's own state is wrong" |
+| 8 | log `C3D_GetCmdBufUsage()` at the canvas draw | 0.101 at draw #137-139 of ~150, 0.000 on frame 1 | **command-buffer overflow** — the buffer is at 10% and the canvas draws are the last of the frame |
+| 9 | skip `replayQueue` entirely, so the diagnostic is the only draw | panel is 100% the clear colour (16,32,48) | "the scene's draws cover the HUD" — there is no scene, and still nothing |
+| 10 | canvas draws forced onto a known-good arena texture | no canvas pixels | "the HUD's textures are the problem" |
+| 11 | the tail draws a KNOWN-GOOD STATIC scene mesh (mesh 0, first 6 vertices) through the frame's own `eyeVp`, tinted magenta | **zero magenta pixels** | "the canvas's mesh or matrix is the problem" — a mesh and matrix the scene proves visible every frame are invisible at the tail |
+| 12 | probe 11 with the replay skipped, so that draw is the only draw in the frame | zero magenta pixels | the last escape: it is not the tail's position among other draws |
+
+**Where that leaves the row.** The fault is not the geometry, the matrix, the texture, the
+combiner, the tint, the depth state, the cull mode, the winding, the command buffer, the
+queue order, or the buffer's address. A draw that uses a mesh, a matrix and a texture the
+scene renders successfully every frame is invisible when `drawDiagnostic` issues it and
+visible when `drawRecorded` does, and the difference between those two call sites is now
+the shortest description of the bug. **The next experiment is named in `docs/OPEN_ITEMS.md`.**
+
+**Two process faults found while doing this, recorded because they nearly produced a wrong
+finding.** Probe 5's build failed to compile and the harness ran the PREVIOUS binary, so
+its "no output" read as a null result; and probe 9's revert was a string replace that
+silently did not match, so probe 10 ran with the scene replay still disabled and its
+"nothing renders" was probe 9's result, not its own. Both were caught only by noticing
+that a measurement could not be distinguished from the one before it. A probe that cannot
+fail is not a probe — including the ones run to find why a probe cannot fail. Separately,
+the first eight probes read the panel with a hand-typed rectangle that was 22 rows too
+high; every one of them was re-checked through `panel_crop.py`'s imported rectangle and
+none of the conclusions moved, which is the only reason this is a footnote and not a
+retraction.
+
+**Lookups.** pi-knowledge was searched live against `mdk-sdl`. Obsidian MCP and Cognee MCP
+are absent from this session's tool list, so per AGENTS P9 this was a degraded lookup and is
+reported as one rather than claimed as an equivalent disk read.
+
+**Notes.** `/tmp/kilo` is not writable by this user (owned by `coleshores`); captures went
+to `/tmp/mdkprobe`. `ralph/builder.md` is modified in the working tree and is a protected
+path in `tools/runner/gates_batch_integrity.py`, so it is deliberately left uncommitted.
+`docs/COMPLETION_LEDGER.tsv` is owner-owned and read-only, which is why F1 was fixed by
+making the row's existing acceptance command mean visibility instead of by re-pointing the
+row.
+
+**Addendum, after the commit was drafted — probe 13, the one the batch named, and it moved the
+bug.** The experiment OPEN_ITEMS asked for was: call `drawRecorded` itself after the replay,
+with a mesh, matrix and texture the scene proves visible every frame, tinted so it can be
+seen. It ran 2219 times (the draw census counts the draw) and produced **zero** magenta
+pixels on the panel. So the shortest true description is no longer "the canvas's draw is
+different from the scene's" — it is **the frame's tail is dead**: anything drawn after
+`replayQueue` returns stops reaching the panel, and the canvas, being the last bucket, is the
+first casualty. The next step is the boundary between the last replayed draw and
+`C3D_FrameEnd`, and it is named in `docs/OPEN_ITEMS.md`.
+
+The first version of that probe used `Pass::Solid`, and `drawRecorded` forces the tint white
+on every non-Overlay draw — so a magenta Solid draw cannot exist and the first null result
+meant nothing. Overlay is the only pass whose tint is the record's colour, and Overlay takes
+`world` as the whole transform, so the probe hands it `eyeVp`. Recorded because a probe whose
+failure mode is invisible is not a probe, and because this one was nearly reported as an
+answer: the same run's log was first read from a stale lane directory left by an earlier
+probe (the harness prints the guest-log path; reading it is not optional), which showed no
+probe lines at all and looked like a much stranger result than it was.

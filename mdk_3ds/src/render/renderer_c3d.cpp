@@ -96,6 +96,13 @@ static constexpr int kScreenHeight = 400;
 // against the free VRAM.
 static constexpr size_t kGpuScratchSize = 256u * 1024u;
 
+// The canvas's quad ceiling, in QUADS, and the single definition of it. The
+// oracle's own cap is `CanvasQuads = 4096` (Renderer.cs:198), compared against
+// the vertex count as `CanvasQuads * QuadVertices` (Renderer.cs:342); the
+// Vulkan backend answers the same 4096. It is a ceiling and not an allocation —
+// `ensureCanvasMesh` sizes from the quads actually queued and only clamps here.
+static constexpr int32_t kCanvasQuadCapacity = 4096;
+
 // The next power of two at or above `value`, and at least 8.
 //
 // The PICA200's texture size register encodes log2 of the dimensions, so a
@@ -732,7 +739,13 @@ inline GpuVertex expand(const mdk::Vertex& v) {
     caps.canvas_filtering = false;  // the palette lookup is fixed-function
     caps.panorama_linear = false;
     caps.max_texture_size = 1024;
-    caps.max_canvas_quads = 512;
+    // ONE NUMBER, ONE DEFINITION. This used to say 512 while
+    // `mdk_render_canvas_capacity` — the value the queue and the mesh actually
+    // enforce — said 4096, so the capability the frontend was told was smaller
+    // than the one it got, and a frontend that trusted `caps` would have
+    // truncated the menus and the message queue, which want hundreds of quads
+    // (review-1 F4). Both now read `kCanvasQuadCapacity`.
+    caps.max_canvas_quads = kCanvasQuadCapacity;
 
     // THE SPRITE RESIDENCY BUDGET.
     //
@@ -825,7 +838,7 @@ static void settleDeferredTextures(RendererC3D* renderer) {
 // comes first in the file.
 static void settleDeferredMeshes(RendererC3D* renderer);
 static void replayQueue(RendererC3D* r);
-static void drawDiagnostic(RendererC3D* r);
+static void drawDiagnostic(RendererC3D* r, float canvasWidth);
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 
 // Install one pass's depth state on the citro3d context and record it in the
@@ -1255,7 +1268,9 @@ static void logCensus(RendererC3D* r) {
             logCensus(r);
             r->census.active = false;
         }
-        drawDiagnostic(r);
+        // The canvas's own width, because the canary is drawn in the canvas's own
+        // pixel space and that space is what `canvasMatrix` projects.
+        drawDiagnostic(r, mdk_render_canvas_width(rr));
     }
     // THE CANVAS LINE, and it is the evidence `mdk_3ds/tools/emurun.sh --expect
     // hud` reads. Why a log line and not a pixel: the HUD's own colours are white,
@@ -2420,70 +2435,98 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
 // description the real draw had just installed and the real draw read the
 // triangle's 15 floats at the mesh's offsets -- invisible geometry, with the
 // diagnostic itself on screen to say the frame was fine (batch 28's defect).
-static void drawDiagnostic(RendererC3D* r) {
+static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
     if (!r->diagnosticTriangle || !r->scratch) {
         return;
     }
-    // THE VERTICES MUST BE IN LINEAR MEMORY, AND THEY WERE NOT. They used to be
-    // a `static float triangle[15]`: a .bss address in the application heap.
-    // citro3d hands the BufInfo address to the GPU, and only the linear heap is
-    // the GPU's address space; nothing flushes the CPU cache for a static array
-    // either. The renderer's linear scratch is the right home: already
-    // `linearAlloc`'d, already GPU-addressable, and nothing else writes it.
+    // THE CANARY, AND WHY IT IS NOT THE TRIANGLE IT USED TO BE.
     //
-    // IT STILL DOES NOT APPEAR, AND THAT IS MEASURED, NOT ASSUMED. Batch 78
-    // replaced these vertices with a triangle covering the whole clip square,
-    // ran it with the cull mode set to GPU_CULL_NONE and the depth test off, and
-    // not one pixel of the panel changed: the panel is 50% white when the SCENE
-    // is drawn with the primary colour and 50% clear colour, and the extra
-    // 50% this triangle would have painted is still the clear colour. So the
-    // linear-memory fix is correct on its own terms -- a .bss pointer is not a
-    // GPU address -- but it is not the whole reason, and the remaining cause is
-    // open. What has been measured and ruled out for it: the cull mode (NONE
-    // changes the frame by 69 px of 96000), the depth test (off changes it by
-    // 201 px), and the winding (the culled set is the one that looks
-    // counter-clockwise on the panel, and the triangle was tried both ways).
-    // The 13/58 this comment used to carry were batch 78's first reading and are
-    // superseded by the re-measurement recorded in PROGRESS_LOG Iteration 108
-    // (review-4 F7); the probes are MORE informative than the old numbers said.
-    float* triangle = static_cast<float*>(r->scratch);
-    triangle[0] = -0.8f; triangle[1] = -0.8f; triangle[2] = 0.0f; triangle[3] = 0.0f; triangle[4] = 0.0f;
-    triangle[5] = 0.8f;  triangle[6] = -0.8f; triangle[7] = 0.0f; triangle[8] = 0.0f; triangle[9] = 0.0f;
-    triangle[10] = 0.0f; triangle[11] = 0.8f;  triangle[12] = 0.0f; triangle[13] = 0.0f; triangle[14] = 0.0f;
-    C3D_Mtx identity;
-    for (int i = 0; i < 16; i++) {
-        identity.m[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    // What shipped here was a white triangle covering most of the clip square,
+    // drawn through an identity matrix, whose stated job was "the frame and the
+    // program are fine". Two problems, both found the hard way while chasing the
+    // HUD: it never painted (so it proved nothing), and the moment anything
+    // downstream of it started working it would have flashed the whole panel
+    // WHITE. A diagnostic that cannot be seen and cannot be trusted is worse than
+    // none, and one that blanks the game when the bug it watches is fixed is a
+    // trap.
+    //
+    // So this is now a 16x16 marker in the canvas's OWN pixel space, through the
+    // canvas's OWN matrix, with the canvas's OWN texture, combiner, tint path,
+    // cull and depth state. That makes it the smallest possible proof of the one
+    // question the HUD row is actually blocked on — "does a draw in the canvas's
+    // state, in the canvas's space, reach the panel?" — and nothing more. It is
+    // the question `emurun.sh --expect hud-visible` asks, and the answer today is
+    // no: measured 2026-11-11, the panel contains zero pixels of the canary
+    // colour, with the scene replayed, with the scene replayed and the canary
+    // drawn first, and with the replay skipped so the canary is the only draw in
+    // the frame.
+    //
+    // THE COLOUR IS THE CONTRACT. Pure blue (0,0,255) is not a colour the level
+    // produces: the whole level-7 capture contains no exact (0,0,255) pixel, so
+    // one in the panel can only have come from here. That is what lets a gate read
+    // visibility out of a screenshot without a HUD-off reference build, which does
+    // not exist and would need a renderer switch this project does not have.
+    //
+    // WHAT THE MEASUREMENTS RULED OUT, and they are here so the next batch does
+    // not re-run them: the queue order (the canary alone, with the scene replay
+    // skipped, is still invisible); the tint and GPU_PRIMARY_COLOR (the scene
+    // rendered normally with its combiner switched to MODULATE(tex, PRIMARY), so
+    // the primary arrives white with alpha 1); the combiner constant; the command
+    // buffer (usage 0.101 at the canvas draw, and the canvas draws are #137-139
+    // of ~150); the vertex data and the buffer addresses (the canvas mesh's first
+    // corner reads back as (500.00, 287.00, 0.00) and every buffer sits in one
+    // linear region); the depth state, the cull mode and the winding; and a
+    // known-good STATIC scene mesh drawn at the tail through the frame's own
+    // eyeVp, which is ALSO invisible — so the fault is not the canvas's geometry
+    // and not its matrix either.
+    float* marker = static_cast<float*>(r->scratch);
+    static const float kSize = 16.0f;
+    const float x1 = kSize;
+    const float y1 = kSize;
+    // pos xyz, uv — the canvas's top-left corner, y down like every other canvas
+    // quad, and the uv the white texture does not care about.
+    const float v[6][5] = {{0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+                           {x1,   0.0f, 0.0f, 1.0f, 0.0f},
+                           {x1,   y1,   0.0f, 1.0f, 1.0f},
+                           {0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+                           {x1,   y1,   0.0f, 1.0f, 1.0f},
+                           {0.0f, y1,   0.0f, 0.0f, 1.0f}};
+    for (int i = 0; i < 6; i++) {
+        for (int c = 0; c < 5; c++) {
+            marker[i * 5 + c] = v[i][c];
+        }
     }
-    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &identity);
+
+    // THE CANVAS'S MATRIX, not the identity. The identity put the marker's 16
+    // canvas pixels at clip 16, which is off the edge of the panel, and an
+    // off-panel draw proves nothing about the HUD.
+    float screen[16];
+    mdk::pica::canvasMatrix(screen, canvasWidth);
+    C3D_Mtx gpuMtx;
+    mdk::pica::registers(screen, gpuMtx.m);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, r->mvpLocation, &gpuMtx);
+
     C3D_BufInfo* info = C3D_GetBufInfo();
     BufInfo_Init(info);
-    BufInfo_Add(info, triangle, 5 * sizeof(float), 2, 0x10);
+    BufInfo_Add(info, marker, 5 * sizeof(float), 2, 0x10);
+
+    // THE CANVAS'S STATE, each of it the same call drawRecorded makes for an
+    // Overlay quad.
+    if (r->canvasWhite >= 0 && (size_t)r->canvasWhite < r->textures.size()) {
+        C3D_TexBind(0, &r->textures[(size_t)r->canvasWhite].tex);
+    }
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, 1.0f, 1.0f, 0.0f, 0.0f);
     C3D_TexEnv* plain = C3D_GetTexEnv(0);
     C3D_TexEnvInit(plain);
-    C3D_TexEnvSrc(plain, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
-    C3D_TexEnvFunc(plain, C3D_Both, GPU_REPLACE);
-    // THE DIAGNOSTIC IS NOT DEPTH-TESTED, and that is load-bearing now that
-    // the scene is. Its three vertices sit at clip z = 0 through an identity
-    // matrix, which is the FAR plane — exactly what the buffer was cleared
-    // to — so with the test installed it would fail wherever any real
-    // geometry is nearer, and the one draw whose whole job is to say "the
-    // frame and the program are fine" would go missing in exactly the busy
-    // scenes it is needed for. The cache is told, because this writes the
-    // state behind the per-draw check's back.
+    C3D_TexEnvSrc(plain, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
+    C3D_TexEnvFunc(plain, C3D_Both, GPU_MODULATE);
+    C3D_CullFace(GPU_CULL_NONE);
+    r->cullMode = GPU_CULL_NONE;
     installDepthState(r, mdk::pica::DepthState{false, false});
-    // THE TINT IS WRITTEN WHITE HERE, and it is load-bearing since the shader
-    // started driving `outclr` from it (review-9 F2). The diagnostic's combiner
-    // is REPLACE(PRIMARY_COLOR), and the canvas is the last thing the replay
-    // draws, so without this the triangle is painted in the last canvas quad's
-    // colour at that quad's alpha -- and a quad of alpha 0 would have the frame's
-    // own alpha test discard the one draw whose job is to say the frame is alive.
-    // Before the tint existed `outclr` was a constant white and the question did
-    // not arise. The cache is told because this writes behind the per-draw check's
-    // back, exactly as the depth call above does.
-    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 1.0f, 1.0f, 1.0f, 1.0f);
-    r->tintIsWhite = true;
-    C3D_DrawArrays(GPU_TRIANGLES, 0, 3);
-    // The uniform now holds the identity, not the frame's matrix. The next
+    C3D_FVUnifSet(GPU_VERTEX_SHADER, r->tintLocation, 0.0f, 0.0f, 1.0f, 1.0f);
+    r->tintIsWhite = false;
+    C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
+    // The uniform now holds the canvas's matrix, not the frame's. The next
     // installEye -- the other eye, or this one's next frame -- is what puts it
     // back, and it writes the uniform unconditionally.
     r->matrixIsFrame = false;
@@ -2658,6 +2701,13 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     if (quads == 0) {
         return;
     }
+    // RECORDED BEFORE THE WAYS THIS CAN STILL FAIL. `canvasQuadsThisFrame` is the
+    // `quads=` half of the line `emurun.sh --expect hud` reads, and it means
+    // "what the frontend asked for" — not "what was drawn". Setting it only on the
+    // success path made an allocation failure read as `quads=0`, i.e. as "the
+    // frontend asked for nothing", which is the one thing the line must not
+    // confuse with a dropped batch (review-1 F5). `draws` stays the honest half.
+    r->canvasQuadsThisFrame = quads;
     const int32_t corners = quads * 6;
     if (!ensureCanvasMesh(rr, r, corners)) {
         r->canvasQuads.clear();
@@ -2707,7 +2757,6 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
         i += run;
     }
 
-    r->canvasQuadsThisFrame = quads;
     r->canvasQuads.clear();
 }
 
@@ -2732,7 +2781,10 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
     // matching the oracle costs nothing today and stops the menus and the message
     // queue, which want hundreds of quads, from silently dropping everything past
     // the 512th (review-9 F6).
-    return 4096;
+    //
+    // `caps.max_canvas_quads` reports this same number, from the same constant,
+    // so the advertised capability and the enforced one cannot drift (review-1 F4).
+    return kCanvasQuadCapacity;
 }
 
 // ---------------------------------------------------------------------------

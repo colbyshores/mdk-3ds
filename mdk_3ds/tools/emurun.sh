@@ -53,7 +53,10 @@
 #   mdk_3ds/tools/emurun.sh --grep 'tex:|draws' # extra patterns to extract
 #   mdk_3ds/tools/emurun.sh --shot /tmp/f.png    # capture the offscreen display
 #   mdk_3ds/tools/emurun.sh --min-frames 60      # refuse to report a short run
-#   mdk_3ds/tools/emurun.sh --expect hud         # fail unless the HUD drew
+#   mdk_3ds/tools/emurun.sh --expect hud         # fail unless the HUD's canvas drew
+#   mdk_3ds/tools/emurun.sh --expect hud-visible --shot S.png
+#                                               # fail unless a canvas draw reached
+#                                               # the panel (the pixel verdict)
 #   mdk_3ds/tools/emurun.sh path/to/other.3dsx
 #
 # EXIT CODES
@@ -740,6 +743,15 @@ while [ "$(date +%s)" -lt "$END" ]; do
   sleep 1
 done
 
+# An `--expect` run ALWAYS has a frame to judge, even when the caller did not ask
+# for one. The ledger's `3ds.hud-canvas` acceptance cell is `emurun.sh --expect hud`
+# with no `--shot`, and a verdict that needs pixels cannot depend on the caller
+# remembering to ask for a picture — that is how a gate goes back to being
+# self-referential the moment nobody is looking (review-1 F1).
+if [ -n "$EXPECT" ] && [ -z "$SHOT" ]; then
+  SHOT="$(mktemp "${TMPDIR:-/tmp}/mdk-emurun-expect.XXXXXX.png")"
+fi
+
 [ -z "$SHOT" ] || import -window root "$SHOT" 2>/dev/null || \
   import -display "$DISPLAY" -window root "$SHOT" 2>/dev/null || \
   echo "emurun: WARNING no screenshot tool (ImageMagick 'import'); continuing" >&2
@@ -822,10 +834,65 @@ grep "$FRAME_RE" "$LOG" | tail -3
 # against a HUD-off run, which does not exist yet; until it does, a green `--expect
 # hud` is not a visibility verdict and must not be recorded as one. A screenshot is
 # still taken and published for the human to look at (`--shot`).
-expect_check() { # expect_check <name> <log> ; 0 when the evidence is there
-    local name="$1" log="$2"
-    local line quads draws
+canary_pixels() { # canary_pixels <png> ; prints the count, 0 on any failure
+    python3 - "$1" "${REPO:-${ROOT:-.}}/tools/panel_crop.py" <<'PY' 2>/dev/null
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
+from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1, open_rgb
+px = open_rgb(sys.argv[1]).load()
+print(sum(1 for y in range(PANEL_Y0, PANEL_Y1 + 1)
+              for x in range(PANEL_X0, PANEL_X1 + 1) if px[x, y] == (0, 0, 255)))
+PY
+}
+
+# THE CANARY, AND WHY IT IS A COLOUR AND NOT A DIFF.
+#
+# `--expect hud` used to read a log line, and the line could only say the canvas was
+# QUEUED and EMITTED; a frame whose draws the GPU never rasterises printed the same
+# line (measured: docs/OPEN_ITEMS.md, "The 3DS canvas draws no pixels"). A pixel
+# verdict needs something to look for, and the obvious answer — diff the HUD frame
+# against a HUD-off frame — needs a HUD-off build, which would need a renderer
+# switch this project does not have and should not grow for a test.
+#
+# So the renderer ships a 16x16 marker drawn in the canvas's own space, through the
+# canvas's own matrix, texture, combiner, tint, cull and depth state
+# (renderer_c3d.cpp's `drawDiagnostic`), in pure (0,0,255) — a colour that does not
+# occur anywhere in the level-7 capture, so an exact hit in the panel can only have
+# come from the canvas's draw path. That is a visibility verdict from one frame and
+# no reference.
+#
+# 25 and not 1: the marker is ~110 panel pixels, and a floor above a stray edge
+# pixel keeps one lucky sample from reading as a painted HUD, while staying far
+# below the marker's size so a HUD that paints at all clears it.
+canary_verdict() { # canary_verdict <shot> ; 0 when the canvas reached the panel
+    local shot="$1" hits
+    if [ -z "$shot" ] || [ ! -f "$shot" ]; then
+        echo "emurun: no screenshot to judge the HUD on (the capture failed)" >&2
+        return 1
+    fi
+    hits="$(canary_pixels "$shot")"
+    case "$hits" in ''|*[!0-9]*) hits=0 ;; esac
+    if [ "$hits" -lt 25 ]; then
+        echo "emurun: HUD NOT VISIBLE: $hits canary pixels of pure (0,0,255) in the " >&2
+        echo "          panel, 25 needed. The canvas's draws are emitted (see the" >&2
+        echo "          'canvas:' line) but nothing drawn in the canvas's state and" >&2
+        echo "          space reaches the screen." >&2
+        return 1
+    fi
+    echo "expect    : HUD VISIBLE -- $hits canary pixels in the panel"
+    return 0
+}
+
+expect_check() { # expect_check <name> <log> <shot> ; 0 when the evidence is there
+    local name="$1" log="$2" shot="${3:-}"
+    local line quads draws hits
     case "$name" in
+        hud-visible)
+            # The pixel verdict on its own, for when the emitted line is not the
+            # question. `hud` below is this check AND the log line.
+            canary_verdict "$shot"
+            return $?
+            ;;
         hud)
             # The line is found by its OWN SHAPE (`canvas: quads=`) and the LAST one
             # wins, for two reasons. A prefix as loose as `canvas: ` is shadowed by an
@@ -852,11 +919,15 @@ expect_check() { # expect_check <name> <log> ; 0 when the evidence is there
                 echo "          (quads and draws both have to be above zero)." >&2
                 return 1
             fi
-            echo "expect    : hud OK -- $line"
-            return 0
+            echo "expect    : hud emitted -- $line"
+            # AND THE PIXELS. The log line is the CPU's half of the story and this
+            # is the GPU's; the ledger row is accepted on both, so a canvas that is
+            # queued, emitted and never rasterised cannot close it (review-1 F1).
+            canary_verdict "$shot"
+            return $?
             ;;
         *)
-            echo "emurun: --expect '$name' is not a known expectation (hud)" >&2
+            echo "emurun: --expect '$name' is not a known expectation (hud, hud-visible)" >&2
             return 2
             ;;
     esac
@@ -864,7 +935,7 @@ expect_check() { # expect_check <name> <log> ; 0 when the evidence is there
 # --- end expectations ---------------------------------------------------------
 
 if [ -n "$EXPECT" ]; then
-  expect_check "$EXPECT" "$LOG"
+  expect_check "$EXPECT" "$LOG" "$SHOT"
   rc=$?
   if [ "$rc" -eq 2 ]; then
     exit 2

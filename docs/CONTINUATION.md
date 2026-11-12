@@ -1,15 +1,20 @@
 # Phase 2 continuation checkpoint
-Risk: high — this batch puts new GPU state on the shipped target and ships a measured negative with it. It
-implements the Citro3D 2D canvas as queue records (`canvas_begin`/`canvas_quad`/`canvas_end` → one mesh upload
-plus one record per same-material run, the oracle's own merge), gives the vertex shader a fifth uniform
-(`.fvec tint`, register 5) and splits the combiner so `Pass::Overlay` modulates while the scene keeps
-`REPLACE`, adds `pica::canvasMatrix`, wires the HUD into `main_3ds.cpp`, and changes a shared-core signature
-(`HudView::loadImage` now takes the palette). `mdk.elf` moves `5549857c421bca2926635ec6a3e0f23e` →
-`096d49f68eb544d402aa9eaf7a17245d` and the shader rebuilds (`mdk_c3d.shbin` → `59d5e0e8ec1dc12827b6cd516715de0f`);
-587 host cases (was 575) and every gate pass; the pinned frame is byte-identical because nothing here reaches
-the Linux capture path. High is the honest level: GPU state written every frame, a resource created and grown
-inside a frame, a new per-draw matrix path, and — the reason no green can be read as a pass — **the HUD draws
-no pixels**, which is recorded rather than hidden (`docs/OPEN_ITEMS.md`, "The 3DS canvas draws no pixels").
+Risk: medium — this batch changes no shipped pixel and no numeric behaviour, but it makes a
+ledger row's acceptance command able to fail. It replaces the Citro3D frame's full-clip-square
+white diagnostic with a 16x16 (0,0,255) canary drawn through the canvas's own matrix,
+texture, combiner, tint, cull and depth state — which also removes a latent full-panel white
+flash waiting for whoever fixes the canvas — turns `emurun.sh --expect hud` into a PIXEL
+verdict instead of a log line (so `3ds.hud-canvas`'s acceptance now FAILS, correctly: the HUD
+does not paint), corrects three records that stated the canvas y-axis derivation backwards,
+and unifies `caps.max_canvas_quads` with the capacity the queue actually enforces.
+`mdk.elf` moves `096d49f68eb544d402aa9eaf7a17245d` → `00d67ff4bbbc9d9a0fab088b935e6842`; the
+shader is unchanged (`mdk_c3d.shbin` `59d5e0e8ec1dc12827b6cd516715de0f`). Medium is the honest
+level: the renderer's shipped diagnostic draw is rewritten, the emulator harness's acceptance
+semantics change, and the row this batch works on is still open — nine probes have now closed
+the queue order, the tint/primary path, the command buffer, the canvas's mesh, texture and
+matrix, and every per-draw state, and the shortest true description left is that a mesh,
+matrix and texture `drawRecorded` renders every frame are invisible when `drawDiagnostic`
+issues them (`docs/OPEN_ITEMS.md`, "The 3DS canvas draws no pixels").
 
 **Batch 142 (the ledger row `3ds.hud-canvas`) — the canvas lands as queue records, the HUD is wired, and the
 picture does not appear; the batch ships the seam, the gate and eight closed doors.** The seam is the oracle's

@@ -19,13 +19,17 @@
 //     2026-11-05: boot straight into a level), so the frontend starts with
 //     Start::Level and treats any other screen as the end of the run rather than
 //     pretending to show one.
-//   * The HUD is HERE. hud_view.cpp was ported long before this backend could
-//     draw it, because mdk_render_canvas_quad was a no-op on the Citro3D backend;
-//     the canvas is now a record in the frame's queue (renderer_c3d.cpp's canvas
-//     seams) and the HUD loads, blinks and draws like the Linux frontend's. What
-//     it shows is what the port has: health, the skull and its fade, the flashes,
-//     and an empty inventory -- the pickup and target-bar writers land with their
-//     own subsystems and the HUD must not invent them.
+//   * The HUD is HERE, AND IT IS NOT YET ON SCREEN. hud_view.cpp was ported long
+//     before this backend could draw it, because mdk_render_canvas_quad was a
+//     no-op on the Citro3D backend. The canvas is now a record in the frame's
+//     queue (renderer_c3d.cpp's canvas seams), so the HUD LOADS and BLINKS like
+//     the Linux frontend's and its quads are QUEUED and EMITTED — and no HUD pixel
+//     has yet been measured on the panel. "Emitted" and "painted" are different
+//     claims and only the first is true; the second is the open item in
+//     docs/OPEN_ITEMS.md (`3ds.hud-canvas`), with the measurements that narrowed
+//     it. What the HUD would show is what the port has: health, the skull and its
+//     fade, the flashes, and an empty inventory -- the pickup and target-bar
+//     writers land with their own subsystems and the HUD must not invent them.
 //   * The ropes, the sniper scope and the effects — `_ropes.Draw`, `_sniper.Draw`
 //     and `_effects.Draw` between the objects and Kurt in C# Viewer.DrawScene
 //     (Viewer.cs:705-707). None of the three is ported, so the frame here goes

@@ -569,30 +569,74 @@ different kind and it is still open — what it is has not been identified.
 The 2D canvas is implemented and its records are replayed — `canvas: quads=4 draws=2
 mesh=2 corners=24 eyes=1` every frame, and the frame census places the panel on the screen
 using the same matrix pointer the GPU is handed — and **no canvas pixel reaches the panel**.
-`mdk_3ds/tools/emurun.sh --expect hud` is green and is *not* proof of visibility; it proves
-the draw was emitted. Do not treat that gate as the item being closed.
+As of batch 143 `mdk_3ds/tools/emurun.sh --expect hud` is **not** self-referential: it
+demands the log line *and* 25 pixels of the (0,0,255) canary the renderer draws through the
+canvas's own state and space, and **it fails**. That failure is this item, stated as a
+command. Do not close it by making the gate cheaper.
 
-Measured and rejected, each in its own emulator run (the numbers are in `docs/PROGRESS_LOG.md`,
-iteration 142 — do not re-derive them):
+Measured and rejected, each in its own emulator run. Iteration 142's list is unchanged and
+still valid; iteration 143 added these (numbers in `docs/PROGRESS_LOG.md`, iteration 143 —
+do not re-derive them):
 
-- the canvas matrix and the per-draw matrix write (installEye made to write the canvas matrix:
-  the level scrambled, the HUD still absent);
-- the tint uniform and `GPU_PRIMARY_COLOR` (the scene drawn with `MODULATE(tex, PRIMARY)`
-  renders normally, so the primary is white including alpha);
-- the HUD textures and the palette expansion (`REPLACE(PRIMARY_COLOR)`, no texture read);
-- GPU command-buffer overflow (`C3D_GetCmdBufUsage()` = 0.113 at frame end);
-- the far clip plane (canvas z moved to -0.5, confirmed in the record);
-- the clipper's fixed-point range (whole matrix ×256, ndc bit-identical);
-- a vertex buffer allocated inside a frame (the canvas mesh moved to `mdk_render_create`).
+- **the queue order, which iteration 142 named as the next candidate — CLOSED.** With the
+  scene replay skipped so the canvas/diagnostic draw is the ONLY draw in the frame, the
+  panel is 100% the clear colour. Position among the scene's draws is not it.
+- the tint and `GPU_PRIMARY_COLOR`, re-measured independently (scene combiner at
+  `MODULATE(tex, PRIMARY)`: the level renders unchanged, so the primary arrives white with
+  alpha 1);
+- **command-buffer overflow, measured at the draw and not at frame end**: `C3D_GetCmdBufUsage()`
+  is 0.101 when the canvas draws are issued (draws #137-139 of ~150);
+- **the canvas's own mesh, texture and matrix**: forcing a known-good arena texture changes
+  nothing, and the mesh's first corner reads back as (500.00, 287.00, 0.00) in the same
+  linear region as the scene's meshes;
+- **the canvas's geometry and transform, by substitution**: a draw at the tail using a
+  KNOWN-GOOD STATIC scene mesh (mesh 0, first 6 vertices), the frame's own `eyeVp`, cull
+  NONE and depth off paints **zero** pixels, with the replay running and with the replay
+  skipped.
 
-**What is still shared with the old, unrelated-looking symptom**: the diagnostic triangle has
-never painted either (`drawDiagnostic`'s comment: 69 px of 96000, not a screen-sized
-triangle), and the shader's w note records a previous failed hunt for that. In a level-7
-frame every scene draw carries an identity world and takes the frame matrix, so the canvas
-and the diagnostic are the only draws issued at the tail of the frame. **The next candidate
-is that a draw issued after the scene's draws does not land** — test it by making the canvas
-the FIRST record in the queue (or by drawing the diagnostic before the replay), not by
-re-testing state.
+**THE SHORTEST TRUE DESCRIPTION OF THE BUG, as of batch 143.** The frame's **tail** is dead.
+`drawRecorded` — the function that renders the scene 137 times a frame — was called after
+`replayQueue` with a known-good mesh (mesh 0, first 6 vertices), the frame's own `eyeVp`
+handed in through `world`, a valid arena texture and a magenta tint, and it reached
+`C3D_DrawArrays` 2219 times (the draw census counts it) and produced **zero** magenta pixels
+on the panel. So it is not `drawDiagnostic`'s sequence, not the canvas's mesh, matrix,
+texture or state, and not the queue's bucket order: **anything drawn after the replay stops
+reaching the panel**, and the canvas — being the last bucket — is the first casualty of that.
+
+**THE NEXT EXPERIMENT, and it is about the boundary, not the draw.** Something between the
+last replayed draw and `C3D_FrameEnd` is the suspect. Two probes, in order of cost: **(a)**
+reverse the bucket order in `replayQueue` (Overlay first, Solid last) — if the HUD then
+paints and the level's last draws go missing instead, the frame has a draw-count or
+command-consumption ceiling and the number is the finding; **(b)** read citro3d's own
+`C3Di_UpdateContext` / `C3D_DrawArrays` in the linked `libcitro3dd.a` for a counter, ring or
+uniform-buffer bound that saturates after N draws. `C3D_GetCmdBufUsage()` reads 0.101 at the
+canvas draw, so it is not the command buffer's byte size — but that counter is citro3d's own
+view of its buffer and has not been reconciled with what the GPU actually consumed.
+
+**A PROBE THAT COULD NOT HAVE WORKED, RECORDED SO IT IS NOT RE-RUN.** The first version of
+the tail probe used `Pass::Solid`. `drawRecorded` forces the tint white on every non-Overlay
+draw, so a magenta Solid draw is impossible and its null result meant nothing. Overlay is the
+only pass whose tint is the record's colour, and Overlay takes `world` as the whole
+transform — hence handing it `eyeVp`. A probe whose failure mode is invisible is not a probe.
+
+**STILL UNTESTED PRIOR ART** (do not skip it if the experiment above says "the tail is
+dead"): the sibling `tetrisphere-godot` port's validation notes —
+`docs/validation/c3d-sky-orient-2026-10-27.md`, `c3d-hud-viewport-2026-10-27.md`,
+`c3d-hud-shared-2026-10-28.md`, `c3d-ui-space-2026-10-27.md` — measure that **citro3d's top
+screen is a 240x400 memory target whose rotation interacts with the projection and the
+viewport**: `C3D_FrameDrawOn` installs the *memory-space* viewport, a physical-size
+`C3D_SetViewport(0,0,400,240)` silently clips the picture to a band, and **replacing
+`Mtx_OrthoTilt` with `Mtx_Ortho` for a UI ortho SWAPPED THE TWO AXES** because the `*Tilt`
+variants carry the top-screen rotation a plain ortho does not. MDK bakes its own quarter
+turn into every matrix and sets `C3D_SetViewport(0, 0, 240, 400)`, the memory size, so it is
+on the good side of the viewport half — but **nobody has checked whether citro3d applies its
+own top-screen flip/rotate below the matrix**, which would hit exactly the draws that write
+their own matrix per draw. Testable from the installed `libcitro3dd` disassembly.
+
+**What is still shared with the old, unrelated-looking symptom**: the diagnostic draw has
+never painted either, and the shader's w note records a previous failed hunt for that. It
+is now the canary (batch 143), which makes "the diagnostic does not paint" and "the canvas
+does not paint" the same measured statement instead of two suspicions.
 
 **THE HEAD-OF-FRAME PROBE WAS RUN AND IS INCONCLUSIVE — do not re-run it as it was.** Attempt 2
 of this row drew a red triangle immediately after `installEye`, before the replay, with the
