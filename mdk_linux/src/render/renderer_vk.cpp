@@ -304,13 +304,18 @@ uint32_t findMemoryType(mdk::vk::Context* ctx, uint32_t typeBits, VkMemoryProper
 // the one-shot helpers are the first sites in the file that can be refused.
 void refused(const char* fmt, ...);
 
-// The one-shot pools are few (one per resource creation at load time); keep
-// them in a small vector so endOneShot can destroy them. Creations are
-// sequential (begin, use, end), so the front of the vector is always the
-// pool the command buffer came from.
-std::vector<VkCommandPool> g_oneShotPools;
-
-void endOneShot(mdk::vk::Context* ctx, VkCommandBuffer cb) {
+// THE ONE-SHOT COMMAND BUFFER AND ITS POOL TRAVEL TOGETHER.
+//
+// They used to be paired by POSITION in a file-scope vector: `beginOneShotTracked`
+// pushed the pool and `endOneShot` destroyed the front entry, which was sound only
+// while every creation ran begin-use-end with no refusal in between. A refusal
+// between the push and the return stranded an entry, and from then on EVERY
+// `endOneShot` freed a foreign command buffer into a pool it had not come from and
+// destroyed that pool one step early — `vkFreeCommandBuffers` requires the pool the
+// handle was allocated from (review-6 F2). Handing the pool to the caller makes the
+// pairing impossible to lose: there is no ledger to desynchronize, nothing left to
+// drain at teardown, and a refusal has exactly one owner for the pool it made.
+void endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb) {
     vkEndCommandBuffer(cb);
     VkSubmitInfo submit = {};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -318,18 +323,15 @@ void endOneShot(mdk::vk::Context* ctx, VkCommandBuffer cb) {
     submit.pCommandBuffers = &cb;
     vkQueueSubmit(ctx->queue, 1, &submit, VK_NULL_HANDLE);
     vkQueueWaitIdle(ctx->queue);
-    // Find and destroy the pool this command buffer came from.
-    for (size_t i = 0; i < g_oneShotPools.size(); i++) {
-        // vkFreeCommandBuffers with the right pool; the pools are used in
-        // order, so pop the front.
-        vkFreeCommandBuffers(ctx->device, g_oneShotPools[i], 1, &cb);
-        vkDestroyCommandPool(ctx->device, g_oneShotPools[i], nullptr);
-        g_oneShotPools.erase(g_oneShotPools.begin() + (long)i);
-        break;
-    }
+    vkFreeCommandBuffers(ctx->device, pool, 1, &cb);
+    vkDestroyCommandPool(ctx->device, pool, nullptr);
 }
 
-VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
+// Returns the command buffer and, through `outPool`, the pool it came from; the
+// caller hands both to `endOneShot`. When it returns VK_NULL_HANDLE it has already
+// destroyed everything it made, so the caller has nothing left to undo.
+VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx, VkCommandPool* outPool) {
+    *outPool = VK_NULL_HANDLE;
     VkCommandPoolCreateInfo alloc = {};
     alloc.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     alloc.queueFamilyIndex = ctx->queueFamily;
@@ -340,7 +342,8 @@ VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
                 "recorded while the driver keeps saying no");
         return VK_NULL_HANDLE;
     }
-    g_oneShotPools.push_back(pool);
+    // From here the pool is this function's to undo until the caller has a command
+    // buffer to take away with it.
     VkCommandBufferAllocateInfo cbAlloc = {};
     cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cbAlloc.commandPool = pool;
@@ -350,6 +353,7 @@ VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
     if (vkAllocateCommandBuffers(ctx->device, &cbAlloc, &cb) != VK_SUCCESS) {
         refused("one-shot command buffer: the upload that asked for it copies into nothing "
                 "and its caller refuses the resource instead");
+        vkDestroyCommandPool(ctx->device, pool, nullptr);
         return VK_NULL_HANDLE;
     }
     VkCommandBufferBeginInfo begin = {};
@@ -358,8 +362,11 @@ VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
     if (vkBeginCommandBuffer(cb, &begin) != VK_SUCCESS) {
         refused("begin of a one-shot command buffer: the upload that asked for it has "
                 "nowhere to be recorded");
+        vkFreeCommandBuffers(ctx->device, pool, 1, &cb);
+        vkDestroyCommandPool(ctx->device, pool, nullptr);
         return VK_NULL_HANDLE;
     }
+    *outPool = pool;
     return cb;
 }
 
@@ -404,7 +411,6 @@ VkCommandBuffer beginOneShotTracked(mdk::vk::Context* ctx) {
 // docs/evidence/2026-11-12-149-refusal-discovery.txt).
 // ---------------------------------------------------------------------------
 struct RefusalLine {
-    const char* site;  // the address of the call site's own format literal
     char text[256];
 };
 // One entry per request already named. Refusals are rare and the table is bounded,
@@ -421,20 +427,34 @@ void refused(const char* fmt, ...) {
     std::vsnprintf(text, sizeof(text), fmt, ap);
     va_end(ap);
 
-    // Every call site passes a string literal, so the address of `fmt` IS the
-    // site: two sites cannot collide, and one site's request cannot silence
-    // another's. A per-site SET is what makes this hold at a per-draw site: the
+    // THE KEY IS THE RENDERED REQUEST, not the call site. A source-site field used
+    // to be part of this key on the theory that "the address of `fmt` IS the site".
+    // That is not true: identical literals are merged at -O1 and above, so two
+    // distinct sites can share one address, and a field that cannot tell them apart
+    // is worse than no field, because the comment claimed it could (review-6 F4).
+    // What is true is weaker and it is enough: a request is a rendered sentence, two
+    // sites that render the same sentence are reporting the same fact, and it is the
+    // SET that stops the flood. A per-draw site needs a set rather than a latch: the
     // descriptor refusal names 48 different requests in a level, and remembering
     // only the last one printed would re-print all 48 on every frame after that.
+    //
+    // THE MEMORY LASTS FOR THE LIFE OF THE PROCESS, deliberately, and that is an
+    // asymmetry with the frontends rather than an oversight. The frontend latch
+    // re-arms on every frame that did not refuse, because it is told once per frame
+    // whether the pass refused. This helper is never told about a success, so "print
+    // again when it comes back" needs a per-request success signal the backend does
+    // not have, and clearing the table on a frame boundary restores the 22500-lines-
+    // in-one-run flood the set exists to prevent (review-5 F2, review-10 F3). A
+    // request that recovers and then recurs byte-identically is therefore silent the
+    // second time (review-6 F5); one that recurs DIFFERENTLY — a bigger canvas, a
+    // different texture — is a different request and does print.
     for (size_t i = 0; i < g_refusalLines.size(); i++) {
-        if (g_refusalLines[i].site == fmt &&
-            std::strcmp(g_refusalLines[i].text, text) == 0) {
+        if (std::strcmp(g_refusalLines[i].text, text) == 0) {
             return;  // this exact request was named already
         }
     }
     if (g_refusalLines.size() < kRefusalMemory) {
         RefusalLine line;
-        line.site = fmt;
         std::snprintf(line.text, sizeof(line.text), "%s", text);
         g_refusalLines.push_back(line);
     }
@@ -475,9 +495,13 @@ bool createHostBuffer(mdk::vk::Context* ctx, VkDeviceSize size, VkBufferUsageFla
     vkBindBufferMemory(ctx->device, *outBuffer, *outMemory, 0);
     if (outMapped) {
         if (vkMapMemory(ctx->device, *outMemory, 0, VK_WHOLE_SIZE, 0, outMapped) != VK_SUCCESS) {
-            vkFreeMemory(ctx->device, *outMemory, nullptr);
+            // Destroy the object BEFORE releasing the memory bound to it. Freeing
+            // first is invalid use, and the same order now holds in every teardown
+            // block in this file (review-6 F6; `linux_refusal_report_test.sh` B9).
             vkDestroyBuffer(ctx->device, *outBuffer, nullptr);
             *outBuffer = VK_NULL_HANDLE;
+            vkFreeMemory(ctx->device, *outMemory, nullptr);
+            *outMemory = VK_NULL_HANDLE;
             *outMapped = nullptr;
             return false;
         }
@@ -541,10 +565,10 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
     if (pixels &&
         !createHostBuffer(ctx, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &staging,
                           &stagingMemory, &stagingMapped)) {
-        vkFreeMemory(ctx->device, *outMemory, nullptr);
-        *outMemory = VK_NULL_HANDLE;
         vkDestroyImage(ctx->device, *outImage, nullptr);
         *outImage = VK_NULL_HANDLE;
+        vkFreeMemory(ctx->device, *outMemory, nullptr);
+        *outMemory = VK_NULL_HANDLE;
         return false;
     }
     if (pixels) {
@@ -552,7 +576,8 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
         vkUnmapMemory(ctx->device, stagingMemory);
     }
 
-    VkCommandBuffer cb = beginOneShotTracked(ctx);
+    VkCommandPool oneShotPool = VK_NULL_HANDLE;
+    VkCommandBuffer cb = beginOneShotTracked(ctx, &oneShotPool);
     if (cb) {
         VkImageMemoryBarrier toTransfer = {};
         toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -591,7 +616,7 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
                              0, nullptr, 0, nullptr, 1, &toSample);
-        endOneShot(ctx, cb);
+        endOneShot(ctx, oneShotPool, cb);
     } else {
         // THE IMAGE IS NOT THE TEXTURE. It exists, but nothing was ever copied
         // into it and its layout was never set, so a `return true` here handed
@@ -714,7 +739,8 @@ bool captureSwapchain(RendererVk* r, const char* path) {
     }
 
     const VkImage image = r->ctx.images[r->ctx.currentImage];
-    VkCommandBuffer cb = beginOneShotTracked(&r->ctx);
+    VkCommandPool oneShotPool = VK_NULL_HANDLE;
+    VkCommandBuffer cb = beginOneShotTracked(&r->ctx, &oneShotPool);
     if (!cb) {
         vkUnmapMemory(r->ctx.device, memory);
         vkDestroyBuffer(r->ctx.device, buffer, nullptr);
@@ -760,7 +786,7 @@ bool captureSwapchain(RendererVk* r, const char* path) {
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr,
                          1, &toPresent);
-    endOneShot(&r->ctx, cb);
+    endOneShot(&r->ctx, oneShotPool, cb);
 
     const uint8_t* raw = static_cast<const uint8_t*>(mapped);
     std::vector<uint8_t> bgra((size_t)size);

@@ -26021,3 +26021,123 @@ audible when it happens; proving it can happen needs a counter or a free, which 
 (ii) The dedup set is capped at 256 entries and prints everything past it. (iii) `vkCreateImageView`'s
 failure path in `createHostImage` still leaks the image and its memory — a leak on a refusal path,
 not a silence, and not this batch's finding.
+
+## Iteration 150 — batch 150: `linux.render-frame` — review-6 was right about all three blocking findings; the refusal gate now reads the file it claims to read, and the one-shot pool is no longer paired by position
+
+**PRIOR-SOLUTION LOOKUP.** `knowledge_search` on the `mdk-sdl` KB for the
+one-shot command-pool lifetime and the refusal-figure defect returned two
+unrelated chunks (`render/render.h` submission order, `SPEC.md` §7.1 frame
+lifecycle) — no prior art, so this is a new defect class for the project, not a
+regression of a solved one. Obsidian and Cognee MCP tools are **absent from this
+session's tool list**, so the vault lookup was the degraded disk-only read of
+`/mnt/nas/Vaults/port-docs` (bounded grep of `30-architecture`, `40-incidents`,
+`10-projects`, `20-runbooks`): nothing on one-shot Vulkan pool lifetime or on
+literal-merging in a log-dedup key. **Cognee was not consulted at all** — no
+`cognee_*` tool exists here, and per AGENTS.md P9 that is a session
+configuration fault to report, not a lookup that happened.
+
+**F1 (High) — CONFIRMED, then fixed.** B3's rule was
+`extra = tokens(figure) - want - EXTRA_SIZE_TOKENS`, which rejects a figure
+mentioning something *foreign* and accepts a figure mentioning *less* than the
+size. `kFramesInFlight` is in `EXTRA_SIZE_TOKENS`, so both of the reviewer's
+mutants were legal subsets. Run against batch 149's gate at the
+`ensureCanvasBuffer` site (the reviewer's own `m_render_create_mesh` site is
+entangled with two existing arms' anchors, so mutating it reddens the gate by
+breaking arms rather than by failing B3, which proves nothing):
+
+- `cap / 8` total + `cap * 4` per-slot → `PASS LinuxRefusalReport (10 checks, 13 arms)`
+- `mdk::vk::kFramesInFlight` alone as the total → `PASS LinuxRefusalReport (10 checks, 13 arms)`
+
+The first is review-5 F3's defect — a printed figure disagreeing with the
+request by a factor — back in through the check built to stop it. B3 is now
+two-sided: the figure's identifiers must be exactly the create call's size
+identifiers or those plus the frames-in-flight count, **and** the figure may not
+introduce an operator or a numeric literal the size expression did not have.
+Both mutants now red B3, and two arms pin it. What the rule still cannot pin —
+arithmetic, as opposed to identifiers and the absence of a rescale — is stated
+in the gate's comment instead of being glossed over.
+
+**F3 (Medium) — CONFIRMED, then fixed.** B4 asked whether `refused(` appeared
+anywhere between the innermost `{` and the return. An unbraced
+`if (cond) return VK_NULL_HANDLE;` has no block of its own, so its innermost `{`
+is the whole function body and a refusal made for an unrelated reason vouched
+for it. The reviewer's mutant placed a few lines after `getDescriptorSet`'s
+existing refusal was `PASS LinuxRefusalReport (10 checks, 13 arms)` against
+batch 149's gate and is `FAIL … every null-handle return in the file is preceded
+by a refusal` against this one. The unbraced form is now judged on its own terms:
+only its condition can carry the refusal, and a condition never does. A refusal
+followed by cleanup statements still counts — `refused(...);
+vkDestroyCommandPool(...); return VK_NULL_HANDLE;` is how a refusal with
+something to undo reads, and the first version of this fix demanded the refusal
+be the immediately preceding statement and went red on all three legitimate
+exits `beginOneShotTracked` had just gained.
+
+**F2 (Medium) — CONFIRMED, then fixed by deleting the ledger.**
+`beginOneShotTracked` pushed its pool onto a file-scope `g_oneShotPools` and
+`endOneShot` destroyed the front entry (its loop ended in an unconditional
+`break`, so index 0 always). Two exits returned `VK_NULL_HANDLE` after the push
+without removing it. One stranded entry and every later `endOneShot` calls
+`vkFreeCommandBuffers` with a pool the handle never came from — forbidden — and
+destroys that pool a step early. Fixed by handing the pool to the caller:
+`beginOneShotTracked(ctx, &pool)` / `endOneShot(ctx, pool, cb)`, with both
+post-create exits undoing what they made and the begin exit freeing its command
+buffer too. The vector is gone, which also removes the never-drained-at-teardown
+half of the finding. New check **B8** pins the shape with three arms.
+
+**F6 (Low) — CONFIRMED, fixed, and found again next door.**
+`createHostImage`'s staging-failure path freed `*outMemory` while it was still
+bound to `*outImage`; the `else` branch batch 149 added already did it in the
+right order, so the function contained both. `createHostBuffer`'s map-failure
+path had the same inverted order and was fixed too. New check **B9** pins the
+class coarsely — in a block that both destroys a buffer/image and frees memory,
+the last such call directly inside it must be the free — and its comment states
+what it does not prove rather than claiming more. Run against
+`git show HEAD:…/renderer_vk.cpp`, B8 and B9 red exactly those two defects and
+nothing else.
+
+**F4 (Low) — CONFIRMED, fixed by removing the field rather than the claim.** "The
+address of `fmt` IS the site: two sites cannot collide" is false under
+`-fmerge-constants`. The `site` field could not do what its comment said, so it
+is gone and the key is the rendered request alone. Isolated harness of the
+helper at `-O2 -fmerge-constants`: 5 repeats → 1 line; 5 distinct → 5 lines; two
+sites with identical words → no new line; different words → 2 lines; 400
+distinct past the 256 cap → 400 lines with the table held at 256.
+
+**F5 (Low) — ACCEPTED as a documented asymmetry, not rebutted.** The memory
+lives for the process, so a request that recovers and recurs byte-identically is
+silent. Re-arming needs a per-request success signal this backend does not have,
+and clearing on a frame boundary restores the 22500-lines flood the set exists
+to prevent. The tradeoff is now written in the helper and in `object_draw.h`
+instead of left implicit. A refusal whose text differs is a different request and
+does print.
+
+**A HARNESS BUG THE NEW CHECK FOUND BY ACCIDENT.** `strip_comments` dropped any
+line whose first non-space character was `*`, assuming a block-comment
+continuation. It is also how this file writes real statements —
+`*outImage = VK_NULL_HANDLE;`, and the new `*outPool = pool;` — so the gate was
+reading a doctored file and reported the pool was never handed over when it was.
+It now tracks whether a block comment is actually open. Every pre-existing arm
+still reds on the corrected text, which is the only way this change could have
+been made without weakening anything.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the
+oracle.`, **592 PASS / 0 FAIL**, and the refusal gate reports
+`PASS LinuxRefusalReport (12 checks, 20 arms adjudicated red)` (was 10 checks /
+13 arms). `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `gates_batch_integrity PASS`,
+`gates_smdh SKIP (no built .cia)`. `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` rc 0, `3DSX mdk.3dsx`,
+`mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e` **unchanged** — nothing in this
+batch reaches the console. `cmake --build build-linux -j8` rc 0. **No emulator
+run: `git diff --name-only` contains no `mdk_3ds/` path**, so AGENTS.md P8 does
+not apply to this batch.
+
+**THE FRAME IS THE SAME PICTURE, AND THAT IS THE POINT.**
+`docs/frames/2026-11-12-review6-refusal-gate.png` is md5 `6769a137…`,
+byte-identical to batch 149's and 148's. Every change in this batch is on a
+failure path, and lavapipe never says no, so no refusal fires in the pinned
+frame; a picture that moved here would have been the finding. The sidecar still
+reads `live measurement: unavailable (oracle pixels absent at
+/tmp/mdk-frame-reference/L3_f1.bmp)` — the fidelity half stays owner-gated
+behind `tests/frames/regenerate_reference.sh`. Full record:
+`docs/evidence/2026-11-12-150-refusal-gate-redescribed.txt`.
