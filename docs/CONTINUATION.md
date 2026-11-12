@@ -15,13 +15,15 @@ the canary's position is exonerated, and `C3D_BindProgram` after the write is ex
 what is left is that a uniform written after `installEye`'s bind does not arrive, which
 contradicts the devkitPro pattern the vault records and therefore points at something in MDK's
 own frame. Full record: `docs/evidence/2026-11-12-145-uniform-delivery.txt`.
-**Gate state, stated plainly:** `make -C mdk_3ds` rc 0 with byte-identical artefacts, and
-`DISPLAY=:99 bash tools/check.sh` rc 0 with every sub-gate green. `make -C tests/scripts` is rc 2
-— **and was rc 2 at the parent commit with a byte-identical FAIL set**, proved by stashing and
-re-running. Its single failing check is `diagnostic-drawn-once`, which batch 142 made
-unsatisfiable by moving the canary to queue records, and whose redness makes all 93 mutation arms
-inert. Root-caused, deliberately not fixed under time pressure, and the top open item with the
-fix's shape written down in `docs/OPEN_ITEMS.md`.
+**All three gates are green.** `make -C mdk_3ds` rc 0 with byte-identical artefacts, and
+`DISPLAY=:99 bash tools/check.sh` rc 0 with every sub-gate green. `make -C tests/scripts` was rc 2
+at the parent commit with 93 `c3d_frame` mutation arms inert, and is **rc 0 now**: two stale
+literals in `tests/scripts/c3d_frame_test.sh` — a check pinning the canary's retired 3-vertex
+triangle shape instead of its 6-vertex quad, and three arm patterns that could not match the real
+`drawDiagnostic(r, mdk_render_canvas_width(rr))` call — made one check always-red, which in a
+mutation harness turns red for every mutant and so disabled the entire suite. Fixed test-side
+only, no arm's expectation loosened, **0 of 94 adjudicating before and 94 of 94 after**. Details
+in `docs/OPEN_ITEMS.md`, closed.
 
 
 **Batch 142 (the ledger row `3ds.hud-canvas`) — the canvas lands as queue records, the HUD is wired, and the

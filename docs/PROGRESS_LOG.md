@@ -100,29 +100,41 @@ produce, and it is the check that proves nothing shipped moved. `DISPLAY=:99 bas
 → **rc 0, ALL GATES PASSED**, including `gates_frames` (every pinned frame deterministic and
 unchanged), `gates_batch_integrity`, `gates_completion`, `audit_c_with_classes` (0 violations)
 and `gates_vfp` (0 blockers); `gates_smdh` SKIPs for want of a built `.cia`. `make -C
-tests/scripts` → **rc 2, and it was rc 2 at the parent commit too**: the FAIL sets are
-byte-identical (93 `c3d_frame` mutation arms plus one check, the same 94 lines in both), so this
-batch adds no failure. It was stashed and re-run at `1069a79` to prove that rather than assume
-it.
+tests/scripts` → **rc 2 at the parent commit, and rc 0 by the end of this batch** (root cause and
+fix below). At the point the six runs were made its FAIL set was byte-identical base vs head — 93
+`c3d_frame` mutation arms plus one check, the same 94 lines in both — proved by stashing and
+re-running at `1069a79` rather than assumed, so the measurement half of the batch added no failure
+and inherited one.
 
-**THE ROOT CAUSE OF THAT RED, WHICH THE LOOP STATUS ASKED FOR.** The single failing check is
-`diagnostic-drawn-once`, and `tests/scripts/c3d_frame_test.sh:827-833` requires
-`C3D_DrawArrays(GPU_TRIANGLES, 0, 3)` to appear once, inside `drawDiagnostic`. **Batch 142
-converted the canvas and the canary from immediate draws to queue records, so that literal call
-no longer exists anywhere and the check cannot be satisfied by any correct code.** Its redness is
-not cosmetic: every mutation arm is required to turn red exactly the check it targets, and a
-check that is red before any mutation turns red for every mutant, so **all 93 arms now report
-"turned `diagnostic-drawn-once` red, but it is cut for …" and test nothing.** The mutation
-harness has been silently inert since batch 142 while still printing 93 lines a run.
+**THE ROOT CAUSE OF THAT RED, AND THE FIX — A SECOND INCREMENT IN THIS BATCH.** The loop status
+demanded a root cause and got one, then got it fixed. Two stale literals, not an architecture
+change, and my first reading of it was WRONG in a way worth recording: I wrote that batch 142 had
+moved the canary to a queue record so the immediate draw was gone. It had not — `drawDiagnostic`
+still draws immediately at `renderer_c3d.cpp:2632`. What changed is its SHAPE: the diagnostic was
+a white TRIANGLE (`GPU_TRIANGLES, 0, 3`) and is now a 16x16 canvas-space canary, two triangles,
+**six** vertices. `tests/scripts/c3d_frame_test.sh:826` still matched `0, 3`, counted zero draws,
+and was red for every correct build. Because a mutation arm must turn red exactly its own target
+check, one always-red check turns red for EVERY mutant, so all 93 arms reported "cut" and
+exercised nothing: a gate printing 94 lines a run and verifying none of them.
 
-**NOT FIXED HERE, ON PURPOSE, AND THAT IS A DECISION NOT AN OMISSION.** The faithful repair is to
-re-express the invariant the check was written for — the canary is emitted exactly once, from
-`drawDiagnostic`, after the real draws — against the queue architecture, and to re-point the
-arms at line 2411 that target it. That file is the most heavily reviewed test in the repository
-(its own comments cite review-6 through review-19 closing holes in exactly these arms), and a
-hurried edit that loosens an arm would re-open a hole while looking like a green gate — the exact
-failure the file exists to prevent. The check is left red and the fix is the top open item with
-its shape written down.
+**A second staleness was hiding under the first.** Three more arms matched the call with
+`\([A-Za-z0-9_]*\)`, which cannot match the real `drawDiagnostic(r, mdk_render_canvas_width(rr))`
+— comma plus nested call. They returned the file unchanged and reported "the mutation changed
+nothing", mutants of nothing in review-14 F3's own class, invisible behind the first failure.
+
+**Fixed, and it is a tightening, not a relaxation.** `0, 3` → `0, 6` in the check and in the arm
+that splices a duplicate emission (leaving that splice at `0, 3` would have made the arm a mutant
+of nothing), and three arm patterns widened from `[A-Za-z0-9_]*` to `[^;\n]*` so they find the
+call that exists. No check deleted, no target re-pointed, no expectation loosened — every arm
+still has to turn red the one check it names, and the check's comment now says the 6 is
+load-bearing. **Before: 0 of 94 arms adjudicated, rc 2. After: 94 of 94, `All cases match the
+oracle`, rc 0.** The diff is test-only (28 insertions, 8 deletions, one file).
+
+**The lesson, since it generalises.** A structural check that pins a LITERAL rather than the
+invariant goes red silently the day the literal legitimately changes — and in a mutation harness
+one always-red check does not cost one check, it costs the whole suite. When a structural check
+fails, ask what invariant the literal stood in for, and after fixing one stale literal, count how
+many arms actually adjudicated, because a second staleness was hiding under the first.
 
 **Everything was reverted.** `mdk.elf` is byte-identical to the committed build (`e70fcb73`) and
 `mdk_c3d.shbin` is unchanged (`59d5e0e8`). No shipped artefact changed; the output is six

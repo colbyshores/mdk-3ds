@@ -564,42 +564,49 @@ different kind and it is still open — what it is has not been identified.
   is a new harness concept on both sides and its own slice; the chute-stop-on-death line
   is pinned instead by a health-zero landing, which reaches the same dead branch.
 
-## The c3d_frame mutation suite is inert — root cause of the red `make -C tests/scripts` (found in batch 145; OPEN, TOP PRIORITY)
+## CLOSED by batch 145: the c3d_frame mutation suite was inert — the root cause of the red `make -C tests/scripts`
 
-`make -C tests/scripts` exits 2. It exited 2 at the parent commit as well, and the FAIL sets are
-byte-identical (93 `c3d_frame` mutation arms plus one check, the same 94 lines in both), so this
-is not a regression introduced by batch 145 — it was proved by stashing and re-running at
-`1069a79`. The loop status asked for a root cause; this is it.
+`make -C tests/scripts` had been exiting 2 with 93 `c3d_frame` mutation arms failing and one
+check red. It was red at the parent commit too, with a byte-identical FAIL set (proved by
+stashing and re-running at `1069a79`), so it was inherited — but inherited is not the same as
+unfixable, and the loop status was right to demand a root cause.
 
-**The one failing check is `diagnostic-drawn-once`.** `tests/scripts/c3d_frame_test.sh:827-833`
-requires the literal `C3D_DrawArrays(GPU_TRIANGLES, 0, 3)` to appear exactly once and inside
-`drawDiagnostic`. **Batch 142 converted the canvas and the canary from immediate draws to queue
-records**, so that call exists nowhere in the file and no correct code can satisfy the check
-again. It reports `0 diagnostic draw(s); inside drawDiagnostic: no`.
+**The root cause was two stale literals, not an architecture change.** `drawDiagnostic` still
+draws immediately; what changed is its SHAPE. The shipped diagnostic used to be a white
+TRIANGLE, `C3D_DrawArrays(GPU_TRIANGLES, 0, 3)`. It is now a 16x16 canary in the canvas's own
+pixel space — two triangles, **six** vertices, `C3D_DrawArrays(GPU_TRIANGLES, 0, 6)` at
+`renderer_c3d.cpp:2632`. `tests/scripts/c3d_frame_test.sh:826` still matched the `0, 3` literal,
+so it counted zero diagnostic draws and was red for every correct build.
 
-**Why that silences the whole mutation suite rather than just one line.** Each arm must turn red
+**Why that silenced the entire mutation suite instead of one line.** Each arm must turn red
 exactly the check it targets. A check that is already red before any mutation turns red for every
-mutant, so every arm reports `turned \`diagnostic-drawn-once\` red, but it is cut for <its real
-target>, so it no longer isolates the check it claims to isolate` and **tests nothing**. Ninety-
-three arms, every run, printing a failure and exercising no code. This is the failure mode the
-file's own comments are full of — a gate that looks busy and verifies nothing — arrived at by a
-legitimate architecture change instead of by a bad edit.
+mutant, so all 93 arms reported "turned `diagnostic-drawn-once` red, but it is cut for <its real
+target>" and **exercised nothing**. A gate that prints 94 lines a run and verifies none of them.
 
-**The fix, and why it was not done in batch 145.** Re-express the invariant the check was written
-for — the canary is emitted exactly once, from `drawDiagnostic`, after the real draws — in the
-queue architecture's own terms, and re-point the arms registered against it near line 2411
-(`diagnostic-drawn-once` is the target of at least the arm at 2411). This file is the most
-heavily reviewed test in the repository; its comments cite review-6 through review-19 closing
-holes in precisely these arms. An edit made under time pressure that loosens an arm would re-open
-one of those holes while turning the gate green, which is strictly worse than the honest red that
-is shipped. The shape of the correct check: count the canary's EMISSION (the queue record it
-pushes), require exactly one, require it inside `drawDiagnostic`, and require the emission to
-come after `replayQueue`'s statement in the eye loop — the three things the old literal happened
-to imply and that the arms at 2411-2417 still need a target for.
+**A second, independent staleness was hiding behind the first.** Three more arms
+(`diagnostic-dropped-from-the-eye-loop`, `diagnostic-after-the-eye-loop`,
+`diagnostic-guarded-to-one-eye`) matched the call with `\([A-Za-z0-9_]*\)`, which cannot match
+the real `drawDiagnostic(r, mdk_render_canvas_width(rr))` — a comma and a nested call. They
+returned the file unchanged and reported "the mutation changed nothing": mutants of nothing, the
+exact class review-14 F3 names. They were invisible while the first failure flooded the output.
 
-**Verify the fix by the arm count, not the exit code.** When it is right, the 93 "cut" lines
-become `turned <target> red as required` lines. A green run that still prints 93 "cut" lines means
-the check was deleted or weakened rather than re-expressed.
+**The fix, and why it is a tightening rather than a relaxation.** The vertex-count literal went
+`0, 3` → `0, 6` in the check AND in the arm that splices a duplicate emission (splicing `0, 3`
+into a check counting `0, 6` would have made that arm a mutant of nothing), and three arm
+patterns widened from `[A-Za-z0-9_]*` to `[^;\n]*` so they find the call that is actually there.
+No check was deleted, no target re-pointed, no arm's expectation loosened: every arm still has to
+turn red the one check it names. **Before: 0 of 94 arms adjudicated. After: 94 of 94, and the
+whole suite reports `All cases match the oracle` with rc 0.** The invariant
+`diagnostic-drawn-once` defends — exactly one diagnostic emission, inside `drawDiagnostic`, not
+per real draw — is unchanged, and the comment at the check now says the 6 is load-bearing so it
+does not get "tidied" back to a 3.
+
+**The general lesson, which is the reason this is written up at this length.** A structural check
+that pins a LITERAL instead of an invariant goes red silently the day the literal legitimately
+changes, and in a mutation harness one always-red check does not cost one check, it costs the
+whole suite. When a structural check fails, the question is never "is the literal still right"
+but "what invariant was the literal standing in for" — and after fixing one stale literal, count
+how many arms actually adjudicated, because a second staleness was hiding under the first.
 
 ## The 3DS canvas draws no pixels (found in batch 142; OPEN)
 

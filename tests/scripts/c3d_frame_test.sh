@@ -823,14 +823,22 @@ def adjudicate(text, quiet=False):
     end_range = span_lines(text, body_span(text, "mdk_render_end_frame"))
     loop_lines = span_lines(text, sp)
 
-    diag = calls(text, r"C3D_DrawArrays\(GPU_TRIANGLES, 0, 3\)")
+    # THE CANARY IS A QUAD, NOT A TRIANGLE, AND THE VERTEX COUNT IS PART OF THE PIN.
+    # This literal used to read `0, 3`, the shipped white TRIANGLE. The canary is now
+    # a 16x16 marker in the canvas's own pixel space -- two triangles, six vertices --
+    # so `0, 3` matched nothing and this check was red for every correct build, which
+    # in turn made EVERY arm below report a spurious red and test nothing (batch 145,
+    # docs/OPEN_ITEMS.md). What the check is FOR has not changed: exactly one
+    # diagnostic emission, and it is inside drawDiagnostic, because per-draw it cost
+    # 2 depth writes + 1 draw per real draw, per eye. Do not "tidy" the 6 back to a 3.
+    diag = calls(text, r"C3D_DrawArrays\(GPU_TRIANGLES, 0, 6\)")
     rep.check("diagnostic-drawn-once",
               len(diag) == 1 and diag_body is not None and
-              "C3D_DrawArrays(GPU_TRIANGLES, 0, 3)" in diag_body,
+              "C3D_DrawArrays(GPU_TRIANGLES, 0, 6)" in diag_body,
               "%d diagnostic draw(s); inside drawDiagnostic: %s (per-draw it cost 2 depth "
               "writes + 1 draw per real draw, per eye)"
               % (len(diag), "yes" if diag_body and
-                 "C3D_DrawArrays(GPU_TRIANGLES, 0, 3)" in diag_body else "no"))
+                 "C3D_DrawArrays(GPU_TRIANGLES, 0, 6)" in diag_body else "no"))
 
     dcall = call_sites(text, "drawDiagnostic")
     rep.check("diagnostic-called-in-the-eye-loop",
@@ -2144,8 +2152,16 @@ def adjudicate(text, quiet=False):
 # that cannot build its mutant is a FAIL below, never a skip (review-10 F1).
 
 def arm_drop_diagnostic(text):
-    """The diagnostic call removed entirely."""
-    out, n = re.subn(r"(?m)^[ \t]*drawDiagnostic\w*\([A-Za-z0-9_]*\);[ \t]*\n", "",
+    """The diagnostic call removed entirely.
+
+    The argument list is matched as `[^;\n]*`, not `\w*`, because the shipped call
+    is `drawDiagnostic(r, mdk_render_canvas_width(rr))` -- a comma and a nested
+    call. With the narrow pattern this arm found nothing, returned the file
+    unchanged, and reported "the mutation changed nothing": a mutant of nothing
+    (review-14 F3's class), batch 145. Still anchored at `^[ \t]*`, so the
+    `static void drawDiagnostic(...);` prototype and the definition are NOT
+    matches and the arm still removes the CALL and nothing else."""
+    out, n = re.subn(r"(?m)^[ \t]*drawDiagnostic\w*\([^;\n]*\);[ \t]*\n", "",
                      text, count=1)
     return out if n else text
 
@@ -2158,7 +2174,7 @@ def arm_move_diagnostic(text, where):
         return text
     a, b = sp
     loop = text[a:b]
-    m = re.search(r"(?m)^([ \t]*)(drawDiagnostic\w*\([A-Za-z0-9_]*\);)[ \t]*\n", loop)
+    m = re.search(r"(?m)^([ \t]*)(drawDiagnostic\w*\([^;\n]*\);)[ \t]*\n", loop)
     if m is None:
         return text
     indent, call = m.group(1), m.group(2)
@@ -2195,7 +2211,7 @@ def arm_guard_loop_statement(text, name):
         return text
     a, b = sp
     loop = text[a:b]
-    m = re.search(r"(?m)^([ \t]*)(" + name + r"\w*\([A-Za-z0-9_]*\);)[ \t]*\n", loop)
+    m = re.search(r"(?m)^([ \t]*)(" + name + r"\w*\([^;\n]*\);)[ \t]*\n", loop)
     if m is None:
         return text
     ind, call = m.group(1), m.group(2)
@@ -2403,10 +2419,14 @@ SHADER_OK_LINE = ('    mdk::log3dsPrintf("shaderProgramSetVsh ok result=0x%08lx"
 
 ARMS = [
     ("diagnostic-back-in-the-per-draw-path",
+     # The splice has to match what the check counts, so it emits the QUAD's six
+     # vertices. Splicing `0, 3` here would leave this arm a mutant of nothing:
+     # it would add a draw the check cannot see, the target check would stay green,
+     # and the arm would report a failure for the wrong reason (review-14 F3's class).
      lambda s: s.replace("    C3D_DrawArrays(GPU_TRIANGLES, first, count);",
                          "    C3D_DrawArrays(GPU_TRIANGLES, first, count);\n"
                          "    if (r->diagnosticTriangle) {\n"
-                         "        C3D_DrawArrays(GPU_TRIANGLES, 0, 3);\n"
+                         "        C3D_DrawArrays(GPU_TRIANGLES, 0, 6);\n"
                          "    }", 1),
      "diagnostic-drawn-once"),
     ("diagnostic-dropped-from-the-eye-loop", arm_drop_diagnostic,
