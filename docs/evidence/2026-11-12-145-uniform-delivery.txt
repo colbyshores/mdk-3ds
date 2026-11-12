@@ -276,3 +276,32 @@ paints, the canvas matrix is wrong for real geometry after all; if (b) paints
 nothing, the fault is in the state `drawDiagnostic` installs and not in its
 geometry at all. Do NOT re-run: the per-draw matrix write ordering, the uniform
 location, the canary's corner-vs-centre position, and rebinding after a write.
+
+================================================================================
+CORRECTION TO RUN 7'S NAMED NEXT EXPERIMENT — DO NOT RUN IT AS WRITTEN.
+================================================================================
+Run 7 named "give the canary the same 5-float layout a `drawRecorded` mesh uses"
+as the next step. **That condition is already true**, checked statically, so the
+experiment as written would change nothing and burn a run:
+
+    renderer_c3d.cpp:2183  BufInfo_Add(bufInfo, mesh.data, 5 * sizeof(float), 2, 0x10);   // level
+    renderer_c3d.cpp:2615  BufInfo_Add(info,   marker,    5 * sizeof(float), 2, 0x10);   // canary
+
+Identical stride, identical attribute count, identical `0x10` format, and both
+share the one `AttrInfo_AddLoader` pair installed by `installEye` (position =
+GPU_FLOAT x3, texcoord = GPU_FLOAT x2, lines 986-987). The buffer is not a stack
+array either: `marker` is `r->scratch`, the linear-allocated scratch buffer, and
+it is `GSPGPU_FlushDataCache`'d before the draw, so the GPU can read it and the
+P3 cache obligation is met.
+
+**So the vertex-layout suspect is closed without a run.** What is left standing
+between the one green run and the red ones is narrower than "geometry" and
+narrower than "uniform": run 2 (matrix as `.constf` literal, canary at centre)
+painted 100 px, and run 3 (same values, same geometry, matrix through
+`C3D_FVUnifMtx4x4`) painted 0 — while run 7 proves a per-draw
+`C3D_FVUnifMtx4x4` from `drawRecorded` does land. The remaining difference is
+therefore **which function issues the write and when in the frame**, not the
+value, not the location, not the geometry. The next step should diff
+`drawRecorded`'s write-to-draw sequence against `drawDiagnostic`'s statement by
+statement — they are not the same sequence — rather than rebuild the canary's
+vertices.
