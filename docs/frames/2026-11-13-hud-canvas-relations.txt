@@ -1,0 +1,25 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-13T07:37:09Z at 4c2e344
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+
+DISCLOSURE, and it is not a hedge (see docs/frames/README.md):
+- This frame is byte-identical to its 175 identical predecessors (sha256
+  6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8; 176 of the
+  177 PNGs in this directory share it). Count re-derived from the tree, not
+  remembered from the previous batch, because review-4 F3 was exactly a
+  remembered count. Nothing on the Linux render path changed in this batch: the
+  diff is one shell harness and one shell test, and mdk.elf's md5
+  (728eb2350c3ef8a81acda15f75617c1e) is unchanged.
+- The pinned frame is a 320x240 LINUX capture and contains ZERO (0,0,255)
+  pixels, so it cannot show the HUD canary at all. It is a presence record for
+  the pinned scene, not the canary evidence.
+- The canary evidence for this batch is the live emulator run, on DISPLAY=:99,
+  Mandarine r1.2.1 md5 0d2adab6, `emurun.sh --expect hud` exit 0:
+  "HUD VISIBLE -- 121 canary pixels in the panel, 121 inside the marker's rect
+  0,0-11,11 (bbox 0,0-10,10, reaching the derived (10,10))". The new bbox
+  relations this batch added had to clear area 11x11=121 >= total 121 (exact,
+  because the marker is a solid block) and bbox 10 <= rect 11.
+- The live oracle measurement above stays unavailable on this host:
+  /tmp/mdk-frame-reference/L3_f1.bmp does not exist and the oracle needs a dotnet
+  10 host that /tmp/kilo (coleshores-owned) does not provide to this lane.

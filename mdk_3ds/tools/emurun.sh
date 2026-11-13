@@ -133,10 +133,25 @@ FRAME_RE='^frame [0-9][0-9]* '
 #                      arm rejects nothing an honest measurement would have passed, and
 #                      it makes the bound the only number to keep in sync (batch 157's
 #                      fixed "six digits" was a second spelling of that).
+#
+#                      LEADING ZEROS ARE STRIPPED FIRST (review-4 F2). This arm is about
+#                      REPRESENTABILITY, not size, and padding adds characters and no
+#                      magnitude: `0000060` IS the decimal 60. Measuring the raw length
+#                      refused a legal `--min-frames 0000060` -- the exact shape a
+#                      wrapper gets from `printf '%06d'` -- as a usage error, over a
+#                      number that compares perfectly well. Unlike the measurements this
+#                      harness reads off its own log, `--min-frames` is CALLER-supplied,
+#                      so it is the one field whose spelling this file does not choose.
+#                      Stripping the zeros costs none of the refusals: a sign, a space or
+#                      a letter is not a leading zero, so `+121`, `-0`, ` 121` and `60x`
+#                      are still rejected by the arm above it.
 decimal_measurement() { # decimal_measurement <field> <max> ; 0 only for a decimal in [0,max]
     case "$1" in ''|*[!0-9]*) return 1 ;; esac
-    [ "${#1}" -le "${#2}" ] || return 1
-    [ "$1" -le "$2" ]
+    local v="$1"
+    while [ -n "$v" ] && [ "${v#0}" != "$v" ]; do v="${v#0}"; done
+    [ -n "$v" ] || v=0
+    [ "${#v}" -le "${#2}" ] || return 1
+    [ "$v" -le "$2" ]
 }
 
 # THE FRAME-COUNT BOUND. It is a bound and not a limit on a long run: six digits is
@@ -170,21 +185,37 @@ frame_floor() { # frame_floor <last-frame> <min-frames> ; 0 when the run is long
 }
 # --- end measurements ----------------------------------------------------------
 
+# A FLAG THAT LOST ITS VALUE IS A USAGE ERROR AND NOT A SHELL FAULT (review-4 F2).
+# Every arm below reads "$2" under `set -u`, so `emurun.sh --min-frames` with nothing
+# after it aborted with `line 182: $2: unbound variable` and exit **1** -- a code this
+# file does not document, from a shell internal, on the one path where the caller was
+# told it would get 2. A wrapper whose variable went empty gets exactly that. The guard
+# is one rule for every value-taking flag rather than one per arm, because the bug was
+# the shape of the arms and not any one of them.
+need_value() { # need_value <flag> <argc>
+    [ "$2" -ge 2 ] && return 0
+    echo "emurun: $1 was given with no value after it." >&2
+    echo "       A flag that lost its argument is a usage error (2), not an unbound-" >&2
+    echo "       variable abort (1) that a caller cannot tell from an internal fault." >&2
+    exit 2
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --secs)       SECS="$2";       shift 2 ;;
-    --grep)       EXTRA_GREP="$2"; shift 2 ;;
-    --shot)       SHOT="$2";       shift 2 ;;
+    --secs)       need_value --secs "$#";       SECS="$2";       shift 2 ;;
+    --grep)       need_value --grep "$#";       EXTRA_GREP="$2"; shift 2 ;;
+    --shot)       need_value --shot "$#";       SHOT="$2";       shift 2 ;;
     --min-frames)
         # Checked AT PARSE TIME, in front of everything expensive: the value reaches
         # `frame_floor` verbatim, and an unusable one used to disable the short-run gate
         # silently while the printed report still claimed to have measured a run.
+        need_value --min-frames "$#"
         decimal_measurement "$2" "$MAX_FRAMES" || {
             echo "emurun: --min-frames requires a decimal 0..$MAX_FRAMES, got [$2]" >&2
             exit 2; }
         MIN_FRAMES="$2"; shift 2 ;;
-    --expect)     EXPECT="$2";     shift 2 ;;
-    --display)    DISPLAY_NUM="$2"; shift 2 ;;
+    --expect)     need_value --expect "$#";     EXPECT="$2";     shift 2 ;;
+    --display)    need_value --display "$#";    DISPLAY_NUM="$2"; shift 2 ;;
     -h|--help)    awk 'NR>2 { if ($0 ~ /^# ={10,}/) exit; print }' "$0"; exit 0 ;;
     *)            DSX="$1";        shift ;;
   esac
@@ -1034,7 +1065,21 @@ CANARY_MAX_COORD=399      # the panel's widest axis, inclusive far index
 # CANARY_X1 and rows 0..CANARY_Y1 inclusive, so 12 x 12 = 144 (review-3 F4). Derived
 # from the rect constants above rather than spelled, and they are re-derived from the
 # shipped renderer by tests/scripts/emurun_harness_test.sh.
-CANARY_MAX_INSIDE=$(( (CANARY_X1 + 1) * (CANARY_Y1 + 1) ))
+# THE `10#` IS NOT DECORATION. Every other reader of these two constants treats them as
+# DECIMAL -- `decimal_measurement` compares them with `[ -le ]`, which parses `011` as
+# eleven -- so the arithmetic must not read them as OCTAL, or one spelling of a rect
+# constant would mean two numbers. A `CANARY_X1=011` edit would derive 100 here and then
+# refuse the honest 121-pixel marker as `inside > CANARY_MAX_INSIDE`: a false-red on the
+# ledger row, caused by a leading zero nobody meant (review-4 open question 2).
+#
+# WHAT IT COSTS, stated rather than hidden: `10#` makes a NON-numeric rect constant a
+# load-time bash arithmetic abort (rc 1, bash's own message) where it used to evaluate as
+# a variable name and reach the named `HUD MALFORMED` constant check. Both are refusals
+# and neither is a silent pass, and the host test reddens a bad constant long before it
+# ships -- it re-derives this value from the shipped renderer's own rect and its mutation
+# row will not land. The computation is kept arithmetic-only so the test can lift the
+# expectations block on its own and read the DERIVED value, not a restated formula.
+CANARY_MAX_INSIDE=$(( (10#$CANARY_X1 + 1) * (10#$CANARY_Y1 + 1) ))
 
 # WHY THE CANARY IS A COLOUR AND NOT A DIFF (and where it comes from).
 #
@@ -1187,6 +1232,42 @@ EOF
             echo "          is not a pair of coordinates inside a $CANARY_MAX_COORD-wide"
             echo "          panel (or the near corner is past the far one), so the extent"
             echo "          cannot be adjudicated (review-2 F2, review-3 F3)."
+        } >&2
+        return 1
+    fi
+    # THE BBOX MUST CONTAIN WHAT IT COUNTED, AND STAY INSIDE WHAT CONTAINED IT
+    # (review-4 F1, and the mirror image of it, which the reviewer did not name).
+    #
+    # Both relations hold BY CONSTRUCTION, so neither can false-red a real measurement,
+    # and both used to be certified green:
+    #
+    #   area >= total.  `canary_stats` takes bx0..bx1 and by0..by1 as the min and max
+    #       over EXACTLY the pixels it counted, so every counted pixel lies inside that
+    #       box and `total` cannot exceed its area. `121 121 10 10 10 10` -- a ONE-pixel
+    #       box holding 121 pixels -- printed `HUD VISIBLE ... (bbox 10,10-10,10)` at
+    #       rc 0, which is review-3 F3's shape (nonsense inside a green verdict) one
+    #       relation further along.
+    #   bbox <= rect.  The containment arm above already returned unless inside ==
+    #       total, and `inside` counts a pixel only when cx <= CANARY_X1 and cy <=
+    #       CANARY_Y1, so every counted pixel is inside the rect by now and the bbox
+    #       cannot reach past it. `121 121 0 0 12 12` -- every pixel inside 0,0-11,11
+    #       and a bbox claiming one of them was at 12 -- was green too, and it is the
+    #       same contradiction wearing the other sign.
+    #
+    # The area is at most the panel's own 400 x 240 = 96000, so this cannot overflow, and
+    # bx0 <= bx1 / by0 <= by1 were checked immediately above, so neither difference is
+    # negative. Both bounds are the harness's OWN rect, which the host test re-derives
+    # from the shipped renderer, so neither is a second spelling of anything.
+    if [ $(( (bx1 - bx0 + 1) * (by1 - by0 + 1) )) -lt "$total" ] \
+       || [ "$bx1" -gt "$CANARY_X1" ] || [ "$by1" -gt "$CANARY_Y1" ]; then
+        {
+            echo "emurun: HUD MALFORMED: $total pixels cannot have bbox"
+            echo "          ($bx0,$by0)-($bx1,$by1) against a marker rect of"
+            echo "          0,0-$CANARY_X1,$CANARY_Y1. A bounding box is the min and max over the"
+            echo "          pixels counted, so it cannot hold fewer of them than their"
+            echo "          number, nor reach outside the rect every one of them was"
+            echo "          counted inside. A line the measurement cannot emit is a"
+            echo "          rejection, never a pass (review-4 F1)."
         } >&2
         return 1
     fi

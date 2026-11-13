@@ -1,0 +1,269 @@
+================================================================================
+BATCH 159 — ledger row `3ds.hud-canvas`
+acceptance: mdk_3ds/tools/emurun.sh --expect hud   (attempt 5 of 8)
+date: 2026-11-13   builder: litellm/qwen   review under remediation:
+logs/ralph-pi/run-20261113-021356/review-4.md (on batch 158)
+================================================================================
+
+0. WHAT THIS BATCH IS
+--------------------------------------------------------------------------------
+review-4 has no Critical and no High, so nothing was mandatory under the loop's
+gate. All three of its findings are Low, all three are in the row's OWN
+acceptance command — which, for this ledger row, is the work — and all three
+were reproduced against the shipped file before anything was edited. None is
+rebutted.
+
+The batch's one idea, again: a measurement is not a number, it is a number plus
+the relations the thing that produced it guarantees. Batch 158 related `inside`
+to `total`. This batch relates the counts to the box they were counted in, and
+fixes two places where the harness refused or accepted a number for the wrong
+reason.
+
+
+1. F1 (Low, CONFIRMED, FIXED) — THE COUNTS AND THE BBOX WERE NEVER COMPARED
+--------------------------------------------------------------------------------
+Quote (review-4 F1): "The new relations arm closes `inside <= total` and
+`inside <= 144`, but not the relation between the counts and the **bbox**.
+`canary_stats` derives the bbox from the same pixel set whose size is `total`,
+so `total` can never exceed the bbox area."
+
+Reproduced against `git show HEAD` of the harness, with `canary_stats` stubbed
+and the real lifted `canary_verdict`:
+
+    121 121 10 10 10 10  ->  rc 0  HUD VISIBLE -- 121 canary pixels in the
+                                  panel, 121 inside ... (bbox 10,10-10,10)
+    121 121 11 11 11 11  ->  rc 0  (same)
+
+A ONE-pixel box holding 121 pixels, printed inside the acceptance evidence.
+
+1b. THE MIRROR, WHICH THE REVIEWER DID NOT NAME
+--------------------------------------------------------------------------------
+The same contradiction with the other sign was green too, and it is a larger
+hole than the one reported: the containment arm returns unless inside == total,
+and `inside` counts a pixel only when cx <= CANARY_X1 and cy <= CANARY_Y1, so
+by the time the bbox is read EVERY counted pixel is inside 0,0-11,11 — yet the
+bbox was free to say otherwise.
+
+    121 121 0 0 12 12  ->  rc 0  HUD VISIBLE ... (bbox 0,0-12,12)
+    121 121 0 0 11 12  ->  rc 0
+    121 121 12 0 12 10 ->  rc 0
+
+1c. THE FIX — TWO RELATIONS, BOTH GUARANTEED BY CONSTRUCTION
+--------------------------------------------------------------------------------
+One arm, placed after the bbox's own validation (so bx0<=bx1 / by0<=by1 are
+already proven and neither difference can be negative) and after containment:
+
+    [ $(( (bx1 - bx0 + 1) * (by1 - by0 + 1) )) -lt "$total" ]  ->  MALFORMED
+    [ "$bx1" -gt "$CANARY_X1" ] || [ "$by1" -gt "$CANARY_Y1" ] ->  MALFORMED
+
+Neither can false-red, and that is the property that matters in an acceptance
+command:
+  * area >= total — the bbox is the min and max over EXACTLY the counted
+    pixels, so every counted pixel lies in the box; distinct pixels are distinct
+    (cx,cy) pairs, so total <= area. Not a threshold: an identity.
+  * bbox <= rect — containment already returned for any pixel outside the rect.
+
+The area is at most the panel's own 400 x 240 = 96000, so the arithmetic cannot
+overflow, and both bounds are the harness's OWN rect constants, which the host
+test re-derives from the shipped renderer.
+
+After: all five impossible lines above are `HUD MALFORMED` at rc 1, and the
+honest ones are untouched — `121 121 0 0 10 10` (the real measurement),
+`121 121 0 0 11 11`, `26 26 0 0 10 10` and `25 25 0 0 10 10` (sparse but
+possible: 26 pixels with a bbox of 121 cells is a hole-y set, not a
+contradiction) all still pass. The ordering pin holds: `0 0 - - - -` is still
+`HUD NOT VISIBLE`, because the count arms run before the bbox arms.
+
+
+2. F2 (Low, CONFIRMED, FIXED) — THE LENGTH ARM MEASURED THE STRING, NOT THE NUMBER
+--------------------------------------------------------------------------------
+Quote (review-4 F2): "The length arm `[ \"${#1}\" -le \"${#2}\" ]` is justified
+as 'a field with more digits than its bound cannot be <= it'. That is false for
+zero-padded input, and unlike the measurements it guards, `--min-frames` is
+*caller-supplied*."
+
+Reproduced against the shipped script:
+
+    emurun: --min-frames requires a decimal 0..999999, got [0000060]   rc 2
+    mdk_3ds/tools/emurun.sh: line 182: $2: unbound variable           rc 1
+
+Two separate defects, one rule behind each.
+
+2a. PADDING. The length arm exists so the `[ -le ]` under it can always be
+EVALUATED — it is a REPRESENTABILITY test, not a size test. Padding adds
+characters and no magnitude, so `0000060` (the exact shape a wrapper gets from
+`printf '%06d'`) was refused as a usage error over a number that compares
+perfectly well. Verified: bash's `[ ]` parses leading-zero operands as DECIMAL
+(`[ 0000060 -eq 48 ]` is false, `[ 099 -le 999999 ]` is true), so the value was
+never the problem; the character count was. The zeros are now stripped before
+the length arm, and the comparison is made on the stripped value so the two arms
+agree. No refusal is lost: a sign, a space or a letter is not a leading zero, so
+`+121`, `-0`, ` 121`, `60x` and `1000000` are all still exit 2 (re-checked).
+Padding smuggles nothing past a bound either: `0000096001` in a 96000-pixel
+panel is still a refusal, because the bound is applied to the VALUE.
+
+2b. A MISSING VALUE. Every option arm read "$2" under `set -u`, so a flag that
+lost its argument aborted with `$2: unbound variable` and exit **1** — a code
+this file does not document, from a shell internal, on the one path the caller
+was promised 2. `need_value <flag> <argc>` now guards every value-taking flag
+(`--secs`, `--grep`, `--shot`, `--min-frames`, `--expect`, `--display`), because
+the bug was the shape of the arms and not any one of them. All six now exit 2
+with a message naming the flag, and the shell's own fault string is gone.
+
+
+3. F3 (Low, CONFIRMED, RECORD CORRECTED) — A COUNT REMEMBERED, NOT DERIVED
+--------------------------------------------------------------------------------
+Quote (review-4 F3): "Both say the new frame is 'byte-identical to its **172**
+identical predecessors'. The tree at HEAD holds **175** PNGs with sha256
+6646adf1…". Confirmed:
+
+    sha256sum docs/frames/*.png | awk '{print $1}' | sort | uniq -c
+      175 6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8
+        1 c42246b7e2a0631dc20fb469f0552e6018c1a677efc618ed0920a57984eaeab1
+
+Batch 158's own frame is one of those 175, so it had 174 identical predecessors,
+not 172. The 172 was carried over from batch 157's sidecar. Corrected in
+`docs/PROGRESS_LOG.md` in place, and appended as a CORRECTION block to
+`docs/evidence/2026-11-13-158-one-measurement-rule.txt` rather than rewritten
+there, so the original claim stays auditable (batch 157's pattern for this
+directory). No verdict changes: the sha, the zero-blue-pixels disclosure and the
+reason the frame is unchanged were all accurate.
+
+
+4. OPEN QUESTION 2 CLOSED (review-4's own, not a finding) — ONE SPELLING, TWO BASES
+--------------------------------------------------------------------------------
+`CANARY_MAX_INSIDE=$(( (CANARY_X1 + 1) * (CANARY_Y1 + 1) ))` is bash ARITHMETIC,
+which reads `011` as OCTAL, while every other reader of those constants is a
+`[ -le ]`, which reads `011` as DECIMAL eleven. Measured: with a padded rect the
+old expression gives 100 and the new one gives 144. A `CANARY_X1=011` edit would
+therefore have derived 100 and refused the honest 121-pixel marker as
+`inside > CANARY_MAX_INSIDE` — a false-red on the ledger row, caused by a
+leading zero nobody meant. Now `10#`-qualified.
+
+What it costs, stated rather than hidden: `10#` makes a NON-numeric rect constant
+a load-time bash arithmetic abort (rc 1) where it used to evaluate as a variable
+name and reach the named `HUD MALFORMED` constant check. Both are refusals and
+neither is a silent pass, and the host test reddens a bad constant before it
+ships (its derivation row re-reads the rect from the shipped renderer, and its
+mutation row would not land).
+
+The pin MUTATES A COPY of the harness with a padded rect and requires the derived
+value to stay 144, with a non-vacuity row proving the mutation landed — because
+restating the formula in the test would be the second spelling this file exists
+to prevent (batch 156's lesson, learned once already).
+
+
+5. THE GATE PROVED ITSELF AGAINST THE COMMIT IT REPLACED
+--------------------------------------------------------------------------------
+`bash tests/scripts/emurun_harness_test.sh /tmp/emurun-parent.sh`, where the
+parent is `git show HEAD:mdk_3ds/tools/emurun.sh`:
+
+    new test on the PARENT harness:  214 checks,  20 FAIL
+    parent test on the PARENT harness: 182 checks, 0 FAIL   (green, as it must be)
+    new test on the WORKING harness: 214 checks,  0 FAIL
+
+The 20 red rows, by group: 7 F1 bbox/count refusals, 6 missing-value usage rows,
+6 padded-decimal accepts (only 2 of the 6 padded accepts can fail on the parent,
+because the parent already accepted `0`, `00`, `099`, `0060` — the length arm
+only bites past the bound's own digit count), 1 "named, not unbound", 1 "fault
+string gone", 1 parse-level padded floor, 1 frame-floor padded floor, 1 octal
+derivation.
+
+**0 PRE-EXISTING COLLATERAL**, and this time it is a set difference and not a
+count: the red labels were diffed against the label set of the parent test run
+on the parent harness, and the intersection is EMPTY.
+
+A method note, because getting it wrong nearly produced a false result: the test
+derives `ROOT` from its OWN path, so the parent copy of the TEST must live in
+`tests/scripts/`. Run from `/tmp` it reds 37 rows for path reasons that have
+nothing to do with the harness, and those 37 look superficially like real
+collateral. The harness path is a parameter; the test path is not.
+
+EmurunHarness is 182 -> **214 checks**.
+
+
+6. GATES, AS RUN (not summarised)
+--------------------------------------------------------------------------------
+make -C tests/scripts -j8                 rc 0
+    "All cases match the oracle."
+    722 PASS / 0 FAIL   (was 690; +32 = the new rows)
+    "PASS EmurunHarness (214 checks: config placement + mount ownership + the HUD canary)"
+
+DISPLAY=:99 bash tools/check.sh           rc 0
+    "CHECK: ALL GATES PASSED"
+    "PASS L3_f1.bmp sha=58615fc85d02e009"
+    "BATCH INTEGRITY: PASS"
+    "COMPLETION: LEDGER VERIFIED"
+    audit_c_with_classes: "VERDICT: CONTRACT CLEAN -- 0 violations."
+    audit_arm11_math:     "VERDICT: CONTRACT CLEAN"
+    gates_core_parity:    "VERDICT: SKIPPED -- no built .cia to read the SMDH out of."
+
+make -C mdk_3ds -j8                       rc 0
+    mdk.elf md5 728eb2350c3ef8a81acda15f75617c1e  UNCHANGED — correct: the diff
+    is one shell harness and one shell test, no compiled source.
+
+`bash -n` clean on both changed shell files.
+
+
+7. THE ACCEPTANCE, AS RUN (AGENTS.md P7/P8)
+--------------------------------------------------------------------------------
+    DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud        ->  rc 0
+
+    display   : :99
+    emulator  : mandarine.AppImage md5 0d2adab6      (r1.2.1, the pinned build)
+    backend: PICA200 Citro3D
+    flow: screen=4 level=7
+    frames    : reached 2460 by the deadline (46 frame lines logged, every 60th
+                after #5); after the reap the guest log ends at frame 2520
+    expect    : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1
+                (canvas frame 2460)
+    expect    : HUD VISIBLE -- 121 canary pixels in the panel, 121 inside
+    expect    : the marker's rect 0,0-11,11 (bbox 0,0-10,10,
+    expect    : reaching the derived (10,10))
+
+What the NEW rules had to clear, and their margins:
+    area (10-0+1) x (10-0+1) = 121  >= total 121     margin 0  (exact)
+    bbox 10 <= rect 11                               margin 1
+    inside 121 <= CANARY_MAX_INSIDE 144             margin 23
+The area arm's zero margin is not a fragility: for a SOLID marker the bbox area
+and the pixel count are the same number by definition, so the arm is an identity
+for what `drawDiagnostic` paints and can only bite on a line the measurement
+cannot emit. (The extent arm's zero margin, item 1 of NEXT, is a different and
+genuinely tighter case: there the geometry, not an identity, forces it.)
+
+Co-tenant hazard, because review-4 declined to run for it and the hazard was
+live here: two `perfect_dark` Mandarine processes were running on the shared
+`:99` during this run. `emurun.sh` captures with `import -window root`, i.e. the
+whole screen, so a co-tenant window on top would land in the capture. The verdict
+self-validates against that: a foreign capture contains no (0,0,255) pixels in
+the panel, which is `HUD NOT VISIBLE` at rc 7, not a pass. The 121 pixels and
+the level-7 guest log are this lane's. Emulator-green is not hardware-pass.
+
+
+8. PRIOR-SOLUTION LOOKUP (as required, with its gaps named)
+--------------------------------------------------------------------------------
+* Pi knowledge (`mdk-sdl`, mode hybrid and semantic): searched. The most useful
+  lead came from the SIBLING project's knowledge base — a changed-pixel census
+  that prints "changed: N … in band: N, outside band: 0" and reddens when a
+  change leaks outside its band. That is F1's shape one subsystem over: a count
+  and a region, checked against each other instead of separately. Applied as the
+  containment half of the arm.
+* Obsidian MCP: **absent from this session's tool list** — no `obsidian_*` tool
+  exists here. Per AGENTS.md §9 P9 that is a session configuration fault to
+  report, not a licence to claim the lookup happened. The vault was read
+  read-only from `/mnt/nas/Vaults/port-docs` instead (bounded grep of
+  `30-architecture/patterns/`), which is a degraded lookup: it finds the same
+  notes but loses graph search entirely.
+* Cognee MCP: **absent from this session's tool list**. No graph lookup is
+  claimed for this batch.
+
+
+9. WHAT THIS BATCH DID NOT TOUCH
+--------------------------------------------------------------------------------
+No compiled source, no gate, no golden, no ledger row, no PROTECTED file. The
+ledger row `3ds.hud-canvas` stays `todo` for the same operator-only reason as
+batches 155-158: `docs/COMPLETION_LEDGER.tsv` is `coleshores:coleshores 0664`
+and this lane is `piagent` (groups `piagent, development`), so it cannot write
+it; the sanctioned closer is `tools/runner/ledger_close.py`, which is itself
+PROTECTED. Re-verified this batch: `test -w` says NOT WRITABLE, and the row's
+acceptance is green again under a stricter rule than batch 158's.

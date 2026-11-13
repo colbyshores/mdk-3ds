@@ -952,6 +952,91 @@ check "and an empty --min-frames is refused at parse time too" "2" "$?"
 check "while a VALID --min-frames is not refused (the guard is not always-red)" "0" \
       "$(bash "$EMU" --min-frames 60 /nonexistent-build.3dsx 2>&1 | grep -c -- "requires a decimal")"
 
+# --- review-4 F1: the counts and the BBOX were never related to each other -----------
+#
+# Batch 158 bounded every field and related `inside` to `total`, but never related either
+# to the bbox, so a ONE-pixel box holding 121 pixels was certified green: `121 121 10 10
+# 10 10` printed `HUD VISIBLE -- 121 canary pixels ... (bbox 10,10-10,10)` at rc 0. The
+# MIRROR is the same contradiction with the other sign, and the reviewer did not name it:
+# containment had already proven every counted pixel lies inside 0,0-11,11, yet `121 121 0
+# 0 12 12` -- a bbox reaching 12 -- was green too. Both relations hold BY CONSTRUCTION,
+# because the bbox is the min and max over EXACTLY the pixels counted, so neither can
+# false-red a real measurement -- and the accept loop below is what proves that, since a
+# sparse-but-possible line and the real measurement both still have to pass.
+for bad in "121 121 10 10 10 10" "121 121 11 11 11 11" "121 121 0 0 12 12" \
+           "121 121 0 0 11 12" "121 121 12 0 12 10" "26 26 5 5 5 5" "121 121 0 0 5 5"; do
+    check "verdict: counts and bbox that disagree [$bad] are named MALFORMED -- review-4 F1" "1" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$bad"; }
+               canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD MALFORMED' )"
+done
+for ok in "121 121 0 0 10 10" "121 121 0 0 11 11" "26 26 0 0 10 10" "25 25 0 0 10 10"; do
+    check "and [$ok] is a line the panel CAN emit, so the arm is not always-red -- review-4 F1" "0" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$ok"; }
+               canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?" )"
+done
+
+# --- review-4 F2: the length arm measured the STRING, not the NUMBER ------------------
+#
+# `[ "${#1}" -le "${#2}" ]` counts CHARACTERS, and the arm exists only so the `[ -le ]`
+# under it can always be EVALUATED -- a representability test, not a size test. Padding
+# adds characters and no magnitude, so a legal `--min-frames 0000060` (the exact shape a
+# wrapper gets from `printf '%06d'`) was refused as a usage error over a number that
+# compares perfectly well. Unlike every measurement this harness reads off its own log,
+# `--min-frames` is CALLER-supplied, so it is the one field whose spelling this file does
+# not choose. Stripping the zeros costs none of review-3's refusals, because a sign, a
+# space or a letter is not a leading zero.
+for ok in "0000060" "0060" "0" "00" "099" "000000000000000000000000000060"; do
+    check "the rule accepts [$ok] -- a padded decimal IS its value -- review-4 F2" "accept" \
+          "$(dm "$ok" 999999)"
+done
+check "and padding smuggles nothing past a bound: [0000096001] in a 96000-pixel panel" "reject" \
+      "$(dm 0000096001 96000)"
+check "frame floor: a padded floor is the number it spells" "0" "$(ff 60 0000060)"
+check "and a padded floor still refuses a short run" "5" "$(ff 3 0000060)"
+
+# EXECUTED THROUGH THE REAL PARSER, which is where F2 actually bit. A bogus build path
+# means nothing can launch however these rows turn out, so the first asserts that the
+# guard's message is ABSENT -- the padded value reached the build check, which is the
+# only thing after the guard.
+bash "$EMU" --min-frames 0000060 /nonexistent-build.3dsx >/dev/null 2>&1
+pad_rc=$?
+pad_msg="$(bash "$EMU" --min-frames 0000060 /nonexistent-build.3dsx 2>&1 | head -3)"
+check "the parser does NOT refuse a zero-padded --min-frames -- review-4 F2" "0" \
+      "$(printf '%s' "$pad_msg" | grep -c -- "requires a decimal")"
+check "and it got as far as the build check, so the guard is not always-red" "2" "$pad_rc"
+
+# AND THE MISSING VALUE. Every arm read "$2" under `set -u`, so a flag that lost its
+# argument aborted with `$2: unbound variable` and exit **1** -- a code this file does not
+# document, from a shell internal, on the one path the caller was promised 2 on.
+for flag in --secs --grep --shot --min-frames --expect --display; do
+    bash "$EMU" "$flag" >/dev/null 2>&1
+    check "a value-taking flag [$flag] with nothing after it is a usage error (2) -- review-4 F2" \
+          "2" "$?"
+done
+check "and it is NAMED as a missing value, not an unbound-variable abort -- review-4 F2" "1" \
+      "$(bash "$EMU" --expect 2>&1 | grep -c 'was given with no value')"
+check "and the shell's own fault string is gone from the output" "0" \
+      "$(bash "$EMU" --expect 2>&1 | grep -c 'unbound variable')"
+
+# --- review-4 open question 2: the derived bound must read its constants as DECIMAL ---
+#
+# `CANARY_MAX_INSIDE` is computed by bash ARITHMETIC, which reads a leading zero as OCTAL,
+# while every other reader of CANARY_X1/CANARY_Y1 in this file is a `[ -le ]` that reads
+# them as DECIMAL. One spelling, two meanings: a rect edit written `011` would derive 100
+# and then refuse the honest 121-pixel marker as `inside > CANARY_MAX_INSIDE`, false-reding
+# the ledger row from a zero nobody meant. The row MUTATES A COPY of the harness rather
+# than restating the formula, because a restated formula is exactly the second spelling
+# this file exists to prevent (batch 156's lesson, learned once already).
+EMU_OCT="$(mktemp)"
+sed 's/^CANARY_X1=11$/CANARY_X1=011/; s/^CANARY_Y1=11$/CANARY_Y1=011/' "$EMU" > "$EMU_OCT"
+check "the mutation landed (non-vacuity: the copy declares a padded rect)" "2" \
+      "$(grep -c '^CANARY_[XY]1=011$' "$EMU_OCT")"
+OCT_INSIDE="$( ( eval "$(awk '/^# --- expectations ---/{f=1;next} /^# --- end expectations/{f=0} f' "$EMU_OCT")"
+                 printf '%s' "$CANARY_MAX_INSIDE" ) 2>/dev/null)"
+rm -f "$EMU_OCT"
+check "the inside bound is DERIVED IN DECIMAL: a padded rect 011,011 still yields 144" "144" \
+      "$OCT_INSIDE"
+
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary)"
     exit 0

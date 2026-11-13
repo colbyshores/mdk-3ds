@@ -267,3 +267,22 @@ exist and the oracle needs a dotnet host), which is why the disclosure is here.
 * An explicitly supplied --shot is still never freshness-checked (review-2's open
   question 2, unchanged; not reachable from the acceptance command).
 ================================================================================
+
+--------------------------------------------------------------------------------
+CORRECTION (batch 159, review-4 F3) — a count in this record was remembered, not
+re-derived, which is the exact defect the batch it documents was about.
+
+  Section 8 said the published frame is "byte-identical to its 172 identical
+  predecessors". The tree at batch 158's HEAD holds 175 PNGs with sha256
+  6646adf1dae3a774d6215d57e5bcfba1bf6563eceac275ffe5f64893cdc49cf8 (176 PNGs in
+  all; one has a different sha), and the frame this record documents is one of
+  those 175 — so it had 174 identical predecessors, not 172.
+
+  The 172 was carried over from batch 157's sidecar, where 173 was the correct
+  figure for that commit. No verdict changes: the sha itself, the disclosure that
+  the pinned frame contains zero (0,0,255) pixels, and the reason it is unchanged
+  (no compiled source in the diff) were all accurate and are confirmed again in
+  batch 159. Corrected here rather than in place so the original claim stays
+  auditable, which is the pattern batch 157 set for this directory.
+
+  Re-derived by: sha256sum docs/frames/*.png | awk '{print $1}' | sort | uniq -c
