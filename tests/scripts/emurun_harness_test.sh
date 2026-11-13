@@ -1037,6 +1037,83 @@ rm -f "$EMU_OCT"
 check "the inside bound is DERIVED IN DECIMAL: a padded rect 011,011 still yields 144" "144" \
       "$OCT_INSIDE"
 
+# --- review-5 F1: one measurement, TWO BASES -----------------------------------------
+#
+# Batch 159 put `10#` on CANARY_MAX_INSIDE because bash ARITHMETIC reads a leading zero
+# as OCTAL while every `[ ]` in this file reads it as DECIMAL -- and then left the same
+# trap on the four fields the arm it added compares. `decimal_measurement` DELIBERATELY
+# accepts a leading zero (review-4 F2), so a padded bbox reaches the area arm intact,
+# and the arm computed `$(( (bx1 - bx0 + 1) * (by1 - by0 + 1) ))` in base 8. Two
+# failures, one spelling: `30 30 010 0 11 11` -- a 24-pixel box holding 30 pixels, the
+# exact contradiction review-4 F1 exists to refuse -- printed HUD VISIBLE at rc 0,
+# because octal inflated the area to 48; and `08` is not a base bash can read at all,
+# so the arithmetic ABORTED the script with "value too great for base" at rc 1, an
+# undocumented code, on the line that decides a ledger row. Both are the same class as
+# batch 159's `unbound variable` fix, one function over.
+#
+# THE PREMISE, PINNED. Everything below rests on arithmetic and `[ ]` disagreeing about
+# the same string. If that ever stops being true these rows are decoration.
+check "the premise: \$((010)) is OCTAL 8" "8" "$( ( printf '%s' "$((010))" ) 2>/dev/null )"
+check "and [ ] reads the same string as DECIMAL 10 -- one spelling, two bases" "0" \
+      "$( [ 010 -eq 10 ] 2>/dev/null; printf '%s' "$?" )"
+check "and \$((08)) is not a number arithmetic can read at all" "1" \
+      "$( ( ( printf '%s' "$((08))" ) >/dev/null 2>&1; printf '%s' "$?" ) )"
+
+# A padded bbox that DISAGREES with its count in DECIMAL is refused, whatever base a
+# shell would have read it in. All three of these were certified green or aborted the
+# script at the parent.
+for bad in "30 30 010 0 11 11" "121 121 08 0 11 11" "121 121 0 0 08 8"; do
+    check "verdict: a zero-padded bbox that disagrees [$bad] is MALFORMED -- review-5 F1" "1" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$bad"; }
+               canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD MALFORMED' )"
+done
+check "and a padded field does not abort the shell on a base it cannot read -- review-5 F1" "0" \
+      "$( ( eval "$EXPECT_FN"; canary_stats() { printf '121 121 08 0 11 11\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'value too great for base' )"
+# AND THE OTHER DIRECTION, which is the one that matters for the ledger row: a padded
+# line that is CONSISTENT in decimal is the same measurement as an unpadded one and must
+# still pass. The parent refused both of these, because octal SHRANK the box -- a
+# false-red on the row, caused by a zero nobody meant. This is the arm being a relation
+# and not a spelling check.
+for ok in "121 121 000 0 010 010" "121 121 0 0 011 11"; do
+    check "and [$ok] is the same box in a padded spelling, so it still passes -- review-5 F1" "0" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$ok"; }
+               canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?" )"
+done
+
+# --- review-5 F2: the zero-strip arm cost QUADRATIC time in a CALLER-supplied field ---
+#
+# The strip peeled one zero per iteration and re-scanned the field each time, so its
+# cost grew with the SQUARE of the length: measured 779 ms at 4 002 characters and 22 s
+# at 20 002. `--min-frames` is the one field a caller spells, so a wrapper that pads
+# from a fixed-width or file-sourced value turned the acceptance command into a HANG
+# instead of a verdict -- and a hang is the failure mode this whole harness exists to
+# avoid, which is why every other arm here is a NAMED refusal. The arm now asks one
+# question about the characters before the bound's own width instead of rebuilding the
+# string: measured 4 ms at 20 002 and 8 ms at 60 002.
+#
+# THE BOUND IS THE PIN, AND IT IS DELIBERATELY LOOSE. 20 002 characters must be
+# adjudicated inside 5 seconds: the fixed cost is 4 ms (a 1 000x margin, so a loaded
+# shared host cannot flake) and the shipped-before cost is 22 s (a 4x margin, so the row
+# is red on the code it was written for). The correctness rows around it use a 6 000-
+# character field, where the parent takes about 2 s and does NOT time out -- those rows
+# pin the verdict, this one pins the cost.
+PAD6="$(printf '%*s' 6000 '' | tr ' ' '0')"
+PAD20="$(printf '%*s' 20000 '' | tr ' ' '0')"
+check "the rule accepts a 6 002-character padded field -- a padded decimal is its value" \
+      "accept" "$(dm "${PAD6}60" 999999)"
+check "and padding smuggles nothing past a bound at that length either -- review-5 F2" "reject" \
+      "$(dm "${PAD6}96001" 96000)"
+check "and a field whose SIGNIFICANT digits exceed the bound is still refused -- review-5 F2" \
+      "reject" "$(dm "${PAD6}1000000" 999999)"
+DM_LIB="$(mktemp)"
+printf '%s\n' "$MEASURE_FN" > "$DM_LIB"
+timeout 5 bash -c '. "$1"; decimal_measurement "$2" 999999' _ "$DM_LIB" "${PAD20}60" \
+    >/dev/null 2>&1
+check "and it adjudicates 20 002 characters inside a bound, not in quadratic time -- review-5 F2" \
+      "0" "$?"
+rm -f "$DM_LIB"
+
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary)"
     exit 0

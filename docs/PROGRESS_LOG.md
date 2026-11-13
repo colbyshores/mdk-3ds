@@ -1,3 +1,112 @@
+## Iteration 160 — batch 160: `3ds.hud-canvas` — the counts were compared, in two different bases
+
+**LEDGER ROW `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`, attempt 6 of 8.
+Review under remediation: `logs/ralph-pi/run-20261113-021356/review-5.md` (on batch 159) — F1 (Low),
+F2 (Medium), F3 (Low); no Critical and no High, so nothing was mandatory. All three reproduced against
+the shipped file before anything was edited; all three fixed; none rebutted. All three are in the row's
+own acceptance command, which for this row IS the work. Full record:
+`docs/evidence/2026-11-13-160-one-base.txt`.**
+
+**THE BATCH'S ONE IDEA: A MEASUREMENT HAS A BASE.** Batch 159 made `decimal_measurement` deliberately
+accept a leading zero and then compared the bbox with bash **arithmetic**, which reads `010` as OCTAL 8,
+while every `[ ]` in the same function reads it as DECIMAL 10. Batch 159 had already closed this exact
+class for its own constant (`10#` on `CANARY_MAX_INSIDE`, review-4 open question 2) and did not apply it
+to the four fields the arm it added compares.
+
+**F1 (Low, CONFIRMED, FIXED): THE NEW ARM READ ITS FIELDS IN A DIFFERENT BASE THAN EVERY OTHER
+READER.** Reproduced on the shipped `canary_verdict` with `canary_stats` stubbed: `30 30 010 0 11 11`
+printed `HUD VISIBLE` at **rc 0** — a 24-pixel box holding 30 pixels, the exact contradiction review-4
+F1 exists to refuse, green because octal inflated the area to 48 — and `121 121 08 0 11 11` **aborted
+the script** with `08: value too great for base` at rc 1, an undocumented exit code, on the line that
+decides a ledger row. `10#`-qualified; the safety is that the bbox validation arm runs immediately
+above, so all four operands are proven non-empty unsigned decimals in [0,399] with `bx0<=bx1` and
+`by0<=by1`, and the area is at most the panel's own 96000. **AND THE OCTAL READING COULD ALSO
+FALSE-RED:** `121 121 000 0 010 010` and `121 121 0 0 011 11` were both REFUSED at the parent, because
+octal shrank the box below its count — the same defect was ready to pass nonsense and fail the honest.
+**WHERE THE CLASS IS CLOSED is review-5 open question 2, and the answer is the arithmetic, not the
+parser:** refusing leading zeros on the log-derived fields would have made `decimal_measurement` two
+predicates with two spellings of "is this a number", the shape batch 158 deleted a second canary-shaped
+copy to close review-3 F1. What the fix does not do is written down: a padded line that is *consistent*
+in decimal still passes and prints its padding — the same box spelled differently, not a contradiction
+(NEXT item 14).
+
+**F2 (Medium, CONFIRMED, FIXED): THE ZERO-STRIP COST QUADRATIC TIME IN THE ONE FIELD A CALLER
+SPELLS.** Measured on the shipped function: 779 ms at 4 002 characters, 22 s at 20 002, and
+`--min-frames` is read three times per run. Not a perf note: a wrapper that pads from a fixed-width or
+file-sourced value turned the acceptance command into a HANG instead of a verdict, and a hang is the
+failure mode this harness exists to avoid, which is why every other arm is a NAMED refusal. **THE
+REVIEWER'S SUGGESTED FIX DOES NOT FIX IT** — `${v#"${v%%[!0]*}"}` and extglob `+(0)` were both measured
+and both are still quadratic (699 ms and 3 434 ms at 20 002); bash's glob backtracking has the loop's
+shape with a smaller constant. What the arm needs is the stripped **length**, and "no more significant
+digits than the bound" is one question about the characters *before* the bound's own width: if every one
+of them is a zero, the significant digits fit. A substring plus a glob: 4 ms at 20 002, 8 ms at 60 002,
+two lines shorter than what it replaces. **EQUIVALENCE PROVEN AGAINST THE SHIPPED CODE, NOT A HAND
+COPY:** the lifted parent predicate and the lifted new one ran side by side over 196 field × bound pairs
+and agree on all 196, because `significant_digits(v) <= digits(max)` iff every one of the first
+`len(v) - digits(max)` characters is a zero — and `[ ]` already reads a padded operand as decimal, so
+the comparison never needed the stripped string. Closes review-5 open question 3: a >6 KB padded floor
+is worth defending and now costs nothing, so the file never has to say "we give up past 6 KB".
+
+**F3 (Low, CONFIRMED, RECORD ONLY): A GATE VERDICT CREDITED TO THE WRONG GATE, in a record about
+attribution.** Both records said `gates_core_parity: VERDICT: SKIPPED -- no built .cia`. That sentence is
+`gates_smdh`'s; `gates_core_parity` ran and printed `VERDICT: CONTRACT CLEAN` (`PASS gates_core_parity
+both targets link the same core`) — and on a batch claiming "no compiled source changed", parity is
+exactly the gate that would catch a target-only source change. Re-verified by running each gate on this
+tree. Corrected in this file in place and appended as a CORRECTION block to batch 159's evidence file
+rather than rewriting its section 6, so the original claim stays auditable.
+
+**THE GATE PROVED ITSELF AGAINST THE COMMIT IT REPLACED — AND IN FOUR COMBINATIONS.** New test on the
+parent harness: **227 checks, 7 FAIL**; parent test on the parent harness: **214 checks, 0 FAIL**; new
+test on the working harness: **227 checks, 0 FAIL**; and — because F2 rewrote a predicate 214 older rows
+depend on — **parent test on the working harness: 214 checks, 0 FAIL**, which is the run a new-rows-only
+comparison cannot see and the one that proves the rewritten predicate breaks nothing already pinned. All
+7 red labels carry this batch's tag; the intersection with the parent's own label set is **empty**, so 0
+pre-existing collateral is a set identity. Two of the seven are the false-red direction, because an arm
+that only refuses could be always-red and look identical to a correct one. `EmurunHarness` 214 → **227**.
+
+**THE ACCEPTANCE, AS RUN (AGENTS.md P7/P8).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` →
+**rc 0**: Mandarine r1.2.1 md5 `0d2adab6ad078c78e6d03e72086f2eb6` (verified before believing the run),
+display `:99`, llvmpipe forced, `graphics_api=1` (OpenGL), `render_3d=0` (mono), dspfirm seeded, level
+7, frame 2520 by the deadline (47 frame lines) and 2580 after the reap (48), `canvas: quads=4 draws=2
+mesh=2 corners=24 eyes=1 (canvas frame 2520)`, and `HUD VISIBLE -- 121 canary pixels in the panel, 121
+inside the marker's rect 0,0-11,11 (bbox 0,0-10,10, reaching the derived (10,10))`. Margins: area 121 ≥
+total 121 (margin 0, an identity for a solid marker), bbox 10 ≤ rect 11 (margin 1), inside 121 ≤ 144
+(margin 23), reach 10 ≥ 10 (margin 0, forced by geometry) — identical to batch 159's, which is the
+point: the base fix changed no verdict on the honest line. The harness left its own mount mounted because
+a process outside the lane was executing from it, which is the co-tenant guard working. Emulator-green
+is not hardware-pass.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **735 PASS / 0
+FAIL** (was 722; +13), `PASS EmurunHarness (227 checks)`. `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK:
+ALL GATES PASSED`, `PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION: LEDGER
+VERIFIED`, `PASS gates_core_parity both targets link the same core`, `SKIP gates_smdh no built .cia to
+read` — stated in the right order this time, because misattributing those two was F3.
+`DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5
+`728eb2350c3ef8a81acda15f75617c1e` **UNCHANGED** — correct, the diff is one shell harness and one shell
+test, no compiled source. (The two env vars are required because this lane's shell is non-login and
+devkit's `/etc/profile.d/devkit-env.sh` is never sourced; prior batches used the same explicit form and
+a bare `make -C mdk_3ds` here fails with "Please set DEVKITARM", which is an environment fact and not a
+regression.) `bash -n` clean on both changed shell files.
+
+**FRAME.** `docs/frames/2026-11-13-hud-canvas-one-base.png` (+ `.txt`), sha256 `6646adf1…`,
+byte-identical to its **176** identical predecessors — re-derived, not remembered (178 PNGs, 177 at that
+sha, this one among them) because a remembered predecessor count was review-4 F3. This batch also
+re-counted the pixels instead of repeating the claim, with a proper PNG unfilter: the pinned 320×240
+Linux capture contains **zero** pure (0,0,255) pixels, so it cannot show the canary at all and the
+canary evidence is the emulator run above. The sidecar is generated and cannot be edited, so that
+disclosure lives here.
+
+**PRIOR-SOLUTION LOOKUP.** Pi knowledge searched (`mdk-sdl`, hybrid) and it surfaced the same class
+already pinned one subsystem over, twice: `c3d_frame_test.sh` review-13 F2 ("`07` is octal 7 and `0b1`
+is one, and each is pinned by an arm so the widening cannot rot open") and `main_3ds_flow_test.sh`
+review-21 OQ4 ("`8192e1` IS 81920, and the old pattern matched `8192` and gave up") — one string, two
+readings of a number, twice before, which is why the fix was written as "one base for every reader of
+this field" rather than a local patch of the one expression the reviewer named. **Obsidian and Cognee
+MCP servers are absent from this session's tool list** — a session configuration fault per AGENTS §9 P9,
+not a licence to claim the lookup happened — so the vault was read read-only from disk (bounded grep,
+which found no note on numeric base) and no Cognee graph lookup is claimed.
+
+
 ## Iteration 159 — batch 159: `3ds.hud-canvas` — the counts and the box they happened in were never compared to each other
 
 **LEDGER ROW `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`, attempt 5 of 8.
@@ -108,7 +217,9 @@ is a false-red risk and not a false-green one. Emulator-green is not hardware-pa
 HUD canary)`. `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
 `PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION: LEDGER VERIFIED`,
 `audit_c_with_classes: VERDICT: CONTRACT CLEAN -- 0 violations.`, `audit_arm11_math: VERDICT: CONTRACT
-CLEAN`, `gates_core_parity: VERDICT: SKIPPED -- no built .cia`. `make -C mdk_3ds -j8` rc 0 with `mdk.elf`
+CLEAN`, `gates_core_parity: PASS both targets link the same core`, `gates_smdh: VERDICT: SKIPPED --
+no built .cia` (batch 160 corrected this attribution: the first version credited the `.cia` skip to
+the parity gate, which is the gate that actually ran and passed — review-5 F3). `make -C mdk_3ds -j8` rc 0 with `mdk.elf`
 md5 `728eb2350c3ef8a81acda15f75617c1e` **UNCHANGED** — correct, the diff is one shell harness and one
 shell test, no compiled source. `bash -n` clean on both changed shell files.
 

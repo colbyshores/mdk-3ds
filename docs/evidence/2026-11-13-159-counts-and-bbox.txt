@@ -267,3 +267,39 @@ and this lane is `piagent` (groups `piagent, development`), so it cannot write
 it; the sanctioned closer is `tools/runner/ledger_close.py`, which is itself
 PROTECTED. Re-verified this batch: `test -w` says NOT WRITABLE, and the row's
 acceptance is green again under a stricter rule than batch 158's.
+
+
+--------------------------------------------------------------------------------
+CORRECTION (batch 160, review-5 F3) — a gate verdict in this record was credited
+to the wrong gate, which in a record whose whole subject is attribution is the
+defect it documents.
+
+  Section 6 listed, among the `tools/check.sh` results:
+
+      gates_core_parity:    "VERDICT: SKIPPED -- no built .cia to read the SMDH
+                             out of."
+
+  That sentence is not `gates_core_parity`'s. It is `gates_smdh`'s, printed at
+  `tools/runner/gates_smdh.py:277` and recorded by `tools/check.sh:149`.
+  `gates_core_parity` does not skip and never prints that sentence: it ran and
+  printed
+
+      VERDICT: CONTRACT CLEAN -- every core source is on both targets, and both
+      build-and-run targets ran clean
+
+  which `tools/check.sh:135` records as `PASS gates_core_parity both targets link
+  the same core`. So the record both misnamed a gate and silently dropped the fact
+  that the parity gate RAN -- and on a batch whose claim was "no compiled source
+  changed", `gates_core_parity` is precisely the gate that would have caught a
+  target-only source change. A reader auditing "did parity run on this commit?"
+  was told it was skipped when it passed.
+
+  Re-verified in batch 160 by running each gate on this tree:
+    `python3 tools/runner/gates_core_parity.py` -> rc 0, "VERDICT: CONTRACT CLEAN"
+    `python3 tools/runner/gates_smdh.py`        -> rc 0, "VERDICT: SKIPPED -- no
+                                                   built .cia to read the SMDH out of."
+  Corrected in `docs/PROGRESS_LOG.md` in place and noted here rather than rewriting
+  section 6, so the original claim stays auditable -- the pattern batch 157 set for
+  this directory and batch 159 followed for the frame count above. No verdict in
+  this record changes: every gate named in section 6 did run, `tools/check.sh` did
+  print `CHECK: ALL GATES PASSED`, and the `.3dsx`/`mdk.elf` md5 claim is unaffected.

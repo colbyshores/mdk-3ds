@@ -145,12 +145,30 @@ FRAME_RE='^frame [0-9][0-9]* '
 #                      Stripping the zeros costs none of the refusals: a sign, a space or
 #                      a letter is not a leading zero, so `+121`, `-0`, ` 121` and `60x`
 #                      are still rejected by the arm above it.
+#                      THE STRIP IS ONE TEST ON THE PREFIX, NOT A LOOP (review-5 F2).
+#                      The first version of this arm peeled one zero per iteration and
+#                      re-scanned the whole field each time, so its cost was QUADRATIC in
+#                      the field length: measured 779 ms at 4 002 characters and 22 s at
+#                      20 002, which turns a caller-supplied field into a way to hang the
+#                      acceptance command instead of getting a verdict from it -- the
+#                      exact failure mode this file exists to prevent. What the arm needs
+#                      is not the stripped string but the stripped LENGTH, and "the value
+#                      has no more significant digits than the bound" is one question
+#                      about the characters BEFORE the bound's own width: if every one of
+#                      them is a zero, the significant digits fit. That is a single
+#                      substring plus a single glob, and it measured 8 ms at 60 002
+#                      characters where the loop took 197 s. Verdicts are unchanged: the
+#                      two forms agree on every field tried, including `0`, `00`, `099`,
+#                      `0000060`, `0000096001` and every review-3 rejection.
 decimal_measurement() { # decimal_measurement <field> <max> ; 0 only for a decimal in [0,max]
     case "$1" in ''|*[!0-9]*) return 1 ;; esac
     local v="$1"
-    while [ -n "$v" ] && [ "${v#0}" != "$v" ]; do v="${v#0}"; done
-    [ -n "$v" ] || v=0
-    [ "${#v}" -le "${#2}" ] || return 1
+    # Everything past the bound's own width must be zeros, or the value has more
+    # significant digits than the bound and cannot be <= it. Skipped when the field is
+    # already short enough, so an honest `60` pays nothing for the padding machinery.
+    if [ "${#v}" -gt "${#2}" ]; then
+        case "${v:0:${#v}-${#2}}" in *[!0]*) return 1 ;; esac
+    fi
     [ "$v" -le "$2" ]
 }
 
@@ -1258,7 +1276,19 @@ EOF
     # bx0 <= bx1 / by0 <= by1 were checked immediately above, so neither difference is
     # negative. Both bounds are the harness's OWN rect, which the host test re-derives
     # from the shipped renderer, so neither is a second spelling of anything.
-    if [ $(( (bx1 - bx0 + 1) * (by1 - by0 + 1) )) -lt "$total" ] \
+    # `10#`, for the reason batch 159 put on CANARY_MAX_INSIDE and left off here
+    # (review-5 F1): `decimal_measurement` DELIBERATELY accepts a leading zero, so
+    # these four fields can arrive padded, and bash ARITHMETIC reads `010` as OCTAL 8
+    # while every other reader in this function is a `[ ]` that reads it as DECIMAL 10.
+    # One spelling, two bases: `30 30 010 0 11 11` computed an area of 48 instead of 24
+    # and certified 30 pixels in a 24-pixel box at rc 0 -- the exact contradiction the
+    # arm above exists to refuse, surviving because the arm read its operands in the
+    # wrong base. And `08` is not a base bash can read at all: the arithmetic ABORTED
+    # the script with "value too great for base" at rc 1, an undocumented code, on the
+    # line that decides a ledger row. `10#` fixes both, and keeps the leading-zero
+    # acceptance review-4 F2 asked for. The fields are proven non-empty decimals by the
+    # arm immediately above, so `10#` can never be handed an empty or signed operand.
+    if [ $(( (10#$bx1 - 10#$bx0 + 1) * (10#$by1 - 10#$by0 + 1) )) -lt "$total" ] \
        || [ "$bx1" -gt "$CANARY_X1" ] || [ "$by1" -gt "$CANARY_Y1" ]; then
         {
             echo "emurun: HUD MALFORMED: $total pixels cannot have bbox"
