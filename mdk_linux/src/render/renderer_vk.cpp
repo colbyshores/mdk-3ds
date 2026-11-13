@@ -327,15 +327,18 @@ void settleRetired(RendererVk* r) {
         VkDescriptorSet set = retired.set;
         const VkResult freed = vkFreeDescriptorSets(r->ctx.device, r->descPool, 1, &set);
         if (freed != VK_SUCCESS) {
-            // The handle is dropped rather than retried, and the reason is a
-            // valid-usage rule rather than a guess: the spec gives this call
-            // OUT_OF_HOST/DEVICE_MEMORY as result codes and does NOT say whether
-            // the sets were freed when it returns one, while its own rule is that
-            // a set "must not have been freed already". So a retry can be a second
-            // free of a handle the driver already took. Losing one set is the
-            // smaller failure — but it is COUNTED, because the refusal below
-            // prints once and a pool quietly holding N fewer sets than its reader
-            // believes is the same silent-budget bug this batch closed.
+            // The handle is dropped rather than retried, and two rules decide that.
+            // They are stated as rules and not quoted (review-10 F3: an earlier draft
+            // of this comment put one of them in quotation marks, and the vendored
+            // header carries no spec prose to check a quotation against, so a quote
+            // here is unfalsifiable and belongs in the spec, not here). First: the
+            // out-of-memory result codes this call can return do not say whether the
+            // sets were taken when one of them comes back. Second: a set handed to it
+            // must be a valid handle this pool issued and not one already returned.
+            // So a retry can be a second free of a handle the driver already took.
+            // Losing one set is the smaller failure — but it is COUNTED, because the
+            // refusal below prints once and a pool quietly holding N fewer sets than
+            // its reader believes is the same silent-budget bug this batch closed.
             r->lostDescriptorSets++;
             refused("return a descriptor set to the pool: the set is lost and the "
                     "pool has one fewer to hand out; when it empties, every draw "

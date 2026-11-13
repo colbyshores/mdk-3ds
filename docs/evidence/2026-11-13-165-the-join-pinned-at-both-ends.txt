@@ -1,0 +1,230 @@
+BATCH 165 — ledger row `linux.render-frame`, acceptance `bash tools/check.sh`, attempt 3
+THE JOIN WAS PINNED AT THREE OF ITS FIVE SEAMS. REVIEW-10 FOUND THE OTHER TWO, AND
+ONE OF THEM PRINTED PASS WITH THE LEAK RESTORED.
+=============================================================================
+
+REVIEW UNDER REMEDIATION
+  logs/ralph-pi/run-20261113-021356/review-10.md
+  builder family=qwen vs reviewer family=deepseek — independent.
+  Verdict: INCOMPLETE. No Critical, no High. F1 (Medium), F2 (Medium),
+  F3 (Low), F4 (Low), F5 (Low). ALL FIVE CONFIRMED, NONE REBUTTED, ALL FIVE
+  FIXED. Every one is in scope for this row: four of them are holes in the
+  check that guards this row's own fix, and the fifth is a sentence in this
+  row's own comment.
+
+-----------------------------------------------------------------------------
+1. REPRODUCED BEFORE TOUCHING ANYTHING
+-----------------------------------------------------------------------------
+Every mutant was applied to a COPY of the tree and run through the SHIPPED
+test, before any edit. Nothing below is taken on the reviewer's word.
+
+  mutant                              shipped test          after this batch
+  ----------------------------------- --------------------- ------------------
+  F1 retire-records-a-blank           PASS 19/51  rc 0      red B12 (arm)
+  F1 retire-pushes-before-filling     "changed nothing"     red B12 (arm)
+  F2 settle-frees-somebody-elses-set  PASS 19/51  rc 0      red B12 (arm)
+  F4 lost-set-counter-deleted         PASS 19/51  rc 0      red B12 (arm)
+  F4 lost-set-print-deleted           PASS 19/51  rc 0      red B12 (arm)
+  F5 named local at the drop site     RED (wrongly)         GREEN (probe)
+  F5 erase instead of the swap-pop    RED (wrongly)         GREEN (probe)
+
+F1 is the one that matters. `RetiredSet`'s in-class initialisers value `set`
+to VK_NULL_HANDLE, so deleting `retired.set = set;` leaves a push with a
+plausible deadline: the pool is handed a null handle, the real set is never
+returned, and the leak batch 163 exists to close is back at full size behind
+`PASS LinuxRefusalReport (19 checks, 51 arms adjudicated red)`.
+
+F5 was confirmed by writing the two refactors the reviewer described and
+running them, not by reading the regexes. A third false red was found while
+fixing it and is recorded in section 4.
+
+-----------------------------------------------------------------------------
+2. F3 — THE QUOTE WAS UNVERIFIABLE IN THIS TREE, SO IT IS GONE, NOT RE-CITED
+-----------------------------------------------------------------------------
+Review-9 F4 was "batch 163 quoted a spec sentence that does not exist". Batch
+164 replaced it with another quoted spec sentence: a set "must not have been
+freed already". Verified here rather than argued:
+
+  grep -c "Valid Usage" mdk_linux/third_party/vulkan/include/vulkan/vulkan_core.h
+    -> 0
+  grep -rn "must not have been freed" .../vulkan_core.h
+    -> no match
+
+The vendored header carries no spec prose at all, so no quotation of it can be
+checked on this host, and a quotation mark in a comment is a claim of
+citation. The comment now states the two rules as RULES and says in the
+comment itself that they are not quoted because there is nothing here to check
+a quote against: (a) the out-of-memory result codes this call can return do not
+say whether the sets were taken when one comes back; (b) a set handed to it
+must be a valid handle this pool issued and not one already returned. Those
+two together are what make a RETRY the unsafe branch. The reasoning is
+unchanged; only the false citation was removed.
+
+Review-10 open question 1 ("does the valid-usage block contain that sentence?")
+is now moot for this tree: nothing is claimed about the spec's wording.
+
+-----------------------------------------------------------------------------
+3. WHAT B12 PINS NOW
+-----------------------------------------------------------------------------
+The rule is one JOIN read off the record that is PUSHED, and its mirror on the
+free side. Not a token, and not a spelling.
+
+(a) THE PUSHED RECORD CARRIES BOTH FIELDS. The helper's own `VkDescriptorSet`
+    parameter is read from its signature; the pushed value is resolved, and
+    BOTH fields must be filled from it before the push:
+      - a named local: `<rec>.set = <param>;` and
+        `<rec>.safeFrame = <x>->frameIndex + kFramesInFlight;`, both BEFORE
+        the `push_back`;
+      - a record built at the call: first field `<param>`, second that same
+        boundary.
+    The deadline must be EXACTLY `frameIndex + kFramesInFlight` with nothing
+    after it — that is what still kills review-9 F1 mutant 3 (`- 1`), which is
+    why the exactness moved INTO the join instead of staying a separate regex.
+(b) THE FREE HANDLES THE ENTRY IT TESTED. The entry whose `.safeFrame` is
+    compared is read from the comparison itself; the handle handed to
+    `vkFreeDescriptorSets` must be that entry's `.set`, either named in place
+    or copied out of it. `r->retiringSets.back().set` fails: it frees a set
+    whose frame was never proven finished (AGENTS P3) and leaks the entry
+    erased in its place.
+(c) THE LOSS IS COUNTED AND THE COUNT IS TOLD. The increment must sit inside a
+    `!= VK_SUCCESS` block in `settleRetired` — not above the test, which counts
+    frees that succeeded, and not inside a `refused(` call, which dedups and
+    would count sentences instead of sets. The total must be printed from
+    `mdk_render_destroy` and guarded by a non-zero test on the counter, so a
+    run that lost nothing does not report a loss.
+(d) THE DROP-SITE IDENTITY IS TRACED, NOT MATCHED. The second argument of
+    `retireDescriptorSet` is resolved to a cache slot, directly or through a
+    named local initialised from that slot, and the slot it names must be the
+    slot the loop removes — swap-pop or `erase(begin() + i)`.
+
+ARMS ADDED (8), each isolating B12:
+  retire-records-a-blank              F1, the mutant that printed PASS
+  retire-pushes-before-filling        declared, pushed, filled after: a blank
+                                      reaches the vector and it still builds
+  settle-frees-somebody-elses-set     F2, the mirror of mutant 4 on the free
+  retire-a-named-local-from-the-wrong-slot
+                                      the non-vacuity of F5's tolerance: the
+                                      trace works, and what it traces to is
+                                      not the entry being dropped
+  lost-set-counter-deleted            F4
+  lost-set-counted-on-success         the counter hoisted above the test
+  lost-set-print-deleted              F4's other half
+  lost-set-print-unguarded            a clean run reports a loss it never had
+
+LinuxRefusalReport: 19 checks / 51 arms  ->  19 checks / 59 arms / 3 probes.
+
+-----------------------------------------------------------------------------
+4. THE PROBES, AND THE PROBE THAT CAUGHT THIS BATCH'S OWN FIX BEING WRONG
+-----------------------------------------------------------------------------
+An arm proves a rule is SENSITIVE. A probe proves it is not merely sensitive to
+a SPELLING, which is what review-10 F5 is about. Three refactors that PRESERVE
+the rule now ship in the file and must stay green; the file fails if any of
+them reddens. This mechanism already exists in `panel_geom_test.sh` and is
+lifted rather than reinvented.
+
+  probe                          what it rewordes
+  ------------------------------ ---------------------------------------------
+  named local at the drop site   the handle lifted into a local
+  erase instead of the swap-pop  the other pop, same slot removed
+  aggregate record at the push   the retire record built at the call
+
+The third one is the honest note in this batch. The first version of the new
+join rule accepted an aggregate at the push but a SEPARATE older sub-rule
+still demanded a literal `safeFrame = ...;` line, so the aggregate refactor —
+a correct program — was reddened by the fix that was supposed to stop
+reddening correct programs. Measured: `f5c: RED`. The exactness requirement
+was then moved into the join, where it reads the deadline off whichever record
+is pushed, and all three probes went green. A rule that reddens an honest edit
+gets worked around, not obeyed; that is the whole content of F5 and it took a
+probe to catch it in the remedy for F5.
+
+-----------------------------------------------------------------------------
+5. THE FOUR-WAY, AND THE ROW THAT IS GREEN BECAUSE IT SHOULD BE
+-----------------------------------------------------------------------------
+  new test (19/59/3) on working sources   rc 0  PASS
+  new test on parent bc5ef65              rc 0  PASS   <- green, and correct
+  new test on be5b673 (batch 163)         rc 1  exactly ONE check red: B12
+  new test on 3aef28d (pre-descriptor)    rc 1  exactly ONE check red: B12
+  parent test (19/51) on working sources  rc 0  PASS   zero collateral
+  parent test on parent sources           rc 0  PASS
+
+The parent row is green because this batch moves NO production shape: the only
+change to `renderer_vk.cpp` is a comment, and everything else is in the check.
+A batch that moves no shape cannot red its own parent, and saying so is the
+honest reading; the instrument that proves the new arms bite is the mutant
+table in section 1, which is the same instrument review-10 used against
+batch 164. The two pre-fix commits red exactly one check each, which is the
+proof that the strengthening did not blunt the original pin.
+
+-----------------------------------------------------------------------------
+6. GATES, AS RUN
+-----------------------------------------------------------------------------
+  make -C tests/scripts -j8
+    rc 0, "All cases match the oracle.", 765 PASS / 0 FAIL
+    PASS LinuxRefusalReport (19 checks, 59 arms adjudicated red, 3 probes green)
+    PASS EmurunHarness (257 checks)
+    The suite count is UNCHANGED and correctly so: this test contributes ONE
+    PASS line to it, not one per check or per arm.
+
+  DISPLAY=:99 bash tools/check.sh
+    rc 0, CHECK: ALL GATES PASSED
+    PASS L3_f1.bmp sha=58615fc85d02e009
+    BATCH INTEGRITY: PASS
+    COMPLETION SELFTEST: PASS (13 arms)
+    COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open
+    COMPLETION: LEDGER VERIFIED
+    PASS audit_c_with_classes (0 violations), gates_vfp (0 blockers),
+    audit_arm11_math, audit_r11_idiv, gates_core_parity, gates_frames,
+    gates_batch_integrity, gates_completion; SKIP gates_smdh (no built .cia)
+
+  DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8
+    rc 0, mdk.elf md5 728eb2350c3ef8a81acda15f75617c1e UNCHANGED.
+    No `mdk_3ds/**` file is in `git diff --name-only`, so no P8 emulator
+    evidence is owed and none was faked.
+
+  cmake --build build-linux -j8
+    rc 0, "Built target mdk". Run BY HAND because of item 11b: nothing in the
+    gate set compiles `mdk_linux/**`, so a stale binary would be certified as
+    happily as a fresh one. Built after the last source edit.
+
+-----------------------------------------------------------------------------
+7. FRAME
+-----------------------------------------------------------------------------
+  docs/frames/2026-11-13-the-join-pinned-at-both-ends.png
+  md5 6769a13731983d65cee9df02da6cff37 — byte-identical to its predecessors.
+  Census re-derived, not remembered: 183 PNGs in docs/frames, 182 at
+  6769a137…, and this frame is 320x240 with ZERO pure (0,0,255) pixels
+  (219 distinct colours). The canary evidence for this row is never the
+  committed frame.
+
+-----------------------------------------------------------------------------
+8. PRIOR-SOLUTION LOOKUP
+-----------------------------------------------------------------------------
+  Pi knowledge (`mdk-sdl`, hybrid): top hit was the 3DS backend's
+  `settleDeferredMeshes` — the same house pattern this row's retire/settle
+  uses, a release deferred to the frame boundary and settled there — plus the
+  review-25 closure at `docs/OPEN_ITEMS.md` that fixed the descriptor CACHE
+  and left the pool undone. Nothing on pinning a join between a retire and a
+  settle, and nothing on green-refactoring probes.
+  Obsidian and Cognee MCP servers are ABSENT from this session's tool list.
+  Per AGENTS §9 P9 that is a session configuration fault to report, not a
+  licence to claim the lookup happened: no Cognee graph search is claimed, and
+  the vault was read read-only from disk instead.
+
+-----------------------------------------------------------------------------
+9. WHAT IS STILL OPEN AFTER THIS BATCH
+-----------------------------------------------------------------------------
+  * Item 11e, unchanged and still disclosed: the image VIEW is destroyed at
+    the drop site while its descriptor set waits two frames. Review-10 tried
+    to break the "latent, not reachable on this frontend today" claim and
+    could not; this batch does not change that, and closing it is a separate
+    slice with its own arms.
+  * Whether the failed-free path is reachable at all on lavapipe is still
+    unmeasured. No validation layer is installed on this host, so every VUID
+    cited in this row is read off naming, not enforced.
+  * The ledger row itself: `docs/COMPLETION_LEDGER.tsv` is
+    coleshores:coleshores 0664 and this lane is piagent, so
+    `tools/runner/ledger_close.py` cannot run here. Operator action:
+    `chgrp development docs/COMPLETION_LEDGER.tsv` and a
+    `ledger_close.py --row linux.render-frame` from a lane in that group, on
+    a clean tree.
