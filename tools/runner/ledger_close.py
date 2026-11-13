@@ -40,8 +40,11 @@ LEDGER_REL = "docs/COMPLETION_LEDGER.tsv"
 EVIDENCE_DIR = "docs/evidence"
 
 
-def git(root: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+def git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    # Bounded: this repo lives on NFS, and an unbounded git call can park in D
+    # state (rpc_wait_bit_killable) and take the whole loop with it.
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                          timeout=timeout)
 
 
 def main() -> int:
@@ -106,9 +109,21 @@ def main() -> int:
         # to pass afterwards -- and it is better than losing the work.
         print(f"ledger_close: banking uncommitted work before certifying {args.row}")
         git(root, "add", "-u")
-        untracked = [p for p in git(root, "ls-files", "--others", "--exclude-standard").stdout.splitlines() if p.strip()]
+        # NEVER add an arbitrary untracked tree. `.progress-log/` on this NFS mount
+        # put `git add` into uninterruptible sleep and hung the loop for minutes.
+        # Untracked work is banked only from directories a batch can legitimately
+        # add to; anything else is reported and left alone.
+        safe_untracked = ("mdk_core/", "mdk_3ds/", "mdk_linux/", "tests/", "tools/",
+                          "docs/evidence/", "n64ref/", "ts_core/", "ts_pc/", "ts_3ds/")
+        untracked = [p for p in git(root, "ls-files", "--others", "--exclude-standard").stdout.splitlines()
+                     if p.strip()]
+        skipped = [p for p in untracked if not p.startswith(safe_untracked)]
         for path in untracked:
-            git(root, "add", "--", path)
+            if path.startswith(safe_untracked):
+                git(root, "add", "--", path)
+        if skipped:
+            print(f"ledger_close: left {len(skipped)} untracked path(s) unbanked (not source): "
+                  + ", ".join(skipped[:6]))
         staged = [p for p in git(root, "diff", "--cached", "--name-only").stdout.splitlines() if p.strip()]
         forbidden = [p for p in staged if p.startswith("MDK/") or p.startswith("mdk_3ds/romfs/")]
         if forbidden:

@@ -127,6 +127,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh main_3ds_flow_test.sh
 	@sh frontend_solid_pin_test.sh
 	@sh linux_refusal_report_test.sh
+	@sh linux_arg_parse_test.sh
 	@sh panel_geom_test.sh
 	@bash emurun_harness_test.sh
 	@$(BUILD)/tick1
