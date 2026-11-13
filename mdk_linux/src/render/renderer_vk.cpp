@@ -145,6 +145,22 @@ struct RetiredSet {
     uint32_t safeFrame = 0;
 };
 
+// An image, its view and its memory that a recorded frame may still be sampling.
+// A descriptor set names a VIEW, so deferring only the set is half a fix: the
+// handle would wait two frames while the resource it names was destroyed on the
+// spot, and AGENTS.md P3 puts the completion boundary on the RESOURCE, not on
+// the handle that refers to it. Settled on the same boundary as `retiringSets`;
+// see `retiringImages`.
+struct RetiredImage {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    uint32_t safeFrame = 0;
+};
+
+void destroyImage(mdk::vk::Context* ctx, VkImage* image, VkDeviceMemory* memory,
+                  VkImageView* view, void** mapped);
+
 void destroyBufferPair(VkDevice device, VkBuffer buffer, VkDeviceMemory memory) {
     if (buffer) vkDestroyBuffer(device, buffer, nullptr);
     if (memory) vkFreeMemory(device, memory, nullptr);
@@ -229,6 +245,11 @@ struct RendererVk {
     // (review-25); returning the SET is what keeps the pool alive, and the two
     // are different acts. Settled beside `retiring`, on the same boundary.
     std::vector<RetiredSet> retiringSets;
+    // The images whose view a retired descriptor set names. Destroying the view
+    // at the call that retired the set left a frame on the queue sampling a
+    // destroyed view, which is the half of the resource AGENTS.md P3 asks about
+    // and review-9 F2 named. Settled on the same boundary as `retiringSets`.
+    std::vector<RetiredImage> retiringImages;
     // Counts the frames this backend has begun. The retire deadline is
     // `frameIndex + kFramesInFlight`; see `retireBuffer`.
     uint32_t frameIndex = 0;
@@ -314,10 +335,10 @@ void settleRetired(RendererVk* r) {
     // THE SET waits for the boundary the buffers wait for, for the set's own
     // reason: `vkFreeDescriptorSets` requires the set not be in use, and a frame
     // that recorded `vkCmdBindDescriptorSets` with it may still be on the queue.
-    // Only the SET. The image view it names is destroyed at the drop site, in the
-    // same call that retired this one, and has no deadline of its own — see
-    // `retireDescriptorSet`, which says so, and the open item that is the real
-    // fix. Do not read this paragraph as a completion boundary for the pair.
+    // Only the SET waits here for the SET's own reason. The image view it names
+    // used to be destroyed at the drop site with no deadline at all; it now goes
+    // through `retireImage` and settles in the loop below this one, on the same
+    // boundary, so the pair is a completion boundary and not half of one.
     for (size_t i = 0; i < r->retiringSets.size();) {
         const RetiredSet retired = r->retiringSets[i];
         if (retired.safeFrame > r->frameIndex) {
@@ -346,6 +367,25 @@ void settleRetired(RendererVk* r) {
         }
         r->retiringSets.erase(r->retiringSets.begin() + (long)i);
     }
+    // The images those sets name. A descriptor set holds a VIEW, so retiring the
+    // handle and destroying the resource in the same call defers half of a
+    // lifetime: a frame still on the queue can be sampling a view that no longer
+    // exists, which is AGENTS.md P3's "do not free an in-flight resource" read on
+    // the resource rather than the handle (review-9 F2). Same boundary, same
+    // reason, and the destroy order is `destroyImage`'s — view, then image, then
+    // memory — because freeing memory bound to a live image is invalid use.
+    for (size_t i = 0; i < r->retiringImages.size();) {
+        const RetiredImage retired = r->retiringImages[i];
+        if (retired.safeFrame > r->frameIndex) {
+            i++;
+            continue;
+        }
+        VkImage image = retired.image;
+        VkDeviceMemory memory = retired.memory;
+        VkImageView view = retired.view;
+        destroyImage(&r->ctx, &image, &memory, &view, nullptr);
+        r->retiringImages.erase(r->retiringImages.begin() + (long)i);
+    }
 }
 
 // Stop using a descriptor set without returning it to the pool yet.
@@ -357,13 +397,11 @@ void settleRetired(RendererVk* r) {
 // boundary `settleRetired` implements, which is the fence `vk::beginFrame` just
 // waited (AGENTS.md P3), not a lock and not a cache flush.
 //
-// THE VIEW DOES NOT WAIT, and that is a gap rather than a design. Every caller
-// destroys the image, its view and its memory in the same call that retires this
-// set, so a frame still on the queue can be sampling a destroyed view while only
-// the handle has been deferred. AGENTS.md P3 asks for the boundary on the whole
-// resource, not on half of it; giving the image its own deadline is a separate
-// slice (a `RetiredImage` beside this struct, settled here) and is recorded as an
-// open item instead of being implied by the paragraph above.
+// THE VIEW WAITS TOO. A retired set is a handle, and the handle is only half of
+// what a queued frame touches: the other half is the image view the set names.
+// `retireImage` below defers that pair to the same boundary, because deferring
+// the handle and destroying the resource on the spot is the half-fix review-9 F2
+// named — AGENTS.md P3 puts the boundary on the resource, not on the reference.
 void retireDescriptorSet(RendererVk* r, VkDescriptorSet set) {
     if (!set) {
         return;
@@ -372,6 +410,24 @@ void retireDescriptorSet(RendererVk* r, VkDescriptorSet set) {
     retired.set = set;
     retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight;
     r->retiringSets.push_back(retired);
+}
+
+// Stop using an image without destroying it yet, on the boundary
+// `retireDescriptorSet` uses. Every caller of `forgetDescriptorSets` was
+// destroying the image, its view and its memory in the same call that retired
+// the set naming them, so the set waited two frames and the resource waited
+// none. The destroy itself stays `destroyImage`'s, at the settle, so the view /
+// image / memory order is one place and not two.
+void retireImage(RendererVk* r, VkImage image, VkDeviceMemory memory, VkImageView view) {
+    if (!image && !memory && !view) {
+        return;
+    }
+    RetiredImage retired;
+    retired.image = image;
+    retired.memory = memory;
+    retired.view = view;
+    retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight;
+    r->retiringImages.push_back(retired);
 }
 
 // ---------------------------------------------------------------------------
@@ -1830,6 +1886,18 @@ void mdk_render_destroy(MdkRenderer rr) {
         destroyBufferPair(r->ctx.device, r->retiring[i].buffer, r->retiring[i].memory);
     }
     r->retiring.clear();
+    // The retired images, drained rather than settled: the device is idle here, so
+    // their boundary has already passed. Draining them is not optional — an image
+    // still in this vector at this point has no other owner, and the textures and
+    // palettes loops above cannot see it because their fields were nulled at the
+    // retire so that this drain would be the only one.
+    for (size_t i = 0; i < r->retiringImages.size(); i++) {
+        VkImage image = r->retiringImages[i].image;
+        VkDeviceMemory memory = r->retiringImages[i].memory;
+        VkImageView view = r->retiringImages[i].view;
+        destroyImage(&r->ctx, &image, &memory, &view, nullptr);
+    }
+    r->retiringImages.clear();
     // The canvas ring. The device is idle here, so these are destroyed and not
     // retired. (They were never freed at all before; the leak was invisible
     // because it happened once, at exit.)
@@ -2161,7 +2229,9 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
     t.view = VK_NULL_HANDLE;
     if (createHostImage(&r->ctx, w, h, t.isIndex ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8B8A8_UNORM,
                         t.isIndex ? 1u : 4u, px, &t.image, &t.memory, &t.view, &t.mapped)) {
-        destroyImage(&r->ctx, &oldImage, &oldMemory, &oldView, nullptr);
+        // Retired, not destroyed: a frame already on the queue may still be
+        // sampling this view through a set that was retired a few lines above.
+        retireImage(r, oldImage, oldMemory, oldView);
     } else {
         refused("re-made texture %d at %dx%d: keeping the image it had, so an animated "
                 "surface freezes on its last frame instead of disappearing", t_, w, h);
@@ -2180,8 +2250,13 @@ void mdk_render_release_texture(MdkRenderer r_, MdkTextureId t_) {
     // destroyed. A released id may be reused, so those sets must not
     // survive the release.
     forgetDescriptorSets(r, t_, -1);
-    destroyImage(&r->ctx, &r->textures[t_].image, &r->textures[t_].memory,
-                 &r->textures[t_].view, &r->textures[t_].mapped);
+    // Retire the resource beside the sets that name it. Nulling the fields is
+    // what makes the retire exclusive: leaving them set would have teardown
+    // destroy the same image a second time.
+    retireImage(r, r->textures[t_].image, r->textures[t_].memory, r->textures[t_].view);
+    r->textures[t_].image = VK_NULL_HANDLE;
+    r->textures[t_].memory = VK_NULL_HANDLE;
+    r->textures[t_].view = VK_NULL_HANDLE;
     r->textures[t_].used = false;
 }
 
@@ -2191,8 +2266,10 @@ void mdk_render_release_palette(MdkRenderer r_, MdkPaletteId p_) {
         return;
     }
     forgetDescriptorSets(r, -1, p_);
-    destroyImage(&r->ctx, &r->palettes[p_].image, &r->palettes[p_].memory,
-                 &r->palettes[p_].view, &r->palettes[p_].mapped);
+    retireImage(r, r->palettes[p_].image, r->palettes[p_].memory, r->palettes[p_].view);
+    r->palettes[p_].image = VK_NULL_HANDLE;
+    r->palettes[p_].memory = VK_NULL_HANDLE;
+    r->palettes[p_].view = VK_NULL_HANDLE;
     r->palettes[p_].used = false;
 }
 

@@ -1,0 +1,196 @@
+BATCH 166 — ledger row `linux.render-frame`, acceptance `bash tools/check.sh`
+THE DESCRIPTOR SET WAITED TWO FRAMES AND THE IMAGE VIEW IT NAMED WAITED NONE:
+HALF A LIFETIME IS NOT A COMPLETION BOUNDARY (item 11e, closed)
+=============================================================================
+
+WHAT THIS IS
+  Not a review remediation. Review-9 F2 named this defect when the set half
+  landed, batch 164 fixed the PROSE and recorded the code as "its own slice ...
+  needs its own mutation arms", and review-10 re-confirmed the reachability
+  analysis without closing it. This is that slice: the fix, its check, and its
+  arms. CONTINUATION item 11e is CLOSED by it.
+
+-----------------------------------------------------------------------------
+1. THE DEFECT
+-----------------------------------------------------------------------------
+`forgetDescriptorSets` drops every cached set naming a texture or palette whose
+view is going away, and each caller then destroyed that view, its image and its
+memory IN THE SAME CALL:
+
+  mdk_render_update_texture   forgetDescriptorSets(...); ... destroyImage(old)
+  mdk_render_release_texture  forgetDescriptorSets(...);  destroyImage(...)
+  mdk_render_release_palette  forgetDescriptorSets(...);  destroyImage(...)
+
+So the retired SET waited `frameIndex + kFramesInFlight`, the boundary
+`vk::beginFrame`'s fence proves, while the RESOURCE the set names — a
+`VkImageView` a queued frame may be sampling right now — was destroyed on the
+spot. AGENTS.md P3 says "do not overwrite, resize, or free an in-flight
+resource", and it says that about the resource, not about the handle that
+refers to it. Batch 164's own comment said this out loud and left it open,
+which is the correct thing to have done and is what this batch closes.
+
+REACHABILITY, stated and not inflated: review-10 tried to break the "latent on
+this frontend" claim and could not. `mdk_render_update_texture` has no caller;
+`mdk_render_release_texture`'s only caller is `kurt_sprite.cpp:515`, reached
+only from `main.cpp:297-306`, inside the one-shot startup block, before any
+frame is submitted; `sprite_residency_bytes = 0` on Linux so the eviction never
+fires. The defect is real in the API and unreachable on this frontend today.
+That is exactly what batch 163 said about the leak, and the leak was still
+worth closing.
+
+-----------------------------------------------------------------------------
+2. THE FIX
+-----------------------------------------------------------------------------
+`RetiredImage { image, memory, view, safeFrame }` beside `RetiredSet`, and
+`retiringImages` beside `retiring`.
+
+  - `retireImage(r, image, memory, view)` pushes the triple with the SAME
+    `frameIndex + kFramesInFlight` boundary the set uses.
+  - `settleRetired` destroys the entry after its deadline test, through
+    `destroyImage`, so the view / image / memory order lives in one place.
+  - All three drop sites retire instead of destroying, and NULL the slot's
+    fields where they retired — leaving them set would have teardown destroy
+    the same image a second time.
+  - `mdk_render_destroy` drains `retiringImages`. The device is idle there, so
+    their boundary has already passed, and nothing else can see them: their
+    slot fields were nulled at the retire precisely so this drain is the only
+    one.
+
+`update_texture`'s keep-the-old-image failure path is untouched: the retire sits
+in the success branch, where the old handles really are unreferenced by the
+slot.
+
+-----------------------------------------------------------------------------
+3. CHECK B13, AND THE SCOPING BUG THE NEW CODE EXPOSED IN THE OLD CHECK
+-----------------------------------------------------------------------------
+B13 pins four things, with eight arms each isolating it:
+  (a) the record `retireImage` pushes carries all THREE handles traced to its
+      own parameters and the exact boundary — B12(a)'s join rule again, for the
+      same reason: a struct whose fields default to VK_NULL_HANDLE makes a
+      missing assignment invisible (review-10 F1);
+  (b) the settle releases the handles of the entry whose `safeFrame` it
+      compared, after that test, in view/image/memory order;
+  (c) DISCOVERED, not listed: every function that calls `forgetDescriptorSets`
+      is a drop site and must retire rather than destroy. Naming the three
+      current ones would leave the fourth one added next month unguarded — the
+      mistake B4 made in review-5 and has not repeated since;
+  (d) a field retired must be nulled where it was retired, and teardown must
+      drain the list.
+
+Arms: `image-destroyed-at-the-drop-site`, `retired-image-never-destroyed`,
+`retired-image-destroyed-before-the-deadline`, `retired-image-one-frame-early`,
+`retire-image-records-a-blank-view`, `retired-image-settle-frees-another-entry`,
+`retired-image-not-drained-at-teardown`, `retired-image-double-destroy`.
+
+**AND THE ROW THAT HURTS, SO IT IS WRITTEN DOWN.** The parent test on the WORKING
+sources is rc 1 — one ARM red, `set-freed-without-a-deadline`, and NO check red.
+The parent's B12 read the settle's set loop with an unbounded tail, so the new
+retired-image loop's `safeFrame` test satisfied the set loop's deadline rule and
+the mutant that deletes the set deadline was accepted. That is not the new code
+breaking something green; it is the old instrument being scope-blind in exactly
+the way review-9 F1 describes, and it could only be found by putting a second
+deadline in the same function. The new test bounds B12's tail at `retiringImages`
+and the arm bites again. `par/new` is reported as rc 1 with that explanation
+rather than quietly dropped from the table.
+
+**A PROBE CAUGHT B13 REDDING A CORRECT PROGRAM, TWICE OVER.** The first version
+required the release to go through `destroyImage`. Writing the three calls out
+(`vkDestroyImageView`, `vkDestroyImage`, `vkFreeMemory`) in the correct order is
+the same program, and it measured `inl: RED` — review-10 F5 repeated inside the
+batch whose predecessor's whole F5 lesson is that a gate reddening an honest edit
+gets worked around. The rule now accepts either spelling and pins the ORDER
+instead, and both rewordings are permanent probes:
+`image handles released inline, in order` and `aggregate record at the image
+push`. Measured after the widening: both GREEN.
+
+LinuxRefusalReport: 19 checks / 59 arms / 3 probes -> **20 checks / 67 arms /
+5 probes**.
+
+-----------------------------------------------------------------------------
+4. THE FOUR-WAY
+-----------------------------------------------------------------------------
+  new test (20/67/5) on working sources    rc 0  PASS
+  new test on the parent 47bc819           rc 1  exactly ONE check red: B13
+  parent test (19/59/3) on working        rc 1  one ARM red, no check red (above)
+  parent test on parent sources            rc 0  PASS
+
+The parent row of a normal batch is green because no shape moved. Here a shape
+moved, so the parent row is red, and it is red on the one check that did not
+exist at the parent — which is the row that says the new check bites on real
+code and not only on mutants.
+
+-----------------------------------------------------------------------------
+5. GATES, AS RUN
+-----------------------------------------------------------------------------
+  make -C tests/scripts -j8
+    rc 0, "All cases match the oracle.", 765 PASS / 0 FAIL
+    PASS LinuxRefusalReport (20 checks, 67 arms adjudicated red, 5 probes green)
+    The suite count is UNCHANGED and correctly so: this test contributes ONE
+    PASS line, not one per check, arm or probe.
+
+  DISPLAY=:99 bash tools/check.sh
+    rc 0, CHECK: ALL GATES PASSED
+    PASS L3_f1.bmp sha=58615fc85d02e009
+    BATCH INTEGRITY: PASS
+    COMPLETION SELFTEST: PASS (13 arms)
+    COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open
+    COMPLETION: LEDGER VERIFIED
+    PASS audit_c_with_classes (0 violations — the new code is a struct, a vector
+    and ordinary functions: no virtual, no template, no exception), gates_vfp
+    (0 blockers), audit_arm11_math, audit_r11_idiv, gates_core_parity,
+    gates_frames, gates_batch_integrity, gates_completion; SKIP gates_smdh
+
+  DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8
+    rc 0, mdk.elf md5 728eb2350c3ef8a81acda15f75617c1e UNCHANGED. No
+    `mdk_3ds/**` file is in `git diff --name-only`, so no P8 emulator evidence is
+    owed and none was faked.
+
+  cmake --build build-linux -j8
+    rc 0, "Built target mdk". Run BY HAND because of item 11b: nothing in the
+    gate set compiles `mdk_linux/**`. The stale-binary hazard was measured and
+    not assumed — build-linux/mdk is 09:38:42, renderer_vk.cpp is 09:38:31, so
+    the binary `gates_frames` certifies is newer than the source it certifies.
+
+-----------------------------------------------------------------------------
+6. FRAME
+-----------------------------------------------------------------------------
+  docs/frames/2026-11-13-the-view-waits-too.png
+  md5 6769a13731983d65cee9df02da6cff37 — byte-identical to its predecessors.
+  Census re-derived, not remembered: 184 PNGs in docs/frames, 183 at 6769a137…,
+  and this frame is 320x240 with ZERO pure (0,0,255) pixels over 219 distinct
+  colours. It is unchanged because the whole path this batch alters is
+  unreachable on this frontend (section 1), which is the honest reading of a
+  byte-identical frame: the fix is proven by shape and by mutation, not by a
+  picture, and this batch does not claim otherwise.
+
+-----------------------------------------------------------------------------
+7. PRIOR-SOLUTION LOOKUP
+-----------------------------------------------------------------------------
+  Pi knowledge (`mdk-sdl`, hybrid): the top hits were `docs/OPEN_ITEMS.md`'s
+  review-25 closure (the descriptor CACHE fix this sits on) and the 3DS backend's
+  `settleDeferredMeshes` / `settleDeferredMeshes` pattern — a release deferred
+  to the frame boundary and settled there, which is the same house shape. Nothing
+  in the KB on deferring the image half specifically.
+  Obsidian and Cognee MCP servers are ABSENT from this session's tool list. Per
+  AGENTS §9 P9 that is a session configuration fault to report, not a licence to
+  claim the lookup happened: no Cognee graph search is claimed, and the vault was
+  read read-only from disk instead.
+
+-----------------------------------------------------------------------------
+8. WHAT IS STILL OPEN AFTER THIS BATCH
+-----------------------------------------------------------------------------
+  * Whether the failed-free and retire paths are reachable at all on lavapipe is
+    still unmeasured, and no validation layer is installed on this host, so every
+    VUID cited in this row is read off naming rather than enforced (item 7 of the
+    NEXT list).
+  * Item 10 of the NEXT list, untouched by this batch: the retire path frees
+    memory it never unmapped for BUFFERS (`mdk_render_release_mesh`,
+    `ensureCanvasBuffer` → `destroyBufferPair`). This batch defers images; the
+    persistent-mapping question on buffers is a different shape decision about
+    `RetiredBuffer` and is still open.
+  * The ledger row itself: `docs/COMPLETION_LEDGER.tsv` is
+    coleshores:coleshores 0664 and this lane is piagent, so
+    `tools/runner/ledger_close.py` cannot run here. Operator action:
+    `chgrp development docs/COMPLETION_LEDGER.tsv` and a
+    `ledger_close.py --row linux.render-frame` from a lane in that group, on a
+    clean tree.

@@ -136,6 +136,24 @@
 #        mutants that restored the leak, double-freed a live set, freed one frame early,
 #        recorded a blank, or freed the wrong entry all printed PASS while the parts
 #        each stayed individually green.
+#     B13 an image a retired descriptor set NAMES waits for the same boundary the set
+#        waits for. A set holds a VkImageView, so retiring the handle and destroying
+#        the view in the same call defers half of a lifetime: the set waited two
+#        frames and the resource it names waited none, and a frame still on the queue
+#        was sampling a destroyed view. AGENTS.md P3 puts the completion boundary on
+#        the RESOURCE, not on the handle that refers to it, and review-9 F2 named this
+#        exact half when the set half landed; batch 164 recorded the fix as its own
+#        slice and this is it. Four shapes: the retire must record all three handles
+#        and the boundary on the record it pushes (B12(a)'s join rule again, for the
+#        same VK_NULL_HANDLE-initialiser reason); the settle must release the handles
+#        of the entry whose deadline it compared, in view/image/memory order; every
+#        function that forgets a set is a drop site and must retire rather than
+#        destroy — DISCOVERED, not listed, because a named list of three would not see
+#        the fourth; and a field retired must be nulled where it was retired, or
+#        teardown destroys the same image twice. The release is accepted through the
+#        file's helper or written out, because the first version of this rule reddened
+#        the written-out spelling, which is review-10 F5 repeated in the batch whose
+#        job was not to repeat it; that rewording is a probe now.
 #
 #   context (mdk_linux/src/render/vk/vk_context.cpp)
 #     C1 every result-bearing Vulkan call in the file has its result read. This is the
@@ -229,6 +247,8 @@ CHK = {
     "B12": "a descriptor set the cache forgets returns to the pool, after its frame "
            "has finished, with its result read, and the retire/settle join is what "
            "makes that true",
+    "B13": "an image a retired descriptor set names waits for the same boundary the "
+           "set waits for, and is destroyed there and not at the drop site",
     "C1": "every result-bearing Vulkan call in vk_context.cpp has its result read",
     "C2": "the frame's command buffer is ended before it is submitted",
     "C3": "a refused frame never leaves its slot's fence unsignalled",
@@ -1407,7 +1427,13 @@ def backend_checks(r, text, quiet):
             bad12.append("settleRetired never settles retiringSets — the retired sets "
                          "are collected and then dropped with the vector")
         else:
-            tail = body[idx:]
+            # Scoped to the SET loop. The retired-image loop below it has its own
+            # `safeFrame` test and its own destroy, and a tail that ran to the end of
+            # the function let B12 read the image loop's deadline as the set loop's —
+            # which is how `set-freed-without-a-deadline` slipped through the first
+            # time B13 was added beside it.
+            stop = body.find("retiringImages", idx)
+            tail = body[idx:stop] if stop > idx else body[idx:]
             if "safeFrame" not in tail:
                 bad12.append("settleRetired frees retired sets without comparing their "
                              "safeFrame, so it frees sets a queued frame may still bind")
@@ -1529,6 +1555,219 @@ def backend_checks(r, text, quiet):
         "`.set` of the entry whose deadline it compared, and a set lost to a failed free "
         "must be counted in the failure branch and the total told once at teardown" +
         ("" if not bad12 else " — " + "; ".join(bad12)))
+
+    # -----------------------------------------------------------------------
+    # B13 — an image a retired set names waits for the boundary the set waits for.
+    #
+    # A descriptor set holds a VkImageView, so retiring the handle and destroying
+    # the resource in the same call defers half of a lifetime: the set waited two
+    # frames and the view waited none, and a frame still on the queue was sampling
+    # a destroyed view. AGENTS.md P3 puts the completion boundary on the RESOURCE
+    # ("do not overwrite, resize, or free an in-flight resource"), not on the handle
+    # that refers to it, and review-9 F2 named this exact half-fix when the set half
+    # landed. Batch 165 closed the set's own join; this is the other half, which
+    # batch 164 recorded as its own slice.
+    #
+    # Four shapes, because there are four ways to be wrong:
+    #   (a) the retire must record all THREE handles it was handed and the boundary,
+    #       read off the record it pushes — the same join rule B12(a), because a
+    #       struct whose fields default to VK_NULL_HANDLE makes a missing assignment
+    #       invisible (review-10 F1);
+    #   (b) the settle must destroy the handles of the entry whose `safeFrame` it
+    #       compared, after that test — B12(b)'s mirror;
+    #   (c) DISCOVERED, not listed: every function that forgets a descriptor set is
+    #       a drop site, and must retire the image rather than destroy it. A rule
+    #       over a named list of three functions would not see the fourth one added
+    #       next month, which is exactly how B4 was rewritten in review-5;
+    #   (d) the field a drop site retired must be nulled there, or teardown destroys
+    #       the same image a second time — and teardown must drain the list at all,
+    #       because an image in it has no other owner.
+    # -----------------------------------------------------------------------
+    bad13 = []
+
+    rsp3 = body_span(code, "retireImage")
+    if not rsp3:
+        bad13.append("retireImage is not in the file, so nothing defers an image the "
+                     "cache forgot")
+    else:
+        ibody = code[rsp3[0]:rsp3[1]]
+        params = {}
+        sig3 = re.search(r"retireImage[ \t]*\(([^)]*)\)", ibody)
+        for a in split_args(sig3.group(1)) if sig3 else []:
+            for kind in ("VkImage", "VkDeviceMemory", "VkImageView"):
+                pm = re.search(kind + r"[ \t]+([A-Za-z_]\w*)$", a.strip())
+                if pm:
+                    params[kind] = pm.group(1)
+        push3 = re.search(r"retiringImages[ \t]*\.[ \t]*push_back[ \t]*\(", ibody)
+        if len(params) != 3:
+            bad13.append("retireImage does not take an image, a memory and a view, so "
+                         "there is no triple of handles for it to record")
+        elif not push3:
+            bad13.append("retireImage never records what it was handed — the call at the "
+                         "drop site is a function call and nothing more, and the view is "
+                         "destroyed under the frame that is sampling it")
+        else:
+            head3 = ibody[:push3.start()]
+            pushed3 = (call_args(ibody, "retiringImages.push_back") or "").strip()
+            named3 = re.fullmatch(r"([A-Za-z_]\w*)", pushed3)
+            for kind, field in (("VkImage", "image"), ("VkDeviceMemory", "memory"),
+                                ("VkImageView", "view")):
+                if kind not in params:
+                    continue
+                if named3:
+                    ok3 = re.search(r"\b" + re.escape(named3.group(1)) + r"[ \t]*\.[ \t]*" +
+                                    field + r"[ \t]*=[ \t]*" + re.escape(params[kind]) +
+                                    r"[ \t]*;", head3)
+                else:
+                    agg3 = re.match(r"(?:RetiredImage[ \t]*)?[{(](.*)[})]", pushed3, re.S)
+                    f3 = [x.strip() for x in split_args(agg3.group(1))] if agg3 else []
+                    order = ["image", "memory", "view"]
+                    ok3 = field in order and order.index(field) < len(f3) \
+                        and f3[order.index(field)] == params[kind]
+                if not ok3:
+                    bad13.append("the record retireImage pushes does not take its `%s` "
+                                 "from the `%s` it was handed, so the handle waits and the "
+                                 "resource it names is destroyed under the frame that is "
+                                 "sampling it" % (field, params[kind]))
+            if named3:
+                safe3 = re.search(r"\b" + re.escape(named3.group(1)) +
+                                  r"[ \t]*\.[ \t]*safeFrame[ \t]*=[ \t]*\w+->frameIndex[ \t]*\+"
+                                  r"[ \t]*(?:mdk::vk::)?kFramesInFlight[ \t]*;", head3)
+            else:
+                agg3 = re.match(r"(?:RetiredImage[ \t]*)?[{(](.*)[})]", pushed3, re.S)
+                f3 = [x.strip() for x in split_args(agg3.group(1))] if agg3 else []
+                safe3 = len(f3) > 3 and re.fullmatch(r"\w+->frameIndex[ \t]*\+[ \t]*"
+                                                     r"(?:mdk::vk::)?kFramesInFlight", f3[3])
+            if not safe3:
+                bad13.append("the record retireImage pushes does not carry exactly "
+                             "frameIndex + kFramesInFlight, so the image is not on the same "
+                             "boundary as the set that names it")
+
+    ssp3 = body_span(code, "settleRetired")
+    if not ssp3:
+        bad13.append("settleRetired is not in the file")
+    else:
+        sbody3 = code[ssp3[0]:ssp3[1]]
+        at3 = sbody3.find("retiringImages")
+        if at3 < 0:
+            bad13.append("settleRetired never settles retiringImages — the images are "
+                         "collected into a vector and the vector is never drained, which "
+                         "is a leak with a deadline in front of it")
+        else:
+            tail3 = sbody3[at3:]
+            if not re.search(r"([A-Za-z_]\w*)[ \t]*\.[ \t]*safeFrame[ \t]*>", tail3):
+                bad13.append("settleRetired destroys retired images without comparing a "
+                             "named entry's safeFrame, so there is no boundary in front of "
+                             "the destroy")
+            else:
+                ent3 = re.search(r"([A-Za-z_]\w*)[ \t]*\.[ \t]*safeFrame[ \t]*>",
+                                 tail3).group(1)
+                deadline_end = re.search(r"[A-Za-z_]\w*[ \t]*\.[ \t]*safeFrame[ \t]*>",
+                                         tail3).end()
+                dest3 = re.search(r"destroyImage[ \t]*\(|vkDestroyImageView[ \t]*\(", tail3)
+                if not dest3:
+                    bad13.append("settleRetired never destroys a retired image: the view, "
+                                 "the image and its memory are collected and never "
+                                 "released")
+                elif dest3.start() < deadline_end:
+                    bad13.append("settleRetired destroys a retired image before the "
+                                 "deadline test, which is the drop site again with a "
+                                 "vector in front of it")
+                else:
+                    # Each handle the tested entry holds must be released, and the VIEW
+                    # before the IMAGE before its MEMORY, because freeing memory bound
+                    # to a live image is invalid use — the order B9 pins for the create
+                    # path. Either spelling counts: the file's one helper that already
+                    # gets that order right, or the three calls written out. A rule that
+                    # reddened the second spelling would be review-10 F5 committed again
+                    # in the batch whose job was not to commit it again, and this rule
+                    # was measured doing exactly that before it was widened.
+                    dargs = split_args(call_args(tail3, "destroyImage") or "")
+                    pos = {"view": 3, "image": 1, "memory": 2}
+                    verb = {"view": "vkDestroyImageView", "image": "vkDestroyImage",
+                            "memory": "vkFreeMemory"}
+                    where = {}
+                    for field in ("view", "image", "memory"):
+                        got = dargs[pos[field]].strip() if len(dargs) > pos[field] else ""
+                        via_helper = \
+                            re.search(r"&[ \t]*" + re.escape(ent3) + r"[ \t]*\.[ \t]*" +
+                                      field + r"$", got) or \
+                            re.search(r"\b[A-Za-z_]\w*[ \t]*=[ \t]*" + re.escape(ent3) +
+                                      r"[ \t]*\.[ \t]*" + field + r"[ \t]*;", tail3)
+                        im = re.search(verb[field] + r"[ \t]*\([^;]*\b" + re.escape(ent3) +
+                                       r"[ \t]*\.[ \t]*" + field + r"\b", tail3)
+                        if not via_helper and not im:
+                            bad13.append("settleRetired releases nothing for the entry "
+                                         "whose deadline it compared, so some other entry's "
+                                         "%s is released and the one whose frame finished "
+                                         "is kept" % field)
+                        where[field] = im.start() if im else -1
+                    if all(v >= 0 for v in where.values()) and \
+                            not where["view"] < where["image"] < where["memory"]:
+                        bad13.append("settleRetired releases a retired image's handles in "
+                                     "an order that can free memory still bound to a live "
+                                     "image, or destroy an image a live view still names")
+
+    # (c) DISCOVERED drop sites. Any function that forgets a descriptor set is
+    # replacing or destroying the resource that set named, so it is a drop site,
+    # and it must retire rather than destroy. Naming the three current ones would
+    # leave the fourth one added next month unguarded, which is the mistake B4 made
+    # in review-5 and has not repeated since.
+    defs = [(m.start(), m.group(1))
+            for m in re.finditer(
+                r"^[A-Za-z_][\w:<>,\* &]*?\b(\w+)\s*\([^;{]*?\)\s*(?:const\s*)?\{",
+                code, re.M)]
+    for m in re.finditer(r"forgetDescriptorSets[ \t]*\(", code):
+        owner = None
+        for start, name in defs:
+            if start < m.start():
+                owner = name
+        if owner is None or owner == "forgetDescriptorSets":
+            # The definition itself matches the call pattern; its own body is not a
+            # drop site, it is the thing the drop sites call.
+            continue
+        osp = body_span(code, owner)
+        if not osp:
+            continue
+        obody = code[osp[0]:osp[1]]
+        if "retireImage(" not in obody:
+            bad13.append("`%s` forgets a descriptor set and does not retire the image that "
+                         "set names, so the handle is deferred and the resource it names "
+                         "is destroyed under a frame that may still be sampling it" % owner)
+        elif "destroyImage(" in obody:
+            bad13.append("`%s` forgets a descriptor set and still calls destroyImage in "
+                         "the same function, which is the half-lifetime this check exists "
+                         "to forbid" % owner)
+        for rc in re.finditer(r"retireImage[ \t]*\(([^)]*)\)", obody):
+            for a in split_args(rc.group(1)):
+                fm = re.fullmatch(r"(\w+(?:->\w+)+)[ \t]*\[[ \t]*(\w+)[ \t]*\][ \t]*"
+                                  r"\.(image|memory|view)", a.strip())
+                if not fm:
+                    continue
+                rest = obody[rc.end():]
+                if not re.search(re.escape(fm.group(1)) + r"[ \t]*\[[ \t]*" +
+                                 re.escape(fm.group(2)) + r"[ \t]*\][ \t]*\." + fm.group(3) +
+                                 r"[ \t]*=[ \t]*VK_NULL_HANDLE[ \t]*;", rest):
+                    bad13.append("`%s` retires `%s[%s].%s` and leaves the field set, so "
+                                 "teardown destroys the same handle a second time"
+                                 % (owner, fm.group(1), fm.group(2), fm.group(3)))
+
+    dsp3 = body_span(code, "mdk_render_destroy")
+    if not dsp3:
+        bad13.append("mdk_render_destroy is not in the file, so nothing could drain the "
+                     "retired images at teardown")
+    elif "retiringImages" not in code[dsp3[0]:dsp3[1]]:
+        bad13.append("teardown never drains retiringImages, and an image in that vector "
+                     "has no other owner: its slot's field was nulled at the retire, so "
+                     "this is the only place it can be released")
+    say(CHK["B13"], not bad13,
+        "a descriptor set names an image view, so deferring the handle and destroying the "
+        "view on the spot is half a lifetime: the frame the set waits for is the frame the "
+        "view has to wait for too (AGENTS.md P3 puts the boundary on the resource, not on "
+        "the reference to it) — so every function that forgets a set must retire the image, "
+        "the settle must destroy the entry whose deadline it tested, the retired field must "
+        "be nulled where it was retired, and teardown must drain the list" +
+        ("" if not bad13 else " — " + "; ".join(bad13)))
 
 
 def context_checks(r, text, quiet):
@@ -2462,6 +2701,133 @@ arm_backend("lost-set-print-deleted", be_lost_set_print_deleted, "B12")
 arm_backend("lost-set-print-unguarded", be_lost_set_print_unguarded, "B12")
 
 
+# ---- B13: the image a retired set names waits for the same boundary ----------
+def be_image_destroyed_at_the_drop_site(s):
+    """The half-lifetime, restored: the set is retired and the view it names is
+    destroyed in the same call, so a frame still on the queue samples a destroyed
+    VkImageView. Reads as a tidy-up — the resource is gone when the cache entry is
+    gone — and it is exactly what review-9 F2 named. B13 only."""
+    return s.replace("""    retireImage(r, r->textures[t_].image, r->textures[t_].memory, r->textures[t_].view);
+    r->textures[t_].image = VK_NULL_HANDLE;
+    r->textures[t_].memory = VK_NULL_HANDLE;
+    r->textures[t_].view = VK_NULL_HANDLE;
+    r->textures[t_].used = false;""",
+                     """    destroyImage(&r->ctx, &r->textures[t_].image, &r->textures[t_].memory,
+                 &r->textures[t_].view, &r->textures[t_].mapped);
+    r->textures[t_].used = false;""", 1)
+
+
+def be_retired_image_never_destroyed(s):
+    """The images are collected, tested against their deadline and released to
+    nothing. A vector is not a destroy — the same argument batch 163 made about the
+    sets, one field over. B13 only."""
+    lo = s.index("void settleRetired(")
+    hi = s.index("\n}\n", lo)
+    seg = s[lo:hi]
+    return s[:lo] + seg.replace("""        VkImage image = retired.image;
+        VkDeviceMemory memory = retired.memory;
+        VkImageView view = retired.view;
+        destroyImage(&r->ctx, &image, &memory, &view, nullptr);
+""", "        (void)retired;\n", 1) + s[hi:]
+
+
+def be_retired_image_destroyed_before_the_deadline(s):
+    """The destroy hoisted above the `safeFrame` test, so every retired image goes
+    on the first frame that settles. The test is still there and still erases, so a
+    rule that asks only whether a deadline exists waves it through. B13 only."""
+    lo = s.index("void settleRetired(")
+    hi = s.index("\n}\n", lo)
+    seg = s[lo:hi]
+    seg = seg.replace("""        VkImage image = retired.image;
+        VkDeviceMemory memory = retired.memory;
+        VkImageView view = retired.view;
+        destroyImage(&r->ctx, &image, &memory, &view, nullptr);
+        r->retiringImages.erase(r->retiringImages.begin() + (long)i);""",
+                      """        r->retiringImages.erase(r->retiringImages.begin() + (long)i);""", 1)
+    seg = seg.replace("""        const RetiredImage retired = r->retiringImages[i];
+        if (retired.safeFrame > r->frameIndex) {""",
+                      """        const RetiredImage retired = r->retiringImages[i];
+        VkImage image = retired.image;
+        VkDeviceMemory memory = retired.memory;
+        VkImageView view = retired.view;
+        destroyImage(&r->ctx, &image, &memory, &view, nullptr);
+        if (retired.safeFrame > r->frameIndex) {""", 1)
+    return s[:lo] + seg + s[hi:]
+
+
+def be_retired_image_one_frame_early(s):
+    """The image's deadline moved a frame forward, so it no longer shares the set's
+    boundary: the set is still bound by a frame the image has already outlived. The
+    same off-by-one review-9 F1 mutant 3 was, on the other half of the pair. B13
+    only."""
+    lo = s.index("void retireImage(")
+    hi = s.index("\n}\n", lo)
+    return s[:lo] + s[lo:hi].replace(
+        "retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight;",
+        "retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight - 1;", 1) + s[hi:]
+
+
+def be_retire_image_records_a_blank_view(s):
+    """Review-10 F1 on the image half: the record is pushed, the image and memory
+    are filled, the deadline is right, and the VIEW — the one handle a descriptor set
+    actually names — is left at its VK_NULL_HANDLE initialiser. The real view is
+    never destroyed and the settle is handed a null handle. B13 only."""
+    lo = s.index("void retireImage(")
+    hi = s.index("\n}\n", lo)
+    return s[:lo] + s[lo:hi].replace("    retired.view = view;\n", "", 1) + s[hi:]
+
+
+def be_retired_image_settle_frees_another_entry(s):
+    """The deadline is compared on entry `i` and the handles are read from `back()`,
+    so an image whose frame was never proven finished is destroyed and the entry
+    erased is the one still being sampled. B13 only."""
+    return s.replace("""        VkImage image = retired.image;
+        VkDeviceMemory memory = retired.memory;
+        VkImageView view = retired.view;
+        destroyImage(&r->ctx, &image, &memory, &view, nullptr);
+        r->retiringImages.erase""",
+                     """        VkImage image = r->retiringImages.back().image;
+        VkDeviceMemory memory = r->retiringImages.back().memory;
+        VkImageView view = r->retiringImages.back().view;
+        destroyImage(&r->ctx, &image, &memory, &view, nullptr);
+        r->retiringImages.erase""", 1)
+
+
+def be_retired_image_not_drained_at_teardown(s):
+    """Teardown stops draining the list. Every field was nulled at the retire, so no
+    other loop can see these images and they are simply never released — and the
+    device is idle here, so this is the only place that could. B13 only."""
+    lo = s.index("    for (size_t i = 0; i < r->retiringImages.size(); i++) {")
+    hi = s.index("    r->retiringImages.clear();\n", lo) + len("    r->retiringImages.clear();\n")
+    return s[:lo] + s[hi:]
+
+
+def be_retired_image_double_destroy(s):
+    """The drop site retires the image and forgets to null the slot's field, so
+    teardown's texture loop destroys the same image a second time. One line, and
+    the retire still reads correctly. B13 only."""
+    return s.replace("""    retireImage(r, r->textures[t_].image, r->textures[t_].memory, r->textures[t_].view);
+    r->textures[t_].image = VK_NULL_HANDLE;
+    r->textures[t_].memory = VK_NULL_HANDLE;
+    r->textures[t_].view = VK_NULL_HANDLE;
+    r->textures[t_].used = false;""",
+                     """    retireImage(r, r->textures[t_].image, r->textures[t_].memory, r->textures[t_].view);
+    r->textures[t_].used = false;""", 1)
+
+
+arm_backend("image-destroyed-at-the-drop-site", be_image_destroyed_at_the_drop_site, "B13")
+arm_backend("retired-image-never-destroyed", be_retired_image_never_destroyed, "B13")
+arm_backend("retired-image-destroyed-before-the-deadline",
+            be_retired_image_destroyed_before_the_deadline, "B13")
+arm_backend("retired-image-one-frame-early", be_retired_image_one_frame_early, "B13")
+arm_backend("retire-image-records-a-blank-view", be_retire_image_records_a_blank_view, "B13")
+arm_backend("retired-image-settle-frees-another-entry",
+            be_retired_image_settle_frees_another_entry, "B13")
+arm_backend("retired-image-not-drained-at-teardown",
+            be_retired_image_not_drained_at_teardown, "B13")
+arm_backend("retired-image-double-destroy", be_retired_image_double_destroy, "B13")
+
+
 # ---------------------------------------------------------------------------
 # The probes. An arm proves a rule is SENSITIVE; a probe proves it is not merely
 # sensitive to a SPELLING (review-10 F5). Each is a refactor that PRESERVES the
@@ -2499,9 +2865,41 @@ def be_aggregate_record_at_the_push(s):
                      "r->frameIndex + mdk::vk::kFramesInFlight});", 1)
 
 
+def be_aggregate_record_at_the_image_push(s):
+    """The retired image built at the push instead of field by field. Same three
+    handles, same boundary, same order."""
+    return s.replace("    RetiredImage retired;\n    retired.image = image;\n"
+                     "    retired.memory = memory;\n    retired.view = view;\n"
+                     "    retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight;\n"
+                     "    r->retiringImages.push_back(retired);",
+                     "    r->retiringImages.push_back(RetiredImage{image, memory, view, "
+                     "r->frameIndex + mdk::vk::kFramesInFlight});", 1)
+
+
+def be_image_handles_destroyed_inline(s):
+    """The retired image released by the three calls written out instead of through
+    `destroyImage`. The order is the one the rule asks for — view, image, memory —
+    so the rule must not care that the helper was not used. This is the rewording
+    that reddened B13 the first time it was written; it lives in the file now so it
+    cannot quietly become a red again."""
+    return s.replace("""        VkImage image = retired.image;
+        VkDeviceMemory memory = retired.memory;
+        VkImageView view = retired.view;
+        destroyImage(&r->ctx, &image, &memory, &view, nullptr);
+        r->retiringImages.erase""",
+                     """        if (retired.view) { vkDestroyImageView(r->ctx.device, retired.view, nullptr); }
+        if (retired.image) { vkDestroyImage(r->ctx.device, retired.image, nullptr); }
+        if (retired.memory) { vkFreeMemory(r->ctx.device, retired.memory, nullptr); }
+        r->retiringImages.erase""", 1)
+
+
 PROBES = [("named local at the drop site", be_named_local_at_the_drop_site, "Linux backend"),
           ("erase instead of the swap-pop", be_erase_instead_of_the_swap_pop, "Linux backend"),
-          ("aggregate record at the push", be_aggregate_record_at_the_push, "Linux backend")]
+          ("aggregate record at the push", be_aggregate_record_at_the_push, "Linux backend"),
+          ("image handles released inline, in order", be_image_handles_destroyed_inline,
+           "Linux backend"),
+          ("aggregate record at the image push", be_aggregate_record_at_the_image_push,
+           "Linux backend")]
 
 checks = sum(r.checks for r in real)
 arms = [("Linux frontend", FRONT_ARMS, FILES["Linux frontend"]),
