@@ -11,6 +11,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -74,11 +75,20 @@ int32_t freshScriptSeed() {
 // The leading-digit test is not decoration. `strtol` skips leading space and
 // accepts a sign, so " 5", "+5" and "-5" all parse without it, and a contract
 // that says "a positive whole number" should mean exactly that.
+// ERANGE is checked and not folded into the range test, because on a target whose
+// `long` is 32 bits (any -m32 or ILP32 build) LONG_MAX *is* INT_MAX: the value
+// clamps to INT_MAX, `value > INT_MAX` cannot fire, and an out-of-range count is
+// silently accepted as the largest legal one. That is the fail-open this
+// predicate exists to remove, reappearing through the type instead of the parse.
+// On this x86-64 host the two tests agree, so the ERANGE arm is a portability
+// guard and is NOT observable here -- stated rather than implied by a green run.
 bool positiveCount(const char* name, const char* text, int* out) {
     char* end = nullptr;
     const bool digits = text != nullptr && *text >= '0' && *text <= '9';
+    errno = 0;
     const long value = digits ? std::strtol(text, &end, 10) : 0;
-    if (!digits || end == text || *end != '\0' || value < 1 || value > INT_MAX) {
+    if (!digits || end == text || *end != '\0' || errno == ERANGE || value < 1 ||
+        value > INT_MAX) {
         std::fprintf(stderr, "[main] %s must be a positive whole number: %s\n",
                      name, text != nullptr ? text : "");
         return false;
@@ -183,8 +193,13 @@ int main(int argc, char** argv) {
                 return 1;
             }
             char* end = nullptr;
+            errno = 0;
             const long value = std::strtol(argv[++i], &end, 10);
-            if (end == argv[i] || *end != '\0' || value < INT_MIN || value > INT_MAX) {
+            // ERANGE for the same reason `positiveCount` needs it: where `long` is
+            // 32 bits the value clamps to LONG_MAX == INT_MAX and the bound test
+            // below cannot fire, so an out-of-range seed is accepted as INT_MAX.
+            if (end == argv[i] || *end != '\0' || errno == ERANGE ||
+                value < INT_MIN || value > INT_MAX) {
                 std::fprintf(stderr, "[main] invalid --seed: %s\n", argv[i]);
                 return 1;
             }
@@ -204,6 +219,37 @@ int main(int argc, char** argv) {
                          "(--frames 3, --seed 1)\n");
             return 1;
         }
+    }
+
+    // A capture the run can never reach is a refusal, not a default.
+    //
+    // Both checks sit HERE rather than in their own option branch because the two
+    // options may arrive in either order: `--capture-frame=99 --frames 2` and
+    // `--frames 2 --capture-frame=99` are the same request, and a branch-local
+    // check would only catch one of them.
+    //
+    // 1. A capture frame with no file to write. The loop breaks on the capture
+    //    frame whether or not a path was given, so `--capture-frame=1` alone ran
+    //    one frame, wrote nothing and exited 0.
+    // 2. A capture frame past the frame bound. The bound breaks first, so
+    //    `--capture=f.bmp --capture-frame=200 --frames 100` exits 0 having written
+    //    no picture: a capture harness reporting a frame it never took.
+    //
+    // This is the same defect as an unparseable count, one step further along: the
+    // value parsed, and nothing asked whether the run could still do what it says.
+    // It also makes the loop's own `break` on `captureThisFrame` safe, because a
+    // non-zero capture frame now always has a path behind it.
+    if (captureFrame > 0 && capturePath.empty()) {
+        std::fprintf(stderr,
+                     "[main] --capture-frame must be used with --capture: no file was named\n");
+        return 1;
+    }
+    if (captureFrame > 0 && maxFrames > 0 && captureFrame > maxFrames) {
+        std::fprintf(stderr,
+                     "[main] --capture-frame must be within --frames: frame %d is past "
+                     "the %d-frame bound and would write no picture\n",
+                     captureFrame, maxFrames);
+        return 1;
     }
 
     // The C# Viewer's ordinary runtime uses an unseeded modern Random. The

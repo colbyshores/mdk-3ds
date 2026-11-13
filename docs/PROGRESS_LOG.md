@@ -1,3 +1,64 @@
+## Iteration 170 — batch 170: `linux.render-frame` — the capture frame parsed and nothing asked whether the run could reach it; and a Critical that is real, owner-protected, and now surfaced instead of filed away
+
+**LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`, attempt 6 of 8.
+This IS a remediation batch: review-1 (`logs/ralph-pi/run-20261113-190705/review-1.md`, on
+`7d46ba4c..7bbb193e`) returned **F1 Critical, F2 High, F3/F4/F5/F6 Medium, F7/F8 Low** and a VERDICT
+of INCOMPLETE. All eight were reproduced or rebutted against the tree before anything was changed.
+Full record: `docs/evidence/2026-11-13-170-the-frame-it-could-not-take.txt`.**
+
+**F3 IS THE SLICE, AND IT IS THIS ROW'S OWN CLASS ONE STEP FURTHER ALONG.** Measured on the parent
+binary before touching anything: `--capture=/tmp/rv_a.bmp --capture-frame=99 --frames 2` exits **0 and
+writes no file** (the frame bound breaks before frame 99), and `--capture-frame=1` with no `--capture`
+exits **0 and writes nothing** (the loop breaks on the capture frame whether or not a path exists).
+The value PARSED, so no batch-169 arm could see either half. Two refusals went in **after the whole
+option loop**, not in the option branches, because `--capture-frame=99 --frames 2` and
+`--frames 2 --capture-frame=99` are one request and a branch-local check catches only one order — so
+the reversed order is its own arm and the placement is pinned, not asserted. The bound is `>` and not
+`>=`, and **arm 23 runs that boundary as a real capture**: a rule bought one value too wide passes
+every reject arm and kills a legal invocation. The loop was not edited; the parser made the stray
+`break` unreachable.
+
+**F1 (Critical) IS CONFIRMED AND A BUILDER BATCH CANNOT CLOSE IT, WHICH IS THE FINDING.**
+`gates_batch_integrity.py --base 7d46ba4 --head 7bbb193 --each-commit` → **FAIL: protected contract
+changed without owner approval: `tools/runner/ledger_close.py`**, plus `50231c37 … must add exactly
+one frame PNG; found 0`; `ATTENTION.log` already logged it as owed. The reviewer's second half holds:
+`iter-1.log:18` publishes a PASS from `--base 50231c3`, which IS the offending commit, and the
+range-less `BATCH INTEGRITY: PASS` from `tools/check.sh` evaluates neither PROTECTED nor the frame
+rule (check.sh:175 passes no `--base`). The record half is fixed here — the failing window and the
+ATTENTION line are now published. The code half is unreachable from a batch: both remedies edit a
+`PROTECTED` file, so the repair trips the gate that protects it, and the gate has no door — its infra
+regex `^(loop|ledger|owner)\b` exempts infrastructure subjects from the FRAME rule only, never from
+PROTECTED (measured: `--base 222f4f3 --head 2a71883 --each-commit` fails the same line on a properly
+`loop:`-prefixed commit). What `50231c3` actually changed in the closer is a `timeout=120` and the
+banking allowlist — not the ledger, not the acceptance read, not the row rewrite — so the power
+PROTECTED guards against was not widened. Mitigation, not rebuttal: **F1 stays open, owner-blocked.**
+
+**F2 (High) CONFIRMED AS HISTORY AND NOT REWRITTEN** (`50231c3` registered an absent test and shipped
+no frame, so HEAD was red at it); the reviewer's fix is a history rewrite of the two commits the
+review, ATTENTION.log, the state file and this batch's parent all name by SHA — it would destroy the
+audit trail that made F1 findable. **F4 (Medium) HALF REBUTTED:** `TimeoutExpired` IS a
+`SubprocessError` (measured `True`) and the module guard catches that pair, so a bounded timeout
+already prints a named refusal and exits 2 — no traceback; the wait-after-kill half stands, and
+`rpc_wait_bit_killable` is TASK_KILLABLE, so the kill does release the observed stall. **F5 and F6
+CONFIRMED** (`docs/frames/` missing from `safe_untracked`; 2888 `.progress-log/` files with no
+`.gitignore` entry). F4/F5/F6 all live in PROTECTED files and are deferred with cause as owner acts.
+**F7 and F8 are fixed**, F7 with its limit stated: on x86-64 the old bound already refused both
+overflow values, so arms 17/18 pass on the parent too and pin the refusal, not the ERANGE mechanism.
+
+**`LinuxArgParse` 19 → 25 arms. THE FOUR-WAY:** working rc 0 (25); **parent binary rc 1 with exactly
+3 red — arms 14/15/16, 22 ok**, arms 17/18 green on the parent exactly as predicted; PARENT test on
+working rc 0, **zero collateral**; parent on parent rc 0. **GATES:** `make -C tests/scripts -j8` rc 0,
+**766 PASS / 0 FAIL**; `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`; `make -C mdk_3ds -j8` rc 0, `mdk.elf` md5
+`728eb2350c3ef8a81acda15f75617c1e` **UNCHANGED** (no `mdk_3ds/**` in the diff → no P8 evidence owed);
+`cmake --build build-linux -j8` rc 0 by hand, three times on purpose. Frame
+`docs/frames/2026-11-13-the-frame-it-could-not-take.png`, byte-identical to its predecessors (188
+PNGs, 187 at `6769a137…`), zero pure (0,0,255) pixels over 219 colours. Prior-solution lookup: Pi
+knowledge (`mdk-sdl`) top hit 0.622 `tests/frames/capture_cpp.sh` — the pinned spelling this batch
+must not break, checked; **Obsidian and Cognee MCP ABSENT** (AGENTS §9 P9, a session fault), vault
+read read-only. Environment faults recorded: `/tmp/kilo` is not writable by this lane, and the ledger
+is still `coleshores:coleshores 0664`.
+
 ## Iteration 169 — batch 169: `linux.render-frame` — an argument the frontend cannot act on is a refusal, not a default; and the fix was written, lost to its own non-vacuity run, and re-made
 
 **LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`, attempt 5 of 8.

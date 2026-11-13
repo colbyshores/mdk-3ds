@@ -209,24 +209,58 @@ expect_reject "non-numeric --level" --headless --fixed-step --level=abc --size=3
 expect_reject "--seed with no value" --headless --fixed-step --seed
 expect_reject "non-numeric --seed" --headless --fixed-step --seed one --frames 1
 
+# --- a value that parses, but that THIS run can never act on --------------------
+# 14/15/16. A capture frame the run cannot reach. Both halves were measured on the
+#      binary before this batch: `--capture=f.bmp --capture-frame=99 --frames 2`
+#      exited 0 and wrote no file (the frame bound breaks first), and
+#      `--capture-frame=1` with no `--capture` also exited 0 having written no file
+#      (the loop breaks on the capture frame whether or not a path exists). A
+#      capture harness reporting success with no picture is the exact failure this
+#      file exists to refuse, and the value PARSED, so no arm above could see it.
+#      Row 16 passes the two options in the other order: the check runs AFTER the
+#      whole parse, so order must not matter, and without that row a branch-local
+#      check would pass 14 and 15 while missing half the class.
+# 17/18. Out of range for `int`. On this x86-64 host `long` is 64 bits, so the old
+#      `value > INT_MAX` test already caught these; the ERANGE check is for a
+#      32-bit-`long` build, where strtol clamps to LONG_MAX == INT_MAX and the
+#      bound test cannot fire. These rows pin the REFUSAL, not the mechanism: the
+#      mechanism is not observable on this target and is not claimed to be.
+expect_reject "capture frame past the frame bound" --headless --fixed-step --size=320x240 --capture="$WORK/past.bmp" --capture-frame=99 --frames 2
+expect_reject "capture frame with no capture path" --headless --fixed-step --size=320x240 --capture-frame=1 --frames 2
+expect_reject "capture frame past the bound, reversed order" --headless --fixed-step --size=320x240 --frames 2 --capture="$WORK/past2.bmp" --capture-frame=99
+expect_reject "--frames past INT_MAX" --headless --fixed-step --frames 99999999999999999999
+expect_reject "--seed past INT_MAX" --headless --fixed-step --seed 99999999999999999999 --frames 1
+
 # --- and the things it must still do --------------------------------------------
-# 14/15. Both documented value styles, or the gate is just a refusal machine.
+# 19/20. Both documented value styles, or the gate is just a refusal machine.
 expect_accept "documented run" --headless --fixed-step --level=3 --size=320x240 --seed 1 --frames 2
 expect_accept "highest shipped level" --headless --fixed-step --level=8 --size=320x240 --seed 1 --frames 2
-# 16. The frame count is honoured, not just parsed.
+# 21. The frame count is honoured, not just parsed.
 expect_frames "--frames 3 stops at 3" 3 \
     --headless --fixed-step --level=3 --size=320x240 --seed 1 --frames 3
-# 17. The capture really happens -- the pinned frame's own spelling.
+# 22. The capture really happens -- the pinned frame's own spelling.
 expect_capture "capture writes a picture" "$WORK/frame.bmp" \
     --headless --fixed-step --level=3 --size=320x240 --seed 1 --capture-frame=1 --capture="$WORK/frame.bmp" --frames 2
+# 23. The boundary of the new bound rule: a capture frame EQUAL to the frame count
+#     is reachable, because the loop breaks after the frame and not before it, so
+#     the rule is `>` and not `>=`. Without this row the new refusal could be
+#     written one value too wide and every reject arm above would still pass.
+expect_capture "capture on the last frame the bound allows" "$WORK/edge.bmp" \
+    --headless --fixed-step --level=3 --size=320x240 --seed 1 --capture="$WORK/edge.bmp" --capture-frame=2 --frames 2
 
-total=$((pass + fail))
+# The summary must not claim arms it did not run. Four arms need a level, and a
+# lane with no game data skips them; printing "a real capture still work" over a
+# run in which no capture arm executed is a coverage claim that is simply false.
 if [ "$fail" -eq 0 ]; then
-    echo "PASS LinuxArgParse ($pass arms: an argument or option value the Linux frontend cannot act on is refused and named, and both documented value spellings, a honoured frame count and a real capture still work)"
+    if [ "$skipped" -gt 0 ]; then
+        echo "PASS LinuxArgParse ($pass arms ok, $skipped SKIPPED for want of game data at $DATA: an argument or option value the Linux frontend cannot act on is refused and named, a capture frame this run can never reach included; the skipped arms are the ones that need a level, and they did NOT run)"
+    else
+        echo "PASS LinuxArgParse ($pass arms: an argument or option value the Linux frontend cannot act on is refused and named, and both documented value spellings, a honoured frame count and two real captures -- the capture-frame boundary included -- still work)"
+    fi
     if [ "$have_data" -eq 0 ]; then
         echo "NOTE LinuxArgParse: $skipped arms that need a level were skipped, not passed (no game data at $DATA); the refuse arms above need neither data nor a display"
     fi
     exit 0
 fi
-echo "FAIL LinuxArgParse ($pass ok, $fail failing)"
+echo "FAIL LinuxArgParse ($pass ok, $fail failing, $skipped skipped)"
 exit 1
