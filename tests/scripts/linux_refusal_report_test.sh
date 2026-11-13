@@ -122,6 +122,12 @@
 #        skipping draws. Three shapes, because there are three distinct ways to be
 #        wrong: the pool must ask for freeable sets, the drop site must retire rather
 #        than free, and the settle must actually free on the buffers' own deadline.
+#        And the JOIN is pinned, not just the parts (review-9 F1): the retire must
+#        record what it was handed, the drop site must hand over the set of the entry
+#        it is dropping, the deadline must be the boundary with no offset on it, and
+#        the settle must remove the entry it freed. Four mutants that restored the
+#        leak, double-freed a live set, or freed one frame early all printed PASS
+#        while the three parts each stayed individually green.
 #
 #   context (mdk_linux/src/render/vk/vk_context.cpp)
 #     C1 every result-bearing Vulkan call in the file has its result read. This is the
@@ -213,7 +219,8 @@ CHK = {
     "B10": "a one-shot submission whose completion was never proven releases nothing",
     "B11": "the frame seam reads both beginFrame's and endFrame's result and says so",
     "B12": "a descriptor set the cache forgets returns to the pool, after its frame "
-           "has finished, with its result read",
+           "has finished, with its result read, and the retire/settle join is what "
+           "makes that true",
     "C1": "every result-bearing Vulkan call in vk_context.cpp has its result read",
     "C2": "the frame's command buffer is ended before it is submitted",
     "C3": "a refused frame never leaves its slot's fence unsignalled",
@@ -1217,7 +1224,13 @@ def backend_checks(r, text, quiet):
     # life of the process. When the pool emptied, the B4 refusal started skipping every
     # draw that needed a new pair, once per distinct request and then silently.
     #
-    # Three shapes are pinned, because there are three distinct ways to be wrong:
+    # The three shapes below are pinned, because there are three distinct ways to be
+    # wrong about the parts. Review-9 F1 was a fourth: the parts can each be present
+    # and the JOIN between them still broken, and four mutants proved it — a retire
+    # that records nothing, a settle that never erases, a deadline one frame early,
+    # and a drop site that retires somebody else's set. Each of those printed PASS
+    # here, and the first is the exact leak this batch exists to close. So the join is
+    # pinned too, one shape per mutant, with an arm apiece:
     #
     #   1. the pool must be created with the bit that makes its sets freeable.
     #      `vkFreeDescriptorSets` is invalid use on a pool that did not ask for it, so
@@ -1258,6 +1271,25 @@ def backend_checks(r, text, quiet):
         if "retireDescriptorSet(" not in body:
             bad12.append("forgetDescriptorSets drops the cache entry and never retires "
                          "the set it dropped — the pool loses one set per drop")
+        else:
+            # THE ARGUMENT IS THE ENTRY BEING DROPPED. `retireDescriptorSet(r, X)`
+            # reads the same wherever X comes from, and a call that hands over the
+            # last cached set, or none, keeps every shape below it green while the
+            # dropped set is still lost (review-9 F1 mutant 4). The entry it drops is
+            # the one the swap-pop overwrites, so that is the identity required.
+            hit = re.search(r"retireDescriptorSet\([ \t]*\w+[ \t]*,[ \t]*"
+                            r"(\w+(?:->\w+)+)\[(\w+)\]\.set[ \t]*\)", body)
+            if not hit:
+                bad12.append("forgetDescriptorSets does not retire the `.set` of the cache "
+                             "entry it is dropping, so some other set — or none — is what "
+                             "goes back to the pool")
+            elif not re.search(re.escape(hit.group(1)) + r"\[" + re.escape(hit.group(2)) +
+                               r"\][ \t]*=[ \t]*" + re.escape(hit.group(1)) + r"\.back\(\)",
+                               body[hit.end():]):
+                bad12.append("`%s[%s].set` is retired but that slot is not the one the "
+                             "swap-pop overwrites, so the handle handed to the pool and the "
+                             "entry dropped from the cache are two different sets"
+                             % (hit.group(1), hit.group(2)))
         for call in ("vkFreeDescriptorSets", "vkResetDescriptorPool"):
             if call + "(" in body:
                 bad12.append("forgetDescriptorSets calls %s at the drop site: a set a "
@@ -1266,10 +1298,25 @@ def backend_checks(r, text, quiet):
     rsp = body_span(code, "retireDescriptorSet")
     if not rsp:
         bad12.append("retireDescriptorSet is not in the file")
-    elif not re.search(r"safeFrame[ \t]*=[^;]*frameIndex[^;]*kFramesInFlight",
-                       code[rsp[0]:rsp[1]]):
-        bad12.append("retireDescriptorSet's deadline is not frameIndex + kFramesInFlight, "
-                     "so it is not the boundary beginFrame's fence actually proves")
+    else:
+        rbody = code[rsp[0]:rsp[1]]
+        # EXACTLY `frameIndex + kFramesInFlight`, with nothing after it. The loose
+        # form of this rule matched `... + kFramesInFlight - 1`, which is the
+        # off-by-one that frees a set the just-submitted frame binds: retire in
+        # frame N, free at begin(N+1), and the fence waited there is frame N-1's
+        # (review-9 F1 mutant 3).
+        if not re.search(r"safeFrame[ \t]*=[ \t]*\w+->frameIndex[ \t]*\+[ \t]*"
+                         r"(?:mdk::vk::)?kFramesInFlight[ \t]*;", rbody):
+            bad12.append("retireDescriptorSet's deadline is not exactly frameIndex + "
+                         "kFramesInFlight with no offset, so it is not the boundary "
+                         "beginFrame's fence actually proves")
+        # AND IT MUST RECORD THE SET. A helper that builds a RetiredSet, names its
+        # deadline, and drops the local on the floor leaves every other shape here
+        # green while the leak runs at full size (review-9 F1 mutant 1).
+        if "retiringSets.push_back(" not in rbody:
+            bad12.append("retireDescriptorSet never records the set it was handed — the "
+                         "call at the drop site is a function call and nothing more, and "
+                         "the pool loses one set per drop")
 
     ssp = body_span(code, "settleRetired")
     if not ssp:
@@ -1285,6 +1332,20 @@ def backend_checks(r, text, quiet):
             if "safeFrame" not in tail:
                 bad12.append("settleRetired frees retired sets without comparing their "
                              "safeFrame, so it frees sets a queued frame may still bind")
+            # FREE IT, THEN REMOVE IT. A settle that frees and leaves the entry
+            # frees the same handle on every frame after it — and once the pool has
+            # handed that handle back out it is freeing a live set (review-9 F1
+            # mutant 2). Removing it before the free would lose a handle whose free
+            # failed, so the order is part of the rule.
+            free_at = tail.find("vkFreeDescriptorSets(")
+            erase_at = tail.find("retiringSets.erase(")
+            if erase_at < 0:
+                bad12.append("settleRetired frees a retired set and never removes it from "
+                             "the list, so every later frame frees that handle again and, "
+                             "once the pool reissues it, frees a live set")
+            elif free_at >= 0 and erase_at < free_at:
+                bad12.append("settleRetired removes the entry before freeing the set, so a "
+                             "failed free loses a handle the pool never got back")
             m = re.search(r"(\w+)[ \t]*=[ \t]*vkFreeDescriptorSets[ \t]*\(", tail)
             inline = re.search(r"if[ \t]*\([ \t]*vkFreeDescriptorSets[ \t]*\(", tail)
             if "vkFreeDescriptorSets(" not in tail:
@@ -1305,7 +1366,9 @@ def backend_checks(r, text, quiet):
     say(CHK["B12"], not bad12,
         "a descriptor set is a slot in a pool with a fixed budget; forgetting the cache "
         "entry frees nothing, freeing it at the drop site is use-after-free, and freeing "
-        "it on a pool that never asked for freeable sets is invalid use" +
+        "it on a pool that never asked for freeable sets is invalid use; and a retire "
+        "that records nothing, a settle that never erases, and a deadline one frame "
+        "early are all three of those failures wearing the fix's clothes" +
         ("" if not bad12 else " — " + "; ".join(bad12)))
 
 
@@ -2095,6 +2158,54 @@ arm_backend("pool-not-created-freeable", be_pool_not_freeable, "B12")
 arm_backend("retired-sets-never-freed", be_retired_sets_never_freed, "B12")
 arm_backend("set-freed-without-a-deadline", be_set_freed_without_a_deadline, "B12")
 arm_backend("set-free-result-discarded", be_set_free_result_discarded, "B12")
+
+
+def be_retire_records_nothing(s):
+    """Review-9 F1 mutant 1, the one that matters: the drop site still calls the helper,
+    the helper still names a deadline, and the record goes nowhere. The leak this batch
+    exists to close is back at full size with every part of the shape intact. B12
+    only."""
+    lo = s.index("void retireDescriptorSet(")
+    hi = s.index("\n}\n", lo)
+    return s[:lo] + s[lo:hi].replace("r->retiringSets.push_back(retired);",
+                                      "(void)retired;", 1) + s[hi:]
+
+
+def be_settle_does_not_erase(s):
+    """Review-9 F1 mutant 2: the free is real and the entry stays, so every frame after
+    it frees the same handle again — and once the pool reissues that handle this is a
+    free of a live descriptor set. The free, its result and the deadline all still
+    read correctly. B12 only."""
+    lo = s.index("void settleRetired(")
+    hi = s.index("\n}\n", lo)
+    return s[:lo] + s[lo:hi].replace(
+        "r->retiringSets.erase(r->retiringSets.begin() + (long)i);", "i++;", 1) + s[hi:]
+
+
+def be_deadline_one_frame_early(s):
+    """Review-9 F1 mutant 3, the tidy-up that reads as an optimisation: settle one frame
+    sooner. Retire in frame N, free at begin(N+1), and the fence waited there is frame
+    N-1's — so the set goes back while the frame that bound it is still on the queue.
+    B12 only."""
+    lo = s.index("void retireDescriptorSet(")
+    hi = s.index("\n}\n", lo)
+    return s[:lo] + s[lo:hi].replace(
+        "retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight;",
+        "retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight - 1;", 1) + s[hi:]
+
+
+def be_retire_the_wrong_set(s):
+    """Review-9 F1 mutant 4: the call is there and the deadline is right, but the set
+    handed over is the last one in the cache instead of the one being dropped — a live
+    pair's set, unless the dropped entry happened to sit last. B12 only."""
+    return s.replace("retireDescriptorSet(r, r->descs[i].set);",
+                     "retireDescriptorSet(r, r->descs.back().set);", 1)
+
+
+arm_backend("retire-records-nothing", be_retire_records_nothing, "B12")
+arm_backend("settle-does-not-erase", be_settle_does_not_erase, "B12")
+arm_backend("deadline-one-frame-early", be_deadline_one_frame_early, "B12")
+arm_backend("retire-the-wrong-set", be_retire_the_wrong_set, "B12")
 
 checks = sum(r.checks for r in real)
 arms = [("Linux frontend", FRONT_ARMS, FILES["Linux frontend"]),

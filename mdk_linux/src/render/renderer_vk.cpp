@@ -194,6 +194,10 @@ struct RendererVk {
     // The palette pipeline's objects.
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     VkDescriptorPool descPool = VK_NULL_HANDLE;
+    // Descriptor sets that a failed `vkFreeDescriptorSets` lost for good (see
+    // `settleRetired`). The handle is dropped rather than retried, so without a
+    // count the only trace of one is a refusal that prints once per sentence.
+    uint32_t lostDescriptorSets = 0;
     VkPipelineLayout pipeLayout = VK_NULL_HANDLE;
     VkPipelineCache pipeCache = VK_NULL_HANDLE;
     // The C#'s two samplers (Renderer.cs:249-250): the REPEAT one for a
@@ -307,9 +311,13 @@ void settleRetired(RendererVk* r) {
     // on every same-size update — spent a set for the rest of the process, and
     // when the pool ran out every draw that needed a new pair was skipped.
     //
-    // It waits for the same boundary the buffers do, for the same reason:
-    // `vkFreeDescriptorSets` requires the set not be in use, and a frame that
-    // recorded `vkCmdBindDescriptorSets` with it may still be on the queue.
+    // THE SET waits for the boundary the buffers wait for, for the set's own
+    // reason: `vkFreeDescriptorSets` requires the set not be in use, and a frame
+    // that recorded `vkCmdBindDescriptorSets` with it may still be on the queue.
+    // Only the SET. The image view it names is destroyed at the drop site, in the
+    // same call that retired this one, and has no deadline of its own — see
+    // `retireDescriptorSet`, which says so, and the open item that is the real
+    // fix. Do not read this paragraph as a completion boundary for the pair.
     for (size_t i = 0; i < r->retiringSets.size();) {
         const RetiredSet retired = r->retiringSets[i];
         if (retired.safeFrame > r->frameIndex) {
@@ -319,10 +327,16 @@ void settleRetired(RendererVk* r) {
         VkDescriptorSet set = retired.set;
         const VkResult freed = vkFreeDescriptorSets(r->ctx.device, r->descPool, 1, &set);
         if (freed != VK_SUCCESS) {
-            // The set is gone from this point either way — a failed free leaves
-            // it in an undefined state, so retrying is not a thing — but the
-            // pool running dry for a reason the log can show is a different
-            // failure from a pool running dry silently.
+            // The handle is dropped rather than retried, and the reason is a
+            // valid-usage rule rather than a guess: the spec gives this call
+            // OUT_OF_HOST/DEVICE_MEMORY as result codes and does NOT say whether
+            // the sets were freed when it returns one, while its own rule is that
+            // a set "must not have been freed already". So a retry can be a second
+            // free of a handle the driver already took. Losing one set is the
+            // smaller failure — but it is COUNTED, because the refusal below
+            // prints once and a pool quietly holding N fewer sets than its reader
+            // believes is the same silent-budget bug this batch closed.
+            r->lostDescriptorSets++;
             refused("return a descriptor set to the pool: the set is lost and the "
                     "pool has one fewer to hand out; when it empties, every draw "
                     "that needs a new texture/palette pair is skipped");
@@ -336,9 +350,17 @@ void settleRetired(RendererVk* r) {
 // The cache drops a set because the image view it names is about to be destroyed
 // or replaced, so the entry must go NOW — but the set itself is named by whatever
 // this frame has already recorded, and `vkFreeDescriptorSets` on a set an
-// in-flight command buffer binds is invalid use. So it waits for the boundary
-// `settleRetired` implements, which is the fence `vk::beginFrame` just waited
-// (AGENTS.md P3), not a lock and not a cache flush.
+// in-flight command buffer binds is invalid use. So the SET waits for the
+// boundary `settleRetired` implements, which is the fence `vk::beginFrame` just
+// waited (AGENTS.md P3), not a lock and not a cache flush.
+//
+// THE VIEW DOES NOT WAIT, and that is a gap rather than a design. Every caller
+// destroys the image, its view and its memory in the same call that retires this
+// set, so a frame still on the queue can be sampling a destroyed view while only
+// the handle has been deferred. AGENTS.md P3 asks for the boundary on the whole
+// resource, not on half of it; giving the image its own deadline is a separate
+// slice (a `RetiredImage` beside this struct, settled here) and is recorded as an
+// open item instead of being implied by the paragraph above.
 void retireDescriptorSet(RendererVk* r, VkDescriptorSet set) {
     if (!set) {
         return;
@@ -1365,11 +1387,13 @@ VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette
     VkDescriptorSet set = VK_NULL_HANDLE;
     if (vkAllocateDescriptorSets(r->ctx.device, &alloc, &set) != VK_SUCCESS) {
         // The cache returns sets to this pool (`forgetDescriptorSets` retires,
-        // `settleRetired` frees), so running dry means the churn outran 4096
-        // live sets rather than a leak (review-5 F1). The callers do NOT draw
-        // without a set: a draw with the previous draw's set bound is a WRONG
-        // picture, which is worse than the missing one every other refusal
-        // here produces.
+        // `settleRetired` frees), so a dry pool is no longer a leak — but it is
+        // NOT only `descs.size()` that spends the 4096: a retired set holds its
+        // slot until the frame boundary frees it, so the churn that dries the
+        // pool is live sets PLUS the ones awaiting that boundary (review-9 F3).
+        // The callers do NOT draw without a set: a draw with the previous draw's
+        // set bound is a WRONG picture, which is worse than the missing one every
+        // other refusal here produces.
         refused("descriptor set for texture %d palette %d (%s sampler): the draw that "
                 "asked for it is skipped rather than sampled with the previous set",
                 (int)texture, (int)palette, repeat ? "REPEAT" : "CLAMP");
@@ -1819,6 +1843,14 @@ void mdk_render_destroy(MdkRenderer rr) {
     if (r->pipeCache) vkDestroyPipelineCache(r->ctx.device, r->pipeCache, nullptr);
     if (r->pipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->pipeLayout, nullptr);
     if (r->descPool) vkDestroyDescriptorPool(r->ctx.device, r->descPool, nullptr);
+    if (r->lostDescriptorSets) {
+        // Printed here, once, rather than inside `settleRetired`'s refusal: that
+        // helper dedups on the rendered sentence, so a count inside it is a new
+        // sentence per frame and the flood B7 exists to prevent (review-9 F3/F4).
+        // Teardown is the one place a running total cannot repeat.
+        std::printf("[vk] %u descriptor set(s) were lost to failed frees and are "
+                    "gone from the pool for good\n", (unsigned)r->lostDescriptorSets);
+    }
     // No per-set free here, and none for `retiringSets`: destroying a descriptor
     // pool returns every set allocated from it, retired ones included, so a
     // second release of the same handle would be the double free this file has

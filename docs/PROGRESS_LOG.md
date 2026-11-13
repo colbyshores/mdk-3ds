@@ -1,3 +1,118 @@
+## Iteration 164 — batch 164: `linux.render-frame` — the check pinned the parts of the retire and never pinned the join; four mutants proved it and all four are red now
+
+**LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`, attempt 2 of 8.
+Review under remediation: `logs/ralph-pi/run-20261113-021356/review-9.md` (on batch 163, `be5b673`)
+— no Critical and no High, so nothing was mandatory by the letter of the protocol, but the reviewer
+blocked its own verdict on its two Mediums and both are real. F1 (Medium) and F2 (Medium) are
+FIXED, F3 (Low) and F4 (Low) are FIXED, none rebutted. Full record:
+`docs/evidence/2026-11-13-164-the-join-not-the-parts.txt`.**
+
+**WHAT THIS BATCH ACTUALLY FIXES IS A CLAIM, NOT A PIXEL.** Batch 163 closed a descriptor-pool leak
+and B12 shipped as the check that keeps it closed. Review-9 wrote four mutants and every one of
+them printed `PASS LinuxRefusalReport (19 checks, 47 arms adjudicated red)` while putting the
+defect back, because B12 asked whether each PART existed and never asked whether the parts were
+connected. **I re-ran all four before touching anything, on a copy of the tree, and all four
+reproduced verbatim:** `M1 retire-records-nothing rc=0`, `M2 settle-does-not-erase rc=0`,
+`M3 deadline-one-frame-early rc=0`, and `M4/M4b retire-the-wrong-set rc=1` — that last one red for
+the wrong reason, only because the registered arms mutate by exact string match and could no longer
+apply, which is sensitivity to a rewording and not a pin. **M1 is `push_back` -> `(void)retired;`
+inside `retireDescriptorSet`: the leak batch 163 exists to close, fully restored, printing PASS.**
+M3 is `+ kFramesInFlight - 1`, which frees a set on the frame whose fence has not been waited yet.
+
+**B12 NOW PINS THE JOIN, ONE SHAPE PER MUTANT, WITH AN ARM AP PIECE.** (a) `retireDescriptorSet`'s
+body must contain `retiringSets.push_back(` — a helper that builds a `RetiredSet`, names its
+deadline, and drops the local on the floor is not a retire. (b) the settle's set loop must contain
+`retiringSets.erase(` and AFTER the `vkFreeDescriptorSets` call: never erasing frees the same handle
+every frame after it, and once the pool reissues it that is a free of a LIVE set; erasing first
+loses a handle whose free failed. (c) the deadline must be EXACTLY `frameIndex + kFramesInFlight`
+with nothing after it — the old regex `safeFrame[^;]*frameIndex[^;]*kFramesInFlight` matched
+`- 1` because `[^;]*` runs to the semicolon, which is precisely how M3 hid. (d) the drop site's
+argument must be `<container>[<index>].set` for the same slot the swap-pop overwrites, which is the
+identity "the set handed to the pool is the set the cache dropped" and the one thing
+`r->descs.back().set` and `VK_NULL_HANDLE` both fail. Four arms ship with it
+(`retire-records-nothing`, `settle-does-not-erase`, `deadline-one-frame-early`,
+`retire-the-wrong-set`), each required to redden B12 and nothing else. **`LinuxRefusalReport` is 19
+checks / 47 arms -> 19 checks / 51 arms, and the five mutants now rc 1 with B12 red as a CHECK.**
+
+**THE FOUR-WAY, INCLUDING THE ROW THAT IS GREEN AND SHOULD BE.** New test on working sources rc 0
+(19/51); new test on HEAD rc 0 — **green, and that is the honest result**: batch 163's fix is
+committed at HEAD, so HEAD already satisfies every new shape, and a batch that moves no production
+shape cannot red that row. The instrument that proves the new arms bite is the mutant table, which
+is the same instrument the reviewer used against batch 163. New test on the PRE-FIX commit
+`3aef28d`: rc 1, exactly ONE check red, B12, all four sub-findings named — the strengthening did not
+blunt the original pin. Parent test on working sources: rc 0, **zero collateral**. Parent test on
+HEAD: rc 0.
+
+**F2 (Medium): THE SET WAITS TWO FRAMES AND THE VIEW IT NAMES IS FREED ON THE SPOT, AND THE NEW
+COMMENT MADE THAT READ LIKE A DESIGN.** `mdk_render_update_texture`, `mdk_render_release_texture`
+and `mdk_render_release_palette` each call `forgetDescriptorSets` and then `destroyImage` in the
+same call, and `destroyImage` destroys view -> image -> memory synchronously with no deadline, so a
+frame still on the queue can be sampling a destroyed view while only the handle has been deferred.
+AGENTS.md P3 puts the completion boundary before the CPU release for the RESOURCE, not only for the
+handle that points at it. Pre-existing — no `destroyImage` call site changed — and the reviewer said
+so itself; what made it a finding was batch 163's sentence that the set "waits for the same boundary
+the buffers do", true of the set and readable as covering the pair. **Fixed by the reviewer's own
+option (b):** both comments now say THE SET, only the set, and `retireDescriptorSet`'s doc comment
+carries the disclosure in full ("THE VIEW DOES NOT WAIT, and that is a gap rather than a design ...
+a `RetiredImage` beside this struct ... recorded as an open item instead of being implied"), and the
+real fix is CONTINUATION item 11e. Option (a) was NOT taken on purpose: retiring every texture and
+palette changes the lifetime of both resource families, interacts with `update_texture`'s
+keep-the-old-image failure path and with teardown, and needs its own arms — two subsystem slices in
+one commit, which `ralph/builder.md` forbids.
+
+**F3 (Low) FIXED, AND THE OPTIONAL HALF DECLINED WITH A REASON THAT IS IN THE CODE.** "Running dry
+means the churn outran 4096 live sets" was wrong in the direction that misleads a debugger: a
+retired set holds its slot until the frame boundary frees it, so the budget is live PLUS
+pending-retired, and the comment now says so. Reporting `descs.size()` and `retiringSets.size()`
+inside the refusal is declined because `refused()` dedups on the RENDERED SENTENCE and the table is
+capped at `kRefusalMemory = 256` with the documented rule "past the cap everything prints" — a
+volatile number in the sentence is a new key per frame, and past 256 keys it prints every frame.
+That is the 22500-lines-for-48-requests flood B7 exists to prevent, measured in
+`docs/evidence/2026-11-12-149-refusal-discovery.txt`. A diagnostic you can only buy by
+reintroducing a finding from nine reviews ago is not a cheap fix.
+
+**F4 (Low): THE SPEC SENTENCE I HAD QUOTED DOES NOT EXIST, SO THE JUSTIFICATION WAS REPLACED, NOT
+RE-CITED.** Review-9 asked for a citation for "a failed free leaves it in an undefined state" and
+was right to: there is no such sentence, and the vendored header carries no spec prose, so nothing
+was invented either. The position now written down rests on two undisputed things — the result codes
+this call can return, and its valid-usage rule that a set "must not have been freed already" — which
+together make a RETRY the unsafe branch (if the driver did take the sets, retrying is a double
+free). Dropping the handle is the safe branch, its cost is one leaked set, and that set is now
+COUNTED (`RendererVk::lostDescriptorSets`) and printed once at teardown, where a running total
+cannot repeat.
+
+**GATES, VERBATIM.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **765 PASS /
+0 FAIL** — unchanged from batch 163 and correctly so, because the refusal test contributes ONE
+`PASS LinuxRefusalReport` line, not one per check; this run's line reads `PASS LinuxRefusalReport
+(19 checks, 51 arms adjudicated red)`. (`grep -c FAIL` over the log returns 3; all three are prose
+inside test labels — "without the word FAILED" twice and "no canary pixels FAILS". No check
+failed.) `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp
+sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`,
+`COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`, `COMPLETION: LEDGER VERIFIED`,
+`SKIP gates_smdh`. `make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5
+`728eb2350c3ef8a81acda15f75617c1e` **UNCHANGED** — correct, no `mdk_3ds/**` file changed, so no P8
+emulator evidence is owed. **And the stale-binary hazard was checked, not assumed:** nothing in the
+gate set compiles `mdk_linux/**`, so `build-linux/mdk` was built by hand twice — after the code
+edits and again after the final comment rewrap — so the binary (06:07:19) is newer than the source
+(06:07:04) that `gates_frames` certifies. A standalone `-fsyntax-only` with the project's own flags
+is rc 0 with zero warnings.
+
+**FRAME.** `docs/frames/2026-11-13-the-join-not-the-parts.png` (+ `.txt`), published on `:99`.
+Census re-derived rather than remembered: 182 PNGs, 181 at md5 `6769a137…` including this one, so
+the picture is byte-identical to its predecessors — the expected result for a batch that moves no
+pixel. The pure-(0,0,255) census was re-run by decoding THIS file: 320x240, zero pure blue pixels.
+
+**PRIOR-SOLUTION LOOKUP.** Pi knowledge (`mdk-sdl`, hybrid) top hit at 0.938 was the review-25
+closure in `docs/OPEN_ITEMS.md` that batch 163 built on; nothing on a retire/settle join or on the
+view-lifetime gap. **Obsidian and Cognee MCP are ABSENT from this session's tool list** (AGENTS §9
+P9: a session fault to report, not a licence to claim the lookup), so the vault was read read-only
+from disk — a bounded grep over `10-projects/mdk-sdl`, `30-architecture`, `50-tooling` for
+`descriptor set` / `VkDescriptorPool` found nothing — and no Cognee graph lookup is claimed.
+
+**THE ROW'S BLOCKER IS UNCHANGED AND IS NOT A BEHAVIOUR.** `docs/COMPLETION_LEDGER.tsv` is
+`coleshores:coleshores 0664`; this lane is `piagent` (groups `piagent, development`) and `test -w`
+says NOT WRITABLE. Attempt 2 of 8.
+
 ## Iteration 163 — batch 163: `linux.render-frame` — the descriptor cache forgot its sets and the pool never got one back
 
 **LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`, attempt 1 of 8.
