@@ -318,3 +318,38 @@ sanctioned closer is `tools/runner/ledger_close.py`, which is itself PROTECTED.
 Re-verified again: the row's acceptance is green for a sixth attempt under a rule
 stricter than batch 159's, and the blocker is a chmod, not a behaviour.
 
+
+================================================================================
+CORRECTION BLOCK — appended by batch 161 (review-6 F1 and F3), 2026-11-13.
+The text above is left exactly as batch 160 wrote it; this block is the audit
+trail. Two claims in it are false and one is not evidence.
+================================================================================
+
+C1 (review-6 F1). Line ~93 and the F2 paragraph say `--min-frames` is "the one
+field a CALLER spells" / "the one field whose spelling this file does not
+choose". FALSE. `--secs` is also caller-spelled, was never validated, and is the
+only one of the two that reaches `$(( ))`, where a leading zero is a BASE:
+measured on batch 160's own shipped file, `--secs 010` settled 8 s with a
+confident rc-0 verdict, `--secs 0045` settled 37, `--secs 08` aborted at the
+undocumented rc 1, `--secs +45` walked a sign into arithmetic, and `--secs ""`
+settled for nothing because `$(( x + ))` is 0. Batch 161 fixed it with the same
+`decimal_measurement` predicate at parse time, `10#` at the arithmetic, and
+`MAX_SECS=3600` derived as a relation to MAX_FRAMES. The quadratic-strip
+measurement in F2 stands; only the scope claim was wrong.
+
+C2 (review-6 F3). "the intersection of those 7 red labels with the parent test's
+own label set is EMPTY — 0 pre-existing collateral, as a set identity" does not
+support its conclusion. The 7 labels exist only in the NEW test file, so the
+intersection is empty for ANY implementation and cannot detect collateral. The
+collateral evidence is the fourth run named in section 4 (parent test file on
+the working harness, 214 checks, 0 FAIL), which is reported and was re-run by
+batch 161. The same correction applies to batch 159's copy of the sentence.
+
+C3 (review-6 F2, a measurement this file's method could not see). The published
+"227 checks, 0 FAIL" counts were single samples of a flaky distribution: one of
+the test's own presence rows piped a 32 KB lifted block into an early-exit grep
+under `pipefail`, and measured 15-27 reds per 200 runs at the payload sizes in
+this tree (0 with `pipefail` off). The counts batch 160 published were not
+fabricated and no row was red on the tree at the time they were taken; they were
+one draw from a distribution. Batch 161 removed the pipe, so its own counts are
+deterministic, and says so rather than quietly re-publishing.

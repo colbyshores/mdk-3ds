@@ -1,3 +1,114 @@
+## Iteration 161 — batch 161: `3ds.hud-canvas` — the base defect was one flag over, and the test had a race in it
+
+**LEDGER ROW `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`, attempt 7 of 8.
+Review under remediation: `logs/ralph-pi/run-20261113-021356/review-6.md` (on batch 160) — F1 (Medium),
+F2 (Medium), F3 (Low); no Critical and no High, so nothing was mandatory. All three reproduced against
+the shipped file before anything was edited; all three fixed; none rebutted. All three are in the row's
+own acceptance command and its own test, which for this row IS the work. Full record:
+`docs/evidence/2026-11-13-161-secs-and-the-race.txt`.**
+
+**THE BATCH'S ONE IDEA: A FIX'S SCOPE IS NOT ITS AUTHOR'S CLAIM ABOUT IT.** Batch 160 closed the
+"one spelling, two bases" class for the four bbox fields and wrote down that `--min-frames` was "the one
+field whose spelling this file does not choose". That sentence was the bug's remaining radius: `--secs`
+was also caller-spelled, was never validated at all, and is the only one of the two that reaches
+`$(( ))`, where a leading zero is a base and not a spelling.
+
+**F1 (Medium, CONFIRMED, FIXED): `--secs` WAS THE OTHER CALLER-SPELLED FIELD, AND THE ONLY ONE READ BY
+ARITHMETIC.** Reproduced by lifting the shipped parser — measurement block, defaults, `need_value`, the
+argument loop, the `END=$(( ))` line, in the order the real file runs them — and running it against a
+`date` that returns a fixed epoch, so the settle window is an exact number and not a date plus a race:
+`--secs 010` settled **8 s** and printed a confident verdict, `--secs 0045` settled 37, `--secs 08`
+aborted at the undocumented **rc 1** that `need_value` exists to prevent, `--secs 4s` aborted the same
+way, `--secs +45` walked a sign into arithmetic, `--secs 99999` asked for 27.7 hours with no bound, and
+— the case the reviewer did not name — `--secs ""` settled for **nothing**, because `$(( x + ))` is 0:
+a wrapper whose variable went empty got a 0-second settle window and a full verdict, which is the
+`--min-frames ""` shape review-3 F2 closed, exactly one flag over. That last one is why a bound alone
+is not the fix. Three changes: `MAX_SECS=3600` (`emurun.sh:207`), the parse-time guard
+`decimal_measurement "$2" "$MAX_SECS"` refusing at 2 by name (`:251`), and `10#$SECS` at the arithmetic
+(`:910`). **THE BOUND IS A RELATION, NOT A TASTE**: the two constants describe one run — a settle window
+produces frames — so a legal `--secs` must never be able to produce a frame count `frame_floor` then
+refuses to evaluate, i.e. `MAX_SECS × 60 ≤ MAX_FRAMES` at the ~60 fps the file already assumes when it
+calls MAX_FRAMES "about 4.6 hours". The test reads both constants out of the harness and checks that
+inequality instead of trusting this sentence, and checks that the bound printed by the refusal IS the
+constant. **AND THE BOUND DOES NOT MAKE THE BASE SAFE**: `--secs 0045` is legal and must settle 45, not
+37, so `10#` is load-bearing on its own. What the fix does NOT do: `--secs 08` is now ACCEPTED and means
+8 — refusing a padded-but-consistent value would be a spelling check wearing a relation's clothes, which
+is batch 160's own ruling applied the other way. The other caller-spelled flags were assessed and left
+alone: `--grep`, `--shot` and `--expect` are strings used as strings, and `--display` is a number used as
+a string, where a wrong one fails loudly at the `xdpyinfo` check (rc 2, named) instead of silently
+measuring something else.
+
+**F2 (Medium, CONFIRMED, FIXED): THE PRESENCE CHECK THAT PIPED WAS A RACE, AND THIS BATCH WOULD HAVE
+MADE IT WORSE.** `printf '%s\n' "$BLOCK" | grep -q …` under the test file's own `set -uo pipefail`:
+grep exits at its first match, printf takes EPIPE on the rest of the payload, and pipefail turns that
+into a red row on an unmodified tree. Measured in isolation on the real lifted payload, 200 runs each:
+**27 of 200 red** at 32 816 B, 1 of 200 at a different match position, 0 of 200 at 6 464 B, and **0 of
+200 with `pipefail` OFF** — the mechanism is SIGPIPE, not the pattern, which is what makes the finding
+real rather than a flake anecdote. The reviewer found one row; **there were four piped rows in the file**
+(389, 391, 395, 628 of the parent). One helper, `lift_contains` (`case`, no pipe, literal pattern, so
+`canary_stats()` matches itself and not a class), replaces all four — the same shape batch 158 used for
+"is this a number": several spellings of one question, one of them wrong, and the fix is one spelling.
+**THE MEASUREMENT THAT DECIDES IT is this batch's own growth**: the piped form measured 0–1 of 200 red on
+the parent's 30 235-byte block and **15 of 200 red on this batch's 34 443-byte block**, so leaving the
+pipe in place would have made an already-flaky row fifteen times flakier while the batch was publishing
+"0 FAIL" counts four times. Two rows pin it past the four it replaces: 200 runs on the real block must
+agree (at the measured rate that is a ~1e-25 event on the piped form, so it is a pin and not a
+formality), and the file may never contain a piped early-exit grep again — a shape row greps the test
+file itself.
+
+**F3 (Low, CONFIRMED, RECORD ONLY): "THE INTERSECTION IS EMPTY" WAS A TAUTOLOGY PRESENTED AS A SET
+IDENTITY.** The 7 red labels batch 160 published exist only in the NEW test file, so their intersection
+with the parent test's label set is empty for ANY implementation whatsoever and cannot detect
+collateral. Corrected in place in this file — in batch 160's copy AND batch 159's, which used the same
+sentence for the same reason — and appended as a CORRECTION block to `docs/evidence/2026-11-13-160-one-base.txt`
+rather than rewritten there, so the original claim stays auditable. The collateral evidence is the fourth
+run, parent test file on the working harness, which every batch that ran it reports and this batch
+re-ran.
+
+**THE GATE PROVED ITSELF, AND THE FOURTH RUN IS NOW NAMED AS THE ONE THAT MEANS IT.** New test on the
+parent harness: **253 checks, 19 FAIL** (batch 160's 7 + this batch's 12); parent test on the parent
+harness: **214 checks, 0 FAIL**; **parent test on the working harness: 214 checks, 0 FAIL** — the
+collateral run, and per F3 the only one of the four that can see collateral; new test on the working
+harness: **253 checks, 0 FAIL**. Composition of this batch's 12: 3 window rows (010, 0045, 08), 1
+inclusive-bound row, 5 named refusals (4s, +45, empty, MAX_SECS+1, 99999), 1 bound-import row, 2
+MAX_SECS declaration/relation rows — plus one rc row that is VACUOUS on the parent for the reason the
+file already documents (the build check also exits 2), which is why every refusal row asserts the
+MESSAGE and not the code. `EmurunHarness` is 227 → **253 checks** (+26), and the host suite moved
+735 → **761 PASS / 0 FAIL**, which is +26 exactly: the new rows are the only delta the goldens saw.
+
+**THE FLAKE, MEASURED IN BOTH DIRECTIONS, INCLUDING AGAINST ITSELF.** 20 full-suite runs of the parent
+test on the parent harness: **0 red** — which does NOT rebut F2, because the full-suite rate is low
+(the reviewer measured ~5% and saw one in 19 runs) so 20 samples cannot show it, while the isolated row
+measured 15–27 of 200 at the payloads in this tree. The decisive measurement is the mechanism, not the
+frequency. 20 full-suite runs of the new test on the working harness: **0 red**.
+
+**THE ACCEPTANCE, AS RUN (AGENTS.md P7/P8).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` →
+**rc 0**: Mandarine r1.2.1 md5 `0d2adab6ad078c78e6d03e72086f2eb6` (verified before believing the run),
+display `:99`, llvmpipe forced, `graphics_api=1` (OpenGL), `render_3d=0` (mono), dspfirm seeded, level 7,
+frame 2460 by the deadline (46 frame lines) and 2580 after the reap (48), `canvas: quads=4 draws=2
+mesh=2 corners=24 eyes=1 (canvas frame 2520)`, and `HUD VISIBLE -- 121 canary pixels in the panel, 121
+inside the marker's rect 0,0-11,11 (bbox 0,0-10,10, reaching the derived (10,10))` — the same verdict
+batch 160 printed, which is the point: the acceptance passes no `--secs`, so the default 45 is the value
+under test and the fix changed nothing on an honest run. The lane's mount was left mounted because a
+process outside this lane was executing from it (the harness's own co-tenant rule, working as designed).
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **761 PASS / 0 FAIL**
+(was 735); `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp
+sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION: LEDGER VERIFIED`, `PASS gates_core_parity
+both targets link the same core`, `SKIP gates_smdh no built .cia to read`; `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5
+`728eb2350c3ef8a81acda15f75617c1e` **UNCHANGED** — correct, the diff is one shell harness and one shell
+test, no compiled source. Frame `docs/frames/2026-11-13-secs-and-the-race.png` is byte-identical to its
+**177** identical predecessors (re-derived from the tree: 179 PNGs, 178 at sha256 `6646adf1…` / md5
+`6769a137…`, this one is one of them), and the pixel census was re-run rather than repeated: **zero**
+pure (0,0,255) pixels, so the canary evidence is the live emulator run and never the committed frame.
+Prior-solution lookup: Pi knowledge searched (`mdk-sdl`, hybrid) for the SIGPIPE/pipefail class and for
+prior presence-check doctrine; it surfaced no prior note on the race (the nearest hits are the
+"non-vacuity" and "a check that cannot evaluate must report, not return false" pins), so the mechanism
+was established by measurement instead. **Obsidian and Cognee MCP servers are ABSENT from this session's
+tool list** — a session configuration fault per AGENTS §9 P9, not a licence to claim the lookup happened
+— so no Cognee graph lookup is claimed and the vault was read read-only from disk.
+
 ## Iteration 160 — batch 160: `3ds.hud-canvas` — the counts were compared, in two different bases
 
 **LEDGER ROW `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`, attempt 6 of 8.
@@ -32,7 +143,11 @@ in decimal still passes and prints its padding — the same box spelled differen
 
 **F2 (Medium, CONFIRMED, FIXED): THE ZERO-STRIP COST QUADRATIC TIME IN THE ONE FIELD A CALLER
 SPELLS.** Measured on the shipped function: 779 ms at 4 002 characters, 22 s at 20 002, and
-`--min-frames` is read three times per run. Not a perf note: a wrapper that pads from a fixed-width or
+`--min-frames` is read three times per run. **CORRECTED BY BATCH 161 (review-6 F1): it was not
+the one field.** `--secs` is also caller-spelled, was never validated, and is the one that reaches
+`$(( ))`, where a leading zero is a BASE and not a spelling — `--secs 010` settled 8 s and
+`--secs 08` aborted at rc 1. Fixed by batch 161 with the same predicate plus `10#` at the
+arithmetic; the quadratic-strip claim itself stands. Not a perf note: a wrapper that pads from a fixed-width or
 file-sourced value turned the acceptance command into a HANG instead of a verdict, and a hang is the
 failure mode this harness exists to avoid, which is why every other arm is a NAMED refusal. **THE
 REVIEWER'S SUGGESTED FIX DOES NOT FIX IT** — `${v#"${v%%[!0]*}"}` and extglob `+(0)` were both measured
@@ -60,8 +175,13 @@ parent harness: **227 checks, 7 FAIL**; parent test on the parent harness: **214
 test on the working harness: **227 checks, 0 FAIL**; and — because F2 rewrote a predicate 214 older rows
 depend on — **parent test on the working harness: 214 checks, 0 FAIL**, which is the run a new-rows-only
 comparison cannot see and the one that proves the rewritten predicate breaks nothing already pinned. All
-7 red labels carry this batch's tag; the intersection with the parent's own label set is **empty**, so 0
-pre-existing collateral is a set identity. Two of the seven are the false-red direction, because an arm
+7 red labels carry this batch's tag; ~~the intersection with the parent's own label set is
+**empty**, so 0 pre-existing collateral is a set identity~~. **CORRECTED BY BATCH 161 (review-6
+F3): that comparison is a tautology, not evidence.** The 7 labels exist only in the NEW test file,
+so their intersection with the parent test's label set is empty for ANY implementation whatsoever
+and cannot detect collateral. The collateral evidence is the fourth run named above — parent test
+file on the working harness, 214 checks, 0 FAIL — which is reported and was re-run by batch 161.
+Two of the seven are the false-red direction, because an arm
 that only refuses could be always-red and look identical to a correct one. `EmurunHarness` 214 → **227**.
 
 **THE ACCEPTANCE, AS RUN (AGENTS.md P7/P8).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` →
@@ -186,7 +306,10 @@ learned once already).
 AND NOT A COUNT.** New test on the parent harness: **214 checks, 20 FAIL**. Parent test on the parent
 harness: **182 checks, 0 FAIL** (green, as a committed state must be). New test on the working harness:
 **214 checks, 0 FAIL**. The 20 red labels were diffed against the label set of the parent test run on
-the parent harness and **the intersection is EMPTY — 0 pre-existing collateral**. Composition of the 20:
+the parent harness and ~~the intersection is EMPTY — 0 pre-existing collateral~~. **CORRECTED BY
+BATCH 161 (review-6 F3, applied to this sentence too): the red labels were new labels by
+construction, so that intersection was empty for any implementation; the collateral evidence is the
+parent-test-on-working-harness run, 214 checks, 0 FAIL.** Composition of the 20:
 7 F1 bbox/count refusals, 6 missing-value usage rows, 6 padded-decimal accepts (only 2 of the 6 CAN
 fail on the parent — it already accepted `0`, `00`, `099`, `0060`, because the length arm only bites
 past the bound's own digit count), 1 named-not-unbound, 1 fault-string-gone, 1 parse-level padded floor,

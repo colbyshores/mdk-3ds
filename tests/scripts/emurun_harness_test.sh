@@ -45,6 +45,29 @@ check() { # check <label> <expected> <actual>
     fi
 }
 
+# A PRESENCE CHECK ON A LIFTED BLOCK MUST NOT PIPE (review-6 F2). `printf '%s\n' "$BLOCK"
+# | grep` with the early-exit flag is not a deterministic check under this file's
+# `pipefail`: grep exits at its first match, printf then takes EPIPE on the rest of the
+# payload, and pipefail turns THAT into a red row on an unmodified tree. Measured on the
+# shipped file, 200 runs each: 27 red on the 32 816-byte canary block, 1 red on the same
+# block with the match at a different position, 0 red on the 6 464-byte measurement block
+# -- the rate is a function of payload size and match position, so every one of these rows
+# has been green by luck, and a loop that reds a row nobody changed is a wasted iteration.
+# A `case` reads the string in place: no pipe, no second process, nothing to race, and the
+# quoted half of the pattern is literal, so a name with regex characters matches itself.
+lift_contains() { # lift_contains <lifted block> <name> ; prints 1 or 0, and it cannot race
+    case "$1" in *"$2"*) echo 1 ;; *) echo 0 ;; esac
+}
+
+check "the presence helper finds a name that is there" "1" "$(lift_contains 'foo() { :; }' 'foo()')"
+check "and does not find one that is not there" "0" "$(lift_contains 'foo() { :; }' 'bar()')"
+check "and an empty block contains nothing, which is a 0 and not an error" "0" \
+      "$(lift_contains '' 'foo()')"
+check "and it matches LITERALLY: a dot in a name is a dot, not any character" "0" \
+      "$(lift_contains 'axby' 'a.b')"
+check "and a name that is a prefix of a definition line still matches, as grep did" "1" \
+      "$(lift_contains 'canary_stats() { # ...' 'canary_stats()')"
+
 # --- lift the config block out of the harness --------------------------------
 CFG_FN="$(awk '
     /^# Every override must clear/ { f = 1 }
@@ -386,15 +409,28 @@ EXPECT_FN="$(awk '/^# --- expectations ---/{f=1;next} /^# --- end expectations/{
 # taught the reader to ignore the file. Lift both, and say which is which.
 MEASURE_FN="$(awk '/^# --- measurements /{f=1;next} /^# --- end measurements /{f=0} f' "$EMU")"
 check "the measurement block was lifted from emurun.sh (non-vacuity)" "1" \
-      "$(printf '%s\n' "$MEASURE_FN" | grep -q 'decimal_measurement()' && echo 1 || echo 0)"
+      "$(lift_contains "$MEASURE_FN" 'decimal_measurement()')"
 check "and the frame floor came with it, so --min-frames is not pinned by a copy" "1" \
-      "$(printf '%s\n' "$MEASURE_FN" | grep -q 'frame_floor()' && echo 1 || echo 0)"
+      "$(lift_contains "$MEASURE_FN" 'frame_floor()')"
 EXPECT_FN="$MEASURE_FN
 $EXPECT_FN"
 check "the expectation block was lifted from emurun.sh (non-vacuity)" "1" \
-      "$(printf '%s\n' "$EXPECT_FN" | grep -q "expect_check()" && echo 1 || echo 0)"
+      "$(lift_contains "$EXPECT_FN" "expect_check()")"
 check "and the lift is syntactically complete, not a truncation of it" "0" \
       "$(printf '%s\n' "$EXPECT_FN" | bash -n 2>/dev/null; printf '%s' "$?")"
+# THE RACE, PINNED. A presence check on a committed file must be deterministic, so the
+# row repeats the real 32 KB block 200 times and requires the same answer every time; on
+# the piped form that is a ~1e-25 event (27 of 200 reds measured above), which is what
+# makes it a pin and not a formality. And the class is closed for the FILE, not just for
+# the four rows that were flaky: a lifted block is a shell variable, so this file must
+# never pipe one into grep with the early-exit flag again.
+RACE=1
+for _ in $(seq 1 200); do
+    [ "$(lift_contains "$EXPECT_FN" 'canary_stats()')" = 1 ] || RACE=0
+done
+check "the presence check is not a race: 200 runs on the real 32 KB block agree" "1" "$RACE"
+check "and no lifted block in this file is piped into grep with the early-exit flag" "0" \
+      "$(grep -c 'grep -[q]' "${BASH_SOURCE[0]}")"
 
 # The canary's own numbers, read back out of the harness so this file never carries a
 # second copy of the threshold or the rectangle.
@@ -625,7 +661,7 @@ check "and it moves the axis a canvasWidth error moves, and only that one" "1" \
 # The lifted block must contain the POSITIONAL half, or every check below is a
 # presence test on a fragment that lost it.
 check "the lift contains canary_stats, so the rect check cannot be a copy" "1" \
-      "$(printf '%s\n' "$EXPECT_FN" | grep -q 'canary_stats()' && echo 1 || echo 0)"
+      "$(lift_contains "$EXPECT_FN" 'canary_stats()')"
 
 stats_of() { # <shot> -> the harness's own "<total> <inside> <bbox...>" line
     ( eval "$EXPECT_FN"; canary_stats "$1" "$CANARY_X1" "$CANARY_Y1" ) 2>/dev/null
@@ -865,6 +901,20 @@ MAX_FRAMES="$( ( eval "$MEASURE_FN"; printf '%s' "$MAX_FRAMES" ) 2>/dev/null)"
 check "the harness declares MAX_FRAMES as a number (the floor is pinned, not guessed)" "1" \
       "$(case "$MAX_FRAMES" in ''|*[!0-9]*) echo 0 ;; *) echo 1 ;; esac)"
 check "and 999999 is a legal frame count against that bound" "accept" "$(dm 999999 "$MAX_FRAMES")"
+# THE SETTLE-WINDOW BOUND, READ OUT OF THE HARNESS (review-6 F1). `--secs` is the second
+# caller-spelled field and it needs a bound of its own; the bound is only defensible as a
+# RELATION to the frame bound, because the two constants describe one run: a settle window
+# produces frames, and the harness must not be able to settle long enough to produce a
+# frame count its own `frame_floor` then refuses to evaluate. The rate is the one the
+# harness's own MAX_FRAMES comment already assumes (~60 fps: "six digits ... about 4.6
+# hours"), and it is stated here rather than hidden because if that claim is ever
+# re-derived this row has to move with it.
+MAX_SECS="$( ( eval "$MEASURE_FN"; printf '%s' "$MAX_SECS" ) 2>/dev/null)"
+check "the harness declares MAX_SECS as a number (the settle bound is pinned) -- review-6 F1" "1" \
+      "$(case "$MAX_SECS" in ''|*[!0-9]*) echo 0 ;; *) echo 1 ;; esac)"
+check "and a full --secs window still yields a frame count the floor can compare -- review-6 F1" "1" \
+      "$(awk -v s="$MAX_SECS" -v m="$MAX_FRAMES" \
+             'BEGIN{print (s ~ /^[0-9]+$/ && m ~ /^[0-9]+$/ && s*60 <= m) ? 1 : 0}')"
 
 # The same fields at the level of the thing that decides the ledger row: a signed field
 # is NAMED as malformed, not silently read as a number.
@@ -1113,6 +1163,85 @@ timeout 5 bash -c '. "$1"; decimal_measurement "$2" 999999' _ "$DM_LIB" "${PAD20
 check "and it adjudicates 20 002 characters inside a bound, not in quadratic time -- review-5 F2" \
       "0" "$?"
 rm -f "$DM_LIB"
+
+# --- review-6 F1: the OTHER caller-spelled field, the one read by ARITHMETIC -----------
+#
+# Batch 160 closed the "one spelling, two bases" class for the bbox fields with `10#` and
+# wrote down that `--min-frames` was "the one field whose spelling this file does not
+# choose". It was not the one. `--secs` is also caller-spelled, it was never validated at
+# all, and it is the only one of the two that reaches `$(( ))` -- which reads a leading
+# zero as OCTAL while every `[ ]` in the same file reads it as DECIMAL. Measured on the
+# shipped file with the parser lifted and run against a fixed clock: `--secs 010` settled
+# for 8 s and printed a confident verdict, `--secs 0045` for 37 s, and `--secs 08` aborted
+# at the undocumented rc 1 that `need_value` exists to prevent. An EMPTY value was the
+# worst of them: `$(( x + ))` is 0, so a wrapper whose variable went empty settled for
+# nothing at all and still reported -- the `--min-frames ""` shape (review-3 F2) exactly
+# one flag over, and the reason the bound is not the whole fix.
+#
+# THE WINDOW IS MEASURED, NOT QUOTED. The parser cannot be run end to end here (an
+# emulator launch follows it), so the measurement block, the defaults, `need_value`, the
+# parser loop and the settle-window line are LIFTED in the order the real file runs them
+# and executed against a `date` that returns a fixed epoch. The fixed clock is what makes
+# the window an exact number instead of a date plus a race, and the control row is its
+# non-vacuity: if the settle line ever stops reading this clock, the window stops being 45.
+PARSER_FIXED=1700000000
+PARSER="$WORK/settle-parser.sh"
+{
+    echo 'set -u'
+    printf '%s\n' "$MEASURE_FN"
+    grep -E '^(SECS|EXTRA_GREP|SHOT|MIN_FRAMES|EXPECT|DISPLAY_NUM)=' "$EMU"
+    awk '/^need_value\(\)/{f=1} f{print} f&&/^\}$/{exit}' "$EMU"
+    awk '/^while \[ \$# -gt 0 \]; do/{f=1} f{print} f&&/^done$/{exit}' "$EMU"
+    printf 'date() { printf "%%s\\n" %s; }\n' "$PARSER_FIXED"
+    grep -m1 '^END=\$((' "$EMU"
+    echo 'echo "$END"'
+} > "$PARSER"
+PARSER_SRC="$(cat "$PARSER")"
+check "the settle-window lift contains the --secs arm (non-vacuity)" "1" \
+      "$(lift_contains "$PARSER_SRC" '--secs)')"
+check "and the settle-window line itself, so --secs is pinned where it is USED" "1" \
+      "$(lift_contains "$PARSER_SRC" 'END=$((')"
+check "and the lift is syntactically complete, not a truncation of it" "0" \
+      "$(bash -n "$PARSER" 2>/dev/null; printf '%s' "$?")"
+
+secs_window() { # <value> -> "window N", the settle window the parser computed, else "rc N"
+    local out rc
+    out="$(bash "$PARSER" --secs "$1" 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ]; then
+        printf 'window %d' "$(( out - PARSER_FIXED ))"
+    else
+        printf 'rc %d' "$rc"
+    fi
+}
+check "the fixed clock is what the settle line reads: --secs 45 settles 45" "window 45" \
+      "$(secs_window 45)"
+check "and --secs 010 settles TEN seconds, not octal eight -- review-6 F1" "window 10" \
+      "$(secs_window 010)"
+check "and --secs 0045 settles forty-five, not thirty-seven -- review-6 F1" "window 45" \
+      "$(secs_window 0045)"
+check "and --secs 08 is a decimal eight, not an arithmetic abort -- review-6 F1" "window 8" \
+      "$(secs_window 08)"
+check "and the bound is inclusive: --secs $MAX_SECS settles it whole" "window $MAX_SECS" \
+      "$(secs_window "$MAX_SECS")"
+
+# THE REFUSALS, THROUGH THE REAL PARSER. A bogus build path means nothing can launch
+# however these turn out -- and the build check ALSO exits 2, so an rc alone cannot tell a
+# refusal from a fall-through (the trap this file already documents for --min-frames). Every
+# row therefore asserts the MESSAGE, which only the guard prints.
+secs_msg() { bash "$EMU" --secs "$1" /nonexistent-build.3dsx 2>&1 | head -3; }
+for bad in "4s" "+45" "" "$(( MAX_SECS + 1 ))" "99999"; do
+    check "the parser refuses --secs [$bad] BY NAME, before anything launches -- review-6 F1" "1" \
+          "$(secs_msg "$bad" | grep -c -- "requires a decimal")"
+done
+check "and the bound the refusal prints IS the harness's own MAX_SECS, not a second copy" "1" \
+      "$(secs_msg 4s | grep -c -- "0\.\.$MAX_SECS")"
+check "while a VALID --secs is not refused (the guard is not always-red)" "0" \
+      "$(secs_msg 45 | grep -c -- "requires a decimal")"
+bash "$EMU" --secs 4s /nonexistent-build.3dsx >/dev/null 2>&1
+check "and the refusal is a usage error (2), not a run verdict -- review-6 F1" "2" "$?"
+bash "$EMU" --secs 45 /nonexistent-build.3dsx >/dev/null 2>&1
+check "and a valid one reaches the build check, so the guard is not always-red" "2" "$?"
+rm -f "$PARSER"
 
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary)"

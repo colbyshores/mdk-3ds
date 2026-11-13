@@ -50,6 +50,8 @@
 # USAGE
 #   mdk_3ds/tools/emurun.sh                      # run mdk_3ds/mdk.3dsx
 #   mdk_3ds/tools/emurun.sh --secs 90            # seconds past readiness
+#                                               # (a decimal 0..MAX_SECS; anything else is
+#                                               #  a usage error (2), not a shorter run)
 #   mdk_3ds/tools/emurun.sh --grep 'tex:|draws' # extra patterns to extract
 #   mdk_3ds/tools/emurun.sh --shot /tmp/f.png    # capture the offscreen display
 #   mdk_3ds/tools/emurun.sh --min-frames 60      # refuse to report a short run
@@ -63,7 +65,9 @@
 #   mdk_3ds/tools/emurun.sh path/to/other.3dsx
 #
 # EXIT CODES
-#   0 ok | 2 launch/environment failed | 3 STALE LOG, refused to report
+#   0 ok | 2 launch/environment failed, OR a usage error: a value-taking flag with no
+#     value after it, or a value this harness cannot compare (--min-frames, --secs)
+#     | 3 STALE LOG, refused to report
 #   4 emulator died before producing a log | 5 run too short to measure, OR its length
 #     could not be measured (an unevaluable --min-frames or frame count is a refusal)
 #   6 emulator version is not the pinned known-good build
@@ -139,9 +143,14 @@ FRAME_RE='^frame [0-9][0-9]* '
 #                      magnitude: `0000060` IS the decimal 60. Measuring the raw length
 #                      refused a legal `--min-frames 0000060` -- the exact shape a
 #                      wrapper gets from `printf '%06d'` -- as a usage error, over a
-#                      number that compares perfectly well. Unlike the measurements this
-#                      harness reads off its own log, `--min-frames` is CALLER-supplied,
-#                      so it is the one field whose spelling this file does not choose.
+#                      number that compares perfectly well. TWO fields are
+#                      CALLER-supplied rather than read off this harness's own log --
+#                      `--min-frames` and `--secs` -- so their spelling is not this
+#                      file's to choose; every other field this predicate guards is a
+#                      measurement this file printed itself. (review-6 F1: this said
+#                      `--min-frames` was "the one", and `--secs` was sitting one flag
+#                      over, unvalidated and read by ARITHMETIC, where a leading zero is
+#                      a base and not a spelling. See MAX_SECS and the settle window.)
 #                      Stripping the zeros costs none of the refusals: a sign, a space or
 #                      a letter is not a leading zero, so `+121`, `-0`, ` 121` and `60x`
 #                      are still rejected by the arm above it.
@@ -177,6 +186,25 @@ decimal_measurement() { # decimal_measurement <field> <max> ; 0 only for a decim
 # ever asked for is a two-digit --secs. It exists so the comparison below is always one
 # `[ ]` can make.
 MAX_FRAMES=999999
+
+# THE SETTLE-WINDOW BOUND (review-6 F1). `--secs` is the other caller-spelled field,
+# and it is the one this file reads with `$(( ))`, which interprets a leading zero as
+# OCTAL: `--secs 010` settled for 8 s and still printed a confident verdict, and
+# `--secs 08` aborted at rc 1 -- the undocumented code `need_value` exists to prevent.
+#
+# WHY FOUR DIGITS, as a relation and not a taste. The bound has to keep the harness's
+# own two constants from contradicting each other: at the ~60 fps this file already
+# assumes when it calls MAX_FRAMES "about 4.6 hours", an hour of settle produces about
+# 216 000 frames, which is still inside MAX_FRAMES -- so a legal `--secs` can never
+# produce a frame count `frame_floor` then refuses to evaluate. `tests/scripts/
+# emurun_harness_test.sh` checks that relation instead of trusting this sentence.
+# Past an hour the caller is not waiting for a run, it is hanging the harness, and a
+# hang is the failure mode this file exists to avoid (review-5 F2).
+#
+# THE BOUND DOES NOT MAKE THE BASE SAFE. `10#` at the arithmetic does, because padding
+# is a spelling and not a contradiction (batches 159/160): `--secs 0045` IS 45 and must
+# settle for 45, not 37.
+MAX_SECS=3600
 
 frame_floor() { # frame_floor <last-frame> <min-frames> ; 0 when the run is long enough
                 # to report on and 5 when it is not -- and 5 ALSO when the comparison
@@ -220,7 +248,19 @@ need_value() { # need_value <flag> <argc>
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --secs)       need_value --secs "$#";       SECS="$2";       shift 2 ;;
+    --secs)
+        # Checked AT PARSE TIME, beside --min-frames, for the same reason (review-6 F1):
+        # the value reaches `$(( ))` in the settle window, and unvalidated it produced
+        # BOTH halves of the wrong-base defect -- `010` silently measured 8 s with an
+        # unchanged green verdict, and `08` aborted at the undocumented rc 1. An empty
+        # value was worse than either: `$(( x + ))` is 0, so a wrapper whose variable
+        # went empty settled for nothing and reported a verdict over a 0-second window
+        # (the `--min-frames ""` shape, review-3 F2, one flag over).
+        need_value --secs "$#"
+        decimal_measurement "$2" "$MAX_SECS" || {
+            echo "emurun: --secs requires a decimal 0..$MAX_SECS, got [$2]" >&2
+            exit 2; }
+        SECS="$2"; shift 2 ;;
     --grep)       need_value --grep "$#";       EXTRA_GREP="$2"; shift 2 ;;
     --shot)       need_value --shot "$#";       SHOT="$2";       shift 2 ;;
     --min-frames)
@@ -862,7 +902,13 @@ done
 }
 
 # ---- settle window ----------------------------------------------------------
-END=$(( $(date +%s) + SECS ))
+# `10#` because SECS is a caller-spelled decimal and `$(( ))` reads a leading zero as
+# OCTAL -- the same base defect batch 160 closed for the bbox fields, one flag over
+# (review-6 F1). It is evaluable because the parse-time guard proved the field a
+# non-empty decimal. The test pins BOTH halves, so neither can be dropped alone: the
+# guard refuses a non-decimal by name at parse time, and the window this line computes
+# is the decimal the caller spelled (`010` -> 10, `0045` -> 45).
+END=$(( $(date +%s) + 10#$SECS ))
 while [ "$(date +%s)" -lt "$END" ]; do
   emurun_alive || {
     echo "emurun: emulator DIED during the settle window. Refusing to report." >&2
