@@ -883,8 +883,37 @@ int main(int argc, char** argv) {
     mdk_render_stats(renderer, &draws, &tris);
     std::printf("[main] exiting after %u frames (last frame: %d draws, %d triangles)\n",
                 frame, draws, tris);
+
+    // THE PICTURE THIS RUN WAS ASKED TO LEAVE BEHIND. `--capture` names a file, and
+    // the run used to return 0 whether or not that file was ever written: the backend
+    // printed `[vk] screenshot: could not open ...`, the bool it returned was
+    // discarded at the frame seam, and a capture harness whose output directory did
+    // not exist reported a frame it had not taken (review-2 F1). What makes that
+    // worse than a crash is that the harness upstream then finds the BMP the PREVIOUS
+    // run left at that path, and commits it as this build's frame.
+    //
+    // The rule is stated against what THIS RUN ASKED FOR and not against what the
+    // backend counted, because "the write failed" and "the frame was never reached"
+    // are both the same failure from here: no picture. A backend that reports zero
+    // writes for a request it cannot honour -- the 3DS has no readback at all --
+    // fails the same test, which is the point of asking the renderer instead of
+    // trusting a log line nobody is reading.
+    int32_t captureRequested = 0;
+    int32_t captureWritten = 0;
+    mdk_render_capture_stats(renderer, &captureRequested, &captureWritten);
+    int status = 0;
+    if (captureFrame > 0 && captureWritten < 1) {
+        std::fprintf(stderr,
+                     "[main] capture FAILED: --capture=%s asked for frame %d and %d of %d "
+                     "requested pictures reached the disk; the run cannot report a frame it "
+                     "did not take\n",
+                     capturePath.c_str(), captureFrame, (int)captureWritten,
+                     (int)captureRequested);
+        status = 1;
+    }
+
     mdk_render_destroy(renderer);
     mdk::audioClose();
     mdk::windowDestroy(&window);
-    return 0;
+    return status;
 }

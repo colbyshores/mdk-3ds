@@ -306,6 +306,25 @@ void mdk_render_stats(MdkRenderer r, int32_t* draw_calls, int32_t* triangles);
 // The last frame's GPU wait, in milliseconds. The 3DS backend reports 0.
 float mdk_render_gpu_wait_ms(MdkRenderer r);
 
+// The captures this renderer was asked for, and the ones that reached the disk.
+// `requested` counts the frames that named a `screenshot_path` above; `written`
+// counts the pictures that were actually written to it. They differ when the
+// file could not be opened or came up short on the way out, when the readback
+// was refused, and when the frame it was asked to capture was never submitted.
+//
+// WHY THIS IS NOT ALREADY COVERED BY THE LOG LINE. Every one of those failures
+// already prints something and already returns a bool, and the frame seam threw
+// that bool away -- so the run exited 0, the harness upstream found the BMP its
+// PREVIOUS run had left at that path, and committed a frame this build never
+// drew. A refusal printed at a terminal nobody is reading has not been reported
+// to anyone who can act on it; an exit code has.
+//
+// A frontend that asked for a picture and did not get one has FAILED, whatever
+// this says, and it is that rule -- not these numbers -- that makes the answer
+// safe. The 3DS backend has no readback of a rendered target at all, so it can
+// only ever report a request and never a write.
+void mdk_render_capture_stats(MdkRenderer r, int32_t* requested, int32_t* written);
+
 // ---------------------------------------------------------------------------
 // The Linux-only enhanced look lives in a SEPARATE header
 // (`mdk_linux/src/render/render_enhanced.h`), not here. The 3DS does not

@@ -454,6 +454,17 @@ struct RendererC3D {
     // may still be reading the last frame's textures then. C3D_FrameBegin
     // waits for the previous queue, so it is the completion boundary.
     bool gpuPending = false;
+
+    // The capture accounting, for the frontend's "asked for a picture, got a
+    // picture" rule. This backend has NO readback of a rendered target -- there is
+    // nothing here that can turn a framebuffer into a file -- so `capturesWritten`
+    // stays zero and always will. The request is still counted, because a frontend
+    // that was asked for a frame and silently given nothing has to be able to tell
+    // "this backend cannot write one" from "nobody asked", and a backend that
+    // reported 0/0 for a request it ignored would turn that rule into a pass
+    // generator. See `mdk_render_capture_stats`.
+    int32_t capturesRequested = 0;
+    int32_t capturesWritten = 0;
 };
 
 RendererC3D* asC3d(MdkRenderer r) {
@@ -1111,6 +1122,13 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     r->frame++;
     r->drawCount = 0;
     r->triangleCount = 0;
+    // A capture this backend cannot honour, counted anyway. `screenshot_path` is
+    // documented as Linux-only and the PICA path has no readback, so this is the
+    // whole of what this backend does with the request: it records that it was
+    // made, and never writes the file. See `RendererC3D::capturesRequested`.
+    if (params && params->screenshot_path && *params->screenshot_path) {
+        r->capturesRequested++;
+    }
     // The one frame that gets censused (see `Census`). Everything else pays the
     // compare and nothing more.
     r->census.active = (r->frame == kCensusFrame);
@@ -2916,3 +2934,14 @@ static bool ensureCanvasMesh(MdkRenderer rr, RendererC3D* r, int32_t corners) {
 }
 
  float mdk_render_gpu_wait_ms(MdkRenderer r) { (void)r; return 0.0f; }
+
+// The capture accounting. This backend never writes a picture, so `written` is a
+// constant zero and that IS the honest answer rather than a stub: the PICA path
+// has no readback of a rendered target, so a frontend that asked for a frame here
+// did not get one and must be able to fail its run. The request half is counted
+// in `mdk_render_begin_frame`.
+ void mdk_render_capture_stats(MdkRenderer r, int32_t* requested, int32_t* written) {
+    RendererC3D* cr = asC3d(r);
+    if (requested) *requested = cr ? cr->capturesRequested : 0;
+    if (written) *written = cr ? cr->capturesWritten : 0;
+ }

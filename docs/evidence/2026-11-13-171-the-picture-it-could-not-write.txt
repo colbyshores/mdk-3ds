@@ -1,0 +1,253 @@
+row: linux.render-frame
+batch: 171
+head: (this commit; the tree this file describes is the working tree committed with it)
+verified-at: the commit this file is part of — NOT its parent. See §6 for why the
+             parent's file (docs/evidence/linux.render-frame-7bbb193.txt) is left
+             exactly as published.
+captured: 2026-11-13T23:35:00Z
+display: :99 (Xvfb :99 -screen 0 1280x1024x24, started by this lane: it was NOT
+         listening when checked with `DISPLAY=:99 xdpyinfo`, and no other Xvfb
+         instance was touched)
+lane: piagent on /mnt/nas/Development/mdk-sdl
+capture dir: /tmp/mdk-batch171-logs (AGENTS P7 says /tmp/kilo; it is
+             coleshores:coleshores 0775 and NOT writable by this lane — re-measured,
+             `touch /tmp/kilo/.wtest` → Permission denied)
+
+== 1. THE DEFECT, MEASURED ON THE COMMITTED BINARY BEFORE ANYTHING WAS CHANGED ====
+
+Review-2 F1 (Medium), reproduced on `94ce8d3`'s own build, `DISPLAY=:99`, level 3,
+320x240, seed 1:
+
+  --capture=/nonexistent-dir/x.bmp --capture-frame=1 --frames 2
+      rc=0
+      [vk] screenshot: could not open /nonexistent-dir/x.bmp
+      [main] exiting after 1 frames (last frame: 159 draws, 400 triangles)
+      no file
+  --capture=$W/dir.bmp (where dir.bmp IS a directory)
+      rc=0, same line, no file
+  --capture=$W/ok.bmp --capture-frame=1 --frames 2      (positive control)
+      rc=0, [vk] screenshot: wrote … (320x240), 307254 bytes
+
+CONFIRMED, not rebutted. The root cause is one discarded bool: `captureSwapchain()`
+returns bool, `mdk_render_end_frame` called it as a statement
+(mdk_linux/src/render/renderer_vk.cpp), and `main` returned 0 unconditionally. Batch
+170 closed the reachability half (a capture frame the run could not reach); this is the
+writability half, reached from a perfectly well-formed argument.
+
+Why it matters more than a wrong exit code: the harness upstream checks that the file
+it asked for exists, finds the BMP the PREVIOUS run left at that path, and commits it
+as this build's frame. The sibling precedent the reviewer cited (tetrisphere-godot
+`tools/pc/capture.sh`, "no root screenshot was written" → non-zero) treats exactly this
+as a hard error.
+
+== 2. THE FIX ================================================================
+
+An accounting, not a printf.
+
+* `RendererVk` gains `capturesRequested` / `capturesWritten`. The write counter rises
+  ONLY in the branch where `captureSwapchain`'s own result decided it:
+      } else if (captureSwapchain(r, path.c_str())) {
+          r->capturesWritten++;
+      }
+  which covers a failed open, a short write, a failed readback, a mapping it could not
+  make, and a frame that was never submitted (that path refuses and never counts).
+* `mdk_render_capture_stats(MdkRenderer, int32_t* requested, int32_t* written)` is
+  declared in `mdk_core/src/render/render.h` next to `mdk_render_stats` /
+  `mdk_render_gpu_wait_ms`, and implemented in BOTH backends.
+* `main` asks after the loop and fails the run when it asked for a picture and got
+  none:
+      if (captureFrame > 0 && captureWritten < 1) { … status = 1; }
+  The rule is stated against what the RUN ASKED FOR and not against the backend's
+  `requested`, because "the write failed" and "the frame was never reached" are the
+  same failure from a harness's side. Teardown still runs before the return.
+
+Why the query is in the shared seam and implemented twice: measured, every `mdk_render_*`
+name in `render.h` is defined by BOTH `renderer_vk.cpp` and `renderer_c3d.cpp` (the
+header's symbol set is a subset of each; only `mdk_render_present` is in neither list
+because it is in both). A query declared in the shared header and defined in one backend
+is a link error waiting for the next batch that calls it from shared code. The PICA
+backend has no readback of a rendered target, so it counts a request in
+`mdk_render_begin_frame` and can never report a write — the honest answer, following the
+`mdk_render_gpu_wait_ms` "The 3DS backend reports 0" precedent already in the same
+header, and not a stub returning success.
+
+That is why `mdk_3ds/**` is in this diff, and why P8 emulator evidence is owed (§5).
+
+== 3. TESTS ===============================================================
+
+`tests/scripts/linux_arg_parse_test.sh`: 25 → 27 arms. New `expect_capture_refusal`
+helper requires all three of: non-zero exit, the refusal naming THE CAPTURE
+("capture FAILED"), and no picture left behind. The third leg is what stops a
+renderer-creation failure from satisfying the arm vacuously on a lane with no Vulkan —
+`expect_reject` alone would have gone green on "the renderer died", which is a different
+failure wearing this one's clothes.
+
+Two arms, both permission-free:
+  24. --capture=$WORK/missing/x.bmp   (parent directory absent, ENOENT)
+  25. --capture=$WORK/as-a-dir.bmp    (the path IS a directory, EISDIR)
+Different syscalls, so a fix that only checked one (a `stat` of the parent, say) leaves
+the other live. A chmod-555 directory reproduces the same lie on this box and was
+NOT used: root writes into a read-only directory, so that arm would go red on a root
+lane for a reason that has nothing to do with the code. A test whose verdict depends on
+who ran it is a worse instrument than one that covers one fewer syscall.
+
+THE FOUR-WAY, RUN (not copied):
+  new test  + new binary     rc 0, 27 arms
+  new test  + PARENT binary  rc 1, EXACTLY 2 red (arms 24/25, both named), 25 ok
+  PARENT test + new binary   rc 0, 25 arms — zero collateral
+  PARENT test + PARENT binary rc 0
+The parent binary was built from `git archive HEAD` + the vendored `third_party`,
+`cmake -S …/mdk_linux -B /tmp/parent-build -DGLSLANG=…` then `cmake --build -j8`, rc 0.
+
+`tests/scripts/linux_refusal_report_test.sh`: 21 → 23 checks, 71 → 78 arms, 5 → 7 probes.
+  * F4 (frontend): the frontend asks, tests the count it was given, and the branch that
+    reports the failure sets the value `main` returns — the JOIN, not the sentence.
+    Arms: ask deleted; verdict printed and then dropped; status computed and not
+    returned. Probe: `status` renamed to `exitStatus` stays green.
+  * B15 (backend): the write counter must sit under a condition that names the call
+    whose result it is, and the query must read its two fields. Arms: result discarded
+    (the exact review-2 F1 shape); write counted on the REQUEST; request never counted;
+    query answering from literals. Probe: nested `if` instead of `else if` stays green.
+  * The two existing B11 arms were REWRITTEN, not left to rot: they mutated the exact
+    text this batch changed, so their `replace(...,1)` would have silently matched
+    nothing and the harness would have reported "the arm tested the file it was handed".
+    They also used to revert the capture accounting along with the frame result, which
+    reddens two checks and isolates neither; each now leaves the other half intact.
+  * Shape-level non-vacuity: the new test against the PARENT sources fails F4 and B15
+    with their own text (and the new arms report "the mutation changed nothing", which
+    is correct — they target text the parent does not have).
+
+== 4. GATES, AS RUN ========================================================
+
+`make -C tests/scripts -j8` → rc 0, `All cases match the oracle.`, 766 `^PASS ` lines,
+0 `^FAIL `. The total is UNCHANGED from batch 170 and correctly so: each of the two
+files this batch changed contributes exactly ONE `PASS` line however many arms it
+adjudicates. The two lines this run reads:
+  PASS LinuxRefusalReport (23 checks, 78 arms adjudicated red, 7 probes green)
+  PASS LinuxArgParse (27 arms: an option value whose meaning this frontend would
+  silently discard is refused and named -- an unparseable count, a capture frame the
+  run can never reach, and a capture file that cannot be written, included -- while
+  both documented value spellings, a honoured frame count and two real captures (the
+  capture-frame boundary included) still work; a --size or --at with trailing junk is
+  accepted on purpose and is NOT claimed here)
+
+`DISPLAY=:99 bash tools/check.sh` → rc 0:
+  PASS L3_f1.bmp sha=58615fc85d02e009
+  VERDICT: CONTRACT CLEAN
+  BATCH INTEGRITY: PASS            (range-less, per review-1 F1: it evaluates neither
+                                    PROTECTED nor the per-commit frame rule)
+  COMPLETION SELFTEST: PASS (13 arms)
+  COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open
+  COMPLETION: LEDGER VERIFIED
+  PASS audit_c_with_classes 0 violations / PASS gates_vfp 0 blockers /
+  PASS audit_arm11_math contract clean / PASS audit_r11_idiv no candidates /
+  PASS gates_core_parity both targets link the same core / SKIP gates_smdh /
+  PASS gates_frames / PASS gates_batch_integrity / PASS gates_completion
+  CHECK: ALL GATES PASSED
+
+`DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` →
+rc 0, `3DSX mdk.3dsx`. `mdk.elf` md5 `72328e9d5fd439d7f75703f5c28ccb80` — CHANGED from
+`728eb2350c3ef8a81acda15f75617c1e`, correctly: `renderer_c3d.cpp` is in this diff, which
+is the first time in this row that the 3DS binary moved. `mdk.3dsx` md5
+`601b1415adfdb17c2183f093bd2f4f91`.
+(The first attempt at this gate failed on `Please set DEVKITARM` because the ad-hoc shell
+did not export it; re-run with the values `ralph-pi.sh` exports rather than read as a
+real failure.)
+
+`cmake --build build-linux -j8` → rc 0 BY HAND. Nothing in the gate set compiles
+`mdk_linux/**` (CONTINUATION item 11b), so without this the frame gate would be
+certifying a stale binary. Built three times on purpose: after the edit, from the parent
+source to mint the row-2 binary, and again after restoring.
+
+== 5. P8 EMULATOR EVIDENCE (owed: mdk_3ds/** changed) ======================
+
+`DISPLAY=:99 MANDARINE=/mnt/nas/Development/mandarine.AppImage mdk_3ds/tools/emurun.sh
+--expect hud` → rc 0. Verdict block:
+  display   : :99
+  emulator  : mandarine.AppImage md5 0d2adab6      (r1.2.1, 20250128-418c25c — the
+             pinned known-good; the symlink points at m121, not the segfaulting r1.3.0)
+  build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+  frames    : reached 2520 by the deadline (47 frame lines logged, every 60th after #5);
+             after the reap the guest log ends at frame 2640 (49 frame lines logged)
+  gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+             graphics_api=1 (OpenGL)
+  stereo    : render_3d=0 factor_3d=0 (MONO) — recorded per AGENTS P6
+  audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0
+  dspfirm   : dspfirm.cdc (the lane's sdmc/3ds/dspfirm.cdc)
+  backend: PICA200 Citro3D
+  flow: screen=4 level=7
+  frame 2520 elapsed=0.0167 steps=2533 feet=(0.0,4.0,0.0) yaw=90.0 health=100
+         eye=(0.0,-4.0,4.5) voices=0 plays=1 objects=7 obj=570c/13d peak=570c/13d
+  expect    : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1
+              (canvas frame 2520)
+  expect    : HUD VISIBLE -- 121 canary pixels in the panel, 121 inside
+  expect    : the marker's rect 0,0-11,11 (bbox 0,0-10,10, reaching the derived (10,10))
+  NOTE /tmp/.mount_mandarRFTxRL has a process outside this lane executing from it;
+  left mounted (the harness refuses to unmount a co-tenant's RomFS).
+
+Emulator-green is not hardware-pass: Mandarine masks FCRAM/VRAM exhaustion, renders
+GPU_CLAMP_TO_EDGE leniently, and does not clear FCRAM between relaunches. No original
+3DS was used and none is claimed. What this run does establish is that the 3DS half of
+this diff — two counters and a query on a path the 3DS frontend never asks about — boots,
+draws, and still prints its HUD line.
+
+== 6. REVIEW-2 FINDINGS 2, 3 AND 4 =========================================
+
+F2 (Low) FIXED. The PASS line claimed coverage of "an argument or option value the
+Linux frontend cannot act on" while an unwritable `--capture` survived it (now refused,
+so that half is true) and `--size=320x240junk` survived it on purpose (batch 169, and it
+still does). The line now claims the narrower thing the arms pin and states the
+junk-suffix carve-out out loud.
+
+F3 (Low) FIXED. `docs/OPEN_ITEMS.md`'s object-pass recipe named only
+`--capture-frame=60`, which batch 170 turned into a refusal. It now names
+`--capture=<out>.bmp --capture-frame=60`, and the full spelling was RUN on this tree:
+rc 0, `[vk] screenshot: wrote`, 307254-byte BMP.
+
+F4 (Low) DECLINED WITH CAUSE — the file was NOT edited. The suggestion was a
+`superseded-by:` line inside `docs/evidence/linux.render-frame-7bbb193.txt`.
+`docs/evidence/README.md:31` is explicit: "Never edit a published pair. Same rule as the
+frame record: a capture is evidence of what the build produced at that revision." Adding
+a line to a published artifact to change what a later reader infers from it is the thing
+that rule exists to stop, and the reviewer's own confidence line agrees the risk is
+prospective and that `gates_completion.py:147-151` reads only the ledger's named
+evidence field — no glob is involved in certification today. The disposition is therefore
+recorded here and in `docs/PROGRESS_LOG.md`, and this file names its own head explicitly
+so the two artifacts cannot be confused. If the owner wants a machine-readable marker,
+the right place is the ledger's evidence column at close time, not a rewrite of a
+published capture.
+
+== 7. FRAME ================================================================
+
+`docs/frames/2026-11-13-the-picture-it-could-not-write.png` (+ .txt). md5
+`6769a13731983d65cee9df02da6cff37` — byte-identical to its 187 predecessors (189 PNGs in
+`docs/frames`, 188 at that md5, the single outlier being the pre-existing
+`2026-10-30-depth-pull.png`). That is the expected result and it is the point: nothing
+this batch changed alters a pixel, and a changed frame would have been the surprise. The
+sidecar records the standing gap ceiling and the honest note that the oracle pixels are
+absent at /tmp/mdk-frame-reference, so the fidelity ceiling could not be re-measured
+live.
+
+== 8. PRIOR-SOLUTION LOOKUP ================================================
+
+Pi knowledge (`mdk-sdl`, 5149 chunks / 988 files): searched. The nearest precedent is
+the sibling tetrisphere-godot `tools/pc/capture.sh`, which treats "no root screenshot
+was written" as a hard error — the same rule this batch implements, found independently
+by this loop and by review-2.
+
+Obsidian MCP and Cognee MCP: ABSENT from this session's tool list. Per AGENTS §9 P9 that
+is a session configuration fault to report, not a licence to claim the lookup happened.
+The vault was read read-only from disk instead, which loses Cognee's graph search.
+
+== 9. STILL OPEN (unchanged by this batch) ==================================
+
+* Owner act: `chgrp development docs/COMPLETION_LEDGER.tsv` and run
+  `python3 tools/runner/ledger_close.py --row linux.render-frame` from a lane in the
+  `development` group on a clean tree. Re-measured in batch 170: the ledger is still
+  `coleshores:coleshores 0664` and unwritable here, and `ledger_close.py` is PROTECTED.
+  The row's acceptance is green.
+* Owner act: review-1 F1 — the door for loop-infrastructure commits that must edit
+  `tools/runner/ledger_close.py` (PROTECTED; the gate has no legitimate door for them).
+* `/tmp/kilo` is not writable by this lane (AGENTS P7's capture directory).
+* Old-3DS hardware evidence: none. No console is in hand; every 3DS claim here is
+  emulator evidence.

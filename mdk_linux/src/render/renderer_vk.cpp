@@ -276,6 +276,14 @@ struct RendererVk {
     // The frame-capture path requested for the frame now being drawn. The
     // path is copied because MdkFrameParams owns only a borrowed C string.
     std::string screenshotPath;
+
+    // The capture ACCOUNTING: how many frames asked for a picture, and how many
+    // pictures reached the disk. Every failure below already returned a bool and
+    // the frame seam threw it away, so the run exited 0 with no file and the
+    // harness upstream read the BMP the previous run left there (review-2 F1).
+    // `capturesWritten` is incremented ONLY on the path where the bytes landed.
+    int32_t capturesRequested = 0;
+    int32_t capturesWritten = 0;
 };
 
 // Defined with the drawing code below; the frame and the canvas need them and
@@ -2043,6 +2051,7 @@ void mdk_render_end_frame(MdkRenderer rr) {
     if (!r->screenshotPath.empty()) {
         const std::string path = r->screenshotPath;
         r->screenshotPath.clear();
+        r->capturesRequested++;
         if (!submitted) {
             // The readback would succeed and print its usual "wrote N" line about an
             // image this frame never drew into. A frame record that cannot be trusted
@@ -2050,8 +2059,11 @@ void mdk_render_end_frame(MdkRenderer rr) {
             refused("capture the frame to %s: the frame it was asked to capture was never "
                     "submitted, so the image would not be this frame's",
                     path.c_str());
-        } else {
-            captureSwapchain(r, path.c_str());
+        } else if (captureSwapchain(r, path.c_str())) {
+            // The one place this counter may rise: `captureSwapchain` returns false
+            // for a failed open, a short write, a failed readback and a mapping it
+            // could not make, and every one of those is a picture that does not exist.
+            r->capturesWritten++;
         }
     }
 }
@@ -2772,4 +2784,14 @@ void mdk_render_stats(MdkRenderer r, int32_t* draw_calls, int32_t* triangles) {
 float mdk_render_gpu_wait_ms(MdkRenderer r) {
     (void)r;
     return 0.0f;
+}
+
+void mdk_render_capture_stats(MdkRenderer r, int32_t* requested, int32_t* written) {
+    RendererVk* vr = asVk(r);
+    if (requested) {
+        *requested = vr ? vr->capturesRequested : 0;
+    }
+    if (written) {
+        *written = vr ? vr->capturesWritten : 0;
+    }
 }

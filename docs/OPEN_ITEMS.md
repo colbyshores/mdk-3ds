@@ -147,7 +147,9 @@ measured or cited reason, and the batch that closes one should delete its entry.
     expectation that this batch would have to rewrite `reference.sha256` was wrong, and
     the middle 173 px of the gap is NOT the missing objects. To compare a frame where
     objects exist, capture the oracle with `--wait=1` (60 fixed steps) and the C++ with
-    `--capture-frame=60`; measured that way the pass shrinks the gap from
+    `--capture=<out>.bmp --capture-frame=60` — both halves of the C++ spelling, because
+    since batch 170 a capture frame with no file named is refused rather than run and
+    silently skipped; measured that way the pass shrinks the gap from
     `1.251 / 231 / 0.1910` to `1.188 / 175 / 0.1405`.
   * The stream keeps the C#'s `1 << 18` **refusal** (a batch that does not fit is
     refused with the cursor unmoved, so a later smaller batch still fits) but the GPU

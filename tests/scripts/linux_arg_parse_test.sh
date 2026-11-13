@@ -22,6 +22,18 @@
 #      options ended up with three different answers to "is this a number?" while
 #      `--size` and `--seed` were validated and these two were not checked at all.
 #
+#   3. A `--capture` path that PARSED and could not be written. Batch 170 closed the
+#      half where the frame the capture was pinned to could not be reached; the half
+#      that remained was measured on that batch's own binary: `--capture` into a
+#      directory that does not exist, or onto a path that is a directory, printed
+#      `[vk] screenshot: could not open ...`, returned false, and `main` returned 0
+#      anyway. That is the same lie as (2) -- a harness reporting a frame it did not
+#      take -- reached from a perfectly well-formed argument, and it is worse than (2)
+#      because the harness upstream then finds the BMP the PREVIOUS run left at that
+#      path and commits it as this build's frame. The frontend now asks the renderer
+#      how many pictures reached the disk and fails the run when it asked for one and
+#      got none (`mdk_render_capture_stats`).
+#
 # A harness that reports having run what it did not run is worse than one that
 # fails, because the number looks measured. So every row here is a RUNTIME row:
 # "this binary, given that argument, exits non-zero and says why". A shape grep
@@ -173,6 +185,44 @@ expect_capture() {
     fi
 }
 
+# expect_capture_refusal <label> <file> <args...>: a capture the run cannot honour
+# must fail the run, name THE CAPTURE as the thing that failed, and leave no
+# picture behind.
+#
+# Why this is not `expect_reject`. `expect_reject` asks "non-zero, and did it name a
+# problem", and a run that died in renderer creation answers both for entirely the
+# wrong reason -- on a lane with no Vulkan every one of the arms below would go green
+# while proving nothing. So the refusal has to name the capture, and the file has to
+# still be absent afterwards: the promise being pinned is "the file I named is the
+# file I wrote", and both halves of that are checked.
+#
+# The `rm -f` is guarded rather than bare because one arm's "file" is a directory.
+expect_capture_refusal() {
+    label=$1
+    file=$2
+    shift 2
+    if [ "$have_data" -eq 0 ]; then
+        skipped=$((skipped + 1))
+        return 0
+    fi
+    [ -f "$file" ] && rm -f "$file"
+    out=$(timeout 120 "$BIN" "$@" 2>&1)
+    rc=$?
+    case "$out" in
+        *"capture FAILED"*) named=1 ;;
+        *) named=0 ;;
+    esac
+    if [ "$rc" -eq 0 ]; then
+        note no "[$label] exited 0 with no picture: the capture failed and the run reported success anyway"
+    elif [ "$named" -eq 0 ]; then
+        note no "[$label] exited $rc without saying the CAPTURE is what failed: $(printf '%s' "$out" | tail -1)"
+    elif [ -f "$file" ] && [ -s "$file" ]; then
+        note no "[$label] refused AND wrote a picture -- the two answers disagree"
+    else
+        note ok
+    fi
+}
+
 # --- the argument the chain does not know at all ---------------------------------
 # 1. The exact mistake batch 168 made: `--level` with a space instead of an equals.
 #    Before the fix this ran the DEFAULT level and exited 0.
@@ -248,14 +298,42 @@ expect_capture "capture writes a picture" "$WORK/frame.bmp" \
 expect_capture "capture on the last frame the bound allows" "$WORK/edge.bmp" \
     --headless --fixed-step --level=3 --size=320x240 --seed 1 --capture="$WORK/edge.bmp" --capture-frame=2 --frames 2
 
+# 24/25. A capture path that parsed perfectly and cannot be written. Both shapes were
+#   measured on batch 170's own binary: rc 0, `[vk] screenshot: could not open ...`,
+#   no file -- the frame seam discarded the bool the capture already returned.
+#
+#   Two shapes and not one, because they fail in different places: a missing parent
+#   directory fails the open with ENOENT and a path that IS a directory fails it with
+#   EISDIR, and a fix that only checked for one of them (a `stat` of the parent, say)
+#   would leave the other live.
+#
+#   Both are deliberately PERMISSION-FREE. A chmod-555 directory reproduces the same
+#   lie on this box, but root writes into a read-only directory without asking, so
+#   that arm would go red on a root lane for a reason that has nothing to do with the
+#   code -- a test that fails on the identity of whoever runs it is a worse instrument
+#   than one that covers one fewer syscall.
+expect_capture_refusal "capture into a directory that does not exist" "$WORK/missing/x.bmp" \
+    --headless --fixed-step --level=3 --size=320x240 --seed 1 --capture="$WORK/missing/x.bmp" --capture-frame=1 --frames 2
+mkdir -p "$WORK/as-a-dir.bmp"
+expect_capture_refusal "capture onto a path that is a directory" "$WORK/as-a-dir.bmp" \
+    --headless --fixed-step --level=3 --size=320x240 --seed 1 --capture="$WORK/as-a-dir.bmp" --capture-frame=1 --frames 2
+
 # The summary must not claim arms it did not run. Four arms need a level, and a
 # lane with no game data skips them; printing "a real capture still work" over a
 # run in which no capture arm executed is a coverage claim that is simply false.
+#
+# WHAT THE FIRST HALF DOES NOT COVER, and says so: `--size=320x240junk` and
+# `--at=1,2,3junk` are ACCEPTED on purpose (batch 169, "STATED, NOT HIDDEN" --
+# `sscanf` reads the leading pair and the trailing junk is ignored), so this file
+# does not claim that every value the frontend cannot fully use is refused. It
+# claims the narrower thing its arms actually pin: a value whose meaning would be
+# silently DISCARDED -- an unparseable count read as "no limit", a capture frame
+# the run can never reach, a capture file that cannot be written.
 if [ "$fail" -eq 0 ]; then
     if [ "$skipped" -gt 0 ]; then
-        echo "PASS LinuxArgParse ($pass arms ok, $skipped SKIPPED for want of game data at $DATA: an argument or option value the Linux frontend cannot act on is refused and named, a capture frame this run can never reach included; the skipped arms are the ones that need a level, and they did NOT run)"
+        echo "PASS LinuxArgParse ($pass arms ok, $skipped SKIPPED for want of game data at $DATA: an option value whose meaning this frontend would silently discard is refused and named -- an unparseable count, a capture frame this run can never reach, and a capture file it cannot write, included; the skipped arms are the ones that need a level, and they did NOT run)"
     else
-        echo "PASS LinuxArgParse ($pass arms: an argument or option value the Linux frontend cannot act on is refused and named, and both documented value spellings, a honoured frame count and two real captures -- the capture-frame boundary included -- still work)"
+        echo "PASS LinuxArgParse ($pass arms: an option value whose meaning this frontend would silently discard is refused and named -- an unparseable count, a capture frame the run can never reach, and a capture file that cannot be written, included -- while both documented value spellings, a honoured frame count and two real captures (the capture-frame boundary included) still work; a --size or --at with trailing junk is accepted on purpose and is NOT claimed here)"
     fi
     if [ "$have_data" -eq 0 ]; then
         echo "NOTE LinuxArgParse: $skipped arms that need a level were skipped, not passed (no game data at $DATA); the refuse arms above need neither data nor a display"

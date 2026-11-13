@@ -43,6 +43,18 @@
 #        (review-11 F7: a one-shot latch reports the first, smallest refusal and
 #        goes silent about the bigger one that followed; review-12 R1: a check on
 #        the assignment line pins a line, not the guard).
+#     F4 the frontend ASKS the renderer what its capture did, and the answer can fail
+#        the run. `--capture` names a file and the run exited 0 whether or not that
+#        file was written: the backend printed its `could not open` line, the bool it
+#        returned was discarded at the frame seam, and a harness whose output directory
+#        did not exist reported a frame it had not taken — then read the BMP the
+#        PREVIOUS run left at that path and committed it as this build's record
+#        (review-2 F1). What is pinned is not the sentence but the JOIN: the branch
+#        that reports the failure sets the value `main` returns, because a refusal
+#        printed beside a `return 0` tells the operator the truth and the harness the
+#        opposite. Three mutants — the ask deleted, the verdict printed and dropped, the
+#        status computed and then not returned — and a rename probe, so the rule follows
+#        the name and not the word `status`.
 #
 #   backend (mdk_linux/src/render/renderer_vk.cpp)
 #     B1 every refusal site prints: inside each named function, every block that
@@ -167,6 +179,16 @@
 #        behind a refusal before anything memcpy's through it — a null mapping copied
 #        through is a segfault in a release build, and the silent empty mesh is what the
 #        refusal buys.
+#     B15 the capture result is RECORDED, and the query reports the record. B11 made the
+#        frame's own result readable; it did not make the CAPTURE's result readable, and
+#        `captureSwapchain` had been returning a bool into the void the whole time. Two
+#        counters are the fix and two shapes undo them: the write counter rising on the
+#        REQUEST instead of on the write's own tested result (which satisfies "asked for
+#        one, got one" with the request alone), and the query answering from a literal
+#        instead of reading them (which satisfies every shape the frontend can test while
+#        being connected to nothing). The write counter must sit under a condition that
+#        names the call whose result it is — `else if` and a nested `if` are both
+#        accepted, and the nested spelling is a probe.
 #
 #   context (mdk_linux/src/render/vk/vk_context.cpp)
 #     C1 every result-bearing Vulkan call in the file has its result read. This is the
@@ -246,6 +268,7 @@ CHK = {
     "F1": "the object pass consults allocationFailed() and prints inside that test",
     "F2": "the refusal line prints the capacity that was refused (attemptedCapacity)",
     "F3": "the refusal line is edge-triggered and re-armed in the else sibling",
+    "F4": "the frontend asks what the capture did and the answer can fail the run",
     "B1": "every backend refusal site prints before it returns",
     "B2": "the refusal helper formats the caller's varargs and flushes",
     "B3": "the printed byte figure is built from the size the create call was given",
@@ -264,6 +287,8 @@ CHK = {
            "set waits for, and is destroyed there and not at the drop site",
     "B14": "a retired buffer's persistent mapping is nulled where it is retired, and "
            "every read of a mapping refuses before it copies on null",
+    "B15": "the capture result is recorded where the write's own result was tested, and "
+           "the query reports the record and not a constant",
     "C1": "every result-bearing Vulkan call in vk_context.cpp has its result read",
     "C2": "the frame's command buffer is ended before it is submitted",
     "C3": "a refused frame never leaves its slot's fence unsignalled",
@@ -752,6 +777,39 @@ def frontend_checks(r, text, quiet):
         "without the guard the refusal prints 60x/s; without the clear in the else "
         "sibling a recovered pass reports a refusal forever and a second, bigger "
         "refusal after a recovery is never printed (review-11 F7, review-12 R1)")
+
+    # F4: the frontend asks the renderer what the capture did, and the answer can
+    # fail the run.
+    #
+    # `--capture` names a file, and the run used to exit 0 whether or not that file
+    # was ever written: the backend printed `[vk] screenshot: could not open ...`, the
+    # bool it returned was discarded at the frame seam, and a capture harness whose
+    # output directory did not exist reported a frame it had not taken -- then found
+    # the BMP the PREVIOUS run left at that path, and committed it as this build's
+    # frame (review-2 F1).
+    #
+    # A log line is not a report. The harness acts on an exit code, so the shape that
+    # is load-bearing here is not the sentence but the JOIN: the branch that reports
+    # the failure must set the very value `main` returns. A refusal that prints and
+    # then returns 0 is the same lie with a nicer message, which is why the rule
+    # follows the assigned name to the `return` instead of trusting that something
+    # non-zero is assigned somewhere in the file.
+    called = "mdk_render_capture_stats(" in code
+    tested = re.search(r"if[ \t]*\([^)]*captureWritten[^)]*\)", code)
+    tsp = block_span_from(code, tested.end() - 1) if tested else None
+    tbody = code[tsp[0]:tsp[1]] if tsp else ""
+    set_nonzero = re.search(r"(\w+)[ \t]*=[ \t]*([1-9][0-9]*)[ \t]*;", tbody)
+    msp = body_span(code, "main")
+    returned = False
+    if set_nonzero and msp:
+        for rm in re.finditer(r"return[ \t]+(\w+)[ \t]*;", code[msp[0]:msp[1]]):
+            if rm.group(1) == set_nonzero.group(1):
+                returned = True
+    say(CHK["F4"], called and bool(tested) and bool(set_nonzero) and returned,
+        "a run that was asked for a picture and did not write one has failed, and the only "
+        "way to tell a harness that is the exit code: printing the refusal beside a "
+        "`return 0` reports the failure to a terminal and the success to the caller "
+        "(review-2 F1)")
 
 
 def backend_checks(r, text, quiet):
@@ -1876,6 +1934,50 @@ def backend_checks(r, text, quiet):
         "retire and none is copied through untested" +
         ("" if not bad14 else " — " + "; ".join(bad14)))
 
+    # B15: the capture result is RECORDED, and the query reports the record.
+    #
+    # `captureSwapchain` has always returned a bool and the frame seam has always
+    # thrown it away, which is how a run that wrote no picture exited 0 (review-2 F1).
+    # Counting is the fix, and a counter is worth nothing unless two things hold: the
+    # write counter rises only where the write's OWN result is what decided it, and the
+    # function that reports the two numbers reads them instead of answering from a
+    # constant. Either half failing turns the frontend's "asked for one, got one" rule
+    # back into the lie it replaced -- one by never counting a write that happened, the
+    # other by reporting a write that did not.
+    bad15 = []
+    fsp = body_span(code, "mdk_render_end_frame")
+    if not fsp:
+        bad15.append("mdk_render_end_frame is gone, so nothing asks for a capture at all")
+    else:
+        body = code[fsp[0]:fsp[1]]
+        if not re.search(r"capturesRequested\s*(?:\+\+|\+=\s*1)", body):
+            bad15.append("nothing records that a capture was ASKED FOR, so a frontend "
+                         "cannot tell a refused write from a frame that never came")
+        wrote = list(re.finditer(r"capturesWritten\s*(?:\+\+|\+=\s*1)", body))
+        if not wrote:
+            bad15.append("nothing records that a capture was WRITTEN")
+        for m in wrote:
+            pos = fsp[0] + m.start()
+            brace = enclosing_brace(code, pos)
+            cond = block_condition(code, brace)
+            if "captureSwapchain(" not in cond:
+                bad15.append("line %d counts a picture as written without the write's own "
+                             "result being the thing that decided it" % line_of(code, pos))
+    qsp = body_span(code, "mdk_render_capture_stats")
+    if not qsp:
+        bad15.append("nothing reports the capture accounting to the frontend")
+    else:
+        qbody = code[qsp[0]:qsp[1]]
+        for field in ("capturesRequested", "capturesWritten"):
+            if field not in qbody:
+                bad15.append("mdk_render_capture_stats does not report %s, so the frontend "
+                             "is answered from a constant" % field)
+    say(CHK["B15"], not bad15,
+        "a capture is the one failure the loop cannot see from its own side, so the backend "
+        "has to keep the count and hand it over — a counter that rises on a request, or a "
+        "query that answers from a literal, both report a picture that was never written "
+        "(review-2 F1)" + ("" if not bad15 else " — " + "; ".join(bad15)))
+
 
 def context_checks(r, text, quiet):
     """The Linux Vulkan context: the same result rule as B5, over the file review-8 F3
@@ -2374,6 +2476,50 @@ arm_frontend("refusal-block-deleted", fe_delete_refusal_block, "F1")
 arm_frontend("prints-capacity-not-attempted-capacity", fe_prints_capacity_not_attempted, "F2")
 arm_frontend("latch-clear-deleted", fe_latch_never_clears, "F3")
 arm_frontend("latch-guard-widened-to-true", fe_latch_guard_widened, "F3")
+
+
+def fe_capture_verdict_not_read(s):
+    """The batch undone: the frontend stops asking, and the run returns 0 over a
+    capture that never landed. Only F4 can see it."""
+    return s.replace(r"""    int32_t captureRequested = 0;
+    int32_t captureWritten = 0;
+    mdk_render_capture_stats(renderer, &captureRequested, &captureWritten);
+    int status = 0;
+    if (captureFrame > 0 && captureWritten < 1) {
+        std::fprintf(stderr,
+                     "[main] capture FAILED: --capture=%s asked for frame %d and %d of %d "
+                     "requested pictures reached the disk; the run cannot report a frame it "
+                     "did not take\n",
+                     capturePath.c_str(), captureFrame, (int)captureWritten,
+                     (int)captureRequested);
+        status = 1;
+    }
+""", """    int status = 0;
+""", 1)
+
+
+def fe_capture_verdict_prints_only(s):
+    """The refusal is printed and then walked past: the operator is told and the
+    harness is told the opposite. This is the mutant a `printf`-shaped check would
+    accept, which is why F4 follows the assigned name to the `return`."""
+    return s.replace("""                     (int)captureRequested);
+        status = 1;
+    }""", """                     (int)captureRequested);
+    }""", 1)
+
+
+def fe_capture_verdict_not_returned(s):
+    """The verdict is computed and the status is dropped on the floor at the exit."""
+    return s.replace("""    mdk::windowDestroy(&window);
+    return status;
+}""", """    mdk::windowDestroy(&window);
+    return 0;
+}""", 1)
+
+
+arm_frontend("capture-verdict-not-read", fe_capture_verdict_not_read, "F4")
+arm_frontend("capture-verdict-printed-and-dropped", fe_capture_verdict_prints_only, "F4")
+arm_frontend("capture-verdict-not-returned", fe_capture_verdict_not_returned, "F4")
 arm_backend("site-refusal-print-deleted", be_delete_dynamic_mesh_refusal, "B1")
 arm_backend("helper-stops-flushing", be_helper_stops_flushing, "B2")
 arm_backend("prints-the-mesh-capacity", be_prints_the_old_capacity, "B3")
@@ -2431,39 +2577,30 @@ def be_begin_frame_silent(s):
 
 
 def be_end_frame_result_discarded(s):
-    # The exact pre-batch shape: the frame's own result thrown away and the
-    # screenshot captured from whatever the swapchain image happened to hold.
+    # endFrame's own result thrown away, and the screenshot taken from whatever the
+    # swapchain image happened to hold.
+    #
+    # The capture ACCOUNTING is deliberately left intact here. The pre-batch shape
+    # reverted BOTH results at once, and an arm that reddens two checks proves
+    # neither: the harness reports the first check that broke, so a mutant that
+    # takes out B11 and B15 together would leave B15 with no mutation that isolates
+    # it. This one keeps a working capture count and fails only the frame's result.
     return s.replace("""    const bool submitted = mdk::vk::endFrame(&r->ctx);
     r->inFrame = false;
     if (!submitted) {
         refused("end the frame: its commands were not submitted or not presented, so this "
                 "frame did not reach the display");
     }
-    if (!r->screenshotPath.empty()) {
-        const std::string path = r->screenshotPath;
-        r->screenshotPath.clear();
-        if (!submitted) {
-            // The readback would succeed and print its usual "wrote N" line about an
-            // image this frame never drew into. A frame record that cannot be trusted
-            // is worse than no frame record, because a frame record gets committed.
-            refused("capture the frame to %s: the frame it was asked to capture was never "
-                    "submitted, so the image would not be this frame's",
-                    path.c_str());
-        } else {
-            captureSwapchain(r, path.c_str());
-        }
-    }""", """    mdk::vk::endFrame(&r->ctx);
+    if (!r->screenshotPath.empty()) {""", """    mdk::vk::endFrame(&r->ctx);
     r->inFrame = false;
-    if (!r->screenshotPath.empty()) {
-        const std::string path = r->screenshotPath;
-        r->screenshotPath.clear();
-        captureSwapchain(r, path.c_str());
-    }""", 1)
+    if (!r->screenshotPath.empty()) {""", 1)
 
 
 def be_capture_of_an_unsubmitted_frame(s):
-    # The result is read and reported, but the pinned frame is captured anyway: the
-    # picture of a frame that never reached the display, published as the record.
+    # The frame's result is still read and still reported, but the pinned frame is
+    # captured anyway: the picture of a frame that never reached the display,
+    # published as the record. The capture count is left correct on purpose, so this
+    # arm isolates B11 and not B15.
     return s.replace("""        if (!submitted) {
             // The readback would succeed and print its usual "wrote N" line about an
             // image this frame never drew into. A frame record that cannot be trusted
@@ -2471,14 +2608,80 @@ def be_capture_of_an_unsubmitted_frame(s):
             refused("capture the frame to %s: the frame it was asked to capture was never "
                     "submitted, so the image would not be this frame's",
                     path.c_str());
-        } else {
+        } else if (captureSwapchain(r, path.c_str())) {
+            // The one place this counter may rise: `captureSwapchain` returns false
+            // for a failed open, a short write, a failed readback and a mapping it
+            // could not make, and every one of those is a picture that does not exist.
+            r->capturesWritten++;
+        }""", """        if (captureSwapchain(r, path.c_str())) {
+            r->capturesWritten++;
+        }""", 1)
+
+
+def be_capture_result_discarded(s):
+    # The exact review-2 F1 shape, and nothing else: the frame's result is read and
+    # reported as before, but the bool `captureSwapchain` returns is thrown away
+    # again, so a run that wrote no picture still counts nothing and still exits 0.
+    return s.replace("""        } else if (captureSwapchain(r, path.c_str())) {
+            // The one place this counter may rise: `captureSwapchain` returns false
+            // for a failed open, a short write, a failed readback and a mapping it
+            // could not make, and every one of those is a picture that does not exist.
+            r->capturesWritten++;
+        }""", """        } else {
             captureSwapchain(r, path.c_str());
-        }""", """        captureSwapchain(r, path.c_str());""", 1)
+        }""", 1)
+
+
+def be_capture_written_counted_on_request(s):
+    # Both counters rise, and neither means anything: the write is counted the moment
+    # a path is named, so the frontend's "asked for one, got one" rule is satisfied
+    # by the request alone and the failure it exists to catch is invisible again.
+    return s.replace("""        r->capturesRequested++;
+        if (!submitted) {""", """        r->capturesRequested++;
+        r->capturesWritten++;
+        if (!submitted) {""", 1).replace("""        } else if (captureSwapchain(r, path.c_str())) {
+            // The one place this counter may rise: `captureSwapchain` returns false
+            // for a failed open, a short write, a failed readback and a mapping it
+            // could not make, and every one of those is a picture that does not exist.
+            r->capturesWritten++;
+        }""", """        } else {
+            captureSwapchain(r, path.c_str());
+        }""", 1)
+
+
+def be_capture_requested_never_counted(s):
+    # The write half is right and the request half is missing, so a frontend cannot
+    # tell "the write was refused" from "no frame ever asked" — and the line it
+    # prints to an operator says 0 of 0 for a capture that was asked for and lost.
+    return s.replace("""        r->capturesRequested++;
+        if (!submitted) {""", """        if (!submitted) {""", 1)
+
+
+def be_capture_stats_answers_from_literals(s):
+    # The query exists and is called, and answers from constants: every shape the
+    # frontend's rule can test is satisfied, and none of it is connected to what the
+    # frame actually did.
+    return s.replace("""    if (requested) {
+        *requested = vr ? vr->capturesRequested : 0;
+    }
+    if (written) {
+        *written = vr ? vr->capturesWritten : 0;
+    }""", """    (void)vr;
+    if (requested) {
+        *requested = 0;
+    }
+    if (written) {
+        *written = 0;
+    }""", 1)
 
 
 arm_backend("begin-frame-refusal-deleted", be_begin_frame_silent, "B11")
 arm_backend("end-frame-result-discarded", be_end_frame_result_discarded, "B11")
 arm_backend("screenshot-of-an-unsubmitted-frame", be_capture_of_an_unsubmitted_frame, "B11")
+arm_backend("capture-result-discarded", be_capture_result_discarded, "B15")
+arm_backend("capture-counted-on-the-request", be_capture_written_counted_on_request, "B15")
+arm_backend("capture-request-never-counted", be_capture_requested_never_counted, "B15")
+arm_backend("capture-stats-answer-from-literals", be_capture_stats_answers_from_literals, "B15")
 
 
 def ce_fence_wait_result_dropped(s):
@@ -3056,7 +3259,39 @@ def be_image_handles_destroyed_inline(s):
         r->retiringImages.erase""", 1)
 
 
+def fe_capture_status_renamed(s):
+    """A correct refactoring: the status variable is named for what it is. F4 follows
+    the assigned name to the `return`, so any name that survives the rename has to
+    stay green — a rule that only accepted `status` would pin a word."""
+    return s.replace("""    int status = 0;
+    if (captureFrame > 0""", """    int exitStatus = 0;
+    if (captureFrame > 0""", 1).replace("""        status = 1;
+    }""", """        exitStatus = 1;
+    }""", 1).replace("""    return status;
+}""", """    return exitStatus;
+}""", 1)
+
+
+def be_capture_written_in_a_nested_if(s):
+    """A correct refactoring: the same test, spelled as a nested `if` instead of an
+    `else if`. The write is still counted only where the write's own result decided
+    it, so B15 has to stay green."""
+    return s.replace("""        } else if (captureSwapchain(r, path.c_str())) {
+            // The one place this counter may rise: `captureSwapchain` returns false
+            // for a failed open, a short write, a failed readback and a mapping it
+            // could not make, and every one of those is a picture that does not exist.
+            r->capturesWritten++;
+        }""", """        } else {
+            if (captureSwapchain(r, path.c_str())) {
+                r->capturesWritten++;
+            }
+        }""", 1)
+
+
 PROBES = [("named local at the drop site", be_named_local_at_the_drop_site, "Linux backend"),
+          ("capture status renamed", fe_capture_status_renamed, "Linux frontend"),
+          ("capture write counted in a nested if", be_capture_written_in_a_nested_if,
+           "Linux backend"),
           ("erase instead of the swap-pop", be_erase_instead_of_the_swap_pop, "Linux backend"),
           ("aggregate record at the push", be_aggregate_record_at_the_push, "Linux backend"),
           ("image handles released inline, in order", be_image_handles_destroyed_inline,
