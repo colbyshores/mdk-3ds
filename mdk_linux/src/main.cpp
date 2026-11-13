@@ -60,6 +60,33 @@ int32_t freshScriptSeed() {
     return seed;
 }
 
+// An option value that names a count this frontend can act on: a non-empty run
+// of decimal digits, nothing after them, and a value in [1, INT_MAX].
+//
+// This exists because `atoi` answers 0 for "abc", for "0" and for "" alike, and
+// every reader of these counts takes 0 to mean "no limit" or "never":
+// `maxFrames > 0` gates the frame bound and `captureFrame > 0` gates the
+// capture. So a value that failed to parse did not fail — it silently became the
+// OPPOSITE of what was asked. `--frames abc` ran unbounded, and
+// `--capture-frame=abc` exited 0 having written no picture, which is a capture
+// harness reporting a frame it never took.
+//
+// The leading-digit test is not decoration. `strtol` skips leading space and
+// accepts a sign, so " 5", "+5" and "-5" all parse without it, and a contract
+// that says "a positive whole number" should mean exactly that.
+bool positiveCount(const char* name, const char* text, int* out) {
+    char* end = nullptr;
+    const bool digits = text != nullptr && *text >= '0' && *text <= '9';
+    const long value = digits ? std::strtol(text, &end, 10) : 0;
+    if (!digits || end == text || *end != '\0' || value < 1 || value > INT_MAX) {
+        std::fprintf(stderr, "[main] %s must be a positive whole number: %s\n",
+                     name, text != nullptr ? text : "");
+        return false;
+    }
+    *out = static_cast<int>(value);
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -96,12 +123,18 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--fixed-step") == 0) {
             fixedStep = true;
         } else if ((value = optionValue(argv[i], "--capture")) != nullptr) {
+            if (*value == '\0') {
+                std::fprintf(stderr, "[main] --capture must name a file to write\n");
+                return 1;
+            }
             capturePath = value;
             if (captureFrame == 0) {
                 captureFrame = 1;
             }
         } else if ((value = optionValue(argv[i], "--capture-frame")) != nullptr) {
-            captureFrame = std::atoi(value);
+            if (!positiveCount("--capture-frame", value, &captureFrame)) {
+                return 1;
+            }
         } else if ((value = optionValue(argv[i], "--size")) != nullptr) {
             int w = 0;
             int h = 0;
@@ -112,7 +145,12 @@ int main(int argc, char** argv) {
             hiddenWidth = w;
             hiddenHeight = h;
         } else if ((value = optionValue(argv[i], "--level")) != nullptr) {
-            levelNumber = std::atoi(value);
+            // Parse first, then bound. Before this, atoi turned "abc" into 0 and
+            // the range check rejected it with a message about the range for a
+            // value that was never a number.
+            if (!positiveCount("--level", value, &levelNumber)) {
+                return 1;
+            }
             if (levelNumber < 3 || levelNumber > 8) {
                 std::fprintf(stderr, "[main] --level must be 3-8\n");
                 return 1;
@@ -131,8 +169,14 @@ int main(int argc, char** argv) {
             hasStartOverride = true;
             hasYawOverride = fields == 4;
             yawOverride = yaw;
-        } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
-            maxFrames = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--frames") == 0) {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "[main] --frames needs a value\n");
+                return 1;
+            }
+            if (!positiveCount("--frames", argv[++i], &maxFrames)) {
+                return 1;
+            }
         } else if (std::strcmp(argv[i], "--seed") == 0) {
             if (i + 1 >= argc) {
                 std::fprintf(stderr, "[main] --seed needs a value\n");
@@ -146,6 +190,19 @@ int main(int argc, char** argv) {
             }
             scriptSeed = static_cast<int32_t>(value);
             scriptSeedSet = true;
+        } else {
+            // An argument the chain does not know used to fall through and the run
+            // continued on its defaults, which is how a "levels 1-7 sweep" made by
+            // passing `--level 3` with a space measured level 3 seven times and
+            // printed identical draw counts. A harness that reports having run
+            // what it did not run is worse than one that fails.
+            std::fprintf(stderr, "[main] unrecognized argument: %s\n", argv[i]);
+            std::fprintf(stderr,
+                         "[main] options take their value with an equals "
+                         "(--level=3, --size=320x240, --capture=frame.bmp) except "
+                         "--frames and --seed, which take it as a separate word "
+                         "(--frames 3, --seed 1)\n");
+            return 1;
         }
     }
 

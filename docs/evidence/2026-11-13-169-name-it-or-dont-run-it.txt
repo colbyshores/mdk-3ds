@@ -1,0 +1,342 @@
+BATCH 169 — ledger row `linux.render-frame`, acceptance `bash tools/check.sh`, attempt 4
+AN ARGUMENT THE FRONTEND CANNOT ACT ON IS A REFUSAL, NOT A DEFAULT:
+FOUR FAIL-OPENS IN THE SAME CHAIN, AND THE SWEEP THAT WAS NEVER A SWEEP
+=============================================================================
+
+WHAT THIS IS
+  CONTINUATION NEXT-list work on the row, and the correction of a published
+  measurement. No review finding was open: review-10 (run-20261113-021356, the
+  newest external review) was remediated in full by batch 165 — five findings,
+  all reproduced as mutants first, none rebutted. Nothing in this batch is a
+  remediation and nothing is rebutted.
+
+  The defect was found the way most of this row's are: by reading the numbers a
+  previous batch published and noticing they were too alike.
+
+
+-----------------------------------------------------------------------------
+1. THE HEADLINE FACT, AND WHY IT IS ABOUT A HARNESS AND NOT A RENDERER
+-----------------------------------------------------------------------------
+  Batch 168 published "levels 1..7, 300 frames each — total 0, distinct 0 on
+  every one" and, as its own §"NEW, not chased", that "`--level 99` run[s] with
+  the same startup draw count as level 3, which suggests an unknown level falls
+  back rather than erroring".
+
+  Neither is a measurement of levels. `optionValue()` matches `--name=value`.
+  `--level` is not `--level=`. Every one of those eight runs received no level at
+  all and ran the default, level 3. The evidence file records each of the seven
+  as ending "exiting after 300 frames (last frame: 190 draws, 1469 triangles)" —
+  the SAME draw count and the SAME triangle count seven times, which is the tell
+  sitting in the table, unread.
+
+  The real sweep, run on this batch's binary with the spelling the frontend
+  actually accepts (`--level=`, 300 frames, seed 1, 320x240, `DISPLAY=:99`,
+  llvapipe ICD):
+
+    level=3  rc 0  refused 0  last frame: 190 draws, 1469 triangles
+    level=4  rc 0  refused 0  last frame:  28 draws,  252 triangles
+    level=5  rc 0  refused 0  last frame: 107 draws, 1682 triangles
+    level=6  rc 0  refused 0  last frame:  87 draws,  926 triangles
+    level=7  rc 0  refused 0  last frame: 153 draws, 1042 triangles
+    level=8  rc 0  refused 0  last frame: 243 draws, 2584 triangles
+
+  Six different scenes now produce six different draw counts, which is what a
+  sweep looks like when it sweeps. Batch 168's CONCLUSION survives — zero
+  refusals at every shipped level, re-established here rather than copied — but
+  its METHOD did not, and one of its two open items was an artifact of the bug
+  rather than a property of the frontend:
+
+    `--level=99` does NOT fall back. It refuses: "[main] --level must be 3-8",
+    rc 1. There is no silent fallback to correct the reviewer to. The open item
+    is closed as "never existed", and batch 168's evidence file carries a
+    CORRECTION block saying so rather than a silent rewrite.
+
+  Why this is a harness defect and not a CLI nicety: the loop's entire method is
+  "run the binary, read the number". An argument that vanishes makes the number
+  describe a different run than the one being recorded, and it looks measured.
+
+
+-----------------------------------------------------------------------------
+2. THE CLASS IS BIGGER THAN THAT ONE ARGUMENT, AND ALL FOUR WAYS WERE MEASURED
+-----------------------------------------------------------------------------
+  Before touching anything, the shipped binary (`git show HEAD` of main.cpp,
+  built, run) was probed with every option value the chain reads:
+
+    `--frames abc`            ran UNBOUNDED — killed by an 8 s watchdog
+    `--frames 0`              ran UNBOUNDED — killed by an 8 s watchdog
+    `--capture=p --capture-frame=abc`
+                              rc 0, and NO FILE was written
+    `--capture=`              rc 0, and NO FILE was written
+    `--frames` (last arg)     rejected, but as "unrecognized argument: --frames"
+                              — a recognised option called unrecognized
+    `--level=abc`             rejected, but as "must be 3-8" about a value that
+                              was never a number
+    `--size=wide`, `--at=1,2` already refused. `--seed` already refused, and was
+                              the only spelling that got it right.
+
+  `atoi` answers 0 for "abc", for "0" and for "" alike, and every reader in this
+  chain takes 0 to mean "no limit" or "never": `maxFrames > 0` gates the frame
+  bound and `captureFrame > 0` gates the capture. So a value that failed to parse
+  silently became the OPPOSITE of what was asked. A harness that asks for a
+  bounded run and then never stops, and a capture harness that reports success
+  with no picture, are the same defect as the invisible `--level`: the frontend
+  ran something other than what it was told and said nothing.
+
+  THE FIX IS ONE PREDICATE, NOT FOUR. `positiveCount(name, text, out)` in the
+  anonymous namespace: a leading digit, `strtol`, nothing after the digits, and a
+  value in [1, INT_MAX]. `--frames`, `--capture-frame` and `--level` all go
+  through it; `--capture` additionally refuses an empty path; a trailing
+  `--frames` says "needs a value"; an unknown argument says "unrecognized". Four
+  guards asking "is this a number?" four different ways is how three of these
+  survived — `--size` and `--seed` were validated, `--level` was range-checked
+  (which rejects a non-number by accident, with a message about the range), and
+  `--frames` and `--capture-frame` were not checked at all. This is the same
+  lesson batch 158 learned one subsystem over.
+
+  The leading-digit test is not decoration: `strtol` skips leading space and
+  accepts a sign, so without it " 5", "+5" and "-5" all parse. A contract that
+  says "a positive decimal number" should mean exactly that.
+
+  AND THE HELP TEXT WAS ITSELF WRONG. The in-flight version of this fix printed
+  "options take their value with an equals ... except --seed, which takes a
+  separate value". `--frames` also takes a separate value. A refusal message that
+  mis-states the interface it is refusing is a second bug wearing the first one's
+  clothes, so it now names both.
+
+
+-----------------------------------------------------------------------------
+3. THE TEST: 18 RUNTIME ARMS, AND WHY NOT ONE OF THEM IS A GREP
+-----------------------------------------------------------------------------
+  `tests/scripts/linux_arg_parse_test.sh`, wired into `tests/scripts/Makefile`.
+
+  The property is "this binary, given that argument, exits non-zero and says why".
+  A shape grep cannot establish that and neither can reading the source, so every
+  arm runs the binary. 13 refuse arms, 2 accept arms, 1 capture arm, plus the
+  two accept arms' siblings:
+
+  * The watchdog is load-bearing, not hygiene. Four of the refuse arms make the
+    PRE-fix binary run unbounded; without `timeout 60` the non-vacuity run would
+    HANG instead of failing, and a hanging test is a worse instrument than a
+    wrong one. rc 124 is reported as its own failure mode: "ran until the 60 s
+    watchdog killed it: ... was accepted as no limit at all".
+  * The refusal text is matched with `case`, never with `printf | grep -q`. A
+    pipe into an early-exit consumer is a SIGPIPE race, which this loop has
+    already been reviewed for twice in another harness (batches 161-162).
+  * `expect_capture` asserts the FILE EXISTS AND IS NON-EMPTY, not just rc 0.
+    "Did not refuse" and "did the thing asked" are different claims, and the
+    refuse arms alone could be satisfied by a frontend that refuses everything.
+    The two accept arms are the other half of that guard.
+  * The refuse arms need neither the game data nor a display — a refusal happens
+    before anything is initialised. Only the accept arms do, so a lane with no
+    `MDK/` still gets 15 real arms and an explicit NOTE line naming the 3 that
+    were skipped rather than quietly dropping them. A skip says so; it is not a
+    pass. The whole test SKIPs only when `build-linux/mdk` does not exist.
+
+  NON-VACUITY, run and not asserted:
+
+    new test on WORKING sources   18 arms, 0 FAIL, rc 0
+    new test on PARENT sources    18 arms, 10 FAIL, rc 1
+
+  The ten that red on the parent are exactly the class: 3 unknown-argument rows,
+  4 `--frames` rows (three of them the watchdog firing), 2 `--capture-frame`
+  rows, 1 empty-`--capture` row. The eight that stay green on the parent are the
+  rows that were already correct (`--size=wide`, `--level=99`, `--level=abc`,
+  `--seed` x2, both accept arms, the capture arm) — they are kept precisely
+  because they were already correct, so a regression in the one good spelling
+  (`--seed`) is caught too.
+
+  Collateral: the parent had no version of this test, so the four-way collapses
+  to the two runs above plus the whole existing suite on the working tree, which
+  is gate 1 below.
+
+
+-----------------------------------------------------------------------------
+4. GATES, VERBATIM
+-----------------------------------------------------------------------------
+  (filled in after the run; see the block appended at the foot of this file)
+
+
+-----------------------------------------------------------------------------
+5. WHAT THIS DOES NOT CLAIM
+-----------------------------------------------------------------------------
+  * It does not claim the CLI is now consistent. `--frames` and `--seed` take a
+    separate value while everything else takes an equals. That inconsistency is
+    what made the silent ignore the EXPECTED mistake rather than a rare one, and
+    the honest response was to refuse and say which style each option wants, not
+    to accept both spellings of everything in a batch whose subject is refusing.
+  * `--size=320x240junk` and `--at=1,2,3junk` are still accepted: `sscanf`
+    returns the fields it read. They are not in this class — they parse, they
+    refuse the fail-open half (non-numeric, non-positive), and tightening them is
+    a strictness change rather than a fail-open fix. Stated rather than hidden.
+  * Nothing here is 3DS evidence. No file under `mdk_3ds/**` changed, so no P8
+    emulator evidence is owed and none is claimed.
+  * The Linux binary is still not compiled by any gate (item 11b). This batch
+    built it by hand with `cmake --build build-linux -j8`, rc 0, and the test
+    SKIPs rather than passes when the binary is absent — which is the honest
+    shape of item 11b from inside a batch that may not edit `tools/check.sh`.
+
+  All three gates, run on the committed working tree. DEVKITPRO/DEVKITARM are not
+  in this lane's ambient environment; gate 3 was first run without them and failed
+  with `Makefile:25: *** "Please set DEVKITARM."` rc 2 — an environment omission
+  in the harness, not a build fault, and it is recorded rather than smoothed over.
+
+  GATE 1  make -C tests/scripts -j8                                  rc 0
+    "All cases match the oracle."
+    766 PASS / 0 FAIL   (was 765; +1 is exactly the new `PASS LinuxArgParse` line)
+    PASS LinuxArgParse (18 arms: an argument or option value the Linux frontend
+      cannot act on is refused and named, and both documented value spellings plus
+      a real capture still work)
+    PASS LinuxRefusalReport (21 checks, 71 arms adjudicated red, 5 probes green)
+
+  GATE 2  DISPLAY=:99 bash tools/check.sh                            rc 0
+    CHECK: ALL GATES PASSED
+    PASS L3_f1.bmp sha=58615fc85d02e009
+    BATCH INTEGRITY: PASS
+    COMPLETION SELFTEST: PASS (13 arms)
+    COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open
+    COMPLETION: LEDGER VERIFIED
+    SKIP gates_smdh  (no built .cia to read)
+    audit_c_with_classes: VERDICT: CONTRACT CLEAN -- 0 violations
+
+  GATE 3  DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM \
+            make -C mdk_3ds -j8                                      rc 0
+    mdk.elf md5 728eb2350c3ef8a81acda15f75617c1e  UNCHANGED
+    Correct, and stated rather than glossed: no file under mdk_3ds/** changed, so
+    the ELF is the same bytes batch 162 recorded. No P8 emulator evidence is owed
+    and none is claimed.
+
+  LINUX BUILD (not a gate — item 11b)
+    cmake --build build-linux -j8   rc 0, run by hand, twice: once for the
+    working binary and once for the parent-source binary the non-vacuity run
+    needed, with main.cpp restored from `git show HEAD:` and then put back.
+
+  FRAME
+    docs/frames/2026-11-13-name-it-or-dont-run-it.png (+ .txt), 320x240,
+    a NEW file. Re-derived census, not remembered: 187 PNGs in docs/frames, 186
+    of them at md5 6769a13731983d65cee9df02da6cff37 including this one, and this
+    frame contains ZERO pure (0,0,255) pixels — so the committed picture cannot
+    show a HUD canary and never did; the disclosure is in the sidecar.
+
+
+=============================================================================
+6. ATTEMPT 5 — THE FIX WAS NOT IN THE TREE, AND TWO NUMBERS IN THIS FILE WERE
+   WRONG. BOTH CORRECTED HERE RATHER THAN QUIETLY REWRITTEN.
+=============================================================================
+
+  WHAT THE NEXT ITERATION INHERITED. Attempt 4 was cut off after 12:06 with the
+  test, the frame, this file and the CONTINUATION entry written, and with
+  `mdk_linux/src/main.cpp` at its PARENT contents. The mtimes say how: the test
+  was last written 12:06:09, main.cpp 12:06:24, `build-linux/mdk` 12:06:35 — the
+  non-vacuity run of §4 needed the parent source in the build tree, so main.cpp
+  was restored from `git show HEAD:`, rebuilt, and the iteration ended before it
+  was put back. The evidence above describes a binary that no longer existed.
+  `grep -c positiveCount mdk_linux/src/main.cpp` on the inherited tree: 0.
+
+  That is the hazard of a non-vacuity run that edits the working tree instead of a
+  copy: the run that proves the test bites is also the run that can delete the
+  fix. The restore is now inside a `trap ... EXIT` in the command that does it, so
+  the put-back happens even when the run fails.
+
+  CORRECTION 1 — THE ARM COUNT IS 19, NOT 18. The shipped test has 15 refuse
+  arms, 2 accept arms, 1 frame-count-honoured arm and 1 real-capture arm. §3 and
+  the CONTINUATION entry both said 18, and §3's breakdown ("13 refuse arms, 2
+  accept arms, 1 capture arm, plus the two accept arms' siblings") does not add up
+  to its own total. The test's own PASS line is the authority:
+
+    PASS LinuxArgParse (19 arms: an argument or option value the Linux frontend
+    cannot act on is refused and named, and both documented value spellings, a
+    honoured frame count and a real capture still work)
+
+  CORRECTION 2 — THE NON-VACUITY RUN WAS RE-MEASURED, NOT COPIED, and it gives the
+  same ten failures against a different total. With main.cpp restored from HEAD
+  (the parent, no fix) and the binary rebuilt from it:
+
+    FAIL LinuxArgParse (9 ok, 10 failing)          rc 1
+      [space-spelled --level]      exited 0, accepted the run
+      [unknown option]             exited 0, accepted the run
+      [stray positional]           exited 0, accepted the run
+      [non-numeric --frames]       ran until the 60 s watchdog killed it
+      [--frames 0]                 ran until the 60 s watchdog killed it
+      [negative --frames]          ran until the 60 s watchdog killed it
+      [--frames with no value]     ran until the 60 s watchdog killed it
+      [non-numeric --capture-frame] exited 0, no file
+      [--capture-frame 0]          exited 0, no file
+      [empty --capture path]       exited 0, no file
+
+  Ten of 19, not ten of 18 — §4's "10 of 18 FAIL" was the same off-by-one in the
+  denominator. The four watchdog firings are the load-bearing ones: without
+  `timeout` the non-vacuity run HANGS rather than fails, which is why the watchdog
+  is in the arm and not in the harness. The nine that stay green on the parent are
+  the rows that were already correct — `--size=wide`, both `--seed` rows, and both
+  remaining `--level` rows (`--level=99` for the right reason, `--level=abc` only
+  by accident, because atoi made it 0 and 0 is outside 3-8) — plus the two accept
+  arms, the honoured frame count and the real capture. They are kept precisely so a
+  regression in the one spelling that always worked is caught too.
+
+  WITH THE FIX RESTORED the same test is 19 arms / 0 FAIL / rc 0, and the frame
+  was re-captured from the fixed binary rather than inherited, so the committed
+  picture comes from the bytes this batch commits.
+
+  WHAT ATTEMPT 5 ADDED TO THE FIX ITSELF. Nothing beyond re-making it: the same
+  one predicate (`positiveCount`: leading digit, `strtol`, nothing after the
+  digits, value in [1, INT_MAX]), the same four call sites (`--frames`,
+  `--capture-frame`, `--level`, and `--capture` refusing an empty path), the same
+  `--frames needs a value`, and the same terminal `else` that calls an unknown
+  argument unrecognized and then states which option wants `=` and which wants a
+  separate word. The four-way still collapses to the two rows above: the parent
+  had no version of this test, so there is no parent-test row to run.
+
+
+-----------------------------------------------------------------------------
+7. THE THREE GATES, RUN ON THE WORKING TREE OF ATTEMPT 5, VERBATIM
+-----------------------------------------------------------------------------
+
+  GATE 1  make -C tests/scripts -j8                                    rc 0
+    "All cases match the oracle."
+    766 PASS / 0 FAIL   (765 before this row existed; +1 is exactly the new
+    `PASS LinuxArgParse` line, and nothing else in the suite moved)
+      PASS LinuxArgParse (19 arms: an argument or option value the Linux
+        frontend cannot act on is refused and named, and both documented value
+        spellings, a honoured frame count and a real capture still work)
+      PASS LinuxRefusalReport (21 checks, 71 arms adjudicated red, 5 probes green)
+
+  GATE 2  DISPLAY=:99 bash tools/check.sh                              rc 0
+    CHECK: ALL GATES PASSED
+      PASS   audit_c_with_classes     0 violations
+      PASS   gates_vfp                0 blockers
+      PASS   audit_arm11_math         contract clean
+      PASS   audit_r11_idiv           no candidates
+      PASS   gates_core_parity        both targets link the same core
+      SKIP   gates_smdh               no built .cia to read
+      PASS   gates_frames             every pinned frame is deterministic and unchanged
+               PASS L3_f1.bmp sha=58615fc85d02e009
+      PASS   gates_batch_integrity    project invariants intact
+      PASS   gates_completion         every done row is backed by evidence and a commit
+    BATCH INTEGRITY: PASS
+    COMPLETION SELFTEST: PASS (13 arms)
+    COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open
+    COMPLETION: LEDGER VERIFIED
+
+  GATE 3  DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM \
+            make -C mdk_3ds -j8                                        rc 0
+    mdk.elf md5 728eb2350c3ef8a81acda15f75617c1e  UNCHANGED
+    Correct, and stated rather than glossed: no file under mdk_3ds/** is in the
+    diff, so no P8 emulator evidence is owed and none is claimed. DEVKITPRO and
+    DEVKITARM are not in this lane's ambient environment; the values above are
+    what the gate needs and are recorded so the run can be repeated.
+
+  LINUX BUILD (not a gate — item 11b: nothing in the gate set compiles
+  mdk_linux/**). `cmake --build build-linux -j8` rc 0, run three times: after the
+  fix, for the parent-source non-vacuity binary, and again after the restore. The
+  binary the frame and the test ran against is the last one.
+
+  FRAME
+    docs/frames/2026-11-13-name-it-or-dont-run-it.png (+ .txt), 320x240, re-
+    captured from the FIXED binary at 19:22:56Z rather than inherited from the
+    attempt that lost the fix. Census re-derived, not remembered: 187 PNGs in
+    docs/frames, 186 of them at md5 6769a13731983d65cee9df02da6cff37 including
+    this one, and this frame decodes to 219 distinct colours with ZERO pure
+    (0,0,255) pixels — so the committed picture cannot show a HUD canary and
+    never did; the disclosure is in the sidecar. A frame identical to its 185
+    siblings is the expected result: no render path changed, only the argument
+    parser that decides which scene to ask for.
