@@ -869,6 +869,22 @@ while :; do
     else
         log "iter=$ITER no open ledger row at $COMPLETION_LEVEL (the iteration runs as before)"
     fi
+
+    # Certify inherited work BEFORE spending a turn on it. A turn that hits the
+    # phase wall is killed before the end-of-iteration closer runs, so a row whose
+    # acceptance already passes could never close: measured at 11:28 today, attempt
+    # 3 of linux.render-frame ran 3h55m, the watchdog killed it, and nothing ever
+    # faced the closer. Banking and certifying here makes every iteration the
+    # closer's opportunity, not only the ones that finish cleanly.
+    if [ -n "$C_ITEM_ID" ] && [ -f "$ROOT/tools/runner/ledger_close.py" ]; then
+        if python3 "$ROOT/tools/runner/ledger_close.py" --row "$C_ITEM_ID" --bank-uncommitted \
+                >>"$RUN_DIR/close-$ITER.log" 2>&1; then
+            log "ledger_close: $C_ITEM_ID certified from inherited work; selecting the next row instead of spending a turn on a closed row"
+            state_set COMPLETION_ITEM ""
+            state_set COMPLETION_ITERS 0
+            continue
+        fi
+    fi
     {
         cat "$BUILDER_FILE"
         if [ -n "$C_ITEM_ID" ]; then
