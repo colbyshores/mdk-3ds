@@ -53,6 +53,8 @@
 #   mdk_3ds/tools/emurun.sh --grep 'tex:|draws' # extra patterns to extract
 #   mdk_3ds/tools/emurun.sh --shot /tmp/f.png    # capture the offscreen display
 #   mdk_3ds/tools/emurun.sh --min-frames 60      # refuse to report a short run
+#                                               # (a decimal 0..MAX_FRAMES; anything else
+#                                               # is a usage error, not a disabled gate)
 #   mdk_3ds/tools/emurun.sh --expect hud         # fail unless the HUD's canvas drew,
 #                                               # in the panel, WHERE THE CANVAS MATRIX
 #                                               # SAYS IT GOES (see canary_verdict)
@@ -62,7 +64,8 @@
 #
 # EXIT CODES
 #   0 ok | 2 launch/environment failed | 3 STALE LOG, refused to report
-#   4 emulator died before producing a log | 5 run too short to measure
+#   4 emulator died before producing a log | 5 run too short to measure, OR its length
+#     could not be measured (an unevaluable --min-frames or frame count is a refusal)
 #   6 emulator version is not the pinned known-good build
 #   7 the run was healthy but a --expect evidence line was not there
 #
@@ -99,12 +102,87 @@ READY_TOKEN='backend:'
 # counts ZERO frames on a run that reached frame 3540. Measured 2026-11-05.
 FRAME_RE='^frame [0-9][0-9]* '
 
+# --- measurements ------------------------------------------------------------
+#
+# THE ONE RULE FOR "IS THIS A NUMBER THIS HARNESS CAN COMPARE?" -- and every number
+# this file compares goes through it, the HUD's pixel counts and the run's frame count
+# alike (review-2 F2, review-3 F1 and F2).
+#
+# WHY A PREDICATE AND NOT A SAFE DEFAULT. `[ ]` exits **2**, not 1, when it cannot parse
+# an operand, and an `if` cannot tell "I could not do this" from "it came out false":
+# the body is skipped and the code walks past the rejection into the pass. So every
+# `[ field -lt bound ]` over a junk field is a SILENT FALSE. Vault
+# 30-architecture/patterns/a-checker-that-cannot-evaluate-a-condition-must-report-err-
+# not-false, and this repo's own `review_int` (tools/runner/review_state.sh), which
+# exists because `[ "$REVIEW_FAILS" -ge "$LIMIT" ]` on an empty counter made a review
+# limit never fire. Coercing to a safe-looking value is what batch 156 did and review-2
+# F2 caught: a value that looks safe is how the third outcome gets read as one of the
+# other two. So the predicate ANSWERS the question and the caller REFUSES.
+#
+# THREE WAYS A FIELD IS NOT COMPARABLE, and each needs its own arm:
+#   empty           -- `[ -lt ]` with a missing operand
+#   a non-digit      -- `x`, `60x`, `1x2`, AND `+121` / `-0` / ` 121`. Review-3 F1: the
+#                      arm used to read `*[!0-9]` with NO trailing star, so it matched
+#                      only a field whose LAST character was a non-digit, and `[ ]`
+#                      happily parses a signed decimal -- so a sign got through the
+#                      guard and went on to decide a ledger row. The class is "any
+#                      non-digit anywhere", which is what the star says.
+#   more digits than
+#       its bound    -- past LONG_MAX the parser dies exactly as dead as on `x`. A field
+#                      with MORE digits than the bound cannot be <= it anyway, so this
+#                      arm rejects nothing an honest measurement would have passed, and
+#                      it makes the bound the only number to keep in sync (batch 157's
+#                      fixed "six digits" was a second spelling of that).
+decimal_measurement() { # decimal_measurement <field> <max> ; 0 only for a decimal in [0,max]
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    [ "${#1}" -le "${#2}" ] || return 1
+    [ "$1" -le "$2" ]
+}
+
+# THE FRAME-COUNT BOUND. It is a bound and not a limit on a long run: six digits is
+# 999999 frames, about 4.6 hours of guest time, and the longest run this instrument is
+# ever asked for is a two-digit --secs. It exists so the comparison below is always one
+# `[ ]` can make.
+MAX_FRAMES=999999
+
+frame_floor() { # frame_floor <last-frame> <min-frames> ; 0 when the run is long enough
+                # to report on and 5 when it is not -- and 5 ALSO when the comparison
+                # cannot be made, which is a refusal and never a pass (review-3 F2).
+                # `--min-frames` reaches here verbatim from the caller, so a wrapper that
+                # passed an unset variable used to get a green 3-frame report.
+    if ! decimal_measurement "$2" "$MAX_FRAMES"; then
+        echo "emurun: --min-frames [$2] is not a frame count this harness can compare" >&2
+        echo "          (a decimal 0..$MAX_FRAMES). A floor it cannot evaluate is a" >&2
+        echo "          refusal, never a disabled gate (review-3 F2)." >&2
+        return 5
+    fi
+    if ! decimal_measurement "$1" "$MAX_FRAMES"; then
+        echo "emurun: the log's last frame [$1] is not a frame count this harness can" >&2
+        echo "          compare (a decimal 0..$MAX_FRAMES), so the run's length is not" >&2
+        echo "          measurable. Refusing to report (review-3 F2)." >&2
+        return 5
+    fi
+    if [ "$1" -lt "$2" ]; then
+        echo "emurun: only reached frame $1 (< --min-frames $2). Refusing to report." >&2
+        return 5
+    fi
+    return 0
+}
+# --- end measurements ----------------------------------------------------------
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --secs)       SECS="$2";       shift 2 ;;
     --grep)       EXTRA_GREP="$2"; shift 2 ;;
     --shot)       SHOT="$2";       shift 2 ;;
-    --min-frames) MIN_FRAMES="$2"; shift 2 ;;
+    --min-frames)
+        # Checked AT PARSE TIME, in front of everything expensive: the value reaches
+        # `frame_floor` verbatim, and an unusable one used to disable the short-run gate
+        # silently while the printed report still claimed to have measured a run.
+        decimal_measurement "$2" "$MAX_FRAMES" || {
+            echo "emurun: --min-frames requires a decimal 0..$MAX_FRAMES, got [$2]" >&2
+            exit 2; }
+        MIN_FRAMES="$2"; shift 2 ;;
     --expect)     EXPECT="$2";     shift 2 ;;
     --display)    DISPLAY_NUM="$2"; shift 2 ;;
     -h|--help)    awk 'NR>2 { if ($0 ~ /^# ={10,}/) exit; print }' "$0"; exit 0 ;;
@@ -775,7 +853,14 @@ case "$FRAMES" in ''|*[!0-9]*) FRAMES=0 ;; esac
 # the number of LINES is a sampling artefact. The frame NUMBER it reached is the
 # run length, and that is what --min-frames has to mean.
 LAST_FRAME=$(grep "$FRAME_RE" "$LOG" 2>/dev/null | tail -1 | awk '{print $2}')
-case "${LAST_FRAME:-}" in ''|*[!0-9]*) LAST_FRAME=0 ;; esac
+# An ABSENT frame line is zero frames, which is a measurement: the guest never logged
+# one, and a floor above zero then refuses, which is the honest answer. A present-but-
+# unusable one is NOT a measurement and is no longer rewritten to a safe-looking 0 --
+# that reset was review-3 F2's silent half -- so `frame_floor` below sees it and refuses
+# under its own name instead. (FRAME_RE already requires the field to be digits, so what
+# can actually arrive here is empty or a digit string of any length; the long one is
+# caught by the bound.)
+case "${LAST_FRAME:-}" in '') LAST_FRAME=0 ;; esac
 
 # What the instrument actually IS, read back from the lane config AFTER the run,
 # so it is the emulator's own final state and not this script's intention: see
@@ -945,6 +1030,11 @@ CANARY_MIN=25
 # a second spelling of a rectangle this file does not own.
 CANARY_MAX_PIXELS=96000   # PANEL_SIZE: 400 columns x 240 rows
 CANARY_MAX_COORD=399      # the panel's widest axis, inclusive far index
+# The most pixels that can ever land INSIDE the marker's rect: it spans columns 0..
+# CANARY_X1 and rows 0..CANARY_Y1 inclusive, so 12 x 12 = 144 (review-3 F4). Derived
+# from the rect constants above rather than spelled, and they are re-derived from the
+# shipped renderer by tests/scripts/emurun_harness_test.sh.
+CANARY_MAX_INSIDE=$(( (CANARY_X1 + 1) * (CANARY_Y1 + 1) ))
 
 # WHY THE CANARY IS A COLOUR AND NOT A DIFF (and where it comes from).
 #
@@ -960,15 +1050,12 @@ CANARY_MAX_COORD=399      # the panel's widest axis, inclusive far index
 # no reference; the rect above is what turns it from "some pixels appeared" into "the
 # canvas's own corner was painted".
 
-# Is this field a measurement the panel could physically produce?
-canary_measurement() { # canary_measurement <field> <max> ; 0 when it is a decimal in [0,max]
-    # The three `case` arms are: empty, not-digits, and SIX OR MORE DIGITS. The third is
-    # the one review-2 F2 found: it keeps `[ "$1" -le "$2" ]` below inside the range the
-    # parser can read, which is the whole point -- and every honest field is at most five
-    # digits (96000), so the arm cannot reject a real measurement.
-    case "$1" in ''|*[!0-9]|??????*) return 1 ;; esac
-    [ "$1" -le "$2" ]
-}
+# Is this field a measurement the panel could physically produce? It IS the shared
+# `decimal_measurement` at the top of this file -- there used to be a second, canary-
+# shaped copy of the rule here, and review-3 F1 found it reading `*[!0-9]` where the
+# rule needs `*[!0-9]*`, i.e. a guard that let `+121` and `-0` through while the prose
+# and the commit message both claimed it rejected them. One rule, one spelling, used by
+# the pixel counts and the frame count alike.
 
 canary_verdict() { # canary_verdict <shot> ; 0 when the canvas reached the panel,
                    # at the corner AND at the extent the canvas's own matrix puts
@@ -997,8 +1084,8 @@ EOF
     # THE COUNTS FIRST, and the bbox later, because "nothing painted" is a real verdict
     # with a real name and its bbox is legitimately `-`; rejecting it as malformed would
     # rename the most common honest failure.
-    if ! canary_measurement "$total" "$CANARY_MAX_PIXELS" \
-       || ! canary_measurement "$inside" "$CANARY_MAX_PIXELS"; then
+    if ! decimal_measurement "$total" "$CANARY_MAX_PIXELS" \
+       || ! decimal_measurement "$inside" "$CANARY_MAX_PIXELS"; then
         {
             echo "emurun: HUD MALFORMED: the canary count line is [$stats] and" >&2
             echo "          [$total]/[$inside] are not counts a $CANARY_MAX_PIXELS-pixel" >&2
@@ -1010,14 +1097,35 @@ EOF
     # THE HARNESS'S OWN CONSTANTS, for the same reason: a comparison has two sides and
     # either one can be the unevaluable one, and a CANARY_MIN of `x` fails open exactly
     # the way an impossible pixel count does.
-    if ! canary_measurement "$CANARY_MIN" "$CANARY_MAX_PIXELS" \
-       || ! canary_measurement "$CANARY_X1" "$CANARY_MAX_COORD" \
-       || ! canary_measurement "$CANARY_Y1" "$CANARY_MAX_COORD" \
-       || ! canary_measurement "$CANARY_REACH_X" "$CANARY_MAX_COORD" \
-       || ! canary_measurement "$CANARY_REACH_Y" "$CANARY_MAX_COORD"; then
+    if ! decimal_measurement "$CANARY_MIN" "$CANARY_MAX_PIXELS" \
+       || ! decimal_measurement "$CANARY_X1" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$CANARY_Y1" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$CANARY_REACH_X" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$CANARY_REACH_Y" "$CANARY_MAX_COORD"; then
         echo "emurun: HUD MALFORMED: the harness's own canary constants are not" >&2
         echo "          measurements (MIN=$CANARY_MIN RECT=$CANARY_X1,$CANARY_Y1" >&2
         echo "          REACH=$CANARY_REACH_X,$CANARY_REACH_Y); refusing to judge." >&2
+        return 1
+    fi
+    # THE RELATIONS BETWEEN THE FIELDS, which the panel guarantees by construction and
+    # which bounding each field on its own cannot see (review-3 F4). `canary_stats`
+    # counts `inside` as a SUBSET of `total`, so inside > total is not a measurement at
+    # all; and it only counts a pixel when cx <= CANARY_X1 and cy <= CANARY_Y1 with both
+    # coordinates non-negative, so at most (CANARY_X1+1) x (CANARY_Y1+1) = 144 pixels
+    # can ever be inside. A line like `96000 96000 0 0 399 239` -- every field inside its
+    # own bound, the whole panel painted -- is arithmetically impossible and used to be
+    # certified green. Both bounds are DERIVED from the harness's own rect constants,
+    # which the host test re-derives from the shipped renderer, so neither is a second
+    # spelling of a rectangle this file does not own.
+    if [ "$inside" -gt "$total" ] \
+       || [ "$inside" -gt "$CANARY_MAX_INSIDE" ]; then
+        {
+            echo "emurun: HUD MALFORMED: the canary count line is [$stats], and $inside"
+            echo "          inside $total cannot come from a $CANARY_X1,$CANARY_Y1 rect:"
+            echo "          inside is a subset of total and cannot exceed the rect's own"
+            echo "          $CANARY_MAX_INSIDE pixels. A relation the measurement cannot"
+            echo "          produce is a rejection, never a pass (review-3 F4)."
+        } >&2
         return 1
     fi
     if [ "$total" -lt "$CANARY_MIN" ]; then
@@ -1062,12 +1170,23 @@ EOF
     # The bbox is only consulted by the EXTENT arm below, so it is validated here rather
     # than with the counts: by this point the marker really did paint, so a bbox that is
     # not a coordinate pair is broken evidence and not the honest no-pixels case.
-    if ! canary_measurement "$bx1" "$CANARY_MAX_COORD" \
-       || ! canary_measurement "$by1" "$CANARY_MAX_COORD"; then
+    #
+    # ALL FOUR CORNERS, not just the far pair (review-3 F3). The near corner is printed
+    # on the success line, so an impossible `bx0` used to appear inside a GREEN verdict:
+    # `121 121 9223372036854775808 0 10 10` certified `HUD VISIBLE ... (bbox
+    # 9223372036854775808,0-10,10)`, which is the exact sentence batch 157 said it had
+    # eliminated. And the near corner must not be BEHIND the far one: `bx0 > bx1` is not
+    # a bounding box, whatever the two numbers individually are.
+    if ! decimal_measurement "$bx0" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$by0" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$bx1" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$by1" "$CANARY_MAX_COORD" \
+       || [ "$bx0" -gt "$bx1" ] || [ "$by0" -gt "$by1" ]; then
         {
             echo "emurun: HUD MALFORMED: the marker's bbox is ($bx0,$by0)-($bx1,$by1), which"
             echo "          is not a pair of coordinates inside a $CANARY_MAX_COORD-wide"
-            echo "          panel, so the extent cannot be adjudicated (review-2 F2)."
+            echo "          panel (or the near corner is past the far one), so the extent"
+            echo "          cannot be adjudicated (review-2 F2, review-3 F3)."
         } >&2
         return 1
     fi
@@ -1152,10 +1271,8 @@ if [ -n "$EXPECT" ]; then
   fi
 fi
 
-if [ "$LAST_FRAME" -lt "$MIN_FRAMES" ]; then
-  echo "emurun: only reached frame $LAST_FRAME (< --min-frames $MIN_FRAMES). Refusing to report." >&2
-  exit 5
+if frame_floor "$LAST_FRAME" "$MIN_FRAMES"; then
+  echo "log: $LOG"
+  exit 0
 fi
-
-echo "log: $LOG"
-exit 0
+exit 5

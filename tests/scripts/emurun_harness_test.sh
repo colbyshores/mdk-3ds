@@ -377,6 +377,20 @@ check "F5 an unreadable comm is kept: not ruling out is not ruling in" "4101" \
 # display and a minute -- so the function is lifted out of the real harness (not
 # retyped, or this certifies a copy) and run against synthetic guest logs.
 EXPECT_FN="$(awk '/^# --- expectations ---/{f=1;next} /^# --- end expectations/{f=0} f' "$EMU")"
+#
+# THE MEASUREMENT RULE IS LIFTED WITH IT (review-3 F1 and F2). `decimal_measurement`
+# and `frame_floor` live above the argument parser, because the parser has to use them,
+# and they are OUTSIDE the expectations block -- so a lift of the expectations block
+# alone would run canary_verdict against an undefined function, and `! missing_command`
+# is a REJECTION, which would have made every row below red for a fixture reason and
+# taught the reader to ignore the file. Lift both, and say which is which.
+MEASURE_FN="$(awk '/^# --- measurements /{f=1;next} /^# --- end measurements /{f=0} f' "$EMU")"
+check "the measurement block was lifted from emurun.sh (non-vacuity)" "1" \
+      "$(printf '%s\n' "$MEASURE_FN" | grep -q 'decimal_measurement()' && echo 1 || echo 0)"
+check "and the frame floor came with it, so --min-frames is not pinned by a copy" "1" \
+      "$(printf '%s\n' "$MEASURE_FN" | grep -q 'frame_floor()' && echo 1 || echo 0)"
+EXPECT_FN="$MEASURE_FN
+$EXPECT_FN"
 check "the expectation block was lifted from emurun.sh (non-vacuity)" "1" \
       "$(printf '%s\n' "$EXPECT_FN" | grep -q "expect_check()" && echo 1 || echo 0)"
 check "and the lift is syntactically complete, not a truncation of it" "0" \
@@ -812,6 +826,131 @@ check "and the shipped constants still pass, so the guard is not always-red" "0"
 check "and the honest no-pixels case keeps its OWN name, not MALFORMED" "1" \
       "$( ( eval "$EXPECT_FN"; canary_stats() { printf '0 0 - - - -\n'; }
            canary_verdict "$CAP_YES" ) 2>&1 | grep -c "HUD NOT VISIBLE" )"
+
+# --- review-3 F1: the "not digits" arm had no trailing star ---------------------------
+#
+# Batch 157 replaced four `case "$f" in ''|*[!0-9]*)` tests with one helper and
+# documented the arm as "empty, not-digits, and six-or-more digits". What it SHIPPED was
+# `*[!0-9]` -- a pattern that matches only a field whose LAST character is a non-digit.
+# `[ ]` parses a signed decimal, so `+121`, `-0`, `-500` and ` 121` walked past the arm
+# and were judged only by the bound, and `+121 121 0 0 10 10` printed
+#     HUD VISIBLE -- +121 canary pixels in the panel, ...
+# at rc 0. The reviewer could not turn it into a WRONG verdict (the arms below are
+# value-based, so `-N` still lands in NOT VISIBLE) and said so; that is why it is Medium
+# and not High. It is still a guard whose documented contract and shipped contract differ,
+# and whose refusal of `x121`-shaped junk depended on `[`'s exit 2 being inverted by the
+# caller's `!` rather than on the character test at all.
+#
+# THE ARM IS NOW `*[!0-9]*`, and the length arm is DERIVED from the bound (`${#1} -le
+# ${#2}`) instead of a magic six: a field with more digits than its own bound cannot be
+# <= it, so nothing an honest measurement produces is rejected, and there is one number
+# to keep in sync instead of two.
+dm() { # dm <field> <max> -> accept | reject, from the SHIPPED rule
+    if ( eval "$MEASURE_FN"; decimal_measurement "$1" "$2" ) >/dev/null 2>&1; then
+        printf 'accept'
+    else
+        printf 'reject'
+    fi
+}
+for bad in "+121" "-0" "-500" " 121" "12x" "x121" "" "1e5" "0x10" "96001" "99999999999999999999"; do
+    check "the rule rejects [$bad] -- not a plain decimal in [0,96000]" "reject" "$(dm "$bad" 96000)"
+done
+for ok in 0 1 121 399 96000; do
+    check "and it accepts [$ok] -- the guard is not always-red" "accept" "$(dm "$ok" 96000)"
+done
+check "the length arm follows the BOUND, not a remembered six: 1000 in a 399-wide panel" "reject" \
+      "$(dm 1000 399)"
+check "and 100000 in a 96000-pixel panel" "reject" "$(dm 100000 96000)"
+MAX_FRAMES="$( ( eval "$MEASURE_FN"; printf '%s' "$MAX_FRAMES" ) 2>/dev/null)"
+check "the harness declares MAX_FRAMES as a number (the floor is pinned, not guessed)" "1" \
+      "$(case "$MAX_FRAMES" in ''|*[!0-9]*) echo 0 ;; *) echo 1 ;; esac)"
+check "and 999999 is a legal frame count against that bound" "accept" "$(dm 999999 "$MAX_FRAMES")"
+
+# The same fields at the level of the thing that decides the ledger row: a signed field
+# is NAMED as malformed, not silently read as a number.
+for bad in "+121 121 0 0 10 10" "-0 121 0 0 10 10" "121 -0 0 0 10 10" \
+           "121 121 +0 0 10 10" "121 121 0 0 10 -1" "121 121 0 0 +10 10"; do
+    check "verdict: a signed field [$bad] is named MALFORMED, not certified" "1" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$bad"; }
+               canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD MALFORMED' )"
+done
+
+# --- review-3 F3: the NEAR corner was printed on a green line and never checked -------
+#
+# bx1/by1 were bounded and bx0/by0 were read, printed and compared to nothing, so
+# `121 121 9223372036854775808 0 10 10` certified `HUD VISIBLE ... (bbox
+# 9223372036854775808,0-10,10)` at rc 0 -- nonsense printed inside the acceptance
+# evidence, which is the sentence batch 157 said it had removed. And a bbox whose near
+# corner is PAST its far corner is not a bbox whatever the two numbers each are.
+for bad in "121 121 9223372036854775808 0 10 10" "121 121 0 9223372036854775808 10 10" \
+           "121 121 400 0 10 10" "121 121 0 400 10 10" "121 121 11 11 10 10"; do
+    check "verdict: an impossible near corner [$bad] is named MALFORMED -- review-3 F3" "1" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$bad"; }
+               canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD MALFORMED' )"
+done
+
+# --- review-3 F4: the RELATIONS the panel guarantees by construction -------------------
+#
+# Every field bounded on its own still admits a line the measurement cannot emit:
+# `inside` is a SUBSET of `total`, and at most (CANARY_X1+1) x (CANARY_Y1+1) = 144 pixels
+# can ever land inside the rect. `96000 96000 0 0 399 239` -- the whole panel painted,
+# every field inside its own bound -- was certified `HUD VISIBLE` at rc 0, and so was
+# `200 200 0 0 10 10`. Both are refusals now, and the bound is DERIVED from the rect
+# constants, so it moves with the rect instead of being remembered as 144.
+for bad in "96000 96000 0 0 399 239" "200 200 0 0 10 10" "121 122 0 0 10 10"; do
+    check "verdict: a line the panel cannot emit [$bad] is named MALFORMED -- review-3 F4" "1" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$bad"; }
+               canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD MALFORMED' )"
+done
+# Read back out of the harness's OWN derivation (`CANARY_MAX_INSIDE=$(( (CANARY_X1 + 1)
+# * (CANARY_Y1 + 1) ))`), not re-sed out of the line, which would copy the expression
+# instead of its value.
+CANARY_MAX_INSIDE="$( ( eval "$EXPECT_FN"; printf '%s' "$CANARY_MAX_INSIDE" ) 2>/dev/null)"
+check "the inside bound follows the DERIVED rect, not a remembered 144" "1" \
+      "$(awk -v d="$DERIVED" -v m="$CANARY_MAX_INSIDE" \
+              'BEGIN{split(d,x," ");print ((x[1]+1)*(x[2]+1) == m+0 && m+0 > 0) ? 1 : 0}')"
+check "and the real marker fits inside it, so the bound cannot false-red" "1" \
+      "$(stats_of "$CAP_YES" | awk -v m="$CANARY_MAX_INSIDE" 'NF==6 && $2 > 0 && $2 <= m {print 1}')"
+
+# --- review-3 F2: the same fail-open, 190 lines below, on --min-frames ----------------
+#
+# `if [ "$LAST_FRAME" -lt "$MIN_FRAMES" ]` with MIN_FRAMES taken verbatim from the
+# caller. `[` exits 2 on an operand it cannot parse, the `if` skips its body, and the
+# harness reports success instead of refusing a short run: `--min-frames ""` -- what a
+# wrapper gets from an unset variable, since `set -u` protects this script and not its
+# caller -- printed a confident verdict over a 3-frame run. The rule is now the SAME
+# `decimal_measurement`, checked at parse time and again at the comparison, because a
+# comparison has two sides and either one can be the unevaluable one.
+ff() { # ff <last> <min> -> the frame floor's exit code, from the SHIPPED rule
+    ( eval "$MEASURE_FN"; frame_floor "$1" "$2" ) >/dev/null 2>&1; printf '%s' "$?"
+}
+check "the premise: [ 2520 -lt empty ] is UNEVALUABLE (exit 2), not false (exit 1)" "2" \
+      "$( [ 2520 -lt "" ] 2>/dev/null; printf '%s' "$?" )"
+check "frame floor: a long run with no floor is reportable" "0" "$(ff 2520 0)"
+check "frame floor: a run short of its floor refuses" "5" "$(ff 3 60)"
+check "frame floor: exactly the floor is not short" "0" "$(ff 60 60)"
+check "frame floor: an EMPTY --min-frames is a refusal, not a disabled gate -- review-3 F2" "5" \
+      "$(ff 2520 "")"
+check "frame floor: a malformed --min-frames is a refusal" "5" "$(ff 2520 60x)"
+check "frame floor: a signed --min-frames is a refusal" "5" "$(ff 2520 +60)"
+check "frame floor: an unreadable frame count is a refusal, not a pass" "5" "$(ff "" 60)"
+check "frame floor: a frame count past the bound is a refusal" "5" "$(ff 99999999999999999999 60)"
+check "frame floor: the real acceptance run's numbers pass it" "0" "$(ff 2580 0)"
+
+# AND THE PARSE-TIME GUARD, EXECUTED. A bogus build path means nothing can launch however
+# this row turns out: if the guard is ever removed the harness falls through to its "no
+# such build" usage error (also rc 2), so the ROW asserts that the message names
+# --min-frames, which only the guard prints.
+bash "$EMU" --min-frames 60x /nonexistent-build.3dsx >/dev/null 2>&1
+ff_rc=$?
+ff_msg="$(bash "$EMU" --min-frames 60x /nonexistent-build.3dsx 2>&1 | head -3)"
+check "the parser refuses --min-frames 60x BY NAME, before anything launches" "1" \
+      "$(printf '%s' "$ff_msg" | grep -c -- "requires a decimal")"
+check "and that is a usage error (2), not a run verdict" "2" "$ff_rc"
+bash "$EMU" --min-frames "" /nonexistent-build.3dsx >/dev/null 2>&1
+check "and an empty --min-frames is refused at parse time too" "2" "$?"
+check "while a VALID --min-frames is not refused (the guard is not always-red)" "0" \
+      "$(bash "$EMU" --min-frames 60 /nonexistent-build.3dsx 2>&1 | grep -c -- "requires a decimal")"
 
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary)"

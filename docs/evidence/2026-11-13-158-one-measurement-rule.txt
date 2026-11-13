@@ -1,0 +1,269 @@
+================================================================================
+BATCH 158 — ledger row `3ds.hud-canvas` (d1, slow), attempt 4
+acceptance: mdk_3ds/tools/emurun.sh --expect hud
+review:     logs/ralph-pi/run-20261113-021356/review-3.md (on batch 157)
+            no Critical, no High. F1 Medium, F2 Medium, F3 Low, F4 Low.
+            ALL FOUR CONFIRMED. ALL FOUR FIXED. NONE REBUTTED.
+================================================================================
+
+--------------------------------------------------------------------------------
+1. THE SHAPE OF ALL FOUR, IN ONE LINE
+--------------------------------------------------------------------------------
+Batch 157 wrote a guard that asked "is this field a number?" and answered with a
+character class plus a magic length. Review-3 found that the same question is asked
+in four places in the same instrument and answered differently — and wrongly — in
+all four:
+
+  F1  the "not digits" arm was `*[!0-9]` with NO trailing star, so it matched only a
+      field whose LAST character was a non-digit; `[ ]` parses a signed decimal, so
+      `+121`, `-0`, `-500` and ` 121` walked past it.
+  F2  `--min-frames` was never validated at all, 190 lines below the guard that
+      exists to stop exactly that.
+  F3  `bx0`/`by0` were read and printed on the SUCCESS line and compared to nothing.
+  F4  each field was bounded on its own, so a line that violates the RELATIONS the
+      measurement guarantees by construction was certified.
+
+THE FIX IS ONE RULE, NOT FOUR PATCHES. `decimal_measurement <field> <max>` now
+lives above the argument parser and answers "is this a decimal in [0,max]" for
+every number the harness compares: the pixel counts, the rect constants, the frame
+count and the caller's floor alike. The canary's private copy is deleted. A second
+spelling of one rule is exactly how F1 happened: the prose, the commit message and
+the test all described `*[!0-9]*` and the file shipped `*[!0-9]`.
+
+    decimal_measurement() {
+        case "$1" in ''|*[!0-9]*) return 1 ;; esac
+        [ "${#1}" -le "${#2}" ] || return 1
+        [ "$1" -le "$2" ]
+    }
+
+The length arm is now DERIVED from the bound instead of remembered as six: a field
+with more digits than its own bound cannot be <= it, so the arm rejects nothing an
+honest measurement could produce, and there is one number to keep in sync (the
+bound) instead of two (the bound and a digit count).
+
+--------------------------------------------------------------------------------
+2. F1 (Medium) — CONFIRMED, REPRODUCED BEFORE CHANGING ANYTHING
+--------------------------------------------------------------------------------
+Against `git show HEAD` of the harness, with the shipped `canary_measurement`:
+
+    canary_measurement "+121" 96000   -> 0  (ACCEPT)
+    canary_measurement "-0"   96000   -> 0  (ACCEPT)
+    canary_measurement "-500" 96000   -> 0  (ACCEPT)
+    canary_measurement " 121" 96000   -> 0  (ACCEPT)
+    canary_measurement "x121" 96000   -> 1  (rejected only by [ `s exit 2, inverted
+                                            by the caller's `!' — not by the class)
+
+    stats="+121 121 0 0 10 10"  ->  HUD VISIBLE -- +121 canary pixels in the panel,
+                                    121 inside ...   rc 0
+
+The reviewer's own severity call is kept and quoted: it could not turn this into a
+WRONG verdict (the arms below the guard are value-based, so `-N` still lands in
+NOT VISIBLE / UNDERSIZED), which is why it is Medium and not High. It is still a
+guard whose shipped contract and documented contract differ, and a refusal that
+depended on `[`'s exit code rather than on the check.
+
+Rows added: 11 shapes rejected and 5 accepted directly against the SHIPPED rule
+(the accept rows are what stop the reject rows being vacuous — on the parent the
+function does not exist, `command not found` is non-zero, and every "must reject"
+row would otherwise pass while certifying nothing), plus 6 verdict-level rows that
+assert the refusal is NAMED `HUD MALFORMED` rather than merely non-zero.
+
+--------------------------------------------------------------------------------
+3. F2 (Medium) — CONFIRMED: THE SAME FAIL-OPEN, 190 LINES BELOW
+--------------------------------------------------------------------------------
+    $ if [ 2520 -lt "" ]; then echo refused; else echo PROCEEDS; fi
+    [: : integer expression expected
+    PROCEEDS
+
+`--min-frames ""` (what a wrapper passes when its own variable is unset — `set -u`
+protects this script, not its caller) and `--min-frames 60x` both silently DISABLED
+the short-run gate while the printed report still claimed to have measured a run.
+
+  * `--min-frames` is now validated IN THE ARGUMENT LOOP, before anything
+    expensive: a bad value is exit 2 (usage), named, and it never reaches a launch.
+  * The comparison itself is now `frame_floor <last> <min>`, which checks BOTH of
+    its sides and returns 5 — a refusal — when either is not a measurement, and
+    returns 5 for a genuinely short run. "I cannot evaluate the floor" and "the run
+    was too short" both mean "do not report"; they are printed as different
+    sentences so the reason is not lost.
+  * The `LAST_FRAME` reset to a safe-looking 0 is narrowed to the EMPTY case only
+    (no frame line = zero frames, which is a measurement and fails any positive
+    floor). A present-but-unusable value is no longer rewritten; `frame_floor` names
+    it. (FRAME_RE already requires digits, so what can actually arrive is empty or
+    a digit string of any length; the over-long one is what the bound catches.)
+  * `MAX_FRAMES=999999` is a parseability bound, not a limit on a long run: six
+    digits is ~4.6 hours of guest frames and the longest run this instrument is
+    ever asked for is a two-digit `--secs`.
+
+Rows added: 9 against the shipped `frame_floor` (including the premise row that
+`[ 2520 -lt "" ]` must exit 2 — if that ever stops being true the rows above it are
+decoration), plus 4 that EXECUTE the real harness with a bogus build path. The
+bogus path is what makes that safe: if the parse guard were ever removed the script
+falls through to its "no such build" usage error, which is also rc 2, so the row
+asserts that the message names `--min-frames` — which only the guard prints — and a
+paired row proves a VALID `--min-frames` is not refused.
+
+--------------------------------------------------------------------------------
+4. F3 (Low) — CONFIRMED: AN IMPOSSIBLE NEAR CORNER ON A GREEN LINE
+--------------------------------------------------------------------------------
+    stats="121 121 9223372036854775808 0 10 10"
+      -> rc 0, "HUD VISIBLE -- 121 canary pixels ... (bbox
+         9223372036854775808,0-10,10, reaching the derived (10,10))"
+
+That is the sentence batch 157 said it had eliminated: nonsense printed inside the
+acceptance evidence, on the success path. All four corners are now validated, and
+`bx0 > bx1` / `by0 > by1` is refused too — a bbox whose near corner is past its far
+corner is not a bbox whatever the two numbers each are. The ordering pin holds:
+`0 0 - - - -` is the honest no-pixels case and still answers `HUD NOT VISIBLE`,
+because the count arms run first and a row pins it.
+
+Rows added: 5.
+
+--------------------------------------------------------------------------------
+5. F4 (Low) — CONFIRMED: THE RELATIONS THE PANEL GUARANTEES WERE NOT CHECKED
+--------------------------------------------------------------------------------
+    stats="96000 96000 0 0 399 239"  ->  rc 0, HUD VISIBLE   (the whole panel painted)
+
+Every field was inside its own bound. But `canary_stats` counts `inside` as a SUBSET
+of `total`, and it only counts a pixel when `cx <= CANARY_X1 and cy <= CANARY_Y1`
+with both coordinates non-negative, so at most (CANARY_X1+1) x (CANARY_Y1+1) = 144
+pixels can ever be inside. Both relations are now refusals, and the second bound is
+DERIVED — `CANARY_MAX_INSIDE=$(( (CANARY_X1 + 1) * (CANARY_Y1 + 1) ))` — so it moves
+with the rect, which the host test already re-derives from the shipped renderer.
+The test reads the harness's own VALUE back out of the lifted block rather than sed-
+copying the expression, and re-checks it against the renderer-derived rect.
+
+No false-red is possible from either relation: both are guaranteed by construction,
+not by measurement. The real run's 121/121 sits inside 144 with room, and the `wide`
+fixture's 132 inside still reaches the containment arm and keeps its own name
+(HUD OVERSIZED), which is pinned.
+
+Rows added: 3 + 2 import/non-vacuity rows.
+
+--------------------------------------------------------------------------------
+6. THE GATE PROVED ITSELF AGAINST THE COMMIT IT REPLACED
+--------------------------------------------------------------------------------
+`bash tests/scripts/emurun_harness_test.sh /tmp/emurun-parent.sh` (parent =
+`git show HEAD:mdk_3ds/tools/emurun.sh`) reds **35 of 182** and **nothing that was
+there before**:
+
+    2   the two measurement-block lift non-vacuity rows (the parent has no such block)
+    6   the "accepts [0 1 121 399 96000]" + MAX_FRAMES rows — the non-vacuity that
+        keeps the 11 "rejects" rows honest on a parent where the function is missing
+    1   "999999 is a legal frame count"
+    6   F1's signed-field verdict rows
+    5   F3's near-corner rows
+    3   F4's relation rows
+    2   the inside-bound derivation rows
+    9   the frame-floor rows
+    1   the parse-time guard row
+
+**35 new rows red, 0 pre-existing collateral.** The 11 `dm` reject rows DO pass on
+the parent, and they pass vacuously (a missing function returns 127, which is a
+"reject"); that is precisely why the 5 accept rows and the two lift rows exist and
+why they are listed as reds above. The verdict-level F1/F3/F4 rows do not have that
+problem: they call `canary_verdict`, which exists on the parent, and each asserts a
+NAMED refusal the parent did not print.
+
+`EmurunHarness` is 130 -> **182 checks**.
+
+--------------------------------------------------------------------------------
+7. THE MEASUREMENT THAT MATTERS IS THAT THE STRICTER RULE DID NOT FALSE-RED
+--------------------------------------------------------------------------------
+    DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud        ->  RC 0
+
+    display   : :99
+    emulator  : mandarine.AppImage md5 0d2adab6      (r1.2.1, the pinned known good)
+    gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+                graphics_api=1 (OpenGL), [default=true]
+    stereo    : render_3d=0 factor_3d=0 (mono)
+    audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0
+    dspfirm   : dspfirm.cdc (the lane's sdmc)
+    lane      : /tmp/mdk-emurun.3573279 (mount /tmp/.mount_mandarkQO9ML)
+    session   : dbus-run-session; XDG_RUNTIME_DIR private
+    build     : mdk_3ds/mdk.3dsx
+    backend: PICA200 Citro3D ; flow: screen=4 level=7
+    frames    : reached 2520 by the deadline (47 frame lines), 2580 after the reap
+    expect    : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1
+                (canvas frame 2520)
+    expect    : HUD VISIBLE -- 121 canary pixels in the panel, 121 inside
+    expect    : the marker's rect 0,0-11,11 (bbox 0,0-10,10,
+    expect    : reaching the derived (10,10))
+
+What the new rules actually had to clear on the real run: 121 <= 96000 (counts),
+121 <= 144 (the new inside bound, with 23 pixels of room), 0/0/10/10 all <= 399
+(the near corners, newly checked), bx0 <= bx1 and by0 <= by1, and
+`frame_floor 2580 0`. None of them is what this run passes on, which is the
+property wanted: a stricter rule that only bites on impossible input.
+
+--------------------------------------------------------------------------------
+8. GATES, AS RUN
+--------------------------------------------------------------------------------
+`make -C tests/scripts -j8`                       rc 0, "All cases match the
+                                  oracle.", 690 PASS / 0 FAIL (was 638), including
+                                  "PASS EmurunHarness (182 checks: ...)"
+`DISPLAY=:99 bash tools/check.sh`                 rc 0, "CHECK: ALL GATES PASSED",
+                                  "PASS L3_f1.bmp sha=58615fc85d02e009",
+                                  "BATCH INTEGRITY: PASS",
+                                  "COMPLETION: LEDGER VERIFIED",
+                                  gates_vfp 0 blockers, audit_c_with_classes 0
+                                  violations, audit_arm11_math contract clean,
+                                  audit_r11_idiv no candidates
+`DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+                                                  rc 0, mdk.elf md5
+                                  728eb2350c3ef8a81acda15f75617c1e UNCHANGED —
+                                  correct: the diff is one shell harness and one
+                                  shell test, no compiled source.
+
+FRAME: docs/frames/2026-11-13-hud-canvas-measure-rule.png (+ .txt), sha256
+6646adf1dae3a774d6215d57... — byte-identical to its 172 identical predecessors,
+because nothing on the Linux render path changed. DISCLOSURE, and it is not a hedge:
+the pinned frame is a 320x240 Linux capture and contains **zero** (0,0,255) pixels,
+so it cannot show the canary at all; the canary evidence is section 7, not the
+frame. The sidecar carries only the four generated lines (the live oracle
+measurement is unavailable on this host: /tmp/mdk-frame-reference/L3_f1.bmp does not
+exist and the oracle needs a dotnet host), which is why the disclosure is here.
+
+--------------------------------------------------------------------------------
+9. PRIOR-SOLUTION LOOKUP
+--------------------------------------------------------------------------------
+* Pi knowledge (`mdk-sdl`, hybrid + semantic): surfaced this repo's OWN prior
+  solution to the same defect class — `review_int` in tools/runner/review_state.sh,
+  which exists because `[ "$REVIEW_FAILS" -ge "$LIMIT" ]` on an empty counter made
+  the reviewer-failure limit never fire — and its pinning test
+  (tools/runner/test_review_state.sh: "a counter that comes back empty must not
+  disable a limit"). Read and applied: the answer is a predicate plus a refusal, not
+  a coerced default. Batch 157 had already chosen "name it and refuse" for the
+  canary; this batch extends that to the frame floor and deletes the coerced
+  `LAST_FRAME=0` reset for the non-empty case.
+* Obsidian MCP and Cognee MCP: **absent from this session's tool list.** That is a
+  session configuration fault per AGENTS.md §9 P9, not a licence to claim the
+  lookup happened. The vault was read read-only from disk, where
+  30-architecture/patterns/a-checker-that-cannot-evaluate-a-condition-must-report-err-not-false.md
+  was found and applied — specifically its recipe item 5, "never let ERR gate a
+  decision silently; ERR must be a third branch". **No Cognee graph lookup is
+  claimed.**
+
+--------------------------------------------------------------------------------
+10. WHAT IS STILL OPEN AFTER THIS BATCH (see CONTINUATION.md NEXT)
+--------------------------------------------------------------------------------
+* The ledger row still cannot be CLOSED from this lane: docs/COMPLETION_LEDGER.tsv
+  is coleshores:coleshores 0664, this lane is piagent (groups piagent, development),
+  and the file is in gates_batch_integrity.PROTECTED. Operator fix:
+  `chgrp development docs/COMPLETION_LEDGER.tsv`.
+* The `*[!0-9]*` arm is now correct AND pinned, but the shape of a `case` arm is
+  still the kind of thing a future edit can silently narrow. The 5 accept rows are
+  what make that visible; they are the load-bearing half of F1's fix, not the arm.
+* `--min-frames` is validated at parse time and at the comparison. A caller that
+  sets MIN_FRAMES some other way (there is none today) would still be caught, because
+  `frame_floor` re-checks. Nothing here is unreachable-by-luck: the LAST_FRAME side
+  is defensive (FRAME_RE already guarantees digits) and is labelled as such.
+* The extent arm still has a zero-pixel margin and inherits the 1:1 window
+  assumption (unchanged since batch 156).
+* Nothing pixel-pins the HUD's own dial position (unchanged; needs the C# oracle's
+  dial rect, which needs the dotnet host).
+* The aspect check pins the canvas width only to about +-7 % (review-2's open
+  question 1, unchanged).
+* An explicitly supplied --shot is still never freshness-checked (review-2's open
+  question 2, unchanged; not reachable from the acceptance command).
+================================================================================
