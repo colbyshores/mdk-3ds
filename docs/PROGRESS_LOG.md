@@ -1,3 +1,115 @@
+## Iteration 157 — batch 157: `3ds.hud-canvas` — the canary's guard could read digits but not numbers, and an impossible count certified `HUD VISIBLE`
+
+**THE LEDGER ROW IS `3ds.hud-canvas` (d1, acceptance `mdk_3ds/tools/emurun.sh --expect
+hud`), attempt 3.** The newest external review
+(`logs/ralph-pi/run-20261113-021356/review-2.md`, on batch 156) carries **no Critical and no
+High**, so nothing was mandatory. Its two findings are both **Low, both CONFIRMED, both
+FIXED, none rebutted** — and both are in the row's own acceptance command, which is what this
+ledger row is.
+
+**F2 (Low, CONFIRMED, REPRODUCED BEFORE CHANGING ANYTHING): THE MALFORMED-EVIDENCE GUARD
+CHECKED CHARACTERS INSTEAD OF RANGE, SO THE FAIL-OPEN IT REPLACED CAME BACK WEARING A DIGIT
+COSTUME.** Batch 156's F5 fix validated each stats field with
+`case "$total" in ''|*[!0-9]*) total=0 ;; esac` and reset a bad field to a safe-looking value.
+That treats the defect as "the field contains a non-digit". It is not. The defect is **a `[ ]`
+comparison that cannot be made**: `[` exits **2**, not 1, and an `if` cannot tell "I could not
+parse this" apart from "it came out false", so the arm's body is skipped and the function walks
+into `HUD VISIBLE`. A digit string past `LONG_MAX` is *all digits* and dies exactly as dead:
+`9223372036854775808` passed the character test, and the verdict printed
+
+```
+HUD VISIBLE -- 9223372036854775808 canary pixels in the panel, 9223372036854775808 inside
+```
+
+with **rc 0** and three `[: …: integer expression expected` lines on stderr. Built the whole
+family against `git show HEAD` of the harness before touching anything: **seven** out-of-range
+stats lines — huge `total`, huge `inside`, huge `bx1`, huge `by1`, a six-digit count, and a
+plausible-but-impossible `400` in a 399-wide panel — **all seven certified green at the
+parent**. Vault `30-architecture/patterns/a-checker-that-cannot-evaluate-a-condition-must-report-err-not-false`
+is exactly this shape: an unevaluable condition folded into `false` (here, folded into
+*pass*).
+
+**THE FIX: A FIELD IS A MEASUREMENT OR IT IS A REJECTION, AND NOTHING IS SILENTLY RESET ANY
+MORE.** `canary_measurement <field> <max>` rejects empty, non-digits, and **six or more
+digits** (so the `[ -le ]` below it can never overflow), then bounds the value. The bound is
+the panel's own geometry — `CANARY_MAX_PIXELS=96000` (400×240) and `CANARY_MAX_COORD=399` —
+which makes it a measurement limit rather than a magic ceiling: `canary_stats` counts inside
+`tools/panel_crop.py`'s crop, so no honest count exceeds the crop's area and no honest crop
+coordinate exceeds its width. The two numbers are **re-derived from `panel_crop.py` by the
+test and reddened on disagreement**, so neither is a second spelling of a rectangle this file
+does not own. A rejected field now produces a named `HUD MALFORMED` verdict instead of being
+quietly rewritten to `0` or `-1`: the third outcome ("I could not check it") has to be
+*visible*, because a value that looks safe is how it gets read as one of the other two.
+
+**A COMPARISON HAS TWO SIDES, AND THE HARNESS WAS THE OTHER ONE.** A `CANARY_MIN` of `x` skips
+its arm exactly as an impossible pixel count does, so the harness now checks its own five
+canary constants before it judges anything. This half is defensive rather than reachable —
+the constants are literals in the same file and the host test already hard-fails on a missing
+one — but "no comparison in this function can fail to evaluate" is only a true claim if both
+sides of every one are checked, and a broken constant is a broken harness, which is why it
+refuses under its own name.
+
+**THE ORDERING IS DELIBERATE AND PINNED.** The counts are validated first and the bbox only
+just before the arm that reads it, because "nothing painted" is an honest verdict with its own
+name and its bbox is legitimately `-`; validating the bbox up front would have renamed the
+most common real failure as malformed. One row pins that `0 0 - - - -` still says `HUD NOT
+VISIBLE`.
+
+**F1 (Low, CONFIRMED): THREE ILLUSTRATIVE NUMBERS IN THE PUBLISHED RECORD WERE NOT
+RE-DERIVABLE FROM THE FIXTURES THEY DESCRIBED.** Measured with the harness's own
+`canary_stats`: the `small` fixture is `size_x-3` = 8×8 = **64 px** (`64 64 0 0 7 7`), not the
+36 px stated in three documents; the `wide` fixture is `3·size_x` = 33×11 = **363 px, 132
+inside** (`363 132 0 0 32 10`), not 297/26.7 — 27 columns and 297 px is the `cw=240` *mutation*
+the fixture stands in for, and that number was right where it was used (`emurun.sh`'s own
+comment and the evidence file's probe table) and wrong where it was attached to the fixture;
+and the axis-swap mutation gives `canvasWidth = 216`, so `far_x = 16·400/216 = 29.63` columns,
+not 26.7 — the record's own table already said `30 11 29 10`. Corrected in place in
+`docs/evidence/2026-11-13-156-canary-extent.txt` (with a CORRECTION block appended to it so
+the edit is attributable rather than silent), `docs/PROGRESS_LOG.md` and
+`docs/CONTINUATION.md`. **No verdict changed: every rc quoted there was re-measured and
+holds**, and the reviewer's own substance check agrees — the mirror-image hole is real at 64
+px, not just at 36.
+
+**THE GATE PROVED ITSELF AGAINST THE COMMIT IT REPLACED, AND THE COMPOSITION IS STATED.**
+`tests/scripts/emurun_harness_test.sh` takes the harness path as `$1`, so the parent
+comparison is one command. The raw parent declares no `CANARY_MAX_PIXELS`/`CANARY_MAX_COORD`,
+which the F4 hard stop (correctly) refuses to run against, so the comparison isolates the
+RULE change from the CONSTANT addition — the parent's verdict with this batch's two constants
+added — and it reds **exactly 10 of 130 and nothing else**: the seven out-of-range stats rows
+and three of the five non-numeric-constant rows. **The two that pass on the parent are
+`CANARY_X1`/`CANARY_Y1`, and that is the honest answer, not a gap**: on the parent a non-numeric
+rect constant makes `canary_stats`' `int()` raise, the capture line comes back empty, `total`
+is 0 and the verdict fails closed as `HUD NOT VISIBLE`. Those two rows pin the *named* refusal
+rather than a hole the parent did not have. **10 new rows red, 0 pre-existing collateral, 0
+vacuous** — and the premise itself is now a check, not a comment: `[ 9223372036854775808 -lt 25 ]`
+must exit **2**, because if that ever stops being true every row above is decoration.
+`EmurunHarness` is 112 → **130 checks**.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **638 PASS / 0 FAIL** (was 620); `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION: LEDGER VERIFIED`; `make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e` **UNCHANGED** — correct, the diff is one shell harness and one shell test, no compiled source.
+
+**THE ACCEPTANCE, AS RUN (the measurement that matters, because the stricter rule must not
+false-red on a real console).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` → **rc 0**:
+display `:99`, Mandarine r1.2.1 md5 `0d2adab6`, llvmpipe forced, `graphics_api=1` (OpenGL),
+`render_3d=0` (mono), dspfirm seeded, level 7, reached frame 2520 by the deadline and 2580
+after the reap, and
+
+```
+expect    : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame 2520)
+expect    : HUD VISIBLE -- 121 canary pixels in the panel, 121 inside
+expect    : the marker's rect 0,0-11,11 (bbox 0,0-10,10, reaching the derived (10,10))
+```
+
+121 ≤ 96000 and 10 ≤ 399, so the new bounds are not what this run clears the verdict on; the
+extent arm's zero-pixel margin from batch 156 is unchanged and still the sharpest edge here.
+
+**PRIOR-SOLUTION LOOKUP.** Pi knowledge searched (`mdk-sdl`, hybrid and semantic): it surfaced
+the imported-not-re-spelled doctrine and the `panel_crop.py` rationale, both of which were
+applied to the two new bounds rather than hand-copying them. **Obsidian and Cognee MCP servers
+are absent from this session's tool list** — a session configuration fault per AGENTS §9 P9,
+not a licence to claim the lookup happened — so the vault was read read-only from disk, where
+`a-checker-that-cannot-evaluate-a-condition-must-report-err-not-false` was found and is cited
+above; **no Cognee graph lookup is claimed**.
+
 ## Iteration 156 — batch 156: `3ds.hud-canvas` — the HUD canary gets an EXTENT, so the rect is enforced from both sides
 
 **THE LEDGER ROW IS `3ds.hud-canvas` (d1, acceptance `mdk_3ds/tools/emurun.sh --expect
@@ -22,7 +134,7 @@ without the `ceil` slack `CANARY_X1/Y1 = 11` already carries, and containment al
 implies `bx1 <= 11`, so the pair pins the marker's bbox to [10,11] on each axis — the
 extent the canvas's own width produces. **THE REVIEWER FOUND HALF THE HOLE.** A
 `canvasWidth` too LARGE shrinks the marker so it sits wholly inside the rect and still
-clears the floor (`block(0,0,8,8)` = 36 px, all inside, all counted): an inside-count
+clears the floor (`block(0,0,8,8)` = 64 px, all inside, all counted): an inside-count
 passes it and containment passes it, and only an extent test sees it. That is the mirror
 image of the defect F1 named, found by applying F1's own argument, and it is now a row.
 

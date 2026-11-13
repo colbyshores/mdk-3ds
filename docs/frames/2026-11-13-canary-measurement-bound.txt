@@ -1,0 +1,30 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-13T05:29:04Z at b2adbe2
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+why this picture did not move, and what it can and cannot show: nothing on the Linux render
+  path changed, so this is a re-capture and not a movement — `mdk.elf` md5
+  728eb2350c3ef8a81acda15f75617c1e is UNCHANGED and this PNG is `cmp`-identical to its 173
+  identical predecessors (sha256 6646adf1dae3a774d6215d57e5bcfba1bf6563ec). What the batch
+  changed is one shell harness (`mdk_3ds/tools/emurun.sh`) and one shell test
+  (`tests/scripts/emurun_harness_test.sh`): the canary verdict's malformed-evidence guard
+  bounded its fields by the panel's own geometry instead of by a character class, so an
+  all-digit count past LONG_MAX — which made every `[ … -lt … ]` error and let the verdict
+  fall through to `HUD VISIBLE` — is now `HUD MALFORMED` (review-2 F2). THIS PAIR CANNOT
+  SHOW ANY OF THAT: the pinned frame is the LINUX capture at level 3, 320x240, and it
+  contains ZERO (0,0,255) pixels (measured) — the canary lives in the 3DS emulator's panel at
+  level 7, a different build, a different level and a different renderer. So this pair is a
+  PRESENCE check and NOT a fidelity check and NOT the canary evidence; the canary evidence is
+  the emulator verdict block in docs/PROGRESS_LOG.md, which records `HUD VISIBLE -- 121 canary
+  pixels in the panel, 121 inside … (bbox 0,0-10,10, reaching the derived (10,10))` at rc 0 on
+  Mandarine r1.2.1 (md5 0d2adab6), llvmpipe, mono, display :99, level 7, frame 2520 by the
+  deadline and 2580 after the reap. The fidelity half is dark on this host anyway (oracle
+  pixels absent, owner-gated behind tests/frames/regenerate_reference.sh). The instrument that
+  shows this batch is the gate: `bash tests/scripts/emurun_harness_test.sh` reports 130
+  checks, and against the parent's verdict with this batch's two constants added it goes red
+  on exactly TEN of the 130 — seven out-of-range stats rows and three non-numeric-constant
+  rows — and on nothing else.
+tree state at capture: the capture ran on this batch's working tree, which was dirty —
+  `mdk_3ds/tools/emurun.sh`, `tests/scripts/emurun_harness_test.sh` and this batch's docs
+  modified — and `at b2adbe2` names the parent because a commit cannot contain its own hash.
+  The binary that drew this frame is UNCHANGED from the parent's, which is the point above.

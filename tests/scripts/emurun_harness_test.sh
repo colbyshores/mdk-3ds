@@ -388,6 +388,8 @@ CANARY_X1="$(sed -n 's/^CANARY_X1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_Y1="$(sed -n 's/^CANARY_Y1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_REACH_X="$(sed -n 's/^CANARY_REACH_X=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_REACH_Y="$(sed -n 's/^CANARY_REACH_Y=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+CANARY_MAX_PIXELS="$(sed -n 's/^CANARY_MAX_PIXELS=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+CANARY_MAX_COORD="$(sed -n 's/^CANARY_MAX_COORD=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_MIN="$(sed -n 's/^CANARY_MIN=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 check "the harness declares the marker rect, its reach and the floor" "5" \
       "$([ -n "$CANARY_X1" ] && [ -n "$CANARY_Y1" ] && [ -n "$CANARY_REACH_X" ] \
@@ -398,7 +400,8 @@ check "the harness declares the marker rect, its reach and the floor" "5" \
 # masqueraded as four new rules biting. A missing constant is a broken harness, not a
 # verdict: say so and stop, so a parent-comparison reds only on the rows that are the
 # new rule's work.
-for v in CANARY_X1 CANARY_Y1 CANARY_REACH_X CANARY_REACH_Y CANARY_MIN; do
+for v in CANARY_X1 CANARY_Y1 CANARY_REACH_X CANARY_REACH_Y CANARY_MIN \
+         CANARY_MAX_PIXELS CANARY_MAX_COORD; do
     case "${!v}" in
         ''|*[!0-9]*)
             echo "EMURUN HARNESS: $EMU declares no numeric $v -- the fixture cannot be built" >&2
@@ -421,7 +424,7 @@ done
 #   flip     -- (a,b) = (-1,-1), the other determinant -1 disposition
 #   rot180   -- (a,b) = (-1,+1), determinant +1: the opposite-sense PROPER rotation,
 #               which is what the old `mirror` fixture actually painted
-#   wide     -- a marker 3x too wide: 132 of its 297 pixels still land inside the
+#   wide     -- a marker 3x too wide: 132 of its 363 pixels still land inside the
 #               rect, so an inside-count rule passes a wrong-aspect canvas (review-1 F1)
 #   small    -- a marker shrunk wholly inside the rect: the mirror-image extent defect
 #
@@ -473,13 +476,16 @@ elif mode == "flip":                  # (a,b) = (-1,-1)  det -1
 elif mode == "rot180":                # (a,b) = (-1,+1)  det +1
     block(*disposition(-1, 1), size_x, size_y)
 elif mode == "wide":
-    # mdk_render_canvas_width returning 240 instead of 600: the marker paints 26.7
-    # columns wide instead of 10.7, so most of its pixels still land INSIDE the rect
-    # and clear the floor. A rule that only counts what falls inside passes it.
+    # A marker 3x too wide: 33 columns instead of the derived 11, so 132 of its 363
+    # pixels still land INSIDE the rect and clear the floor. A rule that only counts
+    # what falls inside passes it. (The mutation this stands in for --
+    # mdk_render_canvas_width returning 240 instead of 600 -- paints 27 columns and 297
+    # pixels; the fixture is deliberately WIDER than that defect, not equal to it, and
+    # the numbers here are the fixture's.)
     block(0, 0, 3 * size_x, size_y)
 elif mode == "small":
-    # The mirror-image defect: a canvasWidth too LARGE shrinks the marker so it sits
-    # wholly inside the rect and still clears the floor. Only an extent test sees it.
+    # The mirror-image defect: a canvasWidth too LARGE shrinks the marker to 8x8 = 64 px,
+    # wholly inside the rect and still clearing the floor. Only an extent test sees it.
     block(0, 0, size_x - 3, size_y - 3)
 path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % mode)
 img.save(path)
@@ -506,7 +512,7 @@ CAP_SMALL="$(cap small)"
 # AND canvasWidth IS IMPORTED FROM mdk_render_canvas_width, NOT RE-SPELLED (review-1
 # F1). The previous version restated the formula as `ch*sh/sw` here. That is a SECOND
 # SPELLING of the thing it was written to pin: change mdk_render_canvas_width to use
-# kScreenWidth where kScreenHeight belongs and the marker moves to 26.7 columns while
+# kScreenWidth where kScreenHeight belongs and the marker moves to 29.6 columns while
 # this derivation still prints 10.667 and still agrees with the harness. So the return
 # EXPRESSION is now read out of the function and evaluated, and an expression this file
 # cannot parse is a hard failure -- the derivation follows the code, or it stops.
@@ -739,6 +745,73 @@ for bad in " 121 0 0 10 10" "" "x y - - - -" "121 121 0 0 10"; do
           "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$bad"; }
                canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?")"
 done
+
+# --- review-2 F2: a comparison that cannot be MADE is a REJECTION --------------------
+#
+# The F5 block above rejects fields that are not made of digits -- the right idea
+# applied to one of the TWO ways a `[ ]` comparison dies. A digit string past LONG_MAX
+# kills it exactly as dead: `[ 9223372036854775808 -lt 25 ]` exits 2, the `if` skips its
+# body, and canary_verdict walked past every arm into `HUD VISIBLE` printing the
+# impossible number on its own success line. That is the same fail-open review-1 F5 was
+# written to close, wearing a digit costume, and it was reproduced against `git show
+# HEAD` of the harness: SEVEN out-of-range stats lines all certified green there.
+# (Vault: a-checker-that-cannot-evaluate-a-condition-must-report-err-not-false.)
+#
+# THE PREMISE, PINNED. Everything below rests on `[` reporting "I could not do this" as
+# exit 2 and nothing downstream looking at it. If that ever stops being true these rows
+# are decoration, so the premise is a check and not a comment.
+check "the premise: [ huge -lt 25 ] is UNEVALUABLE (exit 2), not false (exit 1)" "2" \
+      "$( [ 9223372036854775808 -lt 25 ] 2>/dev/null; printf '%s' "$?" )"
+check "and the huge field is all digits, so the F5 character test let it through" "1" \
+      "$(case 9223372036854775808 in ''|*[!0-9]*) echo 0 ;; *) echo 1 ;; esac)"
+
+# THE BOUNDS ARE panel_crop's, NOT RE-SPELLED. The verdict bounds its fields by the
+# panel's own area and width; this file reads the rectangle out of the one file that
+# owns it and reddens on disagreement, so a bound cannot quietly drift from the crop the
+# pixels were counted in -- the same imported-not-re-spelled rule as the marker rect.
+PANEL_BOUNDS="$(python3 - "$ROOT/tools/panel_crop.py" <<'PY'
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
+from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1
+print((PANEL_X1 - PANEL_X0 + 1) * (PANEL_Y1 - PANEL_Y0 + 1),
+      max(PANEL_X1 - PANEL_X0, PANEL_Y1 - PANEL_Y0))
+PY
+)"
+check "the verdict's measurement bounds are panel_crop's crop, not a second spelling" \
+      "$PANEL_BOUNDS" "$CANARY_MAX_PIXELS $CANARY_MAX_COORD"
+check "and the pixel bound is not vacuous: the real marker sits well inside it" "1" \
+      "$(awk -v m="$CANARY_MAX_PIXELS" 'BEGIN{print (m > 121 && m < 1000000) ? 1 : 0}')"
+
+# Every field the verdict compares, attacked with a value that is all digits and no
+# measurement: past LONG_MAX (the parser dies), six digits (the length arm), and a
+# plausible-but-impossible 400 in a 399-wide panel (the bound arm). All seven of these
+# printed `HUD VISIBLE` at the parent, so every rejection below is this rule's work.
+for bad in "9223372036854775808 9223372036854775808 0 0 10 10" \
+           "99999999999999999999 121 0 0 10 10" \
+           "121 99999999999999999999 0 0 10 10" \
+           "121 121 0 0 9223372036854775808 10" \
+           "121 121 0 0 10 99999999999999999999" \
+           "100000 100000 0 0 10 10" \
+           "121 121 0 0 400 10"; do
+    check "verdict: an out-of-range stats line [$bad] is refused, not certified" "1" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$bad"; }
+               canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?")"
+done
+
+# A COMPARISON HAS TWO SIDES, and either one can be the unevaluable one: a CANARY_MIN of
+# `x` skips its arm exactly as an impossible pixel count does. The harness's own
+# constants are therefore checked too -- and a broken constant is a broken harness, so
+# it refuses under its own name rather than guessing a safe value.
+for v in CANARY_MIN CANARY_X1 CANARY_Y1 CANARY_REACH_X CANARY_REACH_Y; do
+    check "verdict: a non-numeric $v refuses instead of silently skipping an arm" "1" \
+          "$( ( eval "$EXPECT_FN"; eval "$v=x"; canary_verdict "$CAP_YES" ) \
+               >/dev/null 2>&1; printf '%s' "$?")"
+done
+check "and the shipped constants still pass, so the guard is not always-red" "0" \
+      "$( ( eval "$EXPECT_FN"; canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?")"
+check "and the honest no-pixels case keeps its OWN name, not MALFORMED" "1" \
+      "$( ( eval "$EXPECT_FN"; canary_stats() { printf '0 0 - - - -\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c "HUD NOT VISIBLE" )"
 
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary)"

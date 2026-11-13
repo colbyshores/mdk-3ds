@@ -1,0 +1,158 @@
+BATCH 157 — ledger row `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`
+Review under remediation: logs/ralph-pi/run-20261113-021356/review-2.md (on batch 156).
+No Critical and no High in that review, so nothing was mandatory. F1 and F2 are both Low, both
+in the row's own acceptance command, both CONFIRMED and both FIXED. None rebutted.
+
+================================================================================
+1. F2 (Low, CONFIRMED, REPRODUCED BEFORE CHANGING ANYTHING)
+================================================================================
+Batch 156's F5 guard validated each stats field with a character class and reset a bad field
+to a safe-looking value:
+
+    case "$total" in ''|*[!0-9]*) total=0 ;; esac
+
+That diagnoses "the field contains a non-digit". The defect is not about characters. It is
+about a comparison that cannot be made: `[ a -lt b ]` exits 2 when it cannot parse an operand,
+and an `if` cannot distinguish 2 from 1, so the arm's body is skipped and canary_verdict walks
+past every rejection into `HUD VISIBLE`. A digit string past LONG_MAX is all digits:
+
+    canary_stats -> "9223372036854775808 9223372036854775808 0 0 10 10"
+    stdout: expect : HUD VISIBLE -- 9223372036854775808 canary pixels in the panel, ...
+    stderr: [: 9223372036854775808: integer expression expected   (x3)
+    rc 0
+
+THE WHOLE FAMILY, measured against `git show HEAD` of the harness (i.e. batch 156, the commit
+this batch replaces). Every one of these certified the ledger row green:
+
+    "9223372036854775808 9223372036854775808 0 0 10 10"  -> rc 0
+    "99999999999999999999 121 0 0 10 10"                 -> rc 0
+    "121 99999999999999999999 0 0 10 10"                 -> rc 0
+    "121 121 0 0 9223372036854775808 10"                 -> rc 0
+    "121 121 0 0 10 99999999999999999999"                -> rc 0
+    "100000 100000 0 0 10 10"                            -> rc 0   (impossible in 96000 px)
+    "121 121 0 0 400 10"                                 -> rc 0   (off-panel bbox)
+
+After the fix all seven are rc 1 (`HUD MALFORMED`), and the shipped `here` capture is still
+rc 0. Vault pattern this is an instance of:
+30-architecture/patterns/a-checker-that-cannot-evaluate-a-condition-must-report-err-not-false.
+
+THE FIX.
+
+  canary_measurement() { # <field> <max> ; 0 when it is a decimal in [0,max]
+      case "$1" in ''|*[!0-9]|??????*) return 1 ;; esac
+      [ "$1" -le "$2" ]
+  }
+
+The third case arm (six or more digits) is what keeps `[ "$1" -le "$2" ]` itself inside the
+range the parser can read. The bounds are the panel's own geometry:
+
+  CANARY_MAX_PIXELS=96000   # tools/panel_crop.py PANEL_SIZE: 400 columns x 240 rows
+  CANARY_MAX_COORD=399      # the panel's widest axis, inclusive far index
+
+and the host test re-derives both from panel_crop.py and reddens on disagreement, so neither
+is a second spelling of a rectangle this file does not own. Nothing is silently reset to 0 or
+-1 any more: an unevaluable field produces a named `HUD MALFORMED` verdict, because a value
+that LOOKS safe is how the third outcome ("I could not check it") gets read as one of the
+other two.
+
+ORDERING. The counts are validated before the floor arms; the bbox is validated only just
+before the extent arm that reads it. Reason: `canary_stats` prints "0 0 - - - -" when nothing
+painted, which is the honest and most common failure and must keep the name `HUD NOT VISIBLE`.
+Validating the bbox up front would have renamed it `HUD MALFORMED`. One row pins that.
+
+THE OTHER SIDE OF THE SAME COMPARISON. A CANARY_MIN of `x` skips its arm exactly as an
+impossible count does, so the harness now checks its own five canary constants and refuses
+under its own name if one is not a measurement. This half is defensive, not reachable from the
+shipped file (the constants are literals and the host test already hard-fails on a missing
+one); it is there because the claim "no comparison in this function can fail to evaluate" is
+only true if both sides of every one are checked.
+
+================================================================================
+2. F1 (Low, CONFIRMED): THREE ILLUSTRATIVE NUMBERS WERE NOT RE-DERIVABLE FROM THEIR FIXTURES
+================================================================================
+Measured with the harness's own canary_stats on the fixtures the test builds:
+
+    here  -> 121 121 0 0 10 10
+    none  -> 0 0 - - - -
+    turn  -> 121 0 389 0 399 10
+    wide  -> 363 132 0 0 32 10      (3*size_x = 33 columns x 11 rows)
+    small ->  64  64 0 0  7  7      (size_x-3 = 8 x 8)
+
+  * `block(0,0,8,8)` is 64 px, not the 36 px stated in three documents.
+  * The `wide` FIXTURE is 363 px / 33 columns / 132 inside, not 297 / 26.7. 27 columns and
+    297 px is the cw=240 MUTATION the fixture stands in for; that number was correct where it
+    was used (emurun.sh's own comment, and this file's probe table) and wrong where it was
+    attached to the fixture.
+  * The axis-swap mutation gives canvasWidth 216, so far_x = 16*400/216 = 29.63 columns, not
+    26.7. This record's own table already said `30 11 29 10`.
+
+Corrected in place in docs/evidence/2026-11-13-156-canary-extent.txt (with a CORRECTION block
+appended so the edit is attributable), docs/PROGRESS_LOG.md and docs/CONTINUATION.md. No
+verdict changed: every rc quoted in the 156 record was re-measured and holds.
+
+================================================================================
+3. THE GATE PROVED ITSELF AGAINST THE COMMIT IT REPLACED
+================================================================================
+`bash tests/scripts/emurun_harness_test.sh <harness>` takes the harness path, so the parent
+comparison is one command. The raw parent declares no CANARY_MAX_PIXELS/CANARY_MAX_COORD, and
+the F4 hard stop (correctly) refuses to run a fixture against a harness that declares no
+constants, so the comparison isolates the RULE change from the CONSTANT addition: the parent's
+verdict with this batch's two constants added.
+
+    PASS 120 / FAIL 10 of 130, and the 10 are exactly:
+      7 x "verdict: an out-of-range stats line [...] is refused, not certified"
+      3 x "verdict: a non-numeric CANARY_{MIN,REACH_X,REACH_Y} refuses ..."
+    0 pre-existing rows red. 0 vacuous rows.
+
+THE TWO THAT PASS ON THE PARENT ARE THE HONEST ANSWER, NOT A GAP: with CANARY_X1 or
+CANARY_Y1 non-numeric, the parent's canary_stats calls int("x"), raises, prints nothing, the
+verdict reads total=0 and fails closed as HUD NOT VISIBLE. Those two rows pin the NAMED
+refusal, not a hole the parent had.
+
+THE PREMISE IS NOW A CHECK, NOT A COMMENT:
+    "the premise: [ huge -lt 25 ] is UNEVALUABLE (exit 2), not false (exit 1)"  -> PASS
+If that ever stops being true, every row above is decoration, and the suite says so.
+
+EmurunHarness: 112 -> 130 checks.
+
+================================================================================
+4. GATES AND ACCEPTANCE, AS RUN
+================================================================================
+make -C tests/scripts -j8                 rc 0, "All cases match the oracle.",
+                                          638 PASS / 0 FAIL (was 620),
+                                          PASS EmurunHarness (130 checks)
+DISPLAY=:99 bash tools/check.sh           rc 0, "CHECK: ALL GATES PASSED",
+                                          PASS L3_f1.bmp sha=58615fc85d02e009,
+                                          BATCH INTEGRITY: PASS,
+                                          COMPLETION: LEDGER VERIFIED
+make -C mdk_3ds -j8                       rc 0, mdk.elf md5
+                                          728eb2350c3ef8a81acda15f75617c1e UNCHANGED
+                                          (no compiled source in the diff)
+
+DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud   ->  rc 0
+  display   : :99
+  emulator  : mandarine.AppImage md5 0d2adab6 (r1.2.1, the pinned known-good)
+  build     : mdk_3ds/mdk.3dsx
+  frames    : reached 2520 by the deadline; 2580 after the reap (48 frame lines logged)
+  gl        : forced llvmpipe; graphics_api=1 (OpenGL); render_3d=0 (mono); dspfirm seeded
+  lane      : /tmp/mdk-emurun.3303062
+  verdict   : expect : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1
+              expect : HUD VISIBLE -- 121 canary pixels in the panel, 121 inside
+              expect : the marker's rect 0,0-11,11 (bbox 0,0-10,10,
+              expect : reaching the derived (10,10))
+
+121 <= 96000 and 10 <= 399, so the new bounds are not what this run clears the verdict on; the
+stricter rule did not false-red. The extent arm's zero-pixel margin from batch 156 is
+unchanged and remains the sharpest edge on this acceptance command.
+
+Frame pair: docs/frames/2026-11-13-canary-measurement-bound.png (+ .txt). cmp-identical to its
+173 identical predecessors (sha256 6646adf1dae3a774d6215d57e5bcfba1bf6563ec); the pinned frame
+contains ZERO (0,0,255) pixels (measured) and therefore cannot show the canary at all — the
+sidecar says so.
+
+PRIOR-SOLUTION LOOKUP. Pi knowledge (mdk-sdl) searched, hybrid and semantic: surfaced the
+imported-not-re-spelled doctrine, applied to the two new bounds. Obsidian and Cognee MCP
+servers are ABSENT from this session's tool list (a session configuration fault per AGENTS §9
+P9), so the vault was read read-only from disk — where
+a-checker-that-cannot-evaluate-a-condition-must-report-err-not-false was found and is cited
+above. No Cognee graph lookup is claimed.

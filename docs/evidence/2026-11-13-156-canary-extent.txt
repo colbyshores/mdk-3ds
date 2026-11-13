@@ -35,7 +35,7 @@ extent the canvas's own width produces.
 
 The UNDERSIZED arm is a hole the reviewer did NOT name and the same argument finds:
 a canvasWidth too LARGE shrinks the marker so it sits wholly inside the rect and
-still clears the floor (block(0,0,8,8) = 36 px, all inside, all counted). An
+still clears the floor (block(0,0,8,8) = 64 px, all inside, all counted). An
 inside-count and a containment rule both pass it; only an extent test sees it.
 
 After the fix, same three captures:
@@ -189,3 +189,23 @@ reading the FILE, not reciting constants". Obsidian and Cognee MCP servers are A
 from this session's tool list — a session configuration fault per AGENTS §9 P9, not a
 licence to claim the lookup happened — so the vault was read read-only from disk
 instead, and no graph lookup was performed or claimed.
+
+================================================================================
+CORRECTION (batch 157, review-2 F1)
+================================================================================
+Three illustrative numbers in this record and in the two docs that summarise it were
+not re-derivable from the fixtures they described. Corrected in place, here and in
+docs/PROGRESS_LOG.md and docs/CONTINUATION.md:
+
+  * `block(0,0,8,8)` is 64 px, not 36. The `small` fixture is size_x-3 = 8 per axis,
+    and the measured stats line is `64 64 0 0 7 7`. The substance is untouched: a
+    wholly-inside 64-px marker cleared the floor and the parent certified it.
+  * The `wide` FIXTURE is 3*size_x = 33 columns x 11 rows = 363 px, 132 inside
+    (measured `363 132 0 0 32 10`), not 297/26.7. 27 columns and 297 px is the
+    cw=240 MUTATION this fixture stands in for, and that number is right where it was
+    used (emurun.sh's own comment and line 16 above); it was wrong where it was
+    attached to the fixture.
+  * The axis-swap mutation gives canvasWidth 216, so far_x = 16*400/216 = 29.63
+    columns, not 26.7. The record's own table already said `30 11 29 10`.
+
+Nothing about a verdict changed: every rc quoted above was re-measured and holds.

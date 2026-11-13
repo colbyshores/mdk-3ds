@@ -927,6 +927,24 @@ CANARY_REACH_Y=10
 # keeps one lucky sample from reading as a painted HUD, while staying far below the
 # marker's size so a HUD that paints at all clears it.
 CANARY_MIN=25
+#
+# THE PANEL'S OWN MEASUREMENT LIMITS, and why a verdict needs them (review-2 F2).
+#
+# Every arm below is `[ field -lt constant ]`, and a `[ ]` whose operands it cannot
+# parse exits 2 -- NOT 1 -- so the `if` skips its body and the verdict walks past the
+# rejection into `HUD VISIBLE`. "Is the field made of digits" does not prevent that:
+# `9223372036854775808` is all digits and is past LONG_MAX, so the comparison dies
+# exactly as dead as `[ x -lt 25 ]` does, and the verdict printed
+#     HUD VISIBLE -- 9223372036854775808 canary pixels in the panel, ...
+# with rc 0. A field therefore has to be a number the comparison can actually MAKE,
+# which means a bound and not only a character class. The bound is the panel's own
+# geometry, so it is a measurement limit rather than a magic ceiling: canary_stats
+# counts inside tools/panel_crop.py's crop, so no honest count exceeds the crop's area
+# and no honest crop coordinate exceeds its width. tests/scripts/emurun_harness_test.sh
+# re-derives both numbers from panel_crop.py and reddens on disagreement, so neither is
+# a second spelling of a rectangle this file does not own.
+CANARY_MAX_PIXELS=96000   # PANEL_SIZE: 400 columns x 240 rows
+CANARY_MAX_COORD=399      # the panel's widest axis, inclusive far index
 
 # WHY THE CANARY IS A COLOUR AND NOT A DIFF (and where it comes from).
 #
@@ -941,6 +959,17 @@ CANARY_MIN=25
 # come from the canvas's draw path. That is a visibility verdict from one frame and
 # no reference; the rect above is what turns it from "some pixels appeared" into "the
 # canvas's own corner was painted".
+
+# Is this field a measurement the panel could physically produce?
+canary_measurement() { # canary_measurement <field> <max> ; 0 when it is a decimal in [0,max]
+    # The three `case` arms are: empty, not-digits, and SIX OR MORE DIGITS. The third is
+    # the one review-2 F2 found: it keeps `[ "$1" -le "$2" ]` below inside the range the
+    # parser can read, which is the whole point -- and every honest field is at most five
+    # digits (96000), so the arm cannot reject a real measurement.
+    case "$1" in ''|*[!0-9]|??????*) return 1 ;; esac
+    [ "$1" -le "$2" ]
+}
+
 canary_verdict() { # canary_verdict <shot> ; 0 when the canvas reached the panel,
                    # at the corner AND at the extent the canvas's own matrix puts
                    # its top-left marker at
@@ -953,17 +982,44 @@ canary_verdict() { # canary_verdict <shot> ; 0 when the canvas reached the panel
     read -r total inside bx0 by0 bx1 by1 <<EOF
 ${stats:-0 0 - - - -}
 EOF
-    # EACH field validated on its own (review-1 F5). The guard used to test the
-    # CONCATENATION "${total}${inside}", so a stats line whose FIRST field was blank
-    # and second numeric read as "all digits", both comparisons then died on
-    # "integer expression expected", no branch was taken, and the function FELL THROUGH
-    # TO `HUD VISIBLE`. Malformed evidence is a failed verdict and never a green one:
-    # a bad count resets to 0 (which fails the floor) and a bad bbox resets to -1
-    # (which fails the reach).
-    case "$total" in ''|*[!0-9]*) total=0 ;; esac
-    case "$inside" in ''|*[!0-9]*) inside=0 ;; esac
-    case "$bx1" in ''|*[!0-9]*) bx1=-1 ;; esac
-    case "$by1" in ''|*[!0-9]*) by1=-1 ;; esac
+    # MALFORMED EVIDENCE IS A FAILED VERDICT AND NEVER A GREEN ONE (review-1 F5, and
+    # review-2 F2 for the half of it F5 missed). The guard used to test the CONCATENATION
+    # "${total}${inside}", so a stats line whose FIRST field was blank and second numeric
+    # read as "all digits", both comparisons then died on "integer expression expected",
+    # no branch was taken, and the function FELL THROUGH TO `HUD VISIBLE`. F5 replaced
+    # that with a per-field digit test, which fixed the blank field and left the hole
+    # open, because the failure was never about characters: it is about a comparison that
+    # cannot be made, and an `if` cannot tell that apart from a comparison that came out
+    # false. So nothing is silently reset to a safe-looking value any more -- an
+    # unevaluable field is NAMED and REJECTED, which is the only way the third outcome
+    # ("I could not check it") cannot be read as either of the other two.
+    #
+    # THE COUNTS FIRST, and the bbox later, because "nothing painted" is a real verdict
+    # with a real name and its bbox is legitimately `-`; rejecting it as malformed would
+    # rename the most common honest failure.
+    if ! canary_measurement "$total" "$CANARY_MAX_PIXELS" \
+       || ! canary_measurement "$inside" "$CANARY_MAX_PIXELS"; then
+        {
+            echo "emurun: HUD MALFORMED: the canary count line is [$stats] and" >&2
+            echo "          [$total]/[$inside] are not counts a $CANARY_MAX_PIXELS-pixel" >&2
+            echo "          panel can produce. A comparison this function cannot make is"
+            echo "          a rejection, never a pass (review-2 F2)."
+        } >&2
+        return 1
+    fi
+    # THE HARNESS'S OWN CONSTANTS, for the same reason: a comparison has two sides and
+    # either one can be the unevaluable one, and a CANARY_MIN of `x` fails open exactly
+    # the way an impossible pixel count does.
+    if ! canary_measurement "$CANARY_MIN" "$CANARY_MAX_PIXELS" \
+       || ! canary_measurement "$CANARY_X1" "$CANARY_MAX_COORD" \
+       || ! canary_measurement "$CANARY_Y1" "$CANARY_MAX_COORD" \
+       || ! canary_measurement "$CANARY_REACH_X" "$CANARY_MAX_COORD" \
+       || ! canary_measurement "$CANARY_REACH_Y" "$CANARY_MAX_COORD"; then
+        echo "emurun: HUD MALFORMED: the harness's own canary constants are not" >&2
+        echo "          measurements (MIN=$CANARY_MIN RECT=$CANARY_X1,$CANARY_Y1" >&2
+        echo "          REACH=$CANARY_REACH_X,$CANARY_REACH_Y); refusing to judge." >&2
+        return 1
+    fi
     if [ "$total" -lt "$CANARY_MIN" ]; then
         {
             echo "emurun: HUD NOT VISIBLE: $total canary pixels of pure (0,0,255) in the"
@@ -1000,6 +1056,18 @@ EOF
             echo "          not mdk_render_canvas_width's (a wrong-aspect HUD). A count"
             echo "          that only asks how many landed inside cannot see this"
             echo "          (review-1 F1)."
+        } >&2
+        return 1
+    fi
+    # The bbox is only consulted by the EXTENT arm below, so it is validated here rather
+    # than with the counts: by this point the marker really did paint, so a bbox that is
+    # not a coordinate pair is broken evidence and not the honest no-pixels case.
+    if ! canary_measurement "$bx1" "$CANARY_MAX_COORD" \
+       || ! canary_measurement "$by1" "$CANARY_MAX_COORD"; then
+        {
+            echo "emurun: HUD MALFORMED: the marker's bbox is ($bx0,$by0)-($bx1,$by1), which"
+            echo "          is not a pair of coordinates inside a $CANARY_MAX_COORD-wide"
+            echo "          panel, so the extent cannot be adjudicated (review-2 F2)."
         } >&2
         return 1
     fi
