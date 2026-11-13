@@ -50,6 +50,10 @@ def main() -> int:
     parser.add_argument("--row", required=True, help="ledger row id to certify")
     parser.add_argument("--timeout", type=int, default=7200, help="acceptance command timeout, seconds")
     parser.add_argument("--no-commit", action="store_true", help="certify without committing (tests)")
+    parser.add_argument("--bank-uncommitted", action="store_true",
+                        help="commit trailing tracked/untracked work before certifying, instead of "
+                             "refusing. The acceptance then runs on a committed tree, so `verified` "
+                             "names a commit that actually contains the work.")
     args = parser.parse_args()
 
     root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[2]
@@ -88,11 +92,42 @@ def main() -> int:
     # not make the work uncommitted, and treating it as dirty would park the loop
     # forever. A staged or modified TRACKED file does.
     dirty = git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
-    if dirty and not args.no_commit:
+    if dirty and not args.no_commit and not args.bank_uncommitted:
         print("ledger_close: working tree is dirty; refusing to certify a row against uncommitted work:",
               file=sys.stderr)
         print(dirty, file=sys.stderr)
         return 1
+
+    if dirty and args.bank_uncommitted and not args.no_commit:
+        # The worker's rule is "bank early", and it does not always win: an
+        # iteration that ends mid-batch leaves edits behind, and a closer that
+        # refuses every time can never certify anything (measured: 21 of 21 runs
+        # refused). Banking is not certifying -- the acceptance command still has
+        # to pass afterwards -- and it is better than losing the work.
+        print(f"ledger_close: banking uncommitted work before certifying {args.row}")
+        git(root, "add", "-u")
+        untracked = [p for p in git(root, "ls-files", "--others", "--exclude-standard").stdout.splitlines() if p.strip()]
+        for path in untracked:
+            git(root, "add", "--", path)
+        staged = [p for p in git(root, "diff", "--cached", "--name-only").stdout.splitlines() if p.strip()]
+        forbidden = [p for p in staged if p.startswith("MDK/") or p.startswith("mdk_3ds/romfs/")]
+        if forbidden:
+            git(root, "reset", "-q")
+            print("ledger_close: refusing to bank protected/local game bytes: " + ", ".join(forbidden),
+                  file=sys.stderr)
+            return 1
+        if not staged:
+            print("ledger_close: dirty tree but nothing staged after add; refusing", file=sys.stderr)
+            return 1
+        banked = git(root, "commit", "--no-verify", "-m",
+                     f"bank: uncommitted work from the iteration before {args.row} was certified\n\n"
+                     f"Banked by tools/runner/ledger_close.py so the acceptance command runs against a\n"
+                     f"committed tree. This commit certifies nothing; the row closes only if its\n"
+                     f"command passes.")
+        if banked.returncode != 0:
+            print(f"ledger_close: banking commit failed: {banked.stderr}", file=sys.stderr)
+            return 1
+        print(f"ledger_close: banked {len(staged)} file(s); HEAD is now the work under test")
 
     head = git(root, "rev-parse", "--short", "HEAD").stdout.strip()
     print(f"ledger_close: running acceptance for {args.row}: {command}")

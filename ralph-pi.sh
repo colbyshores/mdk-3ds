@@ -1412,7 +1412,7 @@ POLICY_PRECEDENCE
     # gaining the ability to attest one. A dirty tracked tree is refused, so
     # `verified` cannot point at a commit that lacks the work.
     if [ -n "${C_ITEM_ID:-}" ] && [ -f "$ROOT/tools/runner/ledger_close.py" ]; then
-        if python3 "$ROOT/tools/runner/ledger_close.py" --row "$C_ITEM_ID" >>"$LOG" 2>&1; then
+        if python3 "$ROOT/tools/runner/ledger_close.py" --row "$C_ITEM_ID" --bank-uncommitted >>"$LOG" 2>&1; then
             log "ledger_close: $C_ITEM_ID certified (the row closes only if its command passed)"
         else
             log "ledger_close: $C_ITEM_ID not certified this iteration; the row stays open"
