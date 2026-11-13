@@ -53,10 +53,11 @@
 #   mdk_3ds/tools/emurun.sh --grep 'tex:|draws' # extra patterns to extract
 #   mdk_3ds/tools/emurun.sh --shot /tmp/f.png    # capture the offscreen display
 #   mdk_3ds/tools/emurun.sh --min-frames 60      # refuse to report a short run
-#   mdk_3ds/tools/emurun.sh --expect hud         # fail unless the HUD's canvas drew
+#   mdk_3ds/tools/emurun.sh --expect hud         # fail unless the HUD's canvas drew,
+#                                               # in the panel, WHERE THE CANVAS MATRIX
+#                                               # SAYS IT GOES (see canary_verdict)
 #   mdk_3ds/tools/emurun.sh --expect hud-visible --shot S.png
-#                                               # fail unless a canvas draw reached
-#                                               # the panel (the pixel verdict)
+#                                               # the pixel verdict on its own
 #   mdk_3ds/tools/emurun.sh path/to/other.3dsx
 #
 # EXIT CODES
@@ -821,71 +822,150 @@ grep "$FRAME_RE" "$LOG" | tail -3
 # uses for the config functions: lifted from this file, not retyped there, or the
 # test certifies a copy.
 #
-# The evidence is a guest LOG LINE and not a pixel, and the claim it can carry is
-# narrower than it looks: it proves the canvas was QUEUED and EMITTED, not PAINTED.
-# `draws` counts the records the replay reached `C3D_DrawArrays` with, and nothing
-# downstream feeds back, so a frame whose draws the GPU never rasterises prints the
-# same line as a frame that painted (measured: docs/OPEN_ITEMS.md, "The 3DS canvas
-# draws no pixels", where this flag is green over a HUD with no pixels on screen).
-# What the two numbers DO separate is the CPU-side half of the story -- the quads the
-# frontend asked for against the draws the per-eye replay emitted, so a canvas that
-# was queued but dropped by a mesh or texture check, or drawn into one eye only, is a
-# different pair of numbers. The pixel question needs a known-colour probe quad diffed
-# against a HUD-off run, which does not exist yet; until it does, a green `--expect
-# hud` is not a visibility verdict and must not be recorded as one. A screenshot is
-# still taken and published for the human to look at (`--shot`).
-canary_pixels() { # canary_pixels <png> ; prints the count, 0 on any failure
-    python3 - "$1" "${REPO:-${ROOT:-.}}/tools/panel_crop.py" <<'PY' 2>/dev/null
+# `--expect hud` is TWO verdicts and not one, and the second one is the recent half.
+#
+# THE LOG LINE is the CPU's half: it proves the canvas was QUEUED and EMITTED, not
+# PAINTED. `draws` counts the records the replay reached `C3D_DrawArrays` with and
+# nothing downstream feeds back, so a frame whose draws the GPU never rasterises
+# prints the same line as a frame that painted (measured, 2026-11-11: the panel
+# contained zero pixels of the canary colour while this line was green). What the
+# two numbers DO separate is the CPU-side half of the story -- the quads the frontend
+# asked for against the draws the per-eye replay emitted, so a canvas that was queued
+# but dropped by a mesh or texture check, or drawn into one eye only, is a different
+# pair of numbers.
+#
+# THE PIXELS are the GPU's half, and they are a visibility verdict now: the old
+# paragraph here said a green `--expect hud` "is not a visibility verdict and must not
+# be recorded as one", and that sentence outlived the code it described by two batches
+# (review-4 F3). It was written when the flag read only the log line. It does not any
+# more, and a stale disclaimer is how a real verdict gets under-reported for a year.
+#
+# WHAT THE PIXELS CANNOT DO, and the honest limit: they are a KNOWN-COLOUR canary and
+# not a reference diff. A HUD-off build does not exist and would need a renderer switch
+# this project does not have, so there is no "same frame, no HUD" picture to subtract.
+# That costs one thing: the canary proves that a draw in the canvas's own state and
+# space reached the panel at the canvas's own corner. It does not prove the HUD's own
+# quads are correct, correctly coloured, or complete -- the dial's fidelity is a
+# separate question with a separate oracle (the C# renderer), and this flag says
+# nothing about it.
+canary_stats() { # canary_stats <png> <rect_x1> <rect_y1>
+                 # -> "<total> <inside> <bbox_x0> <bbox_y0> <bbox_x1> <bbox_y1>"
+    python3 - "$1" "$2" "$3" "${REPO:-${ROOT:-.}}/tools/panel_crop.py" <<'PY' 2>/dev/null
 import os, sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[4])))
 from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1, open_rgb
+rx1, ry1 = int(sys.argv[2]), int(sys.argv[3])
 px = open_rgb(sys.argv[1]).load()
-print(sum(1 for y in range(PANEL_Y0, PANEL_Y1 + 1)
-              for x in range(PANEL_X0, PANEL_X1 + 1) if px[x, y] == (0, 0, 255)))
+total = inside = 0
+bx0 = by0 = 1 << 30
+bx1 = by1 = -1
+for y in range(PANEL_Y0, PANEL_Y1 + 1):
+    for x in range(PANEL_X0, PANEL_X1 + 1):
+        if px[x, y] != (0, 0, 255):
+            continue
+        total += 1
+        cx, cy = x - PANEL_X0, y - PANEL_Y0
+        bx0, by0 = min(bx0, cx), min(by0, cy)
+        bx1, by1 = max(bx1, cx), max(by1, cy)
+        if cx <= rx1 and cy <= ry1:
+            inside += 1
+if bx1 < 0:
+    print("0 0 - - - -")
+else:
+    print(total, inside, bx0, by0, bx1, by1)
 PY
 }
 
-# THE CANARY, AND WHY IT IS A COLOUR AND NOT A DIFF.
+# THE MARKER'S EXPECTED RECT, in top-panel crop coordinates, inclusive.
 #
-# `--expect hud` used to read a log line, and the line could only say the canvas was
-# QUEUED and EMITTED; a frame whose draws the GPU never rasterises printed the same
-# line (measured: docs/OPEN_ITEMS.md, "The 3DS canvas draws no pixels"). A pixel
-# verdict needs something to look for, and the obvious answer — diff the HUD frame
-# against a HUD-off frame — needs a HUD-off build, which would need a renderer
+# This is DERIVED, not remembered, and tests/scripts/emurun_harness_test.sh re-derives
+# it from the shipped constants and fails if it disagrees -- a hand-copied expectation
+# is a second source of truth that drifts, which is the mistake batch 147's word-order
+# bug hid behind for eleven runs.
+#
+#   canvas      600 x 360 units  (kCanvasHeight 360 x the frame's aspect: 360*400/240,
+#                                 renderer_c3d.cpp's mdk_render_canvas_width)
+#   marker      the canvas's own [0,16] x [0,16]  (drawDiagnostic's kSize)
+#   portrait    240 x 400        (kScreenWidth x kScreenHeight -- the ROTATED
+#                                 framebuffer axes, not the landscape 400x240)
+#   canvasMatrix maps canvas (x,y) to portrait
+#       px = (1 - y/360) * 240,  py = (x/600) * 400
+#   and the display rotates the portrait target back to the landscape crop as
+#       crop_x = py,  crop_y = 240 - px
+#   so the marker's far corner lands at
+#       crop_x = 16*400/600 = 10.667   crop_y = 16*240/360 = 10.667
+#   Pixel centres below 10.667 are columns/rows 0..10 -- an 11x11 block, 121 pixels,
+#   which is exactly what the console measures (docs/evidence/2026-11-12-147-*.txt).
+#   ceil() adds one column and one row of rasterisation slack, giving 0,0-11,11.
+#
+# WHY A RECTANGLE AND NOT JUST A COUNT (review-4 F1). A count of the canary colour
+# cannot see the SIGN of the canvas transform. pica::canvasMatrix's panel quarter turn
+# is out.x = m.y, out.y = -m.x; flip that second sign and the determinant goes from +1
+# to -1 -- a REFLECTION, the exact family of defect that made the canvas invisible for
+# eleven runs -- and the marker moves to the panel's other corner while painting the
+# same 121 pixels. A count-only canary passes that build unchanged.
+CANARY_X1=11
+CANARY_Y1=11
+# 25 and not 1: the marker is ~121 panel pixels, and a floor above a stray edge pixel
+# keeps one lucky sample from reading as a painted HUD, while staying far below the
+# marker's size so a HUD that paints at all clears it.
+CANARY_MIN=25
+
+# WHY THE CANARY IS A COLOUR AND NOT A DIFF (and where it comes from).
+#
+# A pixel verdict needs something to look for, and the obvious answer -- diff the HUD
+# frame against a HUD-off frame -- needs a HUD-off build, which would need a renderer
 # switch this project does not have and should not grow for a test.
 #
 # So the renderer ships a 16x16 marker drawn in the canvas's own space, through the
 # canvas's own matrix, texture, combiner, tint, cull and depth state
-# (renderer_c3d.cpp's `drawDiagnostic`), in pure (0,0,255) — a colour that does not
+# (renderer_c3d.cpp's `drawDiagnostic`), in pure (0,0,255) -- a colour that does not
 # occur anywhere in the level-7 capture, so an exact hit in the panel can only have
 # come from the canvas's draw path. That is a visibility verdict from one frame and
-# no reference.
-#
-# 25 and not 1: the marker is ~110 panel pixels, and a floor above a stray edge
-# pixel keeps one lucky sample from reading as a painted HUD, while staying far
-# below the marker's size so a HUD that paints at all clears it.
-canary_verdict() { # canary_verdict <shot> ; 0 when the canvas reached the panel
-    local shot="$1" hits
+# no reference; the rect above is what turns it from "some pixels appeared" into "the
+# canvas's own corner was painted".
+canary_verdict() { # canary_verdict <shot> ; 0 when the canvas reached the panel,
+                   # at the corner the canvas's own matrix puts its top-left in
+    local shot="$1" stats total inside bx0 by0 bx1 by1
     if [ -z "$shot" ] || [ ! -f "$shot" ]; then
         echo "emurun: no screenshot to judge the HUD on (the capture failed)" >&2
         return 1
     fi
-    hits="$(canary_pixels "$shot")"
-    case "$hits" in ''|*[!0-9]*) hits=0 ;; esac
-    if [ "$hits" -lt 25 ]; then
-        echo "emurun: HUD NOT VISIBLE: $hits canary pixels of pure (0,0,255) in the " >&2
-        echo "          panel, 25 needed. The canvas's draws are emitted (see the" >&2
-        echo "          'canvas:' line) but nothing drawn in the canvas's state and" >&2
-        echo "          space reaches the screen." >&2
+    stats="$(canary_stats "$shot" "$CANARY_X1" "$CANARY_Y1")"
+    read -r total inside bx0 by0 bx1 by1 <<EOF
+${stats:-0 0 - - - -}
+EOF
+    case "${total}${inside}" in ''|*[!0-9]*) total=0; inside=0 ;; esac
+    if [ "$total" -lt "$CANARY_MIN" ]; then
+        {
+            echo "emurun: HUD NOT VISIBLE: $total canary pixels of pure (0,0,255) in the"
+            echo "          panel, $CANARY_MIN needed. The canvas's draws are emitted (see"
+            echo "          the 'canvas:' line) but nothing drawn in the canvas's state"
+            echo "          and space reaches the screen."
+        } >&2
         return 1
     fi
-    echo "expect    : HUD VISIBLE -- $hits canary pixels in the panel"
+    if [ "$inside" -lt "$CANARY_MIN" ]; then
+        {
+            echo "emurun: HUD MISPLACED: $total canary pixels painted, but only $inside"
+            echo "          of them inside the marker's expected rect (crop"
+            echo "          0,0-$CANARY_X1,$CANARY_Y1); their bbox is"
+            echo "          ($bx0,$by0)-($bx1,$by1). The canvas drew, through the canvas's"
+            echo "          own state, somewhere ELSE: a panel rotation with the wrong"
+            echo "          sign, a reflection (determinant -1), or a matrix that is not"
+            echo "          the canvas's. A count alone cannot tell them apart"
+            echo "          (review-4 F1)."
+        } >&2
+        return 1
+    fi
+    echo "expect    : HUD VISIBLE -- $total canary pixels in the panel, $inside inside"
+    echo "expect    : the marker's rect 0,0-$CANARY_X1,$CANARY_Y1 (bbox $bx0,$by0-$bx1,$by1)"
     return 0
 }
 
 expect_check() { # expect_check <name> <log> <shot> ; 0 when the evidence is there
     local name="$1" log="$2" shot="${3:-}"
-    local line quads draws hits
+    local line quads draws
     case "$name" in
         hud-visible)
             # The pixel verdict on its own, for when the emitted line is not the

@@ -1,3 +1,97 @@
+## Iteration 155 — batch 155: `3ds.hud-canvas` — the HUD canary gets a POSITION, so the row's own acceptance command can fail on a mis-oriented canvas (review-4 F1), and the harness stops describing itself as a non-verdict (review-4 F3)
+
+**THE LEDGER ROW IS `3ds.hud-canvas` (d1, acceptance `mdk_3ds/tools/emurun.sh --expect
+hud`), AND THE FINDING WAS IN THE ACCEPTANCE COMMAND ITSELF.** review-4
+(`logs/ralph-pi/run-20261112-035144/review-4.md`, F1, Medium) said the canary "counts
+pure-blue pixels with no positional test, so a reflected canvas (determinant −1) passes
+`--expect hud` unchanged". It was right, and it was reproduced before anything was
+changed: a capture holding the marker's 11×11 block at the panel's FAR corner — exactly
+what a determinant −1 quarter turn paints — gets `HUD VISIBLE -- 121 canary pixels in
+the panel`, rc 0, from `git show HEAD` of the harness. The same capture gets `HUD
+MISPLACED … their bbox is (389,229)-(399,239)`, rc 1, from this batch. Full record:
+`docs/evidence/2026-11-13-155-canary-rect.txt`.
+
+**WHY A COUNT CANNOT SEE THE SIGN, AND WHY THAT IS THIS ROW'S BUG FAMILY.**
+`pica::canvasMatrix` (`mdk_3ds/src/render/pica_matrix.cpp:177-182`) does the panel
+quarter turn as `out.x = m.y`, `out.y = -m.x`. Drop the minus and the determinant goes
+from +1 to −1: a reflection instead of a rotation. The marker keeps its size, its colour
+and its pixel count and moves to the other corner of the panel. Batch 147's word-order
+bug was an orientation bug too, and it hid for eleven runs because every probe read the
+staging buffer through the struct the code believed in. A row about the canvas matrix
+whose only pixel test asks "how many" is the same blind spot wearing a different hat.
+
+**THE EXPECTED RECT WAS DERIVED BEFORE IT WAS MEASURED, AND THE CONSOLE AGREES TO THE
+PIXEL.** From the shipped constants only — `kCanvasHeight 360` (`render_types.h:54`),
+`kScreenWidth 240` / `kScreenHeight 400` (`renderer_c3d.cpp:68-69`), `kSize 16`
+(`drawDiagnostic`, `:2581`), `canvasWidth = 360·400/240 = 600` — `canvasMatrix` puts the
+marker's canvas rect [0,16]² at crop `x = 16·400/600 = 10.667`, `y = 16·240/360 =
+10.667`, i.e. columns/rows 0..10: an 11×11 block, **121 pixels**. The live run then
+printed `HUD VISIBLE -- 121 canary pixels in the panel, 121 inside / the marker's rect
+0,0-11,11 (bbox 0,0-10,10)`. Batch 147 had already quoted 121 and (0,0)-(10,10) without
+deriving them; the two now meet from opposite directions, which is the difference
+between a golden and a guess.
+
+**WHAT LANDED.** `mdk_3ds/tools/emurun.sh`: `canary_pixels` (a count) becomes
+`canary_stats` (count, count-inside-the-rect, and the bbox of everything found);
+`CANARY_X1`/`CANARY_Y1`/`CANARY_MIN` are declared with the derivation attached; a
+refusal that paints in the wrong corner is a distinct verdict — `HUD MISPLACED` — so a
+future reader cannot mistake it for the invisible-HUD case; and the success line now
+prints the bbox, so a passing run records WHERE it landed and not only how many.
+**review-4 F3** is fixed in the same file: the block declaring that a green `--expect
+hud` "is not a visibility verdict and must not be recorded as one" outlived the code it
+described by two batches while `canary_verdict` two screens below printed `HUD VISIBLE`.
+The replacement says what the flag proves and names the one thing it still cannot: there
+is no HUD-off build, so the canary is a known-colour probe and not a reference diff, and
+it says nothing about the HUD's own quads being correct, coloured, or complete.
+
+**THE GATE PROVED ITSELF AGAINST THE COMMIT IT REPLACED, AND THE TEST FILE NEVER
+RE-TYPES THE HARNESS.** `tests/scripts/emurun_harness_test.sh` is **84 checks → 95**,
+and it already took the harness path as `$1`, so the parent comparison is free:
+`bash tests/scripts/emurun_harness_test.sh /tmp/emurun-parent.sh` reds **11** checks —
+the rect and floor are not declared, `canary_stats` is not in the lift, the mirror's
+position is not measured, and the marker-in-its-rect case cannot be adjudicated. The 84
+checks that existed before are all still present and all green on the child; none was
+relaxed. Two of the new rows are the non-vacuity, stated so they cannot be waved at: the
+mirrored capture DOES carry a full marker (so the old count rule would have passed it)
+and carries NONE of it inside the rect. And because a hand-copied expectation is a second
+source of truth, the test re-derives the rect from the four shipped constants and fails
+if it disagrees with the harness's declaration — a constant it cannot find is a hard
+failure, never a skipped check.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`,
+**603 PASS / 0 FAIL** (was 592; +11 from this batch), `PASS EmurunHarness (95 checks:
+config placement + mount ownership + the HUD canary)`. `DISPLAY=:99 bash tools/check.sh`
+rc 0, `CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH
+INTEGRITY: PASS`, `COMPLETION: LEDGER VERIFIED`. `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5
+`728eb2350c3ef8a81acda15f75617c1e` UNCHANGED — correct, because this batch ships no
+compiled code; the only `mdk_3ds/` file touched is its harness tool. Emulator evidence
+was owed anyway (the row's acceptance IS an emulator run) and was taken: `DISPLAY=:99
+mdk_3ds/tools/emurun.sh --expect hud` → **rc 0** on Mandarine r1.2.1 md5 `0d2adab6`,
+llvmpipe forced, `graphics_api=1` (OpenGL), `render_3d=0` (mono), dspfirm seeded, level
+7, reached frame 2520 and 2580 after the reap. The frame is `cmp`-identical to its 171 identical
+predecessors (`6769a137…`, of 172 committed frames at HEAD) because nothing on the Linux
+render path changed; its sidecar carries the standing disclosure that live oracle
+fidelity is unavailable on this host.
+
+**PRIOR-SOLUTION LOOKUP, AS RUN.** Pi knowledge (`mdk-sdl` KB) searched; it surfaced
+`tests/scripts/emurun_harness_test.sh`'s lift-not-retype doctrine and
+`tools/panel_geom.py`'s "a comparison that cannot fail enforces nothing" argument, both
+of which are used here. **Obsidian and Cognee MCP servers are absent from this session's
+tool list** (AGENTS §9 P9: a disk-only lookup is a degraded lookup, and this is a session
+configuration fault to report, not a licence to pretend the lookup happened); the vault
+was read read-only from `/mnt/nas/Vaults/port-docs` instead, which surfaced
+`a-refuters-evidence-is-a-claim-too` (applied: review-4's evidence was re-measured and
+not trusted) and `a-watchdog-downstream-of-what-it-watches-is-not-a-watchdog` (applied:
+the canary must be reachable in the failure it is meant to catch, which is why the
+mirror scene is generated and not argued).
+
+**ALSO INHERITED AND BANKED HERE.** `docs/evidence/linux.render-frame-de663b0.txt` was
+left untracked by the timed-out previous iteration — a `ledger_close.py` acceptance
+capture for `linux.render-frame` (exit 0 at `de663b0`). It is committed with this batch
+because the frame rule forbids a second commit per batch, not because it belongs to this
+row.
+
 ## Iteration 148 — batch 148: `linux.render-frame` — a refused resource on the Linux target names itself instead of drawing a silently emptier frame; the gap review-11 F4 recorded as "NOT fixed" is fixed
 
 **The ledger row is `linux.render-frame` (d1, acceptance `bash tools/check.sh`), and

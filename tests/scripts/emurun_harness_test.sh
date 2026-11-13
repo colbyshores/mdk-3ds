@@ -382,29 +382,106 @@ check "the expectation block was lifted from emurun.sh (non-vacuity)" "1" \
 check "and the lift is syntactically complete, not a truncation of it" "0" \
       "$(printf '%s\n' "$EXPECT_FN" | bash -n 2>/dev/null; printf '%s' "$?")"
 
+# The canary's own numbers, read back out of the harness so this file never carries a
+# second copy of the threshold or the rectangle.
+CANARY_X1="$(sed -n 's/^CANARY_X1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+CANARY_Y1="$(sed -n 's/^CANARY_Y1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+CANARY_MIN="$(sed -n 's/^CANARY_MIN=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+check "the harness declares the marker rect and the floor" "3" \
+      "$([ -n "$CANARY_X1" ] && [ -n "$CANARY_Y1" ] && [ -n "$CANARY_MIN" ] && echo 3 || echo 0)"
+
 # A synthetic emulator capture, so the PIXEL half of `--expect hud` is exercised
 # here too. `--expect hud` now demands the canary as well as the log line (review-1
 # F1: the log line alone was green over a HUD with no pixels), and an acceptance that
 # cannot be exercised is not evidence. The capture is the emulator's documented
-# 1280x1024 window; the canary is 30 pixels of the exact colour the renderer draws.
-cap() { # cap <with-canary:0|1> -> path to a synthetic capture
-    python3 - "$1" "$ROOT/tools/panel_crop.py" <<'PY'
+# 1280x1024 window. Three scenes, because the canary now asks two questions:
+#   here   -- the marker where pica::canvasMatrix puts it (the passing case)
+#   none   -- nothing painted at all (the review-1 F1 hole)
+#   mirror -- the SAME number of pixels in the panel's other corner: what a
+#             determinant -1 quarter turn draws (review-4 F1, the hole this batch
+#             closes). A count-only canary cannot tell `mirror` from `here`.
+cap() { # cap <here|none|mirror> -> path to a synthetic capture
+    python3 - "$1" "$ROOT/tools/panel_crop.py" "$CANARY_X1" "$CANARY_Y1" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
-from panel_crop import PANEL_X0, PANEL_Y0
+from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1
 from PIL import Image
+mode, rx1, ry1 = sys.argv[1], int(sys.argv[3]), int(sys.argv[4])
+W, H = PANEL_X1 - PANEL_X0 + 1, PANEL_Y1 - PANEL_Y0 + 1
 img = Image.new("RGB", (1280, 1024), (16, 32, 48))
-if sys.argv[1] == "1":
-    px = img.load()
-    for i in range(30):
-        px[PANEL_X0 + (i % 10), PANEL_Y0 + (i // 10)] = (0, 0, 255)
-path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % sys.argv[1])
+px = img.load()
+
+
+def block(x0, y0, w, h):
+    for j in range(h):
+        for i in range(w):
+            px[PANEL_X0 + x0 + i, PANEL_Y0 + y0 + j] = (0, 0, 255)
+
+
+if mode == "here":
+    block(0, 0, rx1, ry1)
+elif mode == "mirror":
+    # A reflection about the panel's vertical axis: the marker's 11x11 block, the
+    # same pixel count, against the far edge of the crop.
+    block(W - rx1, H - ry1, rx1, ry1)
+path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % mode)
 img.save(path)
 print(path)
 PY
 }
-CAP_YES="$(cap 1)"
-CAP_NO="$(cap 0)"
+CAP_YES="$(cap here)"
+CAP_NO="$(cap none)"
+CAP_MIRROR="$(cap mirror)"
+
+# THE RECTANGLE IS DERIVED, NOT REMEMBERED. The expectation lives in the harness as a
+# pair of integers; the geometry that produces it lives in the shipped renderer. If
+# nobody recomputes one from the other, the harness quietly starts certifying a rect
+# the renderer no longer draws to -- the same second-source-of-truth failure batch 147
+# hit from the other direction (the host test modelled the register as the code
+# believed it was, and the two wrongs cancelled). So recompute here from the shipped
+# constants and require agreement; a constant this file cannot find is a hard failure,
+# never a skipped check.
+DERIVED="$(python3 - "$ROOT" <<'PY'
+import math, re, sys
+root = sys.argv[1]
+
+
+def grab(path, pattern, cast, what):
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError as exc:
+        sys.exit("derive: cannot read %s (%s)" % (path, exc))
+    m = re.search(pattern, text)
+    if not m:
+        sys.exit("derive: %s is not in %s -- the derivation is stale, not the rect" % (what, path))
+    return cast(m.group(1))
+
+
+cpp = root + "/mdk_3ds/src/render/renderer_c3d.cpp"
+hdr = root + "/mdk_core/src/render/render_types.h"
+sw = grab(cpp, r"kScreenWidth\s*=\s*(\d+)\s*;", int, "kScreenWidth")
+sh = grab(cpp, r"kScreenHeight\s*=\s*(\d+)\s*;", int, "kScreenHeight")
+size = grab(cpp, r"kSize\s*=\s*([0-9.]+)f\s*;", float, "drawDiagnostic's kSize")
+ch = grab(hdr, r"kCanvasHeight\s*=\s*([0-9.]+)f\s*;", float, "kCanvasHeight")
+# canvasWidth = kCanvasHeight * sh / sw (mdk_render_canvas_width), and the marker's
+# far corner lands at kSize * sh / canvasWidth == kSize * sw / kCanvasHeight.
+far = size * sw / ch
+print("%d %d" % (int(math.ceil(far)), int(math.ceil(far))))
+PY
+)"
+check "the marker rect is re-derived from the shipped constants and agrees" \
+      "$DERIVED" "$CANARY_X1 $CANARY_Y1"
+check "and the derivation is not a constant (it would then certify nothing)" "1" \
+      "$(awk '{print ($1 > 0 && $1 < 400) ? 1 : 0}' <<<$DERIVED)"
+
+# The lifted block must contain the POSITIONAL half, or every check below is a
+# presence test on a fragment that lost it.
+check "the lift contains canary_stats, so the rect check cannot be a copy" "1" \
+      "$(printf '%s\n' "$EXPECT_FN" | grep -q 'canary_stats()' && echo 1 || echo 0)"
+
+stats_of() { # <shot> -> the harness's own "<total> <inside> <bbox...>" line
+    ( eval "$EXPECT_FN"; canary_stats "$1" "$CANARY_X1" "$CANARY_Y1" ) 2>/dev/null
+}
 
 expect_rc() { # <log content> <name> [shot] -> the adjudication's exit code
     local content="$1" name="${2:-hud}" shot
@@ -456,8 +533,34 @@ check "hud-visible: no canary fails" "1" \
 check "hud-visible: with no screenshot at all it cannot claim a verdict" "1" \
       "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud-visible "")"
 
+# --- review-4 F1: the count could not see the SIGN of the canvas transform ---------
+#
+# pica::canvasMatrix turns the landscape canvas into the portrait target with
+# out.x = m.y, out.y = -m.x. Drop the minus and the determinant goes from +1 to -1:
+# a REFLECTION. The marker still paints -- same size, same colour, same pixel count --
+# it just paints in the panel's other corner. `--expect hud` was green over that build
+# because the only pixel question it asked was "how many". These rows are the hole and
+# the fix, and the first two are the non-vacuity: they say the mirrored capture would
+# have satisfied the OLD count rule, so the rejection below is the new rule's work and
+# not the capture being bad in some other way.
+MIRROR_STATS="$(stats_of "$CAP_MIRROR")"
+check "the mirrored capture really does carry a full marker (so a count alone passes it)" "1" \
+      "$(awk -v min="$CANARY_MIN" '{print ($1 >= min) ? 1 : 0}' <<<"$MIRROR_STATS")"
+check "and it carries NONE of them inside the marker's rect" "0" \
+      "$(awk '{print $2}' <<<"$MIRROR_STATS")"
+check "and its pixels are at the opposite corner, not merely scattered" "1" \
+      "$(awk '{print ($3 > 200 && $4 > 100) ? 1 : 0}' <<<"$MIRROR_STATS")"
+check "hud: a REFLECTED canvas fails now -- review-4 F1" "1" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud "$CAP_MIRROR")"
+check "hud-visible: the reflected canvas fails the pixel verdict on its own too" "1" \
+      "$(expect_rc 'frame 60 elapsed=1.0000 steps=60' hud-visible "$CAP_MIRROR")"
+check "hud: the marker in its own rect passes, so the rule is not just always-red" "0" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud "$CAP_YES")"
+check "and the stats line names the bbox, so a failure says WHERE" "1" \
+      "$(awk 'NF == 6 && $3 != "-" {print 1}' <<<"$MIRROR_STATS")"
+
 if [ "$fails" -eq 0 ]; then
-    echo "PASS EmurunHarness ($checks checks: config placement + mount ownership)"
+    echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary)"
     exit 0
 fi
 echo "EMURUN HARNESS: $fails FAILED"
