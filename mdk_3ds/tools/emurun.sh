@@ -204,6 +204,15 @@ MAX_FRAMES=999999
 # THE BOUND DOES NOT MAKE THE BASE SAFE. `10#` at the arithmetic does, because padding
 # is a spelling and not a contradiction (batches 159/160): `--secs 0045` IS 45 and must
 # settle for 45, not 37.
+#
+# WHOSE CALLER IT IS FOR (review-7 open question 1). Not the caller that wants a long
+# run: every `--secs` this repository has ever passed is a plain decimal <= 45, and the
+# acceptance command passes none at all. It is for the wrapper whose variable went empty
+# or wrong -- the same class as `--secs ""`, which used to settle for nothing -- and for a
+# settle window that has outlived the run it was waiting for. A soak longer than an hour is
+# a different instrument: it should ask for a FRAME count (`--min-frames`), which is what
+# actually grew, and not for wall-clock. Raising this bound is legal only together with
+# MAX_FRAMES, and the relation row in the test is what makes raising one alone red.
 MAX_SECS=3600
 
 frame_floor() { # frame_floor <last-frame> <min-frames> ; 0 when the run is long enough

@@ -1,3 +1,111 @@
+## Iteration 162 — batch 162: `3ds.hud-canvas` — the numbers I ran, not the numbers I remembered
+
+**LEDGER ROW `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`, attempt 8 of 8.
+Review under remediation: `logs/ralph-pi/run-20261113-021356/review-7.md` (on batch 161) — F1 (Medium),
+F2 (Medium), F3 (Low); no Critical and no High. All three CONFIRMED against the shipped artifacts, all
+three FIXED, none rebutted. Full record: `docs/evidence/2026-11-13-162-the-numbers-i-ran.txt`, and the
+CORRECTION block appended to batch 161's evidence file.**
+
+**THE BATCH'S ONE IDEA: A MEASUREMENT YOU CANNOT RE-RUN IS NOT EVIDENCE, IT IS AN ANECDOTE WITH A NUMBER
+IN IT.** Batches 156-161 built their case on published rates and counts, in a row whose entire subject is
+whether a check is deterministic. Review-7 re-ran two of those numbers on its own host and neither
+survived. This batch re-ran every number it could reach, recorded the load beside each one, and corrected
+the three that did not hold — including two that this file itself published.
+
+**F1 (Medium, CONFIRMED, FIXED): THE FOUR-WAY TABLE NAMED THE WRONG GENERATION, AND THE ERROR
+REPRODUCES.** Batch 161 published `253 checks, 19 FAIL`, `214 checks` and `the parent's 30 235-byte
+block` under a "PARENT" label. All three are the GRANDparent's (f9409a9, batch 159); the parent is
+6345bf5b, batch 160. Re-run with artifacts taken from the right commits: **new test on the parent
+harness 257 checks / 12 FAIL**, **parent test on the parent harness 227 checks / 0 FAIL**, **parent test
+on the working harness 227 checks / 0 FAIL** (the collateral run, and still the only one of the four that
+can see collateral), **new test on the working harness 257 checks / 0 FAIL**. The mislabelling was then
+reproduced rather than merely corrected: this test on the grandparent harness reds **exactly 19** and the
+grandparent's test file is **exactly 214 checks** — one mistake, a comparison run against `HEAD~2`
+artifacts, showing up in three places. The 12 are all batch 161's `--secs` rows (2 declaration/relation,
+3 window, 1 inclusive bound, 5 named refusals, 1 bound-printed); batch 160's 7 pass on its own commit,
+which is the correct answer and the reason 19 was the wrong number. Block sizes re-derived from the awk
+markers rather than remembered: parent 6 464 + 26 351 = **32 816 B**, grandparent 30 235 B, working
+34 443 B.
+
+**F2 (Medium, CONFIRMED, FIXED): TWO PUBLISHED RATES DID NOT REPRODUCE, AND THE CAUSAL CLAIM BUILT ON
+ONE OF THEM WAS BACKWARDS.** (a) "20 full-suite runs of the parent test on the parent harness: 0 red"
+reproduced here (0 of 20, load 10.07→10.23) and did not on review-7's host (2-3 of 20): it was a sample
+written as a constant, and the honest range across two hosts is 0-3 of 20. (b) "0-1 of 200 on the
+parent's block" is simply wrong: the piped canary row reds **24 of 200** on the grandparent's block here
+(five samples on the parent's: 21, 23, 14, 22, 29 of 200) and 33 of 200 on review-7's host — the class
+was already live on the parent at about one run in eight. (c) "this batch's own growth made it fifteen
+times flakier" is not supported: **at equal load the parent's 32 816 B and this batch's 34 443 B blocks
+measure the same rate** (21-29 vs 20-24 of 200), and the gradient that produced the 15x claim (24/54/94)
+was measured while another measurement loop of the same batch was still running on the box — load is a
+driver of this race, so that run measured its own co-tenancy. **WHAT DOES DRIVE IT, measured on one
+payload at five match positions** (32 816 B, 200 runs each, status observed as 141 = SIGPIPE): a match at
+byte 4 463 reds 26 of 200, at 5 296 → 10, at 9 052 → 20, at 17 450 → 5, at 30 218 → 0. The driver is the
+**bytes still to write after the consumer stops reading**, not the payload's size — and that model
+reproduces all three rows of batch 161's own table (canary_stats 23 764 remaining → 27/200 published,
+expect_check 2 598 → 1/200, decimal_measurement 2 001 → 0/200), which also identifies where the wrong
+number came from: `expect_check()` really does measure about 0-1 of 200, because its match sits near the
+end, and its rate was written down as the block's. Measured the same way through `head` because review-7
+F3 named it: `printf '%s\n' "$BLOCK" | head -1` reds **168-179 of 200** at 32 816 B, 2 of 200 at 16 000 B,
+0 of 200 at 4 000 B. None of this weakens the fix: the `case` form is 0 of 200 isolated and the rewritten
+file 0 of 20 full runs on both hosts, and the mechanism (same payload, same pattern: 15-27 of 200 with
+`pipefail`, 0 of 200 without) is what F2 rested on, not any percentage.
+
+**F3 (Low, CONFIRMED, FIXED): THE SHAPE ROW MATCHED ONE SPELLING OF THE CLASS ITS LABEL CLAIMED.** The
+parent row was `grep -c 'grep -[q]'` on the file — the literal `grep -q` and nothing else — while
+`grep -Fq`, `grep -qF`, `grep -qE`, `grep -e x -q` and `grep --quiet` are the same race in another coat.
+Now one pattern, `EE_PAT='\|[^|]*grep[^|]*-[A-Za-z]*q'`, scanned over CODE lines only, because this file
+documents the rule in prose and a scan that reads its own prose as code can never be satisfied (the same
+reason `tools/runner/audit_c_with_classes.py` strips comments before matching), plus a second row for the
+other early-exit consumer, `head`, whose pattern requires the payload to be a variable the shell already
+holds so the twelve `| head -1` uses already in the file are not hits. TWO CONTROLS SHIP WITH IT: a
+positive one running the pattern against all five early-exit spellings (must be 5) and a negative one
+keeping `grep -c`, `grep -cE`, `wc -l` and `sort` out (must be 4). NON-VACUITY BY MUTATION, the only
+proof a shape row can have: injecting `printf x | grep -Fq pat` reds the file row (expected 0, got 1),
+injecting `printf y "$SOME_VAR" | head -1` reds the head row, and narrowing `EE_PAT` back to one spelling
+reds the positive control (expected 5, got 4) — all on throwaway copies inside `tests/scripts/` so `ROOT`
+resolves, deleted and not committed. `EmurunHarness` is 253 → **257 checks** (+5 rows, −1 replaced).
+
+**REVIEW-7 OPEN QUESTION 1, ANSWERED IN THE FILE IT ASKS ABOUT.** It asked whether `MAX_SECS=3600` is an
+owner-approved narrowing and said it needs owner confirmation OR a comment naming the caller class. The
+comment is now above `MAX_SECS` in `mdk_3ds/tools/emurun.sh`: the bound is not for the caller that wants a
+long run (every `--secs` this repository has ever passed is a plain decimal ≤ 45 and the acceptance passes
+none), it is for the wrapper whose variable went empty or wrong — the same class as `--secs ""` — and for
+a settle window that has outlived the run it was waiting for; a soak longer than an hour is a different
+instrument and should ask for a frame count. **No owner decision is claimed.** Raising the bound is legal
+only together with `MAX_FRAMES`, and the relation row is what makes raising one alone red.
+
+**THE GATES, AS RUN (all four, on this tree).** `make -C tests/scripts -j8` rc 0, `All cases match the
+oracle.`, **765 PASS / 0 FAIL** (was 761; +4 = the net new rows exactly), `PASS EmurunHarness (257
+checks…)`. `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp
+sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`, `COMPLETION[d1]:
+11 done / 13 total / 0 owner-blocked / 2 open`, `COMPLETION: LEDGER VERIFIED`, `PASS gates_core_parity
+both targets link the same core`, `SKIP gates_smdh no built .cia to read`. `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e`
+**UNCHANGED** — correct: the diff is one shell harness (comments only), one shell test, and docs.
+
+**THE ACCEPTANCE, AS RUN (AGENTS.md P7/P8).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` →
+**rc 0**: Mandarine r1.2.1 md5 `0d2adab6ad078c78e6d03e72086f2eb6` (verified before believing the run),
+display `:99`, llvmpipe forced, `graphics_api=1` (OpenGL), `render_3d=0` (mono), dspfirm seeded, level 7,
+frame 2460 by the deadline (46 frame lines) and 2520 after the reap (47), `canvas: quads=4 draws=2
+mesh=2 corners=24 eyes=1 (canvas frame 2460)`, and `HUD VISIBLE -- 121 canary pixels in the panel, 121
+inside the marker's rect 0,0-11,11 (bbox 0,0-10,10, reaching the derived (10,10))` — the verdict batches
+160 and 161 printed and review-7 reproduced, which is the point: this batch changed no behaviour in the
+harness at all. Margins unchanged: area 121 ≥ total 121, bbox 10 ≤ rect 11, inside 121 ≤ 144, reach
+10 ≥ 10. The lane's mount was left mounted because a process outside this lane was executing from it.
+
+**WHAT THIS BATCH DOES NOT CLOSE.** The row still cannot be closed from this lane: `docs/COMPLETION_LEDGER.tsv`
+is `coleshores:coleshores 0664` and this lane is `piagent`; the sanctioned closer is
+`tools/runner/ledger_close.py` run from a lane that can write it. And emulator-green is not hardware-pass:
+everything here is Mandarine r1.2.1 on llvmpipe, mono, `:99` (AGENTS P6/P8). Frame
+`docs/frames/2026-11-13-the-numbers-i-ran.png` is byte-identical to 178 of its predecessors (re-derived:
+180 PNGs, 179 at md5 `6769a137…`), and the census was re-run rather than remembered: **zero** pure
+(0,0,255) pixels, so the canary evidence is the live emulator run and never the committed frame.
+Prior-solution lookup: Pi knowledge searched (`mdk-sdl`, hybrid) for prior notes on the SIGPIPE/pipefail
+class and on measurement reproducibility — no prior note exists, so the mechanism was established by
+measurement. **Obsidian and Cognee MCP servers are ABSENT from this session's tool list** — a session
+configuration fault per AGENTS §9 P9, not a licence to claim the lookup happened — so no Cognee graph
+lookup is claimed and the vault was read read-only from disk.
+
 ## Iteration 161 — batch 161: `3ds.hud-canvas` — the base defect was one flag over, and the test had a race in it
 
 **LEDGER ROW `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`, attempt 7 of 8.
@@ -48,13 +156,17 @@ real rather than a flake anecdote. The reviewer found one row; **there were four
 (389, 391, 395, 628 of the parent). One helper, `lift_contains` (`case`, no pipe, literal pattern, so
 `canary_stats()` matches itself and not a class), replaces all four — the same shape batch 158 used for
 "is this a number": several spellings of one question, one of them wrong, and the fix is one spelling.
-**THE MEASUREMENT THAT DECIDES IT is this batch's own growth**: the piped form measured 0–1 of 200 red on
+~~**THE MEASUREMENT THAT DECIDES IT is this batch's own growth**: the piped form measured 0–1 of 200 red on
 the parent's 30 235-byte block and **15 of 200 red on this batch's 34 443-byte block**, so leaving the
 pipe in place would have made an already-flaky row fifteen times flakier while the batch was publishing
-"0 FAIL" counts four times. Two rows pin it past the four it replaces: 200 runs on the real block must
-agree (at the measured rate that is a ~1e-25 event on the piped form, so it is a pin and not a
-formality), and the file may never contain a piped early-exit grep again — a shape row greps the test
-file itself.
+"0 FAIL" counts four times.~~ **CORRECTED BY BATCH 162 (review-7 F2): that gradient was this batch
+measuring its own co-tenancy, and the 0–1 figure was the wrong row's rate.** At equal load the parent's
+block and this batch's measure the same (21–29 vs 20–24 of 200); the driver is the bytes still to write
+after the consumer stops reading, not the payload's size, and the class was already live on the parent at
+about one run in eight. The fix and its conclusion stand; the growth sentence does not. Two rows pin it
+past the four it replaces: 200 runs on the real block must agree (~~at the measured rate that is a ~1e-25
+event on the piped form~~ — at the corrected rate that is about 1 in 10⁹, still a pin and not a formality),
+and the file may never contain a piped early-exit grep again — a shape row greps the test file itself.
 
 **F3 (Low, CONFIRMED, RECORD ONLY): "THE INTERSECTION IS EMPTY" WAS A TAUTOLOGY PRESENTED AS A SET
 IDENTITY.** The 7 red labels batch 160 published exist only in the NEW test file, so their intersection
@@ -65,22 +177,32 @@ rather than rewritten there, so the original claim stays auditable. The collater
 run, parent test file on the working harness, which every batch that ran it reports and this batch
 re-ran.
 
-**THE GATE PROVED ITSELF, AND THE FOURTH RUN IS NOW NAMED AS THE ONE THAT MEANS IT.** New test on the
+**THE GATE PROVED ITSELF, AND THE FOURTH RUN IS NOW NAMED AS THE ONE THAT MEANS IT.** ~~New test on the
 parent harness: **253 checks, 19 FAIL** (batch 160's 7 + this batch's 12); parent test on the parent
 harness: **214 checks, 0 FAIL**; **parent test on the working harness: 214 checks, 0 FAIL** — the
 collateral run, and per F3 the only one of the four that can see collateral; new test on the working
-harness: **253 checks, 0 FAIL**. Composition of this batch's 12: 3 window rows (010, 0045, 08), 1
+harness: **253 checks, 0 FAIL**.~~ **CORRECTED BY BATCH 162 (review-7 F1): three of those four numbers
+are the grandparent's (f9409a9), not the parent's (6345bf5b).** Re-run with artifacts from the right
+commits: new test on the parent harness **257 checks, 12 FAIL** (all twelve are this batch's `--secs`
+rows; batch 160's 7 pass on its own commit), parent test on the parent harness **227 checks, 0 FAIL**,
+parent test on the working harness **227 checks, 0 FAIL** (the collateral run, still the only one of the
+four that can see collateral), new test on the working harness **257 checks, 0 FAIL**. The mislabelling
+reproduces: this test on the grandparent harness reds exactly 19 and the grandparent's test is exactly
+214 checks. Composition of this batch's 12: 3 window rows (010, 0045, 08), 1
 inclusive-bound row, 5 named refusals (4s, +45, empty, MAX_SECS+1, 99999), 1 bound-import row, 2
 MAX_SECS declaration/relation rows — plus one rc row that is VACUOUS on the parent for the reason the
 file already documents (the build check also exits 2), which is why every refusal row asserts the
 MESSAGE and not the code. `EmurunHarness` is 227 → **253 checks** (+26), and the host suite moved
 735 → **761 PASS / 0 FAIL**, which is +26 exactly: the new rows are the only delta the goldens saw.
 
-**THE FLAKE, MEASURED IN BOTH DIRECTIONS, INCLUDING AGAINST ITSELF.** 20 full-suite runs of the parent
-test on the parent harness: **0 red** — which does NOT rebut F2, because the full-suite rate is low
+**THE FLAKE, MEASURED IN BOTH DIRECTIONS, INCLUDING AGAINST ITSELF.** ~~20 full-suite runs of the parent
+test on the parent harness: **0 red**~~ — **CORRECTED BY BATCH 162 (review-7 F2): 0 of 20 reproduced here
+but not on review-7's host, which measured 2–3 of 20; the honest range across two hosts is 0–3 of 20, and
+the sentence was written as a constant when it was a sample.** That does NOT rebut F2, because the full-suite rate is low
 (the reviewer measured ~5% and saw one in 19 runs) so 20 samples cannot show it, while the isolated row
 measured 15–27 of 200 at the payloads in this tree. The decisive measurement is the mechanism, not the
-frequency. 20 full-suite runs of the new test on the working harness: **0 red**.
+frequency. 20 full-suite runs of the new test on the working harness: **0 red** (re-measured by batch
+162: 0 of 20 here, 0 of 20 on review-7's host).
 
 **THE ACCEPTANCE, AS RUN (AGENTS.md P7/P8).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` →
 **rc 0**: Mandarine r1.2.1 md5 `0d2adab6ad078c78e6d03e72086f2eb6` (verified before believing the run),

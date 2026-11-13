@@ -47,14 +47,16 @@ check() { # check <label> <expected> <actual>
 
 # A PRESENCE CHECK ON A LIFTED BLOCK MUST NOT PIPE (review-6 F2). `printf '%s\n' "$BLOCK"
 # | grep` with the early-exit flag is not a deterministic check under this file's
-# `pipefail`: grep exits at its first match, printf then takes EPIPE on the rest of the
-# payload, and pipefail turns THAT into a red row on an unmodified tree. Measured on the
-# shipped file, 200 runs each: 27 red on the 32 816-byte canary block, 1 red on the same
-# block with the match at a different position, 0 red on the 6 464-byte measurement block
-# -- the rate is a function of payload size and match position, so every one of these rows
-# has been green by luck, and a loop that reds a row nobody changed is a wasted iteration.
-# A `case` reads the string in place: no pipe, no second process, nothing to race, and the
-# quoted half of the pattern is literal, so a name with regex characters matches itself.
+# `pipefail`: grep exits at its first match, printf then takes SIGPIPE (status 141, measured)
+# on the bytes it has still to write, and pipefail turns THAT into a red row on an unmodified
+# tree. WHAT DRIVES THE RATE is the bytes still to write after the consumer stops reading,
+# not the size of the payload: on one 32 816-byte block, a match at byte 4 463 reds 26 of 200
+# and a match at byte 30 218 reds 0 of 200. The rate is NOT a property of the payload -- the
+# same block and pattern measured 14-29 of 200 in five samples minutes apart and 54 of 200
+# under a co-tenant -- so no percentage here is a constant, and the only honest claim is that
+# the piped form is non-deterministic at every position that matters. A `case` reads the
+# string in place: no pipe, no second process, nothing to race, and the quoted half of the
+# pattern is literal, so a name with regex characters matches itself.
 lift_contains() { # lift_contains <lifted block> <name> ; prints 1 or 0, and it cannot race
     case "$1" in *"$2"*) echo 1 ;; *) echo 0 ;; esac
 }
@@ -418,19 +420,56 @@ check "the expectation block was lifted from emurun.sh (non-vacuity)" "1" \
       "$(lift_contains "$EXPECT_FN" "expect_check()")"
 check "and the lift is syntactically complete, not a truncation of it" "0" \
       "$(printf '%s\n' "$EXPECT_FN" | bash -n 2>/dev/null; printf '%s' "$?")"
-# THE RACE, PINNED. A presence check on a committed file must be deterministic, so the
-# row repeats the real 32 KB block 200 times and requires the same answer every time; on
-# the piped form that is a ~1e-25 event (27 of 200 reds measured above), which is what
-# makes it a pin and not a formality. And the class is closed for the FILE, not just for
-# the four rows that were flaky: a lifted block is a shell variable, so this file must
-# never pipe one into grep with the early-exit flag again.
+# THE RACE, PINNED. A presence check on a committed file must be deterministic, so the row
+# repeats the real 32 KB block 200 times and requires the same answer every time. On the
+# piped form the canary row reds 7-15% of runs at this payload on this host, so 200
+# independent runs agreeing is not a formality; on the `case` form it is 0 of 200, and this
+# row is what keeps it that way.
 RACE=1
 for _ in $(seq 1 200); do
     [ "$(lift_contains "$EXPECT_FN" 'canary_stats()')" = 1 ] || RACE=0
 done
 check "the presence check is not a race: 200 runs on the real 32 KB block agree" "1" "$RACE"
-check "and no lifted block in this file is piped into grep with the early-exit flag" "0" \
-      "$(grep -c 'grep -[q]' "${BASH_SOURCE[0]}")"
+# THE CLASS, NOT ONE SPELLING (review-7 F3). What races is a pipe whose consumer closes the
+# read end before the writer has finished, and the parent row matched ONE spelling of that:
+# the literal `grep -q`. `grep -Fq`, `grep -qF`, `grep -qE` and `grep --quiet` are the same
+# defect in another coat, so a "never again" row that matches one coat lets the next one in.
+# The pattern is the class, and two controls pin it to the class it names: a positive one
+# that must catch every early-exit spelling (a pattern narrowed by a later editor reds it)
+# and a negative one that must leave alone the consumers that read to EOF. The scan reads
+# CODE lines only, because this file documents the rule in prose and a scan that reads its
+# own prose as code can never be satisfied -- the same reason
+# tools/runner/audit_c_with_classes.py strips comments before it matches.
+EE_PAT='\|[^|]*grep[^|]*-[A-Za-z]*q'
+ee_caught=0
+for fl in q Fq qF qE -quiet; do
+    case "$fl" in -*) probe="x | grep $fl pat" ;; *) probe="x | grep -$fl pat" ;; esac
+    [ "$(printf '%s\n' "$probe" | grep -cE -- "$EE_PAT")" = 1 ] && ee_caught=$((ee_caught + 1))
+done
+check "the early-exit pattern catches every spelling of the class (positive control)" "5" "$ee_caught"
+ee_safe=0
+for probe in 'x | grep -c pat' 'x | grep -cE pat' 'x | wc -l' 'x | sort pat'; do
+    [ "$(printf '%s\n' "$probe" | grep -cE -- "$EE_PAT")" = 0 ] && ee_safe=$((ee_safe + 1))
+done
+check "and it leaves alone a consumer that reads to EOF (negative control)" "4" "$ee_safe"
+check "and no code line in this file pipes anything into an early-exit grep" "0" \
+      "$(grep -v '^[[:space:]]*#' "${BASH_SOURCE[0]}" | grep -cE -- "$EE_PAT")"
+# THE OTHER EARLY-EXIT CONSUMER IS `head`, AND IT IS WORSE: on this same 32 KB block
+# `printf '%s\n' "$BLOCK" | head -1` reds 168-179 of 200 runs, because head stops after the
+# first line while the writer still has 32 KB to go (the same driver as above, and the same
+# reason 4 KB does not race: 0 of 200). The `| head -1` uses already in this file are on
+# `grep -c` and awk output -- one line from a producer that read all of its input -- so they
+# are not the class, and the pattern says so by requiring the payload to be a variable the
+# shell already holds, with no command substitution in between.
+HD_PAT='printf[^|"()]*"[^$()]*\$[A-Za-z_][A-Za-z0-9_]*"[^|()]*\|[[:space:]]*head'
+hd_probe="printf '%s\n' \"\$BLK\" | head -1"
+check "the head pattern catches a lifted block piped to head (positive control)" "1" \
+      "$(printf '%s\n' "$hd_probe" | grep -cE -- "$HD_PAT")"
+# The negative control is the file itself: twelve code lines here already end in `| head -1`
+# on a `grep -c` or awk producer, so a pattern that matched everything would red the row
+# below and a pattern narrowed to nothing would red the control above.
+check "and no code line in this file pipes a lifted block into head" "0" \
+      "$(grep -v '^[[:space:]]*#' "${BASH_SOURCE[0]}" | grep -cE -- "$HD_PAT")"
 
 # The canary's own numbers, read back out of the harness so this file never carries a
 # second copy of the threshold or the rectangle.

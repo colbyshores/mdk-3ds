@@ -283,3 +283,48 @@ byte-identical to its 177 identical predecessors (179 PNGs in docs/frames, 178
 at sha256 6646adf1… / md5 6769a137…), and the pixel census was re-run rather
 than repeated: ZERO pure (0,0,255) pixels in the 320x240 capture, so the canary
 evidence is the live emulator run and never the committed frame.
+
+================================================================================
+CORRECTION — appended by BATCH 162 (review-7 F1, F2). The text above is left
+intact so the original claims stay auditable; these four are wrong as published.
+================================================================================
+
+C1 (review-7 F1). §4's four-way table is labelled "PARENT" but three of its
+numbers are the GRANDparent's (f9409a9, batch 159), not the parent's (6345bf5b,
+batch 160). Re-run on batch 162's tree with artifacts taken from the right
+commits, the true numbers are:
+
+    new test on the PARENT harness:      257 checks, 12 FAIL   (not 253/19)
+    parent test on the PARENT harness:   227 checks,  0 FAIL   (not 214)
+    parent test on the WORKING harness:  227 checks,  0 FAIL   (not 214)
+    new test on the WORKING harness:     257 checks,  0 FAIL
+
+and the mislabelling reproduces: the new test on the GRANDparent harness reds
+exactly 19 and the grandparent's test file is exactly 214 checks. The 12 are this
+batch's `--secs` rows; the other 7 belong to batch 160 and pass on the true
+parent. §4's "19 = batch 160's 7 + this batch's 12" is arithmetically right and
+attributed to the wrong harness. Same for the block size: the parent's lifted
+block is 32 816 B; 30 235 B is the grandparent's.
+
+C2 (review-7 F2). §0's "parent payload 30 235 B: 0-1 of 200 red" is wrong. The
+piped form at the canary row reds 24 of 200 on that block on this host (five
+samples at the parent's 32 816 B: 21, 23, 14, 22, 29 of 200) and 33 of 200 on
+review-7's host. The class was already live on the parent at about one run in
+eight, which strengthens F2's conclusion and destroys the "fifteen times
+flakier" sentence built on top of it.
+
+C3 (review-7 F2). "this batch's own growth is the measurement that decides it"
+is not supported. At equal load the parent's 32 816 B block and this batch's
+34 443 B block measure the SAME rate (21-29 vs 20-24 of 200). The gradient that
+produced the 15x claim (24 / 54 / 94 of 200) was measured while another
+measurement loop of the same batch was still running on the box — load is a
+driver of this race, so that run measured its own co-tenancy. What drives the
+rate is the BYTES STILL TO WRITE after the consumer stops reading: on one
+32 816 B block, a match at byte 4 463 reds 26 of 200 and a match at byte 30 218
+reds 0 of 200. That model reproduces all three rows of §0's own table.
+
+C4 (review-7 F2). §5's "20 full-suite runs of the parent test on the parent
+harness: 0 red" reproduced here (0 of 20) but not on review-7's host (2-3 of 20).
+It is a sample, not a constant; the honest range across two hosts is 0-3 of 20.
+The mechanism claim it was written to protect (SIGPIPE under `pipefail`, status
+141, 0 of 200 with `pipefail` off) is unaffected and re-verified by batch 162.
