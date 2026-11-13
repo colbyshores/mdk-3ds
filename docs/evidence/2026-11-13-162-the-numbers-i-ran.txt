@@ -252,3 +252,38 @@ byte-identical to 178 of its predecessors (re-derived: 180 PNGs in docs/frames,
 179 at md5 6769a137…, this one is one of them), and the pixel census was re-run
 rather than repeated: ZERO pure (0,0,255) pixels in the 320x240 capture, so the
 canary evidence is the live emulator run and never the committed frame.
+
+===========================================================================
+CORRECTION — appended by BATCH 163 (2026-11-13), from review-8 F1 and F3.
+Both were re-measured here, not copied from the review.
+===========================================================================
+
+F1 (Medium, CONFIRMED). §"block sizes" above publishes:
+
+    working 8 091 + 26 351 = 34 443 B
+
+That is the COMMIT PARENT's (50e8276), not this batch's (3aef28d). Re-measured
+with this test's own method — `${#MEASURE_FN}` and `${#EXPECT_FN}` from the two
+awk lifts, combined = MEASURE + EXPECT + 1, exactly as emurun_harness_test.sh
+builds them at :404/:412/:417:
+
+    6345bf5b  (the table's "parent")   6 464 + 26 351 = 32 816 B   [published 32 816 — correct]
+    50e8276   (the commit's parent)    8 091 + 26 351 = 34 443 B   [published as "working" — WRONG]
+    3aef28d   (this batch)             8 801 + 26 351 = 35 153 B   [the correct "working"]
+
+So the batch that existed to close a one-generation label slip made one itself,
+one row over, in the same table. The F2(c) conclusion is unaffected and the
+reviewer showed why: the 11 inserted comment lines sit above `canary_stats()`,
+so they shift the match offset by the same 710 B they add to the payload, and
+remaining-bytes-after-match is 23 823 in both blocks — the variable this file's
+own model names as the driver. The rate rows therefore stand; the SIZE label did
+not.
+
+F3 (Low, CONFIRMED). §F3 above says "the twelve `| head -1` uses already in the
+file are not hits". Re-counted:
+
+    grep -v '^[[:space:]]*#' tests/scripts/emurun_harness_test.sh | grep -c '| head -1'  -> 10
+
+Ten including the new `hd_probe`, so NINE pre-dated this batch. "Twelve" counted
+the `| head -3` uses too. The negative control itself is sound; only its count
+was wrong.

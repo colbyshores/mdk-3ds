@@ -1,3 +1,127 @@
+## Iteration 163 — batch 163: `linux.render-frame` — the descriptor cache forgot its sets and the pool never got one back
+
+**LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`, attempt 1 of 8.
+Review under remediation: `logs/ralph-pi/run-20261113-021356/review-8.md` (on batch 162) — no
+Critical and no High, so nothing was mandatory. F1 (Medium) and F3 (Low) are documentation
+corrections to batch 162's published numbers, both re-measured here and FIXED; F2 (Low) is
+DEFERRED with cause because it edits another row's acceptance test. Full record:
+`docs/evidence/2026-11-13-163-sets-go-back-to-the-pool.txt`, and the CORRECTION block appended to
+batch 162's evidence file.**
+
+**THE DEFECT: A CACHE ENTRY AND AN ALLOCATED SET ARE TWO THINGS, AND ONLY ONE OF THEM WAS
+RELEASED.** `getDescriptorSet` caches one `VkDescriptorSet` per (texture, palette, repeat) triple,
+and `forgetDescriptorSets` drops the entries naming a view that is about to be destroyed or
+replaced — review-25's fix, marked CLOSED at `docs/OPEN_ITEMS.md:497`, and correct: a recreated id
+must not inherit a set naming a dead `VkImageView`. But on the parent, `vkFreeDescriptorSets`
+appears **0** times, `vkResetDescriptorPool` appears **0** times, `poolInfo.flags` is never assigned,
+and `poolInfo.maxSets` is a fixed 4096 on a pool created once. So every set the cache forgot was
+spent for the life of the process, and when the pool emptied `vkAllocateDescriptorSets` began
+failing, `getDescriptorSet` refused, and draws were skipped — once per distinct request and then
+silently, because of the B7 dedup. The three call sites are `mdk_render_update_texture` (every
+same-size update), `mdk_render_release_texture`, `mdk_render_release_palette`; the first two are
+also what `mdk_render_release(scope)` is made of and what `kurt_sprite.cpp:515`'s residency
+eviction calls. **REACHABILITY IS STATED, NOT INFLATED:** on this frontend the churn is small today
+— `mdk_render_capabilities` returns `sprite_residency_bytes = 0` on Linux, so `bounded()` is false
+and `trimResidency` never evicts, and nothing in `mdk_core` calls `mdk_render_update_texture` or
+`mdk_render_release` yet. The 3DS backend returns 1 MiB for that field, so the eviction path is live
+there. The leak is real in the API and latent on this target; what changes here is that it stops
+being the behaviour.
+
+**THE FIX HAS THREE PARTS BECAUSE THERE ARE THREE WAYS TO GET IT WRONG.** (a) The pool must be
+created with `VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT`: `vkFreeDescriptorSets` is invalid
+use without it, so the obvious one-line "free it where you dropped it" is a second bug, and the
+alternative — `vkResetDescriptorPool` — takes every set in the pool with it, including the ones a
+queued frame has bound, so it has no safe point in a frame loop. (b) The drop site **retires**, it
+does not free: a set a recorded frame bound is in use, and AGENTS.md P3 puts the completion boundary
+before the CPU release, so `forgetDescriptorSets` now calls `retireDescriptorSet`, which reuses the
+deadline the file already uses for buffers, `frameIndex + kFramesInFlight`, made real by the fence
+`vk::beginFrame` waits. (c) `settleRetired` — already called at that boundary — now drains
+`retiringSets` through `vkFreeDescriptorSets` and **reads the result**; a failed free leaves the set
+undefined so retrying is not a thing, and it is reported once through the dedup-ing `refused()`.
+Also: the `refused` forward declaration moved above `settleRetired`, the stale `getDescriptorSet`
+comment that asserted "the pool is not freed and reset anywhere in this backend" — the sentence that
+made the leak sound like a decision — rewritten, and a teardown comment recording that
+`vkDestroyDescriptorPool` returns every set including the retired ones, so a per-set free there would
+be a double release.
+
+**THE GATE PROVED ITSELF IN FOUR DIRECTIONS, AND THE FOURTH IS THE ONE THAT MATTERS FOR
+COLLATERAL.** `linux_refusal_report_test.sh` gains check **B12** and six arms, each of which must
+redden B12 and nothing else: `forget-stops-retiring-the-set` (the leak restored),
+`set-freed-at-the-drop-site` (the naive fix, a set a queued frame still binds),
+`pool-not-created-freeable` (the free becomes invalid use), `retired-sets-never-freed` (a vector is
+not a free), `set-freed-without-a-deadline` (the free is in the settle, the deadline is not),
+`set-free-result-discarded` (the `VkResult` thrown away). Then:
+
+| test | sources | result |
+|---|---|---|
+| new (19 checks / 47 arms) | working | **rc 0, 0 red** |
+| new (19 checks / 47 arms) | `git show HEAD:` | **rc 1, exactly 1 of 19 red — B12**, all four sub-findings named |
+| parent (18 checks / 41 arms) | `git show HEAD:` | **rc 0, 0 red** (as it must be) |
+| parent (18 checks / 41 arms) | working | **rc 0, 0 red — ZERO pre-existing collateral** |
+
+The fourth row is the one a new check usually skips: it proves the new *code* breaks nothing that was
+already green, not just that the new *check* reddens the old code. The parent-source run also reports
+the six new arms as "the mutation changed nothing", which is the harness's correct answer for an arm
+applied to a file predating the code it mutates; it is left in the record rather than hidden.
+
+**WHY THE RESULT-READ IS PINNED IN B12 AND NOT IN B5, AND WHAT THAT LEAVES OPEN.** `vkFree*` is a
+MIXED family — `vkFreeMemory` and `vkFreeCommandBuffers` are void, `vkFreeDescriptorSets` is not —
+and B5's `RESULT_VERBS` has no `Free`, so nothing else in the file would notice the result discarded.
+Closing that properly means adding `Free` to the verbs and the two void entry points to
+`VOID_ENTRY_POINTS`, which MOVES B5; the file's own `CONTEXT_VOID_ENTRY_POINTS` precedent forbids
+moving B5 while a new check is being introduced. So the obligation is pinned for the one call this
+batch adds and the general gap is recorded as an open item, not fixed quietly under cover of a new
+check.
+
+**A MEASUREMENT THAT SAYS MORE ABOUT THE ROW THAN THE FIX DOES: NOTHING IN THE GATE SET COMPILES
+`mdk_linux/**`.** `bash tools/check.sh` — this row's registered acceptance — runs the eight contract
+gates; `gates_core_parity` compares source LISTS against `mdk_linux/CMakeLists.txt`; `gates_frames`
+uses `build-linux/mdk` if one happens to exist and SKIPS if not. So the target this row is about is
+built by hand or not at all, and a stale `build-linux/mdk` would be certified by the frame gate as
+happily as a fresh one. `cmake --build build-linux -j8` was run by hand here and returns rc 0
+(`Built target mdk`), and that is the only thing standing between this batch and shipping an
+uncompiled change to a Vulkan renderer. The fix is a `gate` line in `tools/check.sh`, which is in
+`gates_batch_integrity.PROTECTED` and is therefore an owner act, not a batch. `core.formats` sat
+broken for 25 batches for exactly this reason — the ledger header says so in its own comments.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **765 PASS / 0
+FAIL** — unchanged from batch 162, and correctly so: the refusal test contributes ONE
+`PASS LinuxRefusalReport` line to that count, not one per check, so +1 check and +6 arms move the
+refusal test's own numbers (18→19 checks, 41→47 arms) and not this one. `DISPLAY=:99 bash
+tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH
+INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`, `COMPLETION[d1]: 11 done / 13 total / 0
+owner-blocked / 2 open`, `COMPLETION: LEDGER VERIFIED`. `make -C mdk_3ds -j8` rc 0 with `mdk.elf`
+md5 `728eb2350c3ef8a81acda15f75617c1e` **UNCHANGED** — correct, no `mdk_3ds/**` file changed, so no
+P8 emulator evidence is owed either. Note for the next lane: `DEVKITPRO`/`DEVKITARM` are not in this
+lane's ambient environment (`ralph-pi.sh:196-197` exports them); a bare `make -C mdk_3ds` stops at
+`Makefile:25: *** "Please set DEVKITARM"`, which is a lane fact and not a build failure.
+`sh tests/scripts/linux_refusal_report_test.sh` rc 0, `PASS LinuxRefusalReport (19 checks, 47 arms
+adjudicated red)`.
+
+**THE FRAME AND ITS DISCLOSURE.** `docs/frames/2026-11-13-sets-go-back-to-the-pool.png` (+ `.txt`),
+captured at 3aef28d. Census re-derived rather than remembered: **181** PNGs in `docs/frames`, **180**
+at md5 `6769a137…`, and the new pair is one of those 180 — byte-identical to its predecessors, which
+is the expected result for a change that cannot move a pixel of level 3 frame 1. **Zero** pure
+(0,0,255) pixels in it. The sidecar carries the standing blocker verbatim: `live measurement:
+unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)`.
+
+**PRIOR-SOLUTION LOOKUP.** Pi knowledge (`mdk-sdl`, hybrid) surfaced `docs/OPEN_ITEMS.md:497` —
+review-25's MINOR marked CLOSED, which is the `forgetDescriptorSets` change itself; read against the
+code, that closure fixed the cache and left the pool accounting undone, which is exactly the gap
+closed here. Vault read read-only from disk: one hit, a Vulkan-tutorial table of contents naming
+"descriptor pool & sets", no prior solution. **Obsidian MCP and Cognee MCP are ABSENT from this
+session's tool list** — a session configuration fault per AGENTS §9 P9, not a licence to claim the
+lookup; no Cognee graph search is claimed.
+
+**THE ROW'S BLOCKER IS UNCHANGED.** `docs/COMPLETION_LEDGER.tsv` is `coleshores:coleshores 0664`
+and this lane is `piagent` (groups `piagent, development`); `test -w` says NOT WRITABLE, and the
+file is in `gates_batch_integrity.PROTECTED`, so a rename is a hand edit wearing a hat. The
+sanctioned closer re-run here printed `ledger_close: working tree is dirty; refusing to certify a
+row against uncommitted work` — it will not certify against a dirty tree at all, and on a clean one
+it reaches the same `Permission denied`. The operator action is `chgrp development
+docs/COMPLETION_LEDGER.tsv` and then `python3 tools/runner/ledger_close.py --row
+linux.render-frame` from a lane in that group, on a clean tree.
+
 ## Iteration 162 — batch 162: `3ds.hud-canvas` — the numbers I ran, not the numbers I remembered
 
 **LEDGER ROW `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`, attempt 8 of 8.

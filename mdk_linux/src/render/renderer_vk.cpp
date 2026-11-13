@@ -137,6 +137,14 @@ struct RetiredBuffer {
     uint32_t safeFrame = 0;
 };
 
+// A descriptor set the cache has forgotten but a recorded frame may still name.
+// It goes back to the pool at the same boundary a retired buffer waits for;
+// see `retiringSets`.
+struct RetiredSet {
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    uint32_t safeFrame = 0;
+};
+
 void destroyBufferPair(VkDevice device, VkBuffer buffer, VkDeviceMemory memory) {
     if (buffer) vkDestroyBuffer(device, buffer, nullptr);
     if (memory) vkFreeMemory(device, memory, nullptr);
@@ -212,6 +220,11 @@ struct RendererVk {
     // provably finished; `settleRetired` destroys them there, which is the
     // CPU/GPU completion boundary AGENTS.md P3 asks for.
     std::vector<RetiredBuffer> retiring;
+    // The descriptor sets the cache dropped because the image view they name is
+    // going away. Dropping the CACHE ENTRY is what makes a recreated id safe
+    // (review-25); returning the SET is what keeps the pool alive, and the two
+    // are different acts. Settled beside `retiring`, on the same boundary.
+    std::vector<RetiredSet> retiringSets;
     // Counts the frames this backend has begun. The retire deadline is
     // `frameIndex + kFramesInFlight`; see `retireBuffer`.
     uint32_t frameIndex = 0;
@@ -248,6 +261,11 @@ RendererVk* asVk(MdkRenderer r) {
     return static_cast<RendererVk*>(r);
 }
 
+// Defined below, with the rest of the refusal reporting. Declared here because
+// `settleRetired` and the one-shot helpers are the first sites in the file that
+// can be refused.
+void refused(const char* fmt, ...);
+
 // Stop using a buffer without destroying it yet.
 //
 // The caller has finished with it on the CPU, but a submission that reads it may
@@ -282,6 +300,53 @@ void settleRetired(RendererVk* r) {
         destroyBufferPair(r->ctx.device, retired.buffer, retired.memory);
         r->retiring.erase(r->retiring.begin() + (long)i);
     }
+    // The sets the cache forgot. A descriptor set is a slot in a pool with a
+    // fixed `maxSets`, and nothing in this backend has ever given one back: no
+    // `vkFreeDescriptorSets`, no `vkResetDescriptorPool`. So every texture or
+    // palette released and re-made — and `mdk_render_update_texture` does that
+    // on every same-size update — spent a set for the rest of the process, and
+    // when the pool ran out every draw that needed a new pair was skipped.
+    //
+    // It waits for the same boundary the buffers do, for the same reason:
+    // `vkFreeDescriptorSets` requires the set not be in use, and a frame that
+    // recorded `vkCmdBindDescriptorSets` with it may still be on the queue.
+    for (size_t i = 0; i < r->retiringSets.size();) {
+        const RetiredSet retired = r->retiringSets[i];
+        if (retired.safeFrame > r->frameIndex) {
+            i++;
+            continue;
+        }
+        VkDescriptorSet set = retired.set;
+        const VkResult freed = vkFreeDescriptorSets(r->ctx.device, r->descPool, 1, &set);
+        if (freed != VK_SUCCESS) {
+            // The set is gone from this point either way — a failed free leaves
+            // it in an undefined state, so retrying is not a thing — but the
+            // pool running dry for a reason the log can show is a different
+            // failure from a pool running dry silently.
+            refused("return a descriptor set to the pool: the set is lost and the "
+                    "pool has one fewer to hand out; when it empties, every draw "
+                    "that needs a new texture/palette pair is skipped");
+        }
+        r->retiringSets.erase(r->retiringSets.begin() + (long)i);
+    }
+}
+
+// Stop using a descriptor set without returning it to the pool yet.
+//
+// The cache drops a set because the image view it names is about to be destroyed
+// or replaced, so the entry must go NOW — but the set itself is named by whatever
+// this frame has already recorded, and `vkFreeDescriptorSets` on a set an
+// in-flight command buffer binds is invalid use. So it waits for the boundary
+// `settleRetired` implements, which is the fence `vk::beginFrame` just waited
+// (AGENTS.md P3), not a lock and not a cache flush.
+void retireDescriptorSet(RendererVk* r, VkDescriptorSet set) {
+    if (!set) {
+        return;
+    }
+    RetiredSet retired;
+    retired.set = set;
+    retired.safeFrame = r->frameIndex + mdk::vk::kFramesInFlight;
+    r->retiringSets.push_back(retired);
 }
 
 // ---------------------------------------------------------------------------
@@ -299,10 +364,6 @@ uint32_t findMemoryType(mdk::vk::Context* ctx, uint32_t typeBits, VkMemoryProper
     }
     return 0xFFFFFFFFu;
 }
-
-// Defined below, with the rest of the refusal reporting. Declared here because
-// the one-shot helpers are the first sites in the file that can be refused.
-void refused(const char* fmt, ...);
 
 // THE ONE-SHOT COMMAND BUFFER AND ITS POOL TRAVEL TOGETHER.
 //
@@ -1303,12 +1364,12 @@ VkDescriptorSet getDescriptorSet(RendererVk* r, int32_t texture, int32_t palette
     alloc.pSetLayouts = &r->setLayout;
     VkDescriptorSet set = VK_NULL_HANDLE;
     if (vkAllocateDescriptorSets(r->ctx.device, &alloc, &set) != VK_SUCCESS) {
-        // The pool is not freed and reset anywhere in this backend, so every
-        // texture or palette released and re-made takes a set with it and the
-        // pool can run out late in a session (review-5 F1). The callers do NOT
-        // draw without a set: a draw with the previous draw's set bound is a
-        // WRONG picture, which is worse than the missing one every other
-        // refusal here produces.
+        // The cache returns sets to this pool (`forgetDescriptorSets` retires,
+        // `settleRetired` frees), so running dry means the churn outran 4096
+        // live sets rather than a leak (review-5 F1). The callers do NOT draw
+        // without a set: a draw with the previous draw's set bound is a WRONG
+        // picture, which is worse than the missing one every other refusal
+        // here produces.
         refused("descriptor set for texture %d palette %d (%s sampler): the draw that "
                 "asked for it is skipped rather than sampled with the previous set",
                 (int)texture, (int)palette, repeat ? "REPEAT" : "CLAMP");
@@ -1362,6 +1423,12 @@ void forgetDescriptorSets(RendererVk* r, int32_t texture, int32_t palette) {
     while (i < r->descs.size()) {
         if ((texture >= 0 && r->descs[i].texture == texture) ||
             (palette >= 0 && r->descs[i].palette == palette)) {
+            // Retire it, do not just forget it. The entry has to leave the cache
+            // here — that is review-25's fix, and a recreated id must not inherit
+            // a set naming the dead view — but the SET is still allocated, and
+            // until this batch nothing ever handed it back, so the cache was
+            // correct and the pool was leaking in proportion to the churn.
+            retireDescriptorSet(r, r->descs[i].set);
             r->descs[i] = r->descs.back();
             r->descs.pop_back();
             continue;
@@ -1582,6 +1649,13 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
         sizes[0].descriptorCount = 8192;
         VkDescriptorPoolCreateInfo poolInfo = {};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        // The cache RETURNS sets to this pool now (see `settleRetired`), and
+        // `vkFreeDescriptorSets` is invalid use on a pool that did not ask for
+        // this bit. The alternative was `vkResetDescriptorPool`, which takes
+        // every set in the pool with it — including the ones a frame that is
+        // still on the queue has bound — so there is no safe point for it in a
+        // frame loop.
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         poolInfo.maxSets = 4096;
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes = sizes;
@@ -1745,6 +1819,10 @@ void mdk_render_destroy(MdkRenderer rr) {
     if (r->pipeCache) vkDestroyPipelineCache(r->ctx.device, r->pipeCache, nullptr);
     if (r->pipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->pipeLayout, nullptr);
     if (r->descPool) vkDestroyDescriptorPool(r->ctx.device, r->descPool, nullptr);
+    // No per-set free here, and none for `retiringSets`: destroying a descriptor
+    // pool returns every set allocated from it, retired ones included, so a
+    // second release of the same handle would be the double free this file has
+    // been chasing one level down all along.
     if (r->setLayout) vkDestroyDescriptorSetLayout(r->ctx.device, r->setLayout, nullptr);
     mdk::vk::destroyContext(&r->ctx);
     delete r;

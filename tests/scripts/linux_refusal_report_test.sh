@@ -112,6 +112,16 @@
 #        command-buffer reset, begin, submit or present failed was reported as a
 #        rendered frame, and its screenshot was captured and published as the pinned
 #        record of a frame that never reached the display.
+#     B12 a descriptor set the cache forgets goes BACK to the pool, and not before the
+#        frame that named it has finished. `forgetDescriptorSets` was review-25's fix
+#        for a cached set naming a destroyed image view, and it is correct — but a cache
+#        entry and an allocated set are two things and only one of them was released.
+#        With no `vkFreeDescriptorSets` and no `vkResetDescriptorPool` anywhere, a pool
+#        built on a fixed `maxSets` spent a set on every texture or palette released and
+#        re-made for the life of the process, and when it emptied the B4 refusal started
+#        skipping draws. Three shapes, because there are three distinct ways to be
+#        wrong: the pool must ask for freeable sets, the drop site must retire rather
+#        than free, and the settle must actually free on the buffers' own deadline.
 #
 #   context (mdk_linux/src/render/vk/vk_context.cpp)
 #     C1 every result-bearing Vulkan call in the file has its result read. This is the
@@ -202,6 +212,8 @@ CHK = {
     "B9": "teardown frees the memory only after destroying what was bound to it",
     "B10": "a one-shot submission whose completion was never proven releases nothing",
     "B11": "the frame seam reads both beginFrame's and endFrame's result and says so",
+    "B12": "a descriptor set the cache forgets returns to the pool, after its frame "
+           "has finished, with its result read",
     "C1": "every result-bearing Vulkan call in vk_context.cpp has its result read",
     "C2": "the frame's command buffer is ended before it is submitted",
     "C3": "a refused frame never leaves its slot's fence unsignalled",
@@ -1192,6 +1204,110 @@ def backend_checks(r, text, quiet):
         "only layer that can say so, and its screenshot is the record the loop commits" +
         ("" if not bad11 else " — " + "; ".join(bad11)))
 
+    # B12: a descriptor set the cache forgets goes back to the pool, and not before the
+    # frame that named it has finished.
+    #
+    # `forgetDescriptorSets` is review-25's fix for a cached set naming a destroyed
+    # image view, and it is correct: the entry has to leave the cache. But a CACHE ENTRY
+    # and an ALLOCATED SET are two things, and until this batch only the first one was
+    # released. `vkFreeDescriptorSets` appeared nowhere in the backend and
+    # `vkResetDescriptorPool` appeared nowhere, so a pool built on a fixed `maxSets`
+    # spent one set on every texture or palette released and re-made — and
+    # `mdk_render_update_texture` does exactly that on every same-size update — for the
+    # life of the process. When the pool emptied, the B4 refusal started skipping every
+    # draw that needed a new pair, once per distinct request and then silently.
+    #
+    # Three shapes are pinned, because there are three distinct ways to be wrong:
+    #
+    #   1. the pool must be created with the bit that makes its sets freeable.
+    #      `vkFreeDescriptorSets` is invalid use on a pool that did not ask for it, so
+    #      the obvious one-line fix is a second bug unless the create says so; and the
+    #      alternative, `vkResetDescriptorPool`, takes every set in the pool with it,
+    #      including the ones a queued frame has bound, so it has no safe point in a
+    #      frame loop;
+    #   2. the drop site must RETIRE the set and must not free it there. A set that a
+    #      recorded frame bound is in use, and AGENTS.md P3 puts the completion boundary
+    #      before the CPU release — the same reason `retireBuffer` exists;
+    #   3. the settle must actually free it, on the deadline the buffers already wait
+    #      for, and read the result. `vkFree*` is a MIXED family — `vkFreeMemory` and
+    #      `vkFreeCommandBuffers` are void, `vkFreeDescriptorSets` is not — and B5's verb
+    #      list does not cover `Free`, so nothing else in this file would notice the
+    #      result thrown away. Closing that gap properly is B5's job and would move B5,
+    #      which this file's own precedent forbids while a new check is being introduced;
+    #      the obligation is pinned here instead and the gap is recorded in CONTINUATION.
+    bad12 = []
+    pool = re.search(r"VkDescriptorPoolCreateInfo\s+(\w+)\s*=\s*\{\}", code)
+    if not pool:
+        bad12.append("no VkDescriptorPoolCreateInfo is built in the file, so the pool "
+                     "this rule is about is not the pool being checked")
+    else:
+        pname = pool.group(1)
+        made = code.find("vkCreateDescriptorPool(", pool.end())
+        head = code[pool.end():made] if made > 0 else code[pool.end():pool.end() + 2000]
+        if not re.search(re.escape(pname) + r"\.flags[ \t]*=[^;]*FREE_DESCRIPTOR_SET",
+                         head):
+            bad12.append("%s never sets .flags to VK_DESCRIPTOR_POOL_CREATE_FREE_"
+                         "DESCRIPTOR_SET_BIT before the create, so returning a set to "
+                         "this pool is invalid use" % pname)
+
+    fsp = body_span(code, "forgetDescriptorSets")
+    if not fsp:
+        bad12.append("forgetDescriptorSets is not in the file")
+    else:
+        body = code[fsp[0]:fsp[1]]
+        if "retireDescriptorSet(" not in body:
+            bad12.append("forgetDescriptorSets drops the cache entry and never retires "
+                         "the set it dropped — the pool loses one set per drop")
+        for call in ("vkFreeDescriptorSets", "vkResetDescriptorPool"):
+            if call + "(" in body:
+                bad12.append("forgetDescriptorSets calls %s at the drop site: a set a "
+                             "frame has already recorded is still in use there" % call)
+
+    rsp = body_span(code, "retireDescriptorSet")
+    if not rsp:
+        bad12.append("retireDescriptorSet is not in the file")
+    elif not re.search(r"safeFrame[ \t]*=[^;]*frameIndex[^;]*kFramesInFlight",
+                       code[rsp[0]:rsp[1]]):
+        bad12.append("retireDescriptorSet's deadline is not frameIndex + kFramesInFlight, "
+                     "so it is not the boundary beginFrame's fence actually proves")
+
+    ssp = body_span(code, "settleRetired")
+    if not ssp:
+        bad12.append("settleRetired is not in the file")
+    else:
+        body = code[ssp[0]:ssp[1]]
+        idx = body.find("retiringSets")
+        if idx < 0:
+            bad12.append("settleRetired never settles retiringSets — the retired sets "
+                         "are collected and then dropped with the vector")
+        else:
+            tail = body[idx:]
+            if "safeFrame" not in tail:
+                bad12.append("settleRetired frees retired sets without comparing their "
+                             "safeFrame, so it frees sets a queued frame may still bind")
+            m = re.search(r"(\w+)[ \t]*=[ \t]*vkFreeDescriptorSets[ \t]*\(", tail)
+            inline = re.search(r"if[ \t]*\([ \t]*vkFreeDescriptorSets[ \t]*\(", tail)
+            if "vkFreeDescriptorSets(" not in tail:
+                bad12.append("settleRetired never calls vkFreeDescriptorSets — that is "
+                             "the leak again with a vector in front of it")
+            elif not inline and not m:
+                bad12.append("settleRetired calls vkFreeDescriptorSets and throws its "
+                             "VkResult away; vkFree* is a mixed family and B5's verbs do "
+                             "not cover Free, so nothing else here would notice")
+            elif m and not inline:
+                nm = m.group(1)
+                rest = tail[m.end():m.end() + 400]
+                if not re.search(r"\b" + re.escape(nm) + r"\b[^;]*VK_", rest) \
+                        and not re.search(r"if[ \t]*\([ \t]*" + re.escape(nm), rest):
+                    bad12.append("settleRetired discards vkFreeDescriptorSets' VkResult "
+                                 "in `%s`; vkFree* is a mixed family and B5's verbs do "
+                                 "not cover Free, so nothing else here would notice" % nm)
+    say(CHK["B12"], not bad12,
+        "a descriptor set is a slot in a pool with a fixed budget; forgetting the cache "
+        "entry frees nothing, freeing it at the drop site is use-after-free, and freeing "
+        "it on a pool that never asked for freeable sets is invalid use" +
+        ("" if not bad12 else " — " + "; ".join(bad12)))
+
 
 def context_checks(r, text, quiet):
     """The Linux Vulkan context: the same result rule as B5, over the file review-8 F3
@@ -1908,6 +2024,77 @@ arm_context("frame-submitted-unended", ce_frame_submitted_unended, "C2")
 arm_context("fence-reset-in-begin-frame", ce_fence_reset_in_begin_frame, "C3")
 arm_context("refused-submit-keeps-the-reset-fence", ce_refused_submit_keeps_the_reset_fence, "C3")
 arm_context("refused-frame-keeps-the-acquire", ce_refused_frame_keeps_the_acquire, "C4")
+
+
+def be_forget_stops_retiring(s):
+    """The leak, restored exactly: review-25's fix kept, and the set it dropped never
+    handed back. The cache is correct and the pool empties one set at a time. B12 only."""
+    return s.replace("""            retireDescriptorSet(r, r->descs[i].set);
+            r->descs[i] = r->descs.back();""",
+                     """            r->descs[i] = r->descs.back();""", 1)
+
+
+def be_set_freed_at_the_drop_site(s):
+    """The one-line 'fix' that reads correctly and is invalid use: the set is freed at the
+    moment the cache forgets it, which is a moment a recorded frame may still be binding
+    it. B12 only."""
+    return s.replace("            retireDescriptorSet(r, r->descs[i].set);",
+                     "            vkFreeDescriptorSets(r->ctx.device, r->descPool, 1,"
+                     " &r->descs[i].set);", 1)
+
+
+def be_pool_not_freeable(s):
+    """The create without the bit. `vkFreeDescriptorSets` is invalid use on a pool that
+    did not ask for freeable sets, so the free is a second bug rather than a fix. B12
+    only."""
+    return s.replace("        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;\n",
+                     "", 1)
+
+
+def be_retired_sets_never_freed(s):
+    """The bookkeeping without the release: sets are collected into the retire list and
+    the list is drained into nothing. A vector is not a free. B12 only."""
+    marker = "    for (size_t i = 0; i < r->retiringSets.size();) {"
+    lo = s.find(marker)
+    if lo < 0:
+        return s
+    hi = s.find("\n}\n", lo)
+    if hi < 0:
+        return s
+    return s[:lo] + s[hi + 1:]
+
+
+def be_set_freed_without_a_deadline(s):
+    """The free is in the settle and the deadline is not: every retired set goes on the
+    first frame that settles, whether or not the frame that bound it has finished. The
+    call and its result are untouched, so only the boundary can be what reddens. B12
+    only."""
+    return s.replace("""        const RetiredSet retired = r->retiringSets[i];
+        if (retired.safeFrame > r->frameIndex) {
+            i++;
+            continue;
+        }""", """        const RetiredSet retired = r->retiringSets[i];
+        if (false) {
+            i++;
+            continue;
+        }""", 1)
+
+
+def be_set_free_result_discarded(s):
+    """`vkFree*` is a mixed family — vkFreeMemory and vkFreeCommandBuffers are void and
+    vkFreeDescriptorSets is not — and B5's verb list does not cover `Free`, so a
+    discarded result here is invisible to every other check in the file. B12 only."""
+    return s.replace("""        const VkResult freed = vkFreeDescriptorSets(r->ctx.device, r->descPool, 1, &set);
+        if (freed != VK_SUCCESS) {""", """        vkFreeDescriptorSets(r->ctx.device, r->descPool, 1, &set);
+        if (false) {""", 1)
+
+
+arm_backend("forget-stops-retiring-the-set", be_forget_stops_retiring, "B12")
+arm_backend("set-freed-at-the-drop-site", be_set_freed_at_the_drop_site, "B12")
+arm_backend("pool-not-created-freeable", be_pool_not_freeable, "B12")
+arm_backend("retired-sets-never-freed", be_retired_sets_never_freed, "B12")
+arm_backend("set-freed-without-a-deadline", be_set_freed_without_a_deadline, "B12")
+arm_backend("set-free-result-discarded", be_set_free_result_discarded, "B12")
 
 checks = sum(r.checks for r in real)
 arms = [("Linux frontend", FRONT_ARMS, FILES["Linux frontend"]),
