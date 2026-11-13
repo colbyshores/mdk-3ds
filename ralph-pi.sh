@@ -876,7 +876,11 @@ while :; do
     # 3 of linux.render-frame ran 3h55m, the watchdog killed it, and nothing ever
     # faced the closer. Banking and certifying here makes every iteration the
     # closer's opportunity, not only the ones that finish cleanly.
-    if [ -n "$C_ITEM_ID" ] && [ -f "$ROOT/tools/runner/ledger_close.py" ]; then
+    # Only when there IS inherited work: a clean tree means the previous turn
+    # already faced the closer and failed, so re-running a slow acceptance (an
+    # emulator capture can be minutes) would buy nothing.
+    if [ -n "$C_ITEM_ID" ] && [ -f "$ROOT/tools/runner/ledger_close.py" ] \
+            && [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]; then
         if python3 "$ROOT/tools/runner/ledger_close.py" --row "$C_ITEM_ID" --bank-uncommitted \
                 >>"$RUN_DIR/close-$ITER.log" 2>&1; then
             log "ledger_close: $C_ITEM_ID certified from inherited work; selecting the next row instead of spending a turn on a closed row"
