@@ -1,3 +1,65 @@
+## Iteration 168 — batch 168: `linux.render-frame` — the 256-entry refusal memory is not reachable here, and not because refusals are rare: on this host the allocator never fails
+
+**LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`. Not a review
+remediation: NEXT-list item 12, open since review-7 as "Is the 256-entry refusal memory reachable in
+one session?" — one line, deferred by every batch since because answering it needs a run, not an
+argument. Measurement batch: no source file and no check changed; what changed is a question from open
+to answered, with numbers. Full record:
+`docs/evidence/2026-11-13-168-nobody-refuses-here.txt`.**
+
+**WHAT WAS RUN.** `build-linux/mdk`, the binary `gates_frames` certifies, `DISPLAY=:99`,
+`VK_ICD_FILENAMES=…/lvp_icd.json`, `--headless --fixed-step --seed 1`. **Level 3 at 600 frames: 0
+refusal lines, 0 distinct**, rc 0, ending `exiting after 600 frames (last frame: 193 draws, 1493
+triangles)` so the sim really advanced. **Levels 1-7 at 300 frames each: 0 total, 0 distinct on every
+one.** Level 3 at 4096x3072, at 16x16, and `--level 99` at 5 frames: 0 each. Whole-log prefix census of
+the 600-frame run: `[main]` x10, `[audio]` x1, **`[vk]` x0** — not one refusal sentence in a session run
+to frame 600. So the answer is not "256 vs 200", it is **256 vs ZERO: the dedup table never receives its
+first entry.**
+
+**WHY, WHICH IS THE INTERESTING PART.** `refused(` has 38 call sites, so this is not dead code nothing
+could reach; it never fires because **lavapipe does not refuse an allocation on this host** — not at
+4096x3072, not at any level. The prior record already said so and this batch re-confirms it
+independently: the 2026-11-12 evidence produced refusal lines only by FAULT INJECTION, "patching the
+allocator in a scratch build, running, and reverting", because "no executed arm can make lavapipe
+refuse". That reframes the item: the 256-entry memory exists to stop the flood review-5 F2 measured at
+22500 lines in one run, a flood requires refusals to recur, recurring refusals require an allocator that
+fails, and this allocator never fails. **The property the cap protects is not exercised by any unpatched
+run on this host, and the cap's own bound is unreachable by the same fact.**
+
+**THE DECISION IN THIS BATCH IS WHAT WAS NOT ADDED.** The tempting move is to pin "a session emits zero
+`[vk] REFUSED` lines", and this batch deliberately does not, for AGENTS §2's staleness-clock argument
+applied here: a gate green only while the frontend keeps never refusing goes permanently red the first
+time a real ICD, a validation layer (NEXT item 7), or wired sprite churn makes the path fire — and a
+permanently red gate is worse than no gate because it trains the reader to skip it. **The measurement is
+a fact about this host's ICD, not an invariant of the code.** The existing shape check already pins what
+IS invariant: the set consulted before printing, the cap bounding the table, the print followed by a
+flush.
+
+**WHAT IT DOES NOT PROVE, STATED.** It does not prove the refusal pipe works end to end on an unpatched
+build, because nothing on an unpatched build can make it fire; the only end-to-end demonstration on
+record is the 2026-11-12 fault injection, and this batch adds a second independent confirmation of the
+NEGATIVE and does not claim the positive. It does not make descriptor-pool exhaustion (item 11)
+reachable. And **`--level 99` running at all with the same startup draw count as level 3 is a separate
+oddity noticed during this measurement and NOT chased** — it suggests an unknown level falls back rather
+than erroring, logged as open rather than quietly filed under "works".
+
+**GATES.** `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`,
+`COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`, `COMPLETION: LEDGER VERIFIED`,
+`SKIP gates_smdh`. No build was re-run and that is stated rather than skipped silently: no source file
+changed, so `make -C tests/scripts`, `make -C mdk_3ds` and `cmake --build build-linux` have nothing new
+to compile, and the binary used FOR the measurement is the one batch 166 built. The batch-integrity gate requires a frame per batch and this batch did not decline it: `docs/frames/2026-11-13-nobody-refuses-here.png` is byte-identical to its predecessors (md5 `6769a137…`, zero pure (0,0,255) pixels over 219 colours), which is the only honest outcome for a batch that changed no source and had nothing to show — a changed frame would have meant a bug somewhere else. Prior-solution lookup:
+Pi knowledge (`mdk-sdl`) surfaced the refusal-report evidence and the review-5 F2 flood measurement.
+**Obsidian and Cognee MCP are ABSENT from this session's tool list** (AGENTS §9 P9: a session fault, not
+a licence to claim the lookup), vault read read-only from disk.
+
+**STILL OPEN.** NEXT item 7 (install a Khronos validation layer or a second ICD) is now the blocker for
+TWO items: it is what would make refusals fire for real, and what would settle whether `vkFreeMemory`
+needs an explicit `vkUnmapMemory` (batch 167's question). Whether `--level <nonexistent>` should refuse
+or error instead of falling back (new). And the ledger row is still operator-blocked:
+`docs/COMPLETION_LEDGER.tsv` is `coleshores:coleshores 0664`, this lane is `piagent`, and
+`ledger_close.py` refuses a dirty tree before it reaches the `Permission denied`.
+
 ## Iteration 167 — batch 167: `linux.render-frame` — item 10 said "frees memory it never unmapped"; the shape is true, the hazard is a different question, and it is the one now pinned
 
 **LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`. Not a review
