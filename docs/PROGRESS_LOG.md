@@ -1,3 +1,77 @@
+## Iteration 167 — batch 167: `linux.render-frame` — item 10 said "frees memory it never unmapped"; the shape is true, the hazard is a different question, and it is the one now pinned
+
+**LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`. Not a review
+remediation: CONTINUATION NEXT-list item 10, open since batch 152 — "the retire path frees memory it
+never unmapped ... `settleRetired -> destroyBufferPair` never calls `vkUnmapMemory`. A shape decision
+about `RetiredBuffer`, not an argument." Check-only batch: `git diff --name-only` is one file,
+`tests/scripts/linux_refusal_report_test.sh`, and no production line changed. Full record:
+`docs/evidence/2026-11-13-167-the-mapping-does-not-outlive-the-retire.txt`.**
+
+**THE PREMISE IS TRUE AND WAS MEASURED, NOT ASSUMED.** `destroyBufferPair` is `vkDestroyBuffer` +
+`vkFreeMemory`, and `vkUnmapMemory` appears in this file only on staging paths, never on the retire
+path; both persistent-mapping owners (`MeshVk::mapped[]`, `RendererVk::canvasMapped[]`) hand their
+mapping to a retire and never unmap it. **But whether an explicit unmap is REQUIRED before a free is a
+question about spec valid-usage text this host does not have** — measured in batch 165 that the
+vendored `vulkan_core.h` carries no prose at all — and review-10 F3's entire lesson is that an implied
+spec sentence nobody here can look up is a claim wearing a citation's clothes. **So this batch does
+not settle that question and says so in the check's own message**, so a future reader cannot mistake
+the silence for a verdict.
+
+**WHAT IS DECIDABLE IN THE TREE IS NARROWER, AND IT IS WHAT THE HAZARD ACTUALLY TURNS ON: a mapping
+pointer must not outlive the retire that took its buffer, because nothing downstream can tell a live
+mapping from a released one.** Measured on the parent before writing anything: `retireBuffer` is called
+from exactly two places, `mdk_render_release_mesh` and `ensureCanvasBuffer`, and BOTH already null the
+slot's mapping field; and the only reader of a mapping local, `mdk_render_update_mesh`, already takes
+`void* mapped = m.mapped[slot]`, tests it for null, refuses by name, and returns before the `memcpy`.
+**The implied hazard — a stale mapping dereferenced after the free — does not exist on the parent
+either. Item 10 was a shape observation wearing a defect's clothes, and the honest closure is to pin
+the property that keeps it a shape observation, not to invent a fix for a bug that is not there.**
+
+**CHECK B14.** (a) DISCOVERED, as in B13(c): every `retireBuffer` call that names a slot must null that
+slot's mapping field later in the same function — the rule reads the slot out of the call's own
+argument and looks for the matching `...[Mm]apped[...]` nulling, so one pattern covers `m.mapped[slot]`
+and `r->canvasMapped[i]` and will cover the third drop site nobody has written yet; a named list of the
+two current sites is the mistake B4 made in review-5. (b) every local taken from a mapping must be
+tested for null behind a `refused(` before anything `memcpy`'s through it, because a null mapping
+copied through is a segfault in a release build and the refusal is what turns it into a mesh that keeps
+its previous contents and a line saying so. Four arms each isolating B14:
+`retire-buffer-leaves-the-mapping-set`, `canvas-retire-leaves-the-mapping-set`,
+`mapping-copied-without-a-null-test`, `mapping-guard-refuses-silently`. **`LinuxRefusalReport` is 20
+checks / 67 arms / 5 probes → 21 checks / 71 arms / 5 probes.**
+
+**THE FOUR-WAY.** New test on working sources rc 0 (21/71/5); new test on the parent `4656bac` **rc 0 —
+green, and that is the honest result**, because the parent already nulls both mappings and already
+refuses on null, which is the finding above restated as a table cell, and a batch that moves no
+production shape cannot red its own parent; parent test on working sources rc 0, **zero collateral**;
+parent on parent rc 0. The instrument that proves B14 bites is its four arms, each reddening B14 and
+nothing else.
+
+**GATES.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **765 PASS / 0 FAIL**, this
+run reading `PASS LinuxRefusalReport (21 checks, 71 arms adjudicated red, 5 probes green)`.
+`DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`,
+`COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`, `COMPLETION: LEDGER VERIFIED`,
+`SKIP gates_smdh`. `make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e`
+**UNCHANGED** — the diff is one test file, so no P8 emulator evidence is owed and none was faked.
+`cmake --build build-linux -j8` was **not** re-run and that is stated rather than skipped silently: no
+file under `mdk_linux/**` changed, so there is nothing new for it to compile, and the binary
+`gates_frames` certifies is the one batch 166 built and re-dated. Frame
+`docs/frames/2026-11-13-the-mapping-does-not-outlive-the-retire.png` is byte-identical to its
+predecessors (census re-derived: 185 PNGs, 184 at md5 `6769a137…`) with **zero** pure (0,0,255) pixels
+over 219 colours — nothing on any render path changed, so a changed frame would have been the surprise.
+Prior-solution lookup: Pi knowledge (`mdk-sdl`) surfaced the retire/settle pattern and the review-25
+descriptor closure already cited by batches 163-166, nothing on the mapping question. **Obsidian and
+Cognee MCP are ABSENT from this session's tool list** (AGENTS §9 P9: a session fault, not a licence to
+claim the lookup), vault read read-only from disk.
+
+**STILL OPEN.** The spec question this batch refused to answer stands: does `vkFreeMemory` require an
+explicit `vkUnmapMemory` first? It is answerable only by installing a validation layer or fetching the
+spec (NEXT item 7), and until then no batch should assert either way — what B14 pins is the property
+that does not depend on the answer. Whether the retire and failed-free paths are reachable at all on
+lavapipe is still unmeasured. And the ledger row is still operator-blocked: `docs/COMPLETION_LEDGER.tsv`
+is `coleshores:coleshores 0664`, this lane is `piagent`, and `ledger_close.py` refuses a dirty tree
+before it reaches the `Permission denied`.
+
 ## Iteration 166 — batch 166: `linux.render-frame` — the descriptor set waited two frames and the image view it named waited none; half a lifetime is not a completion boundary
 
 **LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`. Not a review

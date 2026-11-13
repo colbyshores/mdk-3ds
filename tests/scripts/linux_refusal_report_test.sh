@@ -154,6 +154,19 @@
 #        file's helper or written out, because the first version of this rule reddened
 #        the written-out spelling, which is review-10 F5 repeated in the batch whose
 #        job was not to repeat it; that rewording is a probe now.
+#     B14 a retired buffer's persistent mapping is nulled where it is retired, and every
+#        read of a mapping refuses before it copies on null. CONTINUATION item 10 says
+#        the retire path frees memory it never unmapped; the shape is true, but whether
+#        an explicit unmap is REQUIRED before the free is a spec question this host
+#        cannot check, and review-10 F3's lesson is not to rest a justification on spec
+#        prose nobody here can look up. So this check does not settle that question and
+#        says so in its own text. It pins what IS decidable in the tree and what the
+#        hazard actually turns on: that no pointer into a released mapping survives the
+#        retire that took its buffer (discovered at every `retireBuffer` call, as in
+#        B13(c), not listed), and that a mapping taken into a local is tested for null
+#        behind a refusal before anything memcpy's through it — a null mapping copied
+#        through is a segfault in a release build, and the silent empty mesh is what the
+#        refusal buys.
 #
 #   context (mdk_linux/src/render/vk/vk_context.cpp)
 #     C1 every result-bearing Vulkan call in the file has its result read. This is the
@@ -249,6 +262,8 @@ CHK = {
            "makes that true",
     "B13": "an image a retired descriptor set names waits for the same boundary the "
            "set waits for, and is destroyed there and not at the drop site",
+    "B14": "a retired buffer's persistent mapping is nulled where it is retired, and "
+           "every read of a mapping refuses before it copies on null",
     "C1": "every result-bearing Vulkan call in vk_context.cpp has its result read",
     "C2": "the frame's command buffer is ended before it is submitted",
     "C3": "a refused frame never leaves its slot's fence unsignalled",
@@ -1769,6 +1784,98 @@ def backend_checks(r, text, quiet):
         "be nulled where it was retired, and teardown must drain the list" +
         ("" if not bad13 else " — " + "; ".join(bad13)))
 
+    # -----------------------------------------------------------------------
+    # B14 — a retired buffer's persistent mapping, and the reads of one.
+    #
+    # CONTINUATION item 10 says "the retire path frees memory it never unmapped".
+    # The shape is true — `destroyBufferPair` calls `vkDestroyBuffer` and
+    # `vkFreeMemory` and no `vkUnmapMemory` anywhere — but whether an explicit unmap
+    # is REQUIRED before freeing is a spec question this host cannot check, and
+    # review-10 F3's whole lesson is not to rest a justification on spec prose that
+    # cannot be looked up here. So this check does not settle that question and does
+    # not pretend to. It pins the property that IS decidable in the tree and that the
+    # hazard actually depends on: a mapping pointer must not outlive the retire that
+    # took its buffer, because nothing downstream can tell a live mapping from a
+    # released one.
+    #
+    #   (a) DISCOVERED, as in B13(c): every `retireBuffer` call that names a slot
+    #       must null that slot's mapping field in the same function. The two current
+    #       sites do (`m.mapped[slot]`, `r->canvasMapped[i]`); a third that forgets
+    #       leaves a pointer into freed mapping behind in a slot the next create will
+    #       hand out.
+    #   (b) every local taken from a mapping must be tested for null, with a refusal,
+    #       before it is copied through. `mdk_render_update_mesh` does exactly that;
+    #       a `memcpy` from a null mapping is a segfault in a release build and a
+    #       silent empty mesh is the alternative, which is why the refusal is the
+    #       required shape and not a nicety.
+    # -----------------------------------------------------------------------
+    bad14 = []
+    defs14 = [(m.start(), m.group(1))
+              for m in re.finditer(
+                  r"^[A-Za-z_][\w:<>,\* &]*?\b(\w+)\s*\([^;{]*?\)\s*(?:const\s*)?\{",
+                  code, re.M)]
+
+    def owner_of(pos):
+        cur = None
+        for start, name in defs14:
+            if start < pos:
+                cur = name
+        return cur
+
+    for rc in re.finditer(r"retireBuffer[ \t]*\(([^)]*)\)", code):
+        args14 = split_args(rc.group(1))
+        if len(args14) < 2:
+            continue
+        sm = re.fullmatch(r"([A-Za-z_]\w*(?:->|\.)?)\w*[ \t]*\[[ \t]*(\w+)[ \t]*\]",
+                          args14[1].strip())
+        if not sm:
+            continue
+        own = owner_of(rc.start())
+        osp14 = body_span(code, own) if own else None
+        if not osp14:
+            bad14.append("a retireBuffer call is not inside a function this check can "
+                         "read, so nothing can say what happens to its mapping")
+            continue
+        obody14 = code[osp14[0]:osp14[1]]
+        after = obody14[rc.end() - osp14[0]:]
+        if not re.search(re.escape(sm.group(1)) + r"\w*[Mm]apped[ \t]*\[[ \t]*" +
+                         re.escape(sm.group(2)) + r"[ \t]*\][ \t]*=[ \t]*nullptr[ \t]*;",
+                         after):
+            bad14.append("`%s` retires `%s` and leaves that slot's mapping field set, so a "
+                         "pointer into a released mapping survives in a slot the next "
+                         "create hands out" % (own, args14[1].strip()))
+
+    for lm in re.finditer(r"void[ \t]*\*[ \t]*(\w+)[ \t]*=[ \t]*([^;]+);", code):
+        if not re.search(r"[Mm]apped", lm.group(2)):
+            continue
+        own = owner_of(lm.start())
+        osp14 = body_span(code, own) if own else None
+        if not osp14:
+            continue
+        obody14 = code[osp14[0]:osp14[1]]
+        after14 = obody14[lm.end() - osp14[0]:]
+        guard = re.search(r"if[ \t]*\([ \t]*![ \t]*" + re.escape(lm.group(1)) + r"[ \t]*\)",
+                          after14)
+        use = re.search(r"memcpy[ \t]*\([ \t]*" + re.escape(lm.group(1)) + r"\b", after14)
+        if use and not guard:
+            bad14.append("`%s` copies through the mapping `%s` with no null test in front "
+                         "of it, so a retired slot's missing mapping is a segfault instead "
+                         "of a refusal" % (own, lm.group(1)))
+        elif use and guard and guard.start() > use.start():
+            bad14.append("`%s` tests the mapping `%s` for null only after it has already "
+                         "copied through it" % (own, lm.group(1)))
+        elif use and guard and "refused(" not in after14[guard.start():guard.start() + 400]:
+            bad14.append("`%s` refuses to copy through a null mapping `%s` without saying "
+                         "so, which is the silent-empty-mesh failure B1 exists to stop"
+                         % (own, lm.group(1)))
+    say(CHK["B14"], not bad14,
+        "a retired buffer's mapping must not outlive the retire, and a mapping read must "
+        "refuse on null — the open question of whether the free needs an explicit unmap is "
+        "a spec question this host cannot check and this check does not pretend to settle; "
+        "what is decidable here is that no pointer into a released mapping survives a "
+        "retire and none is copied through untested" +
+        ("" if not bad14 else " — " + "; ".join(bad14)))
+
 
 def context_checks(r, text, quiet):
     """The Linux Vulkan context: the same result rule as B5, over the file review-8 F3
@@ -2826,6 +2933,62 @@ arm_backend("retired-image-settle-frees-another-entry",
 arm_backend("retired-image-not-drained-at-teardown",
             be_retired_image_not_drained_at_teardown, "B13")
 arm_backend("retired-image-double-destroy", be_retired_image_double_destroy, "B13")
+
+
+# ---- B14: a retired buffer's mapping, and the reads of one ------------------
+def be_retire_buffer_leaves_the_mapping_set(s):
+    """The mesh is retired and its slot's mapping field is left pointing at the
+    released mapping. The next `create` hands that slot out and the next update
+    memcpy's through a pointer that no longer names anything. B14 only."""
+    return s.replace("""        retireBuffer(r, m.buffer[slot], m.memory[slot]);
+        m.buffer[slot] = VK_NULL_HANDLE;
+        m.memory[slot] = VK_NULL_HANDLE;
+        m.mapped[slot] = nullptr;""",
+                     """        retireBuffer(r, m.buffer[slot], m.memory[slot]);
+        m.buffer[slot] = VK_NULL_HANDLE;
+        m.memory[slot] = VK_NULL_HANDLE;""", 1)
+
+
+def be_canvas_retire_leaves_the_mapping_set(s):
+    """The same omission on the canvas ring, which is the second retire site and the
+    one a new drop site would be copied from. B14 only."""
+    return s.replace("""        retireBuffer(r, r->canvasBuffer[i], r->canvasMemory[i]);
+        r->canvasBuffer[i] = VK_NULL_HANDLE;
+        r->canvasMemory[i] = VK_NULL_HANDLE;
+        r->canvasMapped[i] = nullptr;""",
+                     """        retireBuffer(r, r->canvasBuffer[i], r->canvasMemory[i]);
+        r->canvasBuffer[i] = VK_NULL_HANDLE;
+        r->canvasMemory[i] = VK_NULL_HANDLE;""", 1)
+
+
+def be_mapping_copied_without_a_null_test(s):
+    """The guard deleted: a mesh whose slot was retired has a null mapping, and the
+    update memcpy's into null. B14 only."""
+    lo = s.index("void mdk_render_update_mesh(")
+    hi = s.index("\n}\n", lo)
+    seg = s[lo:hi]
+    return s[:lo] + re.sub(r"    if \(!mapped\) \{\n(?:.*\n)*?    \}\n", "", seg, count=1) + s[hi:]
+
+
+def be_mapping_guard_refuses_silently(s):
+    """The guard stays and the sentence goes, so a mesh that silently stops updating
+    is the only symptom — the failure class B1 was written for, one field over. B14
+    only."""
+    return s.replace("""    if (!mapped) {
+        refused("update of mesh %d found no mapped slot at slot %d: the frame draws the "
+                "mesh's previous contents", m_, slot);
+        return;
+    }""", """    if (!mapped) {
+        return;
+    }""", 1)
+
+
+arm_backend("retire-buffer-leaves-the-mapping-set",
+            be_retire_buffer_leaves_the_mapping_set, "B14")
+arm_backend("canvas-retire-leaves-the-mapping-set",
+            be_canvas_retire_leaves_the_mapping_set, "B14")
+arm_backend("mapping-copied-without-a-null-test", be_mapping_copied_without_a_null_test, "B14")
+arm_backend("mapping-guard-refuses-silently", be_mapping_guard_refuses_silently, "B14")
 
 
 # ---------------------------------------------------------------------------
