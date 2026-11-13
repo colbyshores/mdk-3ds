@@ -904,8 +904,25 @@ PY
 # to -1 -- a REFLECTION, the exact family of defect that made the canvas invisible for
 # eleven runs -- and the marker moves to the panel's other corner while painting the
 # same 121 pixels. A count-only canary passes that build unchanged.
+#
+# WHY THE RECTANGLE NEEDS TWO EDGES AND NOT ONE (review-1 F1). A rect tested only as
+# "enough pixels fell inside it" still cannot see the marker's EXTENT. Ask only how
+# many landed inside 0,0-11,11 and a marker that paints 27 columns wide -- what
+# mdk_render_canvas_width returning 240 instead of 600 draws -- keeps 132 of its 297
+# pixels inside the window and passes, with the contradicting bbox printed on the very
+# same success line. So the rect is enforced from BOTH sides: nothing of the marker may
+# lie outside it (containment), and the marker must reach its derived far corner
+# (extent). Together those pin the marker's bbox to the derived [floor,ceil] of 10.667
+# on each axis, which is the extent the canvas's own width produces.
 CANARY_X1=11
 CANARY_Y1=11
+# The marker's derived far corner is 10.667 on both axes, so ceil() gives the outer
+# bound above and floor() gives the reach bound here: a marker that stops short of
+# column/row 10 is a canvas whose width is too LARGE, the mirror-image defect of the
+# one the containment half catches. tests/scripts/emurun_harness_test.sh re-derives
+# all four numbers from the shipped renderer and reddens on disagreement.
+CANARY_REACH_X=10
+CANARY_REACH_Y=10
 # 25 and not 1: the marker is ~121 panel pixels, and a floor above a stray edge pixel
 # keeps one lucky sample from reading as a painted HUD, while staying far below the
 # marker's size so a HUD that paints at all clears it.
@@ -925,7 +942,8 @@ CANARY_MIN=25
 # no reference; the rect above is what turns it from "some pixels appeared" into "the
 # canvas's own corner was painted".
 canary_verdict() { # canary_verdict <shot> ; 0 when the canvas reached the panel,
-                   # at the corner the canvas's own matrix puts its top-left in
+                   # at the corner AND at the extent the canvas's own matrix puts
+                   # its top-left marker at
     local shot="$1" stats total inside bx0 by0 bx1 by1
     if [ -z "$shot" ] || [ ! -f "$shot" ]; then
         echo "emurun: no screenshot to judge the HUD on (the capture failed)" >&2
@@ -935,7 +953,17 @@ canary_verdict() { # canary_verdict <shot> ; 0 when the canvas reached the panel
     read -r total inside bx0 by0 bx1 by1 <<EOF
 ${stats:-0 0 - - - -}
 EOF
-    case "${total}${inside}" in ''|*[!0-9]*) total=0; inside=0 ;; esac
+    # EACH field validated on its own (review-1 F5). The guard used to test the
+    # CONCATENATION "${total}${inside}", so a stats line whose FIRST field was blank
+    # and second numeric read as "all digits", both comparisons then died on
+    # "integer expression expected", no branch was taken, and the function FELL THROUGH
+    # TO `HUD VISIBLE`. Malformed evidence is a failed verdict and never a green one:
+    # a bad count resets to 0 (which fails the floor) and a bad bbox resets to -1
+    # (which fails the reach).
+    case "$total" in ''|*[!0-9]*) total=0 ;; esac
+    case "$inside" in ''|*[!0-9]*) inside=0 ;; esac
+    case "$bx1" in ''|*[!0-9]*) bx1=-1 ;; esac
+    case "$by1" in ''|*[!0-9]*) by1=-1 ;; esac
     if [ "$total" -lt "$CANARY_MIN" ]; then
         {
             echo "emurun: HUD NOT VISIBLE: $total canary pixels of pure (0,0,255) in the"
@@ -958,8 +986,40 @@ EOF
         } >&2
         return 1
     fi
+    # CONTAINMENT: every canary pixel must lie inside the marker's rect. Pixels beyond
+    # the rect mean the marker is bigger than the canvas's own width can produce, or
+    # sits off the corner -- either way the canvas's matrix is not the one derived from
+    # the shipped constants (review-1 F1).
+    if [ "$inside" -ne "$total" ]; then
+        {
+            echo "emurun: HUD OVERSIZED: $total canary pixels painted and only $inside"
+            echo "          inside the marker's rect 0,0-$CANARY_X1,$CANARY_Y1, with bbox"
+            echo "          ($bx0,$by0)-($bx1,$by1) reaching past it. The marker is drawn"
+            echo "          through the canvas's own matrix, so a marker that spills out"
+            echo "          of the rect that matrix implies is a canvas whose width is"
+            echo "          not mdk_render_canvas_width's (a wrong-aspect HUD). A count"
+            echo "          that only asks how many landed inside cannot see this"
+            echo "          (review-1 F1)."
+        } >&2
+        return 1
+    fi
+    # EXTENT: the marker must reach its derived far corner. A marker that stops short
+    # is a canvas whose width is too LARGE, the mirror image of the defect containment
+    # catches, and it passes a count-only and an inside-only rule alike.
+    if [ "$bx1" -lt "$CANARY_REACH_X" ] || [ "$by1" -lt "$CANARY_REACH_Y" ]; then
+        {
+            echo "emurun: HUD UNDERSIZED: the marker's bbox is ($bx0,$by0)-($bx1,$by1)"
+            echo "          but it must reach ($CANARY_REACH_X,$CANARY_REACH_Y), the floor"
+            echo "          of the far corner the shipped constants put it at. The canvas"
+            echo "          painted, in the right corner, at the WRONG SIZE: a canvasWidth"
+            echo "          larger than mdk_render_canvas_width's shrinks the marker while"
+            echo "          leaving it entirely inside the rect."
+        } >&2
+        return 1
+    fi
     echo "expect    : HUD VISIBLE -- $total canary pixels in the panel, $inside inside"
-    echo "expect    : the marker's rect 0,0-$CANARY_X1,$CANARY_Y1 (bbox $bx0,$by0-$bx1,$by1)"
+    echo "expect    : the marker's rect 0,0-$CANARY_X1,$CANARY_Y1 (bbox $bx0,$by0-$bx1,$by1,"
+    echo "expect    : reaching the derived ($CANARY_REACH_X,$CANARY_REACH_Y))"
     return 0
 }
 

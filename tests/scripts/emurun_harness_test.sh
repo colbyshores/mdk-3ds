@@ -386,27 +386,62 @@ check "and the lift is syntactically complete, not a truncation of it" "0" \
 # second copy of the threshold or the rectangle.
 CANARY_X1="$(sed -n 's/^CANARY_X1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_Y1="$(sed -n 's/^CANARY_Y1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+CANARY_REACH_X="$(sed -n 's/^CANARY_REACH_X=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+CANARY_REACH_Y="$(sed -n 's/^CANARY_REACH_Y=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_MIN="$(sed -n 's/^CANARY_MIN=\([0-9][0-9]*\).*/\1/p' "$EMU")"
-check "the harness declares the marker rect and the floor" "3" \
-      "$([ -n "$CANARY_X1" ] && [ -n "$CANARY_Y1" ] && [ -n "$CANARY_MIN" ] && echo 3 || echo 0)"
+check "the harness declares the marker rect, its reach and the floor" "5" \
+      "$([ -n "$CANARY_X1" ] && [ -n "$CANARY_Y1" ] && [ -n "$CANARY_REACH_X" ] \
+         && [ -n "$CANARY_REACH_Y" ] && [ -n "$CANARY_MIN" ] && echo 5 || echo 0)"
+# AND THE FIXTURE REFUSES TO RUN WITHOUT THEM (review-1 F4). Silently carrying an
+# empty CANARY_X1 into the capture builder made python raise ValueError, which left
+# CAP_YES empty, and four PRE-EXISTING rows then failed for a fixture reason and
+# masqueraded as four new rules biting. A missing constant is a broken harness, not a
+# verdict: say so and stop, so a parent-comparison reds only on the rows that are the
+# new rule's work.
+for v in CANARY_X1 CANARY_Y1 CANARY_REACH_X CANARY_REACH_Y CANARY_MIN; do
+    case "${!v}" in
+        ''|*[!0-9]*)
+            echo "EMURUN HARNESS: $EMU declares no numeric $v -- the fixture cannot be built" >&2
+            exit 1 ;;
+    esac
+done
 
 # A synthetic emulator capture, so the PIXEL half of `--expect hud` is exercised
 # here too. `--expect hud` now demands the canary as well as the log line (review-1
 # F1: the log line alone was green over a HUD with no pixels), and an acceptance that
 # cannot be exercised is not evidence. The capture is the emulator's documented
-# 1280x1024 window. Three scenes, because the canary now asks two questions:
-#   here   -- the marker where pica::canvasMatrix puts it (the passing case)
-#   none   -- nothing painted at all (the review-1 F1 hole)
-#   mirror -- the SAME number of pixels in the panel's other corner: what a
-#             determinant -1 quarter turn draws (review-4 F1, the hole this batch
-#             closes). A count-only canary cannot tell `mirror` from `here`.
-cap() { # cap <here|none|mirror> -> path to a synthetic capture
-    python3 - "$1" "$ROOT/tools/panel_crop.py" "$CANARY_X1" "$CANARY_Y1" <<'PY'
+# 1280x1024 window. The scenes, because the canary now asks THREE questions -- did
+# anything paint, did it paint in the canvas's own corner, and did it paint at the
+# canvas's own size:
+#   here     -- the marker where pica::canvasMatrix puts it (the passing case)
+#   none     -- nothing painted at all (the review-1 F1 hole)
+#   turn     -- "drop the minus": (a,b) = (1,+1), determinant -1. THE reflection
+#               review-4 F1 named, and the disposition the old `mirror` fixture
+#               claimed to be but was not (review-1 F2).
+#   flip     -- (a,b) = (-1,-1), the other determinant -1 disposition
+#   rot180   -- (a,b) = (-1,+1), determinant +1: the opposite-sense PROPER rotation,
+#               which is what the old `mirror` fixture actually painted
+#   wide     -- a marker 3x too wide: 132 of its 297 pixels still land inside the
+#               rect, so an inside-count rule passes a wrong-aspect canvas (review-1 F1)
+#   small    -- a marker shrunk wholly inside the rect: the mirror-image extent defect
+#
+# THE DISPOSITIONS ARE BUILT FROM THE SIGN PAIR, NOT FROM A DESCRIPTION (review-1 F2).
+# pica::canvasMatrix's quarter turn is `out col0 = a·m col1`, `out col1 = b·m col0`
+# with the shipped (a,b) = (1,-1). Each block's corner below is COMPUTED from (a,b)
+# through the mapping the harness documents, so a fixture cannot drift from the
+# transform it names -- and all four dispositions are rows here, not one.
+cap() { # cap <here|none|turn|flip|rot180|wide|small> -> path to a synthetic capture
+    python3 - "$1" "$ROOT/tools/panel_crop.py" "$CANARY_REACH_X" "$CANARY_REACH_Y" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
 from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1
 from PIL import Image
-mode, rx1, ry1 = sys.argv[1], int(sys.argv[3]), int(sys.argv[4])
+mode = sys.argv[1]
+# The marker's size comes from the reach the harness DECLARES, not from a literal here:
+# the derived far corner is 10.667, whose floor is REACH, so the marker spans REACH+1
+# columns. Move the harness's reach and these fixtures move with it, instead of this
+# file quietly certifying a different marker than the shipped one draws.
+size_x, size_y = int(sys.argv[3]) + 1, int(sys.argv[4]) + 1
 W, H = PANEL_X1 - PANEL_X0 + 1, PANEL_Y1 - PANEL_Y0 + 1
 img = Image.new("RGB", (1280, 1024), (16, 32, 48))
 px = img.load()
@@ -418,12 +453,34 @@ def block(x0, y0, w, h):
             px[PANEL_X0 + x0 + i, PANEL_Y0 + y0 + j] = (0, 0, 255)
 
 
-if mode == "here":
-    block(0, 0, rx1, ry1)
-elif mode == "mirror":
-    # A reflection about the panel's vertical axis: the marker's 11x11 block, the
-    # same pixel count, against the far edge of the crop.
-    block(W - rx1, H - ry1, rx1, ry1)
+def disposition(a, b):
+    """Where canvasMatrix's (a,b) turn paints canvas [0,size]^2, in crop pixels.
+
+    The harness documents px = (1 - y/360)*240, py = (x/canvasW)*400, crop_x = py and
+    crop_y = 240 - px. Negating a column negates that axis's NDC term, which mirrors
+    the painted span against the far edge of the portrait target -- so each sign just
+    chooses which edge the marker sits flush against.
+    """
+    return (0 if b < 0 else W - size_x, 0 if a > 0 else H - size_y)
+
+
+if mode == "here":                    # (a,b) = ( 1,-1)  shipped,  det +1
+    block(*disposition(1, -1), size_x, size_y)
+elif mode == "turn":                  # (a,b) = ( 1,+1)  det -1
+    block(*disposition(1, 1), size_x, size_y)
+elif mode == "flip":                  # (a,b) = (-1,-1)  det -1
+    block(*disposition(-1, -1), size_x, size_y)
+elif mode == "rot180":                # (a,b) = (-1,+1)  det +1
+    block(*disposition(-1, 1), size_x, size_y)
+elif mode == "wide":
+    # mdk_render_canvas_width returning 240 instead of 600: the marker paints 26.7
+    # columns wide instead of 10.7, so most of its pixels still land INSIDE the rect
+    # and clear the floor. A rule that only counts what falls inside passes it.
+    block(0, 0, 3 * size_x, size_y)
+elif mode == "small":
+    # The mirror-image defect: a canvasWidth too LARGE shrinks the marker so it sits
+    # wholly inside the rect and still clears the floor. Only an extent test sees it.
+    block(0, 0, size_x - 3, size_y - 3)
 path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % mode)
 img.save(path)
 print(path)
@@ -431,7 +488,11 @@ PY
 }
 CAP_YES="$(cap here)"
 CAP_NO="$(cap none)"
-CAP_MIRROR="$(cap mirror)"
+CAP_TURN="$(cap turn)"
+CAP_FLIP="$(cap flip)"
+CAP_ROT180="$(cap rot180)"
+CAP_WIDE="$(cap wide)"
+CAP_SMALL="$(cap small)"
 
 # THE RECTANGLE IS DERIVED, NOT REMEMBERED. The expectation lives in the harness as a
 # pair of integers; the geometry that produces it lives in the shipped renderer. If
@@ -441,16 +502,28 @@ CAP_MIRROR="$(cap mirror)"
 # believed it was, and the two wrongs cancelled). So recompute here from the shipped
 # constants and require agreement; a constant this file cannot find is a hard failure,
 # never a skipped check.
-DERIVED="$(python3 - "$ROOT" <<'PY'
+#
+# AND canvasWidth IS IMPORTED FROM mdk_render_canvas_width, NOT RE-SPELLED (review-1
+# F1). The previous version restated the formula as `ch*sh/sw` here. That is a SECOND
+# SPELLING of the thing it was written to pin: change mdk_render_canvas_width to use
+# kScreenWidth where kScreenHeight belongs and the marker moves to 26.7 columns while
+# this derivation still prints 10.667 and still agrees with the harness. So the return
+# EXPRESSION is now read out of the function and evaluated, and an expression this file
+# cannot parse is a hard failure -- the derivation follows the code, or it stops.
+derive_rect() { # derive_rect <root> -> "<ceilX> <ceilY> <floorX> <floorY>"
+python3 - "$1" <<'PY'
 import math, re, sys
 root = sys.argv[1]
 
 
-def grab(path, pattern, cast, what):
+def read(path):
     try:
-        text = open(path, encoding="utf-8").read()
+        return open(path, encoding="utf-8").read()
     except OSError as exc:
         sys.exit("derive: cannot read %s (%s)" % (path, exc))
+
+
+def grab(text, pattern, cast, what, path):
     m = re.search(pattern, text)
     if not m:
         sys.exit("derive: %s is not in %s -- the derivation is stale, not the rect" % (what, path))
@@ -459,20 +532,75 @@ def grab(path, pattern, cast, what):
 
 cpp = root + "/mdk_3ds/src/render/renderer_c3d.cpp"
 hdr = root + "/mdk_core/src/render/render_types.h"
-sw = grab(cpp, r"kScreenWidth\s*=\s*(\d+)\s*;", int, "kScreenWidth")
-sh = grab(cpp, r"kScreenHeight\s*=\s*(\d+)\s*;", int, "kScreenHeight")
-size = grab(cpp, r"kSize\s*=\s*([0-9.]+)f\s*;", float, "drawDiagnostic's kSize")
-ch = grab(hdr, r"kCanvasHeight\s*=\s*([0-9.]+)f\s*;", float, "kCanvasHeight")
-# canvasWidth = kCanvasHeight * sh / sw (mdk_render_canvas_width), and the marker's
-# far corner lands at kSize * sh / canvasWidth == kSize * sw / kCanvasHeight.
-far = size * sw / ch
-print("%d %d" % (int(math.ceil(far)), int(math.ceil(far))))
+ctext, htext = read(cpp), read(hdr)
+sw = grab(ctext, r"kScreenWidth\s*=\s*(\d+)\s*;", int, "kScreenWidth", cpp)
+sh = grab(ctext, r"kScreenHeight\s*=\s*(\d+)\s*;", int, "kScreenHeight", cpp)
+size = grab(ctext, r"kSize\s*=\s*([0-9.]+)f\s*;", float, "drawDiagnostic's kSize", cpp)
+ch = grab(htext, r"kCanvasHeight\s*=\s*([0-9.]+)f\s*;", float, "kCanvasHeight", hdr)
+
+# THE IMPORT. mdk_render_canvas_width's own return expression, evaluated against the
+# constants it names. Nothing here spells the ratio.
+body = re.search(r"mdk_render_canvas_width\s*\([^)]*\)\s*\{(.*?)\n\}", ctext, re.S)
+if not body:
+    sys.exit("derive: cannot read mdk_render_canvas_width's body in %s -- the "
+             "derivation is stale, not the rect" % cpp)
+ret = re.search(r"return\s+(.+?);", body.group(1), re.S)
+if not ret:
+    sys.exit("derive: mdk_render_canvas_width has no return this file can read")
+expr = re.sub(r"\(\s*float\s*\)", "", ret.group(1)).replace("mdk::", "")
+expr = re.sub(r"//[^\n]*", "", expr)          # the return may carry a trailing comment
+for name, val in (("kCanvasHeight", ch), ("kScreenWidth", float(sw)),
+                  ("kScreenHeight", float(sh))):
+    expr = re.sub(r"\b%s\b" % name, repr(val), expr)
+if re.search(r"[A-Za-z_]", expr):
+    sys.exit("derive: canvasWidth expression %r names something this derivation "
+             "cannot resolve -- re-derive the rect by hand, once, deliberately" % expr)
+cw = eval(expr, {"__builtins__": {}}, {})     # noqa: S307 -- digits and operators only
+
+# The marker's far corner, per axis. crop_x = py = x/canvasWidth * kScreenHeight and
+# crop_y = 240 - px = y/kCanvasHeight * kScreenWidth, so the two axes are DIFFERENT
+# expressions and are asserted separately (review-1 F1): a canvasWidth error moves one
+# and not the other, and a single shared `far` would hide that.
+far_x = size * sh / cw
+far_y = size * sw / ch
+print("%d %d %d %d" % (math.ceil(far_x), math.ceil(far_y),
+                       math.floor(far_x), math.floor(far_y)))
 PY
-)"
-check "the marker rect is re-derived from the shipped constants and agrees" \
-      "$DERIVED" "$CANARY_X1 $CANARY_Y1"
+}
+DERIVED="$(derive_rect "$ROOT")"
+check "the marker rect is re-derived from the shipped renderer and agrees" \
+      "$DERIVED" "$CANARY_X1 $CANARY_Y1 $CANARY_REACH_X $CANARY_REACH_Y"
 check "and the derivation is not a constant (it would then certify nothing)" "1" \
-      "$(awk '{print ($1 > 0 && $1 < 400) ? 1 : 0}' <<<$DERIVED)"
+      "$(awk '{print ($1 > 0 && $1 < 400 && $3 > 0 && $3 < 400) ? 1 : 0}' <<<$DERIVED)"
+
+# AND THE IMPORT IS PROVEN TO BE AN IMPORT. A derivation that only LOOKS like it reads
+# the renderer is the exact failure this block exists to prevent, so mutate a COPY of
+# mdk_render_canvas_width -- swap the two screen axes, the very mistake that function's
+# own comment warns turns 600 into 216 -- and require the derivation to MOVE. Had this
+# file still been spelling `ch*sh/sw` by hand, the mutant would derive the same rect as
+# the real tree and this row would pass while certifying nothing.
+MUTROOT="$(mktemp -d)"
+mkdir -p "$MUTROOT/mdk_3ds/src/render" "$MUTROOT/mdk_core/src/render"
+cp "$ROOT/mdk_3ds/src/render/renderer_c3d.cpp" "$MUTROOT/mdk_3ds/src/render/"
+cp "$ROOT/mdk_core/src/render/render_types.h" "$MUTROOT/mdk_core/src/render/"
+python3 - "$MUTROOT/mdk_3ds/src/render/renderer_c3d.cpp" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+old = "kCanvasHeight * (float)kScreenHeight / (float)kScreenWidth"
+if s.count(old) != 1:
+    sys.exit("mutate: mdk_render_canvas_width's return is not what this mutation "
+             "expects -- update the mutation, do not delete it")
+open(p, "w", encoding="utf-8").write(
+    s.replace(old, "kCanvasHeight * (float)kScreenWidth / (float)kScreenHeight"))
+PY
+MUT_DERIVED="$(derive_rect "$MUTROOT")"
+rm -rf "$MUTROOT"
+check "a mutated mdk_render_canvas_width MOVES the derivation (so it is imported)" "1" \
+      "$([ -n "$MUT_DERIVED" ] && [ "$MUT_DERIVED" != "$DERIVED" ] && echo 1 || echo 0)"
+check "and it moves the axis a canvasWidth error moves, and only that one" "1" \
+      "$(awk -v a="$DERIVED" -v b="$MUT_DERIVED" \
+            'BEGIN{split(a,x," ");split(b,y," ");print (y[1]!=x[1] && y[2]==x[2] && y[4]==x[4]) ? 1 : 0}')"
 
 # The lifted block must contain the POSITIONAL half, or every check below is a
 # presence test on a fragment that lost it.
@@ -533,31 +661,84 @@ check "hud-visible: no canary fails" "1" \
 check "hud-visible: with no screenshot at all it cannot claim a verdict" "1" \
       "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud-visible "")"
 
-# --- review-4 F1: the count could not see the SIGN of the canvas transform ---------
+# --- the SIGN of the canvas transform, and its EXTENT (reviews 4 F1 and 1 F1) -------
 #
 # pica::canvasMatrix turns the landscape canvas into the portrait target with
-# out.x = m.y, out.y = -m.x. Drop the minus and the determinant goes from +1 to -1:
-# a REFLECTION. The marker still paints -- same size, same colour, same pixel count --
-# it just paints in the panel's other corner. `--expect hud` was green over that build
-# because the only pixel question it asked was "how many". These rows are the hole and
-# the fix, and the first two are the non-vacuity: they say the mirrored capture would
-# have satisfied the OLD count rule, so the rejection below is the new rule's work and
+# out col0 = m col1, out col1 = -m col0. Flip either sign and the determinant flips:
+# the marker still paints -- same size, same colour, same pixel count -- it just paints
+# flush against a different edge. `--expect hud` was green over that build because the
+# only pixel question it asked was "how many". And a rect tested only from the inside
+# has the same blind spot one size larger: a marker that spills past the rect still
+# puts plenty of pixels inside it.
+#
+# THE FIRST ROWS OF EACH GROUP ARE THE NON-VACUITY: they say the bad capture would have
+# satisfied the rule it replaces, so every rejection below is the new rule's work and
 # not the capture being bad in some other way.
-MIRROR_STATS="$(stats_of "$CAP_MIRROR")"
-check "the mirrored capture really does carry a full marker (so a count alone passes it)" "1" \
-      "$(awk -v min="$CANARY_MIN" '{print ($1 >= min) ? 1 : 0}' <<<"$MIRROR_STATS")"
-check "and it carries NONE of them inside the marker's rect" "0" \
-      "$(awk '{print $2}' <<<"$MIRROR_STATS")"
-check "and its pixels are at the opposite corner, not merely scattered" "1" \
-      "$(awk '{print ($3 > 200 && $4 > 100) ? 1 : 0}' <<<"$MIRROR_STATS")"
-check "hud: a REFLECTED canvas fails now -- review-4 F1" "1" \
-      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud "$CAP_MIRROR")"
-check "hud-visible: the reflected canvas fails the pixel verdict on its own too" "1" \
-      "$(expect_rc 'frame 60 elapsed=1.0000 steps=60' hud-visible "$CAP_MIRROR")"
+
+# Non-vacuity for review-4 F1: a wrong-corner marker that a COUNT alone would pass.
+TURN_STATS="$(stats_of "$CAP_TURN")"
+check "the turned capture carries a full marker, so a count alone would pass it" "1" \
+      "$(awk -v min="$CANARY_MIN" 'NF && $1 ~ /^[0-9]+$/ && $1 >= min {print 1}' <<<"$TURN_STATS")"
+check "and it carries NONE of its pixels inside the marker's rect" "0" \
+      "$(awk '{print $2}' <<<"$TURN_STATS")"
+check "and its pixels are flush against the far edge, not merely scattered" "1" \
+      "$(awk '{print ($3 > 200) ? 1 : 0}' <<<"$TURN_STATS")"
+
+# All four dispositions of the quarter turn, each built from its own (a,b) sign pair.
+for d in turn flip rot180; do
+    case "$d" in
+        turn) shot="$CAP_TURN" ;;
+        flip) shot="$CAP_FLIP" ;;
+        rot180) shot="$CAP_ROT180" ;;
+    esac
+    check "hud: the $d disposition of the panel turn fails -- review-4 F1" "1" \
+          "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud "$shot")"
+    check "hud-visible: and $d fails the pixel verdict on its own too" "1" \
+          "$(expect_rc 'frame 60 elapsed=1.0000 steps=60' hud-visible "$shot")"
+done
+
+# Non-vacuity for review-1 F1: the wide marker really does clear the floor INSIDE the
+# rect, which is exactly why the inside-count rule let it through.
+WIDE_STATS="$(stats_of "$CAP_WIDE")"
+check "the wide marker clears the floor INSIDE the rect (so an inside-count passes it)" "1" \
+      "$(awk -v min="$CANARY_MIN" 'NF && $2 ~ /^[0-9]+$/ && $2 >= min {print 1}' <<<"$WIDE_STATS")"
+check "and it is genuinely wider than the rect it is judged against" "1" \
+      "$(awk -v x1="$CANARY_X1" 'NF && $5 > x1 {print 1}' <<<"$WIDE_STATS")"
+check "hud: a marker that spills outside its rect fails -- review-1 F1" "1" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud "$CAP_WIDE")"
+
+# The mirror-image extent defect: wholly inside the rect, and too small to be the
+# marker the shipped constants produce.
+SMALL_STATS="$(stats_of "$CAP_SMALL")"
+check "the small marker sits wholly inside the rect and clears the floor" "1" \
+      "$(awk -v min="$CANARY_MIN" 'NF && $2 == $1 && $1 >= min {print 1}' <<<"$SMALL_STATS")"
+check "and it stops short of the derived reach" "1" \
+      "$(awk -v r="$CANARY_REACH_X" 'NF && $5 < r {print 1}' <<<"$SMALL_STATS")"
+check "hud: a marker that stops short of its derived reach fails -- review-1 F1" "1" \
+      "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud "$CAP_SMALL")"
+
+# The rule must not be always-red, and a failure must say where.
 check "hud: the marker in its own rect passes, so the rule is not just always-red" "0" \
       "$(expect_rc 'canvas: quads=12 draws=12 mesh=3 corners=72 eyes=1 (canvas frame 1)' hud "$CAP_YES")"
+check "and the shipped disposition's bbox is exactly the derived rect" "1" \
+      "$(stats_of "$CAP_YES" | awk -v x1="$CANARY_X1" -v y1="$CANARY_Y1" \
+              -v rx="$CANARY_REACH_X" -v ry="$CANARY_REACH_Y" \
+              'NF == 6 && $3 == 0 && $4 == 0 && $5 == rx && $6 == ry && rx <= x1 && ry <= y1 {print 1}')"
 check "and the stats line names the bbox, so a failure says WHERE" "1" \
-      "$(awk 'NF == 6 && $3 != "-" {print 1}' <<<"$MIRROR_STATS")"
+      "$(awk 'NF == 6 && $3 != "-" {print 1}' <<<"$TURN_STATS")"
+
+# --- review-1 F5: malformed evidence is a FAILED verdict, never a green one ---------
+#
+# The guard used to test the CONCATENATION of two fields, so a stats line whose first
+# field was blank read as "all digits", both comparisons then died on "integer
+# expression expected", no branch was taken, and the function FELL THROUGH TO `HUD
+# VISIBLE`. These rows stub canary_stats, because the point is the guard, not the
+# Python that today always prints six fields.
+for bad in " 121 0 0 10 10" "" "x y - - - -" "121 121 0 0 10"; do
+    check "verdict: a malformed stats line [$bad] is refused, not certified" "1" \
+          "$( ( eval "$EXPECT_FN"; canary_stats() { printf '%s\n' "$bad"; }
+               canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?")"
+done
 
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary)"

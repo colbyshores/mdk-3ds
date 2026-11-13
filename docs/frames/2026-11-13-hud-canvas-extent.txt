@@ -1,0 +1,28 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-13T04:36:24Z at 91078b9
+recorded gap ceiling: name=L3_f1.bmp level=3 size=320x240 seed=1 frame=1 bad_percent=1.240 max_delta=247 mean_delta=0.1819
+live measurement: unavailable (oracle pixels absent at /tmp/mdk-frame-reference/L3_f1.bmp)
+why this picture did not move, and what it can and cannot show: nothing on the Linux render
+  path changed, so this is a re-capture and not a movement — `mdk.elf` md5
+  728eb2350c3ef8a81acda15f75617c1e is UNCHANGED and the PNG is `cmp`-identical to its 172
+  identical predecessors at 6769a13731983d65cee9df02da6cff37. What the batch changed is one
+  shell harness (`mdk_3ds/tools/emurun.sh`) and one shell test
+  (`tests/scripts/emurun_harness_test.sh`): the HUD canary's rect is now enforced from BOTH
+  sides, so a marker that spills outside it is `HUD OVERSIZED` and one that stops short of
+  its derived reach is `HUD UNDERSIZED` (review-1 F1). THIS PAIR CANNOT SHOW ANY OF THAT:
+  the pinned frame is the LINUX capture at level 3, 320x240, and it contains ZERO (0,0,255)
+  pixels — the canary lives in the 3DS emulator's panel at level 7, a different build, a
+  different level and a different renderer. So this pair is a PRESENCE check and NOT a
+  fidelity check and NOT the canary evidence; the canary evidence is the emulator verdict
+  block in docs/PROGRESS_LOG.md and docs/evidence/2026-11-13-156-canary-extent.txt, which
+  records `HUD VISIBLE -- 121 canary pixels in the panel, 121 inside … (bbox 0,0-10,10,
+  reaching the derived (10,10))` at rc 0 on Mandarine r1.2.1, llvmpipe, mono, :99. The
+  fidelity half is dark on this host anyway (oracle pixels absent, owner-gated behind
+  tests/frames/regenerate_reference.sh). The instrument that shows this batch is the gate:
+  `bash tests/scripts/emurun_harness_test.sh` reports 112 checks, and against the parent's
+  verdict with this batch's constants added it goes red on exactly THREE of the 112 — the
+  containment row, the extent row and the malformed-stats row — and on nothing else.
+tree state at capture: the capture ran on this batch's working tree, which was dirty —
+  `mdk_3ds/tools/emurun.sh`, `tests/scripts/emurun_harness_test.sh` and this batch's docs
+  modified — and `at 91078b9` names the parent because a commit cannot contain its own hash.
+  The binary that drew this frame is UNCHANGED from the parent's, which is the point above.

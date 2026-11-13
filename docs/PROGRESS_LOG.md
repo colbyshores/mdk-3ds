@@ -1,3 +1,116 @@
+## Iteration 156 — batch 156: `3ds.hud-canvas` — the HUD canary gets an EXTENT, so the rect is enforced from both sides
+
+**THE LEDGER ROW IS `3ds.hud-canvas` (d1, acceptance `mdk_3ds/tools/emurun.sh --expect
+hud`), AND THE FINDING WAS AGAIN IN THE ACCEPTANCE COMMAND ITSELF.** review-1
+(`logs/ralph-pi/run-20261113-021356/review-1.md`, F1, Medium) said batch 155's positional
+verdict "asserts **only the near corner** … the far corner `bx1/by1` is computed, printed,
+and **never compared to anything**", and that the companion re-derivation "reads only
+`kScreenWidth`, `kScreenHeight`, `kSize`, `kCanvasHeight` and hardcodes `far = size * sw /
+ch` … it never reads `mdk_render_canvas_width`". Both halves held, and both were reproduced
+against `git show HEAD` of the harness before anything changed: `block(0,0,27,11)` — what
+`mdk_render_canvas_width` returning 240 instead of 600 paints — gets `HUD VISIBLE -- 297
+canary pixels in the panel, 132 inside … (bbox 0,0-26,10)`, **rc 0**, with the contradicting
+bbox printed on the same success line. `block(0,0,22,22)` likewise at 484/144. Full record:
+`docs/evidence/2026-11-13-156-canary-extent.txt`.
+
+**THE FIX: THE RECT IS ENFORCED FROM BOTH SIDES.** Batch 155 asked "did the marker land in
+the canvas's corner"; this batch also asks "is the marker the canvas's size". `inside !=
+total` → `HUD OVERSIZED` (containment: no canary pixel may lie outside the rect) and
+`bx1 < CANARY_REACH_X || by1 < CANARY_REACH_Y` → `HUD UNDERSIZED` (extent: the marker must
+reach the derived far corner). `CANARY_REACH_X/Y = 10 = floor(10.667)` is the far corner
+without the `ceil` slack `CANARY_X1/Y1 = 11` already carries, and containment already
+implies `bx1 <= 11`, so the pair pins the marker's bbox to [10,11] on each axis — the
+extent the canvas's own width produces. **THE REVIEWER FOUND HALF THE HOLE.** A
+`canvasWidth` too LARGE shrinks the marker so it sits wholly inside the rect and still
+clears the floor (`block(0,0,8,8)` = 36 px, all inside, all counted): an inside-count
+passes it and containment passes it, and only an extent test sees it. That is the mirror
+image of the defect F1 named, found by applying F1's own argument, and it is now a row.
+
+**AND THE IMPORT IS PROVEN, NOT ASSERTED.** F1's second half was that the test restated
+`far = size*sw/ch` by hand — a second spelling of the thing it was written to pin, and the
+failure `tools/panel_geom.py` names as the reason `panel_crop.py` exists ("IMPORTED and not
+re-spelled … a second definition here is how that happens again"). The derivation now reads
+the return EXPRESSION out of `mdk_render_canvas_width`'s body, substitutes the constants it
+names, and hard-fails on an expression it cannot resolve; and it derives the two axes
+SEPARATELY (`far_x = kSize·kScreenHeight/canvasWidth`, `far_y = kSize·kScreenWidth/
+kCanvasHeight`) because a canvasWidth error moves one and not the other, which a single
+shared `far` hid. To prove the import is an import, the test mutates a COPY of
+`renderer_c3d.cpp` swapping the two screen axes in `mdk_render_canvas_width` — the exact
+mistake that function's own comment warns turns 600 into 216 — and requires the derivation
+to move, and to move only the axis that must: real tree `11 11 10 10`, mutant `30 11 29 10`.
+Had the ratio still been spelled by hand here, the mutant would have derived the same rect
+as the real tree and the row would have passed while certifying nothing.
+
+**F5 (Low, CONFIRMED): MALFORMED EVIDENCE CERTIFIED GREEN.** `case "${total}${inside}" in
+''|*[!0-9]*)` concatenated the two fields, so a stats line whose first field was blank and
+second numeric read as "all digits", both comparisons then died on "integer expression
+expected", no branch was taken, and the function **fell through to `HUD VISIBLE`** — a
+fail-open on the line that decides a ledger row, where the single-field guard it replaced
+failed closed. Reproduced with the reviewer's own snippet. Each field is now validated on
+its own (bad count → 0 → fails the floor; bad bbox → −1 → fails the reach) and four rows
+pin it by stubbing `canary_stats`, because the point is the guard and not the Python that
+today always prints six fields; a 5-field partial print, which the parent certified `HUD
+VISIBLE`, now reds. **F2 (Low, CONFIRMED): THE FIXTURE WAS NOT THE TRANSFORM IT NAMED.**
+The `mirror` fixture built `block(W-rx1, H-ry1, …)` = (389,229)-(399,239); a reflection
+about the vertical axis maps (x,y)→(W-1-x,y) and lands at (389,0)-(399,10), so the fixture
+was the 180°/opposite-sense disposition, determinant **+1** — verified independently, not
+taken on the record. The fixtures are now BUILT FROM THE SIGN PAIR: `disposition(a,b)`
+computes each corner from `canvasMatrix`'s `out col0 = a·m col1`, `out col1 = b·m col0`,
+and all four dispositions are rows — `here` (1,−1) rc 0, `turn` (1,+1) rc 1, `flip`
+(−1,−1) rc 1, `rot180` (−1,+1) rc 1 — with the marker's size taken from the reach the
+harness DECLARES rather than a literal. **F4 (Low, CONFIRMED): THE FIXTURE NOW REFUSES TO
+RUN** when the harness declares no numeric constant, instead of carrying an empty value into
+python, getting ValueError, getting an empty capture, and reding four PRE-EXISTING rows for
+a fixture reason while one non-vacuity row passed vacuously on an awk string comparison.
+**F3 (Low, CONFIRMED, RECORD ONLY):** batch 155's record claimed its sidecar carried the
+standing disclosure; it carried four generated lines. The published pair cannot be edited
+(the integrity gate forbids modifying older pairs), so the correction lives here, and this
+batch's own sidecar carries its disclosure — including that the pinned frame contains
+**zero** (0,0,255) pixels and so cannot show the canary at all.
+
+**THE GATE PROVED ITSELF AGAINST THE COMMIT IT REPLACED, AND THE COMPOSITION IS STATED.**
+F4's hard fail makes the raw parent file unusable for a comparison (it stops at the first
+missing constant, which is the point), so the evidence isolates the RULE change from the
+CONSTANT addition — the parent's verdict with this batch's constants added — and it reds
+**exactly three of 112 and nothing else**: the containment row, the extent row, and the
+malformed-stats row. **3 new rows red, 0 pre-existing collateral, 0 vacuous.** The three
+disposition rows and their non-vacuity rows pass on the parent because the parent's
+inside-count already caught the corner family, which is the correct answer: those rows pin
+review-4 F1, which batch 155 closed. `EmurunHarness` is 95 → **112 checks**.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **620
+PASS / 0 FAIL** (was 603), `PASS EmurunHarness (112 checks: config placement + mount
+ownership + the HUD canary)`. `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES
+PASSED`, `PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION: LEDGER
+VERIFIED`, `gates_vfp 0 blockers`, `audit_c_with_classes 0 violations`, `audit_r11_idiv no
+candidates`. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds
+-j8` rc 0 with `mdk.elf` md5 `728eb2350c3ef8a81acda15f75617c1e` **UNCHANGED** — correct, the
+diff is one shell harness and one shell test, no compiled source.
+
+**EMULATOR EVIDENCE (owed: the diff touches `mdk_3ds/**`, and the acceptance IS an emulator
+run).** `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` → **rc 0**, harness exit 0.
+display `:99`; emulator `mandarine.AppImage md5 0d2adab6` (r1.2.1, the pinned known good);
+gl forced llvmpipe, `graphics_api=1` (OpenGL); stereo `render_3d=0` (mono); dspfirm seeded;
+level 7; frames reached 2520 by the deadline and 2580 after the reap; `expect : hud emitted
+-- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame 2520)`; `expect : HUD
+VISIBLE -- 121 canary pixels in the panel, 121 inside`; `expect : the marker's rect
+0,0-11,11 (bbox 0,0-10,10, reaching the derived (10,10))`. **THE MEASUREMENT THAT MATTERS IS
+THAT THE STRICTER RULE DID NOT FALSE-RED**: containment 121 == 121, extent 10 ≥ 10. **The
+extent arm's margin is zero pixels**, which is uncomfortable for an acceptance command and is
+written down rather than hidden — the marker's far edge is at crop 10.667, pixel centres
+below it are columns 0..10, so `bx1 == 10` is forced by the geometry and not by the driver's
+mood, on this emulator at this window size. Emulator-green is not hardware-pass: everything
+here is Mandarine r1.2.1 on llvmpipe, mono, `:99`, and Old-3DS hardware evidence stays open
+(AGENTS.md P6/P8).
+
+**PRIOR-SOLUTION LOOKUP.** Pi knowledge searched (`mdk-sdl`): the imported-not-re-spelled
+doctrine in `tools/panel_geom.py` is the precedent F1's second half applies, and the
+KB's "non-vacuity: the parser must be reading the FILE, not reciting constants … produced on
+purpose and seen to be caught" is the shape of the mutation row. **Obsidian and Cognee MCP
+servers are absent from this session's tool list** — a session configuration fault per AGENTS
+§9 P9, not a licence to claim the lookup happened — so the vault was read read-only from disk
+and no graph lookup was performed or claimed.
+
 ## Iteration 155 — batch 155: `3ds.hud-canvas` — the HUD canary gets a POSITION, so the row's own acceptance command can fail on a mis-oriented canvas (review-4 F1), and the harness stops describing itself as a non-verdict (review-4 F3)
 
 **THE LEDGER ROW IS `3ds.hud-canvas` (d1, acceptance `mdk_3ds/tools/emurun.sh --expect
