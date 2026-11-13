@@ -102,7 +102,10 @@
 #     B10 a one-shot submission the wait could not prove finished releases NOTHING it
 #        named — no free, no destroy, no unmap. A failed wait is a completion boundary
 #        that was not established, not a completion, and AGENTS.md P3 puts the boundary
-#        before CPU reuse (review-8 F1).
+#        before CPU reuse (review-8 F1). It covers the CALLEE too: `endOneShot` owns the
+#        command buffer and the pool the submission is made of, and freeing those under a
+#        submission that may still be running is the same defect one level down
+#        (review-1 F3).
 #     B11 the FRAME SEAM reads both of its results. `beginFrame` and `endFrame` each
 #        return bool, and until this batch the seam returned silently on the first and
 #        discarded the second outright: a frame whose fence wait, image acquire,
@@ -113,12 +116,27 @@
 #   context (mdk_linux/src/render/vk/vk_context.cpp)
 #     C1 every result-bearing Vulkan call in the file has its result read. This is the
 #        property B5 was written for, one file over, and the file is where review-8 F3
-#        said it still lived: 23 of the 39 result-bearing calls there discarded their
+#        said it still lived: 24 of the 39 result-bearing calls there discarded their
 #        VkResult, the worst being a failed surface-capabilities query that left a
 #        zero-initialised extent and made vkCreateSwapchainKHR fail with a line
 #        blaming the create. The rule is B5's plus the file's own idiom (see
 #        `unchecked_result_calls`), because this file reads a result by naming it and
 #        testing it on the next line.
+#     C2 the FRAME's command buffer is ENDED before it is submitted. Only a pending or
+#        executable command buffer may be named by VkSubmitInfo::pCommandBuffers, and the
+#        frame path submitted a buffer that was begun and never ended: an unterminated
+#        stream that lavapipe happens to execute, which is why 138 committed frames said
+#        nothing about it (review-1 F1).
+#     C3 a refused frame never leaves its slot's fence UNSIGNALLED. A wait does not reset
+#        a fence, so `beginFrame` must not reset one at all — every refusal there leaves
+#        the fence signalled and the next wait returns at once — and the one place that
+#        does reset one, `endFrame` before its submit, has to put a signalled fence back
+#        when the submit is the thing that failed (review-1 F2's premise, checked rather
+#        than argued).
+#     C4 a frame that acquired an image and then refused CONSUMES the acquire's signal.
+#        `presentWait` is a BINARY semaphore: a posted one that nobody waits on makes the
+#        next acquire invalid use, so every refusal after a successful acquire has to
+#        drain it (review-1 F4).
 #
 # Every check is paired with a mutation arm, and every arm names the one check it
 # must turn red (review-7 F2's rule: an arm satisfied by a different check leaves
@@ -185,6 +203,9 @@ CHK = {
     "B10": "a one-shot submission whose completion was never proven releases nothing",
     "B11": "the frame seam reads both beginFrame's and endFrame's result and says so",
     "C1": "every result-bearing Vulkan call in vk_context.cpp has its result read",
+    "C2": "the frame's command buffer is ended before it is submitted",
+    "C3": "a refused frame never leaves its slot's fence unsignalled",
+    "C4": "a frame that acquired an image and refused consumes the acquire's signal",
 }
 
 # The identifiers a printed byte figure may use besides the ones in the create
@@ -1085,10 +1106,39 @@ def backend_checks(r, text, quiet):
                     handled = True
         if not handled and not bad10:
             bad10.append("%s has no block that refuses an unfenced submission" % fn)
+    # ... and the CALLEE. `endOneShot` owns the command buffer and the pool the
+    # submission is made of, and it used to free both on the way out of the unfenced
+    # case: `vkFreeCommandBuffers` and `vkDestroyCommandPool` each require that the
+    # submitted commands have completed, which is the one fact the unfenced outcome
+    # says is not known (review-1 F3). The guard has to sit BEFORE the releases, and
+    # "before" is only "unreachable" in straight-line code, so the absence of a loop is
+    # part of what is pinned rather than assumed.
+    fsp = body_span(code, "endOneShot")
+    if not fsp:
+        bad10.append("endOneShot is not in the file")
+    else:
+        body = code[fsp[0]:fsp[1]]
+        guard = None
+        for cond, _block, spn in blocks(code, fsp[0], fsp[1]):
+            if "OneShot::unfenced" in cond and re.search(r"\breturn\b", _block):
+                guard = spn[0] - fsp[0]
+                break
+        releases = [m.start() for m in re.finditer(
+            r"vkFreeCommandBuffers\s*\(|vkDestroyCommandPool\s*\(", body)]
+        if guard is None:
+            bad10.append("endOneShot has no early return keeping an unfenced "
+                         "submission's command buffer and pool out of the releases")
+        elif re.search(r"\bfor\b|\bwhile\b|\bgoto\b", strip_code(body)):
+            bad10.append("endOneShot is no longer straight-line, so the guard's "
+                         "ordering no longer proves the releases are unreachable")
+        elif releases and min(releases) < guard:
+            bad10.append("endOneShot frees the command buffer or destroys its pool "
+                         "before the unfenced guard, at line %d"
+                         % line_of(code, fsp[0] + min(releases)))
     say(CHK["B10"], not bad10,
         "a submission the wait could not prove finished may still be reading or writing "
         "what it names; freeing it there is the use-after-free the refusal's own words "
-        "warned about (review-8 F1, AGENTS.md P3)" + ("" if not bad10 else " — " + "; ".join(bad10)))
+        "warned about (review-8 F1, review-1 F3, AGENTS.md P3)" + ("" if not bad10 else " — " + "; ".join(bad10)))
 
     # B11: the frame seam reads BOTH of its results, and says so.
     #
@@ -1162,6 +1212,121 @@ def context_checks(r, text, quiet):
         "apart" +
         ("" if not bad else " — unchecked at " +
          ", ".join("line %d (%s)" % t for t in bad)))
+
+    # C2: the frame's command buffer is ENDED before it is SUBMITTED. `endFrame` begins
+    # nothing — `beginFrame` did that — and a buffer that was begun and never ended is
+    # still in the RECORDING state, which `VkSubmitInfo::pCommandBuffers` may not name
+    # (VUID-vkSubmitInfo-pCommandBuffers-00075). It was submitted like that every frame
+    # and drew, because lavapipe does not enforce the state machine: 138 committed
+    # screenshots are evidence about Mesa and none about the submission (review-1 F1).
+    # That its result is read is C1's business; what C2 pins is that the call exists and
+    # sits on the near side of the submit.
+    bad2 = []
+    fsp = body_span(code, "endFrame")
+    if not fsp:
+        bad2.append("endFrame is not in the file")
+    else:
+        body = code[fsp[0]:fsp[1]]
+        ended_at = body.find("vkEndCommandBuffer(")
+        submit_at = body.find("vkQueueSubmit(")
+        if submit_at < 0:
+            bad2.append("endFrame no longer submits anything, so the frame's submit "
+                        "moved somewhere this check cannot see")
+        elif ended_at < 0:
+            bad2.append("the frame's command buffer is submitted without ever being "
+                        "ended — an unterminated stream is still RECORDING")
+        elif ended_at > submit_at:
+            bad2.append("the frame's command buffer is ended at line %d, after the "
+                        "submit at line %d"
+                        % (line_of(code, fsp[0] + ended_at),
+                           line_of(code, fsp[0] + submit_at)))
+    say(CHK["C2"], not bad2,
+        "a command stream has to be closed before the queue is given it; a driver that "
+        "enforces the state machine drops the frame and this file reports it as drawn" +
+        ("" if not bad2 else " — " + "; ".join(bad2)))
+
+    # C3: a refused frame never leaves its slot's fence UNSIGNALLED.
+    #
+    # Review-1 F2 read the four `return false` exits after `beginFrame`'s fence wait as
+    # hanging the next frame, on the premise that the wait resets the fence. It does
+    # not: only `vkResetFences` does, and that is the one call that would make the
+    # reviewer's scenario real. So the premise is pinned instead of argued — no reset
+    # in `beginFrame`, and the one reset that exists, in `endFrame` immediately before
+    # the submit, has to put a SIGNALED fence back when the submit is what failed, which
+    # is the hazard batch 153 did find and did fix.
+    bad3 = []
+    bsp = body_span(code, "beginFrame")
+    if not bsp:
+        bad3.append("beginFrame is not in the file")
+    elif "vkResetFences(" in code[bsp[0]:bsp[1]]:
+        bad3.append("beginFrame resets the slot's fence, which is the only way a refused "
+                    "begin can leave an unsignalled fence for the next frame to wait on "
+                    "with UINT64_MAX forever")
+    fsp = body_span(code, "endFrame")
+    if fsp:
+        body = code[fsp[0]:fsp[1]]
+        submit_at = body.find("vkQueueSubmit(")
+        tail = body[submit_at:] if submit_at >= 0 else ""
+        if submit_at < 0:
+            bad3.append("endFrame no longer submits, so where its fence goes is unknown")
+        elif "VK_FENCE_CREATE_SIGNALED_BIT" not in tail or \
+                re.search(r"frame\.inFlight\s*=\s*(?!VK_NULL_HANDLE)\w+", tail) is None:
+            bad3.append("endFrame's refused submit leaves the slot's fence reset and "
+                        "unsignalled: the next beginFrame waits UINT64_MAX on a fence no "
+                        "submission will ever signal")
+    say(CHK["C3"], not bad3,
+        "the invariant is 'this slot's fence is signalled whenever the slot is free'; a "
+        "frame that breaks it is one frame late and a hang two frames later" +
+        ("" if not bad3 else " — " + "; ".join(bad3)))
+
+    # C4: a frame that took an image and then refused CONSUMES the acquire's signal.
+    # `presentWait` is a binary semaphore — created with no type info, so it holds a
+    # state and not a count — and the only thing that clears a posted one is a submit
+    # that waits on it. A refusal that leaves it posted makes the NEXT frame's acquire
+    # invalid use (VUID-vkAcquireNextImageKHR-semaphore-01779). The record used to call
+    # the leftover "a stale +1 ... not a leak and not a hang", which is arithmetic the
+    # object cannot do (review-1 F4).
+    def drains(pos):
+        """Does the if-body this `return false` sits in consume presentWait?
+
+        The block has to be an if-body: the enclosing brace of a bare statement at
+        function scope is the function itself, and a drain anywhere in the function
+        would then vouch for a return that never reaches it.
+        """
+        brace = enclosing_brace(code, pos)
+        if brace < 0 or not block_condition(code, brace):
+            return False
+        sp = block_span_from(code, brace)
+        return sp is not None and "drainPresentWait(" in code[brace:sp[1]]
+
+    bad4 = []
+    if bsp:
+        body = code[bsp[0]:bsp[1]]
+        taken = body.find("ctx->currentImage = imageIndex;")
+        if taken < 0:
+            bad4.append("beginFrame no longer records the image it acquired, so a "
+                        "refused acquire cannot be told from a refused frame")
+        else:
+            for m in re.finditer(r"\breturn[ \t]+false[ \t]*;", body[taken:]):
+                pos = bsp[0] + taken + m.start()
+                if not drains(pos):
+                    bad4.append("line %d refuses a frame that already holds an image "
+                                "without consuming the acquire's signal"
+                                % line_of(code, pos))
+    if fsp:
+        body = code[fsp[0]:fsp[1]]
+        present_at = body.find("vkQueuePresentKHR(")
+        # Before the present is where the submit lives: once the queue has the frame,
+        # presentWait was waited on and there is nothing left to consume.
+        upto = present_at if present_at >= 0 else len(body)
+        for m in re.finditer(r"\breturn[ \t]+false[ \t]*;", body[:upto]):
+            pos = fsp[0] + m.start()
+            if not drains(pos):
+                bad4.append("line %d refuses a frame whose image was acquired without "
+                            "consuming the acquire's signal" % line_of(code, pos))
+    say(CHK["C4"], not bad4,
+        "a binary semaphore left posted is not a spare credit, it is the next frame's "
+        "invalid acquire" + ("" if not bad4 else " — " + "; ".join(bad4)))
 
 
 def adjudicate(who, text, quiet=False):
@@ -1544,6 +1709,23 @@ arm_backend("oneshot-call-site-passes-null-pool", be_oneshot_call_site_passes_nu
 arm_backend("upload-result-discarded", be_upload_result_discarded, "B6")
 arm_backend("unfilled-guard-condition-reverted", be_unfilled_guard_condition_reverted, "B6")
 arm_backend("unfenced-pair-freed", be_unfenced_pair_freed, "B10")
+
+
+def be_unfenced_callee_frees_the_stream(s):
+    """Review-1 F3, restored: the callers abandon an unfenced submission's resources and
+    the callee goes on freeing the command stream the submission is made of. Only the
+    guard in `endOneShot` is removed, so every caller-side arm still passes and only the
+    new half of B10 can see it."""
+    return s.replace("""    if (result == OneShot::unfenced) {
+        refused("one-shot command buffer and its pool are abandoned, not freed: the "
+                "submission that may still be running is made of them");
+        return result;
+    }
+""", "", 1)
+
+
+arm_backend("unfenced-callee-frees-the-stream", be_unfenced_callee_frees_the_stream, "B10")
+
 arm_backend("oneshot-early-return-strands-pair", be_oneshot_early_return_strands_pair, "B8")
 arm_backend("result-bearing-vkget-discarded", be_get_result_dropped, "B5")
 arm_backend("one-shot-submit-result-dropped", be_submit_result_dropped, "B5")
@@ -1633,6 +1815,7 @@ def ce_fence_wait_result_dropped(s):
 def ce_begin_command_buffer_result_dropped(s):
     return s.replace("""    result = vkBeginCommandBuffer(frame.commandBuffer, &beginInfo);
     if (result != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
         return false;
     }""", """    vkBeginCommandBuffer(frame.commandBuffer, &beginInfo);""", 1)
 
@@ -1652,6 +1835,79 @@ def ce_named_result_never_tested(s):
 arm_context("fence-wait-result-dropped", ce_fence_wait_result_dropped, "C1")
 arm_context("begin-command-buffer-result-dropped", ce_begin_command_buffer_result_dropped, "C1")
 arm_context("named-result-never-tested", ce_named_result_never_tested, "C1")
+
+
+def ce_frame_submitted_unended(s):
+    """Review-1 F1, restored: the frame's stream is handed to the queue with no end, and
+    every frame still draws on Mesa. The call is gone rather than unchecked, so C1 stays
+    green and only C2 can see it."""
+    return s.replace("""    const VkResult ended = vkEndCommandBuffer(frame.commandBuffer);
+    if (ended != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
+        vkFailed("vkEndCommandBuffer(the frame's command buffer; nothing was submitted)",
+                 ended);
+        return false;
+    }
+""", "", 1)
+
+
+def ce_fence_reset_in_begin_frame(s):
+    """Review-1 F2's premise, made real: a reset in `beginFrame` is what turns a refused
+    begin into a fence nobody will ever signal. The result is read, so C1 stays green and
+    only C3 can see it."""
+    return s.replace("""    VkResult result = vkWaitForFences(ctx->device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+""", """    VkResult result = vkWaitForFences(ctx->device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+    const VkResult rearmed = vkResetFences(ctx->device, 1, &frame.inFlight);
+    if (rearmed != VK_SUCCESS) {
+        return false;
+    }
+""", 1)
+
+
+def ce_refused_submit_keeps_the_reset_fence(s):
+    """The hazard batch 153 did find: the submit failed after the reset, so the slot's
+    fence is unsignalled and the next beginFrame waits forever. The recovery is deleted
+    and its VkResult goes with it, so C1 has nothing to complain about and only C3 can
+    see it."""
+    return s.replace("""        VkFence replacement = VK_NULL_HANDLE;
+        VkFenceCreateInfo recover = {};
+        recover.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        recover.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        const VkResult refence = vkCreateFence(ctx->device, &recover, nullptr, &replacement);
+        if (refence == VK_SUCCESS) {
+            vkDestroyFence(ctx->device, frame.inFlight, nullptr);
+            frame.inFlight = replacement;
+        } else {
+            vkFailed("vkCreateFence(replacing the fence of a refused submit; the next "
+                     "frame's fence wait may not return)", refence);
+        }
+        return false;""", """        return false;""", 1)
+
+
+def ce_refused_frame_keeps_the_acquire(s):
+    """Review-1 F4, restored: the frame is refused after a successful acquire and the
+    binary semaphore stays posted for the next frame's acquire to trip on. Only the
+    drain is deleted, so only C4 can see it."""
+    return s.replace("""    result = vkResetCommandBuffer(frame.commandBuffer, 0);
+    if (result != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
+        return false;
+    }""", """    result = vkResetCommandBuffer(frame.commandBuffer, 0);
+    if (result != VK_SUCCESS) {
+        return false;
+    }""", 1)
+
+
+arm_context("frame-submitted-unended", ce_frame_submitted_unended, "C2")
+arm_context("fence-reset-in-begin-frame", ce_fence_reset_in_begin_frame, "C3")
+arm_context("refused-submit-keeps-the-reset-fence", ce_refused_submit_keeps_the_reset_fence, "C3")
+arm_context("refused-frame-keeps-the-acquire", ce_refused_frame_keeps_the_acquire, "C4")
 
 checks = sum(r.checks for r in real)
 arms = [("Linux frontend", FRONT_ARMS, FILES["Linux frontend"]),

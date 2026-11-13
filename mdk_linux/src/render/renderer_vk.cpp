@@ -385,6 +385,26 @@ OneShot endOneShot(mdk::vk::Context* ctx, VkCommandPool pool, VkCommandBuffer cb
             result = OneShot::unfenced;
         }
     }
+    // AN UNFENCED SUBMISSION OWNS ITS OWN COMMAND STREAM. The queue has the copy, the
+    // wait could not prove it finished, and the instructions of that copy live in `cb`,
+    // allocated from `pool`. `vkFreeCommandBuffers` requires that every submitted
+    // command in the buffer has completed (VUID-vkFreeCommandBuffers-pCommandBuffers-
+    // 00047) and `vkDestroyCommandPool` requires the same of every command buffer made
+    // from the pool (VUID-vkDestroyCommandPool-commandPool-00041). Batch 152 stopped the
+    // CALLERS from releasing what an unfenced submission named, and this tail went on
+    // freeing the stream those callers had just abandoned (review-1 F3).
+    //
+    // So the pair is abandoned on the callers' terms for the callers' reason: the
+    // handles stop being ours instead of being destroyed. Two driver objects per failed
+    // wait, next to the image and the staging memory the caller already abandoned above,
+    // on a driver that fails a wait; a TRANSIENT pool is expected to be reclaimed with
+    // the device. The guard returns, and everything below it is the proven-finished
+    // path — that ordering is what B10 pins.
+    if (result == OneShot::unfenced) {
+        refused("one-shot command buffer and its pool are abandoned, not freed: the "
+                "submission that may still be running is made of them");
+        return result;
+    }
     // A command buffer whose end failed is still in the RECORDING state, and
     // `vkFreeCommandBuffers` is not the way out of it: the reset that would be the
     // documented recovery needs VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,

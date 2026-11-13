@@ -161,8 +161,16 @@ of which would have made it a pass generator:
 
   * It read string literals. This file's refusal messages NAME the entry point
     that failed — `vkFailed("vkBindImageMemory(depth)", result)` — so a scan over
-    the raw text saw 60 discarded results where there are 23, and every one of
-    the extra 37 was a string. `strip_code()` now blanks comments AND string
+    the raw text saw phantom call sites that are only strings, and every one of
+    them was a message naming an entry point. [CORRECTED by batch 154, review-1
+    F5: this sentence said "60 discarded results where there are 23", and the 23
+    was wrong — §2's 24 is the measured figure. Re-measured with the rule as it
+    now stands, at f98a7cb: string literals blanked gives calls=39 unchecked=24;
+    string literals kept gives calls=42 unchecked=27, i.e. exactly three phantom
+    sites. The 60 was the FIRST version's output under the FIRST version's rule,
+    which also counted a mention of a VK_ constant as a read, and was never
+    re-measured. See docs/evidence/2026-11-13-154-frame-stream-closed.txt §5.] 
+    `strip_code()` now blanks comments AND string
     literals while preserving every newline, so the line numbers printed are the
     file's (the review-8 F5 lesson).
   * It counted a mention of a `VK_` constant as a read. The arm written to prove

@@ -26528,3 +26528,139 @@ acceptance, it passes, and then `could not verify -- [Errno 13] Permission denie
 ledger and does not, because the ledger is in `gates_batch_integrity.PROTECTED` and
 a rename is a hand edit wearing a hat. The operator fix is one command:
 `chgrp development docs/COMPLETION_LEDGER.tsv`. **This is attempt 6 of 8.**
+
+## Iteration 154 — batch 154: `linux.render-frame` — the frame's command stream is closed before the queue is given it; review-1 was right four times and wrong once, and the wrong one was its High finding
+
+**The ledger row is `linux.render-frame` (d1, acceptance `bash tools/check.sh`),
+attempt 8 of 8.** The review this batch answers is
+`logs/ralph-pi/run-20261112-190926/review-1.md` (DeepSeek V4.1 Flash, independence
+PROVED, rc 0). It returned one Critical, two High, one Medium and one Low. Four held.
+The full record is `docs/evidence/2026-11-13-154-frame-stream-closed.txt`.
+
+**F1 (Critical) — CONFIRMED, and it is the oldest defect this row has found.**
+`vk_context.cpp`'s `endFrame` called `vkCmdEndRenderPass` and then submitted
+`frame.commandBuffer` while it was still in the RECORDING state.
+`grep -rn "EndCommandBuffer" mdk_linux/src/` returned two hits before this batch, both
+in the *one-shot* path of the other file: the frame path never called it at all.
+`VkSubmitInfo::pCommandBuffers` may only name a pending or executable command buffer
+(VUID-vkSubmitInfo-pCommandBuffers-00075), so every frame this backend has ever
+presented was submitted invalid. Lavapipe runs the recorded commands anyway, which is
+why 139 committed screenshots exist and why no gate ever reddened — the screenshots are
+evidence about Mesa's leniency, not about the submission. The reviewer's attribution is
+repeated here rather than argued with: pre-existing, not introduced by the range it was
+found in, reported because batch 153's new B11 had just certified the frame seam as
+sound. The fix is one call at `:1090`, after the render pass and **before** the fence
+reset — a refused frame has to leave its fence signalled and the reset is the call that
+would take that away — with its result read, for the reason the one-shot path already
+gives at `renderer_vk.cpp:342`. The frame path had the rule and never applied it to
+itself.
+
+**F3 (High) — CONFIRMED: batch 152 stopped the callers and left the callee.**
+`endOneShot`'s tail ran `vkFreeCommandBuffers` + `vkDestroyCommandPool` on every
+outcome, `unfenced` included, and both entry points require that the submitted commands
+have completed (VUID-vkFreeCommandBuffers-pCommandBuffers-00047,
+VUID-vkDestroyCommandPool-commandPool-00041) — the one fact `unfenced` says is *not*
+known. So `createHostImage` correctly abandoned the staging buffer and the image the
+copy may still be writing, and four lines later the callee destroyed the command stream
+the copy is made of. The refusal text even said the memory "is NOT safe to release", and
+the block comment below it reasoned about the RECORDING state (review-8 F6's subject)
+rather than the in-flight one. The guard at `renderer_vk.cpp:403` now returns before the
+releases and the pair is abandoned on the callers' terms: the handles stop being ours
+instead of being destroyed.
+
+**F4 (Medium) — CONFIRMED, and it corrected a sentence this file wrote.** The comment at
+the post-acquire exits called the leftover acquire "a stale +1 on a semaphore, not a
+leak and not a hang". `presentWait` is a **binary** semaphore — bare
+`VkSemaphoreCreateInfo`, no type info — so it has two states and no count and can never
+be +1; a posted one makes the next `vkAcquireNextImageKHR` invalid use
+(VUID-vkAcquireNextImageKHR-semaphore-01779). Vulkan cannot *withdraw* a signal from the
+CPU but it can *consume* one, so `drainPresentWait` (`:70`) posts an empty submit — no
+command buffers, TOP_OF_PIPE stage mask because
+VUID-VkSubmitInfo-pWaitDstStageMask-parameter requires one whenever there is a wait —
+from the five exits that hold a posted signal (`:1012 :1020 :1092 :1114 :1122`). It is
+deliberately NOT called from the acquire-failure exits: there the state is unknown, and
+waiting on a signal that may never arrive is a queue stall, not a repair. The reviewer
+was also right that `endFrame`'s submit-failure path produced the same state and was not
+documented at all; it is now, and it drains.
+
+**F2 (High) — REBUTTED, with the premise pinned instead of argued.** The finding read
+"`vkWaitForFences` succeeds and therefore **resets** the slot's fence to unsignalled",
+and its permanent hang rests entirely on that clause. It is false. Waiting on a Vulkan
+fence reports it and leaves it signalled; returning it to the unsignalled state is
+`vkResetFences`, a separate call. In this file the fences are created
+`VK_FENCE_CREATE_SIGNALED_BIT` (`:549`) and the only `vkResetFences` is at `:1112`, in
+`endFrame`, immediately before the submit that signals it again. So every `return false`
+in `beginFrame` after the wait leaves the fence **signalled** — which is the invariant
+for a free slot — and the next `beginFrame` waits on a signalled fence and returns at
+once. The reviewer's own comparison is what proves the distinction: `endFrame`'s
+submit-failure path really was a hang, and batch 153 really did fix it, precisely because
+THERE the fence had been reset for a submission that never happened. Putting the same
+recovery in `beginFrame` would destroy and reallocate a fence every frame on a driver
+that has done nothing wrong. No code changed for F2; C3 now pins the premise (red if
+`beginFrame` ever contains a `vkResetFences`, red if `endFrame`'s refused submit loses
+its signalled replacement), and a comment at `:963` states the invariant at the wait.
+
+**F5 (Low) — CONFIRMED, and re-measured rather than guessed.** The count that
+contradicted itself is 24: the gate's own `unchecked_result_calls` against
+`git show f98a7cb:…/vk_context.cpp` gives calls=39 unchecked=24. The reviewer asked
+which site the first version had miscounted, so the strings-kept variant was re-run
+instead of guessed: calls=42 unchecked=27 — three phantom sites, all of them
+`vkFailed("vkBindImageMemory(depth)", …)`-style messages. The "60 discarded results
+where there are 23" was the first version's output under the first version's rule and
+was never re-measured. Corrected in the evidence file, in `docs/CONTINUATION.md`, and in
+the gate's header comment.
+
+**THE GATE: 15 checks / 36 arms → 18 checks / 41 arms.** New **C2** (the frame's buffer
+is ended, and on the near side of the submit), **C3** (a refused frame never leaves its
+fence unsignalled), **C4** (every refusal that holds an acquired image consumes the
+acquire's signal, with a bare `return false` at function scope red on purpose), and
+**B10 extended to the callee** — the guard must precede the releases and `endOneShot`
+must still be straight-line, because "before" only means "unreachable" in code with no
+loop, so the absence of a loop is checked and not assumed. Against `git show HEAD:` of
+all three files the new gate reds **exactly three of the eighteen and nothing else** —
+B10, C2, and C4 naming four real `return false` lines at lines 971/978/1050/1076 — and
+**C3 stays green on the parent, which is the honest result for a check that pins a
+rebuttal rather than a defect**. One bug in C3's first draft was caught by running it and
+is the third time this file has made it: the straight-line scan read text with string
+literals still in it, matched the word "for" inside the refusal message "wait for a
+one-shot upload", and the gate reported its own file as no longer straight-line. It
+scans `strip_code()` now.
+
+**WHAT THIS BATCH DOES NOT PROVE, written down because the vault says to.** No Khronos
+validation layer is installed on this host and lavapipe is the only ICD, so F1's VUID,
+F3's two and F4's are read off the spec's naming and none of it was enforced by anything
+that ran here; no fault injection exists, so no drain, no refused end and no abandoned
+one-shot pair has ever executed. The healthy run proves only that they do not falsely
+fire. And F1 is the first change in this row that alters what the driver is asked to do
+on **every** frame rather than only when it refuses — the evidence that it is neutral is
+an unchanged picture and a green suite, which is weaker than the evidence for the other
+four findings and is recorded as such
+(vault `30-architecture/patterns/a-defence-against-an-unreachable-condition-passes-as-
+proof-of-itself.md`). Prior-solution lookup: `pi-knowledge` `mdk-sdl` returned leads
+(`docs/OPEN_ITEMS.md` on the submission point being per-backend, the C# `Renderer.cs`
+submit) and no prior solution for this defect; Obsidian MCP and Cognee MCP are **not
+exposed in this session** — the vault was read directly, read-only, and Cognee was not
+consulted, which is said rather than implied.
+
+**GATES, AS RUN.** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`,
+**592 PASS / 0 FAIL**, `PASS LinuxRefusalReport (18 checks, 41 arms adjudicated red)`.
+`DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`,
+`COMPLETION: LEDGER VERIFIED`. `DEVKITPRO=/opt/devkitpro
+DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5
+`728eb2350c3ef8a81acda15f75617c1e` UNCHANGED — no `mdk_3ds/` path in
+`git diff --name-only`, so no emulator run was owed and none was faked.
+`cmake --build build-linux -j8` rc 0. The pinned capture printed zero `REFUSED` lines,
+zero `[vk] … failed` lines and still printed
+`[vk] screenshot: wrote /tmp/mdk-lane/f154.bmp (320x240)`; two runs of it are
+byte-identical to each other and the frame is `cmp`-identical to its 139 predecessors,
+md5 `6769a13731983d65cee9df02da6cff37`.
+
+**THE BLOCKER IS STILL THE BLOCKER, AND IT IS NOT CODE.** `python3
+tools/runner/ledger_close.py --row linux.render-frame` refuses to certify against a
+dirty tree and, on a clean one, runs the acceptance, passes it, and then cannot write:
+`[Errno 13] Permission denied: '…/docs/COMPLETION_LEDGER.tsv'`. Measured again this
+batch: the ledger is `coleshores:coleshores 0664` and this lane is `piagent` (groups
+`piagent,development` — not `coleshores`). The operator fix is one command:
+`chgrp development docs/COMPLETION_LEDGER.tsv`. **This was attempt 8 of 8, so the loop
+stops for an operator with a row whose acceptance has been green since batch 149.**

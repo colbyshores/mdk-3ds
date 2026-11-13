@@ -48,6 +48,41 @@ void vkRefused(const char* what) {
     std::fflush(stdout);
 }
 
+// CONSUMING AN ACQUIRE THAT NO FRAME WILL USE.
+//
+// `presentWait` is a BINARY semaphore. It is created with no type info, so it has two
+// states — signalled and unsignalled — and no count. A successful acquire posts it and
+// the only thing that clears it is a submit that waits on it. So a frame that acquired
+// an image and then refused left the semaphore signalled, and the NEXT frame's acquire
+// would pass an already-signalled binary semaphore to `vkAcquireNextImageKHR`, which is
+// invalid use (VUID-vkAcquireNextImageKHR-semaphore-01779) with no specified answer.
+//
+// The comment this replaces called the leftover "a stale +1 on a semaphore, not a leak
+// and not a hang". That reasoned about an arithmetic the object cannot represent: a
+// binary semaphore is never +1 (review-1 F4). It is also not unfixable. Vulkan cannot
+// WITHDRAW a signal from the CPU, but it can CONSUME one: an empty submit — no command
+// buffers, no signal, just this wait — retires the signal as soon as the queue reaches
+// it, and the queue reaches it at once because the signal is already posted.
+//
+// Call this ONLY where the acquire SUCCEEDED. On a failed acquire the semaphore's state
+// is not known (the spec does not say it is untouched), and waiting on a signal that may
+// never arrive would put the queue to sleep instead of repairing anything.
+void drainPresentWait(Context* ctx, FrameContext& frame) {
+    VkSubmitInfo drain = {};
+    drain.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    drain.waitSemaphoreCount = 1;
+    drain.pWaitSemaphores = &frame.presentWait;
+    // A stage mask is required whenever there is a wait semaphore
+    // (VUID-VkSubmitInfo-pWaitDstStageMask-parameter). TOP_OF_PIPE asks the least of
+    // anything: the wait is already satisfied, and no stage has to be flushed for it.
+    const VkPipelineStageFlags top = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    drain.pWaitDstStageMask = &top;
+    const VkResult drained = vkQueueSubmit(ctx->queue, 1, &drain, VK_NULL_HANDLE);
+    if (drained != VK_SUCCESS) {
+        vkFailed("vkQueueSubmit(consuming the image acquire of a refused frame)", drained);
+    }
+}
+
 // The validation layer, when it is asked for.
 static const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
@@ -925,6 +960,16 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
     // device that will not run it. It returns false quietly on purpose: the seam
     // prints, once per distinct request, because a frame-boundary failure repeats
     // every frame and this file has no refusal memory of its own.
+    // WHY A REFUSED BEGIN NEEDS NO FENCE RECOVERY, AND WHY A REFUSED SUBMIT DOES.
+    // `vkWaitForFences` does not RESET a fence: a successful wait leaves it signalled,
+    // and only `vkResetFences` — which this function never calls, and which C3 of
+    // linux_refusal_report_test.sh keeps it that way — takes it back. So every
+    // `return false` below leaves this slot's fence SIGNALLED, which is the state the
+    // slot is supposed to be in when it is free, and the next `beginFrame` waits on a
+    // signalled fence and returns immediately. The slot is reused; nothing hangs.
+    // endFrame's failed submit is the opposite case: there the fence HAD been reset
+    // for a submission that never happened, so nothing would ever signal it, and that
+    // one does carry the signalled replacement it has.
     FrameContext& frame = ctx->frames[ctx->currentFrame];
     VkResult result = vkWaitForFences(ctx->device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
     if (result != VK_SUCCESS) {
@@ -952,22 +997,19 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
     // with nothing in it — the invisible empty picture, at the widest possible
     // scale. Both are refused where they become known.
     //
-    // WHAT THESE TWO EXITS COST, stated rather than hidden: the acquire above has
-    // already signalled `presentWait`, and nothing will consume that signal now, so
-    // the next frame's submit passes its wait one pending signal earlier than it
-    // should. It is a stale +1 on a semaphore, not a leak or a hang, it is reachable
-    // only when the driver fails a reset or a begin on an otherwise healthy device,
-    // and the OUT_OF_DATE retry above can already leave the same indeterminate signal
-    // — the spec does not say the semaphore is untouched when an acquire fails. There
-    // is nothing to call: Vulkan can post a semaphore signal from the CPU
-    // (`vkSignalSemaphore` is declared here) but has no way to WITHDRAW one, and the
-    // obvious reordering — reset and begin BEFORE the acquire — is worse, because a
-    // later acquire failure would then leave the command buffer recording, and
-    // `vkResetCommandBuffer` on a recording buffer is invalid use, which would wedge
-    // every frame after the first failure. Recorded as an open item, not silently
-    // accepted.
+    // WHAT THESE TWO EXITS COST, and what is done about it: the acquire has already
+    // posted `presentWait`, and a binary semaphore that stays posted is not a harmless
+    // leftover — the next frame's acquire would hand a signalled one to
+    // `vkAcquireNextImageKHR`, which is invalid use. So the signal is consumed here,
+    // by the empty submit `drainPresentWait` explains. What is NOT repaired is the
+    // OUT_OF_DATE retry above: a failed acquire's semaphore is not known to be
+    // untouched, and waiting on a signal that may never arrive is a queue stall, not a
+    // fix. The obvious reordering — reset and begin BEFORE the acquire — was considered
+    // and rejected: a later acquire failure would then leave the command buffer
+    // recording, and `vkResetCommandBuffer` on a recording buffer is invalid use.
     result = vkResetCommandBuffer(frame.commandBuffer, 0);
     if (result != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
         return false;
     }
     VkCommandBufferBeginInfo beginInfo = {};
@@ -975,6 +1017,7 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     result = vkBeginCommandBuffer(frame.commandBuffer, &beginInfo);
     if (result != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
         return false;
     }
 
@@ -1027,9 +1070,30 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
 }
 
 bool endFrame(Context* ctx) {
-    vkCmdEndRenderPass(ctx->frames[ctx->currentFrame].commandBuffer);
-
     FrameContext& frame = ctx->frames[ctx->currentFrame];
+    vkCmdEndRenderPass(frame.commandBuffer);
+
+    // THE COMMAND STREAM HAS TO BE CLOSED BEFORE IT IS SUBMITTED. Only a pending or an
+    // executable command buffer may be named by `VkSubmitInfo::pCommandBuffers`
+    // (VUID-vkSubmitInfo-pCommandBuffers-00075), and a buffer that was begun and never
+    // ended is still RECORDING. This file submitted one every frame. That it drew 138
+    // committed frames is evidence that lavapipe does not enforce the state machine and
+    // no evidence at all that the submission was legal (review-1 F1); the one-shot path
+    // in renderer_vk.cpp already refused to submit an unfinalised buffer, and the frame
+    // path is the same rule at the frame's scale.
+    //
+    // The end sits BEFORE the fence reset deliberately: a refused frame has to leave its
+    // fence signalled (see the note in beginFrame), and the reset is the one call here
+    // that would take it away. A failed end does leave the buffer recording — nothing
+    // un-records a buffer — so the next frame's reset is then invalid use too; that is
+    // a driver that has already refused an end, and it is printed rather than hidden.
+    const VkResult ended = vkEndCommandBuffer(frame.commandBuffer);
+    if (ended != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
+        vkFailed("vkEndCommandBuffer(the frame's command buffer; nothing was submitted)",
+                 ended);
+        return false;
+    }
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submitInfo = {};
@@ -1047,10 +1111,15 @@ bool endFrame(Context* ctx) {
     // nothing is queued behind a fence nobody can wait on.
     VkResult result = vkResetFences(ctx->device, 1, &frame.inFlight);
     if (result != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
         return false;
     }
     result = vkQueueSubmit(ctx->queue, 1, &submitInfo, frame.inFlight);
     if (result != VK_SUCCESS) {
+        // The queue refused the frame, so nothing waited on `presentWait` and its
+        // signal is still posted. Consume it before the fence is touched: the next
+        // frame's acquire is invalid use until somebody does.
+        drainPresentWait(ctx, frame);
         // The fence was reset and nothing is going to signal it, so the NEXT
         // beginFrame would wait UINT64_MAX on a fence no submission will ever
         // signal: one refused submit becomes a hang two frames later. The fence is
