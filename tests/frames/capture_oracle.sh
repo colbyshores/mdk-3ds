@@ -190,6 +190,9 @@ STEREO_ARGS=()
 if [ -n "${MDK_FRAME_STEREO:-}" ]; then
     STEREO_ARGS=(--stereo="$MDK_FRAME_STEREO")
 fi
+if [ -n "${MDK_FRAME_GAMMA:-}" ]; then
+    STEREO_ARGS+=(--gamma="$MDK_FRAME_GAMMA")
+fi
 DOTNET_ROOT="$4" XDG_RUNTIME_DIR="$5" MDK_DATA_DIR="$6" MDK_USER_DIR="$5" \
     DISPLAY=:99 timeout 180 "$3" --hidden --original --gpu=vulkan \
         --level="$7" --size="$8" --screenshot="$9" --wait=0 --mute \
