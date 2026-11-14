@@ -86,6 +86,19 @@ struct Context {
     VkDeviceMemory depthMemory = VK_NULL_HANDLE;
     VkImageView depthView = VK_NULL_HANDLE;
 
+    // THE SCENE TARGET (P6 foundation). The scene renders HERE, into an
+    // offscreen colour image, and endFrame blits it into the acquired
+    // swapchain image for present. Before this split the scene drew straight
+    // into the swapchain image, so nothing downstream -- no post pass, no
+    // stereo composite -- could ever read the finished frame. The offscreen
+    // image uses the swapchain format and the same render pass and depth
+    // view, so existing pipelines are unaffected; with no consumer yet the
+    // blit is an exact copy and the presented bytes are unchanged.
+    VkImage sceneImage = VK_NULL_HANDLE;
+    VkDeviceMemory sceneMemory = VK_NULL_HANDLE;
+    VkImageView sceneView = VK_NULL_HANDLE;
+    VkFramebuffer sceneFramebuffer = VK_NULL_HANDLE;
+
     bool validation = false;
 
     // The surface creator, set by the platform layer. It creates the

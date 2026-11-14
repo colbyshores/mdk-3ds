@@ -486,6 +486,131 @@ bool createDepthImage(Context* ctx) {
     return true;
 }
 
+// Release the scene target (see Context::sceneImage). Safe on null handles.
+void destroySceneTarget(Context* ctx) {
+    if (ctx->sceneFramebuffer != VK_NULL_HANDLE) {
+        vkDestroyFramebuffer(ctx->device, ctx->sceneFramebuffer, nullptr);
+        ctx->sceneFramebuffer = VK_NULL_HANDLE;
+    }
+    if (ctx->sceneView != VK_NULL_HANDLE) {
+        vkDestroyImageView(ctx->device, ctx->sceneView, nullptr);
+        ctx->sceneView = VK_NULL_HANDLE;
+    }
+    if (ctx->sceneImage != VK_NULL_HANDLE) {
+        vkDestroyImage(ctx->device, ctx->sceneImage, nullptr);
+        ctx->sceneImage = VK_NULL_HANDLE;
+    }
+    if (ctx->sceneMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(ctx->device, ctx->sceneMemory, nullptr);
+        ctx->sceneMemory = VK_NULL_HANDLE;
+    }
+}
+
+// Create the scene target at the current extent: a swapchain-format colour
+// image the scene renders into, plus a framebuffer over the shared render
+// pass and depth view. Mirrors createDepthImage's memory discipline.
+bool createSceneTarget(Context* ctx) {
+    destroySceneTarget(ctx);
+
+    VkImageCreateInfo imageInfo = {};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = ctx->swapchainFormat;
+    imageInfo.extent.width = ctx->extent.width;
+    imageInfo.extent.height = ctx->extent.height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkResult result = vkCreateImage(ctx->device, &imageInfo, nullptr, &ctx->sceneImage);
+    if (result != VK_SUCCESS) {
+        std::printf("[vk] vkCreateImage(scene) failed (%d)\n", (int)result);
+        return false;
+    }
+
+    VkMemoryRequirements requirements = {};
+    vkGetImageMemoryRequirements(ctx->device, ctx->sceneImage, &requirements);
+    VkMemoryAllocateInfo allocateInfo = {};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocateInfo.allocationSize = requirements.size;
+    allocateInfo.memoryTypeIndex = 0;
+
+    VkPhysicalDeviceMemoryProperties properties = {};
+    vkGetPhysicalDeviceMemoryProperties(ctx->physicalDevice, &properties);
+    bool found = false;
+    for (uint32_t i = 0; i < properties.memoryTypeCount; i++) {
+        if ((requirements.memoryTypeBits & (1u << i)) &&
+            (properties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+            allocateInfo.memoryTypeIndex = i;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        std::printf("[vk] no device-local memory type for the scene target\n");
+        destroySceneTarget(ctx);
+        return false;
+    }
+
+    result = vkAllocateMemory(ctx->device, &allocateInfo, nullptr, &ctx->sceneMemory);
+    if (result != VK_SUCCESS) {
+        std::printf("[vk] vkAllocateMemory(scene) failed (%d)\n", (int)result);
+        destroySceneTarget(ctx);
+        return false;
+    }
+    result = vkBindImageMemory(ctx->device, ctx->sceneImage, ctx->sceneMemory, 0);
+    if (result != VK_SUCCESS) {
+        vkFailed("vkBindImageMemory(scene)", result);
+        destroySceneTarget(ctx);
+        return false;
+    }
+
+    VkImageViewCreateInfo viewInfo = {};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = ctx->sceneImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = ctx->swapchainFormat;
+    viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    result = vkCreateImageView(ctx->device, &viewInfo, nullptr, &ctx->sceneView);
+    if (result != VK_SUCCESS) {
+        std::printf("[vk] vkCreateImageView(scene) failed (%d)\n", (int)result);
+        destroySceneTarget(ctx);
+        return false;
+    }
+
+    VkImageView attachments[2] = {ctx->sceneView, ctx->depthView};
+    VkFramebufferCreateInfo fbInfo = {};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = ctx->renderPass;
+    fbInfo.attachmentCount = 2;
+    fbInfo.pAttachments = attachments;
+    fbInfo.width = ctx->extent.width;
+    fbInfo.height = ctx->extent.height;
+    fbInfo.layers = 1;
+
+    result = vkCreateFramebuffer(ctx->device, &fbInfo, nullptr, &ctx->sceneFramebuffer);
+    if (result != VK_SUCCESS) {
+        std::printf("[vk] vkCreateFramebuffer(scene) failed (%d)\n", (int)result);
+        destroySceneTarget(ctx);
+        return false;
+    }
+    return true;
+}
+
 bool createFramebuffers(Context* ctx) {
     for (uint32_t i = 0; i < ctx->imageCount; i++) {
         VkImageViewCreateInfo viewInfo = {};
@@ -531,7 +656,8 @@ bool createFramebuffers(Context* ctx) {
         }
         ctx->framebuffers[i] = framebuffer;
     }
-    return true;
+    // The scene target rides the same rebuild: same extent, same pass.
+    return createSceneTarget(ctx);
 }
 
 bool createFrameResources(Context* ctx) {
@@ -841,6 +967,7 @@ void destroyContext(Context* ctx) {
                      "a proven completion)", idle);
         }
 
+        destroySceneTarget(ctx);
         for (uint32_t i = 0; i < ctx->imageCount; i++) {
             if (ctx->framebuffers[i] != VK_NULL_HANDLE) {
                 vkDestroyFramebuffer(ctx->device, ctx->framebuffers[i], nullptr);
@@ -908,6 +1035,7 @@ bool recreateSwapchain(Context* ctx, uint32_t width, uint32_t height, bool vsync
         return false;
     }
 
+    destroySceneTarget(ctx);
     for (uint32_t i = 0; i < ctx->imageCount; i++) {
         if (ctx->framebuffers[i] != VK_NULL_HANDLE) {
             vkDestroyFramebuffer(ctx->device, ctx->framebuffers[i], nullptr);
@@ -1036,7 +1164,7 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
     VkRenderPassBeginInfo passInfo = {};
     passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     passInfo.renderPass = ctx->renderPass;
-    passInfo.framebuffer = ctx->framebuffers[ctx->currentImage];
+    passInfo.framebuffer = ctx->sceneFramebuffer;
     passInfo.renderArea.extent = ctx->extent;
     passInfo.clearValueCount = 2;
     passInfo.pClearValues = clears;
@@ -1072,6 +1200,75 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
 bool endFrame(Context* ctx) {
     FrameContext& frame = ctx->frames[ctx->currentFrame];
     vkCmdEndRenderPass(frame.commandBuffer);
+
+    // PRESENT THE SCENE TARGET. The render pass left the scene image in its
+    // colour attachment's final layout (PRESENT_SRC_KHR); move it to a blit
+    // source, blit it whole into the acquired swapchain image, and leave that
+    // image in PRESENT_SRC_KHR for vkQueuePresentKHR. Same format and extent
+    // on both sides, so NEAREST is an exact copy: the presented bytes are the
+    // bytes the scene pass produced, unchanged.
+    {
+        VkImage swapImage = ctx->images[ctx->currentImage];
+        VkImageMemoryBarrier barriers[2] = {};
+        barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barriers[0].oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[0].image = ctx->sceneImage;
+        barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barriers[0].subresourceRange.levelCount = 1;
+        barriers[0].subresourceRange.layerCount = 1;
+        barriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[1].image = swapImage;
+        barriers[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barriers[1].subresourceRange.levelCount = 1;
+        barriers[1].subresourceRange.layerCount = 1;
+        barriers[1].srcAccessMask = 0;
+        barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(frame.commandBuffer,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                             2, barriers);
+
+        VkImageBlit blit = {};
+        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.srcSubresource.layerCount = 1;
+        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.dstSubresource.layerCount = 1;
+        blit.srcOffsets[1].x = (int32_t)ctx->extent.width;
+        blit.srcOffsets[1].y = (int32_t)ctx->extent.height;
+        blit.srcOffsets[1].z = 1;
+        blit.dstOffsets[1].x = (int32_t)ctx->extent.width;
+        blit.dstOffsets[1].y = (int32_t)ctx->extent.height;
+        blit.dstOffsets[1].z = 1;
+        vkCmdBlitImage(frame.commandBuffer, ctx->sceneImage,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapImage,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                       VK_FILTER_NEAREST);
+
+        VkImageMemoryBarrier present = {};
+        present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        present.image = swapImage;
+        present.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        present.subresourceRange.levelCount = 1;
+        present.subresourceRange.layerCount = 1;
+        present.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        present.dstAccessMask = 0;
+        vkCmdPipelineBarrier(frame.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr,
+                             0, nullptr, 1, &present);
+    }
 
     // THE COMMAND STREAM HAS TO BE CLOSED BEFORE IT IS SUBMITTED. Only a pending or an
     // executable command buffer may be named by `VkSubmitInfo::pCommandBuffers`
