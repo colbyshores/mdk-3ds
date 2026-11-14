@@ -1,0 +1,38 @@
+row: 3ds.hud-canvas
+command: mdk_3ds/tools/emurun.sh --expect hud
+exit: 0
+verified-at: 158c11d
+captured: 2026-11-14T05:34:33.840619+00:00
+
+== emurun verdict ==
+display   : :99
+emulator  : mandarine.AppImage md5 0d2adab6
+build     : /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx
+guest log : /tmp/mdk-tmp-lane/mdk-emurun.2878883/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log
+frames    : reached 2400 by the deadline (45 frame lines logged, every 60th after #5); the post-reap line below is the log's real last frame
+gl        : forced llvmpipe (LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe)
+          graphics_api=1 [section created by this harness] [default=true — the emulator counts this as its compiled default, so the stored value matches what ran] (1=OpenGL 2=Vulkan; Mesa env binds OpenGL only)
+stereo    : render_3d=0 [section created by this harness] [default=true — the emulator counts this as its compiled default, so the stored value matches what ran] factor_3d=0 [default=true — the emulator counts this as its compiled default, so the stored value matches what ran] (0 = mono)
+audio     : SDL_AUDIODRIVER=dummy ALSA_CARD=null AUDIODEV=null cfg volume=0 [section created by this harness] [default=false — an explicit override the emulator kept]
+dspfirm   : dspfirm.cdc (the lane's sdmc/3ds/dspfirm.cdc; ndsp needs it)
+lane      : /tmp/mdk-tmp-lane/mdk-emurun.2878883 (mount /tmp/mdk-tmp-lane/.mount_mandarPUXTLr)
+session   : dbus-run-session; XDG_RUNTIME_DIR private
+** (xdg-desktop-portal-gtk:2879328): WARNING **: 22:33:46.720: atk-bridge: get_device_events_reply: unknown signature
+backend: PICA200 Citro3D
+flow: screen=4 level=7
+frame 2280 elapsed=0.0167 steps=2294 feet=(0.0,4.0,0.0) yaw=90.0 health=100 eye=(0.0,-4.0,4.5) voices=0 plays=1 objects=7 obj=570c/13d peak=570c/13d
+frame 2340 elapsed=0.0153 steps=2354 feet=(0.0,4.0,0.0) yaw=90.0 health=100 eye=(0.0,-4.0,4.5) voices=0 plays=1 objects=7 obj=570c/13d peak=570c/13d
+frame 2400 elapsed=0.0145 steps=2414 feet=(0.0,4.0,0.0) yaw=90.0 health=100 eye=(0.0,-4.0,4.5) voices=0 plays=1 objects=7 obj=570c/13d peak=570c/13d
+expect    : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame 2400)
+expect    : HUD MARKER VISIBLE -- 121 canary pixels in the panel, 121 inside
+expect    : the marker's rect 0,0-11,11 (bbox 0,0-10,10,
+expect    : reaching the derived (10,10))
+expect    : HUD INK -- 134 of 134 HUD-palette pixels inside crop
+expect    : 200,120-390,234 (bbox
+expect    : 333,206-388,232, 0 outside, its far corner within
+expect    : 12 px of the derived 390,234), none of it
+expect    : reachable by the level
+log: /tmp/mdk-tmp-lane/mdk-emurun.2878883/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log
+emurun: after the reap the guest log ends at frame 2520 (47 frame lines logged)
+emurun: NOTE /tmp/mdk-tmp-lane/.mount_mandarPUXTLr has a process outside this lane executing from it; left mounted.
+
