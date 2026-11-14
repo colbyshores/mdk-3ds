@@ -480,9 +480,19 @@ CANARY_REACH_Y="$(sed -n 's/^CANARY_REACH_Y=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_MAX_PIXELS="$(sed -n 's/^CANARY_MAX_PIXELS=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_MAX_COORD="$(sed -n 's/^CANARY_MAX_COORD=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 CANARY_MIN="$(sed -n 's/^CANARY_MIN=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+# THE HUD'S OWN INK RECT, read back the same way (see the block on HUD_INK_* in the
+# harness for what it is and why the marker alone was not a HUD verdict).
+HUD_INK_X0="$(sed -n 's/^HUD_INK_X0=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_Y0="$(sed -n 's/^HUD_INK_Y0=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_X1="$(sed -n 's/^HUD_INK_X1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_Y1="$(sed -n 's/^HUD_INK_Y1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_MIN="$(sed -n 's/^HUD_INK_MIN=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 check "the harness declares the marker rect, its reach and the floor" "5" \
       "$([ -n "$CANARY_X1" ] && [ -n "$CANARY_Y1" ] && [ -n "$CANARY_REACH_X" ] \
          && [ -n "$CANARY_REACH_Y" ] && [ -n "$CANARY_MIN" ] && echo 5 || echo 0)"
+check "and it declares the HUD's own ink rect and its floor" "5" \
+      "$([ -n "$HUD_INK_X0" ] && [ -n "$HUD_INK_Y0" ] && [ -n "$HUD_INK_X1" ] \
+         && [ -n "$HUD_INK_Y1" ] && [ -n "$HUD_INK_MIN" ] && echo 5 || echo 0)"
 # AND THE FIXTURE REFUSES TO RUN WITHOUT THEM (review-1 F4). Silently carrying an
 # empty CANARY_X1 into the capture builder made python raise ValueError, which left
 # CAP_YES empty, and four PRE-EXISTING rows then failed for a fixture reason and
@@ -490,7 +500,8 @@ check "the harness declares the marker rect, its reach and the floor" "5" \
 # verdict: say so and stop, so a parent-comparison reds only on the rows that are the
 # new rule's work.
 for v in CANARY_X1 CANARY_Y1 CANARY_REACH_X CANARY_REACH_Y CANARY_MIN \
-         CANARY_MAX_PIXELS CANARY_MAX_COORD; do
+         CANARY_MAX_PIXELS CANARY_MAX_COORD \
+         HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1 HUD_INK_MIN; do
     case "${!v}" in
         ''|*[!0-9]*)
             echo "EMURUN HARNESS: $EMU declares no numeric $v -- the fixture cannot be built" >&2
@@ -522,8 +533,9 @@ done
 # with the shipped (a,b) = (1,-1). Each block's corner below is COMPUTED from (a,b)
 # through the mapping the harness documents, so a fixture cannot drift from the
 # transform it names -- and all four dispositions are rows here, not one.
-cap() { # cap <here|none|turn|flip|rot180|wide|small> -> path to a synthetic capture
-    python3 - "$1" "$ROOT/tools/panel_crop.py" "$CANARY_REACH_X" "$CANARY_REACH_Y" <<'PY'
+cap() { # cap <here|none|turn|flip|rot180|wide|small|noink|inkout|inkboth> -> path to a synthetic capture
+    python3 - "$1" "$ROOT/tools/panel_crop.py" "$CANARY_REACH_X" "$CANARY_REACH_Y" \
+              "$HUD_INK_X0" "$HUD_INK_Y0" "$HUD_INK_X1" "$HUD_INK_Y1" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
 from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1
@@ -534,6 +546,9 @@ mode = sys.argv[1]
 # columns. Move the harness's reach and these fixtures move with it, instead of this
 # file quietly certifying a different marker than the shipped one draws.
 size_x, size_y = int(sys.argv[3]) + 1, int(sys.argv[4]) + 1
+# The HUD's own ink rect, imported from the harness rather than restated here, for the
+# same reason canvasWidth is (review-1 F1: a second spelling certifies a copy).
+ix0, iy0, ix1, iy1 = (int(v) for v in sys.argv[5:9])
 W, H = PANEL_X1 - PANEL_X0 + 1, PANEL_Y1 - PANEL_Y0 + 1
 img = Image.new("RGB", (1280, 1024), (16, 32, 48))
 px = img.load()
@@ -543,6 +558,20 @@ def block(x0, y0, w, h):
     for j in range(h):
         for i in range(w):
             px[PANEL_X0 + x0 + i, PANEL_Y0 + y0 + j] = (0, 0, 255)
+
+
+def digits(x0, y0, w=56, h=27):
+    """The HUD's own pixels: a block of its palette's (0,255,0).
+
+    The shipped capture puts the ink at crop (333,206)-(388,232) -- the health number and
+    the panel sprite's body together, both drawn from the level palette. This stands in
+    for it at the same size, anchored to the far corner of the rect the harness declares,
+    so moving the harness's rect moves the fixture with it instead of silently leaving a
+    fixture that no longer exercises the arm it names.
+    """
+    for j in range(h):
+        for i in range(w):
+            px[PANEL_X0 + x0 + i, PANEL_Y0 + y0 + j] = (0, 255, 0)
 
 
 def disposition(a, b):
@@ -576,6 +605,25 @@ elif mode == "small":
     # The mirror-image defect: a canvasWidth too LARGE shrinks the marker to 8x8 = 64 px,
     # wholly inside the rect and still clearing the floor. Only an extent test sees it.
     block(0, 0, size_x - 3, size_y - 3)
+elif mode in ("noink", "inkout", "inkboth"):
+    # The shipped marker, so the MARKER's arms pass and the failure these fixtures stand
+    # for is the HUD's own half. Without this the fixture paints nothing at all, the
+    # marker's arm rejects it first, and the ink message these rows grep for is never
+    # printed -- a row that passes for the wrong reason is the failure mode this file
+    # calls out more than any other.
+    block(*disposition(1, -1), size_x, size_y)
+
+# THE HUD'S OWN HALF. Every fixture above paints the marker, and the marker is drawn by
+# the RENDERER, so on its own every one of them is also the build whose HUD paints
+# nothing -- which is the hole, not the fixture. So the shipped case paints the ink too,
+# and three fixtures are the ink's own failures: noink (the off-the-edge mutation), inkout
+# (the HUD drew, somewhere else) and inkboth (the level makes the colour itself).
+if mode not in ("none", "noink", "inkout"):
+    digits(ix1 - 55, iy1 - 26)
+if mode == "inkout":
+    digits(20, 60)
+if mode == "inkboth":
+    digits(20, 60)
 path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % mode)
 img.save(path)
 print(path)
@@ -588,6 +636,9 @@ CAP_FLIP="$(cap flip)"
 CAP_ROT180="$(cap rot180)"
 CAP_WIDE="$(cap wide)"
 CAP_SMALL="$(cap small)"
+CAP_NOINK="$(cap noink)"
+CAP_INKOUT="$(cap inkout)"
+CAP_INKBOTH="$(cap inkboth)"
 
 # THE RECTANGLE IS DERIVED, NOT REMEMBERED. The expectation lives in the harness as a
 # pair of integers; the geometry that produces it lives in the shipped renderer. If
@@ -605,7 +656,8 @@ CAP_SMALL="$(cap small)"
 # this derivation still prints 10.667 and still agrees with the harness. So the return
 # EXPRESSION is now read out of the function and evaluated, and an expression this file
 # cannot parse is a hard failure -- the derivation follows the code, or it stops.
-derive_rect() { # derive_rect <root> -> "<ceilX> <ceilY> <floorX> <floorY>"
+derive_rect() { # derive_rect <root> ->
+                #   "<ceilX> <ceilY> <floorX> <floorY> <inkX0> <inkY0> <inkX1> <inkY1>"
 python3 - "$1" <<'PY'
 import math, re, sys
 root = sys.argv[1]
@@ -627,11 +679,18 @@ def grab(text, pattern, cast, what, path):
 
 cpp = root + "/mdk_3ds/src/render/renderer_c3d.cpp"
 hdr = root + "/mdk_core/src/render/render_types.h"
-ctext, htext = read(cpp), read(hdr)
+hud = root + "/mdk_core/src/game/hud_view.cpp"
+ctext, htext, gtext = read(cpp), read(hdr), read(hud)
 sw = grab(ctext, r"kScreenWidth\s*=\s*(\d+)\s*;", int, "kScreenWidth", cpp)
 sh = grab(ctext, r"kScreenHeight\s*=\s*(\d+)\s*;", int, "kScreenHeight", cpp)
 size = grab(ctext, r"kSize\s*=\s*([0-9.]+)f\s*;", float, "drawDiagnostic's kSize", cpp)
 ch = grab(htext, r"kCanvasHeight\s*=\s*([0-9.]+)f\s*;", float, "kCanvasHeight", hdr)
+# The HUD's own anchoring, read out of the file that uses it. These are the ONLY source
+# constants the ink rect is made of: the panel's width and height come from the sprite
+# asset (hud_view.cpp reads texture.width()/height()), which is why the ink rect's NEAR
+# bound is the canvas's own quadrant and not the panel's corner.
+pr = grab(gtext, r"kPanelRight\s*=\s*([0-9.]+)f\s*;", float, "kPanelRight", hud)
+pb = grab(gtext, r"kPanelBottom\s*=\s*([0-9.]+)f\s*;", float, "kPanelBottom", hud)
 
 # THE IMPORT. mdk_render_canvas_width's own return expression, evaluated against the
 # constants it names. Nothing here spells the ratio.
@@ -658,13 +717,28 @@ cw = eval(expr, {"__builtins__": {}}, {})     # noqa: S307 -- digits and operato
 # and not the other, and a single shared `far` would hide that.
 far_x = size * sh / cw
 far_y = size * sw / ch
-print("%d %d %d %d" % (math.ceil(far_x), math.ceil(far_y),
-                       math.floor(far_x), math.floor(far_y)))
+# THE INK RECT, from the same imported canvasWidth and the HUD's own margins. The far
+# corner is the panel's anchored edge (canvas 600-16 by 360-10) through the SAME axis
+# expressions as above, ceil() for the reason the harness gives on CANARY_X1. The near
+# corner is the canvas's centre: the panel is anchored bottom-right, so as long as it
+# fits inside half the canvas on each axis -- it is a sprite read from the asset, and
+# the shipped one is 84x63 against 600x360 -- every pixel of it lies in that quadrant.
+# That is a bound the anchoring guarantees, not a rectangle this file remembers.
+ink_far_x = (cw - pr) / cw * sh
+ink_far_y = (ch - pb) / ch * sw
+print("%d %d %d %d %d %d %d %d" % (math.ceil(far_x), math.ceil(far_y),
+                                   math.floor(far_x), math.floor(far_y),
+                                   math.floor(sh / 2), math.floor(sw / 2),
+                                   math.ceil(ink_far_x), math.ceil(ink_far_y)))
 PY
 }
 DERIVED="$(derive_rect "$ROOT")"
 check "the marker rect is re-derived from the shipped renderer and agrees" \
-      "$DERIVED" "$CANARY_X1 $CANARY_Y1 $CANARY_REACH_X $CANARY_REACH_Y"
+      "$(awk '{print $1, $2, $3, $4}' <<<$DERIVED)" \
+      "$CANARY_X1 $CANARY_Y1 $CANARY_REACH_X $CANARY_REACH_Y"
+check "and the HUD's ink rect is re-derived from hud_view.cpp and agrees" \
+      "$(awk '{print $5, $6, $7, $8}' <<<$DERIVED)" \
+      "$HUD_INK_X0 $HUD_INK_Y0 $HUD_INK_X1 $HUD_INK_Y1"
 check "and the derivation is not a constant (it would then certify nothing)" "1" \
       "$(awk '{print ($1 > 0 && $1 < 400 && $3 > 0 && $3 < 400) ? 1 : 0}' <<<$DERIVED)"
 
@@ -675,9 +749,13 @@ check "and the derivation is not a constant (it would then certify nothing)" "1"
 # file still been spelling `ch*sh/sw` by hand, the mutant would derive the same rect as
 # the real tree and this row would pass while certifying nothing.
 MUTROOT="$(mktemp -d)"
-mkdir -p "$MUTROOT/mdk_3ds/src/render" "$MUTROOT/mdk_core/src/render"
+mkdir -p "$MUTROOT/mdk_3ds/src/render" "$MUTROOT/mdk_core/src/render" \
+         "$MUTROOT/mdk_core/src/game"
 cp "$ROOT/mdk_3ds/src/render/renderer_c3d.cpp" "$MUTROOT/mdk_3ds/src/render/"
 cp "$ROOT/mdk_core/src/render/render_types.h" "$MUTROOT/mdk_core/src/render/"
+# The ink derivation reads hud_view.cpp's margins, so the mutant needs it too -- and it
+# needs the PRISTINE copy, because this mutation is about the canvas, not the HUD.
+cp "$ROOT/mdk_core/src/game/hud_view.cpp" "$MUTROOT/mdk_core/src/game/"
 python3 - "$MUTROOT/mdk_3ds/src/render/renderer_c3d.cpp" <<'PY'
 import sys
 p = sys.argv[1]
@@ -696,6 +774,13 @@ check "a mutated mdk_render_canvas_width MOVES the derivation (so it is imported
 check "and it moves the axis a canvasWidth error moves, and only that one" "1" \
       "$(awk -v a="$DERIVED" -v b="$MUT_DERIVED" \
             'BEGIN{split(a,x," ");split(b,y," ");print (y[1]!=x[1] && y[2]==x[2] && y[4]==x[4]) ? 1 : 0}')"
+# AND IT MOVES THE HUD'S INK RECT TOO, because the panel is anchored to the same canvas
+# the marker is: a canvasWidth error moves the panel's far corner by the same mistake.
+# If this row did not move, the ink derivation would be a second spelling rather than
+# the same import, and the rect would certify a copy (review-1 F1's rule, applied here).
+check "and the same mutation moves the ink rect's far corner (one import, not two)" "1" \
+      "$(awk -v a="$DERIVED" -v b="$MUT_DERIVED" \
+            'BEGIN{split(a,x," ");split(b,y," ");print (y[7]!=x[7]) ? 1 : 0}')"
 
 # The lifted block must contain the POSITIONAL half, or every check below is a
 # presence test on a fragment that lost it.
@@ -1282,8 +1367,88 @@ bash "$EMU" --secs 45 /nonexistent-build.3dsx >/dev/null 2>&1
 check "and a valid one reaches the build check, so the guard is not always-red" "2" "$?"
 rm -f "$PARSER"
 
+# --- THE HUD'S OWN PIXELS: the verdict used to be blind to the HUD -------------------
+#
+# WHY THESE ROWS EXIST, AND THE MEASUREMENT BEHIND THEM. `--expect hud` is the acceptance
+# command of the ledger row `3ds.hud-canvas`, and every pixel arm in canary_verdict
+# judged a 16x16 square that THE RENDERER draws (renderer_c3d.cpp's drawDiagnostic).
+# Measured on this batch, on a build whose HUD queues all four quads and lands every one
+# of them off the right edge of the canvas: the parent harness printed `canvas: quads=4
+# draws=2` and `HUD VISIBLE` at rc 0, and this file's verdict printed the same log line,
+# the same marker, and rc 7. CAP_NOINK IS THAT BUILD as a fixture: the marker painted,
+# the HUD's own (0,255,0) nowhere in the panel. If the rows below ever go vacuous, that
+# is the defect walking back in.
+#
+# THE COLOUR, and why it counts as evidence. Both HUD sprites are drawn with
+# `q.palette = palette_` -- the LEVEL's palette, in hud_view.cpp's `drawImage` AND in
+# `drawNumber`, which builds its own quads rather than going through drawImage (a fact
+# this batch learned the hard way, from a mutation that shifted drawImage and left the
+# health number sitting there, legibly, at (0,255,0)). For the level this harness boots
+# that palette contains exactly (0,255,0). Measured on the shipped capture: 134 such
+# pixels in the whole 400x240 panel, every one inside the ink rect and none outside it.
+# The `outside` arm below is what keeps that a measurement instead of a hope.
+ink_verdict_rc() { # ink_verdict_rc <fixture> -> rc of the pixel verdict
+    ( eval "$EXPECT_FN"; canary_verdict "$1" ) >/dev/null 2>&1; printf '%s' "$?"
+}
+ink_verdict_msg() { # ink_verdict_msg <fixture> -> the verdict's own words
+    ( eval "$EXPECT_FN"; canary_verdict "$1" ) 2>&1
+}
+check "verdict: a build whose HUD draws nothing is REFUSED -- the off-the-edge mutation" "1" \
+      "$(ink_verdict_rc "$CAP_NOINK")"
+check "and it is refused BY NAME, not as a generic failure" "1" \
+      "$(ink_verdict_msg "$CAP_NOINK" | grep -c 'HUD NOT PAINTED')"
+check "while the shipped fixture, marker AND ink, passes" "0" \
+      "$(ink_verdict_rc "$CAP_YES")"
+check "and says which half it just checked" "1" \
+      "$(ink_verdict_msg "$CAP_YES" | grep -c 'HUD INK')"
+check "verdict: ink painted OUTSIDE the panel's anchoring is MISPLACED, not a pass" "1" \
+      "$(ink_verdict_rc "$CAP_INKOUT")"
+check "and it names the misplacement" "1" \
+      "$(ink_verdict_msg "$CAP_INKOUT" | grep -c 'HUD MISPLACED')"
+check "verdict: ink the level could have made itself REFUSES the verdict -- HUD INK NOT UNIQUE" "1" \
+      "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '60 40 20 333 206 388 232\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD INK NOT UNIQUE' )"
+
+# THE SAME DISCIPLINE THE MARKER'S ARMS LEARNED, applied to the ink counter's fields.
+# Each line below is one a counter could not have emitted, and each was certified green
+# by a `[ ]` that could not make the comparison it was guarding (review-2 F2's rule:
+# an unevaluable comparison exits 2, the `if` walks past its body, and the function
+# prints a confident verdict over evidence it never checked).
+for bad in "100 60 60 333 206 388 232" "30000 30000 0 333 206 388 232" \
+           "x 40 20 333 206 388 232" "133 133 0 388 206 333 232" \
+           "133 133 0 333 206 333 206" "133 133 0 333 206 391 232"; do
+    check "verdict: an impossible ink line [$bad] is MALFORMED, never green" "1" \
+          "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '%s\n' "$bad"; }
+               canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD MALFORMED' )"
+done
+# AND THE HARNESS'S OWN SIDE OF EACH COMPARISON, because either side can be the
+# unevaluable one and a HUD_INK_MIN of `x` fails open exactly the way a bad count does.
+for v in HUD_INK_MIN HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1; do
+    check "verdict: a non-numeric $v refuses to judge rather than pass" "1" \
+          "$( ( eval "$EXPECT_FN"; eval "$v=x"; canary_verdict "$CAP_YES" ) \
+              2>&1 | grep -c 'HUD MALFORMED' )"
+done
+check "and a near corner past the far corner is refused too (the rect is a relation)" "1" \
+      "$( ( eval "$EXPECT_FN"; HUD_INK_X0=399; canary_verdict "$CAP_YES" ) \
+          2>&1 | grep -c 'HUD MALFORMED' )"
+# ONE SPELLING, TWO BASES -- the review-5 F1 rule, on the new arm. `decimal_measurement`
+# accepts a leading zero, so a padded bbox arrives intact, and bash arithmetic would read
+# `0388` as no base at all (aborting the script at an undocumented rc 1) or `0333` as
+# octal 219 (a box that disagrees with its own count). `10#` on the area arm is what
+# makes a padded spelling the SAME measurement as an unpadded one.
+check "the premise again: $((0333)) is OCTAL 219, not 333" "219" \
+      "$( ( printf '%s' "$((0333))" ) 2>/dev/null )"
+for ok in "133 133 0 333 206 388 232" "133 133 0 0333 0206 0388 0232"; do
+    check "and [$ok] is the same measurement in either spelling, so it passes" "0" \
+          "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '%s\n' "$ok"; }
+               canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?" )"
+done
+check "and a padded field does not abort the shell on a base it cannot read" "0" \
+      "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '133 133 0 0333 0206 0388 0232\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'value too great for base' )"
+
 if [ "$fails" -eq 0 ]; then
-    echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary)"
+    echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary + the HUD's own ink)"
     exit 0
 fi
 echo "EMURUN HARNESS: $fails FAILED"

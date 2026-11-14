@@ -1,3 +1,98 @@
+## Iteration 173 — batch 173: `3ds.hud-canvas` — the HUD's acceptance was green on a build that paints no HUD, because every pixel it looked at was drawn by the renderer
+
+**LEDGER ROW `3ds.hud-canvas` (d1, fast), acceptance `mdk_3ds/tools/emurun.sh --expect hud`,
+attempt 1 of the current cycle (`COMPLETION_ITERS=1`; the row's previous attempt was batch 162).
+NOT a review remediation: review-4 is the newest review, it has **no Critical and no High**, and
+all five of its findings are `linux.render-frame` work, so they are deferred with cause (§7 of the
+evidence file) rather than dragged into this row. The slice is this row's own item 2, open since
+batch 147: nothing pixel-pinned the HUD's own pixels.
+Full record: `docs/evidence/2026-11-14-173-the-verdict-could-not-see-the-hud.txt`.**
+
+**THE ACCEPTANCE WAS MEASURED AGAINST A MUTANT BEFORE ANYTHING WAS CHANGED, AND IT PASSED THE
+MUTANT.** `--expect hud`'s pixel verdict counts pure (0,0,255) pixels in a derived rect — and every
+one of those pixels is drawn by `renderer_c3d.cpp`'s `drawDiagnostic`, a 16x16 marker the backend
+paints for the harness. The HUD contributes nothing to it. So a build whose HUD queues all four of
+its quads and lands every one of them off the right edge of the canvas (`x += 600.0f` in
+`hud_view.cpp`'s `drawImage` AND `drawNumber`) printed, on the parent harness, `canvas: quads=4
+draws=2` and `HUD VISIBLE` at **rc 0**, and on this batch's harness the same three lines followed by
+`HUD NOT PAINTED` at **rc 7**. The log arm could not see it, because the quads really were queued;
+the marker arm could not see it, because the marker is not the HUD. Batch 147 wrote that a HUD
+drawing in the wrong place would still pass `--expect hud`; the mirror — a HUD drawing nowhere —
+also passed, eight batches after that sentence was written.
+
+**THE INSTRUMENT IS THE HUD'S OWN PALETTE COLOUR, AND IT IS UNIQUE IN THE PANEL.** Both HUD sprites
+are drawn with `q.palette = palette_` — the level's palette — and for level 7 that palette contains
+exactly (0,255,0), which the level's own geometry never produces in the panel: measured 134 such
+pixels in the whole 400x240 panel, all 134 inside the HUD's rect, 0 outside, bbox crop
+(333,206)-(388,232). `hud_ink_verdict` adjudicates them with the arm discipline this file has
+learned over five reviews — harness constants validated before any comparison, the relations the
+counter guarantees by construction (`inside + outside == total`, `inside <= rect area`), the bbox
+unable to contradict the count it bounds, and `10#` on the arithmetic so a padded field is the same
+measurement in either base rather than octal 219 or a script abort.
+
+**THE RECT IS DERIVED FROM THE HUD'S ANCHORING, AND THE DERIVATION IS AN IMPORT.** The far corner
+comes from the imported `mdk_render_canvas_width` expression plus `hud_view.cpp`'s own
+`kPanelRight`/`kPanelBottom`: canvas (584,350) -> crop (389.33,233.33) -> ceil (390,234). **The near
+corner is NOT derivable from source** — `panel_.w`/`panel_.h` are read from the sprite asset — so the
+near bound is the weakest thing the anchoring guarantees (a panel inside half the canvas on each axis
+lies in the bottom-right quadrant, crop (200,120)), and it is written as a bound rather than dressed
+up as a rectangle. The host test re-derives all four numbers, and the existing
+`mdk_render_canvas_width` axis-swap mutation is now required to move the ink rect's far corner too,
+which is what proves the new derivation reads the renderer instead of resembling it.
+
+**TWO THINGS THE MEASUREMENT PROVED WRONG ABOUT THIS ROW'S OWN STORY, RECORDED RATHER THAN
+REWRITTEN.** (a) **The health number reads "100" and is legible.** The first mutation shifted only
+`drawImage`, assuming the digits came from it; they do not — `drawNumber` builds its own quads — and
+the mutant's capture showed the panel gone with a crisp "100" still sitting in its region. The
+scrambled element is the PANEL SPRITE, not the number, and every earlier note saying "the digits are
+smeared" was describing the panel behind them. (b) **The ink is both sprites**: 74 of the 134 green
+pixels survive the panel being pushed off-screen and 76 survive the digits being removed, so the
+panel sprite's own body carries (0,255,0) texels and the instrument is the HUD's palette colour, not
+the digits' colour.
+
+**WHAT IS STILL BROKEN, AND WHY NOTHING WAS SHIPPED FOR IT.** The panel sprite reaches the panel as a
+fine vertical stripe at ~5.3 crop px where the geometry says 21.3 — a factor of 4. The CPU texels,
+the vertices (pos (500,287)-(584,350), uv 0..1) and the uv transform's arrival in the shader were all
+verified correct; writing synthetic patterns straight into the GPU's texture buffer does not come
+out as written (a period-32 wave renders ~4x too many bands; a left/right half renders as top/bottom
+bands). A uv/4 "fix" was tried and rejected on measurement: with the panel's uv divided by 4 the
+digits stop reading "100". The GPU-side addressing rule is not established — `C3D_Tex` carries no
+stride field, so it is computed inside libcitro3d, whose source is not in this tree — and the scene
+textures are probably affected too. That is the row's next slice, written up as an open item, not a
+/4 that makes one pattern tidier while breaking the element the HUD exists to show.
+
+**TESTS.** `EmurunHarness` is **257 -> 283 checks** (+26), with three new fixtures (`noink`,
+`inkout`, `inkboth`) and — the part that matters — **every existing fixture now paints the HUD's ink
+too**, because on their own they were all also "the build whose HUD paints nothing"; the new arm red
+four pre-existing rows for exactly that reason before anything else did.
+
+**GATES:** `make -C tests/scripts` rc 0, `All cases match the oracle.`, **792 PASS / 0 FAIL** (was
+766; +26 = the new rows exactly), reading `PASS EmurunHarness (283 checks: … + the HUD's own ink)`.
+`DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`, `PASS L3_f1.bmp
+sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`,
+`COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`, `COMPLETION: LEDGER VERIFIED`,
+`audit_c_with_classes 0 violations`, `SKIP gates_smdh`.
+`DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8` rc 0 with
+`mdk.elf` md5 `72328e9d5fd439d7f75703f5c28ccb80` **UNCHANGED** — correct, since the only
+`mdk_3ds/**` file in the diff is a host shell script. **P8 owed and run on the final build**:
+`DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 12 --expect hud` -> **rc 0**, Mandarine r1.2.1 md5
+`0d2adab6`, display `:99`, `graphics_api=1`, `render_3d=0`, `backend: PICA200 Citro3D`,
+`flow: screen=4 level=7`, frame 480 by the deadline / 600 after the reap, and
+`HUD INK -- 134 of 134 HUD-palette pixels inside crop 200,120-390,234 (bbox 333,206-388,232, 0
+outside)`. Emulator-green is not hardware-pass and no console was used. Frame
+`docs/frames/2026-11-14-the-verdict-could-not-see-the-hud.png` is byte-identical to its predecessors
+(census re-derived: 191 PNGs, 190 at `6769a137…`) with zero pure (0,0,255) pixels over 219 colours —
+nothing on a render path changed, so a changed frame would have been the surprise.
+
+**PRIOR-SOLUTION LOOKUP AND ENVIRONMENT.** Pi knowledge (`mdk-sdl`) searched for prior work on the
+HUD's pixels and on PICA texture addressing: it surfaced the batch-147 register-word-order closure
+and the batch-142 canvas-queue record, and nothing on a HUD-pixel canary. **Obsidian and Cognee MCP
+were ABSENT from this session's tool list** (AGENTS §9 P9: a session fault, recorded and not papered
+over); the vault was read read-only from disk and no Cognee lookup is claimed. `/tmp/kilo` is still
+not writable by this lane, so captures went to `/tmp/mdk-b173-logs/`, and `Xvfb :99` was not
+listening and was started by this lane per P7. The ledger is still unwritable, so the row stays open
+despite a green acceptance — batch 172's item 0, unchanged.
+
 ## Iteration 172 — batch 172: `linux.render-frame` — the run now says it took no picture; it also has to stop leaving last run's picture where it said it would put one
 
 **LEDGER ROW `linux.render-frame` (d1, slow), acceptance `bash tools/check.sh`, attempt 8 of 8 —

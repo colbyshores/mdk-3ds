@@ -1,0 +1,264 @@
+================================================================================
+BATCH 173 — ledger row `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh
+--expect hud`, attempt 1 of the current cycle (`COMPLETION_ITERS=1`; the row's
+previous attempt was batch 162). NOT a review remediation: review-4 is the newest
+review and is all `linux.render-frame` work (see §7). The slice is the row's own
+item 2, open since batch 147: NOTHING PIXEL-PINNED THE HUD'S OWN PIXELS.
+================================================================================
+
+== 1. THE FINDING, AND THE RUN THAT PROVES IT ==
+
+`--expect hud` is this row's acceptance command. It has two arms: the guest's
+`canvas: quads=N draws=N` line, and a pixel verdict (`canary_verdict`) that counts
+pure (0,0,255) pixels inside a derived rect at the panel's top-left corner.
+
+**EVERY PIXEL IN THAT VERDICT IS DRAWN BY THE RENDERER, NOT BY THE HUD.** The
+(0,0,255) square is `renderer_c3d.cpp`'s `drawDiagnostic`, a 16x16 marker the
+backend paints for the harness. The HUD contributes nothing to it. So the
+acceptance for the row named `3ds.hud-canvas` was judging the canvas's plumbing and
+reporting it as the HUD.
+
+MEASURED BEFORE ANYTHING WAS CHANGED, on a build whose HUD queues all four of its
+quads and lands every one of them off the right edge of the canvas — the mutation is
+`x += 600.0f` in `hud_view.cpp`'s `drawImage` AND in its `drawNumber` (which builds
+its own quads rather than going through `drawImage`; see §4):
+
+  PARENT HARNESS (`git show HEAD:mdk_3ds/tools/emurun.sh`), same binary, same log:
+      expect    : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1
+      expect    : HUD VISIBLE -- 121 canary pixels in the panel, 121 inside
+      expect    : the marker's rect 0,0-11,11 (bbox 0,0-10,10, reaching the derived (10,10))
+      rc 0
+
+  THIS BATCH'S HARNESS, same binary, same log, same marker:
+      (the same three lines, then)
+      emurun: HUD NOT PAINTED: 0 pixels of the HUD's own (0,255,0) in
+                the whole panel, 25 needed. ...
+      rc 7
+
+**THE ROW'S ACCEPTANCE WAS GREEN ON A BUILD THAT PAINTS NO HUD.** The log arm could
+not catch it, because the quads really were queued and drawn — through the canvas's
+matrix, the canvas's state, and nowhere the panel is. The marker arm could not catch
+it, because the marker is not the HUD.
+
+This is the same hole batch 147's own record named — "A HUD that drew in the right
+place through a wrong matrix of its own would still pass `--expect hud`" — and the
+mirror of it: a HUD that drew NOWHERE also passed, and still did, eight batches
+after that sentence was written.
+
+== 2. THE INSTRUMENT: THE HUD'S OWN COLOUR ==
+
+The HUD's two sprites are drawn from the LEVEL's palette: `hud_view.cpp`'s
+`drawImage` sets `q.palette = palette_`, and so does `drawNumber`. For level 7 —
+the level this harness boots (`flow: screen=4 level=7`) — that palette contains
+EXACTLY (0,255,0), and the level's own geometry never produces it anywhere in the
+panel. Measured on the shipped capture:
+
+    pure (0,255,0) in the whole 400x240 panel:  134
+    of those inside the HUD's own rect:         134
+    outside:                                      0
+    bbox:                          crop (333,206)-(388,232)
+
+That is the same one-colour-canary argument the marker rests on ("a colour the level
+cannot produce"), moved one layer up from the renderer's diagnostic to the HUD's own
+draw. The uniqueness claim is not left as prose: the `outside` arm refuses the
+verdict outright if the colour appears anywhere the panel's anchoring cannot reach,
+so a level that starts producing it breaks the instrument loudly instead of quietly
+certifying it.
+
+`hud_ink_stats` counts total / inside / outside / bbox; `hud_ink_verdict` adjudicates
+them with the same arm discipline the marker's verdict learned over five reviews:
+the harness's own constants validated first (a `[ ]` either side of which bash cannot
+parse exits 2, the `if` walks past its body, and the function prints a green verdict
+over a measurement it never made — review-2 F2), then the counts, then the relations
+the counter guarantees by construction (`inside + outside == total`,
+`inside <= rect area`), then the verdicts, then the bbox (which must be able to hold
+what it counted and must not reach outside the rect every one of those pixels was
+counted inside — review-4 F1's shape, on the new counter's own fields). The area arm
+is `10#`-qualified for review-5 F1's reason: `decimal_measurement` deliberately
+accepts a leading zero, and bash arithmetic reads `0333` as octal 219 — or, for
+`0388`, as no base at all, which aborts the script at an undocumented rc 1.
+
+== 3. THE RECT IS DERIVED, AND THE DERIVATION IS AN IMPORT ==
+
+    canvas   600 x 360 units   (kCanvasHeight x the frame's aspect — the SAME
+                                imported expression the marker's rect uses, read
+                                out of mdk_render_canvas_width's own return)
+    crop     400 x 240, so crop = canvas x 2/3 on both axes
+    panel    anchored bottom-right: right edge at canvas x = 600 - kPanelRight(16)
+             = 584 -> crop 389.33; bottom edge at canvas y = 360 - kPanelBottom(10)
+             = 350 -> crop 233.33
+
+so the far corner is `ceil` -> (390, 234), for the same reason `CANARY_X1` is
+`ceil`: a rect that stops inside the derived corner rejects an honest pixel on a
+rounding nobody argued about.
+
+**THE NEAR CORNER IS NOT DERIVABLE THE SAME WAY, AND THAT IS SAID OUT LOUD.**
+`panel_.w` and `panel_.h` come from the sprite asset — `hud_view.cpp` reads
+`texture.width()` / `texture.height()` — not from the source, so no source
+derivation can produce the panel's near corner. What the anchoring still guarantees
+is a BOUND: a panel that fits inside half the canvas on each axis (the shipped one
+is 84x63 against 600x360) lies entirely in the canvas's bottom-right quadrant, i.e.
+at or past crop (200,120). The rect is therefore a bound and not a rectangle, and
+both the harness comment and the test say so rather than pretending to a precision
+the source does not contain.
+
+`tests/scripts/emurun_harness_test.sh` re-derives all four numbers from
+`hud_view.cpp`'s own `kPanelRight` / `kPanelBottom` plus the imported canvasWidth,
+and reddens on disagreement. **AND THE IMPORT IS PROVEN TO BE AN IMPORT:** the
+existing mutation that swaps `kScreenWidth`/`kScreenHeight` inside
+`mdk_render_canvas_width` now has to move the ink rect's far corner too, and a new
+row asserts exactly that. A derivation that only LOOKS like it reads the renderer is
+the failure this block exists to prevent (review-1 F1's rule, one rect over).
+
+== 4. WHAT THE MEASUREMENT TAUGHT THAT NOBODY HAD WRITTEN DOWN ==
+
+Two claims in this batch's own first drafts were WRONG and the capture corrected
+both. They are recorded here rather than quietly rewritten.
+
+(a) **THE HEALTH NUMBER READS "100" AND IS LEGIBLE.** The first mutation shifted
+    only `drawImage`, on the assumption that the digits come from it. They do not:
+    `drawNumber` builds its own `CanvasQuad`s. The mutant's capture showed the
+    panel gone and a crisp, correctly-shaped "100" still sitting in the panel's
+    region at (0,255,0) — 60 pixels, bbox (359,208)-(369,215). So the digits are
+    fine. **The scrambled part is the PANEL SPRITE, not the number.** Every earlier
+    note in this row that said "the digits are smeared" was describing the panel
+    behind them.
+
+(b) **THE INK IS BOTH SPRITES, NOT THE DIGITS ALONE.** With the panel sprite pushed
+    off-screen, 74 of the 134 green pixels remained; with the digits removed, 76
+    remained. The panel sprite's own body carries (0,255,0) texels. The instrument
+    is therefore "the HUD's own palette colour", which is what §2 now says, and
+    `HUD_INK_MIN=25` sits at a sixth of the shipped 134 rather than being tuned to
+    one sprite's contribution.
+
+== 5. THE OPEN DEFECT THIS BATCH NARROWS BUT DOES NOT FIX: THE CANVAS'S TEXTURES ==
+
+The panel sprite reaches the panel and is wrong: a fine vertical stripe pattern
+instead of the oval, at a period of ~5.3 crop px where the derived geometry says
+21.3 — a factor of 4. Measured, not guessed:
+
+  * The CPU-side texels are correct: the expanded RGBA bytes were read back and
+    match the index image and palette byte for byte.
+  * The vertices are correct: the panel's quad is pos (500,287)-(584,350) with uv
+    (0,0)-(1,1), and the marker's measured 10.67 crop px for 16 canvas px confirms
+    the canvas->crop scale is 2/3 on both axes, so 84 texels map to 56 crop px.
+  * The UV transform reaches the shader: forcing `uvtransform` from 0.6562 to 1.0
+    moved the stripe period by exactly the ratio (5.33 -> 3.0 crop px, aliased).
+  * Writing a synthetic pattern straight into the GPU's texture buffer does not come
+    out as written. A period-32 square wave renders ~4x too many bands. A
+    left-white / right-black half pattern renders as TOP-white / BOTTOM-black. A
+    block pattern (white where x<42 and y>=32) renders as vertical stripes in the
+    top band only.
+  * A reciprocal-UV "fix" (divide the transform by 4) was tried and REJECTED on
+    measurement: with the panel's uv scaled by 1/4 the digits stop reading "100".
+    A hack that makes one pattern look plausible while breaking the element the HUD
+    exists to show is not a fix, and nothing was shipped on it.
+
+**NOT DETERMINED, AND NOT GUESSED AT:** whether the factor is in citro3d's
+`C3D_TexInit` linear-stride handling, in the PICA's UV->texel mapping for RGBA8, or
+in something about how this backend's shader consumes `outtexcoord`. `C3D_Tex`
+carries no stride field, so the stride is computed inside libcitro3d, whose source
+is not in this tree; the shipped `.shbin` was verified reproducible and up to date
+(`touch` the `.pica`, rebuild, identical md5 `59d5e0e8ec1dc12827b6cd516715de0f`), so
+the shader is the shader that was written. The scene textures are probably affected
+too — the level shows a fine crosshatch that disappears when the uv is divided —
+which is why this is the row's next slice and not a HUD-only cosmetic.
+
+This is written up as an open item rather than fixed because a fix needs the
+GPU-side addressing rule established by measurement, and a /4 that makes the panel
+look tidier while breaking the digits is the kind of change this row has spent
+fifteen batches learning not to ship.
+
+== 6. THE TEST ==
+
+`EmurunHarness` is **257 -> 283 checks** (+26). New fixtures: `noink` (the marker
+painted and no ink — §1's mutation as a fixture), `inkout` (ink only outside the
+rect), `inkboth` (ink inside and outside). **AND EVERY EXISTING FIXTURE NOW PAINTS
+THE INK TOO**, because on their own they were all also "the build whose HUD paints
+nothing"; the first run of the new arm red four rows for exactly that reason, which
+is the hole showing up in the fixtures before it showed up in the code.
+
+New rows: the deletion mutation is refused and refused BY NAME; the shipped fixture
+passes and says which half it checked; ink outside the anchoring is MISPLACED; ink
+the level could have made itself REFUSES the verdict; six impossible ink count lines
+are MALFORMED (partition violated, inside past the rect's own area, non-numeric,
+bbox inverted, bbox too small to hold the count, bbox past the rect); five
+non-numeric harness constants refuse to judge; the near-past-far rect is refused; the
+octal premise is re-pinned and a padded-but-consistent line still passes and does not
+abort the shell; the ink rect is re-derived from `hud_view.cpp`; and the canvas
+mutation moves the ink rect's far corner.
+
+NON-VACUITY is not claimed from the fixture alone: §1's parent/new pair on a real
+mutant binary is the proof, and it is the row's own acceptance command that moved.
+
+== 7. REVIEW-4, DISPOSED OF AND DEFERRED WITH CAUSE ==
+
+The newest review is `logs/ralph-pi/run-20261113-190705/review-4.md`. **No Critical
+and no High**, so nothing was mandatory. Its F1-F5 are all `linux.render-frame`
+work (the capture path, the refusal report, `render.h`'s prose) and belong to that
+row, not this one; they are recorded here as deferred-with-cause rather than opened
+as a new slice, because this batch's charter is `3ds.hud-canvas` and expanding a
+batch to pick up another row's Mediums is the mistake the builder brief warns
+against.
+
+== 8. GATES, RUN ==
+
+* `make -C tests/scripts` rc 0, `All cases match the oracle.`, **792 PASS / 0 FAIL**
+  (was 766; +26 = the new `EmurunHarness` rows exactly), this run reading
+  `PASS EmurunHarness (283 checks: config placement + mount ownership + the HUD
+  canary + the HUD's own ink)`.
+* `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`,
+  `PASS L3_f1.bmp sha=58615fc85d02e009`, `VERDICT: CONTRACT CLEAN`,
+  `BATCH INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`,
+  `COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`,
+  `COMPLETION: LEDGER VERIFIED`, `audit_c_with_classes 0 violations`,
+  `gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+  candidates`, `SKIP gates_smdh` (no built .cia to read).
+* `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+  rc 0 with `mdk.elf` md5 `72328e9d5fd439d7f75703f5c28ccb80` **UNCHANGED** — correct,
+  because the only `mdk_3ds/**` file in the diff is `tools/emurun.sh`, a host script
+  that is not compiled in. The mutant builds in §1 and §4 were built and then
+  reverted; the shipped binary is the unmutated one, rebuilt after `git checkout`.
+* **P8 OWED AND RUN** (the row's acceptance is an emulator run, so it was run on the
+  final build, not on a proxy): `DISPLAY=:99 mdk_3ds/tools/emurun.sh --secs 12
+  --expect hud` -> **rc 0**. Mandarine r1.2.1, `md5 0d2adab6`, display `:99`,
+  `graphics_api=1` (OpenGL, the stored value matching what ran), `render_3d=0`
+  (mono), `backend: PICA200 Citro3D`, `flow: screen=4 level=7`, frame 480 by the
+  deadline and 600 after the reap, and:
+
+      expect    : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1
+      expect    : HUD VISIBLE -- 121 canary pixels in the panel, 121 inside
+      expect    : HUD INK -- 134 of 134 HUD-palette pixels inside crop
+      expect    : 200,120-390,234 (bbox 333,206-388,232, 0 outside), none of it
+                  reachable by the level
+
+  Emulator-green is not hardware-pass (AGENTS P8), and no console was used.
+* Frame `docs/frames/2026-11-14-the-verdict-could-not-see-the-hud.png` is
+  byte-identical to its predecessors — census re-derived, not remembered: **191
+  PNGs, 190 at md5 `6769a137…`** — with **zero** pure (0,0,255) pixels over 219
+  colours. Nothing on any render path changed, so a changed frame would have been
+  the surprise; the canary evidence is the live emulator run above and never this
+  committed frame.
+
+== 9. PRIOR-SOLUTION LOOKUP AND ENVIRONMENT ==
+
+* **Pi knowledge (`mdk-sdl`) searched** (hybrid and semantic) for prior findings on
+  the HUD's pixels, the canvas canary, and PICA texture addressing. It surfaced the
+  batch-147 register-word-order closure and the batch-142 canvas-queue record — the
+  plumbing this row already knows — and nothing on a HUD-pixel canary or on the
+  canvas texture's sampling. Retrieved content was treated as untrusted and checked
+  against the tree.
+* **Obsidian and Cognee MCP are ABSENT from this session's tool list** (AGENTS §9 P9:
+  a session configuration fault to report, not a licence to claim the lookup
+  happened). The vault was read read-only from disk; no Cognee graph lookup is
+  claimed.
+* **`/tmp/kilo` is not writable by this lane** (re-measured: `touch` -> Permission
+  denied, `coleshores:coleshores 0775`), so AGENTS §11 P7's capture directory is
+  impossible here and every capture in this batch went to `/tmp/mdk-b173-logs/` on
+  `:99`. The display was recorded for every run, as P7 requires.
+* **`Xvfb :99` was not listening** at the start of the batch and was started by this
+  lane (`Xvfb :99 -screen 0 1280x1024x24`), per P7's "start it if it is not already
+  listening; do not assume it exists".
+* The ledger is still unwritable from this lane (`coleshores:coleshores 0664`, and
+  `tools/runner/ledger_close.py` is PROTECTED), so `3ds.hud-canvas` stays open
+  despite a green acceptance. That owner act is unchanged from batch 172's item 0.

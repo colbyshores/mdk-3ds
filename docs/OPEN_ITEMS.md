@@ -610,6 +610,48 @@ whole suite. When a structural check fails, the question is never "is the litera
 but "what invariant was the literal standing in for" — and after fixing one stale literal, count
 how many arms actually adjudicated, because a second staleness was hiding under the first.
 
+## OPEN (batch 173): the 3DS canvas's textures are sampled wrong by the GPU (found in batch 173)
+
+**WHAT IS WRONG, IN ONE SENTENCE.** The HUD's panel sprite reaches the panel as a fine
+vertical stripe instead of the oval, at a period of ~5.3 crop px where the derived
+geometry says 21.3 — **a factor of ~4 too many texels across the panel's width** — and
+the scene's textures are probably affected the same way (the level shows a fine
+crosshatch that disappears when the uv is divided).
+
+**WHAT HAS BEEN RULED OUT, by measurement and not by reading.** (a) The CPU-side texels
+are correct: the expanded RGBA bytes were read back and match the index image and the
+palette byte for byte. (b) The geometry is correct: the panel's quad is pos
+(500,287)-(584,350) with uv (0,0)-(1,1), and the marker's measured 10.67 crop px for 16
+canvas px confirms the canvas->crop scale is 2/3 on both axes, so 84 texels must map to
+56 crop px. (c) The uv transform reaches the shader: forcing `uvtransform` from 0.6562
+to 1.0 moved the stripe period by exactly that ratio. (d) The shipped `.shbin` is the
+shader that was written — `touch` the `.pica`, rebuild, identical md5
+`59d5e0e8ec1dc12827b6cd516715de0f`.
+
+**WHAT IS NOT ESTABLISHED, AND IS THE SLICE.** The GPU-side UV->texel rule. Writing
+synthetic patterns straight into the texture's linear buffer does not come out as
+written: a period-32 square wave renders ~4x too many bands; a left-white/right-black
+half renders as **top-white/bottom-black** bands; a block (white where x<42 and y>=32)
+renders as vertical stripes confined to the top band. Those three observations are not
+consistent with any single scale factor, which is why this is filed as an addressing
+question and not as a wrong constant. `C3D_Tex` carries no stride field, so the stride
+is computed inside libcitro3d — whose source is not in this tree — from `dim` and `fmt`.
+**The next move is to read that source or disassemble `C3D_TexBind`/`C3D_TexInitWithParams`
+from `libcitro3d.a`, establish the rule, and pin it with a pattern fixture before any
+scale is touched.**
+
+**DO NOT SHIP A /4.** It was tried. With the panel's uv scaled by 1/4 the stripes
+thin out, and **the health digits stop reading "100"** — a change that makes one pattern
+look tidier while breaking the element the HUD exists to show. The digits themselves are
+correct as shipped (see the next paragraph), so any fix that damages them is wrong.
+
+**AND A CORRECTION TO THIS ROW'S OWN STORY: THE DIGITS WERE NEVER BROKEN.**
+`hud_view.cpp`'s `drawNumber` builds its own `CanvasQuad`s rather than going through
+`drawImage`, and the shipped capture shows a crisp, correctly-shaped "100" at crop
+(359,208)-(369,215). Every earlier note in this row that said "the digits are smeared"
+was describing the panel sprite behind them. Full record:
+`docs/evidence/2026-11-14-173-the-verdict-could-not-see-the-hud.txt` §5.
+
 ## CLOSED by batch 147: the 3DS canvas drew no pixels (found in batch 142)
 
 **CLOSED, AND THE CAUSE WAS NOT IN ANY OF THE ELEVEN RUNS.** `pica::registers()` wrote each
