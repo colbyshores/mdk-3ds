@@ -1337,6 +1337,23 @@ bool beginPass(Context* ctx, VkFramebuffer framebuffer, VkRenderPass pass,
     return true;
 }
 
+bool beginDepthPass(Context* ctx, VkFramebuffer framebuffer, VkRenderPass pass,
+                    uint32_t width, uint32_t height) {
+    FrameContext& frame = ctx->frames[ctx->currentFrame];
+    VkClearValue clear = {};
+    clear.depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo passInfo = {};
+    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    passInfo.renderPass = pass;
+    passInfo.framebuffer = framebuffer;
+    passInfo.renderArea.offset = {0, 0};
+    passInfo.renderArea.extent = {width, height};
+    passInfo.clearValueCount = 1;
+    passInfo.pClearValues = &clear;
+    vkCmdBeginRenderPass(frame.commandBuffer, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+    return true;
+}
+
 bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint32_t clearColour) {
     if (ctx->extent.width != width || ctx->extent.height != height) {
         if (!recreateSwapchain(ctx, width, height, vsync)) {

@@ -135,6 +135,7 @@ set(SOURCES
     ${CORE}/src/game/player.cpp
     ${CORE}/src/render/arena_scene.cpp
     ${CORE}/src/render/colour_mips.cpp
+    ${CORE}/src/render/sun_shadow.cpp
     ${CORE}/src/render/camera_builder.cpp
     ${CORE}/src/render/depth_pull.cpp
     ${CORE}/src/render/draw_queue.cpp

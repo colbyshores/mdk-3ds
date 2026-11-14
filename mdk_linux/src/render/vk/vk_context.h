@@ -216,6 +216,10 @@ void endPass(Context* ctx);
 bool beginPass(Context* ctx, VkFramebuffer framebuffer, VkRenderPass pass,
                uint32_t clearColour);
 
+// Begin a depth-only pass, clearing the depth to 1.0 (the shadow map).
+bool beginDepthPass(Context* ctx, VkFramebuffer framebuffer, VkRenderPass pass,
+                    uint32_t width, uint32_t height);
+
 // Submit and present the frame whose render passes are all closed: the
 // scene blit, the command-buffer end, the submit and the present. endFrame
 // is endPass + submitFrame; the stereo path closes its own passes and calls

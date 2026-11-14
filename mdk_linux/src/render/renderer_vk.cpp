@@ -42,6 +42,7 @@
 
 #include "render/depth_pull.h"
 #include "render/colour_mips.h"
+#include "render/sun_shadow.h"
 #include "render/draw_queue.h"
 #include "render/render.h"
 #include "render/render_types.h"
@@ -57,6 +58,7 @@
 #include "shader_gamma_frag.h"
 #include "shader_enhanced_vert.h"
 #include "shader_enhanced_frag.h"
+#include "shader_depth_frag.h"
 
 namespace {
 
@@ -317,6 +319,32 @@ struct RendererVk {
     VkDeviceMemory dummyColourMemory = VK_NULL_HANDLE;
     VkImageView dummyColourView = VK_NULL_HANDLE;
     bool enhancedReady = false;
+
+    // The sun shadow (P6 shadow slice): a 2048x2048 depth target, its
+    // depth-only pass, and the depth pipelines (Solid-culled and not).
+    // The scene is deferred to end_frame under the enhanced look so the
+    // shadow pass can read the whole queue before the scene renders.
+    VkImage shadowImage = VK_NULL_HANDLE;
+    VkDeviceMemory shadowMemory = VK_NULL_HANDLE;
+    VkImageView shadowView = VK_NULL_HANDLE;
+    VkRenderPass shadowPass = VK_NULL_HANDLE;
+    VkFramebuffer shadowFramebuffer = VK_NULL_HANDLE;
+    VkShaderModule depthFragModule = VK_NULL_HANDLE;
+    VkPipeline depthPipelines[2] = {};
+    bool shadowReady = false;
+    float sunMatrix[16] = {};
+    bool deferScene = false;
+
+    // Canvas quads deferred under the enhanced look: the vertices are in
+    // the canvas ring as usual; these say where and with what to draw.
+    struct CanvasRecord {
+        VkDeviceSize offset = 0;
+        int32_t texture = -1;
+        int32_t palette = -1;
+        int32_t frameCount = 1;
+        float colour[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    };
+    std::vector<CanvasRecord> canvasRecords;
     std::vector<PipelineVk> pipelines;
     std::vector<DescPair> descs;
 
@@ -2063,6 +2091,14 @@ void mdk_render_destroy(MdkRenderer rr) {
         destroyBufferPair(r->ctx.device, r->uniformRing[i], r->uniformRingMemory[i]);
         destroyBufferPair(r->ctx.device, r->lightBuffers[i], r->lightMemory[i]);
     }
+    if (r->depthPipelines[0]) vkDestroyPipeline(r->ctx.device, r->depthPipelines[0], nullptr);
+    if (r->depthPipelines[1]) vkDestroyPipeline(r->ctx.device, r->depthPipelines[1], nullptr);
+    if (r->depthFragModule) vkDestroyShaderModule(r->ctx.device, r->depthFragModule, nullptr);
+    if (r->shadowFramebuffer) vkDestroyFramebuffer(r->ctx.device, r->shadowFramebuffer, nullptr);
+    if (r->shadowView) vkDestroyImageView(r->ctx.device, r->shadowView, nullptr);
+    if (r->shadowImage) vkDestroyImage(r->ctx.device, r->shadowImage, nullptr);
+    if (r->shadowMemory) vkFreeMemory(r->ctx.device, r->shadowMemory, nullptr);
+    if (r->shadowPass) vkDestroyRenderPass(r->ctx.device, r->shadowPass, nullptr);
     destroyGammaTarget(r);
     if (r->gammaPipeline) vkDestroyPipeline(r->ctx.device, r->gammaPipeline, nullptr);
     if (r->gammaPipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->gammaPipeLayout, nullptr);
@@ -2742,7 +2778,11 @@ void drawComposite(RendererVk* r) {
 
 namespace {
 bool ensureEnhanced(RendererVk* r);
+bool ensureShadow(RendererVk* r);
+void drawShadowMap(RendererVk* r);
 } // namespace
+
+void replayCanvas(RendererVk* r);
 
 void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererVk* r = asVk(rr);
@@ -2832,14 +2872,54 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     vkCmdSetViewport(cb, 0, 1, &viewport);
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
+    // The scene is deferred under the enhanced look without stereo: the
+    // shadow pass at end_frame reads the whole queue, so nothing draws
+    // into this first pass and the sky waits for the replay.
+    r->deferScene = r->enhancedLook && r->stereo.mode == mdk::StereoMode::Off;
+
     // The sky is drawn first, before the level (SPEC.md 6.3 step 2).
-    drawSky(r);
+    if (!r->deferScene) {
+        drawSky(r);
+    }
 }
 
 void mdk_render_end_frame(MdkRenderer rr) {
     RendererVk* r = asVk(rr);
     if (!r || !r->inFrame) {
         return;
+    }
+    // The deferred enhanced frame: the first pass (begun by begin_frame)
+    // holds nothing; close it, render the sun's depth from the whole
+    // queue, then replay sky, scene and canvas into the scene target.
+    bool deferredFrame = false;
+    if (r->deferScene && r->enhancedReady) {
+        r->replayingEyes = true;
+        mdk::vk::endPass(&r->ctx);
+        if (r->lighting.shadows && ensureShadow(r)) {
+            drawShadowMap(r);
+        }
+        mdk::vk::beginPass(&r->ctx, r->ctx.sceneFramebuffer, r->ctx.renderPass,
+                           r->clearColour);
+        {
+            VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+            VkViewport viewport = {};
+            viewport.x = 0.0f;
+            viewport.y = 0.0f;
+            viewport.width = (float)r->ctx.extent.width;
+            viewport.height = (float)r->ctx.extent.height;
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+            VkRect2D scissor = {{0, 0}, r->ctx.extent};
+            vkCmdSetViewport(cb, 0, 1, &viewport);
+            vkCmdSetScissor(cb, 0, 1, &scissor);
+        }
+        drawSky(r);
+        flushDraws(r);
+        r->queue.reset();
+        replayCanvas(r);
+        mdk::vk::endPass(&r->ctx);
+        r->replayingEyes = false;
+        deferredFrame = true;
     }
     bool stereoFrame = false;
     if (r->stereo.mode != mdk::StereoMode::Off && r->ctx.eyesReady && r->stereoReady) {
@@ -2891,19 +2971,19 @@ void mdk_render_end_frame(MdkRenderer rr) {
     // The gamma grade, when the display's gamma is not 1: the finished
     // scene (or the stereo composite) is graded into its own target and
     // that is presented instead.
-    if (stereoFrame && r->gamma != 1.0f && ensureGamma(r)) {
+    if ((stereoFrame || deferredFrame) && r->gamma != 1.0f && ensureGamma(r)) {
         drawGamma(r);
     }
     bool submitted = false;
-    if (stereoFrame) {
+    if (stereoFrame || deferredFrame) {
         submitted = mdk::vk::submitFrame(&r->ctx);
     }
-    if (!stereoFrame && r->gamma != 1.0f && ensureGamma(r)) {
+    if (!stereoFrame && !deferredFrame && r->gamma != 1.0f && ensureGamma(r)) {
         flushDraws(r);
         mdk::vk::endPass(&r->ctx);
         drawGamma(r);
         submitted = mdk::vk::submitFrame(&r->ctx);
-    } else if (!stereoFrame) {
+    } else if (!stereoFrame && !deferredFrame) {
         // The frame's queued draws go in now, in the oracle's pass order, while the
         // render pass is still open (draw_queue.h). A frontend that drew its HUD
         // already flushed at canvas_begin; this is the catch-all for a frame with no
@@ -3713,7 +3793,7 @@ bool ensureEnhanced(RendererVk* r) {
         return false;
     }
 
-    VkDescriptorSetLayoutBinding bindings[3] = {};
+    VkDescriptorSetLayoutBinding bindings[4] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
@@ -3726,9 +3806,13 @@ bool ensureEnhanced(RendererVk* r) {
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 3;
+    layoutInfo.bindingCount = 4;
     layoutInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &r->enhancedSetLayout) !=
         VK_SUCCESS) {
@@ -3755,7 +3839,7 @@ bool ensureEnhanced(RendererVk* r) {
     for (uint32_t i = 0; i < mdk::vk::kFramesInFlight; i++) {
         VkDescriptorPoolSize poolSizes[2] = {};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[0].descriptorCount = 1024;
+        poolSizes[0].descriptorCount = 2048;
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[1].descriptorCount = 2048;
         VkDescriptorPoolCreateInfo poolInfo = {};
@@ -3893,9 +3977,7 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     u.frameCount = draw->material.frame_count > 0 ? draw->material.frame_count : 1;
     u.frame = draw->frame;
     u.mode = draw->material.shading == mdk::Shading::Sprite ? 2 : 1;
-    for (int i = 0; i < 16; i++) {
-        u.sunMatrix[i] = (i % 5 == 0) ? 1.0f : 0.0f;
-    }
+    memcpy(u.sunMatrix, r->sunMatrix, sizeof(u.sunMatrix));
     u.sun[0] = r->lighting.sun_direction.x;
     u.sun[1] = r->lighting.sun_direction.y;
     u.sun[2] = r->lighting.sun_direction.z;
@@ -3921,9 +4003,9 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     u.haze[2] = r->lighting.haze_colour.b;
     u.haze[3] = r->lighting.haze_density;
     u.shadow[0] = 2048.0f;
-    u.shadow[1] = 0.5f;
-    u.shadow[2] = 0.5f;
-    u.shadow[3] = 0.0f;  // shadows land with the shadow pass slice
+    u.shadow[1] = 0.5f / (2.0f * mdk::kSunShadowReach);
+    u.shadow[2] = 0.5f;  // ShadowNormalOffset
+    u.shadow[3] = (r->lighting.shadows && r->shadowReady) ? 1.0f : 0.0f;
 
     const VkDeviceSize uniformOffset = (VkDeviceSize)r->uniformCursor * stride;
     memcpy(static_cast<uint8_t*>(r->uniformRingMapped[slot]) + uniformOffset, &u, sizeof(u));
@@ -3951,7 +4033,11 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     lightInfo.buffer = r->lightBuffers[slot];
     lightInfo.offset = 0;
     lightInfo.range = 528;
-    VkWriteDescriptorSet writes[3] = {};
+    VkDescriptorImageInfo shadowInfo = {};
+    shadowInfo.sampler = r->colourSampler;
+    shadowInfo.imageView = r->shadowReady ? r->shadowView : r->dummyColourView;
+    shadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet writes[4] = {};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = set;
     writes[0].dstBinding = 0;
@@ -3970,7 +4056,13 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     writes[2].descriptorCount = 1;
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[2].pBufferInfo = &lightInfo;
-    vkUpdateDescriptorSets(r->ctx.device, 3, writes, 0, nullptr);
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = set;
+    writes[3].dstBinding = 3;
+    writes[3].descriptorCount = 1;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[3].pImageInfo = &shadowInfo;
+    vkUpdateDescriptorSets(r->ctx.device, 4, writes, 0, nullptr);
 
     float push[32];
     float mvp[16];
@@ -3999,6 +4091,327 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     if (!primitive) {
         r->triangles += draw->vertex_count / 3;
     }
+}
+
+
+// The sun shadow's objects: a 2048x2048 depth target and its depth-only
+// pass. The depth pipelines reuse the palette layout and sets (the depth
+// fragment discards palette index 0 exactly as depth.hlsl does).
+bool ensureShadow(RendererVk* r) {
+    if (r->shadowReady) {
+        return true;
+    }
+    VkDevice device = r->ctx.device;
+
+    VkAttachmentDescription attachment = {};
+    attachment.format = VK_FORMAT_D32_SFLOAT;
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference depthRef = {};
+    depthRef.attachment = 0;
+    depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass = {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.pDepthStencilAttachment = &depthRef;
+
+    VkSubpassDependency dependencies[2] = {};
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependencies[0].srcAccessMask = 0;
+    dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkRenderPassCreateInfo passInfo = {};
+    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    passInfo.attachmentCount = 1;
+    passInfo.pAttachments = &attachment;
+    passInfo.subpassCount = 1;
+    passInfo.pSubpasses = &subpass;
+    passInfo.dependencyCount = 2;
+    passInfo.pDependencies = dependencies;
+    if (vkCreateRenderPass(device, &passInfo, nullptr, &r->shadowPass) != VK_SUCCESS) {
+        refused("shadow render pass: the frame renders without sun shadows");
+        return false;
+    }
+
+    VkImageCreateInfo imgInfo = {};
+    imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgInfo.imageType = VK_IMAGE_TYPE_2D;
+    imgInfo.format = VK_FORMAT_D32_SFLOAT;
+    imgInfo.extent.width = 2048;
+    imgInfo.extent.height = 2048;
+    imgInfo.extent.depth = 1;
+    imgInfo.mipLevels = 1;
+    imgInfo.arrayLayers = 1;
+    imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imgInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(device, &imgInfo, nullptr, &r->shadowImage) != VK_SUCCESS) {
+        refused("shadow map image: the frame renders without sun shadows");
+        return false;
+    }
+    VkMemoryRequirements req = {};
+    vkGetImageMemoryRequirements(device, r->shadowImage, &req);
+    const uint32_t type = findMemoryType(&r->ctx, req.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == 0xFFFFFFFFu) {
+        refused("shadow map memory type: the frame renders without sun shadows");
+        vkDestroyImage(device, r->shadowImage, nullptr);
+        r->shadowImage = VK_NULL_HANDLE;
+        return false;
+    }
+    VkMemoryAllocateInfo alloc = {};
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.allocationSize = req.size;
+    alloc.memoryTypeIndex = type;
+    if (vkAllocateMemory(device, &alloc, nullptr, &r->shadowMemory) != VK_SUCCESS ||
+        vkBindImageMemory(device, r->shadowImage, r->shadowMemory, 0) != VK_SUCCESS) {
+        refused("shadow map memory: the frame renders without sun shadows");
+        vkDestroyImage(device, r->shadowImage, nullptr);
+        r->shadowImage = VK_NULL_HANDLE;
+        if (r->shadowMemory != VK_NULL_HANDLE) {
+            vkFreeMemory(device, r->shadowMemory, nullptr);
+            r->shadowMemory = VK_NULL_HANDLE;
+        }
+        return false;
+    }
+    VkImageViewCreateInfo viewInfo = {};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = r->shadowImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_D32_SFLOAT;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(device, &viewInfo, nullptr, &r->shadowView) != VK_SUCCESS) {
+        refused("shadow map view: the frame renders without sun shadows");
+        return false;
+    }
+    VkImageView attachments[1] = {r->shadowView};
+    VkFramebufferCreateInfo fbInfo = {};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = r->shadowPass;
+    fbInfo.attachmentCount = 1;
+    fbInfo.pAttachments = attachments;
+    fbInfo.width = 2048;
+    fbInfo.height = 2048;
+    fbInfo.layers = 1;
+    if (vkCreateFramebuffer(device, &fbInfo, nullptr, &r->shadowFramebuffer) != VK_SUCCESS) {
+        refused("shadow framebuffer: the frame renders without sun shadows");
+        return false;
+    }
+
+    r->depthFragModule = createModule(&r->ctx, spv_depth_frag, spv_depth_frag_size);
+    if (!r->depthFragModule) {
+        refused("depth shader module: the frame renders without sun shadows");
+        return false;
+    }
+    for (int cull = 0; cull < 2; cull++) {
+        VkPipelineVertexInputStateCreateInfo vi = {};
+        vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        VkVertexInputBindingDescription binding = {};
+        binding.binding = 0;
+        binding.stride = sizeof(mdk::Vertex);
+        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        VkVertexInputAttributeDescription attrs[3] = {};
+        attrs[0].location = 0; attrs[0].binding = 0; attrs[0].offset = 0;
+        attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attrs[1].location = 1; attrs[1].binding = 0; attrs[1].offset = 12;
+        attrs[1].format = VK_FORMAT_R32G32_SFLOAT;
+        attrs[2].location = 2; attrs[2].binding = 0; attrs[2].offset = 20;
+        attrs[2].format = VK_FORMAT_R8G8B8A8_UNORM;
+        vi.vertexBindingDescriptionCount = 1;
+        vi.pVertexBindingDescriptions = &binding;
+        vi.vertexAttributeDescriptionCount = 3;
+        vi.pVertexAttributeDescriptions = attrs;
+
+        VkPipelineInputAssemblyStateCreateInfo ia = {};
+        ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo vp = {};
+        vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        vp.viewportCount = 1;
+        vp.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo rs = {};
+        rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rs.polygonMode = VK_POLYGON_MODE_FILL;
+        rs.lineWidth = 1.0f;
+        rs.cullMode = cull == 0 ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        VkPipelineMultisampleStateCreateInfo ms = {};
+        ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineDepthStencilStateCreateInfo ds = {};
+        ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        ds.depthTestEnable = VK_TRUE;
+        ds.depthWriteEnable = VK_TRUE;
+        ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        VkPipelineColorBlendStateCreateInfo cbs = {};
+        cbs.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        cbs.attachmentCount = 0;
+        VkDynamicState dynamics[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dyn = {};
+        dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dyn.dynamicStateCount = 2;
+        dyn.pDynamicStates = dynamics;
+        VkPipelineShaderStageCreateInfo stages[2] = {};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = r->vertModule;
+        stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = r->depthFragModule;
+        stages[1].pName = "main";
+        VkGraphicsPipelineCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        info.stageCount = 2;
+        info.pStages = stages;
+        info.pVertexInputState = &vi;
+        info.pInputAssemblyState = &ia;
+        info.pViewportState = &vp;
+        info.pRasterizationState = &rs;
+        info.pMultisampleState = &ms;
+        info.pDepthStencilState = &ds;
+        info.pColorBlendState = &cbs;
+        info.pDynamicState = &dyn;
+        info.layout = r->pipeLayout;
+        info.renderPass = r->shadowPass;
+        info.subpass = 0;
+        if (vkCreateGraphicsPipelines(device, r->pipeCache, 1, &info, nullptr,
+                                      &r->depthPipelines[cull]) != VK_SUCCESS) {
+            refused("shadow depth pipeline: the frame renders without sun shadows");
+            return false;
+        }
+    }
+
+    r->shadowReady = true;
+    return true;
+}
+
+// The sun's depth: the frame's shadow casters (opaque Lit triangles)
+// through the sun's matrix, into the shadow map. Records into the open
+// command buffer with no pass open; closes its own pass and leaves the
+// map readable by the fragment shader.
+void drawShadowMap(RendererVk* r) {
+    mdk::sunShadowMatrix(r->lighting.sun_direction, r->activeCamera.position,
+                         r->lighting.shadow_distance, 2048, r->sunMatrix);
+
+    VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+    VkViewport viewport = {};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = 2048.0f;
+    viewport.height = 2048.0f;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    VkRect2D scissor = {{0, 0}, {2048, 2048}};
+
+    mdk::vk::beginDepthPass(&r->ctx, r->shadowFramebuffer, r->shadowPass, 2048, 2048);
+    vkCmdSetViewport(cb, 0, 1, &viewport);
+    vkCmdSetScissor(cb, 0, 1, &scissor);
+
+    for (int32_t bucketIdx = 0; bucketIdx < mdk::kDrawQueuePassCount; bucketIdx++) {
+        const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(bucketIdx);
+        for (size_t i = 0; i < bucket.size(); i++) {
+            const mdk::MeshDraw& draw = bucket[i];
+            if (draw.primitive != mdk::Primitive::Triangles) {
+                continue;
+            }
+            if (draw.material.pass != mdk::Pass::Solid &&
+                draw.material.pass != mdk::Pass::DoubleSided) {
+                continue;
+            }
+            if (draw.material.shading != mdk::Shading::Lit) {
+                continue;
+            }
+            if (draw.mesh < 0 || draw.mesh >= (int32_t)r->meshes.size() ||
+                !r->meshes[draw.mesh].used || draw.vertex_count <= 0) {
+                continue;
+            }
+            const MeshVk& mesh = r->meshes[draw.mesh];
+            const VkBuffer buffer = mesh.buffer[meshSlot(mesh, &r->ctx)];
+            if (!buffer) {
+                continue;
+            }
+
+            float world[16];
+            if (draw.material.depth_layer != 0) {
+                float pulled[16];
+                mdk::buildDepthPullMatrix(r->activeCamera.position, draw.primitive,
+                                          draw.material.depth_layer, pulled);
+                mulMatrix(draw.world, pulled, world);
+            } else {
+                memcpy(world, draw.world, sizeof(world));
+            }
+            PushConstants pc = {};
+            float ws[16];
+            mulMatrix(world, r->sunMatrix, ws);
+            flipClipY(ws);
+            memcpy(pc.mvp, ws, sizeof(ws));
+            const bool textured = draw.material.texture >= 0 &&
+                                  draw.material.texture < (int32_t)r->textures.size() &&
+                                  r->textures[draw.material.texture].used &&
+                                  r->textures[draw.material.texture].isIndex;
+            pc.textured = textured ? 1 : 0;
+            pc.frame_count = draw.material.frame_count > 0 ? draw.material.frame_count : 1;
+            pc.frame = draw.frame;
+
+            VkPipeline pipeline =
+                r->depthPipelines[draw.material.pass == mdk::Pass::Solid ? 0 : 1];
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            vkCmdPushConstants(cb, r->pipeLayout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(PushConstants), &pc);
+            if (textured) {
+                VkDescriptorSet set =
+                    getDescriptorSet(r, draw.material.texture, draw.material.palette, true);
+                if (!set) {
+                    continue;
+                }
+                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout,
+                                        0, 1, &set, 0, nullptr);
+            }
+            const VkDeviceSize offset = sizeof(mdk::Vertex) * (VkDeviceSize)draw.first_vertex;
+            vkCmdBindVertexBuffers(cb, 0, 1, &buffer, &offset);
+            vkCmdDraw(cb, (uint32_t)draw.vertex_count, 1, 0, 0);
+        }
+    }
+    mdk::vk::endPass(&r->ctx);
+
+    VkImageMemoryBarrier barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = r->shadowImage;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
+                         1, &barrier);
 }
 
 // Record one queued draw into this frame's command buffer. This is what the
@@ -4131,6 +4544,12 @@ void flushDraws(RendererVk* r) {
     if (r->stereo.mode != mdk::StereoMode::Off && !r->replayingEyes) {
         return;
     }
+    // Under the enhanced look the scene is deferred to end_frame (the
+    // shadow pass reads the whole queue first), so a mid-frame flush
+    // waits for the replay there too.
+    if (r->enhancedLook && !r->replayingEyes) {
+        return;
+    }
     for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
         const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
         for (size_t i = 0; i < bucket.size(); i++) {
@@ -4245,7 +4664,50 @@ void mdk_render_canvas_begin(MdkRenderer r) {
         // oracle draws its Overlay bucket last (draw_queue.h).
         flushDraws(vk);
         vk->canvasOffset = 0;
+        vk->canvasRecords.clear();
     }
+}
+
+// The deferred canvas replay: the quads a deferred (enhanced) frame
+// recorded, drawn into the replayed scene pass in order.
+void replayCanvas(RendererVk* r) {
+    const uint32_t slot = r->ctx.currentFrame;
+    for (size_t i = 0; i < r->canvasRecords.size(); i++) {
+        const RendererVk::CanvasRecord& rec = r->canvasRecords[i];
+        PushConstants pc = {};
+        canvasOrtho(pc.mvp, canvasWidth(r));
+        pc.colour[0] = rec.colour[0];
+        pc.colour[1] = rec.colour[1];
+        pc.colour[2] = rec.colour[2];
+        pc.colour[3] = rec.colour[3];
+        pc.textured = (rec.texture >= 0) ? ((rec.palette >= 0) ? 1 : 2) : 0;
+        pc.frame_count = rec.frameCount;
+        pc.frame = 0;
+        pc.unused_ = 0;
+
+        VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay, (int)mdk::Blend::Alpha, 0);
+        if (!pipeline) {
+            continue;
+        }
+        VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdPushConstants(cb, r->pipeLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(PushConstants), &pc);
+        if (pc.textured != 0) {
+            VkDescriptorSet set = getDescriptorSet(r, rec.texture, rec.palette, true);
+            if (!set) {
+                continue;
+            }
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeLayout, 0, 1,
+                                    &set, 0, nullptr);
+        }
+        VkDeviceSize offset = rec.offset;
+        vkCmdBindVertexBuffers(cb, 0, 1, &r->canvasBuffer[slot], &offset);
+        vkCmdDraw(cb, 6, 1, 0, 0);
+        r->drawCalls++;
+    }
+    r->canvasRecords.clear();
 }
 
 void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
@@ -4297,6 +4759,24 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
     pc.frame_count = q->frame_count > 0 ? q->frame_count : 1;
     pc.frame = 0;
     pc.unused_ = 0;
+
+    // Under a deferred (enhanced) frame the quad is recorded, not drawn:
+    // the scene pass it belongs to is replayed at end_frame, and the
+    // canvas is drawn there, over the scene, in order (replayCanvas).
+    if (r->deferScene) {
+        RendererVk::CanvasRecord rec;
+        rec.offset = r->canvasOffset;
+        rec.texture = q->texture;
+        rec.palette = q->palette;
+        rec.frameCount = pc.frame_count;
+        rec.colour[0] = q->colour.r;
+        rec.colour[1] = q->colour.g;
+        rec.colour[2] = q->colour.b;
+        rec.colour[3] = q->colour.a;
+        r->canvasRecords.push_back(rec);
+        r->canvasOffset += bytes;
+        return;
+    }
 
     VkPipeline pipeline = getPipeline(r, (int)mdk::Pass::Overlay, (int)mdk::Blend::Alpha, 0);
     if (!pipeline) {

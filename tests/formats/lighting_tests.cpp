@@ -16,6 +16,7 @@
 #include "formats/mto.h"
 #include "game/level_data.h"
 #include "game/level_light.h"
+#include "render/sun_shadow.h"
 
 #include <cstdio>
 #include <stdio.h>
@@ -139,4 +140,28 @@ MDK_TEST(EnhancedLightingMatchesTheOracle) {
         }
     }
     MDK_CHECK_EQ(matched, (int)(sizeof(kExpected) / sizeof(kExpected[0])));
+}
+
+MDK_TEST(SunShadowMatrixMatchesTheOracle) {
+    // From the C# probe (SunShadow.Matrix over the same inputs, raw bits).
+    const uint32_t kM[16] = {0x3B32E910u, 0xBACD2BDCu, 0xB82CE2A1u, 0x00000000u,
+                             0x3AFAB3D7u, 0x3B126AEEu, 0x3876C121u, 0x00000000u,
+                             0x00000000u, 0x3AFB13B2u, 0xB8D688EFu, 0x00000000u,
+                             0xBD860000u, 0xBDB20000u, 0x3F009708u, 0x3F800000u};
+    float m[16];
+    mdk::sunShadowMatrix(mdk::Vec3{-0.330f, 0.471f, -0.819f},
+                         mdk::Vec3{10.0f, 20.0f, 30.0f}, 300.0f, 2048, m);
+    for (int i = 0; i < 16; i++) {
+        if (bitsOf(m[i]) != kM[i]) {
+            std::printf("  M[%d] got %08X want %08X\n", i, bitsOf(m[i]), kM[i]);
+        }
+        MDK_CHECK_EQ(bitsOf(m[i]), kM[i]);
+    }
+    const uint32_t kM2[16] = {0xBC23D70Au, 0u, 0u, 0u, 0u, 0x3C23D70Au, 0u, 0u,
+                              0u, 0u, 0x3903126Fu, 0u, 0u, 0u, 0x3F000000u, 0x3F800000u};
+    mdk::sunShadowMatrix(mdk::Vec3{0.0f, 0.0f, 1.0f}, mdk::Vec3{0.0f, 0.0f, 0.0f},
+                         100.0f, 2048, m);
+    for (int i = 0; i < 16; i++) {
+        MDK_CHECK_EQ(bitsOf(m[i]), kM2[i]);
+    }
 }

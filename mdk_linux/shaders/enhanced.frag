@@ -35,6 +35,8 @@ layout(set = 0, binding = 2) uniform PointLights {
     vec4 lights[32];
 } pl;
 
+layout(set = 0, binding = 3) uniform sampler2D shadow_map;
+
 layout(location = 0) in vec2 uv;
 layout(location = 1) in vec3 world_position;
 layout(location = 0) out vec4 out_colour;
@@ -75,6 +77,33 @@ vec3 point_lights(vec3 position, vec3 normal) {
     return sum;
 }
 
+// How much sunlight reaches a point: 2x2 shadow map texels compared,
+// then blended; fades out towards the map's edge (enhanced.hlsl).
+float sunlight(vec3 position, vec3 normal) {
+    if (u.shadow.w == 0.0) {
+        return 1.0;
+    }
+    vec4 clip = u.sun_matrix * vec4(position + normal * u.shadow.z, 1.0);
+    vec2 ndc = clip.xy / clip.w;
+    float edge = max(abs(ndc.x), abs(ndc.y));
+    if (edge >= 1.0 || clip.z >= 1.0) {
+        return 1.0;
+    }
+    vec2 texel = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * u.shadow.x - 0.5;
+    ivec2 cell = ivec2(floor(texel));
+    vec2 f = fract(texel);
+    int last = int(u.shadow.x) - 1;
+    float depth = clip.z - u.shadow.y;
+    float lit[4];
+    for (int i = 0; i < 4; i++) {
+        ivec2 at = clamp(cell + ivec2(i % 2, i / 2), ivec2(0), ivec2(last));
+        lit[i] = depth <= texelFetch(shadow_map, at, 0).r ? 1.0 : 0.0;
+    }
+    float light = mix(mix(lit[0], lit[1], f.x), mix(lit[2], lit[3], f.x), f.y);
+    const float fade_width = 0.1;
+    return mix(light, 1.0, clamp((edge - (1.0 - fade_width)) / fade_width, 0.0, 1.0));
+}
+
 // Interleaved gradient noise (Jimenez 2014), the dither.hlsli port.
 vec3 dither(vec3 c, vec2 pixel) {
     float noise = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
@@ -105,8 +134,7 @@ void main() {
     if (u.mode == 1) {
         float facing = max(dot(normal, -u.sun.xyz), 0.0);
         vec3 hemisphere = mix(u.ground.rgb, u.sky.rgb, normal.z * 0.5 + 0.5);
-        float sunlight = 1.0;  // the shadow pass lands in the next slice
-        vec3 light = hemisphere + u.sun_colour.rgb * facing * sunlight +
+        vec3 light = hemisphere + u.sun_colour.rgb * facing * sunlight(position, normal) +
                      point_lights(position, normal);
         lit = tonemap(albedo * u.sun.w * light, u.sky.w);
     }
