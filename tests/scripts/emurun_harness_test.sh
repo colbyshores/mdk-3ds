@@ -420,6 +420,15 @@ check "the expectation block was lifted from emurun.sh (non-vacuity)" "1" \
       "$(lift_contains "$EXPECT_FN" "expect_check()")"
 check "and the lift is syntactically complete, not a truncation of it" "0" \
       "$(printf '%s\n' "$EXPECT_FN" | bash -n 2>/dev/null; printf '%s' "$?")"
+# AND SYNTACTIC COMPLETENESS IS NOT ENOUGH (learned the hard way in this batch). A comment
+# line that loses its `#` is a perfectly valid SHELL -- a command name followed by
+# arguments -- so `bash -n` green-lit one, the whole fixture suite stayed green over it,
+# and the shipped harness printed `emurun.sh: line 1268: The: command not found` in a real
+# emulator run while still returning the right verdict. So the block must also be SILENT
+# when evaluated: a function definition writes nothing, and anything else that runs is
+# prose that escaped its comment.
+check "and evaluating the lifted block runs nothing (no comment line lost its hash)" "0" \
+      "$( ( eval "$EXPECT_FN" ) 2>&1 | grep -c 'command not found' )"
 # THE RACE, PINNED. A presence check on a committed file must be deterministic, so the row
 # repeats the real 32 KB block 200 times and requires the same answer every time. On the
 # piped form the canary row reds 7-15% of runs at this payload on this host, so 200
@@ -488,13 +497,16 @@ HUD_INK_X1="$(sed -n 's/^HUD_INK_X1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_Y1="$(sed -n 's/^HUD_INK_Y1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_MIN="$(sed -n 's/^HUD_INK_MIN=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_REACH="$(sed -n 's/^HUD_INK_REACH=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_SHORTFALL="$(sed -n 's/^HUD_INK_SHORTFALL=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_REACH_MAX="$(sed -n 's/^HUD_INK_REACH_MAX=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 check "the harness declares the marker rect, its reach and the floor" "5" \
       "$([ -n "$CANARY_X1" ] && [ -n "$CANARY_Y1" ] && [ -n "$CANARY_REACH_X" ] \
          && [ -n "$CANARY_REACH_Y" ] && [ -n "$CANARY_MIN" ] && echo 5 || echo 0)"
-check "and it declares the HUD's own ink rect, its floor and its reach" "6" \
+check "and it declares the HUD's own ink rect, its floor and its reach" "8" \
       "$([ -n "$HUD_INK_X0" ] && [ -n "$HUD_INK_Y0" ] && [ -n "$HUD_INK_X1" ] \
          && [ -n "$HUD_INK_Y1" ] && [ -n "$HUD_INK_MIN" ] && [ -n "$HUD_INK_REACH" ] \
-         && echo 6 || echo 0)"
+         && [ -n "$HUD_INK_SHORTFALL" ] && [ -n "$HUD_INK_REACH_MAX" ] \
+         && echo 8 || echo 0)"
 # AND THE FIXTURE REFUSES TO RUN WITHOUT THEM (review-1 F4). Silently carrying an
 # empty CANARY_X1 into the capture builder made python raise ValueError, which left
 # CAP_YES empty, and four PRE-EXISTING rows then failed for a fixture reason and
@@ -503,13 +515,27 @@ check "and it declares the HUD's own ink rect, its floor and its reach" "6" \
 # new rule's work.
 for v in CANARY_X1 CANARY_Y1 CANARY_REACH_X CANARY_REACH_Y CANARY_MIN \
          CANARY_MAX_PIXELS CANARY_MAX_COORD \
-         HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1 HUD_INK_MIN HUD_INK_REACH; do
+         HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1 HUD_INK_MIN HUD_INK_REACH \
+         HUD_INK_SHORTFALL HUD_INK_REACH_MAX; do
     case "${!v}" in
         ''|*[!0-9]*)
             echo "EMURUN HARNESS: $EMU declares no numeric $v -- the fixture cannot be built" >&2
             exit 1 ;;
     esac
 done
+# AND THE FIXTURE REFUSES A BUDGET THAT HAS LEFT ITS CALIBRATION BAND (review-2 F1). The
+# ink fixtures are ANCHORED TO THE BUDGET -- that is what makes them pin the arm and not
+# today's number -- so a budget of 88 would push the boundary fixture's block up past the
+# rect's near edge and the row would red as `HUD INK NOT UNIQUE`, a fixture reason wearing
+# a measurement's clothes (measured by the reviewer at REACH=89, and it is the reason this
+# file's own doctrine says a row must not red that way). Say what is actually wrong.
+if [ "$HUD_INK_REACH" -lt "$HUD_INK_SHORTFALL" ] || [ "$HUD_INK_REACH" -ge "$HUD_INK_REACH_MAX" ]; then
+    echo "EMURUN HARNESS: $EMU sets HUD_INK_REACH=$HUD_INK_REACH outside its calibration" >&2
+    echo "  band [$HUD_INK_SHORTFALL,$HUD_INK_REACH_MAX): the ink fixtures are ANCHORED TO" >&2
+    echo "  THE BUDGET, so they cannot be built against one that has left the measurement" >&2
+    echo "  it was taken from. A red here would be a fixture reason, not a measurement." >&2
+    exit 1
+fi
 
 # A synthetic emulator capture, so the PIXEL half of `--expect hud` is exercised
 # here too. `--expect hud` now demands the canary as well as the log line (review-1
@@ -535,9 +561,10 @@ done
 # with the shipped (a,b) = (1,-1). Each block's corner below is COMPUTED from (a,b)
 # through the mapping the harness documents, so a fixture cannot drift from the
 # transform it names -- and all four dispositions are rows here, not one.
-cap() { # cap <here|none|turn|flip|rot180|wide|small|noink|inkout|inkboth|inknear|inkreach> -> path to a synthetic capture
+cap() { # cap <here|none|turn|flip|rot180|wide|small|noink|inkout|inkboth|inknear|inkreach|inkshort|inkreachshort|inkband> -> path to a synthetic capture
     python3 - "$1" "$ROOT/tools/panel_crop.py" "$CANARY_REACH_X" "$CANARY_REACH_Y" \
-              "$HUD_INK_X0" "$HUD_INK_Y0" "$HUD_INK_X1" "$HUD_INK_Y1" "$HUD_INK_REACH" <<'PY'
+              "$HUD_INK_X0" "$HUD_INK_Y0" "$HUD_INK_X1" "$HUD_INK_Y1" "$HUD_INK_REACH" \
+              "$HUD_INK_SHORTFALL" "$HUD_INK_REACH_MAX" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
 from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1
@@ -554,6 +581,10 @@ ix0, iy0, ix1, iy1 = (int(v) for v in sys.argv[5:9])
 # The reach budget, imported for the same reason the rect is: a fixture that restates it
 # certifies a copy of the rule instead of the rule.
 ink_reach = int(sys.argv[9])
+# The calibration the budget was derived from, and the band's ceiling, both imported for
+# the same reason. `inkband` below is the one ink fixture NOT anchored to the budget, and
+# it is the row that catches the budget being loosened (review-2 F1).
+ink_short, ink_max = int(sys.argv[10]), int(sys.argv[11])
 W, H = PANEL_X1 - PANEL_X0 + 1, PANEL_Y1 - PANEL_Y0 + 1
 img = Image.new("RGB", (1280, 1024), (16, 32, 48))
 px = img.load()
@@ -610,7 +641,8 @@ elif mode == "small":
     # The mirror-image defect: a canvasWidth too LARGE shrinks the marker to 8x8 = 64 px,
     # wholly inside the rect and still clearing the floor. Only an extent test sees it.
     block(0, 0, size_x - 3, size_y - 3)
-elif mode in ("noink", "inkout", "inkboth", "inknear", "inkreach"):
+elif mode in ("noink", "inkout", "inkboth", "inknear", "inkreach",
+              "inkshort", "inkreachshort", "inkband", "inkreachx", "inkreachy"):
     # The shipped marker, so the MARKER's arms pass and the failure these fixtures stand
     # for is the HUD's own half. Without this the fixture paints nothing at all, the
     # marker's arm rejects it first, and the ink message these rows grep for is never
@@ -624,7 +656,8 @@ elif mode in ("noink", "inkout", "inkboth", "inknear", "inkreach"):
 # nothing -- which is the hole, not the fixture. So the shipped case paints the ink too,
 # and three fixtures are the ink's own failures: noink (the off-the-edge mutation), inkout
 # (the HUD drew, somewhere else) and inkboth (the level makes the colour itself).
-if mode not in ("none", "noink", "inkout", "inknear", "inkreach"):
+if mode not in ("none", "noink", "inkout", "inknear", "inkreach",
+                "inkshort", "inkreachshort", "inkband", "inkreachx", "inkreachy"):
     digits(ix1 - 55, iy1 - 26)
 if mode == "inkout":
     digits(20, 60)
@@ -641,6 +674,36 @@ if mode == "inkreach":
     # (derived far corner - HUD_INK_REACH). The arm refuses on `<`, so this must pass, and
     # a budget that reddens its own boundary is a budget nobody can reason about.
     digits(ix1 - ink_reach - 55, iy1 - ink_reach - 26)
+if mode == "inkshort":
+    # THE CALIBRATION'S OWN MEASUREMENT: the ink stops exactly HUD_INK_SHORTFALL px short
+    # of the derived corner, which is what the shipped capture measures (bbox far corner
+    # 388,232 against the derived 390,234). A budget trimmed below the number it was
+    # derived from reddens the capture it was derived from, and this is that fixture.
+    digits(ix1 - ink_short - 55, iy1 - ink_short - 26)
+if mode == "inkreachshort":
+    # THE FAILING SIDE OF THE BUDGET (review-2 F1). The fixture above sits AT the budget
+    # and passes; nothing sat one past it, so the arm's edge was pinned from one side only
+    # and an off-by-one widening of the comparison was invisible. Derived from the budget
+    # like the boundary fixture, so it pins the EDGE and not today's number.
+    digits(ix1 - ink_reach - 56, iy1 - ink_reach - 27)
+if mode == "inkreachx":
+    # ONE AXIS AT A TIME, because the arm is a DISJUNCTION (`x short OR y short`) and a
+    # fixture that displaces both axes together cannot tell them apart. Measured in this
+    # batch's own mutant table: widening ONLY the x term (bx1 + REACH*2) left every
+    # both-axes fixture refusing on y, so the suite stayed green over a budget doubled on
+    # one axis -- review-2 F1's class, arriving through the axis instead of the constant.
+    # Here y sits flush on the derived corner, so only x can refuse.
+    digits(ix1 - ink_reach - 56, iy1 - 26)
+if mode == "inkreachy":
+    # The mirror: x flush, y one past the budget.
+    digits(ix1 - 55, iy1 - ink_reach - 27)
+if mode == "inkband":
+    # AN ABSOLUTE SHORTFALL, NOT DERIVED FROM THE BUDGET. Every other ink fixture moves
+    # when HUD_INK_REACH moves, which is exactly why raising the budget from 12 to 88 left
+    # all 296 checks green (review-2 F1, measured). This one stops at the calibration
+    # band's ceiling whatever the budget says, so loosening the budget until it swallows a
+    # displacement that large reddens here instead of passing quietly.
+    digits(ix1 - ink_max - 55, iy1 - ink_max - 26)
 path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % mode)
 img.save(path)
 print(path)
@@ -658,6 +721,11 @@ CAP_INKOUT="$(cap inkout)"
 CAP_INKBOTH="$(cap inkboth)"
 CAP_INKNEAR="$(cap inknear)"
 CAP_INKREACH="$(cap inkreach)"
+CAP_INKSHORT="$(cap inkshort)"
+CAP_INKREACHSHORT="$(cap inkreachshort)"
+CAP_INKREACHX="$(cap inkreachx)"
+CAP_INKREACHY="$(cap inkreachy)"
+CAP_INKBAND="$(cap inkband)"
 
 # THE RECTANGLE IS DERIVED, NOT REMEMBERED. The expectation lives in the harness as a
 # pair of integers; the geometry that produces it lives in the shipped renderer. If
@@ -1445,13 +1513,85 @@ check "the reach budget is INCLUSIVE: a far corner exactly on it passes" "0" \
       "$(ink_verdict_rc "$CAP_INKREACH")"
 check "and the shipped fixture's own 2 px shortfall is well inside it" "1" \
       "$(ink_verdict_msg "$CAP_YES" | grep -c 'HUD INK --')"
-# THE OTHER PRODUCER review-1 F1 named. The `outside` refusal used to blame only the
-# level, but drawInventory's icons and the bar/skull are drawn from the SAME palette and
-# are not inside this rect, so a green icon is a HUD-side cause of the same refusal and a
-# reader told "the level makes that colour" would go looking in the wrong tree.
-check "the NOT UNIQUE refusal names the HUD's own other elements as well as the level" "1" \
+
+# THE BUDGET IS A CALIBRATION AND NOT A KNOB (review-2 F1). The arm's LOGIC was pinned;
+# its TOLERANCE was not. Every ink fixture above is anchored to HUD_INK_REACH, so raising
+# the budget moves the fixtures with it -- measured by the reviewer, 12 -> 88 left all 296
+# checks green, and re-measured here. A tolerance nothing can see is not a tolerance, and
+# this file's own record says a budget that reddens gets tuned rather than deleted, so
+# tuning upward is the expected move. It is now allowed exactly as far as its calibration
+# reaches: the measured shortfall is a constant, the ceiling is ten times it, and the
+# shipped harness REFUSES a budget outside that band instead of quietly becoming a count
+# test. These rows are the band, from both sides, at the measurement and at the ceiling.
+check "the shipped budget sits inside its own calibration band" "1" \
+      "$( [ "$HUD_INK_REACH" -ge "$HUD_INK_SHORTFALL" ] \
+           && [ "$HUD_INK_REACH" -lt "$HUD_INK_REACH_MAX" ] && echo 1 || echo 0)"
+check "and the ceiling is ten times the measurement it was calibrated on" \
+      "$(( HUD_INK_SHORTFALL * 10 ))" "$HUD_INK_REACH_MAX"
+check "verdict: ink stopping AT the measured shortfall passes -- the budget must cover its own measurement" "0" \
+      "$(ink_verdict_rc "$CAP_INKSHORT")"
+check "and it is the ink verdict passing, not a vacuous one" "1" \
+      "$(ink_verdict_msg "$CAP_INKSHORT" | grep -c 'HUD INK --')"
+check "verdict: ink ONE crop px past the budget is REFUSED -- the failing side of the edge" "1" \
+      "$(ink_verdict_rc "$CAP_INKREACHSHORT")"
+check "and it is refused BY NAME as an anchor failure" "1" \
+      "$(ink_verdict_msg "$CAP_INKREACHSHORT" | grep -c 'HUD NOT AT ITS ANCHOR')"
+check "and no green ink line is printed over that refusal" "0" \
+      "$(ink_verdict_msg "$CAP_INKREACHSHORT" | grep -c 'HUD INK --')"
+# EACH AXIS ON ITS OWN. The arm is `x short OR y short`, so a both-axes fixture cannot
+# distinguish the two terms: measured here, a harness that doubles ONLY the x term still
+# refused every both-axis fixture on y and the whole suite stayed green over a budget
+# doubled on one axis. These two fixtures refuse to let that happen again.
+check "verdict: one px past the budget on X ALONE is refused" "1" \
+      "$(ink_verdict_rc "$CAP_INKREACHX")"
+check "and it is the anchor arm that says so" "1" \
+      "$(ink_verdict_msg "$CAP_INKREACHX" | grep -c 'HUD NOT AT ITS ANCHOR')"
+check "verdict: one px past the budget on Y ALONE is refused" "1" \
+      "$(ink_verdict_rc "$CAP_INKREACHY")"
+check "and that one is the anchor arm too" "1" \
+      "$(ink_verdict_msg "$CAP_INKREACHY" | grep -c 'HUD NOT AT ITS ANCHOR')"
+check "verdict: a displacement at the band's CEILING is refused" "1" \
+      "$(ink_verdict_rc "$CAP_INKBAND")"
+check "and at the shipped budget it is an anchor refusal and not a parse failure" "1" \
+      "$(ink_verdict_msg "$CAP_INKBAND" | grep -c 'HUD NOT AT ITS ANCHOR')"
+# THE BAND IS ENFORCED BY THE SHIPPED INSTRUMENT, not only by this file, because a test
+# someone can choose not to run is not a gate. 88 is the reviewer's own measured
+# loosening, kept as a literal so the exact attack is a row and not an inference.
+for v in $(( HUD_INK_SHORTFALL - 1 )) "$HUD_INK_REACH_MAX" 88; do
+    check "verdict: a HUD_INK_REACH of $v is outside the band and refuses to judge" "1" \
+          "$( ( eval "$EXPECT_FN"; HUD_INK_REACH=$v; canary_verdict "$CAP_YES" ) \
+              2>&1 | grep -c 'HUD MALFORMED' )"
+done
+check "while the legal edge of the band, one below the ceiling, still judges" "0" \
+      "$( ( eval "$EXPECT_FN"; HUD_INK_REACH=$(( HUD_INK_REACH_MAX - 1 )); \
+           canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?" )"
+check "and the legal floor, exactly the measurement, still judges" "0" \
+      "$( ( eval "$EXPECT_FN"; HUD_INK_REACH=$HUD_INK_SHORTFALL; \
+           canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?" )"
+check "and the refusal says what to do instead of widening the number" "1" \
+      "$( ( eval "$EXPECT_FN"; HUD_INK_REACH=88; canary_verdict "$CAP_YES" ) \
+          2>&1 | grep -c 'restate HUD_INK_SHORTFALL' )"
+
+# THE OTHER PRODUCER review-1 F1 named, now stated as the code actually behaves (review-2
+# F3). The batch that added this message blamed `drawInventory`'s icons -- but main_3ds.cpp
+# leaves HudState::slots EMPTY and barMax at 0, so neither the icons nor the bar draws
+# anything in the shipped build; and it said the skull was "not inside this rect", when
+# hud_view.cpp centres it on the canvas centre, which IS this rect's near corner (crop
+# 200,120), so it straddles the bound and half of it is outside by construction. A dead-
+# Kurt capture is the reachable HUD-side cause, and a reader sent to the inventory tree
+# would have found an empty vector.
+check "the NOT UNIQUE refusal names the level and the death skull, not an unreachable icon row" "1" \
       "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '60 40 20 333 206 388 232\n'; }
-           canary_verdict "$CAP_YES" ) 2>&1 | grep -c "HUD'S OWN OTHER" )"
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c "HUD'S OWN DEATH" )"
+check "and it says WHY the skull lies outside: it straddles the near corner" "1" \
+      "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '60 40 20 333 206 388 232\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'STRADDLES' )"
+check "and it no longer sends the reader to an inventory this build never fills" "0" \
+      "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '60 40 20 333 206 388 232\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'drawInventory' )"
+check "and it states that the bar and the slots are empty here rather than implying they paint" "1" \
+      "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '60 40 20 333 206 388 232\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'slots' )"
 # AND THE LINE THAT ANNOUNCED A PASS INSIDE A FAILURE (review-1 F5). The marker's verdict
 # printed `HUD VISIBLE` immediately before the ink arm refused the run, so a rejected
 # transcript carried a HUD success on the line above the refusal. The line judges the
@@ -1475,7 +1615,8 @@ for bad in "100 60 60 333 206 388 232" "30000 30000 0 333 206 388 232" \
 done
 # AND THE HARNESS'S OWN SIDE OF EACH COMPARISON, because either side can be the
 # unevaluable one and a HUD_INK_MIN of `x` fails open exactly the way a bad count does.
-for v in HUD_INK_MIN HUD_INK_REACH HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1; do
+for v in HUD_INK_MIN HUD_INK_REACH HUD_INK_SHORTFALL HUD_INK_REACH_MAX \
+         HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1; do
     check "verdict: a non-numeric $v refuses to judge rather than pass" "1" \
           "$( ( eval "$EXPECT_FN"; eval "$v=x"; canary_verdict "$CAP_YES" ) \
               2>&1 | grep -c 'HUD MALFORMED' )"

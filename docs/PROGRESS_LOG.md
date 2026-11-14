@@ -1,3 +1,119 @@
+## Iteration 175 — batch 175: `3ds.hud-canvas` — review-2 remediation: the reach budget was a knob nothing could see (loosen it 7.3× and all 296 checks stayed green), so the calibration now has a band and the shipped harness refuses a budget that has left it
+
+**LEDGER ROW `3ds.hud-canvas` (d1), acceptance `mdk_3ds/tools/emurun.sh --expect hud`,
+attempt 3 of the current cycle. REMEDIATION batch on review-2
+(`logs/ralph-pi/run-20261114-003546/review-2.md`, on batch 174): VERDICT INCOMPLETE, **no
+Critical and no High**, one must-fix Medium (F1) and three Lows (F2, F3, F4). All four were
+reproduced against the tree before anything was changed and all four are FIXED; nothing is
+rebutted. This batch also found two defects in its own first cut — one through its own
+mutant table, one through the real emulator run — and both are fixed and pinned. Full
+record: `docs/evidence/2026-11-14-175-the-budget-has-a-band.txt`.**
+
+**F1 IS THE MUST-FIX AND THE REVIEWER WAS RIGHT, RE-MEASURED HERE AND NOT ACCEPTED ON
+THEIR WORD.** Every ink fixture in the harness test is anchored to `HUD_INK_REACH`, so
+raising the budget moves the fixtures with it: the parent test on the parent harness with
+only that constant set to 88 printed **`PASS EmurunHarness (296 checks)`, rc 0** — a 7.3×
+loosening of the one tolerance that makes the ink rect a placement test, invisible to the
+whole suite. And the record's own line — a budget that reddens its own boundary gets
+deleted rather than tuned — makes tuning upward the expected move, so the finding's failure
+scenario was not hypothetical. **THE POLICY review-2's open question 1 asked for: a budget
+is a CALIBRATION, a measurement times a margin, so the measurement is now a constant and the
+band is derived from it.** `HUD_INK_SHORTFALL=2` (the shipped capture's measured shortfall:
+bbox far 388,232 against the derived 390,234), `HUD_INK_REACH=12` unchanged at six times it,
+`HUD_INK_REACH_MAX=20` at ten times it and EXCLUSIVE. `hud_ink_verdict` now refuses a budget
+outside `[SHORTFALL, REACH_MAX)` as `HUD MALFORMED` — **in the shipped instrument, not only
+in a test file someone can choose not to run** — and the refusal names the remedy: re-measure
+the shortfall on a capture and restate the measurement, saying which capture, instead of
+editing a bare integer. The reviewer's alternative (a ceiling derived from the rect,
+`HUD_INK_X1/4`) was measured and does not work: 390/4 = 97 admits the 88 the finding is
+about. A rect fraction is not a calibration; a multiple of the measurement is.
+
+**FIVE NEW FIXTURES AND THE ONE THAT ACTUALLY CATCHES A LOOSENING.** `inkshort` (shortfall
+== the measurement → passes: the budget must cover what it was derived from, which replaces
+the accidental lower pin the reviewer found at REACH=0), `inkreachshort` (REACH+1 → refuses
+by name: the failing side of the edge, which nothing sat on), `inkband` (**shortfall == the
+ceiling, ABSOLUTE, not anchored to the budget** → refuses: this is the row a loosening
+reddens), and `inkreachx`/`inkreachy`, one axis each. The test file also refuses to BUILD
+its fixtures against an out-of-band budget, because they are anchored to it and a block
+pushed above `HUD_INK_Y0` would red as `HUD INK NOT UNIQUE` — the reviewer's own REACH=89
+fixture-reason observation, and a row must not red that way. **NINE MUTANTS, EVERY ONE
+KILLED BY ITS OWN ROWS**: arm deleted (12 FAIL), arm widened on x (2), on y (2), the x term
+dropped (2), the edge made exclusive (1), the band guard deleted (4), its ceiling made
+inclusive (1), its floor made inclusive (1), the F3 message reverted (4). **THE FOUR-WAY**:
+new/working rc 0 (321 checks); new/PARENT harness rc 1, one red (its fixture guard refuses a
+harness declaring no `HUD_INK_SHORTFALL`, so per-arm non-vacuity is the mutant table, as in
+batch 174); PARENT test/working rc 1 with **exactly one red, and it is the parent's own row
+pinning the sentence review-2 F3 required changing** — not collateral; PARENT/PARENT rc 0
+(296).
+
+**AND THE MUTANT TABLE CAUGHT THIS BATCH'S OWN FIRST CUT.** `reach-arm-doubled` — the x term
+widened to `bx1 + HUD_INK_REACH * 2` — survived the first version of these rows, rc 0, 316
+checks green, because the arm is a DISJUNCTION (`x short OR y short`) and every ink fixture
+displaced both axes together, so the untouched axis refused anyway. That is F1's class
+arriving through the axis instead of the constant, and it is the same lesson: a tolerance you
+cannot see is not a tolerance. `inkreachx` and `inkreachy` exist because of it.
+
+**F3: THE `HUD INK NOT UNIQUE` MESSAGE WAS BACKWARDS ABOUT THE ONE PRODUCER THAT CAN
+ACTUALLY HAPPEN.** Verified in the tree: `main_3ds.cpp` fills only health/dead/hurtFlash/
+whiteFlash, so `HudState::slots` is empty and `barMax` is 0 — `drawInventory`'s loop body
+never runs and `drawBar` returns at `max <= 0`, so the icons and the bar the message blamed
+draw NOTHING today; and at `kMaxSlots=5` the last icon anchor is canvas 32+4·48 = 224 → crop
+149, left of the rect's near bound anyway. The reachable HUD-side producer is the DEATH
+SKULL, which `hud_view.cpp:127-129` centres at canvas (300,180) → crop (200,120) — exactly
+`HUD_INK_X0,HUD_INK_Y0` — through `drawImage`, which sets `q.palette = palette_`, so it
+STRADDLES the near corner and is partly outside by construction, the opposite of the
+message's "are not inside this rect". The message now names the level and the skull, says
+why, and states that the bar and slots are empty here; four rows pin it, one of which greps
+for `drawInventory` and requires 0 so the wrong lead cannot creep back. **Still open**
+(review-2 open question 2): whether the skull sprite carries (0,255,0) in level 7 — needs
+`TRAVSPRT.BNI` plus the level palette, or a dead-Kurt run.
+
+**F2 AND F4, both confirmed, both record corrections.** F2: the displaced HUD was recorded as
+"130 canvas px / 71 px up" and those are CROP px — Δ(130,71) crop = (195,106) canvas, and
+the same batch converts correctly in the other direction, so both statements could not
+stand. Corrected in the harness comment (the only place the claim survives in code) and in
+the evidence file; e249567's commit subject still says 130 and stays, because rewriting it
+rewrites commits the review and this batch's parent name by SHA (batch 170's F2 precedent).
+F4: "nothing greps `HUD VISIBLE`, every hit is prose" was false — batch 174's own absence row
+greps it to require that it is NOT printed; restated as "no consumer greps it as a pass
+condition".
+
+**THE EMULATOR RUN CAUGHT A DEFECT THE TEST SUITE COULD NOT SEE.** The first acceptance run
+returned rc 0 with the right verdict and printed `emurun.sh: line 1268: The: command not
+found`: a comment line in the new block had lost its `#`. `bash -n` passed it — a command
+name plus arguments is valid shell — and 316 fixture checks passed over it. Fixed, and the
+suite now requires the lifted expectations block to be SILENT when evaluated (a function
+definition writes nothing), measured against a mutant reproducing the bug: 1 FAIL, named.
+The quoted acceptance run below is the clean one.
+
+**GATES (all three on the final tree).** `make -C tests/scripts -j8` rc 0, `All cases match
+the oracle.`, **830 PASS / 0 FAIL** (batch 174 measured 805; +25 is exactly EmurunHarness
+296 → 321), reading `PASS EmurunHarness (321 checks: config placement + mount ownership +
+the HUD canary + the HUD's own ink)`. `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL
+GATES PASSED`, `VERDICT: CONTRACT CLEAN -- 0 violations.`, `PASS L3_f1.bmp
+sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS` (range-less, per review-1 F1), `COMPLETION
+SELFTEST: PASS (13 arms)`, `COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`,
+`COMPLETION: LEDGER VERIFIED`, `SKIP gates_smdh`. `make -C mdk_3ds -j8` rc 0 with `mdk.elf`
+md5 `72328e9d5fd439d7f75703f5c28ccb80` **UNCHANGED** — correct, this batch compiles nothing.
+No `mdk_linux/**` file changed, so `cmake --build build-linux` was not re-run, stated rather
+than skipped. **P8, THE ACCEPTANCE ITSELF**: `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect
+hud` → **rc 0**, display `:99`, `mandarine.AppImage md5 0d2adab6` (r1.2.1, md5 checked
+first), llvmpipe forced, `graphics_api=1`, `render_3d=0` (mono), `backend: PICA200
+Citro3D`, `flow: screen=4 level=7`, frames **2460** by the deadline / **2580** after the
+reap, `canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame 2460)`, `HUD MARKER
+VISIBLE -- 121 canary pixels in the panel, 121 inside`, `HUD INK -- 134 of 134 HUD-palette
+pixels inside crop 200,120-390,234 (bbox 333,206-388,232, 0 outside, its far corner within
+12 px of the derived 390,234)`. Emulator-green is not hardware-pass; no console was used and
+no Old-3DS claim is made. Frame `docs/frames/2026-11-14-the-budget-has-a-band.png` is
+byte-identical to its predecessors (census re-derived: 193 PNGs, 192 at `6769a137...`) —
+nothing on a render path changed. Prior-solution lookup: Pi knowledge (`mdk-sdl`) found
+nothing on a calibration band or a tolerance being loosened; **Obsidian and Cognee MCP are
+ABSENT from this session's tool list** (AGENTS §9 P9: a session fault, recorded and not
+papered over), vault read read-only from disk with a bounded grep finding nothing.
+Environment unchanged: `/tmp/kilo` is still not writable by this lane (captures to
+`/tmp/mdk-b175` on `:99`), and the ledger is still unwritable with `ledger_close.py`
+PROTECTED, so this row stays open on an owner act even though its acceptance is green.
+
 ## Iteration 174 — batch 174: `3ds.hud-canvas` — review-1 remediation: the HUD's ink rect asked "is it inside the quadrant" and never asked "did it reach the anchor", so a HUD drawn a third of the screen away still passed
 
 **LEDGER ROW `3ds.hud-canvas` (d1), acceptance `mdk_3ds/tools/emurun.sh --expect hud`,

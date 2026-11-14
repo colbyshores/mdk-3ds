@@ -1248,10 +1248,11 @@ HUD_INK_MIN=25
 # WHY THIS EXISTS AT ALL (review-1 F1). Everything else in hud_ink_verdict is ONE-SIDED
 # containment: bx1 <= HUD_INK_X1, by1 <= HUD_INK_Y1, inside <= the rect's area. A rect
 # that only ever asks "is it inside the quadrant" is a COUNT test and not a PLACEMENT
-# test, and MEASURED on the parent this batch's rect accepted a HUD drawn 130 canvas px
-# left and 71 px up of its own anchor -- rc 0, `HUD INK -- 1512 of 1512 ... 0 outside`,
-# bbox (203,135)-(258,161). The panel's far corner is the one thing its bottom-right
-# anchoring DOES derive (kPanelRight/kPanelBottom above), so the ink has to reach it.
+# test, and MEASURED on the parent this batch's rect accepted a HUD drawn 130 crop px
+# (195 canvas px) left and 71 crop px (106 canvas px) up of its own anchor -- rc 0,
+# `HUD INK -- 1512 of 1512 ... 0 outside`, bbox (203,135)-(258,161). The panel's far
+# corner is the one thing its bottom-right anchoring DOES derive (kPanelRight/
+# kPanelBottom above), so the ink has to reach it.
 #
 # WHY THE BUDGET IS NOT ZERO. The far corner is taken with ceil() (389.33 -> 390), and
 # the ink is the farthest HUD-palette PIXEL, not the panel's bounding box: whatever
@@ -1263,6 +1264,31 @@ HUD_INK_MIN=25
 # open texture-addressing fix changes which texels carry the colour, and a gate that
 # cannot survive the fix it is waiting for gets deleted rather than tuned.
 HUD_INK_REACH=12
+#
+# The budget is a CALIBRATION, and a calibration is a measurement times a margin, so the
+# measurement is a constant here and not prose in a comment (review-2 F1). Everything
+# below is stated in CROP px, the unit the bbox the counter prints is in; canvas px is
+# 1.5x that (600 canvas over a 400-column panel).
+HUD_INK_SHORTFALL=2
+# THE BAND'S CEILING, ten times the measurement above, and EXCLUSIVE: a budget of 19 is
+# legal and a budget of 20 is not.
+#
+# WHY A CEILING EXISTS (review-2 F1). Before this, `HUD_INK_REACH` could be raised from 12
+# to 88 and the whole 296-check suite stayed green -- measured by the reviewer, and
+# re-measured here -- because every fixture that refuses does so at a shortfall DERIVED
+# from the budget (the boundary fixture sits at exactly REACH, the near-corner fixture at
+# 88) and so moves when the budget moves. A knob nothing can see is not a tolerance, and
+# the record's own line -- a budget that reddens its own boundary gets deleted, not tuned
+# -- makes tuning upward the expected move. So the expected move is allowed exactly as far
+# as its calibration reaches. THE POLICY, which review-2's open question 1 asked for: the
+# budget is a multiple of a RECORDED measurement, it may not reach ten times that
+# measurement, and a shortfall that large is not a texel border any more -- it is a
+# placement, which is the thing this arm exists to refuse. Re-measuring is the way out and
+# the refusal says so; re-measuring is also the honest way out, because it makes the lane
+# state which capture the number came from instead of editing a bare integer.
+# (The reviewer's alternative -- a ceiling derived from the rect, `HUD_INK_X1/4` -- was
+# measured and does not work: 390/4 = 97 admits the 88 the finding is about.)
+HUD_INK_REACH_MAX=20
 # The most ink that can ever land inside the rect, derived from the constants above and
 # `10#`-forced to decimal for the reason spelled out on CANARY_MAX_INSIDE: a leading
 # zero must not make one spelling of a rect constant mean two numbers.
@@ -1311,6 +1337,8 @@ hud_ink_verdict() { # hud_ink_verdict <shot> ; 0 when the HUD's OWN pixels reach
     # body, and the function prints a green verdict over a measurement it never made.
     if ! decimal_measurement "$HUD_INK_MIN" "$CANARY_MAX_PIXELS" \
        || ! decimal_measurement "$HUD_INK_REACH" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$HUD_INK_SHORTFALL" "$CANARY_MAX_COORD" \
+       || ! decimal_measurement "$HUD_INK_REACH_MAX" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_X0" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_Y0" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_X1" "$CANARY_MAX_COORD" \
@@ -1318,6 +1346,25 @@ hud_ink_verdict() { # hud_ink_verdict <shot> ; 0 when the HUD's OWN pixels reach
         echo "emurun: HUD MALFORMED: the harness's own ink constants are not" >&2
         echo "          measurements (MIN=$HUD_INK_MIN RECT=$HUD_INK_X0,$HUD_INK_Y0-" >&2
         echo "          $HUD_INK_X1,$HUD_INK_Y1 REACH=$HUD_INK_REACH); refusing to judge." >&2
+        return 1
+    fi
+    # THE BUDGET MUST STILL BE THE NUMBER IT WAS CALIBRATED AS (review-2 F1). Below the
+    # measurement it was derived from, the arm reddens on the capture it was measured on;
+    # at or past ten times it, the arm admits a HUD displaced by more than the whole texel
+    # border and is a count test wearing a placement test's name. Both are the harness
+    # being broken, not the HUD being wrong, which is why this is MALFORMED and not a
+    # verdict -- and why it is checked HERE, in the shipped instrument, and not only by a
+    # test file someone can choose not to run.
+    if [ "$HUD_INK_REACH" -lt "$HUD_INK_SHORTFALL" ] \
+       || [ "$HUD_INK_REACH" -ge "$HUD_INK_REACH_MAX" ]; then
+        {
+            echo "emurun: HUD MALFORMED: the reach budget is $HUD_INK_REACH crop px and" >&2
+            echo "          that is outside its calibration band [$HUD_INK_SHORTFALL," >&2
+            echo "          $HUD_INK_REACH_MAX) -- the measured texel shortfall is" >&2
+            echo "          $HUD_INK_SHORTFALL px and the ceiling is ten times it. Do not" >&2
+            echo "          widen the budget past the band: re-measure the shortfall on a" >&2
+            echo "          capture, restate HUD_INK_SHORTFALL, and say which capture." >&2
+        } >&2
         return 1
     fi
     if [ "$HUD_INK_X0" -gt "$HUD_INK_X1" ] || [ "$HUD_INK_Y0" -gt "$HUD_INK_Y1" ]; then
@@ -1393,10 +1440,14 @@ EOF
             echo "          OUTSIDE crop $HUD_INK_X0,$HUD_INK_Y0-$HUD_INK_X1,$HUD_INK_Y1,"
             echo "          where the panel's bottom-right anchoring cannot put them. Two"
             echo "          producers can do that and both are named: the LEVEL, if it has"
-            echo "          started making that colour itself, and THE HUD'S OWN OTHER"
-            echo "          ELEMENTS -- drawInventory's icons (kIconAnchorX/kIconAnchorY)"
-            echo "          and the bar and skull are drawn from the same palette and are"
-            echo "          not inside this rect. Either way the canary has stopped being a"
+            echo "          started making that colour itself, and THE HUD'S OWN DEATH"
+            echo "          SKULL, which hud_view.cpp centres on the canvas centre -- that"
+            echo "          IS this rect's near corner, crop $HUD_INK_X0,$HUD_INK_Y0 -- so"
+            echo "          it STRADDLES the bound and lies partly outside by construction."
+            echo "          The bar and the inventory icons share the palette but cannot do"
+            echo "          it in this build: main_3ds.cpp leaves the bar's max at 0 and the"
+            echo "          slots empty, so neither draws, and their anchors sit outside"
+            echo "          this rect anyway. Either way the canary has stopped being a"
             echo "          canary: it certifies nothing and says so instead of guessing."
         } >&2
         return 1
