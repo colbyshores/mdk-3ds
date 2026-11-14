@@ -11,6 +11,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -59,6 +62,53 @@ int32_t freshScriptSeed() {
     int32_t seed = 0;
     std::memcpy(&seed, &bits, sizeof(seed));
     return seed;
+}
+
+// Remove a picture that is already sitting at the path this run was told to
+// write, so that a capture which fails cannot leave it there.
+//
+// `--capture` names a file, and the run only ever REPORTED a capture it could
+// not write (batch 171): the exit code says "no picture from this run", and it
+// does not remove the picture the PREVIOUS run left at that path. A harness that
+// keys on the file -- "is the picture there yet?" -- then commits another run's
+// bytes as this build's frame, which is the exact hazard review-2 F1 named and
+// batch 171's record repeats verbatim. Reporting the failure and clearing the
+// destination are two different obligations and only one of them was met.
+//
+// So the destination is cleared when the run COMMITS to honouring the request,
+// before anything that can fail: renderer creation, level load, the readback and
+// the write all happen after this point, and a failure in any of them now leaves
+// no picture at the path instead of a stale one. This is the rule the oracle-side
+// capture harness already applies to its own output
+// (`tests/frames/capture_oracle.sh` runs `rm -f "$OUT"` before it runs the
+// oracle at all), and it belongs to the frontend that made the request rather
+// than to whichever backend is asked to fill it.
+//
+// Only a REGULAR file is removed, and only after `stat` followed the link. A
+// directory, a fifo or a device node at that path is left exactly where it is:
+// `--capture=/dev/full` is how this host forces a write failure, and a cleanup
+// written with `std::remove` would turn that into a way to delete a device node.
+// An invocation that the argument parser refuses never reaches this line, so a
+// refusal cannot touch anyone's file.
+//
+// A removal that fails is reported and the run continues: the write may still
+// succeed, and if it does not, the exit code already says the run has no picture.
+bool clearCaptureDestination(const char* path) {
+    struct stat info;
+    if (::stat(path, &info) != 0) {
+        return true;   // nothing there, or nothing reachable: nothing to clear
+    }
+    if (!S_ISREG(info.st_mode)) {
+        return true;   // not a picture this run would overwrite: leave it alone
+    }
+    if (::unlink(path) != 0) {
+        std::fprintf(stderr,
+                     "[main] --capture=%s already holds a file that could not be "
+                     "removed (%s); if this run's capture fails, those bytes are "
+                     "still there\n", path, std::strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 // An option value that names a count this frontend can act on: a non-empty run
@@ -250,6 +300,15 @@ int main(int argc, char** argv) {
                      "the %d-frame bound and would write no picture\n",
                      captureFrame, maxFrames);
         return 1;
+    }
+
+    // A non-zero capture frame now always has a path behind it, so this is the
+    // whole of the request: one picture, at this path, or the run fails. Clearing
+    // it HERE -- after every refusal and before the first thing that can fail -- is
+    // what makes "the file is there" mean "THIS run put it there". See
+    // `clearCaptureDestination`.
+    if (captureFrame > 0) {
+        clearCaptureDestination(capturePath.c_str());
     }
 
     // The C# Viewer's ordinary runtime uses an unseeded modern Random. The

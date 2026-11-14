@@ -31,6 +31,7 @@
 #include <volk.h>
 
 #include <cmath>
+#include <cerrno>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -972,6 +973,17 @@ bool createHostImage(mdk::vk::Context* ctx, int32_t width, int32_t height, VkFor
 // same layout the C# oracle's Bmp.Write emits. Keeping the two files'
 // containers identical makes the frame comparator work on the pixels, not
 // on two subtly different image encoders.
+//
+// THE PICTURE IS PUBLISHED BY RENAME, NOT BY WRITING IN PLACE. A half-written
+// BMP at the requested path is a file that exists, is non-empty, and is not a
+// frame -- and "the file exists and is non-empty" is exactly the test a capture
+// harness reaches for. So the bytes go to a sibling `<path>.part` and only a
+// complete write is renamed onto the destination: a short write, a full disk or
+// a failed close leaves the destination exactly as it found it and removes the
+// partial file it made, which is a file this function created and therefore
+// always safe to unlink. The frontend separately clears any previous picture at
+// the destination (`clearCaptureDestination` in main.cpp) so a capture that
+// never got here cannot leave the last run's frame either.
 bool writeBmp(const char* path, uint32_t width, uint32_t height, const uint8_t* bgra) {
     if (!path || !bgra || width == 0 || height == 0) {
         return false;
@@ -982,7 +994,8 @@ bool writeBmp(const char* path, uint32_t width, uint32_t height, const uint8_t* 
         return false;
     }
 
-    FILE* file = std::fopen(path, "wb");
+    const std::string temp = std::string(path) + ".part";
+    FILE* file = std::fopen(temp.c_str(), "wb");
     if (!file) {
         std::printf("[vk] screenshot: could not open %s\n", path);
         return false;
@@ -1021,9 +1034,19 @@ bool writeBmp(const char* path, uint32_t width, uint32_t height, const uint8_t* 
         ok = false;
     }
     if (!ok) {
+        // The partial file is this function's own; the destination was never
+        // opened, so whatever was there is still there and still complete.
+        std::remove(temp.c_str());
         std::printf("[vk] screenshot: could not write %s\n", path);
+        return false;
     }
-    return ok;
+    if (std::rename(temp.c_str(), path) != 0) {
+        std::remove(temp.c_str());
+        std::printf("[vk] screenshot: could not place the picture at %s (%s)\n", path,
+                    std::strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 // Copy the swapchain image just presented into a host buffer and write it as

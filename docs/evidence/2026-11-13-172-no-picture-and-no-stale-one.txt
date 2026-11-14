@@ -1,0 +1,240 @@
+================================================================================
+BATCH 172 — ledger row `linux.render-frame`, acceptance `bash tools/check.sh`,
+attempt 8 of 8. Remediation batch on review-3
+(`logs/ralph-pi/run-20261113-190705/review-3.md`, range `94ce8d35..bfc7c3e5`),
+VERDICT COMPLETE, no Critical and no High. The slice is its F1 (Medium): a
+capture that wrote no picture now FAILS the run (batch 171) and still left the
+PREVIOUS run's picture sitting at the path it was asked to write.
+================================================================================
+
+== 1. THE FINDING, AND THE REPRO RUN ON THE PARENT BINARY BEFORE ANYTHING CHANGED ==
+
+Review-3 F1 (Medium, "Confirmed"):
+
+  "The run now *reports* a failed capture, but nothing removes the bytes at the
+   requested path. When a capture fails and that path already holds a picture
+   from an earlier run, the file survives untouched — byte-identical to the
+   previous frame, i.e. exactly the artefact the batch's charter is about."
+
+Re-produced on THIS host against the parent binary (`bfc7c3e`, sources from
+`git show HEAD:`, rebuilt with `cmake --build build-linux -j8`), with the
+reviewer's own scenario — a valid frame seeded at the target, made unwritable,
+then a capture asked for it:
+
+  before: 58615fc85d02e009c10f315478aa8d2b5b3eccb3a3945517dca9587c04397368  out.bmp
+  $ ./build-linux/mdk --headless --fixed-step --level=3 --size=320x240 --seed 1 \
+        --capture=$W/out.bmp --capture-frame=1 --frames 2      # out.bmp is 0444
+  PARENT rc=1
+  [vk] screenshot: could not open /tmp/revrepro.4pajQG/out.bmp
+  after:  58615fc85d02e009c10f315478aa8d2b5b3eccb3a3945517dca9587c04397368  out.bmp
+
+The sha is `tests/frames/reference.sha256`'s `cpp=` value for the pinned frame:
+the file that survives is not merely "a file", it is the frame a harness expects
+to see, which is what makes an exit code insufficient on its own. Batch 171's own
+record already named this hazard — "the harness upstream then finds the BMP the
+PREVIOUS run left at that path, and commits it as this build's frame" — and
+closed only the reporting half of it.
+
+The gap in the existing test was structural, not accidental: `expect_capture_-
+refusal` runs `[ -f "$file" ] && rm -f "$file"` before invoking the binary, so
+every capture-refusal arm starts from an EMPTY path. An arm that wipes the path
+before the run cannot observe a stale file surviving it. That is stated here
+because the fix's arms are the first in the file that seed a file first.
+
+== 2. WHAT THE FIX IS, AND WHY IT IS IN TWO PLACES ==
+
+An exit code reports a failure; it does not un-write a destination. Two
+obligations, two places:
+
+(a) THE FRONTEND CLEARS THE DESTINATION WHEN IT COMMITS TO THE REQUEST
+    (`mdk_linux/src/main.cpp`, `clearCaptureDestination`).
+    Called once, after every argument refusal and before the first thing that
+    can fail (renderer creation, level load, the readback, the write), so a
+    failure at ANY of those points leaves no picture at the path instead of a
+    stale one. This is the rule the oracle-side harness already applies to its
+    own output — `tests/frames/capture_oracle.sh:171` runs `rm -f "$OUT"`
+    before it runs the oracle at all — and it belongs to the frontend that made
+    the request, not to whichever backend is asked to fill it.
+
+    Only a REGULAR file is removed, decided by `stat` (which follows symlinks)
+    and `S_ISREG`, then `unlink`. `std::remove` was rejected on purpose: it
+    removes an empty DIRECTORY too, and `--capture=/dev/full` is how this host
+    forces a write failure — a cleanup written with `std::remove` would turn a
+    test lever into a way to delete a device node. A failed removal is reported
+    and the run continues: the write may still succeed, and if it does not the
+    exit code already says there is no picture.
+
+(b) THE BACKEND PUBLISHES A PICTURE BY RENAME, NOT BY WRITING IN PLACE
+    (`mdk_linux/src/render/renderer_vk.cpp`, `writeBmp`).
+    The bytes go to a sibling `<path>.part`; only a complete write is
+    `rename()`d onto the destination. A short write, a full disk or a failed
+    close now leaves the destination exactly as it found it and unlinks the
+    partial file this function itself created. The hazard this closes is the
+    second half of the same class: a truncated BMP at the path is a file that
+    EXISTS and is NON-EMPTY — which is exactly the test a capture harness
+    reaches for — and the old code left one behind with only a log line.
+
+    Side effect, measured: the reviewer's own repro now SUCCEEDS. `unlink` needs
+    write permission on the DIRECTORY, not on the file, so clearing a 0444 file
+    and writing a fresh one works where `fopen("wb")` failed: rc 0,
+    `[vk] screenshot: wrote …`, 307254 bytes, sha 58615fc8… (the pinned frame).
+
+`mdk_core/src/render/render.h` now states the two things this batch learned the
+hard way, next to `mdk_render_capture_stats`: that `requested` counts frames the
+BACKEND saw name the path (so "0 of 0 requested" can describe a run that did
+ask), and that reporting a failed capture does not un-write the destination.
+
+== 3. THE ARMS, AND WHY EACH ONE IS THERE ==
+
+`tests/scripts/linux_arg_parse_test.sh` is 27 arms -> **31 arms**, four new
+helpers and four new runtime arms. All four are permission-free, for the reason
+the file already gives for its two write-failure arms: a chmod-based arm goes
+red on a root lane for a reason that has nothing to do with the code.
+
+  26. `expect_stale_cleared` — seed a stale frame, make the run unable to produce
+      a picture at all (`VK_ICD_FILENAMES=/nonexistent`, so the renderer itself
+      cannot be created: the earliest failure there is, and the one no
+      write-side fix can reach), assert rc != 0, assert the log shows it failed
+      WHERE IT WAS MADE TO (a lane with no Vulkan would otherwise pass this arm
+      for the wrong reason), and assert the path holds nothing.
+  27. `expect_stale_kept` — the mirror, and the arm that keeps the fix from being
+      too eager: an invocation the parser REFUSES must leave the file alone.
+      Clearing the destination before validating would delete a file on a typo.
+  28. `expect_capture_replaces` — the success path, seeded: a real capture must
+      still produce a real BMP (starts `BM`, >= 1000 bytes) and leave no
+      `.part` scratch file behind.
+  29. `expect_device_untouched` — `--capture=/dev/full`: rc != 0, the capture is
+      named as what failed, `/dev/full` is STILL a character device, and no
+      `/dev/full.part` exists. This is the S_ISREG guard and the scratch-file
+      cleanup pinned at once. Skipped (not passed) on a lane with no /dev/full.
+
+NON-VACUITY, run and not asserted. New test on the working sources: **31 arms,
+rc 0**. New test on PARENT sources (`main.cpp` and `renderer_vk.cpp` restored
+from `git show HEAD:`, rebuilt): **rc 1, exactly 1 of 31 failing** —
+
+  FAIL [stale frame cleared when no renderer could be created] took no picture
+  and the stale bytes are still at /tmp/mdk-argparse.0XJXmG/stale.bmp -- a
+  harness that keys on the file would commit another run's frame as this build's
+
+— and the other 30 green, which is the collateral run in the same row: the fix's
+own arms red on the parent and nothing else moved. The parent restore is inside
+a `trap … EXIT` (batch 169's lesson: the run that proves a test bites is the run
+that can delete the fix), and the working sources were restored and rebuilt
+afterwards, re-verified by re-running the arm set (31 arms, rc 0).
+
+== 4. REVIEW-3 F2 (Low) — CONFIRMED, ADOPTED AS A RECORDING RULE ==
+
+`mdk.3dsx` is not a reproducible fingerprint. Re-measured on this batch's tree:
+`md5sum mdk_3ds/mdk.3dsx` = `2bd6d2d6dd20225be9e6f83ed5947084`, which is one of
+the three different values review-3 got from three consecutive builds of the
+same tree, and is not the value in batch 171's record. `mdk_3ds/mdk.elf` stayed
+`72328e9d5fd439d7f75703f5c28ccb80` across all of them, including this batch's
+build. Disposition: **from this batch on, the 3DS build fingerprint published in
+a batch record is `mdk.elf`'s md5, and `mdk.3dsx` is not quoted as one.** The
+cause is in the Makefile's staging step (`3dsxtool --smdh=… --romfs=$(CIA_ROMFS)`
+over a RomFS re-staged every build); isolating WHICH input varies (staging order
+vs. embedded metadata) is review-3's open question 2 and is not answered here.
+No code change: a fingerprint convention is a documentation rule, and making the
+3dsx reproducible is a packaging change well outside this row.
+
+== 5. REVIEW-3 F3 (Low) — CONFIRMED, DEFERRED WITH CAUSE (no code changed) ==
+
+Confirmed by reading both backends: `renderer_vk.cpp` counts `capturesRequested`
+in `mdk_render_end_frame` only when a path was named after a successful
+`beginFrame`, and `renderer_c3d.cpp` counts it in `mdk_render_begin_frame` only
+after `C3D_FrameBegin` succeeds. They agree on the case that matters — a frame
+that never began is not counted on either — and so the frontend's line can print
+"asked for frame 1 and **0 of 0** requested pictures reached the disk" for a run
+that did ask. That is a self-contradicting record and the reviewer is right that
+it should not read as a ratio.
+
+Deferred, not fixed, for two reasons that are both about this loop's own history:
+the sentence is pinned by three canonical-text mutants in
+`tests/scripts/linux_refusal_report_test.sh` (`capture-verdict-not-read`,
+`capture-verdict-printed-and-dropped`, `capture-verdict-not-returned`, all
+mapped to check F4), so changing it means re-basing three exact-string mutants —
+a test-integrity edit in its own right, of exactly the kind that has needed its
+own review in this row (review-9 F1, review-10 F5) — and the harm today is nil:
+nothing on 3DS sets `screenshot_path`, and on Linux the reading needs a failed
+`beginFrame` on the capture frame, which has never been observed on this host.
+What was done instead is the zero-risk half: `render.h` now documents that
+`requested` is a backend count and that "0 of 0" is not evidence nothing was
+asked, so the imprecision cannot be mistaken for a contract.
+
+== 6. GATES, VERBATIM ==
+
+`make -C tests/scripts -j8` → rc 0, 12m00s, **766 `^PASS` / 0 `^FAIL`**,
+`All cases match the oracle.` The count is unchanged from batch 171 and
+correctly so: this test contributes ONE `PASS LinuxArgParse` line, now reading
+`(31 arms: …)`; `PASS LinuxRefusalReport (23 checks, 78 arms adjudicated red,
+7 probes green)` is unchanged, because no shape check in that file reads
+`writeBmp`'s body and the pinned capture-verdict block was not touched.
+
+`DISPLAY=:99 bash tools/check.sh` → rc 0, `CHECK: ALL GATES PASSED`:
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `VERDICT: CONTRACT CLEAN` (gates_frames),
+`BATCH INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`,
+`COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`,
+`COMPLETION: LEDGER VERIFIED`, `audit_c_with_classes 0 violations`,
+`gates_vfp 0 blockers`, `audit_arm11_math contract clean`, `audit_r11_idiv no
+candidates`, `gates_core_parity both targets link the same core`,
+`SKIP gates_smdh` (no built .cia). `Xvfb :99` was already listening and was not
+restarted; the display used for every run in this record is `:99`.
+
+`DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+→ rc 0, `mdk.elf` md5 `72328e9d5fd439d7f75703f5c28ccb80` **UNCHANGED** — and that
+is a measurement with content here, because `mdk_core/src/render/render.h` IS
+compiled by the 3DS target and an unchanged elf proves this batch's seam change
+was comment-only codegen-wise. `git diff --name-only` contains no `mdk_3ds/**`
+path, so no P8 emulator evidence is owed and none was faked.
+
+`cmake --build build-linux -j8` → rc 0, run BY HAND (item 11b: nothing in the
+gate set compiles `mdk_linux/**`), five times across this batch — after the
+edits, for the parent non-vacuity build, and after each restore. The binary is
+not byte-reproducible on this host (three different md5s for identical sources),
+so it is verified by its tests and by the frame sha, not by its own hash.
+
+FRAME: `docs/frames/2026-11-13-the-destination-is-cleared.png`, captured at
+2026-11-13T23:43:21Z from the fixed binary. Census re-derived, not remembered:
+**190 PNGs, 189 at md5 `6769a13731983d65cee9df02da6cff37`** including this one,
+320x240, **219 distinct colours, zero pure (0,0,255) pixels**. Byte-identical to
+its predecessors, which is the honest reading: no pixel path changed — the
+capture's BYTES are untouched by this batch, only the order in which they reach
+the disk. The canary evidence is the live run, never the committed frame.
+
+== 7. PRIOR-SOLUTION LOOKUP ==
+
+Pi knowledge (`mdk-sdl`, hybrid): the top hit was this loop's OWN prior solution
+to the same class — `ralph-pi.sh`'s `state_write`/`state_apply`, "a write that
+did not happen is never announced as done", with a temp file and a checked `mv`
+(external review 2026-11-01, run-20261101-062333/review-2.md AR6-4 and
+review-3.md F3). The second hit was `capture_oracle.sh`'s `rm -f "$OUT"`. Both
+were reused as the shape of this fix rather than reinvented: rename-to-publish
+from the loop's state writer, clear-the-destination from the oracle harness.
+Nothing in the KB covered the S_ISREG hazard.
+
+Obsidian MCP and Cognee MCP: ABSENT from this session's tool list. Per AGENTS
+§9 P9 that is a session configuration fault to report, not a licence to claim
+the lookup happened; the vault was read read-only from disk instead
+(`/mnt/nas/Vaults/port-docs`, bounded `grep` for atomic-write / partial-file
+notes), which loses Cognee's graph search. No prior vault note on this class.
+
+== 8. STILL OPEN (unchanged by this batch unless noted) ==
+
+* Owner act: `chgrp development docs/COMPLETION_LEDGER.tsv` and run
+  `python3 tools/runner/ledger_close.py --row linux.render-frame` (and
+  `--row 3ds.hud-canvas`) from a lane in the `development` group on a clean
+  tree. Re-measured this batch: `coleshores:coleshores 664`, `os.access(...,
+  W_OK)` is False, and `ledger_close.py` is PROTECTED. The row's acceptance is
+  green. THIS WAS ATTEMPT 8 OF 8: the loop stops for an operator after this
+  batch, and the only thing between this row and `done` is that chgrp.
+* Owner act: review-1 F1 — the door for loop-infrastructure commits that must
+  edit `tools/runner/ledger_close.py` (PROTECTED; the gate has no legitimate
+  door for them).
+* `/tmp/kilo` is not writable by this lane (AGENTS P7's capture directory):
+  re-measured, `touch` → Permission denied. Captures for this batch went to
+  lane-owned directories under /tmp and the display is recorded.
+* review-3 F3 (Low): the "0 of 0 requested" message, deferred with the cause in
+  §5.
+* review-3 open question 2: which input makes `mdk.3dsx` vary. Not isolated.
+* Old-3DS hardware evidence: none. No console is in hand; every 3DS claim here
+  is emulator evidence.

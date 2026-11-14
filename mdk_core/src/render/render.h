@@ -323,6 +323,19 @@ float mdk_render_gpu_wait_ms(MdkRenderer r);
 // this says, and it is that rule -- not these numbers -- that makes the answer
 // safe. The 3DS backend has no readback of a rendered target at all, so it can
 // only ever report a request and never a write.
+//
+// TWO THINGS THIS IS NOT, both learned the hard way (review-3 F1/F3):
+//
+//   * `requested` counts frames the BACKEND saw name the path, and a frame that
+//     never began never names it on either backend. So "0 of 0 requested" can
+//     describe a run that asked for a picture and never got a frame to put it
+//     in; it is not evidence that nothing was asked. The frontend knows what it
+//     asked for and must not read these numbers as the request.
+//   * Reporting a failed capture does not un-write the destination. The Linux
+//     frontend therefore clears a regular file already sitting at the path when
+//     it commits to the request, before anything that can fail, so that "a file
+//     is there" means "THIS run put it there" and a failed capture cannot leave
+//     the previous run's frame to be committed in its place.
 void mdk_render_capture_stats(MdkRenderer r, int32_t* requested, int32_t* written);
 
 // ---------------------------------------------------------------------------

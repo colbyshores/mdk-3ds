@@ -34,6 +34,20 @@
 #      how many pictures reached the disk and fails the run when it asked for one and
 #      got none (`mdk_render_capture_stats`).
 #
+#   4. An EXIT CODE DOES NOT UN-WRITE A DESTINATION. (3) makes the run say it took no
+#      picture; it does not remove the picture the previous run left at the path, and
+#      review-3 measured exactly that: seed a frame at the target, make the write
+#      fail, and the run exits 1 with the OLD frame still sitting there at the sha the
+#      manifest expects. A harness that keys on the file rather than the exit code --
+#      and `expect_capture` below is one -- commits another run's bytes. So the
+#      frontend now clears a regular file at the destination when it commits to the
+#      request, the same way `tests/frames/capture_oracle.sh` runs `rm -f "$OUT"`
+#      before it runs the oracle at all, and the backend publishes a picture by
+#      rename so a half-written BMP can never be the thing at the path. The arms for
+#      that are below, and they are the only ones here that seed a file first: every
+#      other capture arm starts from an empty path and therefore could not see a
+#      stale one survive.
+#
 # A harness that reports having run what it did not run is worse than one that
 # fails, because the number looks measured. So every row here is a RUNTIME row:
 # "this binary, given that argument, exits non-zero and says why". A shape grep
@@ -223,6 +237,144 @@ expect_capture_refusal() {
     fi
 }
 
+# --- the destination, not only the verdict ---------------------------------------
+#
+# Everything above asks "did the run refuse, and did it say so". None of it asks
+# "what is at the path now", and the path is the only thing an upstream capture
+# harness can look at: it cannot read this run's exit code out of a file. So these
+# arms SEED a file first -- a stale frame from a previous run -- and then check what
+# is there afterwards. Every other capture arm here starts from an empty path and
+# therefore could not see a stale one survive; that is the gap review-3 F1 fell
+# through, and `expect_capture_refusal`'s own `rm -f` made it worse by wiping the
+# evidence before the run even started.
+#
+# All four are permission-free for the reason the two arms below give: a chmod-based
+# repro goes red on a root lane for a reason that has nothing to do with the code.
+
+# expect_stale_cleared <label> <file> <args...>: the run is made unable to produce a
+# picture at all -- no usable Vulkan ICD, so the renderer itself cannot be created,
+# which is the earliest failure there is and the one no write-side fix can reach --
+# and the stale bytes must be GONE afterwards.
+#
+# The middle test is what stops this arm from going green on a lane with no Vulkan:
+# if the run did not fail where the arm made it fail, the arm proved nothing and says
+# so rather than passing.
+expect_stale_cleared() {
+    label=$1
+    file=$2
+    shift 2
+    if [ "$have_data" -eq 0 ]; then
+        skipped=$((skipped + 1))
+        return 0
+    fi
+    printf 'STALE FRAME -- a previous run, not this one\n' > "$file" || {
+        note no "[$label] could not seed a stale file at $file"; return 0; }
+    out=$(timeout 120 env VK_ICD_FILENAMES=/nonexistent "$BIN" "$@" 2>&1)
+    rc=$?
+    case "$out" in
+        *"renderer creation FAILED"*) broke=1 ;;
+        *) broke=0 ;;
+    esac
+    if [ "$rc" -eq 0 ]; then
+        note no "[$label] exited 0 although no Vulkan ICD could be opened"
+    elif [ "$broke" -eq 0 ]; then
+        note no "[$label] did not fail where it was made to (no renderer-creation failure in the log), so it says nothing about the stale file: $(printf '%s' "$out" | tail -1)"
+    elif [ -e "$file" ]; then
+        note no "[$label] took no picture and the stale bytes are still at $file -- a harness that keys on the file would commit another run's frame as this build's"
+    else
+        note ok
+    fi
+}
+
+# expect_stale_kept <label> <file> <args...>: the mirror image, and the arm that
+# keeps the fix from being too eager. An invocation the parser REFUSES never starts,
+# so it must not touch the file it was going to write: clearing the destination
+# BEFORE validating would delete a file on a typo.
+expect_stale_kept() {
+    label=$1
+    file=$2
+    shift 2
+    printf 'STALE FRAME -- a previous run, not this one\n' > "$file" || {
+        note no "[$label] could not seed a stale file at $file"; return 0; }
+    out=$(timeout 60 "$BIN" "$@" 2>&1)
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        note no "[$label] exited 0; this arm needs an invocation the parser refuses"
+    elif [ ! -s "$file" ]; then
+        note no "[$label] refused AND deleted the file it was named with -- a refusal must not touch anyone's bytes"
+    else
+        note ok
+    fi
+}
+
+# expect_capture_replaces <label> <file> <args...>: the success path, seeded. The
+# clearing must not cost the run its picture: the stale stub has to be replaced by a
+# real BMP, and no `.part` sibling may survive the rename that published it.
+#
+# `head -c 2 "$file"` is not the early-exit race this file refuses elsewhere: the
+# bytes come from a file the run already closed, not from a pipe a writer is still
+# filling, so there is no writer left to SIGPIPE.
+expect_capture_replaces() {
+    label=$1
+    file=$2
+    shift 2
+    if [ "$have_data" -eq 0 ]; then
+        skipped=$((skipped + 1))
+        return 0
+    fi
+    printf 'STALE\n' > "$file" || {
+        note no "[$label] could not seed a stale file at $file"; return 0; }
+    out=$(timeout 120 "$BIN" "$@" 2>&1)
+    rc=$?
+    magic=$(head -c 2 "$file" 2>/dev/null)
+    size=$(wc -c < "$file" 2>/dev/null)
+    if [ "$rc" -ne 0 ]; then
+        note no "[$label] a valid capture now fails (rc $rc): $(printf '%s' "$out" | tail -1)"
+    elif [ ! -s "$file" ]; then
+        note no "[$label] exited 0 and left an empty file at $file"
+    elif [ "$magic" != "BM" ]; then
+        note no "[$label] the file at $file does not start with BM: the stale stub survived, or the picture is not a BMP"
+    elif [ "${size:-0}" -lt 1000 ]; then
+        note no "[$label] wrote $size bytes at $file, which is not a whole 320x240 frame"
+    elif [ -e "$file.part" ]; then
+        note no "[$label] left the write's scratch file behind at $file.part"
+    else
+        note ok
+    fi
+}
+
+# expect_device_untouched <label> <dev> <args...>: the destination is a CHARACTER
+# DEVICE, present here only because /dev/full makes a write fail after a successful
+# open. The cleanup must not remove it -- unlinking a device node is not clearing a
+# stale picture, it is deleting a system file -- and the write's scratch file must
+# not survive beside it.
+expect_device_untouched() {
+    label=$1
+    dev=$2
+    shift 2
+    if [ "$have_data" -eq 0 ]; then
+        skipped=$((skipped + 1))
+        return 0
+    fi
+    out=$(timeout 120 "$BIN" "$@" 2>&1)
+    rc=$?
+    case "$out" in
+        *"capture FAILED"*) named=1 ;;
+        *) named=0 ;;
+    esac
+    if [ "$rc" -eq 0 ]; then
+        note no "[$label] exited 0 having written to $dev: nothing can be written to $dev"
+    elif [ "$named" -eq 0 ]; then
+        note no "[$label] did not name the capture as the thing that failed: $(printf '%s' "$out" | tail -1)"
+    elif [ ! -c "$dev" ]; then
+        note no "[$label] $dev is GONE: the cleanup unlinked a device node instead of a picture"
+    elif [ -e "$dev.part" ]; then
+        note no "[$label] left the write's scratch file behind at $dev.part"
+    else
+        note ok
+    fi
+}
+
 # --- the argument the chain does not know at all ---------------------------------
 # 1. The exact mistake batch 168 made: `--level` with a space instead of an equals.
 #    Before the fix this ran the DEFAULT level and exited 0.
@@ -318,6 +470,38 @@ mkdir -p "$WORK/as-a-dir.bmp"
 expect_capture_refusal "capture onto a path that is a directory" "$WORK/as-a-dir.bmp" \
     --headless --fixed-step --level=3 --size=320x240 --seed 1 --capture="$WORK/as-a-dir.bmp" --capture-frame=1 --frames 2
 
+# --- and the destination itself ---------------------------------------------------
+# 26. Review-3 F1, permission-free. A stale frame sits at the path and the run cannot
+#     produce a picture at all; the exit code already said "no picture from this
+#     run", and this arm is the half that says the PATH must agree. Measured on the
+#     parent binary the stale bytes survive at the sha the manifest expects, which is
+#     the whole finding: an exit code does not un-write a destination.
+expect_stale_cleared "stale frame cleared when no renderer could be created" \
+    "$WORK/stale.bmp" --headless --fixed-step --level=3 --size=320x240 --seed 1 \
+    --capture="$WORK/stale.bmp" --capture-frame=1 --frames 2
+# 27. The same rule from the parser's side. A request the frontend refuses has not
+#     started, so clearing the destination has to come AFTER the refusals: a frontend
+#     that cleared first would delete a file on a typo, which is a worse bug wearing
+#     this batch's clothes.
+expect_stale_kept "a refused invocation leaves the destination alone" \
+    "$WORK/keep.bmp" --headless --fixed-step --size=320x240 \
+    --capture="$WORK/keep.bmp" --capture-frame=99 --frames 2
+# 28/29. The two things the clearing must not cost: the picture itself, and a scratch
+#     file beside it. 29 also pins that this is a REGULAR-FILE cleanup -- /dev/full is
+#     how a write is made to fail on this host and must not become how a device node
+#     gets deleted, which `std::remove` would have done.
+expect_capture_replaces "a real capture replaces a stale file at the path" "$WORK/replaced.bmp" \
+    --headless --fixed-step --level=3 --size=320x240 --seed 1 \
+    --capture="$WORK/replaced.bmp" --capture-frame=1 --frames 2
+if [ -c /dev/full ]; then
+    expect_device_untouched "a capture onto /dev/full fails and leaves /dev/full alone" \
+        /dev/full --headless --fixed-step --level=3 --size=320x240 --seed 1 \
+        --capture=/dev/full --capture-frame=1 --frames 2
+else
+    # Not a pass: the lane has no /dev/full, so the arm did not run.
+    skipped=$((skipped + 1))
+fi
+
 # The summary must not claim arms it did not run. Four arms need a level, and a
 # lane with no game data skips them; printing "a real capture still work" over a
 # run in which no capture arm executed is a coverage claim that is simply false.
@@ -333,7 +517,7 @@ if [ "$fail" -eq 0 ]; then
     if [ "$skipped" -gt 0 ]; then
         echo "PASS LinuxArgParse ($pass arms ok, $skipped SKIPPED for want of game data at $DATA: an option value whose meaning this frontend would silently discard is refused and named -- an unparseable count, a capture frame this run can never reach, and a capture file it cannot write, included; the skipped arms are the ones that need a level, and they did NOT run)"
     else
-        echo "PASS LinuxArgParse ($pass arms: an option value whose meaning this frontend would silently discard is refused and named -- an unparseable count, a capture frame the run can never reach, and a capture file that cannot be written, included -- while both documented value spellings, a honoured frame count and two real captures (the capture-frame boundary included) still work; a --size or --at with trailing junk is accepted on purpose and is NOT claimed here)"
+        echo "PASS LinuxArgParse ($pass arms: an option value whose meaning this frontend would silently discard is refused and named -- an unparseable count, a capture frame the run can never reach, and a capture file that cannot be written, included -- while both documented value spellings, a honoured frame count and two real captures (the capture-frame boundary included) still work; a run that was asked for a picture and could not take one leaves NO picture at the path it named, while a refused invocation, a device node and a scratch file are all left alone; a --size or --at with trailing junk is accepted on purpose and is NOT claimed here)"
     fi
     if [ "$have_data" -eq 0 ]; then
         echo "NOTE LinuxArgParse: $skipped arms that need a level were skipped, not passed (no game data at $DATA); the refuse arms above need neither data nor a display"
