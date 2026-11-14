@@ -186,9 +186,14 @@ xpid=$!
 trap 'kill "$xpid" 2>/dev/null || true' EXIT
 sleep 1
 cd "$(dirname "$3")"
+STEREO_ARGS=()
+if [ -n "${MDK_FRAME_STEREO:-}" ]; then
+    STEREO_ARGS=(--stereo="$MDK_FRAME_STEREO")
+fi
 DOTNET_ROOT="$4" XDG_RUNTIME_DIR="$5" MDK_DATA_DIR="$6" MDK_USER_DIR="$5" \
     DISPLAY=:99 timeout 180 "$3" --hidden --original --gpu=vulkan \
-        --level="$7" --size="$8" --screenshot="$9" --wait=0 --mute
+        --level="$7" --size="$8" --screenshot="$9" --wait=0 --mute \
+        "${STEREO_ARGS[@]}"
 INNER_EOF
 
 unshare --user --map-root-user -m bash "$INNER" \
