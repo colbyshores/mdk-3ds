@@ -35,6 +35,10 @@ if [ -n "${MDK_FRAME_STEREO:-}" ]; then
     [ -z "${MDK_FRAME_STEREO_SEPARATION:-}" ] || STEREO_ARGS+=(--stereo-separation="$MDK_FRAME_STEREO_SEPARATION")
     [ -z "${MDK_FRAME_STEREO_CONVERGENCE:-}" ] || STEREO_ARGS+=(--stereo-convergence="$MDK_FRAME_STEREO_CONVERGENCE")
 fi
+# The pinned display gamma, when the caller asks for one (the gamma arm).
+if [ -n "${MDK_FRAME_GAMMA:-}" ]; then
+    STEREO_ARGS+=(--gamma="$MDK_FRAME_GAMMA")
+fi
 
 exec env \
     MDK_DATA_DIR="${MDK_DATA_DIR:-$ROOT/MDK}" \

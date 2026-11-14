@@ -168,6 +168,8 @@ int main(int argc, char** argv) {
     bool hasYawOverride = false;
     float yawOverride = 0.0f;
     mdk::StereoSettings stereo;
+    bool enhancedLook = false;
+    float gammaValue = 1.0f;
 
     auto optionValue = [](const char* arg, const char* name) -> const char* {
         const size_t length = std::strlen(name);
@@ -230,6 +232,18 @@ int main(int argc, char** argv) {
             hasStartOverride = true;
             hasYawOverride = fields == 4;
             yawOverride = yaw;
+        } else if (std::strcmp(argv[i], "--enhanced") == 0) {
+            enhancedLook = true;
+        } else if (std::strcmp(argv[i], "--original") == 0) {
+            enhancedLook = false;
+        } else if ((value = optionValue(argv[i], "--gamma")) != nullptr) {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || *end != '\0' || parsed < 0.5f || parsed > 2.0f) {
+                std::fprintf(stderr, "[main] invalid --gamma: %s (want 0.5-2)\n", value);
+                return 1;
+            }
+            gammaValue = parsed;
         } else if ((value = optionValue(argv[i], "--stereo")) != nullptr) {
             // The oracle's --stereo spellings (StereoModes.TryParse): off,
             // sbs, sbsfull, crossview, int, intr, tab, tabr, vr. An unknown
@@ -393,7 +407,7 @@ int main(int argc, char** argv) {
     desc.headless = headless;
     desc.vsync = true;
     desc.validation = true;
-    desc.enhanced_look = true;      // the Linux build does the enhanced look
+    desc.enhanced_look = enhancedLook;
     desc.stereo = stereo;
     desc.hidden_width = hiddenWidth;
     desc.hidden_height = hiddenHeight;
@@ -405,6 +419,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::printf("[main] backend: %s\n", mdk_render_backend_name(renderer));
+    mdk_render_set_gamma(renderer, gammaValue);
 
     // The output stream (the C#'s AudioDevice(Output.Speakers)). No audio device
     // is not an error: the device then mixes and drops, which is the headless

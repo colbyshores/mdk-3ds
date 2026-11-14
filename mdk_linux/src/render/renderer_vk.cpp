@@ -53,6 +53,7 @@
 #include "shader_sky_frag.h"
 #include "shader_stereo_vert.h"
 #include "shader_stereo_frag.h"
+#include "shader_gamma_frag.h"
 
 namespace {
 
@@ -206,6 +207,25 @@ struct RendererVk {
     mdk::Panorama panorama;
     float fade = 1.0f;
     float gamma = 1.0f;
+    bool enhancedLook = false;
+
+    // The gamma grade's objects (P6 post): a target the graded frame is
+    // written into, sampled from the scene target, then presented instead
+    // of it. Created on the first graded frame.
+    VkImage gammaImage = VK_NULL_HANDLE;
+    VkDeviceMemory gammaMemory = VK_NULL_HANDLE;
+    VkImageView gammaView = VK_NULL_HANDLE;
+    VkFramebuffer gammaFramebuffer = VK_NULL_HANDLE;
+    uint32_t gammaWidth = 0;
+    uint32_t gammaHeight = 0;
+    VkShaderModule gammaVertModule = VK_NULL_HANDLE;
+    VkShaderModule gammaFragModule = VK_NULL_HANDLE;
+    VkDescriptorSetLayout gammaSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout gammaPipeLayout = VK_NULL_HANDLE;
+    VkPipeline gammaPipeline = VK_NULL_HANDLE;
+    VkDescriptorPool gammaPool = VK_NULL_HANDLE;
+    VkDescriptorSet gammaSets[mdk::vk::kFramesInFlight] = {};
+    bool gammaReady = false;
 
     int32_t drawCalls = 0;
     int32_t triangles = 0;
@@ -1702,6 +1722,7 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
 
     RendererVk* r = new RendererVk();
     r->stereo = desc->stereo;
+    r->enhancedLook = desc->enhanced_look;
     r->activeCamera = r->camera;
 
     // The surface creator. It is a function pointer so that
@@ -1899,6 +1920,8 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
     return r;
 }
 
+void destroyGammaTarget(RendererVk* r);
+
 void mdk_render_destroy(MdkRenderer rr) {
     RendererVk* r = asVk(rr);
     if (!r) {
@@ -1969,6 +1992,13 @@ void mdk_render_destroy(MdkRenderer rr) {
     if (r->eyeSampler) vkDestroySampler(r->ctx.device, r->eyeSampler, nullptr);
     if (r->stereoVertModule) vkDestroyShaderModule(r->ctx.device, r->stereoVertModule, nullptr);
     if (r->stereoFragModule) vkDestroyShaderModule(r->ctx.device, r->stereoFragModule, nullptr);
+    destroyGammaTarget(r);
+    if (r->gammaPipeline) vkDestroyPipeline(r->ctx.device, r->gammaPipeline, nullptr);
+    if (r->gammaPipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->gammaPipeLayout, nullptr);
+    if (r->gammaSetLayout) vkDestroyDescriptorSetLayout(r->ctx.device, r->gammaSetLayout, nullptr);
+    if (r->gammaPool) vkDestroyDescriptorPool(r->ctx.device, r->gammaPool, nullptr);
+    if (r->gammaVertModule) vkDestroyShaderModule(r->ctx.device, r->gammaVertModule, nullptr);
+    if (r->gammaFragModule) vkDestroyShaderModule(r->ctx.device, r->gammaFragModule, nullptr);
     if (r->sampler) vkDestroySampler(r->ctx.device, r->sampler, nullptr);
     if (r->samplerRepeat) vkDestroySampler(r->ctx.device, r->samplerRepeat, nullptr);
     if (r->pipeCache) vkDestroyPipelineCache(r->ctx.device, r->pipeCache, nullptr);
@@ -2023,6 +2053,315 @@ mdk::MdkCapabilities mdk_render_capabilities(MdkRenderer r) {
 // ---------------------------------------------------------------------------
 // The frame
 // ---------------------------------------------------------------------------
+
+// The gamma grade's target, at the current extent (see the gamma fields).
+void destroyGammaTarget(RendererVk* r) {
+    VkDevice device = r->ctx.device;
+    if (r->gammaFramebuffer != VK_NULL_HANDLE) {
+        vkDestroyFramebuffer(device, r->gammaFramebuffer, nullptr);
+        r->gammaFramebuffer = VK_NULL_HANDLE;
+    }
+    if (r->gammaView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, r->gammaView, nullptr);
+        r->gammaView = VK_NULL_HANDLE;
+    }
+    if (r->gammaImage != VK_NULL_HANDLE) {
+        vkDestroyImage(device, r->gammaImage, nullptr);
+        r->gammaImage = VK_NULL_HANDLE;
+    }
+    if (r->gammaMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, r->gammaMemory, nullptr);
+        r->gammaMemory = VK_NULL_HANDLE;
+    }
+    r->gammaWidth = 0;
+    r->gammaHeight = 0;
+}
+
+// The gamma pipeline and its target, created on the first graded frame.
+// The pipeline runs over the context's composite pass (colour only), so
+// the eye targets (which own that pass) are ensured first, and the eye
+// sampler is shared.
+bool ensureGamma(RendererVk* r) {
+    VkDevice device = r->ctx.device;
+    if (!mdk::vk::ensureEyeTargets(&r->ctx)) {
+        refused("gamma: the composite pass could not be created, so the frame "
+                "is presented ungraded");
+        return false;
+    }
+    if (!r->eyeSampler) {
+        VkSamplerCreateInfo samplerInfo = {};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        if (vkCreateSampler(device, &samplerInfo, nullptr, &r->eyeSampler) != VK_SUCCESS) {
+            refused("gamma sampler: the frame is presented ungraded");
+            return false;
+        }
+    }
+    if (!r->gammaReady) {
+        r->gammaVertModule = createModule(&r->ctx, spv_stereo_vert, spv_stereo_vert_size);
+        r->gammaFragModule = createModule(&r->ctx, spv_gamma_frag, spv_gamma_frag_size);
+        if (!r->gammaVertModule || !r->gammaFragModule) {
+            refused("gamma shader modules: the frame is presented ungraded");
+            return false;
+        }
+
+        VkDescriptorSetLayoutBinding binding = {};
+        binding.binding = 0;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &binding;
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &r->gammaSetLayout) !=
+            VK_SUCCESS) {
+            refused("gamma descriptor layout: the frame is presented ungraded");
+            return false;
+        }
+
+        VkPushConstantRange range = {};
+        range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        range.offset = 0;
+        range.size = 16;
+        VkPipelineLayoutCreateInfo pipeLayoutInfo = {};
+        pipeLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipeLayoutInfo.setLayoutCount = 1;
+        pipeLayoutInfo.pSetLayouts = &r->gammaSetLayout;
+        pipeLayoutInfo.pushConstantRangeCount = 1;
+        pipeLayoutInfo.pPushConstantRanges = &range;
+        if (vkCreatePipelineLayout(device, &pipeLayoutInfo, nullptr, &r->gammaPipeLayout) !=
+            VK_SUCCESS) {
+            refused("gamma pipeline layout: the frame is presented ungraded");
+            return false;
+        }
+
+        VkDescriptorPoolSize poolSize = {};
+        poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSize.descriptorCount = mdk::vk::kFramesInFlight;
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = mdk::vk::kFramesInFlight;
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &r->gammaPool) != VK_SUCCESS) {
+            refused("gamma descriptor pool: the frame is presented ungraded");
+            return false;
+        }
+        for (uint32_t i = 0; i < mdk::vk::kFramesInFlight; i++) {
+            VkDescriptorSetAllocateInfo allocInfo = {};
+            allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocInfo.descriptorPool = r->gammaPool;
+            allocInfo.descriptorSetCount = 1;
+            allocInfo.pSetLayouts = &r->gammaSetLayout;
+            if (vkAllocateDescriptorSets(device, &allocInfo, &r->gammaSets[i]) != VK_SUCCESS) {
+                refused("gamma descriptor sets: the frame is presented ungraded");
+                return false;
+            }
+        }
+
+        VkPipelineVertexInputStateCreateInfo vi = {};
+        vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        VkPipelineInputAssemblyStateCreateInfo ia = {};
+        ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo vp = {};
+        vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        vp.viewportCount = 1;
+        vp.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo rs = {};
+        rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rs.polygonMode = VK_POLYGON_MODE_FILL;
+        rs.lineWidth = 1.0f;
+        rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        VkPipelineMultisampleStateCreateInfo ms = {};
+        ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineDepthStencilStateCreateInfo ds = {};
+        ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        ds.depthTestEnable = VK_FALSE;
+        ds.depthWriteEnable = VK_FALSE;
+        ds.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+        VkPipelineColorBlendAttachmentState cb = {};
+        cb.blendEnable = VK_FALSE;
+        cb.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo cbs = {};
+        cbs.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        cbs.attachmentCount = 1;
+        cbs.pAttachments = &cb;
+        VkDynamicState dynamics[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dyn = {};
+        dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dyn.dynamicStateCount = 2;
+        dyn.pDynamicStates = dynamics;
+        VkPipelineShaderStageCreateInfo stages[2] = {};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = r->gammaVertModule;
+        stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = r->gammaFragModule;
+        stages[1].pName = "main";
+        VkGraphicsPipelineCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        info.stageCount = 2;
+        info.pStages = stages;
+        info.pVertexInputState = &vi;
+        info.pInputAssemblyState = &ia;
+        info.pViewportState = &vp;
+        info.pRasterizationState = &rs;
+        info.pMultisampleState = &ms;
+        info.pDepthStencilState = &ds;
+        info.pColorBlendState = &cbs;
+        info.pDynamicState = &dyn;
+        info.layout = r->gammaPipeLayout;
+        info.renderPass = r->ctx.compositePass;
+        info.subpass = 0;
+        if (vkCreateGraphicsPipelines(device, r->pipeCache, 1, &info, nullptr,
+                                      &r->gammaPipeline) != VK_SUCCESS) {
+            refused("gamma pipeline: the frame is presented ungraded");
+            return false;
+        }
+        r->gammaReady = true;
+    }
+
+    if (r->gammaWidth != r->ctx.extent.width || r->gammaHeight != r->ctx.extent.height) {
+        destroyGammaTarget(r);
+        VkImageCreateInfo imageInfo = {};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = r->ctx.swapchainFormat;
+        imageInfo.extent.width = r->ctx.extent.width;
+        imageInfo.extent.height = r->ctx.extent.height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (vkCreateImage(device, &imageInfo, nullptr, &r->gammaImage) != VK_SUCCESS) {
+            refused("gamma target image: the frame is presented ungraded");
+            return false;
+        }
+        VkMemoryRequirements requirements = {};
+        vkGetImageMemoryRequirements(device, r->gammaImage, &requirements);
+        VkMemoryAllocateInfo allocateInfo = {};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.allocationSize = requirements.size;
+        allocateInfo.memoryTypeIndex = 0;
+        VkPhysicalDeviceMemoryProperties properties = {};
+        vkGetPhysicalDeviceMemoryProperties(r->ctx.physicalDevice, &properties);
+        bool found = false;
+        for (uint32_t i = 0; i < properties.memoryTypeCount; i++) {
+            if ((requirements.memoryTypeBits & (1u << i)) &&
+                (properties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                allocateInfo.memoryTypeIndex = i;
+                found = true;
+                break;
+            }
+        }
+        if (!found || vkAllocateMemory(device, &allocateInfo, nullptr, &r->gammaMemory) !=
+                          VK_SUCCESS ||
+            vkBindImageMemory(device, r->gammaImage, r->gammaMemory, 0) != VK_SUCCESS) {
+            refused("gamma target memory: the frame is presented ungraded");
+            destroyGammaTarget(r);
+            return false;
+        }
+        VkImageViewCreateInfo viewInfo = {};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = r->gammaImage;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = r->ctx.swapchainFormat;
+        viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+        if (vkCreateImageView(device, &viewInfo, nullptr, &r->gammaView) != VK_SUCCESS) {
+            refused("gamma target view: the frame is presented ungraded");
+            destroyGammaTarget(r);
+            return false;
+        }
+        VkImageView attachments[1] = {r->gammaView};
+        VkFramebufferCreateInfo fbInfo = {};
+        fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass = r->ctx.compositePass;
+        fbInfo.attachmentCount = 1;
+        fbInfo.pAttachments = attachments;
+        fbInfo.width = r->ctx.extent.width;
+        fbInfo.height = r->ctx.extent.height;
+        fbInfo.layers = 1;
+        if (vkCreateFramebuffer(device, &fbInfo, nullptr, &r->gammaFramebuffer) != VK_SUCCESS) {
+            refused("gamma framebuffer: the frame is presented ungraded");
+            destroyGammaTarget(r);
+            return false;
+        }
+        r->gammaWidth = r->ctx.extent.width;
+        r->gammaHeight = r->ctx.extent.height;
+    }
+    return true;
+}
+
+// The gamma grade: sample the finished scene, write colour^(1/gamma) into
+// the gamma target, and present that instead (Renderer.Gamma.cs). Runs
+// with no render pass open; closes its own.
+void drawGamma(RendererVk* r) {
+    VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+    VkImageMemoryBarrier barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = r->ctx.sceneImage;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &barrier);
+
+    VkDescriptorSet set = r->gammaSets[r->ctx.currentFrame];
+    VkDescriptorImageInfo image = {};
+    image.sampler = r->eyeSampler;
+    image.imageView = r->ctx.sceneView;
+    image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = set;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image;
+    vkUpdateDescriptorSets(r->ctx.device, 1, &write, 0, nullptr);
+
+    mdk::vk::beginPass(&r->ctx, r->gammaFramebuffer, r->ctx.compositePass, 0);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->gammaPipeline);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->gammaPipeLayout,
+                            0, 1, &set, 0, nullptr);
+    const float uniforms[4] = {1.0f / r->gamma, 0.0f, 0.0f, 0.0f};
+    vkCmdPushConstants(cb, r->gammaPipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                       sizeof(uniforms), uniforms);
+    vkCmdDraw(cb, 3, 1, 0, 0);
+    mdk::vk::endPass(&r->ctx);
+    mdk::vk::setPresentImage(&r->ctx, r->gammaImage);
+}
 
 // One eye's camera, the C#'s View.Eye (Renderer.cs:92): the eyes are
 // `separation` apart, parallel, and their images converge at `convergence`
@@ -2362,6 +2701,14 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
         mdk::vk::setSceneOverride(&r->ctx, VK_NULL_HANDLE);
         r->activeCamera = r->camera;
     }
+    mdk::vk::setPresentImage(&r->ctx, VK_NULL_HANDLE);
+    if (r->enhancedLook) {
+        // Stated once per distinct request (refused dedups): the lit
+        // passes are not ported yet, so an enhanced frame currently
+        // renders the original look. Never a silent substitution.
+        refused("enhanced look: the lit passes are not ported yet, so this "
+                "frame renders the original look");
+    }
     // A FRAME THAT DID NOT BEGIN IS NOT A FRAME. `beginFrame` returns false when the
     // fence wait, the image acquire, the command-buffer reset or the buffer's begin
     // failed — every one of which was read by nobody until this batch — and the
@@ -2457,11 +2804,22 @@ void mdk_render_end_frame(MdkRenderer rr) {
 
         stereoFrame = true;
     }
+    // The gamma grade, when the display's gamma is not 1: the finished
+    // scene (or the stereo composite) is graded into its own target and
+    // that is presented instead.
+    if (stereoFrame && r->gamma != 1.0f && ensureGamma(r)) {
+        drawGamma(r);
+    }
     bool submitted = false;
     if (stereoFrame) {
         submitted = mdk::vk::submitFrame(&r->ctx);
     }
-    if (!stereoFrame) {
+    if (!stereoFrame && r->gamma != 1.0f && ensureGamma(r)) {
+        flushDraws(r);
+        mdk::vk::endPass(&r->ctx);
+        drawGamma(r);
+        submitted = mdk::vk::submitFrame(&r->ctx);
+    } else if (!stereoFrame) {
         // The frame's queued draws go in now, in the oracle's pass order, while the
         // render pass is still open (draw_queue.h). A frontend that drew its HUD
         // already flushed at canvas_begin; this is the catch-all for a frame with no

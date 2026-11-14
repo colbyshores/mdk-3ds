@@ -179,6 +179,29 @@ else
     skip "frame gate: stereo fidelity arm (no oracle sbs frame in $REFDIR)"
 fi
 
+# Arm 6: the gamma grade (P6 post). The pinned scene at --gamma=1.5 must
+# match the oracle's own graded frame under the recorded ceiling. Measured
+# 2026-11-14: 1.240% at tolerance 0 (max 250, mean 0.1490) -- exactly the
+# mono frame's gap, i.e. the grade's math adds no divergence of its own.
+# Ceiling 2.0, may only shrink.
+GAMMA_CAP="$WORK/frame.gamma.bmp"
+if MDK_FRAME_GAMMA=1.5 "$CAPTURE" "$GAMMA_CAP" >/dev/null 2>&1 && [ -s "$GAMMA_CAP" ]; then
+    if [ -f "$REFDIR/L3_f1_gamma.bmp" ]; then
+        gamma_measure=$(python3 "$COMPARE" "$REFDIR/L3_f1_gamma.bmp" "$GAMMA_CAP" --measure 2>/dev/null)
+        gamma_bad=$(printf '%s' "$gamma_measure" | awk '{print $1}')
+        gamma_over=$(python3 - "$gamma_bad" <<'PY'
+import sys
+print("1" if float(sys.argv[1]) > 2.0 else "0")
+PY
+)
+        check "frame gate: the gamma gap to the oracle stays under its 2.0% ceiling (measured 1.240)" "0" "$gamma_over"
+    else
+        skip "frame gate: gamma fidelity arm (no oracle gamma frame in $REFDIR)"
+    fi
+else
+    check "frame gate: the gamma capture succeeds for the gamma arm" "ok" "capture-failed"
+fi
+
 if [ "$fails" -ne 0 ]; then
     echo "FRAME GATE: $fails FAILED ($checks checks, $skipped skipped)"
     exit 1

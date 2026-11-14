@@ -119,6 +119,11 @@ struct Context {
     // that eye. VK_NULL_HANDLE means the scene framebuffer.
     VkFramebuffer sceneOverride = VK_NULL_HANDLE;
 
+    // The image submitFrame blits to present: the scene image normally, or
+    // a post pass's output (the gamma grade) when one ran. VK_NULL_HANDLE
+    // means the scene image. Reset by the renderer every frame.
+    VkImage presentImage = VK_NULL_HANDLE;
+
     bool validation = false;
 
     // The surface creator, set by the platform layer. It creates the
@@ -199,6 +204,10 @@ void destroyEyeTargets(Context* ctx);
 // Which framebuffer the next beginFrame render pass targets (an eye, or
 // VK_NULL_HANDLE for the scene target).
 void setSceneOverride(Context* ctx, VkFramebuffer framebuffer);
+
+// Which image submitFrame blits to present (a post output, or
+// VK_NULL_HANDLE for the scene image).
+void setPresentImage(Context* ctx, VkImage image);
 
 // End the currently open render pass, and begin one on the given
 // framebuffer/pass. The stereo path uses these to draw the second eye and

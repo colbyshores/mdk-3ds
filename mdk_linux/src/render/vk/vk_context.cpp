@@ -1300,6 +1300,10 @@ void setSceneOverride(Context* ctx, VkFramebuffer framebuffer) {
     ctx->sceneOverride = framebuffer;
 }
 
+void setPresentImage(Context* ctx, VkImage image) {
+    ctx->presentImage = image;
+}
+
 void endPass(Context* ctx) {
     FrameContext& frame = ctx->frames[ctx->currentFrame];
     vkCmdEndRenderPass(frame.commandBuffer);
@@ -1458,7 +1462,8 @@ bool endFrame(Context* ctx) {
         barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[0].image = ctx->sceneImage;
+        barriers[0].image = ctx->presentImage != VK_NULL_HANDLE ? ctx->presentImage
+                                                                 : ctx->sceneImage;
         barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         barriers[0].subresourceRange.levelCount = 1;
         barriers[0].subresourceRange.layerCount = 1;
@@ -1491,7 +1496,9 @@ bool endFrame(Context* ctx) {
         blit.dstOffsets[1].x = (int32_t)ctx->extent.width;
         blit.dstOffsets[1].y = (int32_t)ctx->extent.height;
         blit.dstOffsets[1].z = 1;
-        vkCmdBlitImage(frame.commandBuffer, ctx->sceneImage,
+        vkCmdBlitImage(frame.commandBuffer,
+                       ctx->presentImage != VK_NULL_HANDLE ? ctx->presentImage
+                                                           : ctx->sceneImage,
                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapImage,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                        VK_FILTER_NEAREST);
@@ -1624,7 +1631,8 @@ bool submitFrame(Context* ctx) {
         barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[0].image = ctx->sceneImage;
+        barriers[0].image = ctx->presentImage != VK_NULL_HANDLE ? ctx->presentImage
+                                                                 : ctx->sceneImage;
         barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         barriers[0].subresourceRange.levelCount = 1;
         barriers[0].subresourceRange.layerCount = 1;
@@ -1657,7 +1665,9 @@ bool submitFrame(Context* ctx) {
         blit.dstOffsets[1].x = (int32_t)ctx->extent.width;
         blit.dstOffsets[1].y = (int32_t)ctx->extent.height;
         blit.dstOffsets[1].z = 1;
-        vkCmdBlitImage(frame.commandBuffer, ctx->sceneImage,
+        vkCmdBlitImage(frame.commandBuffer,
+                       ctx->presentImage != VK_NULL_HANDLE ? ctx->presentImage
+                                                           : ctx->sceneImage,
                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapImage,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                        VK_FILTER_NEAREST);
