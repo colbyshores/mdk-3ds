@@ -487,12 +487,14 @@ HUD_INK_Y0="$(sed -n 's/^HUD_INK_Y0=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_X1="$(sed -n 's/^HUD_INK_X1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_Y1="$(sed -n 's/^HUD_INK_Y1=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 HUD_INK_MIN="$(sed -n 's/^HUD_INK_MIN=\([0-9][0-9]*\).*/\1/p' "$EMU")"
+HUD_INK_REACH="$(sed -n 's/^HUD_INK_REACH=\([0-9][0-9]*\).*/\1/p' "$EMU")"
 check "the harness declares the marker rect, its reach and the floor" "5" \
       "$([ -n "$CANARY_X1" ] && [ -n "$CANARY_Y1" ] && [ -n "$CANARY_REACH_X" ] \
          && [ -n "$CANARY_REACH_Y" ] && [ -n "$CANARY_MIN" ] && echo 5 || echo 0)"
-check "and it declares the HUD's own ink rect and its floor" "5" \
+check "and it declares the HUD's own ink rect, its floor and its reach" "6" \
       "$([ -n "$HUD_INK_X0" ] && [ -n "$HUD_INK_Y0" ] && [ -n "$HUD_INK_X1" ] \
-         && [ -n "$HUD_INK_Y1" ] && [ -n "$HUD_INK_MIN" ] && echo 5 || echo 0)"
+         && [ -n "$HUD_INK_Y1" ] && [ -n "$HUD_INK_MIN" ] && [ -n "$HUD_INK_REACH" ] \
+         && echo 6 || echo 0)"
 # AND THE FIXTURE REFUSES TO RUN WITHOUT THEM (review-1 F4). Silently carrying an
 # empty CANARY_X1 into the capture builder made python raise ValueError, which left
 # CAP_YES empty, and four PRE-EXISTING rows then failed for a fixture reason and
@@ -501,7 +503,7 @@ check "and it declares the HUD's own ink rect and its floor" "5" \
 # new rule's work.
 for v in CANARY_X1 CANARY_Y1 CANARY_REACH_X CANARY_REACH_Y CANARY_MIN \
          CANARY_MAX_PIXELS CANARY_MAX_COORD \
-         HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1 HUD_INK_MIN; do
+         HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1 HUD_INK_MIN HUD_INK_REACH; do
     case "${!v}" in
         ''|*[!0-9]*)
             echo "EMURUN HARNESS: $EMU declares no numeric $v -- the fixture cannot be built" >&2
@@ -533,9 +535,9 @@ done
 # with the shipped (a,b) = (1,-1). Each block's corner below is COMPUTED from (a,b)
 # through the mapping the harness documents, so a fixture cannot drift from the
 # transform it names -- and all four dispositions are rows here, not one.
-cap() { # cap <here|none|turn|flip|rot180|wide|small|noink|inkout|inkboth> -> path to a synthetic capture
+cap() { # cap <here|none|turn|flip|rot180|wide|small|noink|inkout|inkboth|inknear|inkreach> -> path to a synthetic capture
     python3 - "$1" "$ROOT/tools/panel_crop.py" "$CANARY_REACH_X" "$CANARY_REACH_Y" \
-              "$HUD_INK_X0" "$HUD_INK_Y0" "$HUD_INK_X1" "$HUD_INK_Y1" <<'PY'
+              "$HUD_INK_X0" "$HUD_INK_Y0" "$HUD_INK_X1" "$HUD_INK_Y1" "$HUD_INK_REACH" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[2])))
 from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1
@@ -549,6 +551,9 @@ size_x, size_y = int(sys.argv[3]) + 1, int(sys.argv[4]) + 1
 # The HUD's own ink rect, imported from the harness rather than restated here, for the
 # same reason canvasWidth is (review-1 F1: a second spelling certifies a copy).
 ix0, iy0, ix1, iy1 = (int(v) for v in sys.argv[5:9])
+# The reach budget, imported for the same reason the rect is: a fixture that restates it
+# certifies a copy of the rule instead of the rule.
+ink_reach = int(sys.argv[9])
 W, H = PANEL_X1 - PANEL_X0 + 1, PANEL_Y1 - PANEL_Y0 + 1
 img = Image.new("RGB", (1280, 1024), (16, 32, 48))
 px = img.load()
@@ -605,12 +610,13 @@ elif mode == "small":
     # The mirror-image defect: a canvasWidth too LARGE shrinks the marker to 8x8 = 64 px,
     # wholly inside the rect and still clearing the floor. Only an extent test sees it.
     block(0, 0, size_x - 3, size_y - 3)
-elif mode in ("noink", "inkout", "inkboth"):
+elif mode in ("noink", "inkout", "inkboth", "inknear", "inkreach"):
     # The shipped marker, so the MARKER's arms pass and the failure these fixtures stand
     # for is the HUD's own half. Without this the fixture paints nothing at all, the
     # marker's arm rejects it first, and the ink message these rows grep for is never
     # printed -- a row that passes for the wrong reason is the failure mode this file
-    # calls out more than any other.
+    # calls out more than any other. (Measured, on this batch's first cut: the two new
+    # ink fixtures omitted the marker, and both rows went red for a fixture reason.)
     block(*disposition(1, -1), size_x, size_y)
 
 # THE HUD'S OWN HALF. Every fixture above paints the marker, and the marker is drawn by
@@ -618,12 +624,23 @@ elif mode in ("noink", "inkout", "inkboth"):
 # nothing -- which is the hole, not the fixture. So the shipped case paints the ink too,
 # and three fixtures are the ink's own failures: noink (the off-the-edge mutation), inkout
 # (the HUD drew, somewhere else) and inkboth (the level makes the colour itself).
-if mode not in ("none", "noink", "inkout"):
+if mode not in ("none", "noink", "inkout", "inknear", "inkreach"):
     digits(ix1 - 55, iy1 - 26)
 if mode == "inkout":
     digits(20, 60)
 if mode == "inkboth":
     digits(20, 60)
+if mode == "inknear":
+    # review-1 F1's OWN fixture, measured on the parent: a block of HUD-palette green at
+    # the rect's NEAR corner. Every containment arm in hud_ink_verdict is satisfied by it
+    # -- inside the quadrant, over the floor, bbox wholly inside the rect, nothing
+    # outside -- and it is a HUD drawn a third of the screen away from its anchor.
+    digits(ix0, iy0)
+if mode == "inkreach":
+    # The budget's own boundary, on the passing side: the ink's far corner exactly at
+    # (derived far corner - HUD_INK_REACH). The arm refuses on `<`, so this must pass, and
+    # a budget that reddens its own boundary is a budget nobody can reason about.
+    digits(ix1 - ink_reach - 55, iy1 - ink_reach - 26)
 path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdk-harness-cap-%s.png" % mode)
 img.save(path)
 print(path)
@@ -639,6 +656,8 @@ CAP_SMALL="$(cap small)"
 CAP_NOINK="$(cap noink)"
 CAP_INKOUT="$(cap inkout)"
 CAP_INKBOTH="$(cap inkboth)"
+CAP_INKNEAR="$(cap inknear)"
+CAP_INKREACH="$(cap inkreach)"
 
 # THE RECTANGLE IS DERIVED, NOT REMEMBERED. The expectation lives in the harness as a
 # pair of integers; the geometry that produces it lives in the shipped renderer. If
@@ -1409,6 +1428,39 @@ check "verdict: ink the level could have made itself REFUSES the verdict -- HUD 
       "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '60 40 20 333 206 388 232\n'; }
            canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD INK NOT UNIQUE' )"
 
+# THE RECT IS A PLACEMENT TEST, NOT A CONTAINMENT TEST (review-1 F1). Every arm that
+# existed before this one asked a ONE-SIDED question -- bx1 <= X1, by1 <= Y1, inside <= the
+# rect's area -- so a HUD drawn anywhere in the bottom-right quadrant satisfied all of them.
+# MEASURED on the parent, the reviewer's fixture (HUD-palette green at the rect's NEAR
+# corner) and a HUD displaced 130 canvas px left / 71 px up of its own anchor both printed
+# `HUD INK -- 1512 of 1512 ... 0 outside` at rc 0. The panel's FAR corner is the one thing
+# its bottom-right anchoring derives (kPanelRight/kPanelBottom), so the ink has to reach it.
+check "verdict: ink inside the quadrant but NOT at the derived corner is REFUSED" "1" \
+      "$(ink_verdict_rc "$CAP_INKNEAR")"
+check "and it is refused BY NAME, as an anchor failure and not a generic one" "1" \
+      "$(ink_verdict_msg "$CAP_INKNEAR" | grep -c 'HUD NOT AT ITS ANCHOR')"
+check "and the green ink verdict is NOT also printed over the refusal" "0" \
+      "$(ink_verdict_msg "$CAP_INKNEAR" | grep -c 'HUD INK --')"
+check "the reach budget is INCLUSIVE: a far corner exactly on it passes" "0" \
+      "$(ink_verdict_rc "$CAP_INKREACH")"
+check "and the shipped fixture's own 2 px shortfall is well inside it" "1" \
+      "$(ink_verdict_msg "$CAP_YES" | grep -c 'HUD INK --')"
+# THE OTHER PRODUCER review-1 F1 named. The `outside` refusal used to blame only the
+# level, but drawInventory's icons and the bar/skull are drawn from the SAME palette and
+# are not inside this rect, so a green icon is a HUD-side cause of the same refusal and a
+# reader told "the level makes that colour" would go looking in the wrong tree.
+check "the NOT UNIQUE refusal names the HUD's own other elements as well as the level" "1" \
+      "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '60 40 20 333 206 388 232\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c "HUD'S OWN OTHER" )"
+# AND THE LINE THAT ANNOUNCED A PASS INSIDE A FAILURE (review-1 F5). The marker's verdict
+# printed `HUD VISIBLE` immediately before the ink arm refused the run, so a rejected
+# transcript carried a HUD success on the line above the refusal. The line judges the
+# renderer's marker, and now says MARKER.
+check "the marker's verdict line says MARKER" "1" \
+      "$(ink_verdict_msg "$CAP_YES" | grep -c 'HUD MARKER VISIBLE')"
+check "and no verdict line still claims the whole HUD is visible" "0" \
+      "$(ink_verdict_msg "$CAP_YES" | grep -c 'HUD VISIBLE')"
+
 # THE SAME DISCIPLINE THE MARKER'S ARMS LEARNED, applied to the ink counter's fields.
 # Each line below is one a counter could not have emitted, and each was certified green
 # by a `[ ]` that could not make the comparison it was guarding (review-2 F2's rule:
@@ -1423,7 +1475,7 @@ for bad in "100 60 60 333 206 388 232" "30000 30000 0 333 206 388 232" \
 done
 # AND THE HARNESS'S OWN SIDE OF EACH COMPARISON, because either side can be the
 # unevaluable one and a HUD_INK_MIN of `x` fails open exactly the way a bad count does.
-for v in HUD_INK_MIN HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1; do
+for v in HUD_INK_MIN HUD_INK_REACH HUD_INK_X0 HUD_INK_Y0 HUD_INK_X1 HUD_INK_Y1; do
     check "verdict: a non-numeric $v refuses to judge rather than pass" "1" \
           "$( ( eval "$EXPECT_FN"; eval "$v=x"; canary_verdict "$CAP_YES" ) \
               2>&1 | grep -c 'HUD MALFORMED' )"
@@ -1436,9 +1488,17 @@ check "and a near corner past the far corner is refused too (the rect is a relat
 # `0388` as no base at all (aborting the script at an undocumented rc 1) or `0333` as
 # octal 219 (a box that disagrees with its own count). `10#` on the area arm is what
 # makes a padded spelling the SAME measurement as an unpadded one.
+#
+# AND NOW ON THE COUNTS TOO (review-1 F3). The rule was applied to the bbox and NOT to
+# total/inside/outside, and the two failure modes the comment above names both landed on
+# the counts instead: `133 0388 0 ...` aborted the whole harness at an unnamed rc 1 with
+# `0388: value too great for base`, and `0133 0133 00 ...` was REFUSED as MALFORMED,
+# because `$(( 0133 ))` is 91 while `[ 0133 -le N ]` is 133 -- the arm that exists to say
+# "one spelling, two bases" disagreed with itself. The rows below are the counts' own.
 check "the premise again: $((0333)) is OCTAL 219, not 333" "219" \
       "$( ( printf '%s' "$((0333))" ) 2>/dev/null )"
-for ok in "133 133 0 333 206 388 232" "133 133 0 0333 0206 0388 0232"; do
+for ok in "133 133 0 333 206 388 232" "133 133 0 0333 0206 0388 0232" \
+          "0133 0133 00 333 206 388 232" "0133 0133 00 0333 0206 0388 0232"; do
     check "and [$ok] is the same measurement in either spelling, so it passes" "0" \
           "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '%s\n' "$ok"; }
                canary_verdict "$CAP_YES" ) >/dev/null 2>&1; printf '%s' "$?" )"
@@ -1446,6 +1506,12 @@ done
 check "and a padded field does not abort the shell on a base it cannot read" "0" \
       "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '133 133 0 0333 0206 0388 0232\n'; }
            canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'value too great for base' )"
+check "and a padded COUNT does not abort the shell either -- review-1 F3" "0" \
+      "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '133 0388 0 333 206 388 232\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'value too great for base' )"
+check "and an inconsistent padded count is refused BY NAME instead of by a bash error" "1" \
+      "$( ( eval "$EXPECT_FN"; hud_ink_stats() { printf '133 0388 0 333 206 388 232\n'; }
+           canary_verdict "$CAP_YES" ) 2>&1 | grep -c 'HUD MALFORMED' )"
 
 if [ "$fails" -eq 0 ]; then
     echo "PASS EmurunHarness ($checks checks: config placement + mount ownership + the HUD canary + the HUD's own ink)"

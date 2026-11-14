@@ -1,3 +1,126 @@
+## Iteration 174 — batch 174: `3ds.hud-canvas` — review-1 remediation: the HUD's ink rect asked "is it inside the quadrant" and never asked "did it reach the anchor", so a HUD drawn a third of the screen away still passed
+
+**LEDGER ROW `3ds.hud-canvas` (d1), acceptance `mdk_3ds/tools/emurun.sh --expect hud`,
+attempt 2 of the current cycle. REMEDIATION batch on review-1
+(`logs/ralph-pi/run-20261114-003546/review-1.md`, on batch 173): VERDICT INCOMPLETE, **no
+Critical and no High**, two actionable Mediums (F1, F2) and three Lows (F3, F4, F5). All
+five were reproduced against the tree before anything was changed and all five are FIXED;
+nothing is rebutted. Full record:
+`docs/evidence/2026-11-14-174-a-rect-that-only-asks-inside.txt`.**
+
+**F1 IS THE ONE THAT MATTERS, AND THE REVIEWER WAS RIGHT.** Every positional arm in
+`hud_ink_verdict` was ONE-SIDED containment (`bx1 <= HUD_INK_X1`, `by1 <= HUD_INK_Y1`,
+`inside <= the rect's area`), so the rect — whose FAR corner is the one thing the HUD's
+bottom-right anchoring derives, from `kPanelRight`/`kPanelBottom` — was never actually
+asserted. MEASURED on the parent harness with the functions lifted and the shipped marker
+painted so the marker's arms pass: HUD-palette green at the rect's NEAR corner (the
+reviewer's fixture) printed `HUD INK -- 1512 of 1512 ... 0 outside` at **rc 0**, and a HUD
+displaced **130 canvas px left and 71 px up** of its own anchor did the same. That is the
+row's own defect class walking through the front door. **THE FIX IS THE MARKER'S OWN
+PATTERN, MIRRORED**: `CANARY_REACH_X/Y` already asks `bx1 >= REACH` because the marker is
+anchored at the origin, so the ink — anchored at the FAR corner — gets
+`bx1 + HUD_INK_REACH < HUD_INK_X1 -> HUD NOT AT ITS ANCHOR`. `HUD_INK_REACH=12` is derived
+and not picked: ceil() costs 1 px, the shipped capture's measured shortfall is **2 px on
+each axis** (bbox far corner 388,232 against the derived 390,234), and 12 is six times that
+while still being only 18 canvas px — a budget at the measured 2 would red the moment the
+open texture-addressing fix changes which texels carry the colour, and a gate that cannot
+survive the fix it is waiting for gets deleted rather than tuned. The arm refuses on `<`, so
+the budget is INCLUSIVE, and a fixture sits on the boundary to pin that. F1's second half
+went too: the `outside` refusal blamed only the LEVEL, but `drawInventory`'s icons
+(canvas 32..368, 328 -> crop 21..245, 219) and the bar/skull come from the SAME palette and
+are not inside the rect, so the message now names both producers.
+
+**F2: AN OBSOLETE COPY OF THE LOOP HARNESS WAS SITTING IN THE REPO ROOT, EXECUTABLE.**
+`ralph-pi.sh.next`, 11913 B, untracked, still carrying the Oct-26 route block
+(`glm-5.3-flash-nvidia` / `minimax-m3.1-flash-nvidia`, `set -u` without `pipefail`, no
+`flock`, no `self_sha`/`harness_verdict`, no pre-turn closer), named by nothing in the
+tree. Beyond the second-older-loop hazard, it made this file's own item-0 instruction to
+the owner — run `ledger_close.py` **on a clean tree** — impossible to follow. Deleted; it
+was untracked, so nothing was lost. NOT gitignored: `.gitignore` is PROTECTED, and a stale
+harness should not be hidden, it should not exist.
+
+**F3: THE "ONE SPELLING, TWO BASES" RULE WAS APPLIED TO THE BBOX AND NOT TO THE COUNTS,
+AND BOTH OF ITS FAILURE MODES LANDED ON THE COUNTS.** `decimal_measurement` tests digits
+and not bases, `[ 0133 -le N ]` is decimal while `$(( inside + outside ))` is octal, and
+measured on the parent a count line of `133 0388 0 ...` aborted the whole harness at an
+unnamed rc 1 with `0388: value too great for base` — the exact hazard the block's own
+comment says `10#` prevents — while a legitimate `0133 0133 00 ...` was REFUSED as
+MALFORMED because 0133 is 91 to the arithmetic and 133 to the test. The fix normalises
+`total`/`inside`/`outside` (and the four bbox fields) with `10#` once, right after they are
+known to be digits, so every comparison below and the line printed inside a green verdict
+read one number. Now: the padded-consistent line passes as the same measurement, and the
+padded-inconsistent one is refused BY NAME.
+
+**F4: BATCH 173'S DECOMPOSITION DID NOT ADD UP, AND IT IS NOW MEASURED INSTEAD OF
+ARGUED.** §4(a) said the digits are 60 px, §4(b) said 74 remained with the panel off-screen
+and 76 with the digits removed — so the digits were both 60 and 74, and 74 + 76 = 150 > 134
+for two sprites that cannot overlap by 16 of their own pixels. Re-measured on this batch's
+capture: total 134, **58** inside the digits' documented bbox (359,208)-(369,215), **76**
+outside it — and that 76 is exactly §4(b)'s "digits removed -> 76", so the panel's share is
+settled twice over and **74 is the error**, arithmetically impossible and not merely loose.
+§4(a)'s 60 came from a different capture (the `drawImage`-shift mutant) and is within 2 px
+of 58; that mutant was not rebuilt to chase 2 pixels, and the record says so rather than
+declaring 60 false. Appended as §10 of batch 173's evidence file, not silently rewritten;
+`HUD_INK_MIN=25` is a floor on the TOTAL, which every measurement agrees on, so it does not
+move.
+
+**F5: A REJECTED RUN ANNOUNCED THE HUD WAS VISIBLE.** `canary_verdict` printed
+`HUD VISIBLE -- 121 canary pixels ...` and only then called `hud_ink_verdict`, so a refused
+transcript carried a HUD success on the line above the refusal — review-3 F3's class, one
+arm over. The line always judged the RENDERER's marker, so it now says
+`HUD MARKER VISIBLE`; nothing in the tree greps the old string (measured), and the prose
+above keeps the old spelling on purpose because those paragraphs record measurements taken
+on the parent. `USAGE` now says `--expect hud` requires the HUD's OWN palette colour at the
+HUD's own anchoring, not just the canvas matrix.
+
+**THE FIXTURE TEST CAUGHT THIS BATCH'S OWN FIRST CUT, AND FOR THE REASON THE FILE NAMES
+ABOVE ALL OTHERS.** The two new ink fixtures omitted the marker, so the marker's arm
+rejected them first, neither new message was ever printed, and two rows went red for a
+fixture reason — "a row that passes for the wrong reason". The builder now lists
+`inknear`/`inkreach` in the marker-painting branch with the reason in the comment.
+`EmurunHarness` is **283 -> 296 checks**. **THE FOUR-WAY:** new on working rc 0 (296); new
+on the PARENT harness rc 1 — its fixture guard refuses to build from a harness that
+declares no `HUD_INK_REACH`, which collapses the row to one red, so the per-arm
+non-vacuity is the reviewer's own method instead: the parent's lifted functions return
+rc 0 on both displaced fixtures and a bash abort on the padded counts, and the new ones
+refuse by name; PARENT test on WORKING sources rc 0, 283 checks, **zero collateral**;
+parent on parent rc 0. (Rows 3 and 4 must run from inside `tests/scripts/`, because `ROOT`
+comes from the script's own location.)
+
+**GATES, RUN:** `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`,
+**805 PASS / 0 FAIL** (was 792; +13 is exactly these rows), reading
+`PASS EmurunHarness (296 checks…)`. `DISPLAY=:99 bash tools/check.sh` rc 0,
+`CHECK: ALL GATES PASSED`, `VERDICT: CONTRACT CLEAN -- 0 violations.`,
+`PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS`,
+`COMPLETION SELFTEST: PASS (13 arms)`, `COMPLETION[d1]: 11 done / 13 total / 0
+owner-blocked / 2 open`, `COMPLETION: LEDGER VERIFIED`, `audit_c_with_classes 0
+violations`, `SKIP gates_smdh`. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5 **`72328e9d5fd439d7f75703f5c28ccb80`
+UNCHANGED** — the only `mdk_3ds/**` file in the diff is a host shell script, so nothing new
+reached the ARM binary; no C++ changed, so no §10/R-rule exposure and no golden moved. `cmake --build build-linux -j8` was
+re-run BY HAND (item 11b) and **found a genuinely stale binary** — `build-linux/mdk` was
+16:50 against `hud_view.cpp` at 18:31, and the rebuild recompiled it, so the frame
+`gates_frames` certifies is now built from the tree it describes. Frame
+`docs/frames/2026-11-14-a-rect-that-only-asks-inside.png` is byte-identical to its
+predecessors (census re-derived: 192 PNGs, 191 at md5 `6769a137…`, the lone outlier being the
+pre-existing `2026-10-30-depth-pull.png`) with **zero** pure (0,0,255) pixels over 219
+distinct colours.
+**P8 OWED AND RUN** on the final build: `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud
+--shot …` -> **rc 0**, display `:99`, Mandarine r1.2.1 md5 `0d2adab6`, `graphics_api=1`,
+`render_3d=0`, `flow: screen=4 level=7`, frames 2460 by the deadline / 2580 after the reap,
+`canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame 2520)`,
+`HUD INK -- 134 of 134 … its far corner within 12 px of the derived 390,234`.
+Emulator-green is not hardware-pass; no console was used and Old-3DS performance readiness
+stays open. Prior-solution lookup: pi-knowledge `mdk-sdl` surfaced SPEC §7.3 and the
+`C3dTexture` linear-vs-tiled claim as the lead for the row's real remaining item;
+**Obsidian and Cognee MCP are ABSENT from this session's tool list** (AGENTS §9 P9: a
+session fault, recorded and not papered over), vault read read-only from disk.
+`/tmp/kilo` is still not writable by this lane (captures to `/tmp/mdk-b174-logs/`);
+`Xvfb :99` was already up and was left alone. **WHAT THIS BATCH DID NOT TOUCH, ON PURPOSE:**
+the panel sprite's ~4x mis-sampling — libcitro3d has no source on this host, the rule has
+to be established before any scale is touched, and batch 173 already rejected a /4 on
+measurement; starting it here would be a second subsystem slice in one commit.
+
 ## Iteration 173 — batch 173: `3ds.hud-canvas` — the HUD's acceptance was green on a build that paints no HUD, because every pixel it looked at was drawn by the renderer
 
 **LEDGER ROW `3ds.hud-canvas` (d1, fast), acceptance `mdk_3ds/tools/emurun.sh --expect hud`,

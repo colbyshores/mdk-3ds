@@ -262,3 +262,37 @@ against.
 * The ledger is still unwritable from this lane (`coleshores:coleshores 0664`, and
   `tools/runner/ledger_close.py` is PROTECTED), so `3ds.hud-canvas` stays open
   despite a green acceptance. That owner act is unchanged from batch 172's item 0.
+
+== 10. CORRECTION, APPENDED BY BATCH 174 (review-1 F4): §4's DECOMPOSITION DID NOT ADD UP ==
+
+Review-1 (on this batch) found §4 internally inconsistent, and it does. §4(a) says the
+health number is 60 pixels; §4(b) says that with the panel sprite pushed off-screen 74 of
+the 134 remained — so the digits are both 60 and 74, and 74 + 76 = 150 > 134 for two
+sprites that cannot overlap by 16 pixels of themselves. Nothing was silently rewritten;
+this block is appended, and the figures below were MEASURED, not chosen for tidiness.
+
+Re-measured on a fresh capture from batch 174's build (`--expect hud`, level 7, seed 1,
+frame 2520, display :99), counting pure (0,255,0) in the 400x240 panel:
+
+    total green                                   134     (unchanged, agrees with §2)
+    inside the digits' own bbox (359,208)-(369,215)   58
+    outside that bbox                               76
+    rows carrying ink          206, 208-215, 217, 221-224, 226-232
+
+WHAT THAT SETTLES. The panel sprite's own contribution is 76, and it is now measured TWO
+independent ways that agree: §4(b)'s "with the digits removed, 76 remained", and 134 - 58
+on the shipped capture. So the digits are 58 on this capture, and §4(b)'s **74 is the
+error** — it is not merely imprecise, it is arithmetically impossible next to 76.
+
+WHAT THAT DOES NOT SETTLE. §4(a)'s 60 was counted on a DIFFERENT capture (the mutant with
+`drawImage` shifted off-screen, where the digits were the only ink), and 58 vs 60 is a
+2-pixel difference between two captures of two different builds; this batch did not
+rebuild that mutant to chase 2 pixels, and says so rather than declaring 60 false. The
+claim §4(a) exists to make — the digits are legible and are not the smeared part — does
+not depend on which of the two it is.
+
+WHY IT MATTERS BEYOND TIDINESS, which is the finding's real point: `HUD_INK_MIN=25` was
+justified in §2 as "a sixth of the shipped 134". It is a floor on the TOTAL, and the total
+is the one number every measurement in this file agrees on, so the floor does not move
+whatever the decomposition says. Anyone re-deriving it later should take it from 134 and
+not from either sprite's share.

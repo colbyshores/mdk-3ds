@@ -59,7 +59,12 @@
 #                                               # is a usage error, not a disabled gate)
 #   mdk_3ds/tools/emurun.sh --expect hud         # fail unless the HUD's canvas drew,
 #                                               # in the panel, WHERE THE CANVAS MATRIX
-#                                               # SAYS IT GOES (see canary_verdict)
+#                                               # SAYS IT GOES (see canary_verdict) AND
+#                                               # the HUD's OWN palette colour reached
+#                                               # where the HUD's own anchoring puts the
+#                                               # panel (see hud_ink_verdict: the marker
+#                                               # is drawn by the RENDERER, so the ink
+#                                               # arm is the only one that judges the HUD)
 #   mdk_3ds/tools/emurun.sh --expect hud-visible --shot S.png
 #                                               # the pixel verdict on its own
 #   mdk_3ds/tools/emurun.sh path/to/other.3dsx
@@ -1201,9 +1206,12 @@ CANARY_MAX_INSIDE=$(( (10#$CANARY_X1 + 1) * (10#$CANARY_Y1 + 1) ))
 # for the level this harness boots that palette contains EXACTLY (0,255,0), which the
 # level's own geometry never produces anywhere in the panel. Measured on the shipped
 # capture: 134 such pixels in the whole 400x240 panel, all of them inside the rect below
-# and none outside it; 60 of them are the health number, which reads "100" legibly, and
-# the rest is the panel sprite's own body. That is the same one-colour-canary argument
-# the marker rests on, one layer up -- and the uniqueness claim is not left as prose: the
+# and none outside it; 58 of them are the health number, which reads "100" legibly, and
+# the rest is the panel sprite's own body (the 58/76 split is batch 174's re-measurement,
+# which corrected this paragraph's earlier 60/74 -- see `docs/evidence/
+# 2026-11-14-173-the-verdict-could-not-see-the-hud.txt` §10). That is the same
+# one-colour-canary argument the marker rests on, one layer up -- and the uniqueness claim
+# is not left as prose: the
 # `outside` arm below refuses the verdict if the colour appears anywhere the HUD's own
 # anchoring cannot reach, so a level that starts producing it breaks the instrument
 # loudly instead of quietly certifying it.
@@ -1232,9 +1240,29 @@ HUD_INK_Y0=120
 HUD_INK_X1=390
 HUD_INK_Y1=234
 # 25 for the same reason as CANARY_MIN. The shipped capture puts 134 pixels of the
-# colour inside this rect, 60 of them the health number itself, so the floor sits at a
+# colour inside this rect, 58 of them the health number itself, so the floor sits at a
 # sixth of the real ink and far above a stray pixel or two.
 HUD_INK_MIN=25
+# HOW FAR SHORT of the derived far corner the ink's own far corner may sit, in crop px.
+#
+# WHY THIS EXISTS AT ALL (review-1 F1). Everything else in hud_ink_verdict is ONE-SIDED
+# containment: bx1 <= HUD_INK_X1, by1 <= HUD_INK_Y1, inside <= the rect's area. A rect
+# that only ever asks "is it inside the quadrant" is a COUNT test and not a PLACEMENT
+# test, and MEASURED on the parent this batch's rect accepted a HUD drawn 130 canvas px
+# left and 71 px up of its own anchor -- rc 0, `HUD INK -- 1512 of 1512 ... 0 outside`,
+# bbox (203,135)-(258,161). The panel's far corner is the one thing its bottom-right
+# anchoring DOES derive (kPanelRight/kPanelBottom above), so the ink has to reach it.
+#
+# WHY THE BUDGET IS NOT ZERO. The far corner is taken with ceil() (389.33 -> 390), and
+# the ink is the farthest HUD-palette PIXEL, not the panel's bounding box: whatever
+# border texels of the sprite carry no (0,255,0) sit between the two. On the shipped
+# capture that shortfall measures 2 px on each axis (bbox far corner 388,232 against the
+# derived 390,234). 12 is six times that, and it is still only 18 canvas px -- a
+# displacement the row's own defect class (a HUD landing off its anchor) produces by
+# hundreds, not by tens. A budget this side of the measured 2 would red the moment the
+# open texture-addressing fix changes which texels carry the colour, and a gate that
+# cannot survive the fix it is waiting for gets deleted rather than tuned.
+HUD_INK_REACH=12
 # The most ink that can ever land inside the rect, derived from the constants above and
 # `10#`-forced to decimal for the reason spelled out on CANARY_MAX_INSIDE: a leading
 # zero must not make one spelling of a rect constant mean two numbers.
@@ -1282,13 +1310,14 @@ hud_ink_verdict() { # hud_ink_verdict <shot> ; 0 when the HUD's OWN pixels reach
     # comparison either side of which `[ ]` cannot parse exits 2, the `if` walks past its
     # body, and the function prints a green verdict over a measurement it never made.
     if ! decimal_measurement "$HUD_INK_MIN" "$CANARY_MAX_PIXELS" \
+       || ! decimal_measurement "$HUD_INK_REACH" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_X0" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_Y0" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_X1" "$CANARY_MAX_COORD" \
        || ! decimal_measurement "$HUD_INK_Y1" "$CANARY_MAX_COORD"; then
         echo "emurun: HUD MALFORMED: the harness's own ink constants are not" >&2
         echo "          measurements (MIN=$HUD_INK_MIN RECT=$HUD_INK_X0,$HUD_INK_Y0-" >&2
-        echo "          $HUD_INK_X1,$HUD_INK_Y1); refusing to judge." >&2
+        echo "          $HUD_INK_X1,$HUD_INK_Y1 REACH=$HUD_INK_REACH); refusing to judge." >&2
         return 1
     fi
     if [ "$HUD_INK_X0" -gt "$HUD_INK_X1" ] || [ "$HUD_INK_Y0" -gt "$HUD_INK_Y1" ]; then
@@ -1311,6 +1340,18 @@ EOF
         } >&2
         return 1
     fi
+    # ONE SPELLING, TWO BASES -- ON THE COUNTS, not only on the bbox (review-1 F3).
+    # `decimal_measurement` admits a leading zero (it tests digits, not bases), and
+    # `[ 0133 -le N ]` is a DECIMAL comparison while `$(( inside + outside ))` is an
+    # ARITHMETIC one, which reads the same field as OCTAL. Measured on the parent: a
+    # count line of `133 0388 0 ...` aborted the whole harness at an unnamed rc 1 with
+    # `0388: value too great for base`, and `0133 0133 00 ...` was refused as MALFORMED
+    # because 0133 is 91 to the arithmetic and 133 to the test -- so the arm that exists
+    # to say "one spelling, two bases is the same measurement" was the one that disagreed
+    # with itself. Normalising once, here, after the fields are known to be digits, makes
+    # every comparison below -- and the line printed inside a green verdict -- read one
+    # number. The bbox fields get the same treatment where they are validated.
+    total=$(( 10#$total )); inside=$(( 10#$inside )); outside=$(( 10#$outside ))
     # RELATIONS THE COUNTER GUARANTEES BY CONSTRUCTION: every ink pixel is counted in
     # exactly one of inside/outside, so they partition total; and inside cannot exceed
     # the rect's own area. Neither is a judgement about the HUD, and both used to be
@@ -1350,10 +1391,13 @@ EOF
         {
             echo "emurun: HUD INK NOT UNIQUE: $outside of the $total (0,255,0) pixels lie"
             echo "          OUTSIDE crop $HUD_INK_X0,$HUD_INK_Y0-$HUD_INK_X1,$HUD_INK_Y1,"
-            echo "          where the panel's bottom-right anchoring cannot put them. The"
-            echo "          canary is only a canary while the level does not make that"
-            echo "          colour itself; when it does, this instrument certifies nothing"
-            echo "          and says so instead of guessing."
+            echo "          where the panel's bottom-right anchoring cannot put them. Two"
+            echo "          producers can do that and both are named: the LEVEL, if it has"
+            echo "          started making that colour itself, and THE HUD'S OWN OTHER"
+            echo "          ELEMENTS -- drawInventory's icons (kIconAnchorX/kIconAnchorY)"
+            echo "          and the bar and skull are drawn from the same palette and are"
+            echo "          not inside this rect. Either way the canary has stopped being a"
+            echo "          canary: it certifies nothing and says so instead of guessing."
         } >&2
         return 1
     fi
@@ -1377,9 +1421,29 @@ EOF
         } >&2
         return 1
     fi
+    bx0=$(( 10#$bx0 )); by0=$(( 10#$by0 )); bx1=$(( 10#$bx1 )); by1=$(( 10#$by1 ))
+    # THE REACH ARM -- the one that makes this a PLACEMENT test (review-1 F1). By here
+    # the ink is inside the quadrant and its bbox is honest; what nothing had asked is
+    # whether it got to the corner the HUD's own anchoring puts the panel at. Containment
+    # alone is satisfied by the inventory icons, or by a panel drawn a third of the screen
+    # away from where kPanelRight/kPanelBottom say it is.
+    if [ $(( bx1 + HUD_INK_REACH )) -lt "$HUD_INK_X1" ] \
+       || [ $(( by1 + HUD_INK_REACH )) -lt "$HUD_INK_Y1" ]; then
+        {
+            echo "emurun: HUD NOT AT ITS ANCHOR: the ink's far corner is ($bx1,$by1), more"
+            echo "          than $HUD_INK_REACH px short of the derived ($HUD_INK_X1,$HUD_INK_Y1)"
+            echo "          that canvas 600-kPanelRight / 360-kPanelBottom crops to. The HUD"
+            echo "          painted inside the bottom-right quadrant but NOT where its own"
+            echo "          anchoring puts the panel -- which is the defect this row exists"
+            echo "          to catch, and containment alone could not see it."
+        } >&2
+        return 1
+    fi
     echo "expect    : HUD INK -- $inside of $total HUD-palette pixels inside crop"
     echo "expect    : $HUD_INK_X0,$HUD_INK_Y0-$HUD_INK_X1,$HUD_INK_Y1 (bbox"
-    echo "expect    : $bx0,$by0-$bx1,$by1, $outside outside), none of it reachable by the level"
+    echo "expect    : $bx0,$by0-$bx1,$by1, $outside outside, its far corner within"
+    echo "expect    : $HUD_INK_REACH px of the derived $HUD_INK_X1,$HUD_INK_Y1), none of it"
+    echo "expect    : reachable by the level"
     return 0
 }
 
@@ -1578,7 +1642,13 @@ EOF
         } >&2
         return 1
     fi
-    echo "expect    : HUD VISIBLE -- $total canary pixels in the panel, $inside inside"
+    # WHY THIS LINE SAYS MARKER (review-1 F5). It used to say `HUD VISIBLE`, and it still
+    # printed it immediately BEFORE hud_ink_verdict refused the run -- so the transcript of
+    # a REJECTED run carried a success verdict for the HUD on the line above the refusal,
+    # and anyone grepping the log for the old phrase read a failure as a pass. The line
+    # always judged the marker; now it says so. The prose above describes the OLD spelling
+    # because it records measurements taken on the parent harness, where that was the text.
+    echo "expect    : HUD MARKER VISIBLE -- $total canary pixels in the panel, $inside inside"
     echo "expect    : the marker's rect 0,0-$CANARY_X1,$CANARY_Y1 (bbox $bx0,$by0-$bx1,$by1,"
     echo "expect    : reaching the derived ($CANARY_REACH_X,$CANARY_REACH_Y))"
     # AND THE HUD ITSELF, not just the plumbing it travels through. See the block on

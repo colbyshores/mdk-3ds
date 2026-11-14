@@ -1,0 +1,257 @@
+================================================================================
+BATCH 174 — ledger row `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh
+--expect hud`, attempt 2 of the current cycle.
+REVIEW-1 REMEDIATION: THE HUD'S INK RECT ASKED "IS IT INSIDE THE QUADRANT" AND NEVER
+ASKED "DID IT GET TO THE ANCHOR", SO A HUD DRAWN A THIRD OF THE SCREEN AWAY PASSED.
+================================================================================
+
+Review under remediation: `logs/ralph-pi/run-20261114-003546/review-1.md`, on batch
+173 (`db2a8596..afb2a60f`). VERDICT: INCOMPLETE — **no Critical and no High**, two
+actionable Mediums (F1, F2) and three Lows (F3, F4, F5). All five were reproduced or
+confirmed against the tree BEFORE anything was changed, and all five are fixed here.
+Nothing is rebutted.
+
+--------------------------------------------------------------------------------
+1. F1 (Medium) — CONFIRMED, then FIXED. THE RECT WAS A CONTAINMENT TEST, NOT A
+   PLACEMENT TEST.
+--------------------------------------------------------------------------------
+The reviewer's claim: every positional arm in `hud_ink_verdict` is one-sided (`bx1 <=
+HUD_INK_X1`, `by1 <= HUD_INK_Y1`, `inside <= the rect's area`), so ink anywhere in the
+bottom-right quadrant satisfies all of them, and the rect's whole point — that its far
+corner is DERIVED from `kPanelRight`/`kPanelBottom` — was never asserted.
+
+MEASURED ON THE PARENT HARNESS (`git show HEAD:mdk_3ds/tools/emurun.sh`, functions
+lifted, not retyped), on two fixtures built at the panel's real shipped size (56x27 crop
+px) with the shipped marker also painted so the marker's arms pass:
+
+  ink at the rect's NEAR corner, crop (200,120) — the reviewer's own fixture
+    PARENT: expect : HUD INK -- 1512 of 1512 HUD-palette pixels inside crop   rc=0
+    NEW:    emurun: HUD NOT AT ITS ANCHOR: the ink's far corner is (255,146)  rc=1
+  ink displaced 130 canvas px left / 71 px up of its anchor
+    PARENT: expect : HUD INK -- 1512 of 1512 ...                              rc=0
+    NEW:    emurun: HUD NOT AT ITS ANCHOR: the ink's far corner is (258,161)   rc=1
+
+So the finding is real and the failure scenario is exactly the one the row exists to
+catch: a HUD that paints, inside the quadrant, nowhere near where its own anchoring puts
+it.
+
+THE FIX: a REACH arm, mirroring the one the marker's own verdict already had
+(`CANARY_REACH_X/Y`, which asks `bx1 >= REACH` because the marker is anchored at the
+origin). The ink is anchored at the FAR corner, so the arm is its mirror:
+
+    if [ $(( bx1 + HUD_INK_REACH )) -lt "$HUD_INK_X1" ] \
+       || [ $(( by1 + HUD_INK_REACH )) -lt "$HUD_INK_Y1" ]; then -> HUD NOT AT ITS ANCHOR
+
+`HUD_INK_REACH=12`, and the budget is derived rather than picked:
+  * the far corner is taken with ceil() (389.33 -> 390), which costs 1 px;
+  * the ink is the farthest HUD-palette PIXEL and not the panel's bounding box, so
+    whatever border texels of the sprite carry no (0,255,0) sit between the two;
+  * on the shipped capture that shortfall measures **2 px on each axis** (bbox far
+    corner 388,232 against the derived 390,234) — re-measured this batch, §4 below;
+  * 12 is six times the measured shortfall and still only 18 canvas px, while the defect
+    class this row chases displaces a HUD by hundreds. A budget at the measured 2 would
+    red the moment the open texture-addressing fix changes which texels carry the colour,
+    and a gate that cannot survive the fix it is waiting for gets deleted, not tuned.
+The arm refuses on `<`, so the budget is INCLUSIVE, and there is a fixture on the
+boundary (`inkreach`) pinning that.
+
+F1's SECOND HALF, also fixed: the `outside` refusal blamed only the LEVEL for producing
+(0,255,0). `drawInventory`'s icons (`kIconAnchorX`/`kIconAnchorY` = canvas 32..368, 328
+-> crop 21..245, 219) and the bar/skull are drawn from the SAME palette and are not
+inside this rect, so a green icon is a HUD-side cause of the same refusal and a reader
+told "the level makes that colour" would go looking in the wrong tree. The message now
+names both producers.
+
+--------------------------------------------------------------------------------
+2. F2 (Medium) — CONFIRMED, FIXED. AN OBSOLETE, UNGUARDED COPY OF THE LOOP HARNESS WAS
+   SITTING IN THE REPO ROOT.
+--------------------------------------------------------------------------------
+`ralph-pi.sh.next`, 11913 B, mode 0775, untracked, mtime 2026-11-13 18:30. Its header
+still carried the Oct-26 route block (`litellm/glm-5.3-flash-nvidia` worker,
+`litellm/minimax-m3.1-flash-nvidia` reviewer, `set -u` without `pipefail`, no `flock`, no
+`self_sha`/`harness_verdict`, no pre-turn closer), it was executable, and `git log --all
+-S"ralph-pi.sh.next"` is empty — nothing in the tree names it. Two harms, both real: a
+watchdog or an operator could start a second, older loop as the harness, and its presence
+made this file's own item-0 instruction to the owner ("run `ledger_close.py` **on a clean
+tree**") impossible to follow.
+
+`git status --porcelain` before: `?? ralph-pi.sh.next`. After: clean. It was untracked, so
+nothing was lost. NOT added to `.gitignore` — `.gitignore` is PROTECTED, and a stale copy
+should not be hidden, it should not exist.
+
+--------------------------------------------------------------------------------
+3. F3 (Low) — CONFIRMED, FIXED. THE "ONE SPELLING, TWO BASES" RULE WAS APPLIED TO THE
+   BBOX AND NOT TO THE COUNTS, AND BOTH OF ITS FAILURE MODES LANDED ON THE COUNTS.
+--------------------------------------------------------------------------------
+`decimal_measurement` tests digits, not bases, so a leading zero passes it; `[ 0133 -le N
+]` is a DECIMAL comparison while `$(( inside + outside ))` is an ARITHMETIC one, which
+reads the same field as OCTAL. Measured on the parent, same lifting method:
+
+  count line `133 0388 0 333 206 388 232`
+    PARENT: `0388: value too great for base (error token is "0388")`  rc=1  — the whole
+            harness aborts with an UNNAMED failure, the exact hazard the block's own
+            comment says `10#` prevents
+    NEW:    `HUD MALFORMED: the ink count line is [...]: 388 inside a ...`  rc=1 — the
+            designed refusal, by name (the line really is inconsistent: 388 != 133)
+  count line `0133 0133 00 333 206 388 232`
+    PARENT: `HUD MALFORMED ...` rc=1 — a legitimate measurement REFUSED, because
+            `$(( 0133 ))` is 91 while `[ 0133 -le N ]` is 133
+    NEW:    `HUD INK -- 133 of 133 ...` rc=0 — one spelling, two bases, one measurement
+
+THE FIX normalises once, immediately after the fields are known to be digits:
+`total=$(( 10#$total ))` and the same for inside/outside, and for the four bbox fields
+where they are validated. Every comparison below and the line printed inside a green
+verdict then read one number.
+
+--------------------------------------------------------------------------------
+4. F4 (Low) — CONFIRMED, FIXED BY MEASUREMENT. §4 OF BATCH 173'S RECORD DID NOT ADD UP.
+--------------------------------------------------------------------------------
+§4(a) said the digits are 60 px; §4(b) said 74 remained with the panel off-screen and 76
+remained with the digits removed — so the digits were both 60 and 74, and 74 + 76 = 150 >
+134 for two sprites that cannot overlap by 16 of their own pixels.
+
+Re-measured on this batch's own capture (frame 2520, level 7, seed 1, :99): total 134,
+**58** inside the digits' documented bbox (359,208)-(369,215), **76** outside it. The 76
+agrees with §4(b)'s "digits removed -> 76", so the panel's share is settled by two
+independent measurements and **74 is the error** — arithmetically impossible, not merely
+loose. §4(a)'s 60 came from a different capture (the `drawImage`-shift mutant) and is
+within 2 px of 58; this batch did not rebuild that mutant to chase 2 pixels and says so
+rather than declaring 60 false. Correction appended as §10 of batch 173's evidence file —
+not silently rewritten — and the three summary copies reconciled. `HUD_INK_MIN=25` is a
+floor on the TOTAL (134), which every measurement agrees on, so the floor does not move.
+
+--------------------------------------------------------------------------------
+5. F5 (Low) — CONFIRMED, FIXED. A REJECTED RUN ANNOUNCED THE HUD WAS VISIBLE.
+--------------------------------------------------------------------------------
+`canary_verdict` printed `HUD VISIBLE -- 121 canary pixels ...` and only THEN called
+`hud_ink_verdict`, so the transcript of a refused run carried a HUD success on the line
+above the refusal — measured on the shipped harness over a marker-only capture, rc 1
+below a line saying VISIBLE. This is review-3 F3's class (a self-contradicting verdict
+line) reintroduced one arm over.
+
+The line always judged the RENDERER's marker, so it now says so:
+`HUD MARKER VISIBLE -- ...`. Nothing in the tree greps the old string (checked:
+`grep -rn "HUD VISIBLE" ralph-pi.sh tools/ tests/frames/ docs/frames/README.md` is empty,
+and every hit in `tests/scripts/emurun_harness_test.sh` is prose), so the rename costs no
+consumer. The prose above the function keeps the old spelling on purpose: those paragraphs
+record measurements taken on the PARENT harness, where that was the text. The `USAGE`
+block also now says `--expect hud` requires the HUD's OWN palette colour at the HUD's own
+anchoring, and not only the canvas matrix.
+
+--------------------------------------------------------------------------------
+6. THE TESTS: EmurunHarness 283 -> 296 CHECKS (+13), AND THE FIXTURE TEST CAUGHT ITS OWN
+   FIRST CUT.
+--------------------------------------------------------------------------------
+New rows: the near-corner fixture refused, refused BY NAME, and not also printed green;
+the reach budget's inclusive boundary passes; the shipped fixture's 2 px shortfall is well
+inside it; the NOT UNIQUE refusal names the HUD's own elements; the marker line says
+MARKER and no line says `HUD VISIBLE`; `HUD_INK_REACH` joins the non-numeric-constant
+loop and the fixture's missing-constant guard; two padded-COUNT rows and the
+refused-by-name row for F3.
+
+**AND ONE MISTAKE WORTH RECORDING.** The first cut of the two new ink fixtures omitted the
+marker, so the marker's arm rejected them first and neither new message was ever printed —
+two rows red for a fixture reason. That is the exact failure this file calls out more than
+any other ("a row that passes for the wrong reason"), and it was caught by the file's own
+discipline rather than by review. The fixture builder now lists `inknear`/`inkreach`
+alongside `noink`/`inkout`/`inkboth` in the marker-painting branch, with the reason in the
+comment.
+
+THE FOUR-WAY.
+  new test on working sources ................ rc 0, 296 checks PASS
+  new test on the PARENT harness ............. rc 1 — the fixture guard refuses to build a
+      fixture from a harness that declares no `HUD_INK_REACH` ("a missing constant is a
+      broken harness, not a verdict", review-1 F4's rule from batch 173). That collapses
+      the row to one red, so the per-arm non-vacuity is established the way the reviewer
+      established F1: the PARENT's own lifted functions return rc 0 on the near-corner and
+      displaced fixtures and rc 1-with-a-bash-abort on the padded counts, and the new ones
+      refuse by name. §1 and §3 above are that measurement, verbatim.
+  PARENT test on WORKING sources ............. rc 0, 283 checks — zero collateral
+  PARENT test on PARENT sources .............. rc 0, 283 checks
+(Rows 3 and 4 need the test file inside `tests/scripts/`, because `ROOT` is derived from
+the script's own location; run that way and both are green.)
+
+--------------------------------------------------------------------------------
+7. GATES, RUN, VERBATIM.
+--------------------------------------------------------------------------------
+1. `make -C tests/scripts -j8` -> rc 0, `All cases match the oracle.`,
+   **805 PASS / 0 FAIL** (was 792; +13 is exactly this batch's new rows), including
+   `PASS EmurunHarness (296 checks: config placement + mount ownership + the HUD canary
+   + the HUD's own ink)`.
+2. `DISPLAY=:99 bash tools/check.sh` -> rc 0, `CHECK: ALL GATES PASSED`,
+   `VERDICT: CONTRACT CLEAN -- 0 violations.`, `PASS L3_f1.bmp sha=58615fc85d02e009`,
+   `BATCH INTEGRITY: PASS`, `COMPLETION SELFTEST: PASS (13 arms)`,
+   `COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`,
+   `COMPLETION: LEDGER VERIFIED`, `PASS audit_c_with_classes 0 violations`,
+   `SKIP gates_smdh` (no built .cia — skipped, not passed).
+3. `DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM make -C mdk_3ds -j8`
+   -> rc 0, `mdk.elf` md5 **`72328e9d5fd439d7f75703f5c28ccb80` UNCHANGED** — correct, and
+   a measurement with content: the only `mdk_3ds/**` file in the diff is a host shell
+   script, so nothing new reached the ARM binary. No C++ changed, so no §10/R-rule
+   exposure and no golden moved.
+
+`cmake --build build-linux -j8` was re-run BY HAND (item 11b: nothing in the gate set
+compiles `mdk_linux/**`, so a stale binary would be certified as happily as a fresh one)
+and **it found a genuinely stale binary** — `build-linux/mdk` was dated 16:50 against
+`mdk_core/src/game/hud_view.cpp` at 18:31. The rebuild returned rc 0 and recompiled
+`hud_view.cpp`, so the binary `gates_frames` and `publish_frame.sh` certify is now built
+from the tree they describe. Nothing about this batch's diff required that rebuild; the
+mtime said the tree was newer than the artefact, and item 11b's whole point is to believe
+the mtime rather than assume.
+
+P8 OWED AND RUN (the diff touches `mdk_3ds/**`), on the final build:
+    DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud --shot /tmp/mdk-b174-logs/final.png
+    -> **rc 0**
+    display   : :99
+    emulator  : mandarine.AppImage md5 0d2adab6  (r1.2.1 — NOT the r1.3.0 that segfaults)
+    graphics_api=1 (OpenGL), render_3d=0 (mono), flow: screen=4 level=7
+    frames    : 2460 by the deadline, 2580 after the reap
+    expect    : hud emitted -- canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1
+                (canvas frame 2520)
+    expect    : HUD MARKER VISIBLE -- 121 canary pixels in the panel, 121 inside
+    expect    : HUD INK -- 134 of 134 HUD-palette pixels inside crop
+                200,120-390,234 (bbox 333,206-388,232, 0 outside, its far corner
+                within 12 px of the derived 390,234), none of it reachable by the level
+Emulator-green is not hardware-pass. No console was used, and Old-3DS performance
+readiness stays open.
+
+--------------------------------------------------------------------------------
+8. PRIOR-SOLUTION LOOKUP, AND THE ENVIRONMENT.
+--------------------------------------------------------------------------------
+* **Pi knowledge (`mdk-sdl`, live)** — searched for the GPU-side texture/tiling rule and
+  for prior work on this class. Top hits: `SPEC.md` §7.3 (the PICA200 has no palette
+  texture format, which is why the CPU expands indices to RGBA8), `renderer_c3d.cpp`'s
+  own `C3dTexture` comment (the claim that 32-bit formats are read LINEARLY and only
+  16/8-bit formats are tiled), and AGENTS §12's pointer to the Obsidian
+  `citro3d-renderer-architecture-and-vertex-pipeline` note. Nothing on a HUD-pixel reach
+  rule. The texture note is the lead for the row's NEXT item, §9.
+* **Obsidian MCP and Cognee MCP are ABSENT from this session's tool list** — a session
+  configuration fault to report (AGENTS §9 P9), not a licence to claim the lookup. The
+  vault was read read-only from disk; `10-projects/forsaken/findings/
+  citro3d-renderer-architecture-and-vertex-pipeline.md` §"Textures" documents Morton /
+  Z-order 8x8-block tiling as REQUIRED by the PICA200 for the format that port used
+  (GPU_RGBA4, 16-bit) — which is the sibling port's fact, not this one's, and is recorded
+  as a lead and not as an answer.
+* **`/tmp/kilo` is still not writable by this lane** (re-measured: `touch` -> Permission
+  denied, `coleshores:coleshores 0775`), so AGENTS §11 P7's capture directory is
+  impossible here and captures went to `/tmp/mdk-b174-logs/`. The display is recorded for
+  every run, as P7 requires.
+* **`Xvfb :99` was already listening** this batch (started by an earlier lane) and was not
+  restarted, per P7's "it is shared, so do not kill a server another run is using".
+* The ledger is still unwritable from this lane (`coleshores:coleshores 0664`, and
+  `ledger_close.py` is PROTECTED), so `3ds.hud-canvas` stays open despite a green
+  acceptance. Unchanged from batch 172's and 173's item 0.
+
+--------------------------------------------------------------------------------
+9. WHAT THIS BATCH DELIBERATELY DID NOT TOUCH, AND WHY.
+--------------------------------------------------------------------------------
+The row's real remaining defect is unchanged and is still item 1 of the NEXT list: the
+panel sprite is sampled wrong by the GPU, by a factor of ~4 across its width. This batch
+did not start it, on purpose. `C3D_Tex` carries no stride field, so the rule lives inside
+libcitro3d, and this host has **no citro3d source** (measured: `/opt/devkitpro/libctru/
+include/c3d/texture.h` and `lib/libcitro3d.a` only) — so establishing it means reading
+upstream citro3d or disassembling `C3D_TexInitWithParams`/`C3D_TexBind`, and the row's own
+open item says the rule must be pinned with a pattern fixture BEFORE any scale is touched.
+Batch 173 already tried and rejected a /4 on measurement. Starting that investigation
+inside a remediation batch would have been the batch-expansion the builder brief forbids,
+and a second subsystem slice in one commit.
