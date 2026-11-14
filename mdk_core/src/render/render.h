@@ -72,6 +72,9 @@ struct MdkRenderDesc {
     bool headless = false;
     mdk::StereoSettings stereo;
     bool enhanced_look = false;  // the Linux build can do the enhanced look
+    // The Enhanced Mode feature toggles (SPEC.md 7.9); all on unless a
+    // config file or the settings menu says otherwise.
+    mdk::EnhancedToggles enhanced_toggles;
     int32_t hidden_width = 1280; // the offscreen size for the tests
     int32_t hidden_height = 960;
 };
@@ -96,6 +99,13 @@ struct MdkFrameParams {
 
 // Create the active backend's renderer. Returns nullptr on failure.
 MdkRenderer mdk_render_create(const MdkRenderDesc* desc);
+
+// Replace the Enhanced Mode feature toggles on a live renderer
+// (SPEC.md 7.9): the settings menu's live A/B switch. Takes effect on
+// the next frame; a null renderer or toggles is a safe no-op. The
+// backend reads the flags once per pass at setup, so this is a plain
+// struct copy, never per-draw work.
+void mdk_render_set_enhanced_toggles(MdkRenderer r, const mdk::EnhancedToggles* toggles);
 
 // Destroy a renderer created by mdk_render_create. nullptr is a safe no-op.
 void mdk_render_destroy(MdkRenderer r);

@@ -39,6 +39,10 @@ fi
 if [ -n "${MDK_FRAME_GAMMA:-}" ]; then
     STEREO_ARGS+=(--gamma="$MDK_FRAME_GAMMA")
 fi
+# The enhanced look, when the caller asks for it (the P6 arms).
+if [ -n "${MDK_FRAME_ENHANCED:-}" ]; then
+    STEREO_ARGS+=(--enhanced)
+fi
 
 exec env \
     MDK_DATA_DIR="${MDK_DATA_DIR:-$ROOT/MDK}" \

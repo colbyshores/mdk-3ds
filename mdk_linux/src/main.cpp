@@ -31,6 +31,7 @@
 #include "formats/cmi.h"
 #include "render/render.h"
 #include "render/camera_builder.h"
+#include "game/enhanced_config.h"
 #include "game/level_data.h"
 #include "game/level_light.h"
 #include "game/level_view.h"
@@ -401,6 +402,31 @@ int main(int argc, char** argv) {
         }
     }
 
+    // The Enhanced Mode toggles (SPEC.md 7.9): the same config.ini the
+    // 3DS build reads from sdmc:/3ds/mdk/, here from $MDK_CONFIG_INI or
+    // ./config.ini when one exists. Absent file: all on (the defaults).
+    mdk::EnhancedToggles enhancedToggles;
+    {
+        const char* configPath = std::getenv("MDK_CONFIG_INI");
+        if (!configPath || configPath[0] == '\0') {
+            configPath = "config.ini";
+        }
+        if (FILE* config = std::fopen(configPath, "rb")) {
+            char configText[1024];
+            const size_t got = std::fread(configText, 1, sizeof(configText) - 1, config);
+            configText[got] = '\0';
+            std::fclose(config);
+            if (mdk::parseEnhancedConfig(configText, &enhancedToggles)) {
+                std::printf("[main] config: %s loaded (shadows=%d lights=%d haze=%d "
+                            "mirrors=%d glow=%d)\n",
+                            configPath, (int)enhancedToggles.enableSkyShadows,
+                            (int)enhancedToggles.enableFragmentLights,
+                            (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
+                            (int)enhancedToggles.enableGlowBillboards);
+            }
+        }
+    }
+
     MdkRenderDesc desc;
     desc.width = window.width;
     desc.height = window.height;
@@ -409,6 +435,7 @@ int main(int argc, char** argv) {
     desc.vsync = true;
     desc.validation = true;
     desc.enhanced_look = enhancedLook;
+    desc.enhanced_toggles = enhancedToggles;
     desc.stereo = stereo;
     desc.hidden_width = hiddenWidth;
     desc.hidden_height = hiddenHeight;

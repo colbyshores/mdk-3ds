@@ -62,6 +62,7 @@
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
 #include "game/arena_space.h"
+#include "game/enhanced_config.h"
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
 #include "game/hud_view.h"
@@ -169,12 +170,46 @@ int main(int argc, char** argv) {
         printf("[3ds] romfsInit FAILED -- the game will not find its data\n");
     }
 
+    // The Enhanced Mode toggles (SPEC.md 7.9): persisted on the SD card
+    // so they can be flipped between runs (and, when the settings menu
+    // lands, live, through mdk_render_set_enhanced_toggles + this same
+    // write). A missing file is written with the defaults (all on) so
+    // the knobs are discoverable; a file that does not parse keeps the
+    // defaults too, and says so in the boot log.
+    mdk::EnhancedToggles enhancedToggles;
+    {
+        char configText[1024];
+        bool read = false;
+        if (FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "rb")) {
+            const size_t got = fread(configText, 1, sizeof(configText) - 1, config);
+            configText[got] = '\0';
+            fclose(config);
+            read = true;
+        }
+        if (read && mdk::parseEnhancedConfig(configText, &enhancedToggles)) {
+            mdk::log3dsPrintf("config: sdmc:/3ds/mdk/config.ini loaded");
+        } else {
+            if (read) {
+                mdk::log3dsPrintf("config: config.ini did not parse; defaults kept");
+            }
+            if (FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "wb")) {
+                const std::string text = mdk::writeEnhancedConfig(enhancedToggles);
+                fwrite(text.c_str(), 1, text.size(), config);
+                fclose(config);
+                mdk::log3dsPrintf("config: wrote default sdmc:/3ds/mdk/config.ini");
+            } else {
+                mdk::log3dsPrintf("config: could not write sdmc:/3ds/mdk/config.ini");
+            }
+        }
+    }
+
     MdkRenderDesc desc;
     desc.width = 240;
     desc.height = 400;
     desc.surface = nullptr;   // the 3DS owns its own surface
     desc.vsync = true;
     desc.enhanced_look = false;  // the 3DS shows the ORIGINAL look
+    desc.enhanced_toggles = enhancedToggles;
 
     MdkRenderer renderer = mdk_render_create(&desc);
     if (!renderer) {

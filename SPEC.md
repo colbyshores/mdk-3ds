@@ -790,6 +790,47 @@ Forsaken's notes are the guide:
 - **R1 FZ/DN.** The main thread and every worker get the FZ+DN FPSCR helper,
   with the read-back and the rationale comment. See `AGENTS.md` R1.
 
+### 7.9 3DS Enhanced Mode feature toggles (owner directive 2026-11-14)
+
+The 3DS enhanced look is best-effort against the PC render (§7, and the
+owner direction recorded in `SPEC-COMPLETION.md` §3 item 6). Every
+enhanced feature on the 3DS is individually switchable, so its cost and
+its look can be A/B-compared on hardware:
+
+- **Zero CPU fallback.** All Enhanced Look features (sky shadows,
+  PICA200 fragment lighting/LUTs, atmospheric haze, mirrors, and
+  additive glow billboards) execute strictly on the PICA200 GPU. No
+  per-vertex lighting, UV scrolling, or software lighting calculations
+  on the ARM11 CPU. A feature the PICA200 cannot express in TexEnv
+  combiner stages, ProcTex/maestro extensions, fragment-lighting LUTs,
+  or hardware blend modes is not emulated on the CPU; it is left out.
+- **Individual runtime toggles.** The renderer configuration carries one
+  boolean per potentially expensive PICA200 operation:
+  `enableSkyShadows`, `enableFragmentLights`, `enableHaze`,
+  `enableMirrors`, `enableGlowBillboards` (`mdk::EnhancedToggles` in
+  `render/render_types.h`, carried in `MdkRenderDesc` and changeable at
+  runtime through `mdk_render_set_enhanced_toggles`). Disabling a
+  toggle cleanly skips the corresponding GPU command-list or
+  render-target pass and introduces no CPU overhead: the check is one
+  boolean read at pass setup, never per-vertex or per-pixel CPU work.
+- **Menu & config file integration.** The toggle states persist in
+  `sdmc:/3ds/mdk/config.ini` (loaded at boot, written whenever they
+  change; a missing file means the shipped defaults, all on) and are
+  exposed in an in-game Video/Graphics Settings menu so each feature
+  can be toggled live during gameplay for side-by-side visual A/B
+  comparisons. NOTE (2026-11-14): this port currently has no settings
+  menu — the menu subsystem was cut by the owner directive of
+  2026-11-05 and both frontends boot straight into a level. The config
+  struct, the runtime setter seam, and the `config.ini` persistence
+  land with this directive; the menu page itself is charted as its own
+  item in `SPEC-COMPLETION.md` §3 and calls the same setter when it
+  lands, so no renderer work is redone for it.
+
+The same toggles are honoured by the Linux/Vulkan backend wherever the
+feature already exists there (sky shadows = the sun shadow pass, haze =
+the post pass's haze fade, glow = the post pass's glow term), so a
+config written for the 3DS means the same thing on the PC build.
+
 ---
 
 ## 8. Audio

@@ -220,6 +220,25 @@ struct Lighting {
 };
 
 // ---------------------------------------------------------------------------
+// The Enhanced Mode feature toggles (SPEC.md 7.9, owner directive
+// 2026-11-14). One boolean per potentially expensive GPU operation, so
+// each can be A/B-compared live on hardware. Every enhanced feature
+// executes strictly on the GPU (the PICA200 on the 3DS, the Vulkan
+// device on Linux); there is no CPU fallback path for any of them, and
+// disabling a toggle skips the feature's GPU pass at setup time -- the
+// check is one boolean read per pass, never per-vertex or per-pixel
+// work on the CPU. All default on: the shipped look is the full
+// enhanced look, and a missing config file means these values.
+// ---------------------------------------------------------------------------
+struct EnhancedToggles {
+    bool enableSkyShadows = true;     // the sun shadow map pass
+    bool enableFragmentLights = true; // fragment point lights (LUTs on the PICA200)
+    bool enableHaze = true;           // atmospheric haze / fog blend
+    bool enableMirrors = true;        // planar mirror draws
+    bool enableGlowBillboards = true; // additive glow (post glow / glow billboards)
+};
+
+// ---------------------------------------------------------------------------
 // Draw packets
 // ---------------------------------------------------------------------------
 

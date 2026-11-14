@@ -450,6 +450,13 @@ struct RendererC3D {
     bool ready = false;
     bool inFrame = false;
 
+    // The Enhanced Mode feature toggles (SPEC.md 7.9). The 3DS enhanced
+    // features land behind these flags, each strictly on the PICA200;
+    // until a feature exists its flag is stored and read by nothing,
+    // which is the point of plumbing them first: the config file, the
+    // runtime setter and the future settings menu all work today.
+    mdk::EnhancedToggles toggles;
+
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin
     // waits for the previous queue, so it is the completion boundary.
@@ -668,6 +675,9 @@ inline GpuVertex expand(const mdk::Vertex& v) {
     mdk::log3dsPrintf("renderer created: target=%p dvlb=%p numDVLE=%d scratch=%p",
                       (void*)r->targetLeft, (void*)r->dvlb, (int)r->dvlb->numDVLE, r->scratch);
     r->eyeSeparation = desc ? (float)desc->stereo.separation : 0.0f;
+    if (desc) {
+        r->toggles = desc->enhanced_toggles;
+    }
 
     r->ready = true;
 
@@ -1364,6 +1374,14 @@ static void logCensus(RendererC3D* r) {
     // (SPEC.md 5.3) and the 3DS simply does not consume it.
     (void)rr;
     (void)light;
+}
+
+void mdk_render_set_enhanced_toggles(MdkRenderer rr, const mdk::EnhancedToggles* toggles) {
+    RendererC3D* r = asC3d(rr);
+    if (!r || !toggles) {
+        return;
+    }
+    r->toggles = *toggles;
 }
 
  void mdk_render_set_point_lights(MdkRenderer rr, const mdk::PointLight* lights, int32_t count) {

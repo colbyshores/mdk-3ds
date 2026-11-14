@@ -48,8 +48,10 @@ SOURCES := \
 	$(CORE)/formats/fti.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/game/level_data.cpp \
+	$(CORE)/game/enhanced_config.cpp \
 	$(CORE)/game/level_light.cpp \
 	$(CORE)/render/colour_mips.cpp \
+	$(CORE)/render/post_params.cpp \
 	$(CORE)/render/sun_shadow.cpp
 
 # scripts/pose_cache.cpp is here because game/level_data.cpp calls

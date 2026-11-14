@@ -14,8 +14,10 @@
 #include "formats/fti.h"
 #include "formats/mdk_data.h"
 #include "formats/mto.h"
+#include "game/enhanced_config.h"
 #include "game/level_data.h"
 #include "game/level_light.h"
+#include "render/post_params.h"
 #include "render/sun_shadow.h"
 
 #include <cstdio>
@@ -58,6 +60,12 @@ uint32_t bitsOf(float value) {
     uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
     return bits;
+}
+
+float floatOf(uint32_t bits) {
+    float value = 0.0f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
 }
 
 void checkVec(const char* what, const mdk::Vec3& v, uint32_t x, uint32_t y, uint32_t z) {
@@ -164,4 +172,87 @@ MDK_TEST(SunShadowMatrixMatchesTheOracle) {
     for (int i = 0; i < 16; i++) {
         MDK_CHECK_EQ(bitsOf(m[i]), kM2[i]);
     }
+}
+
+MDK_TEST(PostClipMatricesMatchTheOracle) {
+    // From the C# probe (2026-11-14): CreateLookAt(Zero,
+    // normalize(1,2,3), up=+Z) and CreatePerspectiveFieldOfView(
+    // 1.0471976 rad, 4/3, 1, 4000), printed as raw Single bits.
+    const uint32_t kProj[16] = {0x3FA646E0u, 0x00000000u, 0x00000000u, 0x00000000u,
+                                0x00000000u, 0x3FDDB3D6u, 0x00000000u, 0x00000000u,
+                                0x00000000u, 0x00000000u, 0xBF800832u, 0xBF800000u,
+                                0x00000000u, 0x00000000u, 0xBF800832u, 0x00000000u};
+    // rotation * projection (FollowCamera.cs's ClipToDirection input):
+    // the product is pinned bit-exact.
+    const uint32_t kViewToClip[16] = {0x3F94B8F8u, 0xBF1EFDB8u, 0x3E88DF3Bu, 0x3E88D678u,
+                                      0xBF14B8F8u, 0xBF9EFDB8u, 0x3F08DF3Bu, 0x3F08D678u,
+                                      0x00000000u, 0x3F847E1Au, 0x3F4D4ED7u, 0x3F4D41B3u,
+                                      0x00000000u, 0x00000000u, 0xBF800832u, 0x00000000u};
+    // Matrix4x4.Invert of the above. Ours is Gauss-Jordan, the C#'s an
+    // adjugate expansion, so the inverse is pinned to 1e-5 absolute --
+    // the post pass only dots and normalizes with it.
+    const uint32_t kClipToView[16] = {0x3F304389u, 0xBEB04389u, 0x312C5CC1u, 0xB0CDC032u,
+                                      0xBE53FCF8u, 0xBED3FCF8u, 0x3EB0A825u, 0xB1B654FCu,
+                                      0x80000000u, 0x80000000u, 0x80000000u, 0xBF7FEF9Eu,
+                                      0x3E88D678u, 0x3F08D678u, 0x3F4D41B3u, 0x3F800000u};
+    float proj[16], wantInv[16];
+    for (int i = 0; i < 16; i++) {
+        proj[i] = floatOf(kProj[i]);
+        wantInv[i] = floatOf(kClipToView[i]);
+    }
+    // The probe's forward (Vector3.Normalize(1,2,3), raw bits) and up.
+    const mdk::Vec3 forward{floatOf(0x3E88D677u), floatOf(0x3F08D677u), floatOf(0x3F4D41B2u)};
+    float clipToView[16], viewToClip[16];
+    MDK_CHECK(mdk::postClipMatrices(forward, mdk::Vec3{0.0f, 0.0f, 1.0f}, proj, clipToView,
+                                    viewToClip));
+    for (int i = 0; i < 16; i++) {
+        MDK_CHECK_EQ(bitsOf(viewToClip[i]), kViewToClip[i]);
+        const float diff = clipToView[i] > wantInv[i] ? clipToView[i] - wantInv[i]
+                                                      : wantInv[i] - clipToView[i];
+        if (diff > 1e-5f) {
+            std::printf("  clipToView[%d] got %08X want %08X\n", i, bitsOf(clipToView[i]),
+                        kClipToView[i]);
+        }
+        MDK_CHECK(diff <= 1e-5f);
+    }
+    // The pass constants (Renderer.Enhanced.cs).
+    MDK_CHECK_EQ(bitsOf(mdk::kOcclusionRadius), 0x41400000u);   // 12
+    MDK_CHECK_EQ(bitsOf(mdk::kOcclusionStrength), 0x3FC00000u); // 1.5
+    MDK_CHECK_EQ(bitsOf(mdk::kGlowThreshold), 0x3F4CCCCDu);     // 0.8
+    MDK_CHECK_EQ(bitsOf(mdk::kGlowIntensity), 0x3F4CCCCDu);     // 0.8
+    MDK_CHECK_EQ(bitsOf(mdk::kGlowMip), 0x40400000u);           // 3
+    MDK_CHECK_EQ(mdk::kSceneMips, 6u);
+}
+
+MDK_TEST(EnhancedConfigRoundTrips) {
+    // Defaults are all on (the shipped enhanced look, SPEC.md 7.9).
+    mdk::EnhancedToggles toggles;
+    MDK_CHECK(toggles.enableSkyShadows && toggles.enableFragmentLights && toggles.enableHaze &&
+              toggles.enableMirrors && toggles.enableGlowBillboards);
+
+    // The written file carries all five keys and parses back identically.
+    toggles.enableHaze = false;
+    toggles.enableMirrors = false;
+    const std::string text = mdk::writeEnhancedConfig(toggles);
+    mdk::EnhancedToggles back;
+    MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
+    MDK_CHECK(back.enableSkyShadows && back.enableFragmentLights && !back.enableHaze &&
+              !back.enableMirrors && back.enableGlowBillboards);
+
+    // A partial file moves only the keys it names; comments, unknown
+    // keys and malformed values leave the rest alone.
+    mdk::EnhancedToggles partial;
+    const char* partialText = "; a comment\n"
+                              "enableSkyShadows=off\n"
+                              "somethingElse=0\n"
+                              "enableHaze=banana\n"
+                              "enableGlowBillboards = 0\n";
+    MDK_CHECK(mdk::parseEnhancedConfig(partialText, &partial));
+    MDK_CHECK(!partial.enableSkyShadows);
+    MDK_CHECK(partial.enableFragmentLights);
+    MDK_CHECK(partial.enableHaze);
+    MDK_CHECK(partial.enableMirrors);
+    MDK_CHECK(!partial.enableGlowBillboards);
+
+    MDK_CHECK(!mdk::parseEnhancedConfig(nullptr, &partial));
 }
