@@ -1,0 +1,34 @@
+row: p5.vulkan-goldens
+command: MDK_DOTNET=/tmp/mdk-dotnet10/dotnet DOTNET_ROOT=/tmp/mdk-dotnet10 tests/frames/capture_oracle.sh /tmp/mdk-frame-reference/L3_f1.bmp && python3 tools/runner/gates_frames.py
+exit: 0
+verified-at: bd13abd
+captured: 2026-11-14T05:51:34.289925+00:00
+
+MDK SDL 1.1.1 | .NET 10.0.15 JIT | SDL 3.5.0
+GPU: llvmpipe (LLVM 20.1.2, 256 bits) (Vulkan via SDL_GPU), driver 26.1.6
+Look: Original, mods: none
+Music: H1
+Level 3: 17 arenas, 9708 triangles, 705 outlines, loaded in 681 ms
+Saved /tmp/mdk-frame-reference/L3_f1.bmp
+Kurt at -4.00 0.00 192.98 yaw 96 Still floor False arena HMO_1 health 100
+Display: 1280x1024 @ 0 Hz, window 1280x960 (hidden), render target 320x240, swapchain B8G8R8A8_UNORM (8 bits per channel, SDR), depth D32_FLOAT, MSAA off, present mode VSYNC
+capture_oracle: wrote /tmp/mdk-frame-reference/L3_f1.bmp (level 3, 320x240, display :99 in a private namespace)
+PASS L3_f1.bmp sha=58615fc85d02e009
+VERDICT: CONTRACT CLEAN
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+MESA: info: vulkan: No DRI3 support detected - required for presentation
+Note: you can probably enable DRI3 in your Xorg config
+

@@ -39,7 +39,7 @@ p5.0.frame-harness	d2	slow	done	bash tools/check.sh	docs/evidence/p5.0.frame-har
 # anything. The acceptance now captures the pinned C# oracle frame and runs the
 # frame gate against it (determinism, byte-exact baseline, fidelity ceiling) --
 # strictly stronger, not weaker. Requires a .NET 10 SDK (MDK_DOTNET).
-p5.vulkan-goldens	d2	slow	todo	MDK_DOTNET=/tmp/mdk-dotnet10/dotnet DOTNET_ROOT=/tmp/mdk-dotnet10 tests/frames/capture_oracle.sh /tmp/mdk-frame-reference/L3_f1.bmp && python3 tools/runner/gates_frames.py		
+p5.vulkan-goldens	d2	slow	done	MDK_DOTNET=/tmp/mdk-dotnet10/dotnet DOTNET_ROOT=/tmp/mdk-dotnet10 tests/frames/capture_oracle.sh /tmp/mdk-frame-reference/L3_f1.bmp && python3 tools/runner/gates_frames.py	docs/evidence/p5.vulkan-goldens-bd13abd.txt	bd13abd
 p6.enhanced-stereo	d2	slow	todo	bash tools/check.sh		
 p7.platform-lifecycle	d2	slow	todo	bash tools/check.sh		
 p7.romfs-streaming	d2	slow	todo	mdk_3ds/tools/emurun.sh		
