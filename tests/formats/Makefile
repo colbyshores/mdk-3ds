@@ -24,6 +24,7 @@ SOURCES := \
 	main.cpp \
 	path_tests.cpp \
 	format_tests.cpp \
+	lighting_tests.cpp \
 	math_lut_tests.cpp \
 	random_tests.cpp \
 	$(CORE)/util/math_lut.cpp \
@@ -45,7 +46,8 @@ SOURCES := \
 	$(CORE)/formats/sprite_animation.cpp \
 	$(CORE)/formats/fti.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
-	$(CORE)/game/level_data.cpp
+	$(CORE)/game/level_data.cpp \
+	$(CORE)/game/level_light.cpp
 
 # scripts/pose_cache.cpp is here because game/level_data.cpp calls
 # scripts::forgetPoseCaches(), and a target links whatever a call resolves to.

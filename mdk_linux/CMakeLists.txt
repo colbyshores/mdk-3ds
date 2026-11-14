@@ -128,6 +128,7 @@ set(SOURCES
     ${CORE}/src/game/kurt_sprite.cpp
     ${CORE}/src/game/level_data.cpp
     ${CORE}/src/game/level_flow.cpp
+    ${CORE}/src/game/level_light.cpp
     ${CORE}/src/game/level_view.cpp
     ${CORE}/src/game/object_draw.cpp
     ${CORE}/src/game/object_view.cpp
