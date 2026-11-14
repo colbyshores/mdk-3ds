@@ -40,6 +40,16 @@ p5.0.frame-harness	d2	slow	done	bash tools/check.sh	docs/evidence/p5.0.frame-har
 # frame gate against it (determinism, byte-exact baseline, fidelity ceiling) --
 # strictly stronger, not weaker. Requires a .NET 10 SDK (MDK_DOTNET).
 p5.vulkan-goldens	d2	slow	done	MDK_DOTNET=/tmp/mdk-dotnet10/dotnet DOTNET_ROOT=/tmp/mdk-dotnet10 tests/frames/capture_oracle.sh /tmp/mdk-frame-reference/L3_f1.bmp && python3 tools/runner/gates_frames.py	docs/evidence/p5.vulkan-goldens-bd13abd.txt	bd13abd
+# p6 sub-batches (owner itemization 2026-11-14; the row closes only when
+# ALL are done -- no sub-step is separately closable): (a) lighting rig
+# DONE at ccbf13a (bit-exact in tests/formats); (b) colour textures;
+# (c) lit pipeline; (d) sun shadow; (e) depth/occlusion/post; (f) filtered
+# canvas + enhanced sky; (g) mods/HD textures. Landed already: flat stereo
+# (8b82a1b, oracle gap 4.833% under a 6.0 ceiling) and the gamma grade
+# (d3035b4, 1.240%). 3DS direction (owner, same date): best-effort
+# enhanced on PICA200 hardware paths (combiners, ProcTex, lighting LUTs),
+# ETC1/ETC1A4 .t3x packs baked with tex3ds for HD textures (the
+# ../forsaken method); original look keeps lossless RGBA8.
 p6.enhanced-stereo	d2	slow	todo	bash tools/check.sh		
 p7.platform-lifecycle	d2	slow	todo	bash tools/check.sh		
 p7.romfs-streaming	d2	slow	todo	mdk_3ds/tools/emurun.sh		

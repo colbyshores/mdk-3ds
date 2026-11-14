@@ -129,6 +129,35 @@ the same batch. One subsystem slice per batch.
 5. **P5**: golden-frame tests for the Vulkan renderer (original look within
    tolerance vs the C#). Requires P5.0.
 6. **P6**: enhanced look, stereo, mods (Linux-only). Requires P5.0.
+   **Sub-batches (owner itemization 2026-11-14; each lands with an oracle
+   pin and a shrinking ceiling in `tests/scripts/frame_gate_test.sh`):**
+   (a) lighting rig — DONE (`mdk_core/src/game/level_light`, bit-exact in
+   `tests/formats`); (b) colour textures (RGBA premultiplied expansion +
+   mip chains + per-frame layers, `Renderer.Colours.cs`); (c) lit pipeline
+   (Lit/Sprite, no shadow yet); (d) sun shadow pass (2048², `SunShadow.cs`
+   biases); (e) camera-depth + occlusion + post glow (`post.hlsl`);
+   (f) filtered canvas + enhanced sky; (g) mods / HD-texture path; then
+   the row closes via `ledger_close.py`. Until then `--enhanced` renders
+   the original look and says so through the refusal log.
+   **3DS direction (owner directive 2026-11-14):** the original look stays
+   the 3DS baseline; enhanced fidelity on the 3DS is best-effort against
+   the PC render, built hardware-first — TexEnv combiner stages, ProcTex /
+   maestro extensions, fragment-lighting LUTs, hardware blend modes —
+   with CPU work only where the PICA200 structurally cannot (the palette
+   expansion in SPEC.md §7.3 is the documented case). References to work
+   from when each feature lands: `../t2k/t2k_3ds/src/rendering/c3d/`
+   (vector-glow billboards, `06_builders.inc`), the vault's
+   `GX-to-PICA200/` notes (`20-tev-to-combiners.md`, `22-textures.md`),
+   devkitPro's citro3d TexEnv/ProcTex/lightlut headers and examples.
+   **ETC textures for the 3DS build path (owner directive 2026-11-14,**
+   following `../forsaken`): bake HD/enhanced textures offline with
+   `tex3ds` (`-f etc1` opaque, `-f etc1a4` alpha, `-q high -m gaussian`
+   mips) into `.t3x` RomFS packs, load them at runtime through the tex3ds
+   library (`GPU_ETC1`/`GPU_ETC1A4`, native decompression) — the
+   `../forsaken/regen_hd_textures_*.sh` + `render_c3d.c` method. ETC is
+   for the enhanced/HD layer; the original look keeps its lossless
+   RGBA8 expansion (SPEC.md §7.3). Sizes: ETC1 is 8× smaller than RGBA8,
+   which is what makes enhanced textures fit the 3DS's VRAM at all.
 7. **P7**: the Citro3D renderer depth: platform integration (aptMainLoop,
    sleep/resume, worker sync — `AGENTS.md` §11 P1–P6), audio sink, RomFS
    streaming; the A/B checklist run in mandarine. Requires P5.0.
