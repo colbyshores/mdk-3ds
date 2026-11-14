@@ -130,6 +130,7 @@ test: $(BUILD)/tick1 $(BUILD)/vm_tests
 	@sh linux_arg_parse_test.sh
 	@sh panel_geom_test.sh
 	@bash emurun_harness_test.sh
+	@bash frame_gate_test.sh
 	@$(BUILD)/tick1
 
 $(BUILD):
