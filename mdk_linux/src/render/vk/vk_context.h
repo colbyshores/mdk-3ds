@@ -99,6 +99,26 @@ struct Context {
     VkImageView sceneView = VK_NULL_HANDLE;
     VkFramebuffer sceneFramebuffer = VK_NULL_HANDLE;
 
+    // THE STEREO EYES AND THE COMPOSITE (P6). When a stereo mode is on, the
+    // scene renders once per eye into eyeImage[0] (left) and eyeImage[1]
+    // (right), and a composite pass samples both into the scene target,
+    // which then blits to present exactly as the mono frame does. The
+    // composite pass is colour-only over the scene view; the eyes share the
+    // scene render pass and depth view. Created lazily by ensureEyeTargets
+    // and dropped on every swapchain rebuild.
+    VkImage eyeImage[2] = {};
+    VkDeviceMemory eyeMemory[2] = {};
+    VkImageView eyeView[2] = {};
+    VkFramebuffer eyeFramebuffer[2] = {};
+    VkRenderPass compositePass = VK_NULL_HANDLE;
+    VkFramebuffer compositeFramebuffer = VK_NULL_HANDLE;
+    bool eyesReady = false;
+
+    // The framebuffer beginFrame's render pass targets: the scene
+    // framebuffer normally, an eye framebuffer when the renderer is drawing
+    // that eye. VK_NULL_HANDLE means the scene framebuffer.
+    VkFramebuffer sceneOverride = VK_NULL_HANDLE;
+
     bool validation = false;
 
     // The surface creator, set by the platform layer. It creates the
@@ -169,6 +189,29 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync,
 // End recording: submit the command buffer and present. Returns false when
 // the frame could not be submitted.
 bool endFrame(Context* ctx);
+
+// The stereo eye targets and composite pass (see Context's eye fields).
+// ensureEyeTargets creates them at the current extent if needed;
+// destroyEyeTargets releases them (called on rebuild and teardown).
+bool ensureEyeTargets(Context* ctx);
+void destroyEyeTargets(Context* ctx);
+
+// Which framebuffer the next beginFrame render pass targets (an eye, or
+// VK_NULL_HANDLE for the scene target).
+void setSceneOverride(Context* ctx, VkFramebuffer framebuffer);
+
+// End the currently open render pass, and begin one on the given
+// framebuffer/pass. The stereo path uses these to draw the second eye and
+// the composite between beginFrame and submitFrame.
+void endPass(Context* ctx);
+bool beginPass(Context* ctx, VkFramebuffer framebuffer, VkRenderPass pass,
+               uint32_t clearColour);
+
+// Submit and present the frame whose render passes are all closed: the
+// scene blit, the command-buffer end, the submit and the present. endFrame
+// is endPass + submitFrame; the stereo path closes its own passes and calls
+// submitFrame directly.
+bool submitFrame(Context* ctx);
 
 // The frame's command buffer, for the renderer's draws.
 VkCommandBuffer commandBuffer(Context* ctx);

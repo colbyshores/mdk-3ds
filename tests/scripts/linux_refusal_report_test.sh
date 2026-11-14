@@ -2585,15 +2585,8 @@ def be_end_frame_result_discarded(s):
     # neither: the harness reports the first check that broke, so a mutant that
     # takes out B11 and B15 together would leave B15 with no mutation that isolates
     # it. This one keeps a working capture count and fails only the frame's result.
-    return s.replace("""    const bool submitted = mdk::vk::endFrame(&r->ctx);
-    r->inFrame = false;
-    if (!submitted) {
-        refused("end the frame: its commands were not submitted or not presented, so this "
-                "frame did not reach the display");
-    }
-    if (!r->screenshotPath.empty()) {""", """    mdk::vk::endFrame(&r->ctx);
-    r->inFrame = false;
-    if (!r->screenshotPath.empty()) {""", 1)
+    return s.replace("""        submitted = mdk::vk::endFrame(&r->ctx);""",
+                     """        mdk::vk::endFrame(&r->ctx);""", 1)
 
 
 def be_capture_of_an_unsubmitted_frame(s):

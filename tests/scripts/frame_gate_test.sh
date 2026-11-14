@@ -136,6 +136,49 @@ else
     skip "frame gate: fidelity arm (no oracle pixels in $REFDIR)"
 fi
 
+# Arm 5: the flat-stereo composite (P6). The pinned scene through --stereo=sbs
+# must hold two DIFFERENT eyes (a composite that duplicated one eye would pass
+# a naive "is stereo on" check), and, when the oracle's own sbs frame is in
+# the reference directory, the gap to it must stay under the recorded
+# ceiling. Measured 2026-11-14 on the pinned scene: 4.833% of pixels at
+# tolerance 0 (max 244, mean 1.1030) -- the mono frame's own 1.240% gap
+# carried through the half-width squeeze, so the ceiling is 6.0 and, like
+# the manifest's, it may only shrink.
+STEREO_CAP="$WORK/frame.sbs.bmp"
+if MDK_FRAME_STEREO=sbs "$CAPTURE" "$STEREO_CAP" >/dev/null 2>&1 && [ -s "$STEREO_CAP" ]; then
+    halves=$(python3 - "$STEREO_CAP" <<'PY'
+import hashlib, struct, sys
+data = open(sys.argv[1], "rb").read()
+offset = struct.unpack_from("<I", data, 10)[0]
+width = struct.unpack_from("<i", data, 18)[0]
+height = abs(struct.unpack_from("<i", data, 22)[0])
+row = width * 4
+left, right = [], []
+for y in range(height):
+    start = offset + y * row
+    left.append(data[start:start + row // 2])
+    right.append(data[start + row // 2:start + row])
+print("differ" if hashlib.md5(b"".join(left)).digest() != hashlib.md5(b"".join(right)).digest() else "same")
+PY
+)
+    check "frame gate: the sbs composite holds two different eyes" "differ" "$halves"
+else
+    check "frame gate: the stereo capture succeeds for the stereo arm" "ok" "capture-failed"
+fi
+
+if [ -f "$REFDIR/L3_f1_sbs.bmp" ] && [ -s "$STEREO_CAP" ]; then
+    sbs_measure=$(python3 "$COMPARE" "$REFDIR/L3_f1_sbs.bmp" "$STEREO_CAP" --measure 2>/dev/null)
+    sbs_bad=$(printf '%s' "$sbs_measure" | awk '{print $1}')
+    over=$(python3 - "$sbs_bad" <<'PY'
+import sys
+print("1" if float(sys.argv[1]) > 6.0 else "0")
+PY
+)
+    check "frame gate: the sbs gap to the oracle stays under its 6.0% ceiling (measured 4.833)" "0" "$over"
+else
+    skip "frame gate: stereo fidelity arm (no oracle sbs frame in $REFDIR)"
+fi
+
 if [ "$fails" -ne 0 ]; then
     echo "FRAME GATE: $fails FAILED ($checks checks, $skipped skipped)"
     exit 1

@@ -721,6 +721,225 @@ bool createFrameResources(Context* ctx) {
 
 } // namespace
 
+void destroyEyeTargets(Context* ctx) {
+    for (int eye = 0; eye < 2; eye++) {
+        if (ctx->eyeFramebuffer[eye] != VK_NULL_HANDLE) {
+            vkDestroyFramebuffer(ctx->device, ctx->eyeFramebuffer[eye], nullptr);
+            ctx->eyeFramebuffer[eye] = VK_NULL_HANDLE;
+        }
+        if (ctx->eyeView[eye] != VK_NULL_HANDLE) {
+            vkDestroyImageView(ctx->device, ctx->eyeView[eye], nullptr);
+            ctx->eyeView[eye] = VK_NULL_HANDLE;
+        }
+        if (ctx->eyeImage[eye] != VK_NULL_HANDLE) {
+            vkDestroyImage(ctx->device, ctx->eyeImage[eye], nullptr);
+            ctx->eyeImage[eye] = VK_NULL_HANDLE;
+        }
+        if (ctx->eyeMemory[eye] != VK_NULL_HANDLE) {
+            vkFreeMemory(ctx->device, ctx->eyeMemory[eye], nullptr);
+            ctx->eyeMemory[eye] = VK_NULL_HANDLE;
+        }
+    }
+    if (ctx->compositeFramebuffer != VK_NULL_HANDLE) {
+        vkDestroyFramebuffer(ctx->device, ctx->compositeFramebuffer, nullptr);
+        ctx->compositeFramebuffer = VK_NULL_HANDLE;
+    }
+    if (ctx->compositePass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(ctx->device, ctx->compositePass, nullptr);
+        ctx->compositePass = VK_NULL_HANDLE;
+    }
+    ctx->eyesReady = false;
+}
+
+bool ensureEyeTargets(Context* ctx) {
+    if (ctx->eyesReady) {
+        return true;
+    }
+
+    // The composite pass: colour only, over the scene view, its contents
+    // discarded on entry (the composite triangle covers every pixel) and
+    // stored for the present blit.
+    {
+        VkAttachmentDescription attachment = {};
+        attachment.format = ctx->swapchainFormat;
+        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference colorRef = {};
+        colorRef.attachment = 0;
+        colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorRef;
+
+        VkSubpassDependency dependencies[2] = {};
+        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass = 0;
+        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[0].srcAccessMask = 0;
+        dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[1].srcSubpass = 0;
+        dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+        VkRenderPassCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        createInfo.attachmentCount = 1;
+        createInfo.pAttachments = &attachment;
+        createInfo.subpassCount = 1;
+        createInfo.pSubpasses = &subpass;
+        createInfo.dependencyCount = 2;
+        createInfo.pDependencies = dependencies;
+
+        VkResult result = vkCreateRenderPass(ctx->device, &createInfo, nullptr,
+                                             &ctx->compositePass);
+        if (result != VK_SUCCESS) {
+            std::printf("[vk] vkCreateRenderPass(composite) failed (%d)\n", (int)result);
+            destroyEyeTargets(ctx);
+            return false;
+        }
+    }
+
+    for (int eye = 0; eye < 2; eye++) {
+        VkImageCreateInfo imageInfo = {};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = ctx->swapchainFormat;
+        imageInfo.extent.width = ctx->extent.width;
+        imageInfo.extent.height = ctx->extent.height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VkResult result = vkCreateImage(ctx->device, &imageInfo, nullptr,
+                                        &ctx->eyeImage[eye]);
+        if (result != VK_SUCCESS) {
+            std::printf("[vk] vkCreateImage(eye) failed (%d)\n", (int)result);
+            destroyEyeTargets(ctx);
+            return false;
+        }
+
+        VkMemoryRequirements requirements = {};
+        vkGetImageMemoryRequirements(ctx->device, ctx->eyeImage[eye], &requirements);
+        VkMemoryAllocateInfo allocateInfo = {};
+        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.allocationSize = requirements.size;
+        allocateInfo.memoryTypeIndex = 0;
+
+        VkPhysicalDeviceMemoryProperties properties = {};
+        vkGetPhysicalDeviceMemoryProperties(ctx->physicalDevice, &properties);
+        bool found = false;
+        for (uint32_t i = 0; i < properties.memoryTypeCount; i++) {
+            if ((requirements.memoryTypeBits & (1u << i)) &&
+                (properties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                allocateInfo.memoryTypeIndex = i;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            std::printf("[vk] no device-local memory type for an eye target\n");
+            destroyEyeTargets(ctx);
+            return false;
+        }
+
+        result = vkAllocateMemory(ctx->device, &allocateInfo, nullptr,
+                                  &ctx->eyeMemory[eye]);
+        if (result != VK_SUCCESS) {
+            std::printf("[vk] vkAllocateMemory(eye) failed (%d)\n", (int)result);
+            destroyEyeTargets(ctx);
+            return false;
+        }
+        result = vkBindImageMemory(ctx->device, ctx->eyeImage[eye],
+                                   ctx->eyeMemory[eye], 0);
+        if (result != VK_SUCCESS) {
+            vkFailed("vkBindImageMemory(eye)", result);
+            destroyEyeTargets(ctx);
+            return false;
+        }
+
+        VkImageViewCreateInfo viewInfo = {};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = ctx->eyeImage[eye];
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = ctx->swapchainFormat;
+        viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        result = vkCreateImageView(ctx->device, &viewInfo, nullptr, &ctx->eyeView[eye]);
+        if (result != VK_SUCCESS) {
+            std::printf("[vk] vkCreateImageView(eye) failed (%d)\n", (int)result);
+            destroyEyeTargets(ctx);
+            return false;
+        }
+
+        VkImageView attachments[2] = {ctx->eyeView[eye], ctx->depthView};
+        VkFramebufferCreateInfo fbInfo = {};
+        fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass = ctx->renderPass;
+        fbInfo.attachmentCount = 2;
+        fbInfo.pAttachments = attachments;
+        fbInfo.width = ctx->extent.width;
+        fbInfo.height = ctx->extent.height;
+        fbInfo.layers = 1;
+
+        result = vkCreateFramebuffer(ctx->device, &fbInfo, nullptr,
+                                     &ctx->eyeFramebuffer[eye]);
+        if (result != VK_SUCCESS) {
+            std::printf("[vk] vkCreateFramebuffer(eye) failed (%d)\n", (int)result);
+            destroyEyeTargets(ctx);
+            return false;
+        }
+    }
+
+    {
+        VkImageView attachments[1] = {ctx->sceneView};
+        VkFramebufferCreateInfo fbInfo = {};
+        fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass = ctx->compositePass;
+        fbInfo.attachmentCount = 1;
+        fbInfo.pAttachments = attachments;
+        fbInfo.width = ctx->extent.width;
+        fbInfo.height = ctx->extent.height;
+        fbInfo.layers = 1;
+
+        VkResult result = vkCreateFramebuffer(ctx->device, &fbInfo, nullptr,
+                                              &ctx->compositeFramebuffer);
+        if (result != VK_SUCCESS) {
+            std::printf("[vk] vkCreateFramebuffer(composite) failed (%d)\n", (int)result);
+            destroyEyeTargets(ctx);
+            return false;
+        }
+    }
+
+    ctx->eyesReady = true;
+    return true;
+}
+
+
 bool createInstance(Context* ctx, bool validation) {
     ctx->validation = validation && hasValidationLayer();
 
@@ -967,6 +1186,7 @@ void destroyContext(Context* ctx) {
                      "a proven completion)", idle);
         }
 
+        destroyEyeTargets(ctx);
         destroySceneTarget(ctx);
         for (uint32_t i = 0; i < ctx->imageCount; i++) {
             if (ctx->framebuffers[i] != VK_NULL_HANDLE) {
@@ -1035,6 +1255,7 @@ bool recreateSwapchain(Context* ctx, uint32_t width, uint32_t height, bool vsync
         return false;
     }
 
+    destroyEyeTargets(ctx);
     destroySceneTarget(ctx);
     for (uint32_t i = 0; i < ctx->imageCount; i++) {
         if (ctx->framebuffers[i] != VK_NULL_HANDLE) {
@@ -1072,6 +1293,43 @@ bool recreateSwapchain(Context* ctx, uint32_t width, uint32_t height, bool vsync
     if (!createDepthImage(ctx) || !createFramebuffers(ctx)) {
         return false;
     }
+    return true;
+}
+
+void setSceneOverride(Context* ctx, VkFramebuffer framebuffer) {
+    ctx->sceneOverride = framebuffer;
+}
+
+void endPass(Context* ctx) {
+    FrameContext& frame = ctx->frames[ctx->currentFrame];
+    vkCmdEndRenderPass(frame.commandBuffer);
+}
+
+bool beginPass(Context* ctx, VkFramebuffer framebuffer, VkRenderPass pass,
+               uint32_t clearColour) {
+    FrameContext& frame = ctx->frames[ctx->currentFrame];
+    // The clear colour is 0xAARRGGBB (the seam's convention); the swapchain
+    // is B8G8R8A8, so the bytes land reversed. UNORM, not SRGB: the C#
+    // clears with raw bytes and does its own gamma at the end.
+    VkClearValue clears[2] = {};
+    clears[0].color = {{
+        (float)((clearColour >> 16) & 0xFFu) / 255.0f,
+        (float)((clearColour >> 8) & 0xFFu) / 255.0f,
+        (float)(clearColour & 0xFFu) / 255.0f,
+        (float)(clearColour >> 24) / 255.0f,
+    }};
+    clears[1].depthStencil = {1.0f, 0};
+
+    const bool scenePass = pass == ctx->renderPass;
+    VkRenderPassBeginInfo passInfo = {};
+    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    passInfo.renderPass = pass;
+    passInfo.framebuffer = framebuffer;
+    passInfo.renderArea.extent = ctx->extent;
+    passInfo.clearValueCount = scenePass ? 2 : 0;
+    passInfo.pClearValues = scenePass ? clears : nullptr;
+
+    vkCmdBeginRenderPass(frame.commandBuffer, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
     return true;
 }
 
@@ -1149,27 +1407,12 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
         return false;
     }
 
-    // The clear colour is 0xAARRGGBB (the seam's convention); the swapchain
-    // is B8G8R8A8, so the bytes land reversed. UNORM, not SRGB: the C#
-    // clears with raw bytes and does its own gamma at the end.
-    VkClearValue clears[2] = {};
-    clears[0].color = {{
-        (float)((clearColour >> 16) & 0xFFu) / 255.0f,
-        (float)((clearColour >> 8) & 0xFFu) / 255.0f,
-        (float)(clearColour & 0xFFu) / 255.0f,
-        (float)(clearColour >> 24) / 255.0f,
-    }};
-    clears[1].depthStencil = {1.0f, 0};
-
-    VkRenderPassBeginInfo passInfo = {};
-    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    passInfo.renderPass = ctx->renderPass;
-    passInfo.framebuffer = ctx->sceneFramebuffer;
-    passInfo.renderArea.extent = ctx->extent;
-    passInfo.clearValueCount = 2;
-    passInfo.pClearValues = clears;
-
-    vkCmdBeginRenderPass(frame.commandBuffer, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+    // The scene renders into the scene target (or, while the renderer is
+    // drawing a stereo eye, into that eye's target): see beginPass below.
+    beginPass(ctx,
+              ctx->sceneOverride != VK_NULL_HANDLE ? ctx->sceneOverride
+                                                   : ctx->sceneFramebuffer,
+              ctx->renderPass, clearColour);
 
     // The viewport and scissor are dynamic state and MUST be set every frame;
     // without them nothing rasterizes. POSITIVE height: the y flip that puts
@@ -1200,6 +1443,172 @@ bool beginFrame(Context* ctx, uint32_t width, uint32_t height, bool vsync, uint3
 bool endFrame(Context* ctx) {
     FrameContext& frame = ctx->frames[ctx->currentFrame];
     vkCmdEndRenderPass(frame.commandBuffer);
+
+    // PRESENT THE SCENE TARGET. The render pass left the scene image in its
+    // colour attachment's final layout (PRESENT_SRC_KHR); move it to a blit
+    // source, blit it whole into the acquired swapchain image, and leave that
+    // image in PRESENT_SRC_KHR for vkQueuePresentKHR. Same format and extent
+    // on both sides, so NEAREST is an exact copy: the presented bytes are the
+    // bytes the scene pass produced, unchanged.
+    {
+        VkImage swapImage = ctx->images[ctx->currentImage];
+        VkImageMemoryBarrier barriers[2] = {};
+        barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barriers[0].oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[0].image = ctx->sceneImage;
+        barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barriers[0].subresourceRange.levelCount = 1;
+        barriers[0].subresourceRange.layerCount = 1;
+        barriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[1].image = swapImage;
+        barriers[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barriers[1].subresourceRange.levelCount = 1;
+        barriers[1].subresourceRange.layerCount = 1;
+        barriers[1].srcAccessMask = 0;
+        barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(frame.commandBuffer,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                             2, barriers);
+
+        VkImageBlit blit = {};
+        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.srcSubresource.layerCount = 1;
+        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.dstSubresource.layerCount = 1;
+        blit.srcOffsets[1].x = (int32_t)ctx->extent.width;
+        blit.srcOffsets[1].y = (int32_t)ctx->extent.height;
+        blit.srcOffsets[1].z = 1;
+        blit.dstOffsets[1].x = (int32_t)ctx->extent.width;
+        blit.dstOffsets[1].y = (int32_t)ctx->extent.height;
+        blit.dstOffsets[1].z = 1;
+        vkCmdBlitImage(frame.commandBuffer, ctx->sceneImage,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapImage,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                       VK_FILTER_NEAREST);
+
+        VkImageMemoryBarrier present = {};
+        present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        present.image = swapImage;
+        present.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        present.subresourceRange.levelCount = 1;
+        present.subresourceRange.layerCount = 1;
+        present.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        present.dstAccessMask = 0;
+        vkCmdPipelineBarrier(frame.commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr,
+                             0, nullptr, 1, &present);
+    }
+
+    // THE COMMAND STREAM HAS TO BE CLOSED BEFORE IT IS SUBMITTED. Only a pending or an
+    // executable command buffer may be named by `VkSubmitInfo::pCommandBuffers`
+    // (VUID-vkSubmitInfo-pCommandBuffers-00075), and a buffer that was begun and never
+    // ended is still RECORDING. This file submitted one every frame. That it drew 138
+    // committed frames is evidence that lavapipe does not enforce the state machine and
+    // no evidence at all that the submission was legal (review-1 F1); the one-shot path
+    // in renderer_vk.cpp already refused to submit an unfinalised buffer, and the frame
+    // path is the same rule at the frame's scale.
+    //
+    // The end sits BEFORE the fence reset deliberately: a refused frame has to leave its
+    // fence signalled (see the note in beginFrame), and the reset is the one call here
+    // that would take it away. A failed end does leave the buffer recording — nothing
+    // un-records a buffer — so the next frame's reset is then invalid use too; that is
+    // a driver that has already refused an end, and it is printed rather than hidden.
+    const VkResult ended = vkEndCommandBuffer(frame.commandBuffer);
+    if (ended != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
+        vkFailed("vkEndCommandBuffer(the frame's command buffer; nothing was submitted)",
+                 ended);
+        return false;
+    }
+
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &frame.presentWait;
+    submitInfo.pWaitDstStageMask = &waitStage;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &frame.commandBuffer;
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &frame.renderFinished;
+
+    // The reset is read too: if it failed the fence's state is unknown, and a
+    // submit that relies on that fence is a guess. Refuse BEFORE the submit, so
+    // nothing is queued behind a fence nobody can wait on.
+    VkResult result = vkResetFences(ctx->device, 1, &frame.inFlight);
+    if (result != VK_SUCCESS) {
+        drainPresentWait(ctx, frame);
+        return false;
+    }
+    result = vkQueueSubmit(ctx->queue, 1, &submitInfo, frame.inFlight);
+    if (result != VK_SUCCESS) {
+        // The queue refused the frame, so nothing waited on `presentWait` and its
+        // signal is still posted. Consume it before the fence is touched: the next
+        // frame's acquire is invalid use until somebody does.
+        drainPresentWait(ctx, frame);
+        // The fence was reset and nothing is going to signal it, so the NEXT
+        // beginFrame would wait UINT64_MAX on a fence no submission will ever
+        // signal: one refused submit becomes a hang two frames later. The fence is
+        // not associated with any queue (the submit failed), so the way back to the
+        // invariant "this slot's fence is signalled when the slot is free" is a
+        // fresh signalled one. It is CREATED BEFORE the old one is destroyed, so a
+        // failed recovery changes nothing and leaves the hazard printed rather than
+        // swapping a hang for a null fence. (`vkSignalFence` is the direct way back
+        // and is not declared by the vendored header this build compiles against,
+        // so it is not available here.)
+        VkFence replacement = VK_NULL_HANDLE;
+        VkFenceCreateInfo recover = {};
+        recover.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        recover.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        const VkResult refence = vkCreateFence(ctx->device, &recover, nullptr, &replacement);
+        if (refence == VK_SUCCESS) {
+            vkDestroyFence(ctx->device, frame.inFlight, nullptr);
+            frame.inFlight = replacement;
+        } else {
+            vkFailed("vkCreateFence(replacing the fence of a refused submit; the next "
+                     "frame's fence wait may not return)", refence);
+        }
+        return false;
+    }
+
+    VkPresentInfoKHR presentInfo = {};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &frame.renderFinished;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &ctx->swapchain;
+    presentInfo.pImageIndices = &ctx->currentImage;
+    result = vkQueuePresentKHR(ctx->queue, &presentInfo);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+        // The window was resized. The swapchain is rebuilt on the next
+        // frame; this frame is simply dropped.
+        return true;
+    }
+    if (result != VK_SUCCESS) {
+        return false;
+    }
+
+    ctx->currentFrame = (ctx->currentFrame + 1) % kFramesInFlight;
+    return true;
+}
+
+
+bool submitFrame(Context* ctx) {
+    FrameContext& frame = ctx->frames[ctx->currentFrame];
 
     // PRESENT THE SCENE TARGET. The render pass left the scene image in its
     // colour attachment's final layout (PRESENT_SRC_KHR); move it to a blit

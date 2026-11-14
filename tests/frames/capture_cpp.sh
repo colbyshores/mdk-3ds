@@ -27,6 +27,15 @@ if [ -z "${VK_ICD_FILENAMES:-}" ] && [ -f /usr/share/vulkan/icd.d/lvp_icd.json ]
     export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
 fi
 
+# The pinned stereo mode, when the caller asks for one (the frame gate's
+# stereo arm). Empty means the mono frame, byte-identical to before.
+STEREO_ARGS=()
+if [ -n "${MDK_FRAME_STEREO:-}" ]; then
+    STEREO_ARGS=(--stereo="$MDK_FRAME_STEREO")
+    [ -z "${MDK_FRAME_STEREO_SEPARATION:-}" ] || STEREO_ARGS+=(--stereo-separation="$MDK_FRAME_STEREO_SEPARATION")
+    [ -z "${MDK_FRAME_STEREO_CONVERGENCE:-}" ] || STEREO_ARGS+=(--stereo-convergence="$MDK_FRAME_STEREO_CONVERGENCE")
+fi
+
 exec env \
     MDK_DATA_DIR="${MDK_DATA_DIR:-$ROOT/MDK}" \
     "$ROOT/build-linux/mdk" \
@@ -36,4 +45,5 @@ exec env \
         --size="${MDK_FRAME_SIZE:-320x240}" \
         --seed "${MDK_FRAME_SEED:-1}" \
         --capture-frame="${MDK_FRAME_CAPTURE:-1}" \
-        --capture="$OUT"
+        --capture="$OUT" \
+        "${STEREO_ARGS[@]}"

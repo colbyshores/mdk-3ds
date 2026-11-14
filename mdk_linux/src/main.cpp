@@ -167,6 +167,7 @@ int main(int argc, char** argv) {
     mdk::Vec3 startOverride{};
     bool hasYawOverride = false;
     float yawOverride = 0.0f;
+    mdk::StereoSettings stereo;
 
     auto optionValue = [](const char* arg, const char* name) -> const char* {
         const size_t length = std::strlen(name);
@@ -229,6 +230,54 @@ int main(int argc, char** argv) {
             hasStartOverride = true;
             hasYawOverride = fields == 4;
             yawOverride = yaw;
+        } else if ((value = optionValue(argv[i], "--stereo")) != nullptr) {
+            // The oracle's --stereo spellings (StereoModes.TryParse): off,
+            // sbs, sbsfull, crossview, int, intr, tab, tabr, vr. An unknown
+            // mode is a refusal, never a silent mono run -- a harness that
+            // asked for a stereo frame and got a mono one would measure the
+            // wrong picture and call it a pass.
+            bool parsed = true;
+            if (std::strcmp(value, "off") == 0) {
+                stereo.mode = mdk::StereoMode::Off;
+            } else if (std::strcmp(value, "sbs") == 0) {
+                stereo.mode = mdk::StereoMode::Sbs;
+            } else if (std::strcmp(value, "sbsfull") == 0) {
+                stereo.mode = mdk::StereoMode::SbsFull;
+            } else if (std::strcmp(value, "crossview") == 0 || std::strcmp(value, "cross") == 0) {
+                stereo.mode = mdk::StereoMode::CrossView;
+            } else if (std::strcmp(value, "int") == 0) {
+                stereo.mode = mdk::StereoMode::Interlaced;
+            } else if (std::strcmp(value, "intr") == 0) {
+                stereo.mode = mdk::StereoMode::InterlacedReversed;
+            } else if (std::strcmp(value, "tab") == 0) {
+                stereo.mode = mdk::StereoMode::Tab;
+            } else if (std::strcmp(value, "tabr") == 0) {
+                stereo.mode = mdk::StereoMode::TabReversed;
+            } else if (std::strcmp(value, "vr") == 0) {
+                stereo.mode = mdk::StereoMode::Vr;
+            } else {
+                parsed = false;
+            }
+            if (!parsed) {
+                std::fprintf(stderr, "[main] --stereo: off, sbs, sbsfull, crossview, int, intr, tab, tabr or vr\n");
+                return 1;
+            }
+        } else if ((value = optionValue(argv[i], "--stereo-separation")) != nullptr) {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || *end != '\0') {
+                std::fprintf(stderr, "[main] invalid --stereo-separation: %s\n", value);
+                return 1;
+            }
+            stereo.separation = parsed;
+        } else if ((value = optionValue(argv[i], "--stereo-convergence")) != nullptr) {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || *end != '\0') {
+                std::fprintf(stderr, "[main] invalid --stereo-convergence: %s\n", value);
+                return 1;
+            }
+            stereo.convergence = parsed;
         } else if (std::strcmp(argv[i], "--frames") == 0) {
             if (i + 1 >= argc) {
                 std::fprintf(stderr, "[main] --frames needs a value\n");
@@ -345,6 +394,7 @@ int main(int argc, char** argv) {
     desc.vsync = true;
     desc.validation = true;
     desc.enhanced_look = true;      // the Linux build does the enhanced look
+    desc.stereo = stereo;
     desc.hidden_width = hiddenWidth;
     desc.hidden_height = hiddenHeight;
 

@@ -51,6 +51,8 @@
 #include "shader_palette_frag.h"
 #include "shader_sky_vert.h"
 #include "shader_sky_frag.h"
+#include "shader_stereo_vert.h"
+#include "shader_stereo_frag.h"
 
 namespace {
 
@@ -227,6 +229,24 @@ struct RendererVk {
     VkShaderModule skyVertModule = VK_NULL_HANDLE;
     VkShaderModule skyFragModule = VK_NULL_HANDLE;
     VkPipeline skyPipeline = VK_NULL_HANDLE;
+
+    // The flat-stereo state (P6). `stereo` is the requested mode from the
+    // render description; `activeCamera` is the camera the draw path
+    // consumes (the centre camera, or the eye being drawn); the composite
+    // objects are created on the first stereo frame.
+    mdk::StereoSettings stereo;
+    mdk::Camera activeCamera;
+    uint32_t clearColour = 0xFF000000u;
+    bool replayingEyes = false;
+    VkShaderModule stereoVertModule = VK_NULL_HANDLE;
+    VkShaderModule stereoFragModule = VK_NULL_HANDLE;
+    VkDescriptorSetLayout stereoSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout stereoPipeLayout = VK_NULL_HANDLE;
+    VkPipeline stereoPipeline = VK_NULL_HANDLE;
+    VkDescriptorPool stereoPool = VK_NULL_HANDLE;
+    VkDescriptorSet stereoSets[mdk::vk::kFramesInFlight] = {};
+    VkSampler eyeSampler = VK_NULL_HANDLE;
+    bool stereoReady = false;
     std::vector<PipelineVk> pipelines;
     std::vector<DescPair> descs;
 
@@ -1605,7 +1625,7 @@ void drawSky(RendererVk* r) {
     rotation[8] = right.z;   rotation[9] = trueUp.z;  rotation[10] = zaxis.z; rotation[11] = 0.0f;
     rotation[12] = 0.0f;     rotation[13] = 0.0f;     rotation[14] = 0.0f;    rotation[15] = 1.0f;
     float rp[16];
-    mulMatrix(rotation, r->camera.projection, rp);
+    mulMatrix(rotation, r->activeCamera.projection, rp);
     float c2d[16];
     if (!mdk::invertSystemNumericsMatrix4(rp, c2d)) {
         return;
@@ -1681,6 +1701,8 @@ MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
     }
 
     RendererVk* r = new RendererVk();
+    r->stereo = desc->stereo;
+    r->activeCamera = r->camera;
 
     // The surface creator. It is a function pointer so that
     // vk_context.cpp -- which owns the device, the swapchain and the
@@ -1940,6 +1962,13 @@ void mdk_render_destroy(MdkRenderer rr) {
     if (r->skyPipeline) vkDestroyPipeline(r->ctx.device, r->skyPipeline, nullptr);
     if (r->skyVertModule) vkDestroyShaderModule(r->ctx.device, r->skyVertModule, nullptr);
     if (r->skyFragModule) vkDestroyShaderModule(r->ctx.device, r->skyFragModule, nullptr);
+    if (r->stereoPipeline) vkDestroyPipeline(r->ctx.device, r->stereoPipeline, nullptr);
+    if (r->stereoPipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->stereoPipeLayout, nullptr);
+    if (r->stereoSetLayout) vkDestroyDescriptorSetLayout(r->ctx.device, r->stereoSetLayout, nullptr);
+    if (r->stereoPool) vkDestroyDescriptorPool(r->ctx.device, r->stereoPool, nullptr);
+    if (r->eyeSampler) vkDestroySampler(r->ctx.device, r->eyeSampler, nullptr);
+    if (r->stereoVertModule) vkDestroyShaderModule(r->ctx.device, r->stereoVertModule, nullptr);
+    if (r->stereoFragModule) vkDestroyShaderModule(r->ctx.device, r->stereoFragModule, nullptr);
     if (r->sampler) vkDestroySampler(r->ctx.device, r->sampler, nullptr);
     if (r->samplerRepeat) vkDestroySampler(r->ctx.device, r->samplerRepeat, nullptr);
     if (r->pipeCache) vkDestroyPipelineCache(r->ctx.device, r->pipeCache, nullptr);
@@ -1995,6 +2024,312 @@ mdk::MdkCapabilities mdk_render_capabilities(MdkRenderer r) {
 // The frame
 // ---------------------------------------------------------------------------
 
+// One eye's camera, the C#'s View.Eye (Renderer.cs:92): the eyes are
+// `separation` apart, parallel, and their images converge at `convergence`
+// (<= 0: at infinity), which shifts the frustum sideways by
+// -side * separation * near / (2 * convergence) in projection row 3.
+// Full-side-by-side, crossview and VR eyes see half the frame's aspect, so
+// their x scale doubles (StereoModes.EyeAspect).
+mdk::Camera eyeCamera(RendererVk* r, float side) {
+    mdk::Camera eye = r->camera;
+    const mdk::Vec3 forward = r->camera.forward;
+    const mdk::Vec3 up = r->camera.up;
+    const float nearPlane = r->camera.near_plane;
+
+    mdk::Vec3 right{forward.y * up.z - forward.z * up.y,
+                    forward.z * up.x - forward.x * up.z,
+                    forward.x * up.y - forward.y * up.x};
+    const float rightLen = sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
+    if (rightLen <= 0.0f) {
+        return eye;
+    }
+    right.x /= rightLen;
+    right.y /= rightLen;
+    right.z /= rightLen;
+
+    const float offset = side * r->stereo.separation * 0.5f;
+    const mdk::Vec3 position{r->camera.position.x + right.x * offset,
+                             r->camera.position.y + right.y * offset,
+                             r->camera.position.z + right.z * offset};
+
+    // CreateLookAt(position, position + forward, up), spelt as the core
+    // camera builder spells it (the axes are the view matrix's columns).
+    mdk::Vec3 zaxis{-forward.x, -forward.y, -forward.z};
+    const float zLen = sqrtf(zaxis.x * zaxis.x + zaxis.y * zaxis.y + zaxis.z * zaxis.z);
+    if (zLen <= 0.0f) {
+        return eye;
+    }
+    zaxis.x /= zLen;
+    zaxis.y /= zLen;
+    zaxis.z /= zLen;
+    mdk::Vec3 xaxis{up.y * zaxis.z - up.z * zaxis.y,
+                    up.z * zaxis.x - up.x * zaxis.z,
+                    up.x * zaxis.y - up.y * zaxis.x};
+    const float xLen = sqrtf(xaxis.x * xaxis.x + xaxis.y * xaxis.y + xaxis.z * xaxis.z);
+    if (xLen <= 0.0f) {
+        return eye;
+    }
+    xaxis.x /= xLen;
+    xaxis.y /= xLen;
+    xaxis.z /= xLen;
+    const mdk::Vec3 yaxis{zaxis.y * xaxis.z - zaxis.z * xaxis.y,
+                          zaxis.z * xaxis.x - zaxis.x * xaxis.z,
+                          zaxis.x * xaxis.y - zaxis.y * xaxis.x};
+
+    float* view = eye.view;
+    view[0] = xaxis.x;  view[1] = yaxis.x;  view[2] = zaxis.x;  view[3] = 0.0f;
+    view[4] = xaxis.y;  view[5] = yaxis.y;  view[6] = zaxis.y;  view[7] = 0.0f;
+    view[8] = xaxis.z;  view[9] = yaxis.z;  view[10] = zaxis.z; view[11] = 0.0f;
+    view[12] = -(xaxis.x * position.x + xaxis.y * position.y + xaxis.z * position.z);
+    view[13] = -(yaxis.x * position.x + yaxis.y * position.y + yaxis.z * position.z);
+    view[14] = -(zaxis.x * position.x + zaxis.y * position.y + zaxis.z * position.z);
+    view[15] = 1.0f;
+    eye.position = position;
+
+    if (r->stereo.mode == mdk::StereoMode::SbsFull ||
+        r->stereo.mode == mdk::StereoMode::CrossView ||
+        r->stereo.mode == mdk::StereoMode::Vr) {
+        eye.projection[0] *= 2.0f;
+    }
+    if (r->stereo.convergence > 0.0f && nearPlane > 0.0f) {
+        const float shift = -side * r->stereo.separation * nearPlane /
+                            (2.0f * r->stereo.convergence);
+        eye.projection[8] += shift * eye.projection[0] / nearPlane;
+    }
+    return eye;
+}
+
+// The stereo composite pipeline: one screen-filling triangle sampling the
+// two eye targets into the scene target (the C#'s "stereo" pipeline).
+VkPipeline createStereoPipeline(RendererVk* r) {
+    VkPipelineVertexInputStateCreateInfo vi = {};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo ia = {};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vp = {};
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rs = {};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.lineWidth = 1.0f;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+    VkPipelineMultisampleStateCreateInfo ms = {};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo ds = {};
+    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    ds.depthTestEnable = VK_FALSE;
+    ds.depthWriteEnable = VK_FALSE;
+    ds.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+
+    VkPipelineColorBlendAttachmentState cb = {};
+    cb.blendEnable = VK_FALSE;
+    cb.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo cbs = {};
+    cbs.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cbs.attachmentCount = 1;
+    cbs.pAttachments = &cb;
+
+    VkDynamicState dynamics[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dyn = {};
+    dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dyn.dynamicStateCount = 2;
+    dyn.pDynamicStates = dynamics;
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = r->stereoVertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = r->stereoFragModule;
+    stages[1].pName = "main";
+
+    VkGraphicsPipelineCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    info.stageCount = 2;
+    info.pStages = stages;
+    info.pVertexInputState = &vi;
+    info.pInputAssemblyState = &ia;
+    info.pViewportState = &vp;
+    info.pRasterizationState = &rs;
+    info.pMultisampleState = &ms;
+    info.pDepthStencilState = &ds;
+    info.pColorBlendState = &cbs;
+    info.pDynamicState = &dyn;
+    info.layout = r->stereoPipeLayout;
+    info.renderPass = r->ctx.compositePass;
+    info.subpass = 0;
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(r->ctx.device, r->pipeCache, 1, &info, nullptr,
+                                  &pipeline) != VK_SUCCESS) {
+        refused("stereo composite pipeline: the frame is presented without its "
+                "second eye composited");
+        return VK_NULL_HANDLE;
+    }
+    return pipeline;
+}
+
+// The composite's Vulkan objects, created on the first stereo frame. The
+// eye targets themselves live in the context (ensureEyeTargets).
+bool ensureStereo(RendererVk* r) {
+    if (r->stereoReady) {
+        return true;
+    }
+    VkDevice device = r->ctx.device;
+
+    r->stereoVertModule = createModule(&r->ctx, spv_stereo_vert, spv_stereo_vert_size);
+    r->stereoFragModule = createModule(&r->ctx, spv_stereo_frag, spv_stereo_frag_size);
+    if (!r->stereoVertModule || !r->stereoFragModule) {
+        refused("stereo shader modules: the frame is presented without stereo");
+        return false;
+    }
+
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    for (int i = 0; i < 2; i++) {
+        bindings[i].binding = (uint32_t)i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = bindings;
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &r->stereoSetLayout) !=
+        VK_SUCCESS) {
+        refused("stereo descriptor layout: the frame is presented without stereo");
+        return false;
+    }
+
+    VkPushConstantRange range = {};
+    range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    range.offset = 0;
+    range.size = 16;
+    VkPipelineLayoutCreateInfo pipeLayoutInfo = {};
+    pipeLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeLayoutInfo.setLayoutCount = 1;
+    pipeLayoutInfo.pSetLayouts = &r->stereoSetLayout;
+    pipeLayoutInfo.pushConstantRangeCount = 1;
+    pipeLayoutInfo.pPushConstantRanges = &range;
+    if (vkCreatePipelineLayout(device, &pipeLayoutInfo, nullptr, &r->stereoPipeLayout) !=
+        VK_SUCCESS) {
+        refused("stereo pipeline layout: the frame is presented without stereo");
+        return false;
+    }
+
+    VkSamplerCreateInfo samplerInfo = {};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &r->eyeSampler) != VK_SUCCESS) {
+        refused("stereo eye sampler: the frame is presented without stereo");
+        return false;
+    }
+
+    VkDescriptorPoolSize poolSize = {};
+    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize.descriptorCount = 2 * mdk::vk::kFramesInFlight;
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = mdk::vk::kFramesInFlight;
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &r->stereoPool) != VK_SUCCESS) {
+        refused("stereo descriptor pool: the frame is presented without stereo");
+        return false;
+    }
+    for (uint32_t i = 0; i < mdk::vk::kFramesInFlight; i++) {
+        VkDescriptorSetAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = r->stereoPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &r->stereoSetLayout;
+        if (vkAllocateDescriptorSets(device, &allocInfo, &r->stereoSets[i]) != VK_SUCCESS) {
+            refused("stereo descriptor sets: the frame is presented without stereo");
+            return false;
+        }
+    }
+
+    r->stereoPipeline = createStereoPipeline(r);
+    if (!r->stereoPipeline) {
+        return false;
+    }
+    r->stereoReady = true;
+    return true;
+}
+
+// Bind this frame slot's composite set to the context's current eye views.
+// Rewritten every frame: the eye targets are recreated on a swapchain
+// rebuild, and a set naming a destroyed view is the stale-descriptor defect.
+void updateStereoSet(RendererVk* r) {
+    VkDescriptorSet set = r->stereoSets[r->ctx.currentFrame];
+    VkDescriptorImageInfo images[2] = {};
+    VkWriteDescriptorSet writes[2] = {};
+    for (int eye = 0; eye < 2; eye++) {
+        images[eye].sampler = r->eyeSampler;
+        images[eye].imageView = r->ctx.eyeView[eye];
+        images[eye].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        writes[eye].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[eye].dstSet = set;
+        writes[eye].dstBinding = (uint32_t)eye;
+        writes[eye].descriptorCount = 1;
+        writes[eye].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[eye].pImageInfo = &images[eye];
+    }
+    vkUpdateDescriptorSets(r->ctx.device, 2, writes, 0, nullptr);
+}
+
+// The composite draw: the two eyes into the scene target, the C#'s
+// CompositeStereo uniforms (Renderer.Stereo.cs): x the layout (0 side by
+// side, 1 interlaced, 2 top and bottom, 3 VR), y the eyes exchanged,
+// z the frame aspect; w (this port's addition) the frame height, for the
+// interlaced row parity the HLSL takes from SV_Position.
+void drawComposite(RendererVk* r) {
+    updateStereoSet(r);
+    VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->stereoPipeline);
+    VkDescriptorSet set = r->stereoSets[r->ctx.currentFrame];
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->stereoPipeLayout,
+                            0, 1, &set, 0, nullptr);
+
+    float layout = 0.0f;
+    bool swapped = false;
+    switch (r->stereo.mode) {
+        case mdk::StereoMode::Interlaced: layout = 1.0f; break;
+        case mdk::StereoMode::InterlacedReversed: layout = 1.0f; swapped = true; break;
+        case mdk::StereoMode::Tab: layout = 2.0f; break;
+        case mdk::StereoMode::TabReversed: layout = 2.0f; swapped = true; break;
+        case mdk::StereoMode::Vr: layout = 3.0f; break;
+        case mdk::StereoMode::CrossView: swapped = true; break;
+        default: break;
+    }
+    const float aspect = r->ctx.extent.height != 0
+                             ? (float)r->ctx.extent.width / (float)r->ctx.extent.height
+                             : 4.0f / 3.0f;
+    const float mode[4] = {layout, swapped ? 1.0f : 0.0f, aspect,
+                           (float)r->ctx.extent.height};
+    vkCmdPushConstants(cb, r->stereoPipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                       sizeof(mode), mode);
+    vkCmdDraw(cb, 3, 1, 0, 0);
+}
+
 void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererVk* r = asVk(rr);
     if (!r || !r->ready) {
@@ -2008,6 +2343,25 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     uint32_t h = r->ctx.extent.height;
 
     const uint32_t clear = params ? params->clear_colour : 0xFF000000u;
+    r->clearColour = clear;
+
+    // The frame's first pass targets the scene target, or the left eye's
+    // when stereo is on; the active camera follows the same choice. A
+    // stereo resource failure falls back to the mono frame with a refusal,
+    // never to a half-drawn pair of eyes.
+    const bool stereoOn = r->stereo.mode != mdk::StereoMode::Off && ensureStereo(r) &&
+                          mdk::vk::ensureEyeTargets(&r->ctx);
+    if (stereoOn) {
+        mdk::vk::setSceneOverride(&r->ctx, r->ctx.eyeFramebuffer[0]);
+        r->activeCamera = eyeCamera(r, -1.0f);
+    } else {
+        if (r->stereo.mode != mdk::StereoMode::Off) {
+            refused("stereo frame: the eye targets or composite could not be "
+                    "created, so this frame is presented mono");
+        }
+        mdk::vk::setSceneOverride(&r->ctx, VK_NULL_HANDLE);
+        r->activeCamera = r->camera;
+    }
     // A FRAME THAT DID NOT BEGIN IS NOT A FRAME. `beginFrame` returns false when the
     // fence wait, the image acquire, the command-buffer reset or the buffer's begin
     // failed — every one of which was read by nobody until this batch — and the
@@ -2056,16 +2410,69 @@ void mdk_render_end_frame(MdkRenderer rr) {
     if (!r || !r->inFrame) {
         return;
     }
-    // The frame's queued draws go in now, in the oracle's pass order, while the
-    // render pass is still open (draw_queue.h). A frontend that drew its HUD
-    // already flushed at canvas_begin; this is the catch-all for a frame with no
-    // canvas, and it must come before endFrame closes the render pass.
-    flushDraws(r);
-    // THE FRAME'S OWN RESULT WAS DISCARDED ENTIRELY. `endFrame` returns false when
-    // the fence reset, the submit or the present failed; until now the frame was
-    // reported as rendered either way, so a pinned frame whose commands never ran
-    // would be measured, published and committed as if it were the picture.
-    const bool submitted = mdk::vk::endFrame(&r->ctx);
+    bool stereoFrame = false;
+    if (r->stereo.mode != mdk::StereoMode::Off && r->ctx.eyesReady && r->stereoReady) {
+        // THE STEREO FRAME: replay the queued draws through the right eye,
+        // then composite the two eyes into the scene target, which the
+        // shared submit blits to present. The left eye's pass (begun by
+        // begin_frame, sky included) is still open here.
+        r->replayingEyes = true;
+        flushDraws(r);
+        mdk::vk::endPass(&r->ctx);
+
+        r->activeCamera = eyeCamera(r, 1.0f);
+        mdk::vk::beginPass(&r->ctx, r->ctx.eyeFramebuffer[1], r->ctx.renderPass,
+                           r->clearColour);
+        drawSky(r);
+        flushDraws(r);
+        r->queue.reset();
+        mdk::vk::endPass(&r->ctx);
+
+        // Both eyes now hold finished frames in the render pass's final
+        // layout; the composite samples them.
+        VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+        VkImageMemoryBarrier eyeBarriers[2] = {};
+        for (int eye = 0; eye < 2; eye++) {
+            eyeBarriers[eye].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            eyeBarriers[eye].oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            eyeBarriers[eye].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            eyeBarriers[eye].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            eyeBarriers[eye].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            eyeBarriers[eye].image = r->ctx.eyeImage[eye];
+            eyeBarriers[eye].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            eyeBarriers[eye].subresourceRange.levelCount = 1;
+            eyeBarriers[eye].subresourceRange.layerCount = 1;
+            eyeBarriers[eye].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            eyeBarriers[eye].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        }
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                             0, nullptr, 2, eyeBarriers);
+
+        mdk::vk::beginPass(&r->ctx, r->ctx.compositeFramebuffer, r->ctx.compositePass, 0);
+        drawComposite(r);
+        mdk::vk::endPass(&r->ctx);
+        r->replayingEyes = false;
+        r->activeCamera = r->camera;
+
+        stereoFrame = true;
+    }
+    bool submitted = false;
+    if (stereoFrame) {
+        submitted = mdk::vk::submitFrame(&r->ctx);
+    }
+    if (!stereoFrame) {
+        // The frame's queued draws go in now, in the oracle's pass order, while the
+        // render pass is still open (draw_queue.h). A frontend that drew its HUD
+        // already flushed at canvas_begin; this is the catch-all for a frame with no
+        // canvas, and it must come before endFrame closes the render pass.
+        flushDraws(r);
+        // THE FRAME'S OWN RESULT WAS DISCARDED ENTIRELY. `endFrame` returns false when
+        // the fence reset, the submit or the present failed; until now the frame was
+        // reported as rendered either way, so a pinned frame whose commands never ran
+        // would be measured, published and committed as if it were the picture.
+        submitted = mdk::vk::endFrame(&r->ctx);
+    }
     r->inFrame = false;
     if (!submitted) {
         refused("end the frame: its commands were not submitted or not presented, so this "
@@ -2490,17 +2897,17 @@ void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw) {
     float world[16];
     if (draw->material.depth_layer != 0 || draw->primitive == mdk::Primitive::Lines) {
         float pulled[16];
-        mdk::buildDepthPullMatrix(r->camera.position, draw->primitive,
+        mdk::buildDepthPullMatrix(r->activeCamera.position, draw->primitive,
                                   draw->material.depth_layer, pulled);
         mulMatrix(draw->world, pulled, world);
     } else {
         memcpy(world, draw->world, sizeof(world));
     }
     float wv[16];
-    mulMatrix(world, r->camera.view, wv);
+    mulMatrix(world, r->activeCamera.view, wv);
 
     PushConstants pc;
-    mulMatrix(wv, r->camera.projection, pc.mvp);
+    mulMatrix(wv, r->activeCamera.projection, pc.mvp);
     // Vulkan's framebuffer runs y down; see flipClipY.
     flipClipY(pc.mvp);
     pc.colour[0] = draw->material.colour.r;
@@ -2576,13 +2983,26 @@ void flushDraws(RendererVk* r) {
     if (!r || r->queue.empty() || !r->inFrame) {
         return;
     }
+    // Under stereo the queue is replayed once per eye at end_frame, so a
+    // mid-frame flush (canvas_begin, an inset boundary) must not consume
+    // it: the draws wait and are recorded twice, once through each eye's
+    // camera. The canvas's own immediate quads are not queued and still
+    // draw into the left eye's pass only -- the seam hands the backend no
+    // way to replay a frontend's canvas calls, so the HUD appears in the
+    // left half of a stereo frame. Stated here because the composite
+    // cannot say it.
+    if (r->stereo.mode != mdk::StereoMode::Off && !r->replayingEyes) {
+        return;
+    }
     for (int32_t pass = 0; pass < mdk::kDrawQueuePassCount; pass++) {
         const std::vector<mdk::MeshDraw>& bucket = r->queue.bucket(pass);
         for (size_t i = 0; i < bucket.size(); i++) {
             drawRecorded(r, &bucket[i]);
         }
     }
-    r->queue.reset();
+    if (!r->replayingEyes) {
+        r->queue.reset();
+    }
 }
 
 } // namespace

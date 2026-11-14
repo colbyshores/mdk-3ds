@@ -156,6 +156,7 @@ set(SHADERS
     palette.vert palette.frag
     mirror.frag
     sky.vert sky.frag
+    stereo.vert stereo.frag
     gamma.frag
     depth.frag
     enhanced.frag
