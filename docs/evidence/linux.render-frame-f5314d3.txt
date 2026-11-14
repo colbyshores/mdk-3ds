@@ -1,0 +1,63 @@
+row: linux.render-frame
+command: bash tools/check.sh
+exit: 0
+verified-at: f5314d3
+captured: 2026-11-14T04:57:01.769296+00:00
+
+
+=== audit_c_with_classes (AGENTS.md 10 -- expect VERDICT: CONTRACT CLEAN) ===
+  VERDICT: CONTRACT CLEAN -- 0 violations.
+
+=== gates_vfp (expect PASS blockers=0) ===
+PASS blockers=0 reviews=0
+  note: hot-path corpus is EMPTY and declares no capture date: MDK has not taken an OG-profile capture yet, so the R2-R11 hot-path rules currently have no measured hot function to bite on. The staleness clocks are waived while the project is frozen; the FIRST capture must set `captured` and populate `seed`.
+  note: R9 omitted (VFP_OBJDUMP!=1)
+  note: staleness clocks waived (corpus age, pin age): project frozen at 2026-10-21. Substantive rules still run. VFP_FROZEN_AT='' restores them.
+
+=== audit_arm11_math (expect VERDICT: CONTRACT CLEAN) ===
+VERDICT: CONTRACT CLEAN
+
+=== audit_r11_idiv (screen -- expect no candidates) ===
+    filtered: 4 in cold_always files, 18 not in a loop, 4 constant divisor, 77 float expression, 0 static_assert
+    pinned: 9 suppressed by an @vfp-exempt R11 pin (AGENTS.md 5)
+
+=== gates_core_parity (expect VERDICT: CONTRACT CLEAN) ===
+    core sources: 66   core headers: 75
+    linux SOURCES entries: 74
+    note: 3DS Makefile core globs: $(CORESRC)/*.cpp, $(CORESRC)/*/*.cpp, $(CORESRC)/*/*/*.cpp -> deepest level reached = 2
+    note: no core subdirectory is deeper than the 3DS Makefile's deepest glob
+    note: format target SOURCES: 25 entries, 20 of them under mdk_core/src
+    note: format target compiles 16 of 32 sources under mdk_core/src/formats; NOT compiled by it: beta_demo.cpp, bni.cpp, cmi.cpp, cmi_beta.cpp, fall3d.cpp, flc.cpp, font.cpp, gif.cpp, glb.cpp, mve.cpp, png.cpp, script_decoder.cpp, script_decoder_beta.cpp, script_opcodes.cpp, sniper_screen.cpp, wav.cpp
+    note: format target: make -C tests/formats exit 0 -- 156235 checks, 0 failures
+    note: crossing target: make -C tests/scripts test_crossing exit 0 -- 2 crossing case(s): L4, L7
+    note: crossing selftest: 8 seeded arms, all adjudicated as claimed
+
+=== gates_smdh (expect CONTRACT CLEAN, or SKIPPED before a .cia exists) ===
+    note: no built .cia found -- the SMDH check is SKIPPED, not passed. Build one with: make -C mdk_3ds cia
+    VERDICT: SKIPPED -- no built .cia to read the SMDH out of.
+
+=== gates_frames (expect VERDICT: CONTRACT CLEAN, or SKIPPED before a frame exists) ===
+  note: oracle pixels not in /tmp/mdk-frame-reference: the fidelity ceiling cannot be re-measured live; the regression check still runs
+PASS L3_f1.bmp sha=58615fc85d02e009
+VERDICT: CONTRACT CLEAN
+
+=== gates_batch_integrity (project contract markers and offline invariants) ===
+BATCH INTEGRITY: PASS
+
+=== gates_completion (the ledger's done rows must be verified, not asserted) ===
+  COMPLETION SELFTEST: PASS (13 arms)
+  COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open
+  COMPLETION: LEDGER VERIFIED
+
+  PASS   audit_c_with_classes     0 violations
+  PASS   gates_vfp                0 blockers
+  PASS   audit_arm11_math         contract clean
+  PASS   audit_r11_idiv           no candidates
+  PASS   gates_core_parity        both targets link the same core
+  SKIP   gates_smdh               no built .cia to read
+  PASS   gates_frames             every pinned frame is deterministic and unchanged
+  PASS   gates_batch_integrity    project invariants intact
+  PASS   gates_completion         every done row is backed by evidence and a commit
+
+CHECK: ALL GATES PASSED
+

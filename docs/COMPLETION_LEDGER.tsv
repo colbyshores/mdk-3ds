@@ -32,7 +32,7 @@ audio.3ds-sink	d1	slow	done	mdk_3ds/tools/emurun.sh	mdk_3ds/src/audio/audio_3ds.
 3ds.texel-rgba8	d1	slow	done	make -C tests/scripts	mdk_core/src/render	cb270f8
 3ds.collision-doors	d1	fast	done	make -C tests/scripts test_crossing	tests/scripts	3fe3be3
 3ds.hud-canvas	d1	slow	todo	mdk_3ds/tools/emurun.sh --expect hud		
-linux.render-frame	d1	slow	todo	bash tools/check.sh		
+linux.render-frame	d1	slow	done	bash tools/check.sh	docs/evidence/linux.render-frame-f5314d3.txt	f5314d3
 p5.0.frame-harness	d2	slow	todo	bash tools/check.sh		
 p5.vulkan-goldens	d2	slow	todo	tests/frames/capture_oracle.sh		
 p6.enhanced-stereo	d2	slow	todo	bash tools/check.sh		
