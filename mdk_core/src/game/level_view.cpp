@@ -21,7 +21,7 @@ bool LevelView::load(MdkRenderer renderer, LevelData* level, const formats::Aren
     palette_ = &level->paletteOf(arena);
     const std::vector<const formats::TextureArchive*> archives = level->archivesOf(arena);
 
-    MaterialResolver resolver(&level->dti(), Shading::Original);
+    MaterialResolver resolver(&level->dti(), shading_);
     if (!buildArenaScene(arena, resolver, *palette_, archives, &scene_)) {
         return false;
     }
@@ -116,7 +116,7 @@ bool LevelView::refresh() {
     // again. The whole arena is rebuilt (it is one mesh), which is the same
     // picture the C#'s per-group rebuild produces. A hide/show does NOT come here
     // -- draw() reads the hidden state live, so it needs no rebuild.
-    MaterialResolver resolver(&level_->dti(), Shading::Original);
+    MaterialResolver resolver(&level_->dti(), shading_);
     const std::vector<const formats::TextureArchive*> archives = level_->archivesOf(arena_);
     ArenaScene rebuilt;
     buildArenaScene(arena_, resolver, *palette_, archives, &rebuilt);

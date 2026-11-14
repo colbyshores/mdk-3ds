@@ -32,6 +32,7 @@
 #include "render/render.h"
 #include "render/camera_builder.h"
 #include "game/level_data.h"
+#include "game/level_light.h"
 #include "game/level_view.h"
 #include "game/follow_camera.h"
 #include "game/hud_view.h"
@@ -484,6 +485,7 @@ int main(int argc, char** argv) {
             if (arena) {
                 std::printf("[main] arena: %s (%d arenas)\n", arena->name().c_str(),
                             (int)level.arenas().size());
+                view.setShading(enhancedLook ? mdk::Shading::Lit : mdk::Shading::Original);
                 if (view.load(renderer, &level, arena, &surfaces)) {
                     std::printf("[main] view: %d batches, %d vertices, %d triangles\n",
                                 view.batchCount(), view.vertexCount(), arena->triangleCount());
@@ -502,6 +504,7 @@ int main(int argc, char** argv) {
                     pano.height = (float)sky.height();
                     pano.top_colour = (uint32_t)level.dti().skyTopColor();
                     pano.bottom_colour = (uint32_t)level.dti().skyBottomColor();
+                    pano.linear = enhancedLook;
                     mdk_render_set_panorama(renderer, &pano);
                     std::printf("[main] sky: %dx%d wrap=%d horizon=%d offset=%d top=%d bottom=%d\n",
                                 sky.width(), sky.height(), level.dti().skyWrapWidth(),
@@ -584,11 +587,10 @@ int main(int argc, char** argv) {
     // The LOOKS are keyed by arena NAME and point into LevelData, which is not
     // rebuilt, so they survive a respawn and are not cleared by one.
     //
-    // The shading is the original look's, as LevelView's is: the shared game code
-    // draws the original look on both targets, and the enhanced look lives behind
-    // the Linux-only header the game never includes.
+    // The shading follows the look, as LevelView's does.
     // ---------------------------------------------------------------------
-    mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Original);
+    mdk::MaterialResolver objectResolver(&level.dti(),
+                                         enhancedLook ? mdk::Shading::Lit : mdk::Shading::Original);
     mdk::ObjectView objectView(objectResolver);
     mdk::ObjectDraw objectDraw;
     mdk::ObjectStream objectStream;
@@ -876,6 +878,23 @@ int main(int argc, char** argv) {
                                        mdk::follow_camera::kDefaultPivot, kAspect, 0.0f);
             }
             mdk_render_set_camera(renderer, &camera);
+        }
+
+        // The frame's light (LevelLight.Update): the scripts' current
+        // arena's rig, or the start arena's before the runtime exists.
+        // Point lights gather with the LightSources slice; none yet.
+        if (enhancedLook) {
+            const mdk::formats::Arena* lightArena = arena;
+            if (runtime) {
+                if (const mdk::formats::Arena* current =
+                        level.arenaNamed(runtime->currentArena())) {
+                    lightArena = current;
+                }
+            }
+            if (lightArena) {
+                const mdk::Lighting rig = mdk::enhancedLighting(level.dti(), *lightArena);
+                mdk_render_set_lighting(renderer, &rig);
+            }
         }
 
         // THE MIX, once per frame, after the steps that moved the listener. The C#

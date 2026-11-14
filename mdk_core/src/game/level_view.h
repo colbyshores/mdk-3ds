@@ -59,6 +59,12 @@ public:
     bool load(MdkRenderer renderer, LevelData* level, const formats::Arena* arena,
               SurfaceCache* surfaces);
 
+    // The look the arena's surfaces are shaded with (the C#'s
+    // EnhancedLook.Surfaces for the settings' graphics): Lit under the
+    // enhanced look, Original otherwise. The frontend sets it before
+    // load; refresh() keeps it.
+    void setShading(Shading shading) { shading_ = shading; }
+
     // Draw the arena. The camera and the lighting are the caller's.
     //
     // A group the scripts hid mid-play (group_set_state) is skipped here, per
@@ -94,6 +100,8 @@ private:
     ArenaScene scene_;
 
     SurfaceCache* surfaces_ = nullptr;
+
+    Shading shading_ = Shading::Original;
 
     MdkMeshId mesh_ = -1;
 

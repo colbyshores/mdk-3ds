@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "render/depth_pull.h"
+#include "render/colour_mips.h"
 #include "render/draw_queue.h"
 #include "render/render.h"
 #include "render/render_types.h"
@@ -54,6 +55,8 @@
 #include "shader_stereo_vert.h"
 #include "shader_stereo_frag.h"
 #include "shader_gamma_frag.h"
+#include "shader_enhanced_vert.h"
+#include "shader_enhanced_frag.h"
 
 namespace {
 
@@ -94,6 +97,14 @@ struct TextureVk {
     VkImageView view = VK_NULL_HANDLE;
     void* mapped = nullptr;
     VkDeviceSize size = 0;
+    // The palette indices, kept for the enhanced look's colour expansion
+    // (the C# keeps them in _indexPixels the same way). Bumped version on
+    // every rewrite (bullet holes), so the colour cache can tell.
+    std::vector<uint8_t> indices;
+    uint32_t version = 0;
+    // A 2D-array view of an RGBA texture's image, for the enhanced
+    // sampler (which is an array sampler even for one-layer textures).
+    VkImageView arrayView = VK_NULL_HANDLE;
 };
 
 struct PaletteVk {
@@ -102,6 +113,22 @@ struct PaletteVk {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     void* mapped = nullptr;
+    // The palette's bytes, kept for the colour expansion.
+    uint8_t rgba[1024] = {};
+};
+
+// One expanded colour texture (render/colour_mips): RGBA8, a mip chain,
+// one array layer per frame. Built on demand for a (texture, palette,
+// frames) triple and rebuilt when the index texture's version moves.
+struct ColourVk {
+    bool used = false;
+    int32_t tex = -1;
+    int32_t pal = -1;
+    int32_t frames = 1;
+    uint32_t version = 0;
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
 };
 
 // THE VERTEX BUFFER SLOTS, and why a dynamic mesh needs more than one.
@@ -267,6 +294,29 @@ struct RendererVk {
     VkDescriptorSet stereoSets[mdk::vk::kFramesInFlight] = {};
     VkSampler eyeSampler = VK_NULL_HANDLE;
     bool stereoReady = false;
+
+    // The enhanced look's objects (P6 lit pipeline): the colour-texture
+    // cache, the trilinear sampler, the per-frame descriptor pools and
+    // uniform rings, and the pipelines keyed like the palette ones.
+    std::vector<ColourVk> colours;
+    VkSampler colourSampler = VK_NULL_HANDLE;
+    VkShaderModule enhancedVertModule = VK_NULL_HANDLE;
+    VkShaderModule enhancedFragModule = VK_NULL_HANDLE;
+    VkDescriptorSetLayout enhancedSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout enhancedPipeLayout = VK_NULL_HANDLE;
+    std::vector<PipelineVk> enhancedPipelines;
+    VkDescriptorPool enhancedPools[mdk::vk::kFramesInFlight] = {};
+    VkBuffer uniformRing[mdk::vk::kFramesInFlight] = {};
+    VkDeviceMemory uniformRingMemory[mdk::vk::kFramesInFlight] = {};
+    void* uniformRingMapped[mdk::vk::kFramesInFlight] = {};
+    uint32_t uniformCursor = 0;
+    VkBuffer lightBuffers[mdk::vk::kFramesInFlight] = {};
+    VkDeviceMemory lightMemory[mdk::vk::kFramesInFlight] = {};
+    void* lightMapped[mdk::vk::kFramesInFlight] = {};
+    VkImage dummyColourImage = VK_NULL_HANDLE;
+    VkDeviceMemory dummyColourMemory = VK_NULL_HANDLE;
+    VkImageView dummyColourView = VK_NULL_HANDLE;
+    bool enhancedReady = false;
     std::vector<PipelineVk> pipelines;
     std::vector<DescPair> descs;
 
@@ -1992,6 +2042,27 @@ void mdk_render_destroy(MdkRenderer rr) {
     if (r->eyeSampler) vkDestroySampler(r->ctx.device, r->eyeSampler, nullptr);
     if (r->stereoVertModule) vkDestroyShaderModule(r->ctx.device, r->stereoVertModule, nullptr);
     if (r->stereoFragModule) vkDestroyShaderModule(r->ctx.device, r->stereoFragModule, nullptr);
+    for (size_t i = 0; i < r->enhancedPipelines.size(); i++) {
+        if (r->enhancedPipelines[i].pipeline) {
+            vkDestroyPipeline(r->ctx.device, r->enhancedPipelines[i].pipeline, nullptr);
+        }
+    }
+    for (size_t i = 0; i < r->colours.size(); i++) {
+        retireImage(r, r->colours[i].image, r->colours[i].memory, r->colours[i].view);
+    }
+    if (r->dummyColourView) {
+        retireImage(r, r->dummyColourImage, r->dummyColourMemory, r->dummyColourView);
+    }
+    if (r->enhancedPipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->enhancedPipeLayout, nullptr);
+    if (r->enhancedSetLayout) vkDestroyDescriptorSetLayout(r->ctx.device, r->enhancedSetLayout, nullptr);
+    if (r->colourSampler) vkDestroySampler(r->ctx.device, r->colourSampler, nullptr);
+    if (r->enhancedVertModule) vkDestroyShaderModule(r->ctx.device, r->enhancedVertModule, nullptr);
+    if (r->enhancedFragModule) vkDestroyShaderModule(r->ctx.device, r->enhancedFragModule, nullptr);
+    for (uint32_t i = 0; i < mdk::vk::kFramesInFlight; i++) {
+        if (r->enhancedPools[i]) vkDestroyDescriptorPool(r->ctx.device, r->enhancedPools[i], nullptr);
+        destroyBufferPair(r->ctx.device, r->uniformRing[i], r->uniformRingMemory[i]);
+        destroyBufferPair(r->ctx.device, r->lightBuffers[i], r->lightMemory[i]);
+    }
     destroyGammaTarget(r);
     if (r->gammaPipeline) vkDestroyPipeline(r->ctx.device, r->gammaPipeline, nullptr);
     if (r->gammaPipeLayout) vkDestroyPipelineLayout(r->ctx.device, r->gammaPipeLayout, nullptr);
@@ -2669,6 +2740,10 @@ void drawComposite(RendererVk* r) {
     vkCmdDraw(cb, 3, 1, 0, 0);
 }
 
+namespace {
+bool ensureEnhanced(RendererVk* r);
+} // namespace
+
 void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererVk* r = asVk(rr);
     if (!r || !r->ready) {
@@ -2702,12 +2777,21 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
         r->activeCamera = r->camera;
     }
     mdk::vk::setPresentImage(&r->ctx, VK_NULL_HANDLE);
-    if (r->enhancedLook) {
-        // Stated once per distinct request (refused dedups): the lit
-        // passes are not ported yet, so an enhanced frame currently
-        // renders the original look. Never a silent substitution.
-        refused("enhanced look: the lit passes are not ported yet, so this "
-                "frame renders the original look");
+    if (r->enhancedLook && ensureEnhanced(r)) {
+        // This frame slot's enhanced sets and uniform ring start empty.
+        if (vkResetDescriptorPool(r->ctx.device, r->enhancedPools[r->ctx.currentFrame],
+                                  0) != VK_SUCCESS) {
+            refused("enhanced descriptor pool reset: this frame's lit draws "
+                    "may be dropped at allocation");
+        }
+        r->uniformCursor = 0;
+    }
+    if (r->enhancedLook && !r->enhancedReady) {
+        // Stated once per distinct request (refused dedups): without the
+        // lit pipeline an enhanced frame falls back to the original look.
+        // Never a silent substitution.
+        refused("enhanced look: the lit pipeline could not be created, so "
+                "this frame renders the original look");
     }
     // A FRAME THAT DID NOT BEGIN IS NOT A FRAME. `beginFrame` returns false when the
     // fence wait, the image acquire, the command-buffer reset or the buffer's begin
@@ -2939,6 +3023,8 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r_, int32_t w, int32_t 
     t.width = w;
     t.height = h;
     t.size = (VkDeviceSize)w * (VkDeviceSize)h;
+    t.indices.assign(px, px + (size_t)w * (size_t)h);
+    t.version = 1;
     ResRef ref;
     ref.kind = 0;
     ref.id = id;
@@ -2991,6 +3077,7 @@ MdkPaletteId mdk_render_create_palette(MdkRenderer r_, const uint8_t* rgba) {
     }
     const int32_t id = acquireSlot(r->palettes);
     PaletteVk& p = r->palettes[id];
+    memcpy(p.rgba, rgba, sizeof(p.rgba));
     if (!createHostImage(&r->ctx, 256, 1, VK_FORMAT_R8G8B8A8_UNORM, 4, rgba, &p.image,
                          &p.memory, &p.view, &p.mapped)) {
         refused("palette (256x1 RGBA, 1024 bytes): every surface that names palette id %d "
@@ -3021,6 +3108,10 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
     // The cached descriptor sets name the old image view, so they must go
     // before that view is destroyed.
     forgetDescriptorSets(r, t_, -1);
+    if (t.arrayView) {
+        vkDestroyImageView(r->ctx.device, t.arrayView, nullptr);
+        t.arrayView = VK_NULL_HANDLE;
+    }
     VkImage oldImage = t.image;
     VkDeviceMemory oldMemory = t.memory;
     VkImageView oldView = t.view;
@@ -3029,6 +3120,10 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
     t.view = VK_NULL_HANDLE;
     if (createHostImage(&r->ctx, w, h, t.isIndex ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8B8A8_UNORM,
                         t.isIndex ? 1u : 4u, px, &t.image, &t.memory, &t.view, &t.mapped)) {
+        if (t.isIndex) {
+            t.indices.assign(px, px + (size_t)w * (size_t)h);
+            t.version++;
+        }
         // Retired, not destroyed: a frame already on the queue may still be
         // sampling this view through a set that was retired a few lines above.
         retireImage(r, oldImage, oldMemory, oldView);
@@ -3050,6 +3145,10 @@ void mdk_render_release_texture(MdkRenderer r_, MdkTextureId t_) {
     // destroyed. A released id may be reused, so those sets must not
     // survive the release.
     forgetDescriptorSets(r, t_, -1);
+    if (r->textures[t_].arrayView) {
+        vkDestroyImageView(r->ctx.device, r->textures[t_].arrayView, nullptr);
+        r->textures[t_].arrayView = VK_NULL_HANDLE;
+    }
     // Retire the resource beside the sets that name it. Nulling the fields is
     // what makes the retire exclusive: leaving them set would have teardown
     // destroy the same image a second time.
@@ -3232,6 +3331,676 @@ void mdk_render_release(MdkRenderer r_, MdkScope s) {
 
 namespace {
 
+// ---------------------------------------------------------------------------
+// The enhanced look's backend half (P6 lit pipeline slice): expanded
+// colour textures on demand, a trilinear sampler, per-frame descriptor
+// pools with a uniform ring, and the Lit/Sprite pipelines. The fragment
+// uniforms mirror shaders/enhanced.hlsl's cbuffers, offsets included.
+// ---------------------------------------------------------------------------
+
+struct EnhancedUniforms {
+    float colour[4];
+    int32_t textured;
+    int32_t frameCount;
+    int32_t frame;
+    int32_t mode;
+    float sunMatrix[16];
+    float sun[4];
+    float sunColour[4];
+    float sky[4];
+    float ground[4];
+    float camera[4];
+    float haze[4];
+    float shadow[4];
+};
+
+// A colour texture's GPU image from its expanded chain: RGBA8, a mip
+// chain, one array layer per frame. Uploaded through a staging buffer in
+// one one-shot submission, like every other upload here.
+bool buildColourImage(RendererVk* r, int32_t w, int32_t h, int32_t frames,
+                      const std::vector<uint8_t>& chain, ColourVk* out) {
+    const int32_t levels = mdk::colourLevels(w, h);
+    VkImageCreateInfo imgInfo = {};
+    imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgInfo.imageType = VK_IMAGE_TYPE_2D;
+    imgInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imgInfo.extent.width = (uint32_t)w;
+    imgInfo.extent.height = (uint32_t)h;
+    imgInfo.extent.depth = 1;
+    imgInfo.mipLevels = (uint32_t)levels;
+    imgInfo.arrayLayers = (uint32_t)frames;
+    imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imgInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(r->ctx.device, &imgInfo, nullptr, &out->image) != VK_SUCCESS) {
+        refused("colour texture image %dx%d x%d frames: the surface draws "
+                "through the original pipeline instead", w, h, frames);
+        return false;
+    }
+    VkMemoryRequirements req = {};
+    vkGetImageMemoryRequirements(r->ctx.device, out->image, &req);
+    const uint32_t type = findMemoryType(&r->ctx, req.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == 0xFFFFFFFFu) {
+        refused("colour texture memory type: the surface draws through the "
+                "original pipeline instead");
+        vkDestroyImage(r->ctx.device, out->image, nullptr);
+        out->image = VK_NULL_HANDLE;
+        return false;
+    }
+    VkMemoryAllocateInfo alloc = {};
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.allocationSize = req.size;
+    alloc.memoryTypeIndex = type;
+    if (vkAllocateMemory(r->ctx.device, &alloc, nullptr, &out->memory) != VK_SUCCESS ||
+        vkBindImageMemory(r->ctx.device, out->image, out->memory, 0) != VK_SUCCESS) {
+        refused("colour texture memory: the surface draws through the original "
+                "pipeline instead");
+        vkDestroyImage(r->ctx.device, out->image, nullptr);
+        out->image = VK_NULL_HANDLE;
+        if (out->memory != VK_NULL_HANDLE) {
+            vkFreeMemory(r->ctx.device, out->memory, nullptr);
+            out->memory = VK_NULL_HANDLE;
+        }
+        return false;
+    }
+
+    VkImageViewCreateInfo viewInfo = {};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = out->image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = (uint32_t)levels;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = (uint32_t)frames;
+    if (vkCreateImageView(r->ctx.device, &viewInfo, nullptr, &out->view) != VK_SUCCESS) {
+        refused("colour texture view: the surface draws through the original "
+                "pipeline instead");
+        vkDestroyImage(r->ctx.device, out->image, nullptr);
+        out->image = VK_NULL_HANDLE;
+        vkFreeMemory(r->ctx.device, out->memory, nullptr);
+        out->memory = VK_NULL_HANDLE;
+        return false;
+    }
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    void* stagingMapped = nullptr;
+    if (!createHostBuffer(&r->ctx, (VkDeviceSize)chain.size(),
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &staging, &stagingMemory,
+                          &stagingMapped)) {
+        refused("colour texture staging: the surface draws through the original "
+                "pipeline instead");
+        return false;
+    }
+    memcpy(stagingMapped, chain.data(), chain.size());
+
+    VkCommandPool oneShotPool = VK_NULL_HANDLE;
+    VkCommandBuffer cb = beginOneShotTracked(&r->ctx, &oneShotPool);
+    if (!cb) {
+        refused("colour texture upload command: the surface draws through the "
+                "original pipeline instead");
+        destroyBufferPair(r->ctx.device, staging, stagingMemory);
+        return false;
+    }
+    VkImageMemoryBarrier barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = out->image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = (uint32_t)levels;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = (uint32_t)frames;
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &barrier);
+
+    const int32_t chainSize = mdk::colourChainSize(w, h);
+    std::vector<VkBufferImageCopy> regions;
+    for (int32_t f = 0; f < frames; f++) {
+        int32_t lw = w;
+        int32_t lh = h;
+        VkDeviceSize offset = (VkDeviceSize)f * (VkDeviceSize)chainSize;
+        for (int32_t level = 0; level < levels; level++) {
+            VkBufferImageCopy region = {};
+            region.bufferOffset = offset;
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.mipLevel = (uint32_t)level;
+            region.imageSubresource.baseArrayLayer = (uint32_t)f;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent.width = (uint32_t)lw;
+            region.imageExtent.height = (uint32_t)lh;
+            region.imageExtent.depth = 1;
+            regions.push_back(region);
+            offset += (VkDeviceSize)lw * (VkDeviceSize)lh * 4;
+            lw = lw / 2 > 1 ? lw / 2 : 1;
+            lh = lh / 2 > 1 ? lh / 2 : 1;
+        }
+    }
+    vkCmdCopyBufferToImage(cb, staging, out->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           (uint32_t)regions.size(), regions.data());
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
+                         1, &barrier);
+    const OneShot done = endOneShot(&r->ctx, oneShotPool, cb);
+    destroyBufferPair(r->ctx.device, staging, stagingMemory);
+    if (done != OneShot::done) {
+        refused("colour texture upload: the copy is not known to have finished, so "
+                "the surface draws through the original pipeline instead");
+        return false;
+    }
+    return true;
+}
+
+// The colour texture for a (texture, palette, frames) triple, built or
+// rebuilt when the index texture's version has moved (bullet holes).
+VkImageView getColourView(RendererVk* r, int32_t tex, int32_t pal, int32_t frames) {
+    if (tex < 0 || tex >= (int32_t)r->textures.size() || !r->textures[tex].used ||
+        !r->textures[tex].isIndex || r->textures[tex].indices.empty()) {
+        refused("colour texture for texture %d: it is not a live index texture, so "
+                "the surface draws through the original pipeline instead", tex);
+        return VK_NULL_HANDLE;
+    }
+    if (pal < 0 || pal >= (int32_t)r->palettes.size() || !r->palettes[pal].used) {
+        refused("colour texture for palette %d: it is not a live palette, so the "
+                "surface draws through the original pipeline instead", pal);
+        return VK_NULL_HANDLE;
+    }
+    const TextureVk& t = r->textures[tex];
+    for (size_t i = 0; i < r->colours.size(); i++) {
+        ColourVk& c = r->colours[i];
+        if (c.used && c.tex == tex && c.pal == pal && c.frames == frames) {
+            if (c.version == t.version) {
+                return c.view;
+            }
+            retireImage(r, c.image, c.memory, c.view);
+            c.image = VK_NULL_HANDLE;
+            c.memory = VK_NULL_HANDLE;
+            c.view = VK_NULL_HANDLE;
+            const std::vector<uint8_t> chain =
+                mdk::colourChain(t.indices.data(), t.width, t.height, frames,
+                                 r->palettes[pal].rgba, 1024);
+            if (!buildColourImage(r, t.width, t.height, frames, chain, &c)) {
+                refused("colour texture rebuild for texture %d: the surface draws "
+                        "through the original pipeline instead", tex);
+                c.used = false;
+                return VK_NULL_HANDLE;
+            }
+            c.version = t.version;
+            return c.view;
+        }
+    }
+    ColourVk c;
+    c.used = true;
+    c.tex = tex;
+    c.pal = pal;
+    c.frames = frames;
+    c.version = t.version;
+    const std::vector<uint8_t> chain =
+        mdk::colourChain(t.indices.data(), t.width, t.height, frames,
+                         r->palettes[pal].rgba, 1024);
+    if (!buildColourImage(r, t.width, t.height, frames, chain, &c)) {
+        refused("colour texture build for texture %d: the surface draws through "
+                "the original pipeline instead", tex);
+        return VK_NULL_HANDLE;
+    }
+    r->colours.push_back(c);
+    return c.view;
+}
+
+// The enhanced pipeline for a pass/blend/primitive triple: the palette
+// pipeline's states with the enhanced shaders and layout.
+VkPipeline createEnhancedPipeline(RendererVk* r, int pass, int blend, int primitive) {
+    VkPipelineVertexInputStateCreateInfo vi = {};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    VkVertexInputBindingDescription binding = {};
+    binding.binding = 0;
+    binding.stride = sizeof(mdk::Vertex);
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrs[3] = {};
+    attrs[0].location = 0; attrs[0].binding = 0; attrs[0].offset = 0;
+    attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attrs[1].location = 1; attrs[1].binding = 0; attrs[1].offset = 12;
+    attrs[1].format = VK_FORMAT_R32G32_SFLOAT;
+    attrs[2].location = 2; attrs[2].binding = 0; attrs[2].offset = 20;
+    attrs[2].format = VK_FORMAT_R8G8B8A8_UNORM;
+    vi.vertexBindingDescriptionCount = 1;
+    vi.pVertexBindingDescriptions = &binding;
+    vi.vertexAttributeDescriptionCount = 3;
+    vi.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo ia = {};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = primitive ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vp = {};
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rs = {};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.lineWidth = 1.0f;
+    rs.cullMode = (pass == (int)mdk::Pass::Solid) ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+    VkPipelineMultisampleStateCreateInfo ms = {};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo ds = {};
+    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    ds.depthTestEnable = (pass != (int)mdk::Pass::Overlay && pass != (int)mdk::Pass::OnTop)
+                             ? VK_TRUE : VK_FALSE;
+    ds.depthWriteEnable = (pass != (int)mdk::Pass::Blended && pass != (int)mdk::Pass::Overlay &&
+                           pass != (int)mdk::Pass::OnTop) ? VK_TRUE : VK_FALSE;
+    ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    const bool blended = (pass == (int)mdk::Pass::Blended || pass == (int)mdk::Pass::Overlay);
+    VkPipelineColorBlendAttachmentState cb = {};
+    cb.blendEnable = blended ? VK_TRUE : VK_FALSE;
+    cb.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    cb.dstColorBlendFactor = (blend == (int)mdk::Blend::Add) ? VK_BLEND_FACTOR_ONE
+                                                             : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cb.colorBlendOp = VK_BLEND_OP_ADD;
+    cb.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    cb.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cb.alphaBlendOp = VK_BLEND_OP_ADD;
+    cb.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo cbs = {};
+    cbs.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cbs.attachmentCount = 1;
+    cbs.pAttachments = &cb;
+
+    VkDynamicState dynamics[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dyn = {};
+    dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dyn.dynamicStateCount = 2;
+    dyn.pDynamicStates = dynamics;
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = r->enhancedVertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = r->enhancedFragModule;
+    stages[1].pName = "main";
+
+    VkGraphicsPipelineCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    info.stageCount = 2;
+    info.pStages = stages;
+    info.pVertexInputState = &vi;
+    info.pInputAssemblyState = &ia;
+    info.pViewportState = &vp;
+    info.pRasterizationState = &rs;
+    info.pMultisampleState = &ms;
+    info.pDepthStencilState = &ds;
+    info.pColorBlendState = &cbs;
+    info.pDynamicState = &dyn;
+    info.layout = r->enhancedPipeLayout;
+    info.renderPass = r->ctx.renderPass;
+    info.subpass = 0;
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(r->ctx.device, r->pipeCache, 1, &info, nullptr,
+                                  &pipeline) != VK_SUCCESS) {
+        refused("enhanced pipeline for pass %d blend %d prim %d: the draw is dropped",
+                pass, blend, primitive);
+        return VK_NULL_HANDLE;
+    }
+    return pipeline;
+}
+
+VkPipeline getEnhancedPipeline(RendererVk* r, int pass, int blend, int primitive) {
+    const int key = pass * 16 + blend * 4 + primitive;
+    for (size_t i = 0; i < r->enhancedPipelines.size(); i++) {
+        if (r->enhancedPipelines[i].key == key) {
+            return r->enhancedPipelines[i].pipeline;
+        }
+    }
+    VkPipeline p = createEnhancedPipeline(r, pass, blend, primitive);
+    PipelineVk entry;
+    entry.key = key;
+    entry.pipeline = p;
+    r->enhancedPipelines.push_back(entry);
+    return p;
+}
+
+// The enhanced objects, created on the first enhanced frame.
+bool ensureEnhanced(RendererVk* r) {
+    if (r->enhancedReady) {
+        return true;
+    }
+    VkDevice device = r->ctx.device;
+    r->enhancedVertModule = createModule(&r->ctx, spv_enhanced_vert, spv_enhanced_vert_size);
+    r->enhancedFragModule = createModule(&r->ctx, spv_enhanced_frag, spv_enhanced_frag_size);
+    if (!r->enhancedVertModule || !r->enhancedFragModule) {
+        refused("enhanced shader modules: the frame renders the original look");
+        return false;
+    }
+
+    VkSamplerCreateInfo samplerInfo = {};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.maxLod = 1000.0f;
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &r->colourSampler) != VK_SUCCESS) {
+        refused("colour sampler: the frame renders the original look");
+        return false;
+    }
+
+    VkDescriptorSetLayoutBinding bindings[3] = {};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 3;
+    layoutInfo.pBindings = bindings;
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &r->enhancedSetLayout) !=
+        VK_SUCCESS) {
+        refused("enhanced descriptor layout: the frame renders the original look");
+        return false;
+    }
+
+    VkPushConstantRange range = {};
+    range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    range.offset = 0;
+    range.size = 128;
+    VkPipelineLayoutCreateInfo pipeLayoutInfo = {};
+    pipeLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeLayoutInfo.setLayoutCount = 1;
+    pipeLayoutInfo.pSetLayouts = &r->enhancedSetLayout;
+    pipeLayoutInfo.pushConstantRangeCount = 1;
+    pipeLayoutInfo.pPushConstantRanges = &range;
+    if (vkCreatePipelineLayout(device, &pipeLayoutInfo, nullptr, &r->enhancedPipeLayout) !=
+        VK_SUCCESS) {
+        refused("enhanced pipeline layout: the frame renders the original look");
+        return false;
+    }
+
+    for (uint32_t i = 0; i < mdk::vk::kFramesInFlight; i++) {
+        VkDescriptorPoolSize poolSizes[2] = {};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizes[0].descriptorCount = 1024;
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[1].descriptorCount = 2048;
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 2;
+        poolInfo.pPoolSizes = poolSizes;
+        poolInfo.maxSets = 1024;
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &r->enhancedPools[i]) !=
+            VK_SUCCESS) {
+            refused("enhanced descriptor pool: the frame renders the original look");
+            return false;
+        }
+        if (!createHostBuffer(&r->ctx, 64 * 1024, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                              &r->uniformRing[i], &r->uniformRingMemory[i],
+                              &r->uniformRingMapped[i]) ||
+            !createHostBuffer(&r->ctx, 528, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                              &r->lightBuffers[i], &r->lightMemory[i], &r->lightMapped[i])) {
+            refused("enhanced uniform buffers: the frame renders the original look");
+            return false;
+        }
+    }
+
+    // A 1x1 white colour texture for untextured enhanced draws.
+    {
+        ColourVk dummy;
+        dummy.used = true;
+        dummy.tex = -1;
+        const uint8_t whitePalette[4] = {255, 255, 255, 255};
+        const uint8_t whiteIndex[1] = {0};
+        // Index 0 is clear; use a direct RGBA build instead.
+        std::vector<uint8_t> chain(4, 255);
+        (void)whitePalette;
+        (void)whiteIndex;
+        if (!buildColourImage(r, 1, 1, 1, chain, &dummy)) {
+            refused("enhanced dummy texture: the frame renders the original look");
+            return false;
+        }
+        r->dummyColourImage = dummy.image;
+        r->dummyColourMemory = dummy.memory;
+        r->dummyColourView = dummy.view;
+    }
+
+    r->enhancedReady = true;
+    return true;
+}
+
+// The frame's point lights into this slot's light buffer (called on the
+// first enhanced draw of the frame; the buffer is per frame-in-flight).
+void writePointLights(RendererVk* r) {
+    const uint32_t slot = r->ctx.currentFrame;
+    if (!r->lightMapped[slot]) {
+        return;
+    }
+    float* out = static_cast<float*>(r->lightMapped[slot]);
+    const int32_t count = r->pointLightCount < 16 ? r->pointLightCount : 16;
+    out[0] = (float)count;
+    out[1] = 0.0f;
+    out[2] = 0.0f;
+    out[3] = 0.0f;
+    for (int32_t i = 0; i < count; i++) {
+        const mdk::PointLight& light = r->pointLights[i];
+        float* at = out + 4 + (size_t)i * 8;
+        at[0] = light.position.x;
+        at[1] = light.position.y;
+        at[2] = light.position.z;
+        at[3] = light.radius;
+        at[4] = light.colour.r;
+        at[5] = light.colour.g;
+        at[6] = light.colour.b;
+        at[7] = 0.0f;
+    }
+}
+
+// Record one enhanced draw: the Lit/Sprite path of drawRecorded.
+// `world` and `wv` are drawRecorded's own matrices for this draw.
+void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16],
+                  const float wv[16]) {
+    const int pass = (int)draw->material.pass;
+    const int blend = (int)draw->material.blend;
+    const int primitive = (draw->primitive == mdk::Primitive::Lines) ? 1 : 0;
+    VkPipeline pipeline = getEnhancedPipeline(r, pass, blend, primitive);
+    if (!pipeline) {
+        return;
+    }
+
+    const bool textured = draw->material.texture >= 0 &&
+                          draw->material.texture < (int32_t)r->textures.size() &&
+                          r->textures[draw->material.texture].used;
+    VkImageView colourView = r->dummyColourView;
+    if (textured && r->textures[draw->material.texture].isIndex) {
+        const int32_t frames = draw->material.frame_count > 0 ? draw->material.frame_count : 1;
+        colourView = getColourView(r, draw->material.texture, draw->material.palette, frames);
+        if (!colourView) {
+            return;
+        }
+    } else if (textured) {
+        // An RGBA texture given whole (the C#'s Copy path for colour
+        // textures): sample it through an array view of the same image.
+        TextureVk& t = r->textures[draw->material.texture];
+        if (!t.arrayView) {
+            VkImageViewCreateInfo viewInfo = {};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = t.image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+            viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+            if (vkCreateImageView(r->ctx.device, &viewInfo, nullptr, &t.arrayView) !=
+                VK_SUCCESS) {
+                return;
+            }
+        }
+        colourView = t.arrayView;
+    }
+
+    const uint32_t slot = r->ctx.currentFrame;
+    if (r->uniformCursor == 0) {
+        writePointLights(r);
+    }
+    const uint32_t stride = 256;
+    if ((r->uniformCursor + 1) * stride > 64 * 1024) {
+        refused("enhanced uniform ring full: the rest of the frame's lit draws "
+                "are dropped");
+        return;
+    }
+    EnhancedUniforms u = {};
+    u.colour[0] = draw->material.colour.r;
+    u.colour[1] = draw->material.colour.g;
+    u.colour[2] = draw->material.colour.b;
+    u.colour[3] = draw->material.colour.a;
+    u.textured = textured ? 1 : 0;
+    u.frameCount = draw->material.frame_count > 0 ? draw->material.frame_count : 1;
+    u.frame = draw->frame;
+    u.mode = draw->material.shading == mdk::Shading::Sprite ? 2 : 1;
+    for (int i = 0; i < 16; i++) {
+        u.sunMatrix[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+    }
+    u.sun[0] = r->lighting.sun_direction.x;
+    u.sun[1] = r->lighting.sun_direction.y;
+    u.sun[2] = r->lighting.sun_direction.z;
+    u.sun[3] = r->lighting.exposure;
+    u.sunColour[0] = r->lighting.sun.r;
+    u.sunColour[1] = r->lighting.sun.g;
+    u.sunColour[2] = r->lighting.sun.b;
+    u.sunColour[3] = 1.0f;
+    u.sky[0] = r->lighting.sky.r;
+    u.sky[1] = r->lighting.sky.g;
+    u.sky[2] = r->lighting.sky.b;
+    u.sky[3] = 0.6f;  // Tonemap.Knee
+    u.ground[0] = r->lighting.ground.r;
+    u.ground[1] = r->lighting.ground.g;
+    u.ground[2] = r->lighting.ground.b;
+    u.ground[3] = 1.0f;
+    u.camera[0] = r->activeCamera.position.x;
+    u.camera[1] = r->activeCamera.position.y;
+    u.camera[2] = r->activeCamera.position.z;
+    u.camera[3] = 1.0f;
+    u.haze[0] = r->lighting.haze_colour.r;
+    u.haze[1] = r->lighting.haze_colour.g;
+    u.haze[2] = r->lighting.haze_colour.b;
+    u.haze[3] = r->lighting.haze_density;
+    u.shadow[0] = 2048.0f;
+    u.shadow[1] = 0.5f;
+    u.shadow[2] = 0.5f;
+    u.shadow[3] = 0.0f;  // shadows land with the shadow pass slice
+
+    const VkDeviceSize uniformOffset = (VkDeviceSize)r->uniformCursor * stride;
+    memcpy(static_cast<uint8_t*>(r->uniformRingMapped[slot]) + uniformOffset, &u, sizeof(u));
+    r->uniformCursor++;
+
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = r->enhancedPools[slot];
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &r->enhancedSetLayout;
+    if (vkAllocateDescriptorSets(r->ctx.device, &allocInfo, &set) != VK_SUCCESS) {
+        refused("enhanced descriptor set: the lit draw is dropped");
+        return;
+    }
+    VkDescriptorImageInfo imageInfo = {};
+    imageInfo.sampler = r->colourSampler;
+    imageInfo.imageView = colourView;
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorBufferInfo uniformInfo = {};
+    uniformInfo.buffer = r->uniformRing[slot];
+    uniformInfo.offset = uniformOffset;
+    uniformInfo.range = sizeof(EnhancedUniforms);
+    VkDescriptorBufferInfo lightInfo = {};
+    lightInfo.buffer = r->lightBuffers[slot];
+    lightInfo.offset = 0;
+    lightInfo.range = 528;
+    VkWriteDescriptorSet writes[3] = {};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = set;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo = &imageInfo;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = set;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[1].pBufferInfo = &uniformInfo;
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = set;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[2].pBufferInfo = &lightInfo;
+    vkUpdateDescriptorSets(r->ctx.device, 3, writes, 0, nullptr);
+
+    float push[32];
+    float mvp[16];
+    mulMatrix(wv, r->activeCamera.projection, mvp);
+    flipClipY(mvp);
+    memcpy(push, mvp, sizeof(mvp));
+    memcpy(push + 16, world, sizeof(float) * 16);
+
+    VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->enhancedPipeLayout,
+                            0, 1, &set, 0, nullptr);
+    vkCmdPushConstants(cb, r->enhancedPipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(push), push);
+
+    const MeshVk& mesh = r->meshes[draw->mesh];
+    const VkBuffer buffer = mesh.buffer[meshSlot(mesh, &r->ctx)];
+    if (!buffer) {
+        return;
+    }
+    const VkDeviceSize offset = sizeof(mdk::Vertex) * (VkDeviceSize)draw->first_vertex;
+    vkCmdBindVertexBuffers(cb, 0, 1, &buffer, &offset);
+    vkCmdDraw(cb, (uint32_t)draw->vertex_count, 1, 0, 0);
+
+    r->drawCalls++;
+    if (!primitive) {
+        r->triangles += draw->vertex_count / 3;
+    }
+}
+
 // Record one queued draw into this frame's command buffer. This is what the
 // oracle's `DrawOne` is (Renderer.cs:1060-1110): a pipeline for the pass, the
 // matrices, the texture pair, one draw.
@@ -3263,6 +4032,16 @@ void drawRecorded(RendererVk* r, const mdk::MeshDraw* draw) {
     }
     float wv[16];
     mulMatrix(world, r->activeCamera.view, wv);
+
+    // The enhanced look's Lit/Sprite draws go through the lit pipeline;
+    // everything else (Original shading, mirrors, the canvas's own draws)
+    // keeps the palette path below.
+    if (r->enhancedLook && r->enhancedReady &&
+        (draw->material.shading == mdk::Shading::Lit ||
+         draw->material.shading == mdk::Shading::Sprite)) {
+        drawEnhanced(r, draw, world, wv);
+        return;
+    }
 
     PushConstants pc;
     mulMatrix(wv, r->activeCamera.projection, pc.mvp);
