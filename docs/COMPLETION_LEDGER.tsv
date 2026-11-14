@@ -34,7 +34,12 @@ audio.3ds-sink	d1	slow	done	mdk_3ds/tools/emurun.sh	mdk_3ds/src/audio/audio_3ds.
 3ds.hud-canvas	d1	slow	done	mdk_3ds/tools/emurun.sh --expect hud	docs/evidence/3ds.hud-canvas-158c11d.txt	158c11d
 linux.render-frame	d1	slow	done	bash tools/check.sh	docs/evidence/linux.render-frame-f5314d3.txt	f5314d3
 p5.0.frame-harness	d2	slow	done	bash tools/check.sh	docs/evidence/p5.0.frame-harness-7f0d867.txt	7f0d867
-p5.vulkan-goldens	d2	slow	todo	tests/frames/capture_oracle.sh		
+# p5.vulkan-goldens re-scoped 2026-11-14: the registered command lacked the
+# script's mandatory <out.bmp> argument and exited 1 on usage without capturing
+# anything. The acceptance now captures the pinned C# oracle frame and runs the
+# frame gate against it (determinism, byte-exact baseline, fidelity ceiling) --
+# strictly stronger, not weaker. Requires a .NET 10 SDK (MDK_DOTNET).
+p5.vulkan-goldens	d2	slow	todo	MDK_DOTNET=/tmp/mdk-dotnet10/dotnet DOTNET_ROOT=/tmp/mdk-dotnet10 tests/frames/capture_oracle.sh /tmp/mdk-frame-reference/L3_f1.bmp && python3 tools/runner/gates_frames.py		
 p6.enhanced-stereo	d2	slow	todo	bash tools/check.sh		
 p7.platform-lifecycle	d2	slow	todo	bash tools/check.sh		
 p7.romfs-streaming	d2	slow	todo	mdk_3ds/tools/emurun.sh		
