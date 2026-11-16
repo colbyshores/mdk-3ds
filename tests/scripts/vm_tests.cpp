@@ -3080,14 +3080,15 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
         }
     }
 
-    // Formula-sensitive companion on the near-equal-weight arena WPTEST2. WPTEST's
-    // dominant fixture pins the selection distribution (it rejects a uniform
-    // picker) but is invariant to the weight-formula terms: dropping the +250 bump,
-    // the toKurt<200 near-Kurt term, or the 500-distance base leaves id 1 dominant
-    // and reproduces WPTEST's pins. Here every qualifying waypoint sits on the
-    // x-axis, so each takes the +250 bump and the near-Kurt term and the weights
-    // are near-equal; the pinned seed-1 sequence below changes if any term is
-    // dropped, so this guards the formula that WPTEST cannot.
+    // Formula-sensitive companion on arena WPTEST2. WPTEST's dominant fixture pins
+    // the selection distribution (it rejects a uniform picker) but is invariant to
+    // the weight-formula terms. WPTEST2's waypoints sit on the x-axis so the +250
+    // bump and the 500-distance base move the cumulative pick boundaries: the
+    // pinned seed-1 sequence below changes if the +250 bump or the 500-distance
+    // base is dropped (verified by shadow builds -- disabling +250 reddens these
+    // pins while leaving WPTEST green). It does NOT distinguish dropping the
+    // toKurt<200 near-Kurt term: id 2 at (300,0,0) is beyond 200 of Kurt and
+    // anchors the distribution, so that term is exercised but not pinned here.
     {
         const std::string arena2 = "WPTEST2";
         {
@@ -7679,13 +7680,12 @@ int main() {
             wp.records.push_back(r);
         }
         arenas.push_back(wp);
-        // A second arena with NEAR-EQUAL weights (all waypoints on the x-axis, so
-        // every qualifying waypoint takes the +250 bump and the near-Kurt term).
-        // WPTEST's dominant fixture pins the selection DISTRIBUTION (it rejects a
-        // uniform picker) but is invariant to the weight-formula terms; WPTEST2's
-        // near-equal weights make its pinned sequence change if any term (+250,
-        // the toKurt<200 bump, or the 500-distance base) is dropped, so the two
-        // arenas together guard both the distribution and the formula.
+        // A second arena whose waypoints sit on the x-axis, so the +250 bump and
+        // the 500-distance base move the cumulative pick boundaries. WPTEST's
+        // dominant fixture pins the selection DISTRIBUTION (it rejects a uniform
+        // picker) but is invariant to the weight-formula terms; WPTEST2's pinned
+        // sequence changes if the +250 bump or the 500-distance base is dropped
+        // (the test comment records that the near-Kurt term is not distinguished).
         Dti::ArenaEntry wp2;
         wp2.name = "WPTEST2";
         const float wp2Pos[6][3] = {
