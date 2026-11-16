@@ -9,6 +9,7 @@
 #include "game/kurt_sprite.h"
 
 #include <math.h>
+#include <string.h>
 
 #include <algorithm>
 #include <utility>
@@ -18,6 +19,7 @@
 #include "formats/sprite_animation.h"
 #include "formats/texture.h"
 #include "game/arena_space.h"
+#include "game/mod_images.h"
 #include "util/math_lut.h"
 
 namespace mdk {
@@ -466,6 +468,27 @@ bool KurtSprite::ensureTexture(int32_t animationIndex, int32_t frameIndex) {
             return false;
         }
         frame.texture = texture;
+        // A mod's image for this frame (the C#'s KurtSprite.Upscaled: the
+        // enhanced look's sprites only, named ANIMATION_frame). Given to
+        // the renderer as the frame's colour texture; the index texture
+        // stays for the original look.
+        if (mods_ && shading_ == Shading::Sprite) {
+            formats::Texture image;
+            image.setName(animation.name);
+            image.setWidth(frame.width);
+            image.setHeight(frame.height);
+            image.setFrameCount(1);
+            image.setIndices(frame.indices.data(), (int32_t)frame.indices.size());
+            formats::Palette palette;
+            memcpy(palette.mutableRgba(), paletteRgba_.data(), 256 * 4);
+            HdImage replacement;
+            const std::string name =
+                animation.name + "_" + std::to_string(frameIndex);
+            if (mods_->texture(name, image, palette, &replacement)) {
+                mdk_render_replace_colour(renderer_, texture, palette_, 1, replacement.width,
+                                          replacement.height, replacement.rgba.data());
+            }
+        }
         SpriteResidency::Entry entry;
         entry.animation = animationIndex;
         entry.frame = frameIndex;
@@ -559,7 +582,7 @@ bool KurtSprite::drawFrame(MdkRenderer renderer, int32_t animationIndex, int32_t
     draw.material.palette = palette_;
     draw.material.frame_count = 1;
     draw.material.pass = Pass::DoubleSided;
-    draw.material.shading = Shading::Original;
+    draw.material.shading = shading_;
     draw.material.colour = Colour{1.0f, 1.0f, 1.0f, 1.0f};
     draw.world[0] = 1.0f;
     draw.world[5] = 1.0f;

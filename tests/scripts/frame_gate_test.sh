@@ -269,6 +269,45 @@ else
     check "frame gate: the enhanced capture succeeds for the mods arm" "ok" "capture-failed"
 fi
 
+# Arm 9: Kurt's mod replacement (p6 slice g, the Sprite consumer). A
+# fixture mod replacing Kurt's still frame (textures/K_STILL_0) must
+# change the enhanced frame (Kurt draws through the enhanced Sprite
+# path with the mod's colour texture) and leave the original frame
+# byte-identical (Kurt's original shading never sees mods).
+KURT_USER="$WORK/kurtuser"
+mkdir -p "$KURT_USER/mods/fixture/textures"
+printf 'name=Fixture\ndescription=frame gate kurt mod\n' > "$KURT_USER/mods/fixture/mod.txt"
+python3 - "$KURT_USER/mods/fixture/textures/K_STILL_0.png" <<'PY' 2>/dev/null
+import sys
+from PIL import Image
+Image.new("RGBA", (16, 16), (255, 0, 255, 255)).save(sys.argv[1])
+PY
+KURT_ENH="$WORK/frame.kurtmod.bmp"
+KURT_PLAIN="$WORK/frame.kurtmod.plain.bmp"
+if [ ! -f "$KURT_USER/mods/fixture/textures/K_STILL_0.png" ]; then
+    skip "frame gate: kurt mods arm (no PIL for the fixture PNG)"
+elif [ -s "$ENH_CAP" ] && \
+   MDK_USER_DIR="$KURT_USER" MDK_FRAME_ENHANCED=1 "$CAPTURE" "$KURT_ENH" >/dev/null 2>&1 && \
+   [ -s "$KURT_ENH" ]; then
+    kurt_measure=$(python3 "$COMPARE" "$ENH_CAP" "$KURT_ENH" --measure 2>/dev/null)
+    kurt_bad=$(printf '%s' "$kurt_measure" | awk '{print $1}')
+    kurt_changed=$(python3 - "$kurt_bad" <<'PY'
+import sys
+print("1" if float(sys.argv[1]) > 0.0 else "0")
+PY
+)
+    check "frame gate: a mod's image of Kurt's frame changes the enhanced frame" "1" "$kurt_changed"
+    if [ -s "$PLAIN_CAP" ] && MDK_USER_DIR="$KURT_USER" "$CAPTURE" "$KURT_PLAIN" >/dev/null 2>&1 && \
+       [ -s "$KURT_PLAIN" ]; then
+        python3 "$COMPARE" "$PLAIN_CAP" "$KURT_PLAIN" >/dev/null 2>&1
+        check "frame gate: Kurt's mod leaves the original frame byte-identical" "0" "$?"
+    else
+        check "frame gate: the original capture succeeds for the kurt mods arm" "ok" "capture-failed"
+    fi
+else
+    check "frame gate: the enhanced capture succeeds for the kurt mods arm" "ok" "capture-failed"
+fi
+
 if [ "$fails" -ne 0 ]; then
     echo "FRAME GATE: $fails FAILED ($checks checks, $skipped skipped)"
     exit 1

@@ -35,6 +35,8 @@
 
 namespace mdk {
 
+class ModImages;
+
 namespace formats {
 class Bni;
 class Palette;
@@ -209,6 +211,15 @@ public:
     bool load(MdkRenderer renderer, const formats::Bni& sprites,
               const formats::Palette& palette);
 
+    // The look's shading for Kurt's draws (the C#'s KurtSprite shading:
+    // Sprite under the enhanced look, Original otherwise). The frontend
+    // sets it before load; Original is the shipped default.
+    void setShading(Shading shading) { shading_ = shading; }
+
+    // The mods whose images replace Kurt's frames under the Sprite
+    // shading (the C#'s KurtSprite mods; null: none). Set before load.
+    void setMods(ModImages* mods) { mods_ = mods; }
+
     // Adds one level animation (K_SURF, K_SLIDE, ...). A name already loaded
     // from the BNI is replaced, as the C#'s level animations take precedence.
     bool add(MdkRenderer renderer, const std::string& name,
@@ -313,6 +324,8 @@ private:
                         int32_t height, float top, float bottom, const Vec3& eye, float pull);
 
     MdkRenderer renderer_ = nullptr;
+    Shading shading_ = Shading::Original;
+    ModImages* mods_ = nullptr;
     int32_t palette_ = -1;
     int32_t mesh_ = -1;
     std::vector<uint8_t> paletteRgba_;

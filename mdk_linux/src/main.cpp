@@ -638,6 +638,11 @@ int main(int argc, char** argv) {
                         } else {
                             std::printf("[main] hud: FAILED\n");
                         }
+                        kurtSprite.setShading(enhancedLook ? mdk::Shading::Sprite
+                                                            : mdk::Shading::Original);
+                        if (modsReady) {
+                            kurtSprite.setMods(&modImages);
+                        }
                         if (kurtSprite.load(renderer, sprites, level.dti().palette())) {
                             kurtSpriteReady = true;
                             // The level's SNI archives carry the slide and

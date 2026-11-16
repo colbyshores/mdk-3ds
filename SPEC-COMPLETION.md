@@ -144,16 +144,28 @@ the same batch. One subsystem slice per batch.
    frame-gate arm records an 88.0% ceiling over a measured 86.241% gap
    that is dominated by the lit/post divergence slices (a)–(e) landed
    unmeasured; the row cannot close until that residue is burned down
-   under the shrink-only ceiling. (g) mods / HD-texture path — FIRST
+   under the shrink-only ceiling. (2026-11-15 burn-down pass: the
+   divergence was isolated stage by stage -- post, glow, shadow, haze,
+   sun, exposure and the texture path each measured against the oracle
+   frame; the colour sampler's missing anisotropic filtering (oracle:
+   16x) was found and fixed. The residue is a per-face light
+   distribution difference -- effective-light median +6% with a
+   shadowed-face tail the oracle has and this build does not yet
+   reproduce -- not a single remaining stage error.) (g) mods / HD-texture path — FIRST
    BATCH (2026-11-15): the runtime image replacement — `ModInfo` /
    `ModCatalog` / `HdKey` / `ModImages` in `mdk_core/src/game/`
    (SHA-256 in `util/sha256`), the Lit-only replacement hook in
    `SurfaceCache`, the `mdk_render_replace_colour` / `_replace_image`
    seam (Vulkan colour cache; 3DS no-ops), Linux `--mod` +
-   `$MDK_USER_DIR/mods` wiring, and HUD image replacement. Remaining in
-   (g): Kurt/font/overlay mod consumers, model swap, the settings-file
-   mod states, and HD generation itself (Real-ESRGAN jobs stay the
-   oracle's offline tool). Then the row closes via `ledger_close.py`.
+   `$MDK_USER_DIR/mods` wiring, and HUD image replacement. Kurt's
+   consumer followed (2026-11-15): his draws take the look's shading
+   (Sprite under enhanced, as the oracle's KurtSprite), and a mod's
+   per-frame image replaces his colour texture at first draw.
+   Remaining in (g): font/overlay mod consumers (the font's is blocked
+   on atlas layout: this port wraps the glyph atlas for the PICA200's
+   1024px limit where the oracle's mod image assumes its single row),
+   model swap, the settings-file mod states, and HD generation itself
+   (Real-ESRGAN jobs stay the oracle's offline tool). Then the row closes via `ledger_close.py`.
    Until then `--enhanced` renders the original look and says so
    through the refusal log.
    **3DS direction (owner directive 2026-11-14):** the original look stays
