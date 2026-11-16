@@ -60,6 +60,10 @@ public:
     // one (the C# LevelData.Arenas is a mutable list), so the record tables have
     // to be settable from outside; the synthetic DTI fixtures in tests/scripts
     // append their own arena records through this, exactly as the demo does.
+    // A ScriptRuntime copies the records of each arena it looks up, so replacing
+    // the arenas here does not dangle a live runtime's cache -- but a runtime
+    // built before the change keeps its earlier snapshot, so mutate before you
+    // construct (the fixtures inject their arena before any runtime is built).
     formats::Dti& mutableDti() { return dti_; }
     formats::Mto& mto() { return mto_; }
     const formats::TextureArchive& levelTextures() const { return levelTextures_; }

@@ -2972,10 +2972,12 @@ void testFanLifecycle(scripts::ScriptRuntime& runtime, LevelData& level) {
 // waypoints becomes the destination (command 221), and the opcode BRANCHES on
 // whether one was found (ScriptVm.cs:1268 `return Branch(..., MoveCommand == 221)`).
 // The synthetic arena "WPTEST" (injected in main() before any runtime is built)
-// holds five waypoints; Kurt is at the origin (no player bound) and the object
-// sits at the origin too, so toKurt == distance and the weights are the C#'s
-// 500-distance form. Each scenario runs on a fresh runtime (seed 1) so the RNG
-// state at the draw is known and the pick is reproducible.
+// holds six waypoints. The object sits at the origin; no player is bound, so Kurt
+// stays at the level-7 start (0,4,9) (the runtime seeds kurtPosition_ from the DTI
+// start and runProgram never moves him), so the weights are the C#'s 500-distance
+// form with the toKurt / near-Kurt terms evaluated against that start, NOT against
+// the object. Each scenario runs on a fresh runtime (seed 1) so the RNG state at
+// the draw is known and the pick is reproducible.
 //   id 0  (30,0,0)   dist 30   mode0 no (<50)   mode1 yes (nearest, anchor)
 //   id 1  (100,0,0)  dist 100  mode0 yes        mode1 yes
 //   id 2  (300,0,0)  dist 300  mode0 yes        mode1 yes
@@ -2991,6 +2993,9 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
             }
         }
         return false;
+    };
+    auto same = [](const Vec3& p, const float* q) {
+        return p.x == q[0] && p.y == q[1] && p.z == q[2];
     };
     // mode 0 keeps the 50-500 window (drops id 0 at 30 and id 21 at 600); mode 1
     // keeps the ids within 3 of the nearest (id 0), so it keeps id 0 (30,0,0) but
@@ -3029,6 +3034,19 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
               obj.waypoint.y == obj.move_destination.y &&
               obj.waypoint.z == obj.move_destination.z);
         CHECK((obj.contact_flags & scripts::MdkObject::ContactStuck) == 0);
+        // The weighted draw is the opcode's substance, so pin it, not just the
+        // qualifying set: on one seed-1 runtime the successive draws (the RNG
+        // advances each call) must reproduce the oracle's weighted sequence. A
+        // picker that ignored the weights and took the first qualifying record
+        // would return (100,0,0) every time and fail this; so would a uniform or
+        // last-qualifying picker. This is the oracle's output for this fixture.
+        const float seq[8][3] = {{100, 0, 0}, {300, 0, 0}, {150, 0, 0}, {120, 0, 0},
+                                 {300, 0, 0}, {300, 0, 0}, {150, 0, 0}, {100, 0, 0}};
+        for (int d = 0; d < 8; d++) {
+            runPick(rt, 0, obj);
+            CHECK(obj.move_command == 221);
+            CHECK(same(obj.move_destination, seq[d]));
+        }
     }
 
     // Mode 1: only the waypoints within 3 of the nearest id (0) qualify, so the
@@ -3041,6 +3059,16 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
         runPick(rt, 1, obj);
         CHECK(obj.move_command == 221);
         CHECK(inSet(obj.move_destination, mode1Set, 4));
+        // Same weight pin on the mode-1 id-window set: the draw must reproduce the
+        // oracle's sequence over the four id-window waypoints (id 0/1/2/3), never
+        // reaching id 9 (150,0,0) that mode 0 allows.
+        const float seq[8][3] = {{30, 0, 0}, {100, 0, 0}, {120, 0, 0}, {300, 0, 0},
+                                 {100, 0, 0}, {100, 0, 0}, {120, 0, 0}, {30, 0, 0}};
+        for (int d = 0; d < 8; d++) {
+            runPick(rt, 1, obj);
+            CHECK(obj.move_command == 221);
+            CHECK(same(obj.move_destination, seq[d]));
+        }
     }
 
     // An unknown mode (2) takes the mode-0 window (the C#'s `mode != 1`).

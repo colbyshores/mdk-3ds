@@ -30,6 +30,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -811,10 +812,16 @@ private:
     // -> the arena on the other side. Built once, from EVERY arena in the DTI (not
     // just the reachable ones), because a doorway is a doorway.
     std::map<std::pair<std::string, int32_t>, std::string> connections_;
-    // C# _records (:840): each arena's DTI records, found once. The vectors belong
-    // to level_->dti(), which the runtime borrows for its whole life exactly like
-    // bsps_ and floors_ above.
-    std::map<std::string, const std::vector<formats::Dti::Record>*> records_;
+    // C# _records (:840): each arena's DTI records, found once. The C# caches the
+    // DTI's own List reference; the C++ copies the records into runtime-owned
+    // storage instead of borrowing `&ArenaEntry::records`, because LevelData's
+    // mutable DTI seam (LevelData::mutableDti()/Dti::setArenas) can replace the
+    // arenas vector and free the element a borrowed pointer would name. A std::map
+    // keeps element addresses stable, so the pointer arenaRecords hands back stays
+    // valid for the runtime's life. `unknownArenas_` caches the C#'s empty-list
+    // answer for a name no arena has, so a miss is not re-scanned every tick.
+    std::map<std::string, std::vector<formats::Dti::Record>> records_;
+    std::set<std::string> unknownArenas_;
     Vec3 kurtPosition_{};
     // C# _drawnArenas (ScriptRuntime.cs:310): the arenas drawn -- Kurt's plus the
     // active second -- as the tick's UpdateArenas left them. Written only by

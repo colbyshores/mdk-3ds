@@ -522,16 +522,24 @@ void ScriptRuntime::followArenas(MdkObject* obj) {
 
 const std::vector<formats::Dti::Record>* ScriptRuntime::arenaRecords(
     const std::string& arena) {
-    std::map<std::string, const std::vector<formats::Dti::Record>*>::iterator found =
-        records_.find(arena);
+    std::map<std::string, std::vector<formats::Dti::Record>>::iterator found = records_.find(arena);
     if (found != records_.end()) {
-        return found->second;
+        return &found->second;
+    }
+    if (unknownArenas_.count(arena) != 0) {
+        return nullptr;  // the C#'s empty list for a name no arena has, cached
     }
     const formats::Dti::ArenaEntry* entry = level_->entryNamed(arena);
-    const std::vector<formats::Dti::Record>* records = entry != nullptr ? &entry->records
-                                                                        : static_cast<const std::vector<formats::Dti::Record>*>(nullptr);
-    records_.insert(std::make_pair(arena, records));
-    return records;
+    if (entry == nullptr) {
+        unknownArenas_.insert(arena);
+        return nullptr;
+    }
+    // Copy into runtime-owned storage: a borrowed &entry->records would dangle if
+    // the DTI arenas vector were ever replaced (LevelData::mutableDti()). std::map
+    // keeps this element's address stable for the runtime's life.
+    std::pair<std::map<std::string, std::vector<formats::Dti::Record>>::iterator, bool> inserted =
+        records_.emplace(arena, entry->records);
+    return &inserted.first->second;
 }
 
 void ScriptRuntime::findConnections() {
