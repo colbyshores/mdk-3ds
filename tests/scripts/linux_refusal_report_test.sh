@@ -330,6 +330,10 @@ VOID_ENTRY_POINTS = {
     "vkGetPhysicalDeviceMemoryProperties",
     "vkGetBufferMemoryRequirements",
     "vkGetImageMemoryRequirements",
+    # Void in the API (their answers are the out-structs): the colour
+    # sampler's anisotropy query calls both since the (f) burn-down.
+    "vkGetPhysicalDeviceFeatures",
+    "vkGetPhysicalDeviceProperties",
 }
 
 # The context file calls three more entry points that are not result-bearing:

@@ -147,6 +147,20 @@ bool ensureEnhanced(RendererVk* r) {
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.maxLod = 1000.0f;
+    // The oracle's colour sampler is trilinear AND anisotropic 16x
+    // (Renderer.Colours.cs's MaxAnisotropy): on the arena's grazing walls
+    // that is most of the enhanced frame's texture difference. Ask for as
+    // much as the device has, up to the oracle's 16.
+    VkPhysicalDeviceFeatures features = {};
+    vkGetPhysicalDeviceFeatures(r->ctx.physicalDevice, &features);
+    VkPhysicalDeviceProperties properties = {};
+    vkGetPhysicalDeviceProperties(r->ctx.physicalDevice, &properties);
+    if (features.samplerAnisotropy && properties.limits.maxSamplerAnisotropy > 1.0f) {
+        samplerInfo.anisotropyEnable = VK_TRUE;
+        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy < 16.0f
+                                        ? properties.limits.maxSamplerAnisotropy
+                                        : 16.0f;
+    }
     if (vkCreateSampler(device, &samplerInfo, nullptr, &r->colourSampler) != VK_SUCCESS) {
         refused("colour sampler: the frame renders the original look");
         return false;
