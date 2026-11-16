@@ -3083,12 +3083,12 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
     // Formula-sensitive companion on arena WPTEST2. WPTEST's dominant fixture pins
     // the selection distribution (it rejects a uniform picker) but is invariant to
     // the weight-formula terms. WPTEST2's waypoints sit on the x-axis so the +250
-    // bump and the 500-distance base move the cumulative pick boundaries: the
-    // pinned seed-1 sequence below changes if the +250 bump or the 500-distance
-    // base is dropped (verified by shadow builds -- disabling +250 reddens these
-    // pins while leaving WPTEST green). It does NOT distinguish dropping the
-    // toKurt<200 near-Kurt term: id 2 at (300,0,0) is beyond 200 of Kurt and
-    // anchors the distribution, so that term is exercised but not pinned here.
+    // bump moves the cumulative pick boundaries: disabling the +250 bump reddens
+    // the pinned seed-1 sequence below (verified by shadow build) while leaving
+    // WPTEST green. The toKurt<200 near-Kurt term and the 500-distance base are
+    // exercised here but NOT pinned by these draws -- removing either leaves the
+    // seed-1 sequence byte-identical (the draws do not cross the shifted
+    // boundaries), so those two terms are guarded by no fixture.
     {
         const std::string arena2 = "WPTEST2";
         {
@@ -7680,12 +7680,12 @@ int main() {
             wp.records.push_back(r);
         }
         arenas.push_back(wp);
-        // A second arena whose waypoints sit on the x-axis, so the +250 bump and
-        // the 500-distance base move the cumulative pick boundaries. WPTEST's
-        // dominant fixture pins the selection DISTRIBUTION (it rejects a uniform
-        // picker) but is invariant to the weight-formula terms; WPTEST2's pinned
-        // sequence changes if the +250 bump or the 500-distance base is dropped
-        // (the test comment records that the near-Kurt term is not distinguished).
+        // A second arena whose waypoints sit on the x-axis, so the +250 bump moves
+        // the cumulative pick boundaries. WPTEST's dominant fixture pins the
+        // selection DISTRIBUTION (it rejects a uniform picker) but is invariant to
+        // the weight formula; WPTEST2's pinned sequence changes if the +250 bump is
+        // dropped (the test comment records which other terms these pins do not
+        // distinguish).
         Dti::ArenaEntry wp2;
         wp2.name = "WPTEST2";
         const float wp2Pos[6][3] = {
