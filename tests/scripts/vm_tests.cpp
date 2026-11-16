@@ -1937,6 +1937,12 @@ void testBlastDamageFalloff(LevelData* levelData, const Cmi* cmi, audio::SoundBa
         runtime.blastDamage(point, Vec3{3.0f, 0.0f, -1.0f}, 100, 6.0f);
     CHECK(half.first == 50);
     CHECK(half.second == 3.0f);
+    // Midpoint: 99 * (1 - 3/6) = 49.5. ScriptMath.Round is AwayFromZero -> 50;
+    // a truncating cast would give 49, so this pins the rounding, not just the falloff.
+    std::pair<int32_t, float> mid =
+        runtime.blastDamage(point, Vec3{3.0f, 0.0f, -1.0f}, 99, 6.0f);
+    CHECK(mid.first == 50);
+    CHECK(mid.second == 3.0f);
 }
 
 // Opcode 174 (if_ammo) has no C# ScriptVmTests counterpart, so this pins the

@@ -4428,7 +4428,7 @@ std::pair<int32_t, float> ScriptRuntime::blastDamage(const formats::Box& box, co
     if (squared > radius * radius || !raycastClear(lifted, target)) {
         return std::make_pair(0, 0.0f);
     }
-    const float distance = sqrtf(squared > 0.0f ? squared : 0.0f);
+    const float distance = sqrtf(mathMax(squared, 0.0f));
     // ScriptMath.Round is AwayFromZero (ScriptMath.cs:48); C roundf matches it.
     return std::make_pair((int32_t)roundf((float)damage * (1.0f - distance / radius)), distance);
 }
