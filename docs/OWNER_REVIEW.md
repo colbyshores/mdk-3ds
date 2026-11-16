@@ -38,3 +38,20 @@ or silently loosened.
    emitted-quads evidence; the visibility verdict only became readable
    once the panel could be located. The row's done state predates a
    working visibility check and should be re-read in that light.
+4. **CIA packaging (p8.cia-build).** makerom 0.19 IS installed now
+   (`~/.local/bin/makerom`), so the row is no longer blocked on the
+   tool -- but `mdk_3ds/tools/build_cia.sh`'s invocation predates it
+   (unknown `-name`/`-publisher` flags, an RSF passed as a directory),
+   and the 0.19 RSF schema needs a dedicated pass: the AccessDesc
+   preset templates are not installed, so the RSF must carry the full
+   AccessControlInfo by hand (CoreVersion, SystemCallAccess with this
+   version's exact svc names, kernel capabilities). Estimated half a
+   day with the makerom source's examples; the row stays `todo`.
+5. **Font mod consumer (slice g remainder).** Deferred by design, not
+   blocked: a mod's font image assumes the oracle's single-row glyph
+   atlas, while this port wraps the atlas for the PICA200's 1024px
+   texture limit, so the replacement's UV layout cannot be honoured
+   without unifying the layouts (a Linux-only single-row atlas when a
+   font mod is present is the sketched route). No live Linux font
+   consumer exists yet either (the settings menu is 3DS-only, where
+   mods do not run).
