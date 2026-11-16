@@ -4501,6 +4501,50 @@ std::pair<int32_t, float> ScriptRuntime::blastDamage(const formats::Box& box, co
     return std::make_pair((int32_t)roundf((float)damage * (1.0f - distance / radius)), distance);
 }
 
+// BlastWeakParts (Items.cs:680): the blast on an object's weak parts. For each
+// visible, weak, in-range part with a box, take the blast damage; keep the best
+// (strict >, so the first max wins), and drop each part's health by the hit,
+// recording the last part destroyed (index + 1) as the event.
+ScriptRuntime::BlastPartResult ScriptRuntime::blastWeakParts(MdkObject* obj, const Vec3& center,
+                                                             int32_t damage, float radius,
+                                                             bool counted) {
+    BlastPartResult result;
+    result.best = 0;
+    result.distance = 0.0f;
+    result.point = obj->position;
+    result.event = 0;
+    if ((obj->flags & MdkObject::FlagWeakParts) == 0 || obj->model == nullptr) {
+        return result;
+    }
+    std::vector<PartBox> parts = partBounds(obj);
+    const size_t partCount = obj->model->partList.size();
+    for (size_t i = 0; i < partCount; ++i) {
+        if ((obj->hidden_parts & (1 << i)) != 0 || !isWeakPart(obj, static_cast<int32_t>(i)) ||
+            i >= obj->part_health.size() || i >= parts.size() || !parts[i].valid) {
+            continue;
+        }
+        const formats::Box box = worldBounds(obj, parts[i].box);
+        const std::pair<int32_t, float> hit = blastDamage(box, center, damage, radius);
+        if (hit.first <= 0) {
+            continue;
+        }
+        if (hit.first > result.best) {
+            result.best = hit.first;
+            result.distance = hit.second;
+            result.point = Vec3{(box.min.x + box.max.x) * 0.5f,
+                                (box.min.y + box.max.y) * 0.5f,
+                                (box.min.z + box.max.z) * 0.5f};
+        }
+        obj->part_health[i] -= blastHit(obj, hit.first, obj->part_health[i], counted);
+        if (obj->part_health[i] < 1) {
+            obj->part_health[i] = 0;
+            result.event = static_cast<int32_t>(i) + 1;
+        }
+    }
+    return result;
+}
+
+
 void ScriptRuntime::remove(MdkObject* obj) {
     // C# Remove (ScriptRuntime.cs:1648): a live Attached object (a pickup's chute) goes
     // with it FIRST — Remove(obj.Attached) runs before obj is marked dead — then Dead,

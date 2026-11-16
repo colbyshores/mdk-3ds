@@ -451,6 +451,18 @@ public:
     // ASCII digit, and the name starts with the weak prefix (first weak_prefix_length
     // characters of weak_prefix, ordinal).
     static bool isWeakPart(const MdkObject* obj, int32_t index);
+    // C# Items.BlastWeakParts (Items.cs:680): a blast's effect on an object's weak
+    // parts. Returns the best per-part damage, its distance, the point (that part's
+    // world-box centre), and the destroyed-part event (part index + 1, or 0). Mutates
+    // obj.part_health. `counted` is Kills.Counted (Kurt's blast) vs Kills.Ignored.
+    struct BlastPartResult {
+        int32_t best;
+        float distance;
+        Vec3 point;
+        int32_t event;
+    };
+    BlastPartResult blastWeakParts(MdkObject* obj, const Vec3& center, int32_t damage,
+                                   float radius, bool counted);
 
     int32_t globalFlags = 0;
     std::array<float, 4> globalVariables{{0.0f, 0.0f, 0.0f, 0.0f}};

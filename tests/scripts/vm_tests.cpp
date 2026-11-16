@@ -2011,6 +2011,78 @@ void testPartBoundsAndWeakParts(LevelData* levelData, const Cmi* cmi, audio::Sou
     scripts::MdkObject::forget_poses();
 }
 
+// Items.BlastWeakParts (Items.cs:680), the weak-part core of the blast, ported
+// ahead of the dispatcher. Pins the guard, the best-damage/point selection, the
+// per-part health drop, and the destroyed-part event. The blast rays are short
+// segments near the origin, clear in the shipped level-7 geometry (as in the
+// blastDamage falloff test), so only the falloff and part accounting are exercised.
+void testBlastWeakParts(LevelData* levelData, const Cmi* cmi, audio::SoundBank* bank) {
+    Model model;
+    const char* names[] = {"ARM0", "ARM1", "EMPTY"};
+    const float verts[][6] = {{0, 0, 0, 2, 2, 2}, {1, 1, 1, 3, 3, 3}, {}};
+    for (int i = 0; i < 3; i++) {
+        Model::Part part;
+        snprintf(part.name, sizeof(part.name), "%s", names[i]);
+        const int n = i == 2 ? 0 : 2;
+        for (int v = 0; v < n; v++) {
+            part.vertices.push_back(Vec3f{verts[i][v * 3], verts[i][v * 3 + 1], verts[i][v * 3 + 2]});
+        }
+        model.partList.push_back(part);
+    }
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+
+    // Guard: without FlagWeakParts nothing happens and the point is the position.
+    scripts::MdkObject plain;
+    plain.model = &model;
+    plain.position = Vec3{7.0, 7.0, 7.0};
+    plain.part_health = {50, 50, 50};
+    scripts::ScriptRuntime::BlastPartResult g =
+        runtime.blastWeakParts(&plain, Vec3{0.0f, 0.0f, 0.0f}, 100, 10.0f, true);
+    CHECK(g.best == 0);
+    CHECK(g.point.x == 7.0f);
+    CHECK(g.event == 0);
+    CHECK(plain.part_health[0] == 50);
+
+    // Guard: FlagWeakParts set but no model -> default result, no health change.
+    scripts::MdkObject nomodel;
+    nomodel.flags |= scripts::MdkObject::FlagWeakParts;
+    nomodel.position = Vec3{3.0, 3.0, 3.0};
+    nomodel.part_health = {50};
+    scripts::ScriptRuntime::BlastPartResult nm =
+        runtime.blastWeakParts(&nomodel, Vec3{0.0f, 0.0f, 0.0f}, 100, 10.0f, true);
+    CHECK(nm.best == 0);
+    CHECK(nm.point.x == 3.0f);
+    CHECK(nm.event == 0);
+    CHECK(nomodel.part_health[0] == 50);
+
+    // Weak blast at (1,1,2). ARM0 (box 0..2, centre (1,1,1)) takes 90 (distance 1);
+    // ARM1 (box 1..3, centre (2,2,2)) takes 100 (distance 0). ARM1 is the strict max,
+    // so the point is ARM1's box centre (2,2,2) -- NOT the blast point -- pinning
+    // Point = box.Center(). ARM0 health 91 -> 1 survives (pins the `< 1` boundary:
+    // `<= 1` would destroy it); ARM1 health 100 -> 0 destroyed, event = index+1 = 2.
+    // EMPTY is not a weak part and keeps its health.
+    scripts::MdkObject obj;
+    obj.model = &model;
+    obj.flags |= scripts::MdkObject::FlagWeakParts;
+    obj.weak_prefix = "ARM";
+    obj.weak_prefix_length = 3;
+    obj.position = Vec3{0.0, 0.0, 0.0};
+    obj.yaw = 0.0f;
+    obj.scale = 1.0f;
+    obj.part_health = {91, 100, 50};
+    scripts::ScriptRuntime::BlastPartResult r =
+        runtime.blastWeakParts(&obj, Vec3{1.0f, 1.0f, 2.0f}, 100, 10.0f, true);
+    CHECK(r.best == 100);
+    CHECK(r.distance == 0.0f);
+    CHECK(r.point.x == 2.0f && r.point.y == 2.0f && r.point.z == 2.0f);
+    CHECK(r.event == 2);
+    CHECK(obj.part_health[0] == 1);
+    CHECK(obj.part_health[1] == 0);
+    CHECK(obj.part_health[2] == 50);
+
+    scripts::MdkObject::forget_poses();
+}
+
 
 // Opcode 174 (if_ammo) has no C# ScriptVmTests counterpart, so this pins the
 // oracle directly (ScriptVm.cs:999-1005): kind 0 is the super chain gun's
@@ -7895,6 +7967,8 @@ int main() {
     printf("PASS BlastDamageFalloff\n");
     testPartBoundsAndWeakParts(&levelData, &cmi, &bank);
     printf("PASS PartBoundsAndWeakParts\n");
+    testBlastWeakParts(&levelData, &cmi, &bank);
+    printf("PASS BlastWeakParts\n");
     testIfAmmoReadsSuperChainGunAndSniperAmmo(&levelData, &cmi, &bank);
     printf("PASS IfAmmoReadsSuperChainGunAndSniperAmmo\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);
