@@ -41,12 +41,15 @@ bool SoundBank::withArchives(SoundBank* out, std::vector<formats::Sni>&& archive
     out->cache_.clear();
     out->sounds_.clear();
     out->missing_.clear();
+    out->pins_.clear();
+    out->recent_.clear();
     return true;
 }
 
 bool SoundBank::get(const std::string& name, Entry* out) {
     std::map<std::string, Entry>::const_iterator found = cache_.find(name);
     if (found != cache_.end()) {
+        touch(name);
         if (out != nullptr) {
             *out = found->second;
         }
@@ -62,10 +65,70 @@ bool SoundBank::get(const std::string& name, Entry* out) {
         return false;
     }
     cache_[name] = entry;
+    touch(name);
+    evictOverBudget(name);
     if (out != nullptr) {
         *out = entry;
     }
     return true;
+}
+
+void SoundBank::touch(const std::string& name) {
+    for (std::deque<std::string>::iterator it = recent_.begin(); it != recent_.end(); ++it) {
+        if (*it == name) {
+            recent_.erase(it);
+            break;
+        }
+    }
+    recent_.push_back(name);
+}
+
+void SoundBank::retain(const std::string& name) {
+    if (sounds_.find(name) != sounds_.end()) {
+        pins_[name]++;
+    }
+}
+
+void SoundBank::release(const std::string& name) {
+    std::map<std::string, int32_t>::iterator found = pins_.find(name);
+    if (found == pins_.end()) {
+        return;
+    }
+    if (--found->second <= 0) {
+        pins_.erase(found);
+    }
+}
+
+int32_t SoundBank::pins(const std::string& name) const {
+    std::map<std::string, int32_t>::const_iterator found = pins_.find(name);
+    return found != pins_.end() ? found->second : 0;
+}
+
+void SoundBank::evictOverBudget(const std::string& keep) {
+    if (budgetBytes_ == 0) {
+        return;
+    }
+    while (decodedBytes() > budgetBytes_) {
+        std::string victim;
+        for (size_t i = 0; i < recent_.size(); i++) {
+            const std::string& name = recent_[i];
+            if (name != keep && pins(name) == 0 && sounds_.find(name) != sounds_.end()) {
+                victim = name;
+                break;
+            }
+        }
+        if (victim.empty()) {
+            return;  // everything resident is pinned or just decoded
+        }
+        sounds_.erase(victim);
+        cache_.erase(victim);
+        for (std::deque<std::string>::iterator it = recent_.begin(); it != recent_.end(); ++it) {
+            if (*it == victim) {
+                recent_.erase(it);
+                break;
+            }
+        }
+    }
 }
 
 void SoundBank::preload() {

@@ -227,6 +227,9 @@ const SoundMixer::Voice* SoundMixer::voiceOf(int32_t id) const {
 void SoundMixer::forget(size_t index) {
     // The C# clears the source before pooling the voice so a reused voice can
     // not outlive its object; here the voice is destroyed, which does the same.
+    if (bank_ != nullptr) {
+        bank_->release(voices_[index].name);
+    }
     voices_.erase(voices_.begin() + (long)index);
 }
 
@@ -280,6 +283,9 @@ int32_t SoundMixer::launch(const std::string& name, int32_t start, int32_t place
     voice.sourcePosition = sourcePosition;
     voice.sourceYaw = sourceYaw;
     voices_.push_back(voice);
+    // The voice plays the bank's decoded sound: pin it so a bounded bank
+    // cannot evict the samples under it (forget() releases the pin).
+    bank_->retain(name);
     if (voices_.back().place != Flat) {
         update3d(voices_.back(), 0.0f);
     }

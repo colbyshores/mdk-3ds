@@ -6571,6 +6571,47 @@ void testTriggerShowBoxDrawsAndTheMinusOneBoxClears(LevelData* levelData, const 
 // oracle's, so it stays exactly as it is; what this case adds is the teleport's OWN
 // observables, which no golden has ever run — the arena state a teleport writes, the
 // first-tick rule a teleport overrides, and the arena a teleport makes solid.
+// The decoded bank's bound (audio.bank-bound): over its budget, decoding
+// evicts least-recently-gotten sounds, pinned ones never. The budgets here
+// are half of one sound, so every assertion is about WHO survives, never
+// about how big a footstep happens to be.
+void testBankBudgetEvictsUnpinned(const MdkData& data) {
+    audio::SoundBank bank;
+    CHECK(audio::SoundBank::forLevel(&bank, data, 7));
+    audio::SoundBank::Entry entry;
+    CHECK(bank.get("FOOT1", &entry));
+    const size_t oneSound = bank.decodedBytes();
+    CHECK(oneSound > 0);
+    bank.setDecodedBudgetBytes(oneSound / 2);
+
+    // FOOT1 alone stays (it is the sound just decoded); the next decode
+    // evicts it as the least recently gotten unpinned resident.
+    CHECK(bank.get("DOOR", &entry));
+    CHECK(bank.soundsDecoded() == 1);
+
+    // A pinned sound survives a decode that would otherwise evict it;
+    // releasing the pin makes it the next victim again.
+    audio::SoundBank pinned;
+    CHECK(audio::SoundBank::forLevel(&pinned, data, 7));
+    CHECK(pinned.get("FOOT1", &entry));
+    pinned.retain("FOOT1");
+    CHECK(pinned.pins("FOOT1") == 1);
+    pinned.setDecodedBudgetBytes(oneSound / 2);
+    CHECK(pinned.get("FOOT2", &entry));
+    CHECK(pinned.soundsDecoded() == 2);
+    pinned.release("FOOT1");
+    CHECK(pinned.pins("FOOT1") == 0);
+    CHECK(pinned.get("DOOR", &entry));
+    CHECK(pinned.soundsDecoded() == 1);
+
+    // No budget (the shipped default) keeps everything decoded.
+    audio::SoundBank unbounded;
+    CHECK(audio::SoundBank::forLevel(&unbounded, data, 7));
+    CHECK(unbounded.get("FOOT1", &entry));
+    CHECK(unbounded.get("DOOR", &entry));
+    CHECK(unbounded.soundsDecoded() == 2);
+}
+
 void testTeleportKurtLevel4(const MdkData& data) {
     const float kDoorway = 14822.0f;  // ArenaSwitchTests.Doorway (connection 1012's plane)
     const float kFloor = 21.0f;       // ArenaSwitchTests.Floor
@@ -7339,6 +7380,8 @@ int main() {
     printf("PASS TriggerBoxesPreloadAndPullDoors\n");
     testTriggerShowBoxDrawsAndTheMinusOneBoxClears(&levelData, &cmi, &bank);
     printf("PASS TriggerShowBoxDrawsAndTheMinusOneBoxClears\n");
+    testBankBudgetEvictsUnpinned(data);
+    printf("PASS BankBudgetEvictsUnpinned\n");
     testTeleportKurtLevel4(data);
     printf("PASS TeleportKurtLevel4\n");
     testTeleportKurtLoadsCorridorsAndPullsDoors(&levelData, &cmi, &bank);

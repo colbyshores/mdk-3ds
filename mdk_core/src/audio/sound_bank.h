@@ -47,6 +47,7 @@
 
 #include <stdint.h>
 
+#include <deque>
 #include <map>
 #include <set>
 #include <string>
@@ -104,6 +105,23 @@ public:
     // playing). Here that means reading every WAV header.
     void preload();
 
+    // The decoded store's budget, in bytes (0 = unbounded, the shipped
+    // default: the C#'s bank keeps everything it decoded). Over the
+    // budget, decoding a sound evicts the least recently gotten decoded
+    // sounds until it fits -- except pinned ones (below) and the sound
+    // just decoded, so a bank whose every resident is pinned stays over
+    // budget rather than dropping a sound in use. The 3DS's 24 MiB heap
+    // (sound.h's memory section) is why this exists; which budget a
+    // frontend sets is its own call.
+    void setDecodedBudgetBytes(size_t bytes) { budgetBytes_ = bytes; }
+    size_t decodedBudgetBytes() const { return budgetBytes_; }
+
+    // Pin a decoded sound against eviction (a voice is playing it), and
+    // release the pin. Counts nest; an unknown name is a no-op.
+    void retain(const std::string& name);
+    void release(const std::string& name);
+    int32_t pins(const std::string& name) const;
+
     int32_t archiveCount() const { return (int32_t)archives_.size(); }
 
     // How many names have actually decoded (a bank that has only had one lookup
@@ -130,6 +148,14 @@ private:
     // Look the name up in the archives, newest first.
     bool load(const std::string& name, Entry* out);
 
+    // Mark a decoded sound as recently gotten, and evict over-budget
+    // residents (least recently gotten first, pinned and `keep` excepted).
+    void touch(const std::string& name);
+    void evictOverBudget(const std::string& keep);
+
+    size_t budgetBytes_ = 0;
+    std::map<std::string, int32_t> pins_;
+    std::deque<std::string> recent_;
     std::vector<formats::Sni> archives_;
     std::map<std::string, Entry> cache_;
     // The decoded samples, one per cached name. A std::map node never moves, so
