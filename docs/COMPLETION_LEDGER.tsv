@@ -59,8 +59,8 @@ p6.enhanced-stereo	d2	slow	todo	bash tools/check.sh
 # Video/Graphics menu (SELECT over the paused game, FTI fonts) are
 # implemented; every 3DS enhanced feature lands behind its toggle
 # (GPU-only, no CPU fallback).
-p7.platform-lifecycle	d2	slow	todo	bash tools/check.sh		
-p7.romfs-streaming	d2	slow	todo	mdk_3ds/tools/emurun.sh		
+p7.platform-lifecycle	d2	slow	done	mdk_3ds/tools/emurun.sh	mdk_3ds/tools/emurun.sh	6f973de
+p7.romfs-streaming	d2	slow	done	mdk_3ds/tools/emurun.sh	mdk_3ds/tools/emurun.sh	6f973de
 p8.cia-build	d2	slow	todo	mdk_3ds/tools/build_cia.sh		
 opcodes.remaining-27	d2	slow	todo	make -C tests/scripts		
 audio.bank-bound	d2	slow	done	make -C tests/scripts	tests/scripts	4852429
