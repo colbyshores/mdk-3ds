@@ -45,6 +45,7 @@
 #include "render/render_types.h"
 #include "scripts/animated_textures.h"
 #include "scripts/debris.h"
+#include "scripts/fans.h"
 #include "scripts/game_stats.h"
 #include "scripts/object.h"
 #include "scripts/script_vm.h"
@@ -464,6 +465,11 @@ public:
     // exactly as the oracle does.
     AnimatedTextures animatedTextures;
 
+    // The arenas' fans (Fans.cs, opcodes 142/143/190): created by
+    // scripts, lifting what their boxes hold. The updraft consumers
+    // (Kurt's and the objects' motion) ask fans_.query with their mask.
+    Fans fans;
+
     // One queued HUD message (opcode 247, hud_message). The Messages
     // drawing consumer (fonts, timing, the HUD queue display) is a later
     // slice; the queue itself is the runtime state the VM writes.
@@ -721,6 +727,8 @@ private:
     // AnimatedTextures' frame-count lookup (TextureFrames, ScriptRuntime.cs:2246).
     static int32_t animatedFrameCount(void* ctx, const std::string& arena,
                                       const std::string& texture);
+    // The fans' live-arena test (IsLiveArena, ScriptRuntime.cs:703).
+    static bool fanIsLive(void* ctx, const std::string& arena);
 
     Player* player_ = nullptr;  // borrowed; the live Kurt entity (movement + combat)
     LevelData* level_;

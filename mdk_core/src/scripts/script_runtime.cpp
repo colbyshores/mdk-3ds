@@ -258,6 +258,12 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     // AnimatedTextures' frame counts come from the level's archives
     // (ScriptRuntime.cs:336, TextureFrames via FindTexture).
     animatedTextures = AnimatedTextures(&ScriptRuntime::animatedFrameCount, this);
+    // The fans stand on the DTI's records and share the runtime's RNG
+    // (ScriptRuntime.cs:337). Their spark has no consumer yet (the
+    // effects slice owns sparks), so no callback is registered: the
+    // per-tick RNG rolls happen exactly as the oracle's do.
+    fans = Fans(&level_->dti(), &rng_);
+    fans.setIsLive(&ScriptRuntime::fanIsLive, this);
     // The arenas the world is built from, as the driver does: the reachable
     // ones, so the arena under Kurt is found.
     const std::vector<const formats::Arena*>& arenas = level_->arenas();
@@ -657,9 +663,10 @@ void ScriptRuntime::runTick() {
     kurtVelocity.z = (kurtPosition_.z - previousKurtPosition_.z) * kTicksPerSecond;
     previousKurtPosition_ = kurtPosition_;
 
-    // Debris.Update(1f) (ScriptRuntime.cs:955): the pieces move before the
-    // object loop, as in the C#. The neighbouring subsystem updates (Items,
-    // Effects, Fans, SniperRounds, AirStrike) are later slices.
+    // Fans.Update() then Debris.Update(1f) (ScriptRuntime.cs:954-955):
+    // the fans let out their sparks, then the pieces move, both before
+    // the object loop, as in the C#.
+    fans.update();
     debris_.update(1.0f);
 
     // Only Kurt's arena and the active second one update. On the first tick
@@ -1866,6 +1873,12 @@ bool ScriptRuntime::debrisRayTrampoline(void* ctx, const std::string& arena, con
 bool ScriptRuntime::debrisFacetsTrampoline(void* ctx, const std::string& arena, int32_t group,
                                            DebrisGroup* out) {
     return static_cast<ScriptRuntime*>(ctx)->groupFacets(arena, group, out);
+}
+
+bool ScriptRuntime::fanIsLive(void* ctx, const std::string& arena) {
+    ScriptRuntime* self = static_cast<ScriptRuntime*>(ctx);
+    return arena == self->currentArena_ ||
+           (self->secondActive_ && arena == self->secondArena_);
 }
 
 int32_t ScriptRuntime::animatedFrameCount(void* ctx, const std::string& arena,

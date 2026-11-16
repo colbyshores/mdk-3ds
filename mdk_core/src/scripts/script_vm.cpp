@@ -1916,6 +1916,17 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 247:  // hud_message: [flags, text name, seconds]
             runtime_.pushMessage(strval(op(ins, 1)), ival(op(ins, 0)), fval(op(ins, 2)));
             break;
+        case 142:  // fan_create: [hotspot, name, param, type, strength]
+            runtime_.fans.create(obj->arena, ival(op(ins, 0)), strval(op(ins, 1)),
+                                 ival(op(ins, 2)), ival(op(ins, 3)), fval(op(ins, 4)));
+            break;
+        case 143:  // fan_remove: [name]
+            runtime_.fans.remove(obj->arena, strval(op(ins, 0)));
+            break;
+        case 190:  // fan_enable: [enable, name]
+            runtime_.fans.enable(obj->arena, strval(op(ins, 1)),
+                                 ival(op(ins, 0)) != 0 ? Fans::Power::On : Fans::Power::Off);
+            break;
         case 203: {  // camera_track: [mode, (height)] asks for a follow-camera pitch
             const std::vector<ScriptValue>& track = listval(op(ins, 0));
             const int32_t mode = track.empty() ? 0 : ival(track[0]);

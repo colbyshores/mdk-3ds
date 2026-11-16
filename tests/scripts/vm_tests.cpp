@@ -94,6 +94,9 @@ const int32_t kSet27c = 239;
 const int32_t kArenaTextureFrame = 133;
 const int32_t kLobToKurt = 189;
 const int32_t kHudMessage = 247;
+const int32_t kFanCreate = 142;
+const int32_t kFanRemove = 143;
+const int32_t kFanEnable = 190;
 const int32_t kDebugMsg = 77;
 const int32_t kAlarm = 15;
 const int32_t kIfAlarm = 27;
@@ -2894,6 +2897,70 @@ void testHudMessageQueues(scripts::ScriptRuntime& runtime) {
     CHECK(runtime.messages()[before].flags == 3);
     CHECK(runtime.messages()[before].seconds == 2.5f);
     CHECK(runtime.messages()[before + 1].text == "WORLD");
+}
+
+// Opcodes 142/143/190 (fan_create/remove/enable) drive the runtime's
+// Fans: a fan on a real type-7 hotspot lifts what its box holds, an
+// enabled-off fan holds nothing for Kurt's mask, and a removed fan is
+// gone. The hotspot is the level's own first type-7 record, found by
+// scanning the DTI the runtime was built on.
+void testFanLifecycle(scripts::ScriptRuntime& runtime, LevelData& level) {
+    std::string arena;
+    int32_t hotspot = -1;
+    Vec3 boxMid{0.0f, 0.0f, 0.0f};
+    const std::vector<Dti::ArenaEntry>& arenas = level.dti().arenas();
+    for (size_t i = 0; i < arenas.size() && hotspot < 0; i++) {
+        for (size_t r = 0; r < arenas[i].records.size(); r++) {
+            const Dti::Record& record = arenas[i].records[r];
+            if (record.type == 7) {
+                arena = arenas[i].name;
+                hotspot = record.id;
+                boxMid = Vec3{(record.position[0] + record.boxEnd[0]) * 0.5f,
+                              (record.position[1] + record.boxEnd[1]) * 0.5f,
+                              (record.position[2] + record.boxEnd[2]) * 0.5f};
+                break;
+            }
+        }
+    }
+    CHECK(hotspot >= 0);
+
+    const int32_t before = runtime.fans.count();
+    scripts::MdkObject obj;
+    obj.arena = arena;
+    Code create;
+    create.u8(kFanCreate).u8(hotspot).pstr("TESTFAN").u8(0).u8(3).f32(20.0f);
+    create.end();
+    runProgram(runtime, create, &obj);
+    CHECK(!sawUnimplemented(kFanCreate));
+    CHECK(runtime.fans.count() == before + 1);
+    int32_t mask = 0;
+    float strength = 0.0f;
+    CHECK(runtime.fans.fan(arena, "TESTFAN", &mask, &strength));
+    CHECK(strength == 20.0f);
+
+    // Inside the box, the fan lifts: a still point gains upward speed.
+    const float lifted =
+        runtime.fans.query(arena, boxMid, 0.0f, scripts::Fans::kMaskKurt, 1.0f / 30.0f);
+    CHECK(lifted == lifted);  // not NaN
+    CHECK(lifted > 0.0f);
+
+    // fan_enable off clears bit 0: Kurt's mask no longer matches.
+    Code off;
+    off.u8(kFanEnable).u8(0).pstr("TESTFAN");
+    off.end();
+    runProgram(runtime, off, &obj);
+    CHECK(!sawUnimplemented(kFanEnable));
+    const float held =
+        runtime.fans.query(arena, boxMid, 0.0f, scripts::Fans::kMaskKurt, 1.0f / 30.0f);
+    CHECK(held != held);  // NaN: no fan holds it
+
+    // fan_remove takes it away entirely.
+    Code remove;
+    remove.u8(kFanRemove).pstr("TESTFAN");
+    remove.end();
+    runProgram(runtime, remove, &obj);
+    CHECK(!sawUnimplemented(kFanRemove));
+    CHECK(runtime.fans.count() == before);
 }
 
 // Opcode 77's C# case intentionally ignores its debug message (ScriptVm.cs:1713).
@@ -7386,6 +7453,8 @@ int main() {
     printf("PASS LobToKurtThrowsAtKurt\n");
     testHudMessageQueues(runtime);
     printf("PASS HudMessageQueues\n");
+    testFanLifecycle(runtime, levelData);
+    printf("PASS FanLifecycle\n");
     testDebugMessageIsNoOp(runtime);
     printf("PASS DebugMessageIsNoOp\n");
     testSetRollingCapturesRotationOnTransition(runtime);

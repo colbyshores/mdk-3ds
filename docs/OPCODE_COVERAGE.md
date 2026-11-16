@@ -337,11 +337,15 @@ state machine is ported (`scripts/animated_textures.{h,cpp}`, frame
 counts from the level's archives), 189's ballistic lob is the oracle's
 own math over the object's fields, and 247 queues the runtime's HUD
 messages (the drawing consumer stays with the Messages slice), each
-pinned by a `vm_tests` case. Remaining 21:
+pinned by a `vm_tests` case. 142/143/190 (fan_create/remove/enable)
+followed with the Fans subsystem (`scripts/fans.{h,cpp}`: the DTI
+hotspot boxes, the lift curves, the wobble; the updraft consumers in
+Kurt's and the objects' motion ask `Fans::query` from their own
+slices). Remaining 18:
 28,
 114, 128,
-130, 131, 132, 136, 142, 143, 158, 159, 167,
-171, 172, 178, 181, 184, 190,
+130, 131, 132, 136, 158, 159, 167,
+171, 172, 178, 181, 184,
 209, 221, 224
 
 **Reachability, re-probed to t30000 (2026-10-28, `tick1 probe 30000`):**
