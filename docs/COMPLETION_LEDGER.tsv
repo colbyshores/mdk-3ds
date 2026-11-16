@@ -61,7 +61,7 @@ p6.enhanced-stereo	d2	slow	todo	bash tools/check.sh
 # (GPU-only, no CPU fallback).
 p7.platform-lifecycle	d2	slow	done	mdk_3ds/tools/emurun.sh	mdk_3ds/tools/emurun.sh	6f973de
 p7.romfs-streaming	d2	slow	done	mdk_3ds/tools/emurun.sh	mdk_3ds/tools/emurun.sh	6f973de
-p8.cia-build	d2	slow	todo	mdk_3ds/tools/build_cia.sh		
+p8.cia-build	d2	slow	done	mdk_3ds/tools/build_cia.sh	mdk_3ds/cia/mdk.rsf	ed9d653
 opcodes.remaining-27	d2	slow	todo	make -C tests/scripts		
 audio.bank-bound	d2	slow	done	make -C tests/scripts	tests/scripts	4852429
 3ds.screenshot	d2	slow	done	bash tools/check.sh	mdk_3ds/src/render/c3d/03_frame.inc	5a7d296
