@@ -433,6 +433,24 @@ public:
     // the radius or behind a wall. Returns {damage, distance}.
     std::pair<int32_t, float> blastDamage(const formats::Box& box, const Vec3& center,
                                           int32_t damage, float radius);
+    // C# MdkObject.PartBounds(): each part's box in the object's current pose
+    // (model space), invalid for an empty part (the C# Box?[] with null entries).
+    // Reads the cached pose_parts(). Unlike poseBounds, it does NOT skip hidden
+    // parts -- the C# PartBounds has no HiddenParts filter; callers (BlastWeakParts,
+    // Solids, Aim) apply the hidden_parts bit themselves.
+    struct PartBox {
+        bool valid;
+        formats::Box box;
+    };
+    std::vector<PartBox> partBounds(const MdkObject* obj);
+    // C# GetWorldBounds(obj, bounds): the worldBounds transform applied to a
+    // caller-supplied box (a part's box) instead of the object's pose bounds.
+    formats::Box worldBounds(const MdkObject* obj, const formats::Box& bounds);
+    // C# ScriptRuntime.IsWeakPart (ScriptRuntime.cs:2059): a part is weak when its
+    // name is longer than the weak-prefix length, the character at that index is an
+    // ASCII digit, and the name starts with the weak prefix (first weak_prefix_length
+    // characters of weak_prefix, ordinal).
+    static bool isWeakPart(const MdkObject* obj, int32_t index);
 
     int32_t globalFlags = 0;
     std::array<float, 4> globalVariables{{0.0f, 0.0f, 0.0f, 0.0f}};

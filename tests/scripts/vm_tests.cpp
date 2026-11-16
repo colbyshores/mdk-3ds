@@ -1946,6 +1946,72 @@ void testBlastDamageFalloff(LevelData* levelData, const Cmi* cmi, audio::SoundBa
     CHECK(mid.second == 3.0f);
 }
 
+// The BlastWeakParts primitives (MdkObject.PartBounds, ScriptRuntime.IsWeakPart,
+// GetWorldBounds(obj, part)), ported ahead of the dispatcher. No C# ScriptVmTests
+// counterpart, so these pin the oracle directly (MdkObject.cs:521-541,
+// ScriptRuntime.cs:2059-2070 and 3118-3135).
+void testPartBoundsAndWeakParts(LevelData* levelData, const Cmi* cmi, audio::SoundBank* bank) {
+    Model model;
+    const char* names[] = {"ARM0", "ARM1", "EMPTY", "AB", "XYZ9", "ARM"};
+    // Per-part vertices: ARM0 (0..2), ARM1 (1..3), EMPTY none, AB/XYZ9/ARM (0..1).
+    const float verts[][6] = {
+        {0, 0, 0, 2, 2, 2}, {1, 1, 1, 3, 3, 3}, {}, {0, 0, 0, 1, 1, 1}, {0, 0, 0, 1, 1, 1},
+        {0, 0, 0, 1, 1, 1}};
+    for (size_t i = 0; i < 6; i++) {
+        Model::Part part;
+        snprintf(part.name, sizeof(part.name), "%s", names[i]);
+        const int n = i == 2 ? 0 : 2;  // EMPTY has no vertices
+        for (int v = 0; v < n; v++) {
+            part.vertices.push_back(Vec3f{verts[i][v * 3], verts[i][v * 3 + 1], verts[i][v * 3 + 2]});
+        }
+        model.partList.push_back(part);
+    }
+
+    scripts::MdkObject obj;
+    obj.model = &model;
+    obj.weak_prefix = "ARM";
+    obj.weak_prefix_length = 3;
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+
+    // PartBounds: per-part boxes in the rest pose; the empty part is invalid.
+    std::vector<scripts::ScriptRuntime::PartBox> pb = runtime.partBounds(&obj);
+    CHECK(pb.size() == 6);
+    CHECK(pb[0].valid && pb[0].box.min.x == 0.0f && pb[0].box.max.z == 2.0f);
+    CHECK(pb[1].valid && pb[1].box.min.x == 1.0f && pb[1].box.max.z == 3.0f);
+    CHECK(!pb[2].valid);
+    CHECK(pb[3].valid && pb[3].box.max.x == 1.0f);
+    CHECK(pb[4].valid && pb[4].box.max.x == 1.0f);
+    CHECK(pb[5].valid && pb[5].box.max.x == 1.0f);
+
+    // IsWeakPart: digit at index 3 and the "ARM" prefix. ARM0/ARM1 weak; EMPTY has
+    // no digit at 3; AB is shorter than the prefix length; XYZ9 has the digit but
+    // not the prefix; ARM is exactly the prefix length (name.Length <= length).
+    CHECK(scripts::ScriptRuntime::isWeakPart(&obj, 0));
+    CHECK(scripts::ScriptRuntime::isWeakPart(&obj, 1));
+    CHECK(!scripts::ScriptRuntime::isWeakPart(&obj, 2));
+    CHECK(!scripts::ScriptRuntime::isWeakPart(&obj, 3));
+    CHECK(!scripts::ScriptRuntime::isWeakPart(&obj, 4));
+    CHECK(!scripts::ScriptRuntime::isWeakPart(&obj, 5));
+
+    // GetWorldBounds(obj, part): the part box scaled by 2 and placed at the position
+    // (yaw 0, no lift). ARM0 (0..2) -> (10..14, 20..24, 30..34).
+    obj.position = Vec3{10.0, 20.0, 30.0};
+    obj.yaw = 0.0f;
+    obj.scale = 2.0f;
+    Box world = runtime.worldBounds(&obj, pb[0].box);
+    CHECK(world.min.x == 10.0f && world.min.y == 20.0f && world.min.z == 30.0f);
+    CHECK(world.max.x == 14.0f && world.max.y == 24.0f && world.max.z == 34.0f);
+    // The whole-object worldBounds still aggregates the visible parts (0..3 -> *2 + pos).
+    Box whole = runtime.worldBounds(&obj);
+    CHECK(whole.min.x == 10.0f && whole.max.x == 16.0f && whole.max.z == 36.0f);
+
+    // The pose cache is keyed by Model address; this test's model is a stack local,
+    // so drop the cache (object.h:261-265) or a later test reusing this address
+    // would read this model's pose.
+    scripts::MdkObject::forget_poses();
+}
+
+
 // Opcode 174 (if_ammo) has no C# ScriptVmTests counterpart, so this pins the
 // oracle directly (ScriptVm.cs:999-1005): kind 0 is the super chain gun's
 // remaining tick count, kinds 1-5 are the sniper-ammo entries, and every
@@ -7827,6 +7893,8 @@ int main() {
     printf("PASS IfIsRiddenBranchesOnRidesRidden\n");
     testBlastDamageFalloff(&levelData, &cmi, &bank);
     printf("PASS BlastDamageFalloff\n");
+    testPartBoundsAndWeakParts(&levelData, &cmi, &bank);
+    printf("PASS PartBoundsAndWeakParts\n");
     testIfAmmoReadsSuperChainGunAndSniperAmmo(&levelData, &cmi, &bank);
     printf("PASS IfAmmoReadsSuperChainGunAndSniperAmmo\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);

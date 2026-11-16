@@ -3370,13 +3370,20 @@ void ScriptRuntime::updateDoor(MdkObject* obj) {
 // GetWorldBounds: the pose box's eight corners, scaled, turned by yaw, lifted, and
 // placed at the position. An object with no model is a point box at its position.
 formats::Box ScriptRuntime::worldBounds(const MdkObject* obj) {
-    formats::Box box;
     if (obj->model == nullptr) {
+        formats::Box box;
         box.min = Vec3f{obj->position.x, obj->position.y, obj->position.z};
         box.max = box.min;
         return box;
     }
-    box = poseBounds(obj);
+    return worldBounds(obj, poseBounds(obj));
+}
+
+// GetWorldBounds(obj, bounds): the same corner transform on a caller-supplied box
+// (a part's box from partBounds), not the object's pose bounds. The C# skips the
+// no-model point-box branch when bounds is given (ScriptRuntime.cs:3120), and a
+// part box only exists when there is a model, so this path always has one.
+formats::Box ScriptRuntime::worldBounds(const MdkObject* obj, const formats::Box& box) {
     formats::Box world;
     bool have = false;
     for (int i = 0; i < 8; i++) {
@@ -3403,6 +3410,67 @@ formats::Box ScriptRuntime::worldBounds(const MdkObject* obj) {
     }
     return world;
 }
+
+// PartBounds: each part's box in the current pose, from the cached pose_parts().
+// An empty part is invalid (the C# null). Same pose and per-part min/max as
+// poseBounds, but every part is returned -- hidden parts included -- because the C#
+// PartBounds has no HiddenParts filter; callers apply the hidden_parts bit.
+std::vector<ScriptRuntime::PartBox> ScriptRuntime::partBounds(const MdkObject* obj) {
+    std::vector<PartBox> result;
+    if (obj->model == nullptr) {
+        return result;  // C# PartBounds returns [] with no model
+    }
+    const std::vector<std::vector<Vec3f> >& pose = obj->pose_parts();
+    result.resize(pose.size());
+    for (size_t i = 0; i < pose.size(); ++i) {
+        if (pose[i].empty()) {
+            result[i].valid = false;
+            continue;
+        }
+        Vec3f mn = pose[i][0];
+        Vec3f mx = pose[i][0];
+        for (size_t v = 1; v < pose[i].size(); ++v) {
+            const Vec3f& p = pose[i][v];
+            if (p.x < mn.x) mn.x = p.x;
+            if (p.y < mn.y) mn.y = p.y;
+            if (p.z < mn.z) mn.z = p.z;
+            if (p.x > mx.x) mx.x = p.x;
+            if (p.y > mx.y) mx.y = p.y;
+            if (p.z > mx.z) mx.z = p.z;
+        }
+        result[i].valid = true;
+        result[i].box.min = mn;
+        result[i].box.max = mx;
+    }
+    return result;
+}
+
+// IsWeakPart: the part name's character at weak_prefix_length is an ASCII digit and
+// the name starts with the weak prefix (ordinal). The C# char.IsAsciiDigit is the
+// '0'..'9' range only, not isdigit's locale set.
+bool ScriptRuntime::isWeakPart(const MdkObject* obj, int32_t index) {
+    // The C# indexes PartList[index] and name[length] with a managed bounds check
+    // that throws; the port is -fno-exceptions, so guard the raw operands (index and
+    // weak_prefix_length come from opcode 198's int operands). No valid caller is
+    // out of range (the C# loops i < PartList.Count), so this changes no in-contract
+    // behaviour -- it turns a would-be throw into "not a weak part" instead of UB.
+    if (index < 0 || static_cast<size_t>(index) >= obj->model->partList.size()) {
+        return false;
+    }
+    const std::string& name = obj->model->partList[static_cast<size_t>(index)].nameString();
+    const int32_t length = obj->weak_prefix_length;
+    if (length < 0 || static_cast<int32_t>(name.size()) <= length) {
+        return false;
+    }
+    const char c = name[static_cast<size_t>(length)];
+    if (c < '0' || c > '9') {
+        return false;
+    }
+    const std::string& prefix = obj->weak_prefix;
+    const size_t plen = std::min(static_cast<size_t>(length), prefix.size());
+    return name.compare(0, plen, prefix, 0, plen) == 0;
+}
+
 
 // GetKurtBox: half width 0.6 in XY, height 5 from his feet.
 formats::Box ScriptRuntime::kurtBox() const {
