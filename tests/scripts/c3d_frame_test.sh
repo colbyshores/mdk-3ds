@@ -89,7 +89,20 @@ import re
 import sys
 
 PATH = sys.argv[1]
-SRC = open(PATH, errors="replace").read()
+
+# The renderer is one translation unit assembled from c3d/*.inc (the split
+# of 2026-11-15): expand those includes so the checks and the mutation arms
+# see the same text the compiler does, in the same order.
+def _expand(path):
+    text = open(path, errors="replace").read()
+
+    def _sub(match):
+        inc = os.path.join(os.path.dirname(path), match.group(1))
+        return open(inc, errors="replace").read()
+
+    return re.sub(r'^#include "((?:c3d|vulkan)/[^"]+\.inc)"', _sub, text, flags=re.M)
+
+SRC = _expand(PATH)
 
 # The per-eye loop inside mdk_render_end_frame. Named once here so the checks and
 # the mutation arms all resolve the same block.

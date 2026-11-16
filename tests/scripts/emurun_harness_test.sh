@@ -746,15 +746,24 @@ CAP_INKBAND="$(cap inkband)"
 derive_rect() { # derive_rect <root> ->
                 #   "<ceilX> <ceilY> <floorX> <floorY> <inkX0> <inkY0> <inkX1> <inkY1>"
 python3 - "$1" <<'PY'
-import math, re, sys
+import math, os, re, sys
 root = sys.argv[1]
 
 
 def read(path):
+    # A renderer file may be one translation unit assembled from *.inc
+    # sections (the 2026-11-15 split): expand those includes so the
+    # derivation reads the same text the compiler does.
     try:
-        return open(path, encoding="utf-8").read()
+        text = open(path, encoding="utf-8").read()
     except OSError as exc:
         sys.exit("derive: cannot read %s (%s)" % (path, exc))
+
+    def _sub(match):
+        inc = os.path.join(os.path.dirname(path), match.group(1))
+        return open(inc, encoding="utf-8").read()
+
+    return re.sub(r'^#include "((?:c3d|vulkan)/[^"]+\.inc)"', _sub, text, flags=re.M)
 
 
 def grab(text, pattern, cast, what, path):
@@ -839,11 +848,14 @@ MUTROOT="$(mktemp -d)"
 mkdir -p "$MUTROOT/mdk_3ds/src/render" "$MUTROOT/mdk_core/src/render" \
          "$MUTROOT/mdk_core/src/game"
 cp "$ROOT/mdk_3ds/src/render/renderer_c3d.cpp" "$MUTROOT/mdk_3ds/src/render/"
+# The renderer is assembled from c3d/*.inc (the 2026-11-15 split): the mutant
+# needs the sections beside it, and the canvas mutation lands in its own.
+cp -r "$ROOT/mdk_3ds/src/render/c3d" "$MUTROOT/mdk_3ds/src/render/"
 cp "$ROOT/mdk_core/src/render/render_types.h" "$MUTROOT/mdk_core/src/render/"
 # The ink derivation reads hud_view.cpp's margins, so the mutant needs it too -- and it
 # needs the PRISTINE copy, because this mutation is about the canvas, not the HUD.
 cp "$ROOT/mdk_core/src/game/hud_view.cpp" "$MUTROOT/mdk_core/src/game/"
-python3 - "$MUTROOT/mdk_3ds/src/render/renderer_c3d.cpp" <<'PY'
+python3 - "$MUTROOT/mdk_3ds/src/render/c3d/07_canvas.inc" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()

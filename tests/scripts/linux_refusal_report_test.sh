@@ -226,6 +226,7 @@ set -u
 ROOT=${1:-$(cd "$(dirname "$0")/../.." && pwd)}
 
 python3 - "$ROOT" <<'PY'
+import os
 import re
 import sys
 
@@ -2126,11 +2127,24 @@ def adjudicate(who, text, quiet=False):
     return r
 
 
+# A backend file may be one translation unit assembled from *.inc sections
+# (renderer_vk.cpp since 2026-11-15): expand those includes so the checks
+# see the same text the compiler does, in the same order.
+def _expand(path):
+    text = open(path, errors="replace").read()
+
+    def _sub(match):
+        inc = os.path.join(os.path.dirname(path), match.group(1))
+        return open(inc, errors="replace").read()
+
+    return re.sub(r'^#include "((?:c3d|vulkan)/[^"]+\.inc)"', _sub, text, flags=re.M)
+
+
 FILES = {}
 for who, rel in (("Linux frontend", FRONTEND), ("Linux backend", BACKEND),
                  ("Linux context", CONTEXT)):
     try:
-        FILES[who] = open(ROOT + "/" + rel, errors="replace").read()
+        FILES[who] = _expand(ROOT + "/" + rel)
     except OSError as exc:
         print("  FAIL linux_refusal_report: cannot read %s (%s)" % (rel, exc))
         sys.exit(1)
