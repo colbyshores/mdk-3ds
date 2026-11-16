@@ -2977,13 +2977,16 @@ void testFanLifecycle(scripts::ScriptRuntime& runtime, LevelData& level) {
 // start and runProgram never moves him), so the weights are the C#'s 500-distance
 // form with the toKurt / near-Kurt terms evaluated against that start, NOT against
 // the object. Each scenario runs on a fresh runtime (seed 1) so the RNG state at
-// the draw is known and the pick is reproducible.
-//   id 0  (30,0,0)   dist 30   mode0 no (<50)   mode1 yes (nearest, anchor)
-//   id 1  (100,0,0)  dist 100  mode0 yes        mode1 yes
-//   id 2  (300,0,0)  dist 300  mode0 yes        mode1 yes
-//   id 3  (120,0,0)  dist 120  mode0 yes        mode1 yes
-//   id 9  (150,0,0)  dist 150  mode0 yes        mode1 no  (id 9 from nearest)
-//   id 21 (600,0,0)  dist 600  mode0 no (>500)  mode1 no  (id 21 from nearest)
+// the draw is known and the pick is reproducible. Positions are chosen so one
+// waypoint dominates each mode's weight total (id 1 in mode 0; id 0/id 1 in mode
+// 1), which is what lets the pinned draw sequences reject a uniform picker as well
+// as a first/last picker.
+//   id 0  (30,0,0)    dist 30   mode0 no (<50)   mode1 yes (nearest, anchor)
+//   id 1  (50,0,0)    dist 50   mode0 yes (dom)  mode1 yes (dom)
+//   id 2  (0,499,0)   dist 499  mode0 yes        mode1 yes
+//   id 3  (0,498,0)   dist 498  mode0 yes        mode1 yes
+//   id 9  (0,497,0)   dist 497  mode0 yes        mode1 no  (id 9 from nearest)
+//   id 21 (600,0,0)   dist 600  mode0 no (>500)  mode1 no  (id 21 from nearest)
 void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
     const std::string arena = "WPTEST";
     auto inSet = [](const Vec3& p, const Vec3* set, size_t n) {
@@ -2999,9 +3002,9 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
     };
     // mode 0 keeps the 50-500 window (drops id 0 at 30 and id 21 at 600); mode 1
     // keeps the ids within 3 of the nearest (id 0), so it keeps id 0 (30,0,0) but
-    // drops id 9 (150,0,0). The two sets differ on exactly those two waypoints.
-    const Vec3 mode0Set[] = {Vec3{100, 0, 0}, Vec3{300, 0, 0}, Vec3{120, 0, 0}, Vec3{150, 0, 0}};
-    const Vec3 mode1Set[] = {Vec3{30, 0, 0}, Vec3{100, 0, 0}, Vec3{300, 0, 0}, Vec3{120, 0, 0}};
+    // drops id 9 (0,497,0). The two sets differ on exactly those two waypoints.
+    const Vec3 mode0Set[] = {Vec3{50, 0, 0}, Vec3{0, 499, 0}, Vec3{0, 498, 0}, Vec3{0, 497, 0}};
+    const Vec3 mode1Set[] = {Vec3{30, 0, 0}, Vec3{50, 0, 0}, Vec3{0, 499, 0}, Vec3{0, 498, 0}};
 
     // pick: reset global[1], run pick_waypoint8 `mode`, branch to "found" when a
     // waypoint is chosen (global[1] = 1) else fall through (global[1] stays 0).
@@ -3040,8 +3043,17 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
         // picker that ignored the weights and took the first qualifying record
         // would return (100,0,0) every time and fail this; so would a uniform or
         // last-qualifying picker. This is the oracle's output for this fixture.
-        const float seq[8][3] = {{100, 0, 0}, {300, 0, 0}, {150, 0, 0}, {120, 0, 0},
-                                 {300, 0, 0}, {300, 0, 0}, {150, 0, 0}, {100, 0, 0}};
+        // The weighted draw is the opcode's substance, so pin it, not just the
+        // qualifying set: on one seed-1 runtime the successive draws (the RNG
+        // advances each call) must reproduce the oracle's weighted sequence. Here
+        // id 1 dominates the weight total, so every draw is (50,0,0); a uniform
+        // picker (which would scatter over all four qualifying waypoints) and a
+        // last-qualifying picker (always (0,497,0)) both fail this. A first-
+        // qualifying picker coincidentally matches here (id 1 is also first in DTI
+        // order), so mode 1 below is what rejects that case. This is the oracle's
+        // output for this fixture.
+        const float seq[8][3] = {{50, 0, 0}, {50, 0, 0}, {50, 0, 0}, {50, 0, 0},
+                                 {50, 0, 0}, {50, 0, 0}, {50, 0, 0}, {50, 0, 0}};
         for (int d = 0; d < 8; d++) {
             runPick(rt, 0, obj);
             CHECK(obj.move_command == 221);
@@ -3050,7 +3062,7 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
     }
 
     // Mode 1: only the waypoints within 3 of the nearest id (0) qualify, so the
-    // destination is never the id-9 waypoint at (150,0,0).
+    // destination is never the id-9 waypoint at (0,497,0).
     {
         scripts::ScriptRuntime rt = fresh();
         scripts::MdkObject obj;
@@ -3059,11 +3071,13 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
         runPick(rt, 1, obj);
         CHECK(obj.move_command == 221);
         CHECK(inSet(obj.move_destination, mode1Set, 4));
-        // Same weight pin on the mode-1 id-window set: the draw must reproduce the
-        // oracle's sequence over the four id-window waypoints (id 0/1/2/3), never
-        // reaching id 9 (150,0,0) that mode 0 allows.
-        const float seq[8][3] = {{30, 0, 0}, {100, 0, 0}, {120, 0, 0}, {300, 0, 0},
-                                 {100, 0, 0}, {100, 0, 0}, {120, 0, 0}, {30, 0, 0}};
+        // Same weight pin on the mode-1 id-window set (id 0/1/2/3). id 0 and id 1
+        // carry the weight and the two far id-window waypoints (id 2/id 3) are
+        // weight-1, so the sequence mixes only (30,0,0) and (50,0,0). This rejects
+        // a first-qualifying picker (always (30,0,0)), a last-qualifying picker
+        // (always (0,498,0)), and a uniform picker (which would reach id 2/id 3).
+        const float seq[8][3] = {{30, 0, 0}, {30, 0, 0}, {50, 0, 0}, {50, 0, 0},
+                                 {30, 0, 0}, {30, 0, 0}, {50, 0, 0}, {30, 0, 0}};
         for (int d = 0; d < 8; d++) {
             runPick(rt, 1, obj);
             CHECK(obj.move_command == 221);
@@ -7605,9 +7619,16 @@ int main() {
         std::vector<Dti::ArenaEntry> arenas = levelData.dti().arenas();
         Dti::ArenaEntry wp;
         wp.name = "WPTEST";
+        // Positions are chosen so one waypoint dominates each mode's weight total
+        // (id 1 in mode 0; id 0/id 1 in mode 1), so a uniform-over-qualifying picker
+        // cannot reproduce the seed-1 sequence. distance2d is the x-y ground plane
+        // (z is height), and Kurt's 2D offset is (0,4); the far waypoints sit on +y
+        // (toward Kurt) where toKurt < distance suppresses the +250 bump and their
+        // weight falls to the bare 500-distance value. The mode-0 distance window
+        // and mode-1 id window keep the membership in the header comment's table.
         const int32_t wpId[6] = {0, 1, 2, 3, 9, 21};
         const float wpPos[6][3] = {
-            {30, 0, 0}, {100, 0, 0}, {300, 0, 0}, {120, 0, 0}, {150, 0, 0}, {600, 0, 0}};
+            {30, 0, 0}, {50, 0, 0}, {0, 499, 0}, {0, 498, 0}, {0, 497, 0}, {600, 0, 0}};
         for (int i = 0; i < 6; i++) {
             Dti::Record r;
             r.type = 8;  // DtiWaypoint
