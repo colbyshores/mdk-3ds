@@ -1913,6 +1913,32 @@ void testIfIsRiddenBranchesOnRidesRidden(LevelData* levelData, const Cmi* cmi,
     CHECK(obj.variables[0] == 1.0f);
 }
 
+// BlastDamage (Items.cs:788), the falloff at the core of Items.Blast, ported ahead
+// of the dispatcher. Pin it with hand-computed values: full damage at the centre,
+// linear falloff to the radius, and 0 beyond it. No arena is entered, so the wall
+// test is clear and only the falloff is exercised.
+void testBlastDamageFalloff(LevelData* levelData, const Cmi* cmi, audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    // Box centre (1,1,1), size sqrt(12); its half-diagonal (sqrt(3)) covers the
+    // 1-unit blast lift, so a blast at the centre reads distance 0 -> full damage.
+    const Box box{{0.0f, 0.0f, 0.0f}, {2.0f, 2.0f, 2.0f}};
+    std::pair<int32_t, float> at = runtime.blastDamage(box, Vec3{1.0f, 1.0f, 1.0f}, 100, 10.0f);
+    CHECK(at.first == 100);
+    CHECK(at.second == 0.0f);
+    // Beyond the radius: zero damage, zero distance.
+    std::pair<int32_t, float> far =
+        runtime.blastDamage(box, Vec3{100.0f, 100.0f, 100.0f}, 100, 10.0f);
+    CHECK(far.first == 0);
+    CHECK(far.second == 0.0f);
+    // Linear falloff: a point box at the origin (size 0, so squared == distance^2),
+    // blast 3 units away in a radius of 6 -> half damage at distance 3.
+    const Box point{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
+    std::pair<int32_t, float> half =
+        runtime.blastDamage(point, Vec3{3.0f, 0.0f, -1.0f}, 100, 6.0f);
+    CHECK(half.first == 50);
+    CHECK(half.second == 3.0f);
+}
+
 // Opcode 174 (if_ammo) has no C# ScriptVmTests counterpart, so this pins the
 // oracle directly (ScriptVm.cs:999-1005): kind 0 is the super chain gun's
 // remaining tick count, kinds 1-5 are the sniper-ammo entries, and every
@@ -7792,6 +7818,8 @@ int main() {
     printf("PASS IfPlayerHealthComparesKurtHealth\n");
     testIfIsRiddenBranchesOnRidesRidden(&levelData, &cmi, &bank);
     printf("PASS IfIsRiddenBranchesOnRidesRidden\n");
+    testBlastDamageFalloff(&levelData, &cmi, &bank);
+    printf("PASS BlastDamageFalloff\n");
     testIfAmmoReadsSuperChainGunAndSniperAmmo(&levelData, &cmi, &bank);
     printf("PASS IfAmmoReadsSuperChainGunAndSniperAmmo\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);

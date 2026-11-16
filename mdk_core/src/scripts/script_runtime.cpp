@@ -4385,6 +4385,54 @@ void ScriptRuntime::kill(MdkObject* obj) {
     obj->death_script = 0;
 }
 
+// Items.cs BlastLift: the blast origin is lifted off the floor so the wall test
+// doesn't hit the floor the blast may lie on.
+static const float kBlastLift = 1.0f;
+
+int32_t ScriptRuntime::kurtDamage(MdkObject* obj, int32_t damage, int32_t health) {
+    // C# KurtDamage (ScriptRuntime.OneHit.cs:21). The one-hit console cheat
+    // (Lethality::OneHit) makes a hit take all an enemy's remaining health; that
+    // console setting is unported, so Lethality is always Normal and this returns
+    // `damage` -- the value the C# returns for every non-cheat game.
+    (void)obj;
+    (void)health;
+    return damage;
+}
+
+int32_t ScriptRuntime::kurtDamage(MdkObject* obj, int32_t damage) {
+    return kurtDamage(obj, damage, obj->health);
+}
+
+int32_t ScriptRuntime::blastHit(MdkObject* obj, int32_t damage, int32_t health, bool counted) {
+    // C# BlastHit (Items.cs:783): a counted blast scales by KurtDamage; an
+    // uncounted one (Kills.Ignored) deals the raw damage.
+    return counted ? kurtDamage(obj, damage, health) : damage;
+}
+
+std::pair<int32_t, float> ScriptRuntime::blastDamage(const formats::Box& box, const Vec3& center,
+                                                    int32_t damage, float radius) {
+    // C# BlastDamage (Items.cs:788): falloff to the box centre less half the box's
+    // diagonal; 0 beyond the radius or behind a wall.
+    const float sx = box.max.x - box.min.x;
+    const float sy = box.max.y - box.min.y;
+    const float sz = box.max.z - box.min.z;
+    const float size = sqrtf(sx * sx + sy * sy + sz * sz);
+    const Vec3 target{(box.min.x + box.max.x) * 0.5f,
+                      (box.min.y + box.max.y) * 0.5f,
+                      (box.min.z + box.max.z) * 0.5f};
+    const Vec3 lifted{center.x, center.y, center.z + kBlastLift};
+    const float dx = lifted.x - target.x;
+    const float dy = lifted.y - target.y;
+    const float dz = lifted.z - target.z;
+    const float squared = (dx * dx + dy * dy + dz * dz) - size * size * 0.25f;
+    if (squared > radius * radius || !raycastClear(lifted, target)) {
+        return std::make_pair(0, 0.0f);
+    }
+    const float distance = sqrtf(squared > 0.0f ? squared : 0.0f);
+    // ScriptMath.Round is AwayFromZero (ScriptMath.cs:48); C roundf matches it.
+    return std::make_pair((int32_t)roundf((float)damage * (1.0f - distance / radius)), distance);
+}
+
 void ScriptRuntime::remove(MdkObject* obj) {
     // C# Remove (ScriptRuntime.cs:1648): a live Attached object (a pickup's chute) goes
     // with it FIRST — Remove(obj.Attached) runs before obj is marked dead — then Dead,

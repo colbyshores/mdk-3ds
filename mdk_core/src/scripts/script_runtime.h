@@ -32,6 +32,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "audio/sound_mixer.h"
@@ -413,6 +414,25 @@ public:
     formats::Box poseBounds(const MdkObject* obj);
     // Kurt's bounding box (GetKurtBox): half-width 0.6, height 5 from his feet.
     formats::Box kurtBox() const;
+
+    // Blast damage math (Items.cs), the foundation of Items.Blast -- ported ahead
+    // of the dispatcher so the falloff is pinned by tests before it is wired.
+    // C# KurtDamage (ScriptRuntime.OneHit.cs:21): the damage of Kurt's hit on an
+    // object with `health` left. The one-hit console cheat (Lethality::OneHit)
+    // makes a hit take all an enemy's remaining health; that console setting is
+    // unported, so Lethality is always Normal and this returns `damage` -- the
+    // value the C# returns for every non-cheat game, which is every tick of the
+    // corpus.
+    int32_t kurtDamage(MdkObject* obj, int32_t damage);
+    int32_t kurtDamage(MdkObject* obj, int32_t damage, int32_t health);
+    // C# BlastHit (Items.cs:783): a counted blast scales by KurtDamage; an
+    // uncounted one (Kills.Ignored) deals the raw damage.
+    int32_t blastHit(MdkObject* obj, int32_t damage, int32_t health, bool counted);
+    // C# BlastDamage (Items.cs:788): a blast's damage on a world box and its
+    // distance -- falloff to the box centre less half the box's diagonal, 0 beyond
+    // the radius or behind a wall. Returns {damage, distance}.
+    std::pair<int32_t, float> blastDamage(const formats::Box& box, const Vec3& center,
+                                          int32_t damage, float radius);
 
     int32_t globalFlags = 0;
     std::array<float, 4> globalVariables{{0.0f, 0.0f, 0.0f, 0.0f}};
