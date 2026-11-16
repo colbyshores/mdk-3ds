@@ -328,6 +328,10 @@ public:
     void selectTarget(MdkObject* obj);
     MdkObject* alienTarget() const { return alienTarget_; }
     void setAlienTarget(MdkObject* obj) { alienTarget_ = obj; }
+    // Rides.Ridden (Rides.cs:40): the object Kurt rides, or null on foot. The ride
+    // slice is unported, so this is null on every tick of the corpus; opcode 171
+    // (if_is_573c30) branches on it and reads the same value the C# does.
+    MdkObject* ridesRidden() const { return ridesRidden_; }
     // The first live object of obj's arena whose type matches (C# FirstOther with
     // instance = AnyInstance): face_mode 3 copies its yaw. Null when none.
     MdkObject* firstOther(MdkObject* obj, const std::string& type, int32_t instance = -1);

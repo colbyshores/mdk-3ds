@@ -79,6 +79,7 @@ const int32_t kSpawnAlongPath = 206;
 const int32_t kHeadShots = 217;
 const int32_t kIfPointSeesPlayer = 243;
 const int32_t kIfPlayerHealth = 241;
+const int32_t kIfIsRidden = 171;
 const int32_t kIfAmmo = 174;
 const int32_t kIfPartnerDistance = 213;
 const int32_t kIfPartnerAngle = 214;
@@ -1888,6 +1889,28 @@ void testIfPlayerHealthComparesKurtHealth(LevelData* levelData, const Cmi* cmi,
         CHECK(!sawUnimplemented(kIfPlayerHealth));
         CHECK(obj.variables[0] == 1.0f);
     }
+}
+
+// Opcode 171 (if_is_573c30) branches on whether obj is the object Kurt rides
+// (Rides.Ridden == obj, ScriptVm.cs:1711). The ride slice (mount/dismount) is
+// unported, so ridesRidden() is null and the branch is false for every object --
+// the value the C# reads while Kurt is on foot, which is every tick of the corpus.
+// Pin the dispatch and the false branch; the true branch needs the ride slice.
+void testIfIsRiddenBranchesOnRidesRidden(LevelData* levelData, const Cmi* cmi,
+                                          audio::SoundBank* bank) {
+    scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
+    Code code;
+    code.u8(kIfIsRidden).u8(kActionGoto).target("ridden");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(1.0f);
+    code.end();
+    code.label("ridden");
+    code.u8(kSetVar).u8(kOwn).u8(0).f32(2.0f);
+    code.end();
+    scripts::MdkObject obj;
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kIfIsRidden));
+    // Nothing is ridden, so the branch is not taken and the fall-through runs.
+    CHECK(obj.variables[0] == 1.0f);
 }
 
 // Opcode 174 (if_ammo) has no C# ScriptVmTests counterpart, so this pins the
@@ -7767,6 +7790,8 @@ int main() {
     printf("PASS PointSeesPlayerNeedsRangeAndAClearLine\n");
     testIfPlayerHealthComparesKurtHealth(&levelData, &cmi, &bank);
     printf("PASS IfPlayerHealthComparesKurtHealth\n");
+    testIfIsRiddenBranchesOnRidesRidden(&levelData, &cmi, &bank);
+    printf("PASS IfIsRiddenBranchesOnRidesRidden\n");
     testIfAmmoReadsSuperChainGunAndSniperAmmo(&levelData, &cmi, &bank);
     printf("PASS IfAmmoReadsSuperChainGunAndSniperAmmo\n");
     testPartnerConditionsUseLiveLinkedObjectAndGeometry(runtime);

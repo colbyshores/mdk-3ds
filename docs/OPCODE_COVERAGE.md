@@ -4,7 +4,9 @@ Method and reachability evidence in the final Phase 2 report. Summary:
 
 - Counts recounted from the brace-matched method spans (C# `ScriptVm.Execute`
   vs C++ `ScriptVm::execute`, numeric `case` labels, set semantics): the C#
-  owns **238** cases, the C++ has **216** numeric labels / 215 unique labels (214 true dispatches), leaving **24** unimplemented. The
+  owns **238** cases, the C++ has **226** unique labels (225 true dispatches — one
+  `case 0:` is opcode 249's inner-switch arm, not a dispatch), leaving **13**
+  unimplemented. The
   earlier version of this document claimed 155/83 and listed 114, 171 and 209
   as ported; none of the three is in the C++ `execute()` — the old counts and
   the old "ported" list were wrong. The remaining cases fall through to
@@ -348,11 +350,16 @@ slice). 221 (`pick_waypoint8`) landed next: a weighted-random pick of the
 arena's DTI type-8 waypoints becomes the destination (command 221) and the
 opcode branches on whether one was found. It never fires in levels 3–8, so
 the goldens are unchanged; it is covered by a synthetic `WPTEST` arena in
-`vm_tests`. Remaining 14:
+`vm_tests`. 171 (`if_is_573c30`, "the object Kurt rides") landed next: it is a
+one-line branch on `Rides.Ridden == obj`, and the runtime already carries that
+state as `ridesRidden_` (the ride slice is unported, so it is null and the branch
+is false for every object — the value the C# reads on foot). It never fires in
+levels 3–8; a synthetic `vm_tests` case pins the dispatch and the false branch.
+Remaining 13:
 28,
 114,
 130, 131, 158, 159, 167,
-171, 172, 178, 181, 184,
+172, 178, 181, 184,
 209, 224
 
 **Reachability, re-probed to t30000 (2026-10-28, `tick1 probe 30000`):**
@@ -372,8 +379,12 @@ two-line dispatch.
 By blocking subsystem (carried grouping, corrected for this batch):
 
 - **Kurt/player/HUD (needs Kurt items, ammo, platform, firing, camera
-  state):** 114 (if_player_on_me), 171, 178, 181, 189,
+  state):** 114 (if_player_on_me), 178, 181, 189,
   209, 215, 240, 244, 247.
+  (171 (`if_is_573c30`) landed over the runtime's `ridesRidden_` (the
+  `Rides.Ridden` equivalent): it is not gated by the Kurt items/platform/firing
+  subsystem at all, only by the ride slice, and it reads the same null the C#
+  reads on foot.)
   (109 `hurt_kurt` and 175 `if_inventory` landed with the Kurt health/inventory
   slice; 240/244 read the same Kurt state but do not fire in levels 3-8, so
   they stay deferred. 135's runtime state landed, but its camera consumer is
