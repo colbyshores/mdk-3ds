@@ -21,8 +21,12 @@ void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     // when stereo is on; the active camera follows the same choice. A
     // stereo resource failure falls back to the mono frame with a refusal,
     // never to a half-drawn pair of eyes.
-    const bool stereoOn = r->stereo.mode != mdk::StereoMode::Off && ensureStereo(r) &&
-                          mdk::vk::ensureEyeTargets(&r->ctx);
+    // The eye targets first: they own the composite pass the stereo
+    // pipeline is created against, so creating the pipeline first hands
+    // vkCreateGraphicsPipelines a null render pass and the frame falls
+    // back to mono with the scene queue never replayed.
+    const bool stereoOn = r->stereo.mode != mdk::StereoMode::Off &&
+                          mdk::vk::ensureEyeTargets(&r->ctx) && ensureStereo(r);
     if (stereoOn) {
         mdk::vk::setSceneOverride(&r->ctx, r->ctx.eyeFramebuffer[0]);
         r->activeCamera = eyeCamera(r, -1.0f);
