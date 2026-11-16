@@ -255,6 +255,9 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     // until those slices land — neither perturbs the RNG stream (see debris.h).
     debris_.setCallbacks(this, &ScriptRuntime::debrisRayTrampoline, nullptr, nullptr,
                          &ScriptRuntime::debrisFacetsTrampoline);
+    // AnimatedTextures' frame counts come from the level's archives
+    // (ScriptRuntime.cs:336, TextureFrames via FindTexture).
+    animatedTextures = AnimatedTextures(&ScriptRuntime::animatedFrameCount, this);
     // The arenas the world is built from, as the driver does: the reachable
     // ones, so the arena under Kurt is found.
     const std::vector<const formats::Arena*>& arenas = level_->arenas();
@@ -1863,6 +1866,26 @@ bool ScriptRuntime::debrisRayTrampoline(void* ctx, const std::string& arena, con
 bool ScriptRuntime::debrisFacetsTrampoline(void* ctx, const std::string& arena, int32_t group,
                                            DebrisGroup* out) {
     return static_cast<ScriptRuntime*>(ctx)->groupFacets(arena, group, out);
+}
+
+int32_t ScriptRuntime::animatedFrameCount(void* ctx, const std::string& arena,
+                                          const std::string& texture) {
+    ScriptRuntime* self = static_cast<ScriptRuntime*>(ctx);
+    if (!self->level_) {
+        return 0;
+    }
+    const formats::Arena* owner = self->level_->arenaNamed(arena);
+    if (!owner) {
+        return 0;
+    }
+    const std::vector<const formats::TextureArchive*> archives = self->level_->archivesOf(owner);
+    for (size_t i = 0; i < archives.size(); i++) {
+        const formats::Texture* found = archives[i]->findTexture(texture);
+        if (found) {
+            return found->frameCount();
+        }
+    }
+    return 0;
 }
 
 // CanSeeKurt (ScriptRuntime.cs:3236): within range, inside the view cone (a cone

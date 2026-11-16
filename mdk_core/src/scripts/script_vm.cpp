@@ -1876,6 +1876,46 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 202:  // set_574304: the sky mode shared by the level and renderer
             runtime_.skyMode = ival(op(ins, 0));
             break;
+        case 133:  // arena_texture_frame: [texture, mode, value]; mode 1 is frames per second
+            runtime_.animatedTextures.set(obj->arena, strval(op(ins, 0)),
+                                          AnimatedTextures::modeOf(ival(op(ins, 1))),
+                                          fval(op(ins, 2)), ScriptRuntime::kTick);
+            break;
+        case 189: {  // lob_to_kurt: throw itself so that it lands on Kurt (or at a height)
+            const std::vector<ScriptValue>& args = listval(op(ins, 0));
+            if (!args.empty() && ival(args[0]) <= 1) {
+                const float targetZ = ival(args[0]) == 0
+                                          ? (args.size() > 2 ? fval(args[2]) : 0.0f)
+                                          : runtime_.kurtPosition().z;
+                const float fall = targetZ - obj->position.z;
+                // The fall time of 0.5 * gravity * t^2 = fall with the current
+                // vertical speed (ScriptVm.cs LobToKurt).
+                const float a = obj->gravity * -0.5f;
+                const float discriminant =
+                    obj->velocity.z * obj->velocity.z + 4.0f * a * fall;
+                if (fall <= 0.0f && discriminant >= 0.0f) {
+                    const float root = std::sqrt(discriminant);
+                    const float t1 = (root - obj->velocity.z) / (a * 2.0f);
+                    const float t2 = (-obj->velocity.z - root) / (a * 2.0f);
+                    const float time = t1 > t2 ? t1 : t2;
+                    const float dx = runtime_.kurtPosition().x - obj->position.x;
+                    const float dy = runtime_.kurtPosition().y - obj->position.y;
+                    const float distance = std::sqrt(dx * dx + dy * dy);
+                    if (time > 0.0f && distance > 0.0f) {
+                        // The friction over the flight has to be made up for.
+                        const float capped = args.size() > 1 ? fval(args[1]) : 0.0f;
+                        const float speed =
+                            std::min(obj->friction * 0.5f * time + distance / time, capped);
+                        obj->velocity.x = dx * (speed / distance);
+                        obj->velocity.y = dy * (speed / distance);
+                    }
+                }
+            }
+            break;
+        }
+        case 247:  // hud_message: [flags, text name, seconds]
+            runtime_.pushMessage(strval(op(ins, 1)), ival(op(ins, 0)), fval(op(ins, 2)));
+            break;
         case 203: {  // camera_track: [mode, (height)] asks for a follow-camera pitch
             const std::vector<ScriptValue>& track = listval(op(ins, 0));
             const int32_t mode = track.empty() ? 0 : ival(track[0]);

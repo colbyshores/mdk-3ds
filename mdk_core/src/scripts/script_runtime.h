@@ -43,6 +43,7 @@
 #include "game/kurt.h"
 #include "game/level_data.h"
 #include "render/render_types.h"
+#include "scripts/animated_textures.h"
 #include "scripts/debris.h"
 #include "scripts/game_stats.h"
 #include "scripts/object.h"
@@ -457,6 +458,29 @@ public:
     // zero, which is what a fresh level has.
     GameStats stats;
 
+    // Arena texture animation (AnimatedTextures.cs, opcode 133): the
+    // script-driven texture frames. The renderer-side consumer (drawing
+    // the animated frame) is a later slice; the VM writes this state
+    // exactly as the oracle does.
+    AnimatedTextures animatedTextures;
+
+    // One queued HUD message (opcode 247, hud_message). The Messages
+    // drawing consumer (fonts, timing, the HUD queue display) is a later
+    // slice; the queue itself is the runtime state the VM writes.
+    struct ScriptMessage {
+        std::string text;
+        int32_t flags = 0;
+        float seconds = 0.0f;
+    };
+    const std::vector<ScriptMessage>& messages() const { return messages_; }
+    void pushMessage(const std::string& text, int32_t flags, float seconds) {
+        ScriptMessage message;
+        message.text = text;
+        message.flags = flags;
+        message.seconds = seconds;
+        messages_.push_back(message);
+    }
+
     // ---- Readable state (the driver dumps these) ----
     const std::string& currentArena() const { return currentArena_; }
     // C# SecondArena / SecondActive (ScriptRuntime.cs:259-260): the arena left
@@ -694,6 +718,9 @@ private:
                                     const Vec3& to, DebrisRayHit* out);
     static bool debrisFacetsTrampoline(void* ctx, const std::string& arena, int32_t group,
                                        DebrisGroup* out);
+    // AnimatedTextures' frame-count lookup (TextureFrames, ScriptRuntime.cs:2246).
+    static int32_t animatedFrameCount(void* ctx, const std::string& arena,
+                                      const std::string& texture);
 
     Player* player_ = nullptr;  // borrowed; the live Kurt entity (movement + combat)
     LevelData* level_;
@@ -727,6 +754,7 @@ private:
     std::deque<MdkObject> objects_;
     // The removed (C# Objects.Remove) objects, still in their deque slots.
     std::vector<MdkObject*> removed_;
+    std::vector<ScriptMessage> messages_;
     std::map<std::string, ArenaState> arenas_;
     std::map<std::string, formats::Model> modelCache_;  // global models, stable addresses
     int32_t nextInstance_ = 1000;

@@ -87,6 +87,9 @@ const int32_t kPushKurt = 248;
 const int32_t kSetHurtFlash = 240;
 const int32_t kSetGlobal573bd4 = 244;
 const int32_t kSet27c = 239;
+const int32_t kArenaTextureFrame = 133;
+const int32_t kLobToKurt = 189;
+const int32_t kHudMessage = 247;
 const int32_t kDebugMsg = 77;
 const int32_t kAlarm = 15;
 const int32_t kIfAlarm = 27;
@@ -2810,6 +2813,83 @@ void testUnidentifiedSet27cIsNoOp(scripts::ScriptRuntime& runtime) {
     CHECK(!sawUnimplemented(kSet27c));
     CHECK(obj.variables[0] == 17.0f);
     CHECK(obj.variables[1] == 9.0f);
+}
+
+// Opcode 133 (arena_texture_frame) drives the runtime's AnimatedTextures
+// state (AnimatedTextures.cs): mode 1 adds value*dt frames, wrapping into
+// the texture's frame count; mode 0 sets value-1. M_COMM in level 7's
+// DANT_5 arena is the oracle's own animated-texture example.
+void testArenaTextureFrameAnimates(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject obj;
+    obj.arena = "DANT_5";
+    Code code;
+    code.u8(kArenaTextureFrame).pstr("M_COMM").u8(0).f32(2.0f);
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kArenaTextureFrame));
+    scripts::AnimatedTextures& animated = runtime.animatedTextures;
+    const int32_t first = animated.frameOf(obj.arena, "M_COMM");
+    CHECK(first == 1);
+
+    Code more;
+    more.u8(kArenaTextureFrame).pstr("M_COMM").u8(2).f32(1.5f);
+    more.end();
+    runProgram(runtime, more, &obj);
+    CHECK(animated.frameOf(obj.arena, "M_COMM") == 2);
+
+    // An unknown texture has no frames to animate: a clean no-op.
+    Code missing;
+    missing.u8(kArenaTextureFrame).pstr("NO_SUCH_TEXTURE").u8(0).f32(2.0f);
+    missing.end();
+    runProgram(runtime, missing, &obj);
+    CHECK(animated.frameOf(obj.arena, "NO_SUCH_TEXTURE") == 0);
+}
+
+// Opcode 189 (lob_to_kurt) throws the receiver so it lands on Kurt: the
+// horizontal velocity solves the ballistic fall to Kurt's height, capped
+// by the operand's speed. Mode 2 (and anything above 1) does nothing.
+void testLobToKurtThrowsAtKurt(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject obj;
+    obj.position = runtime.kurtPosition();
+    obj.position.x += 20.0f;  // aside from Kurt, ten units above his height
+    obj.position.z += 10.0f;
+    obj.velocity = mdk::Vec3{0.0f, 0.0f, 0.0f};
+    obj.gravity = 32.0f;
+    obj.friction = 64.0f;
+    Code code;
+    // Mode 0: land at the height operand -- Kurt's own height here.
+    code.u8(kLobToKurt).u8(0).f32(1000.0f).f32(runtime.kurtPosition().z);
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kLobToKurt));
+    CHECK(obj.velocity.x < 0.0f);  // thrown back toward Kurt
+    CHECK(obj.velocity.y == 0.0f);
+
+    // Mode 2 does nothing at all.
+    obj.velocity = mdk::Vec3{1.0f, 2.0f, 3.0f};
+    Code noop;
+    noop.u8(kLobToKurt).u8(2);
+    noop.end();
+    runProgram(runtime, noop, &obj);
+    CHECK(obj.velocity.x == 1.0f && obj.velocity.y == 2.0f && obj.velocity.z == 3.0f);
+}
+
+// Opcode 247 (hud_message) queues a HUD message on the runtime (flags,
+// text, seconds), in order.
+void testHudMessageQueues(scripts::ScriptRuntime& runtime) {
+    const size_t before = runtime.messages().size();
+    scripts::MdkObject obj;
+    Code code;
+    code.u8(kHudMessage).u8(3).pstr("HELLO").f32(2.5f);
+    code.u8(kHudMessage).u8(0).pstr("WORLD").f32(1.0f);
+    code.end();
+    runProgram(runtime, code, &obj);
+    CHECK(!sawUnimplemented(kHudMessage));
+    CHECK(runtime.messages().size() == before + 2);
+    CHECK(runtime.messages()[before].text == "HELLO");
+    CHECK(runtime.messages()[before].flags == 3);
+    CHECK(runtime.messages()[before].seconds == 2.5f);
+    CHECK(runtime.messages()[before + 1].text == "WORLD");
 }
 
 // Opcode 77's C# case intentionally ignores its debug message (ScriptVm.cs:1713).
@@ -7178,6 +7258,12 @@ int main() {
     printf("PASS KurtFlashes\n");
     testUnidentifiedSet27cIsNoOp(runtime);
     printf("PASS UnidentifiedSet27cIsNoOp\n");
+    testArenaTextureFrameAnimates(runtime);
+    printf("PASS ArenaTextureFrameAnimates\n");
+    testLobToKurtThrowsAtKurt(runtime);
+    printf("PASS LobToKurtThrowsAtKurt\n");
+    testHudMessageQueues(runtime);
+    printf("PASS HudMessageQueues\n");
     testDebugMessageIsNoOp(runtime);
     printf("PASS DebugMessageIsNoOp\n");
     testSetRollingCapturesRotationOnTransition(runtime);
