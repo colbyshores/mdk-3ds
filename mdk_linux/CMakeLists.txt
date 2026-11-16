@@ -131,6 +131,11 @@ set(SOURCES
     ${CORE}/src/game/enhanced_config.cpp
     ${CORE}/src/game/enhanced_menu.cpp
     ${CORE}/src/game/font_view.cpp
+    ${CORE}/src/game/hd_key.cpp
+    ${CORE}/src/game/mod_catalog.cpp
+    ${CORE}/src/game/mod_images.cpp
+    ${CORE}/src/game/mod_info.cpp
+    ${CORE}/src/util/sha256.cpp
     ${CORE}/src/game/level_light.cpp
     ${CORE}/src/game/level_view.cpp
     ${CORE}/src/game/object_draw.cpp

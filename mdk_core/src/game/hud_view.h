@@ -26,6 +26,8 @@
 
 namespace mdk {
 
+class ModImages;
+
 namespace formats {
 class Bni;
 class Palette;
@@ -51,8 +53,11 @@ public:
     static const int32_t kSuperChainGun = 6;
 
     // Uploads the HUD's sprites as index textures through `palette`. Returns
-    // false when a required sprite is missing.
-    bool load(MdkRenderer renderer, const formats::Bni& sprites, const formats::Palette& palette);
+    // false when a required sprite is missing. `mods`, when given, replaces
+    // the HUD's pictures with its images (the C# HudView's mods; drawn by
+    // the enhanced look's canvas, the original keeps the index textures).
+    bool load(MdkRenderer renderer, const formats::Bni& sprites, const formats::Palette& palette,
+              ModImages* mods = nullptr);
 
     // Advances the blink once a tick (the C# Tick).
     void tick();
@@ -86,6 +91,7 @@ private:
     void frameRect(float x, float y, float w, float h, const Colour& colour);
 
     MdkRenderer renderer_ = nullptr;
+    ModImages* mods_ = nullptr;
     int32_t palette_ = -1;
     Image panel_;
     Image skull_;

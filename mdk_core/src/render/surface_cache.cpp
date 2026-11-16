@@ -79,8 +79,29 @@ MdkTextureId SurfaceCache::flatColourId(const Colour& colour) {
 }
 
 MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Palette* palette) {
-    return surface.texture != nullptr ? textureId(surface.texture, palette)
-                                      : flatColourId(surface.colour);
+    if (surface.texture == nullptr) {
+        return flatColourId(surface.colour);
+    }
+    const MdkTextureId id = textureId(surface.texture, palette);
+    // A Lit surface's mod replacement, asked once per (texture, palette)
+    // pair (the C#'s MaterialResolver.Replace, at the first point here
+    // where the GPU ids it names exist). The backend copies the bytes, so
+    // the lookup's image need only live for this call.
+    if (replacementLookup_ && surface.shading == Shading::Lit && id >= 0) {
+        const std::pair<const formats::Texture*, const formats::Palette*> key(surface.texture,
+                                                                               palette);
+        if (replacementLooked_.find(key) == replacementLooked_.end()) {
+            replacementLooked_[key] = true;
+            ColourReplacement replacement;
+            if (replacementLookup_(replacementUser_, surface, palette, &replacement) &&
+                replacement.rgba && replacement.width > 0 && replacement.height > 0) {
+                mdk_render_replace_colour(renderer_, id, paletteId(palette), surface.frameCount,
+                                          replacement.width, replacement.height, replacement.rgba);
+                replacementFound_++;
+            }
+        }
+    }
+    return id;
 }
 
 } // namespace mdk

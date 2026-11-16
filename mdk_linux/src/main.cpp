@@ -34,6 +34,8 @@
 #include "game/enhanced_config.h"
 #include "game/level_data.h"
 #include "game/level_light.h"
+#include "game/mod_catalog.h"
+#include "game/mod_images.h"
 #include "game/level_view.h"
 #include "game/follow_camera.h"
 #include "game/hud_view.h"
@@ -149,6 +151,34 @@ bool positiveCount(const char* name, const char* text, int* out) {
     return true;
 }
 
+// The mods' replacement source for the shared surface cache: the level's
+// ModImages plus the image being handed over (the backend copies its bytes
+// inside the call, so the one buffer serves every lookup in turn).
+struct ModReplacementSource {
+    mdk::ModImages* mods = nullptr;
+    mdk::HdImage image;
+};
+
+bool modReplacementLookup(void* user, const mdk::Surface& surface,
+                          const mdk::formats::Palette* palette,
+                          mdk::ColourReplacement* out) {
+    ModReplacementSource* source = static_cast<ModReplacementSource*>(user);
+    if (!source->mods || !surface.texture || !palette) {
+        return false;
+    }
+    source->image = mdk::HdImage();
+    const std::string& name =
+        surface.name.empty() ? surface.texture->name() : surface.name;
+    if (!source->mods->texture(name, *surface.texture, *palette, &source->image)) {
+        return false;
+    }
+    out->width = source->image.width;
+    out->height = source->image.height;
+    out->frames = source->image.frames;
+    out->rgba = source->image.rgba.data();
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -172,6 +202,8 @@ int main(int argc, char** argv) {
     mdk::StereoSettings stereo;
     bool enhancedLook = false;
     float gammaValue = 1.0f;
+    std::vector<std::string> onlyMods;
+    bool onlyModsSet = false;
 
     auto optionValue = [](const char* arg, const char* name) -> const char* {
         const size_t length = std::strlen(name);
@@ -238,6 +270,24 @@ int main(int argc, char** argv) {
             enhancedLook = true;
         } else if (std::strcmp(argv[i], "--original") == 0) {
             enhancedLook = false;
+        } else if ((value = optionValue(argv[i], "--mod")) != nullptr) {
+            // --mod=a,b: only these mods (folders of mods/) on, for this
+            // run (the C# GameOptions.Mods; tests). Empty entries dropped.
+            onlyModsSet = true;
+            std::string list = value;
+            size_t at = 0;
+            while (at <= list.size()) {
+                const size_t comma = list.find(',', at);
+                const std::string one =
+                    list.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+                if (!one.empty()) {
+                    onlyMods.push_back(one);
+                }
+                if (comma == std::string::npos) {
+                    break;
+                }
+                at = comma + 1;
+            }
         } else if ((value = optionValue(argv[i], "--gamma")) != nullptr) {
             char* end = nullptr;
             const float parsed = std::strtof(value, &end);
@@ -459,11 +509,47 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     mdk::formats::MdkData data = mdk::formats::MdkData::find(mdk::formats::fileSystem());
     mdk::LevelData level;
+    // The mods (p6 slice g; the C# Viewer's ScanMods + ModImages): the
+    // enhanced look's HD textures and image replacements, from the user
+    // folder's mods/ ($MDK_USER_DIR, the oracle's override; ./mods here,
+    // where this frontend's config.ini already lives). The original look
+    // never sees them, exactly as the C# only builds ModImages for the
+    // enhanced graphics.
+    mdk::ModCatalog modCatalog;
+    mdk::ModImages modImages;
+    ModReplacementSource modSource;
+    bool modsReady = false;
+    if (enhancedLook) {
+        const char* userDir = std::getenv("MDK_USER_DIR");
+        const std::string modsRoot =
+            (userDir && userDir[0]) ? mdk::ModCatalog::folderIn(userDir) : "mods";
+        modCatalog = mdk::ModCatalog::scan(modsRoot);
+        if (onlyModsSet) {
+            for (size_t i = 0; i < onlyMods.size(); i++) {
+                if (!modCatalog.has(onlyMods[i])) {
+                    std::fprintf(stderr, "No mod %s in %s\n", onlyMods[i].c_str(),
+                                 modsRoot.c_str());
+                }
+            }
+        }
+        const std::vector<std::string> folders =
+            onlyModsSet ? modCatalog.onlyFolders(onlyMods)
+                        : modCatalog.enabledFolders({});
+        modImages = mdk::ModImages::open(folders, true, levelNumber);
+        modSource.mods = &modImages;
+        modsReady = true;
+        std::printf("[main] mods: %d found, %d enabled in %s\n",
+                    (int)modCatalog.mods().size(), (int)folders.size(), modsRoot.c_str());
+    }
+
     // The GPU textures and palettes a resolved surface needs, shared by the arena
     // view and the object pass exactly as the C# shares ONE MaterialResolver
     // between them, so a texture an arena and an object both use is one texture
     // (render/surface_cache.h).
     mdk::SurfaceCache surfaces(renderer);
+    if (modsReady) {
+        surfaces.setColourReplacementLookup(modReplacementLookup, &modSource);
+    }
     mdk::LevelView view;
     mdk::HudView hud;
     mdk::KurtSprite kurtSprite;
@@ -545,7 +631,8 @@ int main(int argc, char** argv) {
                     if (data.read("TRAVERSE/TRAVSPRT.BNI", &spriteBytes) &&
                         mdk::formats::Bni::parse(&sprites, std::move(spriteBytes))) {
                         spritesReady = true;
-                        if (hud.load(renderer, sprites, level.dti().palette())) {
+                        if (hud.load(renderer, sprites, level.dti().palette(),
+                                     modsReady ? &modImages : nullptr)) {
                             hudReady = true;
                             std::printf("[main] hud: loaded\n");
                         } else {

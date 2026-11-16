@@ -14,8 +14,10 @@
 // so the tests exercise the real path, not a bypass.
 // ============================================================================
 
+#include <dirent.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <string>
@@ -88,31 +90,24 @@ inline void reportCheck() {
 namespace host {
 
 // List a directory's entries. The names are the entries' own names.
+// opendir, like the production POSIX seam: listing a FILE fails, which is
+// what the mod scanner's directory probe relies on (an `ls` of a file
+// succeeds and would call every file a directory).
 inline bool listDirectory(void* user, const char* path, std::vector<std::string>* outNames) {
     (void)user;
     outNames->clear();
-    // A portable-ish directory listing without <filesystem>, so the harness
-    // stays dependency-free.
-    const std::string command = std::string("ls -A -1 -- '") + path + "' 2>/dev/null";
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) {
+    DIR* dir = opendir(path);
+    if (!dir) {
         return false;
     }
-    char line[1024];
-    while (fgets(line, sizeof(line), pipe)) {
-        std::string name(line);
-        while (!name.empty() && (name[name.size() - 1] == '\n' || name[name.size() - 1] == '\r')) {
-            name.erase(name.size() - 1);
+    while (struct dirent* entry = readdir(dir)) {
+        const char* name = entry->d_name;
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
+            continue;
         }
-        if (!name.empty()) {
-            outNames->push_back(name);
-        }
+        outNames->push_back(name);
     }
-    const int status = pclose(pipe);
-    if (status != 0) {
-        outNames->clear();
-        return false;
-    }
+    closedir(dir);
     return true;
 }
 

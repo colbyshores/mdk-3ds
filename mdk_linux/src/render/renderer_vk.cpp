@@ -136,6 +136,23 @@ struct ColourVk {
     VkImageView view = VK_NULL_HANDLE;
 };
 
+// A mod's whole colour image given instead of the palette expansion
+// (mdk_render_replace_colour / _replace_image): premultiplied RGBA8, frames
+// stacked downwards, kept until the index texture's version moves -- a
+// changed texture shows its expansion again, exactly as the C#'s Changed
+// drops _replaced. Canvas images (image=true) survive texture changes.
+struct ReplacementVk {
+    bool used = false;
+    bool image = false;
+    int32_t tex = -1;
+    int32_t pal = -1;
+    int32_t frames = 1;
+    int32_t width = 0;
+    int32_t height = 0;
+    uint32_t textureVersion = 0;
+    std::vector<uint8_t> rgba;
+};
+
 // THE VERTEX BUFFER SLOTS, and why a dynamic mesh needs more than one.
 //
 // A STATIC mesh is written once, when it is made, before any frame has drawn
@@ -308,6 +325,7 @@ struct RendererVk {
     // cache, the trilinear sampler, the per-frame descriptor pools and
     // uniform rings, and the pipelines keyed like the palette ones.
     std::vector<ColourVk> colours;
+    std::vector<ReplacementVk> replacements;
     VkSampler colourSampler = VK_NULL_HANDLE;
     VkShaderModule enhancedVertModule = VK_NULL_HANDLE;
     VkShaderModule enhancedFragModule = VK_NULL_HANDLE;
@@ -3218,6 +3236,14 @@ void mdk_render_set_gamma(MdkRenderer rr, float gamma) {
 // Resources
 // ---------------------------------------------------------------------------
 
+// Defined with the enhanced look's colour cache below; the seam's
+// replacement entry points sit with the other resource functions.
+namespace {
+void registerReplacement(RendererVk* r, int32_t tex, int32_t pal, int32_t frames, int32_t width,
+                         int32_t height, const uint8_t* rgba, bool image);
+void dropColour(RendererVk* r, int32_t tex, int32_t pal, int32_t frames);
+} // namespace
+
 MdkTextureId mdk_render_create_index_texture(MdkRenderer r_, int32_t w, int32_t h,
                                              const uint8_t* px, const uint8_t* paletteRgba) {
     // The Vulkan backend IGNORES the palette bytes: it samples the index
@@ -3341,6 +3367,18 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
         if (t.isIndex) {
             t.indices.assign(px, px + (size_t)w * (size_t)h);
             t.version++;
+            // A changed texture shows its expansion again: its material
+            // replacements (not its canvas images) are stale, as in the
+            // C#'s Changed. Their colour textures rebuild on next draw
+            // through the version check in getColourView.
+            for (size_t i = 0; i < r->replacements.size();) {
+                const ReplacementVk& rep = r->replacements[i];
+                if (rep.used && !rep.image && rep.tex == t_) {
+                    r->replacements.erase(r->replacements.begin() + (int)i);
+                } else {
+                    i++;
+                }
+            }
         }
         // Retired, not destroyed: a frame already on the queue may still be
         // sampling this view through a set that was retired a few lines above.
@@ -3354,6 +3392,17 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
     }
 }
 
+void mdk_render_replace_colour(MdkRenderer r_, MdkTextureId texture, MdkPaletteId palette,
+                               int32_t frames, int32_t width, int32_t height,
+                               const uint8_t* rgba) {
+    registerReplacement(asVk(r_), texture, palette, frames, width, height, rgba, false);
+}
+
+void mdk_render_replace_image(MdkRenderer r_, MdkTextureId texture, MdkPaletteId palette,
+                              int32_t width, int32_t height, const uint8_t* rgba) {
+    registerReplacement(asVk(r_), texture, palette, 1, width, height, rgba, true);
+}
+
 void mdk_render_release_texture(MdkRenderer r_, MdkTextureId t_) {
     RendererVk* r = asVk(r_);
     if (!r || t_ < 0 || t_ >= (int32_t)r->textures.size() || !r->textures[t_].used) {
@@ -3363,6 +3412,16 @@ void mdk_render_release_texture(MdkRenderer r_, MdkTextureId t_) {
     // destroyed. A released id may be reused, so those sets must not
     // survive the release.
     forgetDescriptorSets(r, t_, -1);
+    // Its replacements and built colour textures name it; a reused id must
+    // not inherit them.
+    for (size_t i = 0; i < r->replacements.size();) {
+        if (r->replacements[i].used && r->replacements[i].tex == t_) {
+            dropColour(r, t_, r->replacements[i].pal, r->replacements[i].frames);
+            r->replacements.erase(r->replacements.begin() + (int)i);
+        } else {
+            i++;
+        }
+    }
     if (r->textures[t_].arrayView) {
         vkDestroyImageView(r->ctx.device, r->textures[t_].arrayView, nullptr);
         r->textures[t_].arrayView = VK_NULL_HANDLE;
@@ -3383,6 +3442,15 @@ void mdk_render_release_palette(MdkRenderer r_, MdkPaletteId p_) {
         return;
     }
     forgetDescriptorSets(r, -1, p_);
+    // Its replacements and built colour textures name it, as for a texture.
+    for (size_t i = 0; i < r->replacements.size();) {
+        if (r->replacements[i].used && r->replacements[i].pal == p_) {
+            dropColour(r, r->replacements[i].tex, p_, r->replacements[i].frames);
+            r->replacements.erase(r->replacements.begin() + (int)i);
+        } else {
+            i++;
+        }
+    }
     retireImage(r, r->palettes[p_].image, r->palettes[p_].memory, r->palettes[p_].view);
     r->palettes[p_].image = VK_NULL_HANDLE;
     r->palettes[p_].memory = VK_NULL_HANDLE;
@@ -3725,6 +3793,99 @@ bool buildColourImage(RendererVk* r, int32_t w, int32_t h, int32_t frames,
     return true;
 }
 
+// Drop the built colour texture for a (texture, palette, frames) triple,
+// retiring its image for the frames that may still sample it.
+void dropColour(RendererVk* r, int32_t tex, int32_t pal, int32_t frames) {
+    for (size_t i = 0; i < r->colours.size(); i++) {
+        ColourVk& c = r->colours[i];
+        if (c.used && c.tex == tex && c.pal == pal && c.frames == frames) {
+            retireImage(r, c.image, c.memory, c.view);
+            r->colours.erase(r->colours.begin() + (int)i);
+            return;
+        }
+    }
+}
+
+// The replacement registered for a triple, or null. A replacement whose
+// index texture has changed is stale (the C#'s Changed): it and its built
+// colour texture go, and the expansion returns. Canvas images stay.
+const ReplacementVk* findReplacement(RendererVk* r, int32_t tex, int32_t pal, int32_t frames) {
+    for (size_t i = 0; i < r->replacements.size(); i++) {
+        ReplacementVk& rep = r->replacements[i];
+        if (!rep.used || rep.tex != tex || rep.pal != pal || rep.frames != frames) {
+            continue;
+        }
+        if (!rep.image && tex >= 0 && tex < (int32_t)r->textures.size() &&
+            r->textures[tex].version != rep.textureVersion) {
+            dropColour(r, tex, pal, frames);
+            r->replacements.erase(r->replacements.begin() + (int)i);
+            return nullptr;
+        }
+        return &rep;
+    }
+    return nullptr;
+}
+
+// Whether a canvas image replacement (mdk_render_replace_image) is
+// registered for a (texture, palette) pair: the enhanced canvas draws the
+// image (mode 4) instead of filtering the index texture (mode 3).
+bool hasImageReplacement(RendererVk* r, int32_t tex, int32_t pal) {
+    for (size_t i = 0; i < r->replacements.size(); i++) {
+        const ReplacementVk& rep = r->replacements[i];
+        if (rep.used && rep.image && rep.tex == tex && rep.pal == pal) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A replacement's mip chain: each frame's RGBA into its chain level 0,
+// then the shared box filter (render/colour_mips) builds the rest.
+std::vector<uint8_t> replacementChain(const ReplacementVk& rep) {
+    const int32_t frameBytes = mdk::colourChainSize(rep.width, rep.height);
+    std::vector<uint8_t> chain((size_t)frameBytes * (size_t)rep.frames);
+    const size_t framePixels = (size_t)rep.width * (size_t)rep.height * 4;
+    for (int32_t f = 0; f < rep.frames; f++) {
+        uint8_t* level0 = chain.data() + (size_t)frameBytes * (size_t)f;
+        memcpy(level0, rep.rgba.data() + framePixels * (size_t)f, framePixels);
+        mdk::colourFillChain(level0, rep.width, rep.height);
+    }
+    return chain;
+}
+
+// Register (or re-register) a mod's colour image for a triple. The built
+// colour texture for the triple goes, so the next draw builds this.
+void registerReplacement(RendererVk* r, int32_t tex, int32_t pal, int32_t frames, int32_t width,
+                         int32_t height, const uint8_t* rgba, bool image) {
+    if (!r || !r->ready || !rgba || width <= 0 || height <= 0 || frames <= 0 || tex < 0 ||
+        tex >= (int32_t)r->textures.size() || !r->textures[tex].used || pal < 0 ||
+        pal >= (int32_t)r->palettes.size() || !r->palettes[pal].used) {
+        return;
+    }
+    ReplacementVk rep;
+    rep.used = true;
+    rep.image = image;
+    rep.tex = tex;
+    rep.pal = pal;
+    rep.frames = frames;
+    rep.width = width;
+    rep.height = height;
+    rep.textureVersion = r->textures[tex].version;
+    rep.rgba.assign(rgba, rgba + (size_t)width * (size_t)height * (size_t)frames * 4);
+    for (size_t i = 0; i < r->replacements.size(); i++) {
+        ReplacementVk& old = r->replacements[i];
+        if (old.used && old.tex == tex && old.pal == pal && old.frames == frames) {
+            // A canvas image keeps its image flag when a material
+            // replacement lands on the same triple (the C# keeps _images).
+            rep.image = rep.image || old.image;
+            r->replacements.erase(r->replacements.begin() + (int)i);
+            break;
+        }
+    }
+    r->replacements.push_back(rep);
+    dropColour(r, tex, pal, frames);
+}
+
 // The colour texture for a (texture, palette, frames) triple, built or
 // rebuilt when the index texture's version has moved (bullet holes).
 VkImageView getColourView(RendererVk* r, int32_t tex, int32_t pal, int32_t frames) {
@@ -3740,6 +3901,10 @@ VkImageView getColourView(RendererVk* r, int32_t tex, int32_t pal, int32_t frame
         return VK_NULL_HANDLE;
     }
     const TextureVk& t = r->textures[tex];
+    // A mod's replacement image, when one is registered for this triple,
+    // is the colour texture instead of the expansion (a stale one has
+    // already gone in findReplacement).
+    const ReplacementVk* rep = findReplacement(r, tex, pal, frames);
     for (size_t i = 0; i < r->colours.size(); i++) {
         ColourVk& c = r->colours[i];
         if (c.used && c.tex == tex && c.pal == pal && c.frames == frames) {
@@ -3751,9 +3916,11 @@ VkImageView getColourView(RendererVk* r, int32_t tex, int32_t pal, int32_t frame
             c.memory = VK_NULL_HANDLE;
             c.view = VK_NULL_HANDLE;
             const std::vector<uint8_t> chain =
-                mdk::colourChain(t.indices.data(), t.width, t.height, frames,
-                                 r->palettes[pal].rgba, 1024);
-            if (!buildColourImage(r, t.width, t.height, frames, chain, &c)) {
+                rep ? replacementChain(*rep)
+                    : mdk::colourChain(t.indices.data(), t.width, t.height, frames,
+                                       r->palettes[pal].rgba, 1024);
+            if (!buildColourImage(r, rep ? rep->width : t.width, rep ? rep->height : t.height,
+                                  frames, chain, &c)) {
                 refused("colour texture rebuild for texture %d: the surface draws "
                         "through the original pipeline instead", tex);
                 c.used = false;
@@ -3770,9 +3937,11 @@ VkImageView getColourView(RendererVk* r, int32_t tex, int32_t pal, int32_t frame
     c.frames = frames;
     c.version = t.version;
     const std::vector<uint8_t> chain =
-        mdk::colourChain(t.indices.data(), t.width, t.height, frames,
-                         r->palettes[pal].rgba, 1024);
-    if (!buildColourImage(r, t.width, t.height, frames, chain, &c)) {
+        rep ? replacementChain(*rep)
+            : mdk::colourChain(t.indices.data(), t.width, t.height, frames,
+                               r->palettes[pal].rgba, 1024);
+    if (!buildColourImage(r, rep ? rep->width : t.width, rep ? rep->height : t.height,
+                          frames, chain, &c)) {
         refused("colour texture build for texture %d: the surface draws through "
                 "the original pipeline instead", tex);
         return VK_NULL_HANDLE;
@@ -4314,11 +4483,20 @@ void drawEnhancedCanvas(RendererVk* r, int32_t texture, int32_t palette, int32_t
     }
     const bool textured = texture >= 0 && texture < (int32_t)r->textures.size() &&
                           r->textures[texture].used;
-    const int32_t mode = (textured && palette < 0) ? 4 : 3;
+    // A canvas image given whole by a mod (ReplaceImage) draws as mode 4
+    // through its colour texture; an RGBA texture is mode 4 as before.
+    const bool imageReplacement =
+        textured && palette >= 0 && hasImageReplacement(r, texture, palette);
+    const int32_t mode = (textured && (palette < 0 || imageReplacement)) ? 4 : 3;
     VkImageView colourView = r->dummyColourView;
     VkImageView indexView = r->dummyColourView;
     VkImageView paletteView = r->dummyColourView;
-    if (textured && mode == 4) {
+    if (textured && mode == 4 && imageReplacement) {
+        colourView = getColourView(r, texture, palette, 1);
+        if (!colourView) {
+            return;
+        }
+    } else if (textured && mode == 4) {
         colourView = getRgbaArrayView(r, texture);
         if (!colourView) {
             return;

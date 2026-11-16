@@ -48,6 +48,7 @@ bool MaterialResolver::resolve(int32_t value,
             continue;
         }
         out->texture = texture;
+        out->name = name;
         out->frameCount = texture->frameCount();
         out->pass = pass;
         out->shading = shadingOf(pass, shading_);
@@ -90,6 +91,7 @@ bool MaterialResolver::resolveColour(int32_t index, const formats::Palette& pale
             return false;
         }
         out->texture = nullptr;
+        out->name.clear();
         out->colour = Colour{rgba[index * 4 + 0] * kByteToUnit,
                              rgba[index * 4 + 1] * kByteToUnit,
                              rgba[index * 4 + 2] * kByteToUnit,
@@ -112,6 +114,7 @@ bool MaterialResolver::resolveColour(int32_t index, const formats::Palette& pale
             return false;
         }
         out->texture = nullptr;
+        out->name.clear();
         out->colour = Colour{glass[at][0] * kByteToUnit,
                              glass[at][1] * kByteToUnit,
                              glass[at][2] * kByteToUnit,
@@ -126,6 +129,7 @@ bool MaterialResolver::resolveColour(int32_t index, const formats::Palette& pale
     // The mirrors: the panorama, shifted by rows.
     if (index >= kMirrorFirst && index <= kMirrorLast) {
         out->texture = nullptr;
+        out->name.clear();
         out->colour = Colour{1.0f, 1.0f, 1.0f, 1.0f};
         out->frameCount = 1;
         out->pass = Pass::Mirror;

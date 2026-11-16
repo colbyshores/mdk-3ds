@@ -46,6 +46,11 @@ struct Surface {
     // The texture. Null for a flat colour.
     const formats::Texture* texture = nullptr;
 
+    // The material name the texture was resolved by (empty for a flat
+    // colour). The mods name replacements by it (game/mod_images.h), and
+    // an archive can hold a texture under a different name than its own.
+    std::string name;
+
     // The flat colour, for a surface with no texture.
     Colour colour = {1.0f, 1.0f, 1.0f, 1.0f};
 

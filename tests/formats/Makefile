@@ -28,9 +28,11 @@ SOURCES := \
 	colour_tests.cpp \
 	lighting_tests.cpp \
 	math_lut_tests.cpp \
+	mods_tests.cpp \
 	random_tests.cpp \
 	$(CORE)/util/math_lut.cpp \
 	$(CORE)/util/random.cpp \
+	$(CORE)/util/sha256.cpp \
 	$(CORE)/formats/bin_reader.cpp \
 	$(CORE)/formats/palette.cpp \
 	$(CORE)/formats/texture.cpp \
@@ -47,16 +49,23 @@ SOURCES := \
 	$(CORE)/formats/sni.cpp \
 	$(CORE)/formats/sprite_animation.cpp \
 	$(CORE)/formats/fti.cpp \
+	$(CORE)/formats/png.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/game/level_data.cpp \
 	$(CORE)/formats/font.cpp \
 	$(CORE)/game/enhanced_config.cpp \
 	$(CORE)/game/enhanced_menu.cpp \
 	$(CORE)/game/font_view.cpp \
+	$(CORE)/game/hd_key.cpp \
+	$(CORE)/game/mod_catalog.cpp \
+	$(CORE)/game/mod_images.cpp \
+	$(CORE)/game/mod_info.cpp \
 	$(CORE)/game/level_light.cpp \
 	$(CORE)/render/colour_mips.cpp \
 	$(CORE)/render/post_params.cpp \
-	$(CORE)/render/sun_shadow.cpp
+	$(CORE)/render/sun_shadow.cpp \
+	$(CORE)/render/material_resolver.cpp \
+	$(CORE)/render/surface_cache.cpp
 
 # scripts/pose_cache.cpp is here because game/level_data.cpp calls
 # scripts::forgetPoseCaches(), and a target links whatever a call resolves to.
@@ -113,7 +122,7 @@ $(BUILD)/%.o: %.cpp | $(BUILD)
 
 $(BUILD)/format_tests: $(OBJECTS)
 	@echo "LINK $@"
-	@$(CXX) $(LDFLAGS) $(OBJECTS) -o $@
+	@$(CXX) $(LDFLAGS) $(OBJECTS) -lz -o $@
 	@if ! command -v nm >/dev/null 2>&1; then \
 	    echo "LINK GRAPH: nm is not on PATH, so the link-graph guard cannot run." >&2; \
 	    echo "  refusing to report $@ clean on a check that did not execute." >&2; \

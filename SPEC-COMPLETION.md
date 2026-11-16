@@ -144,9 +144,18 @@ the same batch. One subsystem slice per batch.
    frame-gate arm records an 88.0% ceiling over a measured 86.241% gap
    that is dominated by the lit/post divergence slices (a)–(e) landed
    unmeasured; the row cannot close until that residue is burned down
-   under the shrink-only ceiling. (g) mods / HD-texture path; then
-   the row closes via `ledger_close.py`. Until then `--enhanced` renders
-   the original look and says so through the refusal log.
+   under the shrink-only ceiling. (g) mods / HD-texture path — FIRST
+   BATCH (2026-11-15): the runtime image replacement — `ModInfo` /
+   `ModCatalog` / `HdKey` / `ModImages` in `mdk_core/src/game/`
+   (SHA-256 in `util/sha256`), the Lit-only replacement hook in
+   `SurfaceCache`, the `mdk_render_replace_colour` / `_replace_image`
+   seam (Vulkan colour cache; 3DS no-ops), Linux `--mod` +
+   `$MDK_USER_DIR/mods` wiring, and HUD image replacement. Remaining in
+   (g): Kurt/font/overlay mod consumers, model swap, the settings-file
+   mod states, and HD generation itself (Real-ESRGAN jobs stay the
+   oracle's offline tool). Then the row closes via `ledger_close.py`.
+   Until then `--enhanced` renders the original look and says so
+   through the refusal log.
    **3DS direction (owner directive 2026-11-14):** the original look stays
    the 3DS baseline; enhanced fidelity on the 3DS is best-effort against
    the PC render, built hardware-first — TexEnv combiner stages, ProcTex /

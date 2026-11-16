@@ -172,6 +172,23 @@ MdkPaletteId mdk_render_create_palette(MdkRenderer r, const uint8_t* rgba256);
 void mdk_render_update_texture(MdkRenderer r, MdkTextureId texture,
                                 int32_t width, int32_t height, const uint8_t* pixels);
 
+// Give a (texture, palette) pair a whole colour image instead of the
+// palette expansion (a mod's replacement: the C# Renderer's Replace). The
+// image is `frames` frames of width x height stacked downwards, RGBA8
+// premultiplied, any size; the enhanced look samples it with mips. Kept
+// until the index texture changes (then the expansion returns) or either
+// id is released. The 3DS backend holds no colour textures and ignores it.
+void mdk_render_replace_colour(MdkRenderer r, MdkTextureId texture, MdkPaletteId palette,
+                               int32_t frames, int32_t width, int32_t height,
+                               const uint8_t* rgba);
+
+// Give a canvas image (an index texture through a palette) a whole colour
+// image (a mod's replacement for a HUD/menu picture: the C# Renderer's
+// ReplaceImage). Drawn by the enhanced look's canvas in place of the
+// filtered index texture; kept through palette changes. One frame.
+void mdk_render_replace_image(MdkRenderer r, MdkTextureId texture, MdkPaletteId palette,
+                              int32_t width, int32_t height, const uint8_t* rgba);
+
 // Release one resource. The id is invalid afterwards.
 void mdk_render_release_texture(MdkRenderer r, MdkTextureId texture);
 void mdk_render_release_palette(MdkRenderer r, MdkPaletteId palette);

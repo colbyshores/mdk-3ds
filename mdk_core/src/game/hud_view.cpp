@@ -10,6 +10,7 @@
 #include "formats/palette.h"
 #include "formats/sprite_animation.h"
 #include "formats/texture.h"
+#include "game/mod_images.h"
 
 namespace mdk {
 
@@ -58,8 +59,9 @@ float clampf(float v, float lo, float hi) {
 } // namespace
 
 bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
-                   const formats::Palette& palette) {
+                   const formats::Palette& palette, ModImages* mods) {
     renderer_ = renderer;
+    mods_ = mods;
     palette_ = mdk_render_create_palette(renderer, palette.rgba());
     if (palette_ < 0) {
         return false;
@@ -80,6 +82,16 @@ bool HudView::load(MdkRenderer renderer, const formats::Bni& sprites,
             icon.texture = mdk_render_create_index_texture(
                 renderer, frame.image.width(), frame.image.height() * frame.image.frameCount(),
                 frame.image.indices(), palette.rgba());
+            // A mod's image for this pickup frame (CanvasImages.FrameName).
+            if (mods_ && icon.texture >= 0 && frame.image.frameCount() == 1) {
+                char name[32];
+                std::snprintf(name, sizeof(name), "PICKUPS_%d", (int)i);
+                HdImage image;
+                if (mods_->image(name, frame.image, palette, &image)) {
+                    mdk_render_replace_image(renderer, icon.texture, palette_, image.width,
+                                             image.height, image.rgba.data());
+                }
+            }
             icon.w = (float)frame.image.width();
             icon.h = (float)frame.image.height();
             icon.hotspotX = frame.hotspotX;
@@ -111,6 +123,15 @@ void HudView::loadImage(const formats::Bni& sprites, const char* name, Image* ou
     out->texture = mdk_render_create_index_texture(renderer_, texture.width(),
                                                    texture.height() * texture.frameCount(),
                                                    texture.indices(), palette.rgba());
+    // A mod's image for this picture (CanvasImages.Create): the enhanced
+    // canvas draws it instead of the filtered index texture.
+    if (mods_ && out->texture >= 0 && texture.frameCount() == 1) {
+        HdImage image;
+        if (mods_->image(name, texture, palette, &image)) {
+            mdk_render_replace_image(renderer_, out->texture, palette_, image.width, image.height,
+                                     image.rgba.data());
+        }
+    }
     out->w = (float)texture.width();
     out->h = (float)texture.height();
 }

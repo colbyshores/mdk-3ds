@@ -229,6 +229,46 @@ else
     check "frame gate: the enhanced capture succeeds for the enhanced arm" "ok" "capture-failed"
 fi
 
+# Arm 8: mods (p6 slice g). A fixture mod replacing the HUD's SC_STAT
+# image must change the enhanced frame (the enhanced canvas draws the
+# mod's image, mode 4) and must NOT change the original frame (the
+# original look never sees mods, exactly as the C# only builds ModImages
+# for the enhanced graphics).
+MOD_USER="$WORK/moduser"
+mkdir -p "$MOD_USER/mods/fixture/images"
+printf 'name=Fixture\ndescription=frame gate mod\n' > "$MOD_USER/mods/fixture/mod.txt"
+python3 - "$MOD_USER/mods/fixture/images/SC_STAT.png" <<'PY' 2>/dev/null
+import sys
+from PIL import Image
+Image.new("RGBA", (8, 8), (255, 0, 255, 255)).save(sys.argv[1])
+PY
+MOD_ENH="$WORK/frame.mods.bmp"
+MOD_PLAIN="$WORK/frame.mods.plain.bmp"
+PLAIN_CAP="$WORK/frame.plain.bmp"
+if [ ! -f "$MOD_USER/mods/fixture/images/SC_STAT.png" ]; then
+    skip "frame gate: mods arm (no PIL for the fixture PNG)"
+elif [ -s "$ENH_CAP" ] && \
+   MDK_USER_DIR="$MOD_USER" MDK_FRAME_ENHANCED=1 "$CAPTURE" "$MOD_ENH" >/dev/null 2>&1 && \
+   [ -s "$MOD_ENH" ]; then
+    mod_measure=$(python3 "$COMPARE" "$ENH_CAP" "$MOD_ENH" --measure 2>/dev/null)
+    mod_bad=$(printf '%s' "$mod_measure" | awk '{print $1}')
+    mod_changed=$(python3 - "$mod_bad" <<'PY'
+import sys
+print("1" if float(sys.argv[1]) > 0.0 else "0")
+PY
+)
+    check "frame gate: a mod's image changes the enhanced frame" "1" "$mod_changed"
+    if MDK_USER_DIR="$MOD_USER" "$CAPTURE" "$MOD_PLAIN" >/dev/null 2>&1 && [ -s "$MOD_PLAIN" ] && \
+       "$CAPTURE" "$PLAIN_CAP" >/dev/null 2>&1 && [ -s "$PLAIN_CAP" ]; then
+        python3 "$COMPARE" "$PLAIN_CAP" "$MOD_PLAIN" >/dev/null 2>&1
+        check "frame gate: the same mod leaves the original frame byte-identical" "0" "$?"
+    else
+        check "frame gate: the original captures succeed for the mods arm" "ok" "capture-failed"
+    fi
+else
+    check "frame gate: the enhanced capture succeeds for the mods arm" "ok" "capture-failed"
+fi
+
 if [ "$fails" -ne 0 ]; then
     echo "FRAME GATE: $fails FAILED ($checks checks, $skipped skipped)"
     exit 1

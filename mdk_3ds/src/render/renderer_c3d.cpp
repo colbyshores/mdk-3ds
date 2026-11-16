@@ -1873,6 +1873,14 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     texture.lastUsed = ++renderer->drawCounter;
 }
 
+// The mod system's colour-image replacements: the 3DS holds no enhanced
+// colour textures (the mod system is Linux-only, SPEC.md line 36) and the
+// shared code never registers one here, so these are deliberate no-ops.
+void mdk_render_replace_colour(MdkRenderer, MdkTextureId, MdkPaletteId, int32_t, int32_t,
+                               int32_t, const uint8_t*) {}
+void mdk_render_replace_image(MdkRenderer, MdkTextureId, MdkPaletteId, int32_t, int32_t,
+                              const uint8_t*) {}
+
 void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     RendererC3D* renderer = asC3d(r);
     if (!renderer || t < 0 || (size_t)t >= renderer->textures.size()) {

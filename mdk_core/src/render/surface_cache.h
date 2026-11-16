@@ -40,6 +40,25 @@
 
 namespace mdk {
 
+// A whole colour image replacing a surface's palette expansion (a mod's
+// replacement, game/mod_images.h's HdImage without the owning vector):
+// frames of width x height stacked downwards, RGBA8 premultiplied. The
+// bytes are borrowed for the call only; the backend copies them.
+struct ColourReplacement {
+    int32_t width = 0;
+    int32_t height = 0;
+    int32_t frames = 1;
+    const uint8_t* rgba = nullptr;
+};
+
+// Asks for a Lit surface's colour replacement, or returns false. Called
+// once per (texture, palette) pair, the first time the pair is drawn (the
+// C#'s MaterialResolver.Replace runs as surfaces resolve; here the GPU ids
+// only exist at this point, so this is where the replacement can land).
+typedef bool (*ColourReplacementLookup)(void* user, const Surface& surface,
+                                        const formats::Palette* palette,
+                                        ColourReplacement* out);
+
 class SurfaceCache {
 public:
     SurfaceCache() = default;
@@ -71,8 +90,24 @@ public:
     // of it in a second view is how the two trees drift.
     MdkTextureId surfaceId(const Surface& surface, const formats::Palette* palette);
 
+    // The colour-replacement lookup (the mods; null: none, the shipped
+    // behaviour). Set once by the frontend before the first surface draws.
+    void setColourReplacementLookup(ColourReplacementLookup lookup, void* user) {
+        replacementLookup_ = lookup;
+        replacementUser_ = user;
+    }
+
+    // (texture, palette) pairs asked about, and replacements found: the
+    // C# Viewer's "textures X of Y" summary line.
+    int32_t replacementLooked() const { return (int32_t)replacementLooked_.size(); }
+    int32_t replacementFound() const { return replacementFound_; }
+
 private:
     MdkRenderer renderer_ = nullptr;
+    ColourReplacementLookup replacementLookup_ = nullptr;
+    void* replacementUser_ = nullptr;
+    std::map<std::pair<const formats::Texture*, const formats::Palette*>, bool> replacementLooked_;
+    int32_t replacementFound_ = 0;
 
     // A map, not a vector: these are borrowed pointers into LevelData, and a
     // map's elements do not move when later entries are inserted.
