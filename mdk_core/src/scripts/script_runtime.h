@@ -376,6 +376,13 @@ public:
     // FindAdvanceSpot (ScriptRuntime.cs:2413, opcode 197): advance toward Kurt
     // (command 197) via a DTI type-5 spot, or stop (clears MoveCommand).
     void findAdvanceSpot(MdkObject* obj);
+    // PickWaypoint8 (ScriptRuntime.cs:2338, opcode 221): pick one of the arena's
+    // DTI type-8 waypoints by weighted random (command 221) and make it the
+    // object's destination. Mode 1 keeps the waypoints whose id is within 3 of the
+    // nearest one; any other mode keeps those 50-500 units away. Clears MoveCommand
+    // when nothing qualifies. Command 221 has no per-tick consumer in the oracle's
+    // UpdateCommand, so setting the destination is the whole effect.
+    void pickWaypoint8(MdkObject* obj, int32_t mode);
     // C# MayCommand (command_objects / if_count_objects): the receiver has no
     // other leader of a higher priority and obeys the sender's priority.
     static bool mayCommand(const MdkObject* sender, const MdkObject* receiver);

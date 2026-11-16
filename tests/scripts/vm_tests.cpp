@@ -101,6 +101,7 @@ const int32_t kSpawnDebris = 136;
 const int32_t kFanCreate = 142;
 const int32_t kFanRemove = 143;
 const int32_t kFanEnable = 190;
+const int32_t kPickWaypoint8 = 221;
 const int32_t kDebugMsg = 77;
 const int32_t kAlarm = 15;
 const int32_t kIfAlarm = 27;
@@ -2965,6 +2966,121 @@ void testFanLifecycle(scripts::ScriptRuntime& runtime, LevelData& level) {
     runProgram(runtime, remove, &obj);
     CHECK(!sawUnimplemented(kFanRemove));
     CHECK(runtime.fans.count() == before);
+}
+
+// Opcode 221 (pick_waypoint8): a weighted-random pick of the arena's DTI type-8
+// waypoints becomes the destination (command 221), and the opcode BRANCHES on
+// whether one was found (ScriptVm.cs:1268 `return Branch(..., MoveCommand == 221)`).
+// The synthetic arena "WPTEST" (injected in main() before any runtime is built)
+// holds five waypoints; Kurt is at the origin (no player bound) and the object
+// sits at the origin too, so toKurt == distance and the weights are the C#'s
+// 500-distance form. Each scenario runs on a fresh runtime (seed 1) so the RNG
+// state at the draw is known and the pick is reproducible.
+//   id 0  (30,0,0)   dist 30   mode0 no (<50)   mode1 yes (nearest, anchor)
+//   id 1  (100,0,0)  dist 100  mode0 yes        mode1 yes
+//   id 2  (300,0,0)  dist 300  mode0 yes        mode1 yes
+//   id 3  (120,0,0)  dist 120  mode0 yes        mode1 yes
+//   id 9  (150,0,0)  dist 150  mode0 yes        mode1 no  (id 9 from nearest)
+//   id 21 (600,0,0)  dist 600  mode0 no (>500)  mode1 no  (id 21 from nearest)
+void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
+    const std::string arena = "WPTEST";
+    auto inSet = [](const Vec3& p, const Vec3* set, size_t n) {
+        for (size_t i = 0; i < n; i++) {
+            if (p.x == set[i].x && p.y == set[i].y && p.z == set[i].z) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // mode 0 keeps the 50-500 window (drops id 0 at 30 and id 21 at 600); mode 1
+    // keeps the ids within 3 of the nearest (id 0), so it keeps id 0 (30,0,0) but
+    // drops id 9 (150,0,0). The two sets differ on exactly those two waypoints.
+    const Vec3 mode0Set[] = {Vec3{100, 0, 0}, Vec3{300, 0, 0}, Vec3{120, 0, 0}, Vec3{150, 0, 0}};
+    const Vec3 mode1Set[] = {Vec3{30, 0, 0}, Vec3{100, 0, 0}, Vec3{300, 0, 0}, Vec3{120, 0, 0}};
+
+    // pick: reset global[1], run pick_waypoint8 `mode`, branch to "found" when a
+    // waypoint is chosen (global[1] = 1) else fall through (global[1] stays 0).
+    auto runPick = [&](scripts::ScriptRuntime& rt, int32_t mode, scripts::MdkObject& obj) {
+        Code code;
+        code.u8(kSetVar).u8(kGlobal).u8(1).f32(0.0f);
+        code.u8(kPickWaypoint8).u8(mode).u8(kActionGoto).target("found");
+        code.end();
+        code.label("found");
+        code.u8(kSetVar).u8(kGlobal).u8(1).f32(1.0f);
+        code.end();
+        runProgram(rt, code, &obj);
+    };
+    auto fresh = [&]() { return scripts::ScriptRuntime(levelData, cmi, 1, bank, nullptr, nullptr); };
+
+    // Mode 0: a waypoint in the 50-500 window is chosen, the branch is taken, the
+    // destination is one of the three qualifying waypoints, and the stuck flag clears.
+    {
+        scripts::ScriptRuntime rt = fresh();
+        scripts::MdkObject obj;
+        obj.arena = arena;
+        obj.position = Vec3{0.0f, 0.0f, 0.0f};
+        obj.contact_flags = scripts::MdkObject::ContactStuck;
+        runPick(rt, 0, obj);
+        CHECK(!sawUnimplemented(kPickWaypoint8));
+        CHECK(obj.move_command == 221);
+        CHECK(rt.globalVariables[1] == 1.0f);  // branch taken
+        CHECK(inSet(obj.move_destination, mode0Set, 4));
+        CHECK(obj.waypoint.x == obj.move_destination.x &&
+              obj.waypoint.y == obj.move_destination.y &&
+              obj.waypoint.z == obj.move_destination.z);
+        CHECK((obj.contact_flags & scripts::MdkObject::ContactStuck) == 0);
+    }
+
+    // Mode 1: only the waypoints within 3 of the nearest id (0) qualify, so the
+    // destination is never the id-9 waypoint at (150,0,0).
+    {
+        scripts::ScriptRuntime rt = fresh();
+        scripts::MdkObject obj;
+        obj.arena = arena;
+        obj.position = Vec3{0.0f, 0.0f, 0.0f};
+        runPick(rt, 1, obj);
+        CHECK(obj.move_command == 221);
+        CHECK(inSet(obj.move_destination, mode1Set, 4));
+    }
+
+    // An unknown mode (2) takes the mode-0 window (the C#'s `mode != 1`).
+    {
+        scripts::ScriptRuntime rt = fresh();
+        scripts::MdkObject obj;
+        obj.arena = arena;
+        obj.position = Vec3{0.0f, 0.0f, 0.0f};
+        runPick(rt, 2, obj);
+        CHECK(obj.move_command == 221);
+        CHECK(inSet(obj.move_destination, mode0Set, 4));
+    }
+
+    // No qualifying waypoint (an arena with no type-8 records): MoveCommand is
+    // cleared to 0 and the branch is NOT taken.
+    {
+        scripts::ScriptRuntime rt = fresh();
+        scripts::MdkObject none;
+        none.arena = "NO_SUCH_ARENA";
+        none.position = Vec3{0.0f, 0.0f, 0.0f};
+        none.move_command = 5;  // a prior command the opcode must clear
+        runPick(rt, 0, none);
+        CHECK(none.move_command == 0);
+        CHECK(rt.globalVariables[1] == 0.0f);  // branch not taken
+    }
+
+    // Determinism: two fresh runtimes on the same seed make the same pick.
+    {
+        scripts::ScriptRuntime rt1 = fresh();
+        scripts::ScriptRuntime rt2 = fresh();
+        scripts::MdkObject a, b;
+        a.arena = b.arena = arena;
+        a.position = b.position = Vec3{0.0f, 0.0f, 0.0f};
+        runPick(rt1, 0, a);
+        runPick(rt2, 0, b);
+        CHECK(a.move_command == 221 && b.move_command == 221);
+        CHECK(a.move_destination.x == b.move_destination.x);
+        CHECK(a.move_destination.y == b.move_destination.y);
+        CHECK(a.move_destination.z == b.move_destination.z);
+    }
 }
 
 // Opcodes 128/132/136 (attach_effect, spawn_effect, spawn_debris)
@@ -7453,6 +7569,30 @@ int main() {
     // No preload: the programs play nothing, and the C# fixture only builds a
     // mixer around an unloaded bank too.
 
+    // The synthetic waypoint arena for pick_waypoint8 (opcode 221). Injected here,
+    // before ANY runtime is built, so no runtime has cached a record pointer into
+    // the arenas vector that setArenas is about to replace. The demo builds a Dti
+    // by hand the same way (the C# LevelData.Arenas is a mutable list).
+    {
+        std::vector<Dti::ArenaEntry> arenas = levelData.dti().arenas();
+        Dti::ArenaEntry wp;
+        wp.name = "WPTEST";
+        const int32_t wpId[6] = {0, 1, 2, 3, 9, 21};
+        const float wpPos[6][3] = {
+            {30, 0, 0}, {100, 0, 0}, {300, 0, 0}, {120, 0, 0}, {150, 0, 0}, {600, 0, 0}};
+        for (int i = 0; i < 6; i++) {
+            Dti::Record r;
+            r.type = 8;  // DtiWaypoint
+            r.id = wpId[i];
+            r.position[0] = wpPos[i][0];
+            r.position[1] = wpPos[i][1];
+            r.position[2] = wpPos[i][2];
+            wp.records.push_back(r);
+        }
+        arenas.push_back(wp);
+        levelData.mutableDti().setArenas(arenas);
+    }
+
     scripts::ScriptRuntime runtime(&levelData, &cmi, 1, &bank, nullptr, nullptr);
     runtime.option = 1;  // the oracle's default (ScriptRuntime.cs:214)
 
@@ -7549,6 +7689,8 @@ int main() {
     printf("PASS HudMessageQueues\n");
     testFanLifecycle(runtime, levelData);
     printf("PASS FanLifecycle\n");
+    testPickWaypoint8(&levelData, &cmi, &bank);
+    printf("PASS PickWaypoint8\n");
     testEffectsLifecycle(runtime);
     testEffectsViewGeometry();
     printf("PASS EffectsLifecycle\n");

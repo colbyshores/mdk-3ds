@@ -2162,6 +2162,115 @@ void ScriptRuntime::findAdvanceSpot(MdkObject* obj) {
     obj->contact_flags &= ~MdkObject::ContactStuck;
 }
 
+// PickWaypoint8 (ScriptRuntime.cs:2338, opcode 221): one of the arena's DTI
+// type-8 waypoints, chosen by weighted random, becomes the destination (command
+// 221). Every waypoint weighs at least 1 inside the mode's window and 0 outside
+// it: 500 - distance (2D), plus 200 - distance-to-Kurt when Kurt is closer than
+// 200, plus 250 when the object is nearer to Kurt than the waypoint is and the
+// waypoint is farther from Kurt than from the object, less half the height
+// difference. Mode 1 keeps the waypoints whose id is within 3 of the nearest one
+// (nearest by 3D distance); any other mode keeps those 50-500 units away (2D).
+// The single RNG draw (when any waypoint qualifies) matches the C# one-for-one.
+// Command 221 is not a case in the oracle's UpdateCommand, so setting the
+// destination is the whole effect -- there is no per-tick consumer to port.
+void ScriptRuntime::pickWaypoint8(MdkObject* obj, int32_t mode) {
+    const int32_t kPickCommand = 221;
+    const uint32_t kDtiWaypoint = 8;
+    auto distance2d = [](const Vec3& a, const Vec3& b) {
+        float dx = a.x - b.x;
+        float dy = a.y - b.y;
+        return sqrtf(dx * dx + dy * dy);
+    };
+    auto distance3d = [](const Vec3& a, const Vec3& b) {
+        float dx = a.x - b.x;
+        float dy = a.y - b.y;
+        float dz = a.z - b.z;
+        return sqrtf(dx * dx + dy * dy + dz * dz);
+    };
+    obj->move_command = 0;
+
+    // OfType(ArenaRecords(arena), DtiWaypoint): the arena's type-8 records in DTI
+    // order. arenaRecords caches the list; a null list is the C#'s empty list.
+    std::vector<const formats::Dti::Record*> records;
+    const std::vector<formats::Dti::Record>* all = arenaRecords(obj->arena);
+    if (all != nullptr) {
+        for (size_t i = 0; i < all->size(); i++) {
+            if ((*all)[i].type == kDtiWaypoint) {
+                records.push_back(&(*all)[i]);
+            }
+        }
+    }
+
+    // Mode 1's nearest waypoint id, by 3D distance from the object.
+    int32_t nearestId = 0;
+    if (mode == 1) {
+        float nearest = 999999.0f;
+        for (size_t i = 0; i < records.size(); i++) {
+            const formats::Dti::Record& r = *records[i];
+            Vec3 spot{r.position[0], r.position[1], r.position[2]};
+            float distance = distance3d(obj->position, spot);
+            if (distance < nearest) {
+                nearest = distance;
+                nearestId = r.id;
+            }
+        }
+    }
+
+    // One weight per waypoint and their total. The distance from the object to
+    // Kurt is loop-invariant (the C# recomputes it every iteration; same value).
+    std::vector<int32_t> weights;
+    weights.reserve(records.size());
+    int32_t total = 0;
+    const float objToKurt = distance2d(obj->position, kurtPosition_);
+    for (size_t i = 0; i < records.size(); i++) {
+        const formats::Dti::Record& r = *records[i];
+        Vec3 spot{r.position[0], r.position[1], r.position[2]};
+        float distance = distance2d(spot, obj->position);
+        int32_t weight = 0;
+        int32_t idDelta = r.id - nearestId;
+        if (idDelta < 0) {
+            idDelta = -idDelta;
+        }
+        const bool nearNearest = mode == 1 && idDelta <= 3;
+        const bool inWindow = mode != 1 && distance >= 50.0f && distance <= 500.0f;
+        if (nearNearest || inWindow) {
+            float toKurt = distance2d(spot, kurtPosition_);
+            // Round is ScriptMath.Round (MidpointRounding.AwayFromZero), which the
+            // C# reaches unqualified via `using static ScriptMath`; C roundf matches
+            // it exactly, MathF.Round's banker's form (roundToEven above) does not.
+            weight = (int32_t)roundf(500.0f - distance);
+            if (toKurt < 200.0f) {
+                weight = (int32_t)roundf((float)weight + 200.0f - toKurt);
+            }
+            if (objToKurt < distance && toKurt > distance) {
+                weight += 250;
+            }
+            weight = (int32_t)roundf((float)weight - fabsf(spot.z - obj->position.z) * 0.5f);
+            weight = weight > 1 ? weight : 1;
+        }
+        weights.push_back(weight);
+        total += weight;
+    }
+
+    if (total == 0) {
+        return;
+    }
+
+    int32_t pick = rng_.next(total);
+    for (size_t i = 0; i < records.size(); i++) {
+        pick -= weights[i];
+        if (pick >= 0) {
+            continue;
+        }
+        const formats::Dti::Record& r = *records[i];
+        obj->move_command = kPickCommand;
+        obj->move_destination = Vec3{r.position[0], r.position[1], r.position[2]};
+        obj->waypoint = obj->move_destination;
+        obj->contact_flags &= ~MdkObject::ContactStuck;
+        return;
+    }
+}
+
 // FindCoverSpot (ScriptRuntime.cs:2447, opcode 46): a DTI cover spot (type 5) in
 // the object's arena that Kurt cannot see (a blocked ray Kurt->spot) but the
 // object can reach (a clear ray obj->spot), within [9,400] of the object, nearer

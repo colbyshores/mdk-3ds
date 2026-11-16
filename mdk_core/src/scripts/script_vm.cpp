@@ -1852,6 +1852,9 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
         case 197:  // find_advance_spot: walk toward Kurt via a DTI advance spot
             runtime_.findAdvanceSpot(obj);
             return branch(obj, ins, obj->move_command == 197);
+        case 221:  // pick_waypoint8: weighted-random DTI type-8 waypoint (command 221)
+            runtime_.pickWaypoint8(obj, ival(op(ins, 0)));
+            return branch(obj, ins, obj->move_command == 221);
         case 245: {  // find_object: select a named same-arena object
             const std::vector<ScriptValue>& args = listval(op(ins, 0));
             if (!args.empty()) {

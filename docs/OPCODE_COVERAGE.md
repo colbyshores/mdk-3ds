@@ -344,12 +344,16 @@ Kurt's and the objects' motion ask `Fans::query` from their own
 slices). 128/132/136 (attach_effect, spawn_effect, spawn_debris)
 followed with the Effects pool (`scripts/effects.{h,cpp}`: wounds,
 drops, bubbles, pops, trails; their billboard draw is the view's next
-slice). Remaining 15:
+slice). 221 (`pick_waypoint8`) landed next: a weighted-random pick of the
+arena's DTI type-8 waypoints becomes the destination (command 221) and the
+opcode branches on whether one was found. It never fires in levels 3–8, so
+the goldens are unchanged; it is covered by a synthetic `WPTEST` arena in
+`vm_tests`. Remaining 14:
 28,
 114,
 130, 131, 158, 159, 167,
 171, 172, 178, 181, 184,
-209, 221, 224
+209, 224
 
 **Reachability, re-probed to t30000 (2026-10-28, `tick1 probe 30000`):**
 after the Debris slice the only remaining opcode that fires anywhere in
@@ -419,7 +423,6 @@ By blocking subsystem (carried grouping, corrected for this batch):
   and 210 are also unidentified downstream slots, but their C# behavior is a
   pure value write (see the value-slot batch above).
 - **Needs its subsystem or data the tree does not have (deferred with cause):**
-  waypoint tables 221,
   item-chain links (29/49 landed with the chain-link batch). 219
   (`if_gun_aim`) landed with the gun-aim batch: the C# case only aims the gun
   and answers whether it fires, so no projectile subsystem is needed.

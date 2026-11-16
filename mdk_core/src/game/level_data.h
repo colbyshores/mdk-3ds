@@ -56,6 +56,11 @@ public:
     int32_t number() const { return number_; }
 
     const formats::Dti& dti() const { return dti_; }
+    // The DTI, writable. The 1996 demo builds a Dti by hand rather than parsing
+    // one (the C# LevelData.Arenas is a mutable list), so the record tables have
+    // to be settable from outside; the synthetic DTI fixtures in tests/scripts
+    // append their own arena records through this, exactly as the demo does.
+    formats::Dti& mutableDti() { return dti_; }
     formats::Mto& mto() { return mto_; }
     const formats::TextureArchive& levelTextures() const { return levelTextures_; }
 
