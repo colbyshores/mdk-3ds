@@ -105,6 +105,10 @@ public:
                  Surface* out,
                  Pass pass = Pass::Solid) const;
 
+    // A flat colour (sRGB) of this resolver's shading (a mod's model
+    // surface without an image: the C#'s MaterialResolver.Flat).
+    bool resolveFlat(const Colour& colour, Surface* out, Pass pass) const;
+
     // Whether a material value is drawn, without touching a GPU.
     static bool isDrawn(int32_t value,
                         const std::vector<std::string>& names,

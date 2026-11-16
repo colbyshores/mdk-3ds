@@ -135,6 +135,8 @@ set(SOURCES
     ${CORE}/src/game/mod_catalog.cpp
     ${CORE}/src/game/mod_images.cpp
     ${CORE}/src/game/mod_info.cpp
+    ${CORE}/src/game/mod_models.cpp
+    ${CORE}/src/game/part_fit.cpp
     ${CORE}/src/util/sha256.cpp
     ${CORE}/src/game/level_light.cpp
     ${CORE}/src/game/level_view.cpp

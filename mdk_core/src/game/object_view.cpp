@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <string.h>
 
 #include "formats/model.h"
 #include "formats/texture.h"
 #include "formats/texture_archive.h"
 #include "formats/vector_types.h"
+#include "game/mod_models.h"
 
 namespace mdk {
 
@@ -89,8 +91,46 @@ Surface shineSurface(const Surface& surface, bool shines) {
     return surface;
 }
 
+namespace {
+
+// A swap's surfaces through a look, resolved once per layout (the C#'s
+// SurfacesOf): image, else named material, else flat colour; plus white
+// at the end for triangles with no material.
+struct SwapSurfaces {
+    std::vector<Surface> surfaces;
+    std::vector<const HdImage*> images;
+};
+
+void resolveSwapSurfaces(const ModelSwap& swap, const formats::Model& model,
+                         const ObjectLook& look, const MaterialResolver& resolver,
+                         SwapSurfaces* out) {
+    const std::vector<SwapSurface>& from = swap.surfaces();
+    for (size_t i = 0; i < from.size(); i++) {
+        const SwapSurface& s = from[i];
+        Surface surface;
+        const HdImage* image = nullptr;
+        if (s.hasImage) {
+            resolver.resolveFlat(s.colour, &surface, Pass::DoubleSided);
+            image = &s.image;
+        } else if (!resolver.resolve(0, std::vector<std::string>{s.name}, *look.palette,
+                                     look.archives, &surface, Pass::DoubleSided)) {
+            (void)model;
+            resolver.resolveFlat(s.colour, &surface, Pass::DoubleSided);
+        }
+        out->surfaces.push_back(surface);
+        out->images.push_back(image);
+    }
+    Surface white;
+    resolver.resolveFlat(Colour{1.0f, 1.0f, 1.0f, 1.0f}, &white, Pass::DoubleSided);
+    out->surfaces.push_back(white);
+    out->images.push_back(nullptr);
+}
+
+} // namespace
+
 bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
-                       const MaterialResolver& resolver, ObjectLayout* out) {
+                       const MaterialResolver& resolver, ObjectLayout* out,
+                       const ModelSwap* swap) {
     if (out == nullptr || look.palette == nullptr) {
         return false;
     }
@@ -108,9 +148,61 @@ bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
         names.push_back(model.materials[i].nameString());
     }
 
+    SwapSurfaces swapSurfaces;
+    const bool hasSwapSurfaces = swap != nullptr;
+    if (hasSwapSurfaces) {
+        resolveSwapSurfaces(*swap, model, look, resolver, &swapSurfaces);
+    }
+
     int32_t sequence = 0;
     for (int32_t p = 0; p < parts; p++) {
         const formats::Model::Part& part = model.partList[(size_t)p];
+        // A replaced part draws the swap's mesh in its place (the C#'s
+        // AddSwapped): batches keyed by resolved surface + image, in the
+        // part's own place among the model's triangles.
+        if (swap != nullptr && swap->part(p) != nullptr) {
+            const SwapMesh& mesh = *swap->part(p);
+            for (size_t t = 0; t < mesh.materials.size(); t++) {
+                const int32_t index = mesh.materials[t];
+                const size_t pick =
+                    (index >= 0 && (size_t)index < swapSurfaces.surfaces.size() - 1)
+                        ? (size_t)index
+                        : swapSurfaces.surfaces.size() - 1;
+                const Surface& surface = swapSurfaces.surfaces[pick];
+                const HdImage* image = swapSurfaces.images[pick];
+
+                size_t batchIndex = 0;
+                for (; batchIndex < out->batches.size(); batchIndex++) {
+                    const ObjectBatch& existing = out->batches[batchIndex];
+                    if (existing.swapped && existing.image == image &&
+                        sameSurface(existing.surface, surface)) {
+                        break;
+                    }
+                }
+                if (batchIndex == out->batches.size()) {
+                    ObjectBatch batch;
+                    batch.surface = surface;
+                    batch.swapped = true;
+                    batch.image = image;
+                    batch.partCorners.assign((size_t)parts, 0);
+                    batch.firstTriangle.assign((size_t)parts, kObjectUnseen);
+                    out->batches.push_back(batch);
+                }
+                ObjectBatch& batch = out->batches[batchIndex];
+                if (sequence < batch.firstTriangle[(size_t)p]) {
+                    batch.firstTriangle[(size_t)p] = sequence;
+                }
+                batch.partCorners[(size_t)p] += kTriangleVertices;
+                for (int32_t k = 0; k < kTriangleVertices; k++) {
+                    const int32_t vertex = mesh.triangles[t * (size_t)kTriangleVertices + (size_t)k];
+                    batch.parts.push_back(p);
+                    batch.indices.push_back(vertex);
+                    batch.uvs.push_back(mesh.uvs[(size_t)vertex]);
+                }
+            }
+            sequence += (int32_t)part.triangleMaterials.size();
+            continue;
+        }
         for (int32_t t = 0; t < (int32_t)part.triangleMaterials.size(); t++, sequence++) {
             Surface surface;
             if (!resolver.resolve(part.triangleMaterials[(size_t)t], names, *look.palette,
@@ -179,10 +271,14 @@ ObjectLayout* ObjectView::layoutOf(const formats::Model* model, const ObjectLook
         return found->second.get();
     }
     std::unique_ptr<ObjectLayout> made(new ObjectLayout());
-    if (!buildObjectLayout(*model, look, *resolver_, made.get())) {
-        // The C# caches the null too, so a model with nothing to draw is not
-        // rebuilt every draw. The empty layout is dropped; the map keeps a null.
-        made.reset();
+    {
+        const ModelSwap* swap = swaps_ ? swaps_->of(*model) : nullptr;
+        made->swap = swap;
+        if (!buildObjectLayout(*model, look, *resolver_, made.get(), swap)) {
+            // The C# caches the null too, so a model with nothing to draw is not
+            // rebuilt every draw. The empty layout is dropped; the map keeps a null.
+            made.reset();
+        }
     }
     return layouts_.emplace(key, std::move(made)).first->second.get();
 }
@@ -218,6 +314,24 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
     // model, so a part count that disagrees means the pose is not this model's.
     if (pose.size() != obj.model->partList.size()) {
         return false;
+    }
+
+    // A swapped model's replaced parts follow this pose (the C#'s
+    // swap.Pose(pose, hidden)): fit them before any corner is streamed.
+    if (layout->swap != nullptr) {
+        // Only replaced parts are converted (the fit reads nothing else);
+        // this is the modded path, never the shipped frame's hot loop.
+        std::vector<std::vector<Vec3>> posed(pose.size());
+        for (size_t p = 0; p < pose.size(); p++) {
+            if (layout->swap->part((int32_t)p) == nullptr) {
+                continue;
+            }
+            posed[p].reserve(pose[p].size());
+            for (size_t v = 0; v < pose[p].size(); v++) {
+                posed[p].push_back(Vec3{pose[p][v].x, pose[p][v].y, pose[p][v].z});
+            }
+        }
+        layout->swap->pose(posed, hidden);
     }
 
     // The C#'s `TextureFrame >= 0 ? TextureFrame : 0` and its Glow.Shines test.
@@ -276,7 +390,13 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
             // The slot advances for every corner the batch keeps, exactly as the
             // C#'s `at++` does; only the write is conditional, and only for the
             // stale-pose case the guards above exist for.
-            if (index >= 0 && (size_t)index < vertices.size()) {
+            if (batch.swapped && layout->swap != nullptr && layout->swap->part(part) != nullptr) {
+                const SwapMesh& mesh = *layout->swap->part(part);
+                if (index >= 0 && (size_t)index < mesh.vertices.size()) {
+                    stream->vertices[(size_t)(first + slot)] =
+                        Vertex{layout->swap->vertex(part, index), batch.uvs[c], kVertexWhite};
+                }
+            } else if (index >= 0 && (size_t)index < vertices.size()) {
                 const formats::Vec3f& position = vertices[(size_t)index];
                 stream->vertices[(size_t)(first + slot)] =
                     Vertex{Vec3{position.x, position.y, position.z}, batch.uvs[c], kVertexWhite};
@@ -289,6 +409,7 @@ bool ObjectView::addObject(const scripts::MdkObject& obj, const ObjectLook& look
         draw.first = first;
         draw.corners = corners;
         draw.surface = shineSurface(batch.surface, shines);
+        draw.image = batch.image;
         draw.palette = look.palette;
         draw.frame = frame;
         draw.world = transform;

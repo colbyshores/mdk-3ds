@@ -83,6 +83,17 @@ bool MaterialResolver::resolve(int32_t value,
     return false;
 }
 
+bool MaterialResolver::resolveFlat(const Colour& colour, Surface* out, Pass pass) const {
+    out->texture = nullptr;
+    out->name.clear();
+    out->colour = colour;
+    out->frameCount = 1;
+    out->pass = pass;
+    out->shading = shadingOf(pass, shading_);
+    out->rowShift = 0.0f;
+    return true;
+}
+
 bool MaterialResolver::resolveColour(int32_t index, const formats::Palette& palette, Surface* out,
                                      Pass pass) const {
     if (index < kSpecialFirst) {

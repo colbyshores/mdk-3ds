@@ -1495,10 +1495,14 @@ bool Glb::write(const Scene& scene, std::vector<uint8_t>* outBytes, std::string*
         return (int32_t)views.size() - 1;
     };
 
-    // An accessor of some bytes.
+    // An accessor of some bytes. The view's length is the BYTE count
+    // (elements x components x 4 here), never the element count the
+    // accessor itself carries -- confusing the two truncates the BIN
+    // chunk and writes views a reader must refuse as past the end.
     auto addAccessor = [&](const uint8_t* data, int32_t count, int32_t componentType, const char* type,
                            int32_t target, const float* min, const float* max) -> int32_t {
-        const int32_t view = addView(data, count, target);
+        const int32_t components = type[0] == 'V' ? (type[3] == '3' ? 3 : 2) : 1;
+        const int32_t view = addView(data, count * components * 4, target);
         JsonWriter accessor;
         accessor.startObject();
         accessor.number("bufferView", view);

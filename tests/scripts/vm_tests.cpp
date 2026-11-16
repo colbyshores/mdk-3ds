@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include <deque>
 #include <map>
@@ -34,6 +35,7 @@
 #include "formats/case_insensitive_path.h"
 #include "formats/cmi.h"
 #include "formats/dti.h"
+#include "formats/glb.h"
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
 #include "formats/model.h"
@@ -42,6 +44,8 @@
 #include "game/camera_roll.h"
 #include "game/follow_camera.h"
 #include "game/level_data.h"
+#include "game/mod_models.h"
+#include "game/object_view.h"
 #include "game/player.h"
 #include "util/math_minmax.h"
 #include "layer_tests.h"
@@ -6575,6 +6579,83 @@ void testTriggerShowBoxDrawsAndTheMinusOneBoxClears(LevelData* levelData, const 
 // evicts least-recently-gotten sounds, pinned ones never. The budgets here
 // are half of one sound, so every assertion is about WHO survives, never
 // about how big a footstep happens to be.
+// A mod's model swap in the object pass: the layout draws the swap's
+// mesh for the replaced part (fitted to the rest pose here), in one
+// batch, and the unswapped model beside it keeps its own vertices.
+void testSwappedModelStreamsSwapVertices(LevelData& level) {
+    // The fixture mod: models/TEST.glb with a BODY node (as in the
+    // formats tests), written by the project's own GLB writer.
+    char root[] = "/tmp/mdk-vm-swap-XXXXXX";
+    if (!mkdtemp(root)) {
+        CHECK(false);
+        return;
+    }
+    const std::string modelsDir = std::string(root) + "/models";
+    mkdir(modelsDir.c_str(), 0755);
+    Glb::Scene scene;
+    Glb::Mesh mesh;
+    mesh.name = "BODY";
+    Glb::Primitive primitive;
+    primitive.positions = {0, 0, 0, 2, 0, 0, 0, 0, -2, 0, 2, 0};
+    primitive.uvs = {0, 0, 1, 0, 0, 1, 1, 1};
+    primitive.indices = {0, 1, 2, 0, 3, 1};
+    primitive.material = 0;
+    mesh.primitives.push_back(primitive);
+    scene.meshes.push_back(mesh);
+    Glb::Material material;
+    material.name = "SKIN";
+    material.colour[0] = 1.0f;
+    material.colour[1] = 0.0f;
+    material.colour[2] = 1.0f;
+    material.colour[3] = 1.0f;
+    scene.materials.push_back(material);
+    std::vector<uint8_t> bytes;
+    std::string error;
+    CHECK(Glb::write(scene, &bytes, &error));
+    FILE* file = fopen((modelsDir + "/TEST.glb").c_str(), "wb");
+    CHECK(file != nullptr);
+    fwrite(bytes.data(), 1, bytes.size(), file);
+    fclose(file);
+
+    formats::Model model;
+    model.name = "TEST";
+    formats::Model::Part part;
+    std::snprintf(part.name, sizeof(part.name), "BODY");
+    part.vertices = {{0, 0, 0}, {2, 0, 0}, {0, 2, 0}, {0, 0, 2}};
+    part.triangleIndices = {0, 1, 2, 0, 1, 3};
+    part.triangleMaterials = {0, 0};
+    model.partList.push_back(part);
+
+    ModModels models(std::vector<std::string>{root}, 7);
+    MaterialResolver resolver(&level.dti(), Shading::Original);
+    ObjectView view(resolver);
+    view.setSwaps(&models);
+
+    ObjectLook look;
+    look.palette = &level.dti().palette();
+    if (!level.arenas().empty()) {
+        look.archives = level.archivesOf(level.arenas()[0]);
+    }
+
+    scripts::MdkObject obj;
+    obj.model = &model;
+    ObjectStream stream;
+    CHECK(view.addObject(obj, look, Mat4::identity(), &stream));
+    CHECK(stream.draws.size() == 1);
+    CHECK(stream.vertices.size() == 6);
+    // The swap's MDK-converted vertices, not the model's own: glTF
+    // (0,0,-2) arrived as (0,2,0).
+    bool sawConverted = false;
+    for (size_t i = 0; i < stream.vertices.size(); i++) {
+        const Vec3& p = stream.vertices[i].pos;
+        if (p.x == 0.0f && p.y == 2.0f && p.z == 0.0f) {
+            sawConverted = true;
+        }
+    }
+    CHECK(sawConverted);
+    CHECK(models.found().size() == 1);
+}
+
 void testBankBudgetEvictsUnpinned(const MdkData& data) {
     audio::SoundBank bank;
     CHECK(audio::SoundBank::forLevel(&bank, data, 7));
@@ -7380,6 +7461,8 @@ int main() {
     printf("PASS TriggerBoxesPreloadAndPullDoors\n");
     testTriggerShowBoxDrawsAndTheMinusOneBoxClears(&levelData, &cmi, &bank);
     printf("PASS TriggerShowBoxDrawsAndTheMinusOneBoxClears\n");
+    testSwappedModelStreamsSwapVertices(levelData);
+    printf("PASS SwappedModelStreamsSwapVertices\n");
     testBankBudgetEvictsUnpinned(data);
     printf("PASS BankBudgetEvictsUnpinned\n");
     testTeleportKurtLevel4(data);

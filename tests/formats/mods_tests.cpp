@@ -21,6 +21,10 @@
 #include "game/mod_catalog.h"
 #include "game/mod_images.h"
 #include "game/mod_info.h"
+#include "formats/glb.h"
+#include "formats/model.h"
+#include "game/mod_models.h"
+#include "game/part_fit.h"
 #include "render/material_resolver.h"
 #include "render/surface_cache.h"
 #include "test_support.h"
@@ -195,6 +199,18 @@ MDK_TEST(modCatalogOrdersAndEnables) {
     MDK_CHECK_STR_EQ(only[0], root + "/alpha");
 }
 
+MDK_TEST(modStatesParseSettingsText) {
+    const std::vector<std::pair<std::string, mdk::ModState>> states =
+        mdk::modStatesFromSettingsText(
+            "master_volume=1\r\nmod.clean-walls=Off\nmod.hd-textures=On\n"
+            "mod.bogus=Sideways\nother=Off\nmod.=Off\n");
+    MDK_CHECK_EQ((int)states.size(), 2);
+    MDK_CHECK_STR_EQ(states[0].first, "clean-walls");
+    MDK_CHECK(states[0].second == mdk::ModState::Off);
+    MDK_CHECK_STR_EQ(states[1].first, "hd-textures");
+    MDK_CHECK(states[1].second == mdk::ModState::On);
+}
+
 MDK_TEST(modImagesLookupOrderAndPremultiply) {
     const std::string modA = g_root + "/images/modA";
     const std::string modB = g_root + "/images/modB";
@@ -328,6 +344,115 @@ MDK_TEST(surfaceCacheReplacesLitSurfacesOncePerPair) {
     cache.surfaceId(original, &palette);
     MDK_CHECK_EQ(mdk_test_replaceCalls, 1);
     MDK_CHECK_EQ(cache.replacementLooked(), 1);
+}
+
+namespace {
+
+// A model with one named part: a tetrahedron at the origin.
+mdk::formats::Model swapModel() {
+    mdk::formats::Model model;
+    model.name = "TEST";
+    mdk::formats::Model::Part part;
+    std::snprintf(part.name, sizeof(part.name), "BODY");
+    part.vertices = {{0, 0, 0}, {2, 0, 0}, {0, 2, 0}, {0, 0, 2}};
+    part.triangleIndices = {0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 3};
+    part.triangleMaterials = {0, 0, 0, 0};
+    model.partList.push_back(part);
+    mdk::formats::Model::Material material;
+    std::snprintf(material.name, sizeof(material.name), "SKIN");
+    model.materials.push_back(material);
+    return model;
+}
+
+// The same tetrahedron as a glTF scene (Y up), one node named BODY.
+mdk::formats::Glb::Scene swapScene() {
+    mdk::formats::Glb::Scene scene;
+    mdk::formats::Glb::Mesh mesh;
+    mesh.name = "BODY";
+    mdk::formats::Glb::Primitive primitive;
+    primitive.positions = {0, 0, 0, 2, 0, 0, 0, 0, -2, 0, 2, 0};
+    primitive.uvs = {0, 0, 1, 0, 0, 1, 1, 1};
+    primitive.indices = {0, 1, 2, 0, 3, 1};
+    primitive.material = 0;
+    mesh.primitives.push_back(primitive);
+    scene.meshes.push_back(mesh);
+    mdk::formats::Glb::Mesh stray;
+    stray.name = "NOPE";
+    stray.primitives.push_back(primitive);
+    scene.meshes.push_back(stray);
+    mdk::formats::Glb::Material material;
+    material.name = "SKIN";
+    material.colour[0] = 0.25f;
+    material.colour[1] = 0.5f;
+    material.colour[2] = 1.0f;
+    material.colour[3] = 1.0f;
+    scene.materials.push_back(material);
+    return scene;
+}
+
+} // namespace
+
+MDK_TEST(modelSwapMatchesPartsByName) {
+    const mdk::formats::Model model = swapModel();
+    std::vector<std::string> unknown;
+    mdk::ModelSwap* swap = mdk::ModelSwap::of(swapScene(), model, &unknown);
+    MDK_CHECK(swap != nullptr);
+    MDK_CHECK_EQ((int)unknown.size(), 1);
+    MDK_CHECK_STR_EQ(unknown[0], "NOPE");
+    MDK_CHECK(swap->part(0) != nullptr);
+    // glTF (0,0,-2) is MDK (0, 2, 0): the third vertex of the node.
+    const mdk::SwapMesh& mesh = *swap->part(0);
+    MDK_CHECK_EQ((int)mesh.vertices.size(), 4);
+    MDK_CHECK(mesh.vertices[2].x == 0.0f && mesh.vertices[2].y == 2.0f &&
+              mesh.vertices[2].z == 0.0f);
+    MDK_CHECK_EQ((int)mesh.materials.size(), 2);
+    MDK_CHECK_EQ((int)swap->surfaces().size(), 1);
+    MDK_CHECK_STR_EQ(swap->surfaces()[0].name, "SKIN");
+    delete swap;
+}
+
+MDK_TEST(partFitFollowsTranslationAndRotation) {
+    const mdk::formats::Model model = swapModel();
+    const mdk::formats::Model::Part& part = model.partList[0];
+    std::vector<mdk::Vec3> rest;
+    for (size_t i = 0; i < part.vertices.size(); i++) {
+        rest.push_back(mdk::Vec3{part.vertices[i].x, part.vertices[i].y, part.vertices[i].z});
+    }
+    mdk::PartFit fit(rest, part.triangleIndices);
+
+    // Rest pose: identity.
+    float m[16];
+    fit.fit(rest, m);
+    MDK_CHECK(m[0] == 1.0f && m[5] == 1.0f && m[12] == 0.0f);
+
+    // Translated by (5, -3, 2): the translation row carries it.
+    std::vector<mdk::Vec3> moved = rest;
+    for (size_t i = 0; i < moved.size(); i++) {
+        moved[i].x += 5.0f;
+        moved[i].y -= 3.0f;
+        moved[i].z += 2.0f;
+    }
+    fit.fit(moved, m);
+    MDK_CHECK(m[12] > 4.99f && m[12] < 5.01f && m[13] < -2.99f && m[13] > -3.01f &&
+              m[14] > 1.99f && m[14] < 2.01f);
+}
+
+MDK_TEST(modModelsLoadsLazilyFromFixture) {
+    const std::string mod = g_root + "/modelmod";
+    std::vector<uint8_t> bytes;
+    std::string error;
+    MDK_CHECK(mdk::formats::Glb::write(swapScene(), &bytes, &error));
+    writeBytes(mod + "/models/TEST.glb", bytes);
+
+    mdk::ModModels models(std::vector<std::string>{mod}, 3);
+    const mdk::formats::Model model = swapModel();
+    const mdk::ModelSwap* swap = models.of(model);
+    MDK_CHECK(swap != nullptr);
+    MDK_CHECK(swap->part(0) != nullptr);
+    MDK_CHECK_EQ((int)models.found().size(), 1);
+    MDK_CHECK_STR_EQ(models.found()[0], "TEST");
+    // Asked again: the same swap, not a second read.
+    MDK_CHECK(models.of(model) == swap);
 }
 
 // The fixture root, made once for the file-backed cases above.

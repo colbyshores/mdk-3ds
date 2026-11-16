@@ -49,6 +49,7 @@ SOURCES := \
 	$(CORE)/formats/sni.cpp \
 	$(CORE)/formats/sprite_animation.cpp \
 	$(CORE)/formats/fti.cpp \
+	$(CORE)/formats/glb.cpp \
 	$(CORE)/formats/png.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/game/level_data.cpp \
@@ -60,6 +61,8 @@ SOURCES := \
 	$(CORE)/game/mod_catalog.cpp \
 	$(CORE)/game/mod_images.cpp \
 	$(CORE)/game/mod_info.cpp \
+	$(CORE)/game/mod_models.cpp \
+	$(CORE)/game/part_fit.cpp \
 	$(CORE)/game/level_light.cpp \
 	$(CORE)/render/colour_mips.cpp \
 	$(CORE)/render/post_params.cpp \

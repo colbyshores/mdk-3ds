@@ -36,6 +36,7 @@
 #include "game/level_light.h"
 #include "game/mod_catalog.h"
 #include "game/mod_images.h"
+#include "game/mod_models.h"
 #include "game/level_view.h"
 #include "game/follow_camera.h"
 #include "game/hud_view.h"
@@ -517,6 +518,7 @@ int main(int argc, char** argv) {
     // enhanced graphics.
     mdk::ModCatalog modCatalog;
     mdk::ModImages modImages;
+    mdk::ModModels modModels;
     ModReplacementSource modSource;
     bool modsReady = false;
     if (enhancedLook) {
@@ -532,10 +534,30 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        // The settings file's mod states (settings.cfg beside the mods:
+        // `mod.<folder>=Off` switches a mod off between runs, the
+        // oracle's Settings). --mod still wins for its run.
+        std::vector<std::pair<std::string, mdk::ModState>> modStates;
+        {
+            const std::string settingsPath =
+                (userDir && userDir[0]) ? std::string(userDir) + "/settings.cfg"
+                                        : "settings.cfg";
+            if (std::FILE* file = std::fopen(settingsPath.c_str(), "rb")) {
+                std::string text;
+                char chunk[1024];
+                size_t got;
+                while ((got = std::fread(chunk, 1, sizeof(chunk), file)) > 0) {
+                    text.append(chunk, got);
+                }
+                std::fclose(file);
+                modStates = mdk::modStatesFromSettingsText(text);
+            }
+        }
         const std::vector<std::string> folders =
             onlyModsSet ? modCatalog.onlyFolders(onlyMods)
-                        : modCatalog.enabledFolders({});
+                        : modCatalog.enabledFolders(modStates);
         modImages = mdk::ModImages::open(folders, true, levelNumber);
+        modModels = mdk::ModModels(folders, levelNumber);
         modSource.mods = &modImages;
         modsReady = true;
         std::printf("[main] mods: %d found, %d enabled in %s\n",
@@ -711,6 +733,9 @@ int main(int argc, char** argv) {
     mdk::MaterialResolver objectResolver(&level.dti(),
                                          enhancedLook ? mdk::Shading::Lit : mdk::Shading::Original);
     mdk::ObjectView objectView(objectResolver);
+    if (modsReady) {
+        objectView.setSwaps(&modModels);
+    }
     mdk::ObjectDraw objectDraw;
     mdk::ObjectStream objectStream;
     std::map<std::string, mdk::ObjectLook> objectLooks;

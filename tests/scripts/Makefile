@@ -61,6 +61,11 @@ COMMON_SOURCES := \
 	$(CORE)/game/game_state.cpp \
 	$(CORE)/game/kurt.cpp \
 	$(CORE)/game/object_view.cpp \
+	$(CORE)/game/mod_info.cpp \
+	$(CORE)/game/mod_models.cpp \
+	$(CORE)/game/part_fit.cpp \
+	$(CORE)/formats/glb.cpp \
+	$(CORE)/formats/png.cpp \
 	$(CORE)/game/player.cpp \
 	$(CORE)/render/arena_scene.cpp \
 	$(CORE)/render/camera_builder.cpp \
@@ -143,11 +148,11 @@ $(BUILD)/%.o: %.cpp | $(BUILD)
 
 $(BUILD)/tick1: $(OBJECTS)
 	@echo "LINK $@"
-	@$(CXX) $(LDFLAGS) $(OBJECTS) -o $@
+	@$(CXX) $(LDFLAGS) $(OBJECTS) -lz -o $@
 
 $(BUILD)/vm_tests: $(OBJECTS_VM)
 	@echo "LINK $@"
-	@$(CXX) $(LDFLAGS) $(OBJECTS_VM) -o $@
+	@$(CXX) $(LDFLAGS) $(OBJECTS_VM) -lz -o $@
 
 # INCLUDE BOTH OBJECT LISTS. `vm_tests` is built from OBJECTS_VM, and its own
 # .d is only the link-time one; the per-file dependency files of OBJECTS_VM were

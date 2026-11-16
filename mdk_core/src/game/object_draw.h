@@ -41,6 +41,8 @@
 
 #include <stdint.h>
 
+#include <map>
+
 #include "game/object_view.h"
 #include "render/render.h"
 #include "render/surface_cache.h"
@@ -117,7 +119,12 @@ private:
     // Makes the mesh big enough for `need` vertices, replacing it when it is not.
     bool ensure(MdkRenderer renderer, int32_t need);
 
+    // A mod surface's picture as a GPU texture, made once per image
+    // (the image's bytes are the renderer's RGBA source, no palette).
+    MdkTextureId imageTexture(MdkRenderer renderer, const HdImage* image);
+
     MdkMeshId mesh_ = -1;
+    std::map<const HdImage*, MdkTextureId> imageTextures_;
     int32_t capacity_ = 0;
     int32_t attemptedCapacity_ = 0;
     bool failed_ = false;

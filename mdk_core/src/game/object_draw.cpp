@@ -6,6 +6,8 @@
 
 #include <string.h>
 
+#include "game/hd_key.h"
+
 namespace mdk {
 
 namespace {
@@ -16,6 +18,18 @@ namespace {
 const int32_t kInitialStreamCapacity = 4096;
 
 } // namespace
+
+MdkTextureId ObjectDraw::imageTexture(MdkRenderer renderer, const HdImage* image) {
+    std::map<const HdImage*, MdkTextureId>::const_iterator found = imageTextures_.find(image);
+    if (found != imageTextures_.end()) {
+        return found->second;
+    }
+    const MdkTextureId id =
+        mdk_render_create_rgba_texture(renderer, image->width, image->height * image->frames,
+                                       image->rgba.data());
+    imageTextures_[image] = id;
+    return id;
+}
 
 bool ObjectDraw::ensure(MdkRenderer renderer, int32_t need) {
     if (mesh_ >= 0 && need <= capacity_) {
@@ -99,8 +113,14 @@ void ObjectDraw::draw(MdkRenderer renderer, SurfaceCache* surfaces, const Object
         // Mat4 and MeshDraw::world are both row-major row-vector 4x4s.
         memcpy(draw.world, queued.world.m, sizeof(draw.world));
 
-        draw.material.texture = surfaces->surfaceId(queued.surface, queued.palette);
-        draw.material.palette = surfaces->paletteId(queued.palette);
+        if (queued.image != nullptr) {
+            // A mod surface's own picture: its RGBA texture, no palette.
+            draw.material.texture = imageTexture(renderer, queued.image);
+            draw.material.palette = -1;
+        } else {
+            draw.material.texture = surfaces->surfaceId(queued.surface, queued.palette);
+            draw.material.palette = surfaces->paletteId(queued.palette);
+        }
         draw.material.frame_count = queued.surface.frameCount;
         draw.material.pass = queued.surface.pass;
         draw.material.shading = queued.surface.shading;

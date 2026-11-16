@@ -160,11 +160,15 @@ the same batch. One subsystem slice per batch.
    `$MDK_USER_DIR/mods` wiring, and HUD image replacement. Kurt's
    consumer followed (2026-11-15): his draws take the look's shading
    (Sprite under enhanced, as the oracle's KurtSprite), and a mod's
-   per-frame image replaces his colour texture at first draw.
-   Remaining in (g): font/overlay mod consumers (the font's is blocked
-   on atlas layout: this port wraps the glyph atlas for the PICA200's
-   1024px limit where the oracle's mod image assumes its single row),
-   model swap, the settings-file mod states, and HD generation itself
+   per-frame image replaces his colour texture at first draw. The
+   settings-file mod states (`mod.<folder>=Off`) and the model swap
+   (`ModModels`/`ModelSwap`/`PartFit`, fitted poses, image surfaces)
+   followed the same night; the batch also fixed the GLB writer's
+   view-length bug (element count written as byte count, truncating
+   every written file's BIN). Remaining in (g): font/overlay mod
+   consumers (the font's is blocked on atlas layout: this port wraps
+   the glyph atlas for the PICA200's 1024px limit where the oracle's
+   mod image assumes its single row), and HD generation itself
    (Real-ESRGAN jobs stay the oracle's offline tool). Then the row closes via `ledger_close.py`.
    Until then `--enhanced` renders the original look and says so
    through the refusal log.

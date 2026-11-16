@@ -53,6 +53,10 @@
 
 namespace mdk {
 
+class ModModels;
+class ModelSwap;
+struct HdImage;
+
 namespace formats {
 class Model;
 class Palette;
@@ -88,6 +92,14 @@ struct ObjectBatch {
     // The surface: the texture (or flat colour), its frame count, the pass.
     Surface surface;
 
+    // A mod's replaced part's batch (Source::Mod): its corners' vertices
+    // come from the swap's mesh through its fitted pose, not the model's
+    // own pose. `image`, when set, is the surface's own picture (the GPU
+    // texture is made from it at draw); the surface then only carries
+    // the shading and pass.
+    bool swapped = false;
+    const HdImage* image = nullptr;
+
     // Per corner: the part its vertex comes from, and the vertex's index
     // within that part. `parts` and `indices` are the same length as `uvs`.
     std::vector<int32_t> parts;
@@ -106,6 +118,10 @@ struct ObjectLayout {
     std::vector<ObjectBatch> batches;
     std::vector<int32_t> order;
     std::vector<int32_t> keys;
+
+    // The model's mod replacement, when one replaced a part (its fitted
+    // poses are the layout's scratch, fitted per draw in addObject).
+    const ModelSwap* swap = nullptr;
 };
 
 // Whether `part` is hidden by the `hidden` mask (the C#'s IsHidden). The shift
@@ -136,7 +152,8 @@ Surface shineSurface(const Surface& surface, bool shines);
 // arena scene's is. The pass is the C#'s Pass.DoubleSided: models show both
 // faces.
 bool buildObjectLayout(const formats::Model& model, const ObjectLook& look,
-                       const MaterialResolver& resolver, ObjectLayout* out);
+                       const MaterialResolver& resolver, ObjectLayout* out,
+                       const ModelSwap* swap = nullptr);
 
 // One batch's draw, as the object pass queues it (the C#'s DrawCommand, for the
 // object pass). The surface is the FORMAT's surface, not a GPU one: the backend
@@ -165,6 +182,10 @@ struct ObjectStreamDraw {
     // Material.PaletteId). A queued draw always names one: a layout is keyed by the
     // palette, and a look without one lays out nothing.
     const formats::Palette* palette = nullptr;
+
+    // A mod surface's own picture, when the surface has one: the GPU
+    // half makes its texture from this and draws with no palette.
+    const HdImage* image = nullptr;
 
     // The animated texture's frame (the C#'s Draw `frame` argument).
     int32_t frame = 0;
@@ -238,10 +259,15 @@ public:
     // The C#'s Preload: lay a model out before it is drawn (a level's load).
     void preload(const formats::Model* model, const ObjectLook& look) { (void)layoutOf(model, look); }
 
+    // The mods' model replacements (the C#'s ObjectView.Swaps; null:
+    // none, the shipped behaviour). Set before the first layout.
+    void setSwaps(ModModels* swaps) { swaps_ = swaps; }
+
     void clear() { layouts_.clear(); }
 
 private:
     const MaterialResolver* resolver_;
+    ModModels* swaps_ = nullptr;
     // A map, not a vector: layoutOf hands out a pointer into it, and a map's
     // elements do not move when later entries are inserted.
     std::map<std::pair<const formats::Model*, const formats::Palette*>,
