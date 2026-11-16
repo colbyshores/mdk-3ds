@@ -28,6 +28,13 @@ enum class ModState {
     Off,
 };
 
+// The settings file's mod states (`mod.<folder>=On|Off` lines of the
+// user folder's settings.cfg; Settings.cs's ModPrefix): the states a
+// catalog's enabledFolders() consumes. Other lines are not this
+// function's business and are skipped, as are states the enum does not
+// name (the oracle's Enum.TryParse gate).
+std::vector<std::pair<std::string, ModState>> modStatesFromSettingsText(const std::string& text);
+
 // The mods found under one mods/ root.
 class ModCatalog {
 public:

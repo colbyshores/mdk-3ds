@@ -82,6 +82,36 @@ ModCatalog::enabledFolders(const std::vector<std::pair<std::string, ModState>>& 
     return folders;
 }
 
+std::vector<std::pair<std::string, ModState>> modStatesFromSettingsText(const std::string& text) {
+    std::vector<std::pair<std::string, ModState>> states;
+    size_t at = 0;
+    while (at <= text.size()) {
+        const size_t newline = text.find('\n', at);
+        std::string line =
+            text.substr(at, newline == std::string::npos ? std::string::npos : newline - at);
+        if (!line.empty() && line[line.size() - 1] == '\r') {
+            line.erase(line.size() - 1);
+        }
+        const size_t equals = line.find('=');
+        if (equals != std::string::npos) {
+            const std::string name = line.substr(0, equals);
+            const std::string value = line.substr(equals + 1);
+            if (name.compare(0, 4, "mod.") == 0 && name.size() > 4) {
+                const std::string word = modLower(value);
+                if (word == "on" || word == "off") {
+                    states.push_back(std::pair<std::string, ModState>(
+                        name.substr(4), word == "on" ? ModState::On : ModState::Off));
+                }
+            }
+        }
+        if (newline == std::string::npos) {
+            break;
+        }
+        at = newline + 1;
+    }
+    return states;
+}
+
 std::vector<std::string> ModCatalog::onlyFolders(const std::vector<std::string>& folders) const {
     std::vector<std::pair<std::string, ModState>> states;
     for (size_t i = 0; i < mods_.size(); i++) {
