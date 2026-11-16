@@ -861,9 +861,18 @@ def backend_mesh_atoms():
 
 def _read_backend_mesh_atoms():
     try:
-        with open(os.path.join(ROOT, "mdk_3ds", "src", "render",
-                               "renderer_c3d.cpp"), errors="replace") as fh:
+        backend = os.path.join(ROOT, "mdk_3ds", "src", "render", "renderer_c3d.cpp")
+        with open(backend, errors="replace") as fh:
             text = fh.read()
+        # The renderer is one translation unit assembled from c3d/*.inc
+        # (the 2026-11-15 split): expand those includes so this coupling
+        # reads the same text the compiler does.
+        def _sub(match):
+            inc = os.path.join(os.path.dirname(backend), match.group(1))
+            with open(inc, errors="replace") as fh:
+                return fh.read()
+
+        text = re.sub(r'^#include "((?:c3d|vulkan)/[^"]+\.inc)"', _sub, text, flags=re.M)
     except OSError:
         return None
     m = re.search(r"mdk_render_create_dynamic_mesh[ \t]*\([^;{]*\)[ \t]*\{", text)

@@ -303,6 +303,8 @@ VkImageView getRgbaArrayView(RendererVk* r, int32_t tex) {
         viewInfo.subresourceRange.layerCount = 1;
         if (vkCreateImageView(r->ctx.device, &viewInfo, nullptr, &t.arrayView) !=
             VK_SUCCESS) {
+            refused("colour array view for texture %d: the draw that asked for it "
+                    "is dropped", tex);
             return VK_NULL_HANDLE;
         }
     }
