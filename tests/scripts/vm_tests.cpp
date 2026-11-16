@@ -1915,8 +1915,9 @@ void testIfIsRiddenBranchesOnRidesRidden(LevelData* levelData, const Cmi* cmi,
 
 // BlastDamage (Items.cs:788), the falloff at the core of Items.Blast, ported ahead
 // of the dispatcher. Pin it with hand-computed values: full damage at the centre,
-// linear falloff to the radius, and 0 beyond it. No arena is entered, so the wall
-// test is clear and only the falloff is exercised.
+// linear falloff to the radius, and 0 beyond it. No arena is current, so the wall
+// test raycasts the level's whole arena set (raycastPoint's fallback); the short
+// test segments are clear in the shipped geometry, so only the falloff is exercised.
 void testBlastDamageFalloff(LevelData* levelData, const Cmi* cmi, audio::SoundBank* bank) {
     scripts::ScriptRuntime runtime(levelData, cmi, 1, bank, nullptr, nullptr);
     // Box centre (1,1,1), size sqrt(12); its half-diagonal (sqrt(3)) covers the
