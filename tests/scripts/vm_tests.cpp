@@ -3021,7 +3021,7 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
     auto fresh = [&]() { return scripts::ScriptRuntime(levelData, cmi, 1, bank, nullptr, nullptr); };
 
     // Mode 0: a waypoint in the 50-500 window is chosen, the branch is taken, the
-    // destination is one of the three qualifying waypoints, and the stuck flag clears.
+    // destination is one of the four qualifying waypoints, and the stuck flag clears.
     {
         scripts::ScriptRuntime rt = fresh();
         scripts::MdkObject obj;
@@ -3037,12 +3037,6 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
               obj.waypoint.y == obj.move_destination.y &&
               obj.waypoint.z == obj.move_destination.z);
         CHECK((obj.contact_flags & scripts::MdkObject::ContactStuck) == 0);
-        // The weighted draw is the opcode's substance, so pin it, not just the
-        // qualifying set: on one seed-1 runtime the successive draws (the RNG
-        // advances each call) must reproduce the oracle's weighted sequence. A
-        // picker that ignored the weights and took the first qualifying record
-        // would return (100,0,0) every time and fail this; so would a uniform or
-        // last-qualifying picker. This is the oracle's output for this fixture.
         // The weighted draw is the opcode's substance, so pin it, not just the
         // qualifying set: on one seed-1 runtime the successive draws (the RNG
         // advances each call) must reproduce the oracle's weighted sequence. Here
@@ -3072,16 +3066,62 @@ void testPickWaypoint8(LevelData* levelData, Cmi* cmi, audio::SoundBank* bank) {
         CHECK(obj.move_command == 221);
         CHECK(inSet(obj.move_destination, mode1Set, 4));
         // Same weight pin on the mode-1 id-window set (id 0/1/2/3). id 0 and id 1
-        // carry the weight and the two far id-window waypoints (id 2/id 3) are
-        // weight-1, so the sequence mixes only (30,0,0) and (50,0,0). This rejects
-        // a first-qualifying picker (always (30,0,0)), a last-qualifying picker
-        // (always (0,498,0)), and a uniform picker (which would reach id 2/id 3).
+        // carry the weight and the two far id-window waypoints are near-floor (id 2
+        // weight-1, id 3 weight-2), so the sequence mixes only (30,0,0) and
+        // (50,0,0). This rejects a first-qualifying picker (always (30,0,0)), a
+        // last-qualifying picker (always (0,498,0)), and a uniform picker (which
+        // would reach id 2/id 3).
         const float seq[8][3] = {{30, 0, 0}, {30, 0, 0}, {50, 0, 0}, {50, 0, 0},
                                  {30, 0, 0}, {30, 0, 0}, {50, 0, 0}, {30, 0, 0}};
         for (int d = 0; d < 8; d++) {
             runPick(rt, 1, obj);
             CHECK(obj.move_command == 221);
             CHECK(same(obj.move_destination, seq[d]));
+        }
+    }
+
+    // Formula-sensitive companion on the near-equal-weight arena WPTEST2. WPTEST's
+    // dominant fixture pins the selection distribution (it rejects a uniform
+    // picker) but is invariant to the weight-formula terms: dropping the +250 bump,
+    // the toKurt<200 near-Kurt term, or the 500-distance base leaves id 1 dominant
+    // and reproduces WPTEST's pins. Here every qualifying waypoint sits on the
+    // x-axis, so each takes the +250 bump and the near-Kurt term and the weights
+    // are near-equal; the pinned seed-1 sequence below changes if any term is
+    // dropped, so this guards the formula that WPTEST cannot.
+    {
+        const std::string arena2 = "WPTEST2";
+        {
+            scripts::ScriptRuntime rt = fresh();
+            scripts::MdkObject obj;
+            obj.arena = arena2;
+            obj.position = Vec3{0.0f, 0.0f, 0.0f};
+            runPick(rt, 0, obj);
+            CHECK(obj.move_command == 221);
+            CHECK(rt.globalVariables[1] == 1.0f);
+            CHECK(same(obj.move_destination, (const float[]){100, 0, 0}));
+            const float seq[8][3] = {{100, 0, 0}, {300, 0, 0}, {150, 0, 0}, {120, 0, 0},
+                                     {300, 0, 0}, {300, 0, 0}, {150, 0, 0}, {100, 0, 0}};
+            for (int d = 0; d < 8; d++) {
+                runPick(rt, 0, obj);
+                CHECK(obj.move_command == 221);
+                CHECK(same(obj.move_destination, seq[d]));
+            }
+        }
+        {
+            scripts::ScriptRuntime rt = fresh();
+            scripts::MdkObject obj;
+            obj.arena = arena2;
+            obj.position = Vec3{0.0f, 0.0f, 0.0f};
+            runPick(rt, 1, obj);
+            CHECK(obj.move_command == 221);
+            CHECK(same(obj.move_destination, (const float[]){30, 0, 0}));
+            const float seq[8][3] = {{30, 0, 0}, {100, 0, 0}, {120, 0, 0}, {300, 0, 0},
+                                     {100, 0, 0}, {100, 0, 0}, {120, 0, 0}, {30, 0, 0}};
+            for (int d = 0; d < 8; d++) {
+                runPick(rt, 1, obj);
+                CHECK(obj.move_command == 221);
+                CHECK(same(obj.move_destination, seq[d]));
+            }
         }
     }
 
@@ -7639,6 +7679,27 @@ int main() {
             wp.records.push_back(r);
         }
         arenas.push_back(wp);
+        // A second arena with NEAR-EQUAL weights (all waypoints on the x-axis, so
+        // every qualifying waypoint takes the +250 bump and the near-Kurt term).
+        // WPTEST's dominant fixture pins the selection DISTRIBUTION (it rejects a
+        // uniform picker) but is invariant to the weight-formula terms; WPTEST2's
+        // near-equal weights make its pinned sequence change if any term (+250,
+        // the toKurt<200 bump, or the 500-distance base) is dropped, so the two
+        // arenas together guard both the distribution and the formula.
+        Dti::ArenaEntry wp2;
+        wp2.name = "WPTEST2";
+        const float wp2Pos[6][3] = {
+            {30, 0, 0}, {100, 0, 0}, {300, 0, 0}, {120, 0, 0}, {150, 0, 0}, {600, 0, 0}};
+        for (int i = 0; i < 6; i++) {
+            Dti::Record r;
+            r.type = 8;  // DtiWaypoint
+            r.id = wpId[i];
+            r.position[0] = wp2Pos[i][0];
+            r.position[1] = wp2Pos[i][1];
+            r.position[2] = wp2Pos[i][2];
+            wp2.records.push_back(r);
+        }
+        arenas.push_back(wp2);
         levelData.mutableDti().setArenas(arenas);
     }
 
