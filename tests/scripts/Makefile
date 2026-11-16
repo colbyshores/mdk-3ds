@@ -61,6 +61,7 @@ COMMON_SOURCES := \
 	$(CORE)/game/game_state.cpp \
 	$(CORE)/game/kurt.cpp \
 	$(CORE)/game/object_view.cpp \
+	$(CORE)/game/effects_view.cpp \
 	$(CORE)/game/mod_info.cpp \
 	$(CORE)/game/mod_models.cpp \
 	$(CORE)/game/part_fit.cpp \

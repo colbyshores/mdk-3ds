@@ -140,6 +140,8 @@ set(SOURCES
     ${CORE}/src/util/sha256.cpp
     ${CORE}/src/game/level_light.cpp
     ${CORE}/src/game/level_view.cpp
+    ${CORE}/src/game/effects_draw.cpp
+    ${CORE}/src/game/effects_view.cpp
     ${CORE}/src/game/object_draw.cpp
     ${CORE}/src/game/object_view.cpp
     ${CORE}/src/game/player.cpp

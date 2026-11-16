@@ -30,10 +30,10 @@
 //     it. What the HUD would show is what the port has: health, the skull and its
 //     fade, the flashes, and an empty inventory -- the pickup and target-bar
 //     writers land with their own subsystems and the HUD must not invent them.
-//   * The ropes, the sniper scope and the effects — `_ropes.Draw`, `_sniper.Draw`
-//     and `_effects.Draw` between the objects and Kurt in C# Viewer.DrawScene
-//     (Viewer.cs:705-707). None of the three is ported, so the frame here goes
-//     arena, objects, Kurt, and stops where the port's list stops.
+//   * The ropes and the sniper scope — `_ropes.Draw` and `_sniper.Draw`
+//     between the objects and Kurt in C# Viewer.DrawScene (Viewer.cs:705-706).
+//     Neither is ported. The effects (`_effects.Draw`, Viewer.cs:707) ARE:
+//     pieces and sprite effects draw after the objects, before Kurt.
 //
 // THE OBJECT PASS IS HERE. The runtime's objects are drawn between the arena and
 // Kurt, which is the C#'s order (Viewer.cs:702-708), at the blended transform, and
@@ -73,6 +73,8 @@
 #include "game/kurt_sprite.h"
 #include "game/level_data.h"
 #include "game/level_view.h"
+#include "game/effects_draw.h"
+#include "game/effects_view.h"
 #include "game/object_draw.h"
 #include "game/object_view.h"
 #include "game/player.h"
@@ -586,6 +588,9 @@ int main(int argc, char** argv) {
     mdk::MaterialResolver objectResolver(&level.dti(), mdk::Shading::Original);
     mdk::ObjectView objectView(objectResolver);
     mdk::ObjectDraw objectDraw;
+    mdk::EffectsView effectsView(objectResolver, &level, mdk::Shading::Original);
+    mdk::EffectsDraw effectsDraw;
+    mdk::EffectsFrame effectsFrame;
     mdk::ObjectStream objectStream;
     std::map<std::string, mdk::ObjectLook> objectLooks;
 
@@ -701,6 +706,7 @@ int main(int argc, char** argv) {
         // safe even on the first spawn, where there is nothing cached yet.
         mdk::scripts::MdkObject::forget_poses();
         objectView.clear();
+        effectsView.clear();
         if (scriptAssetsReady) {
             // The seed. The oracle seeds its RNG with `new Random()` when no seed is
             // passed (ScriptRuntime.cs:323), which is the clock: an oracle run is
@@ -817,6 +823,7 @@ int main(int argc, char** argv) {
     // (review-10 F3). A latch that could never re-arm would instead hide every
     // refusal after the first (review-11 F7).
     bool streamFailureLogged = false;
+    bool effectsFailureLogged = false;
     // This frame's object-pass cost, and the peak over the run. The peak is the
     // number that says what a level costs the stream mesh: the capacity is rounded
     // up to a power of two, so the capacity alone cannot tell a 480-corner level
@@ -1138,9 +1145,9 @@ int main(int argc, char** argv) {
             // has. ScriptRuntime::ridesRidden_ is null for every tick of every
             // shipped level, so the oracle does not take that branch either here.
             //
-            // And the ropes, the sniper scope and the effects that the C# draws
-            // between the objects and Kurt (Viewer.cs:705-707) are not ported; see
-            // the header.
+            // And the ropes and sniper scope that the C# draws between the
+            // objects and Kurt (Viewer.cs:705-706) are not ported; see the
+            // header. The effects (Viewer.cs:707) draw below.
             const float tickAlpha = runtime->tick_blend(pending);
             objectStream.reset();
             for (const mdk::scripts::MdkObject& obj : runtime->objects()) {
@@ -1220,6 +1227,27 @@ int main(int argc, char** argv) {
                                   (int)((int64_t)streamCapacityLogged * 5 * sizeof(float) /
                                         1024),
                                   (int)objectCorners, (int)objectDraws);
+            }
+        }
+        if (runtime) {
+            // The pieces and sprite effects, where the C# draws them:
+            // after the objects, before Kurt (Viewer.cs:707). The ropes
+            // and sniper scope the C# draws alongside are not ported.
+            // A refusal is reported like the object pass's, edge-triggered
+            // and re-armed, but on this pass's own latch.
+            effectsView.build(*runtime, camera, &effectsFrame);
+            effectsDraw.draw(renderer, &surfaces, effectsFrame);
+            if (effectsDraw.allocationFailed()) {
+                if (!effectsFailureLogged) {
+                    effectsFailureLogged = true;
+                    const int32_t attempted = effectsDraw.attemptedCapacity();
+                    mdk::log3dsPrintf("effects: mesh of %d corners = %d KB "
+                                      "linear — linearAlloc FAILED, no pieces or effects drawn",
+                                      (int)attempted,
+                                      (int)((int64_t)attempted * 5 * sizeof(float) / 1024));
+                }
+            } else {
+                effectsFailureLogged = false;
             }
         }
         if (kurtSpriteReady && playerReady) {

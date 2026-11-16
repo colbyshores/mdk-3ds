@@ -41,6 +41,8 @@
 #include "game/follow_camera.h"
 #include "game/hud_view.h"
 #include "game/kurt_sprite.h"
+#include "game/effects_draw.h"
+#include "game/effects_view.h"
 #include "game/object_draw.h"
 #include "game/object_view.h"
 #include "game/player.h"
@@ -737,6 +739,10 @@ int main(int argc, char** argv) {
         objectView.setSwaps(&modModels);
     }
     mdk::ObjectDraw objectDraw;
+    mdk::EffectsView effectsView(objectResolver, &level,
+                                 enhancedLook ? mdk::Shading::Sprite : mdk::Shading::Original);
+    mdk::EffectsDraw effectsDraw;
+    mdk::EffectsFrame effectsFrame;
     mdk::ObjectStream objectStream;
     std::map<std::string, mdk::ObjectLook> objectLooks;
 
@@ -865,6 +871,7 @@ int main(int argc, char** argv) {
     // Edge trigger for the object pass's refusal line below. Declared with the
     // loop-carried state because it lives as long as the frame loop.
     bool streamFailureLogged = false;
+    bool effectsFailureLogged = false;
     // Build the camera once up front so the very first frame has a valid matrix
     // even if no simulation step fits in it (a zero camera would collapse every
     // vertex to the clip origin and draw nothing).
@@ -1125,6 +1132,22 @@ int main(int argc, char** argv) {
                 }
             } else {
                 streamFailureLogged = false;
+            }
+        }
+        if (runtime) {
+            // The pieces and sprite effects, where the C# draws them:
+            // after the objects, before Kurt (Viewer.cs:707).
+            effectsView.build(*runtime, camera, &effectsFrame);
+            effectsDraw.draw(renderer, &surfaces, effectsFrame);
+            if (effectsDraw.allocationFailed()) {
+                if (!effectsFailureLogged) {
+                    effectsFailureLogged = true;
+                    std::printf("[main] effects: mesh of %d corners REFUSED by the "
+                                "backend — no pieces or effects drawn this frame\n",
+                                (int)effectsDraw.attemptedCapacity());
+                }
+            } else {
+                effectsFailureLogged = false;
             }
         }
         if (kurtSpriteReady && playerReady) {

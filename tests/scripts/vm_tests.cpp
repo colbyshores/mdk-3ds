@@ -43,6 +43,7 @@
 #include "game/arena_space.h"
 #include "game/camera_roll.h"
 #include "game/follow_camera.h"
+#include "game/effects_view.h"
 #include "game/level_data.h"
 #include "game/mod_models.h"
 #include "game/object_view.h"
@@ -3012,6 +3013,48 @@ void testEffectsLifecycle(scripts::ScriptRuntime& runtime) {
     off.end();
     runProgram(runtime, off, &obj);
     CHECK(runtime.effects.count() == before + 1);
+}
+
+// EffectsView's geometry (Objects/EffectsView.cs): the billboard basis
+// read out of the view-projection, the sprite quad's corners and UVs,
+// and a spark's facing-shaded palette index.
+void testEffectsViewGeometry() {
+    // A view-projection whose first column is +X and whose fourth is
+    // +Z: right +X, forward +Z, up = right x forward = -Y.
+    Mat4 vp = Mat4::identity();
+    vp.m[11] = 1.0f;
+    Vec3 right;
+    Vec3 up;
+    Vec3 forward;
+    effectsBillboardBasis(vp, &right, &up, &forward);
+    CHECK(right.x == 1.0f && right.y == 0.0f && right.z == 0.0f);
+    CHECK(forward.x == 0.0f && forward.y == 0.0f && forward.z == 1.0f);
+    CHECK(up.x == 0.0f && up.y == -1.0f && up.z == 0.0f);
+
+    // A 2x2-texel sprite at the origin, one texel = one unit each way.
+    Vertex quad[6];
+    effectsQuadVertices(Vec3{0.0f, 0.0f, 0.0f}, Vec3{1.0f, 0.0f, 0.0f}, Vec3{0.0f, 1.0f, 0.0f}, 2, 2,
+                        quad);
+    CHECK(quad[0].pos.x == -1.0f && quad[0].pos.y == 1.0f && quad[0].uv.x == 0.0f &&
+          quad[0].uv.y == 0.0f);
+    CHECK(quad[1].pos.x == 1.0f && quad[1].pos.y == 1.0f && quad[1].uv.x == 1.0f &&
+          quad[1].uv.y == 0.0f);
+    CHECK(quad[2].pos.x == 1.0f && quad[2].pos.y == -1.0f && quad[2].uv.x == 1.0f &&
+          quad[2].uv.y == 1.0f);
+    CHECK(quad[3].pos.x == quad[0].pos.x && quad[3].pos.y == quad[0].pos.y);
+    CHECK(quad[5].pos.x == -1.0f && quad[5].pos.y == -1.0f && quad[5].uv.x == 0.0f &&
+          quad[5].uv.y == 1.0f);
+
+    // A spark face turned to the camera takes base + range; edge-on and
+    // degenerate faces take base; the index clamps to the palette.
+    const Vec3 a{0.0f, 0.0f, 0.0f};
+    const Vec3 b{1.0f, 0.0f, 0.0f};
+    const Vec3 c{0.0f, 1.0f, 0.0f};
+    CHECK(effectsSparkColourIndex(10, 100, a, b, c, Vec3{0.0f, 0.0f, 1.0f}) == 110);
+    CHECK(effectsSparkColourIndex(10, 100, a, b, c, Vec3{1.0f, 0.0f, 0.0f}) == 10);
+    CHECK(effectsSparkColourIndex(10, 100, a, a, a, Vec3{0.0f, 0.0f, 1.0f}) == 10);
+    CHECK(effectsSparkColourIndex(200, 100, a, b, c, Vec3{0.0f, 0.0f, 1.0f}) == 255);
+    CHECK(effectsSparkColourIndex(-5, 0, a, b, c, Vec3{0.0f, 0.0f, 1.0f}) == 0);
 }
 
 // Opcode 77's C# case intentionally ignores its debug message (ScriptVm.cs:1713).
@@ -7507,6 +7550,7 @@ int main() {
     testFanLifecycle(runtime, levelData);
     printf("PASS FanLifecycle\n");
     testEffectsLifecycle(runtime);
+    testEffectsViewGeometry();
     printf("PASS EffectsLifecycle\n");
     testDebugMessageIsNoOp(runtime);
     printf("PASS DebugMessageIsNoOp\n");
