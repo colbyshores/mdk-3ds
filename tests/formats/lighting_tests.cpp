@@ -14,7 +14,9 @@
 #include "formats/fti.h"
 #include "formats/mdk_data.h"
 #include "formats/mto.h"
+#include "formats/font.h"
 #include "game/enhanced_config.h"
+#include "game/enhanced_menu.h"
 #include "game/level_data.h"
 #include "game/level_light.h"
 #include "render/post_params.h"
@@ -255,4 +257,89 @@ MDK_TEST(EnhancedConfigRoundTrips) {
     MDK_CHECK(!partial.enableGlowBillboards);
 
     MDK_CHECK(!mdk::parseEnhancedConfig(nullptr, &partial));
+}
+
+MDK_TEST(FontParseMatchesTheOracle) {
+    // Pinned from the C# Font.Parse over the real MISC/MDKFONT.FTI
+    // (probe, 2026-11-14): 152 glyphs in FONTBIG, 204 in FONTSML.
+    std::vector<uint8_t> ftiBytes;
+    MDK_CHECK(readDataFile("MISC/MDKFONT.FTI", &ftiBytes));
+    mdk::formats::Fti fti;
+    MDK_CHECK(mdk::formats::Fti::parse(&fti, ftiBytes.data(), (int32_t)ftiBytes.size()));
+    std::vector<uint8_t> bigBytes;
+    MDK_CHECK(fti.getBytes("FONTBIG", &bigBytes));
+    mdk::formats::Font big;
+    MDK_CHECK(mdk::formats::Font::parse(bigBytes.data(), (int32_t)bigBytes.size(),
+                                        6, &big));
+    int32_t present = 0;
+    for (int32_t c = 0; c < 256; c++) {
+        if (big.glyph((uint8_t)c)) {
+            present++;
+        }
+    }
+    MDK_CHECK_EQ(present, 152);
+    const mdk::formats::Font::Glyph* a = big.glyph('A');
+    MDK_CHECK(a != nullptr);
+    if (a) {
+        MDK_CHECK_EQ(a->ascent, 27);
+        MDK_CHECK_EQ(a->descent, 0);
+        MDK_CHECK_EQ(a->width, 29);
+    }
+    MDK_CHECK_EQ(big.width("VIDEO GRAPHICS"), 318);
+    MDK_CHECK(big.glyph(0) == nullptr);
+
+    std::vector<uint8_t> smallBytes;
+    MDK_CHECK(fti.getBytes("FONTSML", &smallBytes));
+    mdk::formats::Font small;
+    MDK_CHECK(mdk::formats::Font::parse(smallBytes.data(), (int32_t)smallBytes.size(),
+                                        4, &small));
+    present = 0;
+    for (int32_t c = 0; c < 256; c++) {
+        if (small.glyph((uint8_t)c)) {
+            present++;
+        }
+    }
+    MDK_CHECK_EQ(present, 204);
+}
+
+MDK_TEST(EnhancedMenuTogglesInPlace) {
+    mdk::EnhancedMenu menu;
+    mdk::EnhancedToggles toggles;
+    mdk::EnhancedMenu::Input none;
+    // Closed: edges do nothing.
+    mdk::EnhancedMenu::Input down;
+    down.down = true;
+    MDK_CHECK(!menu.handle(down, &toggles));
+    MDK_CHECK(!menu.open());
+    menu.setOpen(true);
+    // Navigation clamps at both ends.
+    MDK_CHECK(!menu.handle(down, &toggles));
+    MDK_CHECK_EQ(menu.selected(), 1);
+    mdk::EnhancedMenu::Input up;
+    up.up = true;
+    menu.handle(up, &toggles);
+    menu.handle(up, &toggles);
+    MDK_CHECK_EQ(menu.selected(), 0);
+    // Confirm flips the selected toggle only, and reports the change.
+    mdk::EnhancedMenu::Input confirm;
+    confirm.confirm = true;
+    MDK_CHECK(menu.handle(confirm, &toggles));
+    MDK_CHECK(!toggles.enableSkyShadows);
+    MDK_CHECK(toggles.enableFragmentLights && toggles.enableHaze && toggles.enableMirrors &&
+              toggles.enableGlowBillboards);
+    // Left/right flip too; the last row is GLOW.
+    for (int32_t i = 0; i < 8; i++) {
+        menu.handle(down, &toggles);
+    }
+    MDK_CHECK_EQ(menu.selected(), 4);
+    mdk::EnhancedMenu::Input left;
+    left.left = true;
+    MDK_CHECK(menu.handle(left, &toggles));
+    MDK_CHECK(!toggles.enableGlowBillboards);
+    // Close leaves the toggles alone.
+    mdk::EnhancedMenu::Input close;
+    close.close = true;
+    MDK_CHECK(!menu.handle(close, &toggles));
+    MDK_CHECK(!menu.open());
+    MDK_CHECK(!menu.handle(none, &toggles));
 }

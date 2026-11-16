@@ -818,13 +818,18 @@ its look can be A/B-compared on hardware:
   change; a missing file means the shipped defaults, all on) and are
   exposed in an in-game Video/Graphics Settings menu so each feature
   can be toggled live during gameplay for side-by-side visual A/B
-  comparisons. NOTE (2026-11-14): this port currently has no settings
-  menu — the menu subsystem was cut by the owner directive of
-  2026-11-05 and both frontends boot straight into a level. The config
-  struct, the runtime setter seam, and the `config.ini` persistence
-  land with this directive; the menu page itself is charted as its own
-  item in `SPEC-COMPLETION.md` §3 and calls the same setter when it
-  lands, so no renderer work is redone for it.
+  comparisons. The menu (implemented 2026-11-14): SELECT — unbound in
+  the game — opens and closes it over the paused game; D-pad moves,
+  A (or Left/Right) flips the selected feature, and the flip calls
+  `mdk_render_set_enhanced_toggles` and rewrites `config.ini` in the
+  same frame. It is drawn on the canvas with the game's own interface
+  fonts (`mdk::formats::Font` + `mdk::FontView`, the FONTBIG/FONTSML
+  pair in SYS_PAL colours, ported from the oracle's Font.cs /
+  FontView.cs) by `mdk::EnhancedMenu`; the menu subsystem the
+  2026-11-05 directive cut (main menu, save screens) stays cut — this
+  is a settings page over the running game, not that subsystem. If
+  the fonts fail to load there is no menu, SELECT keeps its older
+  quit meaning, and the boot log says so.
 
 The same toggles are honoured by the Linux/Vulkan backend wherever the
 feature already exists there (sky shadows = the sun shadow pass, haze =

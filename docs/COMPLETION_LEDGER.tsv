@@ -54,13 +54,11 @@ p6.enhanced-stereo	d2	slow	todo	bash tools/check.sh
 # Enhanced Mode toggles (owner directive 2026-11-14, SPEC.md 7.9):
 # mdk::EnhancedToggles (enableSkyShadows, enableFragmentLights,
 # enableHaze, enableMirrors, enableGlowBillboards), config.ini
-# persistence (sdmc:/3ds/mdk/config.ini), and the
-# mdk_render_set_enhanced_toggles live seam are implemented; every
-# 3DS enhanced feature lands behind its toggle (GPU-only, no CPU
-# fallback). The Video/Graphics settings menu page remains charted
-# under p7 (SPEC-COMPLETION.md item 7): the menu subsystem was cut
-# 2026-11-05, so the page arrives with the batch that resurrects a
-# settings surface and only calls the setter + rewrites config.ini.
+# persistence (sdmc:/3ds/mdk/config.ini), the
+# mdk_render_set_enhanced_toggles live seam, and the in-game
+# Video/Graphics menu (SELECT over the paused game, FTI fonts) are
+# implemented; every 3DS enhanced feature lands behind its toggle
+# (GPU-only, no CPU fallback).
 p7.platform-lifecycle	d2	slow	todo	bash tools/check.sh		
 p7.romfs-streaming	d2	slow	todo	mdk_3ds/tools/emurun.sh		
 p8.cia-build	d2	slow	todo	mdk_3ds/tools/build_cia.sh		

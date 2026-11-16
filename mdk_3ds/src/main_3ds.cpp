@@ -61,8 +61,11 @@
 #include "formats/cmi.h"
 #include "formats/file_system.h"
 #include "formats/mdk_data.h"
+#include "formats/font.h"
 #include "game/arena_space.h"
 #include "game/enhanced_config.h"
+#include "game/enhanced_menu.h"
+#include "game/font_view.h"
 #include "game/follow_camera.h"
 #include "game/game_flow.h"
 #include "game/hud_view.h"
@@ -111,6 +114,20 @@ uint32_t g_frameBudget = 0;
 // same inversion). The projection built with the portrait ratio would squash the
 // level sideways.
 constexpr float kAspect = 400.0f / 240.0f;
+
+// The Enhanced Mode toggles' persistence (SPEC.md 7.9): the whole
+// config.ini, rewritten whenever a toggle changes. The directory is
+// the log's (log_3ds.cpp makes sdmc:/3ds/mdk before this can run).
+bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
+    FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "wb");
+    if (!config) {
+        return false;
+    }
+    const std::string text = mdk::writeEnhancedConfig(toggles);
+    const bool written = fwrite(text.c_str(), 1, text.size(), config) == text.size();
+    fclose(config);
+    return written;
+}
 
 } // namespace
 
@@ -192,10 +209,7 @@ int main(int argc, char** argv) {
             if (read) {
                 mdk::log3dsPrintf("config: config.ini did not parse; defaults kept");
             }
-            if (FILE* config = fopen("sdmc:/3ds/mdk/config.ini", "wb")) {
-                const std::string text = mdk::writeEnhancedConfig(enhancedToggles);
-                fwrite(text.c_str(), 1, text.size(), config);
-                fclose(config);
+            if (saveEnhancedConfig(enhancedToggles)) {
                 mdk::log3dsPrintf("config: wrote default sdmc:/3ds/mdk/config.ini");
             } else {
                 mdk::log3dsPrintf("config: could not write sdmc:/3ds/mdk/config.ini");
@@ -278,6 +292,18 @@ int main(int argc, char** argv) {
     // archive and either half can fail to decode without the other.
     mdk::HudView hud;
     bool hudReady = false;
+    // The Video/Graphics settings menu (SPEC.md 7.9): its fonts, and
+    // its readiness. SELECT opens it when ready; without the fonts
+    // there is no menu and SELECT keeps its old quit meaning. STATIC,
+    // not stack: a FontView carries a whole Font (256 glyph records,
+    // ~11 KB), and two of them as main() locals overflowed the main
+    // thread's stack -- the first printf of the run wrote below it
+    // and the guest died before its first log line (measured in
+    // Mandarine, 2026-11-14; AGENTS.md section 10's stack rule).
+    static mdk::EnhancedMenu menu;
+    static mdk::FontView menuBig;
+    static mdk::FontView menuSmall;
+    bool menuReady = false;
     // The level's script bytecode. The C# Viewer loads it next to the geometry
     // and the runtime cannot exist without it.
     mdk::formats::Cmi cmi;
@@ -344,6 +370,46 @@ int main(int argc, char** argv) {
                     mdk::log3dsPrintf("hud: loaded");
                 } else {
                     mdk::log3dsPrintf("hud: FAILED to decode the HUD sprites");
+                }
+                // The settings menu's fonts: MDKFONT.FTI's FONTBIG and
+                // FONTSML in its SYS_PAL colours, the oracle's Fonts
+                // pair (Ui.cs). A failure leaves menuReady false and
+                // the boot log says why; the game runs unchanged.
+                {
+                    std::vector<uint8_t> ftiBytes;
+                    mdk::formats::Fti menuFti;
+                    std::vector<uint8_t> bigBytes;
+                    std::vector<uint8_t> smallBytes;
+                    std::vector<uint8_t> sysPal;
+                    // Heap, not stack: each Font is ~11 KB (see the
+                    // menu objects above).
+                    std::unique_ptr<mdk::formats::Font> bigFont(new mdk::formats::Font());
+                    std::unique_ptr<mdk::formats::Font> smallFont(new mdk::formats::Font());
+                    if (!data.read("MISC/MDKFONT.FTI", &ftiBytes) ||
+                        !mdk::formats::Fti::parse(&menuFti, ftiBytes.data(),
+                                                  (int32_t)ftiBytes.size()) ||
+                        !menuFti.getBytes("FONTBIG", &bigBytes) ||
+                        !menuFti.getBytes("FONTSML", &smallBytes) ||
+                        !menuFti.getBytes("SYS_PAL", &sysPal) ||
+                        !mdk::formats::Font::parse(bigBytes.data(), (int32_t)bigBytes.size(),
+                                                   6 /* FONTBIG space, Font.cs */, bigFont.get()) ||
+                        !mdk::formats::Font::parse(smallBytes.data(), (int32_t)smallBytes.size(),
+                                                   4 /* FONTSML space, Font.cs */,
+                                                   smallFont.get())) {
+                        mdk::log3dsPrintf("menu: MDKFONT.FTI fonts did not load -- no menu");
+                    } else {
+                        const mdk::formats::Palette sysPalette = mdk::formats::Palette::fromRgb(
+                            sysPal.data(), (int32_t)sysPal.size());
+                        const int32_t palette =
+                            mdk_render_create_palette(renderer, sysPalette.rgba());
+                        if (palette >= 0 && menuBig.load(renderer, *bigFont, palette, sysPalette.rgba()) &&
+                            menuSmall.load(renderer, *smallFont, palette, sysPalette.rgba())) {
+                            menuReady = true;
+                            mdk::log3dsPrintf("menu: video/graphics ready (SELECT)");
+                        } else {
+                            mdk::log3dsPrintf("menu: font atlases did not upload -- no menu");
+                        }
+                    }
                 }
             }
         } else {
@@ -733,6 +799,7 @@ int main(int argc, char** argv) {
     int32_t objectPeakCorners = 0;
     int32_t objectPeakDraws = 0;
     const char* exitReason = "aptMainLoop returned false";
+    u32 prevHeld = 0;  // last frame's held mask; the menu reads edges
 
     while (aptMainLoop()) {
         // The frame's clock FIRST: the look integrates over the time since the
@@ -757,14 +824,60 @@ int main(int argc, char** argv) {
         // runs zero steps.
         mdk::Input input;
         const u32 held = mdk::input3dsPoll(&input, elapsed);
+        const u32 pressed = held & ~prevHeld;
+        prevHeld = held;
 
-        // The flow's events. START is the C# pad's Escape, and Escape opens the
-        // menu, which is cut: the honest answer here is to stop, and the flow says
-        // so (Quit -> Screen::None) rather than the frontend deciding on its own.
-        // SELECT stays as the second quit chord because it is unbound in the game
-        // and it is the only other way out of a build that has no menu.
+        // The Video/Graphics settings menu (SPEC.md 7.9). SELECT is
+        // unbound in the game, so it opens and closes the menu; while
+        // the menu is open the simulation below is paused and the
+        // frame's edges drive the menu instead. A flip applies at once
+        // (mdk_render_set_enhanced_toggles) and is written back to
+        // config.ini in the same frame, so a hardware A/B is one
+        // button press. START remains the way out of the build.
+        if (menuReady) {
+            if (!menu.open() && (pressed & KEY_SELECT)) {
+                menu.setOpen(true);
+                mdk::log3dsPrintf("menu: video/graphics opened");
+            } else if (menu.open()) {
+                mdk::EnhancedMenu::Input edges;
+                edges.up = (pressed & KEY_DUP) != 0;
+                edges.down = (pressed & KEY_DDOWN) != 0;
+                edges.left = (pressed & KEY_DLEFT) != 0;
+                edges.right = (pressed & KEY_DRIGHT) != 0;
+                edges.confirm = (pressed & KEY_A) != 0;
+                edges.close = (pressed & KEY_SELECT) != 0;
+                if (menu.handle(edges, &enhancedToggles)) {
+                    mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
+                    const bool saved = saveEnhancedConfig(enhancedToggles);
+                    mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
+                                      "glow=%d (saved=%d)",
+                                      (int)enhancedToggles.enableSkyShadows,
+                                      (int)enhancedToggles.enableFragmentLights,
+                                      (int)enhancedToggles.enableHaze,
+                                      (int)enhancedToggles.enableMirrors,
+                                      (int)enhancedToggles.enableGlowBillboards, (int)saved);
+                }
+                if (!menu.open()) {
+                    mdk::log3dsPrintf("menu: closed");
+                }
+            }
+            if (menu.open()) {
+                // The poll accumulated this frame's look into the
+                // mouse; the paused game must not spend it on resume.
+                input.takeMouseX();
+                input.takeMouseY();
+            }
+        }
+
+        // The flow's events. START is the C# pad's Escape, and Escape opens
+        // the (cut) main menu in the C#: the honest answer here is to stop,
+        // and the flow says so (Quit -> Screen::None) rather than the
+        // frontend deciding on its own. SELECT was the second quit chord
+        // while there was no menu; with the settings menu ready it opens
+        // that instead (above), and this chord only remains when the
+        // menu's fonts did not load.
         mdk::flow::Event next = mdk::flow::Event::None;
-        if (held & (KEY_START | KEY_SELECT)) {
+        if ((held & KEY_START) || (!menuReady && (held & KEY_SELECT))) {
             next = mdk::flow::Event::Quit;
         }
         if (next != mdk::flow::Event::None) {
@@ -780,7 +893,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (playerReady) {
+        if (playerReady && !menu.open()) {
             // The C# Viewer.Frame order: the mouse look is PER FRAME (Kurt's yaw
             // and the camera's look offset), then the simulation runs in fixed
             // steps, and EACH step updates Kurt and then the camera (UpdateKurt
@@ -1047,7 +1160,7 @@ int main(int argc, char** argv) {
             kurtSprite.draw(renderer, player, player.feet, camera.position, camera.forward,
                             camera.up, mdk::follow_camera::kFieldOfView, &space);
         }
-        if (hudReady) {
+        if (hudReady || menu.open()) {
             // The HUD is the last thing drawn before the frame ends, which is the
             // C#'s order (Viewer.DrawScene: the canvas is the Overlay pass, and
             // the queue draws Overlay after every other pass). The canvas seams
@@ -1059,13 +1172,19 @@ int main(int argc, char** argv) {
             // Viewer.HudStateOf passes them (Viewer.cs:913). The inventory and the
             // target bar stay empty until the pickup and shooting subsystems land,
             // because the C# starts them empty and nothing here may invent them.
-            mdk::HudState state;
-            state.health = player.health();
-            state.dead = player.dead;
-            state.hurtFlash = player.combat().hurtFlash();
-            state.whiteFlash = player.combat().whiteFlash();
             mdk_render_canvas_begin(renderer);
-            hud.draw(renderer, state);
+            if (hudReady) {
+                mdk::HudState state;
+                state.health = player.health();
+                state.dead = player.dead;
+                state.hurtFlash = player.combat().hurtFlash();
+                state.whiteFlash = player.combat().whiteFlash();
+                hud.draw(renderer, state);
+            }
+            if (menu.open()) {
+                menu.draw(renderer, menuBig, menuSmall, mdk_render_canvas_width(renderer),
+                          enhancedToggles);
+            }
             mdk_render_canvas_end(renderer);
         }
         mdk_render_end_frame(renderer);

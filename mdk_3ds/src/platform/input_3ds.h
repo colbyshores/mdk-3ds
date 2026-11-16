@@ -27,8 +27,10 @@
 //   Start        escape -> flow::Event::Quit. The menu that Escape opens in the
 //                C# is cut, so the flow answers with Screen::None and the run
 //                ends (main_3ds.cpp); it is not a temporary stand-in.
-//   Select       nothing in the game — this frontend's second way out, paired
-//                with Start only because a build with no menu needs one
+//   Select       nothing in the game — the frontend's Video/Graphics
+//                settings menu (SPEC.md 7.9) opens and closes on it; it
+//                stays a second way out only when the menu's fonts did
+//                not load and there is no menu to open
 //
 // The C# `GamepadMap` is the oracle for a controller, and it puts WALK on the
 // left stick and LOOK on the right one. The original 3DS has ONE analog stick,

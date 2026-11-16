@@ -163,13 +163,10 @@ the same batch. One subsystem slice per batch.
    streaming; the A/B checklist run in mandarine. Requires P5.0.
    **Enhanced Mode toggles (owner directive 2026-11-14, SPEC.md 7.9):**
    the five GPU-only feature toggles, their `config.ini` persistence
-   (`sdmc:/3ds/mdk/config.ini`), and the runtime setter seam are
-   implemented; each 3DS enhanced feature (item 6's hardware-first
-   effects) lands behind its toggle. **The Video/Graphics settings
-   menu page is a separate later item**: the menu subsystem was cut
-   (2026-11-05), so the menu arrives with whatever batch resurrects a
-   settings surface, and it only has to call
-   `mdk_render_set_enhanced_toggles` + rewrite the same `config.ini`.
+   (`sdmc:/3ds/mdk/config.ini`), the runtime setter seam, and the
+   in-game Video/Graphics menu (SELECT over the paused game, the
+   game's own FTI fonts) are implemented; each 3DS enhanced feature
+   (item 6's hardware-first effects) lands behind its toggle.
 8. **P8**: `.cia` packaging — **`makerom` is NOT installed and `libmxml` is
    absent**; `mdk_3ds/tools/build_cia.sh` exits non-zero with an explanation
    instead of shipping a broken title. Installing makerom is an owner

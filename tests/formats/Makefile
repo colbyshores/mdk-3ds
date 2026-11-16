@@ -22,6 +22,7 @@ LDFLAGS :=
 
 SOURCES := \
 	main.cpp \
+	render_seam_stubs.cpp \
 	path_tests.cpp \
 	format_tests.cpp \
 	colour_tests.cpp \
@@ -48,7 +49,10 @@ SOURCES := \
 	$(CORE)/formats/fti.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/game/level_data.cpp \
+	$(CORE)/formats/font.cpp \
 	$(CORE)/game/enhanced_config.cpp \
+	$(CORE)/game/enhanced_menu.cpp \
+	$(CORE)/game/font_view.cpp \
 	$(CORE)/game/level_light.cpp \
 	$(CORE)/render/colour_mips.cpp \
 	$(CORE)/render/post_params.cpp \
