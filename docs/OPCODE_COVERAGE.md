@@ -341,10 +341,13 @@ pinned by a `vm_tests` case. 142/143/190 (fan_create/remove/enable)
 followed with the Fans subsystem (`scripts/fans.{h,cpp}`: the DTI
 hotspot boxes, the lift curves, the wobble; the updraft consumers in
 Kurt's and the objects' motion ask `Fans::query` from their own
-slices). Remaining 18:
+slices). 128/132/136 (attach_effect, spawn_effect, spawn_debris)
+followed with the Effects pool (`scripts/effects.{h,cpp}`: wounds,
+drops, bubbles, pops, trails; their billboard draw is the view's next
+slice). Remaining 15:
 28,
-114, 128,
-130, 131, 132, 136, 158, 159, 167,
+114,
+130, 131, 158, 159, 167,
 171, 172, 178, 181, 184,
 209, 221, 224
 

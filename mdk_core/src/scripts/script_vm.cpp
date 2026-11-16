@@ -1927,6 +1927,49 @@ int32_t ScriptVm::execute(MdkObject* obj, const Instruction& ins) {
             runtime_.fans.enable(obj->arena, strval(op(ins, 1)),
                                  ival(op(ins, 0)) != 0 ? Fans::Power::On : Fans::Power::Off);
             break;
+        case 128:  // attach_effect: [name, point, second point]; "OFF" with
+                   // the same point twice stops the bleeding
+            if (strval(op(ins, 0)) == "OFF" && ival(op(ins, 1)) == ival(op(ins, 2))) {
+                runtime_.effects.detach(obj, ival(op(ins, 1)));
+            } else if (runtime_.option != 0) {
+                runtime_.effects.attach(obj, ival(op(ins, 1)), ival(op(ins, 2)));
+            }
+            break;
+        case 132: {  // spawn_effect: [chance, reference point or 255, point]
+            const int32_t kSparkChance = 150;
+            const int32_t kNoPoint = 255;
+            if (ival(op(ins, 0)) < kSparkChance && runtime_.rng().next(100) < ival(op(ins, 0))) {
+                Vec3 point;
+                if (ival(op(ins, 1)) != kNoPoint) {
+                    point = obj->reference_point(ival(op(ins, 1)));
+                } else {
+                    const std::vector<ScriptValue>& floats = listval(op(ins, 2));
+                    point = Vec3{floats.size() > 0 ? fval(floats[0]) : 0.0f,
+                                 floats.size() > 1 ? fval(floats[1]) : 0.0f,
+                                 floats.size() > 2 ? fval(floats[2]) : 0.0f};
+                }
+                runtime_.effects.spawnBubble(obj->arena, point);
+            }
+            break;
+        }
+        case 136: {  // spawn_debris: [count, velocity, spread, absolute, point, size]
+            const float kSpread = 1.0f / 32768.0f;
+            const int32_t asked = ival(op(ins, 0));
+            const int32_t count =
+                runtime_.option != 0 ? asked : (asked > 1 ? 1 : 0);
+            const Vec3 origin = Vec3{fval(op(ins, 6)) + (ival(op(ins, 5)) == 0 ? obj->position.x : 0.0f),
+                                     fval(op(ins, 7)) + (ival(op(ins, 5)) == 0 ? obj->position.y : 0.0f),
+                                     fval(op(ins, 8)) + (ival(op(ins, 5)) == 0 ? obj->position.z : 0.0f)};
+            for (int32_t i = 0; i < count; i++) {
+                const Vec3 velocity{
+                    fval(op(ins, 1)) + (float)(runtime_.rng().next(32768) - 0x4000) * fval(op(ins, 4)) * kSpread,
+                    fval(op(ins, 2)) + (float)(runtime_.rng().next(32768) - 0x4000) * fval(op(ins, 4)) * kSpread,
+                    fval(op(ins, 3)) + (float)(runtime_.rng().next(32768) - 0x800) * fval(op(ins, 4)) * kSpread};
+                runtime_.effects.spawnDrop(obj->arena, origin, velocity,
+                                           fval(op(ins, 9)) + (float)runtime_.rng().next(32768) * 0.0005f);
+            }
+            break;
+        }
         case 203: {  // camera_track: [mode, (height)] asks for a follow-camera pitch
             const std::vector<ScriptValue>& track = listval(op(ins, 0));
             const int32_t mode = track.empty() ? 0 : ival(track[0]);

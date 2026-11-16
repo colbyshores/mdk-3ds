@@ -45,6 +45,7 @@
 #include "render/render_types.h"
 #include "scripts/animated_textures.h"
 #include "scripts/debris.h"
+#include "scripts/effects.h"
 #include "scripts/fans.h"
 #include "scripts/game_stats.h"
 #include "scripts/object.h"
@@ -469,6 +470,11 @@ public:
     // scripts, lifting what their boxes hold. The updraft consumers
     // (Kurt's and the objects' motion) ask fans_.query with their mask.
     Fans fans;
+
+    // The sprite effects (Effects.cs, opcodes 128/132/136): wounds,
+    // drops, bubbles, trails. Their billboard draw (EffectsView) is a
+    // later slice; the pool and its motion are the runtime state.
+    Effects effects;
 
     // One queued HUD message (opcode 247, hud_message). The Messages
     // drawing consumer (fonts, timing, the HUD queue display) is a later

@@ -264,6 +264,11 @@ ScriptRuntime::ScriptRuntime(LevelData* level, const formats::Cmi* cmi, int32_t 
     // per-tick RNG rolls happen exactly as the oracle's do.
     fans = Fans(&level_->dti(), &rng_);
     fans.setIsLive(&ScriptRuntime::fanIsLive, this);
+    // The effects share the RNG, the archives' frame counts and the
+    // arena ray (ScriptRuntime.cs:341's neighbours).
+    effects = Effects(&rng_);
+    effects.setFrameCount(&ScriptRuntime::animatedFrameCount, this);
+    effects.setRay(&ScriptRuntime::debrisRayTrampoline, this);
     // The arenas the world is built from, as the driver does: the reachable
     // ones, so the arena under Kurt is found.
     const std::vector<const formats::Arena*>& arenas = level_->arenas();
@@ -663,9 +668,10 @@ void ScriptRuntime::runTick() {
     kurtVelocity.z = (kurtPosition_.z - previousKurtPosition_.z) * kTicksPerSecond;
     previousKurtPosition_ = kurtPosition_;
 
-    // Fans.Update() then Debris.Update(1f) (ScriptRuntime.cs:954-955):
-    // the fans let out their sparks, then the pieces move, both before
-    // the object loop, as in the C#.
+    // Effects.Update(1f), Fans.Update(), Debris.Update(1f)
+    // (ScriptRuntime.cs:953-955): effects, fan sparks, then the pieces
+    // move, all before the object loop, as in the C#.
+    effects.update(1.0f);
     fans.update();
     debris_.update(1.0f);
 

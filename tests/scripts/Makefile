@@ -73,6 +73,7 @@ COMMON_SOURCES := \
 	$(CORE)/render/material_resolver.cpp \
 	$(CORE)/scripts/object.cpp \
 	$(CORE)/scripts/animated_textures.cpp \
+	$(CORE)/scripts/effects.cpp \
 	$(CORE)/scripts/fans.cpp \
 	$(CORE)/scripts/pose_cache.cpp \
 	$(CORE)/scripts/script_vm.cpp \

@@ -94,6 +94,9 @@ const int32_t kSet27c = 239;
 const int32_t kArenaTextureFrame = 133;
 const int32_t kLobToKurt = 189;
 const int32_t kHudMessage = 247;
+const int32_t kAttachEffect = 128;
+const int32_t kSpawnEffect = 132;
+const int32_t kSpawnDebris = 136;
 const int32_t kFanCreate = 142;
 const int32_t kFanRemove = 143;
 const int32_t kFanEnable = 190;
@@ -2961,6 +2964,54 @@ void testFanLifecycle(scripts::ScriptRuntime& runtime, LevelData& level) {
     runProgram(runtime, remove, &obj);
     CHECK(!sawUnimplemented(kFanRemove));
     CHECK(runtime.fans.count() == before);
+}
+
+// Opcodes 128/132/136 (attach_effect, spawn_effect, spawn_debris)
+// drive the runtime's Effects pool: drops spawn and expire, a bubble
+// spawns at a point, a wound attaches and detaches by "OFF".
+void testEffectsLifecycle(scripts::ScriptRuntime& runtime) {
+    scripts::MdkObject obj;
+    obj.arena = "DANT_1";
+    obj.position = Vec3{0.0f, 0.0f, 100.0f};
+    const int32_t before = runtime.effects.count();
+
+    // spawn_debris with the detail on (the runtime's default option):
+    // three drops at the object's position.
+    Code drops;
+    drops.u8(kSpawnDebris).u8(3).f32(0.0f).f32(0.0f).f32(0.0f).f32(0.0f).u8(0)
+        .f32(0.0f).f32(0.0f).f32(0.0f).f32(4.0f);
+    drops.end();
+    runProgram(runtime, drops, &obj);
+    CHECK(!sawUnimplemented(kSpawnDebris));
+    CHECK(runtime.effects.count() == before + 3);
+    CHECK(runtime.effects.hasEffects("DANT_1"));
+
+    // They fall and expire: a few hundred updates clear them.
+    for (int i = 0; i < 400; i++) {
+        runtime.effects.update(1.0f);
+    }
+    CHECK(runtime.effects.count() == before);
+
+    // spawn_effect at an explicit point (255): a bubble appears.
+    Code bubble;
+    bubble.u8(kSpawnEffect).u8(100).u8(255).f32(1.0f).f32(2.0f).f32(3.0f);
+    bubble.end();
+    runProgram(runtime, bubble, &obj);
+    CHECK(!sawUnimplemented(kSpawnEffect));
+    CHECK(runtime.effects.count() == before + 1);
+
+    // attach_effect starts a wound; "OFF" with the same point stops it.
+    Code attach;
+    attach.u8(kAttachEffect).pstr("WOUND").u8(0).u8(1);
+    attach.end();
+    runProgram(runtime, attach, &obj);
+    CHECK(!sawUnimplemented(kAttachEffect));
+    CHECK(runtime.effects.count() == before + 2);
+    Code off;
+    off.u8(kAttachEffect).pstr("OFF").u8(0).u8(0);
+    off.end();
+    runProgram(runtime, off, &obj);
+    CHECK(runtime.effects.count() == before + 1);
 }
 
 // Opcode 77's C# case intentionally ignores its debug message (ScriptVm.cs:1713).
@@ -7455,6 +7506,8 @@ int main() {
     printf("PASS HudMessageQueues\n");
     testFanLifecycle(runtime, levelData);
     printf("PASS FanLifecycle\n");
+    testEffectsLifecycle(runtime);
+    printf("PASS EffectsLifecycle\n");
     testDebugMessageIsNoOp(runtime);
     printf("PASS DebugMessageIsNoOp\n");
     testSetRollingCapturesRotationOnTransition(runtime);
