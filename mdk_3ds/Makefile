@@ -114,6 +114,13 @@ DEFINES := -D__3DS__ -DARM -DPLATFORM_3DS -DRENDERER_C3D
 ifeq ($(DEBUG),1)
 DEFINES += -D__3DS_DEBUG__
 endif
+# The autonomous hardware loop (platform/harness_3ds.h): `make AUTOQUIT=90`
+# builds the harness variant that quits by itself after 90 seconds and
+# chain-loads the netload stub on exit. NEVER set this for a release or
+# CIA build (build_cia.sh refuses it): the harness must not ship.
+ifdef AUTOQUIT
+DEFINES += -DMDK_AUTOQUIT=$(AUTOQUIT)
+endif
 
 COMMONFLAGS := $(ARCH) -O2 -ffunction-sections -fdata-sections \
                -fno-math-errno -fno-strict-aliasing $(DEFINES)

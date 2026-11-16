@@ -23,6 +23,15 @@ fi
 
 OUT="$1"; ELF="$2"; SMDH="$3"; ROMFS="$4"; ICON="$5"; BANNER="$6"
 
+# The harness must never ship (mdk_3ds/Makefile's AUTOQUIT): a CIA built
+# from a harness ELF would quit by itself and chain-load a stub that is
+# not on a retail console.
+if [ -n "${AUTOQUIT:-}" ]; then
+    echo "build_cia: AUTOQUIT is set -- this is a harness build, not a release." >&2
+    echo "            Rebuild without AUTOQUIT for a CIA." >&2
+    exit 2
+fi
+
 MAKEROM="${MAKEROM:-}"
 if [ -z "$MAKEROM" ]; then
     for candidate in makerom /opt/devkitpro/tools/bin/makerom "$HOME"/.local/bin/makerom; do

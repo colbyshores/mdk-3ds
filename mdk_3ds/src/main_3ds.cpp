@@ -81,6 +81,7 @@
 #include "scripts/script_runtime.h"
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
+#include "platform/harness_3ds.h"
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
@@ -132,6 +133,14 @@ bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
 } // namespace
 
 int main(int argc, char** argv) {
+#ifdef MDK_AUTOQUIT
+    // The autonomous hardware loop (harness_3ds.h): on exit, chain-load
+    // the netload stub so the next 3dslink push has somewhere to land.
+    // Registered first so every exit route -- including the R1 startup
+    // failure's immediate return -- hands off the same way. Harness
+    // builds only: a release build never sees this.
+    std::atexit(mdk::harnessChainloadStub);
+#endif
     // The command line. A 3DS title's arguments are short; --frames is the
     // one the test harness needs.
     for (int i = 1; i < argc; i++) {
@@ -802,6 +811,14 @@ int main(int argc, char** argv) {
     u32 prevHeld = 0;  // last frame's held mask; the menu reads edges
 
     while (aptMainLoop()) {
+        // The harness deadline (harness builds only; a no-op question in
+        // any other build): quit through the ordinary teardown so the
+        // atexit chain-load hands the console back to the stub.
+        if (mdk::harnessAutoquitDue()) {
+            exitReason = "harness autoquit (MDK_AUTOQUIT)";
+            break;
+        }
+
         // The frame's clock FIRST: the look integrates over the time since the
         // previous frame, so the input poll needs the same delta the simulation is
         // about to get. Clamp it here -- the platform's floor under the game's own
