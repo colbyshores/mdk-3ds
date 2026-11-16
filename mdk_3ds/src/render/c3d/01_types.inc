@@ -403,15 +403,18 @@ struct RendererC3D {
     bool gpuPending = false;
 
     // The capture accounting, for the frontend's "asked for a picture, got a
-    // picture" rule. This backend has NO readback of a rendered target -- there is
-    // nothing here that can turn a framebuffer into a file -- so `capturesWritten`
-    // stays zero and always will. The request is still counted, because a frontend
-    // that was asked for a frame and silently given nothing has to be able to tell
-    // "this backend cannot write one" from "nobody asked", and a backend that
-    // reported 0/0 for a request it ignored would turn that rule into a pass
-    // generator. See `mdk_render_capture_stats`.
+    // picture" rule. The request is counted at begin_frame; the readback
+    // (03_frame.inc's writeScreenshotBmp: a GX transfer of the left eye
+    // target into linear memory, written as a BMP) runs at that frame's
+    // end, and `capturesWritten` counts the files it actually wrote -- so
+    // the frontend can still tell "asked and got nothing" from "nobody
+    // asked", which is the rule this accounting exists for.
+    // See `mdk_render_capture_stats`.
     int32_t capturesRequested = 0;
     int32_t capturesWritten = 0;
+    // The pending capture's output path (a fixed buffer: a frame-time
+    // allocation for a diagnostic path is not worth it).
+    char pendingScreenshot[128] = {};
 };
 
 RendererC3D* asC3d(MdkRenderer r) {

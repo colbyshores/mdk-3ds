@@ -1051,17 +1051,41 @@ int main(int argc, char** argv) {
         // was given and not of what the frame happened to measure.
         audioClock += elapsed;
 
+        // The screenshot arming file (the hardware loop's picture, ledger
+        // 3ds.screenshot): dropping sdmc:/3ds/mdk/capture.txt beside the
+        // log asks for one framebuffer BMP at the next frame; the file is
+        // consumed so the ask fires once. Checked every 30 frames -- a
+        // stat a second, never frame-critical work.
+        static char capturePath[128] = {};
+        if (capturePath[0] == '\0' && (frame % 30) == 0) {
+            if (FILE* armed = std::fopen("sdmc:/3ds/mdk/capture.txt", "rb")) {
+                char named[sizeof(capturePath)] = {};
+                size_t got = std::fread(named, 1, sizeof(named) - 1, armed);
+                std::fclose(armed);
+                while (got > 0 && (named[got - 1] == '\n' || named[got - 1] == '\r' ||
+                                   named[got - 1] == ' ')) {
+                    named[--got] = '\0';
+                }
+                std::snprintf(capturePath, sizeof(capturePath), "%s",
+                              named[0] ? named : "sdmc:/3ds/mdk/capture.bmp");
+                std::remove("sdmc:/3ds/mdk/capture.txt");
+            }
+        }
+
         MdkFrameParams params;
         params.elapsed = elapsed;
         params.frame_index = frame;
         params.clear_colour = 0xFF102030u;
         params.present = true;
-        params.screenshot_path = nullptr;
+        params.screenshot_path = capturePath[0] ? capturePath : nullptr;
 
         // P2: the camera is handed to the renderer every frame, whether or not a
         // step ran, and every GPU state the frame needs is set inside
         // begin/end_frame by the backend.
         mdk_render_begin_frame(renderer, &params);
+        if (capturePath[0]) {
+            capturePath[0] = '\0';  // one frame, one picture (after the copy above)
+        }
         mdk_render_set_camera(renderer, &camera);
 
         if (arena) {

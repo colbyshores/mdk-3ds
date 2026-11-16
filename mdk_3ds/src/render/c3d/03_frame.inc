@@ -329,12 +329,12 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     r->frame++;
     r->drawCount = 0;
     r->triangleCount = 0;
-    // A capture this backend cannot honour, counted anyway. `screenshot_path` is
-    // documented as Linux-only and the PICA path has no readback, so this is the
-    // whole of what this backend does with the request: it records that it was
-    // made, and never writes the file. See `RendererC3D::capturesRequested`.
+    // A capture request: counted here, honoured at this frame's end
+    // (writeScreenshotBmp below) with a readback of the left eye target.
     if (params && params->screenshot_path && *params->screenshot_path) {
         r->capturesRequested++;
+        snprintf(r->pendingScreenshot, sizeof(r->pendingScreenshot), "%s",
+                 params->screenshot_path);
     }
     // The one frame that gets censused (see `Census`). Everything else pays the
     // compare and nothing more.
@@ -474,6 +474,79 @@ static void logCensus(RendererC3D* r) {
     }
 }
 
+// One framebuffer readback: the left eye target (240x400 portrait RGBA8)
+// GX-transferred into linear memory, rotated into the panel's 400x240
+// landscape, and written as a 24-bit BMP. The transfer is queued after
+// the frame's draws (the GPU runs it in order), and the PPF wait makes
+// the pixels final before the CPU reads them. A capture is a diagnostic
+// path, never frame-critical: any failure is a refusal line and no file.
+static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
+    if (!r->targetLeft || !r->targetLeft->frameBuf.colorBuf) {
+        return false;
+    }
+    const int32_t srcW = kScreenWidth;    // 240, portrait width
+    const int32_t srcH = kScreenHeight;   // 400, portrait height
+    const size_t bytes = (size_t)srcW * (size_t)srcH * 4;
+    u32* pixels = (u32*)linearAlloc(bytes);
+    if (!pixels) {
+        mdk::log3dsPrintf("screenshot: linearAlloc(%u) FAILED for %s", (unsigned)bytes, path);
+        return false;
+    }
+    const u32 flags = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) |
+                      GX_TRANSFER_RAW_COPY(0) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+                      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+                      GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
+    GX_DisplayTransfer((u32*)r->targetLeft->frameBuf.colorBuf, GX_BUFFER_DIM(srcW, srcH),
+                       pixels, GX_BUFFER_DIM(srcW, srcH), flags);
+    GSPGPU_FlushDataCache(pixels, bytes);
+    gspWaitForEvent(GSPGPU_EVENT_PPF, false);
+    GSPGPU_InvalidateDataCache(pixels, bytes);
+
+    FILE* file = fopen(path, "wb");
+    if (!file) {
+        mdk::log3dsPrintf("screenshot: cannot open %s", path);
+        linearFree(pixels);
+        return false;
+    }
+    // 24-bit BMP, bottom-up. The panel image is the portrait buffer
+    // rotated: landscape (x, y) reads portrait (srcW-1-y, x). The PICA's
+    // RGBA8 texel in memory is [A, B, G, R], so BMP's B, G, R are the
+    // source bytes 1, 2, 3.
+    const int32_t outW = srcH;  // 400
+    const int32_t outH = srcW;  // 240
+    const int32_t rowBytes = outW * 3;
+    const int32_t imageBytes = rowBytes * outH;
+    uint8_t header[54] = {};
+    header[0] = 'B';
+    header[1] = 'M';
+    const uint32_t fileSize = 54 + (uint32_t)imageBytes;
+    memcpy(header + 2, &fileSize, 4);
+    const uint32_t dataOffset = 54;
+    memcpy(header + 10, &dataOffset, 4);
+    const uint32_t infoSize = 40;
+    memcpy(header + 14, &infoSize, 4);
+    memcpy(header + 18, &outW, 4);
+    memcpy(header + 22, &outH, 4);
+    header[26] = 1;
+    header[28] = 24;
+    memcpy(header + 34, &imageBytes, 4);
+    fwrite(header, 1, sizeof(header), file);
+    const uint8_t* src = (const uint8_t*)pixels;
+    for (int32_t y = outH - 1; y >= 0; y--) {
+        for (int32_t x = 0; x < outW; x++) {
+            const int32_t sx = srcW - 1 - y;
+            const int32_t sy = x;
+            const uint8_t* px = src + ((size_t)sy * (size_t)srcW + (size_t)sx) * 4;
+            const uint8_t bgr[3] = {px[1], px[2], px[3]};
+            fwrite(bgr, 1, 3, file);
+        }
+    }
+    fclose(file);
+    linearFree(pixels);
+    mdk::log3dsPrintf("screenshot: wrote %s (%dx%d)", path, (int)outW, (int)outH);
+    return true;
+}
+
  void mdk_render_end_frame(MdkRenderer rr) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->inFrame) return;
@@ -544,6 +617,14 @@ static void logCensus(RendererC3D* r) {
     // transfer set up by C3D_RenderTargetSetOutput.
     C3D_FrameEnd(0);
     r->inFrame = false;
+    // A pending capture reads the frame just ended (the transfer queues
+    // behind its draws), then the request is spent either way.
+    if (r->pendingScreenshot[0]) {
+        if (writeScreenshotBmp(r, r->pendingScreenshot)) {
+            r->capturesWritten++;
+        }
+        r->pendingScreenshot[0] = '\0';
+    }
     // C3D_FrameEnd submits the queue; it does not wait for it. Until the
     // next C3D_FrameBegin, the GPU may still be reading this frame's
     // textures, so they cannot be freed or replaced (AGENTS.md P3).
