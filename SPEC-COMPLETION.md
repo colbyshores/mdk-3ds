@@ -136,7 +136,15 @@ the same batch. One subsystem slice per batch.
    mip chains + per-frame layers, `Renderer.Colours.cs`); (c) lit pipeline
    (Lit/Sprite, no shadow yet); (d) sun shadow pass (2048², `SunShadow.cs`
    biases); (e) camera-depth + occlusion + post glow (`post.hlsl`);
-   (f) filtered canvas + enhanced sky; (g) mods / HD-texture path; then
+   (f) filtered canvas + enhanced sky — DONE (2026-11-15): the canvas
+   modes of `shaders/enhanced.hlsl` (mode 3 filtered index texture,
+   mode 4 colour image) in `mdk_linux/shaders/enhanced.frag` +
+   `drawEnhancedCanvas`, and the filtered sky verified line-identical
+   to `shaders/sky.hlsl` (already wired via `Panorama.linear`). Its
+   frame-gate arm records an 88.0% ceiling over a measured 86.241% gap
+   that is dominated by the lit/post divergence slices (a)–(e) landed
+   unmeasured; the row cannot close until that residue is burned down
+   under the shrink-only ceiling. (g) mods / HD-texture path; then
    the row closes via `ledger_close.py`. Until then `--enhanced` renders
    the original look and says so through the refusal log.
    **3DS direction (owner directive 2026-11-14):** the original look stays

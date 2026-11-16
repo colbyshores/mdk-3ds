@@ -193,8 +193,14 @@ fi
 if [ -n "${MDK_FRAME_GAMMA:-}" ]; then
     STEREO_ARGS+=(--gamma="$MDK_FRAME_GAMMA")
 fi
+# The enhanced look instead of the original, when the caller asks for it
+# (the P6 frame-gate arms); --original otherwise, byte-identical to before.
+LOOK_ARGS=(--original)
+if [ -n "${MDK_FRAME_ENHANCED:-}" ]; then
+    LOOK_ARGS=(--enhanced)
+fi
 DOTNET_ROOT="$4" XDG_RUNTIME_DIR="$5" MDK_DATA_DIR="$6" MDK_USER_DIR="$5" \
-    DISPLAY=:99 timeout 180 "$3" --hidden --original --gpu=vulkan \
+    DISPLAY=:99 timeout 180 "$3" --hidden "${LOOK_ARGS[@]}" --gpu=vulkan \
         --level="$7" --size="$8" --screenshot="$9" --wait=0 --mute \
         "${STEREO_ARGS[@]}"
 INNER_EOF

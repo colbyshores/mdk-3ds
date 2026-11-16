@@ -36,7 +36,12 @@ fi
     echo "frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)"
     echo "captured: $(date -u +%FT%TZ) at $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
     ORACLE_DIR="${MDK_FRAME_REFERENCE_DIR:-${TMPDIR:-/tmp}/mdk-frame-reference}"
+    # An enhanced capture (MDK_FRAME_ENHANCED, passed through to
+    # capture_cpp.sh) is measured against the oracle's enhanced frame.
     ORACLE="$ORACLE_DIR/L3_f1.bmp"
+    if [ -n "${MDK_FRAME_ENHANCED:-}" ]; then
+        ORACLE="$ORACLE_DIR/L3_f1_enhanced.bmp"
+    fi
     if [ -s "$ORACLE" ]; then
         read -r BAD MAX MEAN < <(python3 "$ROOT/tests/frames/compare_frames.py" "$ORACLE" "$BMP" --measure)
         printf 'live C++ vs C# oracle: bad_percent=%s max_delta=%s mean_delta=%s\n' "$BAD" "$MAX" "$MEAN"

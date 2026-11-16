@@ -202,6 +202,33 @@ else
     check "frame gate: the gamma capture succeeds for the gamma arm" "ok" "capture-failed"
 fi
 
+# Arm 7: the filtered canvas + enhanced sky (p6 slice f). The pinned scene
+# at --enhanced must stay under its recorded ceiling against the oracle's
+# own enhanced frame. Measured 2026-11-15 on the pinned scene: 86.241% of
+# pixels at tolerance 0 (max 251, mean 11.2394) -- dominated by the lit
+# pipeline's pre-existing divergence from slices (a)-(e), which no earlier
+# arm ever measured; this slice's own surface (the canvas band) moved the
+# gap from 87.966% to 86.241% and the original look stayed byte-identical.
+# The ceiling is 88.0, may only shrink, and the p6 row cannot close until
+# the (a)-(e) residue under it is burned down.
+ENH_CAP="$WORK/frame.enhanced.bmp"
+if MDK_FRAME_ENHANCED=1 "$CAPTURE" "$ENH_CAP" >/dev/null 2>&1 && [ -s "$ENH_CAP" ]; then
+    if [ -f "$REFDIR/L3_f1_enhanced.bmp" ]; then
+        enh_measure=$(python3 "$COMPARE" "$REFDIR/L3_f1_enhanced.bmp" "$ENH_CAP" --measure 2>/dev/null)
+        enh_bad=$(printf '%s' "$enh_measure" | awk '{print $1}')
+        enh_over=$(python3 - "$enh_bad" <<'PY'
+import sys
+print("1" if float(sys.argv[1]) > 88.0 else "0")
+PY
+)
+        check "frame gate: the enhanced gap to the oracle stays under its 88.0% ceiling (measured 86.241)" "0" "$enh_over"
+    else
+        skip "frame gate: enhanced fidelity arm (no oracle enhanced frame in $REFDIR)"
+    fi
+else
+    check "frame gate: the enhanced capture succeeds for the enhanced arm" "ok" "capture-failed"
+fi
+
 if [ "$fails" -ne 0 ]; then
     echo "FRAME GATE: $fails FAILED ($checks checks, $skipped skipped)"
     exit 1

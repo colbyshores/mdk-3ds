@@ -3931,7 +3931,7 @@ bool ensureEnhanced(RendererVk* r) {
         return false;
     }
 
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    VkDescriptorSetLayoutBinding bindings[6] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
@@ -3948,9 +3948,19 @@ bool ensureEnhanced(RendererVk* r) {
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // The canvas modes' index and palette (enhanced.frag bindings 4/5):
+    // written for every enhanced set, dummy views on the Lit/Sprite path.
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 4;
+    layoutInfo.bindingCount = 6;
     layoutInfo.pBindings = bindings;
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &r->enhancedSetLayout) !=
         VK_SUCCESS) {
@@ -3977,7 +3987,7 @@ bool ensureEnhanced(RendererVk* r) {
     for (uint32_t i = 0; i < mdk::vk::kFramesInFlight; i++) {
         VkDescriptorPoolSize poolSizes[2] = {};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[0].descriptorCount = 2048;
+        poolSizes[0].descriptorCount = 4096;
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[1].descriptorCount = 2048;
         VkDescriptorPoolCreateInfo poolInfo = {};
@@ -4055,6 +4065,112 @@ void writePointLights(RendererVk* r) {
     }
 }
 
+// A 2D-array view of an RGBA texture's image, for the enhanced shader's
+// colour_texture (the C#'s Copy path for colour textures). Created once.
+VkImageView getRgbaArrayView(RendererVk* r, int32_t tex) {
+    TextureVk& t = r->textures[tex];
+    if (!t.arrayView) {
+        VkImageViewCreateInfo viewInfo = {};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = t.image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+        if (vkCreateImageView(r->ctx.device, &viewInfo, nullptr, &t.arrayView) !=
+            VK_SUCCESS) {
+            return VK_NULL_HANDLE;
+        }
+    }
+    return t.arrayView;
+}
+
+// One enhanced descriptor set for this frame slot: the colour array, the
+// uniform ring entry, the point lights, the shadow map, and the canvas
+// modes' index/palette (dummy views where a mode does not read them).
+// False leaves *out null; the caller names the dropped draw.
+bool allocEnhancedSet(RendererVk* r, VkImageView colourView, VkImageView indexView,
+                      VkImageView paletteView, VkDeviceSize uniformOffset,
+                      VkDescriptorSet* out) {
+    const uint32_t slot = r->ctx.currentFrame;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = r->enhancedPools[slot];
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &r->enhancedSetLayout;
+    if (vkAllocateDescriptorSets(r->ctx.device, &allocInfo, &set) != VK_SUCCESS) {
+        return false;
+    }
+    VkDescriptorImageInfo imageInfo = {};
+    imageInfo.sampler = r->colourSampler;
+    imageInfo.imageView = colourView;
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorBufferInfo uniformInfo = {};
+    uniformInfo.buffer = r->uniformRing[slot];
+    uniformInfo.offset = uniformOffset;
+    uniformInfo.range = sizeof(EnhancedUniforms);
+    VkDescriptorBufferInfo lightInfo = {};
+    lightInfo.buffer = r->lightBuffers[slot];
+    lightInfo.offset = 0;
+    lightInfo.range = 528;
+    VkDescriptorImageInfo shadowInfo = {};
+    shadowInfo.sampler = r->colourSampler;
+    shadowInfo.imageView = r->shadowReady ? r->shadowView : r->dummyColourView;
+    shadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorImageInfo indexInfo = {};
+    indexInfo.sampler = r->sampler;
+    indexInfo.imageView = indexView;
+    indexInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorImageInfo paletteInfo = {};
+    paletteInfo.sampler = r->sampler;
+    paletteInfo.imageView = paletteView;
+    paletteInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet writes[6] = {};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = set;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo = &imageInfo;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = set;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[1].pBufferInfo = &uniformInfo;
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = set;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[2].pBufferInfo = &lightInfo;
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = set;
+    writes[3].dstBinding = 3;
+    writes[3].descriptorCount = 1;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[3].pImageInfo = &shadowInfo;
+    writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[4].dstSet = set;
+    writes[4].dstBinding = 4;
+    writes[4].descriptorCount = 1;
+    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[4].pImageInfo = &indexInfo;
+    writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[5].dstSet = set;
+    writes[5].dstBinding = 5;
+    writes[5].descriptorCount = 1;
+    writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[5].pImageInfo = &paletteInfo;
+    vkUpdateDescriptorSets(r->ctx.device, 6, writes, 0, nullptr);
+    *out = set;
+    return true;
+}
+
 // Record one enhanced draw: the Lit/Sprite path of drawRecorded.
 // `world` and `wv` are drawRecorded's own matrices for this draw.
 void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16],
@@ -4080,24 +4196,10 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     } else if (textured) {
         // An RGBA texture given whole (the C#'s Copy path for colour
         // textures): sample it through an array view of the same image.
-        TextureVk& t = r->textures[draw->material.texture];
-        if (!t.arrayView) {
-            VkImageViewCreateInfo viewInfo = {};
-            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            viewInfo.image = t.image;
-            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-            viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            viewInfo.subresourceRange.baseMipLevel = 0;
-            viewInfo.subresourceRange.levelCount = 1;
-            viewInfo.subresourceRange.baseArrayLayer = 0;
-            viewInfo.subresourceRange.layerCount = 1;
-            if (vkCreateImageView(r->ctx.device, &viewInfo, nullptr, &t.arrayView) !=
-                VK_SUCCESS) {
-                return;
-            }
+        colourView = getRgbaArrayView(r, draw->material.texture);
+        if (!colourView) {
+            return;
         }
-        colourView = t.arrayView;
     }
 
     const uint32_t slot = r->ctx.currentFrame;
@@ -4156,57 +4258,11 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     r->uniformCursor++;
 
     VkDescriptorSet set = VK_NULL_HANDLE;
-    VkDescriptorSetAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = r->enhancedPools[slot];
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &r->enhancedSetLayout;
-    if (vkAllocateDescriptorSets(r->ctx.device, &allocInfo, &set) != VK_SUCCESS) {
+    if (!allocEnhancedSet(r, colourView, r->dummyColourView, r->dummyColourView,
+                          uniformOffset, &set)) {
         refused("enhanced descriptor set: the lit draw is dropped");
         return;
     }
-    VkDescriptorImageInfo imageInfo = {};
-    imageInfo.sampler = r->colourSampler;
-    imageInfo.imageView = colourView;
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkDescriptorBufferInfo uniformInfo = {};
-    uniformInfo.buffer = r->uniformRing[slot];
-    uniformInfo.offset = uniformOffset;
-    uniformInfo.range = sizeof(EnhancedUniforms);
-    VkDescriptorBufferInfo lightInfo = {};
-    lightInfo.buffer = r->lightBuffers[slot];
-    lightInfo.offset = 0;
-    lightInfo.range = 528;
-    VkDescriptorImageInfo shadowInfo = {};
-    shadowInfo.sampler = r->colourSampler;
-    shadowInfo.imageView = r->shadowReady ? r->shadowView : r->dummyColourView;
-    shadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet writes[4] = {};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = set;
-    writes[0].dstBinding = 0;
-    writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[0].pImageInfo = &imageInfo;
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = set;
-    writes[1].dstBinding = 1;
-    writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    writes[1].pBufferInfo = &uniformInfo;
-    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[2].dstSet = set;
-    writes[2].dstBinding = 2;
-    writes[2].descriptorCount = 1;
-    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    writes[2].pBufferInfo = &lightInfo;
-    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[3].dstSet = set;
-    writes[3].dstBinding = 3;
-    writes[3].descriptorCount = 1;
-    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[3].pImageInfo = &shadowInfo;
-    vkUpdateDescriptorSets(r->ctx.device, 4, writes, 0, nullptr);
 
     float push[32];
     float mvp[16];
@@ -4237,6 +4293,98 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     }
 }
 
+
+// Defined with the canvas code below; the enhanced canvas draw needs them.
+float canvasWidth(RendererVk* r);
+void canvasOrtho(float out[16], float width);
+
+// One canvas quad through the enhanced shader (Renderer.Enhanced.cs's
+// ModeOf for the Overlay pass under CanvasSampling.Linear): mode 3 filters
+// the index texture through its palette, mode 4 samples a colour texture
+// (a mod's replacement image); both blend their edges by coverage instead
+// of cutting them. The vertices are already in the canvas ring; the world
+// matrix is identity and the transform is the canvas ortho, exactly the
+// palette path's geometry with the enhanced shader over it.
+void drawEnhancedCanvas(RendererVk* r, int32_t texture, int32_t palette, int32_t frameCount,
+                        const float colour[4], VkDeviceSize bufferOffset) {
+    VkPipeline pipeline = getEnhancedPipeline(r, (int)mdk::Pass::Overlay,
+                                              (int)mdk::Blend::Alpha, 0);
+    if (!pipeline) {
+        return;
+    }
+    const bool textured = texture >= 0 && texture < (int32_t)r->textures.size() &&
+                          r->textures[texture].used;
+    const int32_t mode = (textured && palette < 0) ? 4 : 3;
+    VkImageView colourView = r->dummyColourView;
+    VkImageView indexView = r->dummyColourView;
+    VkImageView paletteView = r->dummyColourView;
+    if (textured && mode == 4) {
+        colourView = getRgbaArrayView(r, texture);
+        if (!colourView) {
+            return;
+        }
+    }
+    if (textured && mode == 3) {
+        if (palette < 0 || palette >= (int32_t)r->palettes.size() ||
+            !r->palettes[palette].used) {
+            return;
+        }
+        indexView = r->textures[texture].view;
+        paletteView = r->palettes[palette].view;
+    }
+
+    const uint32_t slot = r->ctx.currentFrame;
+    if (r->uniformCursor == 0) {
+        writePointLights(r);
+    }
+    const uint32_t stride = 256;
+    if ((r->uniformCursor + 1) * stride > 64 * 1024) {
+        refused("enhanced uniform ring full: the rest of the frame's canvas "
+                "quads are dropped");
+        return;
+    }
+    EnhancedUniforms u = {};
+    u.colour[0] = colour[0];
+    u.colour[1] = colour[1];
+    u.colour[2] = colour[2];
+    u.colour[3] = colour[3];
+    u.textured = textured ? 1 : 0;
+    u.frameCount = frameCount > 0 ? frameCount : 1;
+    u.frame = 0;
+    u.mode = mode;
+    const VkDeviceSize uniformOffset = (VkDeviceSize)r->uniformCursor * stride;
+    memcpy(static_cast<uint8_t*>(r->uniformRingMapped[slot]) + uniformOffset, &u, sizeof(u));
+    r->uniformCursor++;
+
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    if (!allocEnhancedSet(r, colourView, indexView, paletteView, uniformOffset, &set)) {
+        refused("enhanced descriptor set: the canvas quad is dropped");
+        return;
+    }
+
+    float push[32];
+    float mvp[16];
+    canvasOrtho(mvp, canvasWidth(r));
+    memcpy(push, mvp, sizeof(mvp));
+    for (int i = 16; i < 32; i++) {
+        push[i] = 0.0f;
+    }
+    push[16] = 1.0f;
+    push[21] = 1.0f;
+    push[26] = 1.0f;
+    push[31] = 1.0f;
+
+    VkCommandBuffer cb = mdk::vk::commandBuffer(&r->ctx);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, r->enhancedPipeLayout,
+                            0, 1, &set, 0, nullptr);
+    vkCmdPushConstants(cb, r->enhancedPipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(push), push);
+    VkDeviceSize offset = bufferOffset;
+    vkCmdBindVertexBuffers(cb, 0, 1, &r->canvasBuffer[slot], &offset);
+    vkCmdDraw(cb, 6, 1, 0, 0);
+    r->drawCalls++;
+}
 
 // The sun shadow's objects: a 2048x2048 depth target and its depth-only
 // pass. The depth pipelines reuse the palette layout and sets (the depth
@@ -5520,6 +5668,14 @@ void replayCanvas(RendererVk* r) {
     const uint32_t slot = r->ctx.currentFrame;
     for (size_t i = 0; i < r->canvasRecords.size(); i++) {
         const RendererVk::CanvasRecord& rec = r->canvasRecords[i];
+        // The enhanced look filters the canvas (its ModeOf routes the
+        // Overlay pass to the enhanced shader); the original look replays
+        // through the palette pipeline below.
+        if (r->enhancedLook && r->enhancedReady) {
+            drawEnhancedCanvas(r, rec.texture, rec.palette, rec.frameCount, rec.colour,
+                               rec.offset);
+            continue;
+        }
         PushConstants pc = {};
         canvasOrtho(pc.mvp, canvasWidth(r));
         pc.colour[0] = rec.colour[0];
@@ -5620,6 +5776,15 @@ void mdk_render_canvas_quad(MdkRenderer rr, const mdk::CanvasQuad* q) {
         rec.colour[2] = q->colour.b;
         rec.colour[3] = q->colour.a;
         r->canvasRecords.push_back(rec);
+        r->canvasOffset += bytes;
+        return;
+    }
+
+    // The enhanced look filters the canvas even when the frame is not
+    // deferred (stereo eye passes draw the canvas immediately).
+    if (r->enhancedLook && r->enhancedReady) {
+        drawEnhancedCanvas(r, q->texture, q->palette, pc.frame_count, pc.colour,
+                           r->canvasOffset);
         r->canvasOffset += bytes;
         return;
     }
