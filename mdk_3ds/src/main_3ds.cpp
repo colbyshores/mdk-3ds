@@ -108,6 +108,13 @@ double nowSeconds() {
 // stop".
 uint32_t g_frameBudget = 0;
 
+// Set by the APT lifecycle hook when the console wakes (lid opened /
+// resumed): the main loop rebases its frame clock on the next frame
+// (P1, AGENTS.md 11) instead of spending the suspended interval. The
+// hook itself does nothing but set this; all work stays on the loop's
+// own thread.
+static volatile bool g_resumePending = false;
+
 // The picture's aspect. The top screen is 400x240 LANDSCAPE; the framebuffer is
 // 240x400 because the hardware rotates the picture 90 degrees on the way to the
 // panel, which is why this is width/height of the LANDSCAPE mode and not of the
@@ -133,6 +140,17 @@ bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // P1 lifecycle (AGENTS.md 11): know when the console sleeps and
+    // wakes. The hook only records the wake; the loop rebases its clock
+    // and logs it there. Unregistered before return, below.
+    static aptHookCookie s_lifecycleCookie;
+    aptHook(&s_lifecycleCookie,
+            [](APT_HookType hook, void*) {
+                if (hook == APTHOOK_ONWAKEUP || hook == APTHOOK_ONRESTORE) {
+                    g_resumePending = true;
+                }
+            },
+            nullptr);
 #ifdef MDK_AUTOQUIT
     // The autonomous hardware loop (harness_3ds.h): on exit, chain-load
     // the netload stub so the next 3dslink push has somewhere to land.
@@ -824,6 +842,14 @@ int main(int argc, char** argv) {
         // about to get. Clamp it here -- the platform's floor under the game's own
         // policy -- because a 40-second sleep is not 40 seconds of walking.
         const double now = nowSeconds();
+        if (g_resumePending) {
+            // Woke from sleep/suspend: the interval is not gameplay.
+            // Rebase explicitly (the clamp below stays as the backstop
+            // for every other long frame).
+            g_resumePending = false;
+            last = now;
+            mdk::log3dsPrintf("lifecycle: woke; frame clock rebased");
+        }
         double delta = now - last;
         last = now;
         if (delta < 0.0) delta = 0.0;
@@ -1330,6 +1356,7 @@ int main(int argc, char** argv) {
 
     mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
                       (unsigned)steps, exitReason);
+    aptUnhook(&s_lifecycleCookie);
     mdk_render_destroy(renderer);
     mdk::audioClose();
     mdk::romfsFileSystemExit();
