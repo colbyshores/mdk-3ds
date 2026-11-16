@@ -68,12 +68,14 @@ LONG_SIZE = 0x100
 PUBLISHER_SIZE = 0x80
 TITLE_FIELDS = ("short", "long", "publisher")
 
-# The CIA container: a 0x2020-byte header for the normal (type 0) CIA, then
-# the content blocks.
+# The CIA container as makerom writes it: a 0x2020-byte header, then the
+# certificate chain, the ticket and the TMD (each 64-byte aligned), then
+# the NCCH contents the TMD records describe. The SMDH is the "icon" file
+# inside content 0's ExeFS -- there is no standalone SMDH content block
+# in a real CIA, and an earlier version of this gate searched for one
+# and so reported every real CIA as missing its identity.
 CIA_HEADER_SIZE = 0x2020
-CIA_CONTENT_SIZES_OFF = 0x18
-CIA_CONTENT_OFFSETS_OFF = 0x58
-CIA_CONTENT_COUNT = 16
+CIA_ALIGN = 64
 
 
 @dataclass
@@ -117,24 +119,58 @@ def decode_utf16(raw: bytes) -> str:
     return text.split("\x00", 1)[0].strip()
 
 
+def _align64(value: int) -> int:
+    return (value + CIA_ALIGN - 1) & ~(CIA_ALIGN - 1)
+
+
 def find_smdh(cia: bytes) -> tuple[bytes, int] | None:
-    """(the SMDH block, the content index it was found at), or None."""
+    """(the SMDH block, the content index it was found at), or None.
+
+    Walks the container makerom writes: header sizes -> certificate,
+    ticket, TMD -> the TMD's content records -> content 0's NCCH ->
+    its ExeFS file table -> the "icon" file, whose first bytes must be
+    the SMDH magic.
+    """
     if len(cia) < CIA_HEADER_SIZE:
         return None
-    sizes = struct.unpack_from("<16I", cia, CIA_CONTENT_SIZES_OFF)
-    offsets = struct.unpack_from("<16I", cia, CIA_CONTENT_OFFSETS_OFF)
-    for index in range(CIA_CONTENT_COUNT):
-        size = sizes[index]
-        offset = offsets[index]
-        if size == 0:
-            continue
+    cert_size, ticket_size, tmd_size = struct.unpack_from("<III", cia, 8)
+    # Sections start at the 64-byte-aligned header end and stack aligned.
+    tmd_off = _align64(CIA_HEADER_SIZE) + _align64(cert_size) + _align64(ticket_size)
+    contents_off = tmd_off + _align64(tmd_size)
+    if tmd_off + 0x1E0 > len(cia):
+        return None
+    (record_count,) = struct.unpack_from(">H", cia, tmd_off + 0x1DE)
+    # Content chunk records (0x30 bytes each) end the TMD.
+    sizes: list[int] = []
+    for index in range(record_count):
+        rec = tmd_off + tmd_size - (record_count - index) * 0x30
+        if rec < tmd_off or rec + 0x30 > len(cia):
+            return None
+        (size,) = struct.unpack_from(">Q", cia, rec + 8)
+        sizes.append(size)
+    offset = contents_off
+    for index, size in enumerate(sizes):
         start = offset
-        end = offset + size
-        if end > len(cia) or start < 0:
+        offset += _align64(size)
+        if index != 0 or size < 0x200 or start + 0x200 > len(cia):
             continue
-        block = cia[start:end]
-        if block[:4] == SMDH_MAGIC:
-            return block, index
+        if cia[start + 0x100:start + 0x104] != b"NCCH":
+            return None
+        exefs_off, exefs_size = struct.unpack_from("<II", cia, start + 0x1A0)
+        exefs = start + exefs_off * 0x200
+        if exefs + 0x200 > len(cia):
+            return None
+        for entry in range(8):
+            raw_name = cia[exefs + entry * 16: exefs + entry * 16 + 8]
+            name = raw_name.split(b"\x00")[0]
+            if name != b"icon":
+                continue
+            file_off, file_size = struct.unpack_from("<II", cia, exefs + entry * 16 + 8)
+            block = cia[exefs + 0x200 + file_off: exefs + 0x200 + file_off + file_size]
+            if block[:4] == SMDH_MAGIC:
+                return block, index
+            return None
+        return None
     return None
 
 

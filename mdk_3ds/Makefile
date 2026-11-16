@@ -270,9 +270,10 @@ cia: $(TARGET).cia
 data: $(CIA_ROMFS)
 
 # The .cia needs makerom, which is NOT part of the devkitPro toolchain as
-# installed. tools/build_cia.sh says so plainly and exits non-zero rather
-# than producing a .cia that installs and then shows the wrong title.
-$(TARGET).cia: $(TARGET).elf $(CIA_SMDH) $(CIA_ROMFS) $(CIA_DIR)/icon.png $(CIA_DIR)/banner.png
+# installed. tools/build_cia.sh discovers it (or $MAKEROM), substitutes the
+# staged RomFS path into cia/mdk.rsf, and exits non-zero when makerom is
+# absent rather than producing a .cia that shows the wrong title.
+$(TARGET).cia: $(TARGET).elf $(CIA_SMDH) $(CIA_ROMFS) $(CIA_DIR)/icon.png $(CIA_DIR)/banner.png $(CIA_DIR)/mdk.rsf tools/build_cia.sh
 	@echo "CIA  $@"
 	@$(CURDIR)/tools/build_cia.sh $@ $(TARGET).elf $(CIA_SMDH) $(CIA_ROMFS) \
 	    $(CIA_DIR)/icon.png $(CIA_DIR)/banner.png

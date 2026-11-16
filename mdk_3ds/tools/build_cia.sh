@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # ============================================================================
-# build_cia.sh — build the .cia from the .elf, the SMDH and the RomFS tree.
+# build_cia.sh -- build the .cia from the .elf, the SMDH and the RomFS tree.
 #
 # USAGE:  build_cia.sh <output.cia> <elf> <smdh> <romfs-dir> <icon.png> <banner.png>
 #
-# makerom IS NOT PART OF THE DEVKITPRO TOOLCHAIN AS INSTALLED HERE. It lives
-# in a separate package (devkitPro's "3ds-cia-tools" / makerom, from
-# Project_CTR). When it is absent this script says so PLAINLY and exits
-# non-zero, rather than producing a broken .cia: a .cia that installs and
-# then shows the wrong title is worse than no .cia.
+# makerom (Project_CTR, v0.19) is NOT part of the devkitPro toolchain as
+# installed here; it is discovered on PATH, in the devkitPro tools bin, or
+# in ~/.local/bin (or via $MAKEROM). When it is absent this script says so
+# PLAINLY and exits non-zero rather than producing a broken .cia: a .cia
+# that installs and then shows the wrong title is worse than no .cia.
+#
+# The HOME-menu identity comes from the SMDH the Makefile built with
+# smdhtool from APP_TITLE / APP_DESCRIPTION / APP_AUTHOR (-icon below);
+# the RSF (mdk_3ds/cia/mdk.rsf) carries the title id and access control.
+# tools/runner/gates_smdh.py re-reads the SMDH out of the built .cia and
+# fails if any populated language slot disagrees with the Makefile.
 #
 # The .3dsx -- which the same build produces, with the same RomFS embedded
 # and the same SMDH -- is the artifact that runs in an emulator and through
@@ -52,21 +58,34 @@ if [ -z "$MAKEROM" ]; then
     exit 3
 fi
 
-TITLE="MDK"
-DESCRIPTION="Metal Dungeon"
-PUBLISHER="Shiny Entertainment"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+RSF_SRC="$SCRIPT_DIR/../cia/mdk.rsf"
+if [ ! -f "$RSF_SRC" ]; then
+    echo "build_cia: RSF template missing: $RSF_SRC" >&2
+    exit 2
+fi
+
+# makerom resolves RomFs RootPath relative to its own working directory,
+# so hand it an absolute path substituted into a scratch copy of the RSF.
+ROMFS_ABS=$(cd "$ROMFS" && pwd)
+TMP_RSF=$(mktemp /tmp/mdk-rsf.XXXXXX)
+trap 'rm -f "$TMP_RSF"' EXIT
+sed "s|@ROMFS_DIR@|$ROMFS_ABS|" "$RSF_SRC" > "$TMP_RSF"
+if grep -q "@ROMFS_DIR@" "$TMP_RSF"; then
+    echo "build_cia: RSF substitution failed for $RSF_SRC" >&2
+    exit 2
+fi
 
 echo "build_cia: $MAKEROM -f cia -o $OUT"
 "$MAKEROM" -f cia -o "$OUT" \
-    -rsf "$ROMFS" \
-    -target D \
-    -exefslogo \
+    -rsf "$TMP_RSF" \
     -elf "$ELF" \
-    -icon "$ICON" \
-    -banner "$BANNER" \
-    -name "$TITLE" \
-    -publisher "$PUBLISHER" \
-    -title "$TITLE" \
-    -desc "$DESCRIPTION"
+    -icon "$SMDH" \
+    -banner "$BANNER"
+
+if [ ! -s "$OUT" ]; then
+    echo "build_cia: makerom produced no output at $OUT" >&2
+    exit 1
+fi
 
 echo "build_cia: wrote $OUT ($(stat -c%s "$OUT") bytes)"
