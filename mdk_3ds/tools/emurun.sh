@@ -1047,9 +1047,16 @@ canary_stats() { # canary_stats <png> <rect_x1> <rect_y1>
     python3 - "$1" "$2" "$3" "${REPO:-${ROOT:-.}}/tools/panel_crop.py" <<'PY' 2>/dev/null
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[4])))
-from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1, open_rgb
+from panel_crop import PANEL_SIZE, find_panel, open_rgb
 rx1, ry1 = int(sys.argv[2]), int(sys.argv[3])
-px = open_rgb(sys.argv[1]).load()
+_img = open_rgb(sys.argv[1])
+px = _img.load()
+# The panel is located in the capture, not assumed: the window's position
+# comes from the seeded Qt config and drifts (measured -13,-22 once put
+# the whole panel outside the documented rectangle while the game drew
+# it perfectly). find_panel anchors on the game's own clear colour.
+PANEL_X0, PANEL_Y0 = find_panel(_img)
+PANEL_X1, PANEL_Y1 = PANEL_X0 + PANEL_SIZE[0] - 1, PANEL_Y0 + PANEL_SIZE[1] - 1
 total = inside = 0
 bx0 = by0 = 1 << 30
 bx1 = by1 = -1
@@ -1300,9 +1307,12 @@ hud_ink_stats() { # hud_ink_stats <png> <x0> <y0> <x1> <y1>
     python3 - "$1" "$2" "$3" "$4" "$5" "${REPO:-${ROOT:-.}}/tools/panel_crop.py" <<'PY' 2>/dev/null
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[6])))
-from panel_crop import PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1, open_rgb
+from panel_crop import PANEL_SIZE, find_panel, open_rgb
 x0, y0, x1, y1 = (int(v) for v in sys.argv[2:6])
-px = open_rgb(sys.argv[1]).load()
+_img = open_rgb(sys.argv[1])
+px = _img.load()
+PANEL_X0, PANEL_Y0 = find_panel(_img)
+PANEL_X1, PANEL_Y1 = PANEL_X0 + PANEL_SIZE[0] - 1, PANEL_Y0 + PANEL_SIZE[1] - 1
 total = inside = outside = 0
 bx0 = by0 = 1 << 30
 bx1 = by1 = -1

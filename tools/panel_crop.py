@@ -44,9 +44,61 @@ except ImportError:  # pragma: no cover
     sys.stderr.write("panel_crop: needs Pillow (as tools/publish_frame.sh does)\n")
     raise SystemExit(2)
 
-# Inclusive near and far corners in the emulator's 1280x1024 window.
+# Inclusive near and far corners in the emulator's 1280x1024 window, as
+# derived when the emulator window sat where the derivation put it. The
+# window's position comes from the seeded Qt config, which drifts (a
+# measured -13,-22 shift put the whole panel outside this rectangle
+# while the game drew it perfectly), so these constants are now only
+# the FALLBACK: find_panel() locates the panel in the capture itself.
 PANEL_X0, PANEL_Y0, PANEL_X1, PANEL_Y1 = 440, 253, 839, 492
 PANEL_SIZE = (PANEL_X1 - PANEL_X0 + 1, PANEL_Y1 - PANEL_Y0 + 1)
+
+
+def find_panel(image: "Image.Image") -> tuple[int, int]:
+    """The panel's top-left corner in a full-window capture.
+
+    The emulator draws on black; the game always clears its screen to a
+    colour, so the first non-black pixel row and column are the top
+    screen's own. (The bottom screen and the frame-time overlay sit
+    right and below, so they cannot move the origin.) Falls back to the
+    documented constants when the capture holds no non-black pixel or
+    the panel would not fit -- a wrong origin found loudly by the
+    canary verdict is better than a silent crop of the wrong place.
+    """
+    px = image.load()
+    # A capture whose window is filled from its own corner has no black
+    # frame to locate against (the harness's synthetic captures are built
+    # that way, with the panel at the documented constants): keep them.
+    if px[0, 0] != (0, 0, 0):
+        return PANEL_X0, PANEL_Y0
+    min_x, min_y = image.width, image.height
+    for y in range(image.height):
+        for x in range(image.width):
+            if px[x, y] != (0, 0, 0):
+                if x < min_x:
+                    min_x = x
+                if y < min_y:
+                    min_y = y
+                break  # this row's first content; only the minima matter
+    if min_x == image.width or min_x + PANEL_SIZE[0] > image.width or \
+            min_y + PANEL_SIZE[1] > image.height:
+        return PANEL_X0, PANEL_Y0
+    # The location is only believed when the rectangle there is FILLED:
+    # a real frame is cleared to a colour edge to edge, while a synthetic
+    # capture with a lone marker on black would otherwise anchor the
+    # panel on the marker itself and pass a wrong-corner marker (the
+    # exact failure the marker rect exists to catch). Sparse captures
+    # keep the documented constants.
+    filled = 0
+    total = 0
+    for y in range(min_y, min_y + PANEL_SIZE[1], 4):
+        for x in range(min_x, min_x + PANEL_SIZE[0], 4):
+            total += 1
+            if px[x, y] != (0, 0, 0):
+                filled += 1
+    if total == 0 or filled * 2 < total:
+        return PANEL_X0, PANEL_Y0
+    return min_x, min_y
 
 
 def die(message: str, code: int = 1) -> "None":
@@ -79,12 +131,13 @@ def require_panel(path: str) -> "Image.Image":
 
 def do_crop(capture_path: str, out_path: str) -> int:
     image = open_rgb(capture_path)
-    if image.width < PANEL_X1 + 1 or image.height < PANEL_Y1 + 1:
+    x0, y0 = find_panel(image)
+    if image.width < x0 + PANEL_SIZE[0] or image.height < y0 + PANEL_SIZE[1]:
         die(f"{capture_path} is {image.size[0]}x{image.size[1]}, too small for "
-            f"the panel rectangle ({PANEL_X1 + 1}x{PANEL_Y1 + 1} needed)")
-    # PIL's box is [left, upper, right, lower) -- hence the +1 on the far corner.
+            f"the panel at ({x0},{y0}) ({PANEL_SIZE[0]}x{PANEL_SIZE[1]} needed)")
+    # PIL's box is [left, upper, right, lower) -- hence the size form here.
     # Forgetting that is exactly the 399x239 bug this file exists to stop.
-    crop = image.crop((PANEL_X0, PANEL_Y0, PANEL_X1 + 1, PANEL_Y1 + 1))
+    crop = image.crop((x0, y0, x0 + PANEL_SIZE[0], y0 + PANEL_SIZE[1]))
     if crop.size != PANEL_SIZE:
         die(f"crop produced {crop.size[0]}x{crop.size[1]}, expected "
             f"{PANEL_SIZE[0]}x{PANEL_SIZE[1]}")
