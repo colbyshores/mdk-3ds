@@ -2783,6 +2783,70 @@ doorway-crossing oracle rather than a hand-written expectation. Either one chang
 full shape review-4 F3 named (invocation, display, emulator md5, `guest log :` path, frames,
 exit code).
 
+## NEXT (batch 177)
+**THE ONLY BLOCKING FILE WRITE IN THE FRAME LOOP WAS THE PER-DRAW DIAGNOSTIC, AT THREE
+FLUSHED SD WRITES PER FRAME, AND THE DEVICE LOG FROM THE FREEZE ENDS INSIDE IT.**
+`06_draw.inc`'s "first draws" sample is bounded to `drawCount <= 3`, but `drawCount` is
+reset every frame — so it was up to three `log3dsPrintf` lines per frame, and
+`log3dsPrintf` `fflush`es each one (`platform/log_3ds.cpp:88`). Measured in this
+batch's armed lane (below) the level-1 spawn view emits exactly **one** `draw 1:` line
+per frame — 1080 lines for 1080 frames — so the real rate here is 60 flushed SD writes
+a second and the three-line bound is the ceiling. Inside the draw path for the whole
+run, straight into an
+append-only log on `sdmc:`. The pulled device log's newest session does exactly what
+that predicts: thousands of `draw 1/2/3:` lines, then a line cut off mid-field
+(`draw 1: mesh=0 first=0 count=`) with no `--- session end ---` after it. That is a
+stop inside `fwrite`/`fflush`, not a game-logic stop, and it is the same class the
+vault runbook names for this console
+(`20-runbooks/3ds-autonomous-hardware-profiling-loop.md`: "Kill periodic diagnostic SD
+writes ... it murders anything doing ROM streaming off the same SD"; "every site is
+runtime-armed by an sdmc file, so absent files cost ~nothing"), and the same thing
+`AGENTS.md` P5 asks for ("keep ... verbose logging out of frame-critical work").
+
+**ARMED BY A FILE, NOT BY DEFAULT.** `drawSampleArmed()` (`06_draw.inc`) opens
+`sdmc:/3ds/mdk/drawlog.txt` **once**, at the first draw that would print, and latches
+the answer. Present, the sample prints exactly as before and announces itself with
+`draw: sample logging ARMED by sdmc:/3ds/mdk/drawlog.txt`; absent, the cost is one
+failed `fopen` per run and nothing per frame. Nothing else in the backend logs per
+frame — `logCensus` is once per process at `kCensusFrame`, and the rest are boot,
+error, and caller-requested capture lines.
+
+Evidence, both directions, on `DISPLAY=:99` (P7) with the pinned instrument
+`mandarine.AppImage` md5 `0d2adab6ad078c78e6d03e72086f2eb6` (r1.2.1):
+* **Default (absent file)** — `mdk_3ds/tools/emurun.sh --secs 30 --grep 'draw 1:|draw: sample'`
+  → exit 0, `guest log : /tmp/mdk-emurun.326500/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log`,
+  reached frame 1620, **zero** `draw 1:` lines, no `ARMED` line, and the scene/HUD lines
+  unchanged from the previous batch's runs (`frame 1440 ... objects=7`, same fields).
+* **Armed (file present)** — same command with `TMPDIR` pointed at a probe dir and
+  `sdmc/3ds/mdk/drawlog.txt` created before the first draw
+  (`/tmp/armprobe/mdk-emurun.334852/...`) → exit 0, frame 1080, 279 751-byte log, and
+  the sample prints again — **1080 `draw 1:` lines for 1080 frames**, one per frame,
+  plus the single arming line `draw: sample logging ARMED by
+  sdmc:/3ds/mdk/drawlog.txt (3 lines/frame, flushed)`. First repeated line `draw 1:
+  mesh=0 first=0 count=6 tex=15 pass=0 v0=(11.0,438.0,25.0) uv=(0.000,0.000)`. The
+  flood is real and now opt-in.
+* Gates: `bash tools/check.sh` → `CHECK: ALL GATES PASSED` (13/13; `gates_smdh` SKIP, no
+  built `.cia`), including `gates_batch_integrity` and `gates_completion`.
+* Knowledge-base lookup: **the MCP servers were unreachable from this session** —
+  `obsidian.lab.home` failed DNS resolution (`Temporary failure in name resolution`)
+  from the JSON-RPC probe, so this used the **disk fallback**
+  `/mnt/nas/Vaults/port-docs` (read-only) and cites the runbook path above. That is a
+  degraded lookup, not a live-MCP lookup: record it as the session's P9 state.
+
+**Still open, and it is the increment this one unblocks rather than closes.** The
+console's HTTP service came back partially during this batch — `GET /` and
+`GET /3ds/mdk/mdk.log` each answered `200` once, then every subsequent request on every
+path returned `000` while `ping` stayed green and the TCP ports stayed open, and a
+third `cmd reboot` was sent. So there are now **three** distinguishable console states,
+not two: ARP-dead (hard hang, needs power), the P10 trap-8 wedge (`:8080` dead,
+`:17491` open), and this one — **HTTP answers a couple of requests and then stops
+answering entirely, with no reboot taking effect**. `hw.harness-cycle`,
+`hw.profile-og`, `hw.pixels-rgba8`, `hw.cia-boot` and `hw.sleep-resume` stay `todo`;
+nothing here is hardware acceptance. The next hardware attempt is the same
+`hw_cycle.sh --once --ip 192.168.4.167` on the verified harness payload, and it should
+now run without the 180-flush/s SD load — which is the cheapest test of the freeze
+hypothesis this batch exists to make possible.
+
 ## NEXT (batch 176)
 **THE CYCLE'S PAYLOAD COULD NOT END A RUN, AND NOTHING IN THE HARNESS ASKED WHETHER IT COULD.**
 Every push since the harness landed had been built with the plain

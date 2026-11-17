@@ -1,0 +1,16 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-17T05:24:31Z at ef21268
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: this batch is 3DS-only -- the renderer's per-draw sample log
+(mdk_3ds/src/render/c3d/06_draw.inc) becomes opt-in, armed by
+sdmc:/3ds/mdk/drawlog.txt, instead of three fflush()ed SD writes per frame. The
+pinned scene is the Linux level-3 capture, which links none of the 3DS backend,
+so the PNG is byte-identical to the previous pin (md5
+6769a13731983d65cee9df02da6cff37, same numbers above) ON PURPOSE: the picture did
+not move because the change removes file writes, not draws. Evidence both
+directions is on DISPLAY=:99 with mandarine r1.2.1 (md5 0d2adab6): unarmed
+--secs 30 reaches frame 1620 with ZERO `draw 1:` lines
+(/tmp/mdk-emurun.326500/.../mdk.log, 12 638 bytes); armed with drawlog.txt
+present prints 1080 `draw 1:` lines in 1080 frames
+(/tmp/armprobe/mdk-emurun.334852/.../mdk.log, 279 751 bytes) plus the single
+`draw: sample logging ARMED ...` line.

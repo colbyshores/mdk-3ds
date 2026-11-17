@@ -2,6 +2,37 @@
 // Part of renderer_c3d.cpp's single translation unit (see its header).
 // No include guards, no includes of its own; the order is load-bearing.
 
+// THE PER-DRAW SAMPLE IS ARMED BY A FILE, NEVER ALWAYS ON.
+//
+// This block writes THREE lines per frame, and log3dsPrintf fflush()es each one,
+// so at 60 fps it is 180 SD writes a second inside the draw path. That is the
+// one diagnostic in this backend that contends with the frames it describes:
+// the vault's 3ds-autonomous-hardware-profiling-loop runbook names exactly this
+// ("Kill periodic diagnostic SD writes ... it murders anything doing ROM
+// streaming off the same SD"), and AGENTS.md P5 keeps verbose logging out of
+// frame-critical work. It also put the only unguarded blocking file write in
+// the loop, at 3/frame, for the whole run -- the device log from the 2026-11-17
+// freeze ends MID-LINE in this block, which is what a stop inside fflush() looks
+// like. So it is off unless the card asks for it:
+//
+//     touch sdmc:/3ds/mdk/drawlog.txt
+//
+// Absent, the cost is one failed open() at the first draw and nothing per frame.
+// The check is once, not per draw, because the file is placed before the run.
+static bool drawSampleArmed() {
+    static int armed = -1;
+    if (armed < 0) {
+        FILE* file = fopen("sdmc:/3ds/mdk/drawlog.txt", "rb");
+        armed = file ? 1 : 0;
+        if (file) {
+            fclose(file);
+            mdk::log3dsPrintf("draw: sample logging ARMED by sdmc:/3ds/mdk/drawlog.txt"
+                              " (3 lines/frame, flushed)");
+        }
+    }
+    return armed != 0;
+}
+
 static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (draw->mesh < 0 || (size_t)draw->mesh >= r->meshes.size()) {
         return;
@@ -134,10 +165,11 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
 
     r->drawCount++;
     r->triangleCount += draw->vertex_count / 3;
-    if (r->drawCount <= 3) {
-        // THE FIRST DRAWS, in full. A draw that never happens and a draw
+    if (r->drawCount <= 3 && drawSampleArmed()) {
+        // THE FIRST DRAWS, in full -- WHEN ARMED. A draw that never happens and a draw
         // that happens with the wrong data look the same on the screen, and
-        // this is the difference between them.
+        // this is the difference between them. It is armed by a file because
+        // this block is 3 flushed SD writes per frame; see drawSampleArmed().
         // THE SAMPLE IS THE DRAW'S OWN FIRST VERTEX, not the mesh's. Printing
         // `mesh.data[0..2]` made every draw of a mesh log the same vertex, and
         // that is what sent batch 77 looking for a fan in a triangle its draw did
