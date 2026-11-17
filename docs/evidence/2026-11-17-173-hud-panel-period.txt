@@ -1,0 +1,56 @@
+2026-11-17  HUD panel  fine stripe is gone: 5.3 px -> a 2-lobe oval
+==================================================================
+
+CLAIM. Batch 173's headline symptom -- "the HUD's panel sprite reaches the panel
+as a fine vertical stripe instead of the oval, at a period of ~5.3 crop px where
+the derived geometry says 21.3" -- is the row-major texture layout. On the
+tiled build the panel carries no 5.3 px component and resolves into two coarse
+lobes across its 58 crop px, which is the oval. The row-major mutant reproduces
+the recorded 5.3 px peak exactly.
+
+CAPTURES. Both are `--expect hud-visible --shot`, mono, level 7, `screen=4`,
+feet (0,4,0), yaw 90, health 100, ~4200 frames, same scene, same emulator.
+
+  (a) row-major mutant  `2026-11-17-hud-panel-a-rowmajor.png`
+  (b) Morton (shipped)  `2026-11-17-hud-panel-b-morton.png`
+
+Each image is crop (330,190)-(400,240) of the 400x240 top screen -- itself
+(440,239)-(840,479) of the 1280x1024 Xvfb frame -- enlarged 8x with
+nearest-neighbour so the striping is visible in a diff. The numbers below come
+from the UNSCALED crop, luminance averaged over the panel's rows y=200..237,
+x=342..399, detrended with a quadratic fit:
+
+  build      dominant period   fine-band (3-9 px) peak   stripes   profile sd
+  ---------  ---------------   -----------------------   -------   ----------
+  row-major       11.6 px               5.3 px              5        11.2
+  Morton          29.0 px               6.4 px              2        16.3
+
+The mutant's fine-band peak lands on 5.3 px, the exact number recorded in
+docs/OPEN_ITEMS.md for this row before any tile change. The tiled build has no
+peak there; its structure is 29 px across, i.e. about two features in 58 px,
+against the 21.3 px the panel geometry predicts for an 84-texel sprite mapped to
+56 crop px. Counting upward instead of measuring the peak: 5 stripes -> 2.
+
+COMMAND (identical except which helper body was compiled):
+
+  export DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
+  make -C mdk_3ds -j"$(nproc)"
+  DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud-visible \
+      --shot /tmp/kilo/hud-<build>.png --secs 75 --min-frames 60
+
+DISPLAY. `:99`. EMULATOR. mandarine r1.2.1, md5 `0d2adab6ad078c78e6d03e72086f2eb6`.
+REVISION. `1cb8d9d` for the shipped build; the mutant is that tree with
+`textureTexelIndex` replaced by `y*paddedWidth + x` and nothing else.
+
+`emurun.sh` exits 7 on both runs, and that is the pre-existing `HUD INK NOT
+UNIQUE` verdict, not this change: 12 of the 43 (0,255,0) canary pixels fall
+outside the panel crop because the HUD's own death skull straddles that bound by
+construction. The run still writes the shot and the marker-visible evidence
+line; the exit code is about the canary's uniqueness, not about the panel.
+
+WHAT THIS DOES NOT DO. It is emulator evidence on llvmpipe, so the hardware
+acceptance rows stay open (AGENTS.md P8). It does not license the `/4` UV, which
+remains forbidden. And it does not by itself explain the level's crosshatch --
+that is the same layout on scene textures, which the frame A/B in
+`2026-11-17-level7-texture-tile-order.txt` measures as a 2x gradient-energy
+change rather than as a picture a reviewer can point at.

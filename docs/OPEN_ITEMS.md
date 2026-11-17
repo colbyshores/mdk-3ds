@@ -660,13 +660,18 @@ the two earlier "no visible change" readings are not a refutation.
 `docs/evidence/2026-11-17-level7-texture-tile-order.txt` has the captures, the crop, the
 command, the display, and the mutation control.
 
-**WHAT IS STILL OPEN IN THIS ROW.** The HUD panel's measured period (5.3 crop px against
-21.3 derived) has not been re-measured against the tiled build, and the hardware
-acceptance rows are untouched: this is emulator evidence on a software rasterizer, and
-AGENTS.md P8 says emulator-green is not hardware-pass. The `/4` UV remains forbidden.
-Next move: re-measure the panel's stripe period on the tiled build and compare it with
-the 21.3 the geometry predicts; if it lands there, the row closes on evidence rather
-than on a tidier-looking sprite.
+**WHAT IS STILL OPEN IN THIS ROW.** The HUD panel's period is now re-measured, and it
+is the headline number: the panel no longer reaches the screen as a fine stripe. On the
+tiled build the region carries no 3-9 px component and resolves into **2 lobes across
+its 58 crop px** (dominant 29 px, against the 21.3 the geometry predicts for an 84-texel
+sprite in 56 crop px); the row-major mutant reproduces **the recorded 5.3 px peak
+exactly**, with 5 stripes, in the same scene minutes apart. So the fine stripe was the
+layout, and it is gone. `docs/evidence/2026-11-17-173-hud-panel-period.txt` has both
+captures, the crop, the profile numbers, the command and the display.
+
+What remains open is **hardware acceptance only**: every number above is emulator
+evidence on llvmpipe, and AGENTS.md P8 says emulator-green is not hardware-pass, so the
+3DS acceptance cells stay open until the console run exists. The `/4` UV stays forbidden.
 
 **DO NOT SHIP A /4.** It was tried. With the panel's uv scaled by 1/4 the stripes
 thin out, and **the health digits stop reading "100"** — a change that makes one pattern
