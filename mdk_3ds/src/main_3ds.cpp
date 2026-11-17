@@ -44,6 +44,7 @@
 // ============================================================================
 
 #include <3ds.h>
+#include <malloc.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +52,7 @@
 
 #include <map>
 #include <memory>
+#include <new>
 #include <string>
 
 #include "audio/audio_3ds.h"
@@ -139,6 +141,43 @@ bool saveEnhancedConfig(const mdk::EnhancedToggles& toggles) {
     return written;
 }
 
+// PHASE 0 HEAP PROBE (arena streaming). The number that matters is the
+// newlib heap's, not the application region's: libctru allocates the whole
+// application region at boot (heap_split.cpp explains the split), so
+// osGetMemRegionFree(APPLICATION) reads 0 at every point in the run. That is
+// a statement about the reservation, not about headroom. mallinfo() reports
+// the allocator itself:
+//   arena    bytes sbrk'd from the heap reservation so far
+//   used     bytes currently handed out (uordblks)
+//   free     free space inside that arena (fordblks)
+// `peak` is the run's high-water mark of `used`, which is what an arena
+// budget has to fit under. `lin` is the GPU heap's free bytes
+// (linearSpaceFree), the other half of the split: a texture allocation fails
+// with invisible geometry, not an abort, so it is logged beside the malloc
+// numbers on every probe. No probe on this path allocates (log3dsPrintf
+// writes through a static FILE buffer, not newlib's heap).
+static uint32_t g_heapPeak = 0;
+static void heapProbe(const char* tag) {
+    struct mallinfo mi = mallinfo();
+    const uint32_t used = (uint32_t)mi.uordblks;
+    if (used > g_heapPeak) {
+        g_heapPeak = used;
+    }
+    mdk::log3dsPrintf("mem[%s]: cap=%u arena=%u used=%u free=%u peak=%u lin=%u",
+                      tag, (unsigned)envGetHeapSize(), (unsigned)mi.arena, (unsigned)used,
+                      (unsigned)mi.fordblks, (unsigned)g_heapPeak, (unsigned)linearSpaceFree());
+}
+
+// With -fno-exceptions libstdc++'s operator new calls this and then aborts,
+// so the handler is the only place that can name the allocation that ran
+// the heap dry. Without it an OOM is a silent exit with no last line.
+static void onHeapExhausted() {
+    heapProbe("OOM");
+    mdk::log3dsPrintf("FATAL: operator new failed -- the 24 MiB heap is exhausted");
+    mdk::log3dsClose();
+    abort();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -197,6 +236,14 @@ int main(int argc, char** argv) {
     mdk::mathLutInit();
 
     mdk::log3dsOpen();
+    std::set_new_handler(onHeapExhausted);
+    heapProbe("boot");
+    // P6 evidence: the split heap_split.cpp asks for, printed before any
+    // level is loaded. `cap` is what the allocator granted main; `lin` is the
+    // GPU heap's size before the renderer touches it.
+    mdk::log3dsPrintf("main: heap split main=%u linear=%u (avail=%u)", (unsigned)envGetHeapSize(),
+                      (unsigned)envGetLinearHeapSize(),
+                      (unsigned)(envGetHeapSize() + envGetLinearHeapSize()));
     mdk::log3dsPrintf("main: FZ/DN ok (fpscr=0x%08lx)",
                       (unsigned long)mdk::vfpReadFpscr());
 
@@ -262,6 +309,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     mdk::log3dsPrintf("backend: %s", mdk_render_backend_name(renderer));
+    heapProbe("renderer");
 
     // ---------------------------------------------------------------------
     // The flow, BEFORE the level: the flow is what decides which level plays
@@ -341,6 +389,7 @@ int main(int argc, char** argv) {
     if (data.found()) {
         mdk::log3dsPrintf("data: %s", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, flow.state().level)) {
+            heapProbe("level-data");
             // The scripts' bytecode is a level asset, found the same way the C#
             // finds it. A level with no CMI is a level with no scripts, and this
             // frontend says so in the log rather than running a silent half-world.
@@ -356,6 +405,7 @@ int main(int argc, char** argv) {
             } else {
                 cmiReady = true;
                 mdk::log3dsPrintf("scripts: CMI loaded (%d bytes)", (int)cmiBytes.size());
+                heapProbe("cmi");
             }
             const int32_t start = level.dti().startArena();
             if (start >= 0 && start < (int32_t)level.dti().arenas().size()) {
@@ -375,6 +425,7 @@ int main(int argc, char** argv) {
                     mdk::log3dsPrintf("view: FAILED");
                     arena = nullptr;
                 }
+                heapProbe("arena-view");
             }
             // Kurt's frames are loaded whether the arena view worked or not: the
             // sprite is his, not the arena's, and a level with no arena geometry
@@ -441,6 +492,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+            heapProbe("assets");
         } else {
             mdk::log3dsPrintf("level %d: FAILED to load", (int)flow.state().level);
         }
@@ -519,6 +571,11 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     mdk::audio::SoundBank bank;
     bool bankReady = false;
+    mdk::log3dsPrintf("mem: app region size=%llu free=%llu bytes",
+                      (unsigned long long)osGetMemRegionSize(MEMREGION_APPLICATION),
+                      (unsigned long long)osGetMemRegionFree(MEMREGION_APPLICATION));
+    heapProbe("pre-audio");
+    mdk::log3dsPrintf("audio: loading SNI archives (level %d)", (int)flow.state().level);
     if (data.found() &&
         mdk::audio::SoundBank::forLevel(&bank, data, flow.state().level)) {
         bankReady = true;
@@ -527,6 +584,7 @@ int main(int argc, char** argv) {
     } else {
         mdk::log3dsPrintf("audio: the level's SNI archives did not load -- no sounds");
     }
+    heapProbe("post-audio");
     mdk::audio::SoundMixer mixer(bankReady ? &bank : nullptr);
     // The sink gets no queue query (audio_3ds.h: ndsp has no queued-frames
     // query, only a position inside the buffer now playing), so the device keeps
@@ -556,6 +614,7 @@ int main(int argc, char** argv) {
             space.add(a);
         }
     }
+    heapProbe("arena-space");
 
     // ---------------------------------------------------------------------
     // The object pass: the C#'s Viewer._objects, Viewer._looks and DrawObjects.
@@ -728,6 +787,7 @@ int main(int argc, char** argv) {
             }
             mdk::log3dsPrintf("scripts: runtime ready (seed %d, option %d)", (int)seed,
                               (int)kScriptOption);
+            heapProbe("runtime");
         }
         if (kurtSpriteReady) {
             player.setFrameCounts(kurtSprite.frameCounts());
@@ -835,6 +895,8 @@ int main(int argc, char** argv) {
     const char* exitReason = "aptMainLoop returned false";
     u32 prevHeld = 0;  // last frame's held mask; the menu reads edges
 
+    heapProbe("loop");
+    mdk::log3dsPrintf("loop: entering main loop");
     while (aptMainLoop()) {
         // The harness deadline (harness builds only; a no-op question in
         // any other build): quit through the ordinary teardown so the

@@ -1,4 +1,221 @@
 # Phase 2 continuation checkpoint
+
+## ARENA STREAMING — PHASE 0 HARDWARE BASELINE, MEASURED (branch `experimental/arena-streaming`, base `36528a3`)
+
+**This section is not a loop batch.** It is the Phase 0 measurement the arena
+streaming work needs before any streaming change: the level-7 memory failure is
+now REPRODUCED ON THE CONSOLE and MEASURED, not inferred.
+
+**Harness correction first, because it cost hours.** The deploy was repeatedly
+read as failing at ~50 % and re-uploaded; it had been succeeding every time. The
+loop is `mdk_3ds/tools/hw_cycle.sh --once` and the full device runbook is
+AGENTS.md §11 P10. `3dslink`'s piped progress line is stale when stdout is not a
+terminal; the authority is the console's `/3ds/netload_stub/transfers.log`, whose
+line for the build measured here is
+`file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848`.
+`bytes_in` is the *compressed* count, not a truncation.
+
+**Method.** `mdk_3ds/src/main_3ds.cpp` carries an uncommitted `heapProbe()`
+(temporary, Phase 0 only) that prints `mallinfo()` at each phase and installs
+`std::set_new_handler` so an OOM names itself instead of exiting silently. The
+guest log is `sdmc:/3ds/mdk/mdk.log`, `fflush`ed per line and served by the ATM
+sysmodule at `http://192.168.4.167:8080/3ds/mdk/mdk.log`. Console
+`old3ds-lan167`, level 7, backend PICA200 Citro3D, data dir `romfs:/`.
+
+`cap` is `envGetHeapSize()` = **32,657,408 B (31.1 MiB)**. `arena` is what
+newlib has sbrk'd from its 24 MiB reservation; `used` is `uordblks`.
+
+| probe | arena | used | free | peak used |
+|---|---:|---:|---:|---:|
+| boot | 32,736 | 27,752 | 4,984 | 27,752 |
+| renderer | 65,504 | 61,664 | 3,840 | 61,664 |
+| level-data | 20,762,592 | 18,732,056 | 2,030,536 | 18,732,056 |
+| cmi | 21,843,936 | 20,897,784 | 946,152 | 20,897,784 |
+| arena-view | 21,843,936 | 20,971,792 | 872,144 | 20,971,792 |
+| assets | 31,158,240 | 29,163,240 | 1,995,000 | 29,163,240 |
+| pre-audio | 31,158,240 | 28,084,224 | 3,074,016 | 29,163,240 |
+| **OOM** | 31,158,240 | 29,066,424 | 2,091,816 | 29,163,240 |
+
+The last three lines of the run:
+
+```
+mem[pre-audio]: cap=32657408 arena=31158240 used=28084224 free=3074016 peak=29163240
+mem[OOM]: cap=32657408 arena=31158240 used=29066424 free=2091816 peak=29163240
+FATAL: operator new failed -- the 24 MiB heap is exhausted
+```
+
+**What the numbers establish**
+
+1. **The failure is genuine newlib heap exhaustion, and it happens while loading
+   the level's SNI archives** (`audio: loading SNI archives (level 7)` is the
+   line immediately before the OOM). At that point the allocator had 2,091,816 B
+   free inside a 31,158,240 B arena, plus 1,499,168 B of the 32,657,408 B
+   reservation never sbrk'd — **3,590,984 B total against a 5,038,040 B SNI
+   set**, so the request could not be served and no smaller allocation was left
+   to give.
+2. **`LevelData::load` is the largest single consumer: +18,670,392 B**, because
+   it eagerly calls `Mto::getArena()` for all 19 arenas while the MTO byte
+   buffer (8,050,956 B) is still resident.
+3. **The arena *view* is nearly free (+74,008 B)**: 19 arenas become 135 batches,
+   2,544 vertices, 870 triangles. The bytes are the cost, not the view — which
+   is exactly what makes streaming the right lever.
+4. **The sprite/HUD pass is the second consumer: +8,191,448 B** in one step
+   (`mem[assets]`), which is why the arena reached 31.16 MB of its 32.66 MB cap
+   before audio even started.
+5. **CMI costs +2,165,728 B** for a 1,079,557 B file.
+6. **`osGetMemRegionFree(MEMREGION_APPLICATION)` reads 0 at every point in the
+   run** and is not a headroom signal: crt0 reserves `__heap_size = 0x01800000`
+   and `__linear_heap_size = 0x02000000` out of the 64 MiB region at boot, so the
+   region is fully spoken for before `main`. Read `mallinfo()`, never that.
+7. **`mallinfo()` reclaims ~1.08 MB between `assets` and `pre-audio`**, so the
+   peak (`29,163,240`) is above the `pre-audio` `used` — budget against peak,
+   not against the line before the crash.
+
+**Do not re-derive any of this.** The probe is uncommitted scaffolding: keep it
+until Phase 0 baselines exist for the other levels, then delete it in one commit
+with the numbers already in this section.
+
+### The audio load cannot fit, with or without fragmentation
+
+Live heap before audio is **28,084,224 B**; the three SNI archives total
+**5,038,040 B** and `SoundBank` retains every byte (`Sni::bytes_`), so the
+requirement is `28,084,224 + 5,038,040 = 33,122,264 B` against a
+**32,657,408 B** cap — **short by 464,856 B before fragmentation is considered**,
+and the run's peak (`29,163,240`) makes it worse than that.
+
+Fragmentation is what actually trips first. `readFileRomfs()` is
+`resize(size)` + `fread` in place, i.e. **one exact-size allocation per file**
+(`mdk_3ds/src/platform/filesystem_romfs.cpp:156`), so `LEVEL7O.SNI` needs a
+**single contiguous 4,059,388 B** block. Free total at OOM was
+`2,091,816 + 1,499,168 = 3,590,984 B`, below that block even if it were one piece.
+
+The `used` delta across the audio phase proves the identity of the failing
+request: `29,066,424 - 28,084,224 = 982,200 B` was successfully allocated, and
+`TRAVERSE.SNI` (732,952) + `LEVEL7S.SNI` (245,700) = `978,652 B`, leaving
+**3,548 B** for the two `Sni` objects' entry vectors. So the two small archives
+loaded and the **very next allocation — `LEVEL7O.SNI`'s 4,059,388 B `resize` —
+is the one that raised `FATAL`.** That is arithmetic, not inference.
+
+So "free some bytes somewhere" is not a sufficient fix: the largest contiguous
+block is the binding constraint, and it must exceed 4,059,388 B.
+
+**The lever is therefore the 18,670,392 B of eagerly resident MTO arena data,
+not the SNI parser.** Two changes are indicated and they are independent:
+1. free an arena's MTO bytes once its view is built (or load on demand), which
+   buys 18.6 MB; and
+2. do not hold all three SNI archives resident to answer one name lookup.
+
+Do not "solve" this by shrinking the SNI working set alone — a 465 KB deficit
+plus a 4 MB contiguous block will not survive the next level's assets.
+
+### Recovery that cost the most wall clock (2026-11-17)
+
+The console was **wedged**, not the build: HTTP :8080 answered nothing on any
+path while ping was green and :17491 still accepted a socket, so `3dslink`
+pushed `119,371,360 B` into a receive buffer nobody drained and `hw_cycle.sh`
+timed out at 300 s. **Reboot it** — one command, returns in seconds:
+
+```bash
+python3 /mnt/nas/Development/netload_stub/tools/atmctl.py \
+    --ip 192.168.4.167 --tcp-port 17492 reboot
+```
+
+That took `boot_count` 635 → 636 with a new `session` id, `:8080` came back 200
+on the first probe, and the next `hw_cycle.sh --once` finished in **194 s** and
+printed `FRESH e2cb292e20c0747de92b04b883485dc1`. This is now AGENTS.md §11
+trap 8 and is checked before blaming a push. Also `3dslink`'s piped progress
+line is stale when stdout is not a terminal — it prints `49.78%` on a transfer
+that already completed; judge a push by `transfers.log status=ok` and
+`bytes_out` equal to the local file size, never by that line.
+
+## ARENA STREAMING — PHASE 1S: THE HEAP SPLIT, AND LEVEL 7 NOW RUNS ON THE CONSOLE (branch `experimental/arena-streaming`)
+
+**This is not a loop batch either.** It is the first intervention against the
+Phase 0 baseline above, and it is measured on the same console
+(`old3ds-lan167`, firmware `9f3632fe047c+dirty`, level 7, PICA200 Citro3D,
+`romfs:/`, mono).
+
+**The change.** libctru's `__system_allocateHeaps` splits the application region
+in half when neither size is pre-set: `linear = avail/2`, `heap = avail -
+linear`. On this console that is `main cap = 32,657,408` and
+`linear = 32.7 MiB`, and it is the wrong way round for MDK — textures live as
+8-bit palette indices in the main heap and are expanded on demand under an LRU
+(SPEC §"chosen 3DS texture strategy"), so the GPU side holds one arena's working
+set, not a level's worth of RGBA8. `mdk_3ds/src/platform/heap_split.cpp` now
+strong-defines the two weak libctru globals:
+
+```c
+u32 __ctru_heap_size        = 0;                 // main = avail - linear
+u32 __ctru_linear_heap_size = 24 * 1024 * 1024;  // GPU working set + margin
+```
+
+The default allocator is still the one that runs — it reads both globals before
+it splits, so `heap == 0` + `linear != 0` means "linear gets this much, main
+gets the rest". That keeps `mappableInit()`, the `svcControlMemory` mapping and
+the `fake_heap_start/end` wiring in libctru's own path; hand-replacing
+`__system_allocateHeaps` is the trap recorded in
+`30-architecture/patterns/3ds-adaptive-linear-heap-and-mappableinit-trap.md`
+(omitting `mappableInit()` data-aborts in `gspInit` at boot). Verified in the
+linked ELF: both symbols are `V` (weak) in `allocateHeaps.o`, and
+`__ctru_linear_heap_size`'s initializer in `.data` is `0x01800000`.
+
+The main size stays CONSOLE-ADAPTIVE (it is `avail - linear`), so a New 3DS or a
+different region gets the larger main heap without a second constant.
+
+**Measured on hardware** (`mdk_3ds/tools/hw_cycle.sh --once --ip 192.168.4.167`,
+`FRESH 88b343f7d8dfb149360a82026d989714`, 303 s, guest log
+`/tmp/kilo/hw-split1.log`):
+
+```
+main: heap split main=41046016 linear=25165824 (avail=66211840)
+mem[assets]:      cap=41046016 arena=31682528 used=29615920 free=2066608  peak=29615920 lin=20699904
+mem[pre-audio]:   cap=41046016 arena=31682528 used=28536904 free=3145624  peak=29615920 lin=20699904
+audio: bank ready, 3 archives, decoded on demand
+mem[post-audio]:  cap=41046016 arena=35745760 used=33577808 free=2167952  peak=33577808 lin=20699904
+mem[runtime]:     cap=41046016 arena=35745760 used=33736528 free=2009232  peak=33736528 lin=20685696
+loop: entering main loop
+frame 5 elapsed=0.0939 steps=28 feet=(0.0,4.0,4.8) yaw=90.0 health=100
+```
+
+1. **The OOM is gone.** Main cap **32,657,408 → 41,046,016 (+8,388,608 B,
+   +8.0 MiB)**; the audio phase now peaks at **33,577,808** instead of dying at
+   `29,066,424`, so the 4,059,388 B `LEVEL7O.SNI` `resize` that raised `FATAL`
+   has ~7.3 MB of room above it.
+2. **The GPU side did not need the half.** Linear heap free after renderer +
+   level-7 GPU allocation is **20,699,904 of 25,165,824**, i.e. the whole level-7
+   working set costs **~4.45 MiB**. The old split was wasting ~16 MiB of linear
+   on a workload that never touched it.
+3. **Level 7 now reaches the main loop and moves.** Frames 1–5 with
+   `steps` advancing, `feet` z 12.0 → 4.8, `arenas=19`, `canvas: quads=4
+   draws=4 eyes=2`, objects streaming `570 corners / 13 draws` into a
+   `4096-corner = 80 KB linear` buffer, `audio: sink=1 bank=1`, FZ/DN reasserted
+   on the audio thread (`fpscr=83000090`).
+4. **But the main heap is still tight, so this unblocks Phase 1, it does not
+   replace it.** At the loop, `used=33,736,544` against `cap=41,046,016` leaves
+   **2,009,216 B free and 7,309,472 B of slack to the cap**. That is enough for
+   level 7 to run and not enough to absorb another level's residency — the
+   18,670,392 B of eagerly parsed MTO arena data (Phase 0 finding 2) is still the
+   lever, and the SNI archives are still fully retained by `SoundBank`.
+5. **What is NOT yet evidenced, and must not be claimed:** arena transitions
+   past the spawn (portal/level exits), level loads 1–8 other than 7, any
+   stereo run, and the section-6 gameplay acceptance. This cycle proves boot,
+   level-7 load, SNI load, and 5 frames of live gameplay only.
+
+**Gates on this change:** `python3 tools/runner/audit_c_with_classes.py` →
+`VERDICT: CONTRACT CLEAN -- 0 violations`; `python3 -m tools.runner.gates_vfp`
+→ `PASS blockers=0 reviews=0`. The new translation unit contains no float work,
+no allocation and no construct §10 gates.
+
+**Instrumentation still uncommitted-by-design:** `heapProbe()` in
+`main_3ds.cpp` now also logs `linearSpaceFree()` and the boot split, and the
+`set_new_handler` fatal path stays until the Phase 0 baselines for the other
+levels exist (see the Phase 0 note above).
+
+Risk: medium — this changes the memory layout of every 3DS run (one new
+translation unit plus probes), it is validated on hardware for level 7 only, and
+a larger linear addition could still exhaust the now-smaller-than-half GPU heap
+on a future level (measured headroom 20.7 MB, so not soon).
+
 Risk: medium — this batch changes what the ledger row's acceptance command ACCEPTS (a reach budget outside its calibration band now refuses to judge at all), edits the shipped 3DS emulator harness, and ships no compiled code; the diff is two files, every new arm is mutation-measured, and the acceptance was re-run on :99.
 
 **BATCH 175 (ledger row `3ds.hud-canvas`, acceptance `mdk_3ds/tools/emurun.sh --expect hud`, attempt 3 of the current cycle) — REVIEW-2 REMEDIATION: THE REACH BUDGET WAS A KNOB NOTHING COULD SEE, SO THE CALIBRATION NOW HAS A BAND AND THE SHIPPED INSTRUMENT REFUSES A BUDGET THAT HAS LEFT IT. Review-2 (`logs/ralph-pi/run-20261114-003546/review-2.md`, on batch 174) had **no Critical and no High**, one must-fix Medium (F1) and three Lows (F2, F3, F4); all four were reproduced against the tree before anything was changed and all four are fixed — nothing is rebutted. **F1 (Medium), RE-MEASURED AND NOT ACCEPTED ON THE REVIEWER'S WORD**: every ink fixture is anchored to `HUD_INK_REACH`, so raising it moves the fixtures with it — the parent test on the parent harness with only that constant at 88 printed `PASS EmurunHarness (296 checks)` at rc 0, a 7.3× loosening of the one tolerance that makes the ink rect a placement test, and the record's own line (a budget that reddens its boundary gets deleted, not tuned) makes tuning upward the expected move. **THE POLICY review-2's open question 1 asked for: a budget is a calibration — a measurement times a margin — so the measurement is now a constant and the band is derived from it**: `HUD_INK_SHORTFALL=2` (measured: bbox far 388,232 against the derived 390,234), `HUD_INK_REACH=12` unchanged at six times it, `HUD_INK_REACH_MAX=20` at ten times it and EXCLUSIVE, and `hud_ink_verdict` refuses a budget outside `[SHORTFALL, REACH_MAX)` as `HUD MALFORMED` **in the shipped instrument and not only in a test file someone can choose not to run**, naming the remedy (re-measure and restate the measurement, saying which capture). The reviewer's alternative ceiling (`HUD_INK_X1/4`) was measured and does not work: 390/4 = 97 admits the 88 the finding is about — a rect fraction is not a calibration. **FIVE NEW FIXTURES**: `inkshort` (shortfall == the measurement → passes, replacing the accidental lower pin at REACH=0), `inkreachshort` (REACH+1 → refuses by name: the failing side of the edge nothing sat on), `inkband` (**shortfall == the ceiling, ABSOLUTE, the one fixture not anchored to the budget, and the row a loosening reddens**), and `inkreachx`/`inkreachy`, one axis each; the test file also refuses to BUILD fixtures against an out-of-band budget rather than letting a block above `HUD_INK_Y0` red as `HUD INK NOT UNIQUE` (the reviewer's fixture-reason observation at 89). **NINE MUTANTS, ALL KILLED BY THEIR OWN ROWS**: arm deleted 12 FAIL, widened on x 2, on y 2, x term dropped 2, edge made exclusive 1, band guard deleted 4, ceiling made inclusive 1, floor made inclusive 1, F3 message reverted 4. **THE MUTANT TABLE CAUGHT THIS BATCH'S OWN FIRST CUT**: `bx1 + HUD_INK_REACH * 2` survived at rc 0 over 316 checks, because the arm is a DISJUNCTION and every fixture displaced both axes together so the other axis refused anyway — F1's class arriving through the axis, and the reason the two axis-isolated fixtures exist. **F3: THE `HUD INK NOT UNIQUE` MESSAGE WAS BACKWARDS ABOUT THE ONE PRODUCER THAT CAN HAPPEN** — `main_3ds.cpp` fills only health/dead/hurtFlash/whiteFlash, so `slots` is empty and `barMax` is 0, `drawInventory`'s loop body never runs and `drawBar` returns at `max <= 0`: the icons and bar it blamed draw nothing today, and at `kMaxSlots=5` the last icon anchor is canvas 224 → crop 149, left of the near bound anyway. The reachable HUD-side producer is the DEATH SKULL, centred at canvas (300,180) → crop (200,120) = exactly `HUD_INK_X0,HUD_INK_Y0`, through `drawImage` with `q.palette = palette_`, so it **straddles** the near corner and is partly outside by construction — the opposite of the message's claim. The message now names the level and the skull and says why; four rows pin it, one greping `drawInventory` and requiring 0. **F2**: the displaced HUD was recorded in canvas px and the numbers were crop px — Δ(130,71) crop = (195,106) canvas — corrected in the harness comment and the evidence file; e249567's subject stays as history (batch 170's F2 precedent). **F4**: "nothing greps `HUD VISIBLE`" was false — batch 174's own absence row greps it to require its absence; restated. **AND THE EMULATOR RUN CAUGHT WHAT THE SUITE COULD NOT**: the first acceptance printed `emurun.sh: line 1268: The: command not found` while returning rc 0 — a comment line had lost its `#`, `bash -n` passed it (a command name plus arguments is valid shell) and 316 checks passed over it; fixed, and the lifted block must now be SILENT when evaluated, pinned by a mutant that reproduces the bug. **`EmurunHarness` is 296 → 321 checks. THE FOUR-WAY**: new/working rc 0 (321); new/PARENT harness rc 1, one red (its fixture guard refuses a harness with no `HUD_INK_SHORTFALL`, so per-arm non-vacuity is the mutant table, as in batch 174); PARENT test/working rc 1 with **exactly one red, the parent's own row pinning the sentence F3 required changing** — not collateral; PARENT/PARENT rc 0 (296). **GATES**: `make -C tests/scripts -j8` rc 0, `All cases match the oracle.`, **830 PASS / 0 FAIL** (was 805; +25 is exactly these rows), reading `PASS EmurunHarness (321 checks…)`. `DISPLAY=:99 bash tools/check.sh` rc 0, `CHECK: ALL GATES PASSED`, `VERDICT: CONTRACT CLEAN -- 0 violations.`, `PASS L3_f1.bmp sha=58615fc85d02e009`, `BATCH INTEGRITY: PASS` (range-less, per review-1 F1), `COMPLETION SELFTEST: PASS (13 arms)`, `COMPLETION[d1]: 11 done / 13 total / 0 owner-blocked / 2 open`, `COMPLETION: LEDGER VERIFIED`, `SKIP gates_smdh`. `make -C mdk_3ds -j8` rc 0 with `mdk.elf` md5 `72328e9d5fd439d7f75703f5c28ccb80` **UNCHANGED** — correct, nothing was compiled; no `mdk_linux/**` file changed so `cmake --build build-linux` was not re-run, stated and not skipped. **P8, THE ACCEPTANCE ITSELF**: `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` → **rc 0**, display `:99`, `mandarine.AppImage md5 0d2adab6` (r1.2.1, checked first), llvmpipe forced, `graphics_api=1`, `render_3d=0` (mono), `backend: PICA200 Citro3D`, `flow: screen=4 level=7`, frames **2460** by the deadline / **2580** after the reap, `canvas: quads=4 draws=2 mesh=2 corners=24 eyes=1 (canvas frame 2460)`, `HUD MARKER VISIBLE -- 121 canary pixels in the panel, 121 inside`, `HUD INK -- 134 of 134 HUD-palette pixels inside crop 200,120-390,234 (bbox 333,206-388,232, 0 outside, its far corner within 12 px of the derived 390,234)`. Emulator-green is not hardware-pass; no console was used. Frame `docs/frames/2026-11-14-the-budget-has-a-band.png` is byte-identical to its predecessors (census re-derived: 193 PNGs, 192 at `6769a137…`) — nothing on a render path changed. Prior-solution lookup: Pi knowledge (`mdk-sdl`) found nothing on a calibration band or a tolerance loosened; **Obsidian and Cognee MCP are ABSENT from this session's tool list** (AGENTS §9 P9: a session fault, recorded), vault read read-only from disk, bounded grep found nothing. Environment: `/tmp/kilo` still not writable by this lane (captures to `/tmp/mdk-b175` on `:99`), `Xvfb :99` already listening and left alone, ledger still unwritable with `ledger_close.py` PROTECTED. Full record: `docs/evidence/2026-11-14-175-the-budget-has-a-band.txt`.**
