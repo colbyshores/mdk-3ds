@@ -825,10 +825,19 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
    `32 MiB` (dump reserve) `+ 2 MiB` margin `+ payload`. A 119,371,360-byte
    payload is accepted on this card (`word1 == 0`), so free space is ≥ ~153 MB
    and **transport capacity is not the limiting factor**.
-6. **Freshness is the md5, never the exit code.** `mdk.log` is append-only
-   across sessions (`--- mdk 3ds session ---` per boot) and every line is
-   `fflush`ed, so it survives a crash — which is also why a *stale* file is
-   indistinguishable from a live one without the md5 check.
+6. **Freshness is a NEW `--- session end ---` marker counted against the DEVICE
+   log as it stood before the push — never md5 equality, never the exit code,
+   and never the local output file.** `mdk.log` is append-only across sessions
+   (`--- mdk 3ds session ---` per boot) and every line is `fflush`ed, so it
+   survives a crash. Both halves of that cut the same way, and `hw_cycle.sh`
+   got each wrong once, measured with a fake console (see the self-test in
+   trap 11): md5 equality stops before the game writes its first line, so two
+   pulls match and a partial log reads as settled; and a baseline counted from
+   a **local** file that does not exist yet is 0, so a card that has run the
+   game before gives `cycle 0s, FRESH` on somebody else's marker. The baseline
+   is a snapshot of `$LOG_URL` taken after the preflight probe and before the
+   push; if it cannot be read, **do not push** — a run whose completion cannot
+   be told from an older one is not evidence.
 7. **`3dslink -s` is not needed and not used.** The guest log over HTTP is the
    output channel. Do not build a second one.
 8. **A wedged console is YOUR job to fix, with one command. Never ask the
@@ -911,7 +920,45 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
     **Keep the evidence even on timeout.** The log is append-only on SD, so a
     timed-out cycle is still recoverable: reboot, pull `/3ds/mdk/mdk.log`, and
     read the session you already ran. Never re-push a build just to re-read a
-    log that is already on the card.
+    log that is already on the card. `hw_cycle.sh` writes the last successful
+    pull to `<out>.partial` on every timeout path, and the pre-push snapshot to
+    `<out>.prev`.
+
+11. **The verdict logic has its own test, and it does not need a console.**
+    `mdk_3ds/tools/hw_cycle_selftest.sh` runs `hw_cycle.sh` against a fake
+    console on `127.0.0.1:8080` with a stub `3dslink` on `PATH` and asserts the
+    exit code and the sentence that carries each diagnosis: a clean exit is
+    `FRESH`; an older session's marker is **not** this run; a mid-run HTTP
+    death says `post-exit wedge, not the build`; an unverifiable push says
+    `push UNVERIFIED`; a timeout keeps its partial pull. Five cases, ~60 s, no
+    hardware, no emulator, no display.
+
+    Two defects it was written from, both measured here on 2026-11-17:
+    **a failed `curl` leaves the previous pull's bytes in the output file**, so
+    the post-loop check trusted a pull the harness had not made and reported
+    `FRESH` while the fixture's HTTP was already closing connections (the fix
+    unlinks the pull before every attempt and refuses when no attempt
+    succeeded); and **an unverified push was only a warning**, so a run could be
+    reported on a build the card never received (it is now fatal, after five
+    2 s retries for the ledger write to land).
+
+    Run it after any edit to `hw_cycle.sh`, and run the non-vacuity form once —
+    pointing the harness-under-test at an older copy must fail exactly the
+    cases that name a defect:
+
+    ```bash
+    mdk_3ds/tools/hw_cycle_selftest.sh
+    git show <old>:mdk_3ds/tools/hw_cycle.sh > mdk_3ds/tools/.hw_parent.sh
+    chmod +x mdk_3ds/tools/.hw_parent.sh
+    HW_CYCLE_UNDER_TEST=$PWD/mdk_3ds/tools/.hw_parent.sh \
+        mdk_3ds/tools/hw_cycle_selftest.sh   # expect 1 PASS / 4 FAIL
+    rm -f mdk_3ds/tools/.hw_parent.sh
+    ```
+
+    The copy must live inside `mdk_3ds/tools/` so its own `ROOT` resolves; a
+    copy in `/tmp` reports `//mdk_3ds/mdk.3dsx is not built` and looks like a
+    failing case rather than a bad path. This is a harness test, not a hardware
+    result: it cannot tell you the console works.
 
 
 

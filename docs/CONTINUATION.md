@@ -187,6 +187,46 @@ re-checking ARP; the documented ladder (AGENTS.md §11 trap 10) says to poll ARP
 for five minutes, try `discover --broadcast` in case DHCP moved it, and
 otherwise continue with non-hardware work rather than escalate.
 
+### The harness verdict logic is now tested without a console
+
+Because every one of those failures was in `hw_cycle.sh` and not in the build,
+the verdict logic gets a fixture test instead of another hardware cycle:
+`mdk_3ds/tools/hw_cycle_selftest.sh` runs the real harness against a fake
+console on `127.0.0.1:8080` with a stub `3dslink` on `PATH`. **5 PASS / 0 FAIL.**
+
+Two more defects were found by actually running that fixture, and both had
+already produced a green verdict in this session's own terminal:
+
+1. **The baseline came from the local output file.** On a first run `$OUT` does
+   not exist, so `PREV_END` was 0 while the device log — append-only across
+   boots — already held markers from earlier sessions, and the first pull
+   matched: `cycle 0s, FRESH` on a run that had not happened yet. The baseline
+   is now a snapshot of `$LOG_URL` taken after the preflight probe and before
+   the push; if that snapshot cannot be read the harness refuses to push,
+   because a completion that cannot be told from an older one is not evidence.
+   Fixture: a log that already ends with `--- session end ---` and never writes
+   another now gives `TIMEOUT waiting for a new session end marker`, where the
+   parent gave rc 0.
+2. **A failed pull left the previous pull's bytes in the output file,** so the
+   post-loop check read a pull the harness had not made. Measured: a fixture
+   whose HTTP closes mid-run printed `FRESH` at the parent. The pull file is now
+   unlinked before every attempt, a `GOT` flag records whether any attempt
+   succeeded, and "no successful pull" is its own verdict naming the wedge —
+   plus the recovery command and the note that the SD log survives it.
+
+The unverified-push warning also became fatal (after five 2 s retries, because
+the ledger line lands just after `3dslink` returns): the whole point of the
+ledger is that a run of an unknown binary is not a measurement, and a warning
+in the middle of a wall of output is how a stale run gets reported as fresh.
+
+**Non-vacuity, measured:** against the parent `hw_cycle.sh` the self-test gives
+**1 PASS / 4 FAIL** — the legitimate clean-exit case still passes there, and
+exactly the four defect cases fail, which is the row that says the fixtures bite
+on the real bugs and not on the rewrite. Against the working harness it is
+**5 PASS / 0 FAIL.** This is a harness test: it says nothing about the console,
+and no console was reachable to run.
+
+
 
 
 ## ARENA STREAMING — PHASE 1S: THE HEAP SPLIT, AND LEVEL 7 NOW RUNS ON THE CONSOLE (branch `experimental/arena-streaming`)

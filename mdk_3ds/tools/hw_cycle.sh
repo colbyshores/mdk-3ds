@@ -51,13 +51,13 @@ if [ ! -f "$DSX" ]; then
     exit 1
 fi
 
+# The baseline must be the DEVICE log as it stands before this push, never the
+# local output file. mdk.log is append-only across boots, so a card that has
+# already run the game carries `--- session end ---` markers from earlier
+# sessions; baselining on a missing local file counts 0 and the first pull then
+# looks like a new run. Measured on the fake console: `cycle 0s, FRESH`.
 PREV=""
 PREV_END=0
-if [ -f "$OUT" ]; then
-    PREV=$(md5sum "$OUT" | cut -d' ' -f1)
-    PREV_END=$(grep -c '^--- session end ---$' "$OUT" 2>/dev/null || true)
-    : "${PREV_END:=0}"
-fi
 T0=$(date +%s)
 
 # ---- preflight: never push into a dead listener -----------------------------
@@ -91,6 +91,24 @@ if ! probe_log; then
     echo "hw_cycle: preflight recovered -- :8080 answers again"
 fi
 
+# Snapshot the device log BEFORE the push, so a marker written by an earlier
+# session can never be read as this run's completion.
+PREV_LOG="$OUT.prev"
+if ! curl -s --max-time 10 -o "$PREV_LOG" "$LOG_URL" 2>/dev/null; then
+    if [ -f "$OUT" ]; then
+        cp "$OUT" "$PREV_LOG"
+        echo "hw_cycle: WARNING -- could not snapshot the device log; baselining on the local copy $OUT" >&2
+    else
+        echo "hw_cycle: cannot establish the pre-push baseline ($LOG_URL unreadable, no local $OUT)." >&2
+        echo "hw_cycle: not pushing -- a run whose completion cannot be told apart from an older one is not evidence." >&2
+        exit 1
+    fi
+fi
+PREV=$(md5sum "$PREV_LOG" | cut -d' ' -f1)
+PREV_END=$(grep -c '^--- session end ---$' "$PREV_LOG" 2>/dev/null || true)
+: "${PREV_END:=0}"
+echo "hw_cycle: baseline $PREV_END session-end marker(s), md5 $PREV"
+
 echo "hw_cycle: pushing $DSX to $IP"
 3dslink -a "$IP" "$DSX" >/dev/null 2>&1 || { echo "hw_cycle: 3dslink FAILED" >&2; exit 1; }
 push_done=$(date +%s)
@@ -100,15 +118,27 @@ echo "hw_cycle: push returned after $(( push_done - T0 ))s"
 # 3dslink's exit code is 0 even for a stalled transfer. transfers.log is the
 # only evidence that bytes reached the card.
 SIZE=$(stat -c %s "$DSX")
-if LEDGER=$(curl -s --max-time 10 "http://$IP:8080/3ds/netload_stub/transfers.log" 2>/dev/null) \
-   && [ -n "$LEDGER" ]; then
-    LAST=$(printf '%s\n' "$LEDGER" | tail -1)
-    case "$LAST" in
-        *status=ok*bytes_out=$SIZE*) echo "hw_cycle: push verified by transfers.log (bytes_out=$SIZE)" ;;
-        *) echo "hw_cycle: WARNING -- last transfers.log line is not this push:" >&2
-           echo "    $LAST" >&2
-           echo "hw_cycle: expected bytes_out=$SIZE status=ok" >&2 ;;
-    esac
+LEDGER_OK=0
+for attempt in 1 2 3 4 5; do
+    if LEDGER=$(curl -s --max-time 10 "http://$IP:8080/3ds/netload_stub/transfers.log" 2>/dev/null) \
+       && [ -n "$LEDGER" ]; then
+        LAST=$(printf '%s\n' "$LEDGER" | tail -1)
+        case "$LAST" in
+            *status=ok*bytes_out=$SIZE*) LEDGER_OK=1; break ;;
+        esac
+    fi
+    sleep 2
+done
+if [ "$LEDGER_OK" = "1" ]; then
+    echo "hw_cycle: push verified by transfers.log (bytes_out=$SIZE)"
+else
+    # A run of a build that is not this build is not evidence, and 3dslink
+    # exits 0 even when the transfer lands nowhere (its progress line is stale
+    # when stdout is a pipe). Refuse rather than report on an unknown binary.
+    echo "hw_cycle: push UNVERIFIED -- the device ledger has no status=ok line with bytes_out=$SIZE." >&2
+    [ -n "${LAST:-}" ] && echo "    last line: $LAST" >&2
+    echo "hw_cycle: not measuring a run whose binary cannot be confirmed; check free SD space and :17491, then retry." >&2
+    exit 1
 fi
 
 
@@ -126,23 +156,32 @@ fi
 # started before the push expires while the game is still running and reads
 # exactly like a failed run.
 WAIT=${MDK_HW_WAIT:-600}
+PULL=/tmp/mdk-hw-cycle.pull
+rm -f "$PULL"
 PULL_FAILS=0
+GOT=0
 ENDS=$PREV_END
 for i in $(seq 1 $(( WAIT / 3 ))); do
-    if curl -s --max-time 10 -o /tmp/mdk-hw-cycle.pull "$LOG_URL" 2>/dev/null; then
+    # Remove the file before every attempt: curl truncates on success, but a
+    # failed attempt can leave the PREVIOUS pull's bytes in place, and a stale
+    # pull file is a ready-made `FRESH` (measured on the wedge fixture).
+    rm -f "$PULL"
+    if curl -s --max-time 10 -o "$PULL" "$LOG_URL" 2>/dev/null; then
         PULL_FAILS=0
-        ENDS=$(grep -c '^--- session end ---$' /tmp/mdk-hw-cycle.pull 2>/dev/null || true)
+        GOT=1
+        ENDS=$(grep -c '^--- session end ---$' "$PULL" 2>/dev/null || true)
         if [ "${ENDS:-0}" -gt "$PREV_END" ]; then
             break
         fi
     else
         PULL_FAILS=$(( PULL_FAILS + 1 ))
+        GOT=0
     fi
     if [ $(( $(date +%s) - push_done )) -gt "$WAIT" ]; then
         echo "hw_cycle: TIMEOUT after ${WAIT}s of polling (push was $(( push_done - T0 ))s)" >&2
         echo "hw_cycle: session-end markers seen=$ENDS (baseline $PREV_END), consecutive failed pulls=$PULL_FAILS" >&2
-        if [ -s /tmp/mdk-hw-cycle.pull ]; then
-            cp /tmp/mdk-hw-cycle.pull "$OUT.partial"
+        if [ -s "$PULL" ]; then
+            cp "$PULL" "$OUT.partial"
             echo "hw_cycle: kept the last pull as $OUT.partial (append-only log on SD survives the wedge)" >&2
         fi
         if [ "$PULL_FAILS" -gt 2 ]; then
@@ -156,11 +195,18 @@ for i in $(seq 1 $(( WAIT / 3 ))); do
     sleep 3
 done
 
-cp /tmp/mdk-hw-cycle.pull "$OUT"
+if [ "$GOT" != "1" ]; then
+    echo "hw_cycle: TIMEOUT -- no successful pull after $(( $(date +%s) - push_done ))s of polling." >&2
+    echo "hw_cycle: HTTP stopped answering mid-run; that is the post-exit wedge, not the build. Recover with:" >&2
+    echo "    python3 /mnt/nas/Development/netload_stub/tools/atmctl.py --ip $IP cmd reboot" >&2
+    echo "hw_cycle: then pull /3ds/mdk/mdk.log -- the SD log survives the wedge, so the run is still on the card." >&2
+    exit 1
+fi
+cp "$PULL" "$OUT"
 ENDS=$(grep -c '^--- session end ---$' "$OUT" 2>/dev/null || true)
 if [ "${ENDS:-0}" -le "$PREV_END" ]; then
     echo "hw_cycle: TIMEOUT waiting for a new session end marker (no marker after $(( $(date +%s) - T0 ))s)" >&2
-    [ -s /tmp/mdk-hw-cycle.pull ] && cp /tmp/mdk-hw-cycle.pull "$OUT.partial"
+    cp "$PULL" "$OUT.partial"
     exit 1
 fi
 NOW=$(md5sum "$OUT" | cut -d' ' -f1)
