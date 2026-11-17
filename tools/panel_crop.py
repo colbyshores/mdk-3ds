@@ -83,20 +83,21 @@ def find_panel(image: "Image.Image") -> tuple[int, int]:
     if min_x == image.width or min_x + PANEL_SIZE[0] > image.width or \
             min_y + PANEL_SIZE[1] > image.height:
         return PANEL_X0, PANEL_Y0
-    # The location is only believed when the rectangle there is FILLED:
-    # a real frame is cleared to a colour edge to edge, while a synthetic
-    # capture with a lone marker on black would otherwise anchor the
-    # panel on the marker itself and pass a wrong-corner marker (the
-    # exact failure the marker rect exists to catch). Sparse captures
-    # keep the documented constants.
-    filled = 0
-    total = 0
-    for y in range(min_y, min_y + PANEL_SIZE[1], 4):
-        for x in range(min_x, min_x + PANEL_SIZE[0], 4):
-            total += 1
-            if px[x, y] != (0, 0, 0):
-                filled += 1
-    if total == 0 or filled * 2 < total:
+    # The location is only believed when the panel's own EDGES are there: at
+    # least kEdgeRun non-black pixels along the found top row and along the
+    # found left column. A synthetic capture with a lone marker on black (an
+    # 11x11 square) has edges of 11 and keeps the documented constants, so it
+    # cannot anchor the panel on the marker itself (the wrong-corner failure
+    # the marker rect exists to catch). This replaced a "half the rectangle is
+    # non-black" rule, which held while the 3DS drew only a clear colour and
+    # objects, and broke once the scene drew (2026-11-17): a dark level-7
+    # tunnel is under half non-black, the rule fell back to stale constants
+    # (440,253) instead of the found (427,231), and `--expect hud` read the
+    # wrong rectangle -- 0 canary pixels while the capture held all 121.
+    edge_run = 32
+    top = sum(1 for x in range(min_x, min_x + PANEL_SIZE[0]) if px[x, min_y] != (0, 0, 0))
+    left = sum(1 for y in range(min_y, min_y + PANEL_SIZE[1]) if px[min_x, y] != (0, 0, 0))
+    if top < edge_run or left < edge_run:
         return PANEL_X0, PANEL_Y0
     return min_x, min_y
 

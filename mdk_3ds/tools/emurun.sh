@@ -371,6 +371,12 @@ if [ -n "$DSPFIRM_SRC" ] && [ -r "$DSPFIRM_SRC" ] && [ -s "$DSPFIRM_SRC" ]; then
 else
   EMURUN_DSPFIRM_SEEDED="none (the guest will report audio muted)"
 fi
+# The canvas canary is armed by a file (03_frame.inc canaryArmed): every HUD
+# verdict needs it, so an --expect hud* run seeds it; nothing else draws it.
+case "$EXPECT" in
+  hud*) mkdir -p "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk" &&
+        : > "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk/canary.txt" ;;
+esac
 if [ -n "${SEED_SDMC:-}" ]; then
   [ -d "$SEED_SDMC" ] || { echo "emurun: --seed-sdmc $SEED_SDMC is not a directory" >&2; exit 2; }
   mkdir -p "$LANE/xdg/mandarine-emu/sdmc" && cp -a "$SEED_SDMC/." "$LANE/xdg/mandarine-emu/sdmc/" || {
@@ -569,6 +575,25 @@ cfg_set enable_realtime_audio false Audio
 cfg_set graphics_api 1 Renderer
 cfg_set render_3d 0 Layout
 cfg_set factor_3d 0 Layout
+# THE PANEL IS PINNED, 1:1, AT THE DOCUMENTED RECTANGLE. Left to the default
+# layout (layout_option=0) the screens scale to the window, and the window's
+# size drifts (c5a22d7): on 2026-11-17 the top screen measured 427x256 in every
+# capture, a 1.067x upscale, with filter_mode=true smoothing it. Every crop and
+# verdict rectangle here is in 400x240 panel pixels, so the scale alone pushed
+# the HUD's ink 7% past its rect (`HUD INK NOT UNIQUE`). A custom layout places
+# the top screen at exactly (440,253) 400x240 -- tools/panel_crop.py's PANEL_*
+# -- and the bottom screen below it at 320x240, and nearest filtering keeps one
+# captured pixel per 3DS pixel.
+cfg_set layout_option 6 Layout
+cfg_set custom_top_x 440 Layout
+cfg_set custom_top_y 253 Layout
+cfg_set custom_top_width 400 Layout
+cfg_set custom_top_height 240 Layout
+cfg_set custom_bottom_x 480 Layout
+cfg_set custom_bottom_y 533 Layout
+cfg_set custom_bottom_width 320 Layout
+cfg_set custom_bottom_height 240 Layout
+cfg_set filter_mode false Layout
 
 OWN_ROOT=""
 OUR_MOUNT=""

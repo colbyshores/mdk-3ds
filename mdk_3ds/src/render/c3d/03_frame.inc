@@ -29,6 +29,21 @@
 static const uint32_t kRenderDebugFlat = 1u;
 static const uint32_t kRenderDebugTexLog = 4u;   // `texlog`: describe the first index textures
 static const uint32_t kRenderDebugUvLog = 16u;   // `uvlog`: on frame 30, draws whose uv leaves [0,1]
+// The canvas canary's arming (see the drawDiagnostic call in end_frame).
+// Read once; absent, the cost is one failed open.
+static bool canaryArmed() {
+    static int32_t armed = -1;
+    if (armed < 0) {
+        FILE* file = fopen("sdmc:/3ds/mdk/canary.txt", "rb");
+        armed = file ? 1 : 0;
+        if (file) {
+            fclose(file);
+            mdk::log3dsPrintf("canary: ARMED by sdmc:/3ds/mdk/canary.txt (the (0,0,255) panel marker)");
+        }
+    }
+    return armed != 0;
+}
+
 static uint32_t renderDebugFlags() {
     static int32_t flags = -1;
     if (flags < 0) {
@@ -630,6 +645,8 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
         }
         // The canvas's own width, because the canary is drawn in the canvas's own
         // pixel space and that space is what `canvasMatrix` projects.
+        // drawDiagnostic returns at once unless the canary is armed by a file
+        // (canaryArmed): the eye loop's statements stay unconditional.
         drawDiagnostic(r, mdk_render_canvas_width(rr));
     }
     // THE CANVAS LINE, and it is the evidence `mdk_3ds/tools/emurun.sh --expect

@@ -117,3 +117,39 @@ GATES: make -C tests/scripts 857 PASS (new: SkyDome), "All cases match the
 oracle."; tools/check.sh ALL GATES PASSED (incl. audit_arm11_math and
 gates_core_parity after listing sky_dome.cpp in mdk_linux/CMakeLists.txt).
 EMULATOR evidence only.
+
+
+ADDENDUM 3, SAME DAY: THE CANARY LEAVES RELEASE FRAMES; THE HUD ROW IS GREEN AGAIN
+---------------------------------------------------------------------------------
+
+THE CANARY. The (0,0,255) canvas marker was drawn in every build: a blue
+square in the top-left of every frame a player would see. drawDiagnostic now
+returns at once unless sdmc:/3ds/mdk/canary.txt exists (read once).
+`emurun.sh --expect hud*` seeds that file in the lane before launch, so the
+verdicts are unchanged. The eye loop's call stays unconditional (the pinned
+`eye-loop-statements-unconditional` check). A plain run: 0 pure-blue pixels in
+the panel (2026-11-17-emu-level7-1to1-no-canary.png).
+
+WHY `3ds.hud-canvas` (d1, ledger-done) WAS FAILING ITS OWN ACCEPTANCE.
+`emurun.sh --expect hud` had been rc 7 (`HUD INK NOT UNIQUE: 12 of 43`), with
+an explanation (the death skull) that cannot apply to a health-100 run. The
+measurements:
+  1. Mandarine's default layout scales the screens to the window. The window
+     drifted (c5a22d7), and every capture's top screen was 427x256, a 1.067x
+     linear-filtered upscale. Every verdict rectangle is in 400x240 panel
+     pixels, so the HUD's ink landed 7% past its rect. emurun now sets a
+     custom layout (layout_option=6, top 400x240, bottom 320x240) and
+     filter_mode=false: one captured pixel per 3DS pixel.
+  2. tools/panel_crop.py find_panel believed a found origin only if half the
+     panel was non-black: true while the 3DS drew a clear colour and a few
+     objects, false once the scene drew (a dark tunnel). It fell back to stale
+     constants and read the wrong rectangle, giving 0 canary pixels while the
+     capture held all 121. It now requires >= 32 non-black pixels along the
+     found top row and left column (a lone 11x11 synthetic marker still
+     cannot anchor it; a real frame shows 96 and 84).
+RESULT: `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud` rc 0:
+`HUD MARKER VISIBLE -- 121 canary pixels in the panel, 121 inside`,
+`HUD INK -- 165 of 165 HUD-palette pixels inside crop`.
+
+GATES: make -C tests/scripts 857 PASS ("All cases match the oracle.",
+EmurunHarness included); tools/check.sh ALL GATES PASSED. EMULATOR only.

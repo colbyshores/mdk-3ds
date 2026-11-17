@@ -559,6 +559,14 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
 // triangle's 15 floats at the mesh's offsets -- invisible geometry, with the
 // diagnostic itself on screen to say the frame was fine (batch 28's defect).
 static void drawDiagnostic(RendererC3D* r, float canvasWidth) {
+    // ARMED BY A FILE, NOT DRAWN IN EVERY BUILD. The (0,0,255) square is the
+    // harness's proof that a canvas-state draw reaches the panel
+    // (`emurun.sh --expect hud*` seeds sdmc:/3ds/mdk/canary.txt before launch).
+    // Unarmed it was a blue square in the top-left of every frame a player
+    // would see (2026-11-17, hardware and emulator captures).
+    if (!canaryArmed()) {
+        return;
+    }
     if (!r->diagnosticTriangle || !r->scratch) {
         return;
     }
