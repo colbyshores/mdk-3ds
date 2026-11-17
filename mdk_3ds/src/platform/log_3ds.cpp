@@ -42,6 +42,29 @@ bool log3dsOpen() {
     mkdir("sdmc:/3ds", 0777);
     mkdir("sdmc:/3ds/mdk", 0777);
 
+    // ROTATE A LOG THAT HAS OUTGROWN THE WIRE. The log is append-only across
+    // sessions on purpose (every line is flushed, so a crash keeps what was
+    // written), which means it only grows. The console's ATM HTTP server
+    // serves it at ~28 KB/s with up to 40 s before the first byte and ignores
+    // Range, so a 725 KB log (measured 2026-11-17) took 26-52 s per read and
+    // every hardware-loop poll paid it. At boot, and only at boot, a log over
+    // kRotateBytes becomes mdk.prev.log, the one before it mdk.prev2.log (two
+    // generations, both served under /3ds/mdk/), and this session starts a
+    // fresh file. Two, so a timed-out cycle's session survives the NEXT boot's
+    // rotation as well (AGENTS.md P10: "the run is still on the card"). The
+    // harness recognises the rotation by the line below, which names the
+    // rotated size. Failures are harmless: the open appends to whatever is there.
+    const long kRotateBytes = 128 * 1024;
+    long rotated = 0;
+    struct stat st;
+    if (stat("sdmc:/3ds/mdk/mdk.log", &st) == 0 && st.st_size > kRotateBytes) {
+        remove("sdmc:/3ds/mdk/mdk.prev2.log");
+        rename("sdmc:/3ds/mdk/mdk.prev.log", "sdmc:/3ds/mdk/mdk.prev2.log");
+        if (rename("sdmc:/3ds/mdk/mdk.log", "sdmc:/3ds/mdk/mdk.prev.log") == 0) {
+            rotated = (long)st.st_size;
+        }
+    }
+
     g_log = fopen("sdmc:/3ds/mdk/mdk.log", "a");
     if (!g_log) {
         // Fall back to the SD card's root: some emulators' devoptab does
@@ -52,6 +75,9 @@ bool log3dsOpen() {
         return false;
     }
     fprintf(g_log, "--- mdk 3ds session ---\n");
+    if (rotated > 0) {
+        fprintf(g_log, "log: rotated the previous %ld-byte log to mdk.prev.log\n", rotated);
+    }
     fflush(g_log);
     return true;
 }

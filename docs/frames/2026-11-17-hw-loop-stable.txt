@@ -1,0 +1,10 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-17T16:16:11Z at 3e86309
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: 3DS-only batch -- the hardware loop (hw_cycle.sh wake/HTTP budget/log
+rotation, --capture and --profile modes) and the first Old-3DS results. No
+mdk_core or mdk_linux file changed, so no Linux rendering change was expected:
+the PNG is byte-identical to the previous pin (md5
+6769a13731983d65cee9df02da6cff37) ON PURPOSE. The hardware picture this batch
+is about is docs/evidence/2026-11-17-hw-old3ds-level7-frame600.png; the record
+is docs/evidence/2026-11-17-hw-loop-stable-first-hardware-results.txt.

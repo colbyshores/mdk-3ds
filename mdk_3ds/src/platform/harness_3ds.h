@@ -23,7 +23,30 @@
 //     the exit that follows is the transfer.
 // ============================================================================
 
+#include <stdint.h>
+
 namespace mdk {
+
+// The hardware loop's own picture (ledger row hw.pixels-rgba8). In a harness
+// build that also carries -DMDK_HW_CAPTURE=<frame> (`make AUTOQUIT=90
+// CAPTURE=600`), returns the capture path at exactly that frame and nullptr at
+// every other; nullptr always in any other build. The path ends in `.log`
+// because the console's ATM HTTP server serves only `/3ds/**.log|*.txt`
+// (atm_core.c's suffix allowlist), so a `.bmp` written there could not be
+// pulled. The body is an ordinary BMP from the renderer's left-eye readback.
+// One capture, never armed in a profiling build: it stalls one frame on SD.
+const char* harnessCapturePath(uint32_t frame);
+
+// The hardware loop's first OG profile (ledger row hw.profile-og). In a harness
+// build that also carries -DMDK_HW_PROFILE (`make AUTOQUIT=90 PROFILE=1`),
+// harnessProfileFrame() records one frame's wall-clock period (the time since
+// the previous frame, measured BEFORE the gameplay clamp) into a fixed
+// histogram -- O(1), no allocation, no I/O -- and harnessProfileReport() logs
+// one `profile:` summary with the console model, the stereo state and the
+// percentiles. No-ops in every other build. This is a frame-period capture,
+// not a function-level profile: it cannot populate the hot-path corpus.
+void harnessProfileFrame(double periodSeconds);
+void harnessProfileReport();
 
 // True once the harness deadline expires (first call arms it). Always
 // false in a build without MDK_AUTOQUIT.

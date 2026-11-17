@@ -610,7 +610,16 @@ whole suite. When a structural check fails, the question is never "is the litera
 but "what invariant was the literal standing in for" — and after fixing one stale literal, count
 how many arms actually adjudicated, because a second staleness was hiding under the first.
 
-## OPEN (batch 173): the 3DS canvas's textures are sampled wrong by the GPU (found in batch 173)
+## CLOSED ON HARDWARE (2026-11-17): the 3DS canvas's textures are sampled wrong by the GPU (found in batch 173)
+
+**HARDWARE ACCEPTANCE MET (2026-11-17, `old3ds-lan167`, CFGU model 0 = Old 3DS).** A
+harness run (`make AUTOQUIT=90 CAPTURE=600`, `hw_cycle.sh --capture`, FRESH, push
+`bytes_out=119372632` verified) wrote a frame-600 readback on the console. Its HUD panel
+is the oval with a green "100", not a stripe. Its dominant period is the Morton build's
+29.0 px (row-major: 11.6), and best-aligned it correlates r=+0.61 with the emulator's
+Morton crop against +0.19 with the row-major mutant (`mdk_3ds/tools/hud_panel_compare.py`).
+Pictures and numbers: `docs/evidence/2026-11-17-hw-loop-stable-first-hardware-results.txt` §3.
+The history below is kept as written.
 
 **WHAT IS WRONG, IN ONE SENTENCE.** The HUD's panel sprite reaches the panel as a fine
 vertical stripe instead of the oval, at a period of ~5.3 crop px where the derived
@@ -669,12 +678,14 @@ exactly**, with 5 stripes, in the same scene minutes apart. So the fine stripe w
 layout, and it is gone. `docs/evidence/2026-11-17-173-hud-panel-period.txt` has both
 captures, the crop, the profile numbers, the command and the display.
 
-What remains open is **hardware acceptance only**: every number above is emulator
-evidence on llvmpipe, and AGENTS.md P8 says emulator-green is not hardware-pass, so the
-3DS acceptance cells stay open until the console run exists. The `/4` UV stays forbidden.
+What remained open at this point was **hardware acceptance only**, and it is now met
+on the console (see the CLOSED ON HARDWARE note at the top of this row). The `/4` UV
+stays forbidden.
 Two hardware attempts on 2026-11-17 were both blocked before any push by the ATM `:8080`
 wedge (P10 trap 8; the second persisted through two `cmd reboot` sends and 5 min of polling),
-so no console run exists yet; both are recorded at the end of the HUD evidence file above.
+and both are recorded at the end of the HUD evidence file above. That "wedge" turned out
+to be a parked ATM service loop: one directed `atmctl discover` wakes it, which reboots
+never did. `hw_cycle.sh` now wakes the loop before every HTTP read (evidence §1).
 
 **DO NOT SHIP A /4.** It was tried. With the panel's uv scaled by 1/4 the stripes
 thin out, and **the health digits stop reading "100"** — a change that makes one pattern

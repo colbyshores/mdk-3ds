@@ -530,19 +530,40 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
     header[26] = 1;
     header[28] = 24;
     memcpy(header + 34, &imageBytes, 4);
-    fwrite(header, 1, sizeof(header), file);
+    // ONE fwrite PER ROW, not per pixel. On the console the sdmc devoptab
+    // turns small writes into FS calls, and 96,000 three-byte fwrites took
+    // ~69 s on old3ds-lan167 (2026-11-17: frame 600 reached at 21 s of game
+    // time, the capture's frame 601 at the 90 s autoquit). A 1200-byte row
+    // on the main thread's stack is the same bytes in the same order.
     const uint8_t* src = (const uint8_t*)pixels;
-    for (int32_t y = outH - 1; y >= 0; y--) {
+    uint8_t row[kScreenHeight * 3];
+    if ((size_t)rowBytes > sizeof(row)) {
+        mdk::log3dsPrintf("screenshot: row %d B exceeds its %u B buffer for %s",
+                          (int)rowBytes, (unsigned)sizeof(row), path);
+        fclose(file);
+        linearFree(pixels);
+        return false;
+    }
+    bool written = fwrite(header, 1, sizeof(header), file) == sizeof(header);
+    for (int32_t y = outH - 1; y >= 0 && written; y--) {
         for (int32_t x = 0; x < outW; x++) {
             const int32_t sx = srcW - 1 - y;
             const int32_t sy = x;
             const uint8_t* px = src + ((size_t)sy * (size_t)srcW + (size_t)sx) * 4;
-            const uint8_t bgr[3] = {px[1], px[2], px[3]};
-            fwrite(bgr, 1, 3, file);
+            row[x * 3 + 0] = px[1];
+            row[x * 3 + 1] = px[2];
+            row[x * 3 + 2] = px[3];
         }
+        written = fwrite(row, 1, (size_t)rowBytes, file) == (size_t)rowBytes;
     }
-    fclose(file);
+    written = (fclose(file) == 0) && written;
     linearFree(pixels);
+    if (!written) {
+        // No "wrote" line: the harness treats a capture as real only when
+        // this session logged a completed write.
+        mdk::log3dsPrintf("screenshot: write FAILED for %s", path);
+        return false;
+    }
     mdk::log3dsPrintf("screenshot: wrote %s (%dx%d)", path, (int)outW, (int)outH);
     return true;
 }

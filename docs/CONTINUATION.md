@@ -1,5 +1,39 @@
 # Phase 2 continuation checkpoint
 
+## HARDWARE LOOP STABLE, FIRST OLD-3DS RESULTS (2026-11-17, branch `experimental/arena-streaming`)
+
+**The loop works end to end on `old3ds-lan167`.** Four `hw_cycle.sh` cycles ran
+FRESH back to back (push verified, level 7, autoquit, session end). Full record:
+`docs/evidence/2026-11-17-hw-loop-stable-first-hardware-results.txt`.
+
+- **The "wedge" was a parked ATM service loop.** A directed `atmctl discover` wakes
+  it; reboots do not (boot_count advanced, and :8080 still sent 0 bytes).
+  `hw_cycle.sh` wakes it before every HTTP read. AGENTS.md P10 trap 8 still
+  prescribes reboots: an owner edit is needed there (AGENTS.md is owner-protected).
+- **Reads need a real budget** (~28 KB/s, up to 40 s to first byte, no Range), and
+  the log now rotates at boot past 128 KiB (`mdk.prev.log`). `hw_cycle.sh`
+  re-baselines a rotated log.
+- **`--capture` and `--profile` are wired** (`make AUTOQUIT=90 CAPTURE=600` /
+  `PROFILE=1`, each after `make clean`). Self-test 13/13; against the parent
+  script, exactly the 7 new cases fail.
+- **Batch-173 hardware acceptance is MET:** the HUD panel on the console is the oval
+  (dominant 29.0 px; r=+0.61 with the Morton crop vs +0.19 with row-major).
+- **First OG profile:** model 0, stereo on, mean 36.3 ms, p50 <=33.5, p95 <=67.0, at
+  least 1% of frames over 100 ms (max 521 ms). The cause is unmeasured.
+
+**NEXT, in order.**
+1. Close `hw.harness-cycle`, `hw.pixels-rgba8` and `hw.profile-og` with
+   `tools/runner/ledger_close.py` (each runs its acceptance on the console; set
+   `MDK_3DS_IP=192.168.4.167` and build the matching payload first).
+2. Re-measure the capture stall on hardware after the row-write fix (it was ~69 s).
+3. A/B the >100 ms stalls: per-60-frame flushed log lines on vs off, three runs each.
+4. `3ds.hud-canvas` (d1, ledger-done) currently FAILS `emurun.sh --expect hud` (rc 7,
+   12/43 canary px outside). Lead: the emulator crop registration is ~(11,7) px off.
+5. Owner calls: the ATM screenshot quota (32 sets of firmware-project evidence, only
+   5 listed by artifacts.txt); `hw.cia-boot` and `hw.sleep-resume` need an installer
+   or lid/sleep control that ATM does not have. Workstation DNS: `.lab.home` is
+   not routed to 192.168.4.235, so the Obsidian/Cognee MCP fail with EAI_AGAIN.
+
 ## ARENA STREAMING — PHASE 0 HARDWARE BASELINE, MEASURED (branch `experimental/arena-streaming`, base `36528a3`)
 
 **This section is not a loop batch.** It is the Phase 0 measurement the arena

@@ -932,6 +932,12 @@ int main(int argc, char** argv) {
         }
         double delta = now - last;
         last = now;
+        // The OG profile (harness PROFILE builds only; a no-op otherwise): the
+        // raw period, before the gameplay clamp, and never the first frame,
+        // which carries the time since init.
+        if (frame > 0) {
+            mdk::harnessProfileFrame(delta);
+        }
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
         const float elapsed = mdk::flow::GameFlow::elapsedFor(false, step, (float)delta);
@@ -1175,6 +1181,14 @@ int main(int argc, char** argv) {
                 std::snprintf(capturePath, sizeof(capturePath), "%s",
                               named[0] ? named : "sdmc:/3ds/mdk/capture.bmp");
                 std::remove("sdmc:/3ds/mdk/capture.txt");
+            }
+        }
+        // The harness's fixed-frame capture (harness_3ds.h; hw.pixels-rgba8):
+        // no file to drop on a console nobody touches, so the frame is a build
+        // flag. nullptr in every build without MDK_HW_CAPTURE.
+        if (capturePath[0] == '\0') {
+            if (const char* hw = mdk::harnessCapturePath(frame)) {
+                std::snprintf(capturePath, sizeof(capturePath), "%s", hw);
             }
         }
 
@@ -1455,6 +1469,7 @@ int main(int argc, char** argv) {
 
     printf("[3ds] exiting after %lu frames\n", (unsigned long)frame);
 
+    mdk::harnessProfileReport();
     mdk::log3dsPrintf("exiting after %lu frames (%u steps): %s", (unsigned long)frame,
                       (unsigned)steps, exitReason);
     aptUnhook(&s_lifecycleCookie);

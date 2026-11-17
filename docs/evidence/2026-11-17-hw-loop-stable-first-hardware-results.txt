@@ -1,0 +1,226 @@
+2026-11-17  The hardware loop runs end to end, and the first Old-3DS results
+=========================================================================
+
+CONSOLE. old3ds-lan167 (192.168.4.167), Old 3DS, CFGU system model 0
+("3DS", the Old-3DS family: 268 MHz ARM11, no L2), firmware
+9f3632fe047c+dirty (Luma3DS + ATM). Lid closed (`lid=closed_blanked`), 3D
+slider reported > 0 during the profile run (`stereo=on`). No debugger
+attached, and no ATM screenshot during any run. Every result below is
+HARDWARE. Emulator results are marked EMULATOR.
+
+KNOWLEDGE-BASE LOOKUP (P9). The obsidian/cognee MCP servers failed with
+EAI_AGAIN: the workstation's stub resolver does not route `.lab.home` to the
+lab DNS, although `dig @192.168.4.235 obsidian.lab.home` answers. That is a
+workstation DNS-routing fault (root to fix). The vault was read from disk
+(/mnt/nas/Vaults/port-docs), so this was a degraded lookup with no Cognee
+graph: 10-projects/netload_stub/atm/{agent-prompt,troubleshooting,
+deployment-and-launch,crash-recovery,profiling-and-telemetry,
+network-api-reference,artifact-management}.md and
+20-runbooks/3ds-autonomous-hardware-profiling-loop.md.
+
+
+1. WHY EVERY EARLIER CYCLE FAILED: TWO HARNESS FAULTS, NOT A WEDGED CONSOLE
+-------------------------------------------------------------------------
+
+(a) THE "WEDGE" WAS A PARKED ATM SERVICE LOOP. State seen repeatedly on
+2026-11-17: ping green, :8080 accepts TCP and then sends 0 bytes, reboots
+"do not help". Two `cmd reboot` sends DID take (boot_count 655 -> 657), and
+:8080 still answered nothing afterwards. ONE directed discovery probe
+(`atmctl.py --ip 192.168.4.167 discover`) restored a full 912-byte
+status.txt immediately. This is the documented troubleshooting row "service
+loop parked" (pre-fix firmware: socPoll(...,0) is wait-for-event on SOC, so
+the ATM thread sleeps on its discovery socket until a directed probe wakes
+it). status.txt already showed it before this session made any request:
+`http_requests=35 http_ok=6 http_drop=28` at 18 min uptime. AGENTS.md P10
+trap 8 prescribes reboots for this state. They do not fix it. AGENTS.md is
+owner-protected and was NOT edited. The owner should amend trap 8.
+
+FIX: hw_cycle.sh sends a bounded, best-effort directed discovery (`wake`)
+before every HTTP read. MDK_HW_WAKE=0 disables it (the self-test does).
+
+(b) THE LOG READ HAD A 10 s BUDGET FOR A 725 KB FILE. mdk.log is append-only
+across sessions. It had reached 724,968 B, mostly the old per-draw sample
+spam. The ATM HTTP server serves ~28 KB/s with up to 40 s before the first
+byte, and it ignores Range (`-r 0-99` returned 200 with 311,296 B).
+Measured: full reads in 26-52 s, and a 60 s read cut off at 654,672 B. So
+every 10 s `--max-time` failed, and the earlier "HTTP 200, 247,120 B body"
+was a truncated read, not the whole log (its 4 markers were really 9).
+
+FIX: hw_cycle.sh reads with MDK_HW_HTTP_TIMEOUT (default 180 s) and
+`curl --fail`, so a 403/404 error body is never a baseline or a pull. The
+preflight probe only asks whether the server answers (status.txt, 20 s). The
+real fix bounds the file: log_3ds.cpp rotates a log over 128 KiB at boot,
+mdk.log -> mdk.prev.log -> mdk.prev2.log, two generations so a timed-out
+cycle's session survives the next boot too. hw_cycle.sh accepts a rotation
+ONLY when the pull no longer begins with the device snapshot AND its first two
+lines are the session header and `log: rotated the previous <snapshot size>-byte
+log to mdk.prev.log`, and never when the baseline came from the local-copy
+fallback. A pull that merely differs keeps the old baseline (review H1, below).
+OWNER NOTE: AGENTS.md P10 traps 6/10 still describe mdk.log as append-only
+forever; with rotation, an older session is in mdk.prev.log / mdk.prev2.log.
+
+
+2. HARDWARE CYCLES RUN (all `hw_cycle.sh`, push verified by transfers.log)
+--------------------------------------------------------------------------
+
+ run  payload (make -C mdk_3ds ...)     bytes_out   push   cycle  verdict
+ ---  ---------------------------      ---------   ----   -----  -------------------------------
+ 3    AUTOQUIT=90 (HEAD 3e86309)       119372288   225 s  369 s  FRESH 669777c6..., 2098 frames
+ 4    AUTOQUIT=90 + log rotation       119372700   281 s  397 s  FRESH e2101e73..., rotated
+                                                                 740,125 B -> mdk.prev.log, 2531 fr
+ 5    AUTOQUIT=90 CAPTURE=600          119372632   243 s  352 s  FRESH caef6bcc..., CAPTURE 400x240
+ 6    AUTOQUIT=90 PROFILE=1            119374320   232 s  335 s  FRESH 444b2432..., PROFILE OG
+
+Each run booted level 7 (`flow: screen=4 level=7`, 19 arenas, heap split
+main=41,041,920 linear=25,165,824), ran the frame loop with audio
+(`ndsp chn0 PCM16 stereo 44100 Hz`), and ended `exiting after N frames ...:
+harness autoquit (MDK_AUTOQUIT)` then `--- session end ---`. Pulled logs:
+logs/hw/2026-11-17/hw{3,4,5,6}.{log,out} (gitignored).
+
+
+3. hw.pixels-rgba8: THE FIRST HARDWARE PICTURE, AND THE BATCH-173 VERDICT
+------------------------------------------------------------------------
+
+Run 5 wrote ONE framebuffer readback at frame 600 (left-eye target,
+GX_DisplayTransfer RGBA8 -> linear, rotated to 400x240, 24-bit BMP) to
+sdmc:/3ds/mdk/hwcap.bmp.log. The `.log` suffix is there because ATM's HTTP
+allowlist is a suffix match on .log/.txt (atm_core.c). Pulled 288,054 B,
+which matches the size in its own header, md5
+cc81302a32cc24235d47093ec2467d5a.
+
+  docs/evidence/2026-11-17-hw-old3ds-level7-frame600.png   (the full frame)
+  docs/evidence/2026-11-17-hw-old3ds-hud-panel.png          (crop 330,190-400,240, 8x)
+
+The frame shows the same scene as the emulator: the two lava-textured
+objects, the bridge, Kurt, the blue canary at top-left, and the HUD panel at
+bottom-right drawn as THE OVAL with a green "100". It is not a fine stripe.
+
+Measured with mdk_3ds/tools/hud_panel_compare.py (committed). The script
+first reproduces the record's numbers on the two emulator crops (row-major
+dominant 11.6 / fine 5.3 px; Morton 29.0 / 6.4 px):
+
+  capture period metric: dominant=29.0px fine-band-peak=5.3px
+  vs row-major: best shift (-21,-7) luminance r=+0.187 over 1554 panel px
+  vs Morton   : best shift (-11,-7) luminance r=+0.606 over 2060 panel px
+
+The dominant period is the Morton build's 29.0 px, not row-major's 11.6.
+Best-aligned, the hardware panel correlates +0.61 with the Morton build and
++0.19 with the row-major mutant. The fine-band PEAK (5.3 px) does not
+separate the builds on this metric: row-major has LESS fine-band power than
+Morton (13% vs 20%), and the hardware capture is higher still (27%). The
+record's discriminator is the dominant period, which is unambiguous here.
+
+VERDICT: the texture tile-order fix (1cb8d9d) holds on Old-3DS hardware. The
+GPU samples the Morton-expanded textures as intended, and the batch-173 HUD
+stripe is absent on the device. This is the hardware acceptance the 173 row
+was waiting for.
+
+SIDE FINDING: the 2026-11-17 emulator evidence crops are registered about
+(11,7) px off the panel. Its oval runs off the crop's right/bottom, and the
+hardware oval sits wholly inside the same window. That matches c5a22d7's
+"seeded Qt geometry drifted" note. It is a LEAD, not a finding, for why
+`emurun.sh --expect hud` now exits 7 ("12 of the 43 (0,255,0) pixels lie
+OUTSIDE crop 200,120-390,234"), while batch 175 recorded 134 of 134 inside
+on the same row. Re-run this session on :99: still rc 7, unchanged by this
+batch. The verdict text's "death skull" explanation cannot apply to a
+health-100 run. So the d1 row 3ds.hud-canvas currently FAILS its own
+acceptance command, and that needs its own increment.
+
+COST FOUND BY THE CAPTURE: the run reached frame 600 at 21 s of game time
+(1265 steps) and then autoquit at frame 601. The BMP writer issued 96,000
+three-byte fwrites, which took ~69 s on the console's SD devoptab.
+03_frame.inc now writes one 1200-byte row per fwrite (same bytes, same
+order). That is NOT yet re-measured on hardware.
+
+
+4. hw.profile-og: THE FIRST OG FRAME-PERIOD CAPTURE
+--------------------------------------------------
+
+Run 6 (`make AUTOQUIT=90 PROFILE=1`). This is the wall-clock period between
+frames, before the gameplay clamp, first frame excluded, with 0.1 ms
+buckets (percentiles are bucket upper edges):
+
+  profile: frames=2476 mean=36.340ms p50<=33.5ms p95<=67.0ms p99<=521.4ms
+           max=521.437ms over16.7ms=2401 over33.3ms=1607
+  profile: console model=0 family=old3ds clock=268MHz l2=none stereo=on
+
+Reading: the loop is vsync-quantized at ~30 Hz (p50 one 33.3 ms quantum).
+65% of frames miss a 30 Hz vblank (over33.3ms=1607 of 2476), and p95 is two
+quanta. p99 falls in the >100 ms overflow bucket, so at least 1% of frames
+(25+) stall over 100 ms, the worst at 521 ms. Stereo was ON, so both eyes
+were rendered.
+
+NOT CLAIMED: the cause of the >100 ms stalls. One candidate is the flushed
+SD log writes every 60 frames (~41 points in this run, 2 lines each). That
+is a hypothesis to test by A/B (one variable, three runs each per the
+runbook), not a finding. This is also a frame-period capture, not a
+function-level profile: it cannot populate the hot-path corpus (AGENTS.md
+§2), and the VFP freeze stays as it is.
+
+
+5. WHAT THE APPLIANCE CANNOT DO TODAY (rows left open, with cause)
+------------------------------------------------------------------
+
+- ATM SCREENSHOTS DURING A RUN: impossible by design. UDP 8082 is handed to
+  the app during a run (network-api-reference), so `screenshot` sent
+  mid-run is never consumed. `screenshot_auto 20` was acknowledged
+  (`screenshot_auto: armed`, cmdack on UDP 8081) and produced nothing. A
+  manual capture at the stub is refused: `screenshot: refused
+  (quota_exhausted; retrieve+ack first)`. The quota counts manifest files
+  in /luma/atm/screenshots: 32 sets (shot_00000001..20, labels like
+  w38-post-reboot and baseline-homescreen) from the netload_stub/ATM
+  firmware sessions. artifacts.txt LISTS ONLY 5 of them, so atmctl's
+  verified retrieval cannot reach the rest. Freeing the quota means acking
+  another project's evidence, so it is the operator's call and was not
+  done. MDK no longer needs it: the game-side capture above replaces it.
+- hw.cia-boot (`--install`): ATM has no CIA installer and no title-launch
+  path for an installed title (no AM install in atm_svc.c or atmctl.py).
+  Installing needs an on-console installer, a human, or a firmware
+  feature.
+- hw.sleep-resume (`--sleep`): ATM has no remote lid/sleep control. The
+  lid is physically closed, and ATM's devmode denies sleep on shell-close
+  (`lid=closed_blanked`). A real sleep/wake cycle needs a human at the
+  hinge, or a firmware feature that requests sleep.
+
+
+6. HARNESS VERIFICATION (no console), AND THE REVIEW
+---------------------------------------------------
+
+REVIEW. This was an independent fresh-context read-only review (a Claude
+subagent given the diff and ralph/validator.md). It is NOT the cross-family
+validator AGENTS.md §0 names: ralph-pi.sh's DeepSeek route was not available
+to this session, and the reviewer said so itself (verdict INCOMPLETE, "NOT
+INDEPENDENT"). Its findings, all fixed:
+  H1  rotation detection by cmp alone: a 403/404 body, the local-copy
+      fallback, or any differing pull dropped the baseline to 0, and old
+      markers then read as FRESH -> rotation now needs the game's own line
+      naming the snapshot size, never on the local fallback, curl --fail.
+  M1  no test for H1 -> case "a log that only differs is not a rotation".
+  M2  one generation lost a timed-out session at the next boot -> two.
+  M3  the preflight probe downloaded the whole log at the long budget,
+      inside 45/60-try loops -> status.txt, 20 s.
+  M4  build_cia.sh checked the environment, not the binary -> it greps the
+      ELF for all three harness literals (verified: refuses, rc 2).
+  Low the static_assert compared a size with itself -> runtime row guard;
+      fwrite/fclose now checked, and a failed write logs no "wrote"
+      line; the clock/l2 fields say "(by-model)"; `ifeq` instead of
+      `ifdef` for CAPTURE/PROFILE; hud_panel_compare.py's dead shift
+      range and NaN seed fixed, and it resolves paths from its own location.
+Also fixed: the R11 gate (audit_r11_idiv, part of tools/check.sh) flagged
+the profile's two integer divides -> a literal divisor and a double mean.
+
+SELF-TEST: mdk_3ds/tools/hw_cycle_selftest.sh 14 PASS / 0 FAIL. Its default
+payload is now a stand-in, so the verdict cases no longer depend on which
+variant the tree last built (a plain build had turned every case into the
+refusal case). Non-vacuity:
+  - against hw_cycle.sh with H1's guards removed (cmp-only rotation):
+    13 PASS / 1 FAIL, the bogus-rotation case returning rc 0, i.e. H1's
+    false FRESH, reproduced and caught;
+  - against the committed hw_cycle.sh (3e86309): 7 PASS / 7 FAIL, exactly
+    the new rotation/capture/profile cases.
+BUILDS: clean builds of AUTOQUIT=90 PROFILE=1, AUTOQUIT=90 CAPTURE=600 and
+plain all rc 0. Each carries exactly its own literals (harness/capture/
+profile = 1/0/1, 1/1/0, 0/0/0). `CAPTURE` without AUTOQUIT and PROFILE+CAPTURE
+both stop in make. HARDWARE NOTE: runs 3-6 used the harness BEFORE these
+review fixes. The post-review harness is exercised on the console by the
+ledger_close acceptance runs that follow this commit.

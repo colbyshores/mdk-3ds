@@ -33,12 +33,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ ! -f "$DSX" ]; then
-    echo "hw_cycle_selftest: SKIP -- $DSX is not built (make -C mdk_3ds first)."
-    exit 0
-fi
-
 mkdir -p "$WORK/bin"
+# The default payload is a stand-in carrying the harness chainload literal, so
+# the verdict cases do not depend on which variant the tree last built (a plain
+# `make -C mdk_3ds` would otherwise turn every case into the refusal case).
+printf 'stand-in harness payload\0/3ds/netload_stub.3dsx\0' > "$WORK/harness.3dsx"
+DSX="$WORK/harness.3dsx"
 printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/3dslink"
 chmod +x "$WORK/bin/3dslink"
 SIZE=$(stat -c %s "$DSX")
@@ -56,9 +56,17 @@ with open(LOG, "w") as f:
     f.write("--- mdk 3ds session ---\n")
     if MODE == "stale":
         f.write("--- session end ---\n")
+    if MODE == "capold":
+        # An EARLIER session wrote a capture; this run will not.
+        f.write("screenshot: wrote sdmc:/3ds/mdk/hwcap.bmp.log (240x400)\n--- session end ---\n--- mdk 3ds session ---\n")
+    if MODE in ("rotate", "rotbad"):
+        # An old card: three finished sessions before this push.
+        for i in range(3):
+            f.write("frame 1 elapsed=0.0700 steps=1\n--- session end ---\n--- mdk 3ds session ---\n")
 with open(LED, "w") as f:
     out = SIZE if MODE != "ledger" else "12345"
     f.write(f"file=mdk.3dsx status=ok bytes_out={out} bytes_in=1 ms=1\n")
+PREV_SIZE = os.path.getsize(LOG)
 start = time.time()
 hits = {"n": 0}
 class H(http.server.BaseHTTPRequestHandler):
@@ -74,6 +82,11 @@ class H(http.server.BaseHTTPRequestHandler):
                 return
             with open(LOG, "rb") as f:
                 body = f.read()
+        elif self.path.endswith("hwcap.bmp.log"):
+            import struct
+            px = bytes(4 * 4 * 3)
+            body = b"BM" + struct.pack("<IHHI", 54 + len(px), 0, 0, 54) + \
+                struct.pack("<IiiHHIIiiII", 40, 4, 4, 1, 24, 0, len(px), 0, 0, 0, 0) + px
         elif self.path.endswith("transfers.log"):
             with open(LED, "rb") as f:
                 body = f.read()
@@ -89,12 +102,33 @@ class H(http.server.BaseHTTPRequestHandler):
         pass
 def grow():
     time.sleep(4)
+    if MODE == "rotbad":
+        # NOT a rotation: the log is replaced by a body that does not begin
+        # with the snapshot, carries old markers, and states no rotation.
+        with open(LOG, "w") as f:
+            f.write("--- mdk 3ds session ---\n--- session end ---\n--- session end ---\n")
+        return
+    if MODE == "rotate":
+        # The game rotated the oversized log at boot: a fresh file holding
+        # ONLY this session, so its marker count (1) is below the baseline (3).
+        with open(LOG, "w") as f:
+            f.write("--- mdk 3ds session ---\n")
+            f.write(f"log: rotated the previous {PREV_SIZE}-byte log to mdk.prev.log\n")
+            f.write("exiting after 3 frames: harness autoquit (MDK_AUTOQUIT)\n")
+            f.write("--- session end ---\n")
+        return
     with open(LOG, "a") as f:
         for i in range(3):
             f.write(f"frame {i} elapsed=0.0700 steps=1\n")
             f.flush()
             time.sleep(2)
-        if MODE in ("ok", "ledger"):
+        if MODE == "capture":
+            f.write("screenshot: wrote sdmc:/3ds/mdk/hwcap.bmp.log (4x4)\n")
+        if MODE in ("profold", "profnew"):
+            fam = "old3ds" if MODE == "profold" else "new3ds"
+            f.write("profile: frames=3 mean=33.300ms p50<=33.4ms p95<=33.4ms p99<=33.4ms max=33.400ms over16.7ms=3 over33.3ms=0\n")
+            f.write(f"profile: console model=0 family={fam} clock=268MHz l2=none stereo=off\n")
+        if MODE in ("ok", "ledger", "capture", "capold", "profold", "profnew"):
             f.write("exiting after 3 frames: harness autoquit (MDK_AUTOQUIT)\n")
             f.write("--- session end ---\n")
 threading.Thread(target=grow, daemon=True).start()
@@ -107,13 +141,13 @@ case_run() {
     name=$1 mode=$2 wait=$3 wantrc=$4 wanttext=$5
     out="$WORK/guest-$mode.log"
     cp "$WORK/fake.py" "$WORK/fake-$mode.py"
-    ( cd "$WORK" && exec python3 "$WORK/fake-$mode.py" "$mode" "$SIZE" ) > "$WORK/srv-$mode.out" 2>&1 &
+    ( cd "$WORK" && exec python3 "$WORK/fake-$mode.py" "$mode" "$(stat -c %s "${DSX_OVERRIDE:-$DSX}")" ) > "$WORK/srv-$mode.out" 2>&1 &
     SRV_PID=$!
     for _ in $(seq 1 20); do
         [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8080/3ds/mdk/mdk.log)" = 200 ] && break
         sleep 0.5
     done
-    PATH="$WORK/bin:$PATH" MDK_HW_WAIT="$wait" MDK_HW_DSX="${DSX_OVERRIDE:-}" "$CYCLE" --once --ip 127.0.0.1 --out "$out" \
+    PATH="$WORK/bin:$PATH" MDK_HW_WAKE=0 MDK_HW_WAIT="$wait" MDK_HW_DSX="${DSX_OVERRIDE:-$DSX}" "$CYCLE" "${CYCLE_MODE:---once}" --ip 127.0.0.1 --out "$out" \
         > "$WORK/run-$mode.out" 2>&1
     rc=$?
     kill "$SRV_PID" 2>/dev/null
@@ -153,6 +187,16 @@ case_run "a wedge is named as a wedge" wedge 15 1 "post-exit wedge, not the buil
 #    a run of an unknown binary is not evidence.
 case_run "an unverified push refuses" ledger 30 1 "push UNVERIFIED"
 
+# 5. The game rotates an oversized log at boot (log_3ds.cpp), so the fresh log
+#    can hold FEWER markers than the pre-push baseline. A count-only verdict
+#    times out on a run that finished; the harness must see that the log no
+#    longer begins with the snapshot and baseline the new file at 0.
+case_run "a rotated log is this run" rotate 30 0 "log rotated by the game"
+# 5b. A log that merely differs from the snapshot, without the game's rotation
+#     line naming the snapshot's size, is not a rotation: its old markers must
+#     not read as this run's (review finding H1).
+case_run "a log that only differs is not a rotation" rotbad 12 1 "TIMEOUT waiting for a new session end marker"
+
 if [ -s "$WORK/guest-stale.log.partial" ]; then
     echo "PASS a timed-out run keeps its partial pull"
     PASS=$((PASS + 1))
@@ -172,6 +216,32 @@ printf 'harness autoquit (MDK_AUTOQUIT)\0' >> "$WORK/no-harness.3dsx"
 DSX_OVERRIDE="$WORK/no-harness.3dsx"
 case_run "a payload without the harness is refused" ok 30 1 "WITHOUT -DMDK_AUTOQUIT"
 DSX_OVERRIDE=""
+
+# 7-9. --capture (hw.pixels-rgba8). A capture payload carries both harness
+#    literals; the picture counts only when THIS session logged its write.
+printf '/3ds/netload_stub.3dsx\0sdmc:/3ds/mdk/hwcap.bmp.log\0' > "$WORK/capture.3dsx"
+DSX_OVERRIDE="$WORK/capture.3dsx"
+CYCLE_MODE=--capture
+case_run "a capture run pulls its picture" capture 60 0 "CAPTURE 4x4 102 bytes"
+case_run "an earlier session's capture is not this run's" capold 60 1 "CAPTURE MISSING"
+# A harness payload with neither the capture nor the profile, independent of
+# what the tree's own mdk.3dsx happens to be built with.
+printf '/3ds/netload_stub.3dsx\0' > "$WORK/plain.3dsx"
+DSX_OVERRIDE="$WORK/plain.3dsx"
+case_run "a payload without the capture is refused" ok 30 1 "WITHOUT CAPTURE"
+CYCLE_MODE=
+
+# 10-12. --profile (hw.profile-og): an Old-3DS summary is the OG result, a New
+#    3DS one is refused by name, and a payload without the profile never pushes.
+printf '/3ds/netload_stub.3dsx\0profile: console model=%%u\0' > "$WORK/profile.3dsx"
+DSX_OVERRIDE="$WORK/profile.3dsx"
+CYCLE_MODE=--profile
+case_run "an Old-3DS profile is an OG result" profold 60 0 "PROFILE OG"
+case_run "a New-3DS profile is not an OG result" profnew 60 1 "NOT AN OG RESULT"
+DSX_OVERRIDE="$WORK/plain.3dsx"
+case_run "a payload without the profile is refused" ok 30 1 "WITHOUT PROFILE=1"
+DSX_OVERRIDE=""
+CYCLE_MODE=
 
 echo "HW_CYCLE SELFTEST: $PASS PASS / $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

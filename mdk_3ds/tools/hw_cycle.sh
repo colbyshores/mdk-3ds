@@ -10,6 +10,18 @@
 # push's exit code).
 #
 #   hw_cycle.sh --once [--ip <console-ip>] [--out <log>]
+#   hw_cycle.sh --capture [--ip <console-ip>] [--out <log>]
+#   hw_cycle.sh --profile [--ip <console-ip>] [--out <log>]
+#
+# --profile is --once plus the OG frame-period profile (ledger hw.profile-og):
+# the payload must be built `make AUTOQUIT=90 PROFILE=1`, THIS session must log
+# its `profile:` summary, and the console must report the Old-3DS family -- a
+# New 3DS run is refused even at 268 MHz (AGENTS.md: not an OG pass).
+#
+# --capture is --once plus the hardware picture (ledger hw.pixels-rgba8): the
+# payload must be built `make AUTOQUIT=90 CAPTURE=<frame>`, the run must log
+# that it wrote sdmc:/3ds/mdk/hwcap.bmp.log in THIS session, and the BMP is
+# pulled to <out>.bmp and checked against its own header.
 #
 # The console address comes from --ip or $MDK_3DS_IP. The other modes the
 # ledger names (--profile, --capture, --install, --sleep) are hardware
@@ -31,12 +43,12 @@ while [ $# -gt 0 ]; do
 done
 
 case "$MODE" in
-    --once) ;;
-    --profile|--capture|--install|--sleep)
+    --once|--capture|--profile) ;;
+    --install|--sleep)
         echo "hw_cycle: $MODE is a hardware step of its own ledger row and is not wired yet." >&2
         echo "          --once (push, self-quit, pull the log) is the wired cycle." >&2
         exit 3 ;;
-    *) echo "usage: hw_cycle.sh --once [--ip <console-ip>] [--out <log>]" >&2; exit 2 ;;
+    *) echo "usage: hw_cycle.sh --once|--capture|--profile [--ip <console-ip>] [--out <log>]" >&2; exit 2 ;;
 esac
 
 if [ -z "$IP" ]; then
@@ -69,6 +81,21 @@ if ! grep -aqF -- '/3ds/netload_stub.3dsx' "$DSX"; then
     echo "    make -C mdk_3ds -j\$(nproc) AUTOQUIT=90" >&2
     exit 1
 fi
+# --capture needs a payload that writes the picture; the path literal exists
+# only under -DMDK_HW_CAPTURE (harness_3ds.cpp), so it is the evidence.
+CAP_NAME=hwcap.bmp.log
+if [ "$MODE" = "--capture" ] && ! grep -aqF -- "sdmc:/3ds/mdk/$CAP_NAME" "$DSX"; then
+    echo "hw_cycle: $DSX has no harness capture -- it was built WITHOUT CAPTURE=<frame>. Rebuild:" >&2
+    echo "    make -C mdk_3ds clean && make -C mdk_3ds -j\$(nproc) AUTOQUIT=90 CAPTURE=600" >&2
+    exit 1
+fi
+# --profile likewise: the console-model line's format string exists only under
+# -DMDK_HW_PROFILE (harness_3ds.cpp).
+if [ "$MODE" = "--profile" ] && ! grep -aqF -- "profile: console model=" "$DSX"; then
+    echo "hw_cycle: $DSX has no harness profile -- it was built WITHOUT PROFILE=1. Rebuild:" >&2
+    echo "    make -C mdk_3ds clean && make -C mdk_3ds -j\$(nproc) AUTOQUIT=90 PROFILE=1" >&2
+    exit 1
+fi
 
 # The baseline must be the DEVICE log as it stands before this push, never the
 # local output file. mdk.log is append-only across boots, so a card that has
@@ -86,12 +113,39 @@ T0=$(date +%s)
 # refuse to continue if it never comes back.
 LOG_URL="http://$IP:8080/3ds/mdk/mdk.log"
 ATMCTL=/mnt/nas/Development/netload_stub/tools/atmctl.py
+# WAKE THE ATM SERVICE LOOP BEFORE EVERY HTTP READ. On firmware 9f3632fe047c
+# the ATM thread parks on its discovery socket (socPoll(...,0) is wait-for-
+# event on SOC), so :8080 ACCEPTS a TCP connection and then sends 0 bytes --
+# the state AGENTS.md trap 8 had been calling a sysmodule wedge and "fixing"
+# with reboots that did not help. A DIRECTED discovery probe wakes the loop and
+# HTTP answers at once (Obsidian 10-projects/netload_stub/atm/troubleshooting.md,
+# row "service loop parked"; measured 2026-11-17: two reboots, boot_count
+# 655->657, left :8080 at 0 bytes; one `atmctl --ip discover` restored a full
+# status.txt). Best-effort and bounded: a failed wake is not a verdict, the
+# HTTP read after it is. MDK_HW_WAKE=0 disables it (the self-test's fake
+# console has no discovery responder).
+# THE LOG READ NEEDS A REAL BUDGET. mdk.log is append-only across sessions, so
+# it only grows (725 KB on 2026-11-17), and the ATM HTTP server serves it at
+# ~28 KB/s with up to 40 s before the first byte; it ignores Range. A 10 s
+# --max-time therefore cut every read short and read as an unreadable console
+# (measured: 654,672 of 724,968 B at 60 s, full reads in 26-52 s).
+HTTP_T=${MDK_HW_HTTP_TIMEOUT:-180}
+wake() {
+    [ "${MDK_HW_WAKE:-1}" = "1" ] && [ -f "$ATMCTL" ] || return 0
+    timeout 8 python3 "$ATMCTL" --ip "$IP" discover >/dev/null 2>&1 || true
+}
+# The preflight asks only "does the HTTP server answer at all" -- any status
+# line, on a path that costs nothing to serve. Downloading the whole log here
+# with the long budget made the 45/60-try recovery loops worth hours.
 probe_log() {
-    [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$LOG_URL")" = "200" ]
+    wake
+    [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "http://$IP:8080/luma/atm/status.txt")" != "000" ]
 }
 if ! probe_log; then
     echo "hw_cycle: preflight -- $LOG_URL is not answering; attempting recovery" >&2
     if ping -c 1 -W 2 "$IP" >/dev/null 2>&1; then
+        # probe_log already woke the loop once; a reboot is the fallback for a
+        # console that a directed discovery could not wake.
         [ -f "$ATMCTL" ] && python3 "$ATMCTL" --ip "$IP" cmd reboot >/dev/null 2>&1
         for i in $(seq 1 45); do probe_log && break; sleep 4; done
     else
@@ -103,7 +157,7 @@ if ! probe_log; then
     fi
     if ! probe_log; then
         echo "hw_cycle: console unavailable -- $LOG_URL still not 200. Not pushing." >&2
-        echo "hw_cycle: if ARP is dead too, the console is off; otherwise recover with:" >&2
+        echo "hw_cycle: if ARP is dead too, the console is off; otherwise try a directed discovery, then:" >&2
         echo "    python3 $ATMCTL --ip $IP cmd reboot" >&2
         exit 1
     fi
@@ -113,8 +167,15 @@ fi
 # Snapshot the device log BEFORE the push, so a marker written by an earlier
 # session can never be read as this run's completion.
 PREV_LOG="$OUT.prev"
-if ! curl -s --max-time 10 -o "$PREV_LOG" "$LOG_URL" 2>/dev/null; then
+# Rotation can only be judged against the DEVICE's own snapshot: a local copy
+# from an earlier cycle may predate a rotation the card has already done, and
+# then every later pull would "not begin with the snapshot".
+ROTATION_OK=1
+wake
+# --fail: a 403/404 error body must not become the baseline.
+if ! curl -s --fail --max-time "$HTTP_T" -o "$PREV_LOG" "$LOG_URL" 2>/dev/null; then
     if [ -f "$OUT" ]; then
+        ROTATION_OK=0
         cp "$OUT" "$PREV_LOG"
         echo "hw_cycle: WARNING -- could not snapshot the device log; baselining on the local copy $OUT" >&2
     else
@@ -139,7 +200,8 @@ echo "hw_cycle: push returned after $(( push_done - T0 ))s"
 SIZE=$(stat -c %s "$DSX")
 LEDGER_OK=0
 for attempt in 1 2 3 4 5; do
-    if LEDGER=$(curl -s --max-time 10 "http://$IP:8080/3ds/netload_stub/transfers.log" 2>/dev/null) \
+    wake
+    if LEDGER=$(curl -s --fail --max-time "$HTTP_T" "http://$IP:8080/3ds/netload_stub/transfers.log" 2>/dev/null) \
        && [ -n "$LEDGER" ]; then
         LAST=$(printf '%s\n' "$LEDGER" | tail -1)
         case "$LAST" in
@@ -180,16 +242,38 @@ rm -f "$PULL"
 PULL_FAILS=0
 GOT=0
 ENDS=$PREV_END
+# BASE is the marker count a pull must beat. It starts as the snapshot's, and
+# drops to 0 when the game has ROTATED the log at boot (log_3ds.cpp moves a log
+# over 128 KiB to mdk.prev.log): the new file then holds only this session, so
+# its count can be BELOW the snapshot's and a count-only verdict would time out
+# on a run that finished. Rotation is recognised by the pull no longer
+# beginning with the snapshot's bytes AND by the game's own statement of it: the
+# new log's first line is the session header and its next names the rotated
+# size, which is the snapshot's size (nothing is appended between the snapshot
+# and this run's boot). A pull that merely differs -- a truncated or foreign
+# body -- is NOT a rotation, and the baseline stays where it was.
+BASE=$PREV_END
+ROTATED=0
+PREV_SIZE=$(stat -c %s "$PREV_LOG")
 for i in $(seq 1 $(( WAIT / 3 ))); do
     # Remove the file before every attempt: curl truncates on success, but a
     # failed attempt can leave the PREVIOUS pull's bytes in place, and a stale
     # pull file is a ready-made `FRESH` (measured on the wedge fixture).
     rm -f "$PULL"
-    if curl -s --max-time 10 -o "$PULL" "$LOG_URL" 2>/dev/null; then
+    wake
+    if curl -s --fail --max-time "$HTTP_T" -o "$PULL" "$LOG_URL" 2>/dev/null; then
         PULL_FAILS=0
         GOT=1
         ENDS=$(grep -c '^--- session end ---$' "$PULL" 2>/dev/null || true)
-        if [ "${ENDS:-0}" -gt "$PREV_END" ]; then
+        if [ "$ROTATED" = "0" ] && [ "$ROTATION_OK" = "1" ] && [ "$PREV_SIZE" -gt 0 ] \
+           && ! cmp -s -n "$PREV_SIZE" "$PREV_LOG" "$PULL" \
+           && [ "$(head -1 "$PULL")" = "--- mdk 3ds session ---" ] \
+           && sed -n 2p "$PULL" | grep -qxF "log: rotated the previous $PREV_SIZE-byte log to mdk.prev.log"; then
+            ROTATED=1
+            BASE=0
+            echo "hw_cycle: log rotated by the game at boot (it no longer begins with the snapshot); baseline is now 0"
+        fi
+        if [ "${ENDS:-0}" -gt "$BASE" ]; then
             break
         fi
     else
@@ -198,14 +282,14 @@ for i in $(seq 1 $(( WAIT / 3 ))); do
     fi
     if [ $(( $(date +%s) - push_done )) -gt "$WAIT" ]; then
         echo "hw_cycle: TIMEOUT after ${WAIT}s of polling (push was $(( push_done - T0 ))s)" >&2
-        echo "hw_cycle: session-end markers seen=$ENDS (baseline $PREV_END), consecutive failed pulls=$PULL_FAILS" >&2
+        echo "hw_cycle: session-end markers seen=$ENDS (baseline $BASE), consecutive failed pulls=$PULL_FAILS" >&2
         if [ -s "$PULL" ]; then
             cp "$PULL" "$OUT.partial"
             echo "hw_cycle: kept the last pull as $OUT.partial (append-only log on SD survives the wedge)" >&2
         fi
         if [ "$PULL_FAILS" -gt 2 ]; then
-            echo "hw_cycle: HTTP is not answering -- likely the post-exit wedge, NOT the build. Recover with:" >&2
-            echo "    python3 /mnt/nas/Development/netload_stub/tools/atmctl.py --ip $IP cmd reboot" >&2
+            echo "hw_cycle: HTTP is not answering -- likely the post-exit wedge, NOT the build. Recover with a directed discovery first, reboot only if that fails:" >&2
+            echo "    python3 $ATMCTL --ip $IP discover   # then: cmd reboot" >&2
         else
             echo "hw_cycle: HTTP answers but no new session end -- raise MDK_HW_WAIT or check the run on SD." >&2
         fi
@@ -216,14 +300,14 @@ done
 
 if [ "$GOT" != "1" ]; then
     echo "hw_cycle: TIMEOUT -- no successful pull after $(( $(date +%s) - push_done ))s of polling." >&2
-    echo "hw_cycle: HTTP stopped answering mid-run; that is the post-exit wedge, not the build. Recover with:" >&2
-    echo "    python3 /mnt/nas/Development/netload_stub/tools/atmctl.py --ip $IP cmd reboot" >&2
+    echo "hw_cycle: HTTP stopped answering mid-run; that is the post-exit wedge, not the build. Recover with a directed discovery first, reboot only if that fails:" >&2
+    echo "    python3 $ATMCTL --ip $IP discover   # then: cmd reboot" >&2
     echo "hw_cycle: then pull /3ds/mdk/mdk.log -- the SD log survives the wedge, so the run is still on the card." >&2
     exit 1
 fi
 cp "$PULL" "$OUT"
 ENDS=$(grep -c '^--- session end ---$' "$OUT" 2>/dev/null || true)
-if [ "${ENDS:-0}" -le "$PREV_END" ]; then
+if [ "${ENDS:-0}" -le "$BASE" ]; then
     echo "hw_cycle: TIMEOUT waiting for a new session end marker (no marker after $(( $(date +%s) - T0 ))s)" >&2
     cp "$PULL" "$OUT.partial"
     exit 1
@@ -235,3 +319,58 @@ if [ "$NOW" = "$PREV" ]; then
     exit 1
 fi
 echo "hw_cycle: FRESH ($NOW)"
+
+# The newest session: everything after the last `--- mdk 3ds session ---`.
+SESSION=$(awk '/^--- mdk 3ds session ---$/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' "$OUT")
+
+if [ "$MODE" = "--profile" ]; then
+    PROF=$(printf '%s' "$SESSION" | grep -F 'profile: frames=' | tail -1)
+    CONS=$(printf '%s' "$SESSION" | grep -F 'profile: console model=' | tail -1)
+    if [ -z "$PROF" ] || [ -z "$CONS" ]; then
+        echo "hw_cycle: PROFILE MISSING -- this session logged no profile summary." >&2
+        exit 1
+    fi
+    echo "hw_cycle: $PROF"
+    echo "hw_cycle: $CONS"
+    case "$CONS" in
+        *family=old3ds*) echo "hw_cycle: PROFILE OG (Old-3DS family)" ;;
+        *) echo "hw_cycle: NOT AN OG RESULT -- the console is not the Old-3DS family." >&2; exit 1 ;;
+    esac
+    exit 0
+fi
+
+[ "$MODE" = "--capture" ] || exit 0
+
+# ---- the picture -------------------------------------------------------------
+# The file on the card is overwritten by every capture run, so its presence
+# proves nothing about THIS run. The proof is THIS session's own line: the
+# renderer logs `screenshot: wrote <path>` only after a complete write. The
+# session is everything after the last `--- mdk 3ds session ---` header.
+if ! printf '%s' "$SESSION" | grep -qF "screenshot: wrote sdmc:/3ds/mdk/$CAP_NAME"; then
+    echo "hw_cycle: CAPTURE MISSING -- this session did not log a completed write of $CAP_NAME." >&2
+    printf '%s' "$SESSION" | grep -F 'screenshot:' | sed 's/^/    /' >&2
+    exit 1
+fi
+CAP_OUT="$OUT.bmp"
+rm -f "$CAP_OUT"
+wake
+if ! curl -s --fail --max-time "$HTTP_T" -o "$CAP_OUT" "http://$IP:8080/3ds/mdk/$CAP_NAME" 2>/dev/null; then
+    echo "hw_cycle: CAPTURE UNREADABLE -- the run wrote it but the pull failed; it is still on the card." >&2
+    exit 1
+fi
+# A BMP states its own size (bytes 2-5, little-endian); a short pull cannot
+# pass for a picture.
+CAP_SIZE=$(stat -c %s "$CAP_OUT")
+read -r MAGIC DECL W H < <(python3 -c '
+import struct, sys
+b = open(sys.argv[1], "rb").read(26)
+if len(b) < 26:
+    print("-- 0 0 0")
+else:
+    print(b[:2].decode("latin1"), struct.unpack("<I", b[2:6])[0], *struct.unpack("<ii", b[18:26]))
+' "$CAP_OUT")
+if [ "$MAGIC" != "BM" ] || [ "$DECL" != "$CAP_SIZE" ]; then
+    echo "hw_cycle: CAPTURE MALFORMED -- magic '$MAGIC', header says $DECL bytes, pulled $CAP_SIZE." >&2
+    exit 1
+fi
+echo "hw_cycle: CAPTURE ${W}x${H} $CAP_SIZE bytes -> $CAP_OUT ($(md5sum "$CAP_OUT" | cut -d' ' -f1))"
