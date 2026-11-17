@@ -191,7 +191,49 @@ PREV_END=$(grep -c '^--- session end ---$' "$PREV_LOG" 2>/dev/null || true)
 echo "hw_cycle: baseline $PREV_END session-end marker(s), md5 $PREV"
 
 echo "hw_cycle: pushing $DSX to $IP"
-3dslink -a "$IP" "$DSX" >/dev/null 2>&1 || { echo "hw_cycle: 3dslink FAILED" >&2; exit 1; }
+# The stub may not be listening YET: the previous run's chain-load relaunches
+# it only after that run's teardown, and a heavy level tears down slowly.
+# Measured 2026-11-17: level 3 exited cleanly, and the next cycle's 3dslink was
+# refused, along with four more pushes in the following two minutes; minutes
+# later the same push went through. So a refused push is retried, bounded:
+# MDK_HW_PUSH_TRIES attempts (default 12), MDK_HW_PUSH_GAP seconds apart (10).
+# ALWAYS ARRIVE AS mdk.3dsx. netload_stub saves a push under the file's own
+# basename, so a payload named mdk-L4.3dsx is a NEW 119 MB file on the card,
+# not an overwrite. Measured 2026-11-17: per-level payloads filled the SD card
+# and every later push ended `status=disk_full_or_io` in transfers.log. A
+# differently named payload is pushed through a symlink named mdk.3dsx.
+PUSH_FILE="$DSX"
+if [ "$(basename "$DSX")" != "mdk.3dsx" ]; then
+    PUSH_DIR=$(mktemp -d)
+    trap 'rm -rf "$PUSH_DIR"' EXIT
+    ln -s "$(readlink -f "$DSX")" "$PUSH_DIR/mdk.3dsx"
+    PUSH_FILE="$PUSH_DIR/mdk.3dsx"
+    echo "hw_cycle: pushing $(basename "$DSX") under the name mdk.3dsx (the stub keeps one file per name)"
+fi
+PUSH_TRIES=${MDK_HW_PUSH_TRIES:-12}
+PUSH_GAP=${MDK_HW_PUSH_GAP:-10}
+# THE STUB CAN BE GONE, not just late. Measured 2026-11-17: after a clean
+# level-5 exit the chain-load did not happen, the console sat at HOME with no
+# 3dsx_app process (GDB `info os processes`), and nothing listened on 17491.
+# ATM's `launch` cannot start a stub it did not stage, but a reboot autoboots
+# it. So after MDK_HW_REBOOT_AFTER refused pushes (default 3) the harness
+# reboots the console ONCE over UDP 8082 and keeps retrying.
+REBOOT_AFTER=${MDK_HW_REBOOT_AFTER:-3}
+REBOOT_WAIT=${MDK_HW_REBOOT_WAIT:-90}
+rebooted=0
+pushed=0
+for attempt in $(seq 1 "$PUSH_TRIES"); do
+    if 3dslink -a "$IP" "$PUSH_FILE" >/dev/null 2>&1; then pushed=1; break; fi
+    echo "hw_cycle: 3dslink refused (attempt $attempt/$PUSH_TRIES); the stub may still be relaunching" >&2
+    if [ "$rebooted" = "0" ] && [ "$attempt" -ge "$REBOOT_AFTER" ]; then
+        rebooted=1
+        echo "hw_cycle: rebooting the console once so it autoboots the stub (UDP cmd reboot), waiting ${REBOOT_WAIT}s" >&2
+        [ -f "$ATMCTL" ] && python3 "$ATMCTL" --ip "$IP" cmd reboot >/dev/null 2>&1
+        sleep "$REBOOT_WAIT"
+    fi
+    [ "$attempt" -lt "$PUSH_TRIES" ] && { sleep "$PUSH_GAP"; wake; }
+done
+[ "$pushed" = "1" ] || { echo "hw_cycle: 3dslink FAILED after $PUSH_TRIES attempts" >&2; exit 1; }
 push_done=$(date +%s)
 echo "hw_cycle: push returned after $(( push_done - T0 ))s"
 
@@ -332,6 +374,10 @@ if [ "$MODE" = "--profile" ]; then
         exit 1
     fi
     echo "hw_cycle: $PROF"
+    SPANS=$(printf '%s' "$SESSION" | grep -F 'profile: spans ' | tail -1)
+    [ -n "$SPANS" ] && echo "hw_cycle: $SPANS"
+    STEPS=$(printf '%s' "$SESSION" | grep -F 'profile: step ' | tail -1)
+    [ -n "$STEPS" ] && echo "hw_cycle: $STEPS"
     echo "hw_cycle: $CONS"
     case "$CONS" in
         *family=old3ds*) echo "hw_cycle: PROFILE OG (Old-3DS family)" ;;

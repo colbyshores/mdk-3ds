@@ -46,6 +46,18 @@ const char* harnessCapturePath(uint32_t frame);
 // percentiles. No-ops in every other build. This is a frame-period capture,
 // not a function-level profile: it cannot populate the hot-path corpus.
 void harnessProfileFrame(double periodSeconds);
+// Where the frame went (PROFILE builds; no-ops otherwise). Raw svcGetSystemTick
+// spans: the fixed-step simulation loop and how many steps it ran, the
+// render begin (C3D_FrameBegin's vblank wait lives here -- an elastic idle,
+// kept in its own bucket), the draw issue between begin and end, and the end.
+// harnessProfileTick() is the tick source so main needs no <3ds.h> timing code.
+uint64_t harnessProfileTick();
+// Inside the simulation step (PROFILE builds): Kurt (player.update), the
+// scripts (runtime->update), the follow camera, and space.setSolid, summed.
+void harnessProfileStepSpans(uint64_t playerTicks, uint64_t runtimeTicks,
+                             uint64_t cameraTicks, uint64_t solidTicks);
+void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTicks,
+                         uint64_t drawTicks, uint64_t endTicks);
 void harnessProfileReport();
 
 // True once the harness deadline expires (first call arms it). Always

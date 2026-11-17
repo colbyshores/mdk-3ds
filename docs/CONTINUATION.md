@@ -1,5 +1,27 @@
 # Phase 2 continuation checkpoint
 
+## ARENA STREAMING: PHASE 0 FOR EVERY LEVEL, AND THE 20x SCRIPT COST FIXED (2026-11-17)
+
+The plan this branch works to is now in the repo: `docs/ARENA_STREAMING_SPEC.md`.
+Full record: `docs/evidence/2026-11-17-phase0-every-level-and-the-rebake.txt`.
+
+- **Levels 3-7 boot and run on the Old 3DS; level 8 OOMs loading `LEVEL8O.SNI`**
+  (4.99 MB, one allocation). That is Phases 1/5, the spec's predicted failure.
+- **3, 5 and 6 were in a fixed-step death spiral (1.7-2.5 fps). Memory was not
+  the cause: one 60 Hz step cost 35.5 ms on hardware (level 7: 4.1 ms).**
+  callgrind: `ScriptRuntime::poseBounds` re-baked the whole animation on every
+  bounds query (79% of instructions). It now reads the existing C#-equivalent
+  pose cache (`obj->pose_parts()`). Oracle suite 856/856. Emulator level 3: step
+  25.5 -> 0.37 ms, 330 -> 5,354 frames in 90 s, mean 16.8 ms.
+  **Hardware confirmation is still owed** (the console went to another project).
+- Harness: `LEVEL=<n>`, PROFILE step spans, push-as-`mdk.3dsx` (stray names
+  filled the SD card), push retry, one-reboot recovery when the stub vanishes.
+
+**NEXT.** (1) Hardware-verify the fix on levels 3, 5 and 6 (`make AUTOQUIT=90
+PROFILE=1 LEVEL=n`, `hw_cycle.sh --profile`). (2) Spec Phase 1, the chunked MTO
+reader, which is what level 8 needs. (3) The stale "24 MiB heap" text in the
+FATAL handler.
+
 ## HARDWARE LOOP STABLE, FIRST OLD-3DS RESULTS (2026-11-17, branch `experimental/arena-streaming`)
 
 **The loop works end to end on `old3ds-lan167`.** Four `hw_cycle.sh` cycles ran

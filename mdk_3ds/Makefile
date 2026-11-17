@@ -132,6 +132,16 @@ $(error CAPTURE=$(CAPTURE) needs AUTOQUIT: the capture is a harness-build featur
 endif
 DEFINES += -DMDK_HW_CAPTURE=$(CAPTURE)
 endif
+# `make AUTOQUIT=90 LEVEL=<3..8>` starts the run in that level instead of the
+# flow's first (7): the per-level hardware baselines of the arena-streaming
+# plan. Only main_3ds.cpp reads it, so after changing LEVEL `touch
+# mdk_3ds/src/main_3ds.cpp` (the Makefile does not track -D changes).
+ifneq ($(strip $(LEVEL)),)
+ifndef AUTOQUIT
+$(error LEVEL=$(LEVEL) needs AUTOQUIT: the level override is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_LEVEL=$(LEVEL)
+endif
 # `make AUTOQUIT=90 PROFILE=1` logs one `profile:` frame-period summary at exit
 # (harness_3ds.h), what `hw_cycle.sh --profile` reads. Never combine with
 # CAPTURE: the capture's SD write would be inside the measured frames.

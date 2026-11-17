@@ -3059,25 +3059,19 @@ Box ScriptRuntime::poseBounds(const MdkObject* obj) {
         d.max = Vec3f{1.0f, 1.0f, 4.0f};
         return d;
     }
-    // One pose: the rest vertices, or the baked animation frame. The C# caches the
-    // whole bake per (model, animation); baking per call is correct and the test
-    // set is small, so caching is a later optimisation, not a correctness need.
-    std::vector<std::vector<Vec3f> > pose;
-    if (obj->animation == nullptr) {
-        pose = model->restPose();
-    } else {
-        std::vector<std::vector<std::vector<Vec3f> > > frames = obj->animation->bake(*model);
-        int32_t f = obj->animation_frame;
-        if (f < 0) {
-            f = 0;
-        }
-        if (f >= static_cast<int32_t>(frames.size())) {
-            f = static_cast<int32_t>(frames.size()) - 1;
-        }
-        if (!frames.empty()) {
-            pose = frames[f];
-        }
-    }
+    // One pose: the rest vertices, or the baked animation frame -- from the SAME
+    // per-(model, animation) cache the C# keeps (MdkObject.RestPoses / Baked,
+    // scripts/pose_cache.cpp), read by reference. pose_parts() applies exactly
+    // the selection this function used to do by hand: the rest pose without an
+    // animation, else the frame clamped into [0, frames-1], else empty.
+    //
+    // This used to BAKE THE WHOLE ANIMATION ON EVERY CALL and copy one frame out.
+    // Measured 2026-11-17 (callgrind, `tick1 dump transform 3 301`):
+    // ModelAnimation::bake was 79% of all instructions, reached through
+    // worldBounds from the VM, and level 3's script tick cost 20x level 7's. On
+    // the Old 3DS that made one 60 Hz step take 35.5 ms, so levels 3, 5 and 6
+    // ran in the fixed-step death spiral at 1.7-2.5 fps.
+    const std::vector<std::vector<Vec3f> >& pose = obj->pose_parts();
     // PoseBoxes per part (min/max over its vertices), combined over the visible
     // parts (hidden_parts bit clear); fall back to the model's own bounds.
     bool have = false;

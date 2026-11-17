@@ -335,6 +335,14 @@ int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     mdk::flow::FlowOptions options;
     options.start = mdk::flow::Start::Level;
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_LEVEL)
+    // The hardware loop's level choice (`make AUTOQUIT=90 LEVEL=<n>`): the
+    // console has no command line, so the arena-streaming spec's Phase 0
+    // "baseline numbers for every level on hardware" needs the first level
+    // chosen at build time. Harness builds only; the flow validates it.
+    options.level = (int32_t)(MDK_HW_LEVEL);
+    mdk::log3dsPrintf("main: harness level override LEVEL=%d", (int)(MDK_HW_LEVEL));
+#endif
     mdk::flow::GameFlow flow(options);
     mdk::flow::Screen screen = flow.handle(flow.firstEvent());
     mdk::log3dsPrintf("flow: screen=%d level=%d", (int)screen, (int)flow.state().level);
@@ -912,6 +920,9 @@ int main(int argc, char** argv) {
         // The harness deadline (harness builds only; a no-op question in
         // any other build): quit through the ordinary teardown so the
         // atexit chain-load hands the console back to the stub.
+        // The OG profile's per-frame spans (PROFILE builds; all zero otherwise).
+        uint64_t spanSim0 = 0, spanSim = 0;
+        uint32_t spanSteps0 = steps;
         if (mdk::harnessAutoquitDue()) {
             exitReason = "harness autoquit (MDK_AUTOQUIT)";
             break;
@@ -1033,8 +1044,12 @@ int main(int argc, char** argv) {
 
             pending += elapsed;
             if (pending > maxPending) pending = maxPending;
+            spanSim0 = mdk::harnessProfileTick();
+            spanSteps0 = steps;
             while (pending >= step) {
+                const uint64_t tp0 = mdk::harnessProfileTick();
                 player.update(input, step);
+                const uint64_t tp1 = mdk::harnessProfileTick();
                 // The C# Viewer's step order is Kurt, then the scripts, then the
                 // camera (Viewer.cs:505-535). ScriptRuntime keeps its own 1/30 s
                 // clock, so a 1/60 s call completes a script tick every second step
@@ -1042,6 +1057,7 @@ int main(int argc, char** argv) {
                 if (runtime) {
                     runtime->update(step);
                 }
+                const uint64_t tp2 = mdk::harnessProfileTick();
                 // The pitch the camera eases to (Viewer.cs:746-747). The oracle's
                 // sources are a live camera_track request first and the scripts'
                 // current arena's rest pitch after it.
@@ -1072,6 +1088,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 follow.update(&camera, &space, player, target, step, kAspect);
+                const uint64_t tp3 = mdk::harnessProfileTick();
                 // The collision world follows him. The C# refreshes it EVERY STEP
                 // (`_space.SetSolid(_scripts.SolidArenas)`, Viewer.cs:533, after
                 // UpdateCamera), and the pin is sticky: while `_solid` is set,
@@ -1125,6 +1142,8 @@ int main(int argc, char** argv) {
                 }
                 // The C# advances the HUD blink once per 30 Hz boundary
                 // (Viewer.cs:535-538), not once per 60 Hz frame.
+                mdk::harnessProfileStepSpans(tp1 - tp0, tp2 - tp1, tp3 - tp2,
+                                             mdk::harnessProfileTick() - tp3);
                 hudPending += step;
                 if (hudPending >= kHudStep) {
                     hud.tick();
@@ -1133,6 +1152,7 @@ int main(int argc, char** argv) {
                 pending -= step;
                 steps++;
             }
+            spanSim = mdk::harnessProfileTick() - spanSim0;
 
             // Death. The C#'s Kurt.Died writes LASTGAME and leaves for the menu
             // (Game.cs:448-456); the save and the menu are cut, so the frontend
@@ -1202,7 +1222,9 @@ int main(int argc, char** argv) {
         // P2: the camera is handed to the renderer every frame, whether or not a
         // step ran, and every GPU state the frame needs is set inside
         // begin/end_frame by the backend.
+        const uint64_t spanBegin0 = mdk::harnessProfileTick();
         mdk_render_begin_frame(renderer, &params);
+        const uint64_t spanDraw0 = mdk::harnessProfileTick();
         if (capturePath[0]) {
             capturePath[0] = '\0';  // one frame, one picture (after the copy above)
         }
@@ -1369,7 +1391,13 @@ int main(int argc, char** argv) {
             }
             mdk_render_canvas_end(renderer);
         }
+        const uint64_t spanEnd0 = mdk::harnessProfileTick();
         mdk_render_end_frame(renderer);
+        if (frame > 0) {
+            mdk::harnessProfileSpans(spanSim, steps - spanSteps0, spanDraw0 - spanBegin0,
+                                     spanEnd0 - spanDraw0,
+                                     mdk::harnessProfileTick() - spanEnd0);
+        }
         frame++;
 
         if (frame == 1u) {

@@ -39,7 +39,9 @@ mkdir -p "$WORK/bin"
 # `make -C mdk_3ds` would otherwise turn every case into the refusal case).
 printf 'stand-in harness payload\0/3ds/netload_stub.3dsx\0' > "$WORK/harness.3dsx"
 DSX="$WORK/harness.3dsx"
-printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/3dslink"
+# The stand-in 3dslink records the NAME it was asked to push: the stub on the
+# card keeps one file per name, so every push must arrive as mdk.3dsx.
+printf '#!/bin/sh\nbasename "$3" >> "%s/pushed.names"\nexit 0\n' "$WORK" > "$WORK/bin/3dslink"
 chmod +x "$WORK/bin/3dslink"
 SIZE=$(stat -c %s "$DSX")
 
@@ -176,6 +178,11 @@ case_run() {
 
 # 1. A run that exits cleanly is FRESH, and only because a NEW marker appeared.
 case_run "clean exit is fresh" ok 60 0 "FRESH"
+if [ -s "$WORK/pushed.names" ] && ! grep -qv '^mdk\.3dsx$' "$WORK/pushed.names"; then
+    echo "PASS every push arrives as mdk.3dsx (stand-in payload was $(basename "$DSX"))"; PASS=$((PASS + 1))
+else
+    echo "FAIL a push arrived under another name: $(sort -u "$WORK/pushed.names" | tr '\n' ' ')"; FAIL=$((FAIL + 1))
+fi
 # 2. A marker left by an earlier session is not this run's completion. This is
 #    the `cycle 0s, FRESH` defect: a baseline of 0 against a card that has run
 #    the game before.
@@ -230,6 +237,34 @@ printf '/3ds/netload_stub.3dsx\0' > "$WORK/plain.3dsx"
 DSX_OVERRIDE="$WORK/plain.3dsx"
 case_run "a payload without the capture is refused" ok 30 1 "WITHOUT CAPTURE"
 CYCLE_MODE=
+
+# 9b. A push refused while the stub is still relaunching is retried, and the
+#     cycle completes. The stand-in 3dslink refuses its first two calls.
+cat > "$WORK/bin/3dslink-flaky" <<'SH'
+#!/bin/sh
+n=$(cat "$FLAKY_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FLAKY_COUNT"
+[ "$n" -ge 3 ]
+SH
+chmod +x "$WORK/bin/3dslink-flaky"
+cp "$WORK/bin/3dslink" "$WORK/bin/3dslink-ok"
+cp "$WORK/bin/3dslink-flaky" "$WORK/bin/3dslink"
+export FLAKY_COUNT="$WORK/flaky.count" MDK_HW_PUSH_GAP=1
+case_run "a refused push is retried until the stub listens" ok 60 0 "FRESH"
+if [ "$(cat "$FLAKY_COUNT")" = "3" ]; then
+    echo "PASS the push was attempted exactly three times"; PASS=$((PASS + 1))
+else
+    echo "FAIL the push count was $(cat "$FLAKY_COUNT"), not 3"; FAIL=$((FAIL + 1))
+fi
+cp "$WORK/bin/3dslink-ok" "$WORK/bin/3dslink"
+# 9c. A stub that never comes back by itself: after MDK_HW_REBOOT_AFTER refusals
+#     the harness reboots the console ONCE (autoboot restores the stub) and the
+#     cycle completes. The stand-in refuses four times.
+sed 's/-ge 3 \]/-ge 5 ]/' "$WORK/bin/3dslink-flaky" > "$WORK/bin/3dslink"; chmod +x "$WORK/bin/3dslink"
+rm -f "$FLAKY_COUNT"
+export MDK_HW_REBOOT_WAIT=1
+case_run "a vanished stub triggers one reboot and the push lands" ok 60 0 "rebooting the console once"
+cp "$WORK/bin/3dslink-ok" "$WORK/bin/3dslink"
+unset FLAKY_COUNT MDK_HW_PUSH_GAP MDK_HW_REBOOT_WAIT
 
 # 10-12. --profile (hw.profile-og): an Old-3DS summary is the OG result, a New
 #    3DS one is refused by name, and a payload without the profile never pushes.

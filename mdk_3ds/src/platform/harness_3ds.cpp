@@ -44,6 +44,10 @@ uint32_t g_maxUs = 0;
 uint32_t g_over17 = 0;   // > 16.667 ms: missed a 60 Hz vblank
 uint32_t g_over34 = 0;   // > 33.333 ms: missed a 30 Hz vblank
 bool g_stereoSeen = false;
+uint64_t g_simT = 0, g_beginT = 0, g_drawT = 0, g_endT = 0;
+uint64_t g_simSteps = 0;
+uint32_t g_spanFrames = 0;
+uint64_t g_playerT = 0, g_runtimeT = 0, g_cameraT = 0, g_solidT = 0;
 
 uint32_t percentileUs(uint32_t pct) {
     // The bucket's upper edge: an estimate, stated as one in the log line.
@@ -83,8 +87,69 @@ void harnessProfileFrame(double periodSeconds) {
 #endif
 }
 
+uint64_t harnessProfileTick() {
+#ifdef MDK_HW_PROFILE
+    return svcGetSystemTick();
+#else
+    return 0;
+#endif
+}
+
+void harnessProfileStepSpans(uint64_t playerTicks, uint64_t runtimeTicks,
+                             uint64_t cameraTicks, uint64_t solidTicks) {
+#ifdef MDK_HW_PROFILE
+    g_playerT += playerTicks;
+    g_runtimeT += runtimeTicks;
+    g_cameraT += cameraTicks;
+    g_solidT += solidTicks;
+#else
+    (void)playerTicks; (void)runtimeTicks; (void)cameraTicks; (void)solidTicks;
+#endif
+}
+
+void harnessProfileSpans(uint64_t simTicks, uint32_t simSteps, uint64_t beginTicks,
+                         uint64_t drawTicks, uint64_t endTicks) {
+#ifdef MDK_HW_PROFILE
+    g_simT += simTicks;
+    g_simSteps += simSteps;
+    g_beginT += beginTicks;
+    g_drawT += drawTicks;
+    g_endT += endTicks;
+    g_spanFrames++;
+#else
+    (void)simTicks; (void)simSteps; (void)beginTicks; (void)drawTicks; (void)endTicks;
+#endif
+}
+
 void harnessProfileReport() {
 #ifdef MDK_HW_PROFILE
+    if (g_spanFrames > 0) {
+        // Ticks -> microseconds once, here (the runbook's rule: raw ticks in the
+        // bracket, convert once per report). Per frame, and per step for sim.
+        const double usPerTick = 1000000.0 / (double)SYSCLOCK_ARM11;
+        const double f = (double)g_spanFrames;
+        const double simUs = (double)g_simT * usPerTick;
+        mdk::log3dsPrintf("profile: spans frames=%lu sim=%.2fms/frame steps=%.2f/frame "
+                          "step=%.2fms begin(vblank wait)=%.2fms draw=%.2fms end=%.2fms",
+                          (unsigned long)g_spanFrames, simUs / f / 1000.0,
+                          (double)g_simSteps / f,
+                          g_simSteps ? simUs / (double)g_simSteps / 1000.0 : 0.0,
+                          (double)g_beginT * usPerTick / f / 1000.0,
+                          (double)g_drawT * usPerTick / f / 1000.0,
+                          (double)g_endT * usPerTick / f / 1000.0);
+        // The step's parts, per STEP, and the residual so the accounting is
+        // seen to close (the runbook's rule: an unexplained residual is where
+        // the next phantom hides).
+        const double steps = g_simSteps ? (double)g_simSteps : 1.0;
+        const double parts = (double)(g_playerT + g_runtimeT + g_cameraT + g_solidT);
+        mdk::log3dsPrintf("profile: step player=%.2fms runtime=%.2fms camera=%.2fms "
+                          "solid=%.2fms residual=%.2fms (per step)",
+                          (double)g_playerT * usPerTick / steps / 1000.0,
+                          (double)g_runtimeT * usPerTick / steps / 1000.0,
+                          (double)g_cameraT * usPerTick / steps / 1000.0,
+                          (double)g_solidT * usPerTick / steps / 1000.0,
+                          ((double)g_simT - parts) * usPerTick / steps / 1000.0);
+    }
     u8 model = 0xFF;
     if (R_SUCCEEDED(cfguInit())) {
         CFGU_GetSystemModel(&model);
@@ -170,6 +235,14 @@ bool harnessAutoquitDue() {
 const char* harnessCapturePath(uint32_t) {
     return nullptr;
 }
+
+uint64_t harnessProfileTick() {
+    return 0;
+}
+
+void harnessProfileStepSpans(uint64_t, uint64_t, uint64_t, uint64_t) {}
+
+void harnessProfileSpans(uint64_t, uint32_t, uint64_t, uint64_t, uint64_t) {}
 
 void harnessProfileFrame(double) {}
 
