@@ -1,0 +1,11 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-17T13:26:37Z at 30b8ed0
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: this batch is 3DS-only -- it changes how mdk_3ds expands textures into
+PICA200 tile order (mdk_3ds/src/render/pica_matrix.h and c3d/04_textures.inc).
+The pinned scene is the Linux level-3 capture, which links neither, so the PNG is
+byte-identical to the previous pin (md5 6769a13731983d65cee9df02da6cff37, same
+bad_percent/max_delta/mean_delta above) ON PURPOSE: the picture did not move
+because the change moves bytes, not pixels. Evidence for the change is the
+emulator A/B in docs/evidence/2026-11-17-level7-texture-tile-order.txt and the
+open row in docs/OPEN_ITEMS.md (batch 173).

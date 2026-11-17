@@ -1988,6 +1988,52 @@ def adjudicate(text, quiet=False):
               % (len(rgba_parens), len(rgba_bypass),
                  "; ".join(rgba_bypass) if rgba_bypass else "none"))
 
+    # THE DESTINATION'S ORDER, WHICH IS A SECOND, INDEPENDENT QUESTION FROM THE
+    # BYTE ORDER ABOVE. Rotating the bytes correctly and writing them to
+    # `y*width + x` still ships a texture the PICA samples scrambled: it reads an
+    # 8x8 Morton tile (`pica::textureTexelIndex` holds the rule, the citation and
+    # the reproduced symptom), and `C3D_TexLoadImage` is a plain copy, so nothing
+    # complains. Measured as batch 173's symptom -- a period-32 wave came back as
+    # period 8, and a left/right split came back as horizontal bands -- and the
+    # host fixture in `pica_matrix_tests.cpp` pins the permutation itself. This
+    # check pins the CALL: a body that writes a row-major offset has lost the
+    # tile order however correct its bytes are. Both spellings are accepted
+    # (`mdk::pica::` and the unqualified form a `using`-declaration allows) and
+    # the row-major offset is refused explicitly rather than inferred from an
+    # absent call, so a future refactor that hoists the slot into a local keeps
+    # passing while a regression to rows does not.
+    def tiled_destination(body):
+        """(uses the tile helper, found a row-major offset or None).
+
+        THE BODY IS BLANKED FIRST. This file documents the rule in prose --
+        `// THE DESTINATION IS A TILE SLOT, NOT x*paddedWidth` -- and a naive
+        scan read that sentence as the defect it warns about (the same
+        prose-is-not-code trap review-8 F4 fixed for the sink scan)."""
+        if body is None:
+            return (False, "no body")
+        code = blank_comments(body)
+        helper = re.search(r"\b(?:mdk::)?(?:pica::)?textureTexelIndex\s*\(", code)
+        rows = re.search(r"\by\s*\*\s*(?:\(\s*size_t\s*\)\s*)?paddedWidth\b", code) or \
+            re.search(r"\(\s*size_t\s*\)\s*paddedWidth\s*\*\s*[A-Za-z_]", code) or \
+            re.search(r"paddedWidth\s*\*\s*\(\s*size_t\s*\)\s*y\b", code)
+        return (helper is not None, rows.group(0) if rows else None)
+
+    idx_tiled, idx_rows = tiled_destination(idx_body)
+    rgba_tiled, rgba_rows = tiled_destination(rgba_body)
+    rep.check("index-texels-are-tiled-for-the-pica",
+              idx_tiled and idx_rows is None,
+              "textureTexelIndex %s, row-major offset %s (the PICA reads 8x8 Morton "
+              "tiles and C3D_TexLoadImage copies verbatim, so a row-major destination "
+              "is sampled scrambled with no error raised -- batch 173)"
+              % ("called" if idx_tiled else "MISSING",
+                 "found: %s" % idx_rows if idx_rows else "none"))
+    rep.check("rgba-texels-are-tiled-for-the-pica",
+              rgba_tiled and rgba_rows is None,
+              "textureTexelIndex %s, row-major offset %s (same defect as the indexed "
+              "path: correct bytes at the wrong slot is still a scrambled texture)"
+              % ("called" if rgba_tiled else "MISSING",
+                 "found: %s" % rgba_rows if rgba_rows else "none"))
+
     # THE ALPHA, WHICH IS THE HALF THAT IS GAMEPLAY, NOT COLOUR. An indexed texel's
     # alpha is FORCED OPAQUE because the oracle's own shader says so:
     # `shaders/palette.hlsl:70` returns
@@ -2720,13 +2766,13 @@ ARMS = [
      lambda s: s.replace(
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* row = source + (size_t)y * (size_t)width * 4;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
-         "            mdk::pica::texelBytes(out + (size_t)x * 4,\n"
-         "                                  row[(size_t)x * 4 + 0], "
-         "row[(size_t)x * 4 + 1],\n"
-         "                                  row[(size_t)x * 4 + 2], "
-         "row[(size_t)x * 4 + 3]);\n"
+         "            const size_t slot =\n"
+         "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, "
+         "(uint32_t)paddedWidth);\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, row[(size_t)x * 4 + 0],\n"
+         "                                  row[(size_t)x * 4 + 1], row[(size_t)x * 4 + 2],\n"
+         "                                  row[(size_t)x * 4 + 3]);\n"
          "        }\n"
          "    }",
          "    const size_t rowBytes = (size_t)width * 4;\n"
@@ -2735,6 +2781,32 @@ ARMS = [
          "               source + (size_t)y * rowBytes, rowBytes);\n"
          "    }", 1),
      "rgba-texels-are-rotated-for-the-pica"),
+    # THE TILE ORDER, WHICH NOTHING PINNED UNTIL BATCH 173'S SYMPTOM. The arm
+    # above restores a row memcpy and is caught by the byte-order rule because a
+    # memcpy copies the seam's RGBA order through. This one keeps the rotation
+    # and the alpha and changes ONLY the destination -- `y*paddedWidth + x`,
+    # which is exactly what the port shipped and what the PICA samples
+    # scrambled. Without this arm the whole tile rule could be deleted from both
+    # expansions and every other check would stay green.
+    ("rgba-expansion-writes-rows-instead-of-tiles-batch-173",
+     lambda s: s.replace(
+         "            const size_t slot =\n"
+         "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, "
+         "(uint32_t)paddedWidth);\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, row[(size_t)x * 4 + 0],\n",
+         "            mdk::pica::texelBytes(pixels + ((size_t)y * (size_t)paddedWidth + "
+         "(size_t)x) * 4u,\n"
+         "                                  row[(size_t)x * 4 + 0],\n", 1),
+     "rgba-texels-are-tiled-for-the-pica"),
+    ("index-expansion-writes-rows-instead-of-tiles-batch-173",
+     lambda s: s.replace(
+         "            const size_t slot =\n"
+         "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, "
+         "(uint32_t)paddedWidth);\n"
+         "            uint8_t* pixel = pixels + slot * 4u;\n",
+         "            uint8_t* pixel = pixels + ((size_t)y * (size_t)paddedWidth + "
+         "(size_t)x) * 4u;\n", 1),
+     "index-texels-are-tiled-for-the-pica"),
     # The two alpha arms. Each keeps the rotation intact and moves ONLY the alpha, so
     # neither can be caught by the byte-order check: they isolate the alpha rows.
     ("index-expansion-hands-the-palette-alpha-to-the-pica (review-6 F1)",
@@ -2744,13 +2816,15 @@ ARMS = [
          "                                  paletteRgba[index * 4 + 3]);", 1),
      "index-texel-alpha-is-forced-opaque"),
     ("rgba-expansion-forces-an-opaque-alpha (review-6 F1)",
-     lambda s: s.replace("row[(size_t)x * 4 + 2], row[(size_t)x * 4 + 3]);",
+     lambda s: s.replace("row[(size_t)x * 4 + 2],\n"
+                         "                                  row[(size_t)x * 4 + 3]);",
                          "row[(size_t)x * 4 + 2], 255u);", 1),
      "rgba-texel-alpha-is-the-sources"),
     # Review-7 F4: the batch-121 alpha check refused only the LITERAL 255, so a forced
     # `0u` -- which hides every RGBA texel behind the alpha test -- walked through it.
     ("rgba-expansion-forces-a-transparent-alpha (review-7 F4)",
-     lambda s: s.replace("row[(size_t)x * 4 + 2], row[(size_t)x * 4 + 3]);",
+     lambda s: s.replace("row[(size_t)x * 4 + 2],\n"
+                         "                                  row[(size_t)x * 4 + 3]);",
                          "row[(size_t)x * 4 + 2], 0u);", 1),
      "rgba-texel-alpha-is-the-sources"),
     # Review-7 F2: the cheapest alternate spelling of the channel-order defect. Each
@@ -2767,14 +2841,12 @@ ARMS = [
      "index-texel-channels-are-in-source-order"),
     ("rgba-expansion-swaps-the-source-red-and-blue-bytes (review-7 F2)",
      lambda s: s.replace(
-         "                                  row[(size_t)x * 4 + 0], "
-         "row[(size_t)x * 4 + 1],\n"
-         "                                  row[(size_t)x * 4 + 2], "
-         "row[(size_t)x * 4 + 3]);",
-         "                                  row[(size_t)x * 4 + 2], "
-         "row[(size_t)x * 4 + 1],\n"
-         "                                  row[(size_t)x * 4 + 0], "
-         "row[(size_t)x * 4 + 3]);", 1),
+         "            mdk::pica::texelBytes(pixels + slot * 4u, row[(size_t)x * 4 + 0],\n"
+         "                                  row[(size_t)x * 4 + 1], row[(size_t)x * 4 + 2],\n"
+         "                                  row[(size_t)x * 4 + 3]);",
+         "            mdk::pica::texelBytes(pixels + slot * 4u, row[(size_t)x * 4 + 2],\n"
+         "                                  row[(size_t)x * 4 + 1], row[(size_t)x * 4 + 0],\n"
+         "                                  row[(size_t)x * 4 + 3]);", 1),
      "rgba-texel-channels-are-in-source-order"),
     # Review-7 F5: a write through a CAST was invisible to the batch-121 bypass
     # detector, which looked only for `name[i] = ...`. The alpha check kept printing
@@ -2804,10 +2876,9 @@ ARMS = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            pixel[0] = paletteRgba[index * 4 + 0];\n"
          "            pixel[1] = paletteRgba[index * 4 + 1];\n"
          "            pixel[2] = paletteRgba[index * 4 + 2];\n"
@@ -2881,10 +2952,9 @@ ARMS = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 2],\n"
          "                                  paletteRgba[index * 4 + 1],\n"
          "                                  paletteRgba[index * 4 + 0], 255u);\n"
@@ -2907,10 +2977,9 @@ ARMS = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],\n"
          "                                  paletteRgba[index * 4 + 1],\n"
          "                                  paletteRgba[index * 4 + 2], 0u);\n"
@@ -2943,10 +3012,9 @@ ARMS = [
          "    // the oracle's shader discards index 0 }\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            pixel[0] = paletteRgba[index * 4 + 0];\n"
          "            pixel[1] = paletteRgba[index * 4 + 1];\n"
          "            pixel[2] = paletteRgba[index * 4 + 2];\n"
@@ -3011,10 +3079,9 @@ ARMS = [
          "    const uint8_t* colours = paletteRgba;\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            mdk::pica::texelBytes(pixel, colours[index * 4 + 0],\n"
          "                                  colours[index * 4 + 1],\n"
          "                                  colours[index * 4 + 2], colours[index * 4 + 3]);\n"
@@ -3041,9 +3108,8 @@ ARMS = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* row = source + (size_t)y * (size_t)width * 4;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
-         "            mdk::pica::texelBytes(out + (size_t)x * 4, row[(size_t)x * 4 + 0],\n"
+         "            mdk::pica::texelBytes(pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u, row[(size_t)x * 4 + 0],\n"
          "                                  row[(size_t)x * 4 + 1], row[(size_t)x * 4 + 2],\n"
          "                                  255u);\n"
          "        }\n    }\n    return pixels;\n}\n\n"
@@ -3078,10 +3144,9 @@ ARMS = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            texelBytes(pixel, paletteRgba, index);\n"
          "        }\n    }\n    return pixels;\n}\n\n"
          "// WHAT IS LEFT, when a texture does not fit.", 1).replace(
@@ -3109,10 +3174,9 @@ ARMS = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            mdk::pica::texelBytes(pixel, colours[index * 4 + 0],\n"
          "                                  colours[index * 4 + 1],\n"
          "                                  colours[index * 4 + 2],\n"
@@ -3141,10 +3205,9 @@ ARMS = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            const uint8_t r = colours[index * 4 + 0];\n"
          "            const uint8_t g = colours[index * 4 + 1];\n"
          "            const uint8_t b = colours[index * 4 + 2];\n"
@@ -3398,13 +3461,15 @@ PROBES = [
     ("the rgba expansion reads its source through a hoisted row pointer (review-6 F1: "
      "a read is not a texel write)",
      lambda s: s.replace(
-         "            mdk::pica::texelBytes(out + (size_t)x * 4,\n"
-         "                                  row[(size_t)x * 4 + 0], "
-         "row[(size_t)x * 4 + 1],\n"
-         "                                  row[(size_t)x * 4 + 2], "
-         "row[(size_t)x * 4 + 3]);",
+         "            const size_t slot =\n"
+         "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, row[(size_t)x * 4 + 0],\n"
+         "                                  row[(size_t)x * 4 + 1], row[(size_t)x * 4 + 2],\n"
+         "                                  row[(size_t)x * 4 + 3]);",
+         "            const size_t slot =\n"
+         "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);\n"
          "            const uint8_t* src = row + (size_t)x * 4;\n"
-         "            mdk::pica::texelBytes(out + (size_t)x * 4, src[0], src[1], src[2],\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, src[0], src[1], src[2],\n"
          "                                  src[3]);", 1)),
     ("the index expansion spells the forced alpha 0xFFu rather than 255u (review-6 F1)",
      lambda s: s.replace("paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);",
@@ -3444,10 +3509,9 @@ PROBES = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            mdk::pica::texelBytes(pixel, paletteRgba[index * 4 + 0],\n"
          "                                  paletteRgba[index * 4 + 1], "
          "paletteRgba[index * 4 + 2], 255u);\n"
@@ -3466,10 +3530,10 @@ PROBES = [
     ("a brace inside a comment does not truncate the resolved body (review-8 F3)",
      lambda s: s.replace(
          "        for (int32_t x = 0; x < width; x++) {\n"
-         "            mdk::pica::texelBytes(out + (size_t)x * 4,",
+         "            const size_t slot =\n",
          "        // the PICA reads [A, B, G, R], so there is no } shortcut here\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
-         "            mdk::pica::texelBytes(out + (size_t)x * 4,", 1)),
+         "            const size_t slot =\n", 1)),
     # Review-8 F4's green half: a commented-out sink is prose about a sink, not a sink.
     # The batch-122 skip removed only a line whose first characters were `//`, so a
     # block comment beside the real call reddened a correct file.
@@ -3513,16 +3577,18 @@ PROBES = [
     ("the rgba expansion hoists its four source bytes into named locals (review-9 F4: "
      "a byte is a byte when the body says which one)",
      lambda s: s.replace(
-         "            mdk::pica::texelBytes(out + (size_t)x * 4,\n"
-         "                                  row[(size_t)x * 4 + 0], "
-         "row[(size_t)x * 4 + 1],\n"
-         "                                  row[(size_t)x * 4 + 2], "
-         "row[(size_t)x * 4 + 3]);",
+         "            const size_t slot =\n"
+         "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, row[(size_t)x * 4 + 0],\n"
+         "                                  row[(size_t)x * 4 + 1], row[(size_t)x * 4 + 2],\n"
+         "                                  row[(size_t)x * 4 + 3]);",
          "            const uint8_t r = row[(size_t)x * 4 + 0];\n"
          "            const uint8_t g = row[(size_t)x * 4 + 1];\n"
          "            const uint8_t b = row[(size_t)x * 4 + 2];\n"
          "            const uint8_t a = row[(size_t)x * 4 + 3];\n"
-         "            mdk::pica::texelBytes(out + (size_t)x * 4, r, g, b, a);", 1)),
+         "            const size_t slot =\n"
+         "                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);\n"
+         "            mdk::pica::texelBytes(pixels + slot * 4u, r, g, b, a);", 1)),
     # The other half of review-9 F2: an alias is legal when the alpha rule still holds.
     # Refusing the alias spelling would be the same route-around review-16 R2 names, and
     # it is the half that keeps the new resolution from being a name ban.
@@ -3540,10 +3606,9 @@ PROBES = [
          "    const uint8_t* colours = paletteRgba;\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            mdk::pica::texelBytes(pixel, colours[index * 4 + 0],\n"
          "                                  colours[index * 4 + 1],\n"
          "                                  colours[index * 4 + 2], 255u);\n"
@@ -3568,9 +3633,8 @@ PROBES = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* rgb = source + (size_t)y * (size_t)width * 3;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
-         "            mdk::pica::texelBytes(out + (size_t)x * 4, rgb[(size_t)x * 3 + 0],\n"
+         "            mdk::pica::texelBytes(pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u, rgb[(size_t)x * 3 + 0],\n"
          "                                  rgb[(size_t)x * 3 + 1], rgb[(size_t)x * 3 + 2],\n"
          "                                  255u);\n"
          "        }\n    }\n    return pixels;\n}\n\n"
@@ -3593,10 +3657,9 @@ PROBES = [
          "    memset(pixels, 0, texels * 4);\n"
          "    for (int32_t y = 0; y < height; y++) {\n"
          "        const uint8_t* source = indices + (size_t)y * (size_t)width;\n"
-         "        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;\n"
          "        for (int32_t x = 0; x < width; x++) {\n"
          "            const uint8_t index = source[x];\n"
-         "            uint8_t* pixel = out + (size_t)x * 4;\n"
+         "            uint8_t* pixel = pixels + mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth) * 4u;\n"
          "            mdk::pica::texelBytes(pixel, colours[index * 4 + 0],\n"
          "                                  colours[index * 4 + 1],\n"
          "                                  colours[index * 4 + 2], 255u);\n"
@@ -3613,12 +3676,12 @@ PROBES = [
     ("a filler guards with reads through a pointer using !=, <= and >= (review-10 F2: "
      "a comparison is not an assignment)",
      lambda s: s.replace(
-         "            mdk::pica::texelBytes(out + (size_t)x * 4,",
+         "            mdk::pica::texelBytes(pixels + slot * 4u,",
          "            const uint8_t* s = row + (size_t)x * 4;\n"
          "            if (*s != 0) { continue; }\n"
          "            if (*s <= 0) { }\n"
          "            if (*s >= 1) { }\n"
-         "            mdk::pica::texelBytes(out + (size_t)x * 4,", 1)),
+         "            mdk::pica::texelBytes(pixels + slot * 4u,", 1)),
     # Review-10 F3's green half: the zero-fill padding write stays legal whatever the
     # literal's spelling, because an all-zero texel is transparent under ANY byte
     # order — the exemption is the VALUE, not one way of writing it.

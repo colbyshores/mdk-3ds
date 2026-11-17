@@ -640,6 +640,34 @@ is computed inside libcitro3d — whose source is not in this tree — from `dim
 from `libcitro3d.a`, establish the rule, and pin it with a pattern fixture before any
 scale is touched.**
 
+**PARTLY ANSWERED (2026-11-17): the rule is tile ORDER, not a scale.** `C3D_TexLoadImage`
+is a `memcpy` into the texture's linear buffer -- citro3d's own `GSPGPU_FlushDataCache`
+reference in `texture.o` sits in `C3D_TexFlush`, not in the load -- so the buffer the
+backend writes is exactly the buffer the GPU samples, and the GPU samples it in 8x8
+Morton tile order. `04_textures.inc` had been writing rows. Both expansions now write
+through `pica::textureTexelIndex` (`pica_matrix.h`), which is why the row's three
+"synthetic pattern" observations are one fact: a pattern written row-major is read as
+tiles, so a period-32 square wave reads ~4x too many bands, a left/right split reads as
+top/bottom bands, and an L-block reads as vertical stripes confined to a band. The
+horizontal-band signature is now pinned in `testTheTexelTileOrder()` alongside the
+permutation and tile anchors. **Measured on the emulator, same sources minutes apart,
+only the helper body differing:** the row-major mutant's frame has ~2x the gradient
+energy of the tiled build in the level-7 view (|dx| 11.3 vs 5.5, |dy| 10.0 vs 6.7) and
+matches the 23:03 pre-fix capture (10.9 / 11.1), so tile order demonstrably reaches the
+sampled pixels. Clear-colour coverage did NOT move (83.8% both), because scrambling
+permutes colour without touching alpha -- coverage was never the right metric here and
+the two earlier "no visible change" readings are not a refutation.
+`docs/evidence/2026-11-17-level7-texture-tile-order.txt` has the captures, the crop, the
+command, the display, and the mutation control.
+
+**WHAT IS STILL OPEN IN THIS ROW.** The HUD panel's measured period (5.3 crop px against
+21.3 derived) has not been re-measured against the tiled build, and the hardware
+acceptance rows are untouched: this is emulator evidence on a software rasterizer, and
+AGENTS.md P8 says emulator-green is not hardware-pass. The `/4` UV remains forbidden.
+Next move: re-measure the panel's stripe period on the tiled build and compare it with
+the 21.3 the geometry predicts; if it lands there, the row closes on evidence rather
+than on a tidier-looking sprite.
+
 **DO NOT SHIP A /4.** It was tried. With the panel's uv scaled by 1/4 the stripes
 thin out, and **the health digits stop reading "100"** — a change that makes one pattern
 look tidier while breaking the element the HUD exists to show. The digits themselves are

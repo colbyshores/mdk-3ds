@@ -30,6 +30,10 @@
 //      AGENTS.md P6 is open), which is the whole argument for pinning it here.
 //      The far-plane tie is the sharpest of them: it distinguishes the
 //      LESS_OR_EQUAL the oracle uses from the LESS that would reject it.
+//   9. THE TEXEL TILE ORDER AND THE PATTERN THAT PROVED IT. The PICA reads an
+//      8x8 Morton tile, so a row-major upload is sampled scrambled while
+//      raising nothing; the fixture reproduces the measured "four times too
+//      many bands" and the vertical-split-to-horizontal-bands permutation.
 //
 // The inputs are all small integers and halves, so every product and sum below
 // is exact in binary and the comparisons are exact. Where a tolerance is used
@@ -895,6 +899,102 @@ void testTheTexelByteOrder() {
     PICA_CHECK(lands);
 }
 
+void testTheTexelTileOrder() {
+    // THE SAME TRAP ONE UNIT BEFORE THE BYTES: the byte order above says which
+    // byte of a texel goes where; this says WHICH TEXEL SLOT a (x, y) goes in.
+    // The PICA reads an 8x8 Morton tile, not a row (`pica::textureTexelIndex`
+    // carries the rule and its citations), and `C3D_TexLoadImage` copies a
+    // linear buffer verbatim, so a row-major upload is sampled scrambled
+    // without any error being raised.
+    const uint32_t w = 64, h = 64;
+
+    // (1) A SLOT PER TEXEL, NO COLLISION AND NO HOLE. A permutation with a
+    // duplicated slot would silently lose texels and could still pass every
+    // anchor below.
+    bool seen[64 * 64] = {false};
+    bool bijective = true;
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            const size_t slot = mdk::pica::textureTexelIndex(x, y, w);
+            if (slot >= (size_t)(w * h) || seen[slot]) {
+                bijective = false;
+            } else {
+                seen[slot] = true;
+            }
+        }
+    }
+    PICA_CHECK(bijective);
+
+    // (2) THE NESTING, AS ANCHORS. Inside a tile: the 2x2 cells and the texels
+    // within them are Z-ordered, so (0,0) (1,0) (0,1) (1,1) are slots 0..3 and
+    // (2,0) — still in the first 2x2 CELL ROW — is slot 4, not slot 2. Tiles
+    // are row-major, so tile (1,0) starts 64 slots in and tile (0,1) starts a
+    // whole tile row (8 tiles here) after that.
+    PICA_CHECK(mdk::pica::textureTexelIndex(0, 0, w) == 0u);
+    PICA_CHECK(mdk::pica::textureTexelIndex(1, 0, w) == 1u);
+    PICA_CHECK(mdk::pica::textureTexelIndex(0, 1, w) == 2u);
+    PICA_CHECK(mdk::pica::textureTexelIndex(1, 1, w) == 3u);
+    PICA_CHECK(mdk::pica::textureTexelIndex(2, 0, w) == 4u);
+    PICA_CHECK(mdk::pica::textureTexelIndex(8, 0, w) == 64u);
+    PICA_CHECK(mdk::pica::textureTexelIndex(0, 8, w) == 512u);
+    PICA_CHECK(mdk::pica::textureTexelIndex(63, 63, w) == 4095u);
+
+    // (3) THE PATTERN FIXTURE: the documented defect, reproduced and pinned.
+    // A period-32 vertical square wave across a 64-wide texture is the exact
+    // probe that came back "four times too many bands" (docs/OPEN_ITEMS.md,
+    // batch 173). Written through the tile order it reads back as written;
+    // written ROW-MAJOR it reads back at period 8, which IS the four-times
+    // signature. Both arms are asserted, so the check cannot be satisfied by a
+    // helper that happens to differ from row-major in some other way.
+    uint8_t tiled[64 * 64];
+    uint8_t linear[64 * 64];
+    memset(tiled, 0, sizeof tiled);
+    memset(linear, 0, sizeof linear);
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            const uint8_t on = ((x & 31u) < 16u) ? 1u : 0u;
+            tiled[mdk::pica::textureTexelIndex(x, y, w)] = on;
+            linear[y * w + x] = on;
+        }
+    }
+    int tiledTransitions = 0, linearTransitions = 0;
+    for (uint32_t x = 1; x < w; x++) {
+        const size_t a = mdk::pica::textureTexelIndex(x, 0, w);
+        const size_t b = mdk::pica::textureTexelIndex(x - 1, 0, w);
+        if (tiled[a] != tiled[b]) tiledTransitions++;
+        if (linear[a] != linear[b]) linearTransitions++;
+    }
+    PICA_CHECK(tiledTransitions == 3);     // the source's own 2 bands
+    PICA_CHECK(linearTransitions == 15);   // period 8: four times too many
+
+    // (4) AND THE OTHER MEASURED SIGNATURE, WHICH NO UV SCALE COULD PRODUCE: a
+    // left-white/right-black image read row-major through the tile order comes
+    // back as FULL-WIDTH HORIZONTAL bands — zero horizontal transitions, many
+    // vertical ones. That is why the open item says the three observations are
+    // "not consistent with any single scale factor": a vertical split turning
+    // into horizontal bands is a permutation, not a scale.
+    memset(linear, 0, sizeof linear);
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            linear[y * w + x] = (x < 32u) ? 1u : 0u;
+        }
+    }
+    int across = 0, down = 0;
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            const size_t here = mdk::pica::textureTexelIndex(x, y, w);
+            if (x > 0 && linear[here] != linear[mdk::pica::textureTexelIndex(x - 1, y, w)]) {
+                across++;
+            }
+            if (y > 0 && linear[here] != linear[mdk::pica::textureTexelIndex(x, y - 1, w)]) {
+                down++;
+            }
+        }
+    }
+    PICA_CHECK(across == 0);
+    PICA_CHECK(down > 0);
+}
+
 } // namespace
 
 namespace test {
@@ -921,6 +1021,7 @@ int runPicaMatrixTests() {
     testTheEyePlanFollowsTheSlider();
     testTheClearColourByteOrder();
     testTheTexelByteOrder();
+    testTheTexelTileOrder();
     return failures;
 }
 

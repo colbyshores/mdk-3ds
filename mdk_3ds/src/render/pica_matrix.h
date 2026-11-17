@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "render/render_types.h"
@@ -488,6 +489,70 @@ inline void texelBytes(uint8_t* dst, uint32_t r, uint32_t g, uint32_t b, uint32_
     dst[1] = (uint8_t)b;
     dst[2] = (uint8_t)g;
     dst[3] = (uint8_t)r;
+}
+
+// THE TEXEL'S SLOT IN THE PICA'S TILE ORDER, and the reason image data cannot be
+// uploaded row by row.
+//
+// A PICA200 texture is NOT stored as rows of texels. Texels live in 8x8 tiles,
+// the tiles themselves are stored row-major, and INSIDE a tile the texels
+// follow the Z-order (Morton) curve: an 8x8 tile is four 4x4 quadrants ordered
+// diagonally, each quadrant is four 2x2 cells, and each 2x2 cell is four texels
+// ordered the same way. So a texel's slot is `(tileY*tilesPerRow + tileX)*64 +
+// morton8(x&7, y&7)`, and the byte address is that slot times the format's
+// bytes per texel.
+//
+// WHERE THE RULE COMES FROM, read rather than remembered: Obsidian
+// `60-references/3ds-platform/pica200/05-textures-and-combiners.md:16`, "Texels
+// stored in 8x8 tiles, within-tile order follows the Z-order (Morton) curve;
+// tiles row-major", with the same nested-quadrant decomposition this function
+// implements (3dbrew's internal-registers page is that note's source). The
+// citro3d side agrees by construction: `C3D_TexLoadImage` in the linked
+// `libcitro3dd.a` is a plain `memcpy` into the texture's buffer for a linear
+// texture and never permutes anything (`arm-none-eabi-objdump -d texture.o`;
+// the only non-`memcpy` path is the VRAM staging copy), and its own reference
+// note says "`C3D_TexUpload` / `C3D_TexLoadImage` require data laid out in the
+// PICA **tile format** ... raw RGBA uploads must be tiled manually"
+// (`60-references/3ds-platform/citro3d/06-textures-texenv.md`). There is no
+// stride field in `C3D_Tex` to get wrong: the GPU computes the tiled address
+// from `dim` and `fmt`, which is exactly why a row-major buffer is accepted
+// without complaint and sampled wrong.
+//
+// THE DEFECT THIS REPLACES, MEASURED AND REPRODUCED. The expansions wrote rows
+// and the GPU read tiles, and the signature is the one recorded in
+// `docs/OPEN_ITEMS.md` (batch 173): a period-32 vertical square wave came back
+// as period-8 (four times too many bands), a left-white/right-black image came
+// back as full-width horizontal bands (960 vertical colour transitions, zero
+// horizontal -- no UV scale can turn a vertical split into horizontal bands),
+// and a rect confined to one half came back as stripes inside one band. Those
+// three are exactly what a Morton read of a linear buffer produces; the
+// per-texel permutation below was checked against all three before this landed,
+// and `tests/scripts/pica_matrix_tests.cpp` pins the period-32 case as the
+// fixture. It also explains why most of the arena went MISSING rather than
+// merely scrambled: a padded, power-of-two texture's unused region is
+// transparent (alpha 0), the frame-wide alpha test discards alpha 0
+// (`C3D_AlphaTest(true, GPU_GREATER, 0)` in `03_frame.inc`), and a scrambled
+// address lands in that padding.
+//
+// COLD-PATH COST, STATED SO IT IS NOT A SURPRISE. Texture expansion runs at
+// level load and again whenever an evicted texture is made again, so this is
+// per-texel work in a path that can run inside a frame. It is integer only, has
+// no division and no table, and does not change the texel count; R11 and the
+// float rules do not apply to it.
+inline uint32_t morton8InTile(uint32_t x, uint32_t y) {
+    uint32_t m = 0;
+    for (int b = 0; b < 3; b++) {
+        m |= ((x >> b) & 1u) << (2 * b);
+        m |= ((y >> b) & 1u) << (2 * b + 1);
+    }
+    return m;
+}
+
+inline size_t textureTexelIndex(uint32_t x, uint32_t y, uint32_t paddedWidth) {
+    const size_t tileX = (size_t)(x >> 3);
+    const size_t tileY = (size_t)(y >> 3);
+    const size_t tilesPerRow = (size_t)(paddedWidth >> 3);
+    return (tileY * tilesPerRow + tileX) * 64u + (size_t)morton8InTile(x & 7u, y & 7u);
 }
 
 // The depth the PICA stores for a converted NDC z — the model of what the two

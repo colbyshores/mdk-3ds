@@ -92,17 +92,24 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
     if (!pixels) {
         return nullptr;
     }
-    // The padding is transparent. Each source row is copied into its own
-    // padded row: the source is width pixels wide, but the GPU texture is
-    // paddedWidth pixels wide, so copying the source as one contiguous run
-    // would shift every row after the first.
+    // The padding is transparent. Each source row is read at its own stride:
+    // the source is width pixels wide, but the padded texture is paddedWidth
+    // pixels wide, so treating the source as one contiguous run would shift
+    // every row after the first.
+    //
+    // THE DESTINATION IS A TILE SLOT, NOT `y*paddedWidth + x`. The PICA reads
+    // its texels in 8x8 Morton tiles (see `pica::textureTexelIndex`), so a
+    // row-major write is sampled scrambled -- measured, and the reason the
+    // arena went invisible through the alpha test rather than merely looking
+    // wrong.
     memset(pixels, 0, texels * 4);
     for (int32_t y = 0; y < height; y++) {
         const uint8_t* source = indices + (size_t)y * (size_t)width;
-        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;
         for (int32_t x = 0; x < width; x++) {
             const uint8_t index = source[x];
-            uint8_t* pixel = out + (size_t)x * 4;
+            const size_t slot =
+                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);
+            uint8_t* pixel = pixels + slot * 4u;
             if (index == 0) {
                 // Transparent: the colour is irrelevant, but it must not be
                 // black-with-alpha-255, which is what the palette says.
@@ -135,11 +142,12 @@ static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
     memset(pixels, 0, texels * 4);
     for (int32_t y = 0; y < height; y++) {
         const uint8_t* row = source + (size_t)y * (size_t)width * 4;
-        uint8_t* out = pixels + (size_t)y * (size_t)paddedWidth * 4;
         for (int32_t x = 0; x < width; x++) {
-            mdk::pica::texelBytes(out + (size_t)x * 4,
-                                  row[(size_t)x * 4 + 0], row[(size_t)x * 4 + 1],
-                                  row[(size_t)x * 4 + 2], row[(size_t)x * 4 + 3]);
+            const size_t slot =
+                mdk::pica::textureTexelIndex((uint32_t)x, (uint32_t)y, (uint32_t)paddedWidth);
+            mdk::pica::texelBytes(pixels + slot * 4u, row[(size_t)x * 4 + 0],
+                                  row[(size_t)x * 4 + 1], row[(size_t)x * 4 + 2],
+                                  row[(size_t)x * 4 + 3]);
         }
     }
     return pixels;
@@ -232,8 +240,16 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
         // and it works: the PICA200 samples textures out of the linear heap
         // as well as out of the texture VRAM.
         //
-        // RGBA8 is read LINEARLY by the PICA200; only the 16-bit and 8-bit
-        // formats go through the Morton tiling.
+        // RGBA8 IS TILED TOO, AND THE OLD LINE HERE SAID OTHERWISE. It read
+        // "RGBA8 is read LINEARLY by the PICA200; only the 16-bit and 8-bit
+        // formats go through the Morton tiling", which is not true of this GPU
+        // and was the reason the expansions wrote rows the hardware never read
+        // as rows. The 8x8 Morton tile order applies to the 32-bit formats as
+        // it does to the rest (`pica::textureTexelIndex` carries the citation,
+        // the disassembly of `C3D_TexLoadImage`, and the reproduced symptom);
+        // what C3D_TexInit's format argument selects is the TEXEL FORMAT, not
+        // the layout. Nothing about the allocation changes here -- only where
+        // the expansion writes its texels.
         if (C3D_TexInit(&texture.tex, (u16)texture.paddedWidth, (u16)texture.paddedHeight,
                         GPU_RGBA8)) {
             allocated = true;
