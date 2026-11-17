@@ -1,0 +1,14 @@
+row: hw.pixels-rgba8
+command: mdk_3ds/tools/hw_cycle.sh --capture
+exit: 0
+verified-at: f415c8b
+captured: 2026-11-17T17:40:03.855039+00:00
+
+hw_cycle: baseline 4 session-end marker(s), md5 0b3864c9ea3bc98753ddcc23e76d5733
+hw_cycle: pushing /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx to 192.168.4.167
+hw_cycle: push returned after 227s
+hw_cycle: push verified by transfers.log (bytes_out=119372924)
+hw_cycle: cycle 330s, log /tmp/mdk-hw-cycle.log
+hw_cycle: FRESH (34f3fb8fb68e2772c4bc69a9651ac0dc)
+hw_cycle: CAPTURE 400x240 288054 bytes -> /tmp/mdk-hw-cycle.log.bmp (b34207a2b7839ad68a441355ea741929)
+
