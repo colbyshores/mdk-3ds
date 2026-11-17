@@ -81,3 +81,39 @@ agree in geometry, textures, lighting, Kurt and objects
 panorama is not drawn on the 3DS (a full-screen per-pixel pass on Linux; the
 PICA200 has no fragment shader); (2) the (0,0,255) canvas canary is drawn in
 every build, release included. HARDWARE: not run (the console is lent out).
+
+
+ADDENDUM 2, SAME DAY: THE SKY, AND TEXTURE WRAP / FILTER
+--------------------------------------------------------
+
+THE SKY. The 3DS never drew the panorama (mdk_render_set_panorama was a stub,
+and the PICA200 has no fragment shader for the oracle's per-pixel pass). The
+panorama is also 1800 columns, over the PICA's 1024 texture limit, so the
+frontend's index texture could not even be created. New
+mdk_core/src/render/sky_dome.{h,cpp}: a sphere tessellated in the oracle's
+(column, row) space, about 32 columns x 30 rows per cell. Each vertex's
+direction is the inverse of panorama.hlsli's mapping, which is linear in
+azimuth and elevation. The columns are cut into <=1024-wide index slices,
+index 0 is remapped to the nearest palette colour (the sky has no discard;
+0 texels needed it on the shipped levels), and flat caps take
+top_colour/bottom_colour. Trig through the shared LUT (R6). Host test
+(tests/scripts/sky_dome_tests.cpp, against a libm copy of the oracle formula):
+worst column 0.0002 and worst row 0.0042 of a panorama cell over every band
+vertex; slices fit and cover every column once. The 3DS frontend builds it at
+level load and queues it first each frame as DoubleSided, centred on the
+camera; solid geometry, drawn in the earlier pass bucket, occludes it through
+depth. Log line, e.g. level 3: `sky: 1804x360 wrap=1800 horizon=240 offset=300
+-> 2 slices, 8208 vertices`. Side by side: 2026-11-17-sky-dome-side-by-side-L{3,5,8}.png.
+
+TEXTURE WRAP AND FILTER. Nothing set them, so textures took C3D_TexInit's
+defaults. The world's tiled surfaces (rdebug `uvlog`: every tiling draw of
+level 3, 45 of them, is 256x256; level 7 has none) smeared into one edge texel
+under clamp: level 3's ground. Now NEAREST/NEAREST (the oracle looks up one
+index per texel), and GPU_REPEAT on any axis whose real size equals its padded
+size (exact: no padding to wrap through), clamp otherwise. Level 3 side by side:
+2026-11-17-wrap-repeat-side-by-side-L3.png.
+
+GATES: make -C tests/scripts 857 PASS (new: SkyDome), "All cases match the
+oracle."; tools/check.sh ALL GATES PASSED (incl. audit_arm11_math and
+gates_core_parity after listing sky_dome.cpp in mdk_linux/CMakeLists.txt).
+EMULATOR evidence only.

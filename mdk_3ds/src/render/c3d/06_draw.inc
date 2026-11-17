@@ -46,6 +46,29 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         return;
     }
 
+    if ((renderDebugFlags() & kRenderDebugUvLog) && r->frame == 30 && mesh.data != nullptr &&
+        draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
+        // rdebug `uvlog`: which draws TILE (uv outside [0,1]) and on what size.
+        static int32_t uvLogged = 0;
+        const float* f = static_cast<const float*>(mesh.data) + (size_t)draw->first_vertex * 5u;
+        float u0 = 1e9f, u1 = -1e9f, v0 = 1e9f, v1 = -1e9f;
+        for (int32_t i = 0; i < draw->vertex_count; i++) {
+            const float u = f[(size_t)i * 5u + 3u], v = f[(size_t)i * 5u + 4u];
+            if (u < u0) u0 = u;
+            if (u > u1) u1 = u;
+            if (v < v0) v0 = v;
+            if (v > v1) v1 = v;
+        }
+        const C3dTexture& t = r->textures[(size_t)draw->material.texture];
+        if ((u0 < -0.01f || u1 > 1.01f || v0 < -0.01f || v1 > 1.01f) && uvLogged < 80) {
+            uvLogged++;
+            mdk::log3dsPrintf("uvlog: tex=%d %dx%d padded %dx%d frames=%d pass=%d u=[%.2f,%.2f] v=[%.2f,%.2f] verts=%d",
+                              (int)draw->material.texture, (int)t.realWidth, (int)t.realHeight,
+                              (int)t.paddedWidth, (int)t.paddedHeight, (int)draw->material.frame_count,
+                              (int)draw->material.pass, u0, u1, v0, v1, (int)draw->vertex_count);
+        }
+    }
+
     // The texture. A surface with no texture is a flat colour, and it is
     // drawn with a ONE-PIXEL texture of that colour: the PICA200's
     // combiner has no constant-colour source for a vertex shader's output,

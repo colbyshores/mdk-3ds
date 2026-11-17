@@ -28,6 +28,7 @@
 // The arming is logged so a capture always states which switches were on.
 static const uint32_t kRenderDebugFlat = 1u;
 static const uint32_t kRenderDebugTexLog = 4u;   // `texlog`: describe the first index textures
+static const uint32_t kRenderDebugUvLog = 16u;   // `uvlog`: on frame 30, draws whose uv leaves [0,1]
 static uint32_t renderDebugFlags() {
     static int32_t flags = -1;
     if (flags < 0) {
@@ -39,6 +40,7 @@ static uint32_t renderDebugFlags() {
             text[got] = '\0';
             if (strstr(text, "flat")) flags |= (int32_t)kRenderDebugFlat;
             if (strstr(text, "texlog")) flags |= (int32_t)kRenderDebugTexLog;
+            if (strstr(text, "uvlog")) flags |= (int32_t)kRenderDebugUvLog;
             mdk::log3dsPrintf("rdebug: ARMED by sdmc:/3ds/mdk/rdebug.txt flags=%ld (flat=%d texlog=%d)",
                               (long)flags, (flags & (int32_t)kRenderDebugFlat) ? 1 : 0,
                               (flags & (int32_t)kRenderDebugTexLog) ? 1 : 0);

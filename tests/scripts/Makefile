@@ -100,6 +100,8 @@ SOURCES_VM := \
 	system_numerics_tests.cpp \
 	pica_matrix_tests.cpp \
 	input_3ds_tests.cpp \
+	sky_dome_tests.cpp \
+	$(CORE)/render/sky_dome.cpp \
 	$(LINUX)/render/system_numerics_inverse.cpp \
 	$(3DS)/render/pica_matrix.cpp \
 	$(3DS)/platform/input_3ds.cpp \

@@ -50,6 +50,7 @@
 #include "game/player.h"
 #include "util/math_minmax.h"
 #include "layer_tests.h"
+#include "sky_dome_tests.h"
 #include "mve_audio_tests.h"
 #include "pica_matrix_tests.h"
 #include "scripts/debris.h"
@@ -7765,6 +7766,13 @@ int main() {
     // the accumulated mouse. Data-independent for the same reason, and it is the
     // only thing in the tree that checks the controls at all -- the console cannot
     // be run here, and the C# oracle reads SDL, not libctru.
+    // The 3DS sky dome against the oracle's panorama mapping (sky_dome_tests.h).
+    const int skyFailures = mdk::test::runSkyDomeTests();
+    failures += skyFailures;
+    if (skyFailures == 0) {
+        printf("PASS SkyDome\n");
+    }
+
     const int inputFailures = mdk::test::runInput3dsTests();
     failures += inputFailures;
     if (inputFailures == 0) {

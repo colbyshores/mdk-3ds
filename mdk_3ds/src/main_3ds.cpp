@@ -86,6 +86,7 @@
 #include "util/math_lut.h"
 #include "platform/filesystem_romfs.h"
 #include "platform/harness_3ds.h"
+#include "render/sky_dome.h"
 #include "platform/input_3ds.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
@@ -371,6 +372,19 @@ int main(int argc, char** argv) {
     // exactly this reason.
     mdk::SurfaceCache surfaces(renderer);
     mdk::LevelView view;
+    // THE SKY, as geometry (render/sky_dome.h): the PICA200 has no fragment
+    // shader for the oracle's per-pixel panorama pass, and the panorama is wider
+    // than a PICA texture, so it is a sphere around the camera in slices.
+    // Made once at level load; queued first every frame, DoubleSided, so solid
+    // geometry (drawn in an earlier pass bucket) occludes it through depth.
+    struct SkyRange {
+        int32_t texture = -1;
+        int32_t first = 0;
+        int32_t count = 0;
+    };
+    MdkMeshId skyMesh = -1;
+    SkyRange skyRanges[8];
+    int32_t skyRangeCount = 0;
     // Kurt's sprites. TRAVERSE/TRAVSPRT.BNI is the same archive the HUD and the
     // scripts read (C# Viewer loads it once and passes it to all three), and the
     // level's palette indexes it, exactly as there.
@@ -440,6 +454,47 @@ int main(int argc, char** argv) {
                     mdk::log3dsPrintf("view: %d batches, %d vertices, %d triangles",
                                       (int)view.batchCount(), (int)view.vertexCount(),
                                       (int)arena->triangleCount());
+                    {
+                        const mdk::formats::Dti& dti = level.dti();
+                        const uint8_t* pal = dti.palette().rgba();
+                        mdk::SkyDome dome;
+                        if (mdk::buildSkyDome(dti.sky(), pal, dti.skyWrapWidth(), dti.skyHorizonRow(),
+                                              dti.skyOffset(), dti.skyTopColor(),
+                                              dti.skyBottomColor(), &dome)) {
+                            skyMesh = mdk_render_create_mesh(renderer, dome.vertices.data(),
+                                                             (int32_t)dome.vertices.size());
+                            for (const mdk::SkySlice& slice : dome.slices) {
+                                if (skyRangeCount >= 6) break;
+                                SkyRange& r = skyRanges[skyRangeCount++];
+                                r.texture = mdk_render_create_index_texture(
+                                    renderer, slice.width, dome.height, slice.indices.data(), pal);
+                                r.first = slice.first;
+                                r.count = slice.count;
+                            }
+                            const uint8_t top[4] = {dome.topRgb[0], dome.topRgb[1], dome.topRgb[2], 255};
+                            const uint8_t bottom[4] = {dome.bottomRgb[0], dome.bottomRgb[1],
+                                                       dome.bottomRgb[2], 255};
+                            SkyRange& t = skyRanges[skyRangeCount++];
+                            t.texture = mdk_render_create_rgba_texture(renderer, 1, 1, top);
+                            t.first = dome.topFirst;
+                            t.count = dome.topCount;
+                            SkyRange& b = skyRanges[skyRangeCount++];
+                            b.texture = mdk_render_create_rgba_texture(renderer, 1, 1, bottom);
+                            b.first = dome.bottomFirst;
+                            b.count = dome.bottomCount;
+                            mdk::log3dsPrintf("sky: %dx%d wrap=%d horizon=%d offset=%d -> %d slices, "
+                                              "%d vertices, mesh=%d, index0 remapped %d texels to %d (d2=%d)",
+                                              (int)dti.sky().width(), (int)dti.sky().height(),
+                                              (int)dti.skyWrapWidth(), (int)dti.skyHorizonRow(),
+                                              (int)dti.skyOffset(), (int)dome.slices.size(),
+                                              (int)dome.vertices.size(), (int)skyMesh,
+                                              (int)dome.remappedTexels, (int)dome.remapTarget,
+                                              (int)dome.remapDistance);
+                        } else {
+                            mdk::log3dsPrintf("sky: none (the level's panorama cannot be built)");
+                        }
+                        // The dome's CPU copies die here: the renderer keeps its own.
+                    }
                 } else {
                     mdk::log3dsPrintf("view: FAILED");
                     arena = nullptr;
@@ -1229,6 +1284,27 @@ int main(int argc, char** argv) {
             capturePath[0] = '\0';  // one frame, one picture (after the copy above)
         }
         mdk_render_set_camera(renderer, &camera);
+
+        // The sky first (see SkyRange): centred on the camera, DoubleSided.
+        if (skyMesh >= 0) {
+            for (int32_t i = 0; i < skyRangeCount; i++) {
+                const SkyRange& range = skyRanges[i];
+                if (range.texture < 0 || range.count <= 0) {
+                    continue;
+                }
+                mdk::MeshDraw sky;
+                sky.mesh = skyMesh;
+                sky.first_vertex = range.first;
+                sky.vertex_count = range.count;
+                sky.material.texture = range.texture;
+                sky.material.pass = mdk::Pass::DoubleSided;
+                sky.world[0] = sky.world[5] = sky.world[10] = sky.world[15] = 1.0f;
+                sky.world[12] = camera.position.x;
+                sky.world[13] = camera.position.y;
+                sky.world[14] = camera.position.z;
+                mdk_render_draw_mesh(renderer, &sky);
+            }
+        }
 
         if (arena) {
             view.draw();

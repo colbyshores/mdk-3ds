@@ -269,6 +269,24 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
         return false;
     }
 
+    // SAMPLING, set explicitly rather than inherited from C3D_TexInit.
+    //   Filter: NEAREST both ways. The oracle's palette shader looks up ONE
+    //   index per texel (an index cannot be filtered), so the original look is
+    //   point-sampled; a linear magnification would blur it.
+    //   Wrap: REPEAT on an axis whose real size IS the padded size, CLAMP
+    //   otherwise. The world's tiled surfaces carry uv well outside [0,1]
+    //   (2026-11-17, rdebug `uvlog`: all 45 tiling draws of level 3's view are
+    //   256x256), and the oracle's sampler wraps them; with the default clamp
+    //   they smeared into one edge texel (level 3's ground). A power-of-two axis
+    //   has no padding, so REPEAT over the buffer is exactly REPEAT over the
+    //   image. A padded axis cannot wrap exactly in hardware (it would wrap
+    //   through the padding), so it keeps the clamp; no shipped tiling draw
+    //   measured so far uses one.
+    C3D_TexSetFilter(&texture.tex, GPU_NEAREST, GPU_NEAREST);
+    C3D_TexSetWrap(&texture.tex,
+                   texture.realWidth == texture.paddedWidth ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,
+                   texture.realHeight == texture.paddedHeight ? GPU_REPEAT : GPU_CLAMP_TO_EDGE);
+
     // THE PIXELS. A PLAIN CPU BUFFER, NOT linearAlloc.
     //
     // The linear heap STARTS IN THE VRAM: its first megabytes are texture

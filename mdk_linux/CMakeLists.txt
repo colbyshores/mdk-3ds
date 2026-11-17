@@ -151,6 +151,7 @@ set(SOURCES
     ${CORE}/src/render/sun_shadow.cpp
     ${CORE}/src/render/camera_builder.cpp
     ${CORE}/src/render/depth_pull.cpp
+    ${CORE}/src/render/sky_dome.cpp
     ${CORE}/src/render/draw_queue.cpp
     ${CORE}/src/render/material_resolver.cpp
     ${CORE}/src/render/surface_cache.cpp
