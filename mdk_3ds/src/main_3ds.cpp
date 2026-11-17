@@ -1006,6 +1006,15 @@ int main(int argc, char** argv) {
         }
         if (delta < 0.0) delta = 0.0;
         if (delta > 0.25) delta = 0.25;
+#if defined(MDK_AUTOQUIT) && defined(MDK_HW_FIXED)
+        // The harness's deterministic clock (`make AUTOQUIT=90 FIXED=1`): every
+        // frame advances exactly one 1/60 s step, as the Linux build's
+        // --fixed-step does, so `CAPTURE=<n>` writes the SAME simulation frame
+        // the Linux capture writes at --capture-frame=<n>, and the two can be
+        // pixel-diffed (mdk_3ds/tools/compare_linux.sh). Never in a play or
+        // profile build: it is not real time.
+        delta = 1.0 / 60.0;
+#endif
         const float elapsed = mdk::flow::GameFlow::elapsedFor(false, step, (float)delta);
 
         // The controls. ONE scan of HID for the whole frame, inside the poll:

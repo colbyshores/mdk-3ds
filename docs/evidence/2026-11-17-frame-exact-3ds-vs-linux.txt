@@ -1,0 +1,33 @@
+2026-11-17  Frame-exact 3DS vs Linux, and why they differ: the aspect ratio
+==========================================================================
+
+TOOL. `make AUTOQUIT=90 FIXED=1` gives every 3DS frame exactly one 1/60 s step
+(the Linux --fixed-step). mdk_3ds/tools/compare_linux.sh <level> <frame> builds
+that with CAPTURE=<frame> LEVEL=<level>, runs it in Mandarine (:99), pulls the
+game's own left-eye readback from the lane's SD card, captures Linux
+(--headless --fixed-step --size=400x240 --capture-frame=<frame>, frames +-1),
+and prints the difference plus a Linux | 3DS | diff side-by-side. EMULATOR.
+
+LEVEL 7, FRAME 300 (3DS 300 vs Linux 299, the closest; Linux frames 286-314 are
+identical, a static view): 22.38% of pixels differ by >16, mean |d| 12.15.
+71.4% of pixels are BIT-IDENTICAL, and the tone curve is the identity (3DS R
+16/96/255 -> Linux 16/97/255), so palettes, expansion and texture data agree.
+The difference survives a 4-pixel box blur (22.18%), so it is not texel
+jitter: it is a displacement that grows the nearer a feature is to the camera.
+
+CAUSE. mdk_linux/src/main.cpp fixes kAspect = 1280/960 (4:3, the original
+game's) at every output size, so a 400x240 Linux capture is a 4:3 projection
+STRETCHED to 5:3. The 3DS uses its panel's true 400/240. Both are the same core
+FollowCamera; the aspect is an input to its projection and its placement.
+
+PROOF. A temporary 3DS build with kAspect = 1280/960 (reverted, never
+committed): 1.41% of pixels differ by >16, mean |d| 1.04 -- the same order as
+the Linux build's own measured gap to the C# oracle (1.240%). Everything else
+in the 3DS pipeline matches.
+  docs/evidence/2026-11-17-compare-L7-f300-5x3.png           (as shipped, 5:3)
+  docs/evidence/2026-11-17-compare-L7-f300-4x3-experiment.png (4:3, the proof)
+
+OPEN, AN OWNER DECISION: which aspect the 3DS should show -- the true 5:3 view
+(wider than the original's field of view, undistorted), the original's 4:3
+stretched to fill 400x240 (what Linux shows at that size), or 4:3 pillarboxed
+in 320x240 (the original's view, undistorted, with side bars).

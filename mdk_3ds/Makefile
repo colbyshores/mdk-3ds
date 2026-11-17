@@ -142,6 +142,15 @@ $(error LEVEL=$(LEVEL) needs AUTOQUIT: the level override is a harness-build fea
 endif
 DEFINES += -DMDK_HW_LEVEL=$(LEVEL)
 endif
+# `make AUTOQUIT=90 FIXED=1` gives every frame exactly one 1/60 s step (the
+# Linux --fixed-step), for frame-exact 3DS-vs-Linux comparisons with CAPTURE.
+# Only main_3ds.cpp reads it: touch it after changing FIXED.
+ifeq ($(strip $(FIXED)),1)
+ifndef AUTOQUIT
+$(error FIXED=1 needs AUTOQUIT: the fixed clock is a harness-build feature)
+endif
+DEFINES += -DMDK_HW_FIXED=1
+endif
 # `make AUTOQUIT=90 PROFILE=1` logs one `profile:` frame-period summary at exit
 # (harness_3ds.h), what `hw_cycle.sh --profile` reads. Never combine with
 # CAPTURE: the capture's SD write would be inside the measured frames.
