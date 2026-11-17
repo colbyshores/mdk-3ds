@@ -1,0 +1,53 @@
+2026-11-17  Every 3DS scene texture was sampled upside down, and the arena vanished
+==================================================================================
+
+SYMPTOM (HARDWARE and EMULATOR alike). On every level the 3DS showed no arena
+-- no walls, no floor, a flat clear-colour background -- and Kurt as a black
+silhouette, while objects and the HUD drew. The Linux build at the same level
+and frame shows the tunnel, the lit floor and a textured Kurt
+(2026-11-17-linux-level7-f600-reference.png, level 7 frame 600, 400x240).
+
+BISECTION (EMULATOR, Mandarine r1.2.1 md5 0d2adab6..., DISPLAY=:99, level 7,
+runtime switches read from sdmc:/3ds/mdk/rdebug.txt, seeded with the new
+`emurun.sh --seed-sdmc <dir>`):
+  - `flat` (scene draws use a constant colour per pass instead of the texture):
+    the arena's full geometry appears, red walls, green gate, blue blended
+    parts (2026-11-17-emu-level7-rdebug-flat.png). Geometry, transforms,
+    culling and depth are fine.
+  - `noalpha` (alpha test off; since removed, it fought a pinned single-writer
+    check): the arena appears solid BLACK -> its sampled texels were (0,0,0,0).
+  - `texlog` (describe index textures at creation): every palette full (254
+    non-black entries, all opaque) and every texel array populated -> the data
+    entering the expansion is right.
+  - the draw sample log (drawlog.txt, extended with frame and the UV uniform):
+    arena draws frame=0, uv transform e.g. (1.0, 0.5977, 0, 0) for a 256x306
+    texture padded to 512 rows.
+
+CAUSE. The PICA samples t = 0 at the LAST row of a texture's memory. The
+expansion writes image row 0 into the FIRST rows (pica::textureTexelIndex,
+y = 0 first), and the vertex shader passed t = v*scaleY + offsetY straight
+through. So every scene texture was read upside down, and a texture whose
+height is not a power of two read its transparent padding (rows 511..206 of a
+512-row buffer holding 306 image rows) -> alpha 0 -> discarded: the arena on
+every level, and Kurt's frames. Power-of-two textures were merely flipped,
+which a lava or noise texture does not show. The canvas is exempt and correct
+on hardware: its projection inverts y on the panel, cancelling the same
+inversion (the HUD reads "100" upright in every hardware capture).
+
+FIX. Scene draws upload the UV uniform as (scaleX, -scaleY, offsetX,
+1 - offsetY), via pica::sceneUvFromTop (rule, measurement and the canvas
+exemption documented there), pinned by tests/scripts/pica_matrix_tests.cpp
+testSceneUvRunsFromTheLastRow (v=0 reads image row 0, v=1 reads the last image
+row, not padding; a frame offset moves down the image).
+
+RESULT (EMULATOR): 2026-11-17-emu-level7-scene-uv-{before,fixed}.png. Kurt is
+textured, and the tunnel walls, the gate, the far objects and the ceiling beams
+are drawn in the Linux layout. NOT YET MATCHING Linux: the lit floor under Kurt
+is absent even with `flat` (so it is geometry, not texture), and the scene is
+darker. Those are the next slices. HARDWARE: not run (the console is lent to
+another project); the hardware evidence that motivated this is the level-5/7
+captures in 2026-11-17-hw-loop-stable-first-hardware-results.txt.
+
+GATES: make -C tests/scripts 856 PASS ("All cases match the oracle."),
+tools/check.sh ALL GATES PASSED, hw_cycle_selftest 18/18. `emurun --expect hud`
+is still rc 7 with the same pre-existing 12/43 canary verdict.

@@ -45,6 +45,29 @@ MdkTextureId mdk_render_create_index_texture(MdkRenderer r, int32_t w, int32_t h
     texture.source.assign(px, px + (size_t)w * (size_t)h);
     texture.palette.assign(paletteRgba, paletteRgba + 256 * 4);
     texture.lastUsed = ++renderer->drawCounter;
+    if (renderDebugFlags() & kRenderDebugTexLog) {
+        // rdebug `texlog`: what the expansion will be given, for the first 24.
+        static int32_t logged = 0;
+        if (logged < 24) {
+            logged++;
+            int32_t colourful = 0, opaque = 0;
+            for (int32_t e = 0; e < 256; e++) {
+                const uint8_t* c = paletteRgba + e * 4;
+                if (c[0] | c[1] | c[2]) colourful++;
+                if (c[3]) opaque++;
+            }
+            size_t nonzero = 0;
+            const size_t n = (size_t)w * (size_t)h;
+            for (size_t i = 0; i < n; i++) {
+                if (px[i]) nonzero++;
+            }
+            mdk::log3dsPrintf("texlog: index %ldx%ld palette=%p entries non-black=%ld alpha>0=%ld "
+                              "entry1=(%u,%u,%u,%u) texels nonzero=%lu/%lu",
+                              (long)w, (long)h, (const void*)paletteRgba, (long)colourful, (long)opaque,
+                              paletteRgba[4], paletteRgba[5], paletteRgba[6], paletteRgba[7],
+                              (unsigned long)nonzero, (unsigned long)n);
+        }
+    }
 
     const int32_t id = acquireTextureSlot(renderer);
     C3dTexture& slot = renderer->textures[(size_t)id];

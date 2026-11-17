@@ -548,6 +548,29 @@ inline uint32_t morton8InTile(uint32_t x, uint32_t y) {
     return m;
 }
 
+// THE TEXTURE'S t AXIS RUNS FROM THE LAST MEMORY ROW. The PICA samples t = 0 at
+// the LAST row of a texture's memory and t = 1 at the first, while the
+// expansion writes image row 0 into the first rows (textureTexelIndex, y = 0
+// first). A scene draw's oracle v (0 = image top) must therefore reach the GPU
+// as t = 1 - (v * scaleY + offsetY), i.e. the uniform carries (-scaleY,
+// 1 - offsetY). Measured 2026-11-17 in Mandarine: without it every scene
+// texture was sampled upside down, and any texture whose height is not a power
+// of two read its transparent padding instead of the image (a 306-row arena
+// texture in a 512-row buffer sampled rows 511..206), so the arena on every
+// level, and Kurt, went to alpha 0 / black. A power-of-two texture was merely
+// upside down. The canvas does NOT take this: its projection inverts y on the
+// panel, which cancels the same inversion (the HUD reads upright on hardware).
+struct SceneUv {
+    float scaleY;
+    float offsetY;
+};
+inline SceneUv sceneUvFromTop(float scaleY, float offsetY) {
+    SceneUv out;
+    out.scaleY = -scaleY;
+    out.offsetY = 1.0f - offsetY;
+    return out;
+}
+
 inline size_t textureTexelIndex(uint32_t x, uint32_t y, uint32_t paddedWidth) {
     const size_t tileX = (size_t)(x >> 3);
     const size_t tileY = (size_t)(y >> 3);

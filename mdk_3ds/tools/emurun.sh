@@ -288,6 +288,11 @@ while [ $# -gt 0 ]; do
         MIN_FRAMES="$2"; shift 2 ;;
     --expect)     need_value --expect "$#";     EXPECT="$2";     shift 2 ;;
     --display)    need_value --display "$#";    DISPLAY_NUM="$2"; shift 2 ;;
+    # --seed-sdmc <dir>: copy <dir>'s tree onto the lane's emulated SD card root
+    # before launch (e.g. <dir>/3ds/mdk/<arm-file>). The game's runtime-armed
+    # diagnostics read files under sdmc:/3ds/mdk/, and creating them after boot
+    # races the first frame that checks them.
+    --seed-sdmc)  need_value --seed-sdmc "$#";  SEED_SDMC="$2";   shift 2 ;;
     -h|--help)    awk 'NR>2 { if ($0 ~ /^# ={10,}/) exit; print }' "$0"; exit 0 ;;
     *)            DSX="$1";        shift ;;
   esac
@@ -365,6 +370,12 @@ if [ -n "$DSPFIRM_SRC" ] && [ -r "$DSPFIRM_SRC" ] && [ -s "$DSPFIRM_SRC" ]; then
   EMURUN_DSPFIRM_SEEDED="$(basename "$DSPFIRM_SRC")"
 else
   EMURUN_DSPFIRM_SEEDED="none (the guest will report audio muted)"
+fi
+if [ -n "${SEED_SDMC:-}" ]; then
+  [ -d "$SEED_SDMC" ] || { echo "emurun: --seed-sdmc $SEED_SDMC is not a directory" >&2; exit 2; }
+  mkdir -p "$LANE/xdg/mandarine-emu/sdmc" && cp -a "$SEED_SDMC/." "$LANE/xdg/mandarine-emu/sdmc/" || {
+    echo "emurun: could not seed the lane's sdmc from $SEED_SDMC" >&2; exit 2; }
+  echo "emurun: seeded sdmc from $SEED_SDMC: $(cd "$SEED_SDMC" && find . -type f | tr '\n' ' ')"
 fi
 
 # Every override must clear its `\default=true` companion or Citra-lineage

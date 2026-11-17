@@ -899,6 +899,27 @@ void testTheTexelByteOrder() {
     PICA_CHECK(lands);
 }
 
+void testSceneUvRunsFromTheLastRow() {
+    // A 306-row image padded to 512 (a real level-7 arena texture). The image
+    // occupies memory rows 0..305; the PICA's t = 1 is memory row 0.
+    const float realH = 306.0f, paddedH = 512.0f;
+    const mdk::pica::SceneUv uv = mdk::pica::sceneUvFromTop(realH / paddedH, 0.0f);
+    const float tTop = 0.0f * uv.scaleY + uv.offsetY;      // oracle v = 0 (image top)
+    const float tBottom = 1.0f * uv.scaleY + uv.offsetY;   // oracle v = 1 (image bottom)
+    // t -> memory row, counted from the LAST row as the PICA does.
+    const float rowTop = (1.0f - tTop) * paddedH;
+    const float rowBottom = (1.0f - tBottom) * paddedH;
+    PICA_CHECK(rowTop == 0.0f);                 // v = 0 reads image row 0
+    PICA_CHECK(rowBottom == realH);             // v = 1 reads the image's last row, not padding
+    // The unflipped mapping is the defect: v in [0,1] lands in rows 511..206,
+    // i.e. the padding for every v below (paddedH - realH) / realH.
+    const float wrongRowTop = (1.0f - 0.0f) * paddedH;
+    PICA_CHECK(wrongRowTop > realH);
+    // A frame offset (stacked animation frames) moves down the image, not up.
+    const mdk::pica::SceneUv framed = mdk::pica::sceneUvFromTop(0.25f, 0.25f);
+    PICA_CHECK((1.0f - (0.0f * framed.scaleY + framed.offsetY)) == 0.25f);
+}
+
 void testTheTexelTileOrder() {
     // THE SAME TRAP ONE UNIT BEFORE THE BYTES: the byte order above says which
     // byte of a texel goes where; this says WHICH TEXEL SLOT a (x, y) goes in.
@@ -1022,6 +1043,7 @@ int runPicaMatrixTests() {
     testTheClearColourByteOrder();
     testTheTexelByteOrder();
     testTheTexelTileOrder();
+    testSceneUvRunsFromTheLastRow();
     return failures;
 }
 

@@ -1,0 +1,9 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-17T21:48:23Z at 5ffc195
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: 3DS-only rendering fix (mdk_3ds/src/render/**, pica_matrix.h) plus the
+emurun --seed-sdmc option. No mdk_core or mdk_linux file changed, so the pinned
+Linux level-3 frame is byte-identical to the previous pin (md5
+6769a13731983d65cee9df02da6cff37) ON PURPOSE. The pictures this batch is about
+are the emulator captures docs/evidence/2026-11-17-emu-level7-scene-uv-{before,fixed}.png
+and the reference docs/evidence/2026-11-17-linux-level7-f600-reference.png.

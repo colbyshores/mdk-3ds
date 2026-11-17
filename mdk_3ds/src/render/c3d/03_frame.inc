@@ -18,6 +18,35 @@
 // The frame
 // ---------------------------------------------------------------------------
 
+// RENDER DEBUG SWITCHES, armed by a file (the drawlog.txt pattern): the
+// contents of sdmc:/3ds/mdk/rdebug.txt name the switches, any of
+//     flat     scene draws ignore the texture: constant colour per pass
+//     texlog   describe the first 24 index textures as they are created
+// They exist to bisect a draw that reaches the GPU and produces no visible
+// pixels (2026-11-17: the arena on every level, census onscreen=947, while
+// objects and the HUD draw). Read ONCE; absent, the cost is one failed open.
+// The arming is logged so a capture always states which switches were on.
+static const uint32_t kRenderDebugFlat = 1u;
+static const uint32_t kRenderDebugTexLog = 4u;   // `texlog`: describe the first index textures
+static uint32_t renderDebugFlags() {
+    static int32_t flags = -1;
+    if (flags < 0) {
+        flags = 0;
+        if (FILE* file = fopen("sdmc:/3ds/mdk/rdebug.txt", "rb")) {
+            char text[128] = {};
+            const size_t got = fread(text, 1, sizeof(text) - 1, file);
+            fclose(file);
+            text[got] = '\0';
+            if (strstr(text, "flat")) flags |= (int32_t)kRenderDebugFlat;
+            if (strstr(text, "texlog")) flags |= (int32_t)kRenderDebugTexLog;
+            mdk::log3dsPrintf("rdebug: ARMED by sdmc:/3ds/mdk/rdebug.txt flags=%ld (flat=%d texlog=%d)",
+                              (long)flags, (flags & (int32_t)kRenderDebugFlat) ? 1 : 0,
+                              (flags & (int32_t)kRenderDebugTexLog) ? 1 : 0);
+        }
+    }
+    return (uint32_t)flags;
+}
+
 static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics);
 
 // Settle the texture changes that could not be made while the GPU might

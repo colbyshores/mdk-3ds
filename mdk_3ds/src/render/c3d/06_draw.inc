@@ -108,6 +108,13 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         scaleY = (float)frameHeight / (float)resource.paddedHeight;
         offsetY = (float)(draw->frame * frameHeight) / (float)resource.paddedHeight;
     }
+    if (draw->material.pass != mdk::Pass::Overlay) {
+        // The PICA's t runs from the LAST memory row (pica::sceneUvFromTop has
+        // the rule, the measurement and why the canvas is exempt).
+        const mdk::pica::SceneUv flipped = mdk::pica::sceneUvFromTop(scaleY, offsetY);
+        scaleY = flipped.scaleY;
+        offsetY = flipped.offsetY;
+    }
     C3D_FVUnifSet(GPU_VERTEX_SHADER, r->uvLocation, scaleX, scaleY, offsetX, offsetY);
 
     // THE COMBINER, and with it the question of where a draw's colour comes from.
@@ -138,6 +145,16 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (overlay) {
         C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR);
         C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+    } else if (renderDebugFlags() & kRenderDebugFlat) {
+        // rdebug `flat`: the texture is ignored; a constant colour per pass
+        // (Solid red, DoubleSided green, Blended blue, others yellow), opaque.
+        uint32_t c = 0xFF00FFFFu;  // ABGR: yellow
+        if (draw->material.pass == mdk::Pass::Solid) c = 0xFF0000FFu;
+        else if (draw->material.pass == mdk::Pass::DoubleSided) c = 0xFF00FF00u;
+        else if (draw->material.pass == mdk::Pass::Blended) c = 0xFFFF0000u;
+        C3D_TexEnvSrc(env, C3D_Both, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+        C3D_TexEnvColor(env, c);
     } else {
         C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_TEXTURE0, GPU_TEXTURE0);
         C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
@@ -188,11 +205,14 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         if (sampleable) {
             memcpy(v, static_cast<const float*>(mesh.data) + (size_t)first * 5u, sizeof(v));
         }
-        mdk::log3dsPrintf("draw %d: mesh=%d first=%d count=%d tex=%d pass=%d v0=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f)%s",
+        mdk::log3dsPrintf("draw %d: mesh=%d first=%d count=%d tex=%d pass=%d v0=(%.1f,%.1f,%.1f) uv=(%.3f,%.3f) "
+                          "frame=%d frames=%d uvt=(%.4f,%.4f,%.4f,%.4f)%s",
                           (int)r->drawCount, (int)draw->mesh, (int)draw->first_vertex,
                           (int)draw->vertex_count, (int)draw->material.texture,
                           (int)draw->material.pass,
                           v[0], v[1], v[2], v[3], v[4],
+                          (int)draw->frame, (int)draw->material.frame_count,
+                          scaleX, scaleY, offsetX, offsetY,
                           sampleable ? "" : " [first is past the mesh's end]");
     }
     // THE DIAGNOSTIC TRIANGLE IS DRAWN LAST, AFTER THE REAL DRAW -- see below.
