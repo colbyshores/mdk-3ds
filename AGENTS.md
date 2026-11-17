@@ -753,7 +753,10 @@ lookup is a degraded lookup, not an equivalent one.
 
 If `obsidian_*` / `cognee_*` tools are missing from the session's tool list, that
 is a **session configuration fault to report**, not a license to pretend the
-lookup happened. Say which path was actually used. The MDK-specific runbook is
+lookup happened. A common cause, diagnosed 2026-11-17: the servers fail with
+`EAI_AGAIN` while `dig @192.168.4.235 obsidian.lab.home` resolves, meaning the
+workstation's stub resolver is not routing `.lab.home` to the lab DNS. That is a
+host DNS-routing fault for the owner (root) to fix, not a server outage. Say which path was actually used. The MDK-specific runbook is
 `10-projects/mdk-sdl/ralph-pi-mandarine-setup.md`.
 
 ### P10 — The hardware loop is `hw_cycle.sh`, and this is the whole of it
@@ -766,31 +769,65 @@ that script prints.
 
 ```bash
 export DEVKITPRO=/opt/devkitpro DEVKITARM=/opt/devkitpro/devkitARM
-make -C mdk_3ds -j"$(nproc)"                        # ~2-4 min, builds the .3dsx
-curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 http://192.168.4.167:8080/   # must be 200
+make -C mdk_3ds -j"$(nproc)" AUTOQUIT=90            # ~2-4 min; AUTOQUIT is NOT optional here
+python3 /mnt/nas/Development/netload_stub/tools/atmctl.py --ip 192.168.4.167 discover   # wake HTTP (trap 8)
+curl -s --max-time 30 http://192.168.4.167:8080/luma/atm/status.txt | wc -c   # a BODY (>100 B), not just 200
 mdk_3ds/tools/hw_cycle.sh --once --ip 192.168.4.167 # push, run, pull the guest log
 ```
 
-`hw_cycle.sh` is the runbook, and it is already correct: it pushes
-`mdk_3ds/mdk.3dsx` with `3dslink`, discards the push's stdout, then polls
-`http://<ip>:8080/3ds/mdk/mdk.log` until the md5 **settles** and fails `STALE`
-if the run wrote nothing. Exit 2 is a missing address, exit 1 is a failed push,
-a timeout, or a stale log. **A timeout is the console, not the build: check
-`:8080` and `atmctl.py reboot` (trap 8) before anything else.** `--out <file>`
+`hw_cycle.sh` is the runbook: it wakes the console's HTTP before every read
+(trap 8), snapshots the device log, pushes `mdk_3ds/mdk.3dsx` with `3dslink`,
+verifies the push in `transfers.log`, then polls
+`http://<ip>:8080/3ds/mdk/mdk.log` for a NEW `--- session end ---` (trap 6) and
+fails `STALE` if the run wrote nothing. Exit 2 is a usage error or a missing
+address; exit 1 is a failed push, a timeout, or a stale log. **A timeout is the
+console, not the build: follow trap 8 before anything else.** `--out <file>`
 keeps the pulled log (default `/tmp/mdk-hw-cycle.log`). The address also comes
-from `$MDK_3DS_IP`. The
-`--profile`/`--capture`/`--install`/`--sleep` modes are unwired and exit 3 on
-purpose.
+from `$MDK_3DS_IP`.
 
-**One cycle is ~3.5-5 min** for the 119 MB `.3dsx`: roughly 10-25 s of
-transfer, ~70 s of SD write, and the rest setup. The console's own record of
+| mode | build first (`make clean` on any flag change) | adds |
+|---|---|---|
+| `--once` | `make -C mdk_3ds AUTOQUIT=90` | push verified, boot, autoquit, new session end |
+| `--capture` | `... AUTOQUIT=90 CAPTURE=600` | one left-eye readback at that frame, written to `sdmc:/3ds/mdk/hwcap.bmp.log`, pulled to `<out>.bmp`, checked against its BMP header (`hw.pixels-rgba8`) |
+| `--profile` | `... AUTOQUIT=90 PROFILE=1` | a `profile:` frame-period summary plus the CFGU model; refused unless the console is the Old-3DS family (`hw.profile-og`) |
+
+`--sleep` is unwired and exits 3. **There is no `--install`, and there must not
+be one:** the netload loop is `.3dsx`-only, and CIA testing is a separate final
+step by owner decision (`docs/OWNER_BLOCKS.md`, `hw.cia-boot`). Ledger rows
+close only through `tools/runner/ledger_close.py`, which runs the row's
+acceptance on the console (set `MDK_3DS_IP` and build the matching payload
+first). `hw.harness-cycle`, `hw.pixels-rgba8` and `hw.profile-og` were closed
+that way on 2026-11-17.
+
+**THE PAYLOAD MUST BE A HARNESS BUILD, AND THAT IS CHECKED, NOT ASSUMED.** The
+run only ends because `-DMDK_AUTOQUIT` links `harness_3ds.cpp`'s real answers:
+a deadline that quits through the ordinary teardown and an `atexit` chain-load
+back to `netload_stub`. Without the macro those same functions are no-ops, so
+`harnessAutoquitDue()` is a constant false: the game plays forever, no new
+`--- session end ---` can ever appear, and the only reachable verdict is a
+timeout on a console still sitting in the game. Measured 2026-11-17: the
+payload pushed on the previous cycles had been built with plain
+`make -C mdk_3ds`, and the binary contains main's `harness autoquit
+(MDK_AUTOQUIT)` **literal** (it is a string in `main_3ds.cpp` in every build,
+so it proves nothing) but not `/3ds/netload_stub.3dsx` (which only exists under
+the macro). `hw_cycle.sh` therefore greps the `.3dsx` itself for the chainload
+path (`grep -a`, not a `strings | grep` pipe -- with `pipefail`, `grep -q`
+closing the pipe makes `strings` die of SIGPIPE and the check refuses a good
+payload) and exits 1 naming the rebuild command. Harness builds also log
+`main: harness build, autoquit=Ns chainload=netload_stub` at boot, so every
+pull states which payload ran.
+
+**One cycle is ~5.5-7 min** for the 119 MB `.3dsx` (measured 330-400 s over
+eight cycles on 2026-11-17, push 225-280 s of it): network wait, ~20 s of
+transfer, ~70 s of SD write, the 90 s run, then the pull. The console's own record of
 it is `/3ds/netload_stub/transfers.log`, served over HTTP, one line per push:
 
 ```
 file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552 ...
 ```
 
-**Device facts** (`old3ds-lan167`, firmware `9f3632fe047c+dirty`):
+**Device facts** (`old3ds-lan167`, CFGU model 0 = Old 3DS; firmware
+`3a062b049228` since 2026-11-17, the coex build from `../netload_stub`):
 
 | Thing | Value |
 |---|---|
@@ -800,7 +837,9 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
 | ATM HTTP | **8080** (`/`, `/luma/atm/{status.txt,artifacts.txt,atm.log}`, and **any `/3ds/**.log`, `/3ds/**.txt`**, `/luma/dumps/**`) |
 | Game log | `sdmc:/3ds/mdk/mdk.log`, fallback `sdmc:/mdk.log` |
 | Crash dumps | `/luma/dumps/arm11/crash_dump_*.dmp` (`atmctl artifacts`) |
-| Telemetry (netlog UDP) | `192.168.4.220:8081` — **this workstation is .220** |
+| Telemetry (netlog UDP) | `192.168.4.220:8081` — **this workstation is .220**; command acks (`cmdack`) arrive here too |
+| HTTP throughput | **~28 KB/s, up to ~40 s to the first byte, `Range` ignored.** Budget a read at size / 25 KB/s + 40 s and use `curl --fail`; `hw_cycle.sh` reads with `MDK_HW_HTTP_TIMEOUT` (180 s) |
+| ATM log | `/luma/atm/atm.log` (64 KiB cap). Since `3a062b049228` it records every command and its answer (`ev=cmd`, `ev=cmdack`) |
 | `atmctl.py` | `/mnt/nas/Development/netload_stub/tools/atmctl.py`, `--tcp-port 17492` |
 
 **The traps, each of which cost real time:**
@@ -827,9 +866,14 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
    and **transport capacity is not the limiting factor**.
 6. **Freshness is a NEW `--- session end ---` marker counted against the DEVICE
    log as it stood before the push — never md5 equality, never the exit code,
-   and never the local output file.** `mdk.log` is append-only across sessions
-   (`--- mdk 3ds session ---` per boot) and every line is `fflush`ed, so it
-   survives a crash. Both halves of that cut the same way, and `hw_cycle.sh`
+   and never the local output file.** `mdk.log` is append-only within and across
+   sessions (`--- mdk 3ds session ---` per boot), and every line is `fflush`ed,
+   so it survives a crash. The one exception is at boot: a log over 128 KiB is
+   rotated to `mdk.prev.log` (and the previous one to `mdk.prev2.log`), because
+   HTTP could no longer serve it (725 KB took 26-52 s). `hw_cycle.sh` accepts a
+   rotation ONLY when the new log starts with the session header followed by
+   `log: rotated the previous <snapshot size>-byte log to mdk.prev.log`. A pull
+   that merely differs from the snapshot keeps the old baseline. Both halves of that cut the same way, and `hw_cycle.sh`
    got each wrong once, measured with a fake console (see the self-test in
    trap 11): md5 equality stops before the game writes its first line, so two
    pulls match and a partial log reads as settled; and a baseline counted from
@@ -840,37 +884,59 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
    be told from an older one is not evidence.
 7. **`3dslink -s` is not needed and not used.** The guest log over HTTP is the
    output channel. Do not build a second one.
-8. **A wedged console is YOUR job to fix, with one command. Never ask the
-   operator to power-cycle or "check the console".** The operator is not part of
-   the loop; the console is a network device and every recovery is scriptable.
-   After a crash or an OOM `abort()` the console can be left with **HTTP :8080
-   dead while TCP :17491 still ACCEPTS** — a push then "succeeds" into a socket
-   nobody drains, `hw_cycle.sh` times out after 300 s, and it reads exactly like
-   a bad build. Verified 2026-11-17: every 8080 path (`/`,
-   `/luma/atm/status.txt`, `/3ds/mdk/mdk.log`) hung with 0 bytes while ping was
-   green. The diagnosis is the **socket**, not the log: `sockets=… tcp17492:up
-   http8080:up` in `status.txt` is stale once the sysmodule wedges.
+8. **A console whose HTTP will not answer is YOUR job to fix, from this
+   workstation. Never ask the operator to power-cycle or "check the console".**
+   The operator is not part of the loop; the console is a network device.
 
-   **Try `reboot` first only while HTTP answers; when :8080 is dead it refuses
-   by design, and that is not a dead end.** `atmctl.py reboot` performs an HTTP
-   `status` pre-check before sending, so a wedged sysmodule makes it fail — the
-   recovery must not depend on HTTP. Use the fire-and-forget command channel
-   instead (UDP `:8082`, which stays up in the wedge and needs no reply):
+   **FIRST: a DIRECTED discovery, not a reboot.** The common state is :8080
+   ACCEPTING a TCP connection and then sending 0 bytes or dropping it, often
+   after one or two requests had worked, with ping green and `:17491` open.
+   Earlier revisions of this trap called that a "sysmodule wedge" and
+   prescribed reboots. **Reboots do not cure it.** Measured 2026-11-17: two
+   `cmd reboot` sends took effect (`boot_count` 655 -> 657) and HTTP stayed
+   silent, while ONE directed discovery restored a full `status.txt` at once:
 
    ```bash
-   python3 /mnt/nas/Development/netload_stub/tools/atmctl.py \
-       --ip 192.168.4.167 cmd reboot
-   until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-              http://192.168.4.167:8080/)" = 200 ]; do sleep 4; done
+   python3 /mnt/nas/Development/netload_stub/tools/atmctl.py --ip 192.168.4.167 discover
+   curl -s --max-time 30 http://192.168.4.167:8080/luma/atm/status.txt | wc -c   # >100 = back
    ```
 
-   Recovery is **~1–2 minutes**; if two consecutive `cmd reboot` sends plus five
-   minutes of polling do not restore `:8080`, say so in the log and move to a
-   non-hardware increment — do not escalate to the user. Confirm with
-   `status.txt`: a changed `session` id and `boot_count` + 1 is the proof it
-   took. **Check :8080 before blaming the push, the build, or the harness**, and
-   do not rebuild first. A healthy cycle then completes in **~194 s** and prints
-   `FRESH <md5>`.
+   It recurs (`status.txt` showed `http_drop=28` of 35 requests before any
+   client load), so `hw_cycle.sh` sends one before EVERY HTTP read. The cause is
+   an open firmware defect: the build that showed it already had the
+   documented `socPoll` fix, and ATM's loop kept its heartbeat. See vault
+   `30-architecture/patterns/atm-http-drops-wake-with-directed-discover.md`.
+   **An HTTP 200 is not health: check that a body arrived.** A curl that times
+   out mid-body leaves a short file that reads as a complete one.
+
+   **SECOND, only if a discover does not restore it: a reboot over UDP.**
+   `atmctl.py reboot` performs an HTTP `status` pre-check, so use the
+   fire-and-forget command channel (UDP `:8082`, which ATM keeps open in every
+   state), then poll with discovers:
+
+   ```bash
+   python3 /mnt/nas/Development/netload_stub/tools/atmctl.py --ip 192.168.4.167 cmd reboot
+   ```
+
+   Confirm the reboot with `status.txt`: a changed `session` id and `boot_count`
+   + 1. Recovery is ~1-2 minutes. If two `cmd reboot` sends plus five minutes of
+   polling (with discovers) do not restore `:8080`, say so in the log and move to
+   a non-hardware increment; do not escalate to the user. **Check :8080 (with a
+   discover) before blaming the push, the build, or the harness**, and do not
+   rebuild first.
+
+   **The one state the network cannot reach is a HARD HANG, and it is identifiable
+   without a console.** Observed 2026-11-17 on `old3ds-lan167` after a harness
+   run: the operator reported **garbled text frozen on the screen and total
+   unresponsiveness**, and the network matched it — ping fails, the neighbour
+   entry goes `FAILED`, broadcast discovery finds nothing, `:8080`/`:17491`/`:17492`
+   are closed, and even UDP `:8082 cmd reboot` is never consumed (a fire-and-forget
+   send "succeeds" and nothing happens). A crash that leaves the unit drawing
+   garbage has stopped running the code that would answer any of those ports, so
+   neither a discover nor `cmd reboot` can be the fix. Record the observation,
+   keep the increment's non-hardware work moving, and treat the console as off
+   the network until it is physically restarted — that is a hardware fact to
+   report, not a recovery step to delegate.
 
 9. **A clean exit can still wedge HTTP, and that is not a failed run.** Verified
    2026-11-17: a 326-frame level-7 run logged `exiting after 326 frames … harness
@@ -880,8 +946,9 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
    md5 equality stops the poll before the game has written anything (two pulls
    match while the log is unchanged), which is the same false-negative in
    reverse. Failed pulls during the poll are the wedge, not the build: the
-   harness keeps polling through them. After a run like this, recover with trap
-   8's `cmd reboot` and keep the evidence, which is complete on SD.
+   harness keeps polling through them (with a discover before each). After a run
+   like this, recover with trap 8 (discover first) and keep the evidence, which
+   is complete on SD.
 
 10. **The troubleshooting ladder — run it in this order, every time.** Each rung
     below cost real wall clock on 2026-11-17; do not re-derive them.
@@ -889,13 +956,15 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
     | Symptom | Meaning | Action |
     |---|---|---|
     | `TIMEOUT` with **no new session end**, HTTP answers | run too long for the budget | raise `MDK_HW_WAIT`; inspect the partial log |
-    | `TIMEOUT` with **consecutive failed pulls** | sysmodule wedge | trap 8 `cmd reboot`, then retry |
-    | `ping` green, `:8080` dead, `:17491` OPEN | wedged socket | trap 8 `cmd reboot` |
+    | `TIMEOUT` with **consecutive failed pulls** | HTTP not answering | trap 8: directed `discover`, then retry; `cmd reboot` only if that fails |
+    | `ping` green, `:8080` accepts but no body, `:17491` OPEN | HTTP drop (not a wedge) | trap 8: directed `discover` |
+    | a pull or snapshot "succeeds" but is short | read cut off by the ~28 KB/s server | raise `MDK_HW_HTTP_TIMEOUT`; the log should be under 128 KiB after a boot's rotation |
     | **`ping`/ARP dead** on the console IP | console is off or has not reached network init | poll ARP for up to 5 min, then `atmctl.py discover --broadcast` in case DHCP moved it; if still absent it needs physical power and the increment moves to non-hardware work |
     | push returned fast but log has no new session | push went nowhere | verify in `transfers.log` (below) before touching the build |
 
-    **Preflight before every push.** `hw_cycle.sh` now probes
-    `:8080/3ds/mdk/mdk.log` for `200` before pushing. A push into a dead or
+    **Preflight before every push.** `hw_cycle.sh` wakes HTTP and probes
+    `/luma/atm/status.txt` (20 s) before pushing, recovering per trap 8 if it
+    is silent. A push into a dead or
     missing listener silently succeeds from `3dslink`'s point of view.
 
     **Verify the push by the device's own ledger, never by `3dslink`.** One line
@@ -918,8 +987,9 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
     `push returned after Ns`.
 
     **Keep the evidence even on timeout.** The log is append-only on SD, so a
-    timed-out cycle is still recoverable: reboot, pull `/3ds/mdk/mdk.log`, and
-    read the session you already ran. Never re-push a build just to re-read a
+    timed-out cycle is still recoverable: recover HTTP (trap 8), pull
+    `/3ds/mdk/mdk.log` (or `mdk.prev.log` / `mdk.prev2.log` if a later boot
+    rotated it), and read the session you already ran. Never re-push a build just to re-read a
     log that is already on the card. `hw_cycle.sh` writes the last successful
     pull to `<out>.partial` on every timeout path, and the pre-push snapshot to
     `<out>.prev`.
@@ -930,8 +1000,15 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
     exit code and the sentence that carries each diagnosis: a clean exit is
     `FRESH`; an older session's marker is **not** this run; a mid-run HTTP
     death says `post-exit wedge, not the build`; an unverifiable push says
-    `push UNVERIFIED`; a timeout keeps its partial pull. Five cases, ~60 s, no
-    hardware, no emulator, no display.
+    `push UNVERIFIED`; a timeout keeps its partial pull; a payload with no
+    harness chainload is refused before the push; a rotated log is this run,
+    and a log that only differs from the snapshot is NOT a rotation; and
+    `--capture`/`--profile` each pull their result, refuse an earlier session's
+    result, and refuse a payload built without their flag (a New-3DS profile is
+    refused by name). Fourteen cases, ~4 min, no hardware, no emulator, no
+    display, and no build: every case pushes a stand-in payload via
+    `MDK_HW_DSX`, so the verdicts do not depend on which variant the tree last
+    built.
 
     Two defects it was written from, both measured here on 2026-11-17:
     **a failed `curl` leaves the previous pull's bytes in the output file**, so
@@ -951,7 +1028,7 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
     git show <old>:mdk_3ds/tools/hw_cycle.sh > mdk_3ds/tools/.hw_parent.sh
     chmod +x mdk_3ds/tools/.hw_parent.sh
     HW_CYCLE_UNDER_TEST=$PWD/mdk_3ds/tools/.hw_parent.sh \
-        mdk_3ds/tools/hw_cycle_selftest.sh   # expect 1 PASS / 4 FAIL
+        mdk_3ds/tools/hw_cycle_selftest.sh   # vs HEAD~N: the defect cases fail
     rm -f mdk_3ds/tools/.hw_parent.sh
     ```
 
@@ -964,7 +1041,14 @@ file=mdk.3dsx status=ok bytes_out=119371360 bytes_in=59419024 ms=210848 kbps=552
 
 `atmctl.py` is the other supported entry point when a run needs a
 *dump/artifact* rather than the log — `deploy --launch`, `run <file> <outdir>`,
-`status`, `journal`, `artifacts`, `screenshot`. It always re-uploads (there is
+`status`, `journal`, `artifacts`, `screenshot`. ATM keeps UDP 8082 open
+THROUGH a run, so `atmctl ... cmd "screenshot <label>"` works mid-run (verified
+2026-11-17 on an MDK run: a stereo set of the live frame, and the cycle stayed
+FRESH), and `cmd "screenshot_auto <sec>"` captures 3dslink-launched games
+since firmware `3a062b049228`. A command that seems to do nothing was ANSWERED:
+listen on UDP 8081 or read `atm.log` `ev=cmdack`. `cmd shot_purge` /
+`cmd errdisp_purge` clear stale evidence (retrieve first). A screenshot stalls
+the workload: never take one during a profile run. It always re-uploads (there is
 no skip-on-match), so prefer `hw_cycle.sh` for iterations and `atmctl` for
 evidence capture.
 
