@@ -54,3 +54,22 @@ remains forbidden. And it does not by itself explain the level's crosshatch --
 that is the same layout on scene textures, which the frame A/B in
 `2026-11-17-level7-texture-tile-order.txt` measures as a 2x gradient-energy
 change rather than as a picture a reviewer can point at.
+
+HARDWARE ATTEMPT, AND WHY THE ROW IS STILL OPEN (2026-11-17, `old3ds-lan167`).
+The console answered at the start of this session -- `:8080` root 200 and
+`luma/atm/status.txt` readable (`session=fe9ff461 boot_count=650`) -- and the
+harness payload was built correctly (`make -C mdk_3ds AUTOQUIT=90`,
+119,372,288 bytes, chainload path present). The first `hw_cycle.sh --once`
+refused BEFORE pushing: `cannot establish the pre-push baseline
+(http://192.168.4.167:8080/3ds/mdk/mdk.log unreadable)`. That is the correct
+outcome for an unverifiable run, not a build failure.
+
+HTTP then died and stayed dead through three `cmd reboot` sends on the UDP
+command channel (trap 8). The state matched trap 8 exactly and not a hard hang:
+ping green at 4-16 ms, **`:17491` OPEN**, and every `:8080` path -- `/`,
+`/luma/atm/status.txt`, `/3ds/mdk/mdk.log` -- returning 000. One reboot was
+confirmed to have taken effect (`session=fec894bc`, `boot_count=651`); the
+following two did not restore the listener, so under P10 trap 8's ladder this is
+recorded and the increment moves to non-hardware work rather than escalating to
+the operator. No payload was pushed, no console-side run exists, and therefore
+no hardware acceptance is claimed. The 3DS acceptance cells stay open.
