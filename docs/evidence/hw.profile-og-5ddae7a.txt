@@ -1,0 +1,16 @@
+row: hw.profile-og
+command: mdk_3ds/tools/hw_cycle.sh --profile
+exit: 0
+verified-at: 5ddae7a
+captured: 2026-11-17T17:46:19.955440+00:00
+
+hw_cycle: baseline 5 session-end marker(s), md5 34f3fb8fb68e2772c4bc69a9651ac0dc
+hw_cycle: pushing /mnt/nas/Development/mdk-sdl/mdk_3ds/mdk.3dsx to 192.168.4.167
+hw_cycle: push returned after 231s
+hw_cycle: push verified by transfers.log (bytes_out=119374544)
+hw_cycle: cycle 334s, log /tmp/mdk-hw-cycle.log
+hw_cycle: FRESH (7eb5ed7618b466829e9e50e11c7009cb)
+hw_cycle: profile: frames=3180 mean=28.262ms p50<=18.9ms p95<=54.7ms p99<=535.1ms max=535.109ms over16.7ms=2441 over33.3ms=1007
+hw_cycle: profile: console model=0 family=old3ds clock=268MHz(by-model) l2=none(by-model) stereo=on (frame period = wall clock between frames, first frame excluded; percentiles are 0.1 ms bucket upper edges)
+hw_cycle: PROFILE OG (Old-3DS family)
+

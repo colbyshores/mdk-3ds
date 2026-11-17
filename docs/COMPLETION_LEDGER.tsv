@@ -68,7 +68,7 @@ audio.bank-bound	d2	slow	done	make -C tests/scripts	tests/scripts	4852429
 3ds.harness-hooks	d2	fast	done	bash tools/check.sh	mdk_3ds/src/platform/harness_3ds.cpp	5eb69f3
 spec.voice-pool	d2	-	owner-blocked			
 hw.harness-cycle	d3	slow	done	mdk_3ds/tools/hw_cycle.sh --once	docs/evidence/hw.harness-cycle-9ac0a83.txt	9ac0a83
-hw.profile-og	d3	slow	todo	mdk_3ds/tools/hw_cycle.sh --profile		
+hw.profile-og	d3	slow	done	mdk_3ds/tools/hw_cycle.sh --profile	docs/evidence/hw.profile-og-5ddae7a.txt	5ddae7a
 hw.pixels-rgba8	d3	slow	done	mdk_3ds/tools/hw_cycle.sh --capture	docs/evidence/hw.pixels-rgba8-f415c8b.txt	f415c8b
 hw.cia-boot	d3	slow	todo	mdk_3ds/tools/hw_cycle.sh --install		
 hw.sleep-resume	d3	slow	todo	mdk_3ds/tools/hw_cycle.sh --sleep		
