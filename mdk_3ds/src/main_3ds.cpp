@@ -246,6 +246,17 @@ int main(int argc, char** argv) {
                       (unsigned)(envGetHeapSize() + envGetLinearHeapSize()));
     mdk::log3dsPrintf("main: FZ/DN ok (fpscr=0x%08lx)",
                       (unsigned long)mdk::vfpReadFpscr());
+#ifdef MDK_AUTOQUIT
+    // WHICH PAYLOAD THIS IS, in the log itself. A build without MDK_AUTOQUIT
+    // links harness_3ds.cpp's no-op answers: harnessAutoquitDue() is a
+    // constant false, so the run never ends and no `--- session end ---` can
+    // ever appear -- and the loop then reports a console that "ran 600 s
+    // without finishing" for a payload that cannot finish. That happened
+    // (measured 2026-11-17: the pushed .3dsx contained this file's other
+    // autoquit STRING but not netload_stub, i.e. the string without the
+    // macro). The line below is the proof that reads back from a pull.
+    mdk::log3dsPrintf("main: harness build, autoquit=%ds chainload=netload_stub", (int)(MDK_AUTOQUIT));
+#endif
 
     gfxInitDefault();
     // The top screen's parallax barrier. MDK's flat-display stereo modes do

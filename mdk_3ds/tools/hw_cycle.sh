@@ -45,9 +45,28 @@ if [ -z "$IP" ]; then
 fi
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-DSX="$ROOT/mdk_3ds/mdk.3dsx"
+# MDK_HW_DSX is the self-test's seam for feeding a payload that is not the
+# tree's build (the "payload cannot end a run" case).
+DSX="${MDK_HW_DSX:-$ROOT/mdk_3ds/mdk.3dsx}"
 if [ ! -f "$DSX" ]; then
     echo "hw_cycle: $DSX is not built (make -C mdk_3ds AUTOQUIT=90 first)." >&2
+    exit 1
+fi
+
+# REFUSE A PAYLOAD THAT CANNOT END ITS RUN. Without -DMDK_AUTOQUIT,
+# harness_3ds.cpp links the no-op answers: harnessAutoquitDue() is a constant
+# false and harnessChainloadStub() does nothing, so the game runs until someone
+# stops it, no `--- session end ---` can appear, and the only reachable verdict
+# is a timeout on a console still sitting in the game. The `harness autoquit`
+# STRING is not evidence -- it is a literal in main_3ds.cpp in every build; the
+# chainload path is, because netload_stub only exists under the macro.
+# grep reads the .3dsx directly (`-a`) rather than piping `strings`: the script
+# is `set -uo pipefail`, and `grep -q` closing the pipe early would make
+# `strings` die of SIGPIPE and report a FALSE refusal on a good payload.
+if ! grep -aqF -- '/3ds/netload_stub.3dsx' "$DSX"; then
+    echo "hw_cycle: $DSX has no harness chainload -- it was built WITHOUT -DMDK_AUTOQUIT." >&2
+    echo "hw_cycle: that payload cannot end a run, so this cycle could only ever time out. Rebuild:" >&2
+    echo "    make -C mdk_3ds -j\$(nproc) AUTOQUIT=90" >&2
     exit 1
 fi
 

@@ -2783,6 +2783,67 @@ doorway-crossing oracle rather than a hand-written expectation. Either one chang
 full shape review-4 F3 named (invocation, display, emulator md5, `guest log :` path, frames,
 exit code).
 
+## NEXT (batch 176)
+**THE CYCLE'S PAYLOAD COULD NOT END A RUN, AND NOTHING IN THE HARNESS ASKED WHETHER IT COULD.**
+Every push since the harness landed had been built with the plain
+`make -C mdk_3ds` this file's own P10 block printed — no `AUTOQUIT`, therefore no
+`-DMDK_AUTOQUIT`. `harness_3ds.cpp` compiles its `#else` answers in that build:
+`harnessAutoquitDue()` is `return false` and `harnessChainloadStub()` does nothing,
+so `main_3ds.cpp:904` can never fire, no `--- session end ---` can ever be written,
+and the only verdict `hw_cycle.sh` could reach was a timeout on a console still
+playing the game. **The binary said so and nothing read it:** the pushed `.3dsx`
+contains `harness autoquit (MDK_AUTOQUIT)` — that is `main_3ds.cpp`'s literal,
+present in every build — and does **not** contain `/3ds/netload_stub.3dsx`, which
+only exists under the macro. A string that survives both builds cannot be the test
+for which build you have; the chainload path can.
+
+Three fixes, all checkable without a console:
+1. `main_3ds.cpp` logs `main: harness build, autoquit=90s chainload=netload_stub`
+   at boot under `#ifdef MDK_AUTOQUIT`, so every pull states which payload ran.
+2. `hw_cycle.sh` refuses any `.3dsx` without the chainload path, before the
+   preflight and before the push, and exits 1 with the rebuild command.
+3. The self-test grew the case (`MDK_HW_DSX` is its seam for a payload that is not
+   the tree's build): `6 PASS / 0 FAIL` on this harness, and against `HEAD`'s
+   `hw_cycle.sh` **`5 PASS / 1 FAIL`** — the failing case is the new one, and the
+   parent's output is the defect in one line: it pushed the no-harness payload and
+   printed `FRESH`.
+
+**FOUND BY ITS OWN GATE, AND WORTH KEEPING.** The first draft of (2) was
+`strings -a "$DSX" | grep -q '/3ds/netload_stub.3dsx'`; `hw_cycle.sh` is
+`set -uo pipefail`, `grep -q` exits at the match and closes the pipe, `strings`
+dies of SIGPIPE, `pipefail` reports 141, and a **good** payload was refused on all
+five existing cases. It is now `grep -aqF -- '/3ds/netload_stub.3dsx' "$DSX"`:
+no pipe, no SIGPIPE, and grep reads the archive directly.
+
+**P8 verdict blocks (review-4 F3 shape).** Emulator `/mnt/nas/Development/mandarine.AppImage`
+md5 `0d2adab6ad078c78e6d03e72086f2eb6` (r1.2.1, the pinned good build), X display `:99`
+(`Xvfb :99 -screen 0 1280x1024x24`; the pre-existing server was dead with a stale
+`/tmp/.X99-lock`, which was removed and the server restarted), payload
+`mdk_3ds/mdk.3dsx` 119 371 828 bytes built with `AUTOQUIT=90`:
+* `DISPLAY=:99 mdk_3ds/tools/emurun.sh --min-frames 60 --shot /tmp/kilo/payload-fix-plain.png`
+  → **exit 0**, `guest log : /tmp/mdk-emurun.190970/xdg/mandarine-emu/sdmc/3ds/mdk/mdk.log`,
+  ends at frame 2520, and line 5 of that log is the new boot line. No
+  `--- session end ---`: `emurun.sh`'s reap ended the run before the 90 s guest
+  deadline, so this block proves the payload boots and runs, not that its deadline
+  fires. That one is the console's to show.
+* `DISPLAY=:99 mdk_3ds/tools/emurun.sh --expect hud --min-frames 60 --shot /tmp/kilo/after-payload-fix.png`
+  → **exit 1, `HUD MISPLACED`**: 25 ink pixels, 21 inside the derived crop
+  `200,120-390,234`, bbox `(384,222)-(392,229)`; the HUD's own canvas line read
+  `quads=4 draws=2 mesh=2 corners=24 eyes=1` at frame 2460 and the log ends at
+  2580. **Open, and not this batch's acceptance:** the batch's change is a log
+  write under `#ifdef` and cannot move a canvas, so this is a pixel-geometry
+  finding for the HUD/canvas row (batch 155's refusal doing its job), to be
+  triaged against a hardware capture — which is unavailable, because see below.
+
+**The console is still ARP-dead, so no hardware pass and no ledger row closes.**
+`hw.harness-cycle`, `hw.profile-og`, `hw.pixels-rgba8`, `hw.cia-boot` and
+`hw.sleep-resume` remain `todo`. `192.168.4.167` fails ping, its neighbour entry is
+`FAILED`, broadcast discovery times out, and `:8080`/`:17491`/`:17492` are closed;
+`cmd reboot` over UDP `:8082` did not restore it within five minutes. The next
+hardware increment is the same one as before: `hw_cycle.sh --once --ip 192.168.4.167`
+on the now-verifiable payload, then the arena-transition and section-6 gameplay
+acceptance that were always behind it.
+
 ## NEXT (batch 119)
 **Nothing in the gate family is open, and nothing in it should be widened without a finding that
 needs it.** Review-4 found no Critical and no High, its Medium was a coverage hole in a runner

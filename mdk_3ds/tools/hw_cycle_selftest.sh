@@ -101,6 +101,8 @@ threading.Thread(target=grow, daemon=True).start()
 http.server.HTTPServer(("127.0.0.1", 8080), H).serve_forever()
 PY
 
+DSX_OVERRIDE=""
+
 case_run() {
     name=$1 mode=$2 wait=$3 wantrc=$4 wanttext=$5
     out="$WORK/guest-$mode.log"
@@ -111,7 +113,7 @@ case_run() {
         [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8080/3ds/mdk/mdk.log)" = 200 ] && break
         sleep 0.5
     done
-    PATH="$WORK/bin:$PATH" MDK_HW_WAIT="$wait" "$CYCLE" --once --ip 127.0.0.1 --out "$out" \
+    PATH="$WORK/bin:$PATH" MDK_HW_WAIT="$wait" MDK_HW_DSX="${DSX_OVERRIDE:-}" "$CYCLE" --once --ip 127.0.0.1 --out "$out" \
         > "$WORK/run-$mode.out" 2>&1
     rc=$?
     kill "$SRV_PID" 2>/dev/null
@@ -158,6 +160,18 @@ else
     echo "FAIL a timed-out run kept nothing to read afterwards"
     FAIL=$((FAIL + 1))
 fi
+
+# 6. A payload that cannot end a run is refused before the push. Without
+#    -DMDK_AUTOQUIT the harness links a constant-false deadline, so the only
+#    reachable verdict is a timeout on a console still playing the game. This
+#    is the binary that WAS pushed on 2026-11-17 (it carries main's
+#    `harness autoquit` literal but not the chainload path), so the check reads
+#    the chainload path and not the phrase.
+: > "$WORK/no-harness.3dsx"
+printf 'harness autoquit (MDK_AUTOQUIT)\0' >> "$WORK/no-harness.3dsx"
+DSX_OVERRIDE="$WORK/no-harness.3dsx"
+case_run "a payload without the harness is refused" ok 30 1 "WITHOUT -DMDK_AUTOQUIT"
+DSX_OVERRIDE=""
 
 echo "HW_CYCLE SELFTEST: $PASS PASS / $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

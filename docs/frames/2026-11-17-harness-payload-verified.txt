@@ -1,0 +1,14 @@
+frame: level 3, 320x240, seed 1, frame 1 (tests/frames/capture_cpp.sh)
+captured: 2026-11-17T05:24:19Z at 9f507f9
+live C++ vs C# oracle: bad_percent=1.240 max_delta=247 mean_delta=0.1819
+note: this batch is 3DS-only -- it makes hw_cycle.sh refuse a .3dsx that cannot
+end a run (no harness chainload path) and adds a boot-time log line naming the
+payload under #ifdef MDK_AUTOQUIT. The pinned scene is the Linux level-3 capture,
+which links none of that code, so the PNG is byte-identical to the previous pin
+(md5 6769a13731983d65cee9df02da6cff37, same bad_percent/max_delta/mean_delta above)
+ON PURPOSE: the picture did not move because the change moves no pixels. Evidence
+for the change is the harness self-test in mdk_3ds/tools/hw_cycle_selftest.sh
+(6 PASS on this harness; 5 PASS / 1 FAIL against the parent script, the failing
+case being the new one that pushed a no-harness payload) plus the boot line
+`main: harness build, autoquit=90s chainload=netload_stub` in the
+AUTOQUIT=90 emulator log /tmp/mdk-emurun.190970/.../sdmc/3ds/mdk/mdk.log.
