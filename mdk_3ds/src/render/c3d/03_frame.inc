@@ -322,18 +322,17 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // below -- the cache must describe the context, not intend to).
     installBlendState(r, mdk::Pass::Solid, mdk::Blend::Alpha);
 
-    // (B) THE CULL ENUM. The game wants back-face culling, and through the
-    // oracle's right-handed camera the meshes wind CCW on screen. The
-    // PICA200 has no CW-front mode, so "cull the back faces of CCW-front
-    // meshes" is GPU_CULL_BACK_CCW. See the file header: this moved with
-    // the camera's handedness, and it needs a hardware look (AGENTS.md P6)
-    // before it can be called verified.
-    C3D_CullFace(GPU_CULL_BACK_CCW);
+    // (B) THE CULL ENUM: kSolidCull (01_types.inc), measured in the emulator:
+    // visible faces arrive CLOCKWISE, so back-face culling is
+    // GPU_CULL_FRONT_CCW. The earlier GPU_CULL_BACK_CCW culled the FRONT faces
+    // and hid the arena interior on every level. Still owed: a hardware look
+    // (AGENTS.md P6).
+    C3D_CullFace(kSolidCull);
     // The cache describes the state actually installed above. The mode
     // is GLOBAL to the context, so the first eye's install already
     // covers the second; re-installing it per eye is belt and braces,
     // not the mechanism.
-    r->cullMode = GPU_CULL_BACK_CCW;
+    r->cullMode = kSolidCull;
     C3D_DepthMap(mdk::pica::kDepthMapIsZBuffer, mdk::pica::kDepthMapScale,
                  mdk::pica::kDepthMapOffset);
 

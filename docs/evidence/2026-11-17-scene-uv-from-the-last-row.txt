@@ -51,3 +51,33 @@ captures in 2026-11-17-hw-loop-stable-first-hardware-results.txt.
 GATES: make -C tests/scripts 856 PASS ("All cases match the oracle."),
 tools/check.sh ALL GATES PASSED, hw_cycle_selftest 18/18. `emurun --expect hud`
 is still rc 7 with the same pre-existing 12/43 canary verdict.
+
+
+ADDENDUM, SAME DAY: THE FLOOR WAS CULLED (the Solid pass's cull mode)
+--------------------------------------------------------------------
+
+After the UV fix the lit floor under Kurt was still missing, even with `flat`,
+so the floor's triangles were being rejected. Two temporary single-change
+builds (EMULATOR, level 7; reverted, never committed):
+  - culling OFF for every draw: the frame matches the Linux reference (the
+    tunnel, the lit floor, the far objects);
+  - depth test OFF: no improvement.
+GPU_CULL_BACK_CCW, chosen by reasoning about the camera's handedness and marked
+in its own comment as needing a look, was culling the FRONT faces. Visible faces
+reach the PICA CLOCKWISE. With GPU_CULL_FRONT_CCW the frame differs from the
+culling-OFF frame in 0 of 109,312 crop pixels, so nothing visible is culled.
+The permanent build differs in 251 pixels, all inside Kurt's sprite bbox: his
+idle animation frame at capture time. The picture is not mirrored against Linux
+(Kurt's raised arm, the HUD corner and the floor patch agree), so the enum, not
+a mirror, was the defect.
+
+FIX: kSolidCull = GPU_CULL_FRONT_CCW (01_types.inc), used at every site
+(begin_frame install, the per-draw pass selection, the post-diagnostic
+restore). No host test pinned the cull mode; this is measured, not reasoned.
+
+SIDE BY SIDE (left Linux, right 3DS in Mandarine): levels 3, 5, 6 and 8 now
+agree in geometry, textures, lighting, Kurt and objects
+(2026-11-17-cull-fix-side-by-side-L{3,5,6,8}.png). REMAINING: (1) the sky /
+panorama is not drawn on the 3DS (a full-screen per-pixel pass on Linux; the
+PICA200 has no fragment shader); (2) the (0,0,255) canvas canary is drawn in
+every build, release included. HARDWARE: not run (the console is lent out).

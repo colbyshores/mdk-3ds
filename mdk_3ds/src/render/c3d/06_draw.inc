@@ -288,7 +288,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     //
     // Pass::DoubleSided is LOAD-BEARING for Kurt's sprite: the quad mirrors
     // `at.right` for a left-facing view, and that mirror reverses the
-    // winding. With the frame's BACK_CCW default the mirrored sprite would
+    // winding. With the frame's Solid cull default the mirrored sprite would
     // be a back face and vanish. The oracle's material says DoubleSided for
     // exactly this reason; do not "fix" it by emitting both windings, which
     // would double the sprite's vertex count.
@@ -298,7 +298,7 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // Cache the installed mode and change it only on a pass transition. An
     // all-Solid frame then performs no per-draw cull calls at all.
     const bool solid = draw->material.pass == mdk::Pass::Solid;
-    const GPU_CULLMODE wantedCull = solid ? GPU_CULL_BACK_CCW : GPU_CULL_NONE;
+    const GPU_CULLMODE wantedCull = solid ? kSolidCull : GPU_CULL_NONE;
     if (r->cullMode != wantedCull) {
         C3D_CullFace(wantedCull);
         r->cullMode = wantedCull;
@@ -488,9 +488,9 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // Restore the frame's default for the next draw, so every draw starts
     // from the state begin_frame installed. The transition back is cached in
     // the same way; repeated Solid draws do not dirty the effect block.
-    if (r->cullMode != GPU_CULL_BACK_CCW) {
-        C3D_CullFace(GPU_CULL_BACK_CCW);
-        r->cullMode = GPU_CULL_BACK_CCW;
+    if (r->cullMode != kSolidCull) {
+        C3D_CullFace(kSolidCull);
+        r->cullMode = kSolidCull;
     }
 
     // THE DIAGNOSTIC TRIANGLE IS NOT DRAWN HERE. It used to be, immediately

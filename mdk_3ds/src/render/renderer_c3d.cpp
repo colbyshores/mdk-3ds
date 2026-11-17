@@ -35,13 +35,14 @@
 //       LESS_OR_EQUAL, because the map this backend installs stores 0 at the
 //       near plane and 1 at the far — see mdk::pica::kDepthMapScale and the
 //       evidence recorded there.
-//   (B) culling: the PICA200 has NO CW-front mode. Through the oracle's
-//       right-handed camera the meshes wind CCW on screen, so "cull the back
-//       faces" is C3D_CullFace(GPU_CULL_BACK_CCW). (Under the older
-//       left-handed camera build the picture was mirrored and they wound CW,
-//       which is where the previous GPU_CULL_FRONT_CCW came from; the mirror
-//       and the cull enum move together, and getting one of them right on its
-//       own shows up as INVISIBLE GEOMETRY, not as a wrong picture.)
+//   (B) culling: kSolidCull = GPU_CULL_FRONT_CCW, MEASURED 2026-11-17 in the
+//       emulator: visible faces arrive clockwise on screen, so back-face
+//       culling culls the CCW ones. The reasoned GPU_CULL_BACK_CCW that stood
+//       here culled the front faces instead, hiding the arena interior and the
+//       floor on every level -- this note's own warning: a wrong cull enum
+//       shows up as INVISIBLE GEOMETRY, not as a wrong picture. The picture is
+//       not mirrored (it matches the Linux build's orientation), so the enum,
+//       not a mirror, was what was wrong. Hardware look still owed.
 // ============================================================================
 
 #include <3ds.h>

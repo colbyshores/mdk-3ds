@@ -8,6 +8,18 @@
 static constexpr int kScreenWidth = 240;
 static constexpr int kScreenHeight = 400;
 
+// THE SOLID PASS'S CULL MODE, MEASURED (2026-11-17, Mandarine r1.2.1, level 7).
+// Visible scene faces reach the PICA wound CLOCKWISE on screen, so culling the
+// back faces is GPU_CULL_FRONT_CCW (cull the CCW ones). The previous
+// GPU_CULL_BACK_CCW was chosen by reasoning about the camera's handedness and
+// was marked as needing a look; the look showed it culled the FRONT faces: the
+// tunnel interior and the lit floor under Kurt were invisible on every level.
+// With GPU_CULL_FRONT_CCW the frame is pixel-identical to the same frame with
+// culling OFF (0 of 109,312 crop pixels differ by more than 16), i.e. nothing
+// visible is culled, and it matches the Linux build's layout and orientation
+// (no mirror, which would also invert the winding).
+static constexpr GPU_CULLMODE kSolidCull = GPU_CULL_FRONT_CCW;
+
 // THE DISPLAY TRANSFER FLAGS.
 //
 // These are NOT optional. The default transfer format is NOT RGBA8, and a
