@@ -241,3 +241,35 @@ profile = 1/0/1, 1/1/0, 0/0/0). `CAPTURE` without AUTOQUIT and PROFILE+CAPTURE
 both stop in make. HARDWARE NOTE: runs 3-6 used the harness BEFORE these
 review fixes. The post-review harness is exercised on the console by the
 ledger_close acceptance runs that follow this commit.
+
+
+7. ADDENDUM, SAME DAY: THE APPLIANCE IS FIXED (owner request)
+-----------------------------------------------------------
+
+The owner asked for ATM screenshots and atm.log to work, and for the stale
+data to be cleared. Done in ../netload_stub (commits e1b95d2, 3a062b0, f777bf7,
+local, unpushed) and flashed over the network: firmware_id=3a062b049228, coex
+build (ATM deploy on tcp17492, 17491 left to the stub), installed SHA-256
+f0fd4016..., boot_count 660.
+  - screenshot_auto fires while ANY app is in the foreground (PMDBG), with one
+    attempt per interval; shot_purge and errdisp_purge (control gate);
+    `truncated=1` at the end of a full listing, surfaced by atmctl as
+    listing_truncated; every command and ack in atm.log (ev=cmd / ev=cmdack).
+  - HARDWARE, during a 3dslink-launched MDK harness run (cycle FRESH
+    1a1efd59..., push bytes_out=119374544 verified): auto captures every ~30 s,
+    and a manual `screenshot mdkmidrun` mid-run committed shot_0000000c
+    (is3d=yes, 3 files). Its top image is the live level-7 frame, the same
+    scene as the game's own capture: logs/hw/2026-11-17/atm-shot-mdkmidrun-top.png.
+  - Cleared: 32 stale + 13 test screenshot sets, 79 ErrDisp reports (only 33
+    were ever listed, so 46 were deleted without an archive copy), and 29 ATM
+    test payloads (iteration copies only; recovery tools, other projects'
+    payloads and anything unidentified were kept). The verified archive is
+    netload_stub/perf/console-archive-20261117 (53 files).
+  - A plain `make` builds the NON-coex image, which put ATM on 17491 for ~50 min
+    (no MDK push in that window). Corrected and documented in netload_stub's
+    AGENTS.md. Flash with `make clean && make ATM_FREE_3DSLINK_PORT=1` and
+    `atmctl --tcp-port 17492 fwupdate`.
+Knowledge base: vault 30-architecture/patterns/atm-http-drops-wake-with-
+directed-discover.md and 10-projects/mdk-sdl/hardware-loop-old3ds.md (new);
+the netload_stub atm/* pages and the runbook mirrored from the repo (the vault
+runbook was a stale 2026-11-04 copy).

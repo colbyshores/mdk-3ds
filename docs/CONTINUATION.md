@@ -35,8 +35,15 @@ FRESH back to back (push verified, level 7, autoquit, session end). Full record:
    12/43 canary px outside). Lead: the emulator crop registration is ~(11,7) px off.
 5. `hw.cia-boot` is owner-blocked by decision: CIA testing goes LAST, outside the
    netload loop (`.3dsx` only). `hw.sleep-resume` needs lid/sleep control that ATM
-   does not have. ATM screenshots and atm.log command logging are being fixed in
-   `../netload_stub` (the owner said to clear the stale screenshot sets).
+   does not have. ATM appliance FIXED in `../netload_stub` (e1b95d2, 3a062b0,
+   f777bf7; firmware `3a062b049228` installed, `boot_count` 660): screenshot_auto
+   fires for 3dslink-launched apps, `shot_purge`/`errdisp_purge` clear stale
+   evidence, `atm.log` records every `ev=cmd`/`ev=cmdack`, and the artifacts listing
+   says `truncated=1`. HARDWARE: a mid-run `screenshot` of MDK committed a stereo set
+   whose top image is the live level-7 frame (logs/hw/2026-11-17/
+   atm-shot-mdkmidrun-top.png), and the cycle was still FRESH. Stale data cleared:
+   32+13 screenshot sets, 79 ErrDisp reports (46 had never been listed, so were never
+   archived), 29 ATM test payloads; the archive is netload_stub/perf/console-archive-20261117.
    Workstation DNS: `.lab.home` is not routed to 192.168.4.235, so the
    Obsidian/Cognee MCP fail with EAI_AGAIN.
 
