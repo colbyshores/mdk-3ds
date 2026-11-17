@@ -128,6 +128,67 @@ line is stale when stdout is not a terminal — it prints `49.78%` on a transfer
 that already completed; judge a push by `transfers.log status=ok` and
 `bytes_out` equal to the local file size, never by that line.
 
+### A clean exit can still wedge HTTP — and the harness must not call that a failed run (2026-11-17)
+
+The 90 s `AUTOQUIT` level-7 cycle reported `TIMEOUT waiting for the guest log`,
+and the console was wedged again afterwards (`:8080` answered 0 bytes on every
+path, ping green). The run itself was **fine**: `/3ds/mdk/mdk.log` survived on
+SD and ended
+
+```
+frame 300 elapsed=0.0707 steps=1383 feet=(0.0,4.0,0.0) yaw=90.0 health=100 eye=(0.0,-4.0,4.5) voices=0 plays=1 objects=7 obj=570c/13d peak=570c/13d
+exiting after 326 frames (1535 steps): harness autoquit (MDK_AUTOQUIT)
+--- session end ---
+```
+
+with audio running (`dspframes=17084`, `dspdropped=0`), the object mesh streamed
+into linear memory, and **no crash dump** in `/luma/dumps/arm11/` (`atmctl
+artifacts` shows screenshots only). So the game exits cleanly and the
+**sysmodule wedges on HTTP afterwards** — a post-exit wedge, not a build
+failure.
+
+Two harness defects turned that into a false negative:
+
+1. **md5-equality is not a completion signal.** The log is unchanged between the
+   push and the game's first line, so two consecutive pulls match immediately
+   and a partial log looks settled. `hw_cycle.sh` now stops on a **new
+   `--- session end ---` marker** relative to the previous log and keeps polling
+   through failed pulls (a failed curl during the poll is the wedge). Because
+   every line is `fflush`ed, the marker is complete as served.
+2. **Recovery has to survive dead HTTP.** `atmctl.py reboot` does an HTTP
+   `status` pre-check, so in the wedged state it refuses; `cmd reboot` goes out
+   over the fire-and-forget UDP `:8082` channel and needs no reply. Verified:
+   two sends plus polling brought `:8080` back in **~2 minutes**
+   (`boot_count` 638 → 640, `session f24d3fd0`). AGENTS.md §11 trap 8 now names
+   this path, and trap 9 names the post-exit wedge. **The operator is never
+   asked to power-cycle the console**; if two `cmd reboot` sends plus five
+   minutes do not restore `:8080`, record it and move to a non-hardware
+   increment.
+
+**A third defect was the budget, and it is the one that looked most like a bad
+build.** The poll cap was 300 s measured from *before* the push. `transfers.log`
+shows this card taking `158 s`, `215 s`, `350 s` and `647 s` for the same
+`119,371,492 B` payload (`net_wait_ms` alone reached `118,848 ms`), so a 90 s
+`AUTOQUIT` run could not fit: the first timeout caught the log mid-frame
+(`draw 1:` with no newline). The budget now starts **after** the push
+(`MDK_HW_WAIT`, default 600 s) and the harness prints `push returned after Ns`.
+The same run also showed `3dslink` returning 0 for a transfer that landed
+nowhere, so the harness now probes `:8080` before pushing and afterwards checks
+the device's own `transfers.log` for `status=ok` with `bytes_out` equal to
+`ls -l mdk_3ds/mdk.3dsx`.
+
+**The console is currently ARP-dead** (`ping` fails, `ip neigh` shows
+`FAILED` for `192.168.4.167`, `discover --broadcast` times out). That is the one
+state no command channel can reach: HTTP :8080, :17491, :17492 are all closed
+and the last `cmd reboot` did not bring it back within five minutes of polling.
+Nothing in the build is implicated — the last complete session on SD ended
+cleanly at 326 frames with no crash dump. The next hardware increment starts by
+re-checking ARP; the documented ladder (AGENTS.md §11 trap 10) says to poll ARP
+for five minutes, try `discover --broadcast` in case DHCP moved it, and
+otherwise continue with non-hardware work rather than escalate.
+
+
+
 ## ARENA STREAMING — PHASE 1S: THE HEAP SPLIT, AND LEVEL 7 NOW RUNS ON THE CONSOLE (branch `experimental/arena-streaming`)
 
 **This is not a loop batch either.** It is the first intervention against the

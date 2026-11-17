@@ -52,31 +52,117 @@ if [ ! -f "$DSX" ]; then
 fi
 
 PREV=""
-[ -f "$OUT" ] && PREV=$(md5sum "$OUT" | cut -d' ' -f1)
+PREV_END=0
+if [ -f "$OUT" ]; then
+    PREV=$(md5sum "$OUT" | cut -d' ' -f1)
+    PREV_END=$(grep -c '^--- session end ---$' "$OUT" 2>/dev/null || true)
+    : "${PREV_END:=0}"
+fi
 T0=$(date +%s)
+
+# ---- preflight: never push into a dead listener -----------------------------
+# A push into a wedged or absent HTTP listener "succeeds" from 3dslink's point
+# of view (it only fills a socket nobody drains) and then looks like a bad
+# build. Probe the log endpoint first, recover the console if it is wedged, and
+# refuse to continue if it never comes back.
+LOG_URL="http://$IP:8080/3ds/mdk/mdk.log"
+ATMCTL=/mnt/nas/Development/netload_stub/tools/atmctl.py
+probe_log() {
+    [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$LOG_URL")" = "200" ]
+}
+if ! probe_log; then
+    echo "hw_cycle: preflight -- $LOG_URL is not answering; attempting recovery" >&2
+    if ping -c 1 -W 2 "$IP" >/dev/null 2>&1; then
+        [ -f "$ATMCTL" ] && python3 "$ATMCTL" --ip "$IP" cmd reboot >/dev/null 2>&1
+        for i in $(seq 1 45); do probe_log && break; sleep 4; done
+    else
+        echo "hw_cycle: console is ARP-dead (off, or not at network init yet); waiting up to 300s" >&2
+        for i in $(seq 1 60); do
+            ping -c 1 -W 2 "$IP" >/dev/null 2>&1 && probe_log && break
+            sleep 5
+        done
+    fi
+    if ! probe_log; then
+        echo "hw_cycle: console unavailable -- $LOG_URL still not 200. Not pushing." >&2
+        echo "hw_cycle: if ARP is dead too, the console is off; otherwise recover with:" >&2
+        echo "    python3 $ATMCTL --ip $IP cmd reboot" >&2
+        exit 1
+    fi
+    echo "hw_cycle: preflight recovered -- :8080 answers again"
+fi
+
 echo "hw_cycle: pushing $DSX to $IP"
 3dslink -a "$IP" "$DSX" >/dev/null 2>&1 || { echo "hw_cycle: 3dslink FAILED" >&2; exit 1; }
+push_done=$(date +%s)
+echo "hw_cycle: push returned after $(( push_done - T0 ))s"
 
-# The run-complete signal is the guest log itself: poll for it to exist,
-# then for its md5 to settle (the game appends frame lines while it runs).
-LOG_URL="http://$IP:8080/3ds/mdk/mdk.log"
-LAST=""
-for i in $(seq 1 60); do
+# ---- verify the push by the device's own ledger -----------------------------
+# 3dslink's exit code is 0 even for a stalled transfer. transfers.log is the
+# only evidence that bytes reached the card.
+SIZE=$(stat -c %s "$DSX")
+if LEDGER=$(curl -s --max-time 10 "http://$IP:8080/3ds/netload_stub/transfers.log" 2>/dev/null) \
+   && [ -n "$LEDGER" ]; then
+    LAST=$(printf '%s\n' "$LEDGER" | tail -1)
+    case "$LAST" in
+        *status=ok*bytes_out=$SIZE*) echo "hw_cycle: push verified by transfers.log (bytes_out=$SIZE)" ;;
+        *) echo "hw_cycle: WARNING -- last transfers.log line is not this push:" >&2
+           echo "    $LAST" >&2
+           echo "hw_cycle: expected bytes_out=$SIZE status=ok" >&2 ;;
+    esac
+fi
+
+
+# The run-complete signal is a NEW `--- session end ---` marker in the guest
+# log, not a settled md5. Every line is fflushed, so the marker is complete the
+# moment it is served. md5 equality is unusable as the stop condition: the log
+# is unchanged between the push and the game's first line, so two consecutive
+# pulls match immediately and a partial log looks finished.
+#
+# A pull can also fail outright without meaning the run failed: the console's
+# sysmodule can wedge on HTTP right after a clean exit, and a failed curl is
+# then the wedge, not the build. Keep polling through failed pulls.
+# The wait budget must not include the push: a 119 MB .3dsx has taken 160-650 s
+# on this card (transfers.log: net_wait_ms alone has been 118 s), so a budget
+# started before the push expires while the game is still running and reads
+# exactly like a failed run.
+WAIT=${MDK_HW_WAIT:-600}
+PULL_FAILS=0
+ENDS=$PREV_END
+for i in $(seq 1 $(( WAIT / 3 ))); do
     if curl -s --max-time 10 -o /tmp/mdk-hw-cycle.pull "$LOG_URL" 2>/dev/null; then
-        NOW=$(md5sum /tmp/mdk-hw-cycle.pull | cut -d' ' -f1)
-        if [ -n "$LAST" ] && [ "$NOW" = "$LAST" ]; then
+        PULL_FAILS=0
+        ENDS=$(grep -c '^--- session end ---$' /tmp/mdk-hw-cycle.pull 2>/dev/null || true)
+        if [ "${ENDS:-0}" -gt "$PREV_END" ]; then
             break
         fi
-        LAST="$NOW"
+    else
+        PULL_FAILS=$(( PULL_FAILS + 1 ))
     fi
-    if [ $(( $(date +%s) - T0 )) -gt 300 ]; then
-        echo "hw_cycle: TIMEOUT waiting for the guest log" >&2
+    if [ $(( $(date +%s) - push_done )) -gt "$WAIT" ]; then
+        echo "hw_cycle: TIMEOUT after ${WAIT}s of polling (push was $(( push_done - T0 ))s)" >&2
+        echo "hw_cycle: session-end markers seen=$ENDS (baseline $PREV_END), consecutive failed pulls=$PULL_FAILS" >&2
+        if [ -s /tmp/mdk-hw-cycle.pull ]; then
+            cp /tmp/mdk-hw-cycle.pull "$OUT.partial"
+            echo "hw_cycle: kept the last pull as $OUT.partial (append-only log on SD survives the wedge)" >&2
+        fi
+        if [ "$PULL_FAILS" -gt 2 ]; then
+            echo "hw_cycle: HTTP is not answering -- likely the post-exit wedge, NOT the build. Recover with:" >&2
+            echo "    python3 /mnt/nas/Development/netload_stub/tools/atmctl.py --ip $IP cmd reboot" >&2
+        else
+            echo "hw_cycle: HTTP answers but no new session end -- raise MDK_HW_WAIT or check the run on SD." >&2
+        fi
         exit 1
     fi
     sleep 3
 done
 
 cp /tmp/mdk-hw-cycle.pull "$OUT"
+ENDS=$(grep -c '^--- session end ---$' "$OUT" 2>/dev/null || true)
+if [ "${ENDS:-0}" -le "$PREV_END" ]; then
+    echo "hw_cycle: TIMEOUT waiting for a new session end marker (no marker after $(( $(date +%s) - T0 ))s)" >&2
+    [ -s /tmp/mdk-hw-cycle.pull ] && cp /tmp/mdk-hw-cycle.pull "$OUT.partial"
+    exit 1
+fi
 NOW=$(md5sum "$OUT" | cut -d' ' -f1)
 echo "hw_cycle: cycle $(( $(date +%s) - T0 ))s, log $OUT"
 if [ "$NOW" = "$PREV" ]; then
