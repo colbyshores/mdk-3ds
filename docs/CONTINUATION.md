@@ -6,10 +6,12 @@
 FRESH back to back (push verified, level 7, autoquit, session end). Full record:
 `docs/evidence/2026-11-17-hw-loop-stable-first-hardware-results.txt`.
 
-- **The "wedge" was a parked ATM service loop.** A directed `atmctl discover` wakes
-  it; reboots do not (boot_count advanced, and :8080 still sent 0 bytes).
-  `hw_cycle.sh` wakes it before every HTTP read. AGENTS.md P10 trap 8 still
-  prescribes reboots: an owner edit is needed there (AGENTS.md is owner-protected).
+- **The ":8080 wedge" is cured by a directed `atmctl discover`, not by a reboot**
+  (boot_count advanced, and :8080 still sent 0 bytes). `hw_cycle.sh` wakes the
+  console before every HTTP read. The installed firmware (9f3632fe, built
+  2026-11-09) ALREADY has the socPoll fix, and the loop keeps its heartbeat, so
+  the mechanism is unexplained: a firmware defect, not "old firmware".
+  AGENTS.md P10 trap 8 still prescribes reboots; an owner edit is needed there.
 - **Reads need a real budget** (~28 KB/s, up to 40 s to first byte, no Range), and
   the log now rotates at boot past 128 KiB (`mdk.prev.log`). `hw_cycle.sh`
   re-baselines a rotated log.
@@ -22,17 +24,21 @@ FRESH back to back (push verified, level 7, autoquit, session end). Full record:
   least 1% of frames over 100 ms (max 521 ms). The cause is unmeasured.
 
 **NEXT, in order.**
-1. Close `hw.harness-cycle`, `hw.pixels-rgba8` and `hw.profile-og` with
-   `tools/runner/ledger_close.py` (each runs its acceptance on the console; set
-   `MDK_3DS_IP=192.168.4.167` and build the matching payload first).
-2. Re-measure the capture stall on hardware after the row-write fix (it was ~69 s).
-3. A/B the >100 ms stalls: per-60-frame flushed log lines on vs off, three runs each.
+1. DONE: `hw.harness-cycle`, `hw.pixels-rgba8` and `hw.profile-og` were closed by
+   `ledger_close.py` (f415c8b, 5ddae7a, 89e737d), each running its acceptance on
+   the console.
+2. DONE: the capture stall after the row-write fix is gone on hardware (frames
+   600->660 took 79 steps, and the run continued to frame 3170).
+3. Profiles vary a lot run to run (mean 36.3 vs 28.3 ms, p50 33.5 vs 18.9, both
+   stereo on), so take three baselines before any comparison. Then A/B the >100 ms stalls: per-60-frame flushed log lines on vs off, three runs each.
 4. `3ds.hud-canvas` (d1, ledger-done) currently FAILS `emurun.sh --expect hud` (rc 7,
    12/43 canary px outside). Lead: the emulator crop registration is ~(11,7) px off.
-5. Owner calls: the ATM screenshot quota (32 sets of firmware-project evidence, only
-   5 listed by artifacts.txt); `hw.cia-boot` and `hw.sleep-resume` need an installer
-   or lid/sleep control that ATM does not have. Workstation DNS: `.lab.home` is
-   not routed to 192.168.4.235, so the Obsidian/Cognee MCP fail with EAI_AGAIN.
+5. `hw.cia-boot` is owner-blocked by decision: CIA testing goes LAST, outside the
+   netload loop (`.3dsx` only). `hw.sleep-resume` needs lid/sleep control that ATM
+   does not have. ATM screenshots and atm.log command logging are being fixed in
+   `../netload_stub` (the owner said to clear the stale screenshot sets).
+   Workstation DNS: `.lab.home` is not routed to 192.168.4.235, so the
+   Obsidian/Cognee MCP fail with EAI_AGAIN.
 
 ## ARENA STREAMING — PHASE 0 HARDWARE BASELINE, MEASURED (branch `experimental/arena-streaming`, base `36528a3`)
 

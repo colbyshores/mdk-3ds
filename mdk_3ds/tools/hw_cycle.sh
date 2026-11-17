@@ -23,10 +23,11 @@
 # that it wrote sdmc:/3ds/mdk/hwcap.bmp.log in THIS session, and the BMP is
 # pulled to <out>.bmp and checked against its own header.
 #
-# The console address comes from --ip or $MDK_3DS_IP. The other modes the
-# ledger names (--profile, --capture, --install, --sleep) are hardware
-# steps of their own rows; they print what they need and exit 3 until
-# their row wires them, rather than pretending to have run.
+# The console address comes from --ip or $MDK_3DS_IP. --sleep (hw.sleep-resume)
+# is not wired: it prints why and exits 3 rather than pretending to have run.
+# There is NO --install: this loop and netload_stub are .3dsx-only by owner
+# decision (2026-11-17). CIA testing is a separate final step
+# (docs/OWNER_BLOCKS.md, hw.cia-boot), never a hardware-loop mode.
 # ============================================================================
 set -uo pipefail
 
@@ -35,7 +36,7 @@ IP="${MDK_3DS_IP:-}"
 OUT="/tmp/mdk-hw-cycle.log"
 while [ $# -gt 0 ]; do
     case "$1" in
-        --once|--profile|--capture|--install|--sleep) MODE="$1"; shift ;;
+        --once|--profile|--capture|--sleep) MODE="$1"; shift ;;
         --ip) IP="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         *) echo "hw_cycle: unknown argument: $1" >&2; exit 2 ;;
@@ -44,7 +45,7 @@ done
 
 case "$MODE" in
     --once|--capture|--profile) ;;
-    --install|--sleep)
+    --sleep)
         echo "hw_cycle: $MODE is a hardware step of its own ledger row and is not wired yet." >&2
         echo "          --once (push, self-quit, pull the log) is the wired cycle." >&2
         exit 3 ;;

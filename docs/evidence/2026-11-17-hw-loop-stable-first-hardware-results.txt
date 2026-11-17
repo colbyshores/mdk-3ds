@@ -27,10 +27,18 @@ network-api-reference,artifact-management}.md and
 "do not help". Two `cmd reboot` sends DID take (boot_count 655 -> 657), and
 :8080 still answered nothing afterwards. ONE directed discovery probe
 (`atmctl.py --ip 192.168.4.167 discover`) restored a full 912-byte
-status.txt immediately. This is the documented troubleshooting row "service
-loop parked" (pre-fix firmware: socPoll(...,0) is wait-for-event on SOC, so
-the ATM thread sleeps on its discovery socket until a directed probe wakes
-it). status.txt already showed it before this session made any request:
+status.txt immediately. That matches the discriminator of the netload_stub
+troubleshooting row "service loop parked". [CORRECTED the same day: this
+record first said the console ran PRE-FIX firmware. It does not. The
+installed image is netload_stub/boot.firm (SHA-256 aaf5d496..., 468,480 B,
+built 2026-11-09 16:00:44 -0700 from 9f3632fe047c, which was committed 14
+minutes earlier). That commit already carries the socPoll(...,0) fix from
+2026-11-03 (12678ff): every socPoll in the ATM loop has a 10-250 ms timeout.
+And atm.log kept printing `loop alive iters=...` heartbeats, so the loop is
+NOT parked. HTTP connections are accepted and then dropped, and a directed
+discovery makes them succeed again. The mechanism is UNEXPLAINED, and this
+is a firmware defect present in the fixed build.] status.txt already showed
+it before this session made any request:
 `http_requests=35 http_ok=6 http_drop=28` at 18 min uptime. AGENTS.md P10
 trap 8 prescribes reboots for this state. They do not fix it. AGENTS.md is
 owner-protected and was NOT edited. The owner should amend trap 8.
@@ -161,11 +169,17 @@ function-level profile: it cannot populate the hot-path corpus (AGENTS.md
 5. WHAT THE APPLIANCE CANNOT DO TODAY (rows left open, with cause)
 ------------------------------------------------------------------
 
-- ATM SCREENSHOTS DURING A RUN: impossible by design. UDP 8082 is handed to
-  the app during a run (network-api-reference), so `screenshot` sent
-  mid-run is never consumed. `screenshot_auto 20` was acknowledged
-  (`screenshot_auto: armed`, cmdack on UDP 8081) and produced nothing. A
-  manual capture at the stub is refused: `screenshot: refused
+- ATM SCREENSHOTS DURING A RUN. [CORRECTED the same day: this first said
+  UDP 8082 is handed to the app during a run. It is not. atm_svc.c keeps
+  the command socket open for the whole loop, including RUNNING, on
+  purpose; the network-api-reference sentence is stale. The mid-run
+  `screenshot` was almost certainly REFUSED for the quota below, and its
+  cmdack went unheard because nothing was listening on UDP 8081 then.]
+  `screenshot_auto 20` was acknowledged (`screenshot_auto: armed`) and
+  produced nothing, because auto capture fires only while ATM's own
+  state is RUNNING, i.e. a run ATM launched. A 3dslink -> netload_stub ->
+  hb:ldr launch leaves ATM `listening` (status showed run_id=none
+  state=listening throughout). A manual capture at the stub is refused: `screenshot: refused
   (quota_exhausted; retrieve+ack first)`. The quota counts manifest files
   in /luma/atm/screenshots: 32 sets (shot_00000001..20, labels like
   w38-post-reboot and baseline-homescreen) from the netload_stub/ATM
@@ -173,7 +187,10 @@ function-level profile: it cannot populate the hot-path corpus (AGENTS.md
   verified retrieval cannot reach the rest. Freeing the quota means acking
   another project's evidence, so it is the operator's call and was not
   done. MDK no longer needs it: the game-side capture above replaces it.
-- hw.cia-boot (`--install`): ATM has no CIA installer and no title-launch
+- hw.cia-boot: by OWNER DECISION (2026-11-17) CIA testing is the final step
+  and is NOT part of the netload loop, which is .3dsx-only. The row is
+  owner-blocked in docs/OWNER_BLOCKS.md and hw_cycle.sh has no --install.
+  (Recorded at the time: ATM has no CIA installer and no title-launch
   path for an installed title (no AM install in atm_svc.c or atmctl.py).
   Installing needs an on-console installer, a human, or a firmware
   feature.
