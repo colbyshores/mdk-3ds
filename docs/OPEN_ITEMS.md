@@ -672,6 +672,9 @@ captures, the crop, the profile numbers, the command and the display.
 What remains open is **hardware acceptance only**: every number above is emulator
 evidence on llvmpipe, and AGENTS.md P8 says emulator-green is not hardware-pass, so the
 3DS acceptance cells stay open until the console run exists. The `/4` UV stays forbidden.
+Two hardware attempts on 2026-11-17 were both blocked before any push by the ATM `:8080`
+wedge (P10 trap 8; the second persisted through two `cmd reboot` sends and 5 min of polling),
+so no console run exists yet; both are recorded at the end of the HUD evidence file above.
 
 **DO NOT SHIP A /4.** It was tried. With the panel's uv scaled by 1/4 the stripes
 thin out, and **the health digits stop reading "100"** — a change that makes one pattern

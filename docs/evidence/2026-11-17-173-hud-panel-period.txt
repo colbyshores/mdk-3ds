@@ -73,3 +73,38 @@ following two did not restore the listener, so under P10 trap 8's ladder this is
 recorded and the increment moves to non-hardware work rather than escalating to
 the operator. No payload was pushed, no console-side run exists, and therefore
 no hardware acceptance is claimed. The 3DS acceptance cells stay open.
+
+SECOND HARDWARE ATTEMPT (2026-11-17, ~14:25-14:45 UTC, `old3ds-lan167`). Still
+blocked by the `:8080` wedge; nothing was pushed, and no hardware acceptance is
+claimed. The 3DS acceptance cells stay open.
+
+- At the start the console was healthy BY BODY, not just by status code:
+  `luma/atm/status.txt` 912 bytes (`session=f0fe91e9 boot_count=655
+  uptime_s=1077`), `/3ds/mdk/mdk.log` 247,120 bytes with 4 `--- session end
+  ---` markers, ping 4-5 ms, `:17491`/`:17492`/`:4000` open.
+- The SAME status body already read `http_requests=35 http_ok=6 http_drop=28`:
+  the listener was dropping most requests 18 minutes after boot, before this
+  session made any request and before any push. This is an observation about
+  the ATM HTTP listener, not a cause established for the wedge.
+- The harness payload was rebuilt (`make -C mdk_3ds AUTOQUIT=90`, 119,372,288
+  bytes, `/3ds/netload_stub.3dsx` present in the binary).
+- Within minutes every `:8080` path timed out (000 at 8 s). `hw_cycle.sh --once`
+  refused before pushing: its own preflight `cmd reboot` and ~3 min of polling
+  did not restore `mdk.log` ("console unavailable ... Not pushing", exit 1).
+- A second `cmd reboot` (UDP :8082, 14:33:45 UTC) plus 300 s of polling for a
+  status body over 100 bytes did not restore it. At 14:43:50 ping was green
+  (3.9 ms) and `:8080` ACCEPTED TCP, but `status.txt` and `mdk.log` both
+  returned 0 bytes / 000 at 10 s -- trap 8's wedge exactly, not a hard hang.
+  Neither reboot could be confirmed (no status body to read a session id from).
+- Two device screenshots (`screenshot hwacc173a/b`) had been armed to fire
+  inside the 90 s autoquit window as visual hardware evidence for the panel;
+  they never fired, because there was no push.
+- The Rosalina GDB stub (`:4000`) was open throughout but was NOT used: with
+  nothing pushed, the game was not running, so there was no MDK process whose
+  frame counter could prove anything.
+
+Per P10 trap 8 (two reboots + five minutes), this is recorded and the
+increment moves to non-hardware work. Still needed for acceptance: one
+`hw_cycle.sh --once` that reports FRESH on a new `--- session end ---`, with
+`transfers.log status=ok bytes_out=119372288`; and, to show the stripe itself is
+gone on hardware, a device screenshot of the HUD panel taken during that run.
