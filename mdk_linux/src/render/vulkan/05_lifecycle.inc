@@ -354,6 +354,9 @@ void mdk_render_destroy(MdkRenderer rr) {
     for (size_t i = 0; i < r->colours.size(); i++) {
         retireImage(r, r->colours[i].image, r->colours[i].memory, r->colours[i].view);
     }
+    if (r->dummyFlatView) {
+        retireImage(r, VK_NULL_HANDLE, VK_NULL_HANDLE, r->dummyFlatView);
+    }
     if (r->dummyColourView) {
         retireImage(r, r->dummyColourImage, r->dummyColourMemory, r->dummyColourView);
     }

@@ -1128,11 +1128,30 @@ bool createDevice(Context* ctx, uint32_t width, uint32_t height, bool vsync) {
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
 
-    VkPhysicalDeviceFeatures features = {};
-    // MDK's original look needs nothing exotic. Anisotropic sampling and
-    // samplerAnisotropy belong to the ENHANCED look, and are requested when
-    // that look is enabled.
+    // THE FEATURES, asked for only where the device has them. The original look
+    // needs fillModeNonSolid alone. The enhanced look's colour sampler turns on
+    // anisotropy when the device supports it (10_enhanced.inc), which is only
+    // legal if the DEVICE enabled samplerAnisotropy; and glslang targeting
+    // vulkan1.3 compiles `discard` to OpDemoteToHelperInvocation, which needs
+    // shaderDemoteToHelperInvocation. Both were missing (validation errors
+    // VUID-VkSamplerCreateInfo-anisotropyEnable-01070 and
+    // VUID-VkShaderModuleCreateInfo-pCode-08740 on every --enhanced run).
+    VkPhysicalDeviceVulkan13Features have13 = {};
+    have13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    VkPhysicalDeviceFeatures2 have = {};
+    have.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    have.pNext = &have13;
+    vkGetPhysicalDeviceFeatures2(ctx->physicalDevice, &have);
+
+    VkPhysicalDeviceVulkan13Features want13 = {};
+    want13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    want13.shaderDemoteToHelperInvocation = have13.shaderDemoteToHelperInvocation;
+    VkPhysicalDeviceFeatures2 want = {};
+    want.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    want.pNext = &want13;
+    VkPhysicalDeviceFeatures& features = want.features;
     features.fillModeNonSolid = VK_TRUE;
+    features.samplerAnisotropy = have.features.samplerAnisotropy;
 
     // THE DEVICE EXTENSIONS. VK_KHR_swapchain is NOT optional: without it
     // vkGetDeviceProcAddr returns a NULL pointer for vkCreateSwapchainKHR,
@@ -1147,7 +1166,7 @@ bool createDevice(Context* ctx, uint32_t width, uint32_t height, bool vsync) {
     deviceInfo.pQueueCreateInfos = &queueInfo;
     deviceInfo.enabledExtensionCount = (uint32_t)(sizeof(deviceExtensions) / sizeof(deviceExtensions[0]));
     deviceInfo.ppEnabledExtensionNames = deviceExtensions;
-    deviceInfo.pEnabledFeatures = &features;
+    deviceInfo.pNext = &want;   // the features travel in the chain, so pEnabledFeatures stays null
 
     result = vkCreateDevice(ctx->physicalDevice, &deviceInfo, nullptr, &ctx->device);
     if (result != VK_SUCCESS) {

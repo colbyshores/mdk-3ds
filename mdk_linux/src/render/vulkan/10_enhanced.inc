@@ -263,6 +263,18 @@ bool ensureEnhanced(RendererVk* r) {
         r->dummyColourImage = dummy.image;
         r->dummyColourMemory = dummy.memory;
         r->dummyColourView = dummy.view;
+        VkImageViewCreateInfo flat = {};
+        flat.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        flat.image = dummy.image;
+        flat.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        flat.format = VK_FORMAT_R8G8B8A8_UNORM;
+        flat.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        flat.subresourceRange.levelCount = 1;
+        flat.subresourceRange.layerCount = 1;
+        if (vkCreateImageView(r->ctx.device, &flat, nullptr, &r->dummyFlatView) != VK_SUCCESS) {
+            refused("enhanced dummy 2D view: the frame renders the original look");
+            return false;
+        }
     }
 
     r->enhancedReady = true;
@@ -356,7 +368,7 @@ bool allocEnhancedSet(RendererVk* r, VkImageView colourView, VkImageView indexVi
     lightInfo.range = 528;
     VkDescriptorImageInfo shadowInfo = {};
     shadowInfo.sampler = r->colourSampler;
-    shadowInfo.imageView = r->shadowReady ? r->shadowView : r->dummyColourView;
+    shadowInfo.imageView = r->shadowReady ? r->shadowView : r->dummyFlatView;
     shadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkDescriptorImageInfo indexInfo = {};
     indexInfo.sampler = r->sampler;
@@ -495,7 +507,7 @@ void drawEnhanced(RendererVk* r, const mdk::MeshDraw* draw, const float world[16
     r->uniformCursor++;
 
     VkDescriptorSet set = VK_NULL_HANDLE;
-    if (!allocEnhancedSet(r, colourView, r->dummyColourView, r->dummyColourView,
+    if (!allocEnhancedSet(r, colourView, r->dummyFlatView, r->dummyFlatView,
                           uniformOffset, &set)) {
         refused("enhanced descriptor set: the lit draw is dropped");
         return;
@@ -557,8 +569,8 @@ void drawEnhancedCanvas(RendererVk* r, int32_t texture, int32_t palette, int32_t
         textured && palette >= 0 && hasImageReplacement(r, texture, palette);
     const int32_t mode = (textured && (palette < 0 || imageReplacement)) ? 4 : 3;
     VkImageView colourView = r->dummyColourView;
-    VkImageView indexView = r->dummyColourView;
-    VkImageView paletteView = r->dummyColourView;
+    VkImageView indexView = r->dummyFlatView;
+    VkImageView paletteView = r->dummyFlatView;
     if (textured && mode == 4 && imageReplacement) {
         colourView = getColourView(r, texture, palette, 1);
         if (!colourView) {

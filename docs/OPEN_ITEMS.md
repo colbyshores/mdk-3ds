@@ -1269,3 +1269,24 @@ sibling left standing on purpose: **`tick1`'s own `SKIP: no MDK data` still exit
 suite can skip into a green `make -C tests/scripts` on a host without `./MDK/`; it is visible as
 `SKIP` and as a PASS count that drops from 442 to **3** (measured in "Iteration 52"), and making it
 fail is owner task (10), not a batch.
+
+## The Linux `--enhanced` path's remaining Vulkan validation errors (2026-11-17)
+
+Found while using the Linux enhanced look as the PC reference for the 3DS
+Enhanced Mode work. The original look runs with **zero** validation messages.
+The enhanced path's view-type mismatch (bindings 3/4/5 given a 2D_ARRAY view
+where `enhanced.frag` declares `sampler2D`), the unrequested `samplerAnisotropy`
+and the unrequested `shaderDemoteToHelperInvocation` were fixed in the same
+batch, frame pixel-identical. Still open, counts from one level-3 run of 299
+frames (`--headless --fixed-step --enhanced`), none of which moves a captured
+pixel on this host:
+
+- `vkCmdPipelineBarrier-srcAccessMask-02815` (x3588): an image barrier with
+  `srcAccessMask = TRANSFER_WRITE` under `srcStageMask = COLOR_ATTACHMENT_OUTPUT`.
+- `VkRenderPassBeginInfo-clearValueCount-00902` (x897): a render pass with two
+  CLEAR attachments begun with `clearValueCount = 0`.
+- `vkResetDescriptorPool-descriptorPool-00313` (x861): a pool reset while a
+  submitted command buffer still uses its sets -- a real race on a GPU that runs
+  behind, even though this host does not show it.
+- `vkDestroyDevice-device-05137` (x363): images/memory/views still alive at
+  device destruction (teardown leaks).

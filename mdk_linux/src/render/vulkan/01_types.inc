@@ -281,6 +281,11 @@ struct RendererVk {
     VkImage dummyColourImage = VK_NULL_HANDLE;
     VkDeviceMemory dummyColourMemory = VK_NULL_HANDLE;
     VkImageView dummyColourView = VK_NULL_HANDLE;
+    // The same white texel as a plain 2D view, for the bindings enhanced.frag
+    // declares sampler2D (3 shadow, 4 index, 5 palette). dummyColourView is a
+    // 2D_ARRAY view for binding 0; handing it to a 2D binding is
+    // VUID-vkCmdDraw-viewType-07752 (measured: twice per enhanced draw).
+    VkImageView dummyFlatView = VK_NULL_HANDLE;
     bool enhancedReady = false;
 
     // The sun shadow (P6 shadow slice): a 2048x2048 depth target, its
