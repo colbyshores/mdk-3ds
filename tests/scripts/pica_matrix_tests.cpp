@@ -1164,6 +1164,108 @@ void testTheMipChain() {
                mdk::pica::textureBytes(mdk::pica::TexelFormat::Rgba8, 32, 32, levels));
 }
 
+void testTheHdResidencyPolicy() {
+    using mdk::pica::HdSlot;
+    // THE VICTIM: the least recently drawn resident copy that the protected frame
+    // did not draw.
+    HdSlot slots[5];
+    slots[0] = {true, 10};
+    slots[1] = {true, 3};
+    slots[2] = {false, 1};    // not resident: never a victim, however old
+    slots[3] = {true, 25};    // drawn in the protected frame
+    slots[4] = {true, 7};
+    PICA_CHECK(mdk::pica::hdEvictionVictim(slots, 5, 20) == 1);
+    slots[1].resident = false;
+    PICA_CHECK(mdk::pica::hdEvictionVictim(slots, 5, 20) == 4);
+    // Everything resident was drawn at or after the protect stamp: none.
+    PICA_CHECK(mdk::pica::hdEvictionVictim(slots, 5, 7) == -1);
+    PICA_CHECK(mdk::pica::hdEvictionVictim(slots, 0, 100) == -1);
+
+    // THE GATE: one more read only if it could be imported.
+    const size_t largest = 349504u, budget = 1048576u;
+    PICA_CHECK(mdk::pica::hdMayDispatch(0, 0, largest, budget, false));
+    PICA_CHECK(mdk::pica::hdMayDispatch(0, 2, largest, budget, false));    // 3 * largest fits
+    PICA_CHECK(!mdk::pica::hdMayDispatch(0, 3, largest, budget, false));   // 4 does not
+    PICA_CHECK(!mdk::pica::hdMayDispatch(900000, 0, largest, budget, false));
+    PICA_CHECK(mdk::pica::hdMayDispatch(900000, 0, largest, budget, true));  // a victim exists
+
+    // A CAMERA TURN, simulated with the policy alone: 12 textures of 300 KB, a
+    // 700 KB budget (2 fit) against a view drawing 3 at a time -- the protected
+    // frame's working set does NOT fit, which is the case protection exists for --
+    // turning one texture per frame. Every frame: the textures it draws are stamped; at the next
+    // boundary each wanted-but-absent one is imported if the gate and the victim
+    // allow. Asserted: nothing the previous frame drew is ever evicted, and no
+    // read is handed out that could not be imported.
+    const int32_t kCount = 12;
+    const size_t kBytes = 300000u;
+    const size_t simBudget = 700000u;
+    HdSlot sim[kCount];
+    size_t resident = 0;
+    uint32_t stamp = 0;
+    uint32_t previousFrameStart = 0;
+    bool protectedHeld = true;
+    int32_t dispatched = 0;
+    // The camera HOLDS for 10 frames (three textures wanted, two fit, all
+    // drawn every frame: the protected working set overflows the budget, and
+    // only refusing to evict it prevents thrashing), then turns one texture per
+    // frame.
+    auto windowOf = [](int32_t frame) { return frame < 10 ? 0 : frame - 10; };
+    int32_t evictions = 0, imports = 0;
+    for (int32_t frame = 0; frame < 40; frame++) {
+        const uint32_t frameStart = stamp + 1;
+        // The boundary: import what the previous frame wanted.
+        for (int32_t k = 0; k < 3; k++) {
+            const int32_t want = (windowOf(frame - 1) + k) % kCount;
+            if (frame == 0 || sim[want].resident) {
+                continue;
+            }
+            const bool evictable =
+                mdk::pica::hdEvictionVictim(sim, kCount, previousFrameStart) >= 0;
+            if (!mdk::pica::hdMayDispatch(resident, 0, kBytes, simBudget, evictable)) {
+                continue;
+            }
+            // Dispatched: an SD read the real pump would pay for. It must end in
+            // an import, or the gate let through a read only to drop it.
+            dispatched++;
+            while (resident + kBytes > simBudget) {
+                const int32_t v = mdk::pica::hdEvictionVictim(sim, kCount, previousFrameStart);
+                if (v < 0) {
+                    break;
+                }
+                if (sim[v].lastUsed >= previousFrameStart) {
+                    protectedHeld = false;
+                }
+                sim[v].resident = false;
+                resident -= kBytes;
+                evictions++;
+            }
+            if (resident + kBytes <= simBudget) {
+                sim[want].resident = true;
+                sim[want].lastUsed = previousFrameStart;
+                resident += kBytes;
+                imports++;
+            }
+
+        }
+        // The frame: draw three textures, the window moving by one each frame.
+        for (int32_t k = 0; k < 3; k++) {
+            const int32_t drawn = (windowOf(frame) + k) % kCount;
+            stamp++;
+            if (sim[drawn].resident) {
+                sim[drawn].lastUsed = stamp;
+            }
+        }
+        previousFrameStart = frameStart;
+    }
+    PICA_CHECK(protectedHeld);
+    // Every read handed out was imported: none was wasted. (The budget itself
+    // cannot be exceeded here -- an import is behind its own room check -- so it
+    // is not asserted; the GATE is what this line holds.)
+    PICA_CHECK(dispatched == imports);
+    PICA_CHECK(imports > 8);       // the view kept getting HD copies as it turned
+    PICA_CHECK(evictions > 0);     // and the budget made room for them
+}
+
 void testTheTexelTileOrder() {
     // THE SAME TRAP ONE UNIT BEFORE THE BYTES: the byte order above says which
     // byte of a texel goes where; this says WHICH TEXEL SLOT a (x, y) goes in.
@@ -1291,6 +1393,7 @@ int runPicaMatrixTests() {
     testTheHazeIsThePcCurveOnTheRightDraws();
     testTheFilteredEdge();
     testTheMipChain();
+    testTheHdResidencyPolicy();
     return failures;
 }
 

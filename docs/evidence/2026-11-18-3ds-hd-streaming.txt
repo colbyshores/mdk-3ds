@@ -75,3 +75,16 @@ of 6,291,456, 0 evicted, 0 failed, 0 queued, 0 reading. 1 MB budget (temporary
 build, reverted): 5 imported, 21 queued, 0 reading (no SD churn). L7 original
 look 0.04% (unchanged); emurun --expect hud rc 0; check.sh, host suite, formats
 (156,569 checks) green.
+
+THE RESIDENCY POLICY, HOST-TESTED (follow-up batch). The eviction choice and the
+read gate are pure functions now (pica::hdEvictionVictim, pica::hdMayDispatch),
+called by the backend's evictHd, hdHasEvictable and pump. PicaMatrix
+testTheHdResidencyPolicy: direct cases, and a camera simulation through the
+policy alone -- 12 textures of 300 KB against a 700 KB budget, a 3-texture view
+that HOLDS 10 frames (the protected working set overflows the budget) then
+turns one texture a frame. Asserted: nothing the previous frame drew is evicted,
+no read is handed out that is not imported, imports and evictions both happen.
+Non-vacuity, each with the direct checks disabled: dropping the protect test
+from the victim choice fails `protectedHeld`; a gate that always says yes fails
+`dispatched == imports`. (Review: refactor behaviour-identical; the evictable
+scan now runs only when something is queued.)

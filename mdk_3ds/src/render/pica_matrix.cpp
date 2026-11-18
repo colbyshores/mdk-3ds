@@ -469,5 +469,23 @@ void buildMipChain(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight, in
     }
 }
 
+int32_t hdEvictionVictim(const HdSlot* slots, int32_t count, uint32_t protectFrom) {
+    int32_t victim = -1;
+    for (int32_t i = 0; i < count; i++) {
+        if (!slots[i].resident || slots[i].lastUsed >= protectFrom) {
+            continue;
+        }
+        if (victim < 0 || slots[i].lastUsed < slots[victim].lastUsed) {
+            victim = i;
+        }
+    }
+    return victim;
+}
+
+bool hdMayDispatch(size_t residentBytes, size_t readsInFlight, size_t largestBytes,
+                   size_t budgetBytes, bool evictable) {
+    return evictable || residentBytes + (readsInFlight + 1) * largestBytes <= budgetBytes;
+}
+
 } // namespace pica
 } // namespace mdk

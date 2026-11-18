@@ -748,5 +748,29 @@ size_t mipChainTexels(int32_t paddedWidth, int32_t paddedHeight, int32_t levels)
 void buildMipChain(uint8_t* chain, int32_t paddedWidth, int32_t paddedHeight, int32_t realWidth,
                    int32_t realHeight, int32_t levels);
 
+// ---------------------------------------------------------------------------
+// THE HD RESIDENCY POLICY (docs/HD_TEXTURES_3DS_SPEC.md 4.2), pure so the host
+// can run a camera's worth of frames through it: the backend's pump and its
+// mid-frame allocation fallback call exactly these.
+// ---------------------------------------------------------------------------
+
+// One texture's HD copy as the policy sees it.
+struct HdSlot {
+    bool resident = false;
+    uint32_t lastUsed = 0;   // the draw stamp of its last draw
+};
+
+// The copy to evict: the least recently drawn resident one NOT drawn at or after
+// `protectFrom` (the first draw stamp of the frame whose commands may still be
+// in flight, or of the one being recorded). -1 when there is none.
+int32_t hdEvictionVictim(const HdSlot* slots, int32_t count, uint32_t protectFrom);
+
+// May another SD read be handed out? Only when it could be imported: room for
+// the largest pack texture for every read already in flight plus this one, or a
+// copy that could be evicted. Otherwise a full budget would re-read files only
+// to drop them.
+bool hdMayDispatch(size_t residentBytes, size_t readsInFlight, size_t largestBytes,
+                   size_t budgetBytes, bool evictable);
+
 } // namespace pica
 } // namespace mdk

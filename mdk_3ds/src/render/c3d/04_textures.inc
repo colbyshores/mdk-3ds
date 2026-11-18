@@ -435,20 +435,21 @@ static void dropHd(RendererC3D* renderer, C3dTexture& texture) {
 // Evicts the least recently drawn HD copy NOT drawn since `protectFrom` (the
 // frame that just ended), or returns false.
 static bool evictHd(RendererC3D* renderer, uint32_t protectFrom) {
-    C3dTexture* victim = nullptr;
+    // The policy is pica::hdEvictionVictim (host-tested); this is its view of
+    // the texture table, in a buffer reused across calls (evictions are rare:
+    // the frame boundary, or an allocation that failed).
+    std::vector<mdk::pica::HdSlot>& slots = renderer->hdSlotScratch;
+    slots.resize(renderer->textures.size());
     for (size_t i = 0; i < renderer->textures.size(); i++) {
-        C3dTexture& t = renderer->textures[i];
-        if (t.hdState != C3dTexture::HdResident || t.hdLastUsed >= protectFrom) {
-            continue;
-        }
-        if (!victim || t.hdLastUsed < victim->hdLastUsed) {
-            victim = &t;
-        }
+        slots[i].resident = renderer->textures[i].hdState == C3dTexture::HdResident;
+        slots[i].lastUsed = renderer->textures[i].hdLastUsed;
     }
-    if (!victim) {
+    const int32_t victim =
+        mdk::pica::hdEvictionVictim(slots.data(), (int32_t)slots.size(), protectFrom);
+    if (victim < 0) {
         return false;
     }
-    dropHd(renderer, *victim);
+    dropHd(renderer, renderer->textures[(size_t)victim]);
     renderer->hdEvicted++;
     return true;
 }
@@ -465,13 +466,14 @@ static void hdFailed(RendererC3D* renderer, C3dTexture& texture, const char* why
 }
 
 static bool hdHasEvictable(RendererC3D* renderer, uint32_t protectFrom) {
+    // The same rule as evictHd's, by the same function: is there a victim?
+    std::vector<mdk::pica::HdSlot>& slots = renderer->hdSlotScratch;
+    slots.resize(renderer->textures.size());
     for (size_t i = 0; i < renderer->textures.size(); i++) {
-        const C3dTexture& t = renderer->textures[i];
-        if (t.hdState == C3dTexture::HdResident && t.hdLastUsed < protectFrom) {
-            return true;
-        }
+        slots[i].resident = renderer->textures[i].hdState == C3dTexture::HdResident;
+        slots[i].lastUsed = renderer->textures[i].hdLastUsed;
     }
-    return false;
+    return mdk::pica::hdEvictionVictim(slots.data(), (int32_t)slots.size(), protectFrom) >= 0;
 }
 
 // THE PUMP, at the frame boundary -- after C3D_FrameBegin has waited for the
@@ -499,12 +501,14 @@ static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom) {
     // or something the last frame did not draw to evict. Otherwise the queue
     // waits (the view's working set fills the budget; the originals draw
     // meanwhile), and nothing is read from SD only to be thrown away (F3).
-    const bool evictable = hdHasEvictable(renderer, protectFrom);
+    // Only looked for when something waits: most frames have an empty queue,
+    // and the scan copies the whole texture table (review of the policy, low).
+    const bool evictable = !renderer->hdQueue.empty() && hdHasEvictable(renderer, protectFrom);
     size_t next = 0;
     for (; next < renderer->hdQueue.size(); next++) {
-        const size_t inFlight = (size_t)renderer->hdReader.busy();
-        if (!evictable &&
-            renderer->hdResidentBytes + (inFlight + 1) * kHdLargestBytes > kHdBudgetBytes) {
+        if (!mdk::pica::hdMayDispatch(renderer->hdResidentBytes,
+                                      (size_t)renderer->hdReader.busy(), kHdLargestBytes,
+                                      kHdBudgetBytes, evictable)) {
             break;
         }
         const int32_t id = renderer->hdQueue[next];

@@ -474,6 +474,7 @@ struct RendererC3D {
     // THE HD STREAM (C3dTexture::hdPath): the ids whose HD copy a draw asked
     // for, the bytes resident against the budget, and what happened.
     std::vector<int32_t> hdQueue;
+    std::vector<mdk::pica::HdSlot> hdSlotScratch;   // evictHd's view, reused
     // The SD reads, on their own thread (platform/async_file_reader.h): started
     // with the renderer, stopped and joined before C3D_Fini.
     mdk::AsyncFileReader hdReader;
