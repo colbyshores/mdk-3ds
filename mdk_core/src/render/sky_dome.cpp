@@ -123,16 +123,26 @@ bool buildSkyDome(const formats::Texture& sky, const uint8_t* paletteRgba, int32
     std::vector<float> rows;
     stops(0.0f, (float)height, (float)kSkyRowStep, &rows);
 
-    for (int32_t first = 0; first < wrapWidth; first += kSkySliceMax) {
+    const int32_t kDrawnMax = kSkySliceMax - 2;   // the two neighbour columns
+    for (int32_t first = 0; first < wrapWidth; first += kDrawnMax) {
         SkySlice slice;
         slice.firstColumn = first;
-        slice.width = (wrapWidth - first) < kSkySliceMax ? (wrapWidth - first) : kSkySliceMax;
-        slice.indices.resize((size_t)slice.width * (size_t)height);
+        slice.width = (wrapWidth - first) < kDrawnMax ? (wrapWidth - first) : kDrawnMax;
+        slice.storedWidth = slice.width + 2;
+        slice.indices.resize((size_t)slice.storedWidth * (size_t)height);
         for (int32_t y = 0; y < height; y++) {
-            const uint8_t* src = sky.indices() + (size_t)y * (size_t)sky.width() + (size_t)first;
-            uint8_t* dst = slice.indices.data() + (size_t)y * (size_t)slice.width;
-            for (int32_t x = 0; x < slice.width; x++) {
-                uint8_t index = src[x];
+            const uint8_t* src = sky.indices() + (size_t)y * (size_t)sky.width();
+            uint8_t* dst = slice.indices.data() + (size_t)y * (size_t)slice.storedWidth;
+            for (int32_t x = 0; x < slice.storedWidth; x++) {
+                // Stored column x is panorama column first - 1 + x, wrapped into
+                // [0, wrapWidth): at most one step out on either side.
+                int32_t column = first - 1 + x;
+                if (column < 0) {
+                    column += wrapWidth;
+                } else if (column >= wrapWidth) {
+                    column -= wrapWidth;
+                }
+                uint8_t index = src[column];
                 if (index == 0) {
                     index = (uint8_t)target;
                     out->remappedTexels++;
@@ -142,12 +152,14 @@ bool buildSkyDome(const formats::Texture& sky, const uint8_t* paletteRgba, int32
         }
         slice.first = (int32_t)out->vertices.size();
         stops((float)first, (float)(first + slice.width), (float)kSkyColumnStep, &columns);
-        const float width = (float)slice.width;
+        // u over the STORED width, offset past the leading neighbour column.
+        const float stored = (float)slice.storedWidth;
+        const float origin = (float)first - 1.0f;
         for (size_t j = 0; j + 1 < rows.size(); j++) {
             for (size_t i = 0; i + 1 < columns.size(); i++) {
                 const float c0 = columns[i], c1 = columns[i + 1];
                 const float r0 = rows[j], r1 = rows[j + 1];
-                const float u0 = (c0 - (float)first) / width, u1 = (c1 - (float)first) / width;
+                const float u0 = (c0 - origin) / stored, u1 = (c1 - origin) / stored;
                 const float v0 = r0 / (float)height, v1 = r1 / (float)height;
                 pushCell(&out->vertices,
                          skyVertex(skyDirection(c0, r0, ppr, horizon, off), u0, v0),

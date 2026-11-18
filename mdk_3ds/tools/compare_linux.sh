@@ -50,7 +50,7 @@ mkdir -p "$SEED/3ds/mdk"
 if [ -n "${MDK_COMPARE_TOGGLES:-}" ]; then
     cp "$MDK_COMPARE_TOGGLES" "$SEED/3ds/mdk/config.ini"
 else
-    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\n' \
+    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\n' \
         > "$SEED/3ds/mdk/config.ini"
 fi
 # Enough wall time for load + <frame> fixed frames under emulation.

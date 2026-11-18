@@ -373,9 +373,17 @@ else
 fi
 # The canvas canary is armed by a file (03_frame.inc canaryArmed): every HUD
 # verdict needs it, so an --expect hud* run seeds it; nothing else draws it.
+#
+# AND THE ORIGINAL LOOK. The HUD verdict's ink is the exact (0,255,0) the original
+# look's nearest sampling paints; a missing config.ini means every Enhanced Mode
+# toggle ON (SPEC.md 7.9), and FILTERING blends that ink into its neighbours. So
+# the hud lanes run with every toggle off, unless --seed-sdmc supplies a config
+# (it is copied after, and wins).
 case "$EXPECT" in
   hud*) mkdir -p "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk" &&
-        : > "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk/canary.txt" ;;
+        : > "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk/canary.txt" &&
+        printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\n' \
+          > "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk/config.ini" ;;
 esac
 if [ -n "${SEED_SDMC:-}" ]; then
   [ -d "$SEED_SDMC" ] || { echo "emurun: --seed-sdmc $SEED_SDMC is not a directory" >&2; exit 2; }

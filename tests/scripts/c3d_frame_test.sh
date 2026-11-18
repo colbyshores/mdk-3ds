@@ -1128,31 +1128,47 @@ def adjudicate(text, quiet=False):
               "only writer, so a second one writes behind its back: %s"
               % (len(blend), "none" if not blend else "; ".join(loc for _, loc in blend)))
 
-    # The alpha test is pinned three ways: ONE writer, INSIDE installEye (so
-    # both eyes get it — the same placement rule that made batch 30's black
-    # screen a checked property), and spelled with the oracle's own predicate.
-    # A reference moved to 5, or GPU_ALWAYS, or a `false`, is invisible in every
-    # scene this frontend can draw today, so the spelling is the pin.
+    # The alpha test is pinned three ways: ONE writer, installAlphaTest (a cached
+    # helper, since Enhanced Mode filtering made the reference per draw: the half
+    # cover for a filtered scene draw, the oracle's discard for the canvas and for
+    # nearest -- pica::alphaTestReferenceFor); installEye CALLS it, forced (so both
+    # eyes get the frame's default -- the same placement rule that made batch
+    # 30's black screen a checked property); and it is spelled with the oracle's
+    # own predicate. A reference moved to 5, or GPU_ALWAYS, or a `false`, is
+    # invisible in every scene this frontend can draw today, so the spelling is
+    # the pin.
     atest = calls(text, r"C3D_AlphaTest\(")
-    eye_install = line_range(text, body_span(text, "installEye"))
+    writer = line_range(text, body_span(text, "installAlphaTest"))
     atest_stray = [loc for ln, loc in atest
-                   if not (eye_install and eye_install[0] <= ln <= eye_install[1])]
+                   if not (writer and writer[0] <= ln <= writer[1])]
+    eye_body = body(text, "installEye") or ""
+    eye_calls = re.findall(r"installAlphaTest\(\s*r\s*,\s*mdk::pica::alphaTestReferenceFor\("
+                           r"\s*r->toggles\.enableFiltering\s*,\s*mdk::Pass::Solid\s*\)\s*,"
+                           r"\s*true\s*\)", eye_body)
     rep.check("alpha-test-single-writer-in-install-eye",
-              len(atest) == 1 and eye_install and not atest_stray,
-              "%d C3D_AlphaTest call(s), %d outside installEye: %s (frame state one eye "
-              "does not get is a hole in that eye)"
+              len(atest) == 1 and writer and not atest_stray and len(eye_calls) == 1,
+              "%d C3D_AlphaTest call(s), %d outside installAlphaTest: %s; installEye's forced "
+              "installAlphaTest(r, alphaTestReferenceFor(filtering, Solid), true) calls: %d "
+              "(frame state one eye does not get is a hole in that eye)"
               % (len(atest), len(atest_stray),
-                 "none" if not atest_stray else "; ".join(atest_stray)))
+                 "none" if not atest_stray else "; ".join(atest_stray), len(eye_calls)))
 
     discard = [loc.strip() for _, loc in code_lines(text)
-               if re.search(r"C3D_AlphaTest\(\s*true\s*,\s*GPU_GREATER\s*,\s*"
-                            r"mdk::pica::kAlphaTestReference\s*\)", loc)]
-    rep.check("alpha-test-is-the-oracles-discard", len(discard) == 1,
-              "%d C3D_AlphaTest written as (true, GPU_GREATER, kAlphaTestReference): %s "
-              "(GPU_GREATER against 0 IS `if (index == 0) discard;`, because the palette "
-              "expansion encodes index 0 as alpha 0 and every other index as 255; any "
+               if re.search(r"C3D_AlphaTest\(\s*true\s*,\s*GPU_GREATER\s*,\s*reference\s*\)",
+                            loc)]
+    draw_body = body(text, "drawRecorded") or ""
+    draw_calls = re.findall(r"installAlphaTest\(\s*r\s*,\s*mdk::pica::alphaTestReferenceFor\("
+                            r"\s*r->toggles\.enableFiltering\s*,\s*draw->material\.pass\s*\)"
+                            r"\s*,\s*false\s*\)", draw_body)
+    # (The reference VALUES -- kAlphaTestReference with filtering off or on the
+    # canvas, the half cover for a filtered scene draw -- are PicaMatrix's pins.)
+    rep.check("alpha-test-is-the-oracles-discard", len(discard) == 1 and len(draw_calls) == 1,
+              "%d C3D_AlphaTest written as (true, GPU_GREATER, reference): %s; drawRecorded's "
+              "installAlphaTest(r, alphaTestReferenceFor(filtering, draw->material.pass), false) "
+              "calls: %d (GPU_GREATER against 0 IS `if (index == 0) discard;`, because the "
+              "palette expansion encodes index 0 as alpha 0 and every other index as 255; any "
               "other spelling is a different predicate and a discarded fragment does not "
-              "write depth)" % (len(discard), discard or ["none"]))
+              "write depth)" % (len(discard), discard or ["none"], len(draw_calls)))
 
     # THE MICROCODE IS UPLOADED FROM INSIDE THE FRAME (review-6 F6, external review
     # 2026-11-05). Batch 66 hung the guest between `shaderProgramSetVsh ok` and the
@@ -2620,14 +2636,23 @@ ARMS = [
                          "    C3D_DrawArrays(GPU_TRIANGLES, first, count);", 1),
      "alpha-test-single-writer-in-install-eye"),
     ("alpha-test-reference-moved",
-     lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);",
+     lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, reference);",
                          "C3D_AlphaTest(true, GPU_GREATER, 5);", 1),
      "alpha-test-is-the-oracles-discard"),
     ("alpha-test-disabled",
-     lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);",
-                         "C3D_AlphaTest(false, GPU_ALWAYS, mdk::pica::kAlphaTestReference);",
+     lambda s: s.replace("C3D_AlphaTest(true, GPU_GREATER, reference);",
+                         "C3D_AlphaTest(false, GPU_ALWAYS, reference);",
                          1),
      "alpha-test-is-the-oracles-discard"),
+    ("alpha-test-ignores-the-draw's-pass (the canvas takes the half cover)",
+     lambda s: s.replace("draw->material.pass), false);",
+                         "mdk::Pass::Solid), false);", 1),
+     "alpha-test-is-the-oracles-discard"),
+    ("installEye stops installing the frame's alpha test",
+     lambda s: s.replace("    installAlphaTest(r, mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,\n"
+                         "                                                         mdk::Pass::Solid), true);\n",
+                         "", 1),
+     "alpha-test-single-writer-in-install-eye"),
     # The backend's own refused-mesh latch (review-14's related observation). This is
     # the line that printed 1710 times in one run; the frontend's copy of the same
     # edge trigger is pinned three times and this one was pinned not at all.
@@ -3318,9 +3343,11 @@ ARMS = [
     # the draw") and the one batch 126's own closing sentence asserted impossible.
     ("the padding fill moved after the expansion loop and zeroes every texel the helper "
      "wrote (review-12 F1: the rule read the destination and the length, not the place)",
-     lambda s: s.replace("        }\n    }\n    return pixels;",
+     # (Re-anchored 2026-11-17: since prepareForFiltering the loop is followed by
+     # its comment, not by `return`; the wipe still lands right after the loop.)
+     lambda s: s.replace("        }\n    }\n    // Ready for Enhanced Mode filtering",
                          "        }\n    }\n    memset(pixels, 0, texels * 4);\n"
-                         "    return pixels;", 1),
+                         "    // Ready for Enhanced Mode filtering", 1),
      "index-texels-are-rotated-for-the-pica"),
     # Review-12 open question 2, answered as a defect rather than a limit: the same wipe
     # with the fill left where it was and the rows moved around it. Source order cannot

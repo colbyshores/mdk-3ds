@@ -347,6 +347,11 @@ CONTEXT_VOID_ENTRY_POINTS = VOID_ENTRY_POINTS | {
     "vkGetPhysicalDeviceQueueFamilyProperties",
     "vkGetDeviceQueue",
     "vkGetInstanceProcAddr",
+    # Void in the API (the answer is the out-struct chain): the device asks which
+    # optional features exist before enabling them (2026-11-17, samplerAnisotropy
+    # and shaderDemoteToHelperInvocation for the enhanced look). Context-only:
+    # renderer_vk.cpp does not call it, so B5 cannot move.
+    "vkGetPhysicalDeviceFeatures2",
 }
 
 

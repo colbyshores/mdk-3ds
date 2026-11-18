@@ -419,6 +419,8 @@ struct RendererC3D {
     float hazeExponent = 0.0f;
     bool hazeLive = false;
     bool hazeOn = false;
+    // The alpha-test reference installed (installAlphaTest's cache).
+    int alphaReference = 0;
 
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin

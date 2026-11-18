@@ -962,6 +962,97 @@ void testTheHazeIsThePcCurveOnTheRightDraws() {
     PICA_CHECK(mdk::pica::hazeColourWord(wild) == 0xFF33FF00u);
 }
 
+void testTheFilteredEdge() {
+    // THE ALPHA-TEST REFERENCE, per draw: the oracle's discard with filtering
+    // off; the PC's half cover (keep alpha >= 0.5, i.e. byte > 127) for a
+    // filtered SCENE draw; and never for the canvas, which enhanced.frag returns
+    // from before its HALF_COVER discard (the hurt flash is alpha 0.4).
+    using mdk::Pass;
+    const Pass scene[5] = {Pass::Solid, Pass::DoubleSided, Pass::Mirror, Pass::Blended, Pass::OnTop};
+    for (int i = 0; i < 5; i++) {
+        PICA_CHECK(mdk::pica::alphaTestReferenceFor(false, scene[i]) == mdk::pica::kAlphaTestReference);
+        PICA_CHECK(mdk::pica::alphaTestReferenceFor(true, scene[i]) == 127);
+    }
+    PICA_CHECK(mdk::pica::alphaTestReferenceFor(true, Pass::Overlay) == mdk::pica::kAlphaTestReference);
+    PICA_CHECK(mdk::pica::alphaTestReferenceFor(false, Pass::Overlay) == mdk::pica::kAlphaTestReference);
+    const int half = mdk::pica::alphaTestReferenceFor(true, Pass::Solid);
+    PICA_CHECK(128 > half);      // 128/255 >= 0.5: kept
+    PICA_CHECK(!(127 > half));   // 127/255 <  0.5: cut
+    PICA_CHECK(102 > mdk::pica::alphaTestReferenceFor(true, Pass::Overlay));  // the hurt flash survives
+
+    // A 5x5 image in an 8x8 buffer (one whole tile, a legal PICA layout): opaque
+    // red with a transparent hole at (1,1) and a transparent texel at (2,2) whose
+    // opaque neighbours include two greens.
+    const uint32_t pw = 8, ph = 8;
+    uint8_t buf[8 * 8 * 4];
+    memset(buf, 0, sizeof(buf));
+    auto at = [&](uint8_t* base, uint32_t x, uint32_t y, uint32_t w) {
+        return base + mdk::pica::textureTexelIndex(x, y, w) * 4u;
+    };
+    for (uint32_t y = 0; y < 5; y++) {
+        for (uint32_t x = 0; x < 5; x++) {
+            mdk::pica::texelBytes(at(buf, x, y, pw), 200, 0, 0, 255);   // red
+        }
+    }
+    mdk::pica::texelBytes(at(buf, 1, 1, pw), 0, 0, 0, 0);       // the hole
+    mdk::pica::texelBytes(at(buf, 2, 2, pw), 0, 0, 0, 0);       // the second hole
+    mdk::pica::texelBytes(at(buf, 2, 1, pw), 0, 100, 0, 255);   // green
+    mdk::pica::texelBytes(at(buf, 1, 2, pw), 0, 100, 0, 255);   // green
+    mdk::pica::prepareForFiltering(buf, 5, 5, (int32_t)pw, (int32_t)ph);
+
+    // [A, B, G, R]. (1,1)'s opaque 8-neighbours: five red, two green ((2,2) is
+    // transparent and is not a source). Its alpha stays 0.
+    PICA_CHECK(at(buf, 1, 1, pw)[0] == 0);
+    PICA_CHECK(at(buf, 1, 1, pw)[3] == (uint8_t)(200u * 5u / 7u));
+    PICA_CHECK(at(buf, 1, 1, pw)[2] == (uint8_t)(100u * 2u / 7u));
+    PICA_CHECK(at(buf, 1, 1, pw)[1] == 0);
+    // (2,2)'s: (1,1) transparent (not a source even after it was coloured); (2,1)
+    // and (1,2) green; (3,1), (1,3), (3,2), (2,3), (3,3) red -> 5 red, 2 green.
+    PICA_CHECK(at(buf, 2, 2, pw)[0] == 0);
+    PICA_CHECK(at(buf, 2, 2, pw)[3] == (uint8_t)(200u * 5u / 7u));
+    PICA_CHECK(at(buf, 2, 2, pw)[2] == (uint8_t)(100u * 2u / 7u));
+    // Opaque texels are untouched.
+    PICA_CHECK(at(buf, 0, 0, pw)[0] == 255 && at(buf, 0, 0, pw)[3] == 200);
+    // THE CLAMP: the first padding column and row copy the last real ones, alpha
+    // included, the corner from the copied column; beyond them, still padding.
+    for (uint32_t y = 0; y < 5; y++) {
+        PICA_CHECK(memcmp(at(buf, 5, y, pw), at(buf, 4, y, pw), 4) == 0);
+        PICA_CHECK(at(buf, 6, y, pw)[0] == 0);
+    }
+    for (uint32_t x = 0; x < 6; x++) {
+        PICA_CHECK(memcmp(at(buf, x, 5, pw), at(buf, x, 4, pw), 4) == 0);
+        PICA_CHECK(at(buf, x, 6, pw)[0] == 0);
+    }
+
+    // ONE PADDED AXIS: 8 wide (no column to fill), 5 tall in 8.
+    uint8_t one[8 * 8 * 4];
+    memset(one, 0, sizeof(one));
+    for (uint32_t y = 0; y < 5; y++) {
+        for (uint32_t x = 0; x < 8; x++) {
+            mdk::pica::texelBytes(at(one, x, y, 8), (uint32_t)(x * 10), (uint32_t)y, 7, 255);
+        }
+    }
+    mdk::pica::prepareForFiltering(one, 8, 5, 8, 8);
+    for (uint32_t x = 0; x < 8; x++) {
+        PICA_CHECK(memcmp(at(one, x, 5, 8), at(one, x, 4, 8), 4) == 0);
+        PICA_CHECK(at(one, x, 6, 8)[0] == 0);
+    }
+
+    // A POWER-OF-TWO image fills no padding, but its transparent texels still
+    // take colour (a vacuous all-opaque buffer would pass a no-op).
+    uint8_t pot[8 * 8 * 4];
+    memset(pot, 0, sizeof(pot));
+    for (uint32_t y = 0; y < 8; y++) {
+        for (uint32_t x = 0; x < 8; x++) {
+            mdk::pica::texelBytes(at(pot, x, y, 8), 0, 0, 90, 255);   // blue
+        }
+    }
+    mdk::pica::texelBytes(at(pot, 7, 7, 8), 0, 0, 0, 0);
+    mdk::pica::prepareForFiltering(pot, 8, 8, 8, 8);
+    PICA_CHECK(at(pot, 7, 7, 8)[0] == 0 && at(pot, 7, 7, 8)[1] == 90);
+    PICA_CHECK(at(pot, 6, 6, 8)[0] == 255);
+}
+
 void testTheTexelTileOrder() {
     // THE SAME TRAP ONE UNIT BEFORE THE BYTES: the byte order above says which
     // byte of a texel goes where; this says WHICH TEXEL SLOT a (x, y) goes in.
@@ -1087,6 +1178,7 @@ int runPicaMatrixTests() {
     testTheTexelTileOrder();
     testSceneUvRunsFromTheLastRow();
     testTheHazeIsThePcCurveOnTheRightDraws();
+    testTheFilteredEdge();
     return failures;
 }
 

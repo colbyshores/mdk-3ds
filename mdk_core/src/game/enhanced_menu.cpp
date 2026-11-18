@@ -9,7 +9,7 @@ namespace {
 
 // The rows, in the config file's order (SPEC.md 7.9's flag order).
 const char* const kLabels[EnhancedMenu::kRowCount] = {
-    "SKY SHADOWS", "FRAGMENT LIGHTS", "HAZE", "MIRRORS", "GLOW",
+    "SKY SHADOWS", "FRAGMENT LIGHTS", "HAZE", "MIRRORS", "GLOW", "FILTERING",
 };
 
 bool valueOf(const EnhancedToggles& toggles, int32_t row) {
@@ -18,7 +18,8 @@ bool valueOf(const EnhancedToggles& toggles, int32_t row) {
         case 1: return toggles.enableFragmentLights;
         case 2: return toggles.enableHaze;
         case 3: return toggles.enableMirrors;
-        default: return toggles.enableGlowBillboards;
+        case 4: return toggles.enableGlowBillboards;
+        default: return toggles.enableFiltering;
     }
 }
 
@@ -28,7 +29,8 @@ void flip(EnhancedToggles* toggles, int32_t row) {
         case 1: toggles->enableFragmentLights = !toggles->enableFragmentLights; break;
         case 2: toggles->enableHaze = !toggles->enableHaze; break;
         case 3: toggles->enableMirrors = !toggles->enableMirrors; break;
-        default: toggles->enableGlowBillboards = !toggles->enableGlowBillboards; break;
+        case 4: toggles->enableGlowBillboards = !toggles->enableGlowBillboards; break;
+        default: toggles->enableFiltering = !toggles->enableFiltering; break;
     }
 }
 

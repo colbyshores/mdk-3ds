@@ -74,12 +74,30 @@ int runSkyDomeTests() {
     SkyDome dome;
     check(buildSkyDome(sky, palette, wrap, horizon, offset, 7, 9, &dome), "builds");
 
-    // (1) Slices: at most 1024 wide, contiguous, covering [0, wrap) once.
+    // (1) Slices: their TEXTURE at most 1024 wide, the drawn columns contiguous
+    // and covering [0, wrap) once, each texture carrying one neighbour column on
+    // each side (wrapped) so a bilinear tap at a slice edge reads the panorama.
     int32_t next = 0;
     for (const SkySlice& s : dome.slices) {
-        check(s.width > 0 && s.width <= kSkySliceMax, "slice fits the PICA's 1024");
+        check(s.width > 0 && s.storedWidth == s.width + 2, "slice stores its two neighbours");
+        check(s.storedWidth <= kSkySliceMax, "slice texture fits the PICA's 1024");
         check(s.firstColumn == next, "slices are contiguous");
-        check((int32_t)s.indices.size() == s.width * height, "slice holds width*height indices");
+        check((int32_t)s.indices.size() == s.storedWidth * height,
+              "slice holds storedWidth*height indices");
+        bool neighbours = true;
+        for (int32_t y = 0; y < height; y++) {
+            const int32_t before = (s.firstColumn - 1 + wrap) % wrap;
+            const int32_t after = (s.firstColumn + s.width) % wrap;
+            const uint8_t* row = s.indices.data() + (size_t)y * (size_t)s.storedWidth;
+            const uint8_t* src = sky.indices() + (size_t)y * (size_t)sky.width();
+            auto remapped = [&](uint8_t i) { return i == 0 ? (uint8_t)dome.remapTarget : i; };
+            if (row[0] != remapped(src[before]) ||
+                row[s.storedWidth - 1] != remapped(src[after]) ||
+                row[1] != remapped(src[s.firstColumn])) {
+                neighbours = false;
+            }
+        }
+        check(neighbours, "stored edge columns are the panorama's wrapped neighbours");
         next += s.width;
     }
     check(next == wrap, "slices cover the whole wrap");
@@ -96,7 +114,7 @@ int runSkyDomeTests() {
             const Vec3 dir{v.pos.x / len, v.pos.y / len, v.pos.z / len};
             float column = 0.0f, row = 0.0f;
             skyPanoramaPosition(dir, (float)wrap, (float)horizon, (float)offset, &column, &row);
-            const float wantColumn = (float)s.firstColumn + v.uv.x * (float)s.width;
+            const float wantColumn = (float)s.firstColumn - 1.0f + v.uv.x * (float)s.storedWidth;
             const float wantRow = v.uv.y * (float)height;
             float dc = fabsf(column - fmodf(wantColumn, (float)wrap));
             if (dc > (float)wrap / 2.0f) dc = (float)wrap - dc;   // the seam at 0/1800

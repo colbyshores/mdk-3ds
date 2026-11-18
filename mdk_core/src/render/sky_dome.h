@@ -26,7 +26,11 @@
 // wrap_width = 1800 columns, and a PICA texture is at most 1024 wide. The
 // columns are cut into slices of at most kSkySliceMax, each its own index
 // texture and its own vertex range, cut exactly at a slice boundary so no
-// triangle spans two textures.
+// triangle spans two textures. Each slice's texture also carries ONE NEIGHBOUR
+// COLUMN on each side (the panorama's previous and next columns, wrapped), so a
+// bilinear tap at a slice's edge -- the 3DS's Enhanced Mode filtering -- reads
+// the panorama's own neighbour instead of wrapping onto the slice's far edge: a
+// one-texel seam at every boundary otherwise. A nearest tap never reaches them.
 //
 // AND INDEX 0 IS NOT TRANSPARENT IN THE SKY. The scene's expansion makes palette
 // index 0 transparent (the palette shader's discard), but the sky shader uses
@@ -58,9 +62,13 @@ static constexpr float kSkyRadius = 10000.0f;   // inside the camera's 20000 far
 
 // One vertical slice of the panorama: its own index texture.
 struct SkySlice {
-    int32_t firstColumn = 0;
-    int32_t width = 0;
-    std::vector<uint8_t> indices;   // width * height, row-major, index 0 remapped
+    int32_t firstColumn = 0;        // the first panorama column the slice DRAWS
+    int32_t width = 0;              // how many columns it draws
+    // The texture: the drawn columns plus one neighbour column on each side, so
+    // storedWidth = width + 2 <= kSkySliceMax; stored column 0 is panorama column
+    // firstColumn - 1 (wrapped) and the last is firstColumn + width (wrapped).
+    int32_t storedWidth = 0;
+    std::vector<uint8_t> indices;   // storedWidth * height, row-major, index 0 remapped
     int32_t first = 0;              // its triangles in SkyDome::vertices
     int32_t count = 0;
 };
@@ -68,7 +76,7 @@ struct SkySlice {
 struct SkyDome {
     // The mesh: positions on a sphere of kSkyRadius around the origin (draw it
     // with the camera's position as the world translation), uv normalised over
-    // the slice's REAL size (the backend scales to its padding).
+    // the slice's STORED width and height (the backend scales to its padding).
     std::vector<Vertex> vertices;
     std::vector<SkySlice> slices;
     int32_t height = 0;

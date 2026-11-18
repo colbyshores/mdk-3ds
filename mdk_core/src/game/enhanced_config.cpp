@@ -82,6 +82,8 @@ void applyLine(const char* begin, const char* end, EnhancedToggles* toggles) {
         toggles->enableMirrors = value;
     } else if (keyIs(begin, keyEnd, "enableGlowBillboards")) {
         toggles->enableGlowBillboards = value;
+    } else if (keyIs(begin, keyEnd, "enableFiltering")) {
+        toggles->enableFiltering = value;
     }
 }
 
@@ -115,6 +117,7 @@ std::string writeEnhancedConfig(const EnhancedToggles& toggles) {
     appendToggle(&out, "enableHaze", toggles.enableHaze);
     appendToggle(&out, "enableMirrors", toggles.enableMirrors);
     appendToggle(&out, "enableGlowBillboards", toggles.enableGlowBillboards);
+    appendToggle(&out, "enableFiltering", toggles.enableFiltering);
     return out;
 }
 

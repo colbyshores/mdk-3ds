@@ -116,6 +116,7 @@ static void replayQueue(RendererC3D* r);
 static void drawDiagnostic(RendererC3D* r, float canvasWidth);
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset);
 static void prepareHaze(RendererC3D* r);
+static void installAlphaTest(RendererC3D* r, int reference, bool force);
 
 // Install one pass's depth state on the citro3d context and record it in the
 // cache.
@@ -206,6 +207,17 @@ static void installBlendState(RendererC3D* r, mdk::Pass pass, mdk::Blend blend) 
 // belt and braces rather than the mechanism. It is written every frame anyway,
 // because an unwritten PICA register is the invisible-geometry failure mode and
 // not an error (AGENTS.md P2).
+// THE ONE ALPHA-TEST WRITER. `reference` comes from pica::alphaTestReferenceFor;
+// `force` writes it whatever the cache says (installEye: the register is frame
+// state and the cache must describe the context, the cullMode discipline).
+static void installAlphaTest(RendererC3D* r, int reference, bool force) {
+    if (!force && reference == r->alphaReference) {
+        return;
+    }
+    C3D_AlphaTest(true, GPU_GREATER, reference);
+    r->alphaReference = reference;
+}
+
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     C3D_FrameDrawOn(target);
 
@@ -317,7 +329,10 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // discard does; `Blend::Add` (SRC_ALPHA / ONE) adds zero, the same. And a
     // PARTIAL alpha is above the `> 0` reference, so it survives this test rather
     // than being cut -- the palette expansion's fractional EDGE_CLEAR coverage is
-    // not at risk here. The corner has TWO INDEPENDENT TRIGGERS and either one is
+    // not at risk here. (Under Enhanced Mode FILTERING a SCENE draw's reference
+    // is the half cover, 127, and a partial alpha below it IS cut, as the PC's
+    // HALF_COVER cuts it; the canvas keeps the reference 0 because the PC's
+    // canvas modes return before that discard -- pica::alphaTestReferenceFor.) The corner has TWO INDEPENDENT TRIGGERS and either one is
     // enough (review-6 F3 -- an earlier draft of this line made them one
     // conjunction, which is the narrower and wrong reading): an UNBLENDED pass
     // moves COLOUR, because a fragment with blend off replaces the target, so the
@@ -332,7 +347,12 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // canvas's pass, and must NOT spend itself scoping the alpha test per pass
     // before that choice is made (review-4 F9 for the claim, review-5 F5 for the
     // correction).
-    C3D_AlphaTest(true, GPU_GREATER, mdk::pica::kAlphaTestReference);
+    // Under Enhanced Mode FILTERING a scene draw's cut is the PC's half cover
+    // instead (pica::alphaTestReferenceFor; never the canvas's), so the reference
+    // is per draw: installAlphaTest is the one writer, cached, and this is the
+    // frame's default -- the first pass the queue draws.
+    installAlphaTest(r, mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,
+                                                         mdk::Pass::Solid), true);
 
     // The frame's default blend state: the pass the queue starts with. Written
     // every eye so the register is never left to citro3d's initialiser, and

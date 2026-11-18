@@ -244,10 +244,11 @@ BlendState blendStateForPass(Pass pass, Blend blend) {
 }
 
 bool alphaTestPasses(int alphaByte) {
-    // The predicate the hardware is INSTALLED with, not the predicate the
-    // hardware holds: the backend writes a literal
-    // `C3D_AlphaTest(true, GPU_GREATER, kAlphaTestReference)` and never calls
-    // this (review-4 F5). Only the reference is shared. What holds the SPELLING
+    // The ORIGINAL look's predicate, not the predicate the hardware holds: the
+    // backend installs `C3D_AlphaTest(true, GPU_GREATER, reference)` through
+    // installAlphaTest with `alphaTestReferenceFor(filtering, pass)`, which is
+    // kAlphaTestReference whenever Enhanced Mode filtering is off, and never
+    // calls this (review-4 F5). Only the reference is shared. What holds the SPELLING
     // at the call site is the frame gate -- `tests/scripts/c3d_frame_test.sh`'s
     // `alpha-test-is-the-oracles-discard`, `alpha-test-reference-moved` and
     // `alpha-test-disabled` arms each go red if it drifts -- and what holds this
@@ -320,6 +321,75 @@ uint32_t hazeColourWord(const Colour& colour) {
         word |= (uint32_t)(v * 255.0f + 0.5f) << (8 * k);
     }
     return word;
+}
+
+void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
+                         int32_t paddedHeight) {
+    if (!tiled || width <= 0 || height <= 0 || width > paddedWidth || height > paddedHeight) {
+        return;
+    }
+    // [A, B, G, R] per texel (texelBytes).
+    const uint32_t pw = (uint32_t)paddedWidth;
+    // (1) the colour under each transparent real texel. Only OPAQUE neighbours are
+    // read and only alpha-0 texels are written (their alpha untouched), so the
+    // pass is order-independent: no written texel is ever read as a source.
+    for (int32_t y = 0; y < height; y++) {
+        for (int32_t x = 0; x < width; x++) {
+            uint8_t* t = tiled + textureTexelIndex((uint32_t)x, (uint32_t)y, pw) * 4u;
+            if (t[0] != 0) {
+                continue;
+            }
+            uint32_t sum[3] = {0, 0, 0};
+            uint32_t n = 0;
+            for (int32_t dy = -1; dy <= 1; dy++) {
+                for (int32_t dx = -1; dx <= 1; dx++) {
+                    const int32_t nx = x + dx;
+                    const int32_t ny = y + dy;
+                    if ((dx == 0 && dy == 0) || nx < 0 || ny < 0 || nx >= width || ny >= height) {
+                        continue;
+                    }
+                    const uint8_t* s =
+                        tiled + textureTexelIndex((uint32_t)nx, (uint32_t)ny, pw) * 4u;
+                    if (s[0] == 0) {
+                        continue;
+                    }
+                    sum[0] += s[1];
+                    sum[1] += s[2];
+                    sum[2] += s[3];
+                    n++;
+                }
+            }
+            if (n == 0) {
+                continue;
+            }
+            // The mean without a divide: the ARM11 has no integer divide, and this
+            // can run mid-frame when an evicted texture is made again (06_draw.inc).
+            // ceil(65536 / n) is exact here: a sum is at most 8 * 255, so the
+            // product's error stays below 0.03 and no mean's fraction (at most
+            // 6/7) is pushed over an integer.
+            static const uint32_t kReciprocal[9] = {0, 65536, 32768, 21846, 16384,
+                                                    13108, 10923, 9363, 8192};
+            const uint32_t k = kReciprocal[n];
+            t[1] = (uint8_t)((sum[0] * k) >> 16);
+            t[2] = (uint8_t)((sum[1] * k) >> 16);
+            t[3] = (uint8_t)((sum[2] * k) >> 16);
+        }
+    }
+    // (2) the clamp, one texel into the padding on each padded axis: the column
+    // first, then the row (which also fills the corner from the copied column).
+    if (width < paddedWidth) {
+        for (int32_t y = 0; y < height; y++) {
+            memcpy(tiled + textureTexelIndex((uint32_t)width, (uint32_t)y, pw) * 4u,
+                   tiled + textureTexelIndex((uint32_t)(width - 1), (uint32_t)y, pw) * 4u, 4);
+        }
+    }
+    if (height < paddedHeight) {
+        const int32_t columns = width < paddedWidth ? width + 1 : width;
+        for (int32_t x = 0; x < columns; x++) {
+            memcpy(tiled + textureTexelIndex((uint32_t)x, (uint32_t)height, pw) * 4u,
+                   tiled + textureTexelIndex((uint32_t)x, (uint32_t)(height - 1), pw) * 4u, 4);
+        }
+    }
 }
 
 } // namespace pica

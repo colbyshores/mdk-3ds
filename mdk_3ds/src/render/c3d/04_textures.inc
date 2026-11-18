@@ -119,6 +119,11 @@ static uint8_t* expandIndices(const uint8_t* indices, int32_t width, int32_t hei
                                   paletteRgba[index * 4 + 1], paletteRgba[index * 4 + 2], 255u);
         }
     }
+    // Ready for Enhanced Mode filtering whichever way its toggle stands now: the
+    // toggle is live, the texture is made once (pica::prepareForFiltering; a
+    // nearest sample of any texel it touches is unchanged in colour or
+    // discarded as before, except at an exact padded edge, which now clamps).
+    mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
     return pixels;
 }
 
@@ -150,6 +155,7 @@ static uint8_t* expandRgba(const uint8_t* source, int32_t width, int32_t height,
                                   row[(size_t)x * 4 + 3]);
         }
     }
+    mdk::pica::prepareForFiltering(pixels, width, height, paddedWidth, paddedHeight);
     return pixels;
 }
 
@@ -270,9 +276,11 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     }
 
     // SAMPLING, set explicitly rather than inherited from C3D_TexInit.
-    //   Filter: NEAREST both ways. The oracle's palette shader looks up ONE
-    //   index per texel (an index cannot be filtered), so the original look is
-    //   point-sampled; a linear magnification would blur it.
+    //   Filter: NEAREST both ways at creation -- the ORIGINAL look. The oracle's
+    //   palette shader looks up ONE index per texel (an index cannot be
+    //   filtered), so the original look is point-sampled. Enhanced Mode
+    //   FILTERING rewrites this per draw (06_draw.inc), live; the texture is
+    //   prepared for it either way (pica::prepareForFiltering).
     //   Wrap: REPEAT on an axis whose real size IS the padded size, CLAMP
     //   otherwise. The world's tiled surfaces carry uv well outside [0,1]
     //   (2026-11-17, rdebug `uvlog`: all 45 tiling draws of level 3's view are
@@ -282,6 +290,7 @@ static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnos
     //   image. A padded axis cannot wrap exactly in hardware (it would wrap
     //   through the padding), so it keeps the clamp; no shipped tiling draw
     //   measured so far uses one.
+    //   (Enhanced Mode FILTERING switches this per draw, live: 06_draw.inc.)
     C3D_TexSetFilter(&texture.tex, GPU_NEAREST, GPU_NEAREST);
     C3D_TexSetWrap(&texture.tex,
                    texture.realWidth == texture.paddedWidth ? GPU_REPEAT : GPU_CLAMP_TO_EDGE,

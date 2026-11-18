@@ -477,7 +477,7 @@ int main(int argc, char** argv) {
                                 if (skyRangeCount >= 6) break;
                                 SkyRange& r = skyRanges[skyRangeCount++];
                                 r.texture = mdk_render_create_index_texture(
-                                    renderer, slice.width, dome.height, slice.indices.data(), pal);
+                                    renderer, slice.storedWidth, dome.height, slice.indices.data(), pal);
                                 r.first = slice.first;
                                 r.count = slice.count;
                             }
@@ -1067,12 +1067,13 @@ int main(int argc, char** argv) {
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
                     const bool saved = saveEnhancedConfig(enhancedToggles);
                     mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
-                                      "glow=%d (saved=%d)",
+                                      "glow=%d filtering=%d (saved=%d)",
                                       (int)enhancedToggles.enableSkyShadows,
                                       (int)enhancedToggles.enableFragmentLights,
                                       (int)enhancedToggles.enableHaze,
                                       (int)enhancedToggles.enableMirrors,
-                                      (int)enhancedToggles.enableGlowBillboards, (int)saved);
+                                      (int)enhancedToggles.enableGlowBillboards,
+                                      (int)enhancedToggles.enableFiltering, (int)saved);
                 }
                 if (!menu.open()) {
                     mdk::log3dsPrintf("menu: closed");

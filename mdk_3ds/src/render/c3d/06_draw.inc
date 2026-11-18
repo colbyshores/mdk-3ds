@@ -122,6 +122,20 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     if (!texture) {
         return;
     }
+    // THE FILTER (SPEC.md 7.9 enableFiltering): bilinear for every draw while
+    // the toggle is on -- the PC's enhanced look filters the world, the sky and
+    // the canvas alike -- nearest (the original look) otherwise. A bit field in
+    // the texture's own parameter word, carried by the bind below; no state of
+    // its own to cache.
+    //
+    // AN ANIMATED TEXTURE STAYS NEAREST. Its frames are stacked vertically in one
+    // texture, so a bilinear tap at a frame's edge would take half of the next
+    // frame's row (and REPEAT would wrap frame 0's top onto the last frame); the
+    // PC samples one layer of an array and cannot bleed. Nearest never crosses.
+    const bool animated = draw->material.frame_count > 1;
+    const GPU_TEXTURE_FILTER_PARAM filter =
+        (r->toggles.enableFiltering && !animated) ? GPU_LINEAR : GPU_NEAREST;
+    C3D_TexSetFilter(texture, filter, filter);
     C3D_TexBind(0, texture);
 
     // THE UV TRANSFORM, in uniform register 4.
@@ -190,6 +204,10 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // the linked libcitro3dd.a: it sets bit 26+id of the context's dirty word),
     // so this block already re-sends the combiner on every draw either way.
     const bool overlay = draw->material.pass == mdk::Pass::Overlay;
+    // THE CUT for this draw (pica::alphaTestReferenceFor): the half cover for a
+    // filtered scene draw, the oracle's discard for the canvas and for nearest.
+    installAlphaTest(r, mdk::pica::alphaTestReferenceFor(r->toggles.enableFiltering,
+                                                         draw->material.pass), false);
     C3D_TexEnv* env = C3D_GetTexEnv(0);
     C3D_TexEnvInit(env);
     if (overlay) {

@@ -341,6 +341,25 @@ BlendState blendStateForPass(Pass pass, Blend blend);
 // fragment whose alpha is strictly above it.
 const int kAlphaTestReference = 0;
 
+// The reference while Enhanced Mode FILTERING is on (SPEC.md 7.9): the PC's
+// enhanced.frag cuts a filtered texel at HALF_COVER (`if (texel.a < 0.5)
+// discard;`), i.e. it keeps alpha >= 0.5, which is a byte >= 128: GPU_GREATER
+// against 127. Under bilinear filtering a cut-out edge's alpha runs between 0
+// and 255 across a texel, and this keeps the silhouette where the PC's is
+// instead of growing it by the half texel GREATER-0 would admit.
+const int kAlphaTestHalfCover = 127;
+
+// The reference the backend installs for one draw: the oracle's discard, or the
+// PC's half cover while FILTERING is on -- EXCEPT for the canvas. enhanced.frag
+// returns for its canvas modes (3, 4) BEFORE the HALF_COVER discard: the canvas
+// blends by cover and is never cut. The hurt flash (alpha 0.4), the white flash,
+// the inventory box (0.5) and the skull's fade are all canvas quads whose
+// fragments sit below half cover; cutting them deletes them (review of the
+// filtering batch, F1).
+inline int alphaTestReferenceFor(bool filtering, Pass pass) {
+    return (filtering && pass != Pass::Overlay) ? kAlphaTestHalfCover : kAlphaTestReference;
+}
+
 // The oracle's `if (index == 0) discard;` (shaders/palette.hlsl), as a
 // predicate on the fragment's 8-bit alpha so a host test can hold it.
 //
@@ -654,6 +673,31 @@ bool hazeApplies(bool toggleOn, const Lighting& lighting, Shading shading, Pass 
 // The combiner constant's word for an opaque colour: 0xAABBGGRR (R in the low
 // byte), the layout C3D_TexEnvColor takes.
 uint32_t hazeColourWord(const Colour& colour);
+
+// ---------------------------------------------------------------------------
+// THE FILTERED EDGE (Enhanced Mode, SPEC.md 7.9 `enableFiltering`)
+// ---------------------------------------------------------------------------
+
+// Prepares an expanded, TILED texture (`textureTexelIndex` layout, texels as
+// `texelBytes` [A, B, G, R]) for bilinear sampling. Cold: once per texture
+// creation, never per frame.
+//
+//  1. THE COLOUR UNDER A TRANSPARENT TEXEL. Index 0 expands to all-zero, and a
+//     bilinear tap that mixes it with an opaque neighbour pulls the colour
+//     toward BLACK -- a dark fringe on every cut-out edge. The PC avoids it by
+//     filtering premultiplied colour and dividing by alpha (enhanced.frag). The
+//     PICA's combiner cannot divide, so the colour is put where the filter will
+//     find it: every alpha-0 texel takes the mean colour of its opaque
+//     8-neighbours. Its ALPHA STAYS 0, so a nearest sample of it is still
+//     discarded and the original look does not change.
+//  2. THE EDGE OF A PADDED AXIS. A texture whose real size is not a power of two
+//     sits in a padded buffer, and a bilinear tap at its last real row/column
+//     reaches into the padding: alpha 0, so an opaque wall's edge would fade and
+//     the half-cover test would open a crack along it. The first padding row and
+//     column take a copy of the last real ones (alpha included) -- the PC's
+//     clamp, one texel wide, which is all a bilinear tap reaches.
+void prepareForFiltering(uint8_t* tiled, int32_t width, int32_t height, int32_t paddedWidth,
+                         int32_t paddedHeight);
 
 } // namespace pica
 } // namespace mdk
