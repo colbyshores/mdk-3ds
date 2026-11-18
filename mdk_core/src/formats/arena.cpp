@@ -16,6 +16,21 @@ namespace {
 // Names of 10 bytes: an odd count pads to 4.
 const int32_t kAlignment = 4;
 
+// A triangle of the world section: three s16 indices, an s16 material, three
+// (f32, f32) texture coordinates and a u32 of flags. A vertex: three f32.
+const int32_t kTriangleBytes = 36;
+const int32_t kVertexBytes = 12;
+
+// Whether `count` records of `each` bytes are still ahead of the reader.
+bool fitsIn(const BinReader& reader, int32_t byteCount, uint32_t count, int32_t each) {
+    const int64_t left = (int64_t)byteCount - (int64_t)reader.pos();
+    return left >= 0 && (int64_t)count * (int64_t)each <= left;
+}
+
+// More embedded sounds than an arena has (the original refuses more than 16):
+// a count past this is not walked.
+const uint32_t kMaxArenaSounds = 1024;
+
 // The Arena objects alive right now, behind Arena::liveCount(). A plain
 // counter, not an atomic: arenas are constructed and destroyed in level load
 // and teardown, which is main-thread work (the tree creates no worker thread
@@ -76,7 +91,7 @@ Arena* Arena::parse(const std::string& name, const uint8_t* bytes, int32_t byteC
     // needs the arena's own models (e.g. HMO_1's XH1_DOOR), so they are
     // parsed here; the sounds are read past, as the audio path keeps them
     // elsewhere.
-    arena->parseModels(bytes, byteCount, models + 4);
+    const int32_t firstSound = arena->parseModels(bytes, byteCount, models + 4);
 
     // THE ANIMATIONS' OWN BYTES (docs/ARENA_STREAMING_SPEC.md Phase 1). The
     // models section runs from `models` to the next section's start (palette
@@ -92,6 +107,17 @@ Arena* Arena::parse(const std::string& name, const uint8_t* bytes, int32_t byteC
     }
     if (world > models && world < end) {
         end = world;
+    }
+    // ... and it STOPS AT THE ARENA'S EMBEDDED SOUNDS (Phase 5). In every retail
+    // arena that has any, they are the contiguous TAIL of the models section
+    // (37 arenas, 2.73 MB of the six levels' 11.37 MB of models sections,
+    // measured 2026-11-18), nothing plays them (see parseModels), and no
+    // animation track starts past the first of them. If one ever did, the
+    // rebase below would refuse it and droppedAnimations() -- which the format
+    // tests require to be zero -- would say so.
+    if (firstSound > models && firstSound < end) {
+        arena->embeddedSoundBytes_ = end - firstSound;
+        end = firstSound;
     }
     if (models >= buf && models < end) {
         arena->keepAnimationBytes(bytes, models, end, buf, blockEnd < byteCount ? blockEnd : byteCount);
@@ -253,7 +279,16 @@ void Arena::parseWorldSection(const uint8_t* bytes, int32_t byteCount, int32_t b
     }
     BinReader reader(bytes, byteCount, baseOffset);
 
+    // EVERY COUNT IS CHECKED AGAINST THE BYTES THAT ARE LEFT before anything is
+    // sized by it. A world section is what a corridor's SNI entry is, and an
+    // entry that is not a world section (a WAV: 'RIFF' reads as 1.18e9
+    // materials) used to run this loop until the allocator gave up -- an abort
+    // on the console (review, 2026-11-18). A section whose counts do not fit is
+    // no geometry at all, not half of one.
     const uint32_t materialCount = reader.u32();
+    if (!fitsIn(reader, byteCount, materialCount, nameLength)) {
+        return;
+    }
     for (uint32_t i = 0; i < materialCount; i++) {
         char name[64];
         reader.name(name, nameLength);
@@ -266,6 +301,10 @@ void Arena::parseWorldSection(const uint8_t* bytes, int32_t byteCount, int32_t b
     }
 
     const uint32_t nodeCount = reader.u32();
+    if (!fitsIn(reader, byteCount, nodeCount, nodeSize)) {
+        materials_.clear();
+        return;
+    }
     nodes_.resize(nodeCount);
     for (uint32_t i = 0; i < nodeCount; i++) {
         // The reader is moved to the next node rather than read through:
@@ -285,6 +324,11 @@ void Arena::parseWorldSection(const uint8_t* bytes, int32_t byteCount, int32_t b
     }
 
     const uint32_t triangleCount = reader.u32();
+    if (!fitsIn(reader, byteCount, triangleCount, kTriangleBytes)) {
+        materials_.clear();
+        nodes_.clear();
+        return;
+    }
     triangleIndices_.resize((size_t)triangleCount * 3);
     triangleMaterials_.resize(triangleCount);
     triangleUvs_.resize((size_t)triangleCount * 3);
@@ -302,15 +346,24 @@ void Arena::parseWorldSection(const uint8_t* bytes, int32_t byteCount, int32_t b
     }
 
     const uint32_t vertexCount = reader.u32();
+    if (!fitsIn(reader, byteCount, vertexCount, kVertexBytes)) {
+        materials_.clear();
+        nodes_.clear();
+        triangleIndices_.clear();
+        triangleMaterials_.clear();
+        triangleUvs_.clear();
+        triangleFlags_.clear();
+        return;
+    }
     vertices_.resize(vertexCount);
     for (uint32_t i = 0; i < vertexCount; i++) {
         reader.vec3(&vertices_[i].x);
     }
 }
 
-void Arena::parseModels(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset) {
+int32_t Arena::parseModels(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset) {
     if (!bytes || baseOffset < 0 || baseOffset + 12 > byteCount) {
-        return;
+        return -1;
     }
     BinReader reader(bytes, byteCount, baseOffset);
 
@@ -338,8 +391,27 @@ void Arena::parseModels(const uint8_t* bytes, int32_t byteCount, int32_t baseOff
         }
     }
 
-    // The sounds are read past: the audio path keeps them, not the arena.
-    (void)soundCount;
+    // THE ARENA'S OWN SOUNDS are not kept. An entry is the SNI's: a 12-byte
+    // name, u16 flags, u16, u32 offset (from this section) and u32 length, of a
+    // WAV inside the arena's block. The original registers them when the
+    // arena's stream completes (0x41983c -> 0x4310cc, at most 16) and they go
+    // with the arena. The C# parses them into Arena.Sounds and nothing reads
+    // that, so the oracle's bank -- and this port's -- has never had them
+    // (docs/OPEN_ITEMS.md). What IS used here is where the first one starts:
+    // the arena keeps its models section only up to there.
+    int32_t firstSound = -1;
+    for (uint32_t i = 0; i < soundCount && i < kMaxArenaSounds; i++) {
+        if (reader.pos() + 24 > byteCount) {
+            break;
+        }
+        reader.skip(16);   // the name, the flags and the volume
+        const int32_t offset = baseOffset + (int32_t)reader.u32();
+        reader.skip(4);    // the length
+        if (offset > baseOffset && (firstSound < 0 || offset < firstSound)) {
+            firstSound = offset;
+        }
+    }
+    return firstSound;
 }
 
 const Model* Arena::model(const std::string& name) const {

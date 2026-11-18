@@ -27,6 +27,7 @@
 #include <string>
 
 #include "audio/audio_sdl.h"
+#include "audio/level_music.h"
 #include "audio/sound_bank.h"
 #include "formats/cmi.h"
 #include "render/render.h"
@@ -625,6 +626,11 @@ int main(int argc, char** argv) {
     if (data.found()) {
         std::printf("[main] data: %s\n", data.dir().c_str());
         if (mdk::LevelData::load(&level, &data, levelNumber)) {
+            if (level.corridorReadFailures() != 0) {
+                std::printf("[main] level: %d corridor read(s) FAILED -- the level has holes "
+                            "where those corridors are\n",
+                            (int)level.corridorReadFailures());
+            }
             // The scripts and their sounds are level assets, just as in the
             // C# Viewer. They are kept alive for the runtime below.
             char cmiPath[128];
@@ -817,6 +823,12 @@ int main(int argc, char** argv) {
     mdk::Player player;
     mdk::FollowCamera follow;
     std::unique_ptr<mdk::scripts::ScriptRuntime> runtime;
+    // THE LEVEL'S MUSIC (audio/level_music.h, the C#'s LevelMusic): the track of
+    // Kurt's arena, played through the runtime's mixer -- so it lives and dies
+    // with the runtime.
+    std::unique_ptr<mdk::audio::LevelMusic> music;
+    // The arena whose track the bank was last asked to prefetch (the frame loop).
+    std::string musicPrefetchedFor;
     bool playerReady = false;
     auto spawnPlayer = [&]() {
         const float* start = level.dti().startPosition();
@@ -878,6 +890,7 @@ int main(int argc, char** argv) {
             // the model, so this is safe on the first spawn too.
             mdk::scripts::MdkObject::forget_poses();
             objectView.clear();
+            music.reset();   // its voices are the old runtime's mixer's
             const int32_t runtimeSeed = scriptSeedSet ? scriptSeed : freshScriptSeed();
             runtime.reset(new mdk::scripts::ScriptRuntime(&level, &cmi, runtimeSeed, &bank, &player,
                                                           &sprites));
@@ -894,6 +907,15 @@ int main(int argc, char** argv) {
             // calls all go to a null mixer and are dropped.
             player.setMixer(&runtime->mixer());
             std::printf("[main] scripts: runtime ready (seed %d)\n", runtimeSeed);
+            // The level starts in Kurt's arena, its music at once (C#
+            // Viewer.cs:225-228, the original's 0x41ba68): the DTI's start arena,
+            // or where he was put.
+            music.reset(new mdk::audio::LevelMusic(&runtime->mixer(), &cmi.arenaMusic(),
+                                                   &cmi.arenaAmbience()));
+            musicPrefetchedFor.clear();
+            music->enter(startArenaName);
+            std::printf("[main] music: %s for %s\n", music->playing().c_str(),
+                        startArenaName.c_str());
         } else if (scriptAssetsReady) {
             std::printf("[main] scripts: NOT started — TRAVERSE/TRAVSPRT.BNI did not load, and a "
                         "runtime without it is a different random stream, not the oracle's\n");
@@ -994,6 +1016,13 @@ int main(int argc, char** argv) {
                     }
                 }
                 follow.update(&camera, &space, player, target, kStep, kAspect);
+                // The music follows Kurt's arena, which the scripts set (C#
+                // Viewer.cs:521-525: Enter, then Update(Step), every step, after
+                // the camera).
+                if (music) {
+                    music->enter(runtime->currentArena());
+                    music->update(kStep);
+                }
                 // The collision world follows him EVERY step, at the point the C#
                 // does it (`_space.SetSolid(_scripts.SolidArenas)`, after
                 // UpdateCamera, Viewer.cs:533). The pin is sticky: while `_solid` is
@@ -1158,6 +1187,27 @@ int main(int argc, char** argv) {
                             (int)builtViews, arenaViews.lastBuilt().c_str(),
                             (int)(arenaViews.stats().released - releasedBefore),
                             (int)arenaViews.count());
+            }
+
+            // THE MUSIC OF THE ARENA THAT IS LOADING (docs/ARENA_STREAMING_SPEC.md
+            // Phase 5; the original's arena_load -> 0x4192c4, a step a frame at
+            // 0x4193a4): the pair's other arena is where a door or a corridor
+            // leads, so its track is asked for when that arena changes and read
+            // a step per frame. The same calls as the 3DS frontend's; this
+            // frontend preloads its bank (as the C# does), so here they find the
+            // track decoded and do nothing.
+            if (music) {
+                if (streamSecond != musicPrefetchedFor) {
+                    musicPrefetchedFor = streamSecond;
+                    if (!streamSecond.empty()) {
+                        const std::string track = music->trackOf(streamSecond);
+                        if (bank.prefetch(track)) {
+                            std::printf("[main] music: prefetch %s for %s\n", track.c_str(),
+                                        streamSecond.c_str());
+                        }
+                    }
+                }
+                bank.prefetchStep();
             }
         }
 

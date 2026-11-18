@@ -38,6 +38,36 @@ measured or cited reason, and the batch that closes one should delete its entry.
   `SoundBank::forLevel`; the default remains 3. No `GameEngine` exists to wire
   opcode 140 — do not fake call-site wiring.
 
+## The arenas' own sounds are played by nobody: an ORACLE gap (found 2026-11-18, arena streaming Phase 5)
+
+Every MTO arena block carries its own effects in the tail of its models section:
+24-byte entries in the SNI's layout (name[12], u16 flags, u16, u32 offset from the
+section, u32 length) and the WAVs they point at. The original registers them when
+the arena's stream completes (`arena_load_step` 0x41983c -> 0x4310cc ->
+0x403a7c(flags, models + offset), at most 16 handles at 0x573b94) and they go with
+the arena. **85 names over levels 3-8** (level 3: BUBBLE1, DBOARD, DOORLAND,
+H9CRASH, H9IDLE, H9START, MARIO, SMASH, SPLAT, XB3_HBUT, XG_CRASH, XM3_ROLL,
+XW3_SHOT, XW3_TURN; level 4's SUB* set; level 6's CANNON, GLASS, PENDULUM...),
+280-944 KB a level, and **not one of them is in any SNI archive**.
+
+The C# parses them (`Arena.Sounds`, `Arena.cs:109-115`) and nothing reads that
+dictionary: `SoundBank` looks only in the three SNIs. So in the oracle, and in
+this port, a script that plays SMASH or H9START gets "no such sound" -- silence,
+where the 1997 game plays it. This is a gap IN THE REFERENCE, so the port does
+not close it on its own: a sound that newly resolves starts a voice, and voices
+are script-visible (`IsPlaying`, voice ids, the 16-voice ceiling), so the goldens
+would move. It needs the owner's call and a matching change to the oracle.
+
+What the port did (Phase 5): it no longer KEEPS those bytes (`Arena::parseModels`
+finds the first sound and the kept models span stops there: 0.28-0.94 MB a
+level). If they are to be played, they should arrive the way the original's do --
+with the arena's stream (`ArenaStream`: read the block's models tail on switch,
+hand it to the bank, drop it on trim), not by keeping them resident again.
+
+Related, same cause: level 3's `HMO_2` names `AMB_DRIP` as its music and `HMO_9`
+`H9WATER`; neither is in `LEVEL3O.SNI`, so both arenas have no music in the
+original's own lookup (0x431590 searches the SNI directory) and none here.
+
 ## Known divergences from the C#
 
 - **`FrameBlend.Lerp` is `Vector3.Lerp`, and this port does not reproduce its

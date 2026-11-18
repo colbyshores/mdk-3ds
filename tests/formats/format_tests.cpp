@@ -401,9 +401,25 @@ MDK_TEST(StreamedArenasBakeExactlyAsTheWholeFile) {
         return;
     }
     int32_t pairs = 0;
+    // The arenas' embedded sounds, a level: the sum of their entries' lengths
+    // in LEVELnO.MTO (2026-11-18). They are the tail of each models section and
+    // are NOT kept (Arena::parseModels); what is cut is that sum plus at most 3
+    // bytes of padding an arena.
+    const int32_t embeddedSounds[6] = {943740, 313960, 318536, 335482, 279976, 537680};
     for (int32_t number = 3; number <= 8; number++) {
         mdk::LevelData level;
         MDK_CHECK(mdk::LevelData::load(&level, &game, number));
+        {
+            int32_t cut = 0;
+            int32_t kept = 0;
+            for (size_t a = 0; a < level.arenas().size(); a++) {
+                cut += level.arenas()[a]->embeddedSoundBytes();
+                kept += level.arenas()[a]->keptModelBytes();
+            }
+            MDK_CHECK(cut >= embeddedSounds[number - 3]);
+            MDK_CHECK(cut <= embeddedSounds[number - 3] + 3 * (int32_t)level.arenas().size());
+            MDK_CHECK(kept > 0);
+        }
         char path[64];
         snprintf(path, sizeof(path), "TRAVERSE/LEVEL%d/LEVEL%dO.MTO", (int)number, (int)number);
         std::vector<uint8_t> whole;
@@ -423,6 +439,19 @@ MDK_TEST(StreamedArenasBakeExactlyAsTheWholeFile) {
             const int32_t base = models + 4;
             const uint32_t animationCount = binU32(whole.data(), base);
             MDK_CHECK_EQ((int32_t)animationCount, streamed->animationCount());
+            // What the arena KEEPS of its models section is exactly the section
+            // minus its embedded sounds: not less (a bake below would differ) and
+            // not more -- keepAnimationBytes falls back to the WHOLE BLOCK when a
+            // track starts outside the span it is given, which keeps every bake
+            // right and would hide a cut made too early behind a megabyte of
+            // memory (mutant M3, 2026-11-18).
+            const int32_t palette = buf + (int32_t)binU32(whole.data(), buf + 4);
+            if (animationCount > 0) {
+                MDK_CHECK_EQ(streamed->keptModelBytes() + streamed->embeddedSoundBytes(),
+                             palette - models);
+            } else {
+                MDK_CHECK_EQ(streamed->keptModelBytes(), 0);
+            }
             for (uint32_t i = 0; i < animationCount; i++) {
                 const int32_t entry = base + 12 + (int32_t)i * 12;
                 char name[9] = {};

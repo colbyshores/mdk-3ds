@@ -20,6 +20,10 @@ const uint8_t kEndOfRow = 0xFE;
 // The bias of the repeat command's count.
 const int32_t kRepeatBias = 0x7C;
 
+// More pixels than any frame has (2048 x 2048; the game's view is 600 x 360):
+// a header past this is not a frame's, and nothing is allocated for it.
+const int64_t kMaxFramePixels = (int64_t)1 << 22;
+
 } // namespace
 
 bool SpriteAnimation::parse(SpriteAnimation* out, const std::string& name, const uint8_t* bytes,
@@ -86,8 +90,14 @@ bool SpriteAnimation::decode(int32_t offset, Frame* out) const {
     if (width < 0 || height < 0) {
         return false;
     }
+    // A frame is RLE: its pixels are NOT bounded by the bytes it is stored in
+    // (LEVEL6S.SNI's K_SLIP is 7,931 bytes and its frames are larger than
+    // that), so the guard against a garbage header is a fixed ceiling, not the
+    // buffer's size. It was the buffer's size while every animation was parsed
+    // out of a whole multi-megabyte file, where the two could not be told
+    // apart; an animation held on its own (formats::Sni::open) can.
     const int64_t size = (int64_t)width * (int64_t)height;
-    if (size > (int64_t)byteCount_) {
+    if (size > kMaxFramePixels) {
         return false;
     }
 

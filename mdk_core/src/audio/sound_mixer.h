@@ -72,6 +72,18 @@ public:
     static constexpr int32_t kFullVolume = 0x7FFF;
 
     explicit SoundMixer(SoundBank* bank);
+    // A MIXER THAT DIES WITH VOICES STILL PLAYING GIVES THEIR PINS BACK. A voice
+    // pins its sound in the bank (launch) and forget() releases it -- but the
+    // runtime owns its mixer by value and the frontend's bank outlives every
+    // runtime, so a respawn used to leave one pin per live voice in the bank for
+    // ever, and a pinned sound is one the budget and releaseMusicExcept() may
+    // never free. Harmless while nothing bounded the bank and nothing looped for
+    // a level's life; with the level's music playing, every death would have
+    // leaked a megabyte (review, 2026-11-18). Not virtual: nothing derives.
+    ~SoundMixer();
+    // The pins are this object's, so a copy would release them twice.
+    SoundMixer(const SoundMixer&) = delete;
+    SoundMixer& operator=(const SoundMixer&) = delete;
 
     // Play a sound without position. Returns the voice, or 0.
     int32_t play(const std::string& name, int32_t start = New);

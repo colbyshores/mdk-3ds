@@ -57,6 +57,7 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
         delete out->corridors_[i];
     }
     out->corridors_.clear();
+    out->corridorReadFailures_ = 0;
     out->arenas_.clear();
     // The stream first: it points into the arenas the next line frees.
     out->stream_.reset();
@@ -127,20 +128,36 @@ bool LevelData::load(LevelData* out, const formats::MdkData* data, int32_t numbe
     }
 
     // The corridors, from the SNI. The SNI's entries are the corridors and
-    // the sounds, and the sounds are skipped.
+    // the sounds, and the sounds are skipped -- NOT READ: the archive is opened
+    // by its directory and each corridor's entry read on its own (the
+    // original's 0x431914 seeks to the entry and reads it). The file is 3.3-4.5
+    // MB of music around 0.2-0.5 MB of corridors, and reading it whole was the
+    // largest single read of a level's load (docs/ARENA_STREAMING_SPEC.md
+    // Phase 5). A corridor's world section is read front to back from its
+    // entry's first byte, so the entry's bytes parse as the whole file's did
+    // (tests/formats: every retail corridor both ways).
     bytes.clear();
     path = std::string(base) + "O.SNI";
-    if (data->read(path, &bytes)) {
+    {
         formats::Sni sni;
-        if (formats::Sni::parse(&sni, bytes.data(), (int32_t)bytes.size())) {
+        if (!formats::Sni::open(&sni, *data, path)) {
+            out->corridorReadFailures_++;
+        } else {
             const std::vector<formats::Sni::Entry>& entries = sni.entries();
             for (size_t i = 0; i < entries.size(); i++) {
                 if (sni.isSound(entries[i])) {
                     continue;
                 }
-                formats::Arena* corridor = formats::Arena::parseWorld(entries[i].name, bytes.data(),
-                                                                       (int32_t)bytes.size(),
-                                                                       entries[i].offset);
+                std::vector<uint8_t> entryBytes;
+                if (!sni.getBytes(entries[i], &entryBytes)) {
+                    // A corridor that cannot be read is a hole in the level; it
+                    // is counted so the frontend can say so (it was all the
+                    // corridors or none while the file was read whole).
+                    out->corridorReadFailures_++;
+                    continue;
+                }
+                formats::Arena* corridor = formats::Arena::parseWorld(
+                    entries[i].name, entryBytes.data(), (int32_t)entryBytes.size(), 0);
                 if (!corridor) {
                     continue;
                 }

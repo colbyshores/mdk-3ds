@@ -43,6 +43,24 @@
 // choose between decode-on-demand with a budget and streaming; the store half of
 // that choice is made (sound.h) and the budget half is recorded as an open item,
 // not solved by pretending the numbers are smaller.
+//
+// WHICH ARCHIVE IS WHERE (docs/ARENA_STREAMING_SPEC.md Phase 5). forLevel()
+// holds TRAVERSE.SNI and LEVELnS.SNI whole -- the level's effects, 0.8-1.5 MB,
+// any of which a frame may start with no warning -- and OPENS LEVELnO.SNI by its
+// directory (formats::Sni::open): that file is the level's MUSIC, 7-9 tracks of
+// about half a megabyte (3.3-4.5 MB), plus the corridors, and the original never
+// holds it either. It keeps the directory (0x57f378) and one 512,000-byte music
+// buffer (0x491b40; "Sounds %s %s overflow buffersize" past 0x7d000), and reads
+// an arena's track into it when the arena LOADS (0x4192c4 -> 0x431590), a step
+// a frame (0x4193a4 -> 0x4317d8: 0xf768 bytes while more than 0x10000 remain,
+// then the rest), so the track is in memory by the time Kurt walks in.
+//
+// prefetch() / prefetchStep() are that: begin reading a named sound, read one
+// step per call, decode it when the last step lands. A get() of a sound whose
+// prefetch is still in flight finishes it at once and counts the stall; a get()
+// of a streamed sound nobody prefetched reads it whole (counted as a demand
+// read). Either way the answer is the same Entry the whole-file bank gives --
+// the format tests decode every sound of every retail archive both ways.
 // ============================================================================
 
 #include <stdint.h>
@@ -69,6 +87,9 @@ public:
     struct Entry {
         int32_t volume = 0;  // 0-0x7FFF, from the SNI entry
         bool looping = false;
+        // SNI flag 2: a music track. Not in the C#'s Entry (nothing there asks);
+        // here it is what releaseMusicExcept() goes by.
+        bool music = false;
         int32_t channels = 0;
         int32_t sampleRate = 0;
         int32_t frames = 0;  // samples per channel (Sound.Frames)
@@ -91,6 +112,48 @@ public:
 
     // A bank over archives the caller already has (the 1996 demo's).
     static bool withArchives(SoundBank* out, std::vector<formats::Sni>&& archives);
+
+    // What the bank has read and waited for (a streamed archive only).
+    struct Stats {
+        int32_t prefetches = 0;       // prefetch() calls that began a read
+        int32_t prefetchSteps = 0;    // steps read by prefetchStep()
+        int32_t prefetchStalls = 0;   // get() had to finish a prefetch in flight
+        int64_t prefetchStallBytes = 0;
+        int32_t prefetchDrops = 0;    // a prefetch replaced before it finished
+        int32_t demandReads = 0;      // get() read a streamed sound nobody prefetched
+        int64_t demandBytes = 0;
+        int32_t readFailures = 0;     // a read that failed (the sound is then missing)
+        int32_t evictions = 0;        // decoded sounds dropped for the budget
+        int32_t musicReleased = 0;    // tracks dropped by releaseMusicExcept()
+    };
+
+    // The original's music step (0x4317d8): 0xf768 bytes while more than
+    // 0x10000 remain, then whatever is left.
+    static const int32_t kPrefetchStepBytes = 0xf768;
+    static const int32_t kPrefetchTailBytes = 0x10000;
+
+    // A READ THAT FAILS IS NOT "THE LEVEL HAS NO SUCH SOUND". The C# caches null
+    // for a name its archives do not carry, and so does this (missing_); but a
+    // streamed sound can also fail because the card did, and caching THAT would
+    // silence a track until the game is restarted. So a read failure is counted
+    // per name and the name is tried again the next time something asks for it
+    // -- at most this many times, after which it is missing like any other.
+    // Nothing asks per frame (the music asks when Kurt's arena changes, a script
+    // when it plays), so this is not a retry in the frame loop (AGENTS.md P5).
+    static const int32_t kMaxReadFailures = 3;
+
+    // Begin reading `name` a step per prefetchStep(). True when a read began;
+    // false when there is nothing to do (already decoded, not a sound of the
+    // archives, or known missing). A prefetch still in flight for ANOTHER name
+    // is dropped: there is one staging buffer, as the original has one music
+    // buffer.
+    bool prefetch(const std::string& name);
+    // Read one step of the prefetch in flight, and decode the sound when it is
+    // complete. True while more steps remain.
+    bool prefetchStep();
+    // The sound a prefetch is reading (empty: none).
+    const std::string& prefetching() const { return staging_.name; }
+    const Stats& stats() const { return stats_; }
 
     // Get(name): the sound, or false when the level has no such sound. The name
     // is matched exactly, as the C# does — a script that asks for a lower-case
@@ -122,6 +185,16 @@ public:
     void release(const std::string& name);
     int32_t pins(const std::string& name) const;
 
+    // Drop every decoded MUSIC track (SNI flag 2) that no voice is playing and
+    // that is not one of `keep[0..count)`: the spec's "free the decoded samples
+    // of an arena when it is deactivated" (docs/ARENA_STREAMING_SPEC.md Phase
+    // 5). The frontend keeps the track playing, the one fading out and the one
+    // of the arena that is loading, so a level played end to end holds three
+    // tracks and not all nine. Effects are never touched (they are the
+    // budget's business). Returns the bytes given back. A dropped track that is
+    // asked for again is read again, like any other.
+    size_t releaseMusicExcept(const std::string* keep, int32_t count);
+
     int32_t archiveCount() const { return (int32_t)archives_.size(); }
 
     // How many names have actually decoded (a bank that has only had one lookup
@@ -138,15 +211,37 @@ public:
     size_t decodedSamples() const;
     size_t decodedBytes() const;
 
-    // The archive blobs themselves, which stay resident after a decode (an Sni
-    // owns its bytes and the bank owns its Snis). This is the other half of what
-    // a preload has to fit: halving the decoded store buys nothing if the raw
-    // archives plus the level's geometry do not leave room for it.
+    // The archive blobs that are RESIDENT (an Sni that was parsed owns its
+    // bytes and the bank owns its Snis): TRAVERSE.SNI and LEVELnS.SNI for a
+    // forLevel() bank, whose music archive is opened by its directory and
+    // counts for nothing here. The other half of what the bank costs, beside
+    // decodedBytes().
     size_t archiveBytes() const;
 
 private:
-    // Look the name up in the archives, newest first.
-    bool load(const std::string& name, Entry* out);
+    // Look the name up in the archives, newest first: the archive and the
+    // entry of the sound that wins, or false.
+    bool find(const std::string& name, size_t* archive, const formats::Sni::Entry** entry) const;
+    // Read the name's bytes (finishing its prefetch, if one is in flight) and
+    // decode them. `*readFailed` says the failure was a READ, not the data.
+    bool load(const std::string& name, Entry* out, bool* readFailed);
+    // A read of `name` failed: count it, and give the name up at the limit.
+    void noteReadFailure(const std::string& name);
+    // The entry's WAV bytes into the bank's decoded store.
+    bool decode(const std::string& name, const formats::Sni::Entry& entry,
+                const std::vector<uint8_t>& bytes, Entry* out);
+
+    // The one prefetch in flight.
+    struct Staging {
+        std::string name;        // empty: none
+        size_t archive = 0;
+        formats::Sni::Entry entry;
+        std::vector<uint8_t> bytes;   // read so far
+    };
+    // Read up to `limit` more bytes of the staging (0: all that remain). False
+    // on a read failure, which abandons the prefetch.
+    bool stagingRead(int32_t limit);
+    void stagingDrop();
 
     // Mark a decoded sound as recently gotten, and evict over-budget
     // residents (least recently gotten first, pinned and `keep` excepted).
@@ -163,6 +258,10 @@ private:
     // it — which is the sharing the C# gets from Sound being a reference type.
     std::map<std::string, Sound> sounds_;
     std::set<std::string> missing_;
+    // Read failures per name, until kMaxReadFailures makes the name missing.
+    std::map<std::string, int32_t> readFailures_;
+    Staging staging_;
+    Stats stats_;
 };
 
 } // namespace audio

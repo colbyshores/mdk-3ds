@@ -75,6 +75,14 @@ SoundMixer::SoundMixer(SoundBank* bank)
     listenerUp.z = 1.0f;
 }
 
+SoundMixer::~SoundMixer() {
+    if (bank_ != nullptr) {
+        for (size_t i = 0; i < voices_.size(); i++) {
+            bank_->release(voices_[i].name);
+        }
+    }
+}
+
 int32_t SoundMixer::play(const std::string& name, int32_t start) {
     return launch(name, start, Flat, Vec3(), nullptr, nullptr, false, SoundDevice::Effects);
 }

@@ -22,6 +22,7 @@
 #include "formats/dti.h"
 #include "formats/mdk_data.h"
 #include "formats/mto.h"
+#include "formats/sni.h"
 #include "formats/texture_archive.h"
 #include "game/arena_stream.h"
 #include "game/arena_views.h"
@@ -413,6 +414,186 @@ MDK_TEST(TheLevelsAreArenasJoinedByCorridors) {
     }
     MDK_CHECK_EQ(borrowers, 1);
     MDK_CHECK_STR_EQ(borrowerNames, "OLYM_9 ");
+}
+
+// Phase 5: the corridors come out of LEVELnO.SNI by its DIRECTORY, one entry
+// read at a time, and the music around them is never read. A corridor parsed
+// from its own entry's bytes must be the corridor the whole file parsed to --
+// which is only true if a world section never reads outside its entry.
+MDK_TEST(CorridorsReadByEntryAreTheWholeFiles) {
+    const MdkData game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    int32_t corridors = 0;
+    int32_t placeholders = 0;
+    for (int32_t number = 3; number <= 8; number++) {
+        mdk::LevelData level;
+        MDK_CHECK(mdk::LevelData::load(&level, &game, number));
+
+        char path[96];
+        snprintf(path, sizeof(path), "TRAVERSE/LEVEL%d/LEVEL%dO.SNI", (int)number, (int)number);
+        std::vector<uint8_t> bytes;
+        MDK_CHECK(game.read(path, &bytes));
+        Sni whole;
+        MDK_CHECK(Sni::parse(&whole, bytes.data(), (int32_t)bytes.size()));
+        for (size_t e = 0; e < whole.entries().size(); e++) {
+            const Sni::Entry& entry = whole.entries()[e];
+            if (whole.isSound(entry)) {
+                continue;
+            }
+            // The whole-file parse, exactly as level_data.cpp did it before.
+            Arena* reference = Arena::parseWorld(entry.name, bytes.data(), (int32_t)bytes.size(),
+                                                 entry.offset);
+            MDK_CHECK(reference != nullptr);
+            if (!reference) {
+                continue;
+            }
+            const Arena* loaded = level.arenaNamed(entry.name);
+            if (reference->materials().size() == 1 && reference->materials()[0] == "NONE") {
+                placeholders++;
+                MDK_CHECK(loaded == nullptr);   // a placeholder is not a place
+                delete reference;
+                continue;
+            }
+            MDK_CHECK(loaded != nullptr);
+            if (loaded) {
+                corridors++;
+                MDK_CHECK(loaded->materials() == reference->materials());
+                MDK_CHECK_EQ(loaded->vertices().size(), reference->vertices().size());
+                MDK_CHECK_EQ(loaded->nodes().size(), reference->nodes().size());
+                MDK_CHECK(loaded->triangleIndices() == reference->triangleIndices());
+                MDK_CHECK(loaded->triangleMaterials() == reference->triangleMaterials());
+                MDK_CHECK(loaded->triangleFlags() == reference->triangleFlags());
+                MDK_CHECK(loaded->vertices().size() == reference->vertices().size() &&
+                          memcmp(loaded->vertices().data(), reference->vertices().data(),
+                                 loaded->vertices().size() * sizeof(Vec3f)) == 0);
+                MDK_CHECK(loaded->triangleUvs().size() == reference->triangleUvs().size() &&
+                          memcmp(loaded->triangleUvs().data(), reference->triangleUvs().data(),
+                                 loaded->triangleUvs().size() * sizeof(Vec2f)) == 0);
+                MDK_CHECK(loaded->nodes().size() == reference->nodes().size() &&
+                          memcmp(loaded->nodes().data(), reference->nodes().data(),
+                                 loaded->nodes().size() * sizeof(BspNode)) == 0);
+                MDK_CHECK(!loaded->vertices().empty() && !loaded->nodes().empty());
+            }
+            delete reference;
+        }
+    }
+    // Every level has corridors; the census is the files' own (2026-11-18).
+    MDK_CHECK(corridors >= 40);
+    printf("  corridors compared: %d (%d placeholders)\n", (int)corridors, (int)placeholders);
+}
+
+// A world section's counts are checked against the bytes that are left. What
+// is NOT a world section -- a music track read as a corridor, which is what an
+// archive misclassified at open would hand the level's load -- must come back
+// as no geometry, at once, and not as a 1.18e9-material loop that ends when
+// the allocator does (review, 2026-11-18).
+MDK_TEST(AWorldSectionThatDoesNotFitIsNoGeometry) {
+    // 'RIFF' as a material count, then nothing like enough bytes.
+    std::vector<uint8_t> wav(4096, 0);
+    memcpy(wav.data(), "RIFF", 4);
+    Arena* notAWorld = Arena::parseWorld("WAV", wav.data(), (int32_t)wav.size(), 0);
+    MDK_CHECK(notAWorld != nullptr);
+    if (notAWorld) {
+        MDK_CHECK(notAWorld->materials().empty());
+        MDK_CHECK(notAWorld->nodes().empty());
+        MDK_CHECK(notAWorld->vertices().empty());
+        MDK_CHECK(notAWorld->triangleIndices().empty());
+        delete notAWorld;
+    }
+
+    // Each count on its own, absurd, with the counts before it honest: nothing
+    // may be SIZED by it. (A reader that has run off the end makes the next
+    // bound refuse everything, so a missing bound in the middle gives the same
+    // empty arena -- after an allocation of a gigabyte of nodes, which on the
+    // console is the abort. Here it is the test binary that dies.)
+    for (int32_t which = 0; which < 3; which++) {
+        std::vector<uint8_t> section;
+        const uint32_t counts[4] = {0, which == 0 ? 0x40000000u : 0,
+                                    which == 1 ? 0x40000000u : 0,
+                                    which == 2 ? 0x40000000u : 0};
+        for (int32_t k = 0; k < 4 && k <= which + 1; k++) {
+            for (int32_t b = 0; b < 4; b++) {
+                section.push_back((uint8_t)(counts[k] >> (8 * b)));
+            }
+        }
+        section.resize(section.size() + 64, 0);
+        Arena* absurd = Arena::parseWorld("ABSURD", section.data(), (int32_t)section.size(), 0);
+        MDK_CHECK(absurd != nullptr);
+        if (absurd) {
+            MDK_CHECK(absurd->nodes().empty());
+            MDK_CHECK(absurd->triangleIndices().empty());
+            MDK_CHECK(absurd->triangleFlags().empty());
+            MDK_CHECK(absurd->vertices().empty());
+            delete absurd;
+        }
+    }
+
+    const MdkData game = locateData();
+    if (!game.found()) {
+        return;
+    }
+    // A REAL corridor cut short is EITHER the whole corridor (the cut fell in
+    // the BSP leaf data that follows the vertices, which this parser does not
+    // read) OR no geometry at all -- never half of one. And the same bytes whole
+    // are the corridor: the bounds refuse what does not fit and nothing that
+    // does.
+    std::vector<uint8_t> bytes;
+    MDK_CHECK(game.read("TRAVERSE/LEVEL3/LEVEL3O.SNI", &bytes));
+    Sni whole;
+    MDK_CHECK(Sni::parse(&whole, bytes.data(), (int32_t)bytes.size()));
+    int32_t tried = 0;
+    int32_t refused = 0;
+    for (size_t e = 0; e < whole.entries().size(); e++) {
+        const Sni::Entry& entry = whole.entries()[e];
+        if (whole.isSound(entry) || entry.length < 4096) {
+            continue;
+        }
+        std::vector<uint8_t> corridor;
+        MDK_CHECK(whole.getBytes(entry, &corridor));
+        Arena* full = Arena::parseWorld(entry.name, corridor.data(), (int32_t)corridor.size(), 0);
+        MDK_CHECK(full != nullptr && !full->vertices().empty() && !full->nodes().empty() &&
+                  !full->materials().empty());
+        // Cut at 8 bytes and at every 32nd of the entry: every section of every
+        // corridor (materials, nodes, triangles, vertices) is cut somewhere.
+        const int32_t kCuts = 33;
+        for (int32_t c = 0; c < kCuts; c++) {
+            const int32_t at = c == 0 ? 8 : (int32_t)((int64_t)corridor.size() * c / kCuts);
+            Arena* cut = Arena::parseWorld(entry.name, corridor.data(), at, 0);
+            MDK_CHECK(cut != nullptr);
+            if (cut && full) {
+                // The same in CONTENT: a section sized by a count the bytes do
+                // not hold reads as zeros past the end, and has the right sizes.
+                const bool same =
+                    cut->materials() == full->materials() &&
+                    cut->nodes().size() == full->nodes().size() &&
+                    memcmp(cut->nodes().data(), full->nodes().data(),
+                           full->nodes().size() * sizeof(BspNode)) == 0 &&
+                    cut->triangleIndices() == full->triangleIndices() &&
+                    cut->triangleFlags() == full->triangleFlags() &&
+                    cut->vertices().size() == full->vertices().size() &&
+                    memcmp(cut->vertices().data(), full->vertices().data(),
+                           full->vertices().size() * sizeof(Vec3f)) == 0;
+                const bool none = cut->materials().empty() && cut->nodes().empty() &&
+                                  cut->triangleIndices().empty() &&
+                                  cut->triangleMaterials().empty() &&
+                                  cut->triangleUvs().empty() && cut->triangleFlags().empty() &&
+                                  cut->vertices().empty();
+                MDK_CHECK(same || none);
+                refused += none ? 1 : 0;
+                // Eight bytes cannot be a corridor.
+                if (c == 0) {
+                    MDK_CHECK(none);
+                }
+            }
+            delete cut;
+            tried++;
+        }
+        delete full;
+    }
+    MDK_CHECK(tried >= 8);
+    MDK_CHECK(refused >= tried / 2);
 }
 
 // A file that stops reading: the stream's own read fails once and is abandoned;

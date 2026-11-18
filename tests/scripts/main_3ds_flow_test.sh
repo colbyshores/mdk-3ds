@@ -953,6 +953,10 @@ CHK = {
         "the frame mixes the pointer that follows the runtime, not the standalone mixer",
     "respawn-reattaches":
         "a respawn re-points the mixer, rebinds Kurt, and re-attaches the sink",
+    "music-follows-kurts-arena":
+        "the level's music is made on the runtime's mixer, dropped before the runtime is, "
+        "entered and faded every step after the camera, and the loading arena's track is "
+        "prefetched after the stream (arena streaming Phase 5)",
     "asset-gate": "the runtime is constructed under the asset gate",
     "pitch-from-runtime": "the pitch target is camera_track, then the scripts' arena",
     "objects-drawn-in-order":
@@ -1199,6 +1203,51 @@ def adjudicate(text, quiet=False):
         "frameDrawn (the runtime's drawnArenas) -> stream.update -> arenaViews.sync -> "
         "begin_frame -> arenaViews.draw, all three on the one list; any other order or a "
         "second list draws an arena whose textures are not in, or lets go of one that is drawn")
+
+    # 12c. THE LEVEL'S MUSIC (arena streaming Phase 5; audio/level_music.h).
+    #     - It holds voices of the RUNTIME's mixer, so it is dropped BEFORE the
+    #       runtime is destroyed (a LevelMusic that outlives its mixer stops a voice
+    #       through a freed pointer on the next step) and it is built on that mixer
+    #       and no other: built on the standalone one it would play into a device
+    #       nothing mixes once there is a runtime.
+    #     - The C# enters Kurt's arena and advances the fades EVERY STEP, after the
+    #       camera and before SetSolid (Viewer.cs:521-525, :533): enter, then update.
+    #     - The bank's stepped prefetch of the loading arena's track runs once per
+    #       FRAME, after the stream has been told the pair and before the frame
+    #       begins.
+    music_ok = False
+    if spawn_body is not None and loop is not None and frame is not None:
+        drop = spawn_body.find("music.reset();")
+        kill = spawn_body.find("runtime.reset();")
+        made = re.search(r"music\.reset\(new mdk::audio::LevelMusic\(&runtime->mixer\(\),",
+                         spawn_body)
+        cam = call_line(loop, "follow.update")
+        enter = call_line(loop, "music->enter")
+        fade = call_line(loop, "music->update")
+        solid = call_line(loop, "space.setSolid")
+        prefetch_at = text.find("bank.prefetch(track)")
+        step_at = text.find("bank.prefetchStep()")
+        # The tracks given back once a second are every one BUT the playing one,
+        # the fading one and the LOADING arena's: without the third the track a
+        # prefetch has just landed is released within the second, and Kurt walks
+        # into a stall the prefetch existed to prevent.
+        keep = re.search(r"const std::string keep\[3\] = \{(.*?)\};", text, re.S)
+        keep_ok = (keep is not None
+                   and "music->playing()" in keep.group(1)
+                   and "music->fading()" in keep.group(1)
+                   and "music->trackOf(streamSecond)" in keep.group(1)
+                   and "bank.releaseMusicExcept(keep, 3)" in text[frame[0]:begin_at])
+        music_ok = (0 <= drop < kill and made is not None and keep_ok
+                    and "music->enter(runtime->currentArena());" in loop
+                    and "music->update(step);" in loop
+                    and None not in (cam, enter, fade, solid) and cam < enter < fade < solid
+                    and frame[0] <= update_at < prefetch_at < step_at < begin_at < frame[1])
+    say(CHK["music-follows-kurts-arena"], music_ok,
+        "music.reset() before runtime.reset(); LevelMusic(&runtime->mixer(), ...); in the "
+        "step loop follow.update -> music->enter(currentArena) -> music->update(step) -> "
+        "setSolid; in the frame stream.update -> bank.prefetch -> bank.prefetchStep -> "
+        "begin_frame; releaseMusicExcept keeps the playing, the fading and the loading "
+        "arena's track")
 
     # 13. the pass is gated on the runtime. `runtime->objects()` on a null runtime
     #     is a null dereference in the frame path, and the level runs without scripts
@@ -1980,6 +2029,52 @@ def arm_sink_not_reattached(text):
     if not n:
         return text
     return text[:a] + mutated + text[b:]
+
+
+def arm_music_outlives_the_runtime(text):
+    """The respawn destroys the runtime -- and its mixer -- while the LevelMusic that
+    holds two of that mixer's voices is still alive."""
+    sp = body_span(text, "spawnPlayer")
+    if sp is None:
+        return text
+    a, b = sp
+    mutated, n = re.subn(r"(?m)^[ \t]*music\.reset\(\);[^\n]*\n", "", text[a:b], count=1)
+    if not n:
+        return text
+    return text[:a] + mutated + text[b:]
+
+
+def arm_music_on_the_standalone_mixer(text):
+    """The music is built on the frontend's own mixer, which nothing mixes once the
+    runtime exists: the level's scripts are heard and its music is not."""
+    return text.replace("new mdk::audio::LevelMusic(&runtime->mixer(),",
+                        "new mdk::audio::LevelMusic(&mixer,", 1)
+
+
+def arm_music_fades_before_it_enters(text):
+    """update() before enter(): the fade of a frame is applied to the track of the
+    arena Kurt has just left, and a new track starts a step late."""
+    enter = "                    music->enter(runtime->currentArena());\n"
+    fade = "                    music->update(step);\n"
+    if enter not in text or fade not in text:
+        return text
+    text = text.replace(fade, "", 1)
+    return text.replace(enter, fade + enter, 1)
+
+
+def arm_music_never_prefetched(text):
+    """The loading arena's track is asked for, and the bank is never stepped: every
+    arena's music is then read whole on the step Kurt walks in (a stall each)."""
+    return text.replace("const bool more = bank.prefetchStep();",
+                        "const bool more = false;", 1)
+
+
+def arm_loading_arenas_track_is_released(text):
+    """The once-a-second release keeps the playing and the fading track and forgets
+    the one that was prefetched for the arena Kurt is walking towards."""
+    return text.replace(
+        "streamSecond.empty() ? std::string() : music->trackOf(streamSecond)};",
+        "std::string()};", 1)
 
 
 def arm_no_asset_gate(text):
@@ -2839,6 +2934,16 @@ ARMS = [
      CHK["scripts-tick-order"]),
     ("frame-mixes-the-standalone-mixer", arm_mixes_standalone, CHK["mixes-runtime-mixer"]),
     ("respawn-does-not-re-attach-the-sink", arm_sink_not_reattached, CHK["respawn-reattaches"]),
+    ("the music outlives the runtime it plays through", arm_music_outlives_the_runtime,
+     CHK["music-follows-kurts-arena"]),
+    ("the music is built on the standalone mixer", arm_music_on_the_standalone_mixer,
+     CHK["music-follows-kurts-arena"]),
+    ("the music fades before it enters", arm_music_fades_before_it_enters,
+     CHK["music-follows-kurts-arena"]),
+    ("the loading arena's track is never stepped", arm_music_never_prefetched,
+     CHK["music-follows-kurts-arena"]),
+    ("the loading arena's track is released under Kurt",
+     arm_loading_arenas_track_is_released, CHK["music-follows-kurts-arena"]),
     ("runtime-built-without-the-asset-gate", arm_no_asset_gate, CHK["asset-gate"]),
     # The replacement form trips check 5 first: with the geometric block gone there
     # is no guarded arenaAt lookup left to check. arm_frozen_pin_added is the arm

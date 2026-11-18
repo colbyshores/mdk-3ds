@@ -23,13 +23,21 @@ bool SoundBank::forLevel(SoundBank* out, const formats::MdkData& data, int32_t l
 
     std::vector<formats::Sni> archives;
     for (int i = 0; i < 3; i++) {
-        std::vector<uint8_t> bytes;
-        if (!data.read(paths[i], &bytes)) {
-            return false;
-        }
         formats::Sni archive;
-        if (!formats::Sni::parse(&archive, std::move(bytes))) {
-            return false;
+        if (i == 2) {
+            // LEVELnO.SNI: the music and the corridors, by its directory (see
+            // the header).
+            if (!formats::Sni::open(&archive, data, paths[i])) {
+                return false;
+            }
+        } else {
+            std::vector<uint8_t> bytes;
+            if (!data.read(paths[i], &bytes)) {
+                return false;
+            }
+            if (!formats::Sni::parse(&archive, std::move(bytes))) {
+                return false;
+            }
         }
         archives.push_back(std::move(archive));
     }
@@ -41,8 +49,11 @@ bool SoundBank::withArchives(SoundBank* out, std::vector<formats::Sni>&& archive
     out->cache_.clear();
     out->sounds_.clear();
     out->missing_.clear();
+    out->readFailures_.clear();
     out->pins_.clear();
     out->recent_.clear();
+    out->staging_ = Staging();
+    out->stats_ = Stats();
     return true;
 }
 
@@ -60,10 +71,16 @@ bool SoundBank::get(const std::string& name, Entry* out) {
     }
 
     Entry entry;
-    if (!load(name, &entry)) {
-        missing_.insert(name);
+    bool readFailed = false;
+    if (!load(name, &entry, &readFailed)) {
+        if (readFailed) {
+            noteReadFailure(name);   // tried again next time, up to the limit
+        } else {
+            missing_.insert(name);
+        }
         return false;
     }
+    readFailures_.erase(name);   // the limit is on failures in a row
     cache_[name] = entry;
     touch(name);
     evictOverBudget(name);
@@ -122,6 +139,7 @@ void SoundBank::evictOverBudget(const std::string& keep) {
         }
         sounds_.erase(victim);
         cache_.erase(victim);
+        stats_.evictions++;
         for (std::deque<std::string>::iterator it = recent_.begin(); it != recent_.end(); ++it) {
             if (*it == victim) {
                 recent_.erase(it);
@@ -129,6 +147,35 @@ void SoundBank::evictOverBudget(const std::string& keep) {
             }
         }
     }
+}
+
+size_t SoundBank::releaseMusicExcept(const std::string* keep, int32_t count) {
+    size_t freed = 0;
+    for (std::map<std::string, Entry>::iterator it = cache_.begin(); it != cache_.end();) {
+        const std::string& name = it->first;
+        bool kept = !it->second.music || pins(name) != 0;
+        for (int32_t k = 0; !kept && keep && k < count; k++) {
+            kept = keep[k] == name;
+        }
+        if (kept) {
+            ++it;
+            continue;
+        }
+        std::map<std::string, Sound>::iterator sound = sounds_.find(name);
+        if (sound != sounds_.end()) {
+            freed += sound->second.samples.size() * sizeof(Sound::Samples::value_type);
+            sounds_.erase(sound);
+        }
+        for (std::deque<std::string>::iterator r = recent_.begin(); r != recent_.end(); ++r) {
+            if (*r == name) {
+                recent_.erase(r);
+                break;
+            }
+        }
+        stats_.musicReleased++;
+        cache_.erase(it++);
+    }
+    return freed;
 }
 
 void SoundBank::preload() {
@@ -187,42 +234,176 @@ bool SoundBank::animation(const std::string& name, formats::SpriteAnimation* out
 
 // Newest archive first, as the C#'s `for (var i = archives.Count - 1; ...)`.
 // An entry of that name that is not a sound is skipped and the search continues
-// in the older archives — it does not end the lookup. The winning entry is found
-// in the walk and decoded after it, so the frame-count division (runtime
-// divisor: the channel count) runs once per name, not inside the archive loop.
-bool SoundBank::load(const std::string& name, Entry* out) {
-    const formats::Sni::Entry* found = nullptr;
-    std::vector<uint8_t> bytes;
+// in the older archives -- it does not end the lookup.
+bool SoundBank::find(const std::string& name, size_t* archive,
+                     const formats::Sni::Entry** entry) const {
     for (int i = (int)archives_.size() - 1; i >= 0; i--) {
-        const formats::Sni& candidate = archives_[i];
+        const formats::Sni& candidate = archives_[(size_t)i];
         const std::vector<formats::Sni::Entry>& entries = candidate.entries();
-        const formats::Sni::Entry* entry = nullptr;
+        const formats::Sni::Entry* found = nullptr;
         for (size_t e = 0; e < entries.size(); e++) {
             if (entries[e].nameString() == name) {
-                entry = &entries[e];
+                found = &entries[e];
                 break;
             }
         }
-        if (entry == nullptr || !candidate.isSound(*entry)) {
+        if (found == nullptr || !candidate.isSound(*found)) {
             continue;
         }
-        if (!candidate.getBytes(*entry, &bytes)) {
+        // The C# takes the entry's bytes here (GetBytes cannot fail for a
+        // parsed archive); an entry whose range is outside the file is skipped
+        // as before.
+        // A streamed entry is all directory: one longer than any entry is
+        // (Sni::kMaxStreamedEntryBytes) is skipped the same way, before the
+        // prefetch reserves a buffer of its length.
+        if (found->offset < 0 || found->length < 0 ||
+            (!candidate.streamed() &&
+             (int64_t)found->offset + found->length > (int64_t)candidate.bytes().size()) ||
+            (candidate.streamed() && found->length > formats::Sni::kMaxStreamedEntryBytes)) {
             continue;
         }
-        found = entry;
-        break;
+        *archive = (size_t)i;
+        *entry = found;
+        return true;
     }
-    if (found == nullptr) {
+    return false;
+}
+
+bool SoundBank::prefetch(const std::string& name) {
+    if (name.empty() || name == staging_.name || cache_.find(name) != cache_.end() ||
+        missing_.find(name) != missing_.end()) {
         return false;
     }
+    size_t archive = 0;
+    const formats::Sni::Entry* entry = nullptr;
+    if (!find(name, &archive, &entry)) {
+        return false;
+    }
+    if (!staging_.name.empty()) {
+        stats_.prefetchDrops++;
+    }
+    stagingDrop();
+    staging_.name = name;
+    staging_.archive = archive;
+    staging_.entry = *entry;
+    staging_.bytes.reserve((size_t)entry->length);
+    stats_.prefetches++;
+    return true;
+}
 
+void SoundBank::noteReadFailure(const std::string& name) {
+    if (++readFailures_[name] >= kMaxReadFailures) {
+        missing_.insert(name);
+    }
+}
+
+void SoundBank::stagingDrop() {
+    staging_.name.clear();
+    std::vector<uint8_t>().swap(staging_.bytes);
+}
+
+bool SoundBank::stagingRead(int32_t limit) {
+    const int32_t have = (int32_t)staging_.bytes.size();
+    int32_t want = staging_.entry.length - have;
+    if (limit > 0 && want > limit) {
+        want = limit;
+    }
+    if (want <= 0) {
+        return true;
+    }
+    std::vector<uint8_t> chunk;
+    if (!archives_[staging_.archive].readEntry(staging_.entry, have, want, &chunk)) {
+        stats_.readFailures++;
+        stagingDrop();
+        return false;
+    }
+    staging_.bytes.insert(staging_.bytes.end(), chunk.begin(), chunk.end());
+    return true;
+}
+
+bool SoundBank::prefetchStep() {
+    if (staging_.name.empty()) {
+        return false;
+    }
+    const int32_t left = staging_.entry.length - (int32_t)staging_.bytes.size();
+    const int32_t step = left > kPrefetchTailBytes ? kPrefetchStepBytes : left;
+    stats_.prefetchSteps++;
+    const std::string reading = staging_.name;
+    if (!stagingRead(step)) {
+        // Abandoned, and counted against the name: a later get() reads it
+        // whole, or finds it missing once the limit is reached.
+        noteReadFailure(reading);
+        return false;
+    }
+    if ((int32_t)staging_.bytes.size() < staging_.entry.length) {
+        return true;
+    }
+    // The last step: decode, as a get() would have.
+    const std::string name = staging_.name;
+    Entry entry;
+    const bool ok = decode(name, staging_.entry, staging_.bytes, &entry);
+    stagingDrop();
+    if (ok) {
+        readFailures_.erase(name);
+        cache_[name] = entry;
+        touch(name);
+        evictOverBudget(name);
+    } else {
+        missing_.insert(name);
+    }
+    return false;
+}
+
+bool SoundBank::load(const std::string& name, Entry* out, bool* readFailed) {
+    std::vector<uint8_t> bytes;
+    formats::Sni::Entry entry;
+    if (name == staging_.name) {
+        // The sound is wanted before its prefetch is done: finish it now.
+        const int64_t left = (int64_t)staging_.entry.length - (int64_t)staging_.bytes.size();
+        stats_.prefetchStalls++;
+        stats_.prefetchStallBytes += left;
+        if (!stagingRead(0)) {
+            *readFailed = true;
+            return false;
+        }
+        entry = staging_.entry;
+        bytes.swap(staging_.bytes);
+        stagingDrop();
+    } else {
+        size_t archive = 0;
+        const formats::Sni::Entry* found = nullptr;
+        if (!find(name, &archive, &found)) {
+            return false;
+        }
+        entry = *found;
+        if (!archives_[archive].getBytes(entry, &bytes)) {
+            if (archives_[archive].streamed()) {
+                stats_.readFailures++;
+                *readFailed = true;
+            }
+            return false;
+        }
+        if (archives_[archive].streamed()) {
+            stats_.demandReads++;
+            stats_.demandBytes += entry.length;
+        }
+    }
+    return decode(name, entry, bytes, out);
+}
+
+// The winning entry is decoded after the walk, so the frame-count division
+// (runtime divisor: the channel count) runs once per name, not inside the
+// archive loop.
+bool SoundBank::decode(const std::string& name, const formats::Sni::Entry& entry,
+                       const std::vector<uint8_t>& bytes, Entry* out) {
     formats::Wav wav;
     if (!formats::Wav::parse(bytes.data(), (int32_t)bytes.size(), &wav)) {
         return false;  // C#: Wav.Parse null here means Get caches null
     }
 
-    out->volume = found->volume;
-    out->looping = (found->flags & formats::Sni::kFlagLoop) != 0;
+    out->volume = entry.volume;
+    out->looping = (entry.flags & formats::Sni::kFlagLoop) != 0;
+    out->music = (entry.flags & formats::Sni::kFlagMusic) != 0;
     out->channels = wav.channels();
     out->sampleRate = wav.sampleRate();
     out->frames = wav.frames();

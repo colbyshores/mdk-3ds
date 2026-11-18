@@ -74,6 +74,11 @@ public:
     const ArenaStream& stream() const { return stream_; }
     const formats::TextureArchive& levelTextures() const { return levelTextures_; }
 
+    // Corridors that could not be read out of LEVELnO.SNI when the level
+    // loaded (or 1 when the archive itself did not open): each is a hole in the
+    // level, and the frontend says so. Zero for a level that read whole.
+    int32_t corridorReadFailures() const { return corridorReadFailures_; }
+
     // The arenas, then the corridors (a corridor CHMO_1 follows the arena
     // HMO_1).
     const std::vector<const formats::Arena*>& arenas() const { return arenas_; }
@@ -131,6 +136,7 @@ private:
 
     // The corridors, which the level owns. The arenas belong to the MTO.
     std::vector<formats::Arena*> corridors_;
+    int32_t corridorReadFailures_ = 0;
 
     // The palettes, by arena. They are made once each, because the GPU
     // copy of a palette is made once too.

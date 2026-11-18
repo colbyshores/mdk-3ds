@@ -1,0 +1,219 @@
+2026-11-18  Arena streaming Phase 5: the music archive is not resident; the level's music plays
+==========================================================================================
+
+SPEC. docs/ARENA_STREAMING_SPEC.md Phase 5 ("per-arena audio") and the two
+section-4 questions about sound. EMULATOR and HOST evidence only: the Old 3DS is
+pinned to another project (owner, 2026-11-18); no hardware number is claimed and
+the phase is not tagged.
+
+Instrument: Mandarine r1.2.1 (20250128-418c25c, md5 0d2adab6...) via
+mdk_3ds/tools/compare_linux.sh -> emurun.sh, DISPLAY=:99, forced llvmpipe;
+builds `make -C mdk_3ds AUTOQUIT=90 FIXED=1 CAPTURE=<frame> LEVEL=<n> [AT=..]`.
+Ghidra 12.0.4 headless over MDK/MDKD3D.EXE (md5 13d5553e...).
+
+1. WHAT THE ORIGINAL DOES (GHIDRA, rechecked against the binary)
+----------------------------------------------------------------
+- LEVELnO.SNI is never resident. Its DIRECTORY is (0x57f378, 24-byte entries,
+  count 0x57f374) and the file stays open (handle 0x491b44).
+- ONE music buffer (0x491b40). 0x431590 looks the arena's two music names up in
+  that directory and refuses more than 0x7d000 = 512,000 bytes for the pair
+  ("Sounds %s %s overflow buffersize"). The names are the two pascal strings of
+  the CMI's arena record (0x43d9cc); the retail first one is NONE.
+- arena_load starts the preload (0x4192c4 -> 0x431590, flag 0x573b2c = 1);
+  game_frame reads a step a frame (0x4193a4 -> 0x4317d8): 0xf768 bytes while
+  more than 0x10000 remain, then the rest. When the last step lands and the
+  arena is Kurt's, the track starts (0x419158, the fades).
+- A corridor is read from the same file when it is needed (0x431914: seek to
+  the entry, a blocking read loop in the same step size, parse).
+- THE 24-BYTE SOUND ENTRIES OF AN MTO ARENA'S MODELS SECTION (spec section 4):
+  name[12], u16 flags, u16, u32 offset (from the models section), u32 length --
+  the SNI entry's own layout. arena_load_step (0x41983c), on the stream's last
+  chunk, registers them from the streamed buffer (0x4310cc -> 0x403a7c(flags,
+  models + offset)) into the 16 handles at 0x573b94; more than 16 is fatal. They
+  are the arena's OWN effects, they live in the arena's block, and they go when
+  the arena goes.
+
+2. WHAT THE FILES SAY
+---------------------
+  level  LEVELnO.SNI   music tracks (bytes)   corridors (bytes)   S + TRAVERSE
+    3    3,484,332     7  (3,290,490)         9  (193,395)        905,728
+    8    4,988,896     9  (4,482,651)         9  (505,754)        832,536
+Every track is mono PCM, 8- or 16-bit, 465-512 KB. CORRIDOR (30 KB) is in
+LEVELnS.SNI. A SPRITE ANIMATION's directory length is 0xFFFFFFFF in all six
+retail cases (LEVEL4S.SNI K_SURF, K_SURFJ; LEVEL6S.SNI K_SLIP, K_SLIDE,
+K_BSLIDE, K_FSLIDE): its size is the u32 its entry starts with, which does not
+count itself.
+The arenas' embedded sounds: 12-16 names a level (level 3: BUBBLE1, DBOARD,
+DOORLAND, H9CRASH, H9IDLE, H9START, MARIO, SMASH, SPLAT, ...), 280-944 KB a
+level, always the contiguous TAIL of the models section, and NOT ONE of the 85
+names is in any SNI archive. The C# oracle parses them (Arena.Sounds) and
+nothing reads them, so neither the oracle nor this port plays them: see
+docs/OPEN_ITEMS.md. Level 3's HMO_2 names AMB_DRIP as its music and HMO_9
+H9WATER: neither is in LEVEL3O.SNI, so those arenas are silent in the original's
+lookup too.
+
+3. WHAT CHANGED
+---------------
+- formats::Sni::open: an archive by its DIRECTORY; entries are read from the
+  file by range. Sni::parse (the whole file) is unchanged.
+- audio::SoundBank::forLevel holds TRAVERSE.SNI and LEVELnS.SNI whole (the
+  effects: 0.8-1.5 MB, any of which a frame may start with no warning) and
+  OPENS LEVELnO.SNI. prefetch()/prefetchStep(): the original's stepped music
+  read into one staging buffer, decoded on the last step; a get() of a sound
+  whose prefetch is in flight finishes it and counts the stall.
+- audio::LevelMusic: the port of src/Mdk.Game/Audio/LevelMusic.cs. The level's
+  music was NOT PORTED before this: the tracks were resident and never played.
+- Both frontends: music made with the runtime (its mixer), enter() + update()
+  every step after the camera (C# Viewer.cs:521-525), the second arena's track
+  prefetched when that arena changes, one step a frame. The 3DS bounds the
+  decoded store at 6 MiB (LRU, never a playing voice) and, once a second, gives
+  back every decoded track but the playing one, the fading one and the loading
+  arena's (SoundBank::releaseMusicExcept): the spec's "free the decoded samples
+  of an arena when it is deactivated".
+- LevelData reads the corridors by entry from the opened archive: the level's
+  load no longer reads 3.3-4.5 MB of music to get at 0.2-0.5 MB of corridors.
+- An arena keeps its models section only up to its first embedded sound
+  (2.73 MB of the six levels' 11.37 MB of models sections).
+- formats::SpriteAnimation: the frame guard was "pixels <= the buffer's size",
+  which an RLE frame held on its own breaks (K_SLIP is 7,931 bytes and its
+  frames are larger); it is a fixed ceiling now.
+
+4. MEMORY (EMULATOR; mallinfo `used`; Phase 0 rows are HARDWARE)
+----------------------------------------------------------------
+           level data                 in play (frame loop, start arena)
+  level  Phase 2     Phase 5      Phase 0       Phase 2       Phase 5       bank resident (was)
+    3    6,371,600   5,427,848    33,978,904    22,663,248    19,224,816    905,728  (4,390,060)
+    7    6,526,760   6,409,832    33,736,528    22,817,968    19,651,064    978,652  (5,038,040)
+    8    7,351,432   6,813,832    OOM (audio)   25,596,624    21,076,144    832,536  (5,821,432)
+The 3DS main heap cap is 41,041,920 B. Phase 5's in-play figure INCLUDES the
+start arena's decoded track (about 1 MB as int16) and its voice, which Phase 2
+did not play at all. "Level data" fell by the arenas' embedded sounds.
+
+5. THE MUSIC, AS LOGGED BY THE 3DS BUILD (EMULATOR)
+---------------------------------------------------
+  level start:   "music: H1 for HMO_1 (read and decoded in 109.6 ms)" -- at
+                 spawn, inside the level's load. Level 7 TRACK11, level 8 RECALL1.
+  corridor:      "music: CORRIDOR for CHMO_1 (read and decoded in 3.5 ms)".
+  prefetch (level 3, AT=0,1154,-925: CHMO_2's type-3 box, which preloads HMO_3):
+                 "stream: switch to HMO_3 (773624 bytes; cur=CHMO_2 second=HMO_3)"
+                 "music: prefetch H3 for HMO_3"
+                 "music: H3 in (9 steps so far, worst read step 22.2 ms, last
+                  step with the decode 39.9 ms; 572472 bytes decoded ...)"
+                 "stream: HMO_3 in (46 steps ...)"
+                 The track (511,718 bytes, 9 steps) is in memory 14 frames before
+                 the arena's textures are; no stall line.
+  back to HMO_1 (AT=75,700,110, CHMO_1 with HMO_1 the second arena):
+                 "music: prefetch H1 for HMO_1" ... "H1 in (8 steps so far, worst
+                  read step 14.3 ms, last step with the decode 63.3 ms; ...)"
+Emulator timings are not the console's. THE LAST STEP IS THE ONE TO WATCH ON
+HARDWARE: it decodes the whole track (half a million 8-bit samples to int16) in
+one frame, 40-63 ms here. If the console shows it as a hitch, the fix is to
+convert each step's bytes as they arrive instead of all at the end.
+
+6. TESTS
+--------
+tests/scripts/audio_stream_tests.cpp (in vm_tests, 2,511 checks):
+- every entry of every retail archive (TRAVERSE, LEVEL3-8 S and O) by both
+  forms: directory fields, kind, bytes; ranged reads; the six sprite animations
+  frame for frame (each must DECODE in both forms);
+- the level's bank against a whole-file bank, every sound of levels 3-8: same
+  metadata, same samples; what was read on demand is exactly the music;
+- the prefetch on retail tracks: the step count is the original's rule, nothing
+  decoded before the last step, an early get() finishes it (one stall, the bytes
+  left), a second prefetch drops the first;
+- SYNTHETIC archives (built in the test, written to a private folder): later
+  archives win; a non-sound or an over-long entry of a name does not end the
+  lookup; flag 1 and flag 2 apart; the step rule at exactly 0x10000 / 0x10001 /
+  three steps, through a resident and a streamed archive, sample for sample; a
+  WAV that does not parse is remembered after ONE read; the budget evicts on a
+  prefetch's completion; new archives drop a prefetch in flight; a 5000-entry
+  directory, a 64 MiB animation and 64 MiB / 2 GB entries are refused WITHOUT
+  the read being asked for (the file system counts the largest request);
+- reads that FAIL (a file system whose range reads can be switched off): an
+  archive that cannot be classified does not open and the level's bank does not
+  load over it; a prefetch that fails midway is dropped and the track plays when
+  the reads work again; a name whose reads keep failing costs exactly
+  kMaxReadFailures reads and then none; one failure is not the limit;
+- a mixer destroyed with voices playing leaves no pin (three lives), and the
+  dead life's track can then be released;
+- releaseMusicExcept: the playing (pinned) track, a kept one and every effect
+  stay; a released track reads back the same;
+- LevelMusic against LevelMusic.cs's text (TRANSLITERATED: the headless oracle
+  does not drive it): track of an arena, the last value of a name written twice,
+  fade in/out per frame, the swap back, the stop BELOW zero and not at it (a
+  frame at exactly 0.0), NONE, the third track stopping the fading one, pins,
+  the ambience (looped, not restarted for the same name, replaced, silenced).
+tests/formats/stream_tests.cpp:
+- CorridorsReadByEntryAreTheWholeFiles: all 44 corridors of levels 3-8 (10
+  placeholders) parsed from their own entry equal the whole-file parse;
+- AWorldSectionThatDoesNotFitIsNoGeometry: 'RIFF' as a world section, each
+  count absurd on its own, and every level-3 corridor cut at 33 points: the
+  whole corridor or nothing, never half.
+tests/formats/format_tests.cpp: the bake of all 721 (model, animation) pairs is
+unchanged with the embedded sounds cut; what each arena keeps is EXACTLY its
+models section minus those sounds; the bytes cut per level are the files'.
+tests/scripts/main_3ds_flow_test.sh: `music-follows-kurts-arena` with five arms
+(the music outlives the runtime; built on the standalone mixer; faded before
+entered; the prefetch never stepped; the loading arena's track released).
+
+7. INDEPENDENT REVIEW (Fable subagent, code only, mutants run in its own copy)
+-----------------------------------------------------------------------------
+No finding in dangling pointers, LevelMusic's semantics against the C#, lookup
+order on retail data, or retry storms. Fixed from it:
+- HIGH: a voice's pin was released only by SoundMixer::forget(). The runtime
+  owns its mixer and the frontend's bank outlives it, so every death left one
+  pin per live voice -- with music playing, a megabyte a life that neither the
+  budget nor releaseMusicExcept() could ever free (measured by the reviewer:
+  4.78 MB unreleasable after seven lives). ~SoundMixer releases them now.
+- Sni::open took "the 4-byte kind could not be read" for "not a sound": the
+  level's load would then parse a music track as a corridor ('RIFF' is a
+  material count of 1.18e9: an abort on the console). The open fails now, and
+  Arena::parseWorldSection checks every count against the bytes that are left.
+- one failed read made a track "missing" until the game was restarted: a READ
+  failure is now retried the next time the name is asked for, at most three
+  times; "not in the archives" and "not a WAV" are remembered as before.
+- blocking audio work was not all timed or logged: every prefetch step is timed
+  (worst read step and the decoding last step are on the line), and any frame
+  in which the bank read a streamed sound whole says so.
+- a streamed entry's length was never checked: 8 MiB ceiling, in the archive
+  and in the bank before the staging buffer is reserved; stored offsets that
+  would overflow are refused.
+- a corridor that cannot be read is counted and said (LevelData::
+  corridorReadFailures); the loading arena's track is asked for again once a
+  second in case the budget evicted it.
+MUTANTS, counted as run (each in a clean scratch copy of mdk_core + tests):
+- 5 of the corridor read and the sound cut (corridor parsed 4 bytes in; cut at
+  the last sound; cut 4096 and 64 bytes early; no cut): 3 caught at once, the
+  4096-early and the no-cut ones survived until the kept span was pinned to the
+  byte (keepAnimationBytes falls back to the WHOLE block when a track starts
+  outside its span, which kept every bake right and hid the cut);
+- 34 of the audio code and the parser's bounds -- the reviewer's survivors that
+  are not equivalent, plus one or two per fix above: 24 caught on the first run,
+  10 survived (guards whose removal changes no RESULT, only what is read or
+  allocated first) and were caught after the tests were made to count the reads
+  and the largest read asked for, and to feed each world-section count an absurd
+  value. Two of those are caught by the test binary dying on a gigabyte
+  allocation, which is the defect the guard is there against.
+All 39 are caught now. NOT pinned by any test, said plainly: the sprite frame
+ceiling removed altogether (only its value is pinned); the Linux frontend's
+music wiring (the source check reads the 3DS file); playMusic's bus (existing
+code, not this change's).
+
+8. VERIFICATION
+---------------
+On the final tree: `make -C tests/scripts test` 858 PASS, "All cases match the
+oracle" (C3dFrame 48 checks / 108 arms, Main3dsFlow 22 checks / 63 arms,
+FrontendSolidPin 12 / 12, AudioStreamAndLevelMusic); tests/formats 161,148
+checks, 0 failures; tools/check.sh all gates; HUD acceptance in the emulator
+green; level 8 frame 300 0.52% and level 7 frame 300 0.04% against the Linux
+build, as before the phase; the pinned Linux frame is byte-identical to the
+previous pin (docs/frames/2026-11-18-arena-streaming-phase5.png).
+
+9. NOT DONE / NOT VERIFIED
+--------------------------
+- Hardware: SD read time of a 0.5 MB track, the decoding last step of a
+  prefetch, the level-start read, the 6 MiB budget, and what one or two more
+  software-mixed voices cost a frame (music did not play before this).
+- The arenas' embedded sounds are not played (the oracle does not play them);
+  their bytes are no longer kept.
+- A walk under real input through a door, with the music changing.

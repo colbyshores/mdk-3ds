@@ -30,6 +30,7 @@
 #include "test_support.h"
 #include "archive_guard_tests.h"
 #include "audio_sink_tests.h"
+#include "audio_stream_tests.h"
 #include "flow_tests.h"
 #include "input_3ds_tests.h"
 #include "formats/case_insensitive_path.h"
@@ -8112,6 +8113,13 @@ int main() {
     printf("PASS SwappedModelStreamsSwapVertices\n");
     testBankBudgetEvictsUnpinned(data);
     printf("PASS BankBudgetEvictsUnpinned\n");
+    // Arena streaming Phase 5: the music archive by its directory, the bank's
+    // stepped prefetch, the level's music (audio_stream_tests.h).
+    const int audioStreamFailures = mdk::test::runAudioStreamTests(data);
+    failures += audioStreamFailures;
+    if (audioStreamFailures == 0) {
+        printf("PASS AudioStreamAndLevelMusic\n");
+    }
     testTeleportKurtLevel4(data);
     printf("PASS TeleportKurtLevel4\n");
     testTeleportKurtLoadsCorridorsAndPullsDoors(&levelData, &cmi, &bank);

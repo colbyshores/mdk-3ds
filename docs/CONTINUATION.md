@@ -1,5 +1,74 @@
 # Phase 2 continuation checkpoint
 
+## ARENA STREAMING PHASE 5: THE MUSIC ARCHIVE IS NOT RESIDENT, AND THE LEVEL'S MUSIC PLAYS (2026-11-18)
+
+Spec: `docs/ARENA_STREAMING_SPEC.md` Phase 5. Evidence:
+`docs/evidence/2026-11-18-arena-streaming-phase5.txt`. EMULATOR + HOST only --
+the console is pinned to another project, no hardware number is claimed and the
+phase is NOT tagged.
+
+- **What the original does (Ghidra, rechecked).** `LEVELnO.SNI` is never
+  resident: its directory is (0x57f378) and the file stays open. ONE music
+  buffer (0x491b40, 512,000 bytes for an arena's pair of names: "Sounds %s %s
+  overflow buffersize"); `arena_load` starts the preload (0x4192c4 -> 0x431590)
+  and `game_frame` reads a step a frame (0x4193a4 -> 0x4317d8: 0xf768 bytes
+  while more than 0x10000 remain, then the rest). A corridor is read from the
+  same file when needed (0x431914).
+- **Spec section 4, the 24-byte sound entries: ANSWERED.** They are the SNI's
+  own entry layout (name[12], u16 flags, u16, u32 offset from the models section,
+  u32 length) and they are the ARENA'S OWN EFFECTS, WAVs inside its block,
+  registered when its stream completes (0x41983c -> 0x4310cc, at most 16). 85
+  names over levels 3-8 and none of them is in any SNI -- and the C# oracle never
+  plays them (`Arena.Sounds` has no reader). That is an oracle gap, recorded in
+  `docs/OPEN_ITEMS.md`; the port does not close it alone (voices are
+  script-visible). It no longer KEEPS their bytes: 0.28-0.94 MB a level.
+- **What landed.** `formats::Sni::open` (an archive by its directory, entries
+  read by range). `SoundBank::forLevel` holds TRAVERSE.SNI and LEVELnS.SNI whole
+  (effects, 0.8-1.5 MB) and OPENS LEVELnO.SNI; `prefetch()` / `prefetchStep()`
+  are the original's stepped music read; `releaseMusicExcept()` gives back the
+  decoded tracks of arenas that are gone. `audio::LevelMusic` is the port of
+  `LevelMusic.cs` -- **the level's music was not ported at all before this**:
+  the tracks sat in memory and nothing played them. `LevelData` reads corridors
+  by entry (the level's load no longer reads 3.3-4.5 MB of music to reach them).
+- **The frontends.** Music is made with the runtime (on ITS mixer) and dropped
+  before it; `enter(currentArena)` + `update(step)` every step after the camera
+  (C# Viewer.cs:521-525); the second arena's track is prefetched when that arena
+  changes and stepped once a frame after `stream.update`. The 3DS also bounds the
+  decoded store (6 MiB, LRU, never a playing voice) and releases unneeded tracks
+  once a second. `main_3ds_flow_test.sh` pins it (`music-follows-kurts-arena`,
+  four arms).
+- **Two format facts the work turned up.** A sprite animation's SNI directory
+  length is 0xFFFFFFFF (all six retail ones): its size is the u32 its entry
+  starts with. And `SpriteAnimation`'s frame guard compared an RLE frame's pixel
+  count with the size of the buffer it was read from, which only held while
+  every animation was parsed out of a whole file; it is a fixed ceiling now.
+- **Numbers (EMULATOR, mallinfo used).** In play, start arena, its track
+  playing: L3 22.66 -> 19.22 MB, L7 22.82 -> 19.65 MB, L8 25.60 -> 21.08 MB
+  (Phase 0 hardware: 33.98 / 33.74 / OOM; heap cap 41.04 MB). Level data L3
+  6.37 -> 5.43 MB, L7 6.53 -> 6.41 MB, L8 7.35 -> 6.81 MB. The bank holds
+  0.83-0.98 MB of archives instead of 4.39-5.82 MB.
+- **Review (code only) and what it changed.** HIGH: a voice's pin was only
+  released by `SoundMixer::forget`, so every death leaked the pins of the voices
+  alive at it -- with music playing, a megabyte a life the budget could never
+  free; `~SoundMixer` releases them. Also fixed: `Sni::open` mistook an
+  unreadable entry for "not a sound" (the level's load would have parsed a WAV as
+  a corridor and aborted), so the open fails and the world parser bounds every
+  count; a read failure is retried up to three times instead of silencing the
+  track for good; every blocking audio read is timed or logged; entry lengths
+  have a ceiling. 39 mutants, all caught (12 only after the tests were
+  strengthened): the evidence file has the count as run.
+- **The one number to watch on hardware.** The LAST prefetch step decodes the
+  whole track in one frame: 40-63 ms in the emulator. If the console shows it as
+  a hitch in a corridor, convert each step's bytes as they arrive.
+
+**Still owed / next:**
+- Hardware: SD read time of a half-megabyte track (the prefetch's whole point),
+  the level-start read, the 6 MiB budget. Owner tests over FTP.
+- The arenas' embedded sounds (the oracle gap above): owner's call.
+- Models/animations still resident for every arena (unported half of
+  `UpdateArenas`); corridors are kept by design (0.2-0.5 MB a level).
+- Then sun shadows (enhancement 6), per the owner's order.
+
 ## ARENA STREAMING PHASE 2: ONE ARENA'S TEXTURES RESIDENT, EVERY LOADED ARENA DRAWN (2026-11-18)
 
 Spec: `docs/ARENA_STREAMING_SPEC.md` Phases 2-3. Evidence:

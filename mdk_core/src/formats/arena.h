@@ -212,6 +212,12 @@ public:
     // Animations parse() had to drop because a track lay outside the arena's
     // block (keepAnimationBytes). Zero on every retail level (format_tests).
     int32_t droppedAnimations() const { return droppedAnimations_; }
+
+    // The bytes of the models section's tail that were NOT kept: the arena's
+    // embedded sounds (see parseModels). Zero for an arena without any.
+    int32_t embeddedSoundBytes() const { return embeddedSoundBytes_; }
+    // The bytes of the models section the arena keeps for its animations.
+    int32_t keptModelBytes() const { return (int32_t)animationBytes_.size(); }
     const std::string& modelName(int32_t index) const { return models_[index].first; }
 
     int32_t triangleCount() const { return (int32_t)triangleMaterials_.size(); }
@@ -247,7 +253,9 @@ private:
 
     // The model, animation and sound directories (arena_parse_models). The
     // sounds are read past, not kept: the audio path is elsewhere.
-    void parseModels(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset);
+    // Returns where the arena's first embedded sound starts (an offset into
+    // `bytes`), or -1 when it has none.
+    int32_t parseModels(const uint8_t* bytes, int32_t byteCount, int32_t baseOffset);
 
     // Copy [from, to) of the parse buffer -- the models section -- into
     // animationBytes_ and rebase every animation onto it. If any track falls
@@ -276,6 +284,7 @@ private:
     // resized after keepAnimationBytes: the animations hold its data().
     std::vector<uint8_t> animationBytes_;
     int32_t droppedAnimations_ = 0;
+    int32_t embeddedSoundBytes_ = 0;
 
     int32_t texturePrefixBytes_ = 0;
     // The textures point at this (Texture::setPixelSource); the arena does not
