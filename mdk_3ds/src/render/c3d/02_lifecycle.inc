@@ -184,6 +184,7 @@
     }
 
     r->ready = true;
+    r->hdReader.start();
 
     // THE CANVAS'S WHITE TEXTURE, made once here and never released.
     //
@@ -223,6 +224,9 @@
     RendererC3D* r = asC3d(rr);
     if (!r) return;
 
+    // The HD reader first: its thread is joined and the buffers it still holds
+    // are freed before anything it could name goes away (AGENTS.md P4).
+    r->hdReader.stop();
     if (r->scratch) {
         linearFree(r->scratch);
         r->scratch = nullptr;

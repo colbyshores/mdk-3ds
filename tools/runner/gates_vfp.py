@@ -1331,8 +1331,14 @@ def fpscr_ok(text: str) -> bool:
     return fpscr_asm_write(text)
 
 
+# Both spellings, as FPSCR_HELPER_RE above says the rule binds to: MDK's helpers
+# are camelCase in namespace mdk (`vfpThreadFzDn()`), and before 2026-11-17 this
+# call pattern held only the snake_case names, so a worker routine that called
+# `vfpThreadFzDn()` at its entry -- the shape AGENTS.md R1 prescribes -- read as
+# never establishing FZ|DN (found by the HD reader thread, async_file_reader.cpp).
 HELPER_CALL_RE = re.compile(
-    r"\b(vfp_set_fz_dn|vfp_thread_fz_dn|ts_vfp_init|vfp_init_fpscr|ts_vfp_set_fpscr)\s*\(\s*\)"
+    r"\b(vfp_set_fz_dn|vfp_thread_fz_dn|ts_vfp_init|vfp_init_fpscr|ts_vfp_set_fpscr"
+    r"|vfpSetFzDnMain|vfpSetFzDn|vfpThreadFzDn)\s*\(\s*\)"
 )
 HELPER_DEF_TAIL_RE = re.compile(r"\b(?:void|int|static|inline|constexpr|auto)\s*$")
 
@@ -1360,8 +1366,9 @@ def fpscr_called(text: str) -> bool:
 
 
 HELPER_DEF_RE = re.compile(
-    r"\b(?:void|int|static|inline|constexpr|auto)[^\n;{}]*\b"
-    r"(?:vfp_set_fz_dn|vfp_thread_fz_dn|ts_vfp_init|vfp_init_fpscr|ts_vfp_set_fpscr)\s*\("
+    r"\b(?:void|int|bool|static|inline|constexpr|auto)[^\n;{}=]*\b"
+    r"(?:vfp_set_fz_dn|vfp_thread_fz_dn|ts_vfp_init|vfp_init_fpscr|ts_vfp_set_fpscr"
+    r"|vfpSetFzDnMain|vfpSetFzDn|vfpThreadFzDn)\s*\("
 )
 
 

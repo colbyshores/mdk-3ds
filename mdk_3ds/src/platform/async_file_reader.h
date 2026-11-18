@@ -1,0 +1,86 @@
+#pragma once
+
+// ============================================================================
+// async_file_reader.h -- whole files read from the SD card on a worker thread.
+//
+// THE HD STREAM'S I/O (docs/HD_TEXTURES_3DS_SPEC.md 4.2). An SD read of a
+// 100-350 KB .t3x is an FS-service round trip measured in tens of milliseconds
+// on hardware; done at the frame boundary it is a hitch per texture. So the
+// renderer hands PATHS to this reader and takes back BUFFERS: the worker reads,
+// the main thread imports (the import -- a copy into the linear heap -- is the
+// only part that has to be on the thread that owns citro3d, AGENTS.md P2).
+//
+// THE THREAD (AGENTS.md P4, R1, §10):
+//   - owned and joined: start() creates it, stop() signals, joins and frees it,
+//     and frees every buffer still held; the renderer's destroy calls stop();
+//   - FZ/DN at entry (vfpThreadFzDn), though it does no float work;
+//   - a small stack (kStackBytes) and no large locals: the path is copied into
+//     a fixed slot, the bytes live in a malloc'd buffer;
+//   - priority one BELOW the main thread's, on the application core: on the Old
+//     3DS it runs while main waits (the frame end's vsync), never instead of it.
+//   - synchronisation: one LightLock guards the slots; a LightEvent wakes the
+//     worker. No `volatile` stands in for either.
+// ============================================================================
+
+#include <3ds.h>
+#include <stddef.h>
+#include <stdint.h>
+
+namespace mdk {
+
+class AsyncFileReader {
+public:
+    static constexpr int32_t kSlots = 4;
+    static constexpr size_t kPathMax = 192;
+    static constexpr size_t kStackBytes = 16 * 1024;
+
+    AsyncFileReader() = default;
+    AsyncFileReader(const AsyncFileReader&) = delete;
+    AsyncFileReader& operator=(const AsyncFileReader&) = delete;
+
+    // Starts the worker. False (and the reader stays unusable) when the thread
+    // cannot be created.
+    bool start();
+    // Stops and joins the worker, then frees every buffer it still holds. Safe
+    // to call when start() failed or was never called.
+    void stop();
+
+    // Asks for `path` under `tag`. False when every slot is busy (try again next
+    // frame), the path is too long, or the reader is not running.
+    bool request(int32_t tag, const char* path);
+
+    // Takes one finished read, if any: its tag, the path it read (into `path`,
+    // kPathMax bytes -- a tag can be reused before its old read finishes, and the
+    // path is what tells the two apart), and either the bytes (malloc'd; the
+    // caller frees them) and their size, or ok=false (the file could not be
+    // read). False when nothing is finished.
+    bool poll(int32_t* tag, char* path, uint8_t** bytes, size_t* size, bool* ok);
+
+    // Slots holding a request, a read in progress or an untaken result.
+    int32_t busy();
+
+    // The worker's loop (the thread's entry, asyncFileReaderThread, calls it
+    // after establishing FZ/DN). Not for any other caller.
+    void run();
+
+private:
+    enum State : uint8_t { Free, Requested, Reading, Done };
+    struct Slot {
+        State state = Free;
+        int32_t tag = -1;
+        char path[kPathMax] = {0};
+        uint8_t* bytes = nullptr;
+        size_t size = 0;
+        bool ok = false;
+    };
+
+
+    Slot slots_[kSlots];
+    LightLock lock_;
+    LightEvent wake_;
+    Thread thread_ = nullptr;
+    bool running_ = false;
+    bool exit_ = false;   // read and written under lock_ only
+};
+
+} // namespace mdk

@@ -59,6 +59,21 @@ public:
         return "LEVEL" + std::to_string(level);
     }
 
+    // The same index built from a LIST of files instead of a directory scan:
+    // `files` are paths relative to `root` ("textures/LEVEL3/WALL@9f3a.t3x"),
+    // one mod. The 3DS HD pack lists its files in its manifest
+    // (docs/HD_TEXTURES_3DS_SPEC.md) because its SD card is not scanned; the
+    // indexing rule is the scan's own.
+    static ModImages fromList(const std::string& root, const std::vector<std::string>& files,
+                              bool hasLevel, int32_t level);
+
+    // The FILE a replacement would come from, by find()'s own order (exact key,
+    // then the level's folder, then every level), without decoding it; whole
+    // files only (no per-frame NAME_0.. sets). The 3DS imports a compressed
+    // .t3x from this path instead of decoding a PNG.
+    bool resolve(Kind kind, const std::string& name, const formats::Texture& texture,
+                 const formats::Palette& palette, std::string* path);
+
     // A 3D texture's replacement (arenas, models, Kurt's frames), or false.
     bool texture(const std::string& name, const formats::Texture& texture,
                  const formats::Palette& palette, HdImage* out);

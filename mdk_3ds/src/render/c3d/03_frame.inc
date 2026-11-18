@@ -66,6 +66,12 @@ static uint32_t renderDebugFlags() {
 
 static bool makeTexture(RendererC3D* renderer, C3dTexture& texture, bool diagnostics);
 
+// The HD stream's entry points (04_textures.inc, THE HD STREAM), declared here
+// because the frame boundary calls them before they are defined.
+static void dropHd(RendererC3D* renderer, C3dTexture& texture);
+static void pumpHdTextures(RendererC3D* renderer, uint32_t protectFrom);
+static bool evictHd(RendererC3D* renderer, uint32_t protectFrom);
+
 // Settle the texture changes that could not be made while the GPU might
 // still be reading the old copy.
 //
@@ -87,6 +93,7 @@ static void settleDeferredTextures(RendererC3D* renderer) {
             C3D_TexDelete(&texture.tex);
             texture.valid = false;
         }
+        dropHd(renderer, texture);
         texture.releasePending = false;
         texture.stale = false;
         texture.source.clear();
@@ -435,9 +442,22 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // THE FRAME'S BOUNDARY FOR THE EVICTION. A texture stamped at or after
     // this has been used by THIS frame's commands, and the GPU may still be
     // reading it, so it cannot be freed (AGENTS.md P3).
+    // The frame that just ENDED drew stamps from the old boundary on: the HD
+    // pump keeps those (the view's working set) and imports within the rest.
+    const uint32_t previousFrameStart = r->frameStartUse;
     r->frameStartUse = r->drawCounter + 1;
     settleDeferredTextures(r);
     settleDeferredMeshes(r);
+    pumpHdTextures(r, previousFrameStart);
+    // The stream's state, every 300 frames once it has done anything: the
+    // evidence a budget is read from (docs/HD_TEXTURES_3DS_SPEC.md 4.2).
+    if ((r->frame % 300) == 0 && (r->hdImported > 0 || !r->hdQueue.empty())) {
+        mdk::log3dsPrintf("hd: frame %d: %d imported, %u bytes resident of %u, %d evicted, "
+                          "%d failed, %d queued, %d reading",
+                          (int)r->frame, (int)r->hdImported, (unsigned)r->hdResidentBytes,
+                          (unsigned)kHdBudgetBytes, (int)r->hdEvicted, (int)r->hdFailedCount,
+                          (int)r->hdQueue.size(), (int)r->hdReader.busy());
+    }
     r->queue.reset();
 
     // THE CLEAR COLOUR IS CONVERTED, NOT PASSED THROUGH. The seam carries

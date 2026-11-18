@@ -47,10 +47,12 @@
 
 #include <3ds.h>
 #include <citro3d.h>
+#include <tex3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -61,6 +63,7 @@
 #include "mdk_c3d_shbin.h"
 #include "platform/vfp_fpscr.h"
 #include "platform/log_3ds.h"
+#include "platform/async_file_reader.h"
 
 // THIS FILE IS A SINGLE TRANSLATION UNIT ASSEMBLED FROM c3d/*.inc
 // (the ../t2k split of the same name, adopted 2026-11-15). The

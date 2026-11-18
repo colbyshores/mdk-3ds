@@ -49,6 +49,9 @@ struct ColourReplacement {
     int32_t height = 0;
     int32_t frames = 1;
     const uint8_t* rgba = nullptr;
+    // OR a compressed file (the 3DS HD pack's .t3x), handed to
+    // mdk_render_replace_compressed instead; borrowed for the call only.
+    const char* compressedPath = nullptr;
 };
 
 // Asks for a Lit surface's colour replacement, or returns false. Called

@@ -47,14 +47,19 @@ trap 'rm -rf "$LANE_TMP" 2>/dev/null' EXIT   # the lane holds emulator runtime m
 # original look: no --enhanced flag).
 SEED="$LANE_TMP/seed"
 mkdir -p "$SEED/3ds/mdk"
+# MDK_COMPARE_SDMC: a tree copied onto the emulated SD card as well (e.g. a
+# directory holding 3ds/mdk/hd/, the HD pack built by build_hd_pack.sh).
+if [ -n "${MDK_COMPARE_SDMC:-}" ]; then
+    cp -a "$MDK_COMPARE_SDMC/." "$SEED/"
+fi
 if [ -n "${MDK_COMPARE_TOGGLES:-}" ]; then
     cp "$MDK_COMPARE_TOGGLES" "$SEED/3ds/mdk/config.ini"
 else
-    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\nenableMipmaps=0\n' \
+    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\nenableMipmaps=0\nenableHdTextures=0\n' \
         > "$SEED/3ds/mdk/config.ini"
 fi
 # Enough wall time for load + <frame> fixed frames under emulation.
-SECS=$(( 40 + FRAME / 20 ))
+SECS=${MDK_COMPARE_SECS:-$(( 40 + FRAME / 20 ))}
 [ "$SECS" -gt 600 ] && SECS=600
 TMPDIR=$LANE_TMP "$ROOT/mdk_3ds/tools/emurun.sh" --secs "$SECS" --seed-sdmc "$SEED" > "$OUT/emurun.log" 2>&1
 CAP=$(find "$LANE_TMP" -path '*sdmc*/3ds/mdk/hwcap.bmp.log' | head -1)

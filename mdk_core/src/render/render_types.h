@@ -240,6 +240,8 @@ struct EnhancedToggles {
     bool enableFiltering = true;      // bilinear texture filtering (the PC's filtered look)
     bool enableMipmaps = true;        // 3DS: mip chains (made at texture creation, sampled live,
                                       // only with enableFiltering); the PC always mips
+    bool enableHdTextures = true;     // 3DS: the HD pack's ETC1/ETC1A4 replacements,
+                                      // streamed (docs/HD_TEXTURES_3DS_SPEC.md)
 };
 
 // ---------------------------------------------------------------------------

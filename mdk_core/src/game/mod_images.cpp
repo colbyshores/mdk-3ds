@@ -52,13 +52,13 @@ void collectPngs(const formats::FileSystem* system, const std::string& folder,
     }
 }
 
-// One kind of a mod's files, indexed (ModImages.cs's Scan).
-void scanKind(const formats::FileSystem* system, const std::string& folder, bool hasLevel,
-              int32_t level, std::map<std::string, std::string>* keys,
-              std::map<std::string, std::string>* levelFiles,
-              std::map<std::string, std::string>* names) {
-    std::vector<std::string> paths;
-    collectPngs(system, folder, &paths);
+// One kind of a mod's files, indexed from a list of their paths (ModImages.cs's
+// Scan). The list is a directory scan on the PC (scanKind) and the HD pack's
+// manifest on the 3DS (ModImages::fromList), so both index by the same rule.
+void indexPaths(const std::vector<std::string>& paths, const std::string& folder, bool hasLevel,
+                int32_t level, std::map<std::string, std::string>* keys,
+                std::map<std::string, std::string>* levelFiles,
+                std::map<std::string, std::string>* names) {
     const std::string levelPath =
         hasLevel ? modPathJoin(folder, ModImages::levelFolder(level)) : "";
     for (size_t i = 0; i < paths.size(); i++) {
@@ -84,6 +84,15 @@ void scanKind(const formats::FileSystem* system, const std::string& folder, bool
             }
         }
     }
+}
+
+void scanKind(const formats::FileSystem* system, const std::string& folder, bool hasLevel,
+              int32_t level, std::map<std::string, std::string>* keys,
+              std::map<std::string, std::string>* levelFiles,
+              std::map<std::string, std::string>* names) {
+    std::vector<std::string> paths;
+    collectPngs(system, folder, &paths);
+    indexPaths(paths, folder, hasLevel, level, keys, levelFiles, names);
 }
 
 // Straight alpha to premultiplied, in place (ModImages.Premultiply).
@@ -234,6 +243,61 @@ bool ModImages::find(Kind kind, const std::string& name, const formats::Texture&
             reportFound(name);
             return true;
         }
+    }
+    return false;
+}
+
+ModImages ModImages::fromList(const std::string& root, const std::vector<std::string>& files,
+                              bool hasLevel, int32_t level) {
+    ModImages images;
+    std::map<Kind, Index> kinds;
+    const Kind all[] = {Kind::Textures, Kind::Images};
+    for (size_t k = 0; k < 2; k++) {
+        const std::string prefix = std::string(folderOf(all[k])) + "/";
+        std::vector<std::string> paths;
+        for (size_t i = 0; i < files.size(); i++) {
+            if (files[i].compare(0, prefix.size(), prefix) == 0) {
+                paths.push_back(modPathJoin(root, files[i]));
+            }
+        }
+        Index index;
+        indexPaths(paths, modPathJoin(root, folderOf(all[k])), hasLevel, level, &index.keys,
+                   &index.level, &index.names);
+        kinds[all[k]] = index;
+    }
+    images.mods_.push_back(kinds);
+    return images;
+}
+
+bool ModImages::resolve(Kind kind, const std::string& name, const formats::Texture& texture,
+                        const formats::Palette& palette, std::string* path) {
+    std::string key;
+    bool keyComputed = false;
+    for (size_t m = 0; m < mods_.size(); m++) {
+        const Index& index = mods_[m][kind];
+        if (!index.keys.empty()) {
+            if (!keyComputed) {
+                key = hdKeyOf(texture, palette);
+                keyComputed = true;
+            }
+            const std::map<std::string, std::string>::const_iterator exact = index.keys.find(key);
+            if (exact != index.keys.end()) {
+                *path = exact->second;
+                reportFound(name);
+                return true;
+            }
+        }
+        const std::string lower = modLower(name);
+        std::map<std::string, std::string>::const_iterator it = index.level.find(lower);
+        if (it == index.level.end()) {
+            it = index.names.find(lower);
+            if (it == index.names.end()) {
+                continue;
+            }
+        }
+        *path = it->second;
+        reportFound(name);
+        return true;
     }
     return false;
 }

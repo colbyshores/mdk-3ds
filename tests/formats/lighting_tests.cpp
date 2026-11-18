@@ -231,19 +231,21 @@ MDK_TEST(EnhancedConfigRoundTrips) {
     mdk::EnhancedToggles toggles;
     MDK_CHECK(toggles.enableSkyShadows && toggles.enableFragmentLights && toggles.enableHaze &&
               toggles.enableMirrors && toggles.enableGlowBillboards && toggles.enableFiltering &&
-              toggles.enableMipmaps);
+              toggles.enableMipmaps && toggles.enableHdTextures);
 
-    // The written file carries all seven keys and parses back identically.
+    // The written file carries all eight keys and parses back identically.
     toggles.enableHaze = false;
     toggles.enableMirrors = false;
     toggles.enableFiltering = false;
     toggles.enableMipmaps = false;
+    toggles.enableHdTextures = false;
     const std::string text = mdk::writeEnhancedConfig(toggles);
     mdk::EnhancedToggles back;
     MDK_CHECK(mdk::parseEnhancedConfig(text.c_str(), &back));
     MDK_CHECK(back.enableSkyShadows && back.enableFragmentLights && !back.enableHaze &&
               !back.enableMirrors && back.enableGlowBillboards && !back.enableFiltering &&
-              !back.enableMipmaps);
+              !back.enableMipmaps && !back.enableHdTextures);
+    MDK_CHECK(text.find("enableHdTextures=0\n") != std::string::npos);
     MDK_CHECK(text.find("enableMipmaps=0\n") != std::string::npos);
     MDK_CHECK(text.find("enableFiltering=0\n") != std::string::npos);
 
@@ -256,7 +258,8 @@ MDK_TEST(EnhancedConfigRoundTrips) {
                               "enableHaze=banana\n"
                               "enableGlowBillboards = 0\n"
                               "enableFiltering=false\n"
-                              "enableMipmaps=off\n";
+                              "enableMipmaps=off\n"
+                              "enableHdTextures=0\n";
     MDK_CHECK(mdk::parseEnhancedConfig(partialText, &partial));
     MDK_CHECK(!partial.enableSkyShadows);
     MDK_CHECK(partial.enableFragmentLights);
@@ -265,6 +268,7 @@ MDK_TEST(EnhancedConfigRoundTrips) {
     MDK_CHECK(!partial.enableGlowBillboards);
     MDK_CHECK(!partial.enableFiltering);
     MDK_CHECK(!partial.enableMipmaps);
+    MDK_CHECK(!partial.enableHdTextures);
 
     MDK_CHECK(!mdk::parseEnhancedConfig(nullptr, &partial));
 }
@@ -337,13 +341,18 @@ MDK_TEST(EnhancedMenuTogglesInPlace) {
     MDK_CHECK(!toggles.enableSkyShadows);
     MDK_CHECK(toggles.enableFragmentLights && toggles.enableHaze && toggles.enableMirrors &&
               toggles.enableGlowBillboards);
-    // Left/right flip too; the last row is MIPMAPS, then FILTERING, then GLOW.
-    for (int32_t i = 0; i < 9; i++) {
+    // Left/right flip too; the last row is HD TEXTURES, then MIPMAPS, FILTERING, GLOW.
+    for (int32_t i = 0; i < 10; i++) {
         menu.handle(down, &toggles);
     }
-    MDK_CHECK_EQ(menu.selected(), 6);
+    MDK_CHECK_EQ(menu.selected(), 7);
     mdk::EnhancedMenu::Input left;
     left.left = true;
+    MDK_CHECK(menu.handle(left, &toggles));
+    MDK_CHECK(!toggles.enableHdTextures);
+    MDK_CHECK(toggles.enableMipmaps);
+    menu.handle(up, &toggles);
+    MDK_CHECK_EQ(menu.selected(), 6);
     MDK_CHECK(menu.handle(left, &toggles));
     MDK_CHECK(!toggles.enableMipmaps);
     MDK_CHECK(toggles.enableFiltering);

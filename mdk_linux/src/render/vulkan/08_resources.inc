@@ -150,6 +150,10 @@ void mdk_render_update_texture(MdkRenderer r_, MdkTextureId t_, int32_t w, int32
     }
 }
 
+// The 3DS HD pack's compressed replacements: this backend decodes the PC mods
+// through mdk_render_replace_colour, and no shared code hands it a .t3x.
+void mdk_render_replace_compressed(MdkRenderer, MdkTextureId, const char*) {}
+
 void mdk_render_replace_colour(MdkRenderer r_, MdkTextureId texture, MdkPaletteId palette,
                                int32_t frames, int32_t width, int32_t height,
                                const uint8_t* rgba) {

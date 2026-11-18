@@ -97,6 +97,25 @@ struct GpuVertex {
 // RGBA4 round-trips 0 of the 926 textures exactly, because the palettes
 // are dithered ramps and 8->4 bits only round-trips multiples of 17. So
 // the 3DS spends its VRAM on colour fidelity.
+// THE HD BUDGET: the linear-heap bytes the HD replacements may hold at once.
+// Level 3's pack is 21.6 MB against ~14-16 MB free after a load
+// (docs/HD_TEXTURES_3DS_SPEC.md 4.1), and the original textures stay resident
+// beside it, so the HD layer gets a fixed share and streams within it.
+static constexpr size_t kHdBudgetBytes = 6u * 1024u * 1024u;
+// How many .t3x a frame boundary imports at most: each is an SD read and an
+// upload, and they wait at the boundary, never inside a draw.
+static constexpr int32_t kHdImportsPerFrame = 2;
+// The most one pack texture can need: 512x512 ETC1A4 with its chain (the pack's
+// cap, hd_pack_convert.py --max 512; pica::textureBytes). A read is only handed
+// out when this much could be made room for, so a full budget does not re-read
+// the same files from SD every frame (measured with a 1 MB budget: 13-15 queued
+// textures re-read continuously before this rule).
+static constexpr size_t kHdLargestBytes = 349504u;
+// A failed import waits this many frames before it is asked for again, at most
+// kHdMaxFailures times.
+static constexpr int32_t kHdRetryFrames = 120;
+static constexpr int32_t kHdMaxFailures = 3;
+
 struct C3dTexture {
     C3D_Tex tex;
     bool valid = false;
@@ -115,6 +134,31 @@ struct C3dTexture {
 
     // When this texture was last drawn, for the eviction order.
     uint32_t lastUsed = 0;
+
+    // THE HD REPLACEMENT (Enhanced Mode enableHdTextures,
+    // docs/HD_TEXTURES_3DS_SPEC.md): a .t3x from the HD pack, ETC1 or ETC1A4,
+    // its mip chain prebuilt by tex3ds on the host. Recorded when the shared
+    // surface cache resolves it (mdk_render_replace_compressed); IMPORTED by the
+    // frame-boundary pump (pumpHdTextures) when a draw first wants it and the HD
+    // budget allows, and EVICTED least-recently-drawn first. Until it is resident
+    // the draw binds the original texture -- a surface turns HD a few frames
+    // after it is first seen; nothing blocks a draw on the SD card.
+    enum HdState : uint8_t { HdNone, HdQueued, HdReading, HdResident, HdFailed };
+    std::string hdPath;
+    HdState hdState = HdNone;
+    C3D_Tex hd;
+    uint32_t hdBytes = 0;
+    int32_t hdLevels = 0;
+    uint32_t hdLastUsed = 0;
+    // A failed import is retried, a few times, after a pause (a linear-heap
+    // shortage passes); the surface cache asks for a texture only once, so the
+    // backend owns the retry (review F4).
+    int32_t hdFailures = 0;
+    int32_t hdRetryFrame = 0;
+    // The image's rectangle in the texture's own texcoords, from the .t3x
+    // (Tex3DS_SubTexture): the draw maps the oracle's [0,1] uv through it, so the
+    // HD path never assumes an orientation.
+    float hdLeft = 0.0f, hdTop = 1.0f, hdRight = 1.0f, hdBottom = 0.0f;
 
     // The mip levels below level 0 this texture was MADE with (Enhanced Mode
     // enableMipmaps, decided when the GPU copy is made; pica::mipLevelsFor).
@@ -427,6 +471,17 @@ struct RendererC3D {
     // The alpha-test reference installed (installAlphaTest's cache).
     int alphaReference = 0;
 
+    // THE HD STREAM (C3dTexture::hdPath): the ids whose HD copy a draw asked
+    // for, the bytes resident against the budget, and what happened.
+    std::vector<int32_t> hdQueue;
+    // The SD reads, on their own thread (platform/async_file_reader.h): started
+    // with the renderer, stopped and joined before C3D_Fini.
+    mdk::AsyncFileReader hdReader;
+    size_t hdResidentBytes = 0;
+    int32_t hdImported = 0;
+    int32_t hdEvicted = 0;
+    int32_t hdFailedCount = 0;
+
     // True after C3D_FrameEnd and before the next C3D_FrameBegin. The GPU
     // may still be reading the last frame's textures then. C3D_FrameBegin
     // waits for the previous queue, so it is the completion boundary.
@@ -466,4 +521,3 @@ inline GpuVertex expand(const mdk::Vertex& v) {
     g.texcoord[1] = v.uv.y;
     return g;
 }
-

@@ -10,7 +10,7 @@ namespace {
 // The rows, in the config file's order (SPEC.md 7.9's flag order).
 const char* const kLabels[EnhancedMenu::kRowCount] = {
     "SKY SHADOWS", "FRAGMENT LIGHTS", "HAZE", "MIRRORS", "GLOW", "FILTERING",
-    "MIPMAPS",
+    "MIPMAPS", "HD TEXTURES",
 };
 
 bool valueOf(const EnhancedToggles& toggles, int32_t row) {
@@ -21,7 +21,8 @@ bool valueOf(const EnhancedToggles& toggles, int32_t row) {
         case 3: return toggles.enableMirrors;
         case 4: return toggles.enableGlowBillboards;
         case 5: return toggles.enableFiltering;
-        default: return toggles.enableMipmaps;
+        case 6: return toggles.enableMipmaps;
+        default: return toggles.enableHdTextures;
     }
 }
 
@@ -33,7 +34,8 @@ void flip(EnhancedToggles* toggles, int32_t row) {
         case 3: toggles->enableMirrors = !toggles->enableMirrors; break;
         case 4: toggles->enableGlowBillboards = !toggles->enableGlowBillboards; break;
         case 5: toggles->enableFiltering = !toggles->enableFiltering; break;
-        default: toggles->enableMipmaps = !toggles->enableMipmaps; break;
+        case 6: toggles->enableMipmaps = !toggles->enableMipmaps; break;
+        default: toggles->enableHdTextures = !toggles->enableHdTextures; break;
     }
 }
 
@@ -86,7 +88,7 @@ void EnhancedMenu::draw(MdkRenderer renderer, FontView& big, FontView& small,
     // units wide, the widest FONTSML row at 1.5x is 248, so a 400-wide
     // panel holds both with the value column clear of the labels.
     const float kPanelW = 400.0f;
-    const float kPanelH = 238.0f;   // seven rows at 22 + the title and the footer
+    const float kPanelH = 260.0f;   // eight rows at 22 + the title and the footer
     const float px = (canvasWidth - kPanelW) * 0.5f;
     const float py = 58.0f;
     const Colour kPanel{0.0f, 0.0f, 0.0f, 0.72f};

@@ -75,6 +75,7 @@
 #include "game/kurt_sprite.h"
 #include "game/level_data.h"
 #include "game/level_light.h"
+#include "game/mod_images.h"
 #include "game/level_view.h"
 #include "game/effects_draw.h"
 #include "game/effects_view.h"
@@ -168,6 +169,89 @@ static void heapProbe(const char* tag) {
     mdk::log3dsPrintf("mem[%s]: cap=%u arena=%u used=%u free=%u peak=%u lin=%u",
                       tag, (unsigned)envGetHeapSize(), (unsigned)mi.arena, (unsigned)used,
                       (unsigned)mi.fordblks, (unsigned)g_heapPeak, (unsigned)linearSpaceFree());
+}
+
+// THE HD PACK (docs/HD_TEXTURES_3DS_SPEC.md): built on the host by
+// mdk_3ds/tools/build_hd_pack.sh and copied to the SD card. Its manifest lists
+// every .t3x by key, so the pack is indexed by ModImages' own rule
+// (ModImages::fromList) without scanning the card; the surface cache then hands
+// each Lit surface's match to the backend (mdk_render_replace_compressed), which
+// streams it under the HD budget.
+const char kHdPackRoot[] = "sdmc:/3ds/mdk/hd";
+
+bool loadHdPack(int32_t level, mdk::ModImages* out) {
+    FILE* file = fopen("sdmc:/3ds/mdk/hd/manifest.txt", "r");
+    if (!file) {
+        return false;
+    }
+    std::vector<std::string> files;
+    char line[512];
+    bool tooBig = false;
+    while (fgets(line, sizeof(line), file)) {
+        const size_t length = strlen(line);
+        if (length > 0 && line[length - 1] != '\n' && !feof(file)) {
+            // Longer than the buffer: no pack line is, so skip the rest of it
+            // rather than parse its tail as a line of its own (review F10).
+            int c;
+            while ((c = fgetc(file)) != EOF && c != '\n') {
+            }
+            continue;
+        }
+        if (line[0] == '#' || line[0] == '\n') {
+            continue;
+        }
+        // Column 8 is the size cap the pack was built with
+        // (hd_pack_convert.py): the backend's budget gate assumes 512
+        // (kHdLargestBytes), so a larger cap is refused, not drawn over budget.
+        {
+            int column = 0;
+            const char* field = line;
+            for (const char* p = line; *p && column < 8; p++) {
+                if (*p == '\t') {
+                    column++;
+                    field = p + 1;
+                }
+            }
+            if (column == 8 && atoi(field) > 512) {
+                tooBig = true;
+            }
+        }
+        char* tab = strchr(line, '\t');
+        if (!tab) {
+            continue;
+        }
+        *tab = '\0';
+        files.push_back(std::string(line) + ".t3x");
+    }
+    fclose(file);
+    if (tooBig) {
+        mdk::log3dsPrintf("hd: pack built above the 512 cap the 3DS budgets for; not used");
+        return false;
+    }
+    *out = mdk::ModImages::fromList(kHdPackRoot, files, true, level);
+    mdk::log3dsPrintf("hd: pack manifest %d textures (sdmc:/3ds/mdk/hd)", (int)files.size());
+    return !files.empty();
+}
+
+// The surface cache's lookup into the HD pack: a Lit surface's .t3x path.
+struct HdPackSource {
+    mdk::ModImages* pack = nullptr;
+    std::string path;
+};
+
+bool hdPackLookup(void* user, const mdk::Surface& surface, const mdk::formats::Palette* palette,
+                  mdk::ColourReplacement* out) {
+    HdPackSource* source = static_cast<HdPackSource*>(user);
+    if (!source || !source->pack || !surface.texture || !palette) {
+        return false;
+    }
+    const std::string& name = surface.name.empty() ? surface.texture->name() : surface.name;
+    if (!source->pack->resolve(mdk::ModImages::Kind::Textures, name, *surface.texture, *palette,
+                               &source->path)) {
+        return false;
+    }
+    out->compressedPath = source->path.c_str();
+    return true;
 }
 
 // With -fno-exceptions libstdc++'s operator new calls this and then aborts,
@@ -372,6 +456,15 @@ int main(int argc, char** argv) {
     // draw objects with). The C# gives both views one MaterialResolver for
     // exactly this reason.
     mdk::SurfaceCache surfaces(renderer);
+    // The HD pack, when the SD card has one (loadHdPack). Its lookup is wired
+    // whatever the toggle says: the backend decides per draw (enableHdTextures)
+    // whether the HD copy is used, so the toggle stays live.
+    mdk::ModImages hdPack;
+    HdPackSource hdSource;
+    if (loadHdPack(options.level, &hdPack)) {
+        hdSource.pack = &hdPack;
+        surfaces.setColourReplacementLookup(hdPackLookup, &hdSource);
+    }
     mdk::LevelView view;
     // THE SKY, as geometry (render/sky_dome.h): the PICA200 has no fragment
     // shader for the oracle's per-pixel panorama pass, and the panorama is wider
@@ -1067,14 +1160,15 @@ int main(int argc, char** argv) {
                     mdk_render_set_enhanced_toggles(renderer, &enhancedToggles);
                     const bool saved = saveEnhancedConfig(enhancedToggles);
                     mdk::log3dsPrintf("menu: shadows=%d lights=%d haze=%d mirrors=%d "
-                                      "glow=%d filtering=%d mipmaps=%d (saved=%d)",
+                                      "glow=%d filtering=%d mipmaps=%d hd=%d (saved=%d)",
                                       (int)enhancedToggles.enableSkyShadows,
                                       (int)enhancedToggles.enableFragmentLights,
                                       (int)enhancedToggles.enableHaze,
                                       (int)enhancedToggles.enableMirrors,
                                       (int)enhancedToggles.enableGlowBillboards,
                                       (int)enhancedToggles.enableFiltering,
-                                      (int)enhancedToggles.enableMipmaps, (int)saved);
+                                      (int)enhancedToggles.enableMipmaps,
+                                      (int)enhancedToggles.enableHdTextures, (int)saved);
                 }
                 if (!menu.open()) {
                     mdk::log3dsPrintf("menu: closed");

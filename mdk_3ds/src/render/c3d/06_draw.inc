@@ -100,24 +100,53 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
     // so a colour has to come from a texture.
     C3D_Tex* texture = nullptr;
     int32_t mipLevels = 0;
+    const C3dTexture* hd = nullptr;   // the resource whose HD copy is bound, if one is
     if (draw->material.texture >= 0 && (size_t)draw->material.texture < r->textures.size()) {
         C3dTexture& resource = r->textures[(size_t)draw->material.texture];
         // A released texture whose GPU copy is waiting for the next frame
         // boundary must not be drawn again: the caller has given the id up.
         if (!resource.releasePending) {
-            if (!resource.valid && !resource.source.empty()) {
-                // THE EVICTION IS REVERSIBLE. The texture was made again from
-                // the source the backend kept: the caller's id is still good,
-                // and the picture comes back with it.
-                makeTexture(r, resource, false);
-            }
-            if (resource.valid) {
-                texture = &resource.tex;
-                mipLevels = resource.mipLevels;
-                // THE EVICTION ORDER. The texture is stamped every time it is
-                // drawn, so the least recently used one is the one that goes
-                // when the VRAM is full.
+            // THE HD COPY (enableHdTextures, docs/HD_TEXTURES_3DS_SPEC.md): wanted
+            // for a Lit or Sprite surface -- the PC draws a mod's colour image only
+            // in its enhanced lit/sprite modes, never on an Original-shaded pass
+            // (sky, canvas, glass) -- and never for a stacked-frame (animated)
+            // texture (spec 3).
+            const bool wantsHd = r->toggles.enableHdTextures && !resource.hdPath.empty() &&
+                                 draw->material.frame_count <= 1 &&
+                                 draw->material.shading != mdk::Shading::Original;
+            if (wantsHd && resource.hdState == C3dTexture::HdResident) {
+                // Bound whether or not the original is resident: an evicted
+                // original must not take a resident HD copy's surface with it (F1).
+                texture = &resource.hd;
+                mipLevels = resource.hdLevels;
                 resource.lastUsed = ++r->drawCounter;
+                resource.hdLastUsed = r->drawCounter;
+                hd = &resource;
+            } else {
+                if (!resource.valid && !resource.source.empty()) {
+                    // THE EVICTION IS REVERSIBLE. The texture was made again from
+                    // the source the backend kept: the caller's id is still good,
+                    // and the picture comes back with it.
+                    makeTexture(r, resource, false);
+                }
+                if (resource.valid) {
+                    texture = &resource.tex;
+                    mipLevels = resource.mipLevels;
+                    // THE EVICTION ORDER. The texture is stamped every time it is
+                    // drawn, so the least recently used one is the one that goes
+                    // when the VRAM is full.
+                    resource.lastUsed = ++r->drawCounter;
+                }
+                // Not resident: this draw takes the original and the copy is asked
+                // for -- or asked again once a failure's pause has passed (F4).
+                if (wantsHd &&
+                    (resource.hdState == C3dTexture::HdNone ||
+                     (resource.hdState == C3dTexture::HdFailed &&
+                      resource.hdFailures < kHdMaxFailures &&
+                      r->frame >= resource.hdRetryFrame))) {
+                    resource.hdState = C3dTexture::HdQueued;
+                    r->hdQueue.push_back(draw->material.texture);
+                }
             }
         }
     }
@@ -196,7 +225,16 @@ static void drawRecorded(RendererC3D* r, const mdk::MeshDraw* draw) {
         scaleY = (float)frameHeight / (float)resource.paddedHeight;
         offsetY = (float)(draw->frame * frameHeight) / (float)resource.paddedHeight;
     }
-    {
+    if (hd) {
+        // AN HD COPY maps the oracle's uv (0 = image top) through the image's own
+        // rectangle from its .t3x (Tex3DS_SubTexture: top/bottom are already the
+        // texture's t, so no last-row flip is applied on top). A .t3x is a whole
+        // power-of-two image: no padding to undo.
+        scaleX = hd->hdRight - hd->hdLeft;
+        offsetX = hd->hdLeft;
+        scaleY = hd->hdBottom - hd->hdTop;
+        offsetY = hd->hdTop;
+    } else {
         // The PICA's t runs from the LAST memory row (pica::sceneUvFromTop has
         // the rule and the measurement). Every draw takes it, the canvas too:
         // the canvas was once exempt, and its non-power-of-two images (the

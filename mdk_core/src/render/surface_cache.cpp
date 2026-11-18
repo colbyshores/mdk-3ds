@@ -93,8 +93,12 @@ MdkTextureId SurfaceCache::surfaceId(const Surface& surface, const formats::Pale
         if (replacementLooked_.find(key) == replacementLooked_.end()) {
             replacementLooked_[key] = true;
             ColourReplacement replacement;
-            if (replacementLookup_(replacementUser_, surface, palette, &replacement) &&
-                replacement.rgba && replacement.width > 0 && replacement.height > 0) {
+            const bool looked = replacementLookup_(replacementUser_, surface, palette, &replacement);
+            if (looked && replacement.compressedPath && replacement.compressedPath[0]) {
+                mdk_render_replace_compressed(renderer_, id, replacement.compressedPath);
+                replacementFound_++;
+            } else if (looked && replacement.rgba && replacement.width > 0 &&
+                       replacement.height > 0) {
                 mdk_render_replace_colour(renderer_, id, paletteId(palette), surface.frameCount,
                                           replacement.width, replacement.height, replacement.rgba);
                 replacementFound_++;

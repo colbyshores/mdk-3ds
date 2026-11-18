@@ -1,0 +1,77 @@
+3DS HD TEXTURES: IMPORT + STREAMING (docs/HD_TEXTURES_3DS_SPEC.md 3, 4.2),
+2026-11-17/18. EMULATOR evidence -- Mandarine r1.2.1 (md5
+0d2adab6ad078c78e6d03e72086f2eb6) on DISPLAY=:99 via mdk_3ds/tools/
+compare_linux.sh (make AUTOQUIT=90 FIXED=1 CAPTURE=<n> LEVEL=3), the level-3
+pack (578 .t3x, 21.6 MB) seeded onto the emulated SD card at sdmc:/3ds/mdk/hd/
+(MDK_COMPARE_SDMC). Not a hardware result: SD speed, the reader's scheduling
+and the Old-3DS budget are owed to the hardware pass.
+
+WHAT LANDED.
+  core  ModImages::fromList (the index from a list of files -- the pack's
+        manifest -- by the directory scan's own rule) and ModImages::resolve
+        (find()'s order, exact key -> level folder -> every level, returning the
+        file's PATH, no decode). ColourReplacement::compressedPath; SurfaceCache
+        hands it to a new seam, mdk_render_replace_compressed (Linux: no-op; it
+        decodes the PC mods). Toggle enableHdTextures (config.ini, 8th menu row).
+  3DS   main reads sdmc:/3ds/mdk/hd/manifest.txt, builds the index for the
+        level, and wires the lookup into the surface cache. The backend records
+        the path per texture; a draw binds the HD copy when it is resident, else
+        binds the original and queues it. The frame-boundary pump (after
+        C3D_FrameBegin's wait, P3) hands queued paths to an owned reader thread
+        (platform/async_file_reader: FZ/DN at entry, 16 KB stack, priority one
+        below main, LightLock + LightEvent, joined before C3D_Fini) and imports
+        finished buffers (Tex3DS_TextureImport into the linear heap, prebuilt
+        chain) at most 2 per frame within a 6 MB budget, evicting the least
+        recently drawn copy not drawn last frame. uv goes through the .t3x's own
+        texcoord rectangle (Tex3DS_SubTexture), not an assumed orientation. A
+        read is handed out only when an import could fit (room for the largest
+        pack texture, 512^2 ETC1A4 + chain = 349,504 bytes, or something
+        evictable). Animated (stacked-frame) textures keep their original.
+
+MEASURED.
+  Level 3, HD on, frame 300 and 600: the textures import (first: H1_FLR 512x512,
+  6 levels, 174,752 bytes, uv rect top 1 bottom 0); the view's working set is
+  26 textures, 2,072,128 bytes of the 6,291,456 budget, all resident by frame
+  900, 0 evicted, 0 failed, nothing queued or reading. Orientation matches the
+  original (the hull's lights and panels in place):
+    docs/evidence/2026-11-18-3ds-hd-L3.png  (HD off | HD on | PC enhanced)
+  At 400x240 most HD textures are minified: the visible change is smoother
+  surfaces, not added detail.
+  A temporary 1 MB budget build (reverted): the working set does not fit, nothing
+  is evictable (all drawn last frame), and the remainder keeps its original.
+  BEFORE the dispatch rule the queued textures were re-read from SD continuously
+  (13-15 queued, 1-3 reads always in flight); AFTER it, 19 queued and 0 reads in
+  flight at frames 1500-2100.
+  NOT YET EXERCISED: eviction under motion (the harness camera is fixed), SD read
+  cost and import hitches on hardware, the budget's right size on the Old 3DS.
+
+REVIEW (independent, same night; libctru 2.7.0 headers and libctru.a symbols
+checked: newlib locks are LightLock-backed, devoptab path buffers TLS, so the
+worker's stdio on a 16 KB stack is sound). No P3 or threading defect. Fixed:
+  F1 an original evicted under memory pressure took its surface with it while
+     the HD copy was resident: a resident HD copy now binds whether or not the
+     original is, and makeTexture's eviction falls back to an HD copy not drawn
+     this frame before an original fails to be made.
+  F2 a path >= 192 bytes jammed the queue's head forever: refused when recorded.
+  F3 the dispatch gate reserved room for one read while handing out four: it now
+     reserves the largest texture per read in flight; a pack built above the 512
+     cap (the manifest's column) is refused at load.
+  F4 one failed import was permanent: retried after 120 frames, up to 3 times.
+  F5 toggle off kept reading and holding up to 6 MB: off now reads nothing and
+     frees the resident copies at the frame boundary.
+  F6 HD bound on Original-shaded draws of a shared (texture, palette): the bind
+     is now Lit/Sprite only, as the PC's replacement is.
+  F7 a rotated subtexture is refused; an axis tex3ds padded clamps, not repeats.
+  F8 the R1 rationale at the worker's entry, read-back logged.
+  F9/F10 comment placement, a redundant clause, over-long manifest lines skipped.
+GATE FIX. tools/runner/gates_vfp.py's R1 call pattern held only the snake_case
+helper names, so a worker calling MDK's camelCase `vfpThreadFzDn()` at entry --
+the prescribed shape -- read as never establishing FZ|DN. The call and
+definition patterns now hold both spellings; non-vacuity: deleting the reader's
+call turns the gate red (R1 MUST async_file_reader.cpp:74), restoring it green.
+
+RE-MEASURED AFTER THE FIXES. L3 HD on, frame 600: 26 imported, 2,072,128 bytes
+of 6,291,456, 0 evicted, 0 failed, 0 queued, 0 reading. 1 MB budget (temporary
+build, reverted): 5 imported, 21 queued, 0 reading (no SD churn). L7 original
+look 0.04% (unchanged); emurun --expect hud rc 0; check.sh, host suite, formats
+(156,569 checks) green.

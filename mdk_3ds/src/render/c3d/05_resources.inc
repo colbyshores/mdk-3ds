@@ -179,9 +179,31 @@ void mdk_render_update_texture(MdkRenderer r, MdkTextureId t, int32_t w, int32_t
     texture.lastUsed = ++renderer->drawCounter;
 }
 
-// The mod system's colour-image replacements: the 3DS holds no enhanced
-// colour textures (the mod system is Linux-only, SPEC.md line 36) and the
-// shared code never registers one here, so these are deliberate no-ops.
+// The HD pack's compressed replacement for an index texture: recorded only.
+// The draw that first wants it queues it, and the frame-boundary pump imports
+// it under the HD budget (04_textures.inc, THE HD STREAM).
+void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId t, const char* path) {
+    RendererC3D* renderer = asC3d(r);
+    if (!renderer || t < 0 || (size_t)t >= renderer->textures.size() || !path || !*path) {
+        return;
+    }
+    if (strlen(path) >= mdk::AsyncFileReader::kPathMax) {
+        // The reader's slots hold kPathMax bytes; a longer path could never be
+        // read, and left queued it would stop every read behind it (review F2).
+        mdk::log3dsPrintf("hd: path too long, ignored: %s", path);
+        return;
+    }
+    C3dTexture& texture = renderer->textures[(size_t)t];
+    texture.hdPath = path;
+    texture.hdFailures = 0;
+    if (texture.hdState == C3dTexture::HdFailed) {
+        texture.hdState = C3dTexture::HdNone;
+    }
+}
+
+// The mod system's DECODED colour-image replacements: the 3DS takes the HD
+// pack's compressed .t3x instead (mdk_render_replace_compressed above) and never
+// decodes a PNG, so these stay deliberate no-ops.
 void mdk_render_replace_colour(MdkRenderer, MdkTextureId, MdkPaletteId, int32_t, int32_t,
                                int32_t, const uint8_t*) {}
 void mdk_render_replace_image(MdkRenderer, MdkTextureId, MdkPaletteId, int32_t, int32_t,
@@ -195,10 +217,14 @@ void mdk_render_release_texture(MdkRenderer r, MdkTextureId t) {
     C3dTexture& texture = renderer->textures[(size_t)t];
     const bool inFlight = renderer->gpuPending ||
                           (renderer->inFrame && texture.lastUsed >= renderer->frameStartUse);
+    if (!inFlight) {
+        dropHd(renderer, texture);
+    }
+    texture.hdPath.clear();
     if (texture.valid && !inFlight) {
         C3D_TexDelete(&texture.tex);
         texture.valid = false;
-    } else if (texture.valid) {
+    } else if (texture.valid || texture.hdState == C3dTexture::HdResident) {
         // The id is invalid to the caller now, but the GPU may still be
         // reading the old copy. The next frame boundary frees it.
         texture.releasePending = true;

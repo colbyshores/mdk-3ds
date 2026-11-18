@@ -182,6 +182,14 @@ void mdk_render_replace_colour(MdkRenderer r, MdkTextureId texture, MdkPaletteId
                                int32_t frames, int32_t width, int32_t height,
                                const uint8_t* rgba);
 
+// Give an index texture a COMPRESSED replacement read from a file: the 3DS HD
+// pack's .t3x (ETC1 / ETC1A4, its mip chain prebuilt by tex3ds on the host;
+// docs/HD_TEXTURES_3DS_SPEC.md). The backend records the path and makes the
+// texture itself when it decides to (the 3DS streams them under a budget, and
+// draws the original until the replacement is resident). The Linux backend
+// decodes mods through mdk_render_replace_colour and ignores this.
+void mdk_render_replace_compressed(MdkRenderer r, MdkTextureId texture, const char* path);
+
 // Give a canvas image (an index texture through a palette) a whole colour
 // image (a mod's replacement for a HUD/menu picture: the C# Renderer's
 // ReplaceImage). Drawn by the enhanced look's canvas in place of the

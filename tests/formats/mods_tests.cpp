@@ -38,6 +38,9 @@ extern int32_t mdk_test_replaceFrames;
 extern int32_t mdk_test_replaceWidth;
 extern int32_t mdk_test_replaceHeight;
 extern int mdk_test_replaceFirstByte;
+extern int mdk_test_compressedCalls;
+extern int32_t mdk_test_compressedTexture;
+extern std::string mdk_test_compressedPath;
 
 namespace {
 
@@ -262,6 +265,74 @@ MDK_TEST(modImagesLevelFolderBeatsAllLevels) {
     mdk::ModImages other = mdk::ModImages::open({mod}, true, 4);
     MDK_CHECK(other.texture("WALL", keyTexture(), keyPalette(), &out));
     MDK_CHECK_EQ((int)out.rgba[0], 1);
+}
+
+MDK_TEST(modImagesFromListResolvesByTheScansOrder) {
+    // THE 3DS HD PACK'S INDEX: built from its manifest's file list, not a scan,
+    // and resolved to a PATH (no decode): exact key first, then the level's
+    // folder, then every level -- the same order find() decodes in.
+    const std::vector<std::string> files = {
+        "textures/WALL.t3x",
+        "textures/LEVEL3/WALL.t3x",
+        "textures/LEVEL3/FLOOR.t3x",
+        "textures/LEVEL3/WHATEVER@a3d10be8e07dc5fc.t3x",
+        "images/SC_STAT.t3x",
+    };
+    mdk::ModImages pack = mdk::ModImages::fromList("sdmc:/3ds/mdk/hd", files, true, 3);
+    std::string path;
+    // The exact key wins over the name, wherever it sits.
+    MDK_CHECK(pack.resolve(mdk::ModImages::Kind::Textures, "WALL", keyTexture(), keyPalette(),
+                           &path));
+    MDK_CHECK_STR_EQ(path, "sdmc:/3ds/mdk/hd/textures/LEVEL3/WHATEVER@a3d10be8e07dc5fc.t3x");
+    // A texture with another key: the level's folder, then every level.
+    mdk::formats::Palette other = keyPalette();
+    other.mutableRgba()[1 * 4 + 0] ^= 0xFF;   // a palette the key covers -> another key
+    MDK_CHECK(pack.resolve(mdk::ModImages::Kind::Textures, "WALL", keyTexture(), other, &path));
+    MDK_CHECK_STR_EQ(path, "sdmc:/3ds/mdk/hd/textures/LEVEL3/WALL.t3x");
+    mdk::ModImages level4 = mdk::ModImages::fromList("sdmc:/3ds/mdk/hd", files, true, 4);
+    MDK_CHECK(level4.resolve(mdk::ModImages::Kind::Textures, "WALL", keyTexture(), other, &path));
+    MDK_CHECK_STR_EQ(path, "sdmc:/3ds/mdk/hd/textures/WALL.t3x");
+    MDK_CHECK(!level4.resolve(mdk::ModImages::Kind::Textures, "FLOOR", keyTexture(), other, &path));
+    // The kinds stay apart.
+    MDK_CHECK(pack.resolve(mdk::ModImages::Kind::Images, "SC_STAT", keyTexture(), other, &path));
+    MDK_CHECK(!pack.resolve(mdk::ModImages::Kind::Textures, "SC_STAT", keyTexture(), other, &path));
+}
+
+namespace {
+
+const char* const kHookPath = "sdmc:/3ds/mdk/hd/textures/LEVEL3/WALL.t3x";
+
+bool compressedLookup(void*, const mdk::Surface& surface, const mdk::formats::Palette*,
+                      mdk::ColourReplacement* out) {
+    if (surface.name != "WALL") {
+        return false;
+    }
+    out->compressedPath = kHookPath;
+    return true;
+}
+
+} // namespace
+
+MDK_TEST(surfaceCacheHandsACompressedReplacementToItsSeam) {
+    mdk_test_replaceCalls = 0;
+    mdk_test_compressedCalls = 0;
+    mdk::SurfaceCache cache((MdkRenderer)(void*)0x1);
+    cache.setColourReplacementLookup(compressedLookup, nullptr);
+    mdk::formats::Texture texture = keyTexture();
+    mdk::formats::Palette palette = keyPalette();
+    mdk::Surface lit;
+    lit.texture = &texture;
+    lit.name = "WALL";
+    lit.shading = mdk::Shading::Lit;
+    lit.frameCount = 1;
+    cache.surfaceId(lit, &palette);
+    MDK_CHECK_EQ(mdk_test_compressedCalls, 1);
+    MDK_CHECK_EQ(mdk_test_replaceCalls, 0);   // not the decoded path
+    MDK_CHECK_EQ(mdk_test_compressedTexture, 0);
+    MDK_CHECK_STR_EQ(mdk_test_compressedPath, kHookPath);
+    MDK_CHECK_EQ(cache.replacementFound(), 1);
+    cache.surfaceId(lit, &palette);
+    MDK_CHECK_EQ(mdk_test_compressedCalls, 1);   // once per pair
 }
 
 MDK_TEST(modImagesFramesStripAndPerFrame) {
