@@ -55,7 +55,7 @@ fi
 if [ -n "${MDK_COMPARE_TOGGLES:-}" ]; then
     cp "$MDK_COMPARE_TOGGLES" "$SEED/3ds/mdk/config.ini"
 else
-    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\nenableMipmaps=0\nenableHdTextures=0\nenableLighting=0\n' \
+    printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\nenableMipmaps=0\nenableHdTextures=0\nenableLighting=0\nenableEdgeSmoothing=0\n' \
         > "$SEED/3ds/mdk/config.ini"
 fi
 # Enough wall time for load + <frame> fixed frames under emulation.
@@ -69,6 +69,9 @@ if [ -z "$CAP" ]; then
     exit 1
 fi
 cp "$CAP" "$OUT/3ds-L$LEVEL-f$FRAME.bmp"
+# A stereo run (emurun's MDK_EMU_STEREO) also captured the right eye beside it.
+RIGHT_CAP="$(dirname "$CAP")/hwcap.right.bmp.log"
+if [ -f "$RIGHT_CAP" ]; then cp "$RIGHT_CAP" "$OUT/3ds-L$LEVEL-f$FRAME-right.bmp"; fi
 # The guest log too (its mem[...] probes carry the linear heap's free bytes, the
 # number an Enhanced Mode memory cost is read from).
 GUEST_LOG=$(find "$LANE_TMP" -name mdk.log | head -1)

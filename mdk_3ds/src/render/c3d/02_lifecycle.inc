@@ -2,6 +2,80 @@
 // Part of renderer_c3d.cpp's single translation unit (see its header).
 // No include guards, no includes of its own; the order is load-bearing.
 
+// THE EYE TARGETS, AT A SCALE.
+//
+// Scale 1 is the panel's own 240x400 (portrait; the projection rotates it).
+// Scale 2 is EDGE SMOOTHING (enableEdgeSmoothing, SPEC.md 7.9): each eye draws
+// into a 480x800 target and the display transfer that already copies the target
+// to the panel averages every 2x2 block into one pixel (GX_TRANSFER_SCALE_XY).
+// That is supersampling done by the PICA's own transfer engine -- the 3DS's
+// counterpart of the PC's MSAA, with no CPU work and no extra pass.
+//
+// VRAM IS SIX MEGABYTES. A scale-2 eye is 1.5 MB of RGBA8 colour plus 1.5 MB of
+// DEPTH24_STENCIL8, so two full eyes would be all of it. The eyes are drawn one
+// after the other, so at scale 2 the right eye BORROWS the left eye's depth
+// buffer (4.5 MB in all) and mdk_render_end_frame clears it between the passes.
+// A target created without depth does not own (or free) the buffer it borrows:
+// citro3d frees only what it allocated (C3Di_RenderTargetDestroy's ownsDepth).
+static u32 displayTransferFlags(int scale) {
+    return (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
+            GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+            GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) |
+            GX_TRANSFER_SCALING(scale > 1 ? GX_TRANSFER_SCALE_XY : GX_TRANSFER_SCALE_NO));
+}
+
+// Outside a frame only: C3D_RenderTargetDelete waits for the GPU queue (and
+// breaks if called inside a frame), so nothing in flight still reads them.
+static void releaseEyeTargets(RendererC3D* r) {
+    if (r->targetRight) {
+        C3D_RenderTargetDelete(r->targetRight);
+        r->targetRight = nullptr;
+    }
+    if (r->targetLeft) {
+        C3D_RenderTargetDelete(r->targetLeft);
+        r->targetLeft = nullptr;
+    }
+    r->targetsShareDepth = false;
+}
+
+// Both eyes at `scale`, or neither (false, nothing held). The caller has released
+// the previous pair: the VRAM is not big enough for both generations at once.
+static bool buildEyeTargets(RendererC3D* r, int scale) {
+    const int w = kScreenWidth * scale;
+    const int h = kScreenHeight * scale;
+    C3D_RenderTarget* left = C3D_RenderTargetCreate(w, h, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
+    if (!left) {
+        mdk::log3dsPrintf("C3D_RenderTargetCreate(left %dx%d) FAILED (vram free %u)", w, h,
+                          (unsigned)vramSpaceFree());
+        return false;
+    }
+    const bool share = scale > 1;
+    C3D_RenderTarget* right = share
+        ? C3D_RenderTargetCreate(w, h, GPU_RB_RGBA8, -1)
+        : C3D_RenderTargetCreate(w, h, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
+    if (!right) {
+        mdk::log3dsPrintf("C3D_RenderTargetCreate(right %dx%d) FAILED (vram free %u)", w, h,
+                          (unsigned)vramSpaceFree());
+        C3D_RenderTargetDelete(left);
+        return false;
+    }
+    if (share) {
+        C3D_FrameBufDepth(&right->frameBuf, left->frameBuf.depthBuf, GPU_RB_DEPTH24_STENCIL8);
+    }
+    C3D_RenderTargetSetOutput(left, GFX_TOP, GFX_LEFT, displayTransferFlags(scale));
+    C3D_RenderTargetSetOutput(right, GFX_TOP, GFX_RIGHT, displayTransferFlags(scale));
+    r->targetLeft = left;
+    r->targetRight = right;
+    r->targetScale = scale;
+    r->targetWidth = w;
+    r->targetHeight = h;
+    r->targetsShareDepth = share;
+    mdk::log3dsPrintf("targets: %dx%d per eye, scale %d%s (vram free %u)", w, h, scale,
+                      share ? ", right eye borrows the left depth" : "",
+                      (unsigned)vramSpaceFree());
+    return true;
+}
+
  MdkRenderer mdk_render_create(const MdkRenderDesc* desc) {
 
     // R1: the FPSCR's FZ and DN bits MUST be set before any application float
@@ -33,28 +107,14 @@
         return nullptr;
     }
 
-    // The top screen's eye pair. 240x400 portrait; the projection rotates it.
-    r->targetLeft = C3D_RenderTargetCreate(kScreenWidth, kScreenHeight,
-                                           GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
-    if (!r->targetLeft) {
-        mdk::log3dsPrintf("C3D_RenderTargetCreate(left) FAILED");
+    // The top screen's eye pair, at scale 1 (the panel's own 240x400 portrait;
+    // the projection rotates it). The toggles arrive after create, and the first
+    // begin_frame rebuilds them at scale 2 when enableEdgeSmoothing is on.
+    if (!buildEyeTargets(r, 1)) {
         C3D_Fini();
         delete r;
         return nullptr;
     }
-    r->targetRight = C3D_RenderTargetCreate(kScreenWidth, kScreenHeight,
-                                             GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
-    if (!r->targetRight) {
-        mdk::log3dsPrintf("C3D_RenderTargetCreate(right) FAILED");
-        C3D_RenderTargetDelete(r->targetLeft);
-        C3D_Fini();
-        delete r;
-        return nullptr;
-    }
-    C3D_RenderTargetSetOutput(r->targetLeft, GFX_TOP, GFX_LEFT,
-                              MDK_DISPLAY_TRANSFER_FLAGS);
-    C3D_RenderTargetSetOutput(r->targetRight, GFX_TOP, GFX_RIGHT,
-                              MDK_DISPLAY_TRANSFER_FLAGS);
 
     // THE DEPTH STATE, IN THE LOG.
     //
@@ -77,8 +137,7 @@
     r->dvlb = DVLB_ParseFile((u32*)mdk_c3d_shbin, mdk_c3d_shbin_size);
     if (!r->dvlb) {
         mdk::log3dsPrintf("DVLB_ParseFile FAILED");
-        C3D_RenderTargetDelete(r->targetLeft);
-        C3D_RenderTargetDelete(r->targetRight);
+        releaseEyeTargets(r);
         C3D_Fini();
         delete r;
         return nullptr;
@@ -87,8 +146,7 @@
     if (R_FAILED(spInit)) {
         mdk::log3dsPrintf("shaderProgramInit FAILED result=0x%08lx", (unsigned long)spInit);
         DVLB_Free(r->dvlb);
-        C3D_RenderTargetDelete(r->targetLeft);
-        C3D_RenderTargetDelete(r->targetRight);
+        releaseEyeTargets(r);
         C3D_Fini();
         delete r;
         return nullptr;
@@ -102,8 +160,7 @@
         mdk::log3dsPrintf("shaderProgramSetVsh FAILED result=0x%08lx", (unsigned long)spVsh);
         shaderProgramFree(&r->program);
         DVLB_Free(r->dvlb);
-        C3D_RenderTargetDelete(r->targetLeft);
-        C3D_RenderTargetDelete(r->targetRight);
+        releaseEyeTargets(r);
         C3D_Fini();
         delete r;
         return nullptr;
@@ -199,8 +256,7 @@
         mdk::log3dsPrintf("linearAlloc(%u) FAILED", (unsigned)r->scratchSize);
         shaderProgramFree(&r->program);
         DVLB_Free(r->dvlb);
-        C3D_RenderTargetDelete(r->targetLeft);
-        C3D_RenderTargetDelete(r->targetRight);
+        releaseEyeTargets(r);
         C3D_Fini();
         delete r;
         return nullptr;
@@ -271,14 +327,7 @@
     // Freeing the textures before that wait would hand back memory the GPU
     // may still be reading (AGENTS.md P3); the heap itself goes when the
     // process exits, which is the only caller of this destructor.
-    if (r->targetLeft) {
-        C3D_RenderTargetDelete(r->targetLeft);
-        r->targetLeft = nullptr;
-    }
-    if (r->targetRight) {
-        C3D_RenderTargetDelete(r->targetRight);
-        r->targetRight = nullptr;
-    }
+    releaseEyeTargets(r);
     if (r->dvlb) {
         if (r->litReady) {
             shaderProgramFree(&r->programLit);

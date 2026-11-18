@@ -31,13 +31,10 @@ static constexpr GPU_CULLMODE kSolidCull = GPU_CULL_FRONT_CCW;
 //   GX_TRANSFER_RAW_COPY(0)   copy, do not convert
 //   GX_TRANSFER_IN_FORMAT     RGBA8 -- the render target's format
 //   GX_TRANSFER_OUT_FORMAT    RGB8 -- what the display takes
-//   GX_TRANSFER_SCALING       no scaling
-#define MDK_DISPLAY_TRANSFER_FLAGS                                     \
-    (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) |             \
-     GX_TRANSFER_RAW_COPY(0) |                                        \
-     GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |                    \
-     GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) |                   \
-     GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO))
+//   GX_TRANSFER_SCALING       none at scale 1; 2x2 averaging (SCALE_XY) for
+//                             edge smoothing at scale 2
+//
+// The set is displayTransferFlags(scale) in 02_lifecycle.inc.
 
 // The 3DS's VRAM is 6 MB on the original, and the linear heap starts there,
 // so EVERY linear allocation is VRAM until the heap runs out.
@@ -281,6 +278,19 @@ struct HdCopy {
 struct RendererC3D {
     C3D_RenderTarget* targetLeft = nullptr;
     C3D_RenderTarget* targetRight = nullptr;
+    // EDGE SMOOTHING (enableEdgeSmoothing, SPEC.md 7.9): the eye targets' scale.
+    // 1 is the panel's own 240x400; 2 is a 480x800 target the display transfer
+    // averages 2x2 into the panel (buildEyeTargets, 02_lifecycle.inc). The
+    // viewport, the scissor and the capture read these, never kScreenWidth.
+    int targetScale = 1;
+    int targetWidth = kScreenWidth;
+    int targetHeight = kScreenHeight;
+    // At scale 2 the right eye borrows the left eye's depth buffer (VRAM), so the
+    // second eye pass clears it first (mdk_render_end_frame).
+    bool targetsShareDepth = false;
+    // A scale-2 build that failed: stay at scale 1 until the toggle goes off, so
+    // a full VRAM is one refusal line, not a rebuild attempt every frame.
+    bool smoothingRefused = false;
     C3D_RenderTarget* targetBottom = nullptr;
 
     // The camera, kept so each eye can be rendered with its own offset.

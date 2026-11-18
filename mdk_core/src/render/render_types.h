@@ -244,6 +244,9 @@ struct EnhancedToggles {
                                       // streamed (docs/HD_TEXTURES_3DS_SPEC.md)
     bool enableLighting = true;       // 3DS: the sky/ground/sun light per triangle (the lit
                                       // program's geometry shader); the PC always lights
+    bool enableEdgeSmoothing = true;  // 3DS: 2x2 supersampled eye targets that the display
+                                      // transfer averages down (the PC's MSAA, by the PICA's
+                                      // own downscale); the PC always multisamples
 };
 
 // ---------------------------------------------------------------------------

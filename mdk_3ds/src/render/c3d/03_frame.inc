@@ -227,6 +227,17 @@ static void installAlphaTest(RendererC3D* r, int reference, bool force) {
 }
 
 static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
+    // THE BORROWED DEPTH (edge smoothing, buildEyeTargets): at scale 2 the right
+    // eye draws against the left eye's depth buffer, which still holds the left
+    // eye's scene. The split submits the left eye's commands to the GX queue
+    // first, so the fill that follows runs after them and before the right eye's
+    // (a clear queued without the split would run before EITHER eye's draws: the
+    // frame's commands go to the GPU at C3D_FrameEnd). Measured in Mandarine at
+    // slider 60: without these two calls the right eye lost 43% of its pixels.
+    if (target == r->targetRight && r->targetsShareDepth) {
+        C3D_FrameSplit(0);
+        C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH, 0, mdk::pica::kDepthClearValue);
+    }
     C3D_FrameDrawOn(target);
 
     // The MVP for this eye: the view-projection with both PICA conversions
@@ -406,14 +417,50 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // The viewport is a HARDWARE CLIP RECTANGLE. A zero-area viewport
     // SILENTLY DROPS the draw -- the "invisible 3D trap". The full target
     // is the safe default; the insets set their own.
-    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);
-    C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, kScreenWidth, kScreenHeight);
+    // The TARGET's size, which is the panel's at scale 1 and twice it per axis
+    // under edge smoothing (buildEyeTargets).
+    C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);
+    C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, r->targetWidth, r->targetHeight);
+}
+
+// The eye targets' scale follows enableEdgeSmoothing (buildEyeTargets). Called
+// between frames only. A scale-2 build that fails (VRAM) falls back to scale 1
+// and is not retried until the toggle goes off and on again; a scale-1 build
+// that fails leaves no target to draw into, and the renderer stops (ready=false)
+// rather than draw into a deleted one.
+static void applyEdgeSmoothing(RendererC3D* r) {
+    if (!r->toggles.enableEdgeSmoothing) {
+        r->smoothingRefused = false;
+    }
+    const int want = (r->toggles.enableEdgeSmoothing && !r->smoothingRefused) ? 2 : 1;
+    if (want == r->targetScale && r->targetLeft) {
+        return;
+    }
+    releaseEyeTargets(r);
+    if (buildEyeTargets(r, want)) {
+        return;
+    }
+    if (want > 1) {
+        r->smoothingRefused = true;
+        mdk::log3dsPrintf("smoothing: scale %d REFUSED, back to scale 1", want);
+        if (buildEyeTargets(r, 1)) {
+            return;
+        }
+    }
+    mdk::log3dsPrintf("targets: no eye target could be built; the renderer stops");
+    r->ready = false;
 }
 
  void mdk_render_begin_frame(MdkRenderer rr, const MdkFrameParams* params) {
     RendererC3D* r = asC3d(rr);
     if (!r || !r->ready) return;
     if (r->inFrame) return;   // a begin without an end is a bug, not a re-entry
+
+    // EDGE SMOOTHING follows its toggle here, OUTSIDE the frame: the rebuild
+    // deletes the eye targets, and C3D_RenderTargetDelete waits for the GPU queue
+    // first (and breaks inside a frame), so nothing in flight still reads them.
+    applyEdgeSmoothing(r);
+    if (!r->ready) return;
 
     // C3D_FrameBegin returns FALSE when it could not begin (with
     // C3D_FRAME_NONBLOCK). A failed begin does NOT authorise drawing.
@@ -522,7 +569,12 @@ static void installEye(RendererC3D* r, C3D_RenderTarget* target, float offset) {
     // 0x00FFFFFF is the 24-bit maximum under either byte order of the word.
     C3D_RenderTargetClear(r->targetLeft, C3D_CLEAR_ALL, clear,
                           mdk::pica::kDepthClearValue);
-    C3D_RenderTargetClear(r->targetRight, C3D_CLEAR_ALL, clear,
+    // At edge-smoothing scale 2 the right eye's depth is the LEFT eye's buffer,
+    // just filled above and filled again before the right eye draws (installEye),
+    // so only its colour is cleared here: a third 1.5 MB depth fill is wasted fill
+    // bandwidth on the Old 3DS.
+    C3D_RenderTargetClear(r->targetRight,
+                          r->targetsShareDepth ? C3D_CLEAR_COLOR : C3D_CLEAR_ALL, clear,
                           mdk::pica::kDepthClearValue);
 }
 
@@ -588,12 +640,16 @@ static void logCensus(RendererC3D* r) {
 // the frame's draws (the GPU runs it in order), and the PPF wait makes
 // the pixels final before the CPU reads them. A capture is a diagnostic
 // path, never frame-critical: any failure is a refusal line and no file.
-static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
-    if (!r->targetLeft || !r->targetLeft->frameBuf.colorBuf) {
+static bool writeScreenshotBmp(RendererC3D* r, C3D_RenderTarget* target, const char* path) {
+    if (!target || !target->frameBuf.colorBuf) {
         return false;
     }
+    // The capture is the PANEL's picture: at edge-smoothing scale 2 the same
+    // 2x2-averaging transfer the display gets brings the 480x800 target down to
+    // 240x400, so the file shows exactly what the screen shows.
     const int32_t srcW = kScreenWidth;    // 240, portrait width
     const int32_t srcH = kScreenHeight;   // 400, portrait height
+    const int32_t scale = r->targetScale;
     const size_t bytes = (size_t)srcW * (size_t)srcH * 4;
     u32* pixels = (u32*)linearAlloc(bytes);
     if (!pixels) {
@@ -603,11 +659,22 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
     const u32 flags = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) |
                       GX_TRANSFER_RAW_COPY(0) | GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
                       GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-                      GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO);
-    GX_DisplayTransfer((u32*)r->targetLeft->frameBuf.colorBuf, GX_BUFFER_DIM(srcW, srcH),
-                       pixels, GX_BUFFER_DIM(srcW, srcH), flags);
+                      GX_TRANSFER_SCALING(scale > 1 ? GX_TRANSFER_SCALE_XY
+                                                    : GX_TRANSFER_SCALE_NO);
+    // BOTH dimensions are the INPUT's, as citro3d's own display output passes
+    // them: the transfer engine halves the output dimension itself when it
+    // scales (measured: passing the panel's 240x400 as the output read a
+    // quarter of the target, unscaled, twice).
+    const u32 dim = GX_BUFFER_DIM(srcW * scale, srcH * scale);
+    // SYNCHRONOUS: C3D_SyncDisplayTransfer waits for citro3d's queue to drain
+    // (the frame's draws and the panel transfers), THEN runs this transfer and
+    // waits for ITS completion. A bare GX_DisplayTransfer + PPF wait here could be
+    // satisfied by the queue's own panel transfer firing first and read the
+    // buffer early -- on hardware, not in the emulator, which finishes transfers
+    // at once (review, 2026-11-18: four times likelier at scale 2, and a stereo
+    // capture now makes two). The flush keeps no dirty line over the buffer.
     GSPGPU_FlushDataCache(pixels, bytes);
-    gspWaitForEvent(GSPGPU_EVENT_PPF, false);
+    C3D_SyncDisplayTransfer((u32*)target->frameBuf.colorBuf, dim, pixels, dim, flags);
     GSPGPU_InvalidateDataCache(pixels, bytes);
 
     FILE* file = fopen(path, "wb");
@@ -761,8 +828,26 @@ static bool writeScreenshotBmp(RendererC3D* r, const char* path) {
     // A pending capture reads the frame just ended (the transfer queues
     // behind its draws), then the request is spent either way.
     if (r->pendingScreenshot[0]) {
-        if (writeScreenshotBmp(r, r->pendingScreenshot)) {
+        if (writeScreenshotBmp(r, r->targetLeft, r->pendingScreenshot)) {
             r->capturesWritten++;
+        }
+        // A STEREO frame's right eye as well, beside it: the both-eye evidence
+        // AGENTS.md P6 asks of rendering changes, and the only picture of the
+        // edge-smoothing pass that draws against a borrowed depth buffer. The
+        // name keeps the left file's suffix (hwcap.bmp.log -> hwcap.right.bmp.log)
+        // because the console's HTTP serves only /3ds/**.log and .txt. The
+        // harness's verdict stays the left eye's file.
+        if (r->eyes.passes > 1) {
+            char rightPath[sizeof(r->pendingScreenshot) + 16];
+            const char* slash = strrchr(r->pendingScreenshot, '/');
+            const char* dot = strchr(slash ? slash : r->pendingScreenshot, '.');
+            if (dot) {
+                snprintf(rightPath, sizeof(rightPath), "%.*s.right%s",
+                         (int)(dot - r->pendingScreenshot), r->pendingScreenshot, dot);
+            } else {
+                snprintf(rightPath, sizeof(rightPath), "%s.right", r->pendingScreenshot);
+            }
+            writeScreenshotBmp(r, r->targetRight, rightPath);
         }
         r->pendingScreenshot[0] = '\0';
     }

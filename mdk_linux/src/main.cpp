@@ -487,7 +487,8 @@ int main(int argc, char** argv) {
             std::fclose(config);
             if (mdk::parseEnhancedConfig(configText, &enhancedToggles)) {
                 std::printf("[main] config: %s loaded (shadows=%d lights=%d haze=%d "
-                            "mirrors=%d glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d)\n",
+                            "mirrors=%d glow=%d filtering=%d mipmaps=%d hd=%d lighting=%d "
+                            "smoothing=%d)\n",
                             configPath, (int)enhancedToggles.enableSkyShadows,
                             (int)enhancedToggles.enableFragmentLights,
                             (int)enhancedToggles.enableHaze, (int)enhancedToggles.enableMirrors,
@@ -495,7 +496,8 @@ int main(int argc, char** argv) {
                             (int)enhancedToggles.enableFiltering,
                             (int)enhancedToggles.enableMipmaps,
                             (int)enhancedToggles.enableHdTextures,
-                            (int)enhancedToggles.enableLighting);
+                            (int)enhancedToggles.enableLighting,
+                            (int)enhancedToggles.enableEdgeSmoothing);
             }
         }
     }

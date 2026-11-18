@@ -382,7 +382,7 @@ fi
 case "$EXPECT" in
   hud*) mkdir -p "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk" &&
         : > "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk/canary.txt" &&
-        printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\nenableMipmaps=0\nenableHdTextures=0\nenableLighting=0\n' \
+        printf 'enableSkyShadows=0\nenableFragmentLights=0\nenableHaze=0\nenableMirrors=0\nenableGlowBillboards=0\nenableFiltering=0\nenableMipmaps=0\nenableHdTextures=0\nenableLighting=0\nenableEdgeSmoothing=0\n' \
           > "$LANE/xdg/mandarine-emu/sdmc/3ds/mdk/config.ini" ;;
 esac
 if [ -n "${SEED_SDMC:-}" ]; then
@@ -581,8 +581,18 @@ cfg_set enable_realtime_audio false Audio
 # [Layout], graphics_api under [Renderer]); naming the section is what makes the
 # insert branch land where the emulator looks.
 cfg_set graphics_api 1 Renderer
-cfg_set render_3d 0 Layout
-cfg_set factor_3d 0 Layout
+# MDK_EMU_STEREO=<1..100> is the one opt-in: side-by-side stereo (render_3d=1)
+# at that slider depth (factor_3d, the percentage the guest reads back as its 3D
+# slider), for the both-eye checks AGENTS.md P6 asks of rendering changes. The
+# verdict block below records whichever mode ran.
+case "${MDK_EMU_STEREO:-}" in
+    '') cfg_set render_3d 0 Layout; cfg_set factor_3d 0 Layout ;;
+    *[!0-9]*) echo "emurun: MDK_EMU_STEREO must be 1..100" >&2; exit 2 ;;
+    *) if [ "$MDK_EMU_STEREO" -lt 1 ] || [ "$MDK_EMU_STEREO" -gt 100 ]; then
+           echo "emurun: MDK_EMU_STEREO must be 1..100" >&2; exit 2
+       fi
+       cfg_set render_3d 1 Layout; cfg_set factor_3d "$MDK_EMU_STEREO" Layout ;;
+esac
 # THE PANEL IS PINNED, 1:1, AT THE DOCUMENTED RECTANGLE. Left to the default
 # layout (layout_option=0) the screens scale to the window, and the window's
 # size drifts (c5a22d7): on 2026-11-17 the top screen measured 427x256 in every

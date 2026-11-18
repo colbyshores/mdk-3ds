@@ -1232,6 +1232,24 @@ def adjudicate(text, quiet=False):
               % (len(bind), len(bind_stray),
                  "none" if not bind_stray else "; ".join(bind_stray)))
 
+    # EDGE SMOOTHING'S BORROWED DEPTH. At scale 2 the right eye shares the left
+    # eye's depth buffer (02_lifecycle.inc buildEyeTargets), so installing the
+    # right eye must SPLIT the frame (submitting the left eye's commands) and THEN
+    # clear the depth, both before the target is selected. Measured in Mandarine
+    # at slider 60: without them the right eye lost 43% of its pixels; with the
+    # clear but no split the fill would run before either eye's draws.
+    eye_body = body(text, "installEye") or ""
+    split_at = eye_body.find("C3D_FrameSplit(0);")
+    clear_at = eye_body.find("C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH")
+    drawon_at = eye_body.find("C3D_FrameDrawOn(target);")
+    guarded = "target == r->targetRight && r->targetsShareDepth" in eye_body
+    rep.check("borrowed-depth-split-then-cleared-per-right-eye",
+              guarded and 0 <= split_at < clear_at < drawon_at,
+              "installEye: guard %s, split at %d, depth clear at %d, target select at %d "
+              "(the right eye's borrowed depth must be split off the left eye's commands, "
+              "then cleared, then drawn on)" % ("yes" if guarded else "NO", split_at,
+                                                clear_at, drawon_at))
+
     # THE BACKEND'S OWN REFUSED-MESH LINE IS AN EDGE TRIGGER TOO. Review-14's related
     # observation: the frontend's copy of this latch is pinned three times over and
     # its counterpart here was pinned zero times, and THIS is the line that actually
@@ -2555,9 +2573,9 @@ ARMS = [
      lambda s: arm_seam_replay(s, "mdk_render_present", "asC3d(rr)"),
      "replay-only-at-frame-end"),
     ("second-depth-writer",
-     lambda s: s.replace("    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);",
+     lambda s: s.replace("    C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);",
                          "    C3D_DepthTest(true, GPU_LEQUAL, GPU_WRITE_ALL);\n"
-                         "    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);", 1),
+                         "    C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);", 1),
      "depth-state-single-writer"),
     # review-3's five mutants, reproduced as arms so the checks that close those
     # findings cannot be satisfied by a reading of the file.
@@ -2580,6 +2598,18 @@ ARMS = [
      "eye-loop-statements-unconditional"),
     ("install-after-its-replay", arm_install_after_replay,
      "install-eye-first-in-loop"),
+    ("borrowed-depth-clear-removed",
+     lambda s: s.replace("        C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH, 0, "
+                         "mdk::pica::kDepthClearValue);\n", "", 1),
+     "borrowed-depth-split-then-cleared-per-right-eye"),
+    ("borrowed-depth-cleared-before-the-split",
+     lambda s: s.replace("        C3D_FrameSplit(0);\n"
+                         "        C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH, 0, "
+                         "mdk::pica::kDepthClearValue);\n",
+                         "        C3D_FrameBufClear(&target->frameBuf, C3D_CLEAR_DEPTH, 0, "
+                         "mdk::pica::kDepthClearValue);\n"
+                         "        C3D_FrameSplit(0);\n", 1),
+     "borrowed-depth-split-then-cleared-per-right-eye"),
     ("install-fixed-target-for-both-eyes",
      lambda s: s.replace("installEye(r, eye == 0 ? r->targetLeft : r->targetRight, r->eyes.offset[eye]);",
                          "installEye(r, r->targetLeft, 0.0f);", 1),
@@ -2649,10 +2679,10 @@ ARMS = [
     # review-3 F3's three mutants, each a plausible edit that no runtime capture
     # in this frontend can show, because the start arena has no blended pass.
     ("second-alpha-blend-writer",
-     lambda s: s.replace("    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);",
+     lambda s: s.replace("    C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);",
                          "    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE,\n"
                          "                       GPU_ZERO, GPU_ONE, GPU_ZERO);\n"
-                         "    C3D_SetViewport(0, 0, kScreenWidth, kScreenHeight);", 1),
+                         "    C3D_SetViewport(0, 0, r->targetWidth, r->targetHeight);", 1),
      "alpha-blend-single-writer"),
     ("alpha-test-in-the-per-draw-path",
      lambda s: s.replace("    C3D_DrawArrays(GPU_TRIANGLES, first, count);",
